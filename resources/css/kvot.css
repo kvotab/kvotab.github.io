@@ -143,9 +143,8 @@ footer {
 
 .logolarge {
     position: fixed;
-    transform-origin: 50% 50%;
-    top: 25%;
-    left: 25%;
+    top: 100px;
+    left: 25vw;
     width: 50vw;
     height: 50vw;
     -webkit-animation-name: spin;
