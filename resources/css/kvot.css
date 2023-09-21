@@ -15,13 +15,13 @@ body{
 #burger-menu {
   right:0px;
   cursor: pointer;
-  height: 27px;
-  width: 27px;
-  margin: 10px;
-  padding: 10px;
+  height:30;
+  width: 30px;
+  margin: 35px;
+  padding: 0px;
   overflow: visible;
   position: absolute;
-  z-index: 2;
+  z-index: 1000000001;
 }
 #burger-menu span,
 #burger-menu span:before,
@@ -33,44 +33,35 @@ body{
   position: absolute;
   transition: 0.3s ease-in-out;
   right: 0px;
+  width: 30px;
 }
 #burger-menu span:before,
 #burger-menu span:after {
   content: "";
-  right: 0px;
 }
 #burger-menu span:before {
-  right: 10px;
-  top: -20px;
-  width: 27px;
-  background-color:antiquewhite
+  top: -10px;
 }
 #burger-menu span {
-  right: 10px;
-  top: 30px;
-  width: 27px;
+  top: 0px;
 }
 #burger-menu span:after {
-  right: 10px;
-  top: 20px;
-  width: 27px;
+  top: 10px;
 }
 #burger-menu.close span:before {
   top: 0px;
-  right:0px;
   transform: rotate(90deg);
 }
 #burger-menu.close span {
-  top: 30px;
+  top: 0px;
   transform: rotate(-45deg);
-  width: 27px;
 }
 #burger-menu.close span:after {
   opacity: 0;
 }
 
 #menu {
-  z-index: 1;
+  z-index: 1000000000;
   min-width: 100%;
   min-height: 100%;
   position: fixed;
@@ -153,9 +144,9 @@ footer {
     position: fixed;
     transform-origin: 50% 50%;
     top: 25%;
-    left: 35%;
-    height:40%;
-    width:40%;
+    left: 25%;
+    width: 50vw;
+    height: 50vw;
     -webkit-animation-name: spin;
     -webkit-animation-duration: 50000ms;
     -webkit-animation-iteration-count: infinite;

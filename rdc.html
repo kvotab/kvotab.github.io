@@ -1,0 +1,1474 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+	<!--<link href="css/base/jquery-ui-1.9.2.custom.css" rel="stylesheet">
+    <link href="https://unpkg.com/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet" type="text/css"/>
+    <link href="./vendors/css/cytoscape-context-menus.css" rel="stylesheet" type="text/css" /> 
+    <script src="./vendors/js/cytoscape-context-menus.js"></script>
+    <script src="./vendors/js/cytoscape-svg.js"></script>
+	-->
+    <link href="http://code.jquery.com/ui/1.13.2/themes/base/jquery-ui.css" rel="stylesheet">
+	<link href="https://cdnjs.cloudflare.com/ajax/libs/jstree/3.2.1/themes/default/style.min.css" rel="stylesheet" />
+	<link href="./resources/css/rdc.css" rel="stylesheet" />
+    <link href="./resources/css/kvot.css" rel="stylesheet" />  
+	<script src="./vendors/js/jquery-1.8.3.js"></script>
+	<script src="./vendors/js/jquery-ui-1.9.2.custom.js"></script>
+	<script src="./vendors/js/jstree.min.js"></script>
+	<script src="./resources/js/rndecaydata.js" type="text/javascript" language="javascript"></script>
+	<script src="./resources/js/rndatatree.js" type="text/javascript" language="javascript"></script>
+	<script src="./vendors/js/cytoscape.umd.js"></script>
+	<script src="./resources/js/ndf.min.js" type="text/javascript" language="javascript"></script>
+	<!--
+        <script src="../ode/js/radaum.js" type="text/javascript" language="javascript"></script>
+	<script src="../ode/js/radau.js" type="text/javascript" language="javascript"></script>
+	<script src="../ode/js/radaunomath.js" type="text/javascript" language="javascript"></script>
+-->
+	<script src="https://cdn.plot.ly/plotly-2.14.0.min.js"></script>
+	<script src="./vendors/js/math.min.js"></script>
+	<script src="./vendors/js/FileSaver.min.js"></script>
+    <script src="./vendors/js/cytoscape-cxtmenu2.js"></script>
+    <link href="https://unpkg.com/leaflet@1.9.2/dist/leaflet.css" rel="stylesheet" />
+    <script src="https://unpkg.com/leaflet@1.9.2/dist/leaflet.js"></script>
+	<title>
+		Radionuclide decay chains (ICRP Publication 107)
+	</title>
+	<style type="text/css">
+	</style>
+</head>
+<body>	
+
+<header role="banner">
+<svg class="logo" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px"
+	 viewBox="489.1 191.5 776.9 457.6" xml:space="preserve">
+     <a href="./index.html" title="kvot ab">
+<path class="stTop"  d="M966.1,461.6l-14.5,14.5V191.5h14.5v197.3l114.1-114.1l7,13l-71.5,72l66.8,74.2c4.8,5.5,9,9.3,12.5,11.5
+	c3.5,2.2,7.5,3.3,11.9,3.3h2v14.5c0,0-2,0-2,0c-6.8,0-12.7-1.5-17.8-4.5c-5.1-3-10.7-8-17-15l-66.8-73.6l-39.3,39.3V461.6z"/>
+<path class="stTop"  d="M1066,219.9l16,0l76.2,149.9l76.8-151.2l16,0l-87.9,173.1h-9.6L1066,219.9z"/>
+<path class="stTop"  d="M1030.2,455.3c25.5,0,47.4,9.5,65.5,28.4c18.2,18.9,27.3,41.7,27.3,68.2c0,17.4-4.1,33.5-12.4,48.3
+	c-8.3,14.8-19.5,26.4-33.8,35c-14.3,8.6-29.8,12.9-46.6,12.9s-32.3-4.3-46.6-12.9c-14.3-8.6-25.5-20.3-33.8-35
+	c-8.3-14.8-12.4-30.9-12.4-48.3c0-26.6,9.1-49.3,27.3-68.2C982.9,464.8,1004.7,455.3,1030.2,455.3z M951.9,551.9
+	c0,22.6,7.7,41.8,23.1,57.8c15.4,16,33.8,23.9,55.3,23.9s39.9-8,55.3-23.9c15.4-16,23.1-35.2,23.1-57.8c0-22.6-7.7-41.9-23.1-58
+	c-15.4-16.1-33.8-24.1-55.3-24.1s-39.9,8-55.3,24.1C959.6,510,951.9,529.4,951.9,551.9z"/>
+<path class="stTop"  d="M1165.8,584.2c0,10.8,3.8,20,11.5,27.6c7.7,7.6,16.9,11.5,27.7,11.5c10,0,19.3-3,27.9-9.1l8.4,11.5
+	c-10.4,8.1-22.5,12.1-36.3,12.1c-14.8,0-27.5-5.2-38-15.6c-10.5-10.4-15.7-23-15.7-37.8V463H1123v-14.5h28.3v-42.8h14.5v42.8h71.7
+	V463h-71.7V584.2z"/>
+<polygon class="stRight" points="889.8,230.7 624.9,383 691.3,420.7 823.7,344.6 824.4,648.1 890.7,609.6"/>
+<polygon class="stTop" points="621.9,381.4 754.6,456.8 754.8,532.7 491,380.8 820.3,191.5 886.7,229.2"/>
+<polygon class="stLeft" points="820.5,346.1 754.3,384.2 754.7,536.1 489.1,384.8 489.1,465.4 821.3,649.2"/>
+</a>
+</svg>
+<section class="title">radionuclide decay chains <span style="font-size: 0.5em;">icrp publication 107</span></section>	
+<input id="search-input" class="search-input" type="text" placeholder="Search radionuclide..." onfocusout="searchUnfocus(this)"/>
+<section ></section>
+ <!--<svg class="navbarsvg" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path fill-rule="evenodd" clip-rule="evenodd" d="M3 6.75C3 6.33579 3.33579 6 3.75 6H20.25C20.6642 6 21 6.33579 21 6.75C21 7.16421 20.6642 7.5 20.25 7.5H3.75C3.33579 7.5 3 7.16421 3 6.75ZM3 12C3 11.5858 3.33579 11.25 3.75 11.25H20.25C20.6642 11.25 21 11.5858 21 12C21 12.4142 20.6642 12.75 20.25 12.75H3.75C3.33579 12.75 3 12.4142 3 12ZM3 17.25C3 16.8358 3.33579 16.5 3.75 16.5H20.25C20.6642 16.5 21 16.8358 21 17.25C21 17.6642 20.6642 18 20.25 18H3.75C3.33579 18 3 17.6642 3 17.25Z"/>
+</svg>-->
+    
+			
+	</header>
+    <div>
+        <div id="burger-menu">
+          <span></span>
+        </div>
+        
+        <div id="menu">
+            <ul>
+              <li><a href="./index.html">Home</a></li>
+              <li><a href="#">About Us</a></li>
+              <li><a href="#">Contact Us</a></li>
+              <li><a href="./rdc.html">Radionuclide decay chains</a></li>
+            </ul>
+        </div>
+        </div>
+    <div class="content">
+            <div id="info"></div>
+ <!-- The Modal info view-->
+ <div id="myModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-top">
+        <span class="close">&times;</span>
+         </div>
+         <br>
+        <h3>Radionuclide decay chains</h3>
+        <p>
+            This webpage serves as a comprehensive tool for generating illustrations depicting radionuclide decay chains as defined in the <a href="https://www.icrp.org/publication.asp?id=ICRP%20Publication%20107" target="_blank" rel="noopener noreferrer" title="ICRP, 2008.">ICRP 2008</a>-database. Additionally, it offers the functionality to compute and visualize the temporal progression of radionuclide decay and ingrowth based on user-defined initial conditions. Users can access radionuclide-specific settings by right-clicking on a particular radionuclide within the chart.
+        </p><p>
+            The time evolution of radionuclide-specific characteristics can be displayed in a range of units including activity (measured in Becquerels, Bq), quantity (measured in moles), radiotoxicity upon ingestion (measured in Sieverts, Sv), external radiotoxicity (measured in Sv/(s m3)), and energy (measured in Mega-electronvolts, MeV). Furthermore, users can opt to view the total energy emitted or analyze it separately according to alpha emissions, electron emissions (including beta emissions), or photon emissions.
+         </p><p>
+            Conversion coefficients utilized to convert radionuclide activity (measured in Bq) to radiotoxicity upon ingestion (measured in Sv) for adults are sourced from the <a href="https://www.icrp.org/publication.asp?id=icrp%20publication%2072" target="_blank" rel="noopener noreferrer" title="ICRP, 1995.">ICRP 1995</a> guidelines. Similarly, conversion coefficients employed to convert radionuclide activity (measured in Bq) to external radiotoxicity (measured in Sv/(s m3)) in an infinite soil environment are drawn from the <a href="https://www.epa.gov/radiation/federal-guidance-report-no-15-external-exposure-radionuclides-air-water-and-soil" target="_blank" rel="noopener noreferrer" title="EPA, 2019.">EPA 2019</a> recommendations.
+         </p><p>
+            The <a href="https://www.icrp.org/publication.asp?id=ICRP%20Publication%20107" target="_blank" rel="noopener noreferrer" title="ICRP, 2008.">ICRP 2008</a>-database comprises comprehensive data on 1252 radionuclides across 97 elements, encompassing details such as half-lives, decay chains, and the yields and energies of emitted radiations resulting from nuclear transformations. The selection of nuclides for inclusion in the database was contingent on their half-life exceeding 1 minute or if they were formed as a byproduct in the nuclear transformation of a designated radionuclide. Notably, N-16, with a half-life of 7.13 seconds, was included primarily for historical significance. It is imperative that the underlying nuclear physics data be sufficiently robust to enable meaningful computations of radiation yields and energies.
+          </p><p>
+            The database contains compiled information for 922 radionuclides with half-lives surpassing 10 minutes, as well as 330 radionuclides with half-lives less than 10 minutes. Data pertaining to the 118 chemical elements within the periodic table are predominantly sourced from the <a href="https://pubchem.ncbi.nlm.nih.gov/periodic-table/" target="_blank" rel="noopener noreferrer" title="PubChem, 2023.">National Center for Biotechnology Information</a> as of 2023.
+        </p>
+        <h3>Glossary</h3>
+        <p><b>Activity</b><br>
+        The activity of a radionuclide expresses the number of transformations over a certain time interval. Its unit is 1 Becquerel (Bq), which represents an activity equal to one conversion per second.</p>
+        <p><b>Alpha decay</b><br>
+        In alpha decay, the nucleus of an atom of atomic number Z and mass number A emits an alpha particle (<sup>4</sup>He nucleus) to form an atom of atomic number Z - 2 and mass number A - 4.</p>
+        <p><b>Auger transition</b><br>
+        The filling of a vacancy in an inner electron shell of an atom, e.g. as created in electron capture, is accompanied by the emission of an electron from the outer shell, an Auger electron.</p>
+        <p><b>Beta-minus decay</b><br>
+        In beta-minus decay, the nucleus of an atom of atomic number Z and mass number A emits a negative electron (β<sup>-</sup>) and an antineutrino (<span style="font-style: italic;text-decoration: overline;">v</span>) to form an atom of atomic number Z + 1 and mass number A.</p>
+        <p><b>Beta-plus decay</b><br>
+        In beta-plus decay, the nucleus of an atom of atomic number Z and mass number A emits a positive electron (β<sup>+</sup>, positron) and a neutrino (<i>v</i>) to form an atom of atomic number Z - 1 and mass number A.</p>
+        <p><b>Branching fraction</b><br>
+        Branching fraction is the fraction of the nuclear transformations of the radionuclide that forms a particular daughter nucleus.</p>
+        <p><b>Coster-Kronig (CK) transition</b><br>
+        CK transition is an Auger transition in which the atomic shell vacancy is filled by an electron from a higher subshell of the same shell.</p>
+        <p><b>Inner bremsstrahlung</b><br>
+        Inner bremsstrahlung is a continuous electromagnetic radiation produced by the sudden change of nuclear charge which occurs in beta-plus, beta-minus, or electron-capture decay. This radiation is not included here because of its low energy and low yield.</p>
+        <p><b>Electron-capture decay</b><br>
+        In electron-capture decay, the nucleus of an atom of atomic number Z and mass number A captures an atomic electron and emits a neutrino (<i>v</i>) to form an atom of atomic number Z - 1 and mass number A.</p>
+        <p><b>Half-life (T<sub>1/2</sub>)</b><br>
+        The half-life of a radionuclide is the interval required for its activity to decay to half of its initial value. The half-life is related to the decay constant &lambda; as T<sub>1/2</sub> = ln(2)/&lambda; and to the mean life &tau; as &tau; = T<sub>1/2</sub>/ln(2).</p>
+        <p><b>Gamma ray</b><br>
+        Gamma-rays are electromagnetic radiations (photons) emitted by the nucleus in transition from a high energy state to a lower energy state.</p>
+        <p><b>Isomeric transition decay</b><br>
+        A nucleus in an excited energy state of an atom of atomic number Z and mass number A can transition to a lower energy state by emission of a gamma ray, or eject an orbital electron with the excess energy. No change in atomic and mass numbers occurs; the parent and daughter nuclei are isomers. Isomers of energy above the ground state are identified by appending 'm', 'n', 'p', or 'q' to the mass number.</p>
+        <p><b>Isomers</b><br>
+        Nuclei of the same atomic number Z and mass number A but with a different energy state and different physical half-life. Isomers of energy above the ground state are identified by appending 'm', 'n', 'p', or 'q' to the mass number.</p>
+        <p><b>Internal conversion electron</b><br>
+        An internal conversion electron is an orbital electron ejected from the atom as a result of the energy difference between states of the nucleus being transferred directly to a bound atomic electron. This process is a form of isomeric decay.</p>
+        <p><b>Mole</b><br>
+        The mole (symbol mol) is the unit of measurement for amount of substance, a quantity proportional to the number of elementary entities of a substance. One mole contains exactly 6.02214076&#215;10<sup>23</sup> elementary entities.</p>
+        <p><b>Nuclear transformation</b><br>
+        Nuclear transformation is the occurrence of the decay process(es) that spontaneously transform(s) an atom from one state to another. It is often referred to as 'decay' and its SI unit is the becquerel.</p>
+        <p><b>Spontaneous fission</b><br>
+        Spontaneous fission is a decay mechanism resulting in splitting of the nucleus into lighter nuclei, referred to as 'fission fragments', with the emission of neutrons.</p>
+        <p><b>Transition</b><br>
+        The individual process by which a nucleus is spontaneously transformed to another energy state.</p>
+        <p><b>X ray</b><br>
+        The filling of a vacancy in an inner electron shell of an atom, e.g. created in electron capture, may be accompanied by the emission of an x-ray photon.</p>
+    
+        <h3>References</h3>
+        <a href="https://www.icrp.org/publication.asp?id=ICRP%20Publication%20107" target="_blank" rel="noopener noreferrer" title="ICRP, 2008.">ICRP, 2008</a>. <i>Nuclear Decay Data for Dosimetric Calculations</i>. ICRP Publication 107. Ann. ICRP 38 (3). <a href="https://journals.sagepub.com/doi/pdf/10.1177/ANIB_38_3" target="_blank" rel="noopener noreferrer" title="ICRP, 2008.">PDF</a><br>
+        <a href="https://www.icrp.org/publication.asp?id=ICRP%20Publication%20107" target="_blank" rel="noopener noreferrer" title="ICRP, 1995.">ICRP, 1995</a>. <i>Age-dependent Doses to the Members of the Public from Intake of Radionuclides - Part 5 Compilation of Ingestion and Inhalation Coefficients</i>. ICRP Publication 72. Ann. ICRP 26 (1). <a href="https://journals.sagepub.com/doi/pdf/10.1177/ANIB_26_1" target="_blank" rel="noopener noreferrer" title="ICRP, 1995.">PDF</a><br>
+        <a href="https://www.epa.gov/radiation/federal-guidance-report-no-15-external-exposure-radionuclides-air-water-and-soil" target="_blank" rel="noopener noreferrer" title="EPA, 2019.">EPA, 2019</a>. <i>External Exposure to Radionuclides in Air, Water and Soil</i>. Federal Guidance Report No. 15. EPA-402-R-19-002, U.S. Environmental Protection Agency, Washington DC. <a href="https://www.epa.gov/sites/default/files/2019-08/documents/fgr_15_final_508_2019aug02.pdf" target="_blank" rel="noopener noreferrer" title="EPA, 2019.">PDF</a><br>
+        <a href="https://pubchem.ncbi.nlm.nih.gov/periodic-table/" target="_blank" rel="noopener noreferrer" title="EPA, 2019.">National Center for Biotechnology Information, 2023</a>. <i>Periodic Table of Elements</i>. Retrieved September 20, 2023 from https://pubchem.ncbi.nlm.nih.gov/periodic-table/ <br>
+     
+    </div>
+</div>
+
+  <div id="map" style="display:block"></div>
+  	<nav>
+		<div id="tree" class="demo1"></div>
+	</nav>
+	<div id="chartdialog" class="ui-state-active">	
+		<div class="settings" id="settings">
+			<select name="chartunit" id="chartunit" class="ui-state-default ui-corner-all" onChange="updateLevelICrunAndUpdateChart()">
+				<option value="Bq">Activity (Bq)</option>
+				<option value="Mole">Amount (mol)</option>
+				<option value="DCC_ing">Radiotoxicity on ingestion (Sv)</option>
+				<option value="DCC_ext">External radiotoxicity (Sv/s m3)</option>
+				<option value="Alpha_energy">Energy of alpha emissions (MeV)</option>
+				<option value="Electron_energy">Energy of electrons, including beta (MeV)</option>
+				<option value="Photon_energy">Energy of photon emission (MeV)</option>
+				<option value="Total_energy">Total energy (MeV)</option>
+			</select>				
+			<label id="timelabel" for="timeinput" class="ui-state-default ui-corner-all">Time
+			<input id="timeinput"  type="number" min="0" value="100" onchange="runAndUpdateChart()">
+			<select name="timeunit" id="timeunit"  onChange='runAndUpdateChart()'>
+				<option value='second'>seconds</option>
+				<option value='minute'>minutes</option>
+				<option value='hour'>hours</option>
+				<option value='day'>days</option>
+				<option value='year' selected>years</option>
+			</select>	</label>			
+		</div>
+	</div>			
+	<div id="cy"></div>	
+    <div id="icdialog" style="display:none"><form><input type="number" min="0" style="z-index:10000;width:82%" name="ICBQ" value="0"> Bq<br><br>
+        <input type="number" min="0" style="z-index:10000;width:82%" name="ICMOLE" value="0"> mol</form></div>
+  	
+</div>
+<footer>
+<li style="float:left;list-style-type: none;">
+  Kvot AB | 
+  <svg onclick="toggleMap()" class="smallsvg" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" fill="#000000"><title>address</title><g><path d="M 15.212,16.424c 2.874,0, 5.212-2.338, 5.212-5.212C 20.424,8.338, 18.086,6, 15.212,6S 10,8.338, 10,11.212 C 10,14.086, 12.338,16.424, 15.212,16.424z M 15.212,8c 1.77,0, 3.212,1.44, 3.212,3.212s-1.44,3.212-3.212,3.212S 12,12.982, 12,11.212 S 13.44,8, 15.212,8zM 14.484,31.458c 0.168,0.186, 0.33,0.306, 0.486,0.39c 0.002,0.002, 0.006,0.002, 0.008,0.004 c 0.108,0.056, 0.214,0.098, 0.314,0.098c 0.1,0, 0.206-0.042, 0.314-0.098c 0.002-0.002, 0.006-0.002, 0.008-0.004 c 0.156-0.084, 0.318-0.204, 0.486-0.39c0,0, 9.296-10.11, 10.23-18.87c 0.056-0.452, 0.094-0.91, 0.094-1.376 C 26.424,5.020, 21.404,0, 15.212,0S 4,5.020, 4,11.212c0,0.474, 0.038,0.936, 0.096,1.394C 5.054,21.362, 14.484,31.458, 14.484,31.458z M 15.212,2 c 5.080,0, 9.212,4.132, 9.212,9.212c0,0.338-0.024,0.698-0.082,1.164c-0.716,6.712-7.018,14.588-9.048,16.984 c-2.082-2.4-8.474-10.256-9.214-17C 6.026,11.918, 6,11.554, 6,11.212C 6,6.132, 10.132,2, 15.212,2z"></path></g></svg> Valhallagatan 16 &bull; 753 34 &bull; Uppsala |
+   <a href="tel:0733822313"><svg class="smallsvg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" ><title>phone</title><path d="M164.9 24.6c-7.7-18.6-28-28.5-47.4-23.2l-88 24C12.1 30.2 0 46 0 64C0 311.4 200.6 512 448 512c18 0 33.8-12.1 38.6-29.5l24-88c5.3-19.4-4.6-39.7-23.2-47.4l-96-40c-16.3-6.8-35.2-2.1-46.3 11.6L304.7 368C234.3 334.7 177.3 277.7 144 207.3L193.3 167c13.7-11.2 18.4-30 11.6-46.3l-40-96z"/></svg></a>&nbsp; <a href="mailto:pa@kvotab.se"><svg class="smallsvg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><title>mail</title><path d="M48 64C21.5 64 0 85.5 0 112c0 15.1 7.1 29.3 19.2 38.4L236.8 313.6c11.4 8.5 27 8.5 38.4 0L492.8 150.4c12.1-9.1 19.2-23.3 19.2-38.4c0-26.5-21.5-48-48-48H48zM0 176V384c0 35.3 28.7 64 64 64H448c35.3 0 64-28.7 64-64V176L294.4 339.2c-22.8 17.1-54 17.1-76.8 0L0 176z"/></svg></a>&nbsp; <a href="https://linkedin.com/in/per-anders-ekstrom" target="_blank" rel="noopener noreferrer"><svg class="smallsvg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><title>linked in</title><path d="M100.28 448H7.4V148.9h92.88zM53.79 108.1C24.09 108.1 0 83.5 0 53.8a53.79 53.79 0 0 1 107.58 0c0 29.7-24.1 54.3-53.79 54.3zM447.9 448h-92.68V302.4c0-34.7-.7-79.2-48.29-79.2-48.29 0-55.69 37.7-55.69 76.7V448h-92.78V148.9h89.08v40.8h1.3c12.4-23.5 42.69-48.3 87.88-48.3 94 0 111.28 61.9 111.28 142.3V448z"/></svg></a>&nbsp; <a href="https://www.mathworks.com/matlabcentral/profile/authors/718179" target="_blank" rel="noopener noreferrer"><svg class="smallsvg" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" role="img"><title>matlab</title><path d="M4.323 16.248C3.13 15.354 1.64 14.31 0 13.118l5.814-2.236 2.385 1.789c-1.789 2.087-2.981 2.832-3.876 3.578zm15.95-6.26c-.447-1.193-.745-2.385-1.193-3.578-.447-1.342-.894-2.534-1.64-3.578-.298-.447-.894-1.491-1.64-1.491-.149 0-.298.149-.447.149-.447.149-1.043 1.043-1.193 1.64-.447.745-1.342 1.938-1.938 2.683-.149.298-.447.596-.596.745-.447.298-.894.745-1.491 1.043-.149 0-.298.149-.447.149-.447 0-.745.298-1.043.447-.447.447-.894 1.043-1.342 1.491 0 .149-.149.298-.298.447l2.236 1.64c1.64-1.938 3.578-3.876 4.919-7.602 0 0-.447 4.025-4.025 8.348-2.236 2.534-4.025 3.876-4.323 4.174 0 0 .596-.149 1.193.149 1.193.447 1.789 2.087 2.236 3.279.298.894.745 1.64 1.043 2.534 1.193-.298 1.938-.745 2.683-1.491s1.491-1.64 2.236-2.385c1.342-1.64 2.981-3.727 5.068-2.683.298.149.745.447.894.596.447.298.745.596 1.193 1.043.745.596 1.043 1.043 1.64 1.342-1.491-2.981-2.534-5.963-3.727-9.093z"/></svg></a>&nbsp; <a href="https://github.com/kvotab" target="_blank" rel="noopener noreferrer"><svg class="smallsvg" viewBox="0 0 98 96" xmlns="http://www.w3.org/2000/svg"><title>github</title><path fill-rule="evenodd" clip-rule="evenodd" d="M48.854 0C21.839 0 0 22 0 49.217c0 21.756 13.993 40.172 33.405 46.69 2.427.49 3.316-1.059 3.316-2.362 0-1.141-.08-5.052-.08-9.127-13.59 2.934-16.42-5.867-16.42-5.867-2.184-5.704-5.42-7.17-5.42-7.17-4.448-3.015.324-3.015.324-3.015 4.934.326 7.523 5.052 7.523 5.052 4.367 7.496 11.404 5.378 14.235 4.074.404-3.178 1.699-5.378 3.074-6.6-10.839-1.141-22.243-5.378-22.243-24.283 0-5.378 1.94-9.778 5.014-13.2-.485-1.222-2.184-6.275.486-13.038 0 0 4.125-1.304 13.426 5.052a46.97 46.97 0 0 1 12.214-1.63c4.125 0 8.33.571 12.213 1.63 9.302-6.356 13.427-5.052 13.427-5.052 2.67 6.763.97 11.816.485 13.038 3.155 3.422 5.015 7.822 5.015 13.2 0 18.905-11.404 23.06-22.324 24.283 1.78 1.548 3.316 4.481 3.316 9.126 0 6.6-.08 11.897-.08 13.526 0 1.304.89 2.853 3.316 2.364 19.412-6.52 33.405-24.935 33.405-46.691C97.707 22 75.788 0 48.854 0z"/></svg></a> | 
+   <svg onClick="navigator.clipboard.writeText('559162-0306')" class="smallsvg" style="vertical-align: middle;fill: currentColor;overflow: hidden;" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg"><title>organisation number</title><path d="M661 84v860H84V84h577m29.3-80H54.7C26.7 4 4 30.9 4 64v900c0 33.1 22.7 60 50.7 60h635.6c28 0 50.7-26.9 50.7-60V64c0-33.1-22.7-60-50.7-60z"  /><path d="M505 742v201H240V742h265m61-80H178.1c-16.8 0-18.1 9.5-18.1 21.2v318.5c0 11.7 1.4 21.2 18.1 21.2H566c16.8 0 19-9.5 19-21.2V683.2c0-11.7-2.2-21.2-19-21.2z m376-267v548H742.1V395H942m63.9-80H677.5c-14.2 0-15.3 18.6-15.3 41.6v624.7c0 23 1.1 41.6 15.3 41.6h328.4c14.2 0 16.1-18.6 16.1-41.6V356.6c0-23-1.9-41.6-16.1-41.6zM291 223H185c-22.1 0-40-17.9-40-40s17.9-40 40-40h106c22.1 0 40 17.9 40 40s-17.9 40-40 40z m270 0H455c-22.1 0-40-17.9-40-40s17.9-40 40-40h106c22.1 0 40 17.9 40 40s-17.9 40-40 40zM291 380H185c-22.1 0-40-17.9-40-40s17.9-40 40-40h106c22.1 0 40 17.9 40 40s-17.9 40-40 40z m270 0H455c-22.1 0-40-17.9-40-40s17.9-40 40-40h106c22.1 0 40 17.9 40 40s-17.9 40-40 40zM291 537H185c-22.1 0-40-17.9-40-40s17.9-40 40-40h106c22.1 0 40 17.9 40 40s-17.9 40-40 40z m270 0H455c-22.1 0-40-17.9-40-40s17.9-40 40-40h106c22.1 0 40 17.9 40 40s-17.9 40-40 40z"  /><path d="M766 557h-39.7c-22.1 0-40-17.9-40-40s17.9-40 40-40H766c22.1 0 40 17.9 40 40s-17.9 40-40 40z m0 179h-43c-22.1 0-40-17.9-40-40s17.9-40 40-40h43c22.1 0 40 17.9 40 40s-17.9 40-40 40z m0 179h-36.4c-22.1 0-40-17.9-40-40s17.9-40 40-40H766c22.1 0 40 17.9 40 40s-17.9 40-40 40z"  /></svg> 559162-0306 | 
+   <svg onClick="navigator.clipboard.writeText('SE559162030601')" class="smallsvg" style="vertical-align: middle;fill: currentColor;overflow: hidden;" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 122.88 111.5"><defs><style>.cls-1{fill-rule:evenodd;}</style></defs><title>VAT-number</title><path class="cls-1" d="M122.88,58.58l-35,52.92L60,93.6l1.85-3.91,20.43,13,.25.17a4.15,4.15,0,0,0,5.73-1.32l1.13-1.8.06,0,5.27-8.57,24-35.3,4.21,2.69ZM33.15,39.26H24.2L17.65,15.32h7.51l.67,4L28.6,32.64h.45l3.4-12.92.7-4.4h7.26L33.15,39.26Zm28.1,0H53.74l-.67-3.95,0-.12-3.63-.07-3,.15-.63,4H38.49l7.26-23.94h9l6.55,23.94Zm-9.32-9.47L50.3,22h-.45l-2.07,7.84,2.07,0,2.08,0ZM78.69,15.84l-.4,5.4L73.4,21H73l-.19,10.47.3,7.77h-7.4l.37-7L65.85,21h-.48l-4.92.22L60,20.72l.41-5.4H78.29l.4.52ZM48.59,83.28,48,82.72l-8.3,8.53a2.09,2.09,0,0,1-.14.17,2.51,2.51,0,0,1-3.55,0l-8.7-8.7-9,8.54h0a2.51,2.51,0,0,1-3.5-.05L6.3,82.59l-1.78,2A2.51,2.51,0,0,1,0,83.15V2.51A2.51,2.51,0,0,1,2.51,0H93.87a2.5,2.5,0,0,1,2.5,2.51V21.69l-1.23-.79a4.72,4.72,0,0,0-3.78-.6V5H5v71.7a2.5,2.5,0,0,1,2.8.32.8.8,0,0,1,.13.13H8L16.66,86l9-8.53a2.49,2.49,0,0,1,3.49,0h0l8.63,8.63,8.35-8.6a2.49,2.49,0,0,1,3.49-.1h0l1.58,1.46-2,2.94a4.74,4.74,0,0,0-.63,1.49Zm11.56-18h-41a1.85,1.85,0,0,1,0-3.7H62.59l-2.44,3.7ZM68.29,53H18.59a1.85,1.85,0,1,1,0-3.7H70.73L68.29,53Zm51.31-5.84L84.6,100,56.68,82.14l35-52.92,27.91,17.9ZM94.08,61.57a7.54,7.54,0,1,1-10.3-2.77,7.53,7.53,0,0,1,10.3,2.77Zm15.52-8.2L86.13,88.29a4.91,4.91,0,0,0-6.77,1.49l-11-7.07a4.9,4.9,0,0,0-1.49-6.77L90.31,41a4.89,4.89,0,0,0,6.76-1.48l11.05,7.07a4.9,4.9,0,0,0,1.48,6.77Z"/></svg> SE559162030601 | 
+   <svg onClick="printCY()" class="smallsvg" xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="white" class="bi bi-printer" viewBox="0 0 16 16"> <title>print decay chain</title><path d="M2.5 8a.5.5 0 1 0 0-1 .5.5 0 0 0 0 1z"/> <path d="M5 1a2 2 0 0 0-2 2v2H2a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h1v1a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-1h1a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-1V3a2 2 0 0 0-2-2H5zM4 3a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2H4V3zm1 5a2 2 0 0 0-2 2v1H2a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1v-1a2 2 0 0 0-2-2H5zm7 2v3a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1z"/> </svg>
+   
+  
+    <svg class="smallsvg" title="help" id="myBtn" xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="white" viewBox="0 0 512 512">
+        <path d="M464 256A208 208 0 1 0 48 256a208 208 0 1 0 416 0zM0 256a256 256 0 1 1 512 0A256 256 0 1 1 0 256zm169.8-90.7c7.9-22.3 29.1-37.3 52.8-37.3h58.3c34.9 0 63.1 28.3 63.1 63.1c0 22.6-12.1 43.5-31.7 54.8L280 264.4c-.2 13-10.9 23.6-24 23.6c-13.3 0-24-10.7-24-24V250.5c0-8.6 4.6-16.5 12.1-20.8l44.3-25.4c4.7-2.7 7.6-7.7 7.6-13.1c0-8.4-6.8-15.1-15.1-15.1H222.6c-3.4 0-6.4 2.1-7.5 5.3l-.4 1.2c-4.4 12.5-18.2 19-30.6 14.6s-19-18.2-14.6-30.6l.4-1.2zM224 352a32 32 0 1 1 64 0 32 32 0 1 1 -64 0z" />
+    </svg>
+
+</li>
+</footer>
+<script src="./resources/js/rdc.js" type="text/javascript" language="javascript"></script>
+<script>
+    var burgerMenu = document.getElementById('burger-menu');
+
+var overlay = document.getElementById('menu');
+
+burgerMenu.addEventListener('click', function() {
+  this.classList.toggle("close");
+  overlay.classList.toggle("overlay");
+});
+
+ var CY = cytoscape({
+    container: document.getElementById("cy"), // container to render in
+    elements: [],
+    style: [{
+            selector: "node",
+            style: {
+                "background-image": function (element) {
+                    if (element.data("Z") === 0) {
+                        return "data:image/svg+xml;charset=utf-8," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg"></svg>');
+                    } else {
+						var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="10em" height="10em">';
+					//	console.log(svg);
+						if (element.data("level") > 0) {
+							let level = 10 - element.data("level") * 10;
+                            svg = svg + '<rect x="0em" y="' + level + 'em" width="10em" height="10em" stroke="black" fill="#FFF4A3" stroke-width=".05em" />';
+						}
+                        svg = svg + '<foreignObject x="0" y="1em" width="10em" height="10em">' +
+                            '<body xmlns="http://www.w3.org/1999/xhtml">' +
+                            '<table style="border-spacing:0px;padding:0px;font-family:helvetica neue,helvetica,liberation sans,arial,sans-serif;margin-left:auto; margin-right: auto;">' +
+                            '<tr><td valign="bottom" align="right" style="font-size:1.4em;">' + element.data('A') + "" + element.data('state') + '</td>' +
+                            '<td rowspan="2" style="font-size:4em;text-align:left;"><b>' + element.data('Element') + '</b></td></tr>' +
+                            '<tr><td valign="top" align="right" style="font-size:1.4em;">' + element.data('Z') + '</td></tr>' +
+                            '<tr><td colspan="2" style="font-size:1.5em;text-align:center;">' + element.data('Halflife') + '</td></tr></table>' +
+                            '</body>' +
+                            '</foreignObject>';
+                            '</foreignObject>';
+                        svg = svg + '</svg>';
+                        return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+                    }
+                },
+				"overlay-opacity": 0,
+                "background-fit": "cover cover",
+                "background-color": "white",
+                "border-width": function (element) {
+                    if (element.data("Z") === 0) {
+                        return 0;
+                    } else {
+                        return 2;
+                    }
+                },
+                height: function (element) {
+                    if (element.data("Z") === 0) {
+                        return 10;
+                    } else {
+                        return 80;
+                    }
+                },
+                width: function (element) {
+                    if (element.data("Z") === 0) {
+                        return 10;
+                    } else {
+                        return 80;
+                    }
+                },
+            }
+        }, {
+            selector: "edge",
+            style: {
+                //'label': function (element) {return element.data("mode")+' '+element.data("br");},
+                width: 1,
+				"overlay-opacity": 0,
+                "line-color": "#000",
+                "target-arrow-color": "#000",
+                "target-arrow-shape": "triangle",
+                "curve-style": "bezier",
+                "font-family": "sans-serif",
+                'color': 'gray',
+                'font-size': '10px',
+                'text-background-color': 'white',
+                'text-background-shape': 'rectangle',
+                'text-background-opacity': '0.7',
+                "text-wrap": "wrap",
+                "label": function (element) {
+                    return element.data('mode').replace("&beta;", "β").replace("&alpha;", "α") + "\n" + element.data("br");
+
+                },
+                "line-style": function (element) {
+                    if (element.data("mode") === "SF") {
+                        return "dashed";
+                    } else {
+                        return "solid";
+                    }
+                },
+            }
+        }
+    ],
+    minZoom:0.5,
+    maxZoom:2,
+    wheelSensitivity: 0.2,
+});
+
+function styleBorder(rn,onoff){
+	let node = CY.getElementById(rn);
+	if (onoff){
+		let linesCY = ['solid','dashed','dotted','double'];
+		node.style('border-color', "rgb("+node.data().color[0]+","+node[0].data().color[1]+","+node[0].data().color[2]+")");
+		node.style('border-style', linesCY[LINES.indexOf(node.data().dash)]);
+		node.style('border-width', 2);
+        node.style('background-color', "rgb("+node.data().color[0]+","+node[0].data().color[1]+","+node[0].data().color[2]+")");
+        node.style('background-opacity','0.2');
+		}else{
+		node.style('border-color', 'black');
+		node.style('border-style', 'solid');
+		node.style('border-width', 1);
+        node.style('background-color', 'white');
+        node.style('background-opacity','1');
+	}
+}
+CY.on('zoom', function (event) {
+//console.log(event.target.zoom());
+});
+CY.on('mouseover', 'node', function(e){
+	styleBorder(e.target.data().id,true);
+});
+CY.on('mouseout', 'node', function(e){
+	styleBorder(e.target.data().id,false);
+});
+function createSubmenuLineColorSelect(){
+	let submenu = [];
+	for (let i = 0; i < COLORS.length; i++) {
+		submenu.push({
+			fillColor: 'rgba('+COLORS[i][0]+', '+COLORS[i][1]+', '+COLORS[i][2]+', 0.75)',
+			content: '',
+			select: function (ele) {
+				Plotly.restyle(CHARTDIALOG[0],{'line.color':'rgb('+COLORS[i][0]+', '+COLORS[i][1]+', '+COLORS[i][2]+''},ele.data().index);
+				ele.data().color = COLORS[i];
+			}
+		});
+	}
+	return submenu;
+}
+function createSubmenuLineStyleSelect(){
+	let submenu = [];
+	for (let i = 0; i < LINES.length; i++) {
+		submenu.push({
+			content: LINES[i],
+			select: function (ele) {
+				Plotly.restyle(CHARTDIALOG[0],{'line.dash':LINES[i]},ele.data().index);
+				ele.data().dash = LINES[i];
+			}
+		});
+	}
+	return submenu;
+}
+CY.cxtmenu({
+                selector: 'node[type='+TYPE_NUCLIDE+']',
+				adaptativeNodeSpotlightRadius: true,
+				menuRadius: 200, // the size in pixels of the pointer to the active command
+				minSpotlightRadius: 1, // the minimum radius in pixels of the spotlight
+				maxSpotlightRadius: 100, // the maximum radius in pixels of the spotlight
+				itemTextShadowColor: 'black', // the text shadow colour of the command's content
+                commands: [
+                    {
+                        content: 'line-color',
+                        submenu: createSubmenuLineColorSelect(),
+						
+                    }, 		
+                    {
+                        content: 'line-style',
+                        submenu: createSubmenuLineStyleSelect(),
+						/*[
+                            {	
+								content: 'solid',
+								select: function (ele) {
+									ele.style('background-color', '#1f77b4');
+								}
+							},
+                            {	
+								content: 'dash',
+								select: function (ele) {
+									ele.style('background-color', '#ff7f0e');
+								}
+							},
+                            {	
+								content: 'dot',
+								select: function (ele) {
+									ele.style('background-color', '#2ca02c');
+								}
+							},
+                            {	
+								content: 'dot-dash',
+								select: function (ele) {
+									ele.style('background-color', '#d62728');
+								}
+							},                            
+                        ]*/
+                    },
+					{
+                        content: 'initial inventory', //'<svg xmlns="http://www.w3.org/2000/svg" viewBox="-1024 0 2536 512"><!--! Font Awesome Pro 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license (Commercial License) Copyright 2022 Fonticons, Inc. --><path fill="white" d="M216 186.7c-23.9 13.8-40 39.7-40 69.3L32 256C14.3 256-.2 241.6 2 224.1C10.7 154 47.8 92.7 101.3 52c14.1-10.7 33.8-5.3 42.7 10l72 124.7zM256 336c14.6 0 28.2-3.9 40-10.7l72 124.8c8.8 15.3 3.7 35.1-12.6 41.9c-30.6 12.9-64.2 20-99.4 20s-68.9-7.1-99.4-20c-16.3-6.9-21.4-26.6-12.6-41.9l72-124.8c11.8 6.8 25.4 10.7 40 10.7zm224-80l-144 0c0-29.6-16.1-55.5-40-69.3L368 62c8.8-15.3 28.6-20.7 42.7-10c53.6 40.7 90.6 102 99.4 172.1c2.2 17.5-12.4 31.9-30 31.9zM256 304c-26.5 0-48-21.5-48-48s21.5-48 48-48s48 21.5 48 48s-21.5 48-48 48z"/></svg>',
+                        submenu: [
+                            {	
+								content: 'clear inventory',
+								select: function (node) {
+									node.data().IC = 0;
+									updateLevel("IC");
+									runAndUpdateChart();
+								}
+							},
+                            {	
+								content: '+1 Bq',
+								select: function (node) {
+									node.data().IC = node.data().IC + 1;
+									updateLevel("IC");
+									runAndUpdateChart();									
+								}
+							},
+                            {	
+								content: '+1 mol',
+								select: function (node) {
+									node.data().IC = node.data().IC + Math.log(2)/getRn(node.data().id).Halflife_y*6.02214179E23/(60*60*24*365.242196);
+									updateLevel("IC");
+									runAndUpdateChart();									
+								}
+							},
+                            {	
+								content: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="-1024 0 2536 512"><!--! Font Awesome Pro 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license (Commercial License) Copyright 2022 Fonticons, Inc. --><path fill="white" d="M495.9 166.6c3.2 8.7 .5 18.4-6.4 24.6l-43.3 39.4c1.1 8.3 1.7 16.8 1.7 25.4s-.6 17.1-1.7 25.4l43.3 39.4c6.9 6.2 9.6 15.9 6.4 24.6c-4.4 11.9-9.7 23.3-15.8 34.3l-4.7 8.1c-6.6 11-14 21.4-22.1 31.2c-5.9 7.2-15.7 9.6-24.5 6.8l-55.7-17.7c-13.4 10.3-28.2 18.9-44 25.4l-12.5 57.1c-2 9.1-9 16.3-18.2 17.8c-13.8 2.3-28 3.5-42.5 3.5s-28.7-1.2-42.5-3.5c-9.2-1.5-16.2-8.7-18.2-17.8l-12.5-57.1c-15.8-6.5-30.6-15.1-44-25.4L83.1 425.9c-8.8 2.8-18.6 .3-24.5-6.8c-8.1-9.8-15.5-20.2-22.1-31.2l-4.7-8.1c-6.1-11-11.4-22.4-15.8-34.3c-3.2-8.7-.5-18.4 6.4-24.6l43.3-39.4C64.6 273.1 64 264.6 64 256s.6-17.1 1.7-25.4L22.4 191.2c-6.9-6.2-9.6-15.9-6.4-24.6c4.4-11.9 9.7-23.3 15.8-34.3l4.7-8.1c6.6-11 14-21.4 22.1-31.2c5.9-7.2 15.7-9.6 24.5-6.8l55.7 17.7c13.4-10.3 28.2-18.9 44-25.4l12.5-57.1c2-9.1 9-16.3 18.2-17.8C227.3 1.2 241.5 0 256 0s28.7 1.2 42.5 3.5c9.2 1.5 16.2 8.7 18.2 17.8l12.5 57.1c15.8 6.5 30.6 15.1 44 25.4l55.7-17.7c8.8-2.8 18.6-.3 24.5 6.8c8.1 9.8 15.5 20.2 22.1 31.2l4.7 8.1c6.1 11 11.4 22.4 15.8 34.3zM256 336c44.2 0 80-35.8 80-80s-35.8-80-80-80s-80 35.8-80 80s35.8 80 80 80z"/></svg>',
+								select: function (node) {
+									updateIC(node);
+								}
+							},
+                        ]
+                    },
+                    {
+                        content: 'select as start',
+                        select: function (node) {
+                            $('#tree').jstree(true).show_all();
+                            $('#tree').jstree('search', node.id());
+                        }
+                    },
+                    /*{
+                        content: '<span class="fa fa-star fa-2x"></span>',
+                        submenu: [
+                            {
+                                content: '<span class="fa fa-flash fa-2x"></span>',
+                                select: function (ele) {
+                                    console.log(ele.id());
+                                }
+                            },
+                            {
+                                content: 'Text',
+                                select: function (ele) {
+                                    console.log(ele.id());
+                                }
+                            },
+                            {
+                                content: 'What',
+                                enabled: false
+                            }
+                        ],
+                        enabled: true
+                    },
+                    {
+                        content: 'disabled',
+                        enabled: false
+                    }*/
+                ]
+            });
+
+ /*           CY.cxtmenu({
+                selector: 'core',
+
+                commands: () => CY.$(':selected').length === 0 ? [
+                    {
+                        content: 'bg1',
+                        select: function () {
+                            console.log('bg1');
+                        }
+                    },
+
+                    {
+                        content: 'bg2',
+                        select: function () {
+                            console.log('bg2');
+                        }
+                    }
+                ] : [{
+                    content: 'bg1',
+                    select: function () {
+                        console.log('bg1');
+                    }
+                }]
+            });*/
+/*// demo your core ext
+CY.on('cxttap', function (event) {
+    if (allSelected('node')) {
+        contextMenu.hideMenuItem('select-all-nodes');
+        contextMenu.showMenuItem('unselect-all-nodes');
+    } else {
+        contextMenu.hideMenuItem('unselect-all-nodes');
+        contextMenu.showMenuItem('select-all-nodes');
+    }
+    if (allSelected('edge')) {
+        contextMenu.hideMenuItem('select-all-edges');
+        contextMenu.showMenuItem('unselect-all-edges');
+    } else {
+        contextMenu.hideMenuItem('unselect-all-edges');
+        contextMenu.showMenuItem('select-all-edges');
+    }
+});
+
+var allSelected = function (type) {
+    if (type == 'node') {
+        return CY.nodes().length == CY.nodes(':selected').length;
+    } else if (type == 'edge') {
+        return CY.edges().length == CY.edges(':selected').length;
+    }
+    return false;
+}
+
+var selectAllOfTheSameType = function (type) {
+    if (type == 'node') {
+        CY.nodes().select();
+    } else if (type == 'edge') {
+        CY.edges().select();
+    }
+};
+var unselectAllOfTheSameType = function (type) {
+    if (type == 'node') {
+        CY.nodes().unselect(); ;
+    } else if (type == 'edge') {
+        CY.edges().unselect();
+    }
+};
+var contextMenu = CY.contextMenus({
+    menuItems: [{
+            id: 'disable',
+            content: '<div class="header">disable</div>',
+            tooltipText: 'disable',
+            image: {
+                src: "assets/remove.svg",
+                width: 12,
+                height: 12,
+                x: 6,
+                y: 4
+            },
+            selector: 'node, edge',
+            onClickFunction: function (event) {
+                var target = event.target || event.cyTarget;
+                removed = target.remove();
+
+                contextMenu.showMenuItem('undo-last-remove');
+            },
+            hasTrailingDivider: true
+        }, {
+            id: 'undo-last-remove',
+            content: 'undo last remove',
+            selector: 'node, edge',
+            show: false,
+            coreAsWell: true,
+            onClickFunction: function (event) {
+                if (removed) {
+                    removed.restore();
+                }
+                contextMenu.hideMenuItem('undo-last-remove');
+            },
+            hasTrailingDivider: true
+        }, {
+            id: 'update-ic',
+            content: 'update initial condition',
+            tooltipText: 'update initial condition',
+            selector: 'node',
+            onClickFunction: function (event) {
+                        let target = event.target || event.cyTarget;
+                        updateIC(target);
+                    },
+            }, {
+            id: 'color',
+            content: 'change color',
+            tooltipText: 'change color',
+            selector: 'node',
+            hasTrailingDivider: true,
+            submenu: [{
+                    id: 'color-blue',
+                    content: 'blue',
+                    tooltipText: 'blue',
+                    onClickFunction: function (event) {
+                        let target = event.target || event.cyTarget;
+                         target.style('background-color', 'blue');
+                    },
+                    submenu: [{
+                            id: 'color-light-blue',
+                            content: 'light blue',
+                            tooltipText: 'light blue',
+                            onClickFunction: function (event) {
+                                let target = event.target || event.cyTarget;
+                                target.style('background-color', 'lightblue');
+                            },
+                        }, {
+                            id: 'color-dark-blue',
+                            content: 'dark blue',
+                            tooltipText: 'dark blue',
+                            onClickFunction: function (event) {
+                                let target = event.target || event.cyTarget;
+                                target.style('background-color', 'darkblue');
+                            },
+                        },
+                    ],
+                }, {
+                    id: 'color-green',
+                    content: 'green',
+                    tooltipText: 'green',
+                    onClickFunction: function (event) {
+                        let target = event.target || event.cyTarget;
+                        target.style('background-color', 'green');
+                    },
+                }, {
+                    id: 'color-red',
+                    content: 'red',
+                    tooltipText: 'red',
+                    onClickFunction: function (event) {
+                        let target = event.target || event.cyTarget;
+                        target.style('background-color', 'red');
+                    },
+                },
+            ]
+        }, {
+            id: 'add-node',
+            content: 'add node',
+            tooltipText: 'add node',
+            image: {
+                src: "assets/add.svg",
+                width: 12,
+                height: 12,
+                x: 6,
+                y: 4
+            },
+            coreAsWell: true,
+            onClickFunction: function (event) {
+                var data = {
+                    group: 'nodes'
+                };
+
+                var pos = event.position || event.cyPosition;
+
+                CY.add({
+                    data: data,
+                    position: {
+                        x: pos.x,
+                        y: pos.y
+                    }
+                });
+            }
+        }, {
+            id: 'select-all-nodes',
+            content: 'select all nodes',
+            selector: 'node',
+            coreAsWell: true,
+            show: true,
+            onClickFunction: function (event) {
+                selectAllOfTheSameType('node');
+
+                contextMenu.hideMenuItem('select-all-nodes');
+                contextMenu.showMenuItem('unselect-all-nodes');
+            }
+        }, {
+            id: 'unselect-all-nodes',
+            content: 'unselect all nodes',
+            selector: 'node',
+            coreAsWell: true,
+            show: false,
+            onClickFunction: function (event) {
+                unselectAllOfTheSameType('node');
+
+                contextMenu.showMenuItem('select-all-nodes');
+                contextMenu.hideMenuItem('unselect-all-nodes');
+            }
+        }, {
+            id: 'select-all-edges',
+            content: 'select all edges',
+            selector: 'edge',
+            coreAsWell: true,
+            show: true,
+            onClickFunction: function (event) {
+                selectAllOfTheSameType('edge');
+
+                contextMenu.hideMenuItem('select-all-edges');
+                contextMenu.showMenuItem('unselect-all-edges');
+            }
+        }, {
+            id: 'unselect-all-edges',
+            content: 'unselect all edges',
+            selector: 'edge',
+            coreAsWell: true,
+            show: false,
+            onClickFunction: function (event) {
+                unselectAllOfTheSameType('edge');
+
+                contextMenu.showMenuItem('select-all-edges');
+                contextMenu.hideMenuItem('unselect-all-edges');
+            }
+        }
+    ],
+
+    menuItemClasses: ['custom-menu-item'],
+    contextMenuClasses: ['custom-context-menu']
+});*/
+const svgIcon = L.divIcon({
+  html: `
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px"
+	 viewBox="489.1 191.5 776.9 457.6" xml:space="preserve">
+<polygon class="stRight" points="889.8,230.7 624.9,383 691.3,420.7 823.7,344.6 824.4,648.1 890.7,609.6"/>
+<polygon class="stTop" points="621.9,381.4 754.6,456.8 754.8,532.7 491,380.8 820.3,191.5 886.7,229.2"/>
+<polygon class="stLeft" points="820.5,346.1 754.3,384.2 754.7,536.1 489.1,384.8 489.1,465.4 821.3,649.2"/>
+</svg>`,
+  className: "",
+  iconSize: [70, 70],
+  iconAnchor: [25, 5],
+});
+    const accessToken = 'ENe8N6YxrncW4x3EDSJgqDZUylzlnpOMk4WCgzYhdm0sAP6l0dr6BlQaijzEznsa';
+    const styleId = 'jawg-light';
+    const map = L.map('map').setView([59.87072523185025, 17.63431259999659], 14);
+    L.tileLayer(
+      `https://tile.jawg.io/${styleId}/{z}/{x}/{y}.png?access-token=${accessToken}`, {
+        attribution: '<a href="http://jawg.io" title="Tiles Courtesy of Jawg Maps" target="_blank" class="jawg-attrib">&copy; <b>Jawg</b>Maps</a> | <a href="https://www.openstreetmap.org/copyright" title="OpenStreetMap is open data licensed under ODbL" target="_blank" class="osm-attrib">&copy; OSM contributors</a>',
+        maxZoom: 22
+      }
+    ).addTo(map);
+	L.marker([59.87072523185025, 17.63431259999659], { icon: svgIcon }).addTo(map);
+toggleMap()
+
+// Get the modal
+var modal = document.getElementById("myModal");
+
+// Get the button that opens the modal
+var btn = document.getElementById("myBtn");
+
+// Get the <span> element that closes the modal
+var span = document.getElementsByClassName("close")[0];
+
+// When the user clicks the button, open the modal 
+btn.onclick = function() {
+    modal.style.display = "block";
+}
+
+// When the user clicks on <span> (x), close the modal
+span.onclick = function() {
+    modal.style.display = "none";
+}
+
+// When the user clicks anywhere outside of the modal, close it
+window.onclick = function(event) {
+    if (event.target == modal) {
+        modal.style.display = "none";
+    }
+}
+window.onload = function(){
+    $('#tree').jstree(true).show_all();
+    //$('#tree').jstree('search', 'U-238');
+    $('#tree').jstree('select_node', 'U-238');
+}
+
+function selectElement(Z){
+    $('#tree').jstree(true).show_all();    
+    console.log(Z)
+    console.log(datatree[Z].text)
+    $('#tree').jstree('select_node', datatree[Z].text);
+}
+function decaygraph(ids, rnnode) {
+    if (rnnode.hasOwnProperty('Progenies')) {
+        rnnode.Progenies.forEach(function (progeny) {
+            let progname = progeny.name;
+            if (!ids.includes(progname)) {
+                if (progname == "SF") {
+                    progname = progname + Math.random();
+                    let {
+                        x,
+                        y
+                    } = getPosition(rnnode);
+                    CY.add({
+                        data: {
+                            id: progname,
+                            Halflife: "",
+                            Element: "",
+                            A: 0,
+                            Z: 0,
+                            state: 0,
+                            IC: 0,
+							level:0,
+							type:TYPE_SF,
+							color: [255,255,255],
+							dash: "dot",
+                        },
+                        position: {
+                            x: x + 100,
+                            y: y - 100
+                        }
+                    });
+                } else {
+                    let prognode = getRn(progname);
+                    let {
+                        x,
+                        y
+                    } = getPosition(prognode);
+					let type = TYPE_NUCLIDE;
+					nodeIndex = nodeIndex+1;
+					let color= COLORS[nodeIndex % COLORS.length];
+					let dash= LINES[Math.floor(nodeIndex / COLORS.length)];
+					if (prognode.Halflife == "Stable"){
+						type = TYPE_STABLE;
+						nodeIndex = nodeIndex-1;
+						color = [0,0,0];
+						dash = 'solid';
+					}
+                    CY.add({
+                        data: {
+                            id: prognode.name,
+                            Halflife: prognode.Halflife,
+                            Element: prognode.Element,
+                            A: prognode.A,
+                            Z: prognode.Z,
+                            state: prognode.state,
+                            IC: 0,
+							level: 0,
+							type: type,
+							color: color,
+							dash: dash,
+							index: nodeIndex,
+                        },
+                        position: {
+                            x: x,
+                            y: y
+                        },
+                    });
+                    ids[ids.length] = progname;
+                    decaygraph(ids, getRn(progname));
+                }
+            }
+            if (!(ids.includes(rnnode.name.concat(progname)))) {
+                ids[ids.length] = rnnode.name.concat(progname);
+                CY.add({
+                    data: {
+                        mode: progeny.mode,
+                        br: formatBR(progeny.br),
+                        source: rnnode.name,
+                        target: progname
+                    },
+                });
+
+            }
+        });
+    }
+}
+function printCY(){
+    let sel = $('#tree').jstree("get_selected",true)[0].text;
+    if (sel.includes('-')){
+    const blob = CY.png({'bg':'#FFF','full':true,'output':'blob'});
+    saveAs( blob, sel+'.png' );
+    }else{
+        console.log('No radionuclide selected');
+    }
+}
+function updateLevel(state,rns,y){
+	if (state==="IC"){
+		rns = CY.nodes().filter(function (node) {
+			if (node.data().Halflife == "Stable" || node.id().startsWith("SF")) {
+				return false;
+			} else {
+				return true;
+			}
+		}).map(x => x.id());
+        let unit = document.getElementById("chartunit").value;
+		let n = rns.length;
+		y = new Array(n);
+		let totact = 0;
+		for (let i = 0; i < n; i++) {            
+			let rn = rns[i];
+			let node = CY.getElementById(rn);
+			let ic = node.data().IC;
+            let multfac = 1;
+            if (unit !== "Bq") {
+                let rnnode = getRn(rn);
+                if (unit === "Total_energy") {
+                    multfac = rnnode["Alpha_energy"] + rnnode["Electron_energy"] + rnnode["Photon_energy"];
+                } else if (unit === "Mole") {
+                    multfac = 60*60*24*365.242196*rnnode.Halflife_y/Math.log(2)/6.02214179E23;
+                } else {
+                    multfac = rnnode[unit];
+                }
+            }
+			totact = totact + ic*multfac;
+			y[i] = ic*multfac;
+		}
+
+  // Handler for .ready() called.
+		for (let i = 0; i < n; i++) {
+			//let rect = document.getElementById('rect'+rns[i].replace('-',''));
+			
+			let node = CY.getElementById(rns[i]);
+			if (totact==0){
+				node.data().level = 0;
+			}else{
+				node.data().level = y[i]/totact;
+			}
+		}
+	}else{
+		let totact = 0;
+		for (let i = 0; i < rns.length; i++) {
+			totact = totact+y[i];
+		}
+		for (let i = 0; i < rns.length; i++) {
+			//let rect = document.querySelector('#rect-'+rns[i]);
+			
+			let node = CY.getElementById(rns[i]);
+			if (totact==0){
+				node.data().level = 0;
+			}else{
+				node.data().level = y[i]/totact;
+			}
+		}
+	}
+    CY.nodes().select();
+    CY.nodes().unselect();
+}
+function updateLevelICrunAndUpdateChart(){
+				updateLevel("IC");
+                runAndUpdateChart();
+
+}
+function updateIC(node) {
+    $("#icdialog").dialog({
+        title: "Set initial invntory for " + node.id(),
+        modal: true,
+        buttons: {
+            'OK': function () {
+                let IC = $('input[name="ICBQ"]').val();
+                node.data().IC = Number(IC);
+				updateLevel("IC");
+                runAndUpdateChart();
+                $(this).dialog('close');
+            },
+            'Cancel': function () {
+                $(this).dialog('close');
+            }
+        },
+        open: function (event, ui) {
+            $('input[name="ICBQ"]').val(node.data().IC);
+            $('input[name="ICMOLE"]').val(node.data().IC*60*60*24*365.242196*getRn(node.id()).Halflife_y/Math.log(2)/6.02214179E23);
+
+            $('input[name="ICMOLE"]').change(function(){
+                $('input[name="ICBQ"]').val(Number($('input[name="ICMOLE"]').val())/(60*60*24*365.242196*getRn(node.id()).Halflife_y/Math.log(2)/6.02214179E23));
+            });
+            $('input[name="ICBQ"]').change(function(){
+                $('input[name="ICMOLE"]').val(Number($('input[name="ICBQ"]').val())*(60*60*24*365.242196*getRn(node.id()).Halflife_y/Math.log(2)/6.02214179E23));
+            });
+        }
+    });
+};
+var xrn;
+var yrn;
+var nodeIndex;
+$('#tree').jstree({
+    'core': {
+        'multiple': false,
+        'data': datatree
+    },
+    'types': {
+        'Alkali_metal': {
+            "icon": "treeelement icon Alkali_metal"
+        },
+        'Alkaline_earth_metal': {
+            "icon": "treeelement icon Alkaline_earth_metal"
+        },
+        'Transition_metal': {
+            "icon": "treeelement icon Transition_metal"
+        },
+        'Post__transition_metal': {
+            "icon": "treeelement icon Post__transition_metal"
+        },
+        'Metalloid': {
+            "icon": "treeelement icon Metalloid"
+        },
+        'Reactive_nonmetal': {
+            "icon": "treeelement icon Reactive_nonmetal"
+        },
+        'Noble_gas': {
+            "icon": "treeelement icon Noble_gas"
+        },
+        'Lanthanide': {
+            "icon": "treeelement icon Lanthanide"
+        },
+        'Actinide': {
+            "icon": "treeelement icon Actinide"
+        },
+        'Unknown_properties': {
+            "icon": "treeelement icon Unknown_properties"
+        },
+        'isotope': {
+            "icon": "isotope"
+        },
+        'radioisotope': {
+            "icon": "radioisotope"
+        }
+    },
+    plugins: ["search", "types", "themes"],
+    "search": {
+        "case_sensitive": false,
+        "show_only_matches": false,
+    },
+}).on("changed.jstree", function (e, data) {
+    $('#tree').jstree(true).show_all();
+    $('#tree').jstree('search', "");
+    var node = data.instance.get_node(data.selected[0])
+    CY.elements().remove();
+    var infodiv = document.getElementById("info");
+      //  infodiv.classList.remove("liquid");
+      //  infodiv.classList.remove("unknown");
+      //  infodiv.classList.remove("solid");
+      //  infodiv.classList.remove("gas");
+
+    if (node && node.type.endsWith('isotope')) { // Radioisotope selected
+       // infodiv.style.display = "none";
+        infodiv.classList.remove("show");
+       // infodiv.style.zIndex = "1";
+        
+        var ids = [node.text];
+        rnnode = getRn(node.text);
+        xrn = (rnnode.A - rnnode.Z) * 100;
+        yrn = rnnode.Z * 100;
+        let x = 0;
+        let y = 0;
+        if (rnnode.state == "m") {
+            y = -141.5;
+        } else if (rnnode.state == "n") {
+            y = 141.5;
+        }
+		nodeIndex = 0;
+        CY.add({
+            data: {
+                id: rnnode.name,
+                Halflife: rnnode.Halflife,
+                Element: rnnode.Element,
+                A: rnnode.A,
+                Z: rnnode.Z,
+                state: rnnode.state,
+                IC: 0,
+				level:0,
+				type: TYPE_NUCLIDE,
+                color: COLORS[nodeIndex % COLORS.length],
+                dash: LINES[Math.floor(nodeIndex / COLORS.length)],
+				index: nodeIndex,
+            },
+            position: {
+                x: x,
+                y: y
+            },
+        });
+        let unit = "year";
+        let halflife = rnnode.Halflife_y;
+        if (halflife > 1) {}
+        else if (halflife * 365.25 > 1) {
+            halflife *= 365.25;
+            unit = "day";
+        } else if (halflife * 365.25 * 24 > 1) {
+            halflife *= 365.25 * 24;
+            unit = "hour";
+        } else if (halflife * 365.25 / 24 / 60 > 1) {
+            halflife *= 365.25 * 24 * 60;
+            unit = "minute";
+        } else {
+            halflife *= 365.25 * 24 * 60 * 60;
+            unit = "second";
+        }
+        let expvalue = 1 + Math.ceil(Math.log10(halflife));
+        document.getElementById("timeinput").value = "1e" + expvalue;
+        document.getElementById("timeunit").value = unit;
+        decaygraph(ids, rnnode);
+        var foo = CY.extent();
+        CY.ready(function () {
+            CY.fit([], 20);
+        });
+    }
+    else if (node) { // Chemical element selected
+
+        var html = "";
+            html=html+"<table border=0 style='font-size: 1.4em' cellpadding=0 cellspacing=0>";
+           //     html=html+"<tr><td><b style='font-size: 3em'>"+node.a_attr.Z +"</b></td><td style='font-size: 2em'>"+node.a_attr.weight +"</td></td><td width='300'  class='"+node.a_attr.phase.replace(' (expected)','')+"' rowspan='4'>&nbsp;</td></tr>";
+          // html=html+"<tr><td><b style='font-size: 3em'>"+node.a_attr.Z +"</b></td><td style='font-size: 2em'>"+node.a_attr.weight +"</td></td><td width='300'  class='pt' rowspan='4'>&nbsp;</td></tr>";
+           html=html+"<tr><td><b style='font-size: 2.5em'>"+node.a_attr.Z +"</b></td><td style='font-size: 2em'>"+node.a_attr.weight.replace('–','') +"</td><td width='290' rowspan='4'>"+getPeriodicTable(node.a_attr.Z)+"</td></tr>";
+            html=html+"<tr style='line-height: 5em;'><td colspan=2><b style='vertical-align:top;font-size:7em'>"+node.a_attr.symbol+"</b></td></tr>";
+            html=html+"<tr><td style='vertical-align: bottom;padding-top:10px;font-size: 2em' colspan=2>"+node.text+"</td></tr>";
+            html=html+"<tr><td style='vertical-align: bottom;font-size: 1.5em' colspan=2>"+node.a_attr.type+"</td></tr>";
+            //html=html+"<td><table border=1 cellpadding='0' cellspacing='0'  class='liquid'><tr><td>&nbsp;</td></tr></table></td></tr>";
+           // html=html+"<tr><td colspan=3><table border=3>";
+            html=html+"<tr><td colspan=3>"+node.a_attr.info+"</td></tr>";
+            html=html+"<tr><td colspan=3><br>Discovered "+node.a_attr.year +" by "+node.a_attr.discoverer +". "+node.a_attr.note +"<br><br></td></tr>";
+            html=html+"<tr><th colspan=2>Origin of name</th><td>"+node.a_attr.origin_name +"</td></tr>";
+            html=html+"<tr><th colspan=2>Atomic mass</th><td>"+node.a_attr.weight +" g/mol</td></tr>";
+            html=html+"<tr><th colspan=2>Standard state</th><td class='"+node.a_attr.phase.replace(' (expected)','')+"'>"+node.a_attr.phase +"</td></tr>";
+            html=html+"<tr><th colspan=2 style='vertical-align: bottom;'>Electron configuration</th><td>"+node.a_attr.electron +"</td></tr>";
+            html=html+"<tr><th colspan=2>Oxidation states</th><td>"+node.a_attr.oxi +"</td></tr>";
+            html=html+"<tr><th colspan=2>Electronegativity (Pauling scale)</th><td>"+node.a_attr.electro +"</td></tr>";
+            html=html+"<tr><th colspan=2>Atomic radius (van der Waals)</th><td>"+node.a_attr.radius +" pm</td></tr>";
+            html=html+"<tr><th colspan=2>Ionization energy</th><td>"+node.a_attr.ion +" eV</td></tr>";
+            html=html+"<tr><th colspan=2>Electron affinity</th><td>"+node.a_attr.affin +" eV</td></tr>";
+           html=html+"<tr><th colspan=2>Melting point</th><td>"+node.a_attr.melting +"°C</td></tr>";
+            html=html+"<tr><th colspan=2>Boiling point</th><td>"+node.a_attr.boiling +"°C</td></tr>";
+            html=html+"<tr><th colspan=2>Specific heat capacity</th><td>"+node.a_attr.heat +" J/g · K</td></tr>";
+            html=html+"<tr><th colspan=2 style='vertical-align: bottom;'>Density</th><td>"+node.a_attr.density +" g/cm<sup>3</sup></td></tr>";
+           html=html+"<tr><th colspan=2>Earth</th><td>"+node.a_attr.earth +"%</td></tr>";
+              html=html+"<tr><th colspan=2>Abundance in the Earth's crust</th><td>"+node.a_attr.abundance +" mg/kg</td></tr>";
+              html=html+"<tr><th colspan=2>Block</th><td>"+node.a_attr.block+"</td></tr>";
+            html=html+"<tr><th colspan=2>Origin</th><td>"+node.a_attr.origin +"</td></tr>";
+             //html=html+"<tr><th>Discovered by</th><td>"+node.a_attr.discoverer +"</td></tr>";
+            //html=html+"<tr><th>Note</th><td>"+node.a_attr.note +"</td></tr>";
+            html=html+"</table>";
+            infodiv.innerHTML = html;
+       // infodiv.style.display = "block";
+       // infodiv.style.zIndex = "3";
+      //  infodiv.classList.remove("gas");
+
+
+      infodiv.classList.remove("Alkali_metal");
+      infodiv.classList.remove("Alkaline_earth_metal");
+      infodiv.classList.remove("Transition_metal");
+      infodiv.classList.remove("Post__transition_metal");
+      infodiv.classList.remove("Metalloid");
+      infodiv.classList.remove("Reactive_nonmetal");
+      infodiv.classList.remove("Noble_gas");
+      infodiv.classList.remove("Lanthanide");
+      infodiv.classList.remove("Actinide");
+      infodiv.classList.remove("Unknown_properties");
+      infodiv.classList.add(node.type);
+      infodiv.classList.add("show");
+      infodiv.style.backgroundColor.replace(')',',0.2)').replace('rgb','rgba');
+      //  infodiv.classList.add(node.a_attr.phase.replace(' phase',''));
+   //   for (let i = 1; i < 119; i++) {
+   //         document.addEventListener('DOMContentLoaded', function() {
+    //        document.getElementById("ID"+i).addEventListener("click", "selectElement("+i+")");
+     //   });
+      //  }
+    }
+    runAndUpdateChart()
+}).on('open_node.jstree', function (e, data) {
+    data.instance.set_icon(data.node, data.instance.get_icon(data.node).replace("treeelement", "treeelement_open"));
+}).on('close_node.jstree', function (e, data) {
+    data.instance.set_icon(data.node, data.instance.get_icon(data.node).replace("_open", ""));
+}).on('search.jstree', function (nodes, data, res) {
+    data.instance.deselect_all();
+    data.instance.close_all();
+    if (data.nodes.length === 0) {
+        $('#tree').jstree(true).hide_all();
+    } else if (data.nodes.length > 0) {
+        data.instance.select_node(data.res[0]);
+    }
+}).on('loaded.jstree', function(e, data) {
+    $('#tree').jstree('search', 'U-238');
+});
+function runAndUpdateChart() {
+    var order = CY.nodes().filter(function (node) {
+        if (node.data().Halflife == "Stable" || node.id().startsWith("SF")) {
+            return false;
+        } else {
+            return true;
+        }
+    }).map(x => x.id());
+    var n = order.length;
+    let y0 = new Array(n);
+    var lambda = new Array(n);
+    var dydt_data = new Array(n);
+    let currns = new Array(n);
+    let totact = 0;
+    for (let i = 0; i < n; i++) {
+        let rn = order[i];
+        let node = CY.getElementById(rn);
+        let ic = node.data().IC;
+        totact = totact + ic;
+        currns[i] = getRn(rn);
+        lambda[i] = Math.log(2) / currns[i].Halflife_y;
+        y0[i] = ic; //
+        dydt_data[i] = new Array();
+    }
+    if (totact === 0) {
+        if (CHARTDIALOG.dialog("isOpen")) {
+            CHARTDIALOG.dialog("close");
+        }
+        return;
+        CHARTDIALOG.dialog("open");
+    } else if (!CHARTDIALOG.dialog("isOpen")) {
+        CHARTDIALOG.dialog("open");
+    }
+    for (let i = 0; i < n; i++) {
+        for (let j = 0; j < currns[i].Progenies.length; j++) {
+            let pos = order.indexOf(currns[i].Progenies[j].name);
+            if (pos > -1) {
+                dydt_data[pos][dydt_data[pos].length] = {
+                    br: Number(currns[i].Progenies[j].br),
+                    index: i
+                };
+            }
+        }
+    }
+    let timeunit = "year";
+    let yaxistitle = "Activity (Bq)";
+    let data = new Array(n);
+    if (n > 0) {
+        let endtime = Number(document.getElementById("timeinput").value);
+        timeunit = document.getElementById("timeunit").value;
+        let timescale = 1;
+        switch (timeunit) {
+        case "second":
+            timescale /= 60;
+        case "minute":
+            timescale /= 60;
+        case "hour":
+            timescale /= 24;
+        case "day":
+            timescale /= 365.25;
+        case "year":
+        }
+        let tspan = [0, endtime * timescale];
+        let Jacobian = new Array(n);
+
+        for (let i = 0; i < n; i++) {
+            Jacobian[i] = new Array(n).fill(0);
+            Jacobian[i][i] = -lambda[i];
+        }
+        for (let i = 0; i < n; i++) {
+            for (let j = 0; j < dydt_data[i].length; j++) {
+                Jacobian[i][dydt_data[i][j].index] += dydt_data[i][j].br*lambda[i];
+            }
+        }
+        var {
+            tout,
+            yout
+       } = ndf((t, y) => {
+  //      } = radau((t, y) => {
+   //     } = radaunomath((t, y) => {
+
+            let dydt = new Array(n);
+            for (let i = 0; i < n; i++) {
+                dydt[i] = -y[i];
+                for (let j = 0; j < dydt_data[i].length; j++) {
+                    dydt[i] += dydt_data[i][j].br * y[dydt_data[i][j].index];
+                }
+                dydt[i] *= lambda[i];
+            }
+            return dydt;
+        }, tspan, y0, {
+            Refine: 4,
+            AbsTol: 1e-20,
+            RelTol: 1e-6,
+            Jacobian: Jacobian
+        });
+        tout = tout.map(x => x / timescale);
+        sel = document.getElementById("chartunit");
+        let unit = sel.value;
+        yaxistitle = sel.options[sel.selectedIndex].text;
+        let multfac = 1;
+        if (unit !== "Bq") {
+            if (unit === "DCC_ing") {}
+            else {}
+        }
+        for (let i = 0; i < n; i++) {
+			let node = CY.nodes("#"+order[i]);
+            if (unit !== "Bq") {
+                let rnnode = getRn(order[i]);
+                if (unit === "Total_energy") {
+                    multfac = rnnode["Alpha_energy"] + rnnode["Electron_energy"] + rnnode["Photon_energy"];
+                } else if (unit === "Mole") {
+                    multfac = 60*60*24*365.242196*rnnode.Halflife_y/Math.log(2)/6.02214179E23;
+                } else {
+                    multfac = rnnode[unit];
+                }
+            }
+            yi = yout[i].map(x => x * multfac);
+            data[i] = {
+                x: tout,
+                y: yi,
+                name: order[i],
+                line: {
+                    color: "rgb("+node.data().color[0]+","+node[0].data().color[1]+","+node[0].data().color[2]+")",//+colors[i % 10],
+                    dash: node.data().dash,//LINES[Math.floor(i / 10)],
+                }
+            };
+        }
+    }
+    Plotly.newPlot(CHARTDIALOG[0], data, {
+        autosize: true,
+        paper_bgcolor: "rgb(253,254,255)",
+        plot_bgcolor: "rgb(255,255,255)",
+        margin: {
+            t: 4,
+            b: 70
+        },
+        yaxis: {
+            title: yaxistitle,
+			type: YAXISTYPE,
+            mirror: true,
+            ticks: 'outside',
+            showline: true,
+            linecolor: "#bbb",
+        },
+        xaxis: {
+            title: 'Time (' + timeunit + 's)',
+            type: XAXISTYPE,
+            mirror: true,
+            ticks: 'outside',
+            showline: true,
+            linecolor: "#bbb",
+        },
+		/*updatemenus: [{
+			y: -0.14,
+			yanchor: 'bottom',
+			direction: 'up',
+			buttons: [{
+				method: 'relayout',
+				args: ['yaxis.type', 'linear'],
+				label: 'Linear'
+			}, {
+				method: 'relayout',
+				args: ['yaxis.type', 'log'],
+				label: 'Log'
+			}]
+		},{
+			y: -0.14,
+			yanchor: 'top',
+			direction: 'right',
+			active:1,
+			buttons: [{
+				method: 'relayout',
+				args: ['xaxis.type', 'linear'],
+				label: 'Linear'
+			}, {
+				method: 'relayout',
+				args: ['xaxis.type', 'log'],
+				label: 'Log'
+			}]
+		}],*/
+	}, 
+	{
+        displaylogo: false,
+        responsive: true,
+        toImageButtonOptions: {
+            format: 'svg', // one of png, svg, jpeg, webp
+            filename: yaxistitle, //'custom_image',
+            height: 500,
+            width: 700,
+            scale: 1 // Multiply title/legend/axis/canvas sizes by this factor
+        },
+
+        modeBarButtonsToRemove: ['resetScale2d', 'zoomIn2d', 'zoomOut2d','autoScale2d'],
+        modeBarButtonsToAdd: [{
+                name: "downloadCsv",
+                title: "Download data as csv",
+                icon: Plotly.Icons.disk,
+                click: (gd) => {
+                    let blobdata = ["Time (" + timeunit + ")"];
+                    for (let j = 0; j < n; j++) {
+                        blobdata[0] = blobdata[0] + "," + order[j];
+                    }
+                    for (let i = 0; i < data[0].x.length; i++) {
+                        blobdata[i + 1] = data[0].x[i];
+                        for (let j = 0; j < n; j++) {
+                            blobdata[i + 1] = blobdata[i + 1] + "," + data[j].y[i];
+                        }
+                    }
+                    let blob = new Blob([blobdata.join("\r\n")], {
+                        type: "text/csv"
+                    });
+                    //  import { saveAs } from "file-saver";
+                    saveAs(blob, gd.layout.yaxis.title.text + ".csv");
+                },
+            },{
+                name: "linLogY",
+                title: "Toggle linear/logarithmic "+yaxistitle+"-scale",
+                icon: {
+					width: 448, height: 512,
+					path: 'M246.6 41.4c-12.5-12.5-32.8-12.5-45.3 0l-160 160c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0L224 109.3 361.4 246.6c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3l-160-160zm160 352l-160-160c-12.5-12.5-32.8-12.5-45.3 0l-160 160c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0L224 301.3 361.4 438.6c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3z'
+				},
+				//val: 'linLogY',
+				//toggle: true,
+				//attr: 'toggle-linLogY-syncronisation',
+                click: (gd) => {
+					if (gd.layout.yaxis.type === "linear"){
+						YAXISTYPE = 'log';
+					}else{
+						YAXISTYPE = 'linear';
+					}         
+					Plotly.relayout(CHARTDIALOG[0],{'yaxis.type': YAXISTYPE});            
+                },
+            },{
+                name: "linLogX",
+                title: "Toggle linear/logarithmic time-scale",
+                icon: {
+					width: 512, height: 512,
+					path: 'M470.6 278.6c12.5-12.5 12.5-32.8 0-45.3l-160-160c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3L402.7 256 265.4 393.4c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0l160-160zm-352 160l160-160c12.5-12.5 12.5-32.8 0-45.3l-160-160c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3L210.7 256 73.4 393.4c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0z'
+				},
+				//val: 'linLogX',
+				//toggle: true,
+				//attr: 'toggle-linLogX-syncronisation',
+				click: (gd) => {
+					if (gd.layout.xaxis.type === "linear"){
+						XAXISTYPE = 'log';
+					}else{
+						XAXISTYPE = 'linear';
+					}      
+					Plotly.relayout(CHARTDIALOG[0],{'xaxis.type': XAXISTYPE});             
+                },
+            }, 'togglespikelines', 'hoverclosest', 'hovercompare'],
+        showEditInChartStudio: true,
+        plotlyServerURL: "https://chart-studio.plotly.com",
+    });
+	
+    Plotly.Plots.resize(CHARTDIALOG[0]);
+    window.onresize = function () {
+        Plotly.Plots.resize(CHARTDIALOG[0]);
+    };
+    CHARTDIALOG[0].on('plotly_hover', function (data) {
+        var rn = data.points.map(function (d) {
+            return d.data.name;
+        });
+      /*  var color = data.points.map(function (d) {
+            return d.fullData.line.color;
+        });
+        var dash = data.points.map(function (d) {
+            switch (d.data.line.dash) {
+            case 'solid':
+                return 'solid';
+            case 'dash':
+                return 'dashed';
+            case 'dot':
+                return 'dotted';
+            case 'dashdot':
+                return 'double';
+            }
+        });*/
+        var y = data.points.map(function (d) {
+            return d.y;
+        });
+		for (let i = 0; i < rn.length; i++) {
+			styleBorder(rn[i],true);
+		//	let node = CY.getElementById(rn[i]);
+		//	node.style('border-color', color[i]);
+		//	node.style('border-style', dash[i]);
+		//	node.style('border-width', 3);
+		}
+		if (rn.length>1){
+			updateLevel("level",rn,y);
+		}else{
+			updateLevel("IC");
+		}
+    }).on('plotly_unhover', function (data) {
+        var rn = data.points.map(function (d) {
+            return d.data.name;
+        });
+		for (let i = 0; i < rn.length; i++) {
+			styleBorder(rn[i],false);
+		//	let node = CY.getElementById(rn[i]);
+        //node.style('border-color', 'black');
+        //node.style('border-style', 'solid');
+        //node.style('border-width', 1);
+		}
+		if (rn.length>1){
+			updateLevel("IC");
+		}
+    });
+}
+
+</script>
+</body>
+</html>
