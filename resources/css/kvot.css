@@ -156,6 +156,22 @@ footer {
    font-family:RawengulkSans;
 }
 
+#intro {
+  
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+   
+    width: 500px;
+    height: 500px;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    overflow: hidden;
+    
+
+}
 .logolarge {
   
   display: block;
