@@ -12,57 +12,67 @@ body{
      color: #344126;
      font-family: verdana, sans-serif;
 }
-
-#burger-menu {
-  right:0px;
-  cursor: pointer;
-  height:30;
-  width: 30px;
-  margin: 35px;
-  padding: 0px;
-  overflow: visible;
+.nav-toggle {
   position: fixed;
+  cursor: pointer;
+  top:0;
+  right:0;
+  padding: 0px;
+  background: transparent;
+  border: 1px solid transparent;
+  padding:0px;
+  margin: 27px;
   z-index: 1000000001;
 }
-#burger-menu span,
-#burger-menu span:before,
-#burger-menu span:after {
-  background: var(--color-kvot-bright);
-  display: block;
-  height: 3px;
-  opacity: 1;
-  position: absolute;
-  transition: 0.3s ease-in-out;
-  right: 0px;
-  width: 30px;
-}
-#burger-menu span:before,
-#burger-menu span:after {
-  content: "";
-}
-#burger-menu span:before {
-  top: -10px;
-}
-#burger-menu span {
-  top: 0px;
-}
-#burger-menu span:after {
-  top: 10px;
-}
-#burger-menu.close span:before {
-  top: 0px;
-  transform: rotate(90deg);
-}
-#burger-menu.close span {
-  top: 0px;
-  transform: rotate(-45deg);
-}
-#burger-menu.close span:after {
-  opacity: 0;
+
+.nav-toggle:focus {
+  outline-width: 0;
 }
 
+.nav-toggle [class*='bar-'] {
+  background: #E8AD1A;
+  display: block;
+  -webkit-transform: rotate(0deg);
+          transform: rotate(0deg);
+  -webkit-transition: .2s ease all;
+          transition: .2s ease all;
+  
+  /* 
+   * ENLARGED FOR PRESENTATION
+   * Keep these values at the same proportion 
+   * for it to look correct
+  border-radius: 4px;
+  height: 4px;
+  width: 50px;
+  margin-bottom: 8px;
+  */
+  border-radius: 2px;
+  height: 2px;
+  width: 25px;
+  margin-bottom: 4px;
+}
+
+.nav-toggle .bar-bot {
+  margin-bottom: 0;
+}
+
+.opened .bar-top {
+  -webkit-transform: rotate(45deg);
+          transform: rotate(45deg);
+  -webkit-transform-origin: 15% 15%;
+          transform-origin: 15% 15%;
+}
+.opened .bar-mid {
+  opacity: 0;
+}
+.opened .bar-bot {
+  -webkit-transform: rotate(45deg);
+          transform: rotate(-45deg);
+  -webkit-transform-origin: 15% 95%;
+          transform-origin: 15% 95%;
+}
 #menu {
-  z-index: 1000000000;
+  z-index: 100000000;
   min-width: 100%;
   min-height: 100%;
   position: fixed;
@@ -125,6 +135,10 @@ header .logo:hover {
   transform: scale(1.05);
 }
 
+@font-face {
+	font-family: RawengulkSans;
+	src: url(RawengulkSans-094.otf);
+}
 footer {
    display: grid;
    position: fixed;
@@ -139,14 +153,26 @@ footer {
    text-align:center;
    font-size:15px;
    padding-top:5px;
+   font-family:RawengulkSans;
 }
 
 .logolarge {
-    position: fixed;
-    top: 100px;
-    left: 25vw;
-    width: 50vw;
-    height: 50vw;
+  
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+   
+    width: 500px;
+    height: 500px;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    overflow: hidden;
+    
+    opacity:0.1;
+
+    /*
     -webkit-animation-name: spin;
     -webkit-animation-duration: 50000ms;
     -webkit-animation-iteration-count: infinite;
@@ -163,6 +189,8 @@ footer {
     animation-duration: 50000ms;
     animation-iteration-count: infinite;
     animation-timing-function: linear;
+    
+    */
 }
 
 @-ms-keyframes spin {
