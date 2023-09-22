@@ -380,7 +380,7 @@ header {
 }
 @font-face {
 	font-family: RawengulkSans;
-	src: url(RawengulkSans-094.otf);
+	src: url(../../vendors/font/RawengulkSans-094.otf);
 }
 header .title {
 	margin:6px;
