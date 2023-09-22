@@ -4,6 +4,10 @@
 	--color-kvot-background:#352921;/*dark-brown*/
 	--color-kvot-primary:#344126;	/*dark-green*/
 }
+@font-face {
+	font-family: RawengulkSans;
+	src: url(../../vendors/font/RawengulkSans-094.otf);
+}
 body{
   margin: 0;
   padding: 0;
@@ -162,13 +166,13 @@ footer {
   margin-left: auto;
   margin-right: auto;
    
-    width: 500px;
-    height: 500px;
     position: absolute;
     top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
+    text-align: center;
+    width:100%;
     overflow: hidden;
+    font-family:RawengulkSans;
+    color: var(--color-kvot-primary);
     
 
 }
@@ -209,6 +213,7 @@ footer {
     */
 }
 
+    /*
 @-ms-keyframes spin {
     from {
       -ms-transform: rotate(0deg);
@@ -245,10 +250,7 @@ footer {
     }
   }
 
-@font-face {
-	font-family: RawengulkSans;
-	src: url(../../vendors/font/RawengulkSans-094.otf);
-}
+  */
 h1 {
 	font-family:RawengulkSans;
 }
