@@ -137,7 +137,7 @@ header {
 
 header .logo:hover {
   fill: #bb6c5d;
-  transform: scale(1.05);
+  /*transform: scale(1.05);*/
 }
 
 footer {
