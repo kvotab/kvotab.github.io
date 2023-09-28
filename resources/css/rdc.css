@@ -561,7 +561,7 @@ th {
 	position: relative;
     width: 40px;
     height: 20px;	
-    border: 1px solid var(--color-kvot-bright);
+    border: 1px solid var(--color-kvot-accent);
     border-radius: 20px;
     display: flex;
     justify-content: center;
@@ -572,21 +572,21 @@ th {
 .circle {
     position: absolute;
     left: 0;
-    width: 20px;
-    height: 20px;
-    border-radius: 20px;
+    width: 19px;
+    height: 19px;
+    border-radius: 19px;
     background-color: var(--color-kvot-bright);
     transition: .3s;
 }
 .activesort {
     border-color: var(--color-kvot-accent);
 }
-.activesort  .sorttext {
+.activesort .sorttext {
     color: var(--color-kvot-accent);
 }
 .activesort .circle {
     left: 100%;
     transform: translateX(-100%);
     transition: .3s;
-    background-color: var(--color-kvot-accent);
+   /* background-color: var(--color-kvot-accent);*/
 }
