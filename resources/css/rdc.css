@@ -571,10 +571,11 @@ th {
 }
 .circle {
     position: absolute;
-    left: 0;
-    width: 19px;
-    height: 19px;
-    border-radius: 19px;
+    left: 1px;
+    bottom: 1px;
+    width: 18px;
+    height: 18px;
+    border-radius: 18px;
     background-color: var(--color-kvot-bright);
     transition: .3s;
 }
@@ -585,8 +586,8 @@ th {
     color: var(--color-kvot-accent);
 }
 .activesort .circle {
-    left: 100%;
-    transform: translateX(-100%);
+    left: 21px;
+    
     transition: .3s;
-   /* background-color: var(--color-kvot-accent);*/
+   /* transform: translateX(-20px);background-color: var(--color-kvot-accent);*/
 }

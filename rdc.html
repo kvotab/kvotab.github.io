@@ -156,7 +156,7 @@
         <td><div class="togglesort" onclick="togglesort()">
         <div class="circle"></div>
     </div></td>
-    <td style="text-align:right;"><div class="sorttext">Z&darr;</div></td>
+    <td style="text-align:right;"><div class="sorttext">z&darr;</div></td>
 </tr></table>
 </div>
   <div id="map" style="display:block"></div>
@@ -215,10 +215,10 @@
     Asort = !Asort;
     if (Asort) {
         toggle.classList.add('activesort')
-        text.innerHTML = 'AZ&darr;';
+        text.innerHTML = 'az&darr;';
     } else {
         toggle.classList.remove('activesort')
-        text.innerHTML = 'Z&darr;';
+        text.innerHTML = 'z&darr;';
     }
     $('#tree').jstree(true).refresh();
     

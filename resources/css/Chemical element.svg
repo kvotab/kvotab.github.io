@@ -1,6 +1,16 @@
 <svg version="1.1"  id="Layer_1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px"
 	 viewBox="0 0 512 512" style="enable-background:new 0 0 512 512;" xml:space="preserve">
 	 
+<defs>
+    <filter id="f4" x="0" y="0" width="200%" height="200%">
+      <feOffset result="offOut" in="SourceGraphic" dx="20" dy="20" />
+      <feColorMatrix result="matrixOut" in="offOut" type="matrix"
+      values="0.2 0 0 0 0 0 0.2 0 0 0 0 0 0.2 0 0 0 0 0 1 0" />
+      <feGaussianBlur result="blurOut" in="matrixOut" stdDeviation="10" />
+      <feBlend in="SourceGraphic" in2="blurOut" mode="normal" />
+    </filter>
+  </defs>
+
 	<path d="M338.323,214.924l49.724-58.415c-12.839-6.552-23.932-16.038-32.382-27.588l-49.709,58.397
 			c-15.249-8.442-32.766-13.266-51.396-13.266c-23.878,0-45.944,7.904-63.722,21.229l-21.393-18.557
 			c-6.117,13.142-15.837,24.271-27.891,32.119l20.998,18.215c-9.17,15.722-14.45,33.977-14.45,53.454
