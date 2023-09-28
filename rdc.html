@@ -151,8 +151,16 @@
      
     </div>
 </div>
-
+<div class="sort">
+    <table width="100%"><tr>        
+        <td><div class="togglesort" onclick="togglesort()">
+        <div class="circle"></div>
+    </div></td>
+    <td style="text-align:right;"><div class="sorttext">Z&darr;</div></td>
+</tr></table>
+</div>
   <div id="map" style="display:block"></div>
+ 
   	<nav>
 		<div id="tree" class="demo1"></div>
 	</nav>
@@ -200,6 +208,21 @@
 </footer>
 <script src="./resources/js/rdc.js" type="text/javascript" language="javascript"></script>
 <script>
+    var Asort = false;
+    function togglesort() {
+    let toggle = document.querySelector('.togglesort')
+    let text = document.querySelector('.sorttext')
+    Asort = !Asort;
+    if (Asort) {
+        toggle.classList.add('activesort')
+        text.innerHTML = 'AZ&darr;';
+    } else {
+        toggle.classList.remove('activesort')
+        text.innerHTML = 'Z&darr;';
+    }
+    $('#tree').jstree(true).refresh();
+    
+}
     var toggle = document.querySelector('.nav-toggle');
   var overlay = document.getElementById('menu');
     
@@ -1002,11 +1025,26 @@ $('#tree').jstree({
             "icon": "radioisotope"
         }
     },
-    plugins: ["search", "types", "themes"],
+    plugins: ["search", "types", "themes","sort"],
     "search": {
         "case_sensitive": false,
         "show_only_matches": false,
     },
+    "sort" : function (a, b) { 
+        a1 = this.get_node(a);
+        b1 = this.get_node(b);
+         if (a1 && !a1.type.endsWith('isotope')){
+            if (Asort){
+                return (a1.text > b1.text) ? 1 : -1;
+            }else{
+                return (Number(a1.a_attr.Z) > Number(b1.a_attr.Z)) ? 1 : -1;
+            }
+     //       
+            
+         }else{
+            return 1; 
+         }
+        },
 }).on("changed.jstree", function (e, data) {
     $('#tree').jstree(true).show_all();
     $('#tree').jstree('search', "");
