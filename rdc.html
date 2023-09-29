@@ -153,10 +153,13 @@
 </div>
 <div class="sort">
     <table width="100%"><tr>        
-        <td><div class="togglesort" onclick="togglesort()">
+        <td rowspan="2"><div class="togglesort" onclick="togglesort()">
         <div class="circle"></div>
     </div></td>
-    <td style="text-align:right;"><div class="sorttext">z&darr;</div></td>
+    <td  style="text-align:right;vertical-align:top;line-height:5px;"><div class="sorttext">&nbsp;</div></td>
+    <td rowspan="2" style="font-size: 30px;">&darr;</td></tr>
+    <tr>   
+        <td  style="text-align:right;">z</td>
 </tr></table>
 </div>
   <div id="map" style="display:block"></div>
@@ -215,10 +218,10 @@
     Asort = !Asort;
     if (Asort) {
         toggle.classList.add('activesort')
-        text.innerHTML = 'az&darr;';
+        text.innerHTML = 'a';
     } else {
         toggle.classList.remove('activesort')
-        text.innerHTML = 'z&darr;';
+        text.innerHTML = '&nbsp;';
     }
     $('#tree').jstree(true).refresh();
     
