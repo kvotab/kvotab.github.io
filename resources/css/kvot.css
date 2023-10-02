@@ -227,15 +227,13 @@ footer {
     visibility:hidden;
 }
 #logn {    
-    margin-left: auto;
-    margin-right: auto;
     position: absolute;
-    top: 100px;
-    left: 10%;
+    top: 0px;
+    left: 0px;
+    width:100%;
     font-family:RawengulkSans;
     color: var(--color-kvot-primary);
     visibility:visible;
-    z-index: 1;
 }
 #links {  
   margin-left: auto;
@@ -249,6 +247,9 @@ footer {
     visibility:hidden;
     list-style: none;
 
+}
+#p1,#p2 {  
+  width:40px;
 }
 .logolarge {
   
@@ -399,4 +400,48 @@ h1 {
     height: 100%;
     width: 100%;
     z-index: index 200000; 
+  }
+  #infotext{
+    height: 100%;
+    width: 100%;
+
+  }
+  #chart{
+    position:absolute;
+    right:100px;
+    bottom:100px;
+    height:250px;
+    width: 250px;
+    margin:0vh;
+    padding: 0.5em;
+    z-index:5;
+  }
+  #chart p { 
+    cursor: move; 
+  }
+  .ui-draggable, .ui-droppable {
+    background-position: top;
+  }
+  table {
+    font-size: 1em;
+  }
+
+  .toggler {
+    width: 500px;
+    height: 200px;
+  }
+  #button {
+    padding: .5em 1em;
+    text-decoration: none;
+  }
+  #effect {
+    position: relative;
+    width: 240px;
+    height: 170px;
+    padding: 0.4em;
+  }
+  #effect h3 {
+    margin: 0;
+    padding: 0.4em;
+    text-align: center;
   }
