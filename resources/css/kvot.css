@@ -186,16 +186,27 @@ footer {
    font-family:RawengulkSans;
 }
 
+.content {
+  position: absolute;
+  top: 70px;
+  left: 0;
+  width:100%;
+  height: calc(100vh - 101px);
+ /* */
+}
 #intro {  
   display: block;
   margin-left: auto;
   margin-right: auto;
-   
-    position: absolute;
+  width:100%;
+     /*
+  position: absolute;
     top: 50%;
     text-align: center;
-    width:100%;
     overflow: hidden;
+    */
+    
+
     font-family:RawengulkSans;
     color: var(--color-kvot-primary);
     visibility:hidden;
@@ -205,26 +216,43 @@ footer {
   display: block;
   margin-left: auto;
   margin-right: auto;
-   
+  width:100%;
+     /*
     position: absolute;
     top: 50%;
     text-align: center;
-    width:100%;
     overflow: hidden;
+    */
     font-family:RawengulkSans;
     color: var(--color-kvot-primary);
     visibility:hidden;
 
 }
-#contact {    
-    margin-left: auto;
-    margin-right: auto;
-    position: absolute;
-    top: 100px;
-    left: 40%;
+#contact {   
+  position: fixed; 
+    margin: auto;
+    padding: 30px;
     font-family:RawengulkSans;
     color: var(--color-kvot-primary);
     visibility:hidden;
+}
+#links {  
+  position: fixed;
+  margin: auto;
+  padding: 30px;
+  font-family:RawengulkSans;
+  color: var(--color-kvot-primary);
+  visibility:hidden;
+  /*
+  margin-left: auto;
+  margin-right: auto;
+   
+    position: absolute;
+    top: 100px;
+    left: 50%;
+    list-style: none;
+   */
+
 }
 #logn {    
     position: absolute;
@@ -234,19 +262,6 @@ footer {
     font-family:RawengulkSans;
     color: var(--color-kvot-primary);
     visibility:visible;
-}
-#links {  
-  margin-left: auto;
-  margin-right: auto;
-   
-    position: absolute;
-    top: 100px;
-    left: 50%;
-    font-family:RawengulkSans;
-    color: var(--color-kvot-primary);
-    visibility:hidden;
-    list-style: none;
-
 }
 #p1,#p2 {  
   width:40px;
@@ -365,13 +380,6 @@ h1 {
  .stLeft{
     fill:#344126;
 }
- .content {
-     position: absolute;
-     top: 70px;
-     left: 0;
-     height: calc(100vh - 101px);
-     width:100%;
-}
  .left {
      position: absolute;
      left: 0;
@@ -390,15 +398,25 @@ h1 {
      height:100%;
 }
 #map {
-    min-height: 500px;
+  position: fixed;
+  top: 70px;
+  left: 0;
+  width:100%;
+  height: calc(100vh - 101px);
+  /*  min-height: 500px;
     height: 100%;
-    width: 100%;
+    width: 100%;*/
     z-index: index 200000; 
   }
   .map {
-    min-height: 500px;
-    height: 100%;
-    width: 100%;
+    position: fixed;
+    top: 70px;
+    left: 0;
+    width:100%;
+    height: calc(100vh - 101px);
+    /*  min-height: 500px;
+      height: 100%;
+      width: 100%;*/
     z-index: index 200000; 
   }
   #infotext{

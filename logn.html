@@ -62,178 +62,147 @@
       </ul>
   </div>
 
-
   <div class="content">
     <div id="chart" class="ui-widget-content"><p class="ui-widget-header">I can be dragged only by this handle</p></div>  
 
     <div id="logn">
-      <table cellpadding="0px" border="1" style="table-layout: fixed;width:100%">
-        <tr><td colspan="2">
+      <table cellpadding="0px" border="0" style="table-layout: fixed;width:100%">
+        <tr><td>
           <div id="tabs-1">
             <ul>
-              <li><a href="#tabs-1mu">mu</a></li>
-              <li><a href="#tabs-1mean">mean</a></li>
-              <li><a href="#tabs-1GM">GM</a></li>
-              <li><a href="#tabs-1mode">mode</a></li>
-              <li><a href="#tabs-1percentile">percentile</a></li>
-              <li><a href="#tabs-1data">data</a></li>
+              <li><a href="#tabs-1-mu">mu</a></li>
+              <li><a href="#tabs-1-mean">mean</a></li>
+              <li><a href="#tabs-1-GM">GM</a></li>
+              <li><a href="#tabs-1-mode">mode</a></li>
+              <li><a href="#tabs-1-percentile">percentile</a></li>
+              <li><a href="#tabs-1-data">data</a></li>
+              <li><a href="#tabs-1-sigma">sigma</a></li>
+              <li><a href="#tabs-1-SD">SD</a></li>
+              <li><a href="#tabs-1-GSD">GSD</a></li>
+              <li><a href="#tabs-1-CV">CV</a></li>
+              <li><a href="#tabs-1-error">error factor</a></li>
+              <!--  
+              <li><a href="#tabs-1-skewness">skewness</a></li>
+              <li><a href="#tabs-1-kurtosis">kurtosis</a></li>
+              <li><a href="#tabs-1-entropy">entropy</a></li>
+            -->
             </ul>
-            <div id="tabs-1mu">
+            <div id="tabs-1-mu">
               <p>mu (\(\mu\)) is the mean of the associated normal distribution.</p>
-              <p><input id="mu" value="0" name="Mean of it's natural logarithm" title="Please provide the mean of it's natural logarithm."></p>
+              <p><input class="arg" id="mu1" value="0" name="Mean of it's natural logarithm" title="Please provide the mean of it's natural logarithm."></p>
             </div>
-            <div id="tabs-1mean">
-              <p><input id="AM" value="1" name="Arithmetic mean" title="Please provide the arithmetic mean."></p>
+            <div id="tabs-1-mean">
+              <p><input class="arg" id="mean1" value="1" name="Arithmetic mean" title="Please provide the arithmetic mean."></p>
             </div>
-            <div id="tabs-1GM">
-              <p><input id="GM" value="1" name="Geometric mean" title="Please provide the geometric mean."></p>
-              <p>Duis cursus. Maecenas ligula eros, blandit nec, pharetra at, semper at, magna. Nullam ac lacus. Nulla facilisi. Praesent viverra justo vitae neque. Praesent blandit adipiscing velit. Suspendisse potenti. Donec mattis, pede vel pharetra blandit, magna ligula faucibus eros, id euismod lacus dolor eget odio. Nam scelerisque. Donec non libero sed nulla mattis commodo. Ut sagittis. Donec nisi lectus, feugiat porttitor, tempor ac, tempor vitae, pede. Aenean vehicula velit eu tellus interdum rutrum. Maecenas commodo. Pellentesque nec elit. Fusce in lacus. Vivamus a libero vitae lectus hendrerit hendrerit.</p>
+            <div id="tabs-1-GM">
+              <p><input class="arg" id="GM1" value="1" name="Geometric mean" title="Please provide the geometric mean."></p>
             </div>
-            <div id="tabs-1mode">
-              <p>Mauris eleifend est et turpis. Duis id erat. Suspendisse potenti. Aliquam vulputate, pede vel vehicula accumsan, mi neque rutrum erat, eu congue orci lorem eget lorem. Vestibulum non ante. Class aptent taciti sociosqu ad litora torquent per conubia nostra, per inceptos himenaeos. Fusce sodales. Quisque eu urna vel enim commodo pellentesque. Praesent eu risus hendrerit ligula tempus pretium. Curabitur lorem enim, pretium nec, feugiat nec, luctus a, lacus.</p>
-              <p>Duis cursus. Maecenas ligula eros, blandit nec, pharetra at, semper at, magna. Nullam ac lacus. Nulla facilisi. Praesent viverra justo vitae neque. Praesent blandit adipiscing velit. Suspendisse potenti. Donec mattis, pede vel pharetra blandit, magna ligula faucibus eros, id euismod lacus dolor eget odio. Nam scelerisque. Donec non libero sed nulla mattis commodo. Ut sagittis. Donec nisi lectus, feugiat porttitor, tempor ac, tempor vitae, pede. Aenean vehicula velit eu tellus interdum rutrum. Maecenas commodo. Pellentesque nec elit. Fusce in lacus. Vivamus a libero vitae lectus hendrerit hendrerit.</p>
+            <div id="tabs-1-mode">
+              <p><input class="arg" id="mode1" value="1" name="Mode" title="Please provide the mode."></p>
             </div>
-            <div id="tabs-1percentile">
-              <p><input id="p1" type="number" value="5" name="Percentile" title="Please provide a percentile.">
-                <input id="x1" value="0" name="Value" title="Please provide corresponding value."></p>
+            <div id="tabs-1-percentile">
+              <p><input class="arg" id="p1" type="number" value="5" name="Percentile" title="Please provide a percentile.">
+                <input class="arg" id="x1" value="0" name="Value" title="Please provide corresponding value."></p>
             </div>
-            <div id="tabs-1data">
-              <p>Mauris eleifend est et turpis. Duis id erat. Suspendisse potenti. Aliquam vulputate, pede vel vehicula accumsan, mi neque rutrum erat, eu congue orci lorem eget lorem. Vestibulum non ante. Class aptent taciti sociosqu ad litora torquent per conubia nostra, per inceptos himenaeos. Fusce sodales. Quisque eu urna vel enim commodo pellentesque. Praesent eu risus hendrerit ligula tempus pretium. Curabitur lorem enim, pretium nec, feugiat nec, luctus a, lacus.</p>
-              <p>Duis cursus. Maecenas ligula eros, blandit nec, pharetra at, semper at, magna. Nullam ac lacus. Nulla facilisi. Praesent viverra justo vitae neque. Praesent blandit adipiscing velit. Suspendisse potenti. Donec mattis, pede vel pharetra blandit, magna ligula faucibus eros, id euismod lacus dolor eget odio. Nam scelerisque. Donec non libero sed nulla mattis commodo. Ut sagittis. Donec nisi lectus, feugiat porttitor, tempor ac, tempor vitae, pede. Aenean vehicula velit eu tellus interdum rutrum. Maecenas commodo. Pellentesque nec elit. Fusce in lacus. Vivamus a libero vitae lectus hendrerit hendrerit.</p>
+            <div id="tabs-1-data">
+              <p><input class="arg" id="data" value="" name="Data" title="Please provide raw data."></p>
             </div>
-          </div>
-
-        </td></tr>
-        <tr><td colspan="2">
-          <div id="tabs-2">
-            <ul>
-              <li><a href="#tabs-2sigma">sigma</a></li>
-              <li><a href="#tabs-2SD">SD</a></li>
-              <li><a href="#tabs-2GSD">GSD</a></li>
-              <li><a href="#tabs-2CV">CV</a></li>
-              <li><a href="#tabs-2percentile">percentile</a></li>
-              <li><a href="#tabs-2error">error factor</a></li>
-              <li><a href="#tabs-2skewness">skewness</a></li>
-              <li><a href="#tabs-2kurtosis">kurtosis</a></li>
-              <li><a href="#tabs-2entropy">entropy</a></li>
-            </ul>
-            <div id="tabs-2sigma">
+            <div id="tabs-1-sigma">
               <p>sigma (\(\sigma\)) is the standard deviation of the associated normal distribution.</p>
-              <p><input id="sigma" value="1" name="Standard deviation of it's natural logarithm" title="Please provide the standard deviation of it's natural logarithm."></p>
+              <p><input class="arg" id="sigma1" value="1" name="Standard deviation of it's natural logarithm" title="Please provide the standard deviation of it's natural logarithm."></p>
             </div>
-            <div id="tabs-2SD">
-              <p><input id="ASD" value="0" name="Standard deviation" title="Please provide the arithmetic standard deviation."></p>
+            <div id="tabs-1-SD">
+              <p><input class="arg" id="SD1" value="0" name="Standard deviation" title="Please provide the arithmetic standard deviation."></p>
             </div>
-            <div id="tabs-2GSD">
-              <p><input id="GSD" value="1" name="Geometric mean" title="Please provide the geometric standard deviation."></p>
+            <div id="tabs-1-GSD">
+              <p><input class="arg" id="GSD1" value="1" name="Geometric mean" title="Please provide the geometric standard deviation."></p>
             </div>
-            <div id="tabs-2CV">
-              <p>Mauris eleifend est et turpis. Duis id erat. Suspendisse potenti. Aliquam vulputate, pede vel vehicula accumsan, mi neque rutrum erat, eu congue orci lorem eget lorem. Vestibulum non ante. Class aptent taciti sociosqu ad litora torquent per conubia nostra, per inceptos himenaeos. Fusce sodales. Quisque eu urna vel enim commodo pellentesque. Praesent eu risus hendrerit ligula tempus pretium. Curabitur lorem enim, pretium nec, feugiat nec, luctus a, lacus.</p>
-              <p>Duis cursus. Maecenas ligula eros, blandit nec, pharetra at, semper at, magna. Nullam ac lacus. Nulla facilisi. Praesent viverra justo vitae neque. Praesent blandit adipiscing velit. Suspendisse potenti. Donec mattis, pede vel pharetra blandit, magna ligula faucibus eros, id euismod lacus dolor eget odio. Nam scelerisque. Donec non libero sed nulla mattis commodo. Ut sagittis. Donec nisi lectus, feugiat porttitor, tempor ac, tempor vitae, pede. Aenean vehicula velit eu tellus interdum rutrum. Maecenas commodo. Pellentesque nec elit. Fusce in lacus. Vivamus a libero vitae lectus hendrerit hendrerit.</p>
+            <div id="tabs-1-CV">
+              <p><input class="arg" id="CV1" value="1" name="Coefficient of variation" title="Please provide the coefficient of variation."></p>
             </div>
-            <div id="tabs-2percentile">
-              <p><input id="p2" type="number" value="95" name="Percentile" title="Please provide a percentile.">
-                <input id="x2" value="10" name="Value" title="Please provide corresponding value."></p>
+            <div id="tabs-1-error">
+              <p><input class="arg" id="error1" value="1" name="Error factor" title="Please provide the error factor."></p>
             </div>
-            <div id="tabs-2error">
-              <p>Mauris eleifend est et turpis. Duis id erat. Suspendisse potenti. Aliquam vulputate, pede vel vehicula accumsan, mi neque rutrum erat, eu congue orci lorem eget lorem. Vestibulum non ante. Class aptent taciti sociosqu ad litora torquent per conubia nostra, per inceptos himenaeos. Fusce sodales. Quisque eu urna vel enim commodo pellentesque. Praesent eu risus hendrerit ligula tempus pretium. Curabitur lorem enim, pretium nec, feugiat nec, luctus a, lacus.</p>
-              <p>Duis cursus. Maecenas ligula eros, blandit nec, pharetra at, semper at, magna. Nullam ac lacus. Nulla facilisi. Praesent viverra justo vitae neque. Praesent blandit adipiscing velit. Suspendisse potenti. Donec mattis, pede vel pharetra blandit, magna ligula faucibus eros, id euismod lacus dolor eget odio. Nam scelerisque. Donec non libero sed nulla mattis commodo. Ut sagittis. Donec nisi lectus, feugiat porttitor, tempor ac, tempor vitae, pede. Aenean vehicula velit eu tellus interdum rutrum. Maecenas commodo. Pellentesque nec elit. Fusce in lacus. Vivamus a libero vitae lectus hendrerit hendrerit.</p>
+            <!--  
+            <div id="tabs-1-skewness">
+              <p><input class="arg" id="skewness1" value="1" name="Skewness" title="Please provide the skewness."></p>
             </div>
-            <div id="tabs-2skewness">
-              <p>Mauris eleifend est et turpis. Duis id erat. Suspendisse potenti. Aliquam vulputate, pede vel vehicula accumsan, mi neque rutrum erat, eu congue orci lorem eget lorem. Vestibulum non ante. Class aptent taciti sociosqu ad litora torquent per conubia nostra, per inceptos himenaeos. Fusce sodales. Quisque eu urna vel enim commodo pellentesque. Praesent eu risus hendrerit ligula tempus pretium. Curabitur lorem enim, pretium nec, feugiat nec, luctus a, lacus.</p>
-              <p>Duis cursus. Maecenas ligula eros, blandit nec, pharetra at, semper at, magna. Nullam ac lacus. Nulla facilisi. Praesent viverra justo vitae neque. Praesent blandit adipiscing velit. Suspendisse potenti. Donec mattis, pede vel pharetra blandit, magna ligula faucibus eros, id euismod lacus dolor eget odio. Nam scelerisque. Donec non libero sed nulla mattis commodo. Ut sagittis. Donec nisi lectus, feugiat porttitor, tempor ac, tempor vitae, pede. Aenean vehicula velit eu tellus interdum rutrum. Maecenas commodo. Pellentesque nec elit. Fusce in lacus. Vivamus a libero vitae lectus hendrerit hendrerit.</p>
+            <div id="tabs-1-kurtosis">
+              <p><input class="arg" id="kurtosis1" value="1" name="Kurtosis" title="Please provide the kurtosis."></p>
             </div>
-            <div id="tabs-2kurtosis">
-              <p>Mauris eleifend est et turpis. Duis id erat. Suspendisse potenti. Aliquam vulputate, pede vel vehicula accumsan, mi neque rutrum erat, eu congue orci lorem eget lorem. Vestibulum non ante. Class aptent taciti sociosqu ad litora torquent per conubia nostra, per inceptos himenaeos. Fusce sodales. Quisque eu urna vel enim commodo pellentesque. Praesent eu risus hendrerit ligula tempus pretium. Curabitur lorem enim, pretium nec, feugiat nec, luctus a, lacus.</p>
-              <p>Duis cursus. Maecenas ligula eros, blandit nec, pharetra at, semper at, magna. Nullam ac lacus. Nulla facilisi. Praesent viverra justo vitae neque. Praesent blandit adipiscing velit. Suspendisse potenti. Donec mattis, pede vel pharetra blandit, magna ligula faucibus eros, id euismod lacus dolor eget odio. Nam scelerisque. Donec non libero sed nulla mattis commodo. Ut sagittis. Donec nisi lectus, feugiat porttitor, tempor ac, tempor vitae, pede. Aenean vehicula velit eu tellus interdum rutrum. Maecenas commodo. Pellentesque nec elit. Fusce in lacus. Vivamus a libero vitae lectus hendrerit hendrerit.</p>
+            <div id="tabs-1-entropy">
+              <p><input class="arg" id="entropy1" value="1" name="Entropy" title="Please provide the entropy."></p>
             </div>
-            <div id="tabs-2entropy">
-              <p>Mauris eleifend est et turpis. Duis id erat. Suspendisse potenti. Aliquam vulputate, pede vel vehicula accumsan, mi neque rutrum erat, eu congue orci lorem eget lorem. Vestibulum non ante. Class aptent taciti sociosqu ad litora torquent per conubia nostra, per inceptos himenaeos. Fusce sodales. Quisque eu urna vel enim commodo pellentesque. Praesent eu risus hendrerit ligula tempus pretium. Curabitur lorem enim, pretium nec, feugiat nec, luctus a, lacus.</p>
-              <p>Duis cursus. Maecenas ligula eros, blandit nec, pharetra at, semper at, magna. Nullam ac lacus. Nulla facilisi. Praesent viverra justo vitae neque. Praesent blandit adipiscing velit. Suspendisse potenti. Donec mattis, pede vel pharetra blandit, magna ligula faucibus eros, id euismod lacus dolor eget odio. Nam scelerisque. Donec non libero sed nulla mattis commodo. Ut sagittis. Donec nisi lectus, feugiat porttitor, tempor ac, tempor vitae, pede. Aenean vehicula velit eu tellus interdum rutrum. Maecenas commodo. Pellentesque nec elit. Fusce in lacus. Vivamus a libero vitae lectus hendrerit hendrerit.</p>
-            </div>
+          -->
+         
           </div>
 
-        </td></tr>
-          <tr><td colspan="2">
-          <div class="widget"> 
-            <fieldset data-role="controlgroup" data-type="horizontal" data-mini="true">
-              <legend>Select first input type: </legend>
-              <label for="radio-1mu">mu</label>
-              <input type="radio" name="radio-1" id="radio-1mu" value="on" checked="checked">
-              <label for="radio-1am">mean</label>
-              <input type="radio" name="radio-1" id="radio-1am">
-              <label for="radio-1gm">GM</label>
-              <input type="radio" name="radio-1" id="radio-1gm">
-              <label for="radio-1mode">mode</label>
-              <input type="radio" name="radio-1" id="radio-1mode">
-              <label for="radio-1perc">percentile</label>
-              <input type="radio" name="radio-1" id="radio-1perc">
-              <label for="radio-1data">data</label>
-              <input type="radio" name="radio-1" id="radio-1data">
-            </fieldset>
-            <fieldset data-role="controlgroup" data-type="horizontal" data-mini="true" >
-              <legend>Select second input type: </legend>
-              <label for="radio-2sigma">sigma</label>
-              <input type="radio" name="radio-2" id="radio-2sigma" value="on" checked="checked">
-              <label for="radio-2asd">SD</label>
-              <input type="radio" name="radio-2" id="radio-2asd">
-              <label for="radio-2gsd">GSD</label>
-              <input type="radio" name="radio-2" id="radio-2gsd">
-              <label for="radio-2cv">CV</label>
-              <input type="radio" name="radio-2" id="radio-2cv">
-              <label for="radio-2perc">percentile</label>
-              <input type="radio" name="radio-2" id="radio-2perc">
-              <label for="radio-2ef">error factor</label>
-              <input type="radio" name="radio-2" id="radio-2ef">
-              <label for="radio-2skew">skewness</label>
-              <input type="radio" name="radio-2" id="radio-2skew">
-              <label for="radio-2kurt">kurtosis</label>
-              <input type="radio" name="radio-2" id="radio-2kurt">
-              <label for="radio-2entropy">entropy</label>
-              <input type="radio" name="radio-2" id="radio-2entropy">
-            </fieldset>
-          </div>
         </td></tr>
         <tr><td>
-          <div class="toggler">            
-            <div id="effect" class="ui-widget-content ui-corner-all">
-              <h3 class="ui-widget-header ui-corner-all">Toggle</h3>
-              <p>
-                Etiam libero neque, luctus a, eleifend nec, semper at, lorem. Sed pede. Nulla lorem metus, adipiscing ut, luctus sed, hendrerit vitae, mi.
-              </p>
+          <div id="tabs-2">
+            <ul>
+              <li><a href="#tabs-2-mu">mu</a></li>
+              <li><a href="#tabs-2-mean">mean</a></li>
+              <li><a href="#tabs-2-GM">GM</a></li>
+              <li><a href="#tabs-2-mode">mode</a></li>
+              <li><a href="#tabs-2-percentile">percentile</a></li>
+              <li><a href="#tabs-2-sigma">sigma</a></li>
+              <li><a href="#tabs-2-SD">SD</a></li>
+              <li><a href="#tabs-2-GSD">GSD</a></li>
+              <li><a href="#tabs-2-CV">CV</a></li>
+              <li><a href="#tabs-2-error">error factor</a></li>
+              <!--  
+                <li><a href="#tabs-2-skewness">skewness</a></li>
+              <li><a href="#tabs-2-kurtosis">kurtosis</a></li>
+              <li><a href="#tabs-2-entropy">entropy</a></li>
+              -->
+            </ul>
+           <div id="tabs-2-mu">
+              <p>mu (\(\mu\)) is the mean of the associated normal distribution.</p>
+              <p><input class="arg" id="mu2" value="0" name="Mean of it's natural logarithm" title="Please provide the mean of it's natural logarithm."></p>
             </div>
-          </div>
-        </td>
-        <td>
-          <div class="toggler">            
-            <div id="effect2" class="ui-widget-content ui-corner-all">
-              <h3 class="ui-widget-header ui-corner-all">Toggle</h3>
-              <p>
-                Etiam libero neque, luctus a, eleifend nec, semper at, lorem. Sed pede. Nulla lorem metus, adipiscing ut, luctus sed, hendrerit vitae, mi.
-              </p>
+            <div id="tabs-2-mean">
+              <p><input class="arg" id="mean2" value="1" name="Arithmetic mean" title="Please provide the arithmetic mean."></p>
             </div>
+            <div id="tabs-2-GM">
+              <p><input class="arg" id="GM2" value="1" name="Geometric mean" title="Please provide the geometric mean."></p>
+            </div>
+            <div id="tabs-2-mode">
+              <p><input class="arg" id="mode2" value="1" name="Mode" title="Please provide the mode."></p>
+            </div>
+            <div id="tabs-2-percentile">
+              <p><input class="arg" id="p2" type="number" value="5" name="Percentile" title="Please provide a percentile.">
+                <input class="arg" id="x2" value="0" name="Value" title="Please provide corresponding value."></p>
+            </div>
+            <div id="tabs-2-sigma">
+              <p>sigma (\(\sigma\)) is the standard deviation of the associated normal distribution.</p>
+              <p><input class="arg" id="sigma2" value="1" name="Standard deviation of it's natural logarithm" title="Please provide the standard deviation of it's natural logarithm."></p>
+            </div>
+            <div id="tabs-2-SD">
+              <p><input class="arg" id="SD2" value="0" name="Standard deviation" title="Please provide the arithmetic standard deviation."></p>
+            </div>
+            <div id="tabs-2-GSD">
+              <p><input class="arg" id="GSD2" value="1" name="Geometric mean" title="Please provide the geometric standard deviation."></p>
+            </div>
+            <div id="tabs-2-CV">
+              <p><input class="arg" id="CV2" value="1" name="Coefficient of variation" title="Please provide the coefficient of variation."></p>
+            </div>
+            <div id="tabs-2-error">
+              <p><input class="arg" id="error2" value="1" name="Error factor" title="Please provide the error factor."></p>
+            </div>
+            <!--
+            <div id="tabs-2-skewness">
+              <p><input class="arg" id="skewness2" value="1" name="Skewness" title="Please provide the skewness."></p>
+            </div>
+            <div id="tabs-2-kurtosis">
+              <p><input class="arg" id="kurtosis2" value="1" name="Kurtosis" title="Please provide the kurtosis."></p>
+            </div>
+            <div id="tabs-2-entropy">
+              <p><input class="arg" id="entropy2" value="1" name="Entropy" title="Please provide the entropy."></p>
+            </div>
+          -->
           </div>
-        </td></tr>
-        
-        <tr><td colspan="2">
-<select name="effects" id="effectTypes">
-  <option value="blind">Blind</option>
-  <option value="bounce">Bounce</option>
-  <option value="clip">Clip</option>
-  <option value="drop">Drop</option>
-  <option value="explode">Explode</option>
-  <option value="fade">Fade</option>
-  <option value="fold">Fold</option>
-  <option value="highlight">Highlight</option>
-  <option value="puff">Puff</option>
-  <option value="pulsate">Pulsate</option>
-  <option value="scale">Scale</option>
-  <option value="shake">Shake</option>
-  <option value="size">Size</option>
-  <option value="slide">Slide</option>
-</select>
- 
-<button id="button" class="ui-state-default ui-corner-all">Run Effect</button>
+
         </td></tr>
         
             
@@ -370,6 +339,7 @@
       </table>
      
        </div>
+       <!--
   <svg id="logolarge" class="logolarge" style="visibility:visible" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px"
 	 viewBox="460 185 470 470" xml:space="preserve">
 
@@ -377,7 +347,7 @@
 <polygon class="stTop" points="621.9,381.4 754.6,456.8 754.8,532.7 491,380.8 820.3,191.5 886.7,229.2"/>
 <polygon class="stLeft" points="820.5,346.1 754.3,384.2 754.7,536.1 489.1,384.8 489.1,465.4 821.3,649.2"/>
 </svg>
-  
+  -->
 
 <div id="map"></div>
 
@@ -385,12 +355,76 @@
   <iframe id="map" src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d2002.7036995537744!2d17.63211855183321!3d59.870665974453!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x465fcc0c874e0cd3%3A0x906e69fcf0234d1b!2sValhallagatan%2016%2C%20753%2034%20Uppsala!5e0!3m2!1sen!2sse!4v1681024648923!5m2!1sen!2sse" width="100%" height="100%" frameborder="0" style="border:0;" allowfullscreen="" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
 
 -->
+ 
   <script>
+  /*  
+  0 mu
+  1 mean
+  2 GM
+  3 mode
+  4 percentile
+  5 sigma
+  6 SD
+  7 GSD
+  8 CV
+  9 error factor
+  */
+var tab1 = "mu";
+var tab2 = "sigma";
 
-$( function() {
+var $tabs2 = $('#tabs-2').tabs({
+  active: 5,
+  activate: function(event,ui){
+    tab2 = ui.newTab.text();
+  }
+});
+var $tabs1 = $('#tabs-1').tabs({
+  activate: function(event,ui){
+    tab1 = ui.newTab.text();
+    switch (tab1) {
+      case "mu":
+      case "GM":
+        $tabs2.tabs({ disabled: [0,2,6] }); 
+        switch ($tabs2.tabs('option','active')) {
+          case 0:case 2:case 6:
+            $tabs2.tabs('option','active',(tab1==="GM" ? 7 : 5));
+            break;
+        }
+        break;
+      case "mean":
+        $tabs2.tabs({ disabled: [1] }); 
+        switch ($tabs2.tabs('option','active')) {
+          case 1:
+            $tabs2.tabs('option','active',6);
+            break;
+        }
+        break;
+      case "mode":
+        $tabs2.tabs({ disabled: [3] }); 
+        switch ($tabs2.tabs('option','active')) {
+          case 3:
+            $tabs2.tabs('option','active',6);
+            break;
+        }
+        break;
+    
+      default:
+          $tabs2.tabs({ disabled: [] }); 
+        break;
+    }
+    if (tab1==="data") {
+      $tabs2.hide();//tabs({ disabled: [0,1,2,3,4,5,6,7,8] });
+      
+    } else {
+      $tabs2.show();//({ disabled: [] });      
+    }
+  }
+});
+/*$( function() {
     $( "#tabs-1" ).tabs();
     $( "#tabs-2" ).tabs();
   } );
+  */
 
   $( function() {
     $( "#chart" ).draggable({ handle: "p"});
@@ -402,45 +436,238 @@ $( function() {
     });
     
   } );
-    $( "#effect" ).hide();
-  $( function() {
-    // run the currently selected effect
-    function runEffect() {
-      // get effect type from
-      var selectedEffect = $( "#effectTypes" ).val();
- 
-      // Most effect types need no options passed by default
-      var options = {};
-      // some effects have required parameters
-      if ( selectedEffect === "scale" ) {
-        options = { percent: 50 };
-      } else if ( selectedEffect === "size" ) {
-        options = { to: { width: 200, height: 60 } };
-      } else if ( selectedEffect === "slide" ) {
-        options = { to:{direction: "up"},from:{direction: "left"} };
+
+
+
+
+/*
+This program uses one or more of the following relationships for lognormals:
+  sigma = SQR(2 * LOG(mean / median)) = SQR(2 * LOG(mean / mode) / 3)
+  sigma = SQR(LOG(median / mode)) = LOG(x1 / median) / z1
+  sigma = SQR(LOG(CV ^ 2 + 1)) = LOG(GSD); GSD = EXP(sigma)
+  sigma = LOG(x1 / x2) / (z1 - z2); sigma = SQR(mu - LOG(mode))
+  SQR(EXP(sigma^2)-1)*EXP(sigma^2/2) = SD/median; !must be solved numerically!
+  median = mean * EXP(-sigma ^ 2 / 2) = mode * EXP(sigma ^ 2)
+  mu = LOG(median) = LOG(mean) - sigma ^ 2 /2 = LOG(mode) + sigma ^ 2
+  mu = LOG(x1) + LOG(x2 / x1) * (0-z1) / (z2-z1); median = EXP(mu)
+  mu = LOG(x1) - sigma * z1 = LOG(mode) + LOG(CV ^ 2 + 1)
+  mode ^ 2 * SD ^ 2 - median ^ 4 + median ^ 3 * mode = 0 !numerically solved
+  SD ^ 2 / x1 ^ 2 = EXP(-2 * z1 * sigma + sigma ^ 2) * (EXP(sigma ^ 2) - 1)
+  [Note: Solve numerically; eqn. may yield 1 or 3 values of sigma for z1 > 1]
+  mean = median * EXP(sigma ^ 2 / 2); lnmean = LOG(mean)
+  mode = EXP(mu - sigma ^ 2) = median * EXP(-sigma ^ 2); lnmode = LOG(mode)
+  CV = SQR(EXP(sigma ^ 2) - 1); CV = SD / mean; SD = CV * mean
+  variance = SD ^ 2 = EXP(2 * mu + sigma ^ 2) * (EXP(sigma ^ 2) - 1)
+  skewness = CV^3 + 3 * CV; kurtosis = CV^8 + 6 * CV^6 + 15 * CV^4 + 16 * CV^2
+  zmode = -sigma; zmean = sigma / 2; zmedian = 0
+  value = EXP(mu + zvalue * sigma); zvalue = (LOG(value) - mu) / sigma
+  If mean < value then sigma = z1 + SQR(z1 ^ 2 + 2 * LOG(mean / value))
+  If mean > value then sigma = z1 - SQR(z1 ^ 2 + 2 * LOG(mean / value))
+  If mode > value then sigma = (-z1 + SQR(z1 ^ 2 - 4 * LOG(mode / value))) / 2
+  If mode < value then sigma = (-z1 - SQR(z1 ^ 2 - 4 * LOG(mode / value))) / 2
+  
+  There are 16 methods of specifying a lognormal distribution. You can specify...
+  1. the mean and median (or their natural logs)
+  2. the mean and mode (or their natural logs)
+  3. the median and mode (or their natural logs)
+  4. the median (or its natural log) and the GSD or sigma = ln(GSD)
+  5. the mean (or its natural log) and the GSD or sigma = ln(GSD)
+  6. the mode (or its natural log) and the GSD or sigma = ln(GSD)
+  7. a value & its %ile OR quantile OR std norm deviate & GSD or sigma=ln(GSD)
+  8. the median & a value with its percentile OR quantile OR std normal deviate
+  9. the mean & a value with its percentile OR quantile OR std normal deviate
+  10. the mode & a value with its percentile OR quantile OR std normal deviate
+  11. the median & [arithmetic] standard deviation OR coefficient of variation
+  12. the mean & [arithmetic] standard deviation OR coefficient of variation
+  13. the mode & [arithmetic] standard deviation OR coefficient of variation
+  14. a value & its %ile OR quantile OR std norm deviate & [arithmetic] SD or CV
+  15. a pair of values and their percentiles OR quantiles OR std normal deviates
+  16. a file created by LOGNORML containing mu & sigma & etc.
+*/
+function getMuSigma(args){
+  var mu;
+  var sigma;
+  let keys = Object.keys(args);
+  switch (keys[0]) {
+    case "mu":
+      mu = args.mu;
+      switch (keys[1]) {
+        case "mean":        sigma = Math.sqrt((Math.log(args.mean)-mu)*2); break;
+        case "mode":        sigma = Math.sqrt(mu-Math.log(args.mode)); break;
+        case "p": case "x": sigma = (Math.log(args.x)-mu)/(Math.exp(args.p/100)); break;
+        case "sigma":       sigma = args.sigma; break;      
+        case "GSD":         sigma = Math.log(args.GSD); break;
+        case "CV":          sigma = Math.sqrt(Math.log((args.CV**2)+1)); break;
+        case "error_factor":sigma = Math.log(args.error_factor)/1.645; break;
       }
- 
-      // Run the effect
-      $( "#effect" ).toggle( selectedEffect, options, 500 );
-      $( "#effect2" ).toggle( selectedEffect, options, 500 );
-    };
- 
-    // Set effect from select menu value
-    $( "#button" ).on( "click", function() {
-      runEffect();
-    });
+    break;
+    case "mean":
+      switch (keys[1]) {
+        case "GM":          sigma = Math.sqrt(2*Math.log(args.mean/args.GM));  break;
+        case "mode":        sigma = Math.sqrt(2*Math.log(args.mean/args.mode)/3); break;
+        case "p": case "x": 
+          if (args.mean<args.x) {
+            sigma = args.p/100 + Math.sqrt(((args.p/100)**2) + 2 * Math.log(args.mean / args.x));
+          } else if (args.mean>args.x) {
+            sigma = args.p/100 - Math.sqrt(((args.p/100)**2) + 2 * Math.log(args.mean / args.x));
+          }
+          break;//let B = -2*norminv(0,1,p/100);sigma = (-B+Math.sqrt((B**2)-8*(Math.log(x)-Math.log(mean))))/2; break;
+        case "sigma":       sigma = args.sigma; break;         
+        case "SD":          sigma = Math.sqrt(Math.log((args.SD**2)/(args.mean**2)+1)); break;
+        case "GSD":         sigma = Math.log(args.GSD); break;
+        case "CV":          sigma = Math.sqrt(Math.log((args.CV**2)+1)); break;
+        case "error_factor":sigma = Math.log(args.error_factor)/1.645; break;
+      }
+      mu = Math.log(args.mean)-(sigma**2)/2;
+    break;
+    case "mode":
+      switch (keys[1]) {
+        case "p": case "x": 
+          if (args.mode<args.x) {
+            sigma = (-args.p/100 - Math.sqrt((args.p/100)**2 - 4 * Math.log(args.mode / args.x))) / 2;
+          } else if (args.mode>args.x) {
+            sigma = (-args.p/100 + Math.sqrt((args.p/100)**2  - 4 * Math.log(args.mode / args.x))) / 2;
+          }
+          break;
+        case "sigma":       sigma = args.sigma; break;         
+        case "SD":          sigma = Math.sqrt(Math.log((args.SD**2)/(args.mean**2)+1)); break;
+        case "GSD":         sigma = Math.log(args.GSD); break;
+        case "CV":          sigma = Math.sqrt(Math.log((args.CV**2)+1)); break;
+        case "error_factor":sigma = Math.log(args.error_factor)/1.645; break;
+      }
+      mu = Math.log(args.mode)+sigma**2;
+    break;
+    case "p1":
+    case "x1":
+      sigma = Math.log(args.x1 / args.x2) / (args.p1/100 - args.p2/100); 
+      mu = Math.log(args.x1) + Math.log(args.x2 / args.x1) * (0-args.p1/100) / (args.p2/100-args.p1/100); 
+    break;      
+  }
+  return [mu,sigma];
+}
+function updatedInput(){
+  var args = {};
+  var mu;
+  var sigma;
+  switch (tab1) {
+    case "mu":
+    case "GM":
+      if (tab1==="mu") {
+        args.mu = +document.getElementById("mu1").value;        
+      } else {
+        let GM = +document.getElementById("GM1").value;
+        args.mu = Math.log(GM);        
+      }
+      switch (tab2) {
+        case "mean": args.mean = +document.getElementById("mean2").value; break;
+        case "mode": args.mode = +document.getElementById("mode2").value; break;
+        case "percentile": args.p = +document.getElementById("p2").value; args.x = +document.getElementById("x2").value; break;
+        case "sigma": args.sigma = +document.getElementById("sigma2").value; break;      
+        case "GSD": args.GSD = +document.getElementById("GSD2").value; break;
+        case "CV": args.CV = +document.getElementById("CV2").value; break;
+        case "error factor": args.error_factor = +document.getElementById("error").value; break;
+      }
+      break;
+    case "mean":
+      args.mean = +document.getElementById("mean1").value;
+      switch (tab2) {
+        case "mu": args = {mu: +document.getElementById("mu2").value,"mean":args.mean}; break;
+        case "GM": args.GM = +document.getElementById("GM2").value; break;
+        case "mode": args.mode = +document.getElementById("mode2").value; break;
+        case "percentile": args.p = +document.getElementById("p2").value; args.x = +document.getElementById("x2").value; break;
+        case "sigma": args.sigma = +document.getElementById("sigma2").value; break;
+        case "SD": largs.SD = +document.getElementById("SD2").value; break;
+        case "GSD": args.GSD = +document.getElementById("GSD2").value; break;
+        case "CV": args.CV = +document.getElementById("CV2").value; break;
+        case "error factor": args.error_factor = +document.getElementById("error").value; break;
+      }
+      break;
+    case "mode":
+      args.mode = +document.getElementById("mode1").value;
+      switch (tab2) {
+        case "mu": args = {mu: +document.getElementById("mu2").value,"mode":args.mode}; break;
+        case "GM": args = {mu: Math.log(+document.getElementById("GM2").value),"mode":args.mode}; break;
+        case "mean": args = {mean: Math.log(+document.getElementById("mean2").value),"mode":args.mode}; break;
+      }
+      break;
+    case "percentile":
+        args.p1 = +document.getElementById("p1").value;
+        args.x1 = +document.getElementById("x1").value;
+      switch (tab2) {
+        case "mu": args = {mu: +document.getElementById("mu2").value,"p":args.p1,"x":args.x1}; break;
+        case "GM": args = {mu: Math.log(+document.getElementById("GM2").value),"p":args.p1,"x":args.x1}; break;
+        case "mean": args = {mean: +document.getElementById("mean2").value,"p":args.p1,"x":args.x1}; break;
+        case "percentile": args.p2 = +document.getElementById("p2").value; args.x2 = +document.getElementById("x2").value; break;
+      }
+      break;
+    case "data":
+      let data = +document.getElementById("data").value;
+
+      break;
+  }
+      [mu,sigma] = getMuSigma(args);
+  let txt = ''
+  txt += 'mu ' + mu + '\n';
+  txt += 'sigma ' + sigma + '\n';
+  txt += 'Mean ' + Math.exp(mu+(sigma**2)/2) + '\n';
+  txt += 'Median ' + Math.exp(mu) + '\n';
+  txt += 'Mode ' + Math.exp(mu-sigma**2) + '\n';
+  txt += 'Standard deviation ' + Math.sqrt((Math.exp(sigma**2)-1)*Math.exp(2*mu+(sigma**2))) + '\n';
+  txt += 'Variance ' +                     (Math.exp(sigma**2)-1)*Math.exp(2*mu+(sigma**2)) + '\n';
+  txt += 'Geometric standard deviation ' + Math.exp(sigma) + '\n';
+  let CV = Math.sqrt(Math.exp(sigma**2)-1);
+  txt += 'CV ' + CV + '\n';
+  txt += 'Skewness ' + (Math.pow(CV,3)+3*CV) + '\n';
+  //txt += 'Skewness ' + Math.sqrt(Math.exp(sigma**2)-1)*(Math.exp(sigma**2)+2) + '\n';
+  txt += 'Kurtosis ' + (Math.pow(CV,8)+6*Math.pow(CV,6)+15*Math.pow(CV,4)+16*Math.pow(CV,2)) + '\n';
+  txt += 'Entropy ' + ((1+Math.log(2*Math.PI*sigma**2))/2+mu) + '\n';
+  txt += 'Error factor ' + Math.exp(sigma*1.645); + '\n';
+  console.log(txt);
+
+  let n = 1000;
+      let p = linspace(0,0.99,n);
+      let p5 = linspace(0,0.05,n);
+      let p95 = linspace(0.95,0.99,n);
+      let x = new Array();
+      let y = new Array();
+      let x5 = new Array();
+      let y5 = new Array();
+      let x95 = new Array();
+      let y95 = new Array();
+      for (let i=1;i<n;i++){
+        x[i] = logninv(mu,sigma,p[i]);
+        y[i] = lognpdf(mu,sigma,x[i]);
+        x5[i] = logninv(mu,sigma,p5[i]);
+        y5[i] = lognpdf(mu,sigma,x5[i]);
+        x95[i] = logninv(mu,sigma,p95[i]);
+        y95[i] = lognpdf(mu,sigma,x95[i]);
+      }
+
+  CHART = document.getElementById('chart');
+	Plotly.newPlot( CHART, [ 
+    {	x: x,	y: y, fill: 'tozeroy',   fillcolor: 'rgba(243,184,123,0.5)', line: { color: '#f3b87b' },type: 'scatter' },
+    {	x: x5,	y: y5, fill: 'tozeroy',   fillcolor: 'rgba(243,184,123,0.5)', line: { color: '#f3b87b' },type: 'scatter' },
+    {	x: x95,	y: y95, fill: 'tozeroy',   fillcolor: 'rgba(243,184,123,0.5)', line: { color: '#f3b87b' },type: 'scatter' },
+    {x:[Math.exp(mu+(sigma**2)/2),Math.exp(mu+(sigma**2)/2)],y:[0,lognpdf( mu, sigma, Math.exp(mu+(sigma**2)/2) )],hovertext:'Mean',mode:'lines',line: { color: '#f3b87b',dash:'solid' }},
+    {x:[Math.exp(mu),Math.exp(mu)],y:[0,lognpdf( mu, sigma, Math.exp(mu) )],hovertext:'50%',mode:'lines',line: { color: '#f3b87b',dash:'dot' }},
+    ], {
+      autosize: true,
+      responsive: true,
+      showlegend: false,
+	    xaxis: {
+        type: 'lin',
+        range: [x[0],x[n-1]]
+      },  
+      margin: { t: 0,r: 0,b:20,l:40,autoexpand:false },
+      paper_bgcolor: 'rgba(0,0,0,0)',
+      plot_bgcolor: 'rgba(0,0,0,0)'
   } );
 
 
 
- $( function() {
-    $( 'input[type="radio"]' ).checkboxradio({
-      icon: false
-    });
-    $( "fieldset" ).controlgroup();
-  } );
-
-    function updatedInput(id){
+/*
+      console.log($tabs1.tabs('option', 'active'));
+      console.log($tabs2.tabs('option', 'active'));
       switch (id) {
         
         case "GM":
@@ -449,23 +676,23 @@ $( function() {
           let GSD = +document.getElementById("GSD").value;
           if (typeof GM === "number" && GM > 0 && typeof GSD === "number" && GSD > 0 )  {
             let AM = Math.exp(Math.log(GM)+0.5*Math.log(GSD)**2);
-            let ASD = Math.sqrt((Math.exp(Math.log(GSD)**2)-1)*Math.exp(2*Math.log(GM)+Math.log(GSD)**2));
+            let SD = Math.sqrt((Math.exp(Math.log(GSD)**2)-1)*Math.exp(2*Math.log(GM)+Math.log(GSD)**2));
             let mu = Math.log(GM);
             let sigma = Math.log(GSD);
-            update(mu,sigma,GM,GSD,AM,ASD);
+            update(mu,sigma,GM,GSD,AM,SD);
           }
           break;
 
         case "AM":
-        case "ASD":
+        case "SD":
           let AM = +document.getElementById("AM").value;
-          let ASD = +document.getElementById("ASD").value;
-          if (typeof AM === "number" && AM > 0 && typeof ASD === "number" && ASD > 0 )  {
-            let GM = Math.exp(Math.log(AM)-0.5*Math.log(1+ASD**2/AM**2));
-            let GSD = Math.exp(Math.sqrt(Math.log(1+ASD**2/AM**2)));
-            let mu = Math.log(AM**2/Math.sqrt(AM**2+ASD**2));
-            let sigma = Math.sqrt(Math.log(1+ASD**2(AM**2)));
-            update(mu,sigma,GM,GSD,AM,ASD);
+          let SD = +document.getElementById("SD").value;
+          if (typeof AM === "number" && AM > 0 && typeof SD === "number" && SD > 0 )  {
+            let GM = Math.exp(Math.log(AM)-0.5*Math.log(1+SD**2/AM**2));
+            let GSD = Math.exp(Math.sqrt(Math.log(1+SD**2/AM**2)));
+            let mu = Math.log(AM**2/Math.sqrt(AM**2+SD**2));
+            let sigma = Math.sqrt(Math.log(1+SD**2/(AM**2)));
+            update(mu,sigma,GM,GSD,AM,SD);
           }
           break;
 
@@ -477,8 +704,8 @@ $( function() {
             let GM = Math.exp(mu);
             let GSD = Math.exp(sigma);
             let AM = Math.exp(mu+sigma**2/2);
-            let ASD = Math.sqrt((Math.exp(sigma**2)-1)*Math.exp(2*mu+sigma**2));
-            update(mu,sigma,GM,GSD,AM,ASD);
+            let SD = Math.sqrt((Math.exp(sigma**2)-1)*Math.exp(2*mu+sigma**2));
+            update(mu,sigma,GM,GSD,AM,SD);
           }
           break;
 
@@ -495,18 +722,19 @@ $( function() {
             let mu = Math.log(x1)+Math.sqrt(2)*erfcinv(2*p1/100)*sigma;
             document.getElementById("mu").value = mu;
             document.getElementById("sigma").value = sigma;
-            updatedInput("mu");
+          //  updatedInput("mu");
           }   
           break;
       }
+      */
     }
-    function update(mu,sigma,GM,GSD,AM,ASD){
+    function update(mu,sigma,GM,GSD,AM,SD){
       document.getElementById("mu").value = mu;
       document.getElementById("sigma").value = sigma;
       document.getElementById("GM").value = GM;
       document.getElementById("GSD").value = GSD;
       document.getElementById("AM").value = AM;
-      document.getElementById("ASD").value = ASD;
+      document.getElementById("SD").value = SD;
       document.getElementById("x1").value = logninv( mu, sigma, (+document.getElementById("p1").value)/100);
       document.getElementById("x2").value = logninv( mu, sigma, (+document.getElementById("p2").value)/100);
       let n = 1000;
@@ -550,21 +778,28 @@ $( function() {
 
   }
 
-    document.getElementById("GM").addEventListener('input',(event) => {updatedInput(event.target.id)});
-    document.getElementById("GSD").addEventListener('input',(event) => {updatedInput(event.target.id)});
-    document.getElementById("AM").addEventListener('input',(event) => {updatedInput(event.target.id)});
-    document.getElementById("ASD").addEventListener('input',(event) => {updatedInput(event.target.id)});
-    document.getElementById("mu").addEventListener('input',(event) => {updatedInput(event.target.id)});
-    document.getElementById("sigma").addEventListener('input',(event) => {updatedInput(event.target.id)});
-    document.getElementById("p1").addEventListener('input',(event) => {updatedInput(event.target.id)});
-    document.getElementById("x1").addEventListener('input',(event) => {updatedInput(event.target.id)});
-    document.getElementById("p2").addEventListener('input',(event) => {updatedInput(event.target.id)});
-    document.getElementById("x2").addEventListener('input',(event) => {updatedInput(event.target.id)});
-    updatedInput("mu");
+// loop through each arg-input and add a input event listener
+document.querySelectorAll(".arg").forEach(function(input) {
+  input.addEventListener("input", function() {updatedInput()});
+});
+/*
+    document.getElementById("GM").addEventListener('input',(event) => {updatedInput()});
+    document.getElementById("GSD").addEventListener('input',(event) => {updatedInput()});
+    document.getElementById("AM").addEventListener('input',(event) => {updatedInput()});
+    document.getElementById("SD").addEventListener('input',(event) => {updatedInput()});
+    document.getElementById("mu").addEventListener('input',(event) => {updatedInput()});
+    document.getElementById("sigma").addEventListener('input',(event) => {updatedInput()});
+    document.getElementById("p1").addEventListener('input',(event) => {updatedInput()});
+    document.getElementById("x1").addEventListener('input',(event) => {updatedInput()});
+    document.getElementById("p2").addEventListener('input',(event) => {updatedInput()});
+    document.getElementById("x2").addEventListener('input',(event) => {updatedInput()});
+    //updatedInput("mu");
+    */
  
     function unifinv( a, b, p ){ return a+(b-a)*p;}
-    function norminv( am, asd, p ){ return -Math.sqrt(2)*erfcinv(2*p)*asd+am;}
-    function normcdf( am, asd, x ){ return 0.5*erfc(-(x-am)/asd/Math.sqrt(2));}
+    function norminv( mu, sigma, p ){ return -Math.sqrt(2)*erfcinv(2*p)*sigma+mu;}
+    function normcdf( mu, sigma, x ){ return 0.5*erfc(-(x-mu)/sigma/Math.sqrt(2));}
+    function normpdf( mu, sigma, x ){ return Math.exp(-0.5*((x-mu)/sigma)**2)/(Math.sqrt(2*Math.PI)*sigma)};
     function logninv( mu, sigma, p ){ return Math.exp(sigma*(-Math.sqrt(2)*erfcinv(2*p))+mu);}
     function logncdf( mu, sigma, x ){ return 0.5*erfc(-(Math.log(x)-mu)/sigma/sqrt(2));}
     function lognpdf( mu, sigma, x ){ return Math.exp(-0.5*((Math.log(x)-mu)/sigma)**2)/(x*Math.sqrt(2*Math.PI)*sigma);}
