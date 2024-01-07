@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
   <head>
+    < meta name="viewport" content="width=device-width, initial-scale=1">
   <link href="https://unpkg.com/leaflet@1.9.2/dist/leaflet.css" rel="stylesheet" />
   <script src="https://unpkg.com/leaflet@1.9.2/dist/leaflet.js"></script>
   <link rel="stylesheet" href="./resources/css/kvot.css">  
@@ -126,7 +127,7 @@ var overlay = document.getElementById('menu');
   document.getElementById('links').style.visibility = "hidden";
   var fragment = window.location.hash; // = '#login' in your example url
 if (fragment) {
-    console.log(fragment);
+   // console.log(fragment);
     document.getElementById(fragment.replace('#','')).style.visibility = "visible";
 }else{
   document.getElementById('contact').style.visibility = "visible";
