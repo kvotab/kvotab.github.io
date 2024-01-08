@@ -128,10 +128,10 @@ var overlay = document.getElementById('menu');
   document.getElementById('links').style.visibility = "hidden";
   var fragment = window.location.hash; // = '#login' in your example url
 if (fragment) {
-  //  console.log(fragment);
+    console.log(fragment);
     document.getElementById(fragment.replace('#','')).style.visibility = "visible";
 }else{
-   // console.log("no fragment");
+   console.log("no fragment");
   document.getElementById('contact').style.visibility = "visible";
 
 }
