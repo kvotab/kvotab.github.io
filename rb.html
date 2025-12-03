@@ -1102,6 +1102,21 @@
     async function buildTree(group, prefix = '', isNested = false) {
       const childrenHtml = [];
       
+      // Add root group item only at top level
+      if (prefix === '') {
+        const isRootSelected = selectedDatasetPath === '/' && selectedIsRadionuclidesGroup;
+        const rootHtml = `<div class="tree-item group ${isRootSelected ? 'expanded' : ''}" onclick="toggleGroup(event)" data-path="/" style="font-weight: 600; color: var(--color-kvot-primary); margin-bottom: 8px;">
+          <div class="tree-toggle ${isRootSelected ? '' : 'collapsed'}">▶</div>
+          <div class="tree-icon folder"></div>
+          <div class="tree-label">/ (root)</div>
+        </div>`;
+        childrenHtml.push(rootHtml);
+        
+        // Add a wrapper for root children
+        const rootChildrenStart = `<div class="tree-group-children ${isRootSelected ? 'expanded' : ''}" style="margin-left: 20px;">`;
+        childrenHtml.push(rootChildrenStart);
+      }
+      
       try {
         let keys = [];
         try {
@@ -1111,11 +1126,18 @@
           keys.sort();
         } catch (e) {
           console.error('Error getting keys:', e.message);
-          return '';
+          if (prefix === '') {
+            childrenHtml.push('</div>'); // Close root children wrapper
+          }
+          return childrenHtml.join('');
         }
         
         if (keys.length === 0) {
-          return '';
+          if (prefix === '') {
+            childrenHtml.push('<div style="color:#999;padding:8px;font-size:12px;">(empty)</div>');
+            childrenHtml.push('</div>'); // Close root children wrapper
+          }
+          return childrenHtml.join('');
         }
         
         for (const key of keys) {
@@ -1162,7 +1184,11 @@
         }
       } catch (e) {
         console.error('buildTree error:', e);
-        return '';
+      }
+      
+      // Close root children wrapper
+      if (prefix === '') {
+        childrenHtml.push('</div>');
       }
       
       return childrenHtml.join('');
