@@ -796,7 +796,20 @@
       const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
       return String(text).replace(/[&<>"']/g, m => map[m]);
     }
-
+    function escapeCSV(value) {
+      if (value === null || value === undefined) {
+        return '';
+      }
+      
+      const str = String(value);
+      
+      // If the value contains comma, quote, or newline, wrap in quotes and escape quotes
+      if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+        return '"' + str.replace(/"/g, '""') + '"';
+      }
+      
+      return str;
+    }
     function formatDataType(dtype) {
       if (!dtype) return 'unknown';
       
@@ -1978,7 +1991,7 @@
         if (isGroup && enabledFiles.length > 0) {
           const firstFile = loadedFiles[enabledFiles[0]];
           isRadionuclidesGroup = checkGroupForRadionuclides(firstFile, path);
-          selectedIsRadionuclidesGroup = isRadionuclidesGroup; // Store this
+          selectedIsRadionuclidesGroup = isRadionuclidesGroup;
         } else {
           selectedIsRadionuclidesGroup = false;
         }
@@ -2042,22 +2055,157 @@
               if (data !== undefined) {
                 let preview;
                 let itemCount;
+                let fullData;
                 
                 if (Array.isArray(data)) {
                   preview = data.slice(0, 100);
                   itemCount = data.length;
+                  fullData = data;
                 } else if (data && typeof data === 'object' && data.length !== undefined) {
                   preview = Array.from(data).slice(0, 100);
                   itemCount = data.length;
+                  fullData = Array.from(data);
                 } else {
                   preview = [data];
                   itemCount = 1;
+                  fullData = [data];
                 }
                 
+                const isScalar = itemCount === 1;
+                const downloadBtnId = `downloadData_${fileKey.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}`;
+                
                 html += `<div class="info-section">
-                  <div class="info-label">Data Preview (first ${preview.length}/${itemCount} items)</div>
+                  <div class="info-label" style="display: flex; align-items: center; justify-content: space-between;">
+                    <span>Data Preview (first ${preview.length}/${itemCount} items)</span>
+                    ${!isScalar ? `<button 
+                      id="${downloadBtnId}" 
+                      class="download-data-btn" 
+                      style="padding: 4px 8px; background: var(--color-kvot-background); color: var(--color-kvot-bright); border: none; border-radius: 3px; cursor: pointer; font-size: 11px; font-weight: 500; transition: all 0.2s;"
+                      onmouseover="this.style.background='var(--color-kvot-primary)'" 
+                      onmouseout="this.style.background='var(--color-kvot-background)'"
+                      title="Download full dataset as CSV">
+                      ⬇ Download CSV
+                    </button>` : ''}
+                  </div>
                   <div class="info-content">${escapeHtml(JSON.stringify(preview, jsonReplacer, 2))}</div>
                 </div>`;
+                
+                // Store the full data for download
+                if (!isScalar) {
+                  setTimeout(() => {
+                    const downloadBtn = document.getElementById(downloadBtnId);
+                    if (downloadBtn) {
+                      downloadBtn.addEventListener('click', () => {
+                        // Get index attribute if it exists
+                        let headerRow = null;
+                        try {
+                          if (node.attrs && typeof node.attrs === 'object') {
+                            for (const attrName in node.attrs) {
+                              if (attrName === 'index') {
+                                const attrObj = node.attrs[attrName];
+                                if (attrObj && attrObj.value !== null && typeof attrObj.value !== 'undefined') {
+                                  const indexValue = attrObj.value;
+                                  if (Array.isArray(indexValue)) {
+                                    headerRow = indexValue;
+                                  } else if (indexValue && typeof indexValue === 'object' && indexValue.length !== undefined) {
+                                    headerRow = Array.from(indexValue);
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        } catch (e) {
+                          console.warn('Could not read index attribute:', e);
+                        }
+                        
+                        // Determine data shape
+                        let csvContent = '';
+                        const shape = node.shape || [];
+                        
+                        if (shape.length === 1) {
+                          // 1D array - single column
+                          if (headerRow && headerRow.length === 1) {
+                            csvContent += escapeCSV(headerRow[0]) + '\n';
+                          }
+                          fullData.forEach(value => {
+                            csvContent += escapeCSV(value) + '\n';
+                          });
+                        } else if (shape.length === 2) {
+                          // 2D array - rows and columns
+                          const numRows = shape[0];
+                          const numCols = shape[1];
+                          
+                          // Add header if available
+                          if (headerRow && headerRow.length === numCols) {
+                            csvContent += headerRow.map(h => escapeCSV(h)).join(',') + '\n';
+                          }
+                          
+                          // Add data rows
+                          for (let i = 0; i < numRows; i++) {
+                            const row = [];
+                            for (let j = 0; j < numCols; j++) {
+                              row.push(escapeCSV(fullData[i * numCols + j]));
+                            }
+                            csvContent += row.join(',') + '\n';
+                          }
+                        } else if (shape.length === 0) {
+                          // Scalar or flat array
+                          if (headerRow && headerRow.length > 0) {
+                            csvContent += headerRow.map(h => escapeCSV(h)).join(',') + '\n';
+                          }
+                          
+                          // Try to determine if it's a multi-column array by checking header length
+                          if (headerRow && headerRow.length > 1) {
+                            const numCols = headerRow.length;
+                            const numRows = Math.floor(fullData.length / numCols);
+                            for (let i = 0; i < numRows; i++) {
+                              const row = [];
+                              for (let j = 0; j < numCols; j++) {
+                                row.push(escapeCSV(fullData[i * numCols + j]));
+                              }
+                              csvContent += row.join(',') + '\n';
+                            }
+                          } else {
+                            // Single column
+                            fullData.forEach(value => {
+                              csvContent += escapeCSV(value) + '\n';
+                            });
+                          }
+                        } else {
+                          // Higher dimensional - flatten to 2D
+                          console.warn('Multi-dimensional array, flattening to 2D');
+                          if (headerRow) {
+                            csvContent += headerRow.map(h => escapeCSV(h)).join(',') + '\n';
+                          }
+                          
+                          const lastDim = shape[shape.length - 1];
+                          const numRows = Math.floor(fullData.length / lastDim);
+                          
+                          for (let i = 0; i < numRows; i++) {
+                            const row = [];
+                            for (let j = 0; j < lastDim; j++) {
+                              row.push(escapeCSV(fullData[i * lastDim + j]));
+                            }
+                            csvContent += row.join(',') + '\n';
+                          }
+                        }
+                        
+                        // Create and download CSV
+                        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        const safePath = path.replace(/[^a-zA-Z0-9]/g, '_');
+                        const safeFileName = fileKey.replace(/\.[^/.]+$/, '');
+                        a.download = `${safeFileName}${safePath}_data.csv`;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                      });
+                    }
+                  }, 0);
+                }
               }
             } catch (e) {
               console.warn('Could not read data:', e.message);
