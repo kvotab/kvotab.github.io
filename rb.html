@@ -994,7 +994,7 @@
     }
 
     async function removeFile(fileName) {
-      if (confirm(`Remove file "${fileName}"?`)) {
+      //if (confirm(`Remove file "${fileName}"?`)) {
         delete loadedFiles[fileName];
         delete fileStates[fileName];
         fileOrder = fileOrder.filter(k => k !== fileName);
@@ -1020,7 +1020,7 @@
           // Clear tabs
           document.getElementById('fileTabs').innerHTML = '';
         }
-      }
+      //}
     }
     
     function selectDataset(path, evt) {
