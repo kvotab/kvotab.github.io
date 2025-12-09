@@ -883,7 +883,28 @@
     function getEnabledFiles() {
       return fileOrder.filter(key => fileStates[key]);
     }
-
+    function toggleGroupExpansion(event, path) {
+      event.stopPropagation(); // Prevent group selection
+      
+      const toggle = event.currentTarget;
+      const groupItem = toggle.closest('.tree-item.group');
+      const childrenDiv = groupItem.nextElementSibling;
+      
+      // Only handle expand/collapse, don't select the group
+      if (childrenDiv && childrenDiv.classList.contains('tree-group-children')) {
+        const isExpanded = childrenDiv.classList.contains('expanded');
+        
+        if (isExpanded) {
+          childrenDiv.classList.remove('expanded');
+          toggle.classList.add('collapsed');
+          // Remove expanded class from group item (visual indicator)
+          groupItem.classList.remove('expanded');
+        } else {
+          childrenDiv.classList.add('expanded');
+          toggle.classList.remove('collapsed');
+        }
+      }
+    }
     function getTreeFile() {
       const enabledFiles = getEnabledFiles();
       return enabledFiles.length > 0 ? enabledFiles[0] : null;
@@ -1076,20 +1097,10 @@
     function toggleGroup(event) {
       event.stopPropagation();
       const groupItem = event.currentTarget;
-      const toggle = groupItem.querySelector('.tree-toggle');
-      const childrenDiv = groupItem.nextElementSibling;
       
-      // Handle expand/collapse of children
-      if (childrenDiv && childrenDiv.classList.contains('tree-group-children')) {
-        const isExpanded = childrenDiv.classList.contains('expanded');
-        
-        if (isExpanded) {
-          childrenDiv.classList.remove('expanded');
-          toggle.classList.add('collapsed');
-        } else {
-          childrenDiv.classList.add('expanded');
-          toggle.classList.remove('collapsed');
-        }
+      // Don't do anything if clicking on the toggle triangle (handled separately)
+      if (event.target.classList.contains('tree-toggle')) {
+        return;
       }
       
       const path = groupItem.getAttribute('data-path');
@@ -1150,7 +1161,7 @@
       if (prefix === '') {
         const isRootSelected = selectedDatasetPath === '/' && selectedIsRadionuclidesGroup;
         const rootHtml = `<div class="tree-item group ${isRootSelected ? 'expanded' : ''}" onclick="toggleGroup(event)" data-path="/" style="font-weight: 600; color: var(--color-kvot-primary); margin-bottom: 8px;">
-          <div class="tree-toggle ${isRootSelected ? '' : 'collapsed'}">▶</div>
+          <div class="tree-toggle ${isRootSelected ? '' : 'collapsed'}" onclick="event.stopPropagation(); toggleGroupExpansion(event, '/')">▶</div>
           <div class="tree-icon folder"></div>
           <div class="tree-label">/ (root)</div>
         </div>`;
@@ -1195,10 +1206,10 @@
             if (objType === 'group') {
               const isSelected = selectedDatasetPath === path && selectedIsRadionuclidesGroup;
               const groupHtml = `<div class="tree-item group ${isSelected ? 'expanded' : ''}" onclick="toggleGroup(event)" data-path="${escapeHtml(path)}">
-                <div class="tree-toggle ${isSelected ? '' : 'collapsed'}">▶</div>
-                <div class="tree-icon folder"></div>
-                <div class="tree-label">${escapeHtml(key)}</div>
-              </div>`;
+                  <div class="tree-toggle ${isSelected ? '' : 'collapsed'}" onclick="event.stopPropagation(); toggleGroupExpansion(event, '${path.replace(/'/g, "\\'")}')">▶</div>
+                  <div class="tree-icon folder"></div>
+                  <div class="tree-label">${escapeHtml(key)}</div>
+                </div>`;
               childrenHtml.push(groupHtml);
               
               try {
