@@ -736,7 +736,12 @@
                 <option value="log">Log</option>
               </select>
             </label>
-            <button onclick="applyReleasePresetView()">Apply Release View</button>
+            <label >
+              <input type="checkbox" id="dynamicLegend" checked onchange="toggleDynamicLegend()">
+              Dynamic Legend
+            </label>
+            <span id="legendStatus" style=" font-size: 12px; color: var(--color-text-muted);"></span>
+            <button onclick="applyReleasePresetView()" style="margin-left: auto;">Apply Release View</button>
             <button onclick="applyDosePresetView()">Apply Dose View</button>
             <button class="secondary" onclick="downloadChartData()">Download Data (CSV)</button>
           </div>
@@ -1745,7 +1750,9 @@
 
         currentChartData = { traces, layout, path };
         chartContainer.classList.add('visible');
-        Plotly.newPlot('plotlyChart', traces, layout, config);
+        Plotly.newPlot('plotlyChart', traces, layout, config).then(() => {
+          setupDynamicLegend(document.getElementById('plotlyChart'));
+        });
       } else {
         chartContainer.classList.remove('visible');
         currentChartData = null;
@@ -2003,12 +2010,197 @@
         
         currentChartData = { traces, layout, path };
         chartContainer.classList.add('visible');
-        Plotly.newPlot('plotlyChart', traces, layout, config);
+        Plotly.newPlot('plotlyChart', traces, layout, config).then(() => {
+          setupDynamicLegend(document.getElementById('plotlyChart'));
+        });
       } else {
         chartContainer.classList.remove('visible');
         currentChartData = null;
       }
     }
+    let dynamicLegendEnabled = true;
+
+    function toggleDynamicLegend() {
+      dynamicLegendEnabled = document.getElementById('dynamicLegend').checked;
+      
+      const plotDiv = document.getElementById('plotlyChart');
+      if (!plotDiv || !plotDiv.data || !plotDiv.layout) {
+        return;
+      }
+      
+      if (!dynamicLegendEnabled) {
+        // Show all legend items using Plotly.react
+        const newData = plotDiv.data.map(trace => ({
+          ...trace,
+          showlegend: true
+        }));
+        
+        Plotly.react(plotDiv, newData, plotDiv.layout).then(() => {
+          const statusEl = document.getElementById('legendStatus');
+          if (statusEl) {
+            statusEl.style.display = 'none';
+          }
+        });
+      } else {
+        // Re-apply dynamic filtering based on current view
+        const layout = plotDiv.layout;
+        
+        // Get current ranges
+        let xRange = layout.xaxis?.range;
+        let yRange = layout.yaxis?.range;
+        
+        if (!xRange || !yRange) {
+          // If no zoom applied yet, show all
+          return;
+        }
+        
+        // Convert log scale ranges if needed
+        const xIsLog = layout.xaxis?.type === 'log';
+        const yIsLog = layout.yaxis?.type === 'log';
+        
+        const xMin = xIsLog ? Math.pow(10, xRange[0]) : xRange[0];
+        const xMax = xIsLog ? Math.pow(10, xRange[1]) : xRange[1];
+        const yMin = yIsLog ? Math.pow(10, yRange[0]) : yRange[0];
+        const yMax = yIsLog ? Math.pow(10, yRange[1]) : yRange[1];
+        
+        // Check each trace for visibility
+        let visibleCount = 0;
+        const newData = plotDiv.data.map((trace) => {
+          let isVisible = false;
+          
+          // Check if any point is within the visible range
+          for (let j = 0; j < trace.x.length; j++) {
+            const x = trace.x[j];
+            const y = trace.y[j];
+            
+            if (x === null || x === undefined || y === null || y === undefined) {
+              continue;
+            }
+            
+            if (x >= xMin && x <= xMax && y >= yMin && y <= yMax) {
+              isVisible = true;
+              break;
+            }
+          }
+          
+          if (isVisible) visibleCount++;
+          
+          return {
+            ...trace,
+            showlegend: isVisible
+          };
+        });
+        
+        // Use Plotly.react to force redraw
+        Plotly.react(plotDiv, newData, plotDiv.layout).then(() => {
+          const totalCount = plotDiv.data.length;
+          const statusEl = document.getElementById('legendStatus');
+          
+          if (statusEl) {
+            if (visibleCount < totalCount) {
+              statusEl.textContent = `Showing ${visibleCount}/${totalCount} traces`;
+              statusEl.style.display = 'block';
+            } else {
+              statusEl.style.display = 'none';
+            }
+          }
+        });
+      }
+    }
+    function setupDynamicLegend(plotDiv) {
+      plotDiv.on('plotly_relayout', function(eventData) {
+        if (!dynamicLegendEnabled) return;
+        
+        // Check if this is a zoom/pan event
+        if (!eventData || (!eventData['xaxis.range[0]'] && !eventData['xaxis.range'] && !eventData['xaxis.autorange'])) {
+          return;
+        }
+        
+        const fullData = plotDiv.data;
+        const layout = plotDiv.layout;
+        
+        // Get current axis ranges
+        let xRange, yRange;
+        
+        if (eventData['xaxis.autorange'] || eventData['yaxis.autorange']) {
+          // Autorange - show all traces
+          const visibility = fullData.map(() => true);
+          Plotly.restyle(plotDiv, { showlegend: visibility });
+          
+          // Update status
+          const statusEl = document.getElementById('legendStatus');
+          if (statusEl) {
+            statusEl.style.display = 'none';
+          }
+          return;
+        }
+        
+        if (eventData['xaxis.range[0]'] !== undefined) {
+          xRange = [eventData['xaxis.range[0]'], eventData['xaxis.range[1]']];
+        } else if (eventData['xaxis.range']) {
+          xRange = eventData['xaxis.range'];
+        } else if (layout.xaxis && layout.xaxis.range) {
+          xRange = layout.xaxis.range;
+        }
+        
+        if (eventData['yaxis.range[0]'] !== undefined) {
+          yRange = [eventData['yaxis.range[0]'], eventData['yaxis.range[1]']];
+        } else if (eventData['yaxis.range']) {
+          yRange = eventData['yaxis.range'];
+        } else if (layout.yaxis && layout.yaxis.range) {
+          yRange = layout.yaxis.range;
+        }
+        
+        if (!xRange || !yRange) return;
+        
+        // Convert log scale ranges if needed
+        const xIsLog = layout.xaxis && layout.xaxis.type === 'log';
+        const yIsLog = layout.yaxis && layout.yaxis.type === 'log';
+        
+        const xMin = xIsLog ? Math.pow(10, xRange[0]) : xRange[0];
+        const xMax = xIsLog ? Math.pow(10, xRange[1]) : xRange[1];
+        const yMin = yIsLog ? Math.pow(10, yRange[0]) : yRange[0];
+        const yMax = yIsLog ? Math.pow(10, yRange[1]) : yRange[1];
+        
+        // Check each trace for visibility
+        const visibility = fullData.map((trace, i) => {
+          // Check if any point is within the visible range
+          for (let j = 0; j < trace.x.length; j++) {
+            const x = trace.x[j];
+            const y = trace.y[j];
+            
+            // Skip invalid values
+            if (x === null || x === undefined || y === null || y === undefined) {
+              continue;
+            }
+            
+            // Check if point is in visible range
+            if (x >= xMin && x <= xMax && y >= yMin && y <= yMax) {
+              return true;
+            }
+          }
+          return false;
+        });
+        
+        // Use Plotly.restyle with array of booleans
+        Plotly.restyle(plotDiv, { showlegend: visibility }).then(() => {
+          // Update status counter
+          const visibleCount = visibility.filter(v => v).length;
+          const totalCount = fullData.length;
+          const statusEl = document.getElementById('legendStatus');
+          
+          if (statusEl) {
+            if (visibleCount < totalCount) {
+              statusEl.textContent = `Showing ${visibleCount}/${totalCount} traces`;
+              statusEl.style.display = 'block';
+            } else {
+              statusEl.style.display = 'none';
+            }
+          }
+        });
+      });
+    }
+
 
     function showNodeAttributes(path, isGroup = false) {
       const infoDiv = document.getElementById('info');
