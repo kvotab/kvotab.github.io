@@ -1051,33 +1051,35 @@
     }
 
     async function removeFile(fileName) {
-      //if (confirm(`Remove file "${fileName}"?`)) {
-        delete loadedFiles[fileName];
-        delete fileStates[fileName];
-        fileOrder = fileOrder.filter(k => k !== fileName);
+      delete loadedFiles[fileName];
+      delete fileStates[fileName];
+      fileOrder = fileOrder.filter(k => k !== fileName);
+      
+      const enabledFiles = getEnabledFiles();
+      
+      // Always update tabs - don't clear them completely
+      updateTabs();
+      
+      if (enabledFiles.length > 0) {
+        // Has enabled files - refresh tree
+        // (updateTabs already called above)
+      } else {
+        // No enabled files - clear tree and info but keep tabs
+        currentTreeFile = null;
+        const tree = document.getElementById('tree');
+        tree.innerHTML = '<div class="loading">Drop HDF5 files or click "+ Add Files" to start...</div>';
+        tree.classList.add('loading');
+        document.getElementById('info').innerHTML = 'Select a dataset to view its details';
+        document.getElementById('plotlyChartContainer').classList.remove('visible');
+        currentChartData = null;
+        selectedDatasetPath = null;
+        selectedIsRadionuclidesGroup = false;
         
-        const enabledFiles = getEnabledFiles();
-        if (enabledFiles.length > 0) {
-          updateTabs();
-        } else {
-          // No files left, clear everything
-          currentTreeFile = null;
-          const tree = document.getElementById('tree');
-          tree.innerHTML = '<div class="loading">Drop HDF5 files or click "+ Add Files" to start...</div>';
-          tree.classList.add('loading');
-          document.getElementById('info').innerHTML = 'Select a dataset to view its details';
-          document.getElementById('plotlyChartContainer').classList.remove('visible');
-          currentChartData = null;
-          selectedDatasetPath = null;
-          selectedIsRadionuclidesGroup = false;
-          
-          // Hide search bar
-          document.querySelector('.search-container').classList.remove('visible');
-          
-          // Clear tabs
-          document.getElementById('fileTabs').innerHTML = '';
-        }
-      //}
+        // Hide search bar
+        document.querySelector('.search-container').classList.remove('visible');
+        
+        // Don't clear tabs here - updateTabs() already called above
+      }
     }
     
     function selectDataset(path, evt) {
@@ -1462,7 +1464,7 @@
       
       const update = {
         'xaxis.type': 'log',
-        'xaxis.range': [Math.log10(2000), Math.log10(100000)],
+        'xaxis.range': [Math.log10(100), Math.log10(100000)],
         'yaxis.type': 'log',
         'yaxis.range': [Math.log10(10000), Math.log10(1e9)]
       };
@@ -1478,7 +1480,7 @@
       
       const update = {
         'xaxis.type': 'log',
-        'xaxis.range': [Math.log10(2000), Math.log10(1e5)],
+        'xaxis.range': [Math.log10(1000), Math.log10(1e5)],
         'yaxis.type': 'log',
         'yaxis.range': [Math.log10(1e-10), Math.log10(1e-5)]
       };
