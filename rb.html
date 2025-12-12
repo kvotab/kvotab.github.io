@@ -1095,6 +1095,12 @@
         // Hide search bar
         document.querySelector('.search-container').classList.remove('visible');
         
+        // Hide multi-select hint
+        const hint = document.getElementById('multiSelectHint');
+        if (hint) {
+          hint.style.display = 'none';
+        }
+        
         // Don't clear tabs here - updateTabs() already called above
       }
     }
@@ -1216,13 +1222,27 @@
         searchContainer.classList.remove('visible'); // Hide search bar on error
       }
     }
-    // Show multi-select hint when tree is loaded
+    // Show multi-select hint when tree is loaded with data
     const originalRefreshTreeStructure2 = refreshTreeStructure;
     refreshTreeStructure = async function() {
       await originalRefreshTreeStructure2();
       const hint = document.getElementById('multiSelectHint');
-      if (hint && getEnabledFiles().length > 0) {
-        hint.style.display = 'flex';
+      const tree = document.getElementById('tree');
+      
+      if (hint) {
+        // Only show hint if:
+        // 1. There are enabled files
+        // 2. Tree is not in loading state
+        // 3. Tree actually has content (datasets/groups)
+        const hasEnabledFiles = getEnabledFiles().length > 0;
+        const isNotLoading = !tree.classList.contains('loading');
+        const hasTreeContent = tree.querySelector('.tree-item') !== null;
+        
+        if (hasEnabledFiles && isNotLoading && hasTreeContent) {
+          hint.style.display = 'flex';
+        } else {
+          hint.style.display = 'none';
+        }
       }
     };
     async function buildTree(group, prefix = '', isNested = false) {
