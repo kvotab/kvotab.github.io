@@ -338,6 +338,18 @@
       display: block;
     }
 
+    .multi-select-hint {
+        background: var(--color-kvot-bright);
+        color: var(--color-kvot-background);
+        padding: 8px 12px;
+        border-radius: 4px;
+        font-size: 12px;
+        margin-bottom: 12px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
     #treeSearch {
       width: 100%;
       padding: 8px 32px 8px 12px;
@@ -750,7 +762,10 @@
         
         <div>
           <h3>Dataset Information</h3>
-          <div id="info">Select a dataset to view its details</div>
+            <div class="multi-select-hint" style="display: none;" id="multiSelectHint">
+              💡 <strong>Tip:</strong> Hold Ctrl (⌘ on Mac) and click datasets to compare multiple
+            </div>
+            <div id="info">Select a dataset to view its details</div>
         </div>
       </div>
     </div>
@@ -816,6 +831,8 @@
     let selectedIsRadionuclidesGroup = false; // Track if selected path is radionuclides group
     let currentChartData = null; // Store current chart data for export
     let currentTreeFile = null; // Track the current first enabled file
+    let selectedDatasets = []; // Array to track multiple selected datasets
+    let multiSelectMode = false; // Track if we're in multi-select mode
 
     async function waitForH5Wasm() {
       let attempts = 0;
@@ -1084,21 +1101,56 @@
     
     function selectDataset(path, evt) {
       evt?.stopPropagation();
-      selectedDatasetPath = path;
-      selectedIsRadionuclidesGroup = false;
       
-      // Clear all dataset selections
-      document.querySelectorAll('.tree-item.dataset').forEach(el => el.classList.remove('selected'));
+      const isCtrlKey = evt?.ctrlKey || evt?.metaKey; // Support both Ctrl (Windows/Linux) and Cmd (Mac)
+      const datasetElement = evt?.target?.closest('.tree-item.dataset');
       
-      // Remove 'expanded' class from ALL groups (this clears selection styling)
-      document.querySelectorAll('.tree-item.group').forEach(el => {
-        el.classList.remove('expanded');
-      });
-      
-      // Mark this dataset as selected
-      evt?.target?.closest('.tree-item.dataset')?.classList.add('selected');
-      
-      showNodeAttributes(path, false);
+      if (isCtrlKey) {
+        // Multi-select mode
+        multiSelectMode = true;
+        
+        // Check if already selected
+        const index = selectedDatasets.indexOf(path);
+        if (index > -1) {
+          // Deselect
+          selectedDatasets.splice(index, 1);
+          datasetElement?.classList.remove('selected');
+        } else {
+          // Add to selection
+          selectedDatasets.push(path);
+          datasetElement?.classList.add('selected');
+        }
+        
+        // Clear group selection
+        selectedIsRadionuclidesGroup = false;
+        document.querySelectorAll('.tree-item.group').forEach(el => {
+          el.classList.remove('expanded');
+        });
+        
+        // Show info for all selected datasets
+        if (selectedDatasets.length > 0) {
+          showMultipleDatasetAttributes(selectedDatasets);
+        } else {
+          document.getElementById('info').innerHTML = 'Select a dataset to view its details';
+          document.getElementById('plotlyChartContainer').classList.remove('visible');
+          currentChartData = null;
+        }
+      } else {
+        // Single select mode
+        multiSelectMode = false;
+        selectedDatasets = [path];
+        selectedDatasetPath = path;
+        selectedIsRadionuclidesGroup = false;
+        
+        // Clear all selections
+        document.querySelectorAll('.tree-item.dataset').forEach(el => el.classList.remove('selected'));
+        document.querySelectorAll('.tree-item.group').forEach(el => el.classList.remove('expanded'));
+        
+        // Mark this dataset as selected
+        datasetElement?.classList.add('selected');
+        
+        showNodeAttributes(path, false);
+      }
     }
     
     function toggleGroup(event) {
@@ -1112,6 +1164,10 @@
       
       const path = groupItem.getAttribute('data-path');
       if (path) {
+        // Clear multi-select mode
+        multiSelectMode = false;
+        selectedDatasets = [];
+        
         selectedDatasetPath = path;
         selectedIsRadionuclidesGroup = true;
         
@@ -1160,7 +1216,15 @@
         searchContainer.classList.remove('visible'); // Hide search bar on error
       }
     }
-
+    // Show multi-select hint when tree is loaded
+    const originalRefreshTreeStructure2 = refreshTreeStructure;
+    refreshTreeStructure = async function() {
+      await originalRefreshTreeStructure2();
+      const hint = document.getElementById('multiSelectHint');
+      if (hint && getEnabledFiles().length > 0) {
+        hint.style.display = 'flex';
+      }
+    };
     async function buildTree(group, prefix = '', isNested = false) {
       const childrenHtml = [];
       
@@ -1751,6 +1815,263 @@
         };
 
         currentChartData = { traces, layout, path };
+        chartContainer.classList.add('visible');
+        Plotly.newPlot('plotlyChart', traces, layout, config).then(() => {
+          setupDynamicLegend(document.getElementById('plotlyChart'));
+        });
+      } else {
+        chartContainer.classList.remove('visible');
+        currentChartData = null;
+      }
+    }
+
+    function createMultiDatasetChart(paths) {
+      const plotDiv = document.getElementById('plotlyChart');
+      const chartContainer = document.getElementById('plotlyChartContainer');
+      plotDiv.innerHTML = '';
+      
+      const traces = [];
+      const enabledFiles = getEnabledFiles();
+      
+      let timeUnit = '';
+      const yAxisUnits = new Set();
+      
+      if (enabledFiles.length > 0) {
+        const firstFile = loadedFiles[enabledFiles[0]];
+        timeUnit = getTimeUnit(firstFile);
+      }
+      
+      // Color palette for different datasets
+      const colors = [
+        '#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6',
+        '#1abc9c', '#e67e22', '#34495e', '#c0392b', '#2980b9',
+        '#27ae60', '#f1c40f', '#8e44ad', '#16a085', '#d35400'
+      ];
+      
+      for (const [pathIndex, path] of paths.entries()) {
+        const datasetName = path.split('/').pop();
+        const baseColor = colors[pathIndex % colors.length];
+        
+        for (const [fileIndex, fileKey] of enabledFiles.entries()) {
+          const file = loadedFiles[fileKey];
+          
+          if (!checkDatasetExistsInFile(file, path)) {
+            continue;
+          }
+          
+          try {
+            const dataset = file.get(path);
+            
+            if (!isTimeDependent(dataset)) {
+              continue;
+            }
+            
+            // Get unit
+            let yAxisUnit = '';
+            if (dataset.attrs && typeof dataset.attrs === 'object') {
+              for (const attrName in dataset.attrs) {
+                if (attrName === 'unit') {
+                  const attrObj = dataset.attrs[attrName];
+                  if (attrObj && attrObj.value !== null && typeof attrObj.value !== 'undefined') {
+                    yAxisUnit = attrObj.value;
+                    yAxisUnits.add(yAxisUnit);
+                  }
+                }
+              }
+            }
+            
+            const timeData = getTimeData(file);
+            if (!timeData) {
+              console.warn(`No /time dataset found in ${fileKey}`);
+              continue;
+            }
+            
+            let yData;
+            if (typeof dataset.value !== 'undefined') {
+              yData = dataset.value;
+            } else if (typeof dataset.toArray === 'function') {
+              yData = dataset.toArray();
+            }
+            
+            if (yData) {
+              let yArray;
+              if (Array.isArray(yData)) {
+                yArray = yData;
+              } else if (yData && typeof yData === 'object' && yData.length !== undefined) {
+                yArray = Array.from(yData);
+              } else {
+                yArray = [yData];
+              }
+              
+              // Handle probabilistic data (take mean)
+              let isProbabilistic = false;
+              if (dataset.attrs && typeof dataset.attrs === 'object') {
+                for (const attrName in dataset.attrs) {
+                  if (attrName === 'probabilistic') {
+                    const attrObj = dataset.attrs[attrName];
+                    if (attrObj && typeof attrObj.value !== 'undefined') {
+                      const value = attrObj.value;
+                      isProbabilistic = value === true || value === 1 || value === 'TRUE' || value === 'True';
+                    }
+                  }
+                }
+              }
+              
+              if (isProbabilistic) {
+                if (Array.isArray(yArray[0])) {
+                  yArray = yArray.map(timeSlice => {
+                    if (Array.isArray(timeSlice)) {
+                      const sum = timeSlice.reduce((a, b) => a + b, 0);
+                      return sum / timeSlice.length;
+                    }
+                    return timeSlice;
+                  });
+                } else if (yArray.length > timeData.length && yArray.length % timeData.length === 0) {
+                  const numRealizations = Math.floor(yArray.length / timeData.length);
+                  const avgFirst = (yArray[0] + yArray[1] + yArray[2]) / 3;
+                  const avgAtBoundary = (yArray[timeData.length] + yArray[timeData.length + 1] + yArray[timeData.length + 2]) / 3;
+                  
+                  let changeAtBoundary;
+                  if (avgFirst === 0 && avgAtBoundary === 0) {
+                    let foundNonZero = false;
+                    for (let offset = 0; offset < Math.min(10, timeData.length - 3); offset++) {
+                      const testAvgFirst = (yArray[offset] + yArray[offset + 1] + yArray[offset + 2]) / 3;
+                      const testAvgBoundary = (yArray[timeData.length + offset] + yArray[timeData.length + offset + 1] + yArray[timeData.length + offset + 2]) / 3;
+                      
+                      if (testAvgFirst !== 0 || testAvgBoundary !== 0) {
+                        changeAtBoundary = Math.abs(testAvgBoundary - testAvgFirst) / Math.max(Math.abs(testAvgFirst), Math.abs(testAvgBoundary), 1e-10);
+                        foundNonZero = true;
+                        break;
+                      }
+                    }
+                    
+                    if (!foundNonZero) {
+                      changeAtBoundary = 1.0;
+                    }
+                  } else {
+                    changeAtBoundary = Math.abs(avgAtBoundary - avgFirst) / Math.max(Math.abs(avgFirst), Math.abs(avgAtBoundary), 1e-10);
+                  }
+                  
+                  const means = [];
+                  if (changeAtBoundary < 0.1) {
+                    for (let t = 0; t < timeData.length; t++) {
+                      let sum = 0;
+                      for (let r = 0; r < numRealizations; r++) {
+                        sum += yArray[r * timeData.length + t];
+                      }
+                      means.push(sum / numRealizations);
+                    }
+                  } else {
+                    for (let t = 0; t < timeData.length; t++) {
+                      let sum = 0;
+                      for (let r = 0; r < numRealizations; r++) {
+                        sum += yArray[t * numRealizations + r];
+                      }
+                      means.push(sum / numRealizations);
+                    }
+                  }
+                  yArray = means;
+                }
+              }
+
+              const minLength = Math.min(timeData.length, yArray.length);
+              const trimmedTimeData = timeData.slice(0, minLength);
+              const trimmedYData = yArray.slice(0, minLength);
+              
+              // Adjust opacity and line style for multiple files
+              let traceName = datasetName;
+              let lineColor = baseColor;
+              let lineWidth = 2;
+              let lineDash = 'solid';
+              
+              if (enabledFiles.length > 1) {
+                traceName = `${datasetName} (${fileKey})`;
+                lineWidth = 1.5;
+                // Use different dash styles for different files of same dataset
+                const dashStyles = ['solid', 'dash', 'dot', 'dashdot'];
+                lineDash = dashStyles[fileIndex % dashStyles.length];
+              }
+              
+              traces.push({
+                x: trimmedTimeData,
+                y: trimmedYData,
+                mode: 'lines+markers',
+                name: traceName,
+                line: {
+                  color: lineColor,
+                  dash: lineDash,
+                  width: lineWidth
+                },
+                type: 'scatter',
+                hovertemplate: `<b>${traceName}</b><br>Time: %{x}<br>Value: %{y}<extra></extra>`
+              });
+            }
+          } catch (e) {
+            console.error(`Error creating trace for ${path} in ${fileKey}:`, e);
+          }
+        }
+      }
+      
+      if (traces.length > 0) {
+        const xScale = document.getElementById('xAxisScale').value;
+        const yScale = document.getElementById('yAxisScale').value;
+        
+        let yAxisTitle = 'Value';
+        if (yAxisUnits.size === 1) {
+          // All datasets have same unit
+          yAxisTitle = `Value (${Array.from(yAxisUnits)[0]})`;
+        } else if (yAxisUnits.size > 1) {
+          // Multiple units
+          yAxisTitle = `Value (${Array.from(yAxisUnits).join(', ')})`;
+        }
+        
+        const layout = {
+          title: {
+            text: `Comparing ${paths.length} dataset${paths.length > 1 ? 's' : ''}`,
+            font: { size: 14 },
+            xanchor: 'left',
+            x: 0
+          },
+          xaxis: { 
+            title: timeUnit ? `Time (${timeUnit})` : 'Time',
+            type: xScale
+          },
+          yaxis: { 
+            title: yAxisTitle,
+            type: yScale,
+            showexponent: 'all',
+            exponentformat: 'power'
+          },
+          hovermode: 'closest',
+          showlegend: true,
+          legend: {
+            x: 1.02,
+            y: 1,
+            xanchor: 'left',
+            yanchor: 'top'
+          },
+          margin: {
+            r: 200
+          }
+        };
+        
+        const config = {
+            displayLogo:false,
+            scrollZoom: true,
+            showLink:   false,
+            plotlyServerURL:"https://chart-studio.plotly.com",
+            modeBarButtonsToAdd: ['v1hovermode'],
+            responsive: true,
+            toImageButtonOptions: {
+              format: 'svg',
+              filename: 'multi_dataset_chart',
+              height: 600,
+              width: 800,
+              scale: 1
+            }
+        };
+
+        currentChartData = { traces, layout, paths };
         chartContainer.classList.add('visible');
         Plotly.newPlot('plotlyChart', traces, layout, config).then(() => {
           setupDynamicLegend(document.getElementById('plotlyChart'));
@@ -2611,10 +2932,100 @@
         document.getElementById('fileInput').dispatchEvent(event);
       }
     });
+
+    function showMultipleDatasetAttributes(paths) {
+      const infoDiv = document.getElementById('info');
+      infoDiv.innerHTML = `<div class="loading">Loading ${paths.length} datasets...</div>`;
+      
+      const enabledFiles = getEnabledFiles();
+      if (enabledFiles.length === 0) return;
+      
+      let html = `<div style="background: var(--color-kvot-bright); padding: 12px; border-radius: 6px; margin-bottom: 16px; font-weight: 600; color: var(--color-kvot-background);">
+        📊 ${paths.length} datasets selected
+      </div>`;
+      
+      let allTimeDependent = true;
+      
+      for (const path of paths) {
+        html += `<div class="file-data-section" style="border-left-color: var(--color-kvot-accent);">`;
+        html += `<h4>${escapeHtml(path)}</h4>`;
+        
+        const file = loadedFiles[enabledFiles[0]];
+        try {
+          const dataset = file.get(path);
+          if (!dataset) continue;
+          
+          const isTimeDep = isTimeDependent(dataset);
+          if (!isTimeDep) allTimeDependent = false;
+          
+          html += `<div class="info-section">
+            <div class="info-label">Type</div>
+            <div class="info-content">${escapeHtml(String(dataset.type))} ${isTimeDep ? '⏱️ (time-dependent)' : ''}</div>
+          </div>`;
+          
+          if (dataset.dtype) {
+            const readableDtype = formatDataType(dataset.dtype);
+            html += `<div class="info-section">
+              <div class="info-label">Data Type</div>
+              <div class="info-content">${escapeHtml(readableDtype)}</div>
+            </div>`;
+          }
+          
+          if (dataset.shape && Array.isArray(dataset.shape)) {
+            html += `<div class="info-section">
+              <div class="info-label">Shape</div>
+              <div class="info-content">${dataset.shape.join(', ')}</div>
+            </div>`;
+          }
+          
+          // Show attributes
+          const attrs = {};
+          if (dataset.attrs && typeof dataset.attrs === 'object') {
+            for (const attrName in dataset.attrs) {
+              if (!attrName.startsWith('_') && typeof dataset.attrs[attrName] === 'object') {
+                const attrObj = dataset.attrs[attrName];
+                attrs[attrName] = attrObj?.value ?? attrObj;
+              }
+            }
+          }
+          
+          if (Object.keys(attrs).length > 0) {
+            html += `<div class="info-section">
+              <div class="info-label">Key Attributes</div>
+              <div class="info-content" style="font-size: 11px;">`;
+            
+            for (const [key, value] of Object.entries(attrs).slice(0, 5)) {
+              let displayValue = String(value);
+              if (displayValue.length > 50) {
+                displayValue = displayValue.substring(0, 50) + '...';
+              }
+              html += `<strong>${escapeHtml(key)}:</strong> ${escapeHtml(displayValue)}<br>`;
+            }
+            
+            html += `</div></div>`;
+          }
+          
+        } catch (e) {
+          html += `<div class="error">Error loading dataset: ${escapeHtml(e.message)}</div>`;
+        }
+        
+        html += `</div>`;
+      }
+      
+      infoDiv.innerHTML = html;
+      
+      // Create combined chart if all are time-dependent
+      if (allTimeDependent && paths.length > 0) {
+        createMultiDatasetChart(paths);
+      } else {
+        document.getElementById('plotlyChartContainer').classList.remove('visible');
+        currentChartData = null;
+      }
+    }
+
     // Search functionality
     let searchTimeout = null;
     let currentSearchTerm = '';
-
     function wildcardToRegex(pattern) {
       // Escape special regex characters except *
       const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
