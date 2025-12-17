@@ -1695,58 +1695,19 @@
                 });
               } else if (yArray.length > timeData.length && yArray.length % timeData.length === 0) {
                 const numRealizations = Math.floor(yArray.length / timeData.length);
-                
-                const avgFirst = (yArray[0] + yArray[1] + yArray[2]) / 3;
-                const avgAtBoundary = (yArray[timeData.length] + yArray[timeData.length + 1] + yArray[timeData.length + 2]) / 3;
-                
-                // Try a different section if first values are all zero
-                let changeAtBoundary;
-                if (avgFirst === 0 && avgAtBoundary === 0) {
-                  // Find first non-zero section
-                  let foundNonZero = false;
-                  for (let offset = 0; offset < Math.min(10, timeData.length - 3); offset++) {
-                    const testAvgFirst = (yArray[offset] + yArray[offset + 1] + yArray[offset + 2]) / 3;
-                    const testAvgBoundary = (yArray[timeData.length + offset] + yArray[timeData.length + offset + 1] + yArray[timeData.length + offset + 2]) / 3;
-                    
-                    if (testAvgFirst !== 0 || testAvgBoundary !== 0) {
-                      changeAtBoundary = Math.abs(testAvgBoundary - testAvgFirst) / Math.max(Math.abs(testAvgFirst), Math.abs(testAvgBoundary), 1e-10);
-                      foundNonZero = true;
-                      break;
-                    }
-                  }
-                  
-                  if (!foundNonZero) {
-                    // Default to time-major if can't determine
-                    changeAtBoundary = 1.0; 
-                  }
-                } else {
-                  changeAtBoundary = Math.abs(avgAtBoundary - avgFirst) / Math.max(Math.abs(avgFirst), Math.abs(avgAtBoundary), 1e-10);
-                }
                                 
                 // If data layout is [t1_r1, t1_r2, ..., t1_rN, t2_r1, t2_r2, ...] (time-major)
                 // then elements at boundary (t2_r1) should be different from t1_r1
                 // If data layout is [r1_t1, r1_t2, ..., r1_tN, r2_t1, ...] (realization-major)
                 // then elements at boundary (r2_t1) should be similar to r1_t1
-                
                 const means = [];
-                if (changeAtBoundary < 0.1) {
-                  // Layout is likely [r1_t1, r1_t2, ..., r2_t1, r2_t2, ...] (realization-major)
-                  for (let t = 0; t < timeData.length; t++) {
-                    let sum = 0;
-                    for (let r = 0; r < numRealizations; r++) {
-                      sum += yArray[r * timeData.length + t];
-                    }
-                    means.push(sum / numRealizations);
+                // Layout is likely [t1_r1, t1_r2, ..., t2_r1, t2_r2, ...] (time-major)
+                for (let t = 0; t < timeData.length; t++) {
+                  let sum = 0;
+                  for (let r = 0; r < numRealizations; r++) {
+                    sum += yArray[t * numRealizations + r];
                   }
-                } else {
-                  // Layout is likely [t1_r1, t1_r2, ..., t2_r1, t2_r2, ...] (time-major)
-                  for (let t = 0; t < timeData.length; t++) {
-                    let sum = 0;
-                    for (let r = 0; r < numRealizations; r++) {
-                      sum += yArray[t * numRealizations + r];
-                    }
-                    means.push(sum / numRealizations);
-                  }
+                  means.push(sum / numRealizations);
                 }
                 yArray = means;
               } else {
@@ -1948,48 +1909,17 @@
                   });
                 } else if (yArray.length > timeData.length && yArray.length % timeData.length === 0) {
                   const numRealizations = Math.floor(yArray.length / timeData.length);
-                  const avgFirst = (yArray[0] + yArray[1] + yArray[2]) / 3;
-                  const avgAtBoundary = (yArray[timeData.length] + yArray[timeData.length + 1] + yArray[timeData.length + 2]) / 3;
-                  
-                  let changeAtBoundary;
-                  if (avgFirst === 0 && avgAtBoundary === 0) {
-                    let foundNonZero = false;
-                    for (let offset = 0; offset < Math.min(10, timeData.length - 3); offset++) {
-                      const testAvgFirst = (yArray[offset] + yArray[offset + 1] + yArray[offset + 2]) / 3;
-                      const testAvgBoundary = (yArray[timeData.length + offset] + yArray[timeData.length + offset + 1] + yArray[timeData.length + offset + 2]) / 3;
-                      
-                      if (testAvgFirst !== 0 || testAvgBoundary !== 0) {
-                        changeAtBoundary = Math.abs(testAvgBoundary - testAvgFirst) / Math.max(Math.abs(testAvgFirst), Math.abs(testAvgBoundary), 1e-10);
-                        foundNonZero = true;
-                        break;
-                      }
-                    }
-                    
-                    if (!foundNonZero) {
-                      changeAtBoundary = 1.0;
-                    }
-                  } else {
-                    changeAtBoundary = Math.abs(avgAtBoundary - avgFirst) / Math.max(Math.abs(avgFirst), Math.abs(avgAtBoundary), 1e-10);
-                  }
-                  
+                                    
                   const means = [];
-                  if (changeAtBoundary < 0.1) {
-                    for (let t = 0; t < timeData.length; t++) {
-                      let sum = 0;
-                      for (let r = 0; r < numRealizations; r++) {
-                        sum += yArray[r * timeData.length + t];
-                      }
-                      means.push(sum / numRealizations);
+                  
+                  for (let t = 0; t < timeData.length; t++) {
+                    let sum = 0;
+                    for (let r = 0; r < numRealizations; r++) {
+                      sum += yArray[t * numRealizations + r];
                     }
-                  } else {
-                    for (let t = 0; t < timeData.length; t++) {
-                      let sum = 0;
-                      for (let r = 0; r < numRealizations; r++) {
-                        sum += yArray[t * numRealizations + r];
-                      }
-                      means.push(sum / numRealizations);
-                    }
+                    means.push(sum / numRealizations);
                   }
+                  
                   yArray = means;
                 }
               }
@@ -2198,51 +2128,16 @@
                   } else if (yArray.length > timeData.length && yArray.length % timeData.length === 0) {
                     const numRealizations = Math.floor(yArray.length / timeData.length);
                     
-                    const avgFirst = (yArray[0] + yArray[1] + yArray[2]) / 3;
-                    const avgAtBoundary = (yArray[timeData.length] + yArray[timeData.length + 1] + yArray[timeData.length + 2]) / 3;
-                    
-                    // Try a different section if first values are all zero
-                    let changeAtBoundary;
-                    if (avgFirst === 0 && avgAtBoundary === 0) {
-                      // Find first non-zero section
-                      let foundNonZero = false;
-                      for (let offset = 0; offset < Math.min(10, timeData.length - 3); offset++) {
-                        const testAvgFirst = (yArray[offset] + yArray[offset + 1] + yArray[offset + 2]) / 3;
-                        const testAvgBoundary = (yArray[timeData.length + offset] + yArray[timeData.length + offset + 1] + yArray[timeData.length + offset + 2]) / 3;
-                        
-                        if (testAvgFirst !== 0 || testAvgBoundary !== 0) {
-                          changeAtBoundary = Math.abs(testAvgBoundary - testAvgFirst) / Math.max(Math.abs(testAvgFirst), Math.abs(testAvgBoundary), 1e-10);
-                          foundNonZero = true;
-                          break;
-                        }
-                      }
-                      
-                      if (!foundNonZero) {
-                        // Default to time-major if can't determine
-                        changeAtBoundary = 1.0; 
-                      }
-                    } else {
-                      changeAtBoundary = Math.abs(avgAtBoundary - avgFirst) / Math.max(Math.abs(avgFirst), Math.abs(avgAtBoundary), 1e-10);
-                    }
-                    
                     const means = [];
-                    if (changeAtBoundary < 0.1) {
-                      for (let t = 0; t < timeData.length; t++) {
-                        let sum = 0;
-                        for (let r = 0; r < numRealizations; r++) {
-                          sum += yArray[r * timeData.length + t];
-                        }
-                        means.push(sum / numRealizations);
+                    
+                    for (let t = 0; t < timeData.length; t++) {
+                      let sum = 0;
+                      for (let r = 0; r < numRealizations; r++) {
+                        sum += yArray[t * numRealizations + r];
                       }
-                    } else {
-                      for (let t = 0; t < timeData.length; t++) {
-                        let sum = 0;
-                        for (let r = 0; r < numRealizations; r++) {
-                          sum += yArray[t * numRealizations + r];
-                        }
-                        means.push(sum / numRealizations);
-                      }
+                      means.push(sum / numRealizations);
                     }
+                    
                     yArray = means;
                   }
                 }
