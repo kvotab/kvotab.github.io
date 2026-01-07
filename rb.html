@@ -514,6 +514,10 @@
     
     #plotlyChart {
       min-height: 500px;
+      height: 500px;
+      max-height: 2000px;
+      resize: vertical;
+      overflow: auto;
     }
     
     #info { 
@@ -3116,6 +3120,26 @@
         setTimeout(() => filterTree(searchTerm), 50);
       }
     };
+
+    // Setup ResizeObserver to automatically resize Plotly chart when container is resized
+    const plotlyChart = document.getElementById('plotlyChart');
+    let resizeTimeout;
+    const resizeObserver = new ResizeObserver(entries => {
+      if (resizeTimeout) {
+        clearTimeout(resizeTimeout);
+      }
+      resizeTimeout = setTimeout(() => {
+        for (const entry of entries) {
+          if (entry.target === plotlyChart && plotlyChart.data) {
+            Plotly.Plots.resize(plotlyChart);
+          }
+        }
+      }, 100);
+    });
+    
+    if (plotlyChart) {
+      resizeObserver.observe(plotlyChart);
+    }
   </script>
 </body>
 </html>
