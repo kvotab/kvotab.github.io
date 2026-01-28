@@ -851,7 +851,24 @@ class XlsxWriter {
         xml += this._generateAxisXML(chart.yAxis, 'l', chart.xAxis.id);
         
         xml += '</c:plotArea>';
-        xml += '<c:legend><c:legendPos val="r"/><c:layout/><c:overlay val="0"/></c:legend>';
+        
+        // Legend with configurable font size
+        const legendPos = chart.legend?.position || 'r';
+        const legendFontSize = chart.legend?.fontSize || 10;
+        xml += '<c:legend>';
+        xml += `<c:legendPos val="${legendPos}"/>`;
+        xml += '<c:layout/>';
+        xml += '<c:overlay val="0"/>';
+        xml += '<c:txPr>';
+        xml += '<a:bodyPr/>';
+        xml += '<a:lstStyle/>';
+        xml += '<a:p>';
+        xml += `<a:pPr><a:defRPr sz="${legendFontSize * 100}"/></a:pPr>`;
+        xml += '<a:endParaRPr lang="en-US"/>';
+        xml += '</a:p>';
+        xml += '</c:txPr>';
+        xml += '</c:legend>';
+        
         xml += '<c:plotVisOnly val="1"/>';
         xml += '<c:dispBlanksAs val="gap"/>';
         xml += '<c:showDLblsOverMax val="0"/>';
@@ -1038,6 +1055,18 @@ class XlsxWriter {
         const minorTickMark = axis.minorTickMark || 'none';
         xml += `<c:minorTickMark val="${minorTickMark}"/>`;
         xml += '<c:tickLblPos val="nextTo"/>';
+        
+        // Tick label font properties
+        const tickLblFontSize = axis.tickLabelFontSize || axis.fontSize || 10;
+        xml += '<c:txPr>';
+        xml += '<a:bodyPr/>';
+        xml += '<a:lstStyle/>';
+        xml += '<a:p>';
+        xml += `<a:pPr><a:defRPr sz="${tickLblFontSize * 100}"/></a:pPr>`;
+        xml += '<a:endParaRPr lang="en-US"/>';
+        xml += '</a:p>';
+        xml += '</c:txPr>';
+        
         xml += `<c:crossAx val="${crossAxisId}"/>`;
         xml += '<c:crosses val="autoZero"/>';
         xml += '<c:crossBetween val="midCat"/>';
