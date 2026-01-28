@@ -756,6 +756,10 @@
               <input type="checkbox" id="dynamicLegend" checked onchange="toggleDynamicLegend()">
               Dynamic Legend
             </label>
+            <label id="showTotalLabel" style="display: none;">
+              <input type="checkbox" id="showTotal" checked onchange="toggleShowTotal()">
+              Show Total
+            </label>
             <span id="legendStatus" style=" font-size: 12px; color: var(--color-text-muted);"></span>
             <button onclick="applyReleasePresetView()" style="margin-left: auto;">Apply Release View</button>
             <button onclick="applyDosePresetView()">Apply Dose View</button>
@@ -1605,6 +1609,9 @@
       const chartContainer = document.getElementById('plotlyChartContainer');
       plotDiv.innerHTML = '';
       
+      // Hide "Show Total" checkbox (only for radionuclides groups)
+      document.getElementById('showTotalLabel').style.display = 'none';
+      
       const traces = [];
       const enabledFiles = getEnabledFiles();
       
@@ -1827,6 +1834,9 @@
       const plotDiv = document.getElementById('plotlyChart');
       const chartContainer = document.getElementById('plotlyChartContainer');
       plotDiv.innerHTML = '';
+      
+      // Hide "Show Total" checkbox (only for radionuclides groups)
+      document.getElementById('showTotalLabel').style.display = 'none';
       
       const traces = [];
       const enabledFiles = getEnabledFiles();
@@ -2072,8 +2082,14 @@
       const chartContainer = document.getElementById('plotlyChartContainer');
       plotDiv.innerHTML = '';
       
+      // Show "Show Total" checkbox for radionuclides groups
+      document.getElementById('showTotalLabel').style.display = '';
+      
       const traces = [];
       const enabledFiles = getEnabledFiles();
+      
+      // Store data for computing total
+      const totalDataByFile = {}; // fileKey -> { timeData: [], dataArrays: [] }
       
       let timeUnit = '';
       let yAxisUnit = '';
@@ -2177,6 +2193,12 @@
                 const trimmedTimeData = timeData.slice(0, minLength);
                 const trimmedYData = yArray.slice(0, minLength);
                 
+                // Store data for computing total
+                if (!totalDataByFile[fileKey]) {
+                  totalDataByFile[fileKey] = { timeData: trimmedTimeData, dataArrays: [] };
+                }
+                totalDataByFile[fileKey].dataArrays.push(trimmedYData);
+                
                 const lineStyle = getLineStyle(datasetKey);
                 let traceName = datasetKey;
                 let lineWidth = lineStyle.width;
@@ -2205,6 +2227,46 @@
           }
         } catch (e) {
           console.error(`Error processing group for ${fileKey}:`, e);
+        }
+      }
+      
+      // Add total trace if checkbox is checked
+      const showTotalCheckbox = document.getElementById('showTotal');
+      if (showTotalCheckbox && showTotalCheckbox.checked) {
+        for (const fileKey of Object.keys(totalDataByFile)) {
+          const fileData = totalDataByFile[fileKey];
+          if (fileData.dataArrays.length > 0) {
+            const timeData = fileData.timeData;
+            const totalY = new Array(timeData.length).fill(0);
+            
+            // Sum all data arrays
+            for (const dataArray of fileData.dataArrays) {
+              for (let i = 0; i < Math.min(dataArray.length, totalY.length); i++) {
+                totalY[i] += dataArray[i];
+              }
+            }
+            
+            let traceName = 'Total';
+            let lineWidth = 2;
+            
+            if (enabledFiles.length > 1 && enabledFiles.indexOf(fileKey) > 0) {
+              traceName = `Total (${fileKey})`;
+              lineWidth = 1;
+            }
+            
+            traces.push({
+              x: timeData,
+              y: totalY,
+              mode: 'lines',
+              name: traceName,
+              line: {
+                color: '#000000',
+                dash: 'solid',
+                width: lineWidth
+              },
+              type: 'scatter'
+            });
+          }
         }
       }
       
@@ -2309,6 +2371,13 @@
       } else {
         chartContainer.classList.remove('visible');
         currentChartData = null;
+      }
+    }
+
+    function toggleShowTotal() {
+      // Re-render the radionuclides chart when toggling the total line
+      if (selectedIsRadionuclidesGroup && selectedDatasetPath) {
+        createRadionuclidesChart(selectedDatasetPath);
       }
     }
 
