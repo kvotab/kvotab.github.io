@@ -7,6 +7,47 @@
   <title>HDF5 File Viewer</title>
   <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+  <script type="module">
+    // Import wasm-xlsxwriter for Excel export with chart support
+    import xlsxInit, {
+      Workbook as XlsxWorkbook,
+      Chart as XlsxChart,
+      ChartType as XlsxChartType,
+      ChartSeries as XlsxChartSeries,
+      ChartRange as XlsxChartRange,
+      ChartLine as XlsxChartLine,
+      ChartLineDashType as XlsxChartLineDashType,
+      ChartFormat as XlsxChartFormat,
+      ChartMarker as XlsxChartMarker,
+      ChartLegendPosition as XlsxChartLegendPosition,
+      ChartFont as XlsxChartFont,
+      Format as XlsxFormat,
+      FormatAlign as XlsxFormatAlign,
+      Color as XlsxColor
+    } from 'https://cdn.jsdelivr.net/npm/wasm-xlsxwriter@0.11.2/web/+esm';
+    
+    // Initialize the WASM module and expose to global scope
+    xlsxInit().then(() => {
+      window.XlsxWorkbook = XlsxWorkbook;
+      window.XlsxChart = XlsxChart;
+      window.XlsxChartType = XlsxChartType;
+      window.XlsxChartSeries = XlsxChartSeries;
+      window.XlsxChartRange = XlsxChartRange;
+      window.XlsxChartLine = XlsxChartLine;
+      window.XlsxChartLineDashType = XlsxChartLineDashType;
+      window.XlsxChartFormat = XlsxChartFormat;
+      window.XlsxChartMarker = XlsxChartMarker;
+      window.XlsxChartLegendPosition = XlsxChartLegendPosition;
+      window.XlsxChartFont = XlsxChartFont;
+      window.XlsxFormat = XlsxFormat;
+      window.XlsxFormatAlign = XlsxFormatAlign;
+      window.XlsxColor = XlsxColor;
+      window.xlsxReady = true;
+      console.log('wasm-xlsxwriter initialized');
+    }).catch(err => {
+      console.error('Failed to initialize wasm-xlsxwriter:', err);
+    });
+  </script>
   <style>
     /* ==========================================================================
        1. BASE STYLES & CSS RESET
@@ -2225,6 +2266,320 @@
     }
     
     /**
+     * Export current chart data to an Excel file (.xlsx).
+     * Creates a workbook with two sheets:
+     * - "Chart": Contains a native Excel scatter chart with the same look as Plotly
+     * - "Data": Contains the chart data with time column and one column per trace
+     * 
+     * Uses wasm-xlsxwriter (Rust xlsxwriter compiled to WASM) for native Excel chart creation.
+     * Creates a chart that matches the Plotly chart styling:
+     * - Same axis type (log/linear)
+     * - Same line colors from traces
+     * - Same dash patterns (solid, dash, dot, dashdot, longdash)
+     * - Lines without markers
+     * 
+     * @returns {Promise<void>}
+     */
+    async function downloadChartDataAsExcel() {
+      if (!currentChartData) {
+        alert('No chart data available');
+        return;
+      }
+      
+      // Check if wasm-xlsxwriter is ready
+      if (!window.xlsxReady) {
+        alert('Excel export library is still loading. Please try again in a moment.');
+        return;
+      }
+      
+      try {
+        const allTraces = currentChartData.traces;
+        const layout = currentChartData.layout;
+        
+        // Get current state from the actual Plotly chart element
+        const chartDiv = document.getElementById('plotlyChart');
+        const plotlyTraces = chartDiv && chartDiv.data ? chartDiv.data : allTraces;
+        const plotlyLayout = chartDiv && chartDiv.layout ? chartDiv.layout : layout;
+        
+        // Check if Dynamic Legend is enabled and we should filter by viewport
+        const dynamicLegendCheckbox = document.getElementById('dynamicLegend');
+        const isDynamicLegendEnabled = dynamicLegendCheckbox && dynamicLegendCheckbox.checked;
+        
+        let traces;
+        
+        if (isDynamicLegendEnabled && plotlyLayout.xaxis && plotlyLayout.yaxis) {
+          // Filter traces based on whether they have data points in the current viewport
+          const xRange = plotlyLayout.xaxis.range;
+          const yRange = plotlyLayout.yaxis.range;
+          
+          if (xRange && yRange) {
+            const xIsLog = plotlyLayout.xaxis.type === 'log';
+            const yIsLog = plotlyLayout.yaxis.type === 'log';
+            
+            const xMin = xIsLog ? Math.pow(10, xRange[0]) : xRange[0];
+            const xMax = xIsLog ? Math.pow(10, xRange[1]) : xRange[1];
+            const yMin = yIsLog ? Math.pow(10, yRange[0]) : yRange[0];
+            const yMax = yIsLog ? Math.pow(10, yRange[1]) : yRange[1];
+            
+            traces = plotlyTraces.filter(trace => {
+              // Check if trace has any data points in the current viewport
+              for (let j = 0; j < trace.x.length; j++) {
+                const x = trace.x[j];
+                const y = trace.y[j];
+                if (x !== null && x !== undefined && y !== null && y !== undefined) {
+                  if (x >= xMin && x <= xMax && y >= yMin && y <= yMax) {
+                    return true;
+                  }
+                }
+              }
+              return false;
+            });
+          } else {
+            traces = plotlyTraces;
+          }
+        } else {
+          // Dynamic Legend off - export all traces (or filter by visible property)
+          traces = plotlyTraces.filter(trace => {
+            const visible = trace.visible;
+            return visible === undefined || visible === true;
+          });
+        }
+        
+        if (traces.length === 0) {
+          alert('No visible traces to export. Please show at least one trace in the chart.');
+          return;
+        }
+        
+        // Find the longest x array to determine row count
+        const maxLength = Math.max(...traces.map(t => t.x ? t.x.length : 0));
+        
+        // Extract chart metadata
+        const chartTitle = layout && layout.title && layout.title.text 
+          ? layout.title.text 
+          : 'Chart Data';
+        const xAxisTitle = layout && layout.xaxis && layout.xaxis.title && layout.xaxis.title.text
+          ? layout.xaxis.title.text
+          : 'Time';
+        const yAxisTitle = layout && layout.yaxis && layout.yaxis.title && layout.yaxis.title.text
+          ? layout.yaxis.title.text
+          : 'Value';
+        
+        // Detect axis types from Plotly layout
+        const xAxisType = layout && layout.xaxis && layout.xaxis.type ? layout.xaxis.type : 'linear';
+        const yAxisType = layout && layout.yaxis && layout.yaxis.type ? layout.yaxis.type : 'linear';
+        
+        // Create workbook
+        const workbook = new XlsxWorkbook();
+        
+        // ============ DATA SHEET ============
+        const dataSheet = workbook.addWorksheet();
+        dataSheet.setName('Data');
+        
+        // Create header format
+        const headerFormat = new XlsxFormat()
+          .setBold()
+          .setBackgroundColor(XlsxColor.rgb(0x00, 0x45, 0x76))
+          .setFontColor(XlsxColor.white())
+          .setAlign(XlsxFormatAlign.Center);
+        
+        // Write headers
+        dataSheet.writeWithFormat(0, 0, 'Time', headerFormat);
+        traces.forEach((trace, idx) => {
+          dataSheet.writeWithFormat(0, idx + 1, trace.name || `Series ${idx + 1}`, headerFormat);
+        });
+        
+        // Get x values from the first trace
+        const xValues = traces.length > 0 && traces[0].x ? traces[0].x : [];
+        
+        // Write data rows
+        for (let i = 0; i < maxLength; i++) {
+          // Write time value
+          if (xValues[i] !== undefined && xValues[i] !== null) {
+            dataSheet.write(i + 1, 0, xValues[i]);
+          }
+          // Write trace values
+          traces.forEach((trace, colIdx) => {
+            if (trace.y && trace.y[i] !== undefined && trace.y[i] !== null) {
+              dataSheet.write(i + 1, colIdx + 1, trace.y[i]);
+            }
+          });
+        }
+        
+        // Set column widths
+        dataSheet.setColumnWidth(0, 18);
+        for (let i = 0; i < traces.length; i++) {
+          dataSheet.setColumnWidth(i + 1, 15);
+        }
+        
+        // ============ CHART ============
+        // Create scatter chart with straight lines (no markers)
+        const chart = new XlsxChart(XlsxChartType.ScatterStraight);
+        
+        // Helper function to parse rgb color string to [R, G, B] array
+        const parseRgbColor = (colorStr) => {
+          if (!colorStr) return null;
+          // Handle rgb(r,g,b) format
+          const rgbMatch = colorStr.match(/rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i);
+          if (rgbMatch) {
+            return [parseInt(rgbMatch[1]), parseInt(rgbMatch[2]), parseInt(rgbMatch[3])];
+          }
+          // Handle hex format #RRGGBB or RRGGBB
+          const hexMatch = colorStr.match(/#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i);
+          if (hexMatch) {
+            return [parseInt(hexMatch[1], 16), parseInt(hexMatch[2], 16), parseInt(hexMatch[3], 16)];
+          }
+          // Handle short hex format #RGB
+          const shortHexMatch = colorStr.match(/^#?([a-f\d])([a-f\d])([a-f\d])$/i);
+          if (shortHexMatch) {
+            return [
+              parseInt(shortHexMatch[1] + shortHexMatch[1], 16),
+              parseInt(shortHexMatch[2] + shortHexMatch[2], 16),
+              parseInt(shortHexMatch[3] + shortHexMatch[3], 16)
+            ];
+          }
+          return null;
+        };
+        
+        // Map Plotly dash type to Excel ChartLineDashType
+        const mapDashType = (plotlyDash) => {
+          if (!plotlyDash || plotlyDash === 'solid') return XlsxChartLineDashType.Solid;
+          switch (plotlyDash) {
+            case 'dash': return XlsxChartLineDashType.Dash;
+            case 'dot': return XlsxChartLineDashType.RoundDot;
+            case 'dashdot': return XlsxChartLineDashType.DashDot;
+            case 'longdash': return XlsxChartLineDashType.LongDash;
+            case 'longdashdot': return XlsxChartLineDashType.LongDashDot;
+            default: return XlsxChartLineDashType.Solid;
+          }
+        };
+        
+        // Fallback Plotly-like color palette (brighter colors)
+        const plotlyColors = [
+          [0x1F, 0x77, 0xB4], // blue
+          [0xFF, 0x7F, 0x0E], // orange
+          [0x2C, 0xA0, 0x2C], // green
+          [0xD6, 0x27, 0x28], // red
+          [0x94, 0x67, 0xBD], // purple
+          [0x8C, 0x56, 0x4B], // brown
+          [0xE3, 0x77, 0xC2], // pink
+          [0x7F, 0x7F, 0x7F], // gray
+          [0xBC, 0xBD, 0x22], // olive
+          [0x17, 0xBE, 0xCF]  // cyan
+        ];
+        
+        // Add a series for each trace
+        traces.forEach((trace, idx) => {
+          const series = new XlsxChartSeries();
+          
+          // Start with fallback color
+          let color = plotlyColors[idx % plotlyColors.length];
+          let dashType = XlsxChartLineDashType.Solid;
+          
+          // Try to get color from trace (check multiple possible locations)
+          const traceColor = trace.line?.color || trace.marker?.color || null;
+          if (traceColor) {
+            const parsedColor = parseRgbColor(traceColor);
+            if (parsedColor) {
+              color = parsedColor;
+            }
+          }
+          
+          // Get dash type from trace
+          if (trace.line?.dash) {
+            dashType = mapDashType(trace.line.dash);
+          }
+          
+          // Set series name
+          series.setName(trace.name || `Series ${idx + 1}`);
+          
+          // Set X values (time column)
+          const xRange = XlsxChartRange.newFromRange('Data', 1, 0, maxLength, 0);
+          series.setCategories(xRange);
+          
+          // Set Y values (data column)
+          const yRange = XlsxChartRange.newFromRange('Data', 1, idx + 1, maxLength, idx + 1);
+          series.setValues(yRange);
+          
+          // Create color using Color.rgb() static method with hex value 0xRRGGBB
+          const colorHex = (color[0] << 16) | (color[1] << 8) | color[2];
+          const xlsxColor = XlsxColor.rgb(colorHex);
+          
+          // Set line format with color and dash type
+          const chartLine = new XlsxChartLine()
+            .setColor(xlsxColor)
+            .setWidth(2)
+            .setDashType(dashType);
+          const chartFormat = new XlsxChartFormat().setLine(chartLine);
+          series.setFormat(chartFormat);
+          
+          // Explicitly hide markers (use set_none pattern)
+          const noMarker = new XlsxChartMarker().setNone();
+          series.setMarker(noMarker);
+          
+          chart.pushSeries(series);
+        });
+        
+        // Set chart title and axis labels
+        chart.title().setName(chartTitle);
+        chart.xAxis().setName(xAxisTitle);
+        chart.yAxis().setName(yAxisTitle);
+        
+        // Set axis min/max to match current Plotly view (if zoomed)
+        // Note: Logarithmic axis and gridline formatting are not supported in wasm-xlsxwriter JS bindings
+        if (plotlyLayout.xaxis && plotlyLayout.xaxis.range) {
+          const xRange = plotlyLayout.xaxis.range;
+          const xIsLog = plotlyLayout.xaxis.type === 'log';
+          const xMin = xIsLog ? Math.pow(10, xRange[0]) : xRange[0];
+          const xMax = xIsLog ? Math.pow(10, xRange[1]) : xRange[1];
+          chart.xAxis().setMin(xMin);
+          chart.xAxis().setMax(xMax);
+        }
+        if (plotlyLayout.yaxis && plotlyLayout.yaxis.range) {
+          const yRange = plotlyLayout.yaxis.range;
+          const yIsLog = plotlyLayout.yaxis.type === 'log';
+          const yMin = yIsLog ? Math.pow(10, yRange[0]) : yRange[0];
+          const yMax = yIsLog ? Math.pow(10, yRange[1]) : yRange[1];
+          chart.yAxis().setMin(yMin);
+          chart.yAxis().setMax(yMax);
+        }
+        
+        // Position legend at the right (like Plotly default)
+        chart.legend().setPosition(XlsxChartLegendPosition.Right);
+        
+        // Set chart size (similar to Plotly dimensions)
+        chart.setWidth(800);
+        chart.setHeight(500);
+        
+        // Insert chart on a separate worksheet for better viewing
+        const chartSheet = workbook.addWorksheet();
+        chartSheet.setName('Chart');
+        chartSheet.insertChart(0, 0, chart);
+        
+        // Generate filename
+        const safeTitle = chartTitle.replace(/[^a-z0-9]/gi, '_').substring(0, 50);
+        const filename = `${safeTitle}_${Date.now()}.xlsx`;
+        
+        // Generate and download the file
+        const buffer = workbook.saveToBufferSync();
+        const blob = new Blob([buffer], { 
+          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
+        });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+      } catch (err) {
+        console.error('Excel export failed:', err);
+        alert('Failed to export to Excel: ' + err.message);
+      }
+    }
+    
+    /**
      * Handle "Show Total" checkbox toggle for radionuclides charts.
      * When checked, adds a trace showing the sum of all radionuclide activities.
      * Only applicable when viewing a radionuclides group.
@@ -2730,6 +3085,7 @@
      * Configures the mode bar with:
      * - Copy to clipboard button (PNG export)
      * - Download CSV button (data export)
+     * - Download Excel button (xlsx export)
      * - Standard Plotly zoom/pan/reset tools
      * - SVG export configuration
      * 
@@ -2764,6 +3120,17 @@
             },
             click: function(gd) {
               downloadChartData();
+            }
+          },
+          {
+            name: 'Download data as Excel',
+            icon: {
+              width: 384,
+              height: 512,
+              path: 'M64 0C28.7 0 0 28.7 0 64V448c0 35.3 28.7 64 64 64H320c35.3 0 64-28.7 64-64V160H256c-17.7 0-32-14.3-32-32V0H64zM256 0V128H384L256 0zM155.7 250.2L192 302.1l36.3-51.9c7.6-10.9 22.6-13.5 33.4-5.9s13.5 22.6 5.9 33.4L221.3 344l46.4 66.2c7.6 10.9 5 25.8-5.9 33.4s-25.8 5-33.4-5.9L192 385.8l-36.3 51.9c-7.6 10.9-22.6 13.5-33.4 5.9s-13.5-22.6-5.9-33.4L162.7 344l-46.4-66.2c-7.6-10.9-5-25.8 5.9-33.4s25.8-5 33.4 5.9z'
+            },
+            click: function(gd) {
+              downloadChartDataAsExcel();
             }
           }
         ],
