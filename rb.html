@@ -2401,21 +2401,19 @@
           height: 500,
           scatterStyle: 'line',  // Line without markers
           showBorder: false,     // Remove chart border
-          title: { 
-            text: chartTitle,
-            font: { size: 14, bold: true }
-          },
           xAxis: {
             title: { text: xAxisTitle },
             numberFormat: '[>1000]# ##0;General',
+            fontSize: 9,
             majorGridlines: { color: gridColor, width: 0.75 }
           },
           yAxis: {
             title: { text: yAxisTitle, customAngle: -90 },
-            numberFormat: '[>1000]# ##0;General',
+            numberFormat: '0E+0',
+            fontSize: 9,
             majorGridlines: { color: gridColor, width: 0.75 }
           },
-          legend: { position: 'r' }
+          legend: { position: 'r', fontSize: 8 }
         };
         
         // Set logarithmic scale if Plotly uses it, and add minor gridlines/ticks
@@ -2430,18 +2428,26 @@
           chartConfig.yAxis.minorTickMark = 'out';
         }
         
-        // Set axis min/max to match current Plotly view (if zoomed)
+        // Set axis min/max to match current Plotly view
+        // For log scale: always set limits (needed for proper scaling)
+        // For linear scale: only set limits if user has zoomed (autorange is false)
         if (plotlyLayout.xaxis && plotlyLayout.xaxis.range) {
           const xRange = plotlyLayout.xaxis.range;
           const xIsLog = xAxisType === 'log';
-          chartConfig.xAxis.minimum = xIsLog ? Math.pow(10, xRange[0]) : xRange[0];
-          chartConfig.xAxis.maximum = xIsLog ? Math.pow(10, xRange[1]) : xRange[1];
+          const xIsZoomed = plotlyLayout.xaxis.autorange === false;
+          if (xIsLog || xIsZoomed) {
+            chartConfig.xAxis.minimum = xIsLog ? Math.pow(10, xRange[0]) : xRange[0];
+            chartConfig.xAxis.maximum = xIsLog ? Math.pow(10, xRange[1]) : xRange[1];
+          }
         }
         if (plotlyLayout.yaxis && plotlyLayout.yaxis.range) {
           const yRange = plotlyLayout.yaxis.range;
           const yIsLog = yAxisType === 'log';
-          chartConfig.yAxis.minimum = yIsLog ? Math.pow(10, yRange[0]) : yRange[0];
-          chartConfig.yAxis.maximum = yIsLog ? Math.pow(10, yRange[1]) : yRange[1];
+          const yIsZoomed = plotlyLayout.yaxis.autorange === false;
+          if (yIsLog || yIsZoomed) {
+            chartConfig.yAxis.minimum = yIsLog ? Math.pow(10, yRange[0]) : yRange[0];
+            chartConfig.yAxis.maximum = yIsLog ? Math.pow(10, yRange[1]) : yRange[1];
+          }
         }
         
         const chart = xlsx.newChart(chartConfig);
@@ -2464,6 +2470,9 @@
           // Get dash type from trace
           const dashType = mapDashType(trace.line?.dash);
           
+          // Get line width from trace (default to 2 if not specified)
+          const lineWidth = trace.line?.width || 2;
+          
           // Filter out null/undefined values
           const yVals = trace.y || [];
           const xVals = trace.x || xValues;
@@ -2476,7 +2485,7 @@
             length: Math.max(xVals.length, yVals.length),
             line: {
               color: { option: 'Solid', value: color },
-              width: 2,
+              width: lineWidth,
               dashType: dashType,
               capType: 'rnd',
               compoundType: 'sng',
