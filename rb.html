@@ -8,27 +8,42 @@
   <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
   <style>
+    /* ==========================================================================
+       1. BASE STYLES & CSS RESET
+       ========================================================================== */
     * { box-sizing: border-box; }
+
+    /* ==========================================================================
+       2. CSS CUSTOM PROPERTIES (DESIGN TOKENS)
+       ========================================================================== */
     :root {
-      --color-kvot-bright:#f3b87b; 	/* beige*/
-      --color-kvot-accent:#bb6c5d;	/*red-brown*/
-      --color-kvot-background:#352921;/*dark-brown*/
-      --color-kvot-primary:#344126;	/*dark-green*/
+      /* Brand Colors */
+      --color-kvot-bright: #f3b87b;      /* Beige */
+      --color-kvot-accent: #bb6c5d;      /* Red-brown */
+      --color-kvot-background: #352921; /* Dark brown */
+      --color-kvot-primary: #344126;     /* Dark green */
       
-      /* New harmonized palette */
+      /* Panel & Surface Colors */
       --color-panel-bg: #faf8f6;
       --color-panel-border: #e5ddd5;
+      --color-hover-bg: #f5ede5;
+      --color-selected-bg: #ede3d8;
+      
+      /* Text Colors */
       --color-text-primary: #2d2416;
       --color-text-secondary: #6b5d4f;
       --color-text-muted: #9b8d7f;
-      --color-hover-bg: #f5ede5;
-      --color-selected-bg: #ede3d8;
       --color-selected-text: #2d2416;
     }
+
+    /* ==========================================================================
+       3. TYPOGRAPHY & FONTS
+       ========================================================================== */
     @font-face {
       font-family: RawengulkSans;
       src: url(./vendors/font/RawengulkSans-094.otf);
     }
+
     body { 
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
       margin: 0; 
@@ -40,7 +55,10 @@
       overflow: hidden;
       color: var(--color-text-primary);
     }
-    
+
+    /* ==========================================================================
+       4. DRAG & DROP OVERLAY
+       ========================================================================== */
     #dropOverlay {
       position: fixed;
       top: 0;
@@ -69,7 +87,10 @@
       color: var(--color-kvot-primary);
       font-weight: 600;
     }
-    
+
+    /* ==========================================================================
+       5. FILE TABS & HEADER
+       ========================================================================== */
     .tabs-container {
       background: var(--color-kvot-background);
       border-bottom: 1px solid var(--color-kvot-bright);
@@ -167,7 +188,10 @@
     .add-file-btn:hover {
       background: #405533;
     }
-    
+
+    /* ==========================================================================
+       6. MAIN LAYOUT & PANELS
+       ========================================================================== */
     .container { 
       display: grid; 
       grid-template-columns: 350px 1fr; 
@@ -195,6 +219,16 @@
       font-weight: 600;
     }
     
+    .right-panel-content {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ==========================================================================
+       7. TREE VIEW (File Structure)
+       ========================================================================== */
     #tree { 
       flex: 1;
       overflow-y: auto; 
@@ -202,6 +236,7 @@
       padding: 4px;
     }
     
+    /* Tree Item Base */
     .tree-item { 
       margin: 2px 0; 
       padding: 6px 8px;
@@ -218,6 +253,7 @@
       background: var(--color-hover-bg);
     }
     
+    /* Tree Item - Group Type */
     .tree-item.group { 
       font-weight: 500;
       color: var(--color-kvot-primary);
@@ -235,6 +271,7 @@
       padding-left: 5px;
     }
     
+    /* Tree Item - Dataset Type */
     .tree-item.dataset { 
       color: var(--color-text-secondary);
       font-size: 12px;
@@ -253,6 +290,7 @@
       padding-left: 5px;
     }
     
+    /* Tree Toggle Button */
     .tree-toggle {
       display: inline-flex;
       align-items: center;
@@ -270,6 +308,7 @@
       transform: rotate(-90deg);
     }
     
+    /* Tree Icons */
     .tree-icon {
       width: 18px;
       height: 18px;
@@ -303,6 +342,7 @@
       );
     }
     
+    /* Tree Labels & Meta */
     .tree-label {
       flex: 1;
       overflow: hidden;
@@ -317,6 +357,7 @@
       flex-shrink: 0;
     }
     
+    /* Tree Group Children Container */
     .tree-group-children {
       margin-left: 0;
       border-left: 2px solid var(--color-panel-border);
@@ -327,27 +368,18 @@
     .tree-group-children.expanded {
       display: block;
     }
-    
+
+    /* ==========================================================================
+       8. SEARCH FUNCTIONALITY
+       ========================================================================== */
     .search-container {
       position: relative;
       margin-bottom: 12px;
-      display: none; /* Hidden by default */
+      display: none;
     }
 
     .search-container.visible {
       display: block;
-    }
-
-    .multi-select-hint {
-        background: var(--color-kvot-bright);
-        color: var(--color-kvot-background);
-        padding: 8px 12px;
-        border-radius: 4px;
-        font-size: 12px;
-        margin-bottom: 12px;
-        display: flex;
-        align-items: center;
-        gap: 8px;
     }
 
     #treeSearch {
@@ -398,6 +430,7 @@
       display: block;
     }
 
+    /* Search Results Highlighting */
     .tree-item.search-hidden {
       display: none !important;
     }
@@ -421,13 +454,9 @@
       display: block !important;
     }
 
-    .right-panel-content {
-      flex: 1;
-      overflow-y: auto;
-      display: flex;
-      flex-direction: column;
-    }
-    
+    /* ==========================================================================
+       9. CHART & VISUALIZATION
+       ========================================================================== */
     #plotlyChartContainer {
       margin-bottom: 16px;
       display: none;
@@ -437,6 +466,15 @@
       display: block;
     }
     
+    #plotlyChart {
+      min-height: 500px;
+      height: 500px;
+      max-height: 2000px;
+      resize: vertical;
+      overflow: auto;
+    }
+    
+    /* Chart Controls */
     .chart-controls {
       display: flex;
       gap: 12px;
@@ -511,15 +549,10 @@
     .chart-controls button.secondary:hover {
       background: var(--color-text-primary);
     }
-    
-    #plotlyChart {
-      min-height: 500px;
-      height: 500px;
-      max-height: 2000px;
-      resize: vertical;
-      overflow: auto;
-    }
-    
+
+    /* ==========================================================================
+       10. DATASET INFO PANEL
+       ========================================================================== */
     #info { 
       flex: 1;
     }
@@ -553,7 +586,6 @@
       padding: 12px;
       background: var(--color-hover-bg);
       border-radius: 6px;
-      border-left: 3px solid var(--color-kvot-accent);
       border: 1px solid var(--color-panel-border);
       border-left: 3px solid var(--color-kvot-accent);
     }
@@ -564,7 +596,22 @@
       font-size: 13px;
       font-weight: 600;
     }
-    
+
+    .multi-select-hint {
+      background: var(--color-kvot-bright);
+      color: var(--color-kvot-background);
+      padding: 8px 12px;
+      border-radius: 4px;
+      font-size: 12px;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* ==========================================================================
+       11. STATUS & FEEDBACK STATES
+       ========================================================================== */
     .error { 
       background: #fef2f2; 
       color: #991b1b; 
@@ -578,11 +625,10 @@
       color: var(--color-text-muted); 
       font-style: italic; 
     }
-    
-    #fileInput {
-      display: none;
-    }
-    
+
+    /* ==========================================================================
+       12. DRAG & DROP SORTING (SortableJS)
+       ========================================================================== */
     .sortable-ghost {
       opacity: 0.4;
     }
@@ -590,21 +636,10 @@
     .sortable-drag {
       opacity: 0.8;
     }
-    
-    .smallsvg {
-        fill: var(--color-kvot-bright);
-        vertical-align: bottom;
-        height: 15px;
-        transition: all 0.2s;
-        transform-origin: 50% 50%;
-    }
-    .smallsvg:hover {
-        fill: var(--color-kvot-accent);
-        transform: scale(1.1);
-        cursor:pointer;
-    }
-    
-    /* Footer styles */
+
+    /* ==========================================================================
+       13. FOOTER
+       ========================================================================== */
     footer {
       height: 30px;
       border-top: var(--color-kvot-accent) solid 1px;
@@ -616,7 +651,7 @@
       padding: 0 16px;
       font-size: 15px;
       flex-shrink: 0;
-      font-family:RawengulkSans;
+      font-family: RawengulkSans;
     }
 
     footer ul {
@@ -645,16 +680,63 @@
     footer a:hover {
       color: var(--color-kvot-accent);
     }
-    
+
+    /* ==========================================================================
+       14. ICONS & SVG
+       ========================================================================== */
     .smallsvg {
       width: 14px;
       height: 14px;
       fill: currentColor;
       display: inline-block;
       vertical-align: middle;
+      transition: all 0.2s;
+      transform-origin: 50% 50%;
     }
     
-    /* Scrollbar styling */
+    .smallsvg:hover {
+      fill: var(--color-kvot-accent);
+      transform: scale(1.1);
+      cursor: pointer;
+    }
+
+    /* ==========================================================================
+       15. LOGO (Header Branding)
+       ========================================================================== */
+    .logo {
+      margin-left: 0px;
+      margin-top: 0px;
+      padding-bottom: 10px;
+      text-align: left;
+      height: 40px;
+    }
+    
+    .logo:hover {
+      fill: #bb6c5d;
+    }
+    
+    .stRight {
+      fill: #bb6c5d;
+    }
+    
+    .stTop {
+      fill: #f3b87b;
+    }
+    
+    .stLeft {
+      fill: #344126;
+    }
+
+    /* ==========================================================================
+       16. UTILITIES & HIDDEN ELEMENTS
+       ========================================================================== */
+    #fileInput {
+      display: none;
+    }
+
+    /* ==========================================================================
+       17. CUSTOM SCROLLBAR
+       ========================================================================== */
     ::-webkit-scrollbar {
       width: 8px;
       height: 8px;
@@ -672,26 +754,6 @@
     
     ::-webkit-scrollbar-thumb:hover {
       background: var(--color-text-secondary);
-    }
-    .logo {
-     margin-left: 0px;
-     margin-top: 0px;
-     padding-bottom: 10px;
-     text-align: left;
-     height: 40px;
-    }
-    .logo:hover {
-      fill: #bb6c5d;
-      /*transform: scale(1.05);*/
-    }
-    .stRight{
-      fill:#bb6c5d;
-    }
-    .stTop{
-      fill:#f3b87b;
-    }
-    .stLeft{
-      fill:#344126;
     }
   </style>
 </head>
@@ -823,24 +885,216 @@
 
   <script src="https://cdn.jsdelivr.net/npm/h5wasm@latest/dist/iife/h5wasm.min.js"></script>
   <script>
-    // Placeholder for toggleMap function
-    function toggleMap() {
-      console.log('Map toggle clicked (not implemented)');
-    }
-  </script>
+    /* ==========================================================================
+       HDF5 FILE VIEWER - JAVASCRIPT APPLICATION
+       ==========================================================================
+       
+       Module Organization:
+       1. GLOBAL STATE & CONFIGURATION
+       2. UTILITY FUNCTIONS
+       3. HDF5 DATA ACCESS
+       4. FILE MANAGEMENT
+       5. TAB MANAGEMENT
+       6. TREE VIEW
+       7. RADIONUCLIDE LINE STYLES
+       8. CHART CONTROLS
+       9. CHART CREATION
+       10. DYNAMIC LEGEND
+       11. DATASET INFORMATION DISPLAY
+       12. SEARCH FUNCTIONALITY
+       13. DRAG & DROP
+       14. CLIPBOARD & EXPORT
+       15. EVENT LISTENERS & INITIALIZATION
+       
+       ========================================================================== */
 
-  <script src="https://cdn.jsdelivr.net/npm/h5wasm@latest/dist/iife/h5wasm.min.js"></script>
-  <script>
+
+    /**
+     * ==========================================================================
+     * HDF5 FILE VIEWER APPLICATION
+     * ==========================================================================
+     * 
+     * A browser-based viewer for HDF5 files with interactive tree navigation,
+     * Plotly.js charting, and multi-file comparison capabilities.
+     * 
+     * @overview
+     * - Section 1: Global State & Configuration
+     * - Section 2: Utility Functions  
+     * - Section 3: HDF5 Data Access
+     * - Section 4: File Management
+     * - Section 5: Tab Management
+     * - Section 6: Tree View
+     * - Section 7: Radionuclide Line Styles
+     * - Section 8: Chart Controls
+     * - Section 9: Chart Creation
+     * - Section 10: Dynamic Legend
+     * - Section 11: Dataset Information Display
+     * - Section 12: Search Functionality
+     * - Section 13: Drag & Drop
+     * - Section 14: Clipboard & Export
+     * - Section 15: Event Listeners & Initialization
+     * 
+     * @requires h5wasm - WebAssembly-based HDF5 library
+     * @requires Plotly.js - Interactive charting library
+     * @requires SortableJS - Drag-and-drop sorting library
+     * 
+     * @author KVOT Development Team
+     * @version 2.0.0
+     */
+
+    /* ==========================================================================
+       1. GLOBAL STATE & CONFIGURATION
+       ========================================================================== */
+    
+    /**
+     * @typedef {Object} FileState
+     * @property {boolean} enabled - Whether the file is currently enabled for display
+     */
+
+    /**
+     * @typedef {Object} ChartData
+     * @property {Array} traces - Plotly trace data
+     * @property {Object} layout - Plotly layout configuration
+     * @property {string} path - Dataset path being charted
+     */
+
+    /** @type {Object.<string, Object>} Map of filename to HDF5 file objects */
     let loadedFiles = {};
-    let fileStates = {}; // Track enabled/disabled state
-    let fileOrder = []; // Track tab order
+    /** @type {Object.<string, boolean>} Map of filename to enabled/disabled state */
+    let fileStates = {};
+    /** @type {string[]} Ordered list of filenames (determines tab order) */
+    let fileOrder = [];
+    
+    // Selection state
+    /** @type {string|null} Currently selected HDF5 path in the tree view */
     let selectedDatasetPath = null;
-    let selectedIsRadionuclidesGroup = false; // Track if selected path is radionuclides group
-    let currentChartData = null; // Store current chart data for export
-    let currentTreeFile = null; // Track the current first enabled file
-    let selectedDatasets = []; // Array to track multiple selected datasets
-    let multiSelectMode = false; // Track if we're in multi-select mode
+    /** @type {boolean} True if the selected path is a radionuclides group (for special charting) */
+    let selectedIsRadionuclidesGroup = false;
+    /** @type {string[]} Array of selected paths when in multi-select mode (Ctrl+click) */
+    let selectedDatasets = [];
+    /** @type {boolean} True when user is selecting multiple datasets with Ctrl/Cmd key */
+    let multiSelectMode = false;
+    
+    // Chart state
+    /** @type {ChartData|null} Current chart data (traces, layout, path) for export/clipboard */
+    let currentChartData = null;
+    /** @type {string|null} Filename of the first enabled file (determines tree structure source) */
+    let currentTreeFile = null;
+    
+    // Dynamic legend state
+    /** @type {boolean} When true, legend updates to show only traces visible in current viewport */
+    let dynamicLegendEnabled = true;
+    
+    // Search state
+    /** @type {number|null} Timeout ID for debounced search input */
+    let searchTimeout = null;
+    /** @type {string} Current search/filter term applied to tree view */
+    let currentSearchTerm = '';
+    
+    // Drag & drop state
+    /** @type {number} Counter for drag enter/leave events to handle nested elements */
+    let dragCounter = 0;
 
+
+    /* ==========================================================================
+       1.1 CONSTANTS
+       ========================================================================== */
+    
+    /**
+     * Default placeholder message shown in the info panel when no dataset is selected.
+     * @constant {string}
+     */
+    const INFO_PANEL_DEFAULT_MESSAGE = 'Select a dataset to view its details';
+    
+    /**
+     * Standard legend positioning for Plotly charts.
+     * Places legend to the right of the chart area.
+     * @constant {Object}
+     */
+    const CHART_LEGEND_CONFIG = {
+      x: 1.02,      // Slightly right of chart area
+      y: 1,         // Top aligned
+      xanchor: 'left',
+      yanchor: 'top'
+    };
+    
+    /**
+     * Y-axis exponent display settings for scientific notation.
+     * Shows all exponents in power format (e.g., 10^6 instead of 1e6).
+     * @constant {Object}
+     */
+    const CHART_YAXIS_EXPONENT = {
+      showexponent: 'all',
+      exponentformat: 'power'
+    };
+    
+    /**
+     * Chart margins with extra right padding for legend.
+     * @constant {Object}
+     */
+    const CHART_MARGIN_WITH_LEGEND = { r: 150 };
+
+
+    /* ==========================================================================
+       1.2 DOM ELEMENT HELPERS
+       ========================================================================== */
+    
+    /**
+     * Cached DOM element references (initialized on DOMContentLoaded)
+     * @type {Object.<string, HTMLElement>}
+     */
+    const DOM = {};
+    
+    /**
+     * Initialize cached DOM element references
+     * Call once after DOM is ready
+     */
+    function initDOMReferences() {
+      DOM.plotlyChart = document.getElementById('plotlyChart');
+      DOM.plotlyChartContainer = document.getElementById('plotlyChartContainer');
+      DOM.info = document.getElementById('info');
+      DOM.tree = document.getElementById('tree');
+      DOM.xAxisScale = document.getElementById('xAxisScale');
+      DOM.yAxisScale = document.getElementById('yAxisScale');
+      DOM.searchInput = document.getElementById('searchInput');
+      DOM.searchResults = document.getElementById('searchResults');
+      DOM.tabs = document.getElementById('tabs');
+      DOM.showTotal = document.getElementById('showTotal');
+      DOM.showTotalContainer = document.getElementById('showTotalContainer');
+      DOM.showTotalLabel = document.getElementById('showTotalLabel');
+      DOM.dynamicLegendToggle = document.getElementById('dynamicLegendToggle');
+      DOM.dropZone = document.getElementById('dropZone');
+      DOM.fileTabs = document.getElementById('fileTabs');
+    }
+    
+    /**
+     * Get element by ID (with fallback if DOM cache not initialized)
+     * @param {string} id - Element ID
+     * @returns {HTMLElement|null}
+     */
+    function getElement(id) {
+      return DOM[id] || document.getElementById(id);
+    }
+    
+    /**
+     * Show or hide the "Show Total" checkbox based on context
+     * @param {boolean} show - Whether to show the checkbox
+     */
+    function setShowTotalVisible(show) {
+      const label = getElement('showTotalLabel');
+      if (label) {
+        label.style.display = show ? '' : 'none';
+      }
+    }
+
+
+    /* ==========================================================================
+       2. UTILITY FUNCTIONS
+       ========================================================================== */
+    
+    /**
+     * Wait for h5wasm library to be loaded and ready
+     */
     async function waitForH5Wasm() {
       let attempts = 0;
       while (!window.h5wasm && attempts < 50) {
@@ -852,10 +1106,17 @@
       return window.h5wasm;
     }
 
+    /**
+     * Escape HTML special characters for safe rendering
+     */
     function escapeHtml(text) {
       const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
       return String(text).replace(/[&<>"']/g, m => map[m]);
     }
+    
+    /**
+     * Escape value for CSV export (handle commas, quotes, newlines)
+     */
     function escapeCSV(value) {
       if (value === null || value === undefined) {
         return '';
@@ -863,13 +1124,16 @@
       
       const str = String(value);
       
-      // If the value contains comma, quote, or newline, wrap in quotes and escape quotes
       if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
         return '"' + str.replace(/"/g, '""') + '"';
       }
       
       return str;
     }
+    
+    /**
+     * Format HDF5 data type into human-readable string
+     */
     function formatDataType(dtype) {
       if (!dtype) return 'unknown';
       
@@ -908,37 +1172,205 @@
       
       return name;
     }
-
-    function getEnabledFiles() {
-      return fileOrder.filter(key => fileStates[key]);
+    
+    /**
+     * Placeholder for map toggle (footer link)
+     */
+    function toggleMap() {
+      console.log('Map toggle clicked (not implemented)');
     }
-    function toggleGroupExpansion(event, path) {
-      event.stopPropagation(); // Prevent group selection
-      
-      const toggle = event.currentTarget;
-      const groupItem = toggle.closest('.tree-item.group');
-      const childrenDiv = groupItem.nextElementSibling;
-      
-      // Only handle expand/collapse, don't select the group
-      if (childrenDiv && childrenDiv.classList.contains('tree-group-children')) {
-        const isExpanded = childrenDiv.classList.contains('expanded');
-        
-        if (isExpanded) {
-          childrenDiv.classList.remove('expanded');
-          toggle.classList.add('collapsed');
-          // Remove expanded class from group item (visual indicator)
-          groupItem.classList.remove('expanded');
-        } else {
-          childrenDiv.classList.add('expanded');
-          toggle.classList.remove('collapsed');
-        }
+    
+    /**
+     * Check if a value represents a truthy attribute (handles various formats)
+     * @param {*} value - The value to check
+     * @returns {boolean} True if the value is truthy
+     */
+    function isTruthyAttribute(value) {
+      return value === true || value === 1 || value === 'TRUE' || value === 'True' || value === 'true';
+    }
+    
+    /**
+     * Convert data to a proper array
+     * @param {*} data - The data to convert (array, array-like, or scalar)
+     * @returns {Array} The data as an array
+     */
+    function normalizeDataArray(data) {
+      if (Array.isArray(data)) {
+        return data;
+      } else if (data && typeof data === 'object' && data.length !== undefined) {
+        return Array.from(data);
+      } else {
+        return [data];
       }
     }
-    function getTreeFile() {
-      const enabledFiles = getEnabledFiles();
-      return enabledFiles.length > 0 ? enabledFiles[0] : null;
+    
+    /**
+     * Check if a dataset has the 'probabilistic' attribute set to true
+     * @param {Object} dataset - HDF5 dataset with attrs
+     * @returns {boolean} True if probabilistic
+     */
+    function checkIsProbabilistic(dataset) {
+      if (dataset && dataset.attrs && typeof dataset.attrs === 'object') {
+        for (const attrName in dataset.attrs) {
+          if (attrName === 'probabilistic') {
+            const attrObj = dataset.attrs[attrName];
+            if (attrObj && typeof attrObj.value !== 'undefined') {
+              return isTruthyAttribute(attrObj.value);
+            }
+          }
+        }
+      }
+      return false;
+    }
+    
+    /**
+     * Compute mean values from probabilistic data array
+     * @param {Array} yArray - Raw data array (may contain realizations)
+     * @param {Array} timeData - Time data for reference length
+     * @returns {Array} Array of mean values per timestep
+     */
+    function computeProbabilisticMean(yArray, timeData) {
+      if (Array.isArray(yArray[0])) {
+        // Array of arrays: each timeSlice has multiple realizations
+        return yArray.map(timeSlice => {
+          if (Array.isArray(timeSlice)) {
+            const sum = timeSlice.reduce((a, b) => a + b, 0);
+            return sum / timeSlice.length;
+          }
+          return timeSlice;
+        });
+      } else if (yArray.length > timeData.length && yArray.length % timeData.length === 0) {
+        // Flat array: realizations interleaved or sequential
+        const numRealizations = Math.floor(yArray.length / timeData.length);
+        const means = [];
+        for (let t = 0; t < timeData.length; t++) {
+          let sum = 0;
+          for (let r = 0; r < numRealizations; r++) {
+            sum += yArray[t * numRealizations + r];
+          }
+          means.push(sum / numRealizations);
+        }
+        return means;
+      }
+      return yArray;
+    }
+    
+    /**
+     * Get current axis scale values from UI
+     * @returns {{xScale: string, yScale: string}}
+     */
+    function getChartScales() {
+      return {
+        xScale: getElement('xAxisScale')?.value || 'linear',
+        yScale: getElement('yAxisScale')?.value || 'linear'
+      };
+    }
+    
+    /**
+     * Create base layout configuration for Plotly charts
+     * @param {Object} options - Layout options
+     * @param {string} options.title - Chart title
+     * @param {string} options.xAxisTitle - X axis title
+     * @param {string} options.yAxisTitle - Y axis title
+     * @param {string} [options.xScale='linear'] - X axis scale type
+     * @param {string} [options.yScale='linear'] - Y axis scale type
+     * @returns {Object} Plotly layout configuration
+     */
+    function createBaseLayout({ title, xAxisTitle, yAxisTitle, xScale = 'linear', yScale = 'linear' }) {
+      return {
+        title: {
+          text: title,
+          font: { size: 14 },
+          xanchor: 'left',
+          x: 0
+        },
+        xaxis: { 
+          title: xAxisTitle,
+          type: xScale
+        },
+        yaxis: { 
+          title: yAxisTitle,
+          type: yScale,
+          ...CHART_YAXIS_EXPONENT
+        },
+        hovermode: 'closest',
+        showlegend: true,
+        legend: CHART_LEGEND_CONFIG,
+        margin: CHART_MARGIN_WITH_LEGEND
+      };
+    }
+    
+    /**
+     * Hide the chart container and clear chart data
+     */
+    function hideChart() {
+      const container = getElement('plotlyChartContainer');
+      if (container) {
+        container.classList.remove('visible');
+      }
+      currentChartData = null;
+    }
+    
+    /**
+     * Reset info panel to default message
+     */
+    function resetInfoPanel() {
+      const info = getElement('info');
+      if (info) {
+        info.innerHTML = INFO_PANEL_DEFAULT_MESSAGE;
+      }
+    }
+    
+    /**
+     * Render a Plotly chart with standard configuration
+     * @param {Array} traces - Plotly trace data
+     * @param {Object} layout - Plotly layout configuration
+     * @param {string} path - Dataset path (for storing in currentChartData)
+     */
+    function renderChart(traces, layout, path) {
+      const container = getElement('plotlyChartContainer');
+      const config = getPlotlyConfig('chart');
+      
+      currentChartData = { traces, layout, path };
+      if (container) {
+        container.classList.add('visible');
+      }
+      
+      Plotly.newPlot('plotlyChart', traces, layout, config).then(() => {
+        setupDynamicLegend(getElement('plotlyChart'));
+      });
     }
 
+
+    /* ==========================================================================
+       3. HDF5 DATA ACCESS
+       ========================================================================== */
+    
+    /**
+     * Check if a dataset or group exists at the given path in an HDF5 file.
+     * Safely handles exceptions from invalid paths.
+     * 
+     * @param {Object} file - h5wasm File object
+     * @param {string} path - HDF5 path to check (e.g., '/group/dataset')
+     * @returns {boolean} True if the path exists and is accessible
+     */
+    function checkDatasetExistsInFile(file, path) {
+      try {
+        const dataset = file.get(path);
+        return dataset !== null && dataset !== undefined;
+      } catch (e) {
+        return false;
+      }
+    }
+    
+    /**
+     * Check if a path exists in a file referenced by filename.
+     * Looks up the file in loadedFiles by name before checking.
+     * 
+     * @param {string} fileName - Key in loadedFiles object
+     * @param {string} path - HDF5 path to check
+     * @returns {boolean} True if file exists in loadedFiles and path is valid
+     */
     function checkIfPathExistsInFile(fileName, path) {
       try {
         const file = loadedFiles[fileName];
@@ -950,6 +1382,216 @@
       }
     }
 
+    /**
+     * Retrieve time axis data from the standard '/time' dataset.
+     * This is the x-axis data for time-dependent plots.
+     * 
+     * @param {Object} file - h5wasm File object
+     * @returns {number[]|null} Array of time values, or null if not found
+     */
+    function getTimeData(file) {
+      try {
+        const timeDataset = file.get('/time');
+        if (timeDataset && typeof timeDataset.value !== 'undefined') {
+          let timeData = timeDataset.value;
+          if (timeData && typeof timeData === 'object' && timeData.length !== undefined) {
+            return Array.from(timeData);
+          }
+          return [timeData];
+        }
+      } catch (e) {
+        console.warn('Could not read /time dataset:', e.message);
+      }
+      return null;
+    }
+
+    /**
+     * Get the unit string from the '/time' dataset's 'unit' attribute.
+     * Used for labeling the x-axis on time-dependent charts.
+     * 
+     * @param {Object} file - h5wasm File object
+     * @returns {string} Time unit string (e.g., 'years', 's'), or empty string if not found
+     */
+    function getTimeUnit(file) {
+      try {
+        const timeDataset = file.get('/time');
+        if (timeDataset && timeDataset.attrs && typeof timeDataset.attrs === 'object') {
+          for (const attrName in timeDataset.attrs) {
+            if (attrName === 'unit') {
+              const attrObj = timeDataset.attrs[attrName];
+              if (attrObj && attrObj.value !== null && typeof attrObj.value !== 'undefined') {
+                return attrObj.value;
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Could not read time unit:', e);
+      }
+      return '';
+    }
+
+    /**
+     * Check if a dataset has the 'time_dependent' attribute set to a truthy value.
+     * Datasets marked as time-dependent are eligible for time-series plotting.
+     * 
+     * @param {Object} dataset - h5wasm Dataset object with attrs property
+     * @returns {boolean} True if the dataset has time_dependent=true/1/'TRUE'/'True'
+     */
+    function isTimeDependent(dataset) {
+      try {
+        if (dataset.attrs && typeof dataset.attrs === 'object') {
+          for (const attrName in dataset.attrs) {
+            if (attrName === 'time_dependent') {
+              const attrObj = dataset.attrs[attrName];
+              if (attrObj && typeof attrObj.value !== 'undefined') {
+                const value = attrObj.value;
+                return value === true || value === 1 || value === 'TRUE' || value === 'True';
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Error checking time_dependent attribute:', e);
+      }
+      return false;
+    }
+    
+    /**
+     * Check if a group contains radionuclide data suitable for special charting.
+     * A radionuclides group must have:
+     * - IndexLists attribute containing 'Radionuclides'
+     * - time_dependent attribute set to true
+     * 
+     * These groups get special treatment: all child datasets are plotted together
+     * with isotope-specific line styles and colors.
+     * 
+     * @param {Object} file - h5wasm File object
+     * @param {string} path - HDF5 path to the group
+     * @returns {boolean} True if the group is a radionuclides data container
+     */
+    function checkGroupForRadionuclides(file, path) {
+      try {
+        const group = file.get(path);
+        if (!group || group.type.toLowerCase() !== 'group') {
+          return false;
+        }
+        
+        let hasRadionuclidesIndex = false;
+        let isTimeDependentGroup = false;
+        
+        if (group.attrs && typeof group.attrs === 'object') {
+          for (const attrName in group.attrs) {
+            if (attrName === 'IndexLists') {
+              const attrObj = group.attrs[attrName];
+              if (attrObj && attrObj.value !== null && typeof attrObj.value !== 'undefined') {
+                const value = attrObj.value;
+                if (Array.isArray(value) && value.includes('Radionuclides')) {
+                  hasRadionuclidesIndex = true;
+                } else if (typeof value === 'string' && value === 'Radionuclides') {
+                  hasRadionuclidesIndex = true;
+                }
+              }
+            }
+            
+            if (attrName === 'time_dependent') {
+              const attrObj = group.attrs[attrName];
+              if (attrObj && typeof attrObj.value !== 'undefined') {
+                const value = attrObj.value;
+                isTimeDependentGroup = value === true || value === 1 || value === 'TRUE' || value === 'True';
+              }
+            }
+          }
+        }
+        
+        return hasRadionuclidesIndex && isTimeDependentGroup;
+      } catch (e) {
+        console.warn('Error checking group for radionuclides:', e);
+        return false;
+      }
+    }
+
+
+    /* ==========================================================================
+       4. FILE MANAGEMENT
+       ========================================================================== */
+    
+    /**
+     * Get list of filenames for currently enabled (visible) files.
+     * Maintains the order from fileOrder array.
+     * 
+     * @returns {string[]} Array of enabled filenames in display order
+     */
+    function getEnabledFiles() {
+      return fileOrder.filter(key => fileStates[key]);
+    }
+    
+    /**
+     * Get the filename of the first enabled file.
+     * This file's structure is used to render the tree view.
+     * 
+     * @returns {string|null} Filename of first enabled file, or null if none enabled
+     */
+    function getTreeFile() {
+      const enabledFiles = getEnabledFiles();
+      return enabledFiles.length > 0 ? enabledFiles[0] : null;
+    }
+
+    /**
+     * Toggle a file's enabled/disabled state and update the UI.
+     * Enabled files contribute data to charts; disabled files are hidden.
+     * 
+     * @param {string} fileName - The filename to toggle
+     */
+    function toggleFileState(fileName) {
+      fileStates[fileName] = !fileStates[fileName];
+      updateTabs();
+    }
+
+    /**
+     * Remove a file completely from the viewer.
+     * Cleans up all references and updates the UI. If this was the last
+     * file, resets the viewer to its initial empty state.
+     * 
+     * @param {string} fileName - The filename to remove
+     * @returns {Promise<void>}
+     */
+    async function removeFile(fileName) {
+      delete loadedFiles[fileName];
+      delete fileStates[fileName];
+      fileOrder = fileOrder.filter(k => k !== fileName);
+      
+      const enabledFiles = getEnabledFiles();
+      
+      updateTabs();
+      
+      if (enabledFiles.length === 0) {
+        // No enabled files - clear UI
+        currentTreeFile = null;
+        const tree = document.getElementById('tree');
+        tree.innerHTML = '<div class="loading">Drop HDF5 files or click "+ Add Files" to start...</div>';
+        tree.classList.add('loading');
+        resetInfoPanel();
+        hideChart();
+        selectedDatasetPath = null;
+        selectedIsRadionuclidesGroup = false;
+        
+        document.querySelector('.search-container').classList.remove('visible');
+        
+        const hint = document.getElementById('multiSelectHint');
+        if (hint) {
+          hint.style.display = 'none';
+        }
+      }
+    }
+    
+    /**
+     * Refresh the info panel and chart display after file selection changes.
+     * Verifies the selected path still exists in the current tree file.
+     * If the path no longer exists, clears the selection.
+     * 
+     * @returns {void}
+     */
     function refreshInfoAndChart() {
       if (!selectedDatasetPath) {
         return;
@@ -957,29 +1599,25 @@
 
       const treeFile = getTreeFile();
       
-      // Check if selected path exists in new first file
       if (!treeFile || !checkIfPathExistsInFile(treeFile, selectedDatasetPath)) {
-        // Clear selection
-        document.getElementById('info').innerHTML = 'Select a dataset to view its details';
-        document.getElementById('plotlyChartContainer').classList.remove('visible');
-        currentChartData = null;
+        // Clear selection if path doesn't exist
+        resetInfoPanel();
+        hideChart();
         selectedDatasetPath = null;
         selectedIsRadionuclidesGroup = false;
         
-        // Remove selection highlighting
         document.querySelectorAll('.tree-item.dataset').forEach(el => el.classList.remove('selected'));
         document.querySelectorAll('.tree-item.group').forEach(el => el.classList.remove('expanded'));
         return;
       }
 
-      // Path exists, refresh the info and chart
+      // Path exists, refresh display
       if (selectedIsRadionuclidesGroup) {
         showNodeAttributes(selectedDatasetPath, true);
         createRadionuclidesChart(selectedDatasetPath);
       } else {
         showNodeAttributes(selectedDatasetPath, false);
         
-        // Check if the dataset is time-dependent
         try {
           const file = loadedFiles[treeFile];
           const dataset = file.get(selectedDatasetPath);
@@ -992,10 +1630,27 @@
       }
     }
 
+
+    /* ==========================================================================
+       5. TAB MANAGEMENT
+       ========================================================================== */
+    
+    /**
+     * Update the file tabs display and reinitialize drag-drop sorting.
+     * Renders a tab for each loaded file, handles click-to-toggle and
+     * drag-to-reorder functionality via SortableJS.
+     * 
+     * Tab states:
+     * - enabled: File data included in charts (blue indicator)
+     * - disabled: File loaded but hidden from charts (gray)
+     * 
+     * @returns {void}
+     */
     function updateTabs() {
       const tabsContainer = document.getElementById('fileTabs');
-      const previousTreeFile = currentTreeFile; // Use stored value
+      const previousTreeFile = currentTreeFile;
       
+      // Render tabs
       tabsContainer.innerHTML = fileOrder.map(key => {
         const isEnabled = fileStates[key];
         return `
@@ -1006,7 +1661,7 @@
         `;
       }).join('');
       
-      // Add click handlers
+      // Add click handlers for toggle
       document.querySelectorAll('.file-tab').forEach(tab => {
         const fileName = tab.getAttribute('data-file');
         tab.addEventListener('click', (e) => {
@@ -1016,23 +1671,20 @@
         });
       });
       
-      // Initialize sortable
+      // Initialize SortableJS for drag reordering
       if (window.Sortable && tabsContainer.children.length > 0) {
         Sortable.create(tabsContainer, {
           animation: 150,
           ghostClass: 'sortable-ghost',
           dragClass: 'sortable-drag',
           onEnd: function(evt) {
-            // Capture previous before updating order
             const previousFirst = currentTreeFile;
             
-            // Update file order based on new tab positions
             const newOrder = Array.from(tabsContainer.children).map(
               tab => tab.getAttribute('data-file')
             );
             fileOrder = newOrder;
             
-            // Update current tree file
             const newTreeFile = getTreeFile();
             currentTreeFile = newTreeFile;
             
@@ -1040,22 +1692,18 @@
             
             console.log('Drag ended - Previous:', previousFirst, 'New:', newTreeFile, 'Changed:', treeFileChanged);
             
-            // Update tree if first file changed
             if (treeFileChanged) {
               refreshTreeStructure();
             }
             
-            // Always refresh info and chart
             refreshInfoAndChart();
           }
         });
       }
       
-      // Check if first enabled file changed (for enable/disable actions)
+      // Check if tree file changed
       const newTreeFile = getTreeFile();
       const treeFileChanged = previousTreeFile !== newTreeFile;
-      
-      // Update the tracked current tree file
       currentTreeFile = newTreeFile;
       
       console.log('updateTabs - Previous:', previousTreeFile, 'New:', newTreeFile, 'Changed:', treeFileChanged);
@@ -1064,87 +1712,83 @@
         refreshTreeStructure();
       }
       
-      // Always refresh info and chart when tabs change
       refreshInfoAndChart();
     }
 
-    function toggleFileState(fileName) {
-      // Don't update currentTreeFile here - let updateTabs do it
-      fileStates[fileName] = !fileStates[fileName];
-      updateTabs();
-    }
 
-    async function removeFile(fileName) {
-      delete loadedFiles[fileName];
-      delete fileStates[fileName];
-      fileOrder = fileOrder.filter(k => k !== fileName);
+    /* ==========================================================================
+       6. TREE VIEW
+       ========================================================================== */
+    
+    /**
+     * Toggle the expand/collapse state of a group node in the tree.
+     * Called when clicking the triangle toggle icon.
+     * Does NOT select the group or trigger chart updates.
+     * 
+     * @param {Event} event - Click event on the toggle icon
+     * @param {string} path - HDF5 path of the group
+     * @returns {void}
+     */
+    function toggleGroupExpansion(event, path) {
+      event.stopPropagation();
       
-      const enabledFiles = getEnabledFiles();
+      const toggle = event.currentTarget;
+      const groupItem = toggle.closest('.tree-item.group');
+      const childrenDiv = groupItem.nextElementSibling;
       
-      // Always update tabs - don't clear them completely
-      updateTabs();
-      
-      if (enabledFiles.length > 0) {
-        // Has enabled files - refresh tree
-        // (updateTabs already called above)
-      } else {
-        // No enabled files - clear tree and info but keep tabs
-        currentTreeFile = null;
-        const tree = document.getElementById('tree');
-        tree.innerHTML = '<div class="loading">Drop HDF5 files or click "+ Add Files" to start...</div>';
-        tree.classList.add('loading');
-        document.getElementById('info').innerHTML = 'Select a dataset to view its details';
-        document.getElementById('plotlyChartContainer').classList.remove('visible');
-        currentChartData = null;
-        selectedDatasetPath = null;
-        selectedIsRadionuclidesGroup = false;
+      if (childrenDiv && childrenDiv.classList.contains('tree-group-children')) {
+        const isExpanded = childrenDiv.classList.contains('expanded');
         
-        // Hide search bar
-        document.querySelector('.search-container').classList.remove('visible');
-        
-        // Hide multi-select hint
-        const hint = document.getElementById('multiSelectHint');
-        if (hint) {
-          hint.style.display = 'none';
+        if (isExpanded) {
+          childrenDiv.classList.remove('expanded');
+          toggle.classList.add('collapsed');
+          groupItem.classList.remove('expanded');
+        } else {
+          childrenDiv.classList.add('expanded');
+          toggle.classList.remove('collapsed');
         }
-        
-        // Don't clear tabs here - updateTabs() already called above
       }
     }
     
+    /**
+     * Handle dataset selection in single or multi-select mode.
+     * 
+     * Single-click: Selects one dataset, shows its info and chart.
+     * Ctrl/Cmd+click: Adds/removes dataset from multi-selection,
+     *                 shows combined info and comparison chart.
+     * 
+     * @param {string} path - HDF5 path to the dataset
+     * @param {Event} [evt] - Click event (used to detect Ctrl/Cmd key)
+     * @returns {void}
+     */
     function selectDataset(path, evt) {
       evt?.stopPropagation();
       
-      const isCtrlKey = evt?.ctrlKey || evt?.metaKey; // Support both Ctrl (Windows/Linux) and Cmd (Mac)
+      const isCtrlKey = evt?.ctrlKey || evt?.metaKey;
       const datasetElement = evt?.target?.closest('.tree-item.dataset');
       
       if (isCtrlKey) {
         // Multi-select mode
         multiSelectMode = true;
         
-        // Check if already selected
         const index = selectedDatasets.indexOf(path);
         if (index > -1) {
-          // Deselect
           selectedDatasets.splice(index, 1);
           datasetElement?.classList.remove('selected');
         } else {
-          // Add to selection
           selectedDatasets.push(path);
           datasetElement?.classList.add('selected');
         }
         
-        // Clear group selection
         selectedIsRadionuclidesGroup = false;
         document.querySelectorAll('.tree-item.group').forEach(el => {
           el.classList.remove('expanded');
         });
         
-        // Show info for all selected datasets
         if (selectedDatasets.length > 0) {
           showMultipleDatasetAttributes(selectedDatasets);
         } else {
-          document.getElementById('info').innerHTML = 'Select a dataset to view its details';
+          resetInfoPanel();
           document.getElementById('plotlyChartContainer').classList.remove('visible');
           currentChartData = null;
         }
@@ -1155,52 +1799,60 @@
         selectedDatasetPath = path;
         selectedIsRadionuclidesGroup = false;
         
-        // Clear all selections
         document.querySelectorAll('.tree-item.dataset').forEach(el => el.classList.remove('selected'));
         document.querySelectorAll('.tree-item.group').forEach(el => el.classList.remove('expanded'));
         
-        // Mark this dataset as selected
         datasetElement?.classList.add('selected');
         
         showNodeAttributes(path, false);
       }
     }
     
+    /**
+     * Handle group selection to show group info and radionuclides chart.
+     * Clicking on a group (not its toggle icon) selects it for display.
+     * If the group contains radionuclides data, triggers special charting.
+     * 
+     * @param {Event} event - Click event on the group element
+     * @returns {void}
+     */
     function toggleGroup(event) {
       event.stopPropagation();
       const groupItem = event.currentTarget;
       
-      // Don't do anything if clicking on the toggle triangle (handled separately)
       if (event.target.classList.contains('tree-toggle')) {
         return;
       }
       
       const path = groupItem.getAttribute('data-path');
       if (path) {
-        // Clear multi-select mode
         multiSelectMode = false;
         selectedDatasets = [];
         
         selectedDatasetPath = path;
         selectedIsRadionuclidesGroup = true;
         
-        // Clear all dataset selections
         document.querySelectorAll('.tree-item.dataset.selected').forEach(el => {
           el.classList.remove('selected');
         });
         
-        // Remove 'expanded' class from ALL groups (this is the selection indicator)
         document.querySelectorAll('.tree-item.group').forEach(el => {
           el.classList.remove('expanded');
         });
         
-        // Add 'expanded' class ONLY to this selected group (for selection styling)
         groupItem.classList.add('expanded');
         
         showNodeAttributes(path, true);
       }
     }
 
+    /**
+     * Refresh the tree view from the first enabled file's structure.
+     * Rebuilds the entire tree HTML and applies any active search filter.
+     * Shows loading state during refresh and handles errors gracefully.
+     * 
+     * @returns {Promise<void>}
+     */
     async function refreshTreeStructure() {
       const tree = document.getElementById('tree');
       const searchContainer = document.querySelector('.search-container');
@@ -1209,9 +1861,9 @@
       if (!treeFile) {
         tree.innerHTML = '<div class="loading">Drop HDF5 files or click "+ Add Files" to start...</div>';
         tree.classList.add('loading');
-        document.getElementById('info').innerHTML = 'Select a dataset to view its details';
-        document.getElementById('plotlyChartContainer').classList.remove('visible');
-        searchContainer.classList.remove('visible'); // Hide search bar
+        resetInfoPanel();
+        hideChart();
+        searchContainer.classList.remove('visible');
         return;
       }
       
@@ -1222,14 +1874,15 @@
         const treeHtml = await buildTree(file);
         tree.innerHTML = treeHtml || '<div style="color:#999;">No items found</div>';
         tree.classList.remove('loading');
-        searchContainer.classList.add('visible'); // Show search bar
+        searchContainer.classList.add('visible');
       } catch (err) {
         tree.innerHTML = `<div class="error">Error loading tree: ${escapeHtml(err.message)}</div>`;
         console.error(err);
-        searchContainer.classList.remove('visible'); // Hide search bar on error
+        searchContainer.classList.remove('visible');
       }
     }
-    // Show multi-select hint when tree is loaded with data
+    
+    // Decorator: Show multi-select hint after tree refresh
     const originalRefreshTreeStructure2 = refreshTreeStructure;
     refreshTreeStructure = async function() {
       await originalRefreshTreeStructure2();
@@ -1237,10 +1890,6 @@
       const tree = document.getElementById('tree');
       
       if (hint) {
-        // Only show hint if:
-        // 1. There are enabled files
-        // 2. Tree is not in loading state
-        // 3. Tree actually has content (datasets/groups)
         const hasEnabledFiles = getEnabledFiles().length > 0;
         const isNotLoading = !tree.classList.contains('loading');
         const hasTreeContent = tree.querySelector('.tree-item') !== null;
@@ -1252,6 +1901,17 @@
         }
       }
     };
+    
+    /**
+     * Recursively build HTML tree structure from an HDF5 group.
+     * Creates collapsible group nodes and selectable dataset nodes.
+     * Preserves selection state when rebuilding.
+     * 
+     * @param {Object} group - h5wasm Group object to traverse
+     * @param {string} [prefix=''] - Path prefix for nested items
+     * @param {boolean} [isNested=false] - Whether this is a nested call (not root)
+     * @returns {Promise<string>} HTML string for the tree structure
+     */
     async function buildTree(group, prefix = '', isNested = false) {
       const childrenHtml = [];
       
@@ -1265,7 +1925,6 @@
         </div>`;
         childrenHtml.push(rootHtml);
         
-        // Add a wrapper for root children
         const rootChildrenStart = `<div class="tree-group-children ${isRootSelected ? 'expanded' : ''}" style="margin-left: 20px;">`;
         childrenHtml.push(rootChildrenStart);
       }
@@ -1280,7 +1939,7 @@
         } catch (e) {
           console.error('Error getting keys:', e.message);
           if (prefix === '') {
-            childrenHtml.push('</div>'); // Close root children wrapper
+            childrenHtml.push('</div>');
           }
           return childrenHtml.join('');
         }
@@ -1288,7 +1947,7 @@
         if (keys.length === 0) {
           if (prefix === '') {
             childrenHtml.push('<div style="color:#999;padding:8px;font-size:12px;">(empty)</div>');
-            childrenHtml.push('</div>'); // Close root children wrapper
+            childrenHtml.push('</div>');
           }
           return childrenHtml.join('');
         }
@@ -1339,7 +1998,6 @@
         console.error('buildTree error:', e);
       }
       
-      // Close root children wrapper
       if (prefix === '') {
         childrenHtml.push('</div>');
       }
@@ -1347,140 +2005,108 @@
       return childrenHtml.join('');
     }
 
-    function checkDatasetExistsInFile(file, path) {
-      try {
-        const dataset = file.get(path);
-        return dataset !== null && dataset !== undefined;
-      } catch (e) {
-        return false;
-      }
-    }
 
-    function getTimeData(file) {
-      try {
-        const timeDataset = file.get('/time');
-        if (timeDataset && typeof timeDataset.value !== 'undefined') {
-          let timeData = timeDataset.value;
-          if (timeData && typeof timeData === 'object' && timeData.length !== undefined) {
-            return Array.from(timeData);
-          }
-          return [timeData];
-        }
-      } catch (e) {
-        console.warn('Could not read /time dataset:', e.message);
-      }
-      return null;
-    }
-
-    function getTimeUnit(file) {
-      try {
-        const timeDataset = file.get('/time');
-        if (timeDataset && timeDataset.attrs && typeof timeDataset.attrs === 'object') {
-          for (const attrName in timeDataset.attrs) {
-            if (attrName === 'unit') {
-              const attrObj = timeDataset.attrs[attrName];
-              if (attrObj && attrObj.value !== null && typeof attrObj.value !== 'undefined') {
-                return attrObj.value;
-              }
-            }
-          }
-        }
-      } catch (e) {
-        console.warn('Could not read time unit:', e);
-      }
-      return '';
-    }
-
-    function isTimeDependent(dataset) {
-      try {
-        if (dataset.attrs && typeof dataset.attrs === 'object') {
-          for (const attrName in dataset.attrs) {
-            if (attrName === 'time_dependent') {
-              const attrObj = dataset.attrs[attrName];
-              if (attrObj && typeof attrObj.value !== 'undefined') {
-                const value = attrObj.value;
-                return value === true || value === 1 || value === 'TRUE' || value === 'True';
-              }
-            }
-          }
-        }
-      } catch (e) {
-        console.warn('Error checking time_dependent attribute:', e);
-      }
-      return false;
-    }
-
+    /* ==========================================================================
+       7. RADIONUCLIDE LINE STYLES
+       ========================================================================== */
+    
+    /**
+     * Get the line style (color, dash pattern) for a radionuclide isotope.
+     * 
+     * Predefined styles are provided for common isotopes in categories:
+     * - Actinides (Ac, Am, Cm, Np, Pa, Pu, Th, U)
+     * - Fission products (Ag, Cs, I, Pd, Se, Sm, Sn, Sr, Tc, Zr)
+     * - Activation products (Be, C, Cl, Co, H, Ni, Nb, Mo)
+     * - Other radionuclides (various)
+     * 
+     * Colors are chosen for visual distinction on both light backgrounds
+     * and when multiple isotopes are plotted together.
+     * 
+     * @param {string} name - Isotope name (e.g., 'U-238', 'Cs-137', 'C-14-org')
+     * @returns {{color: string|null, dash: string, width: number}} Line style object
+     * 
+     * @example
+     * getLineStyle('U-238')  // { color: 'rgb(255,0,0)', dash: 'solid', width: 2 }
+     * getLineStyle('unknown') // { color: null, dash: 'solid', width: 2 }
+     */
     function getLineStyle(name) {
       const lineStyles = {
+        // Actinides
         'Ac-227': { color: 'rgb(128,0,0)', dash: 'solid' },
-        'Ag-108m': { color: 'rgb(128,128,0)', dash: 'solid' },
-        'Am-243': { color: 'rgb(72,209,204)', dash: 'solid' },
-        'Am-242m': { color: 'rgb(72,209,204)', dash: 'dash' },
         'Am-241': { color: 'rgb(72,209,204)', dash: 'dashdot' },
-        'Ar-39': { color: 'rgb(152,251,152)', dash: 'solid' },
-        'Ba-133': { color: 'rgb(70,130,180)', dash: 'solid' },
+        'Am-242m': { color: 'rgb(72,209,204)', dash: 'dash' },
+        'Am-243': { color: 'rgb(72,209,204)', dash: 'solid' },
+        'Cm-242': { color: 'rgb(175,238,238)', dash: 'dash' },
+        'Cm-243': { color: 'rgb(175,238,238)', dash: 'solid' },
+        'Cm-244': { color: 'rgb(175,238,238)', dash: 'dot' },
+        'Cm-245': { color: 'rgb(175,238,238)', dash: 'dash' },
+        'Cm-246': { color: 'rgb(175,238,238)', dash: 'dashdot' },
+        'Np-237': { color: 'rgb(218,165,32)', dash: 'solid' },
+        'Pa-231': { color: 'rgb(85,107,47)', dash: 'solid' },
+        'Pu-238': { color: 'rgb(0,255,255)', dash: 'dot' },
+        'Pu-239': { color: 'rgb(0,255,255)', dash: 'solid' },
+        'Pu-240': { color: 'rgb(0,255,255)', dash: 'dash' },
+        'Pu-241': { color: 'rgb(0,255,255)', dash: 'dashdot' },
+        'Pu-242': { color: 'rgb(0,255,255)', dash: 'dash' },
+        'Th-228': { color: 'rgb(75,0,130)', dash: 'dash' },
+        'Th-229': { color: 'rgb(75,0,130)', dash: 'dot' },
+        'Th-230': { color: 'rgb(75,0,130)', dash: 'solid' },
+        'Th-232': { color: 'rgb(75,0,130)', dash: 'dash' },
+        'U-232': { color: 'rgb(255,0,0)', dash: 'longdash' },
+        'U-233': { color: 'rgb(255,0,0)', dash: 'dash' },
+        'U-234': { color: 'rgb(255,0,0)', dash: 'dot' },
+        'U-235': { color: 'rgb(255,0,0)', dash: 'dash' },
+        'U-236': { color: 'rgb(255,0,0)', dash: 'dashdot' },
+        'U-238': { color: 'rgb(255,0,0)', dash: 'solid' },
+        
+        // Fission products
+        'Ag-108m': { color: 'rgb(128,128,0)', dash: 'solid' },
+        'Cs-135': { color: 'rgb(0,128,0)', dash: 'solid' },
+        'Cs-137': { color: 'rgb(0,128,0)', dash: 'dash' },
+        'I-129': { color: 'rgb(30,144,255)', dash: 'solid' },
+        'Pd-107': { color: 'rgb(216,191,216)', dash: 'solid' },
+        'Se-79': { color: 'rgb(112,128,144)', dash: 'solid' },
+        'Sm-151': { color: 'rgb(138,43,226)', dash: 'solid' },
+        'Sn-126': { color: 'rgb(0,0,0)', dash: 'solid' },
+        'Sr-90': { color: 'rgb(255,215,0)', dash: 'solid' },
+        'Tc-99': { color: 'rgb(0,0,128)', dash: 'solid' },
+        'Zr-93': { color: 'rgb(144,238,144)', dash: 'solid' },
+        
+        // Activation products
         'Be-10': { color: 'rgb(65,105,225)', dash: 'solid' },
         'C-14': { color: 'rgb(0,0,255)', dash: 'solid' },
         'C-14-org': { color: 'rgb(0,0,255)', dash: 'solid' },
         'C-14-ind': { color: 'rgb(0,0,255)', dash: 'dash' },
         'C-14-inorg': { color: 'rgb(0,0,255)', dash: 'dot' },
-        'Ca-41': { color: 'rgb(128,0,128)', dash: 'solid' },
-        'Cd-113m': { color: 'rgb(124,252,0)', dash: 'solid' },
         'Cl-36': { color: 'rgb(210,105,30)', dash: 'solid' },
-        'Cm-243': { color: 'rgb(175,238,238)', dash: 'solid' },
-        'Cm-242': { color: 'rgb(175,238,238)', dash: 'dash' },
-        'Cm-244': { color: 'rgb(175,238,238)', dash: 'dot' },
-        'Cm-245': { color: 'rgb(175,238,238)', dash: 'dash' },
-        'Cm-246': { color: 'rgb(175,238,238)', dash: 'dashdot' },
         'Co-60': { color: 'rgb(0,255,127)', dash: 'solid' },
-        'Cs-135': { color: 'rgb(0,128,0)', dash: 'solid' },
-        'Cs-137': { color: 'rgb(0,128,0)', dash: 'dash' },
-        'Eu-152': { color: 'rgb(205,133,63)', dash: 'solid' },
-        'Eu-150': { color: 'rgb(205,133,63)', dash: 'dash' },
-        'Gd-148': { color: 'rgb(255,255,0)', dash: 'solid' },
         'H-3': { color: 'rgb(0,0,205)', dash: 'solid' },
-        'Ho-166m': { color: 'rgb(100,149,237)', dash: 'solid' },
-        'I-129': { color: 'rgb(30,144,255)', dash: 'solid' },
-        'K-40': { color: 'rgb(139,69,19)', dash: 'solid' },
-        'La-137': { color: 'rgb(255,248,220)', dash: 'solid' },
-        'Mo-93': { color: 'rgb(0,255,0)', dash: 'solid' },
-        'Nb-93m': { color: 'rgb(210,180,140)', dash: 'solid' },
-        'Nb-94': { color: 'rgb(210,180,140)', dash: 'dash' },
         'Ni-59': { color: 'rgb(255,0,255)', dash: 'solid' },
         'Ni-63': { color: 'rgb(255,0,255)', dash: 'dash' },
-        'Np-237': { color: 'rgb(218,165,32)', dash: 'solid' },
-        'Pa-231': { color: 'rgb(85,107,47)', dash: 'solid' },
+        'Nb-93m': { color: 'rgb(210,180,140)', dash: 'solid' },
+        'Nb-94': { color: 'rgb(210,180,140)', dash: 'dash' },
+        'Mo-93': { color: 'rgb(0,255,0)', dash: 'solid' },
+        
+        // Other radionuclides
+        'Ar-39': { color: 'rgb(152,251,152)', dash: 'solid' },
+        'Ba-133': { color: 'rgb(70,130,180)', dash: 'solid' },
+        'Ca-41': { color: 'rgb(128,0,128)', dash: 'solid' },
+        'Cd-113m': { color: 'rgb(124,252,0)', dash: 'solid' },
+        'Eu-150': { color: 'rgb(205,133,63)', dash: 'dash' },
+        'Eu-152': { color: 'rgb(205,133,63)', dash: 'solid' },
+        'Gd-148': { color: 'rgb(255,255,0)', dash: 'solid' },
+        'Ho-166m': { color: 'rgb(100,149,237)', dash: 'solid' },
+        'K-40': { color: 'rgb(139,69,19)', dash: 'solid' },
+        'La-137': { color: 'rgb(255,248,220)', dash: 'solid' },
         'Pb-210': { color: 'rgb(148,0,211)', dash: 'dash' },
-        'Pd-107': { color: 'rgb(216,191,216)', dash: 'solid' },
         'Po-210': { color: 'rgb(148,0,211)', dash: 'dot' },
-        'Pu-239': { color: 'rgb(0,255,255)', dash: 'solid' },
-        'Pu-242': { color: 'rgb(0,255,255)', dash: 'dash' },
-        'Pu-238': { color: 'rgb(0,255,255)', dash: 'dot' },
-        'Pu-240': { color: 'rgb(0,255,255)', dash: 'dash' },
-        'Pu-241': { color: 'rgb(0,255,255)', dash: 'dashdot' },
         'Ra-226': { color: 'rgb(148,0,211)', dash: 'solid' },
         'Ra-228': { color: 'rgb(148,0,211)', dash: 'dash' },
         'Re-186m': { color: 'rgb(255,160,122)', dash: 'solid' },
-        'Se-79': { color: 'rgb(112,128,144)', dash: 'solid' },
         'Si-32': { color: 'rgb(255,228,181)', dash: 'solid' },
-        'Sm-151': { color: 'rgb(138,43,226)', dash: 'solid' },
-        'Sn-126': { color: 'rgb(0,0,0)', dash: 'solid' },
-        'Sr-90': { color: 'rgb(255,215,0)', dash: 'solid' },
         'Tb-157': { color: 'rgb(221,160,221)', dash: 'solid' },
         'Tb-158': { color: 'rgb(221,160,221)', dash: 'dash' },
-        'Tc-99': { color: 'rgb(0,0,128)', dash: 'solid' },
-        'Th-230': { color: 'rgb(75,0,130)', dash: 'solid' },
-        'Th-228': { color: 'rgb(75,0,130)', dash: 'dash' },
-        'Th-229': { color: 'rgb(75,0,130)', dash: 'dot' },
-        'Th-232': { color: 'rgb(75,0,130)', dash: 'dash' },
-        'Ti-44': { color: 'rgb(218,112,214)', dash: 'solid' },
-        'U-238': { color: 'rgb(255,0,0)', dash: 'solid' },
-        'U-235': { color: 'rgb(255,0,0)', dash: 'dash' },
-        'U-234': { color: 'rgb(255,0,0)', dash: 'dot' },
-        'U-233': { color: 'rgb(255,0,0)', dash: 'dash' },
-        'U-236': { color: 'rgb(255,0,0)', dash: 'dashdot' },
-        'U-232': { color: 'rgb(255,0,0)', dash: 'longdash' },
-        'Zr-93': { color: 'rgb(144,238,144)', dash: 'solid' }
+        'Ti-44': { color: 'rgb(218,112,214)', dash: 'solid' }
       };
       
       const defaultStyle = { color: null, dash: 'solid', width: 2 };
@@ -1492,47 +2118,17 @@
       return defaultStyle;
     }
 
-    function checkGroupForRadionuclides(file, path) {
-      try {
-        const group = file.get(path);
-        if (!group || group.type.toLowerCase() !== 'group') {
-          return false;
-        }
-        
-        let hasRadionuclidesIndex = false;
-        let isTimeDependentGroup = false;
-        
-        if (group.attrs && typeof group.attrs === 'object') {
-          for (const attrName in group.attrs) {
-            if (attrName === 'IndexLists') {
-              const attrObj = group.attrs[attrName];
-              if (attrObj && attrObj.value !== null && typeof attrObj.value !== 'undefined') {
-                const value = attrObj.value;
-                if (Array.isArray(value) && value.includes('Radionuclides')) {
-                  hasRadionuclidesIndex = true;
-                } else if (typeof value === 'string' && value === 'Radionuclides') {
-                  hasRadionuclidesIndex = true;
-                }
-              }
-            }
-            
-            if (attrName === 'time_dependent') {
-              const attrObj = group.attrs[attrName];
-              if (attrObj && typeof attrObj.value !== 'undefined') {
-                const value = attrObj.value;
-                isTimeDependentGroup = value === true || value === 1 || value === 'TRUE' || value === 'True';
-              }
-            }
-          }
-        }
-        
-        return hasRadionuclidesIndex && isTimeDependentGroup;
-      } catch (e) {
-        console.warn('Error checking group for radionuclides:', e);
-        return false;
-      }
-    }
 
+    /* ==========================================================================
+       8. CHART CONTROLS
+       ========================================================================== */
+    
+    /**
+     * Update the chart axis scales based on dropdown selections.
+     * Applies new scale types (linear/log) without rebuilding the entire chart.
+     * 
+     * @returns {void}
+     */
     function updateChartScales() {
       if (!currentChartData) return;
       
@@ -1547,6 +2143,14 @@
       Plotly.relayout('plotlyChart', update);
     }
 
+    /**
+     * Apply preset axis ranges optimized for viewing release data.
+     * Sets both axes to log scale with ranges suitable for radionuclide releases.
+     * X-axis: 100 - 100,000 (years)
+     * Y-axis: 10,000 - 1e9 (activity units)
+     * 
+     * @returns {void}
+     */
     function applyReleasePresetView() {
       if (!currentChartData) return;
       
@@ -1563,6 +2167,14 @@
       Plotly.relayout('plotlyChart', update);
     }
 
+    /**
+     * Apply preset axis ranges optimized for viewing dose data.
+     * Sets both axes to log scale with ranges suitable for dose rates.
+     * X-axis: 1,000 - 100,000 (years)
+     * Y-axis: 1e-10 - 1e-5 (Sv/year or similar units)
+     * 
+     * @returns {void}
+     */
     function applyDosePresetView() {
       if (!currentChartData) return;
       
@@ -1579,6 +2191,13 @@
       Plotly.relayout('plotlyChart', update);
     }
 
+    /**
+     * Export current chart data to a CSV file.
+     * Creates a downloadable file with columns: Series, X, Y.
+     * Each trace in the chart becomes a series in the CSV.
+     * 
+     * @returns {void}
+     */
     function downloadChartData() {
       if (!currentChartData) {
         alert('No chart data available');
@@ -1604,13 +2223,40 @@
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     }
+    
+    /**
+     * Handle "Show Total" checkbox toggle for radionuclides charts.
+     * When checked, adds a trace showing the sum of all radionuclide activities.
+     * Only applicable when viewing a radionuclides group.
+     * 
+     * @returns {void}
+     */
+    function toggleShowTotal() {
+      if (selectedIsRadionuclidesGroup && selectedDatasetPath) {
+        createRadionuclidesChart(selectedDatasetPath);
+      }
+    }
+
+
+    /* ==========================================================================
+       9. CHART CREATION
+       ========================================================================== */
+    
+    /**
+     * Create a Plotly chart for a single time-dependent dataset.
+     * Plots the dataset from all enabled files as separate traces,
+     * allowing comparison across files.
+     * 
+     * @param {string} path - HDF5 path to the dataset
+     * @returns {void}
+     */
     function createPlotlyChart(path) {
-      const plotDiv = document.getElementById('plotlyChart');
-      const chartContainer = document.getElementById('plotlyChartContainer');
+      const plotDiv = getElement('plotlyChart');
+      const chartContainer = getElement('plotlyChartContainer');
       plotDiv.innerHTML = '';
       
       // Hide "Show Total" checkbox (only for radionuclides groups)
-      document.getElementById('showTotalLabel').style.display = 'none';
+      setShowTotalVisible(false);
       
       const traces = [];
       const enabledFiles = getEnabledFiles();
@@ -1641,6 +2287,7 @@
         }
       }
       
+      // Build traces for each enabled file
       for (const fileKey of enabledFiles) {
         const file = loadedFiles[fileKey];
         
@@ -1669,174 +2316,68 @@
           }
           
           if (yData) {
-            let yArray;
-            if (Array.isArray(yData)) {
-              yArray = yData;
-            } else if (yData && typeof yData === 'object' && yData.length !== undefined) {
-              yArray = Array.from(yData);
-            } else {
-              yArray = [yData];
-            }
+            let yArray = normalizeDataArray(yData);
             
-            // Check if probabilistic and take mean
-            let isProbabilistic = false;
-            if (dataset.attrs && typeof dataset.attrs === 'object') {
-              for (const attrName in dataset.attrs) {
-                if (attrName === 'probabilistic') {
-                  const attrObj = dataset.attrs[attrName];
-                  if (attrObj && typeof attrObj.value !== 'undefined') {
-                    const value = attrObj.value;
-                    isProbabilistic = value === true || value === 1 || value === 'TRUE' || value === 'True';
-                  }
-                }
-              }
-            }
-            
-            if (isProbabilistic) {
-              if (Array.isArray(yArray[0])) {
-                yArray = yArray.map(timeSlice => {
-                  if (Array.isArray(timeSlice)) {
-                    const sum = timeSlice.reduce((a, b) => a + b, 0);
-                    return sum / timeSlice.length;
-                  }
-                  return timeSlice;
-                });
-              } else if (yArray.length > timeData.length && yArray.length % timeData.length === 0) {
-                const numRealizations = Math.floor(yArray.length / timeData.length);
-                const means = [];
-                for (let t = 0; t < timeData.length; t++) {
-                  let sum = 0;
-                  for (let r = 0; r < numRealizations; r++) {
-                    sum += yArray[t * numRealizations + r];
-                  }
-                  means.push(sum / numRealizations);
-                }
-                yArray = means;
-              }
+            // Handle probabilistic data (take mean)
+            if (checkIsProbabilistic(dataset)) {
+              yArray = computeProbabilisticMean(yArray, timeData);
             }
 
+            // Handle length mismatch
+            const minLength = Math.min(timeData.length, yArray.length);
             if (timeData.length !== yArray.length) {
               console.warn(`Time data length (${timeData.length}) doesn't match data length (${yArray.length}) for ${fileKey}`);
-              const minLength = Math.min(timeData.length, yArray.length);
-              const trimmedTimeData = timeData.slice(0, minLength);
-              const trimmedYData = yArray.slice(0, minLength);
-              
-              traces.push({
-                x: trimmedTimeData,
-                y: trimmedYData,
-                mode: 'lines+markers',
-                name: fileKey,
-                type: 'scatter'
-              });
-            } else {
-              traces.push({
-                x: timeData,
-                y: yArray,
-                mode: 'lines+markers',
-                name: fileKey,
-                type: 'scatter'
-              });
             }
+            
+            traces.push({
+              x: timeData.slice(0, minLength),
+              y: yArray.slice(0, minLength),
+              mode: 'lines+markers',
+              name: fileKey,
+              type: 'scatter'
+            });
           }
         } catch (e) {
           console.error(`Error creating trace for ${fileKey}:`, e);
         }
       }
       
+      // Render chart if we have data
       if (traces.length > 0) {
-        const xScale = document.getElementById('xAxisScale').value;
-        const yScale = document.getElementById('yAxisScale').value;
-        
+        const { xScale, yScale } = getChartScales();
         const yAxisTitle = yAxisUnit ? `${yAxisName} (${yAxisUnit})` : yAxisName;
         
-        const layout = {
-          title: {
-            text: path,
-            font: { size: 14 },
-            xanchor: 'left',
-            x: 0
-          },
-          xaxis: { 
-            title: timeUnit ? `Time (${timeUnit})` : 'Time',
-            type: xScale
-          },
-          yaxis: { 
-            title: yAxisTitle,
-            type: yScale,
-            showexponent: 'all',
-            exponentformat: 'power'
-          },
-          hovermode: 'closest',
-          showlegend: true,
-          legend: {
-            x: 1.02,
-            y: 1,
-            xanchor: 'left',
-            yanchor: 'top'
-          },
-          margin: {
-            r: 150
-          }
-        };
-        
-        const config = {
-          displayLogo: false,
-          scrollZoom: true,
-          showLink: false,
-          plotlyServerURL: "https://chart-studio.plotly.com",
-          modeBarButtonsToAdd: [
-            'v1hovermode',
-            {
-              name: 'Copy chart to clipboard',
-              icon: {
-                width: 500,
-                height: 600,
-                path: 'M224 0c-35.3 0-64 28.7-64 64V288v64 64c0 35.3 28.7 64 64 64H448c35.3 0 64-28.7 64-64V288 160 64c0-35.3-28.7-64-64-64H224zm0 64H448V160H224V64zM160 448c0 17.7-14.3 32-32 32H64c-17.7 0-32-14.3-32-32V384H160v64zm0-96H32V288H160v64zM32 240V176H160v64H32zM160 128V64h32v64H160z'
-              },
-              click: function(gd) {
-                copyChartToClipboard();
-              }
-            },
-            {
-              name: 'Download data as CSV',
-              icon: {
-                width: 512,
-                height: 512,
-                path: 'M288 32c0-17.7-14.3-32-32-32s-32 14.3-32 32V274.7l-73.4-73.4c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3l128 128c12.5 12.5 32.8 12.5 45.3 0l128-128c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0L288 274.7V32zM64 352c-35.3 0-64 28.7-64 64v32c0 35.3 28.7 64 64 64H448c35.3 0 64-28.7 64-64V416c0-35.3-28.7-64-64-64H346.5l-45.3 45.3c-25 25-65.5 25-90.5 0L165.5 352H64zm368 56a24 24 0 1 1 0 48 24 24 0 1 1 0-48z'
-              },
-              click: function(gd) {
-                downloadChartData();
-              }
-            }
-          ],
-          responsive: true,
-          toImageButtonOptions: {
-            format: 'svg',
-            filename: 'chart',
-            height: 600,
-            width: 800,
-            scale: 1
-          }
-        };
-
-        currentChartData = { traces, layout, path };
-        chartContainer.classList.add('visible');
-        Plotly.newPlot('plotlyChart', traces, layout, config).then(() => {
-          setupDynamicLegend(document.getElementById('plotlyChart'));
+        const layout = createBaseLayout({
+          title: path,
+          xAxisTitle: timeUnit ? `Time (${timeUnit})` : 'Time',
+          yAxisTitle,
+          xScale,
+          yScale
         });
+
+        renderChart(traces, layout, path);
       } else {
-        chartContainer.classList.remove('visible');
-        currentChartData = null;
+        hideChart();
       }
     }
 
+    /**
+     * Create a Plotly chart comparing multiple selected datasets.
+     * Each dataset gets a unique color; if multiple files are enabled,
+     * different line dash styles distinguish files for the same dataset.
+     * 
+     * Used in multi-select mode (Ctrl+click on multiple datasets).
+     * 
+     * @param {string[]} paths - Array of HDF5 dataset paths to compare
+     * @returns {void}
+     */
     function createMultiDatasetChart(paths) {
-      const plotDiv = document.getElementById('plotlyChart');
-      const chartContainer = document.getElementById('plotlyChartContainer');
+      const plotDiv = getElement('plotlyChart');
+      const chartContainer = getElement('plotlyChartContainer');
       plotDiv.innerHTML = '';
       
       // Hide "Show Total" checkbox (only for radionuclides groups)
-      document.getElementById('showTotalLabel').style.display = 'none';
+      setShowTotalVisible(false);
       
       const traces = [];
       const enabledFiles = getEnabledFiles();
@@ -1902,57 +2443,18 @@
             }
             
             if (yData) {
-              let yArray;
-              if (Array.isArray(yData)) {
-                yArray = yData;
-              } else if (yData && typeof yData === 'object' && yData.length !== undefined) {
-                yArray = Array.from(yData);
-              } else {
-                yArray = [yData];
-              }
+              let yArray = normalizeDataArray(yData);
               
               // Handle probabilistic data (take mean)
-              let isProbabilistic = false;
-              if (dataset.attrs && typeof dataset.attrs === 'object') {
-                for (const attrName in dataset.attrs) {
-                  if (attrName === 'probabilistic') {
-                    const attrObj = dataset.attrs[attrName];
-                    if (attrObj && typeof attrObj.value !== 'undefined') {
-                      const value = attrObj.value;
-                      isProbabilistic = value === true || value === 1 || value === 'TRUE' || value === 'True';
-                    }
-                  }
-                }
-              }
-              
-              if (isProbabilistic) {
-                if (Array.isArray(yArray[0])) {
-                  yArray = yArray.map(timeSlice => {
-                    if (Array.isArray(timeSlice)) {
-                      const sum = timeSlice.reduce((a, b) => a + b, 0);
-                      return sum / timeSlice.length;
-                    }
-                    return timeSlice;
-                  });
-                } else if (yArray.length > timeData.length && yArray.length % timeData.length === 0) {
-                  const numRealizations = Math.floor(yArray.length / timeData.length);
-                  const means = [];
-                  for (let t = 0; t < timeData.length; t++) {
-                    let sum = 0;
-                    for (let r = 0; r < numRealizations; r++) {
-                      sum += yArray[t * numRealizations + r];
-                    }
-                    means.push(sum / numRealizations);
-                  }
-                  yArray = means;
-                }
+              if (checkIsProbabilistic(dataset)) {
+                yArray = computeProbabilisticMean(yArray, timeData);
               }
 
               const minLength = Math.min(timeData.length, yArray.length);
               const trimmedTimeData = timeData.slice(0, minLength);
               const trimmedYData = yArray.slice(0, minLength);
               
-              // Adjust opacity and line style for multiple files
+              // Adjust style for multiple files
               let traceName = datasetName;
               let lineColor = baseColor;
               let lineWidth = 2;
@@ -1986,8 +2488,7 @@
       }
       
       if (traces.length > 0) {
-        const xScale = document.getElementById('xAxisScale').value;
-        const yScale = document.getElementById('yAxisScale').value;
+        const { xScale, yScale } = getChartScales();
         
         let yAxisTitle = 'Value';
         if (yAxisUnits.size === 1) {
@@ -1996,100 +2497,53 @@
           yAxisTitle = `Value (${Array.from(yAxisUnits).join(', ')})`;
         }
         
-        const layout = {
-          title: {
-            text: `Comparing ${paths.length} dataset${paths.length > 1 ? 's' : ''}`,
-            font: { size: 14 },
-            xanchor: 'left',
-            x: 0
-          },
-          xaxis: { 
-            title: timeUnit ? `Time (${timeUnit})` : 'Time',
-            type: xScale
-          },
-          yaxis: { 
-            title: yAxisTitle,
-            type: yScale,
-            showexponent: 'all',
-            exponentformat: 'power'
-          },
-          hovermode: 'closest',
-          showlegend: true,
-          legend: {
-            x: 1.02,
-            y: 1,
-            xanchor: 'left',
-            yanchor: 'top'
-          },
-          margin: {
-            r: 200
-          }
-        };
+        const layout = createBaseLayout({
+          title: `Comparing ${paths.length} dataset${paths.length > 1 ? 's' : ''}`,
+          xAxisTitle: timeUnit ? `Time (${timeUnit})` : 'Time',
+          yAxisTitle,
+          xScale,
+          yScale
+        });
+        layout.margin.r = 200; // Extra room for longer legend names
         
-        const config = {
-          displayLogo: false,
-          scrollZoom: true,
-          showLink: false,
-          plotlyServerURL: "https://chart-studio.plotly.com",
-          modeBarButtonsToAdd: [
-            'v1hovermode',
-            {
-              name: 'Copy chart to clipboard',
-              icon: {
-                width: 500,
-                height: 600,
-                path: 'M224 0c-35.3 0-64 28.7-64 64V288v64 64c0 35.3 28.7 64 64 64H448c35.3 0 64-28.7 64-64V288 160 64c0-35.3-28.7-64-64-64H224zm0 64H448V160H224V64zM160 448c0 17.7-14.3 32-32 32H64c-17.7 0-32-14.3-32-32V384H160v64zm0-96H32V288H160v64zM32 240V176H160v64H32zM160 128V64h32v64H160z'
-              },
-              click: function(gd) {
-                copyChartToClipboard();
-              }
-            },
-            {
-              name: 'Download data as CSV',
-              icon: {
-                width: 512,
-                height: 512,
-                path: 'M288 32c0-17.7-14.3-32-32-32s-32 14.3-32 32V274.7l-73.4-73.4c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3l128 128c12.5 12.5 32.8 12.5 45.3 0l128-128c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0L288 274.7V32zM64 352c-35.3 0-64 28.7-64 64v32c0 35.3 28.7 64 64 64H448c35.3 0 64-28.7 64-64V416c0-35.3-28.7-64-64-64H346.5l-45.3 45.3c-25 25-65.5 25-90.5 0L165.5 352H64zm368 56a24 24 0 1 1 0 48 24 24 0 1 1 0-48z'
-              },
-              click: function(gd) {
-                downloadChartData();
-              }
-            }
-          ],
-          responsive: true,
-          toImageButtonOptions: {
-            format: 'svg',
-            filename: 'multi_dataset_chart',
-            height: 600,
-            width: 800,
-            scale: 1
-          }
-        };
+        const config = getPlotlyConfig('multi_dataset_chart');
 
         currentChartData = { traces, layout, paths };
-        chartContainer.classList.add('visible');
+        const container = getElement('plotlyChartContainer');
+        if (container) container.classList.add('visible');
         Plotly.newPlot('plotlyChart', traces, layout, config).then(() => {
-          setupDynamicLegend(document.getElementById('plotlyChart'));
+          setupDynamicLegend(getElement('plotlyChart'));
         });
       } else {
-        chartContainer.classList.remove('visible');
-        currentChartData = null;
+        hideChart();
       }
     }
 
+    /**
+     * Create a Plotly chart for a radionuclides data group.
+     * Plots all child datasets (isotopes) with predefined line styles.
+     * 
+     * Features:
+     * - Each isotope uses its characteristic color and dash pattern
+     * - "Show Total" checkbox adds a summed trace
+     * - Supports multi-file comparison with thinner lines for secondary files
+     * 
+     * @param {string} path - HDF5 path to the radionuclides group
+     * @returns {void}
+     */
     function createRadionuclidesChart(path) {
-      const plotDiv = document.getElementById('plotlyChart');
-      const chartContainer = document.getElementById('plotlyChartContainer');
+      const plotDiv = getElement('plotlyChart');
+      const chartContainer = getElement('plotlyChartContainer');
       plotDiv.innerHTML = '';
       
       // Show "Show Total" checkbox for radionuclides groups
-      document.getElementById('showTotalLabel').style.display = '';
+      setShowTotalVisible(true);
       
       const traces = [];
       const enabledFiles = getEnabledFiles();
       
       // Store data for computing total
-      const totalDataByFile = {}; // fileKey -> { timeData: [], dataArrays: [] }
+      const totalDataByFile = {};
       
       let timeUnit = '';
       let yAxisUnit = '';
@@ -2100,6 +2554,7 @@
         timeUnit = getTimeUnit(firstFile);
       }
       
+      // Build traces for each file and each radionuclide
       for (const fileKey of enabledFiles) {
         const file = loadedFiles[fileKey];
         
@@ -2144,49 +2599,11 @@
               }
               
               if (yData) {
-                let yArray;
-                if (Array.isArray(yData)) {
-                  yArray = yData;
-                } else if (yData && typeof yData === 'object' && yData.length !== undefined) {
-                  yArray = Array.from(yData);
-                } else {
-                  yArray = [yData];
-                }
+                let yArray = normalizeDataArray(yData);
                 
-                let isProbabilistic = false;
-                if (dataset.attrs && typeof dataset.attrs === 'object') {
-                  for (const attrName in dataset.attrs) {
-                    if (attrName === 'probabilistic') {
-                      const attrObj = dataset.attrs[attrName];
-                      if (attrObj && typeof attrObj.value !== 'undefined') {
-                        const value = attrObj.value;
-                        isProbabilistic = value === true || value === 1 || value === 'TRUE' || value === 'True';
-                      }
-                    }
-                  }
-                }
-                
-                if (isProbabilistic) {
-                  if (Array.isArray(yArray[0])) {
-                    yArray = yArray.map(timeSlice => {
-                      if (Array.isArray(timeSlice)) {
-                        const sum = timeSlice.reduce((a, b) => a + b, 0);
-                        return sum / timeSlice.length;
-                      }
-                      return timeSlice;
-                    });
-                  } else if (yArray.length > timeData.length && yArray.length % timeData.length === 0) {
-                    const numRealizations = Math.floor(yArray.length / timeData.length);
-                    const means = [];
-                    for (let t = 0; t < timeData.length; t++) {
-                      let sum = 0;
-                      for (let r = 0; r < numRealizations; r++) {
-                        sum += yArray[t * numRealizations + r];
-                      }
-                      means.push(sum / numRealizations);
-                    }
-                    yArray = means;
-                  }
+                // Handle probabilistic data
+                if (checkIsProbabilistic(dataset)) {
+                  yArray = computeProbabilisticMean(yArray, timeData);
                 }
 
                 const minLength = Math.min(timeData.length, yArray.length);
@@ -2199,6 +2616,7 @@
                 }
                 totalDataByFile[fileKey].dataArrays.push(trimmedYData);
                 
+                // Get line style for this radionuclide
                 const lineStyle = getLineStyle(datasetKey);
                 let traceName = datasetKey;
                 let lineWidth = lineStyle.width;
@@ -2231,7 +2649,7 @@
       }
       
       // Add total trace if checkbox is checked
-      const showTotalCheckbox = document.getElementById('showTotal');
+      const showTotalCheckbox = getElement('showTotal');
       if (showTotalCheckbox && showTotalCheckbox.checked) {
         for (const fileKey of Object.keys(totalDataByFile)) {
           const fileData = totalDataByFile[fileKey];
@@ -2270,7 +2688,9 @@
         }
       }
       
+      // Render chart if we have traces
       if (traces.length > 0) {
+        // Get unit from group
         const firstFile = loadedFiles[enabledFiles[0]];
         try {
           const group = firstFile.get(path);
@@ -2288,101 +2708,88 @@
           console.warn('Could not read unit from group:', e);
         }
         
-        const xScale = document.getElementById('xAxisScale').value;
-        const yScale = document.getElementById('yAxisScale').value;
-        
+        const { xScale, yScale } = getChartScales();
         const yAxisTitle = yAxisUnit ? `${yAxisName} (${yAxisUnit})` : yAxisName;
         
-        const layout = {
-          title: {
-            text: path,
-            font: { size: 14 },
-            xanchor: 'left',
-            x: 0
-          },
-          xaxis: { 
-            title: timeUnit ? `Time (${timeUnit})` : 'Time',
-            type: xScale
-          },
-          yaxis: { 
-            title: yAxisTitle,
-            type: yScale,
-            showexponent: 'all',
-            exponentformat: 'power'
-          },
-          hovermode: 'closest',
-          showlegend: true,
-          legend: {
-            x: 1.02,
-            y: 1,
-            xanchor: 'left',
-            yanchor: 'top'
-          },
-          margin: {
-            r: 150
-          }
-        };
-        
-        const config = {
-          displayLogo: false,
-          scrollZoom: true,
-          showLink: false,
-          plotlyServerURL: "https://chart-studio.plotly.com",
-          modeBarButtonsToAdd: [
-            'v1hovermode',
-            {
-              name: 'Copy chart to clipboard',
-              icon: {
-                width: 500,
-                height: 600,
-                path: 'M224 0c-35.3 0-64 28.7-64 64V288v64 64c0 35.3 28.7 64 64 64H448c35.3 0 64-28.7 64-64V288 160 64c0-35.3-28.7-64-64-64H224zm0 64H448V160H224V64zM160 448c0 17.7-14.3 32-32 32H64c-17.7 0-32-14.3-32-32V384H160v64zm0-96H32V288H160v64zM32 240V176H160v64H32zM160 128V64h32v64H160z'
-              },
-              click: function(gd) {
-                copyChartToClipboard();
-              }
-            },
-            {
-              name: 'Download data as CSV',
-              icon: {
-                width: 512,
-                height: 512,
-                path: 'M288 32c0-17.7-14.3-32-32-32s-32 14.3-32 32V274.7l-73.4-73.4c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3l128 128c12.5 12.5 32.8 12.5 45.3 0l128-128c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0L288 274.7V32zM64 352c-35.3 0-64 28.7-64 64v32c0 35.3 28.7 64 64 64H448c35.3 0 64-28.7 64-64V416c0-35.3-28.7-64-64-64H346.5l-45.3 45.3c-25 25-65.5 25-90.5 0L165.5 352H64zm368 56a24 24 0 1 1 0 48 24 24 0 1 1 0-48z'
-              },
-              click: function(gd) {
-                downloadChartData();
-              }
-            }
-          ],
-          responsive: true,
-          toImageButtonOptions: {
-            format: 'svg',
-            filename: 'chart',
-            height: 600,
-            width: 800,
-            scale: 1
-          }
-        };
-        
-        currentChartData = { traces, layout, path };
-        chartContainer.classList.add('visible');
-        Plotly.newPlot('plotlyChart', traces, layout, config).then(() => {
-          setupDynamicLegend(document.getElementById('plotlyChart'));
+        const layout = createBaseLayout({
+          title: path,
+          xAxisTitle: timeUnit ? `Time (${timeUnit})` : 'Time',
+          yAxisTitle,
+          xScale,
+          yScale
         });
+        
+        renderChart(traces, layout, path);
       } else {
-        chartContainer.classList.remove('visible');
-        currentChartData = null;
+        hideChart();
       }
     }
-
-    function toggleShowTotal() {
-      // Re-render the radionuclides chart when toggling the total line
-      if (selectedIsRadionuclidesGroup && selectedDatasetPath) {
-        createRadionuclidesChart(selectedDatasetPath);
-      }
+    
+    /**
+     * Get standard Plotly configuration with custom toolbar buttons.
+     * Configures the mode bar with:
+     * - Copy to clipboard button (PNG export)
+     * - Download CSV button (data export)
+     * - Standard Plotly zoom/pan/reset tools
+     * - SVG export configuration
+     * 
+     * @param {string} filename - Base filename for exported images/data
+     * @returns {Object} Plotly config object
+     */
+    function getPlotlyConfig(filename) {
+      return {
+        displayLogo: false,
+        scrollZoom: true,
+        showLink: false,
+        plotlyServerURL: "https://chart-studio.plotly.com",
+        modeBarButtonsToAdd: [
+          'v1hovermode',
+          {
+            name: 'Copy chart to clipboard',
+            icon: {
+              width: 500,
+              height: 600,
+              path: 'M224 0c-35.3 0-64 28.7-64 64V288v64 64c0 35.3 28.7 64 64 64H448c35.3 0 64-28.7 64-64V288 160 64c0-35.3-28.7-64-64-64H224zm0 64H448V160H224V64zM160 448c0 17.7-14.3 32-32 32H64c-17.7 0-32-14.3-32-32V384H160v64zm0-96H32V288H160v64zM32 240V176H160v64H32zM160 128V64h32v64H160z'
+            },
+            click: function(gd) {
+              copyChartToClipboard();
+            }
+          },
+          {
+            name: 'Download data as CSV',
+            icon: {
+              width: 512,
+              height: 512,
+              path: 'M288 32c0-17.7-14.3-32-32-32s-32 14.3-32 32V274.7l-73.4-73.4c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3l128 128c12.5 12.5 32.8 12.5 45.3 0l128-128c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0L288 274.7V32zM64 352c-35.3 0-64 28.7-64 64v32c0 35.3 28.7 64 64 64H448c35.3 0 64-28.7 64-64V416c0-35.3-28.7-64-64-64H346.5l-45.3 45.3c-25 25-65.5 25-90.5 0L165.5 352H64zm368 56a24 24 0 1 1 0 48 24 24 0 1 1 0-48z'
+            },
+            click: function(gd) {
+              downloadChartData();
+            }
+          }
+        ],
+        responsive: true,
+        toImageButtonOptions: {
+          format: 'svg',
+          filename: filename,
+          height: 600,
+          width: 800,
+          scale: 1
+        }
+      };
     }
 
-    let dynamicLegendEnabled = true;
 
+    /* ==========================================================================
+       10. DYNAMIC LEGEND
+       ========================================================================== */
+    
+    /**
+     * Toggle dynamic legend filtering on/off.
+     * When enabled, only traces with data points visible in the current
+     * viewport are shown in the legend. When disabled, all traces are shown.
+     * 
+     * @returns {void}
+     */
     function toggleDynamicLegend() {
       dynamicLegendEnabled = document.getElementById('dynamicLegend').checked;
       
@@ -2392,7 +2799,7 @@
       }
       
       if (!dynamicLegendEnabled) {
-        // Show all legend items using Plotly.react
+        // Show all legend items
         const newData = plotDiv.data.map(trace => ({
           ...trace,
           showlegend: true
@@ -2408,16 +2815,13 @@
         // Re-apply dynamic filtering based on current view
         const layout = plotDiv.layout;
         
-        // Get current ranges
         let xRange = layout.xaxis?.range;
         let yRange = layout.yaxis?.range;
         
         if (!xRange || !yRange) {
-          // If no zoom applied yet, show all
           return;
         }
         
-        // Convert log scale ranges if needed
         const xIsLog = layout.xaxis?.type === 'log';
         const yIsLog = layout.yaxis?.type === 'log';
         
@@ -2426,12 +2830,10 @@
         const yMin = yIsLog ? Math.pow(10, yRange[0]) : yRange[0];
         const yMax = yIsLog ? Math.pow(10, yRange[1]) : yRange[1];
         
-        // Check each trace for visibility
         let visibleCount = 0;
         const newData = plotDiv.data.map((trace) => {
           let isVisible = false;
           
-          // Check if any point is within the visible range
           for (let j = 0; j < trace.x.length; j++) {
             const x = trace.x[j];
             const y = trace.y[j];
@@ -2454,7 +2856,6 @@
           };
         });
         
-        // Use Plotly.react to force redraw
         Plotly.react(plotDiv, newData, plotDiv.layout).then(() => {
           const totalCount = plotDiv.data.length;
           const statusEl = document.getElementById('legendStatus');
@@ -2470,11 +2871,22 @@
         });
       }
     }
+    
+    /**
+     * Set up dynamic legend filtering on zoom/pan events.
+     * Attaches a plotly_relayout listener that updates legend visibility
+     * based on which traces have data points in the current viewport.
+     * 
+     * This helps reduce legend clutter when zoomed in on charts with many traces.
+     * A status indicator shows "Showing X/Y traces" when filtering is active.
+     * 
+     * @param {HTMLElement} plotDiv - The Plotly chart DOM element
+     * @returns {void}
+     */
     function setupDynamicLegend(plotDiv) {
       plotDiv.on('plotly_relayout', function(eventData) {
         if (!dynamicLegendEnabled) return;
         
-        // Check if this is a zoom/pan event
         if (!eventData || (!eventData['xaxis.range[0]'] && !eventData['xaxis.range'] && !eventData['xaxis.autorange'])) {
           return;
         }
@@ -2482,7 +2894,6 @@
         const fullData = plotDiv.data;
         const layout = plotDiv.layout;
         
-        // Get current axis ranges
         let xRange, yRange;
         
         if (eventData['xaxis.autorange'] || eventData['yaxis.autorange']) {
@@ -2490,7 +2901,6 @@
           const visibility = fullData.map(() => true);
           Plotly.restyle(plotDiv, { showlegend: visibility });
           
-          // Update status
           const statusEl = document.getElementById('legendStatus');
           if (statusEl) {
             statusEl.style.display = 'none';
@@ -2498,6 +2908,7 @@
           return;
         }
         
+        // Get axis ranges
         if (eventData['xaxis.range[0]'] !== undefined) {
           xRange = [eventData['xaxis.range[0]'], eventData['xaxis.range[1]']];
         } else if (eventData['xaxis.range']) {
@@ -2516,7 +2927,7 @@
         
         if (!xRange || !yRange) return;
         
-        // Convert log scale ranges if needed
+        // Convert log scale ranges
         const xIsLog = layout.xaxis && layout.xaxis.type === 'log';
         const yIsLog = layout.yaxis && layout.yaxis.type === 'log';
         
@@ -2527,17 +2938,14 @@
         
         // Check each trace for visibility
         const visibility = fullData.map((trace, i) => {
-          // Check if any point is within the visible range
           for (let j = 0; j < trace.x.length; j++) {
             const x = trace.x[j];
             const y = trace.y[j];
             
-            // Skip invalid values
             if (x === null || x === undefined || y === null || y === undefined) {
               continue;
             }
             
-            // Check if point is in visible range
             if (x >= xMin && x <= xMax && y >= yMin && y <= yMax) {
               return true;
             }
@@ -2545,9 +2953,7 @@
           return false;
         });
         
-        // Use Plotly.restyle with array of booleans
         Plotly.restyle(plotDiv, { showlegend: visibility }).then(() => {
-          // Update status counter
           const visibleCount = visibility.filter(v => v).length;
           const totalCount = fullData.length;
           const statusEl = document.getElementById('legendStatus');
@@ -2565,6 +2971,16 @@
     }
 
 
+    /* ==========================================================================
+       11. DATASET INFORMATION DISPLAY
+       ========================================================================== */
+    
+    /**
+     * Display node attributes and information for a selected path
+     * Shows data preview, attributes table, and triggers chart if time-dependent
+     * @param {string} path - HDF5 path to the node
+     * @param {boolean} isGroup - Whether the node is a group (vs dataset)
+     */
     function showNodeAttributes(path, isGroup = false) {
       const infoDiv = document.getElementById('info');
       infoDiv.innerHTML = '<div class="loading">Loading...</div>';
@@ -2585,6 +3001,7 @@
         let hasTimeDependentData = false;
         let isRadionuclidesGroup = false;
         
+        // Check if this is a radionuclides group
         if (isGroup && enabledFiles.length > 0) {
           const firstFile = loadedFiles[enabledFiles[0]];
           isRadionuclidesGroup = checkGroupForRadionuclides(firstFile, path);
@@ -2593,6 +3010,7 @@
           selectedIsRadionuclidesGroup = false;
         }
         
+        // Build HTML for each enabled file
         for (const fileKey of enabledFiles) {
           const file = loadedFiles[fileKey];
           
@@ -2609,6 +3027,7 @@
           html += `<div class="file-data-section" style="border-left-color: ${fileColor};">`;
           html += `<h4>${escapeHtml(fileKey)}</h4>`;
           
+          // Show path, type, dtype, shape only for first file
           if (isFirstFile) {
             html += `<div class="info-section">
               <div class="info-label">Path</div>
@@ -2636,6 +3055,7 @@
             }
           }
           
+          // Show data preview for datasets (not groups)
           if (!isGroup) {
             if (isTimeDependent(node)) {
               hasTimeDependentData = true;
@@ -2687,118 +3107,13 @@
                   <div class="info-content">${escapeHtml(JSON.stringify(preview, jsonReplacer, 2))}</div>
                 </div>`;
                 
-                // Store the full data for download
+                // Setup download button handler
                 if (!isScalar) {
                   setTimeout(() => {
                     const downloadBtn = document.getElementById(downloadBtnId);
                     if (downloadBtn) {
                       downloadBtn.addEventListener('click', () => {
-                        // Get index attribute if it exists
-                        let headerRow = null;
-                        try {
-                          if (node.attrs && typeof node.attrs === 'object') {
-                            for (const attrName in node.attrs) {
-                              if (attrName === 'index') {
-                                const attrObj = node.attrs[attrName];
-                                if (attrObj && attrObj.value !== null && typeof attrObj.value !== 'undefined') {
-                                  const indexValue = attrObj.value;
-                                  if (Array.isArray(indexValue)) {
-                                    headerRow = indexValue;
-                                  } else if (indexValue && typeof indexValue === 'object' && indexValue.length !== undefined) {
-                                    headerRow = Array.from(indexValue);
-                                  }
-                                }
-                              }
-                            }
-                          }
-                        } catch (e) {
-                          console.warn('Could not read index attribute:', e);
-                        }
-                        
-                        // Determine data shape
-                        let csvContent = '';
-                        const shape = node.shape || [];
-                        
-                        if (shape.length === 1) {
-                          // 1D array - single column
-                          if (headerRow && headerRow.length === 1) {
-                            csvContent += escapeCSV(headerRow[0]) + '\n';
-                          }
-                          fullData.forEach(value => {
-                            csvContent += escapeCSV(value) + '\n';
-                          });
-                        } else if (shape.length === 2) {
-                          // 2D array - rows and columns
-                          const numRows = shape[0];
-                          const numCols = shape[1];
-                          
-                          // Add header if available
-                          if (headerRow && headerRow.length === numCols) {
-                            csvContent += headerRow.map(h => escapeCSV(h)).join(',') + '\n';
-                          }
-                          
-                          // Add data rows
-                          for (let i = 0; i < numRows; i++) {
-                            const row = [];
-                            for (let j = 0; j < numCols; j++) {
-                              row.push(escapeCSV(fullData[i * numCols + j]));
-                            }
-                            csvContent += row.join(',') + '\n';
-                          }
-                        } else if (shape.length === 0) {
-                          // Scalar or flat array
-                          if (headerRow && headerRow.length > 0) {
-                            csvContent += headerRow.map(h => escapeCSV(h)).join(',') + '\n';
-                          }
-                          
-                          // Try to determine if it's a multi-column array by checking header length
-                          if (headerRow && headerRow.length > 1) {
-                            const numCols = headerRow.length;
-                            const numRows = Math.floor(fullData.length / numCols);
-                            for (let i = 0; i < numRows; i++) {
-                              const row = [];
-                              for (let j = 0; j < numCols; j++) {
-                                row.push(escapeCSV(fullData[i * numCols + j]));
-                              }
-                              csvContent += row.join(',') + '\n';
-                            }
-                          } else {
-                            // Single column
-                            fullData.forEach(value => {
-                              csvContent += escapeCSV(value) + '\n';
-                            });
-                          }
-                        } else {
-                          // Higher dimensional - flatten to 2D
-                          console.warn('Multi-dimensional array, flattening to 2D');
-                          if (headerRow) {
-                            csvContent += headerRow.map(h => escapeCSV(h)).join(',') + '\n';
-                          }
-                          
-                          const lastDim = shape[shape.length - 1];
-                          const numRows = Math.floor(fullData.length / lastDim);
-                          
-                          for (let i = 0; i < numRows; i++) {
-                            const row = [];
-                            for (let j = 0; j < lastDim; j++) {
-                              row.push(escapeCSV(fullData[i * lastDim + j]));
-                            }
-                            csvContent += row.join(',') + '\n';
-                          }
-                        }
-                        
-                        // Create and download CSV
-                        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        const safePath = path.replace(/[^a-zA-Z0-9]/g, '_');
-                        const safeFileName = fileKey.replace(/\.[^/.]+$/, '');
-                        a.download = `${safeFileName}${safePath}_data.csv`;
-                        document.body.appendChild(a);
-                        a.click();
-                        document.body.removeChild(a);
-                        URL.revokeObjectURL(url);
+                        downloadDatasetAsCSV(node, fullData, path, fileKey);
                       });
                     }
                   }, 0);
@@ -2809,6 +3124,7 @@
             }
           }
           
+          // Show attributes table
           const attrs = {};
           let hasAttributes = false;
           
@@ -2839,42 +3155,7 @@
           }
           
           if (hasAttributes && Object.keys(attrs).length > 0) {
-            let attrsHtml = '<table style="width:100%; border-collapse: collapse; font-family: monospace; font-size: 11px;">';
-            attrsHtml += '<tr style="border-bottom: 1px solid #e5e7eb; background: #f3f4f6;"><th style="text-align: left; padding: 6px; font-weight: 600;">Name</th><th style="text-align: left; padding: 6px; font-weight: 600;">Value</th></tr>';
-            
-            for (const [key, value] of Object.entries(attrs)) {
-              let displayValue;
-              if (typeof value === 'string') {
-                displayValue = value;
-              } else if (Array.isArray(value)) {
-                displayValue = `[${value.join(', ')}]`;
-              } else if (value === null) {
-                displayValue = 'null';
-              } else if (value === undefined) {
-                displayValue = 'undefined';
-              } else if (typeof value === 'object') {
-                if (value.length !== undefined) {
-                  displayValue = `[${Array.from(value).slice(0, 10).join(', ')}${value.length > 10 ? '...' : ''}]`;
-                } else {
-                  displayValue = JSON.stringify(value, jsonReplacer, 0);
-                }
-              } else if (typeof value === 'bigint') {
-                displayValue = value.toString() + 'n';
-              } else {
-                displayValue = String(value);
-              }
-              
-              attrsHtml += `<tr style="border-bottom: 1px solid #f0f0f0;">
-                <td style="padding: 6px; word-break: break-word; max-width: 150px;"><strong>${escapeHtml(key)}</strong></td>
-                <td style="padding: 6px; word-break: break-word; color: #555;">${escapeHtml(displayValue)}</td>
-              </tr>`;
-            }
-            
-            attrsHtml += '</table>';
-            html += `<div class="info-section">
-              <div class="info-label">Attributes (${Object.keys(attrs).length})</div>
-              <div class="info-content" style="padding: 0; overflow-x: auto;">${attrsHtml}</div>
-            </div>`;
+            html += buildAttributesTable(attrs, jsonReplacer);
           }
           
           html += '</div>';
@@ -2882,6 +3163,7 @@
         
         infoDiv.innerHTML = html || '<div style="color:#999;">No data available for this path</div>';
         
+        // Create chart if appropriate
         if (isRadionuclidesGroup) {
           createRadionuclidesChart(path);
         } else if (hasTimeDependentData && !isGroup) {
@@ -2896,83 +3178,167 @@
       }
     }
 
-    document.getElementById('fileInput').addEventListener('change', async (e) => {
-      const files = Array.from(e.target.files || []);
-      if (files.length === 0) return;
-      
+    /**
+     * Download dataset data as CSV file
+     * @param {Object} node - HDF5 dataset node
+     * @param {Array} fullData - Full data array
+     * @param {string} path - Dataset path
+     * @param {string} fileKey - File name
+     */
+    function downloadDatasetAsCSV(node, fullData, path, fileKey) {
+      // Get index attribute if it exists
+      let headerRow = null;
       try {
-        await waitForH5Wasm();
-        
-        for (const file of files) {
-          try {
-            const buffer = await file.arrayBuffer();
-            
-            const { FS, File } = window.h5wasm;
-            if (!FS || !File) throw new Error('h5wasm not ready');
-            
-            const filename = `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.h5`;
-            const data = new Uint8Array(buffer);
-            
-            FS.writeFile('/' + filename, data);
-            const hf = new File('/' + filename, 'r');
-            
-            loadedFiles[file.name] = hf;
-            fileStates[file.name] = true;
-            if (!fileOrder.includes(file.name)) {
-              fileOrder.push(file.name);
+        if (node.attrs && typeof node.attrs === 'object') {
+          for (const attrName in node.attrs) {
+            if (attrName === 'index') {
+              const attrObj = node.attrs[attrName];
+              if (attrObj && attrObj.value !== null && typeof attrObj.value !== 'undefined') {
+                const indexValue = attrObj.value;
+                if (Array.isArray(indexValue)) {
+                  headerRow = indexValue;
+                } else if (indexValue && typeof indexValue === 'object' && indexValue.length !== undefined) {
+                  headerRow = Array.from(indexValue);
+                }
+              }
             }
-          } catch (err) {
-            console.error(`Error loading ${file.name}:`, err);
-            alert(`Failed to load ${file.name}`);
           }
         }
-        
-        updateTabs();
-        await refreshTreeStructure();
-      } catch (err) {
-        alert(`Error: ${err.message}`);
-        console.error(err);
+      } catch (e) {
+        console.warn('Could not read index attribute:', e);
       }
       
-      e.target.value = '';
-    });
-
-    let dragCounter = 0;
-
-    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-      document.body.addEventListener(eventName, preventDefaults, false);
-    });
-
-    function preventDefaults(e) {
-      e.preventDefault();
-      e.stopPropagation();
+      // Determine data shape and build CSV
+      let csvContent = '';
+      const shape = node.shape || [];
+      
+      if (shape.length === 1) {
+        // 1D array - single column
+        if (headerRow && headerRow.length === 1) {
+          csvContent += escapeCSV(headerRow[0]) + '\n';
+        }
+        fullData.forEach(value => {
+          csvContent += escapeCSV(value) + '\n';
+        });
+      } else if (shape.length === 2) {
+        // 2D array - rows and columns
+        const numRows = shape[0];
+        const numCols = shape[1];
+        
+        if (headerRow && headerRow.length === numCols) {
+          csvContent += headerRow.map(h => escapeCSV(h)).join(',') + '\n';
+        }
+        
+        for (let i = 0; i < numRows; i++) {
+          const row = [];
+          for (let j = 0; j < numCols; j++) {
+            row.push(escapeCSV(fullData[i * numCols + j]));
+          }
+          csvContent += row.join(',') + '\n';
+        }
+      } else if (shape.length === 0) {
+        // Scalar or flat array
+        if (headerRow && headerRow.length > 0) {
+          csvContent += headerRow.map(h => escapeCSV(h)).join(',') + '\n';
+        }
+        
+        if (headerRow && headerRow.length > 1) {
+          const numCols = headerRow.length;
+          const numRows = Math.floor(fullData.length / numCols);
+          for (let i = 0; i < numRows; i++) {
+            const row = [];
+            for (let j = 0; j < numCols; j++) {
+              row.push(escapeCSV(fullData[i * numCols + j]));
+            }
+            csvContent += row.join(',') + '\n';
+          }
+        } else {
+          fullData.forEach(value => {
+            csvContent += escapeCSV(value) + '\n';
+          });
+        }
+      } else {
+        // Higher dimensional - flatten to 2D
+        console.warn('Multi-dimensional array, flattening to 2D');
+        if (headerRow) {
+          csvContent += headerRow.map(h => escapeCSV(h)).join(',') + '\n';
+        }
+        
+        const lastDim = shape[shape.length - 1];
+        const numRows = Math.floor(fullData.length / lastDim);
+        
+        for (let i = 0; i < numRows; i++) {
+          const row = [];
+          for (let j = 0; j < lastDim; j++) {
+            row.push(escapeCSV(fullData[i * lastDim + j]));
+          }
+          csvContent += row.join(',') + '\n';
+        }
+      }
+      
+      // Create and download CSV
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const safePath = path.replace(/[^a-zA-Z0-9]/g, '_');
+      const safeFileName = fileKey.replace(/\.[^/.]+$/, '');
+      a.download = `${safeFileName}${safePath}_data.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
     }
 
-    document.body.addEventListener('dragenter', (e) => {
-      dragCounter++;
-      document.getElementById('dropOverlay').classList.add('active');
-    });
-
-    document.body.addEventListener('dragleave', (e) => {
-      dragCounter--;
-      if (dragCounter === 0) {
-        document.getElementById('dropOverlay').classList.remove('active');
-      }
-    });
-
-    document.body.addEventListener('drop', (e) => {
-      dragCounter = 0;
-      document.getElementById('dropOverlay').classList.remove('active');
+    /**
+     * Build HTML table for node attributes
+     * @param {Object} attrs - Attributes object
+     * @param {Function} jsonReplacer - JSON replacer for BigInt etc.
+     * @returns {string} HTML string for attributes section
+     */
+    function buildAttributesTable(attrs, jsonReplacer) {
+      let attrsHtml = '<table style="width:100%; border-collapse: collapse; font-family: monospace; font-size: 11px;">';
+      attrsHtml += '<tr style="border-bottom: 1px solid #e5e7eb; background: #f3f4f6;"><th style="text-align: left; padding: 6px; font-weight: 600;">Name</th><th style="text-align: left; padding: 6px; font-weight: 600;">Value</th></tr>';
       
-      const dt = e.dataTransfer;
-      const files = dt.files;
-      if (files.length > 0) {
-        document.getElementById('fileInput').files = files;
-        const event = new Event('change', { bubbles: true });
-        document.getElementById('fileInput').dispatchEvent(event);
+      for (const [key, value] of Object.entries(attrs)) {
+        let displayValue;
+        if (typeof value === 'string') {
+          displayValue = value;
+        } else if (Array.isArray(value)) {
+          displayValue = `[${value.join(', ')}]`;
+        } else if (value === null) {
+          displayValue = 'null';
+        } else if (value === undefined) {
+          displayValue = 'undefined';
+        } else if (typeof value === 'object') {
+          if (value.length !== undefined) {
+            displayValue = `[${Array.from(value).slice(0, 10).join(', ')}${value.length > 10 ? '...' : ''}]`;
+          } else {
+            displayValue = JSON.stringify(value, jsonReplacer, 0);
+          }
+        } else if (typeof value === 'bigint') {
+          displayValue = value.toString() + 'n';
+        } else {
+          displayValue = String(value);
+        }
+        
+        attrsHtml += `<tr style="border-bottom: 1px solid #f0f0f0;">
+          <td style="padding: 6px; word-break: break-word; max-width: 150px;"><strong>${escapeHtml(key)}</strong></td>
+          <td style="padding: 6px; word-break: break-word; color: #555;">${escapeHtml(displayValue)}</td>
+        </tr>`;
       }
-    });
+      
+      attrsHtml += '</table>';
+      return `<div class="info-section">
+        <div class="info-label">Attributes (${Object.keys(attrs).length})</div>
+        <div class="info-content" style="padding: 0; overflow-x: auto;">${attrsHtml}</div>
+      </div>`;
+    }
 
+    /**
+     * Display information for multiple selected datasets
+     * @param {Array<string>} paths - Array of selected dataset paths
+     */
     function showMultipleDatasetAttributes(paths) {
       const infoDiv = document.getElementById('info');
       infoDiv.innerHTML = `<div class="loading">Loading ${paths.length} datasets...</div>`;
@@ -3018,7 +3384,7 @@
             </div>`;
           }
           
-          // Show attributes
+          // Show key attributes
           const attrs = {};
           if (dataset.attrs && typeof dataset.attrs === 'object') {
             for (const attrName in dataset.attrs) {
@@ -3063,17 +3429,28 @@
       }
     }
 
-    // Search functionality
-    let searchTimeout = null;
-    let currentSearchTerm = '';
+
+    /* ==========================================================================
+       12. SEARCH FUNCTIONALITY
+       ========================================================================== */
+
+    /**
+     * Convert wildcard pattern to regular expression
+     * @param {string} pattern - Wildcard pattern (supports *)
+     * @returns {RegExp} Compiled regular expression
+     */
     function wildcardToRegex(pattern) {
-      // Escape special regex characters except *
       const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
-      // Replace * with .*
       const regexPattern = escaped.replace(/\*/g, '.*');
       return new RegExp(regexPattern, 'i');
     }
 
+    /**
+     * Highlight matching text in a string
+     * @param {string} text - Original text
+     * @param {string} searchTerm - Search term to highlight
+     * @returns {string} HTML with highlighted matches
+     */
     function highlightText(text, searchTerm) {
       if (!searchTerm) return escapeHtml(text);
       
@@ -3092,14 +3469,19 @@
       return `${before}<span class="search-highlight">${matched}</span>${after}`;
     }
 
+    /**
+     * Filter tree view based on search term
+     * Shows matching items and their parents, hides non-matching items
+     * @param {string} searchTerm - Search term (supports wildcards)
+     */
     function filterTree(searchTerm) {
       currentSearchTerm = searchTerm;
       const tree = document.getElementById('tree');
       const allItems = tree.querySelectorAll('.tree-item');
       const allChildren = tree.querySelectorAll('.tree-group-children');
       
+      // Clear search - show everything, remove highlights
       if (!searchTerm.trim()) {
-        // Clear search - show everything, remove highlights
         allItems.forEach(item => {
           item.classList.remove('search-hidden', 'search-match');
           const label = item.querySelector('.tree-label');
@@ -3111,7 +3493,6 @@
         
         allChildren.forEach(child => {
           child.classList.remove('search-expanded');
-          // Restore original expanded state based on parent
           const parentGroup = child.previousElementSibling;
           if (parentGroup && parentGroup.classList.contains('expanded')) {
             child.classList.add('expanded');
@@ -3138,7 +3519,6 @@
         if (matches) {
           matchingItems.add(item);
           item.classList.add('search-match');
-          // Highlight the matching text
           label.innerHTML = highlightText(text, searchTerm);
         } else {
           item.classList.remove('search-match');
@@ -3150,7 +3530,6 @@
       matchingItems.forEach(item => {
         itemsToShow.add(item);
         
-        // Add all parent groups
         let current = item;
         while (current) {
           const parentChildren = current.closest('.tree-group-children');
@@ -3195,73 +3574,74 @@
       });
     }
 
-    // Setup search event listeners
-    document.getElementById('treeSearch').addEventListener('input', (e) => {
-      const searchTerm = e.target.value;
-      const clearBtn = document.getElementById('clearSearch');
-      
-      if (searchTerm) {
-        clearBtn.classList.add('visible');
-      } else {
-        clearBtn.classList.remove('visible');
-      }
-      
-      // Debounce the search
-      if (searchTimeout) {
-        clearTimeout(searchTimeout);
-      }
-      
-      searchTimeout = setTimeout(() => {
-        filterTree(searchTerm);
-      }, 200);
-    });
 
-    document.getElementById('clearSearch').addEventListener('click', () => {
-      const searchInput = document.getElementById('treeSearch');
-      searchInput.value = '';
-      document.getElementById('clearSearch').classList.remove('visible');
-      filterTree('');
-      searchInput.focus();
-    });
+    /* ==========================================================================
+       13. DRAG & DROP FILE LOADING
+       ========================================================================== */
 
-    // Handle Escape key to clear search
-    document.getElementById('treeSearch').addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') {
-        document.getElementById('clearSearch').click();
-      }
-    });
-
-    // Re-apply search filter after tree refresh
-    const originalRefreshTreeStructure = refreshTreeStructure;
-    refreshTreeStructure = async function() {
-      await originalRefreshTreeStructure();
-      const searchTerm = document.getElementById('treeSearch').value;
-      if (searchTerm) {
-        // Small delay to ensure DOM is updated
-        setTimeout(() => filterTree(searchTerm), 50);
-      }
-    };
-
-    // Setup ResizeObserver to automatically resize Plotly chart when container is resized
-    const plotlyChart = document.getElementById('plotlyChart');
-    let resizeTimeout;
-    const resizeObserver = new ResizeObserver(entries => {
-      if (resizeTimeout) {
-        clearTimeout(resizeTimeout);
-      }
-      resizeTimeout = setTimeout(() => {
-        for (const entry of entries) {
-          if (entry.target === plotlyChart && plotlyChart.data) {
-            Plotly.Plots.resize(plotlyChart);
-          }
-        }
-      }, 100);
-    });
-    
-    if (plotlyChart) {
-      resizeObserver.observe(plotlyChart);
+    /**
+     * Prevent default browser behavior for drag events.
+     * Required to enable custom drop handling for HDF5 files.
+     * 
+     * @param {Event} e - Drag event to prevent
+     * @returns {void}
+     */
+    function preventDefaults(e) {
+      e.preventDefault();
+      e.stopPropagation();
     }
+
+    /*
+     * Drag & Drop Event Registration
+     * 
+     * Uses a dragCounter to track nested drag enter/leave events,
+     * ensuring the overlay is only hidden when the drag truly leaves
+     * the document (not just moving between child elements).
+     */
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+      document.body.addEventListener(eventName, preventDefaults, false);
+    });
+
+    document.body.addEventListener('dragenter', (e) => {
+      dragCounter++;
+      document.getElementById('dropOverlay').classList.add('active');
+    });
+
+    document.body.addEventListener('dragleave', (e) => {
+      dragCounter--;
+      if (dragCounter === 0) {
+        document.getElementById('dropOverlay').classList.remove('active');
+      }
+    });
+
+    document.body.addEventListener('drop', (e) => {
+      dragCounter = 0;
+      document.getElementById('dropOverlay').classList.remove('active');
+      
+      const dt = e.dataTransfer;
+      const files = dt.files;
+      if (files.length > 0) {
+        document.getElementById('fileInput').files = files;
+        const event = new Event('change', { bubbles: true });
+        document.getElementById('fileInput').dispatchEvent(event);
+      }
+    });
+
+
+    /* ==========================================================================
+       14. CLIPBOARD & EXPORT
+       ========================================================================== */
     
+    /**
+     * Copy the current chart to clipboard as a PNG image.
+     * Uses the Clipboard API with ClipboardItem for image data.
+     * Falls back to file download if clipboard access is denied or unavailable.
+     * 
+     * The exported image is rendered at 2x scale (1200x800 at scale 2)
+     * for high-quality output suitable for documents and presentations.
+     * 
+     * @returns {Promise<void>}
+     */
     async function copyChartToClipboard() {
       if (!currentChartData) {
         alert('No chart available to copy');
@@ -3273,23 +3653,22 @@
       const originalText = btn.textContent;
       
       try {
-        // First check if clipboard API is available
+        // Check clipboard API availability
         if (!navigator.clipboard || !navigator.clipboard.write) {
           throw new Error('Clipboard API not supported');
         }
         
-        // Try to request permission if needed (some browsers require this)
+        // Try to request permission if needed
         try {
           const permissionStatus = await navigator.permissions.query({ name: 'clipboard-write' });
           if (permissionStatus.state === 'denied') {
             throw new Error('Clipboard permission denied');
           }
         } catch (permErr) {
-          // Some browsers don't support permission query for clipboard, continue anyway
           console.log('Permission query not supported, attempting clipboard write anyway');
         }
         
-        // Convert the chart to PNG
+        // Convert chart to PNG
         const dataUrl = await Plotly.toImage(plotDiv, {
           format: 'png',
           width: 1200,
@@ -3299,14 +3678,14 @@
         
         const blob = await fetch(dataUrl).then(r => r.blob());
         
-        // Attempt to write to clipboard
+        // Write to clipboard
         await navigator.clipboard.write([
           new ClipboardItem({
             'image/png': blob
           })
         ]);
         
-        // Success - show feedback
+        // Show success feedback
         btn.textContent = '✓ Copied!';
         btn.style.background = 'var(--color-kvot-accent)';
         
@@ -3343,7 +3722,6 @@
             btn.style.background = '';
           }, 2000);
           
-          // Inform user why it was downloaded instead
           if (err.message.includes('denied') || err.message.includes('permission')) {
             alert('Clipboard access was denied. The chart has been downloaded instead.');
           }
@@ -3352,6 +3730,163 @@
           alert('Failed to copy or download chart: ' + downloadErr.message);
         }
       }
+    }
+
+
+    /* ==========================================================================
+       15. EVENT LISTENERS & INITIALIZATION
+       ========================================================================== */
+    
+    /*
+     * Application Initialization
+     * 
+     * The following code runs immediately when the script loads:
+     * 1. Initialize DOM element cache for performance
+     * 2. Register event handlers for file input, search, resize, etc.
+     * 3. Set up keyboard shortcuts and accessibility features
+     */
+    
+    // Initialize cached DOM element references
+    initDOMReferences();
+    
+    /**
+     * File input change handler.
+     * Processes selected HDF5 files, loads them via h5wasm,
+     * and adds them to the file tabs for viewing.
+     * 
+     * @listens change
+     */
+    document.getElementById('fileInput').addEventListener('change', async (e) => {
+      const files = Array.from(e.target.files || []);
+      if (files.length === 0) return;
+      
+      try {
+        await waitForH5Wasm();
+        
+        for (const file of files) {
+          try {
+            const buffer = await file.arrayBuffer();
+            
+            const { FS, File } = window.h5wasm;
+            if (!FS || !File) throw new Error('h5wasm not ready');
+            
+            const filename = `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.h5`;
+            const data = new Uint8Array(buffer);
+            
+            FS.writeFile('/' + filename, data);
+            const hf = new File('/' + filename, 'r');
+            
+            loadedFiles[file.name] = hf;
+            fileStates[file.name] = true;
+            if (!fileOrder.includes(file.name)) {
+              fileOrder.push(file.name);
+            }
+          } catch (err) {
+            console.error(`Error loading ${file.name}:`, err);
+            alert(`Failed to load ${file.name}`);
+          }
+        }
+        
+        updateTabs();
+        await refreshTreeStructure();
+      } catch (err) {
+        alert(`Error: ${err.message}`);
+        console.error(err);
+      }
+      
+      e.target.value = '';
+    });
+
+    /**
+     * Search input handler with 200ms debouncing.
+     * Filters the tree view to show only matching items.
+     * Shows/hides the clear button based on input state.
+     * 
+     * @listens input
+     */
+    document.getElementById('treeSearch').addEventListener('input', (e) => {
+      const searchTerm = e.target.value;
+      const clearBtn = document.getElementById('clearSearch');
+      
+      if (searchTerm) {
+        clearBtn.classList.add('visible');
+      } else {
+        clearBtn.classList.remove('visible');
+      }
+      
+      // Debounce the search
+      if (searchTimeout) {
+        clearTimeout(searchTimeout);
+      }
+      
+      searchTimeout = setTimeout(() => {
+        filterTree(searchTerm);
+      }, 200);
+    });
+
+    /**
+     * Clear search button handler.
+     * Resets search input, removes filter, and refocuses the input.
+     * 
+     * @listens click
+     */
+    document.getElementById('clearSearch').addEventListener('click', () => {
+      const searchInput = document.getElementById('treeSearch');
+      searchInput.value = '';
+      document.getElementById('clearSearch').classList.remove('visible');
+      filterTree('');
+      searchInput.focus();
+    });
+
+    /**
+     * Keyboard shortcut: Escape key clears the search input.
+     * Provides quick way to reset the tree filter.
+     * 
+     * @listens keydown
+     */
+    document.getElementById('treeSearch').addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        document.getElementById('clearSearch').click();
+      }
+    });
+
+    /**
+    /**
+     * Decorator: Re-apply search filter after tree structure refresh.
+     * Ensures that if the user has an active search term, it persists
+     * when the tree is rebuilt (e.g., after file reordering).
+     */
+    const originalRefreshTreeStructure = refreshTreeStructure;
+    refreshTreeStructure = async function() {
+      await originalRefreshTreeStructure();
+      const searchTerm = document.getElementById('treeSearch').value;
+      if (searchTerm) {
+        setTimeout(() => filterTree(searchTerm), 50);
+      }
+    };
+
+    /**
+     * Responsive chart resizing using ResizeObserver.
+     * Automatically resizes the Plotly chart when its container changes size.
+     * Debounced to 100ms to prevent excessive resize operations.
+     */
+    const plotlyChart = document.getElementById('plotlyChart');
+    let resizeTimeout;
+    const resizeObserver = new ResizeObserver(entries => {
+      if (resizeTimeout) {
+        clearTimeout(resizeTimeout);
+      }
+      resizeTimeout = setTimeout(() => {
+        for (const entry of entries) {
+          if (entry.target === plotlyChart && plotlyChart.data) {
+            Plotly.Plots.resize(plotlyChart);
+          }
+        }
+      }, 100);
+    });
+    
+    if (plotlyChart) {
+      resizeObserver.observe(plotlyChart);
     }
   </script>
 </body>
