@@ -3478,6 +3478,21 @@
             html += buildAttributesTable(attrs, jsonReplacer);
           }
           
+          // Add Excel download button for datasets (not groups)
+          if (!isGroup) {
+            const escapedPath = path.replace(/'/g, "\\'");
+            const escapedFileKey = fileKey.replace(/'/g, "\\'");
+            html += `<div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--color-border);">
+              <button onclick="downloadDatasetAsExcel('${escapedPath}', '${escapedFileKey}')" 
+                style="padding: 6px 12px; background: #217346; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 500; transition: all 0.2s;"
+                onmouseover="this.style.background='#1e6b3f'" 
+                onmouseout="this.style.background='#217346'"
+                title="Download this dataset to Excel">
+                📊 Download Excel
+              </button>
+            </div>`;
+          }
+          
           html += '</div>';
         }
         
@@ -3611,6 +3626,360 @@
     }
 
     /**
+     * Download selected dataset information, attributes, and data as Excel file
+     * Uses xlsxwrite.js library
+     */
+    async function downloadDatasetAsExcel(datasetPath, datasetFileKey) {
+      // Use provided parameters or fall back to selected dataset
+      const path = datasetPath || selectedDatasetPath;
+      if (!path) {
+        alert('No dataset selected');
+        return;
+      }
+      
+      const enabledFiles = getEnabledFiles();
+      if (enabledFiles.length === 0) {
+        alert('No files enabled');
+        return;
+      }
+      
+      try {
+        // Use specified file or first enabled file
+        const fileKey = datasetFileKey || enabledFiles[0];
+        const file = loadedFiles[fileKey];
+        if (!file) {
+          alert('File not found: ' + fileKey);
+          return;
+        }
+        const node = file.get(path);
+        
+        if (!node) {
+          alert('Could not access dataset');
+          return;
+        }
+        
+        const isGroup = node.type === 'Group';
+        const safeFileName = fileKey.replace(/\.[^/.]+$/, '').replace(/[^a-zA-Z0-9]/g, '_');
+        const safePath = path.replace(/[^a-zA-Z0-9]/g, '_');
+        
+        // Create workbook
+        const xlsx = new XlsxWriter(`${safeFileName}${safePath}.xlsx`);
+        
+        // Create formats
+        const headerFormat = xlsx.addFormat({
+          bold: true,
+          bg_color: '217346',
+          font_color: 'FFFFFF',
+          align: 'center',
+          valign: 'vcenter',
+          border: 1
+        });
+        
+        const labelFormat = xlsx.addFormat({
+          bold: true,
+          bg_color: 'E2EFDA',
+          border: 1
+        });
+        
+        const valueFormat = xlsx.addFormat({
+          border: 1
+        });
+        
+        const titleFormat = xlsx.addFormat({
+          bold: true,
+          font_size: 14,
+          font_color: '217346'
+        });
+        
+        // ========== SHEET 1: Information ==========
+        xlsx.write(0, 0, 'Dataset Information', titleFormat, 'Information');
+        xlsx.write(2, 0, 'Property', headerFormat, 'Information');
+        xlsx.write(2, 1, 'Value', headerFormat, 'Information');
+        xlsx.setColumn(0, 0, 20, null, {}, 'Information');
+        xlsx.setColumn(1, 1, 50, null, {}, 'Information');
+        
+        let row = 3;
+        xlsx.write(row, 0, 'File', labelFormat, 'Information');
+        xlsx.write(row, 1, fileKey, valueFormat, 'Information');
+        row++;
+        
+        xlsx.write(row, 0, 'Path', labelFormat, 'Information');
+        xlsx.write(row, 1, path, valueFormat, 'Information');
+        row++;
+        
+        xlsx.write(row, 0, 'Type', labelFormat, 'Information');
+        xlsx.write(row, 1, String(node.type), valueFormat, 'Information');
+        row++;
+        
+        if (!isGroup && node.dtype) {
+          xlsx.write(row, 0, 'Data Type', labelFormat, 'Information');
+          xlsx.write(row, 1, formatDataType(node.dtype), valueFormat, 'Information');
+          row++;
+        }
+        
+        if (node.shape && Array.isArray(node.shape)) {
+          xlsx.write(row, 0, 'Shape', labelFormat, 'Information');
+          xlsx.write(row, 1, node.shape.join(' × '), valueFormat, 'Information');
+          row++;
+        }
+        
+        xlsx.write(row, 0, 'Export Date', labelFormat, 'Information');
+        xlsx.write(row, 1, new Date().toISOString(), valueFormat, 'Information');
+        
+        // ========== SHEET 2: Attributes ==========
+        const attrs = {};
+        if (node.attrs && typeof node.attrs === 'object') {
+          for (const attrName in node.attrs) {
+            if (!attrName.startsWith('_') && typeof node.attrs[attrName] === 'object') {
+              try {
+                const attrObj = node.attrs[attrName];
+                let attrValue;
+                
+                if (attrObj && attrObj.value !== null && typeof attrObj.value !== 'undefined') {
+                  attrValue = attrObj.value;
+                } else {
+                  attrValue = attrObj;
+                }
+                
+                attrs[attrName] = attrValue;
+              } catch (e) {
+                attrs[attrName] = `(unreadable: ${e.message})`;
+              }
+            }
+          }
+        }
+        
+        xlsx.write(0, 0, 'Attributes', titleFormat, 'Attributes');
+        xlsx.write(2, 0, 'Name', headerFormat, 'Attributes');
+        xlsx.write(2, 1, 'Value', headerFormat, 'Attributes');
+        xlsx.setColumn(0, 0, 25, null, {}, 'Attributes');
+        xlsx.setColumn(1, 1, 60, null, {}, 'Attributes');
+        
+        row = 3;
+        for (const [key, value] of Object.entries(attrs)) {
+          let displayValue;
+          if (typeof value === 'string') {
+            displayValue = value;
+          } else if (Array.isArray(value)) {
+            displayValue = `[${value.join(', ')}]`;
+          } else if (value === null || value === undefined) {
+            displayValue = String(value);
+          } else if (typeof value === 'object') {
+            if (value.length !== undefined) {
+              displayValue = `[${Array.from(value).join(', ')}]`;
+            } else {
+              displayValue = JSON.stringify(value);
+            }
+          } else if (typeof value === 'bigint') {
+            displayValue = value.toString();
+          } else {
+            displayValue = String(value);
+          }
+          
+          xlsx.write(row, 0, key, labelFormat, 'Attributes');
+          xlsx.write(row, 1, displayValue, valueFormat, 'Attributes');
+          row++;
+        }
+        
+        if (Object.keys(attrs).length === 0) {
+          xlsx.write(3, 0, '(No attributes)', valueFormat, 'Attributes');
+        }
+        
+        // ========== SHEET 3: Data ==========
+        if (!isGroup) {
+          let data;
+          try {
+            if (typeof node.value !== 'undefined') {
+              data = node.value;
+            } else if (typeof node.toArray === 'function') {
+              data = node.toArray();
+            }
+          } catch (e) {
+            console.warn('Could not read data:', e);
+          }
+          
+          if (data !== undefined) {
+            let fullData;
+            if (Array.isArray(data)) {
+              fullData = data;
+            } else if (data && typeof data === 'object' && data.length !== undefined) {
+              fullData = Array.from(data);
+            } else {
+              fullData = [data];
+            }
+            
+            xlsx.write(0, 0, 'Data', titleFormat, 'Data');
+            
+            // Check for index attribute (column headers)
+            let headerRow = null;
+            try {
+              if (node.attrs && node.attrs['index']) {
+                const indexAttr = node.attrs['index'];
+                const indexValue = indexAttr.value !== undefined ? indexAttr.value : indexAttr;
+                if (Array.isArray(indexValue)) {
+                  headerRow = indexValue;
+                } else if (indexValue && indexValue.length !== undefined) {
+                  headerRow = Array.from(indexValue);
+                }
+              }
+            } catch (e) {
+              console.warn('Could not read index attribute:', e);
+            }
+            
+            // Try to get time data for time-series datasets
+            let timeData = null;
+            let timeUnit = '';
+            try {
+              timeData = getTimeData(file);
+              timeUnit = getTimeUnit(file);
+            } catch (e) {
+              console.warn('Could not read time data:', e);
+            }
+            
+            const shape = node.shape || [];
+            
+            if (shape.length <= 1) {
+              // 1D array - single column (possibly with time column)
+              const hasTimeColumn = timeData && timeData.length === fullData.length;
+              const colOffset = hasTimeColumn ? 1 : 0;
+              
+              // Write time header if available
+              if (hasTimeColumn) {
+                const timeHeader = timeUnit ? `Time (${timeUnit})` : 'Time';
+                xlsx.write(2, 0, timeHeader, headerFormat, 'Data');
+                xlsx.setColumn(0, 0, 15, null, {}, 'Data');
+              }
+              
+              // Write data header
+              if (headerRow && headerRow.length === 1) {
+                xlsx.write(2, colOffset, headerRow[0], headerFormat, 'Data');
+              } else {
+                xlsx.write(2, colOffset, 'Value', headerFormat, 'Data');
+              }
+              
+              // Write data (with time if available)
+              for (let i = 0; i < fullData.length; i++) {
+                if (hasTimeColumn) {
+                  xlsx.write(3 + i, 0, timeData[i], null, 'Data');
+                }
+                const val = fullData[i];
+                xlsx.write(3 + i, colOffset, typeof val === 'number' ? val : String(val), null, 'Data');
+              }
+              
+              xlsx.setColumn(colOffset, colOffset, 15, null, {}, 'Data');
+              
+            } else if (shape.length === 2) {
+              // 2D array (possibly with time column)
+              const numRows = shape[0];
+              const numCols = shape[1];
+              const hasTimeColumn = timeData && timeData.length === numRows;
+              const colOffset = hasTimeColumn ? 1 : 0;
+              
+              // Write time header if available
+              if (hasTimeColumn) {
+                const timeHeader = timeUnit ? `Time (${timeUnit})` : 'Time';
+                xlsx.write(2, 0, timeHeader, headerFormat, 'Data');
+              }
+              
+              // Write headers
+              if (headerRow && headerRow.length === numCols) {
+                for (let j = 0; j < numCols; j++) {
+                  xlsx.write(2, j + colOffset, String(headerRow[j]), headerFormat, 'Data');
+                }
+              } else {
+                for (let j = 0; j < numCols; j++) {
+                  xlsx.write(2, j + colOffset, `Col ${j + 1}`, headerFormat, 'Data');
+                }
+              }
+              
+              // Write data (with time if available)
+              for (let i = 0; i < numRows; i++) {
+                if (hasTimeColumn) {
+                  xlsx.write(3 + i, 0, timeData[i], null, 'Data');
+                }
+                for (let j = 0; j < numCols; j++) {
+                  const val = fullData[i * numCols + j];
+                  xlsx.write(3 + i, j + colOffset, typeof val === 'number' ? val : String(val), null, 'Data');
+                }
+              }
+              
+              // Set column widths
+              if (hasTimeColumn) {
+                xlsx.setColumn(0, 0, 15, null, {}, 'Data');
+              }
+              for (let j = 0; j < numCols; j++) {
+                xlsx.setColumn(j + colOffset, j + colOffset, 12, null, {}, 'Data');
+              }
+              
+            } else {
+              // Higher dimensional - flatten with index attribute hints (possibly with time column)
+              const numCols = headerRow ? headerRow.length : (shape[shape.length - 1] || 1);
+              const numRows = Math.floor(fullData.length / numCols);
+              const hasTimeColumn = timeData && timeData.length === numRows;
+              const colOffset = hasTimeColumn ? 1 : 0;
+              
+              // Write time header if available
+              if (hasTimeColumn) {
+                const timeHeader = timeUnit ? `Time (${timeUnit})` : 'Time';
+                xlsx.write(2, 0, timeHeader, headerFormat, 'Data');
+              }
+              
+              // Write headers
+              if (headerRow) {
+                for (let j = 0; j < headerRow.length; j++) {
+                  xlsx.write(2, j + colOffset, String(headerRow[j]), headerFormat, 'Data');
+                }
+              } else {
+                for (let j = 0; j < numCols; j++) {
+                  xlsx.write(2, j + colOffset, `Col ${j + 1}`, headerFormat, 'Data');
+                }
+              }
+              
+              // Write data (with time if available)
+              for (let i = 0; i < numRows; i++) {
+                if (hasTimeColumn) {
+                  xlsx.write(3 + i, 0, timeData[i], null, 'Data');
+                }
+                for (let j = 0; j < numCols; j++) {
+                  const idx = i * numCols + j;
+                  if (idx < fullData.length) {
+                    const val = fullData[idx];
+                    xlsx.write(3 + i, j + colOffset, typeof val === 'number' ? val : String(val), null, 'Data');
+                  }
+                }
+              }
+              
+              // Set column widths
+              if (hasTimeColumn) {
+                xlsx.setColumn(0, 0, 15, null, {}, 'Data');
+              }
+              for (let j = 0; j < numCols; j++) {
+                xlsx.setColumn(j + colOffset, j + colOffset, 12, null, {}, 'Data');
+              }
+            }
+          }
+        }
+        
+        // Save and download
+        const content = await xlsx.save();
+        
+        // Browser download
+        const url = URL.createObjectURL(content);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${safeFileName}${safePath}.xlsx`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+      } catch (e) {
+        console.error('Error creating Excel file:', e);
+        alert('Error creating Excel file: ' + e.message);
+      }
+    }
+
+    /**
      * Build HTML table for node attributes
      * @param {Object} attrs - Attributes object
      * @param {Function} jsonReplacer - JSON replacer for BigInt etc.
@@ -3730,6 +4099,19 @@
             
             html += `</div></div>`;
           }
+          
+          // Add Excel download button for this dataset
+          const escapedPath = path.replace(/'/g, "\\'");
+          const escapedFileKey = enabledFiles[0].replace(/'/g, "\\'");
+          html += `<div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--color-border);">
+            <button onclick="downloadDatasetAsExcel('${escapedPath}', '${escapedFileKey}')" 
+              style="padding: 6px 12px; background: #217346; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 500; transition: all 0.2s;"
+              onmouseover="this.style.background='#1e6b3f'" 
+              onmouseout="this.style.background='#217346'"
+              title="Download this dataset to Excel">
+              📊 Download Excel
+            </button>
+          </div>`;
           
         } catch (e) {
           html += `<div class="error">Error loading dataset: ${escapeHtml(e.message)}</div>`;
