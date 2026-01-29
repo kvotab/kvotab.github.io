@@ -30,6 +30,34 @@ if (typeof window !== 'undefined' && window.JSZip) {
     }
 }
 
+// ============================================================================
+// Constants
+// ============================================================================
+
+/** Conversion factor: points to EMUs (English Metric Units) */
+const PT_TO_EMU = 12700;
+
+/** Conversion factor: inches to EMUs */
+const INCH_TO_EMU = 914400;
+
+/** Default chart dimensions */
+const DEFAULT_CHART_DIM = {
+    WIDTH: 480,
+    HEIGHT: 288,
+    COL_WIDTH_PX: 64,
+    ROW_HEIGHT_PX: 20
+};
+
+/** Default font settings */
+const DEFAULT_FONT = {
+    NAME: 'Calibri',
+    SIZE: 11,
+    FAMILY: 2
+};
+
+/** Custom number format starting index (per OOXML spec) */
+const CUSTOM_NUM_FMT_START_ID = 164;
+
 /**
  * Named colors mapping (HTML color names to hex)
  */
@@ -99,17 +127,126 @@ const DASH_TYPES = {
 };
 
 /**
+ * Marker types available in Excel charts
+ */
+const MARKER_TYPES = {
+    'automatic': 'auto',
+    'none': 'none',
+    'circle': 'circle',
+    'diamond': 'diamond',
+    'square': 'square',
+    'triangle': 'triangle',
+    'x': 'x',
+    'star': 'star',
+    'plus': 'plus',
+    'dot': 'dot',
+    'dash': 'dash',
+    'short_dash': 'dash',
+    'long_dash': 'dash',
+    'picture': 'picture'
+};
+
+/**
+ * Built-in number format codes
+ */
+const NUM_FORMATS = {
+    'General': 0,
+    '0': 1,
+    '0.00': 2,
+    '#,##0': 3,
+    '#,##0.00': 4,
+    '0%': 9,
+    '0.00%': 10,
+    '0.00E+00': 11,
+    '# ?/?': 12,
+    '# ??/??': 13,
+    'mm-dd-yy': 14,
+    'd-mmm-yy': 15,
+    'd-mmm': 16,
+    'mmm-yy': 17,
+    'h:mm AM/PM': 18,
+    'h:mm:ss AM/PM': 19,
+    'h:mm': 20,
+    'h:mm:ss': 21,
+    'm/d/yy h:mm': 22,
+    '#,##0 ;(#,##0)': 37,
+    '#,##0 ;[Red](#,##0)': 38,
+    '#,##0.00;(#,##0.00)': 39,
+    '#,##0.00;[Red](#,##0.00)': 40,
+    'mm:ss': 45,
+    '[h]:mm:ss': 46,
+    'mmss.0': 47,
+    '##0.0E+0': 48,
+    '@': 49
+};
+
+/**
+ * Border style mapping
+ */
+const BORDER_STYLES = {
+    'none': null,
+    'thin': 'thin',
+    'medium': 'medium',
+    'dashed': 'dashed',
+    'dotted': 'dotted',
+    'thick': 'thick',
+    'double': 'double',
+    'hair': 'hair',
+    'mediumDashed': 'mediumDashed',
+    'dashDot': 'dashDot',
+    'mediumDashDot': 'mediumDashDot',
+    'dashDotDot': 'dashDotDot',
+    'mediumDashDotDot': 'mediumDashDotDot',
+    'slantDashDot': 'slantDashDot'
+};
+
+/**
+ * Pattern fill types
+ */
+const PATTERN_TYPES = {
+    'none': 'none',
+    'solid': 'solid',
+    'gray125': 'gray125',
+    'gray0625': 'gray0625',
+    'darkGray': 'darkGray',
+    'mediumGray': 'mediumGray',
+    'lightGray': 'lightGray',
+    'darkHorizontal': 'darkHorizontal',
+    'darkVertical': 'darkVertical',
+    'darkDown': 'darkDown',
+    'darkUp': 'darkUp',
+    'darkGrid': 'darkGrid',
+    'darkTrellis': 'darkTrellis',
+    'lightHorizontal': 'lightHorizontal',
+    'lightVertical': 'lightVertical',
+    'lightDown': 'lightDown',
+    'lightUp': 'lightUp',
+    'lightGrid': 'lightGrid',
+    'lightTrellis': 'lightTrellis'
+};
+
+/** Cache for column letter lookups (A-ZZ = 702 columns) */
+const XL_COLUMN_CACHE = {};
+
+/**
  * Convert column number to Excel column letter(s)
  * @param {number} column - 1-based column number
  * @returns {string} Column letter(s) (A, B, ..., Z, AA, AB, ...)
  */
 function xlColumn(column) {
+    // Return cached value if available
+    if (XL_COLUMN_CACHE[column]) return XL_COLUMN_CACHE[column];
+    
     let result = '';
-    while (column > 0) {
-        column--;
-        result = String.fromCharCode(65 + (column % 26)) + result;
-        column = Math.floor(column / 26);
+    let col = column;
+    while (col > 0) {
+        col--;
+        result = String.fromCharCode(65 + (col % 26)) + result;
+        col = Math.floor(col / 26);
     }
+    
+    // Cache columns up to ZZ (702) to avoid unbounded growth
+    if (column <= 702) XL_COLUMN_CACHE[column] = result;
     return result;
 }
 
@@ -171,19 +308,63 @@ function getHexColor(colorValue) {
     return '000000';
 }
 
+/** XML escape character map for single-pass replacement */
+const XML_ESCAPE_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' };
+const XML_ESCAPE_RE = /[&<>"']/g;
+
 /**
- * Escape XML special characters
+ * Escape XML special characters (single-pass for performance)
  * @param {string} str - String to escape
  * @returns {string} Escaped string
  */
 function escapeXml(str) {
     if (str === null || str === undefined) return '';
-    return String(str)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&apos;');
+    return String(str).replace(XML_ESCAPE_RE, c => XML_ESCAPE_MAP[c]);
+}
+
+/** XML attribute escape for single-pass replacement */
+const XML_ATTR_ESCAPE_MAP = { '&': '&amp;', '<': '&lt;', '"': '&quot;' };
+const XML_ATTR_ESCAPE_RE = /[&<"]/g;
+
+/**
+ * Escape string for XML attribute values (single-pass for performance)
+ * @param {string} str - String to escape
+ * @returns {string} Escaped string
+ */
+function escapeXmlAttr(str) {
+    if (str === null || str === undefined) return '';
+    return String(str).replace(XML_ATTR_ESCAPE_RE, c => XML_ATTR_ESCAPE_MAP[c]);
+}
+
+/**
+ * Convert RGB array or color value to 6-digit hex string
+ * @param {number[]|string|number} color - RGB array [r,g,b], hex string, or color value
+ * @returns {string} 6-digit uppercase hex color string
+ */
+function toHexColor(color) {
+    if (Array.isArray(color)) {
+        return color.map(c => Math.round(c).toString(16).padStart(2, '0')).join('').toUpperCase();
+    }
+    if (typeof color === 'string') {
+        return color.replace(/^#/, '').toUpperCase();
+    }
+    return getHexColor(color);
+}
+
+/**
+ * Escape sheet name for use in Excel formulas
+ * Sheet names with special characters must be quoted
+ * @param {string} name - Sheet name
+ * @returns {string} Escaped sheet name safe for formula references
+ */
+function escapeSheetName(name) {
+    if (!name) return 'Sheet1';
+    // Sheet names with spaces, special chars, or starting with digits need quotes
+    if (/[^A-Za-z0-9_]/.test(name) || /^\d/.test(name)) {
+        // Escape single quotes by doubling them, then wrap in quotes
+        return "'" + name.replace(/'/g, "''") + "'";
+    }
+    return name;
 }
 
 /**
@@ -192,6 +373,184 @@ function escapeXml(str) {
  */
 function generateId() {
     return Math.floor(Math.random() * 1e9);
+}
+
+// ============================================================================
+// Format Class for Cell Formatting
+// ============================================================================
+
+/**
+ * Format class for cell formatting (similar to XlsxWriter's Format)
+ */
+class Format {
+    constructor(properties = {}) {
+        // Font properties
+        this.fontName = properties.font_name || properties.fontName || 'Calibri';
+        this.fontSize = properties.font_size || properties.fontSize || 11;
+        this.fontColor = properties.font_color || properties.fontColor || null;
+        this.bold = properties.bold || false;
+        this.italic = properties.italic || false;
+        this.underline = properties.underline || 0;  // 0, 1 (single), 2 (double)
+        this.fontStrikeout = properties.font_strikeout || properties.fontStrikeout || false;
+        this.fontScript = properties.font_script || properties.fontScript || 0;  // 0=normal, 1=superscript, 2=subscript
+        
+        // Number format
+        this.numFormat = properties.num_format || properties.numFormat || 'General';
+        this.numFormatIndex = properties.num_format_index || properties.numFormatIndex || 0;
+        
+        // Alignment
+        this.align = properties.align || null;  // left, center, right, fill, justify, center_across, distributed
+        this.valign = properties.valign || null;  // top, vcenter, bottom, vjustify, vdistributed
+        this.rotation = properties.rotation || 0;
+        this.textWrap = properties.text_wrap || properties.textWrap || false;
+        this.shrink = properties.shrink || false;
+        this.indent = properties.indent || 0;
+        
+        // Border
+        this.border = properties.border || 0;
+        this.borderColor = properties.border_color || properties.borderColor || null;
+        this.left = properties.left || 0;
+        this.leftColor = properties.left_color || properties.leftColor || null;
+        this.right = properties.right || 0;
+        this.rightColor = properties.right_color || properties.rightColor || null;
+        this.top = properties.top || 0;
+        this.topColor = properties.top_color || properties.topColor || null;
+        this.bottom = properties.bottom || 0;
+        this.bottomColor = properties.bottom_color || properties.bottomColor || null;
+        this.diagonalType = properties.diagonal_type || properties.diagonalType || 0;
+        this.diagonalBorder = properties.diagonal_border || properties.diagonalBorder || 0;
+        this.diagonalColor = properties.diagonal_color || properties.diagonalColor || null;
+        
+        // Fill
+        this.pattern = properties.pattern || 0;  // 0=none, 1=solid, etc.
+        this.bgColor = properties.bg_color || properties.bgColor || null;
+        this.fgColor = properties.fg_color || properties.fgColor || null;
+        
+        // Protection
+        this.locked = properties.locked !== undefined ? properties.locked : true;
+        this.hidden = properties.hidden || false;
+        
+        // Internal indices (set by workbook)
+        this.xfIndex = null;
+        this.fontIndex = null;
+        this.fillIndex = null;
+        this.borderIndex = null;
+        
+        // Apply border shorthand
+        if (this.border) {
+            this.left = this.left || this.border;
+            this.right = this.right || this.border;
+            this.top = this.top || this.border;
+            this.bottom = this.bottom || this.border;
+        }
+        if (this.borderColor) {
+            this.leftColor = this.leftColor || this.borderColor;
+            this.rightColor = this.rightColor || this.borderColor;
+            this.topColor = this.topColor || this.borderColor;
+            this.bottomColor = this.bottomColor || this.borderColor;
+        }
+    }
+    
+    // Setter methods for chaining (snake_case like Python XlsxWriter)
+    // Each setter invalidates the cached key to ensure getKey() returns correct value
+    set_font_name(name) { this.fontName = name; this._cachedKey = undefined; return this; }
+    set_font_size(size) { this.fontSize = size; this._cachedKey = undefined; return this; }
+    set_font_color(color) { this.fontColor = color; this._cachedKey = undefined; return this; }
+    set_bold(bold = true) { this.bold = bold; this._cachedKey = undefined; return this; }
+    set_italic(italic = true) { this.italic = italic; this._cachedKey = undefined; return this; }
+    set_underline(style = 1) { this.underline = style; this._cachedKey = undefined; return this; }
+    set_font_strikeout(strikeout = true) { this.fontStrikeout = strikeout; this._cachedKey = undefined; return this; }
+    set_font_script(script) { this.fontScript = script; this._cachedKey = undefined; return this; }
+    set_num_format(format) { this.numFormat = format; this._cachedKey = undefined; return this; }
+    set_align(align) { this.align = align; this._cachedKey = undefined; return this; }
+    set_valign(valign) { this.valign = valign; this._cachedKey = undefined; return this; }
+    set_rotation(angle) { this.rotation = angle; this._cachedKey = undefined; return this; }
+    set_text_wrap(wrap = true) { this.textWrap = wrap; this._cachedKey = undefined; return this; }
+    set_shrink(shrink = true) { this.shrink = shrink; this._cachedKey = undefined; return this; }
+    set_indent(indent) { this.indent = indent; this._cachedKey = undefined; return this; }
+    set_border(style) { 
+        this.left = this.right = this.top = this.bottom = style;
+        this._cachedKey = undefined;
+        return this; 
+    }
+    set_border_color(color) {
+        this.leftColor = this.rightColor = this.topColor = this.bottomColor = color;
+        this._cachedKey = undefined;
+        return this;
+    }
+    set_left(style) { this.left = style; this._cachedKey = undefined; return this; }
+    set_right(style) { this.right = style; this._cachedKey = undefined; return this; }
+    set_top(style) { this.top = style; this._cachedKey = undefined; return this; }
+    set_bottom(style) { this.bottom = style; this._cachedKey = undefined; return this; }
+    set_left_color(color) { this.leftColor = color; this._cachedKey = undefined; return this; }
+    set_right_color(color) { this.rightColor = color; this._cachedKey = undefined; return this; }
+    set_top_color(color) { this.topColor = color; this._cachedKey = undefined; return this; }
+    set_bottom_color(color) { this.bottomColor = color; this._cachedKey = undefined; return this; }
+    set_pattern(pattern) { this.pattern = pattern; this._cachedKey = undefined; return this; }
+    set_bg_color(color) { this.bgColor = color; if (!this.pattern) this.pattern = 1; this._cachedKey = undefined; return this; }
+    set_fg_color(color) { this.fgColor = color; if (!this.pattern) this.pattern = 1; this._cachedKey = undefined; return this; }
+    set_locked(locked = true) { this.locked = locked; this._cachedKey = undefined; return this; }
+    set_hidden(hidden = true) { this.hidden = hidden; this._cachedKey = undefined; return this; }
+    
+    // CamelCase aliases for JavaScript convention
+    setFontName(name) { return this.set_font_name(name); }
+    setFontSize(size) { return this.set_font_size(size); }
+    setFontColor(color) { return this.set_font_color(color); }
+    setBold(bold = true) { return this.set_bold(bold); }
+    setItalic(italic = true) { return this.set_italic(italic); }
+    setUnderline(style = 1) { return this.set_underline(style); }
+    setFontStrikeout(strikeout = true) { return this.set_font_strikeout(strikeout); }
+    setFontScript(script) { return this.set_font_script(script); }
+    setNumFormat(format) { return this.set_num_format(format); }
+    setAlign(align) { return this.set_align(align); }
+    setValign(valign) { return this.set_valign(valign); }
+    setRotation(angle) { return this.set_rotation(angle); }
+    setTextWrap(wrap = true) { return this.set_text_wrap(wrap); }
+    setShrink(shrink = true) { return this.set_shrink(shrink); }
+    setIndent(indent) { return this.set_indent(indent); }
+    setBorder(style) { return this.set_border(style); }
+    setBorderColor(color) { return this.set_border_color(color); }
+    setLeft(style) { return this.set_left(style); }
+    setRight(style) { return this.set_right(style); }
+    setTop(style) { return this.set_top(style); }
+    setBottom(style) { return this.set_bottom(style); }
+    setLeftColor(color) { return this.set_left_color(color); }
+    setRightColor(color) { return this.set_right_color(color); }
+    setTopColor(color) { return this.set_top_color(color); }
+    setBottomColor(color) { return this.set_bottom_color(color); }
+    setPattern(pattern) { return this.set_pattern(pattern); }
+    setBgColor(color) { return this.set_bg_color(color); }
+    setFgColor(color) { return this.set_fg_color(color); }
+    setLocked(locked = true) { return this.set_locked(locked); }
+    setHidden(hidden = true) { return this.set_hidden(hidden); }
+    
+    /**
+     * Get a unique key for this format (for deduplication)
+     * Cached after first computation for O(1) subsequent calls
+     */
+    getKey() {
+        if (this._cachedKey === undefined) {
+            this._cachedKey = JSON.stringify({
+                fn: this.fontName, fs: this.fontSize, fc: this.fontColor,
+                b: this.bold, i: this.italic, u: this.underline, st: this.fontStrikeout, sc: this.fontScript,
+                nf: this.numFormat,
+                al: this.align, va: this.valign, r: this.rotation, tw: this.textWrap, sh: this.shrink, in: this.indent,
+                l: this.left, lc: this.leftColor, ri: this.right, rc: this.rightColor,
+                t: this.top, tc: this.topColor, bo: this.bottom, bc: this.bottomColor,
+                p: this.pattern, bg: this.bgColor, fg: this.fgColor,
+                lo: this.locked, hi: this.hidden
+            });
+        }
+        return this._cachedKey;
+    }
+    
+    /**
+     * Invalidate cached key (call after modifying properties)
+     * @private
+     */
+    _invalidateCache() {
+        this._cachedKey = undefined;
+    }
 }
 
 /**
@@ -203,6 +562,10 @@ function generateId() {
 function deepMerge(target, source) {
     const result = { ...target };
     for (const key of Object.keys(source)) {
+        // SECURITY: Prevent prototype pollution attacks
+        if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+            continue;
+        }
         if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
             result[key] = deepMerge(result[key] || {}, source[key]);
         } else {
@@ -375,7 +738,7 @@ function getDefaultAxis(overrides = {}) {
  */
 function getDefaultSeries(overrides = {}) {
     return deepMerge({
-        type: 'Scatter',  // 'Scatter', 'Line', 'Area', 'Bar'
+        type: 'scatter',  // 'scatter', 'line', 'area', 'bar', 'column', 'pie', 'doughnut', 'radar'
         option: 'PrimaryAxis',  // 'PrimaryAxis', 'SecondaryAxis'
         order: NaN,
         name: { ref: '', text: '' },
@@ -384,8 +747,12 @@ function getDefaultSeries(overrides = {}) {
         length: 0,
         line: getDefaultLine({ width: 1.5, color: getDefaultColor({ option: 'Solid' }) }),
         marker: getDefaultMarker(),
+        smooth: false,  // Smooth line for scatter/line charts
         legendVisible: true,
-        label: getDefaultLabel()
+        label: getDefaultLabel(),
+        dataLabels: null,  // Data labels configuration
+        trendline: null,   // Trendline configuration
+        errorBars: null    // Error bars configuration
     }, overrides);
 }
 
@@ -418,11 +785,13 @@ function getDefaultLegend(overrides = {}) {
  */
 function getDefaultChart(overrides = {}) {
     return deepMerge({
+        type: 'scatter',       // 'scatter', 'line', 'area', 'bar', 'column', 'pie', 'doughnut', 'radar'
+        subtype: null,         // 'straight', 'straight_with_markers', 'smooth', 'smooth_with_markers', 'stacked', 'percent_stacked'
         scatterStyle: 'lineMarker',
-        grouping: 'standard',
-        barDir: 'col',
+        grouping: 'standard',  // 'standard', 'stacked', 'percentStacked'
+        barDir: 'col',         // 'col' for column, 'bar' for bar
         gapWidth: 150,
-        overlap: 100,
+        overlap: 0,
         height: 288,
         width: 480,
         x: 0,
@@ -430,8 +799,8 @@ function getDefaultChart(overrides = {}) {
         title: getDefaultTitle({ font: getDefaultFont({ size: 14 }) }),
         xAxis: getDefaultAxis(),
         yAxis: getDefaultAxis({ title: { customAngle: -90 } }),
-        x2Axis: getDefaultAxis(),
-        y2Axis: getDefaultAxis({ title: { customAngle: -90 } }),
+        x2Axis: getDefaultAxis({ visible: false }),
+        y2Axis: getDefaultAxis({ visible: false, title: { customAngle: -90 } }),
         plotArea: getDefaultShape({
             fillColor: getDefaultColor({ option: 'Solid', value: [255, 255, 255] }),
             line: getDefaultLine({ color: getDefaultColor({ option: 'None' }) }),
@@ -442,7 +811,10 @@ function getDefaultChart(overrides = {}) {
             line: getDefaultLine({ color: getDefaultColor({ option: 'None' }) })
         }),
         legend: getDefaultLegend(),
-        series: []
+        series: [],
+        showBorder: true,
+        backgroundColor: 'FFFFFF',
+        style: 2  // Excel chart style (1-48)
     }, overrides);
 }
 
@@ -619,19 +991,98 @@ class XlsxWriter {
         this.filename = filename.endsWith('.xlsx') ? filename : filename + '.xlsx';
         this.zip = new JSZip();
         this.sheets = [];
+        this.sheetMap = new Map();  // Sheet name -> index for O(1) lookup
         this.sharedStrings = [];
+        this.sharedStringsMap = new Map();  // String -> index for O(1) lookup
         this.charts = [];
         this.comments = [];
         this.currentSheetId = 0;
+        
+        // Format management
+        this.formats = [];
+        this.formatMap = new Map();  // Key -> Format index
+        this.customNumFormats = new Map();  // Custom number format -> id
+        this.nextNumFormatId = 164;  // Custom formats start at 164
+        
+        // Add default format
+        this._defaultFormat = this.addFormat({});
+        
+        // Column/row dimensions
+        this.columnInfo = {};  // { sheetIndex: { col: { width, format, hidden } } }
+        this.rowInfo = {};     // { sheetIndex: { row: { height, format, hidden } } }
+        
+        // Merge cells
+        this.mergeCells = {};  // { sheetIndex: [ { start, end } ] }
+        
+        // Images
+        this.images = [];      // { sheetIndex, filename, data, row, col, options }
+    }
+    
+    /**
+     * Add a format for cell styling
+     * @param {Object} properties - Format properties
+     * @returns {Format} Format object
+     */
+    addFormat(properties = {}) {
+        const format = new Format(properties);
+        const key = format.getKey();
+        
+        if (this.formatMap.has(key)) {
+            return this.formats[this.formatMap.get(key)];
+        }
+        
+        format.xfIndex = this.formats.length;
+        this.formats.push(format);
+        this.formatMap.set(key, format.xfIndex);
+        
+        // Handle custom number format
+        if (format.numFormat && format.numFormat !== 'General') {
+            if (NUM_FORMATS[format.numFormat] !== undefined) {
+                format.numFormatIndex = NUM_FORMATS[format.numFormat];
+            } else if (!this.customNumFormats.has(format.numFormat)) {
+                this.customNumFormats.set(format.numFormat, this.nextNumFormatId);
+                format.numFormatIndex = this.nextNumFormatId;
+                this.nextNumFormatId++;
+            } else {
+                format.numFormatIndex = this.customNumFormats.get(format.numFormat);
+            }
+        }
+        
+        return format;
     }
     
     /**
      * Create a new chart configuration
-     * @param {Object} overrides - Chart property overrides
+     * @param {Object} options - Chart options including type
      * @returns {Object} Chart configuration object
      */
-    newChart(overrides = {}) {
-        return getDefaultChart(overrides);
+    newChart(typeOrOptions = {}, subtype = null) {
+        // Support both newChart('line') and newChart({ type: 'line' })
+        let options = typeOrOptions;
+        if (typeof typeOrOptions === 'string') {
+            options = { type: typeOrOptions, subtype };
+        }
+        
+        const chartType = options.type || 'scatter';
+        const chartSubtype = options.subtype || subtype || null;
+        
+        // Set scatterStyle based on type and subtype
+        let scatterStyle = 'lineMarker';
+        if (chartType === 'scatter') {
+            if (chartSubtype === 'straight') scatterStyle = 'lineMarker';
+            else if (chartSubtype === 'straight_with_markers') scatterStyle = 'lineMarker';
+            else if (chartSubtype === 'smooth') scatterStyle = 'smoothMarker';
+            else if (chartSubtype === 'smooth_with_markers') scatterStyle = 'smoothMarker';
+            else if (chartSubtype === 'markers_only' || chartSubtype === 'lineMarkers') scatterStyle = 'lineMarker';
+            else scatterStyle = 'lineMarker';
+        }
+        
+        return getDefaultChart({ 
+            type: chartType, 
+            subtype: chartSubtype,
+            scatterStyle,
+            ...options 
+        });
     }
     
     /**
@@ -658,15 +1109,49 @@ class XlsxWriter {
      * @param {Object} options - Series options
      */
     addSeriesToChart(chart, options) {
+        // Determine marker settings based on chart subtype
+        let markerOption = options.marker?.option || 'NoMarker';
+        let showMarkers = options.showMarkers;
+        
+        if (showMarkers === undefined) {
+            // Auto-determine based on subtype
+            const subtype = chart.subtype || '';
+            if (subtype.includes('markers') || subtype === 'markers_only') {
+                showMarkers = true;
+            } else if (chart.type === 'scatter' && !subtype) {
+                // Default scatter with no subtype shows markers only (no lines)
+                showMarkers = true;
+            }
+        }
+        
+        if (showMarkers) {
+            markerOption = 'Built-in';
+        }
+        
+        // Handle line visibility based on subtype
+        let lineConfig = options.line || getDefaultLine({
+            color: getDefaultColor({ option: 'Solid', value: options.color || this._getDefaultSeriesColor(chart.series.length) })
+        });
+        
+        // For markers_only subtype, hide the line
+        if (chart.subtype === 'markers_only') {
+            lineConfig = { ...lineConfig, color: { ...lineConfig.color, option: 'None' } };
+        }
+        
         const series = this.newSeries({
             name: { text: options.name || `Series${chart.series.length + 1}` },
-            x: { values: options.xValues || [] },
-            y: { values: options.yValues || [] },
+            x: { values: options.xValues || [], ref: options.xRef || '' },
+            y: { values: options.yValues || [], ref: options.yRef || '' },
             length: options.yValues ? options.yValues.length : 0,
-            line: options.line || getDefaultLine({
-                color: getDefaultColor({ option: 'Solid', value: options.color || this._getDefaultSeriesColor(chart.series.length) })
+            line: lineConfig,
+            marker: options.marker || getDefaultMarker({ 
+                option: markerOption,
+                type: options.markerType || 'circle',
+                size: options.markerSize || 5
             }),
-            marker: options.marker || getDefaultMarker({ option: options.showMarkers ? 'Built-in' : 'NoMarker' })
+            smooth: options.smooth || (chart.subtype?.includes('smooth') ? true : false),
+            dataLabels: options.dataLabels || null,
+            trendline: options.trendline || null
         });
         
         chart.series.push(series);
@@ -689,6 +1174,313 @@ class XlsxWriter {
     }
     
     /**
+     * Get or create sheet by name/index
+     * Uses Map for O(1) lookup instead of O(n) array search
+     * @private
+     */
+    _getOrCreateSheet(sheet) {
+        const sheetName = typeof sheet === 'number' ? `Sheet${sheet}` : sheet;
+        let sheetIndex = this.sheetMap.get(sheetName);
+        
+        if (sheetIndex === undefined) {
+            sheetIndex = this.sheets.length;
+            this.sheets.push({
+                name: sheetName,
+                data: [],
+                startRow: 1,
+                startCol: 1,
+                chart: null,
+                comments: []
+            });
+            this.sheetMap.set(sheetName, sheetIndex);
+        }
+        
+        return { sheetIndex, sheetName };
+    }
+    
+    /**
+     * Write a single cell value
+     * @param {number|string} row - Row number (0-indexed) or cell reference ('A1')
+     * @param {number} col - Column number (0-indexed), optional if row is cell reference
+     * @param {*} value - Value to write
+     * @param {Format} format - Optional format
+     */
+    write(row, col, value, format, sheet = 'Sheet1') {
+        // Handle A1 notation
+        if (typeof row === 'string') {
+            const cellInfo = xlCell2Ind(row);
+            sheet = typeof col === 'string' ? col : sheet;
+            format = typeof col === 'object' ? col : (typeof value === 'object' && !(value instanceof Format) ? value : format);
+            value = typeof col !== 'string' && typeof col !== 'object' ? col : value;
+            row = cellInfo.row - 1;
+            col = cellInfo.column - 1;
+        }
+        
+        const { sheetIndex } = this._getOrCreateSheet(sheet);
+        const sheetObj = this.sheets[sheetIndex];
+        
+        // Ensure data array is large enough
+        while (sheetObj.data.length <= row) {
+            sheetObj.data.push([]);
+        }
+        while (sheetObj.data[row].length <= col) {
+            sheetObj.data[row].push(null);
+        }
+        
+        // Process the value
+        const cellData = this._processCell(value, format);
+        sheetObj.data[row][col] = cellData;
+        
+        // Update sheet bounds
+        sheetObj.startRow = Math.min(sheetObj.startRow || 1, row + 1);
+        sheetObj.startCol = Math.min(sheetObj.startCol || 1, col + 1);
+        
+        return this;
+    }
+    
+    /**
+     * Write a string to a cell
+     */
+    writeString(row, col, string, format, sheet = 'Sheet1') {
+        return this.write(row, col, String(string), format, sheet);
+    }
+    
+    /**
+     * Write a number to a cell
+     */
+    writeNumber(row, col, number, format, sheet = 'Sheet1') {
+        return this.write(row, col, Number(number), format, sheet);
+    }
+    
+    /**
+     * Write a formula to a cell
+     */
+    writeFormula(row, col, formula, format, sheet = 'Sheet1') {
+        const formulaStr = formula.startsWith('=') ? formula : '=' + formula;
+        return this.write(row, col, formulaStr, format, sheet);
+    }
+    
+    /**
+     * Write a blank cell with format
+     */
+    writeBlank(row, col, format, sheet = 'Sheet1') {
+        return this.write(row, col, '', format, sheet);
+    }
+    
+    /**
+     * Write a boolean value
+     */
+    writeBoolean(row, col, value, format, sheet = 'Sheet1') {
+        return this.write(row, col, Boolean(value), format, sheet);
+    }
+    
+    /**
+     * Write a hyperlink
+     */
+    writeUrl(row, col, url, format, displayText, sheet = 'Sheet1') {
+        // For now, write as HYPERLINK formula
+        const text = displayText || url;
+        const formula = `=HYPERLINK("${url}","${text}")`;
+        return this.writeFormula(row, col, formula, format, sheet);
+    }
+    
+    /**
+     * Write a row of data
+     */
+    writeRow(row, col, data, format, sheet = 'Sheet1') {
+        if (typeof row === 'string') {
+            const cellInfo = xlCell2Ind(row);
+            sheet = typeof format === 'string' ? format : sheet;
+            format = typeof col === 'object' && !(col instanceof Format) && !Array.isArray(col) ? col : format;
+            data = Array.isArray(col) ? col : data;
+            row = cellInfo.row - 1;
+            col = cellInfo.column - 1;
+        }
+        
+        for (let i = 0; i < data.length; i++) {
+            this.write(row, col + i, data[i], format, sheet);
+        }
+        return this;
+    }
+    
+    /**
+     * Write a column of data
+     */
+    writeColumn(row, col, data, format, sheet = 'Sheet1') {
+        if (typeof row === 'string') {
+            const cellInfo = xlCell2Ind(row);
+            sheet = typeof format === 'string' ? format : sheet;
+            format = typeof col === 'object' && !(col instanceof Format) && !Array.isArray(col) ? col : format;
+            data = Array.isArray(col) ? col : data;
+            row = cellInfo.row - 1;
+            col = cellInfo.column - 1;
+        }
+        
+        for (let i = 0; i < data.length; i++) {
+            this.write(row + i, col, data[i], format, sheet);
+        }
+        return this;
+    }
+    
+    /**
+     * Set column width and format
+     * @param {string|number} firstCol - First column (A or 0)
+     * @param {string|number} lastCol - Last column (optional)
+     * @param {number} width - Column width in characters
+     * @param {Format} format - Optional format
+     * @param {Object} options - { hidden: bool }
+     */
+    setColumn(firstCol, lastCol, width, format, options = {}, sheet = 'Sheet1') {
+        // Handle single column
+        if (typeof lastCol === 'number' && width === undefined) {
+            width = lastCol;
+            lastCol = firstCol;
+        }
+        
+        // Convert column letters to numbers
+        let startCol = typeof firstCol === 'string' ? xlCell2Ind(firstCol + '1').column : firstCol + 1;
+        let endCol = typeof lastCol === 'string' ? xlCell2Ind(lastCol + '1').column : (lastCol !== undefined ? lastCol + 1 : startCol);
+        
+        const { sheetIndex } = this._getOrCreateSheet(sheet);
+        
+        if (!this.columnInfo[sheetIndex]) {
+            this.columnInfo[sheetIndex] = {};
+        }
+        
+        for (let col = startCol; col <= endCol; col++) {
+            this.columnInfo[sheetIndex][col] = {
+                width: width,
+                format: format,
+                hidden: options.hidden || false
+            };
+        }
+        
+        return this;
+    }
+    
+    /**
+     * Set row height and format
+     * @param {number} row - Row number (0-indexed)
+     * @param {number} height - Row height in points
+     * @param {Format} format - Optional format
+     * @param {Object} options - { hidden: bool }
+     */
+    setRow(row, height, format, options = {}, sheet = 'Sheet1') {
+        const { sheetIndex } = this._getOrCreateSheet(sheet);
+        
+        if (!this.rowInfo[sheetIndex]) {
+            this.rowInfo[sheetIndex] = {};
+        }
+        
+        this.rowInfo[sheetIndex][row + 1] = {
+            height: height,
+            format: format,
+            hidden: options.hidden || false
+        };
+        
+        return this;
+    }
+    
+    /**
+     * Merge a range of cells
+     */
+    mergeRange(firstRow, firstCol, lastRow, lastCol, data, format, sheet = 'Sheet1') {
+        // Handle A1:B2 notation
+        if (typeof firstRow === 'string' && firstRow.includes(':')) {
+            const parts = firstRow.split(':');
+            const start = xlCell2Ind(parts[0]);
+            const end = xlCell2Ind(parts[1]);
+            sheet = typeof lastRow === 'string' ? lastRow : sheet;
+            format = typeof lastCol === 'object' ? lastCol : format;
+            data = firstCol;
+            firstRow = start.row - 1;
+            firstCol = start.column - 1;
+            lastRow = end.row - 1;
+            lastCol = end.column - 1;
+        }
+        
+        const { sheetIndex } = this._getOrCreateSheet(sheet);
+        
+        if (!this.mergeCells[sheetIndex]) {
+            this.mergeCells[sheetIndex] = [];
+        }
+        
+        this.mergeCells[sheetIndex].push({
+            startRow: firstRow + 1,
+            startCol: firstCol + 1,
+            endRow: lastRow + 1,
+            endCol: lastCol + 1
+        });
+        
+        // Write value to top-left cell
+        if (data !== undefined) {
+            this.write(firstRow, firstCol, data, format, sheet);
+        }
+        
+        return this;
+    }
+    
+    /**
+     * Insert a chart into the worksheet
+     */
+    insertChart(row, col, chart, options = {}, sheet = 'Sheet1') {
+        if (typeof row === 'string') {
+            const cellInfo = xlCell2Ind(row);
+            sheet = typeof options === 'string' ? options : sheet;
+            options = typeof chart === 'object' && !chart.series ? chart : options;
+            chart = col;
+            row = cellInfo.row - 1;
+            col = cellInfo.column - 1;
+        }
+        
+        const { sheetIndex } = this._getOrCreateSheet(sheet);
+        
+        // Set chart position
+        chart.x = (options.x_offset || 0) + col * 64;
+        chart.y = (options.y_offset || 0) + row * 20;
+        
+        this.sheets[sheetIndex].chart = chart;
+        
+        return this;
+    }
+    
+    /**
+     * Process a single cell value
+     * @private
+     */
+    _processCell(value, format) {
+        let cellData = { value: value, type: 'n', format: format };
+        
+        if (value === null || value === undefined) {
+            cellData = { value: '', type: 'n', format: format };
+        } else if (typeof value === 'string') {
+            if (value.startsWith('=')) {
+                // Formula
+                cellData = { value: value.substring(1), type: 'str', isFormula: true, format: format };
+            } else if (value === '') {
+                cellData = { value: '', type: 'n', format: format };
+            } else {
+                // Shared string - O(1) lookup with Map
+                let idx = this.sharedStringsMap.get(value);
+                if (idx === undefined) {
+                    idx = this.sharedStrings.length;
+                    this.sharedStrings.push(value);
+                    this.sharedStringsMap.set(value, idx);
+                }
+                cellData = { value: idx, type: 's', format: format };
+            }
+        } else if (typeof value === 'boolean') {
+            cellData = { value: value ? 1 : 0, type: 'b', format: format };
+        } else if (typeof value === 'number') {
+            if (value === Infinity) cellData.value = 9.99999999999999E+307;
+            else if (value === -Infinity) cellData.value = -9.99999999999999E+307;
+            else if (isNaN(value)) cellData.value = '';
+        }
+        
+        return cellData;
+    }
+    
+    /**
      * Write data to a worksheet
      * @param {Array} data - 2D array of data
      * @param {string|number} sheet - Sheet name or index
@@ -704,51 +1496,56 @@ class XlsxWriter {
             fullData = [options.header, ...data];
         }
         
-        // Process data and collect shared strings
-        const processedData = [];
-        for (let r = 0; r < fullData.length; r++) {
-            const row = fullData[r];
-            const processedRow = [];
-            for (let c = 0; c < row.length; c++) {
-                const cell = row[c];
-                let cellData = { value: cell, type: 'n' };
-                
-                if (cell === null || cell === undefined) {
-                    cellData = { value: '', type: 'n' };
-                } else if (typeof cell === 'string') {
-                    if (cell.startsWith('=')) {
-                        // Formula
-                        cellData = { value: cell.substring(1), type: 'str', isFormula: true };
-                    } else {
-                        // Shared string
-                        let idx = this.sharedStrings.indexOf(cell);
-                        if (idx === -1) {
-                            idx = this.sharedStrings.length;
-                            this.sharedStrings.push(cell);
-                        }
-                        cellData = { value: idx, type: 's' };
-                    }
-                } else if (typeof cell === 'boolean') {
-                    cellData = { value: cell ? 1 : 0, type: 'b' };
-                } else if (typeof cell === 'number') {
-                    if (cell === Infinity) cellData.value = 9.99999999999999E+307;
-                    else if (cell === -Infinity) cellData.value = -9.99999999999999E+307;
-                    else if (isNaN(cell)) cellData.value = '';
-                }
-                
-                processedRow.push(cellData);
-            }
-            processedData.push(processedRow);
+        // Check if sheet already exists
+        let existingSheetIndex = this.sheets.findIndex(s => s.name === sheetName);
+        let sheetObj;
+        
+        if (existingSheetIndex >= 0) {
+            sheetObj = this.sheets[existingSheetIndex];
+        } else {
+            sheetObj = {
+                name: sheetName,
+                data: [],
+                startRow,
+                startCol,
+                chart: options.chart || null,
+                comments: options.comments || []
+            };
+            this.sheets.push(sheetObj);
+            existingSheetIndex = this.sheets.length - 1;
         }
         
-        this.sheets.push({
-            name: sheetName,
-            data: processedData,
-            startRow,
-            startCol,
-            chart: options.chart || null,
-            comments: options.comments || []
-        });
+        // Process data and collect shared strings
+        for (let r = 0; r < fullData.length; r++) {
+            const row = fullData[r];
+            const rowIdx = startRow - 1 + r;
+            
+            // Ensure data array is large enough
+            while (sheetObj.data.length <= rowIdx) {
+                sheetObj.data.push([]);
+            }
+            
+            for (let c = 0; c < row.length; c++) {
+                const colIdx = startCol - 1 + c;
+                const cell = row[c];
+                
+                // Ensure row is large enough
+                while (sheetObj.data[rowIdx].length <= colIdx) {
+                    sheetObj.data[rowIdx].push(null);
+                }
+                
+                sheetObj.data[rowIdx][colIdx] = this._processCell(cell, null);
+            }
+        }
+        
+        // Update bounds
+        sheetObj.startRow = Math.min(sheetObj.startRow || startRow, startRow);
+        sheetObj.startCol = Math.min(sheetObj.startCol || startCol, startCol);
+        
+        // Store chart if provided
+        if (options.chart) {
+            sheetObj.chart = options.chart;
+        }
         
         return this;
     }
@@ -756,9 +1553,10 @@ class XlsxWriter {
     /**
      * Generate the sheet data XML
      */
-    _generateSheetDataXML(sheet) {
+    _generateSheetDataXML(sheet, sheetIndex) {
         let xml = '';
-        const { data, startRow, startCol } = sheet;
+        const { data } = sheet;
+        const rowInfoObj = this.rowInfo[sheetIndex] || {};
         
         for (let r = 0; r < data.length; r++) {
             const row = data[r];
@@ -769,28 +1567,55 @@ class XlsxWriter {
             const hasContent = row.some(cell => 
                 cell && (cell.value !== '' && cell.value !== null && cell.value !== undefined)
             );
-            if (!hasContent) continue;
             
-            const rowNum = startRow + r;
-            const maxCol = startCol + row.length - 1;
-            xml += `<row r="${rowNum}" spans="${startCol}:${maxCol}">`;
+            // Also check if row has custom height
+            const rowInfo = rowInfoObj[r + 1];
+            
+            if (!hasContent && !rowInfo) continue;
+            
+            const rowNum = r + 1;
+            const maxCol = row.length;
+            
+            let rowAttrs = `r="${rowNum}" spans="1:${maxCol}"`;
+            if (rowInfo) {
+                if (rowInfo.height) {
+                    rowAttrs += ` ht="${rowInfo.height}" customHeight="1"`;
+                }
+                if (rowInfo.hidden) {
+                    rowAttrs += ` hidden="1"`;
+                }
+                if (rowInfo.format && rowInfo.format.xfIndex) {
+                    rowAttrs += ` s="${rowInfo.format.xfIndex}" customFormat="1"`;
+                }
+            }
+            
+            xml += `<row ${rowAttrs}>`;
             
             for (let c = 0; c < row.length; c++) {
                 const cell = row[c];
                 if (!cell) continue;
                 
-                const colNum = startCol + c;
+                const colNum = c + 1;
                 const cellRef = xlColumn(colNum) + rowNum;
                 
+                // Get format index
+                let styleAttr = '';
+                if (cell.format && cell.format.xfIndex !== null && cell.format.xfIndex !== undefined) {
+                    styleAttr = ` s="${cell.format.xfIndex}"`;
+                }
+                
                 if (cell.isFormula) {
-                    xml += `<c r="${cellRef}"><f>${escapeXml(cell.value)}</f></c>`;
+                    xml += `<c r="${cellRef}"${styleAttr}><f>${escapeXml(cell.value)}</f></c>`;
                 } else if (cell.value === '' || cell.value === null || cell.value === undefined) {
-                    // Skip empty cells
+                    // Skip empty cells unless they have formatting
+                    if (styleAttr) {
+                        xml += `<c r="${cellRef}"${styleAttr}/>`;
+                    }
                 } else if (cell.type === 'n') {
                     // Number - don't include t attribute for numbers
-                    xml += `<c r="${cellRef}"><v>${cell.value}</v></c>`;
+                    xml += `<c r="${cellRef}"${styleAttr}><v>${cell.value}</v></c>`;
                 } else {
-                    xml += `<c r="${cellRef}" t="${cell.type}"><v>${cell.value}</v></c>`;
+                    xml += `<c r="${cellRef}" t="${cell.type}"${styleAttr}><v>${cell.value}</v></c>`;
                 }
             }
             
@@ -829,45 +1654,42 @@ class XlsxWriter {
         xml += '<c:plotArea>';
         xml += '<c:layout/>';
         
-        // Scatter chart with line style
-        const scatterStyle = chart.scatterStyle || 'line';
-        xml += '<c:scatterChart>';
-        xml += `<c:scatterStyle val="${scatterStyle}"/>`;
-        xml += '<c:varyColors val="0"/>';
-        
-        // Generate series
-        for (let i = 0; i < chart.series.length; i++) {
-            xml += this._generateSeriesXML(chart.series[i], i, sheetName, dataInfo);
-        }
-        
-        xml += `<c:axId val="${chart.xAxis.id}"/>`;
-        xml += `<c:axId val="${chart.yAxis.id}"/>`;
-        xml += '</c:scatterChart>';
+        // Generate chart type-specific XML
+        const chartType = chart.type || 'scatter';
+        xml += this._generateChartTypeXML(chart, chartType, sheetName, dataInfo);
         
         // X axis
-        xml += this._generateAxisXML(chart.xAxis, 'b', chart.yAxis.id);
+        xml += this._generateAxisXML(chart.xAxis, 'b', chart.yAxis.id, chartType);
         
         // Y axis
-        xml += this._generateAxisXML(chart.yAxis, 'l', chart.xAxis.id);
+        xml += this._generateAxisXML(chart.yAxis, 'l', chart.xAxis.id, chartType);
+        
+        // Secondary axes if needed
+        if (chart.y2Axis && chart.y2Axis.visible) {
+            xml += this._generateAxisXML(chart.x2Axis, 't', chart.y2Axis.id, chartType, true);
+            xml += this._generateAxisXML(chart.y2Axis, 'r', chart.x2Axis.id, chartType, true);
+        }
         
         xml += '</c:plotArea>';
         
         // Legend with configurable font size
         const legendPos = chart.legend?.position || 'r';
-        const legendFontSize = chart.legend?.fontSize || 10;
-        xml += '<c:legend>';
-        xml += `<c:legendPos val="${legendPos}"/>`;
-        xml += '<c:layout/>';
-        xml += '<c:overlay val="0"/>';
-        xml += '<c:txPr>';
-        xml += '<a:bodyPr/>';
-        xml += '<a:lstStyle/>';
-        xml += '<a:p>';
-        xml += `<a:pPr><a:defRPr sz="${legendFontSize * 100}"/></a:pPr>`;
-        xml += '<a:endParaRPr lang="en-US"/>';
-        xml += '</a:p>';
-        xml += '</c:txPr>';
-        xml += '</c:legend>';
+        if (legendPos !== 'none') {
+            const legendFontSize = chart.legend?.fontSize || 10;
+            xml += '<c:legend>';
+            xml += `<c:legendPos val="${legendPos}"/>`;
+            xml += '<c:layout/>';
+            xml += '<c:overlay val="0"/>';
+            xml += '<c:txPr>';
+            xml += '<a:bodyPr/>';
+            xml += '<a:lstStyle/>';
+            xml += '<a:p>';
+            xml += `<a:pPr><a:defRPr sz="${legendFontSize * 100}"/></a:pPr>`;
+            xml += '<a:endParaRPr lang="en-US"/>';
+            xml += '</a:p>';
+            xml += '</c:txPr>';
+            xml += '</c:legend>';
+        }
         
         xml += '<c:plotVisOnly val="1"/>';
         xml += '<c:dispBlanksAs val="gap"/>';
@@ -892,119 +1714,574 @@ class XlsxWriter {
     }
     
     /**
-     * Generate series XML for scatter chart
+     * Generate chart type-specific XML
      */
-    _generateSeriesXML(series, index, sheetName, dataInfo) {
-        let xml = '<c:ser>';
-        xml += `<c:idx val="${index}"/>`;
-        xml += `<c:order val="${index}"/>`;
+    _generateChartTypeXML(chart, chartType, sheetName, dataInfo) {
+        let xml = '';
         
-        // Series name - reference header cell if dataInfo available
-        if (series.name && series.name.text) {
-            if (dataInfo) {
-                // Reference header cell (row 1, column B for index 0, C for index 1, etc.)
-                const headerCol = xlColumn(dataInfo.startCol + index + 1);
-                const headerRow = dataInfo.startRow;
-                xml += `<c:tx><c:strRef><c:f>${sheetName}!$${headerCol}$${headerRow}</c:f></c:strRef></c:tx>`;
-            } else {
-                xml += `<c:tx><c:v>${escapeXml(series.name.text)}</c:v></c:tx>`;
+        switch (chartType) {
+            case 'scatter':
+                xml += this._generateScatterChartXML(chart, sheetName, dataInfo);
+                break;
+            case 'line':
+                xml += this._generateLineChartXML(chart, sheetName, dataInfo);
+                break;
+            case 'column':
+            case 'bar':
+                xml += this._generateBarChartXML(chart, sheetName, dataInfo, chartType);
+                break;
+            case 'area':
+                xml += this._generateAreaChartXML(chart, sheetName, dataInfo);
+                break;
+            case 'pie':
+                xml += this._generatePieChartXML(chart, sheetName, dataInfo);
+                break;
+            case 'doughnut':
+                xml += this._generateDoughnutChartXML(chart, sheetName, dataInfo);
+                break;
+            default:
+                xml += this._generateScatterChartXML(chart, sheetName, dataInfo);
+        }
+        
+        return xml;
+    }
+    
+    /**
+     * Generate scatter chart XML
+     */
+    _generateScatterChartXML(chart, sheetName, dataInfo) {
+        let xml = '';
+        const scatterStyle = chart.scatterStyle || 'lineMarker';
+        
+        xml += '<c:scatterChart>';
+        xml += `<c:scatterStyle val="${scatterStyle}"/>`;
+        xml += '<c:varyColors val="0"/>';
+        
+        // Generate series
+        for (let i = 0; i < chart.series.length; i++) {
+            xml += this._generateScatterSeriesXML(chart.series[i], i, sheetName, dataInfo, chart);
+        }
+        
+        xml += `<c:axId val="${chart.xAxis.id}"/>`;
+        xml += `<c:axId val="${chart.yAxis.id}"/>`;
+        xml += '</c:scatterChart>';
+        
+        return xml;
+    }
+    
+    /**
+     * Generate line chart XML
+     */
+    _generateLineChartXML(chart, sheetName, dataInfo) {
+        let xml = '';
+        const grouping = chart.grouping || 'standard';
+        
+        xml += '<c:lineChart>';
+        xml += `<c:grouping val="${grouping}"/>`;
+        xml += '<c:varyColors val="0"/>';
+        
+        for (let i = 0; i < chart.series.length; i++) {
+            xml += this._generateLineSeriesXML(chart.series[i], i, sheetName, dataInfo, chart);
+        }
+        
+        xml += '<c:marker val="1"/>';
+        xml += `<c:axId val="${chart.xAxis.id}"/>`;
+        xml += `<c:axId val="${chart.yAxis.id}"/>`;
+        xml += '</c:lineChart>';
+        
+        return xml;
+    }
+    
+    /**
+     * Generate bar/column chart XML
+     */
+    _generateBarChartXML(chart, sheetName, dataInfo, chartType) {
+        let xml = '';
+        const barDir = chartType === 'bar' ? 'bar' : 'col';
+        const grouping = chart.grouping || 'clustered';
+        
+        xml += '<c:barChart>';
+        xml += `<c:barDir val="${barDir}"/>`;
+        xml += `<c:grouping val="${grouping}"/>`;
+        xml += '<c:varyColors val="0"/>';
+        
+        for (let i = 0; i < chart.series.length; i++) {
+            xml += this._generateBarSeriesXML(chart.series[i], i, sheetName, dataInfo);
+        }
+        
+        xml += `<c:gapWidth val="${chart.gapWidth || 150}"/>`;
+        if (grouping === 'clustered' || grouping === 'stacked' || grouping === 'percentStacked') {
+            xml += `<c:overlap val="${chart.overlap || 0}"/>`;
+        }
+        xml += `<c:axId val="${chart.xAxis.id}"/>`;
+        xml += `<c:axId val="${chart.yAxis.id}"/>`;
+        xml += '</c:barChart>';
+        
+        return xml;
+    }
+    
+    /**
+     * Generate area chart XML
+     */
+    _generateAreaChartXML(chart, sheetName, dataInfo) {
+        let xml = '';
+        const grouping = chart.grouping || 'standard';
+        
+        xml += '<c:areaChart>';
+        xml += `<c:grouping val="${grouping}"/>`;
+        xml += '<c:varyColors val="0"/>';
+        
+        for (let i = 0; i < chart.series.length; i++) {
+            xml += this._generateAreaSeriesXML(chart.series[i], i, sheetName, dataInfo);
+        }
+        
+        xml += `<c:axId val="${chart.xAxis.id}"/>`;
+        xml += `<c:axId val="${chart.yAxis.id}"/>`;
+        xml += '</c:areaChart>';
+        
+        return xml;
+    }
+    
+    /**
+     * Generate pie chart XML
+     */
+    _generatePieChartXML(chart, sheetName, dataInfo) {
+        let xml = '';
+        
+        xml += '<c:pieChart>';
+        xml += '<c:varyColors val="1"/>';
+        
+        for (let i = 0; i < chart.series.length; i++) {
+            xml += this._generatePieSeriesXML(chart.series[i], i, sheetName, dataInfo);
+        }
+        
+        xml += '<c:firstSliceAng val="0"/>';
+        xml += '</c:pieChart>';
+        
+        return xml;
+    }
+    
+    /**
+     * Generate doughnut chart XML
+     */
+    _generateDoughnutChartXML(chart, sheetName, dataInfo) {
+        let xml = '';
+        
+        xml += '<c:doughnutChart>';
+        xml += '<c:varyColors val="1"/>';
+        
+        for (let i = 0; i < chart.series.length; i++) {
+            xml += this._generatePieSeriesXML(chart.series[i], i, sheetName, dataInfo);
+        }
+        
+        xml += '<c:firstSliceAng val="0"/>';
+        xml += `<c:holeSize val="${chart.holeSize || 50}"/>`;
+        xml += '</c:doughnutChart>';
+        
+        return xml;
+    }
+    
+    /**
+ * Generate series name XML element
+ * @private
+ */
+    _generateSeriesNameXML(series, index, sheetName, dataInfo) {
+        if (!series.name?.text) return '';
+        
+        if (dataInfo?.numRows > 1) {
+            const headerCol = xlColumn(dataInfo.startCol + index + 1);
+            const headerRow = dataInfo.startRow;
+            const safeSheetName = escapeSheetName(sheetName);
+            return `<c:tx><c:strRef><c:f>${safeSheetName}!$${headerCol}$${headerRow}</c:f></c:strRef></c:tx>`;
+        }
+        return `<c:tx><c:v>${escapeXml(series.name.text)}</c:v></c:tx>`;
+    }
+
+    /**
+     * Generate common series header (idx, order, name)
+     * @private
+     */
+    _generateSeriesHeader(series, index, sheetName, dataInfo) {
+        return `<c:ser>` +
+            `<c:idx val="${index}"/>` +
+            `<c:order val="${index}"/>` +
+            this._generateSeriesNameXML(series, index, sheetName, dataInfo);
+    }
+
+    /**
+     * Generate scatter series XML
+     */
+    _generateScatterSeriesXML(series, index, sheetName, dataInfo, chart) {
+        const parts = [
+            this._generateSeriesHeader(series, index, sheetName, dataInfo),
+            this._generateSeriesSpPr(series, chart),
+            this._generateMarkerXML(series.marker, series, chart),
+            series.dataLabels ? this._generateDataLabelsXML(series.dataLabels) : '',
+            series.trendline ? this._generateTrendlineXML(series.trendline) : '',
+            this._generateXValXML(series, index, sheetName, dataInfo),
+            this._generateYValXML(series, index, sheetName, dataInfo),
+            `<c:smooth val="${series.smooth ? '1' : '0'}"/>`,
+            '</c:ser>'
+        ];
+        return parts.join('');
+    }
+    
+    /**
+     * Generate line series XML
+     */
+    _generateLineSeriesXML(series, index, sheetName, dataInfo, chart) {
+        const parts = [
+            this._generateSeriesHeader(series, index, sheetName, dataInfo),
+            this._generateSeriesSpPr(series, chart),
+            this._generateMarkerXML(series.marker, series, chart),
+            this._generateCatXML(series, index, sheetName, dataInfo),
+            this._generateValXML(series, index, sheetName, dataInfo),
+            `<c:smooth val="${series.smooth ? '1' : '0'}"/>`,
+            '</c:ser>'
+        ];
+        return parts.join('');
+    }
+    
+    /**
+     * Generate bar series XML
+     */
+    _generateBarSeriesXML(series, index, sheetName, dataInfo) {
+        const parts = [
+            this._generateSeriesHeader(series, index, sheetName, dataInfo),
+            this._generateBarSpPr(series),
+            this._generateCatXML(series, index, sheetName, dataInfo),
+            this._generateValXML(series, index, sheetName, dataInfo),
+            '</c:ser>'
+        ];
+        return parts.join('');
+    }
+    
+    /**
+     * Generate area series XML
+     */
+    _generateAreaSeriesXML(series, index, sheetName, dataInfo) {
+        const parts = [
+            this._generateSeriesHeader(series, index, sheetName, dataInfo),
+            this._generateBarSpPr(series),
+            this._generateCatXML(series, index, sheetName, dataInfo),
+            this._generateValXML(series, index, sheetName, dataInfo),
+            '</c:ser>'
+        ];
+        return parts.join('');
+    }
+    
+    /**
+     * Generate pie series XML
+     */
+    _generatePieSeriesXML(series, index, sheetName, dataInfo) {
+        const parts = [
+            this._generateSeriesHeader(series, index, sheetName, dataInfo),
+            this._generateCatXML(series, index, sheetName, dataInfo),
+            this._generateValXML(series, index, sheetName, dataInfo),
+            '</c:ser>'
+        ];
+        return parts.join('');
+    }
+    
+    /**
+     * Generate solid fill XML element
+     * @private
+     */
+    _generateSolidFillXML(color) {
+        if (!color) return '';
+        const hexColor = toHexColor(color);
+        return `<a:solidFill><a:srgbClr val="${hexColor}"/></a:solidFill>`;
+    }
+
+    /**
+     * Generate line XML element
+     * @private
+     */
+    _generateLineXML(line) {
+        if (!line?.color) return '';
+        
+        const { color, width = 2, dashType = 'solid' } = line;
+        
+        if (color.option === 'None') {
+            return '<a:ln><a:noFill/></a:ln>';
+        }
+        
+        if (color.option === 'Solid' && color.value) {
+            const hexColor = toHexColor(color.value);
+            const lineWidth = width * PT_TO_EMU;
+            return `<a:ln w="${lineWidth}">` +
+                `<a:solidFill><a:srgbClr val="${hexColor}"/></a:solidFill>` +
+                `<a:prstDash val="${dashType}"/>` +
+                '</a:ln>';
+        }
+        
+        return '';
+    }
+
+    /**
+     * Generate series shape properties (line style)
+     */
+    _generateSeriesSpPr(series, chart) {
+        return '<c:spPr>' + this._generateLineXML(series.line) + '</c:spPr>';
+    }
+    
+    /**
+     * Generate bar/area shape properties (fill)
+     */
+    _generateBarSpPr(series) {
+        const fill = series.line?.color?.value 
+            ? this._generateSolidFillXML(series.line.color.value) 
+            : '';
+        return '<c:spPr>' + fill + '</c:spPr>';
+    }
+    
+    /**
+     * Generate marker XML
+     */
+    _generateMarkerXML(marker, series, chart) {
+        // No marker or explicitly disabled
+        if (!marker || marker.option === 'NoMarker' || marker.option === 'none') {
+            return '<c:marker><c:symbol val="none"/></c:marker>';
+        }
+        
+        // Auto marker - let Excel choose
+        if (marker.option === 'Automatic' || marker.option === 'auto') {
+            return '';
+        }
+        
+        // Built-in marker
+        const markerType = MARKER_TYPES[marker.type] || marker.type || 'circle';
+        const markerSize = marker.size || 5;
+        
+        const parts = [
+            '<c:marker>',
+            `<c:symbol val="${markerType}"/>`,
+            `<c:size val="${markerSize}"/>`
+        ];
+        
+        // Marker fill and line styling
+        if (marker.fillColor || marker.line) {
+            parts.push('<c:spPr>');
+            
+            if (marker.fillColor?.option === 'Solid' && marker.fillColor.value) {
+                parts.push(this._generateSolidFillXML(marker.fillColor.value));
             }
-        }
-        
-        // Line properties with color and dash type
-        if (series.line && series.line.color && series.line.color.value) {
-            const rgb = series.line.color.value;
-            const hexColor = rgb.map(c => Math.round(c).toString(16).padStart(2, '0')).join('').toUpperCase();
-            const lineWidth = (series.line.width || 2) * 12700; // EMUs
-            const dashType = series.line.dashType || 'solid';
-            xml += '<c:spPr>';
-            xml += `<a:ln w="${lineWidth}">`;
-            xml += `<a:solidFill><a:srgbClr val="${hexColor}"/></a:solidFill>`;
-            xml += `<a:prstDash val="${dashType}"/>`;
-            xml += '</a:ln>';
-            xml += '</c:spPr>';
-        }
-        
-        // No markers
-        xml += '<c:marker><c:symbol val="none"/></c:marker>';
-        
-        // X values - use cell reference if dataInfo available
-        if (dataInfo && dataInfo.numRows > 1) {
-            const xCol = xlColumn(dataInfo.startCol);  // Column A = X values
-            const startDataRow = dataInfo.startRow + 1;  // Skip header row
-            const endDataRow = dataInfo.startRow + dataInfo.numRows;
-            xml += '<c:xVal><c:numRef>';
-            xml += `<c:f>${sheetName}!$${xCol}$${startDataRow}:$${xCol}$${endDataRow}</c:f>`;
-            xml += '</c:numRef></c:xVal>';
-        } else if (series.x && series.x.values && series.x.values.length > 0) {
-            // Fallback to inline values
-            xml += '<c:xVal><c:numLit>';
-            xml += '<c:formatCode>General</c:formatCode>';
-            xml += `<c:ptCount val="${series.x.values.length}"/>`;
-            for (let j = 0; j < series.x.values.length; j++) {
-                const val = series.x.values[j];
-                if (val !== null && val !== undefined && !isNaN(val)) {
-                    xml += `<c:pt idx="${j}"><c:v>${val}</c:v></c:pt>`;
-                }
+            
+            if (marker.line?.color?.option === 'Solid' && marker.line.color.value) {
+                const hexColor = toHexColor(marker.line.color.value);
+                const lineWidth = (marker.line.width || 0.75) * PT_TO_EMU;
+                parts.push(`<a:ln w="${lineWidth}"><a:solidFill><a:srgbClr val="${hexColor}"/></a:solidFill></a:ln>`);
             }
-            xml += '</c:numLit></c:xVal>';
+            
+            parts.push('</c:spPr>');
         }
         
-        // Y values - use cell reference if dataInfo available
-        if (dataInfo && dataInfo.numRows > 1) {
-            const yCol = xlColumn(dataInfo.startCol + index + 1);  // Column B, C, D... = Y values
-            const startDataRow = dataInfo.startRow + 1;  // Skip header row
-            const endDataRow = dataInfo.startRow + dataInfo.numRows;
-            xml += '<c:yVal><c:numRef>';
-            xml += `<c:f>${sheetName}!$${yCol}$${startDataRow}:$${yCol}$${endDataRow}</c:f>`;
-            xml += '</c:numRef></c:yVal>';
-        } else if (series.y && series.y.values && series.y.values.length > 0) {
-            // Fallback to inline values
-            xml += '<c:yVal><c:numLit>';
-            xml += '<c:formatCode>General</c:formatCode>';
-            xml += `<c:ptCount val="${series.y.values.length}"/>`;
-            for (let j = 0; j < series.y.values.length; j++) {
-                const val = series.y.values[j];
-                if (val !== null && val !== undefined && !isNaN(val)) {
-                    xml += `<c:pt idx="${j}"><c:v>${val}</c:v></c:pt>`;
-                }
-            }
-            xml += '</c:numLit></c:yVal>';
+        parts.push('</c:marker>');
+        return parts.join('');
+    }
+    
+    /**
+     * Generate numeric literal data points XML
+     * @private
+     */
+    _generateNumericPointsXML(values) {
+        const points = values
+            .map((val, idx) => (val !== null && val !== undefined && !isNaN(val))
+                ? `<c:pt idx="${idx}"><c:v>${val}</c:v></c:pt>`
+                : '')
+            .filter(Boolean)
+            .join('');
+        
+        return '<c:formatCode>General</c:formatCode>' +
+            `<c:ptCount val="${values.length}"/>` +
+            points;
+    }
+
+    /**
+     * Generate cell reference range string
+     * @private
+     */
+    _generateCellRange(sheetName, col, startRow, endRow) {
+        const colLetter = xlColumn(col);
+        const safeSheetName = escapeSheetName(sheetName);
+        return `${safeSheetName}!$${colLetter}$${startRow}:$${colLetter}$${endRow}`;
+    }
+
+    /**
+     * Generate X values XML for scatter chart
+     */
+    _generateXValXML(series, index, sheetName, dataInfo) {
+        if (dataInfo?.numRows > 1) {
+            const startRow = dataInfo.startRow + 1;
+            const endRow = dataInfo.startRow + dataInfo.numRows - 1;
+            const range = this._generateCellRange(sheetName, dataInfo.startCol, startRow, endRow);
+            return `<c:xVal><c:numRef><c:f>${range}</c:f></c:numRef></c:xVal>`;
         }
         
-        xml += '<c:smooth val="0"/>';
-        xml += '</c:ser>';
+        if (series.x?.values?.length > 0) {
+            return '<c:xVal><c:numLit>' +
+                this._generateNumericPointsXML(series.x.values) +
+                '</c:numLit></c:xVal>';
+        }
+        
+        return '';
+    }
+    
+    /**
+     * Generate Y values XML for scatter chart
+     */
+    _generateYValXML(series, index, sheetName, dataInfo) {
+        if (dataInfo?.numRows > 1) {
+            const startRow = dataInfo.startRow + 1;
+            const endRow = dataInfo.startRow + dataInfo.numRows - 1;
+            const range = this._generateCellRange(sheetName, dataInfo.startCol + index + 1, startRow, endRow);
+            return `<c:yVal><c:numRef><c:f>${range}</c:f></c:numRef></c:yVal>`;
+        }
+        
+        if (series.y?.values?.length > 0) {
+            return '<c:yVal><c:numLit>' +
+                this._generateNumericPointsXML(series.y.values) +
+                '</c:numLit></c:yVal>';
+        }
+        
+        return '';
+    }
+    
+    /**
+     * Generate category XML for line/bar/area/pie charts
+     */
+    _generateCatXML(series, index, sheetName, dataInfo) {
+        const values = series.x?.values;
+        if (!values?.length) return '';
+        
+        const isString = typeof values[0] === 'string';
+        const points = values
+            .map((val, idx) => `<c:pt idx="${idx}"><c:v>${isString ? escapeXml(val) : val}</c:v></c:pt>`)
+            .join('');
+        
+        if (isString) {
+            return '<c:cat><c:strLit>' +
+                `<c:ptCount val="${values.length}"/>` +
+                points +
+                '</c:strLit></c:cat>';
+        }
+        
+        return '<c:cat><c:numLit>' +
+            '<c:formatCode>General</c:formatCode>' +
+            `<c:ptCount val="${values.length}"/>` +
+            points +
+            '</c:numLit></c:cat>';
+    }
+    
+    /**
+     * Generate values XML for line/bar/area/pie charts
+     */
+    _generateValXML(series, index, sheetName, dataInfo) {
+        if (!series.y?.values?.length) return '';
+        
+        return '<c:val><c:numLit>' +
+            this._generateNumericPointsXML(series.y.values) +
+            '</c:numLit></c:val>';
+    }
+    
+    /**
+     * Generate data labels XML
+     */
+    _generateDataLabelsXML(dataLabels) {
+        let xml = '<c:dLbls>';
+        
+        if (dataLabels.showValue) {
+            xml += '<c:showVal val="1"/>';
+        }
+        if (dataLabels.showCatName) {
+            xml += '<c:showCatName val="1"/>';
+        }
+        if (dataLabels.showSerName) {
+            xml += '<c:showSerName val="1"/>';
+        }
+        if (dataLabels.showPercent) {
+            xml += '<c:showPercent val="1"/>';
+        }
+        
+        xml += '<c:showLegendKey val="0"/>';
+        xml += '</c:dLbls>';
+        return xml;
+    }
+    
+    /**
+     * Generate trendline XML
+     */
+    _generateTrendlineXML(trendline) {
+        let xml = '<c:trendline>';
+        
+        // Trendline type
+        const type = trendline.type || 'linear';
+        xml += `<c:trendlineType val="${type}"/>`;
+        
+        // Polynomial order
+        if (type === 'poly' && trendline.order) {
+            xml += `<c:order val="${trendline.order}"/>`;
+        }
+        
+        // Period for moving average
+        if (type === 'movingAvg' && trendline.period) {
+            xml += `<c:period val="${trendline.period}"/>`;
+        }
+        
+        // Forward/backward projection
+        if (trendline.forward) {
+            xml += `<c:forward val="${trendline.forward}"/>`;
+        }
+        if (trendline.backward) {
+            xml += `<c:backward val="${trendline.backward}"/>`;
+        }
+        
+        // Display equation/R-squared
+        if (trendline.displayEquation) {
+            xml += '<c:dispEq val="1"/>';
+        }
+        if (trendline.displayRSquared) {
+            xml += '<c:dispRSqr val="1"/>';
+        }
+        
+        xml += '</c:trendline>';
         return xml;
     }
     
     /**
      * Generate axis XML
      */
-    _generateAxisXML(axis, position, crossAxisId) {
+    _generateAxisXML(axis, position, crossAxisId, chartType = 'scatter', isSecondary = false) {
         const isLogScale = axis.logBase && !isNaN(axis.logBase) && axis.logBase > 1;
         
-        let xml = '<c:valAx>';
+        // For non-scatter charts, X axis is a category axis
+        const isXAxis = position === 'b' || position === 't';
+        const useCategoryAxis = isXAxis && chartType !== 'scatter';
+        
+        let xml = useCategoryAxis ? '<c:catAx>' : '<c:valAx>';
         xml += `<c:axId val="${axis.id}"/>`;
         
         // Scaling with optional log scale and min/max
         xml += '<c:scaling>';
-        if (isLogScale) {
+        if (isLogScale && !useCategoryAxis) {
             xml += `<c:logBase val="${axis.logBase}"/>`;
         }
         xml += '<c:orientation val="minMax"/>';
-        if (axis.maximum !== undefined && !isNaN(axis.maximum)) {
-            xml += `<c:max val="${axis.maximum}"/>`;
-        }
-        if (axis.minimum !== undefined && !isNaN(axis.minimum)) {
-            xml += `<c:min val="${axis.minimum}"/>`;
+        if (!useCategoryAxis) {
+            if (axis.maximum !== undefined && !isNaN(axis.maximum)) {
+                xml += `<c:max val="${axis.maximum}"/>`;
+            }
+            if (axis.minimum !== undefined && !isNaN(axis.minimum)) {
+                xml += `<c:min val="${axis.minimum}"/>`;
+            }
         }
         xml += '</c:scaling>';
         
         xml += '<c:delete val="0"/>';
         xml += `<c:axPos val="${position}"/>`;
         
-        // Major gridlines
-        if (axis.majorGridlines !== false) {
+        // Major gridlines (typically only for value axes)
+        if (!useCategoryAxis && axis.majorGridlines !== false) {
             xml += '<c:majorGridlines>';
             if (axis.majorGridlines && (axis.majorGridlines.color || axis.majorGridlines.width)) {
                 const color = axis.majorGridlines.color || 'D9D9D9';
@@ -1019,7 +2296,7 @@ class XlsxWriter {
         }
         
         // Minor gridlines (configurable, useful for log scale)
-        if (axis.minorGridlines) {
+        if (!useCategoryAxis && axis.minorGridlines) {
             xml += '<c:minorGridlines>';
             if (axis.minorGridlines.color || axis.minorGridlines.width) {
                 const color = axis.minorGridlines.color || 'E5E5E5';
@@ -1069,8 +2346,17 @@ class XlsxWriter {
         
         xml += `<c:crossAx val="${crossAxisId}"/>`;
         xml += '<c:crosses val="autoZero"/>';
-        xml += '<c:crossBetween val="midCat"/>';
-        xml += '</c:valAx>';
+        
+        if (useCategoryAxis) {
+            xml += '<c:auto val="1"/>';
+            xml += '<c:lblAlgn val="ctr"/>';
+            xml += '<c:lblOffset val="100"/>';
+            xml += '</c:catAx>';
+        } else {
+            xml += '<c:crossBetween val="midCat"/>';
+            xml += '</c:valAx>';
+        }
+        
         return xml;
     }
 
@@ -1124,7 +2410,21 @@ class XlsxWriter {
         } else if (typeof require !== 'undefined') {
             // Node.js: write to file
             const fs = require('fs');
-            fs.writeFileSync(filename, content);
+            const path = require('path');
+            
+            // SECURITY: Validate filename to prevent path traversal
+            const resolvedPath = path.resolve(filename);
+            const baseDir = process.cwd();
+            if (!resolvedPath.startsWith(baseDir + path.sep) && resolvedPath !== baseDir) {
+                throw new Error('Security error: output path must be within working directory');
+            }
+            
+            // SECURITY: Ensure .xlsx extension to prevent arbitrary file writes
+            if (!resolvedPath.toLowerCase().endsWith('.xlsx')) {
+                throw new Error('Security error: output file must have .xlsx extension');
+            }
+            
+            fs.writeFileSync(resolvedPath, content);
         }
         
         return content;
@@ -1246,19 +2546,234 @@ class XlsxWriter {
     /**
      * Add styles.xml
      */
+    /**
+     * Build style collections (fonts, fills, borders) from formats
+     * @private
+     */
+    _buildStyleCollections() {
+        const fonts = ['<font><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/><scheme val="minor"/></font>'];
+        const fills = [
+            '<fill><patternFill patternType="none"/></fill>',
+            '<fill><patternFill patternType="gray125"/></fill>'
+        ];
+        const borders = ['<border><left/><right/><top/><bottom/><diagonal/></border>'];
+        
+        const fontMap = { 'default': 0 };
+        const fillMap = { 'none': 0, 'gray125': 1 };
+        const borderMap = { 'default': 0 };
+        
+        for (const format of this.formats) {
+            this._addUniqueStyle(fonts, fontMap, this._buildFontKey(format), () => this._buildFontXML(format));
+            this._addUniqueStyle(fills, fillMap, this._buildFillKey(format), () => this._buildFillXML(format));
+            this._addUniqueStyle(borders, borderMap, this._buildBorderKey(format), () => this._buildBorderXML(format));
+        }
+        
+        return { fonts, fills, borders, fontMap, fillMap, borderMap };
+    }
+
+    /**
+     * Add unique style to collection if not already present
+     * @private
+     */
+    _addUniqueStyle(collection, map, key, buildFn) {
+        if (!Object.prototype.hasOwnProperty.call(map, key)) {
+            map[key] = collection.length;
+            collection.push(buildFn());
+        }
+    }
+
+    /**
+     * Generate custom number formats XML
+     * @private
+     */
+    _buildNumFormatsXML() {
+        if (this.customNumFormats.size === 0) return '';
+        
+        const formats = Array.from(this.customNumFormats.entries())
+            .map(([fmt, id]) => `<numFmt numFmtId="${id}" formatCode="${escapeXmlAttr(fmt)}"/>`)
+            .join('');
+        
+        return `<numFmts count="${this.customNumFormats.size}">${formats}</numFmts>`;
+    }
+
     _addStyles() {
-        let xml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
-        xml += '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">';
-        xml += '<fonts count="1"><font><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/><scheme val="minor"/></font></fonts>';
-        xml += '<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>';
-        xml += '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>';
-        xml += '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>';
-        xml += '<cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs>';
-        xml += '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>';
-        xml += '<dxfs count="0"/>';
-        xml += '<tableStyles count="0" defaultTableStyle="TableStyleMedium9" defaultPivotStyle="PivotStyleLight16"/>';
-        xml += '</styleSheet>';
-        this.zip.file('xl/styles.xml', xml);
+        const { fonts, fills, borders, fontMap, fillMap, borderMap } = this._buildStyleCollections();
+        
+        const parts = [
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+            '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">',
+            this._buildNumFormatsXML(),
+            `<fonts count="${fonts.length}">${fonts.join('')}</fonts>`,
+            `<fills count="${fills.length}">${fills.join('')}</fills>`,
+            `<borders count="${borders.length}">${borders.join('')}</borders>`,
+            '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
+        ];
+        
+        // Cell XFs
+        const cellXfs = ['<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>']; // Default format
+        
+        for (const format of this.formats) {
+            const fontId = fontMap[this._buildFontKey(format)];
+            const fillId = fillMap[this._buildFillKey(format)];
+            const borderId = borderMap[this._buildBorderKey(format)];
+            const numFmtId = format.numFmtId || 0;
+            
+            let xfXml = `<xf numFmtId="${numFmtId}" fontId="${fontId}" fillId="${fillId}" borderId="${borderId}" xfId="0"`;
+            
+            // Apply flags
+            if (numFmtId !== 0) xfXml += ' applyNumberFormat="1"';
+            if (fontId !== 0) xfXml += ' applyFont="1"';
+            if (fillId !== 0) xfXml += ' applyFill="1"';
+            if (borderId !== 0) xfXml += ' applyBorder="1"';
+            
+            // Alignment
+            const hasAlignment = format.align || format.valign || format.textWrap || format.rotation || format.indent;
+            if (hasAlignment) {
+                xfXml += ' applyAlignment="1">';
+                xfXml += '<alignment';
+                if (format.align) xfXml += ` horizontal="${format.align}"`;
+                if (format.valign) xfXml += ` vertical="${format.valign}"`;
+                if (format.textWrap) xfXml += ' wrapText="1"';
+                if (format.rotation) xfXml += ` textRotation="${format.rotation}"`;
+                if (format.indent) xfXml += ` indent="${format.indent}"`;
+                xfXml += '/></xf>';
+            } else {
+                xfXml += '/>';
+            }
+            
+            cellXfs.push(xfXml);
+        }
+        
+        parts.push(
+            `<cellXfs count="${cellXfs.length}">${cellXfs.join('')}</cellXfs>`,
+            '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>',
+            '<dxfs count="0"/>',
+            '<tableStyles count="0" defaultTableStyle="TableStyleMedium9" defaultPivotStyle="PivotStyleLight16"/>',
+            '</styleSheet>'
+        );
+        
+        this.zip.file('xl/styles.xml', parts.join('\n'));
+    }
+    
+    /**
+     * Build font key for deduplication
+     */
+    _buildFontKey(format) {
+        return JSON.stringify({
+            name: format.fontName,
+            size: format.fontSize,
+            bold: format.bold,
+            italic: format.italic,
+            underline: format.underline,
+            strikeout: format.strikeout,
+            fontColor: format.fontColor
+        });
+    }
+    
+    /**
+     * Build font XML
+     */
+    _buildFontXML(format) {
+        const parts = ['<font>'];
+        
+        // Font style flags
+        if (format.bold) parts.push('<b/>');
+        if (format.italic) parts.push('<i/>');
+        if (format.underline) parts.push('<u/>');
+        if (format.strikeout) parts.push('<strike/>');
+        
+        // Font size and color
+        parts.push(`<sz val="${format.fontSize || DEFAULT_FONT.SIZE}"/>`);
+        parts.push(format.fontColor 
+            ? `<color rgb="FF${format.fontColor.toUpperCase()}"/>` 
+            : '<color theme="1"/>');
+        
+        // Font name and family
+        const fontName = format.fontName || DEFAULT_FONT.NAME;
+        parts.push(`<name val="${fontName}"/>`);
+        parts.push(`<family val="${DEFAULT_FONT.FAMILY}"/>`);
+        
+        if (fontName === DEFAULT_FONT.NAME) {
+            parts.push('<scheme val="minor"/>');
+        }
+        
+        parts.push('</font>');
+        return parts.join('');
+    }
+    
+    /**
+     * Build fill key for deduplication
+     */
+    _buildFillKey(format) {
+        return JSON.stringify({
+            bgColor: format.bgColor,
+            pattern: format.pattern
+        });
+    }
+    
+    /**
+     * Build fill XML
+     */
+    _buildFillXML(format) {
+        if (!format.bgColor) {
+            return '<fill><patternFill patternType="none"/></fill>';
+        }
+        const pattern = format.pattern || 'solid';
+        let xml = `<fill><patternFill patternType="${pattern}">`;
+        xml += `<fgColor rgb="FF${format.bgColor.toUpperCase()}"/>`;
+        xml += '</patternFill></fill>';
+        return xml;
+    }
+    
+    /**
+     * Build border key for deduplication
+     */
+    _buildBorderKey(format) {
+        return JSON.stringify({
+            left: format.left,
+            right: format.right,
+            top: format.top,
+            bottom: format.bottom,
+            leftColor: format.leftColor,
+            rightColor: format.rightColor,
+            topColor: format.topColor,
+            bottomColor: format.bottomColor
+        });
+    }
+    
+    /**
+     * Build border XML
+     */
+    _buildBorderXML(format) {
+        let xml = '<border>';
+        xml += this._buildBorderSideXML('left', format.left, format.leftColor);
+        xml += this._buildBorderSideXML('right', format.right, format.rightColor);
+        xml += this._buildBorderSideXML('top', format.top, format.topColor);
+        xml += this._buildBorderSideXML('bottom', format.bottom, format.bottomColor);
+        xml += '<diagonal/>';
+        xml += '</border>';
+        return xml;
+    }
+    
+    /**
+     * Build individual border side XML
+     */
+    _buildBorderSideXML(side, style, color) {
+        if (!style || style === 0) return `<${side}/>`;
+        const styleMap = {
+            1: 'thin', 2: 'medium', 3: 'dashed', 4: 'dotted', 5: 'thick',
+            6: 'double', 7: 'hair', 8: 'mediumDashed', 9: 'dashDot',
+            10: 'mediumDashDot', 11: 'dashDotDot', 12: 'mediumDashDotDot', 13: 'slantDashDot'
+        };
+        const styleName = typeof style === 'number' ? (styleMap[style] || 'thin') : style;
+        let xml = `<${side} style="${styleName}">`;
+        if (color) {
+            xml += `<color rgb="FF${color.toUpperCase()}"/>`;
+        } else {
+            xml += '<color auto="1"/>';
+        }
+        xml += `</${side}>`;
+        return xml;
     }
     
     /**
@@ -1369,9 +2884,39 @@ class XlsxWriter {
             xml += 'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">';
             xml += '<sheetViews><sheetView workbookViewId="0"/></sheetViews>';
             xml += '<sheetFormatPr defaultRowHeight="15"/>';
+            
+            // Column widths
+            const colInfo = this.columnInfo[i];
+            if (colInfo && Object.keys(colInfo).length > 0) {
+                xml += '<cols>';
+                // Sort by column number
+                const sortedCols = Object.entries(colInfo).sort((a, b) => Number(a[0]) - Number(b[0]));
+                for (const [col, info] of sortedCols) {
+                    xml += `<col min="${col}" max="${col}"`;
+                    if (info.width !== undefined) xml += ` width="${info.width}"`;
+                    if (info.hidden) xml += ' hidden="1"';
+                    if (info.formatId) xml += ` style="${info.formatId}"`;
+                    xml += ' customWidth="1"/>';
+                }
+                xml += '</cols>';
+            }
+            
             xml += '<sheetData>';
-            xml += this._generateSheetDataXML(sheet);
+            xml += this._generateSheetDataXML(sheet, i);
             xml += '</sheetData>';
+            
+            // Merge cells
+            const mergeCells = this.mergeCells[i];
+            if (mergeCells && mergeCells.length > 0) {
+                xml += `<mergeCells count="${mergeCells.length}">`;
+                for (const merge of mergeCells) {
+                    const startRef = xlColumn(merge.startCol) + merge.startRow;
+                    const endRef = xlColumn(merge.endCol) + merge.endRow;
+                    xml += `<mergeCell ref="${startRef}:${endRef}"/>`;
+                }
+                xml += '</mergeCells>';
+            }
+            
             xml += '<pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/>';
             
             // Add drawing reference if there's a chart (after pageMargins per OOXML schema)
@@ -1466,6 +3011,72 @@ class XlsxWriter {
             this.zip.file(`xl/drawings/_rels/drawing${chartId}.xml.rels`, drawingRelsXml);
         }
     }
+    
+    /**
+     * Insert an image into the worksheet
+     * @param {string} sheetName - Sheet name
+     * @param {number} row - Row number (1-based)
+     * @param {number} col - Column number (1-based)
+     * @param {string|ArrayBuffer|Uint8Array} image - Image path, data URL, or binary data
+     * @param {Object} [options] - Options { xOffset, yOffset, xScale, yScale }
+     */
+    async insertImage(sheetName, row, col, image, options = {}) {
+        const sheet = this._getOrCreateSheet(sheetName);
+        if (!sheet.images) sheet.images = [];
+        
+        let imageData;
+        let imageType = 'png';
+        
+        if (typeof image === 'string') {
+            if (image.startsWith('data:')) {
+                // Data URL - validate format strictly
+                const match = image.match(/^data:image\/(png|jpe?g|gif|bmp|webp);base64,([A-Za-z0-9+/=]+)$/);
+                if (match) {
+                    imageType = match[1] === 'jpeg' ? 'jpeg' : match[1];
+                    imageData = atob(match[2]);
+                }
+            } else {
+                // File path - need to read (Node.js only)
+                if (typeof require !== 'undefined') {
+                    const fs = require('fs');
+                    const path = require('path');
+                    
+                    // SECURITY: Validate path to prevent traversal attacks
+                    const resolvedPath = path.resolve(image);
+                    const baseDir = process.cwd();
+                    if (!resolvedPath.startsWith(baseDir + path.sep) && resolvedPath !== baseDir) {
+                        throw new Error('Security error: image path must be within working directory');
+                    }
+                    
+                    // SECURITY: Validate file extension
+                    const ext = path.extname(image).toLowerCase();
+                    const allowedExts = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'];
+                    if (!allowedExts.includes(ext)) {
+                        throw new Error('Security error: invalid image type ' + ext);
+                    }
+                    
+                    imageData = fs.readFileSync(resolvedPath);
+                    imageType = ext.substring(1);
+                    if (imageType === 'jpg') imageType = 'jpeg';
+                }
+            }
+        } else if (image instanceof ArrayBuffer || image instanceof Uint8Array) {
+            imageData = image;
+        }
+        
+        if (imageData) {
+            sheet.images.push({
+                row,
+                col,
+                data: imageData,
+                type: imageType,
+                xOffset: options.xOffset || 0,
+                yOffset: options.yOffset || 0,
+                xScale: options.xScale || 1,
+                yScale: options.yScale || 1
+            });
+        }
+    }
 }
 
 // ============================================================================
@@ -1477,6 +3088,7 @@ if (typeof module !== 'undefined' && module.exports) {
     // Node.js
     module.exports = {
         XlsxWriter,
+        Format,
         xlColumn,
         xlCell2Ind,
         getHexColor,
@@ -1491,13 +3103,19 @@ if (typeof module !== 'undefined' && module.exports) {
         getDefaultComment,
         getDefaultTextBox,
         NAMED_COLORS,
-        DASH_TYPES
+        DASH_TYPES,
+        MARKER_TYPES,
+        NUM_FORMATS,
+        BORDER_STYLES,
+        PATTERN_TYPES
     };
 } else if (typeof window !== 'undefined') {
     // Browser
     window.XlsxWriter = XlsxWriter;
+    window.Format = Format;
     window.xlsxwrite = {
         XlsxWriter,
+        Format,
         xlColumn,
         xlCell2Ind,
         getHexColor,
@@ -1512,6 +3130,10 @@ if (typeof module !== 'undefined' && module.exports) {
         getDefaultComment,
         getDefaultTextBox,
         NAMED_COLORS,
-        DASH_TYPES
+        DASH_TYPES,
+        MARKER_TYPES,
+        NUM_FORMATS,
+        BORDER_STYLES,
+        PATTERN_TYPES
     };
 }
