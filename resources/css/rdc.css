@@ -93,14 +93,6 @@
 			.cxtmenu-disabled {
 				opacity: 0.333;
 			}
-/* .content {
-	margin-top: 55px;
-	margin-left: 12em;
-	right: 0px;
-	border: 0px;
-	height: calc(100vh - 65px);
-	width: calc(100vw - 13.2em);
-}*/
 .Alkali_metal 
 {
 	background-color: rgba(0, 128, 0, 0.3);
@@ -166,11 +158,6 @@
 .no-close .ui-dialog-titlebar-close {
   display: none;
 }
-	/*.ui-dialog-titlebar { 
-	font-family:RawengulkSans;
-	background-color: #f3b87b; 
-	color: #344126; 
-}*/
 	.ui-dialog { 
 	border-color: #eee; 
 	border:1;
@@ -280,9 +267,9 @@ input[type=number]::-webkit-inner-spin-button {
 }
 #cy {
   position: fixed;
-	top: 70px;
+	top: 43px;
 	left: 12em;
-	height: calc(100vh - 101px);
+	height: calc(100vh - 74px);
 	width: calc(100vw - 12em);
 	z-index:2;
 }
@@ -396,7 +383,7 @@ header {
 */
 
 nav {
-	top:70px;
+	top:43px;
 	left:0px;
 	bottom: 32px;
 	position: fixed;
@@ -434,7 +421,7 @@ pre {
 }
 /* The Modal information-window */
 .modal {
-	display: block;
+	display: none;
 	position: fixed;
 	z-index: 1000000;
 	padding-top: 40px;

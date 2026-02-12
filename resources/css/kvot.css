@@ -13,7 +13,7 @@ body{
   padding: 0;
   overflow-x: hidden;
   /*background: #1e3c72 !important;*/
-     color: #344126;
+     color: var(--color-kvot-primary);
      font-family: verdana, sans-serif;
 }
 .nav-toggle {
@@ -25,7 +25,7 @@ body{
   background: transparent;
   border: 1px solid transparent;
   padding:0px;
-  margin: 27px;
+  margin: 16px;
   z-index: 1000000001;
 }
 
@@ -91,7 +91,7 @@ body{
 #menu.overlay {
   visibility: visible;
   opacity: 1;
-  padding-top: 100px;
+  padding-top: 60px;
   background: rgba(0, 0, 0, 0.85);
 }
 #menu ul {
@@ -122,49 +122,49 @@ header {
      border-bottom: var(--color-kvot-accent) solid 1px;
      background: var(--color-kvot-background);
      color: var(--color-kvot-bright);
-     height: 49px;
+     height: 30px;
      width:100%;
-     padding:10px;
+     padding:6px;
 }
  header .logo {
      margin-left: 0px;
      margin-top: 0px;
      text-align: left;
-     height: 50px;
+     height: 30px;
      transition: all 1s;
      transform-origin: 50% 50%;
 }
 
 header .logo:hover {
-  fill: #bb6c5d;
+  fill: var(--color-kvot-accent);
   /*transform: scale(1.05);*/
 }
 .stRight{
-  fill:#bb6c5d;
+  fill: var(--color-kvot-accent);
 }
 .stTop{
-  fill:#f3b87b;
+  fill: var(--color-kvot-bright);
 }
 .stLeft{
-  fill:#344126;
+  fill: var(--color-kvot-primary);
 }
 header .title {
-margin:6px;
+margin:2px;
 margin-left: 8px;
-font-size: 2.5em;
+font-size: 1.5em;
 
 text-align: left;
-   color: #f3b87b;
+   color: var(--color-kvot-bright);
 font-family:RawengulkSans;
 }
 header input {
 width:140px;
 border-radius:4px;
 border: 1px solid #004285;
-margin-top:11px;
+margin-top:4px;
 padding:1px;
 padding-left:8px;
-height: 28px;
+height: 22px;
 }
 header input:focus::placeholder {
 color: transparent;
@@ -188,10 +188,10 @@ footer {
 
 .content {
   position: absolute;
-  top: 70px;
+  top: 43px;
   left: 0;
   width:100%;
-  height: calc(100vh - 101px);
+  height: calc(100vh - 74px);
   font-family:RawengulkSans;
   color: var(--color-kvot-background);
  /* */
@@ -242,105 +242,39 @@ footer {
     transform: translate(-50%, -50%);
     
     opacity:0.1;
-
-    /*
-    -webkit-animation-name: spin;
-    -webkit-animation-duration: 50000ms;
-    -webkit-animation-iteration-count: infinite;
-    -webkit-animation-timing-function: linear;
-    -moz-animation-name: spin;
-    -moz-animation-duration: 50000ms;
-    -moz-animation-iteration-count: infinite;
-    -moz-animation-timing-function: linear;
-    -ms-animation-name: spin;
-    -ms-animation-duration: 50000ms;
-    -ms-animation-iteration-count: infinite;
-    -ms-animation-timing-function: linear;
-    animation-name: spin;
-    animation-duration: 50000ms;
-    animation-iteration-count: infinite;
-    animation-timing-function: linear;
-    
-    */
 }
 
-    /*
-@-ms-keyframes spin {
-    from {
-      -ms-transform: rotate(0deg);
-    }
-    to {
-      -ms-transform: rotate(360deg);
-    }
-  }
-  
-  @-moz-keyframes spin {
-    from {
-      -moz-transform: rotate(0deg);
-    }
-    to {
-      -moz-transform: rotate(360deg);
-    }
-  }
-  
-  @-webkit-keyframes spin {
-    from {
-      -webkit-transform: rotate(0deg);
-    }
-    to {
-      -webkit-transform: rotate(360deg);
-    }
-  }
-  
-  @keyframes spin {
-    from {
-      transform: rotate(0deg);
-    }
-    to {
-      transform: rotate(360deg);
-    }
-  }
 
-  */
 h1 {
 	font-family:RawengulkSans;
 }
  a {
-     color: #f3b87b;
+     color: var(--color-kvot-bright);
      text-decoration: none;
 }
  .smallsvg:hover {
-     fill: #bb6c5d;
+     fill: var(--color-kvot-accent);
      transform: scale(1.05);
      cursor:pointer;
 }
  .smallsvg {
-     fill: #f3b87b;
+     fill: var(--color-kvot-bright);
      vertical-align: bottom;
      height: 15px;
      transition: all 0.2s;
      transform-origin: 50% 50%;
 }
  .navbarsvg:hover {
-     fill: #bb6c5d;
+     fill: var(--color-kvot-accent);
      transform: scale(1.2);
 }
  .navbarsvg {
      padding-top:5px;
-     fill: #f3b87b;
+     fill: var(--color-kvot-bright);
      vertical-align: middle;
      height: 40px;
      transition: all 1s;
      transform-origin: 50% 50%;
-}
- .stRight{
-    fill:#bb6c5d;
-}
- .stTop{
-    fill:#f3b87b;
-}
- .stLeft{
-    fill:#344126;
 }
  .left {
      position: absolute;
@@ -361,10 +295,10 @@ h1 {
 }
 #map {
   position: fixed;
-  top: 70px;
+  top: 43px;
   left: 0;
   width:100%;
-  height: calc(100vh - 101px);
+  height: calc(100vh - 74px);
   /*  min-height: 500px;
     height: 100%;
     width: 100%;*/
@@ -372,10 +306,10 @@ h1 {
   }
   .map {
     position: fixed;
-    top: 70px;
+    top: 43px;
     left: 0;
     width:100%;
-    height: calc(100vh - 101px);
+    height: calc(100vh - 74px);
     /*  min-height: 500px;
       height: 100%;
       width: 100%;*/
