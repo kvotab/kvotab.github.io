@@ -829,6 +829,10 @@
               <input type="checkbox" id="showTotal" checked onchange="toggleShowTotal()">
               Show Total
             </label>
+            <label id="showRatioLabel" style="display: none;">
+              <input type="checkbox" id="showRatio" onchange="toggleShowRatio()">
+              Show Ratio
+            </label>
             <span id="legendStatus" style=" font-size: 12px; color: var(--color-text-muted);"></span>
             <button onclick="applyReleasePresetView()" style="margin-left: auto;">Apply Release View</button>
             <button onclick="applyDosePresetView()">Apply Dose View</button>
@@ -1069,6 +1073,8 @@
       DOM.showTotal = document.getElementById('showTotal');
       DOM.showTotalContainer = document.getElementById('showTotalContainer');
       DOM.showTotalLabel = document.getElementById('showTotalLabel');
+      DOM.showRatio = document.getElementById('showRatio');
+      DOM.showRatioLabel = document.getElementById('showRatioLabel');
       DOM.dynamicLegendToggle = document.getElementById('dynamicLegendToggle');
       DOM.dropZone = document.getElementById('dropZone');
       DOM.fileTabs = document.getElementById('fileTabs');
@@ -1089,6 +1095,18 @@
      */
     function setShowTotalVisible(show) {
       const label = getElement('showTotalLabel');
+      if (label) {
+        label.style.display = show ? '' : 'none';
+      }
+    }
+
+    /**
+     * Show or hide the "Show Ratio" checkbox based on context.
+     * Only shown when there are exactly two enabled files (thick + thin lines).
+     * @param {boolean} show - Whether to show the checkbox
+     */
+    function setShowRatioVisible(show) {
+      const label = getElement('showRatioLabel');
       if (label) {
         label.style.display = show ? '' : 'none';
       }
@@ -2545,6 +2563,19 @@
       }
     }
 
+    /**
+     * Handle "Show Ratio" checkbox toggle for radionuclides charts.
+     * When checked, appends the ratio of max values (thick/thin) to the legend
+     * name of thick-line traces.
+     * 
+     * @returns {void}
+     */
+    function toggleShowRatio() {
+      if (selectedIsRadionuclidesGroup && selectedDatasetPath) {
+        createRadionuclidesChart(selectedDatasetPath);
+      }
+    }
+
 
     /* ==========================================================================
        9. CHART CREATION
@@ -2563,8 +2594,9 @@
       const chartContainer = getElement('plotlyChartContainer');
       plotDiv.innerHTML = '';
       
-      // Hide "Show Total" checkbox (only for radionuclides groups)
+      // Hide "Show Total" and "Show Ratio" checkboxes (only for radionuclides groups)
       setShowTotalVisible(false);
+      setShowRatioVisible(false);
       
       const traces = [];
       const enabledFiles = getEnabledFiles();
@@ -2684,8 +2716,9 @@
       const chartContainer = getElement('plotlyChartContainer');
       plotDiv.innerHTML = '';
       
-      // Hide "Show Total" checkbox (only for radionuclides groups)
+      // Hide "Show Total" and "Show Ratio" checkboxes (only for radionuclides groups)
       setShowTotalVisible(false);
+      setShowRatioVisible(false);
       
       const traces = [];
       const enabledFiles = getEnabledFiles();
@@ -2850,9 +2883,16 @@
       const traces = [];
       const enabledFiles = getEnabledFiles();
       
+      // Show "Show Ratio" checkbox only when exactly 2 files are enabled (thick + thin lines)
+      const hasTwoFiles = enabledFiles.length === 2;
+      setShowRatioVisible(hasTwoFiles);
+      
       // Store data for computing total
       const totalDataByFile = {};
       
+      // Track the starting index of each file's traces in the traces array
+      const fileTraceStartIndex = {};
+
       let timeUnit = '';
       let yAxisUnit = '';
       let yAxisName = path.split('/').pop();
@@ -2865,6 +2905,9 @@
       // Build traces for each file and each radionuclide
       for (const fileKey of enabledFiles) {
         const file = loadedFiles[fileKey];
+        
+        // Record where this file's traces begin
+        fileTraceStartIndex[fileKey] = traces.length;
         
         if (!checkDatasetExistsInFile(file, path)) {
           continue;
@@ -2956,9 +2999,52 @@
         }
       }
       
-      // Add total trace if checkbox is checked
+      // Collect max values per radionuclide per file (needed for ratio display)
+      const showRatioCheckbox = getElement('showRatio');
+      const showRatioChecked = hasTwoFiles && showRatioCheckbox && showRatioCheckbox.checked;
+      const maxByFileAndName = {}; // { datasetKey: { fileKey: maxVal } }
+      if (showRatioChecked) {
+        for (const fileKey of enabledFiles) {
+          const fileData = totalDataByFile[fileKey];
+          if (!fileData) continue;
+          const file = loadedFiles[fileKey];
+          const group = file.get(path);
+          let datasetKeys = [];
+          try {
+            if (typeof group.keys === 'function') {
+              datasetKeys = Array.from(group.keys());
+            }
+          } catch (e) { /* ignore */ }
+          // Match datasetKeys to dataArrays by index
+          for (let i = 0; i < datasetKeys.length && i < fileData.dataArrays.length; i++) {
+            const key = datasetKeys[i];
+            const arr = fileData.dataArrays[i];
+            const maxVal = Math.max(...arr);
+            if (!maxByFileAndName[key]) maxByFileAndName[key] = {};
+            maxByFileAndName[key][fileKey] = maxVal;
+          }
+        }
+      }
+
+      const primaryFile = enabledFiles[0];
+      const secondaryFile = hasTwoFiles ? enabledFiles[1] : null;
+
+      /**
+       * Format a ratio value to a display string (3 significant digits).
+       * @param {number} ratio
+       * @returns {string}
+       */
+      function formatRatio(ratio) {
+        if (ratio === 0 || !isFinite(ratio)) return ratio.toString();
+        return ratio.toPrecision(3);
+      }
+
+      // Add total traces, each at the top of its corresponding file's group in the legend
       const showTotalCheckbox = getElement('showTotal');
       if (showTotalCheckbox && showTotalCheckbox.checked) {
+        // Compute total per file and collect total max values for ratio
+        const totalMaxByFile = {}; // { fileKey: maxTotalValue }
+        const totalTracesByFile = {}; // { fileKey: traceObject }
         for (const fileKey of Object.keys(totalDataByFile)) {
           const fileData = totalDataByFile[fileKey];
           if (fileData.dataArrays.length > 0) {
@@ -2972,6 +3058,8 @@
               }
             }
             
+            totalMaxByFile[fileKey] = Math.max(...totalY);
+
             let traceName = 'Total';
             let lineWidth = 2;
             
@@ -2980,7 +3068,7 @@
               lineWidth = 1;
             }
             
-            traces.push({
+            totalTracesByFile[fileKey] = {
               x: timeData,
               y: totalY,
               mode: 'lines',
@@ -2991,7 +3079,49 @@
                 width: lineWidth
               },
               type: 'scatter'
-            });
+            };
+          }
+        }
+
+        // If Show Ratio is checked, append ratio to the primary Total trace name
+        if (showRatioChecked && secondaryFile) {
+          const t = totalTracesByFile[primaryFile];
+          if (t && t.name === 'Total') {
+            const maxPrimary = totalMaxByFile[primaryFile];
+            const maxSecondary = totalMaxByFile[secondaryFile];
+            if (maxSecondary != null && maxSecondary !== 0) {
+              t.name = `Total (${formatRatio(maxPrimary / maxSecondary)})`;
+            } else if (maxSecondary === 0 && maxPrimary > 0) {
+              t.name = `Total (∞)`;
+            }
+          }
+        }
+
+        // Insert each total trace at the beginning of its file's group.
+        // Process files in reverse order so earlier splice positions stay valid.
+        const filesWithTotals = enabledFiles.filter(fk => totalTracesByFile[fk]);
+        for (let i = filesWithTotals.length - 1; i >= 0; i--) {
+          const fk = filesWithTotals[i];
+          const insertIdx = fileTraceStartIndex[fk] != null ? fileTraceStartIndex[fk] : traces.length;
+          traces.splice(insertIdx, 0, totalTracesByFile[fk]);
+        }
+      }
+
+      // Update thick-line trace names with ratio of max values if "Show Ratio" is checked
+      if (showRatioChecked) {
+        for (const trace of traces) {
+          // Thick-line traces are those from the primary file (no fileKey suffix, not Total)
+          for (const datasetKey of Object.keys(maxByFileAndName)) {
+            if (trace.name === datasetKey) {
+              const maxPrimary = maxByFileAndName[datasetKey][primaryFile];
+              const maxSecondary = maxByFileAndName[datasetKey][secondaryFile];
+              if (maxSecondary != null && maxSecondary !== 0) {
+                trace.name = `${datasetKey} (${formatRatio(maxPrimary / maxSecondary)})`;
+              } else if (maxSecondary === 0 && maxPrimary > 0) {
+                trace.name = `${datasetKey} (∞)`;
+              }
+              break;
+            }
           }
         }
       }
