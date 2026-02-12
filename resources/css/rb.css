@@ -1,0 +1,670 @@
+    /* ==========================================================================
+       1. BASE STYLES & CSS RESET
+       ========================================================================== */
+    * { box-sizing: border-box; }
+
+    /* ==========================================================================
+       2. CSS CUSTOM PROPERTIES (DESIGN TOKENS)
+       ========================================================================== */
+    :root {
+      /* Brand Colors */
+      --color-kvot-bright: #f3b87b;      /* Beige */
+      --color-kvot-accent: #bb6c5d;      /* Red-brown */
+      --color-kvot-background: #352921; /* Dark brown */
+      --color-kvot-primary: #344126;     /* Dark green */
+      
+      /* Panel & Surface Colors */
+      --color-panel-bg: #faf8f6;
+      --color-panel-border: #e5ddd5;
+      --color-hover-bg: #f5ede5;
+      --color-selected-bg: #ede3d8;
+      
+      /* Text Colors */
+      --color-text-primary: #2d2416;
+      --color-text-secondary: #6b5d4f;
+      --color-text-muted: #9b8d7f;
+      --color-selected-text: #2d2416;
+    }
+
+    /* ==========================================================================
+       3. LAYOUT
+       ========================================================================== */
+    body { 
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
+      margin: 0; 
+      padding: 0;
+      padding-top: 42px;
+      background: #ebe3db; 
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      color: var(--color-text-primary);
+    }
+
+    /* ==========================================================================
+       4. DRAG & DROP OVERLAY
+       ========================================================================== */
+    #dropOverlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(243, 184, 123, 0.15);
+      border: 4px dashed var(--color-kvot-bright);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      pointer-events: none;
+    }
+    
+    #dropOverlay.active {
+      display: flex;
+    }
+    
+    #dropOverlay .message {
+      background: white;
+      padding: 40px;
+      border-radius: 12px;
+      box-shadow: 0 8px 24px rgba(53, 41, 33, 0.25);
+      font-size: 24px;
+      color: var(--color-kvot-primary);
+      font-weight: 600;
+    }
+
+    /* ==========================================================================
+       5. FILE TABS & HEADER
+       ========================================================================== */
+    header {
+      grid-template-columns: 90px auto 1fr 80px;
+      z-index: 1000000000;
+      box-sizing: content-box;
+    }
+
+    .tabs-container {
+      display: flex;
+      align-items: flex-end;
+      gap: 4px;
+      overflow-x: auto;
+      overflow-y: hidden;
+      margin-left: 12px;
+      position: relative;
+      top: 3px;
+    }
+
+    #fileTabs {
+      display: flex;
+      gap: 4px;
+      flex: 1;
+      overflow-x: auto;
+      overflow-y: hidden;
+    }
+    
+    .file-tab {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid var(--color-kvot-accent);
+      border-bottom: none;
+      border-radius: 4px 4px 0 0;
+      cursor: pointer;
+      user-select: none;
+      font-size: 12px;
+      transition: all 0.2s;
+      position: relative;
+      max-width: 160px;
+      color: rgba(243, 184, 123, 0.7);
+      white-space: nowrap;
+    }
+    }
+    
+    .file-tab:hover {
+      background: rgba(255, 255, 255, 0.15);
+      color: var(--color-kvot-bright);
+    }
+    
+    .file-tab.enabled {
+      background: var(--color-kvot-bright);
+      color: var(--color-kvot-background);
+      border-color: var(--color-kvot-bright);
+    }
+    
+    .file-tab.enabled:hover {
+      background: #f5c690;
+    }
+    
+    .file-tab.disabled {
+      opacity: 0.5;
+      background: rgba(255, 255, 255, 0.05);
+    }
+    
+    .file-tab.disabled:hover {
+      opacity: 0.7;
+    }
+    
+    .file-tab-name {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    
+    .file-tab-close {
+      width: 16px;
+      height: 16px;
+      border-radius: 3px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      line-height: 1;
+      flex-shrink: 0;
+      transition: background 0.2s;
+    }
+    
+    .file-tab-close:hover {
+      background: rgba(0, 0, 0, 0.2);
+    }
+    
+    .file-tab.enabled .file-tab-close:hover {
+      background: rgba(53, 41, 33, 0.15);
+    }
+    
+    .add-file-btn {
+      padding: 4px 10px;
+      background: var(--color-kvot-primary);
+      color: var(--color-kvot-bright);
+      border: none;
+      border-radius: 4px 4px 0 0;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 500;
+      transition: background 0.2s;
+      margin-left: auto;
+      white-space: nowrap;
+    }
+    
+    .add-file-btn:hover {
+      background: #405533;
+    }
+
+    /* ==========================================================================
+       6. MAIN LAYOUT & PANELS
+       ========================================================================== */
+    .container { 
+      display: grid; 
+      grid-template-columns: 350px 1fr; 
+      gap: 16px;
+      padding: 16px;
+      flex: 1;
+      overflow: hidden;
+    }
+    
+    .panel { 
+      background: var(--color-panel-bg);
+      border-radius: 8px; 
+      padding: 16px; 
+      box-shadow: 0 2px 8px rgba(53, 41, 33, 0.1);
+      border: 1px solid var(--color-panel-border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    
+    .panel h3 {
+      margin: 0 0 12px 0;
+      color: var(--color-kvot-primary);
+      font-size: 16px;
+      font-weight: 600;
+    }
+    
+    .right-panel-content {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ==========================================================================
+       7. TREE VIEW (File Structure)
+       ========================================================================== */
+    #tree { 
+      flex: 1;
+      overflow-y: auto; 
+      font-size: 13px;
+      padding: 4px;
+    }
+    
+    /* Tree Item Base */
+    .tree-item { 
+      margin: 2px 0; 
+      padding: 6px 8px;
+      display: flex;
+      align-items: center;
+      cursor: pointer;
+      border-radius: 4px;
+      transition: all 0.15s ease;
+      user-select: none;
+      color: var(--color-text-primary);
+    }
+    
+    .tree-item:hover {
+      background: var(--color-hover-bg);
+    }
+    
+    /* Tree Item - Group Type */
+    .tree-item.group { 
+      font-weight: 500;
+      color: var(--color-kvot-primary);
+    }
+    
+    .tree-item.group:hover {
+      background: var(--color-hover-bg);
+      color: var(--color-kvot-background);
+    }
+    
+    .tree-item.group.expanded {
+      background: var(--color-selected-bg);
+      color: var(--color-kvot-background);
+      border-left: 3px solid var(--color-kvot-accent);
+      padding-left: 5px;
+    }
+    
+    /* Tree Item - Dataset Type */
+    .tree-item.dataset { 
+      color: var(--color-text-secondary);
+      font-size: 12px;
+    }
+    
+    .tree-item.dataset:hover { 
+      background: var(--color-hover-bg); 
+      color: var(--color-text-primary);
+    }
+    
+    .tree-item.dataset.selected { 
+      background: var(--color-selected-bg); 
+      color: var(--color-selected-text);
+      font-weight: 500;
+      border-left: 3px solid var(--color-kvot-accent);
+      padding-left: 5px;
+    }
+    
+    /* Tree Toggle Button */
+    .tree-toggle {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 20px;
+      height: 20px;
+      margin-right: 4px;
+      font-size: 10px;
+      transition: transform 0.2s;
+      flex-shrink: 0;
+      color: var(--color-text-muted);
+    }
+    
+    .tree-toggle.collapsed {
+      transform: rotate(-90deg);
+    }
+    
+    /* Tree Icons */
+    .tree-icon {
+      width: 18px;
+      height: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-right: 6px;
+      flex-shrink: 0;
+      position: relative;
+    }
+    
+    .tree-icon::before {
+      content: '';
+      width: 14px;
+      height: 14px;
+      display: block;
+    }
+    
+    .tree-icon.folder::before {
+      background: var(--color-kvot-accent);
+      clip-path: polygon(0% 15%, 40% 15%, 45% 0%, 100% 0%, 100% 100%, 0% 100%);
+    }
+    
+    .tree-icon.dataset::before {
+      background: var(--color-kvot-bright);
+      clip-path: polygon(
+        0% 0%, 100% 0%, 100% 70%, 70% 100%, 0% 100%,
+        15% 25%, 15% 40%, 85% 40%, 85% 25%,
+        15% 50%, 15% 65%, 85% 65%, 85% 50%,
+        15% 75%, 15% 85%, 50% 85%, 50% 75%
+      );
+    }
+    
+    /* Tree Labels & Meta */
+    .tree-label {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    
+    .tree-meta {
+      color: var(--color-text-muted);
+      font-size: 11px;
+      margin-left: 8px;
+      flex-shrink: 0;
+    }
+    
+    /* Tree Group Children Container */
+    .tree-group-children {
+      margin-left: 0;
+      border-left: 2px solid var(--color-panel-border);
+      padding-left: 4px;
+      display: none;
+    }
+    
+    .tree-group-children.expanded {
+      display: block;
+    }
+
+    /* ==========================================================================
+       8. SEARCH FUNCTIONALITY
+       ========================================================================== */
+    .search-container {
+      position: relative;
+      margin-bottom: 12px;
+      display: none;
+    }
+
+    .search-container.visible {
+      display: block;
+    }
+
+    #treeSearch {
+      width: 100%;
+      padding: 8px 32px 8px 12px;
+      border: 1px solid var(--color-panel-border);
+      border-radius: 4px;
+      font-size: 13px;
+      font-family: inherit;
+      background: white;
+      color: var(--color-text-primary);
+      transition: all 0.15s ease;
+      outline: none;
+    }
+
+    #treeSearch:focus {
+      border-color: var(--color-kvot-primary);
+      box-shadow: 0 0 0 3px rgba(52, 65, 38, 0.1);
+    }
+
+    #treeSearch::placeholder {
+      color: var(--color-text-muted);
+    }
+
+    .clear-search-btn {
+      position: absolute;
+      right: 8px;
+      top: 50%;
+      transform: translateY(-50%);
+      background: none;
+      border: none;
+      color: var(--color-text-muted);
+      font-size: 20px;
+      line-height: 1;
+      cursor: pointer;
+      padding: 4px 8px;
+      border-radius: 3px;
+      transition: all 0.2s;
+      display: none;
+    }
+
+    .clear-search-btn:hover {
+      background: var(--color-hover-bg);
+      color: var(--color-text-primary);
+    }
+
+    .clear-search-btn.visible {
+      display: block;
+    }
+
+    /* Search Results Highlighting */
+    .tree-item.search-hidden {
+      display: none !important;
+    }
+
+    .tree-item.search-match {
+      background: rgba(243, 184, 123, 0.15);
+    }
+
+    .tree-item.search-match .tree-label {
+      font-weight: 600;
+    }
+
+    .search-highlight {
+      background: var(--color-kvot-bright);
+      color: var(--color-kvot-background);
+      padding: 1px 2px;
+      border-radius: 2px;
+    }
+
+    .tree-group-children.search-expanded {
+      display: block !important;
+    }
+
+    /* ==========================================================================
+       9. CHART & VISUALIZATION
+       ========================================================================== */
+    #plotlyChartContainer {
+      margin-bottom: 16px;
+      display: none;
+    }
+    
+    #plotlyChartContainer.visible {
+      display: block;
+    }
+    
+    #plotlyChart {
+      min-height: 500px;
+      height: 500px;
+      max-height: 2000px;
+      resize: vertical;
+      overflow: auto;
+    }
+    
+    /* Chart Controls */
+    .chart-controls {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 12px;
+      padding: 12px;
+      background: var(--color-hover-bg);
+      border-radius: 6px;
+      flex-wrap: wrap;
+      border: 1px solid var(--color-panel-border);
+    }
+    
+    .chart-controls label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      color: var(--color-text-primary);
+      font-weight: 500;
+    }
+    
+    .chart-controls select {
+      padding: 6px 24px 6px 10px;
+      border: 1px solid var(--color-panel-border);
+      border-radius: 4px;
+      font-size: 13px;
+      background: var(--color-panel-bg);
+      color: var(--color-text-primary);
+      cursor: pointer;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%232d2416' d='M6 9L1 4h10z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 8px center;
+      background-size: 12px;
+      transition: all 0.15s ease;
+      outline: none;
+    }
+    
+    .chart-controls select:hover {
+      border-color: var(--color-kvot-accent);
+      background-color: white;
+    }
+    
+    .chart-controls select:focus {
+      border-color: var(--color-kvot-primary);
+      box-shadow: 0 0 0 3px rgba(52, 65, 38, 0.1);
+    }
+    
+    .chart-controls button {
+      padding: 6px 12px;
+      background: var(--color-kvot-background);
+      color: var(--color-kvot-bright);
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+      transition: all 0.2s;
+      font-weight: 500;
+    }
+    
+    .chart-controls button:hover {
+      background: var(--color-kvot-primary);
+      transform: translateY(-1px);
+      box-shadow: 0 2px 4px rgba(53, 41, 33, 0.2);
+    }
+    
+    .chart-controls button.secondary {
+      background: var(--color-text-secondary);
+      color: white;
+    }
+    
+    .chart-controls button.secondary:hover {
+      background: var(--color-text-primary);
+    }
+
+    /* ==========================================================================
+       10. DATASET INFO PANEL
+       ========================================================================== */
+    #info { 
+      flex: 1;
+    }
+    
+    .info-section { 
+      margin-bottom: 16px; 
+    }
+    
+    .info-label { 
+      font-weight: 600; 
+      margin-bottom: 6px; 
+      color: var(--color-kvot-primary); 
+      font-size: 13px;
+    }
+    
+    .info-content { 
+      background: var(--color-hover-bg); 
+      padding: 10px; 
+      border-radius: 4px; 
+      font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace; 
+      font-size: 12px; 
+      max-height: 300px; 
+      overflow-y: auto; 
+      word-break: break-all;
+      color: var(--color-text-secondary);
+      border: 1px solid var(--color-panel-border);
+    }
+    
+    .file-data-section {
+      margin-bottom: 12px;
+      padding: 12px;
+      background: var(--color-hover-bg);
+      border-radius: 6px;
+      border: 1px solid var(--color-panel-border);
+      border-left: 3px solid var(--color-kvot-accent);
+    }
+    
+    .file-data-section h4 {
+      margin: 0 0 8px 0;
+      color: var(--color-kvot-background);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .multi-select-hint {
+      background: var(--color-kvot-bright);
+      color: var(--color-kvot-background);
+      padding: 8px 12px;
+      border-radius: 4px;
+      font-size: 12px;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* ==========================================================================
+       11. STATUS & FEEDBACK STATES
+       ========================================================================== */
+    .error { 
+      background: #fef2f2; 
+      color: #991b1b; 
+      padding: 12px; 
+      border-radius: 4px; 
+      margin-top: 12px;
+      border: 1px solid #fecaca;
+    }
+    
+    .loading { 
+      color: var(--color-text-muted); 
+      font-style: italic; 
+    }
+
+    /* ==========================================================================
+       12. DRAG & DROP SORTING (SortableJS)
+       ========================================================================== */
+    .sortable-ghost {
+      opacity: 0.4;
+    }
+    
+    .sortable-drag {
+      opacity: 0.8;
+    }
+
+    /* ==========================================================================
+       16. UTILITIES & HIDDEN ELEMENTS
+       ========================================================================== */
+    #fileInput {
+      display: none;
+    }
+
+    /* ==========================================================================
+       17. CUSTOM SCROLLBAR
+       ========================================================================== */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    
+    ::-webkit-scrollbar-track {
+      background: var(--color-hover-bg);
+      border-radius: 4px;
+    }
+    
+    ::-webkit-scrollbar-thumb {
+      background: var(--color-text-muted);
+      border-radius: 4px;
+    }
+    
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--color-text-secondary);
+    }
