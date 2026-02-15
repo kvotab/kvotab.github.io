@@ -552,6 +552,39 @@
     }
     
     /**
+     * Assign legendrank to traces so that in the legend they are grouped by
+     * line width (thick first, thin second) and within each group sorted by
+     * the maximum Y value in descending order.
+     * @param {Array} traces - Array of Plotly trace objects
+     */
+    function assignLegendRanks(traces) {
+      // Classify traces into groups by line width (thick = first file, thin = secondary files)
+      const thick = [];
+      const thin = [];
+      for (let i = 0; i < traces.length; i++) {
+        const w = traces[i].line?.width || 2;
+        const maxY = Math.max(...(traces[i].y || []).filter(v => v != null && isFinite(v)));
+        const entry = { index: i, maxY: isFinite(maxY) ? maxY : 0 };
+        if (w >= 2) {
+          thick.push(entry);
+        } else {
+          thin.push(entry);
+        }
+      }
+      // Sort each group by maxY descending
+      thick.sort((a, b) => b.maxY - a.maxY);
+      thin.sort((a, b) => b.maxY - a.maxY);
+      // Assign legendrank: thick group first, then thin group
+      let rank = 0;
+      for (const entry of thick) {
+        traces[entry.index].legendrank = rank++;
+      }
+      for (const entry of thin) {
+        traces[entry.index].legendrank = rank++;
+      }
+    }
+
+    /**
      * Render a Plotly chart with standard configuration
      * @param {Array} traces - Plotly trace data
      * @param {Object} layout - Plotly layout configuration
@@ -561,6 +594,10 @@
       const container = getElement('plotlyChartContainer');
       const config = getPlotlyConfig('chart');
       
+      if (dynamicLegendEnabled) {
+        assignLegendRanks(traces);
+      }
+
       currentChartData = { traces, layout, path };
       if (container) {
         container.classList.add('visible');
@@ -2058,6 +2095,9 @@
         currentChartData = { traces, layout, paths };
         const container = getElement('plotlyChartContainer');
         if (container) container.classList.add('visible');
+        if (dynamicLegendEnabled) {
+          assignLegendRanks(traces);
+        }
         Plotly.newPlot('plotlyChart', traces, layout, config).then(() => {
           setupDynamicLegend(getElement('plotlyChart'));
         });
@@ -2471,6 +2511,9 @@
         // Re-apply dynamic filtering based on current view
         const layout = plotDiv.layout;
         
+        // Re-apply legend sorting by max Y value
+        assignLegendRanks(plotDiv.data);
+
         let xRange = layout.xaxis?.range;
         let yRange = layout.yaxis?.range;
         
