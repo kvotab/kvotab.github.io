@@ -31,7 +31,13 @@
 
   <div class="container">
     <div class="panel" id="leftPanel">
-      <h3>File Structure</h3>
+      <div class="panel-heading">
+        <h3>File Structure</h3>
+        <label id="intersectLabel" class="intersect-checkbox" style="display: none;">
+          <input type="checkbox" id="intersectCheckbox" onchange="toggleIntersect()">
+          Intersect
+        </label>
+      </div>
       <div class="search-container">
         <input 
           type="text" 
@@ -193,10 +199,12 @@
     let selectedDatasetPath = null;
     /** @type {boolean} True if the selected path is a radionuclides group (for special charting) */
     let selectedIsRadionuclidesGroup = false;
-    /** @type {string[]} Array of selected paths when in multi-select mode (Ctrl+click) */
+    /** @type {{path: string, fileKey: string|null}[]} Array of selected datasets in multi-select mode (Ctrl+click) */
     let selectedDatasets = [];
     /** @type {boolean} True when user is selecting multiple datasets with Ctrl/Cmd key */
     let multiSelectMode = false;
+    /** @type {string|null} File key of the tree node that was clicked (null = use all enabled files) */
+    let selectedFileKey = null;
     
     // Chart state
     /** @type {ChartData|null} Current chart data (traces, layout, path) for export/clipboard */
@@ -859,6 +867,31 @@
     }
 
     /**
+     * Check if intersect mode is active.
+     * @returns {boolean}
+     */
+    function isIntersectMode() {
+      const cb = document.getElementById('intersectCheckbox');
+      return cb && cb.checked && getEnabledFiles().length > 1;
+    }
+
+    /**
+     * Get the list of files to use for info/charts.
+     * In non-intersect mode with a specific file selected, returns just that file.
+     * In intersect mode, returns all enabled files.
+     * @returns {string[]}
+     */
+    function getEffectiveFiles() {
+      if (isIntersectMode()) {
+        return getEnabledFiles();
+      }
+      if (selectedFileKey && loadedFiles[selectedFileKey]) {
+        return [selectedFileKey];
+      }
+      return getEnabledFiles();
+    }
+
+    /**
      * Toggle a file's enabled/disabled state and update the UI.
      * Enabled files contribute data to charts; disabled files are hidden.
      * 
@@ -918,14 +951,16 @@
         return;
       }
 
-      const treeFile = getTreeFile();
+      // Use selectedFileKey if available, otherwise first enabled file
+      const checkFile = selectedFileKey || getTreeFile();
       
-      if (!treeFile || !checkIfPathExistsInFile(treeFile, selectedDatasetPath)) {
+      if (!checkFile || !checkIfPathExistsInFile(checkFile, selectedDatasetPath)) {
         // Clear selection if path doesn't exist
         resetInfoPanel();
         hideChart();
         selectedDatasetPath = null;
         selectedIsRadionuclidesGroup = false;
+        selectedFileKey = null;
         
         document.querySelectorAll('.tree-item.dataset').forEach(el => el.classList.remove('selected'));
         document.querySelectorAll('.tree-item.group').forEach(el => el.classList.remove('expanded'));
@@ -940,7 +975,7 @@
         showNodeAttributes(selectedDatasetPath, false);
         
         try {
-          const file = loadedFiles[treeFile];
+          const file = loadedFiles[checkFile];
           const dataset = file.get(selectedDatasetPath);
           if (dataset && dataset.type.toLowerCase() === 'dataset' && isTimeDependent(dataset)) {
             createPlotlyChart(selectedDatasetPath);
@@ -1027,11 +1062,23 @@
       const treeFileChanged = previousTreeFile !== newTreeFile;
       currentTreeFile = newTreeFile;
       
+      // Show/hide Intersect checkbox based on number of enabled files
+      const intersectLabel = document.getElementById('intersectLabel');
+      if (intersectLabel) {
+        const enabledCount = getEnabledFiles().length;
+        intersectLabel.style.display = enabledCount > 1 ? 'flex' : 'none';
+        // Uncheck if only one file left
+        if (enabledCount <= 1) {
+          const cb = document.getElementById('intersectCheckbox');
+          if (cb) cb.checked = false;
+        }
+      }
+      
       console.log('updateTabs - Previous:', previousTreeFile, 'New:', newTreeFile, 'Changed:', treeFileChanged);
       
-      if (treeFileChanged) {
-        refreshTreeStructure();
-      }
+      // Always refresh tree: in multi-file mode the set of visible roots changes,
+      // and in intersect mode the intersection set changes when files are toggled.
+      refreshTreeStructure();
       
       refreshInfoAndChart();
     }
@@ -1088,16 +1135,20 @@
       const isCtrlKey = evt?.ctrlKey || evt?.metaKey;
       const datasetElement = evt?.target?.closest('.tree-item.dataset');
       
+      // Determine which file this tree node belongs to
+      const nodeFileKey = datasetElement?.getAttribute('data-file') || null;
+      
       if (isCtrlKey) {
-        // Multi-select mode
+        // Multi-select mode — allow cross-file selection
         multiSelectMode = true;
+        selectedFileKey = null; // clear single-file scope
         
-        const index = selectedDatasets.indexOf(path);
+        const index = selectedDatasets.findIndex(d => d.path === path && d.fileKey === nodeFileKey);
         if (index > -1) {
           selectedDatasets.splice(index, 1);
           datasetElement?.classList.remove('selected');
         } else {
-          selectedDatasets.push(path);
+          selectedDatasets.push({ path, fileKey: nodeFileKey });
           datasetElement?.classList.add('selected');
         }
         
@@ -1116,7 +1167,8 @@
       } else {
         // Single select mode
         multiSelectMode = false;
-        selectedDatasets = [path];
+        selectedFileKey = nodeFileKey;
+        selectedDatasets = [{ path, fileKey: nodeFileKey }];
         selectedDatasetPath = path;
         selectedIsRadionuclidesGroup = false;
         
@@ -1150,6 +1202,10 @@
         multiSelectMode = false;
         selectedDatasets = [];
         
+        // Determine which file this tree node belongs to
+        const nodeFileKey = groupItem.getAttribute('data-file') || null;
+        selectedFileKey = nodeFileKey;
+        
         selectedDatasetPath = path;
         selectedIsRadionuclidesGroup = true;
         
@@ -1168,6 +1224,78 @@
     }
 
     /**
+     * Toggle the Intersect checkbox and rebuild the tree.
+     */
+    function toggleIntersect() {
+      // Clear per-file selection when switching modes
+      selectedFileKey = null;
+      selectedDatasetPath = null;
+      selectedIsRadionuclidesGroup = false;
+      selectedDatasets = [];
+      multiSelectMode = false;
+      resetInfoPanel();
+      hideChart();
+      refreshTreeStructure();
+    }
+
+    /**
+     * Recursively collect all paths (groups and datasets) from an HDF5 file.
+     * @param {Object} group - h5wasm Group object
+     * @param {string} prefix - Current path prefix
+     * @returns {Set<string>} Set of all paths in the group
+     */
+    function collectAllPaths(group, prefix = '') {
+      const paths = new Set();
+      try {
+        let keys = [];
+        if (typeof group.keys === 'function') {
+          keys = Array.from(group.keys());
+        }
+        for (const key of keys) {
+          const path = prefix ? `${prefix}/${key}` : `/${key}`;
+          paths.add(path);
+          try {
+            const obj = group.get(key);
+            if (obj && String(obj.type).toLowerCase() === 'group') {
+              for (const subPath of collectAllPaths(obj, path)) {
+                paths.add(subPath);
+              }
+            }
+          } catch (e) { /* skip */ }
+        }
+      } catch (e) { /* skip */ }
+      return paths;
+    }
+
+    /**
+     * Get the set of paths that exist in ALL enabled files.
+     * @returns {Set<string>|null} Intersected paths, or null if intersect is off
+     */
+    function getIntersectedPaths() {
+      const checkbox = document.getElementById('intersectCheckbox');
+      if (!checkbox || !checkbox.checked) return null;
+      
+      const enabledFiles = getEnabledFiles();
+      if (enabledFiles.length < 2) return null;
+      
+      let intersection = null;
+      for (const fileKey of enabledFiles) {
+        const file = loadedFiles[fileKey];
+        if (!file) continue;
+        const filePaths = collectAllPaths(file);
+        if (intersection === null) {
+          intersection = filePaths;
+        } else {
+          // Keep only paths present in both sets
+          for (const p of intersection) {
+            if (!filePaths.has(p)) intersection.delete(p);
+          }
+        }
+      }
+      return intersection || new Set();
+    }
+
+    /**
      * Refresh the tree view from the first enabled file's structure.
      * Rebuilds the entire tree HTML and applies any active search filter.
      * Shows loading state during refresh and handles errors gracefully.
@@ -1177,9 +1305,9 @@
     async function refreshTreeStructure() {
       const tree = document.getElementById('tree');
       const searchContainer = document.querySelector('.search-container');
-      const treeFile = getTreeFile();
+      const enabledFiles = getEnabledFiles();
       
-      if (!treeFile) {
+      if (enabledFiles.length === 0) {
         tree.innerHTML = '<div class="loading">Drop HDF5 files or click "+ Add Files" to start...</div>';
         tree.classList.add('loading');
         resetInfoPanel();
@@ -1188,11 +1316,22 @@
         return;
       }
       
-      console.log('Refreshing tree structure for:', treeFile);
-      
       try {
-        const file = loadedFiles[treeFile];
-        const treeHtml = await buildTree(file, '', false, treeFile);
+        const intersectedPaths = getIntersectedPaths();
+        let treeHtml = '';
+        
+        if (intersectedPaths) {
+          // Intersect mode: single tree from first file, filtered to common paths
+          const file = loadedFiles[enabledFiles[0]];
+          treeHtml = await buildTree(file, '', false, 'Intersect', intersectedPaths, null);
+        } else {
+          // Non-intersect: one tree per enabled file
+          for (const fileKey of enabledFiles) {
+            const file = loadedFiles[fileKey];
+            treeHtml += await buildTree(file, '', false, fileKey, null, fileKey);
+          }
+        }
+        
         tree.innerHTML = treeHtml || '<div style="color:#999;">No items found</div>';
         tree.classList.remove('loading');
         searchContainer.classList.add('visible');
@@ -1233,17 +1372,18 @@
      * @param {boolean} [isNested=false] - Whether this is a nested call (not root)
      * @returns {Promise<string>} HTML string for the tree structure
      */
-    async function buildTree(group, prefix = '', isNested = false, fileName = '') {
+    async function buildTree(group, prefix = '', isNested = false, fileName = '', intersectedPaths = null, fileKey = null) {
       const childrenHtml = [];
+      const fileAttr = fileKey ? ` data-file="${escapeHtml(fileKey)}"` : '';
       
       // Add root group item only at top level
       if (prefix === '') {
         const isRootSelected = selectedDatasetPath === '/' && selectedIsRadionuclidesGroup;
         const rootLabel = fileName ? fileName : 'root';
-        const rootHtml = `<div class="tree-item group ${isRootSelected ? 'expanded' : ''}" onclick="toggleGroup(event)" data-path="/" style="font-weight: 600; color: var(--color-kvot-primary); margin-bottom: 8px;">
+        const rootHtml = `<div class="tree-item group ${isRootSelected ? 'expanded' : ''}" onclick="toggleGroup(event)" data-path="/"${fileAttr} style="font-weight: 600; color: var(--color-kvot-primary); margin-bottom: 8px;">
           <div class="tree-toggle ${isRootSelected ? '' : 'collapsed'}" onclick="event.stopPropagation(); toggleGroupExpansion(event, '/')">▶</div>
           <div class="tree-icon folder"></div>
-          <div class="tree-label">/ (${rootLabel})</div>
+          <div class="tree-label">/ (${escapeHtml(rootLabel)})</div>
         </div>`;
         childrenHtml.push(rootHtml);
         
@@ -1282,9 +1422,12 @@
             const path = prefix ? `${prefix}/${key}` : `/${key}`;
             const objType = String(obj.type).toLowerCase();
             
+            // Skip this node if intersect is active and path is not in the intersection
+            if (intersectedPaths && !intersectedPaths.has(path)) continue;
+            
             if (objType === 'group') {
               const isSelected = selectedDatasetPath === path && selectedIsRadionuclidesGroup;
-              const groupHtml = `<div class="tree-item group ${isSelected ? 'expanded' : ''}" onclick="toggleGroup(event)" data-path="${escapeHtml(path)}">
+              const groupHtml = `<div class="tree-item group ${isSelected ? 'expanded' : ''}" onclick="toggleGroup(event)" data-path="${escapeHtml(path)}"${fileAttr}>
                   <div class="tree-toggle ${isSelected ? '' : 'collapsed'}" onclick="event.stopPropagation(); toggleGroupExpansion(event, '${path.replace(/'/g, "\\'")}')">▶</div>
                   <div class="tree-icon folder"></div>
                   <div class="tree-label">${escapeHtml(key)}</div>
@@ -1292,7 +1435,7 @@
               childrenHtml.push(groupHtml);
               
               try {
-                const subItems = await buildTree(obj, path, true);
+                const subItems = await buildTree(obj, path, true, '', intersectedPaths, fileKey);
                 const childrenWrapper = `<div class="tree-group-children ${isSelected ? 'expanded' : ''}">${subItems || '<div style="color:#999;padding:8px;font-size:12px;">(empty)</div>'}</div>`;
                 childrenHtml.push(childrenWrapper);
               } catch (subErr) {
@@ -1304,7 +1447,7 @@
               const shape = obj.shape?.length ? `${obj.shape.join('×')}` : 'scalar';
               const formattedDtype = formatDataType(obj.dtype);
               const isSelected = selectedDatasetPath === path && !selectedIsRadionuclidesGroup;
-              const datasetHtml = `<div class="tree-item dataset ${isSelected ? 'selected' : ''}" onclick="selectDataset('${path.replace(/'/g, "\\'")}', event)" data-path="${escapeHtml(path)}">
+              const datasetHtml = `<div class="tree-item dataset ${isSelected ? 'selected' : ''}" onclick="selectDataset('${path.replace(/'/g, "\\'")}', event)" data-path="${escapeHtml(path)}"${fileAttr}>
                 <div class="tree-icon dataset"></div>
                 <div class="tree-label">${escapeHtml(key)}</div>
                 <div class="tree-meta">${escapeHtml(formattedDtype)} [${escapeHtml(shape)}]</div>
@@ -1896,7 +2039,7 @@
       setShowRatioVisible(false);
       
       const traces = [];
-      const enabledFiles = getEnabledFiles();
+      const enabledFiles = getEffectiveFiles();
       
       let timeUnit = '';
       let yAxisUnit = '';
@@ -2000,15 +2143,14 @@
 
     /**
      * Create a Plotly chart comparing multiple selected datasets.
-     * Each dataset gets a unique color; if multiple files are enabled,
-     * different line dash styles distinguish files for the same dataset.
+     * Each selection item carries its own fileKey so cross-file comparisons work.
      * 
-     * Used in multi-select mode (Ctrl+click on multiple datasets).
+     * Used in multi-select mode (Ctrl+click on datasets, possibly from different files).
      * 
-     * @param {string[]} paths - Array of HDF5 dataset paths to compare
+     * @param {{path: string, fileKey: string|null}[]} items - Array of selected dataset items
      * @returns {void}
      */
-    function createMultiDatasetChart(paths) {
+    function createMultiDatasetChart(items) {
       const plotDiv = getElement('plotlyChart');
       const chartContainer = getElement('plotlyChartContainer');
       plotDiv.innerHTML = '';
@@ -2018,15 +2160,29 @@
       setShowRatioVisible(false);
       
       const traces = [];
-      const enabledFiles = getEnabledFiles();
-      
-      let timeUnit = '';
       const yAxisUnits = new Set();
+      let timeUnit = '';
       
-      if (enabledFiles.length > 0) {
-        const firstFile = loadedFiles[enabledFiles[0]];
-        timeUnit = getTimeUnit(firstFile);
+      // Normalize items: if fileKey is null (intersect mode), expand to all enabled files
+      const normalizedItems = [];
+      for (const item of items) {
+        if (item.fileKey && loadedFiles[item.fileKey]) {
+          normalizedItems.push(item);
+        } else {
+          // Intersect mode — expand to all enabled files
+          for (const fk of getEnabledFiles()) {
+            normalizedItems.push({ path: item.path, fileKey: fk });
+          }
+        }
       }
+      
+      // Collect unique file keys from items
+      const uniqueFileKeys = [...new Set(normalizedItems.map(d => d.fileKey).filter(Boolean))];
+      if (uniqueFileKeys.length === 0) return hideChart();
+      
+      // Use first file for time unit
+      const firstFile = loadedFiles[uniqueFileKeys[0]];
+      if (firstFile) timeUnit = getTimeUnit(firstFile);
       
       // Color palette for different datasets
       const colors = [
@@ -2035,94 +2191,99 @@
         '#27ae60', '#f1c40f', '#8e44ad', '#16a085', '#d35400'
       ];
       
-      for (const [pathIndex, path] of paths.entries()) {
+      // Unique paths for color assignment
+      const uniquePaths = [...new Set(normalizedItems.map(d => d.path))];
+      const multiFile = uniqueFileKeys.length > 1;
+      const multiPath = uniquePaths.length > 1;
+      
+      for (const [itemIndex, item] of normalizedItems.entries()) {
+        const { path, fileKey } = item;
         const datasetName = path.split('/').pop();
-        const baseColor = colors[pathIndex % colors.length];
+        const pathIdx = uniquePaths.indexOf(path);
+        const baseColor = colors[pathIdx % colors.length];
         
-        for (const [fileIndex, fileKey] of enabledFiles.entries()) {
-          const file = loadedFiles[fileKey];
+        const file = loadedFiles[fileKey];
+        if (!file || !checkDatasetExistsInFile(file, path)) continue;
+        
+        try {
+          const dataset = file.get(path);
+          if (!isTimeDependent(dataset)) continue;
           
-          if (!checkDatasetExistsInFile(file, path)) {
-            continue;
-          }
-          
-          try {
-            const dataset = file.get(path);
-            
-            if (!isTimeDependent(dataset)) {
-              continue;
-            }
-            
-            // Get unit
-            let yAxisUnit = '';
-            if (dataset.attrs && typeof dataset.attrs === 'object') {
-              for (const attrName in dataset.attrs) {
-                if (attrName === 'unit') {
-                  const attrObj = dataset.attrs[attrName];
-                  if (attrObj && attrObj.value !== null && typeof attrObj.value !== 'undefined') {
-                    yAxisUnit = attrObj.value;
-                    yAxisUnits.add(yAxisUnit);
-                  }
+          // Get unit
+          let yAxisUnit = '';
+          if (dataset.attrs && typeof dataset.attrs === 'object') {
+            for (const attrName in dataset.attrs) {
+              if (attrName === 'unit') {
+                const attrObj = dataset.attrs[attrName];
+                if (attrObj && attrObj.value !== null && typeof attrObj.value !== 'undefined') {
+                  yAxisUnit = attrObj.value;
+                  yAxisUnits.add(yAxisUnit);
                 }
               }
             }
-            
-            const timeData = getTimeData(file);
-            if (!timeData) {
-              console.warn(`No /time dataset found in ${fileKey}`);
-              continue;
-            }
-            
-            let yData;
-            if (typeof dataset.value !== 'undefined') {
-              yData = dataset.value;
-            } else if (typeof dataset.toArray === 'function') {
-              yData = dataset.toArray();
-            }
-            
-            if (yData) {
-              let yArray = normalizeDataArray(yData);
-              
-              // Handle probabilistic data (take mean)
-              if (checkIsProbabilistic(dataset)) {
-                yArray = computeProbabilisticMean(yArray, timeData);
-              }
-
-              const minLength = Math.min(timeData.length, yArray.length);
-              const trimmedTimeData = timeData.slice(0, minLength);
-              const trimmedYData = yArray.slice(0, minLength);
-              
-              // Adjust style for multiple files
-              let traceName = datasetName;
-              let lineColor = baseColor;
-              let lineWidth = 2;
-              let lineDash = 'solid';
-              
-              if (enabledFiles.length > 1) {
-                const diffLabel = fileIndex > 0 ? filenameDiff(enabledFiles[0], fileKey) : fileKey;
-                traceName = `${datasetName} (${diffLabel})`;
-                lineWidth = 1.5;
-                const dashStyles = ['solid', 'dash', 'dot', 'dashdot'];
-                lineDash = dashStyles[fileIndex % dashStyles.length];
-              }
-              
-              traces.push({
-                x: trimmedTimeData,
-                y: trimmedYData,
-                mode: 'lines+markers',
-                name: traceName,
-                line: {
-                  color: lineColor,
-                  dash: lineDash,
-                  width: lineWidth
-                },
-                type: 'scatter',
-                hovertemplate: `<b>${traceName}</b><br>Time: %{x}<br>Value: %{y}<extra></extra>`
-              });
-            }
-          } catch (e) {
-            console.error(`Error creating trace for ${path} in ${fileKey}:`, e);
           }
+          
+          const timeData = getTimeData(file);
+          if (!timeData) {
+            console.warn(`No /time dataset found in ${fileKey}`);
+            continue;
+          }
+          
+          let yData;
+          if (typeof dataset.value !== 'undefined') {
+            yData = dataset.value;
+          } else if (typeof dataset.toArray === 'function') {
+            yData = dataset.toArray();
+          }
+          
+          if (yData) {
+            let yArray = normalizeDataArray(yData);
+            
+            // Handle probabilistic data (take mean)
+            if (checkIsProbabilistic(dataset)) {
+              yArray = computeProbabilisticMean(yArray, timeData);
+            }
+
+            const minLength = Math.min(timeData.length, yArray.length);
+            const trimmedTimeData = timeData.slice(0, minLength);
+            const trimmedYData = yArray.slice(0, minLength);
+            
+            // Build trace name — show file label when multiple files, path when multiple paths
+            let traceName = datasetName;
+            let lineWidth = 2;
+            let lineDash = 'solid';
+            
+            if (multiFile && multiPath) {
+              const diffLabel = filenameDiff(uniqueFileKeys[0], fileKey);
+              traceName = `${datasetName} (${diffLabel})`;
+            } else if (multiFile) {
+              traceName = fileKey;
+            }
+            // else just datasetName for single-file multi-path
+            
+            if (multiFile) {
+              const fileIdx = uniqueFileKeys.indexOf(fileKey);
+              const dashStyles = ['solid', 'dash', 'dot', 'dashdot'];
+              lineDash = dashStyles[fileIdx % dashStyles.length];
+              lineWidth = 1.5;
+            }
+            
+            traces.push({
+              x: trimmedTimeData,
+              y: trimmedYData,
+              mode: 'lines+markers',
+              name: traceName,
+              line: {
+                color: baseColor,
+                dash: lineDash,
+                width: lineWidth
+              },
+              type: 'scatter',
+              hovertemplate: `<b>${traceName}</b><br>Time: %{x}<br>Value: %{y}<extra></extra>`
+            });
+          }
+        } catch (e) {
+          console.error(`Error creating trace for ${path} in ${fileKey}:`, e);
         }
       }
       
@@ -2136,8 +2297,9 @@
           yAxisTitle = `Value (${Array.from(yAxisUnits).join(', ')})`;
         }
         
+        const paths = normalizedItems.map(d => d.path);
         const layout = createBaseLayout({
-          title: `Comparing ${paths.length} dataset${paths.length > 1 ? 's' : ''}`,
+          title: `Comparing ${normalizedItems.length} dataset${normalizedItems.length > 1 ? 's' : ''}`,
           xAxisTitle: timeUnit ? `Time (${timeUnit})` : 'Time',
           yAxisTitle,
           xScale,
@@ -2182,7 +2344,7 @@
       setShowTotalVisible(true);
       
       const traces = [];
-      const enabledFiles = getEnabledFiles();
+      const enabledFiles = getEffectiveFiles();
       
       // Show "Show Ratio" checkbox only when exactly 2 files are enabled (thick + thin lines)
       // and secondary file has data for this path — will be set after building traces
@@ -2759,7 +2921,7 @@
       };
       
       try {
-        const enabledFiles = getEnabledFiles();
+        const enabledFiles = getEffectiveFiles();
         let html = '';
         let hasTimeDependentData = false;
         let isRadionuclidesGroup = false;
@@ -3080,7 +3242,7 @@
         return;
       }
       
-      const enabledFiles = getEnabledFiles();
+      const enabledFiles = getEffectiveFiles();
       if (enabledFiles.length === 0) {
         alert('No files enabled');
         return;
@@ -3468,27 +3630,42 @@
     }
 
     /**
-     * Display information for multiple selected datasets
-     * @param {Array<string>} paths - Array of selected dataset paths
+     * Display information for multiple selected datasets.
+     * Each item carries its own fileKey for cross-file comparisons.
+     * @param {{path: string, fileKey: string|null}[]} items - Array of selected dataset items
      */
-    function showMultipleDatasetAttributes(paths) {
+    function showMultipleDatasetAttributes(items) {
       const infoDiv = document.getElementById('info');
-      infoDiv.innerHTML = `<div class="loading">Loading ${paths.length} datasets...</div>`;
+      infoDiv.innerHTML = `<div class="loading">Loading ${items.length} datasets...</div>`;
       
-      const enabledFiles = getEnabledFiles();
-      if (enabledFiles.length === 0) return;
+      if (items.length === 0) return;
+      
+      // Normalize: expand null fileKey (intersect mode) to all enabled files
+      const normalizedItems = [];
+      for (const item of items) {
+        if (item.fileKey && loadedFiles[item.fileKey]) {
+          normalizedItems.push(item);
+        } else {
+          for (const fk of getEnabledFiles()) {
+            normalizedItems.push({ path: item.path, fileKey: fk });
+          }
+        }
+      }
       
       let html = `<div style="background: var(--color-kvot-bright); padding: 12px; border-radius: 6px; margin-bottom: 16px; font-weight: 600; color: var(--color-kvot-background);">
-        📊 ${paths.length} datasets selected
+        📊 ${normalizedItems.length} datasets selected
       </div>`;
       
       let allTimeDependent = true;
       
-      for (const path of paths) {
-        html += `<div class="file-data-section" style="border-left-color: var(--color-kvot-accent);">`;
-        html += `<h4>${escapeHtml(path)}</h4>`;
+      for (const item of normalizedItems) {
+        const { path, fileKey } = item;
+        const file = loadedFiles[fileKey];
+        if (!file) continue;
         
-        const file = loadedFiles[enabledFiles[0]];
+        html += `<div class="file-data-section" style="border-left-color: var(--color-kvot-accent);">`;
+        html += `<h4>${escapeHtml(path)} <span style="font-weight:400;font-size:11px;color:#888;">(${escapeHtml(fileKey)})</span></h4>`;
+        
         try {
           const dataset = file.get(path);
           if (!dataset) continue;
@@ -3545,7 +3722,7 @@
           
           // Add Excel download button for this dataset
           const escapedPath = path.replace(/'/g, "\\'");
-          const escapedFileKey = enabledFiles[0].replace(/'/g, "\\'");
+          const escapedFileKey = fileKey.replace(/'/g, "\\'");
           html += `<div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--color-border);">
             <button onclick="downloadDatasetAsExcel('${escapedPath}', '${escapedFileKey}')" 
               style="padding: 6px 12px; background: #217346; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 500; transition: all 0.2s;"
@@ -3566,8 +3743,8 @@
       infoDiv.innerHTML = html;
       
       // Create combined chart if all are time-dependent
-      if (allTimeDependent && paths.length > 0) {
-        createMultiDatasetChart(paths);
+      if (allTimeDependent && normalizedItems.length > 0) {
+        createMultiDatasetChart(normalizedItems);
       } else {
         document.getElementById('plotlyChartContainer').classList.remove('visible');
         currentChartData = null;
