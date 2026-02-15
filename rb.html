@@ -486,6 +486,60 @@
     }
     
     /**
+     * Compute a compact diff label showing only the parts of secondName
+     * that differ from firstName, with '...' replacing matching segments
+     * longer than 3 characters. Short matching runs (1-3 chars) are kept.
+     * Example: firstName='SFR_FSAR_CCP1.h5', secondName='SFR_PSAR_CCP33.h5'
+     *          returns '...P...33...'
+     *
+     * @param {string} firstName - The primary/reference filename
+     * @param {string} secondName - The secondary filename to diff
+     * @returns {string} Compact diff string
+     */
+    function filenameDiff(firstName, secondName) {
+      // Strip .h5/.hdf5/.he5 extension for comparison
+      const stripExt = s => s.replace(/\.(h5|hdf5|he5)$/i, '');
+      const a = stripExt(firstName);
+      const b = stripExt(secondName);
+      
+      // Build runs of same/diff segments
+      const runs = []; // { same: bool, text: string (from b) }
+      let i = 0;
+      const len = Math.max(a.length, b.length);
+      while (i < len) {
+        const ca = i < a.length ? a[i] : '';
+        const cb = i < b.length ? b[i] : '';
+        const same = (ca === cb);
+        let text = cb;
+        let j = i + 1;
+        while (j < len) {
+          const na = j < a.length ? a[j] : '';
+          const nb = j < b.length ? b[j] : '';
+          if ((na === nb) !== same) break;
+          text += nb;
+          j++;
+        }
+        runs.push({ same, text });
+        i = j;
+      }
+      
+      // Build result: replace matching runs > 3 chars with '...'
+      let result = '';
+      for (const run of runs) {
+        if (run.same) {
+          result += run.text.length > 3 ? '...' : run.text;
+        } else {
+          result += run.text;
+        }
+      }
+      
+      // If result equals the stripped second name, files are identical
+      if (result === b) return secondName;
+      
+      return result;
+    }
+
+    /**
      * Get current axis scale values from UI
      * @returns {{xScale: string, yScale: string}}
      */
@@ -2045,7 +2099,8 @@
               let lineDash = 'solid';
               
               if (enabledFiles.length > 1) {
-                traceName = `${datasetName} (${fileKey})`;
+                const diffLabel = fileIndex > 0 ? filenameDiff(enabledFiles[0], fileKey) : fileKey;
+                traceName = `${datasetName} (${diffLabel})`;
                 lineWidth = 1.5;
                 const dashStyles = ['solid', 'dash', 'dot', 'dashdot'];
                 lineDash = dashStyles[fileIndex % dashStyles.length];
@@ -2130,8 +2185,9 @@
       const enabledFiles = getEnabledFiles();
       
       // Show "Show Ratio" checkbox only when exactly 2 files are enabled (thick + thin lines)
+      // and secondary file has data for this path — will be set after building traces
       const hasTwoFiles = enabledFiles.length === 2;
-      setShowRatioVisible(hasTwoFiles);
+      setShowRatioVisible(false);
       
       // Store data for computing total
       const totalDataByFile = {};
@@ -2219,7 +2275,7 @@
                 let lineWidth = lineStyle.width;
                 
                 if (enabledFiles.length > 1 && enabledFiles.indexOf(fileKey) > 0) {
-                  traceName = `${datasetKey} (${fileKey})`;
+                  traceName = `${datasetKey} (${filenameDiff(enabledFiles[0], fileKey)})`;
                   lineWidth = lineWidth / 2;
                 }
                 
@@ -2245,6 +2301,14 @@
         }
       }
       
+      // Now that traces are built, show "Show Ratio" only if both files contributed data
+      if (hasTwoFiles) {
+        const secondaryFile = enabledFiles[1];
+        const secondaryStart = fileTraceStartIndex[secondaryFile] != null ? fileTraceStartIndex[secondaryFile] : traces.length;
+        const secondaryHasTraces = secondaryStart < traces.length;
+        setShowRatioVisible(secondaryHasTraces);
+      }
+
       // Collect max values per radionuclide per file (needed for ratio display)
       const showRatioCheckbox = getElement('showRatio');
       const showRatioChecked = hasTwoFiles && showRatioCheckbox && showRatioCheckbox.checked;
@@ -2310,7 +2374,7 @@
             let lineWidth = 2;
             
             if (enabledFiles.length > 1 && enabledFiles.indexOf(fileKey) > 0) {
-              traceName = `Total (${fileKey})`;
+              traceName = `Total (${filenameDiff(enabledFiles[0], fileKey)})`;
               lineWidth = 1;
             }
             
