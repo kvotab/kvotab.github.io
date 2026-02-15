@@ -78,7 +78,7 @@
        5. FILE TABS & HEADER
        ========================================================================== */
     header {
-      grid-template-columns: 70px auto 1fr 80px;
+      grid-template-columns: 50px auto 1fr 80px;
       z-index: 1000000000;
       box-sizing: content-box;
     }
@@ -412,6 +412,26 @@
 
     .search-container.visible {
       display: block;
+    }
+
+    .panel-heading {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .intersect-checkbox {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      color: var(--color-text-secondary);
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .intersect-checkbox input[type="checkbox"] {
+      cursor: pointer;
     }
 
     #treeSearch {
