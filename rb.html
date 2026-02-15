@@ -30,7 +30,7 @@
   <input id="fileInput" type="file" accept=".h5,.hdf5,.he5" multiple />
 
   <div class="container">
-    <div class="panel">
+    <div class="panel" id="leftPanel">
       <h3>File Structure</h3>
       <div class="search-container">
         <input 
@@ -43,6 +43,8 @@
       </div>
       <div id="tree" class="loading">Drop HDF5 files or click "+ Add Files" to start...</div>
     </div>
+
+    <div class="resize-handle" id="resizeHandle"></div>
 
     <div class="panel">
       <div class="right-panel-content">
@@ -253,7 +255,7 @@
      * Chart margins with extra right padding for legend.
      * @constant {Object}
      */
-    const CHART_MARGIN_WITH_LEGEND = { r: 150 };
+    const CHART_MARGIN_WITH_LEGEND = { t: 10, r: 150,  b: 60 };
 
 
     /* ==========================================================================
@@ -507,7 +509,7 @@
     function createBaseLayout({ title, xAxisTitle, yAxisTitle, xScale = 'linear', yScale = 'linear' }) {
       return {
         title: {
-          text: title,
+          text: '',
           font: { size: 14 },
           xanchor: 'left',
           x: 0
@@ -1099,7 +1101,7 @@
       
       try {
         const file = loadedFiles[treeFile];
-        const treeHtml = await buildTree(file);
+        const treeHtml = await buildTree(file, '', false, treeFile);
         tree.innerHTML = treeHtml || '<div style="color:#999;">No items found</div>';
         tree.classList.remove('loading');
         searchContainer.classList.add('visible');
@@ -1140,16 +1142,17 @@
      * @param {boolean} [isNested=false] - Whether this is a nested call (not root)
      * @returns {Promise<string>} HTML string for the tree structure
      */
-    async function buildTree(group, prefix = '', isNested = false) {
+    async function buildTree(group, prefix = '', isNested = false, fileName = '') {
       const childrenHtml = [];
       
       // Add root group item only at top level
       if (prefix === '') {
         const isRootSelected = selectedDatasetPath === '/' && selectedIsRadionuclidesGroup;
+        const rootLabel = fileName ? fileName : 'root';
         const rootHtml = `<div class="tree-item group ${isRootSelected ? 'expanded' : ''}" onclick="toggleGroup(event)" data-path="/" style="font-weight: 600; color: var(--color-kvot-primary); margin-bottom: 8px;">
           <div class="tree-toggle ${isRootSelected ? '' : 'collapsed'}" onclick="event.stopPropagation(); toggleGroupExpansion(event, '/')">▶</div>
           <div class="tree-icon folder"></div>
-          <div class="tree-label">/ (root)</div>
+          <div class="tree-label">/ (${rootLabel})</div>
         </div>`;
         childrenHtml.push(rootHtml);
         
@@ -3923,6 +3926,51 @@
     if (plotlyChart) {
       resizeObserver.observe(plotlyChart);
     }
+  </script>
+
+  <script>
+    // Panel resize handle
+    (function() {
+      const handle = document.getElementById('resizeHandle');
+      const leftPanel = document.getElementById('leftPanel');
+      const container = leftPanel.parentElement;
+      let startX, startWidth;
+
+      handle.addEventListener('mousedown', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        startX = e.clientX;
+        startWidth = leftPanel.getBoundingClientRect().width;
+        handle.classList.add('active');
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+        // Block pointer events on everything else during drag
+        container.style.pointerEvents = 'none';
+        handle.style.pointerEvents = 'auto';
+
+        function onMouseMove(e) {
+          e.preventDefault();
+          const dx = e.clientX - startX;
+          const maxW = container.getBoundingClientRect().width * 0.6;
+          const newWidth = Math.max(150, Math.min(startWidth + dx, maxW));
+          leftPanel.style.flex = '0 0 ' + newWidth + 'px';
+        }
+
+        function onMouseUp() {
+          handle.classList.remove('active');
+          document.body.style.cursor = '';
+          document.body.style.userSelect = '';
+          container.style.pointerEvents = '';
+          handle.style.pointerEvents = '';
+          document.removeEventListener('mousemove', onMouseMove);
+          document.removeEventListener('mouseup', onMouseUp);
+          window.dispatchEvent(new Event('resize'));
+        }
+
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+      });
+    })();
   </script>
 </body>
 </html>
