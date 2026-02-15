@@ -35,7 +35,7 @@
         <h3>File Structure</h3>
         <label id="intersectLabel" class="intersect-checkbox" style="display: none;">
           <input type="checkbox" id="intersectCheckbox" onchange="toggleIntersect()">
-          Intersect
+          Intersect Data
         </label>
       </div>
       <div class="search-container">
@@ -556,6 +556,42 @@
         xScale: getElement('xAxisScale')?.value || 'linear',
         yScale: getElement('yAxisScale')?.value || 'linear'
       };
+    }
+
+    /**
+     * Capture the current Plotly axis state (ranges and autorange flags)
+     * so it can be restored after a chart rebuild.
+     * @returns {Object|null} Saved axis state, or null if no chart exists
+     */
+    function captureAxisState() {
+      const plotDiv = getElement('plotlyChart');
+      if (!plotDiv || !plotDiv.layout) return null;
+      const xaxis = plotDiv.layout.xaxis || {};
+      const yaxis = plotDiv.layout.yaxis || {};
+      return {
+        xRange: xaxis.range ? [...xaxis.range] : null,
+        yRange: yaxis.range ? [...yaxis.range] : null,
+        xAutorange: xaxis.autorange,
+        yAutorange: yaxis.autorange
+      };
+    }
+
+    /**
+     * Apply a previously captured axis state to a Plotly layout object.
+     * Only overrides ranges when the user had manually zoomed/panned (autorange=false).
+     * @param {Object} layout - Plotly layout to modify in-place
+     * @param {Object} savedState - State from captureAxisState()
+     */
+    function applyAxisState(layout, savedState) {
+      if (!savedState) return;
+      if (savedState.xRange && savedState.xAutorange === false) {
+        layout.xaxis.range = savedState.xRange;
+        layout.xaxis.autorange = false;
+      }
+      if (savedState.yRange && savedState.yAutorange === false) {
+        layout.yaxis.range = savedState.yRange;
+        layout.yaxis.autorange = false;
+      }
     }
     
     /**
@@ -1323,7 +1359,7 @@
         if (intersectedPaths) {
           // Intersect mode: single tree from first file, filtered to common paths
           const file = loadedFiles[enabledFiles[0]];
-          treeHtml = await buildTree(file, '', false, 'Intersect', intersectedPaths, null);
+          treeHtml = await buildTree(file, '', false, 'Intersection', intersectedPaths, null);
         } else {
           // Non-intersect: one tree per enabled file
           for (const fileKey of enabledFiles) {
@@ -1999,7 +2035,8 @@
      */
     function toggleShowTotal() {
       if (selectedIsRadionuclidesGroup && selectedDatasetPath) {
-        createRadionuclidesChart(selectedDatasetPath);
+        const savedAxis = captureAxisState();
+        createRadionuclidesChart(selectedDatasetPath, savedAxis);
       }
     }
 
@@ -2012,7 +2049,8 @@
      */
     function toggleShowRatio() {
       if (selectedIsRadionuclidesGroup && selectedDatasetPath) {
-        createRadionuclidesChart(selectedDatasetPath);
+        const savedAxis = captureAxisState();
+        createRadionuclidesChart(selectedDatasetPath, savedAxis);
       }
     }
 
@@ -2112,7 +2150,7 @@
             traces.push({
               x: timeData.slice(0, minLength),
               y: yArray.slice(0, minLength),
-              mode: 'lines+markers',
+              mode: 'lines',
               name: fileKey,
               type: 'scatter'
             });
@@ -2271,7 +2309,7 @@
             traces.push({
               x: trimmedTimeData,
               y: trimmedYData,
-              mode: 'lines+markers',
+              mode: 'lines',
               name: traceName,
               line: {
                 color: baseColor,
@@ -2335,7 +2373,7 @@
      * @param {string} path - HDF5 path to the radionuclides group
      * @returns {void}
      */
-    function createRadionuclidesChart(path) {
+    function createRadionuclidesChart(path, savedAxisState) {
       const plotDiv = getElement('plotlyChart');
       const chartContainer = getElement('plotlyChartContainer');
       plotDiv.innerHTML = '';
@@ -2596,6 +2634,19 @@
             }
           }
         }
+        
+        // Hide thin-line (secondary file) traces from legend — keep them visible in chart.
+        // Secondary file traces have halved line widths compared to primary ones.
+        for (const trace of traces) {
+          const w = trace.line && trace.line.width;
+          // Thick (primary) traces have width >= 2, thin (secondary) have width < 2
+          // Total traces: primary=2, secondary=1. Radionuclide traces: primary=original, secondary=original/2.
+          // We keep ratio-annotated traces and primary Total in the legend.
+          if (w != null && w < 2) {
+            trace.showlegend = false;
+            trace._hiddenFromLegend = true; // preserve across dynamic legend updates
+          }
+        }
       }
       
       // Render chart if we have traces
@@ -2628,6 +2679,9 @@
           xScale,
           yScale
         });
+        
+        // Preserve axis ranges when toggling controls (Show Total, Show Ratio)
+        applyAxisState(layout, savedAxisState);
         
         renderChart(traces, layout, path);
       } else {
@@ -2721,13 +2775,10 @@
       }
       
       if (!dynamicLegendEnabled) {
-        // Show all legend items
-        const newData = plotDiv.data.map(trace => ({
-          ...trace,
-          showlegend: true
-        }));
+        // Show all legend items (except those explicitly hidden, e.g. by Show Ratio)
+        const showlegendValues = plotDiv.data.map(trace => !trace._hiddenFromLegend);
         
-        Plotly.react(plotDiv, newData, plotDiv.layout).then(() => {
+        Plotly.restyle(plotDiv, { showlegend: showlegendValues }).then(() => {
           const statusEl = document.getElementById('legendStatus');
           if (statusEl) {
             statusEl.style.display = 'none';
@@ -2756,7 +2807,7 @@
         const yMax = yIsLog ? Math.pow(10, yRange[1]) : yRange[1];
         
         let visibleCount = 0;
-        const newData = plotDiv.data.map((trace) => {
+        const showlegendValues = plotDiv.data.map((trace) => {
           let isVisible = false;
           
           for (let j = 0; j < trace.x.length; j++) {
@@ -2773,15 +2824,15 @@
             }
           }
           
-          if (isVisible) visibleCount++;
+          // Never show in legend if explicitly hidden (e.g. by Show Ratio)
+          const legendVisible = trace._hiddenFromLegend ? false : isVisible;
+          if (legendVisible) visibleCount++;
           
-          return {
-            ...trace,
-            showlegend: isVisible
-          };
+          return legendVisible;
         });
         
-        Plotly.react(plotDiv, newData, plotDiv.layout).then(() => {
+        const legendrankValues = plotDiv.data.map(t => t.legendrank);
+        Plotly.restyle(plotDiv, { showlegend: showlegendValues, legendrank: legendrankValues }).then(() => {
           const totalCount = plotDiv.data.length;
           const statusEl = document.getElementById('legendStatus');
           
@@ -2822,8 +2873,8 @@
         let xRange, yRange;
         
         if (eventData['xaxis.autorange'] || eventData['yaxis.autorange']) {
-          // Autorange - show all traces
-          const visibility = fullData.map(() => true);
+          // Autorange - show all traces (except those explicitly hidden, e.g. by Show Ratio)
+          const visibility = fullData.map(trace => !trace._hiddenFromLegend);
           Plotly.restyle(plotDiv, { showlegend: visibility });
           
           const statusEl = document.getElementById('legendStatus');
@@ -2861,8 +2912,9 @@
         const yMin = yIsLog ? Math.pow(10, yRange[0]) : yRange[0];
         const yMax = yIsLog ? Math.pow(10, yRange[1]) : yRange[1];
         
-        // Check each trace for visibility
+        // Check each trace for visibility (respect _hiddenFromLegend flag)
         const visibility = fullData.map((trace, i) => {
+          if (trace._hiddenFromLegend) return false;
           for (let j = 0; j < trace.x.length; j++) {
             const x = trace.x[j];
             const y = trace.y[j];
