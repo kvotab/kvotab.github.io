@@ -605,29 +605,65 @@
      * @returns {Object} Plotly layout configuration
      */
     function createBaseLayout({ title, xAxisTitle, yAxisTitle, xScale = 'linear', yScale = 'linear' }) {
+      const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+      const textColor = isDark ? '#e8ddd0' : '#2d2416';
+      const gridColor = isDark ? '#4a3f35' : '#e5ddd5';
+      const bgColor = isDark ? '#2a221b' : '#ffffff';
+
       return {
         title: {
           text: '',
-          font: { size: 14 },
+          font: { size: 14, color: textColor },
           xanchor: 'left',
           x: 0
         },
+        paper_bgcolor: bgColor,
+        plot_bgcolor: bgColor,
+        font: { color: textColor },
         xaxis: { 
           title: xAxisTitle,
-          type: xScale
+          type: xScale,
+          gridcolor: gridColor,
+          zerolinecolor: gridColor,
+          color: textColor
         },
         yaxis: { 
           title: yAxisTitle,
           type: yScale,
+          gridcolor: gridColor,
+          zerolinecolor: gridColor,
+          color: textColor,
           ...CHART_YAXIS_EXPONENT
         },
         hovermode: 'closest',
         showlegend: true,
-        legend: CHART_LEGEND_CONFIG,
+        legend: { ...CHART_LEGEND_CONFIG, font: { color: textColor } },
         margin: CHART_MARGIN_WITH_LEGEND
       };
     }
     
+    // Update Plotly chart colours when theme changes
+    new MutationObserver(() => {
+      const el = document.getElementById('plotlyChart');
+      if (!el || !currentChartData) return;
+      const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+      const textColor = isDark ? '#e8ddd0' : '#2d2416';
+      const gridColor = isDark ? '#4a3f35' : '#e5ddd5';
+      const bgColor  = isDark ? '#2a221b' : '#ffffff';
+      Plotly.relayout(el, {
+        paper_bgcolor: bgColor,
+        plot_bgcolor: bgColor,
+        'font.color': textColor,
+        'xaxis.gridcolor': gridColor,
+        'xaxis.zerolinecolor': gridColor,
+        'xaxis.color': textColor,
+        'yaxis.gridcolor': gridColor,
+        'yaxis.zerolinecolor': gridColor,
+        'yaxis.color': textColor,
+        'legend.font.color': textColor
+      });
+    }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
     /**
      * Hide the chart container and clear chart data
      */
@@ -1416,7 +1452,7 @@
       if (prefix === '') {
         const isRootSelected = selectedDatasetPath === '/' && selectedIsRadionuclidesGroup;
         const rootLabel = fileName ? fileName : 'root';
-        const rootHtml = `<div class="tree-item group ${isRootSelected ? 'expanded' : ''}" onclick="toggleGroup(event)" data-path="/"${fileAttr} style="font-weight: 600; color: var(--color-kvot-primary); margin-bottom: 8px;">
+        const rootHtml = `<div class="tree-item group root-node ${isRootSelected ? 'expanded' : ''}" onclick="toggleGroup(event)" data-path="/"${fileAttr}>
           <div class="tree-toggle ${isRootSelected ? '' : 'collapsed'}" onclick="event.stopPropagation(); toggleGroupExpansion(event, '/')">▶</div>
           <div class="tree-icon folder"></div>
           <div class="tree-label">/ (${escapeHtml(rootLabel)})</div>
@@ -3643,8 +3679,8 @@
      * @returns {string} HTML string for attributes section
      */
     function buildAttributesTable(attrs, jsonReplacer) {
-      let attrsHtml = '<table style="width:100%; border-collapse: collapse; font-family: monospace; font-size: 11px;">';
-      attrsHtml += '<tr style="border-bottom: 1px solid #e5e7eb; background: #f3f4f6;"><th style="text-align: left; padding: 6px; font-weight: 600;">Name</th><th style="text-align: left; padding: 6px; font-weight: 600;">Value</th></tr>';
+      let attrsHtml = '<table class="attrs-table">';
+      attrsHtml += '<tr class="attrs-header"><th>Name</th><th>Value</th></tr>';
       
       for (const [key, value] of Object.entries(attrs)) {
         let displayValue;
@@ -3668,9 +3704,9 @@
           displayValue = String(value);
         }
         
-        attrsHtml += `<tr style="border-bottom: 1px solid #f0f0f0;">
-          <td style="padding: 6px; word-break: break-word; max-width: 150px;"><strong>${escapeHtml(key)}</strong></td>
-          <td style="padding: 6px; word-break: break-word; color: #555;">${escapeHtml(displayValue)}</td>
+        attrsHtml += `<tr class="attrs-row">
+          <td><strong>${escapeHtml(key)}</strong></td>
+          <td class="attrs-value">${escapeHtml(displayValue)}</td>
         </tr>`;
       }
       

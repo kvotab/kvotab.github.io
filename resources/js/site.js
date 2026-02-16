@@ -49,6 +49,40 @@ const KVOT = (() => {
     return `<svg class="${cls}" xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}" ${extra}><title>${title}</title>${pathD}</svg>`;
   }
 
+  // ── Theme Management ───────────────────────────────────────────────────────
+
+  const THEME_KEY = 'kvot-theme';
+
+  function getPreferredTheme() {
+    const stored = localStorage.getItem(THEME_KEY);
+    if (stored) return stored;
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+
+  function setTheme(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem(THEME_KEY, theme);
+    document.querySelectorAll('.theme-toggle').forEach(btn => {
+      btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+      btn.title = theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode';
+    });
+  }
+
+  function toggleTheme() {
+    const current = document.documentElement.getAttribute('data-theme') || 'light';
+    setTheme(current === 'dark' ? 'light' : 'dark');
+  }
+
+  // Apply theme immediately on load (before render)
+  setTheme(getPreferredTheme());
+
+  // Listen for system theme changes
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => {
+    if (!localStorage.getItem(THEME_KEY)) {
+      setTheme(e.matches ? 'dark' : 'light');
+    }
+  });
+
   // ── Header ─────────────────────────────────────────────────────────────────
 
   function renderHeader(title, extraHTML = '') {
@@ -63,50 +97,60 @@ const KVOT = (() => {
   // ── Navigation toggle + overlay ────────────────────────────────────────────
 
   function renderNav(currentPage) {
-    // Build project links, excluding the current page
-    const projectLinks = ALL_PROJECTS
-      .filter(p => p.href !== './' + currentPage)
-      .map(p => `<a href="${p.href}">${p.label}</a>`)
-      .join('\n        ');
-
-    // Insert nav-toggle (hamburger) right after header
     const header = document.querySelector('header');
     if (!header) return;
 
+    // Hamburger toggle
     const toggle = document.createElement('div');
     toggle.className = 'nav-toggle';
+    toggle.setAttribute('aria-label', 'Toggle navigation');
     toggle.innerHTML = '<span class="bar-top"></span><span class="bar-mid"></span><span class="bar-bot"></span>';
     header.insertAdjacentElement('afterend', toggle);
 
+    // Build project sub-links (exclude current page)
+    const projectLinks = ALL_PROJECTS
+      .filter(p => p.href !== './' + currentPage)
+      .map(p => `<li class="nav-sub"><a href="${p.href}">${p.label}</a></li>`)
+      .join('\n        ');
+
+    // Dropdown card
     const menu = document.createElement('div');
     menu.id = 'menu';
     menu.innerHTML = `
       <ul>
         <li><a href="./index.html">home</a></li>
         <li><a href="./index.html#links">links</a></li>
-        <li>projects
-          ${projectLinks}
-        </li>
+        <li><div class="nav-divider"></div></li>
+        <li><div class="nav-section-label">projects</div></li>
+        ${projectLinks}
       </ul>`;
     toggle.insertAdjacentElement('afterend', menu);
 
     function closeMenu() {
       toggle.classList.remove('opened');
-      menu.classList.remove('overlay');
+      menu.classList.remove('open');
     }
 
     // Toggle handler
-    toggle.addEventListener('click', function () {
+    toggle.addEventListener('click', function (e) {
+      e.stopPropagation();
       this.classList.toggle('opened');
-      menu.classList.toggle('overlay');
+      menu.classList.toggle('open');
     });
 
-    // Close when clicking a link inside the menu
+    // Close when clicking a link
     menu.querySelectorAll('a').forEach(a => a.addEventListener('click', closeMenu));
 
-    // Close when clicking on the overlay background (outside the links)
-    menu.addEventListener('click', function (e) {
-      if (e.target === menu) closeMenu();
+    // Close when clicking anywhere outside
+    document.addEventListener('click', function (e) {
+      if (!menu.contains(e.target) && !toggle.contains(e.target)) {
+        closeMenu();
+      }
+    });
+
+    // Close on Escape key
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') closeMenu();
     });
   }
 
@@ -116,9 +160,13 @@ const KVOT = (() => {
     const footer = document.querySelector('footer');
     if (!footer) return;
 
+    const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
+    const themeIcon = currentTheme === 'dark' ? '☀️' : '🌙';
+    const themeTitle = currentTheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode';
+
     footer.innerHTML = `
-    <ul style="list-style-type: none; padding: 0; margin: 0;">
-      <li style="float:middle;">
+    <div class="footer-content">
+      <span class="footer-center">
         kvot ab |
         ${svgIcon('0 0 32 32', ICON_ADDRESS, { title: 'address', extra: 'onclick="KVOT.toggleMap()" style="cursor:pointer;"' })}
         valhallagatan 16 &bull; 753 34 &bull; uppsala |
@@ -128,8 +176,9 @@ const KVOT = (() => {
         <a href="https://www.mathworks.com/matlabcentral/profile/authors/718179" target="_blank" rel="noopener noreferrer">${svgIcon('0 0 24 24', ICON_MATLAB, { title: 'matlab' })}</a>
         <a href="https://github.com/kvotab" target="_blank" rel="noopener noreferrer">${svgIcon('0 0 98 96', ICON_GITHUB, { title: 'github' })}</a>
         ${extraIcons}
-      </li>
-    </ul>`;
+      </span>
+      <button class="theme-toggle" onclick="KVOT.toggleTheme()" title="${themeTitle}">${themeIcon}</button>
+    </div>`;
   }
 
   // ── Leaflet Map ────────────────────────────────────────────────────────────
@@ -179,5 +228,6 @@ const KVOT = (() => {
     renderFooter,
     initMap,
     toggleMap,
+    toggleTheme,
   };
 })();

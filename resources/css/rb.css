@@ -26,6 +26,17 @@
       --color-selected-text: #2d2416;
     }
 
+    [data-theme="dark"] {
+      --color-panel-bg: #2a221b;
+      --color-panel-border: #4a3f35;
+      --color-hover-bg: #3a3028;
+      --color-selected-bg: #4a3f35;
+      --color-text-primary: #e8ddd0;
+      --color-text-secondary: #b8a898;
+      --color-text-muted: #8a7d6f;
+      --color-selected-text: #e8ddd0;
+    }
+
     /* ==========================================================================
        3. LAYOUT
        ========================================================================== */
@@ -34,12 +45,13 @@
       margin: 0; 
       padding: 0;
       padding-top: 42px;
-      background: #ebe3db; 
+      background: var(--bg-primary, #ebe3db); 
       height: 100vh;
       display: flex;
       flex-direction: column;
       overflow: hidden;
       color: var(--color-text-primary);
+      transition: background-color 0.3s ease, color 0.3s ease;
     }
 
     /* ==========================================================================
@@ -65,7 +77,7 @@
     }
     
     #dropOverlay .message {
-      background: white;
+      background: var(--color-panel-bg);
       padding: 40px;
       border-radius: 12px;
       box-shadow: 0 8px 24px rgba(53, 41, 33, 0.25);
@@ -77,10 +89,13 @@
     /* ==========================================================================
        5. FILE TABS & HEADER
        ========================================================================== */
+    header, footer {
+      box-sizing: content-box;
+    }
+
     header {
       grid-template-columns: 50px auto 1fr 80px;
       z-index: 1000000000;
-      box-sizing: content-box;
     }
 
     .tabs-container {
@@ -445,7 +460,7 @@
       border-radius: 4px;
       font-size: 13px;
       font-family: inherit;
-      background: white;
+      background: var(--color-panel-bg);
       color: var(--color-text-primary);
       transition: all 0.15s ease;
       outline: none;
@@ -571,7 +586,7 @@
     
     .chart-controls select:hover {
       border-color: var(--color-kvot-accent);
-      background-color: white;
+      background-color: var(--color-panel-bg);
     }
     
     .chart-controls select:focus {
@@ -676,6 +691,12 @@
       margin-top: 12px;
       border: 1px solid #fecaca;
     }
+
+    [data-theme="dark"] .error {
+      background: #3b1515;
+      color: #fca5a5;
+      border-color: #7f1d1d;
+    }
     
     .loading { 
       color: var(--color-text-muted); 
@@ -720,4 +741,138 @@
     
     ::-webkit-scrollbar-thumb:hover {
       background: var(--color-text-secondary);
+    }
+
+    /* ==========================================================================
+       18. DARK MODE CONTRAST FIXES
+       Elements that use --color-kvot-primary (#344126) or
+       --color-kvot-background (#352921) as text colour are nearly invisible
+       on dark surfaces. Override them with high-contrast earthy alternatives.
+       ========================================================================== */
+    [data-theme="dark"] .panel h3 {
+      color: var(--color-kvot-bright);
+    }
+
+    [data-theme="dark"] .tree-item.group {
+      color: #8aad6a;                  /* light olive green */
+    }
+
+    [data-theme="dark"] .tree-item.group:hover {
+      color: #c5d8b4;                  /* pale green */
+    }
+
+    [data-theme="dark"] .tree-item.group.expanded {
+      color: #c5d8b4;
+    }
+
+    [data-theme="dark"] .info-label {
+      color: var(--color-kvot-bright);
+    }
+
+    [data-theme="dark"] .file-data-section h4 {
+      color: var(--color-kvot-bright);
+    }
+
+    [data-theme="dark"] #dropOverlay .message {
+      color: var(--color-kvot-bright);
+    }
+
+    [data-theme="dark"] .chart-controls select {
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23e8ddd0' d='M6 9L1 4h10z'/%3E%3C/svg%3E");
+    }
+
+    [data-theme="dark"] .chart-controls button {
+      color: var(--color-kvot-background);
+    }
+
+    [data-theme="dark"] .chart-controls button.secondary {
+      background: var(--color-text-muted);
+      color: var(--text-primary);
+    }
+
+    [data-theme="dark"] .chart-controls button.secondary:hover {
+      background: var(--color-text-secondary);
+    }
+
+    [data-theme="dark"] .multi-select-hint {
+      color: var(--color-kvot-background);
+    }
+
+    [data-theme="dark"] #treeSearch:focus {
+      box-shadow: 0 0 0 3px rgba(243, 184, 123, 0.15);
+    }
+
+    [data-theme="dark"] .chart-controls select:focus {
+      box-shadow: 0 0 0 3px rgba(243, 184, 123, 0.15);
+    }
+
+    [data-theme="dark"] .search-highlight {
+      background: var(--color-kvot-accent);
+      color: #fff;
+    }
+
+    /* ==========================================================================
+       19. ROOT NODE & ATTRIBUTES TABLE
+       ========================================================================== */
+
+    /* Root node in tree */
+    .tree-item.root-node {
+      font-weight: 600;
+      color: var(--color-kvot-primary);
+      margin-bottom: 8px;
+    }
+
+    [data-theme="dark"] .tree-item.root-node {
+      color: #8aad6a;
+    }
+
+    [data-theme="dark"] .tree-item.root-node:hover,
+    [data-theme="dark"] .tree-item.root-node.expanded {
+      color: #c5d8b4;
+    }
+
+    /* Attributes table */
+    .attrs-table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 12px 0;
+      font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
+      font-size: 11px;
+      color: var(--color-text-primary);
+    }
+
+    .attrs-header {
+      border-bottom: 1px solid var(--color-panel-border);
+      background: var(--color-hover-bg);
+    }
+
+    .attrs-header th {
+      text-align: left;
+      padding: 6px 0;
+      font-weight: 600;
+      color: var(--color-text-primary);
+      border-bottom: 1px solid var(--color-panel-border);
+    }
+
+    .attrs-header th:first-child {
+      width: 1%;
+      white-space: nowrap;
+    }
+
+    .attrs-row {
+      border-bottom: 1px solid var(--color-panel-border);
+    }
+
+    .attrs-row td {
+      padding: 6px 0;
+      word-break: break-word;
+      border-bottom: 1px solid var(--color-panel-border);
+    }
+
+    .attrs-row td:first-child {
+      white-space: nowrap;
+    }
+
+    .attrs-value {
+      color: var(--color-text-secondary);
     }

@@ -3,7 +3,61 @@
 	--color-kvot-accent:#bb6c5d;	/*red-brown*/
 	--color-kvot-background:#352921;/*dark-brown*/
 	--color-kvot-primary:#344126;	/*dark-green*/
+
+	/* Light mode (default) */
+	--bg-primary: #ffffff;
+	--bg-secondary: #f5f5f5;
+	--bg-surface: #faf8f6;
+	--text-primary: #352921;
+	--text-secondary: #6b5d4f;
+	--text-muted: #9b8d7f;
+	--border-color: #e5ddd5;
+	--input-bg: #ffffff;
+	--input-border: #cccccc;
+	--input-text: #333333;
+	--header-bg: #352921;
+	--header-text: #f3b87b;
+	--footer-bg: #352921;
+	--footer-text: #f3b87b;
+	--link-color: #bb6c5d;
+	--shadow-color: rgba(0, 0, 0, 0.1);
+	--code-bg: #f4f4f4;
+	--code-text: #333;
+	--overlay-bg: rgba(0, 0, 0, 0.4);
+	--modal-bg: #fefefe;
+	--table-border: #ddd;
+	--table-stripe: #f9f9f9;
+	--scrollbar-thumb: #c1b9b0;
+	--scrollbar-track: #f0ece8;
 }
+
+[data-theme="dark"] {
+	--bg-primary: #1a1410;
+	--bg-secondary: #2a221b;
+	--bg-surface: #332b23;
+	--text-primary: #e8ddd0;
+	--text-secondary: #b8a898;
+	--text-muted: #8a7d6f;
+	--border-color: #4a3f35;
+	--input-bg: #2a221b;
+	--input-border: #5a4f42;
+	--input-text: #e8ddd0;
+	--header-bg: #0f0b08;
+	--header-text: #f3b87b;
+	--footer-bg: #0f0b08;
+	--footer-text: #f3b87b;
+	--link-color: #f3b87b;
+	--shadow-color: rgba(0, 0, 0, 0.4);
+	--code-bg: #2a221b;
+	--code-text: #e8ddd0;
+	--overlay-bg: rgba(0, 0, 0, 0.7);
+	--modal-bg: #2a221b;
+	--table-border: #4a3f35;
+	--table-stripe: #332b23;
+	--scrollbar-thumb: #5a4f42;
+	--scrollbar-track: #2a221b;
+}
+
 @font-face {
 	font-family: RawengulkSans;
 	src: url(../../vendors/font/RawengulkSans-094.otf);
@@ -12,9 +66,10 @@ body{
   margin: 0;
   padding: 0;
   overflow-x: hidden;
-  /*background: #1e3c72 !important;*/
-     color: var(--color-kvot-primary);
-     font-family: verdana, sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: verdana, sans-serif;
+  transition: background-color 0.3s ease, color 0.3s ease;
 }
 .nav-toggle {
   position: fixed;
@@ -76,40 +131,62 @@ body{
           transform-origin: 15% 95%;
 }
 #menu {
-  z-index: 100000000;
-  min-width: 100%;
-  min-height: 100%;
   position: fixed;
-  top: 0;
-  height: 0;
-  visibility: hidden;
+  top: 44px;
+  right: 8px;
+  z-index: 1000000000;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px var(--shadow-color);
+  padding: 6px 0;
+  min-width: 230px;
   opacity: 0;
-  text-align: center;
-  padding-top: 20px;
-  transition: all 0.3s ease-in-out;
+  visibility: hidden;
+  transform: translateY(-8px);
+  transition: opacity 0.2s ease, transform 0.2s ease, visibility 0.2s;
 }
-#menu.overlay {
-  visibility: visible;
+#menu.open {
   opacity: 1;
-  padding-top: 60px;
-  background: rgba(0, 0, 0, 0.85);
+  visibility: visible;
+  transform: translateY(0);
 }
 #menu ul {
   padding: 0;
+  margin: 0;
 }
 #menu li {
   list-style: none;
 }
 #menu a {
-  color: var(--color-kvot-bright);
   display: block;
-  font-size: 32px;
-  margin-bottom: 30px;
+  padding: 10px 20px;
+  color: var(--text-primary);
   text-decoration: none;
-  font-family:RawengulkSans;
+  font-size: 15px;
+  font-family: RawengulkSans;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 #menu a:hover {
+  background: var(--bg-secondary);
   color: var(--color-kvot-accent);
+}
+#menu .nav-divider {
+  height: 1px;
+  background: var(--border-color);
+  margin: 4px 12px;
+}
+#menu .nav-section-label {
+  padding: 8px 20px 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  font-family: RawengulkSans;
+}
+#menu .nav-sub a {
+  padding-left: 32px;
+  font-size: 14px;
 }
 
 
@@ -120,11 +197,12 @@ header {
      top: 0;
      left: 0;
      border-bottom: var(--color-kvot-accent) solid 1px;
-     background: var(--color-kvot-background);
-     color: var(--color-kvot-bright);
+     background: var(--header-bg);
+     color: var(--header-text);
      height: 30px;
      width:100%;
      padding:6px;
+     transition: background-color 0.3s ease, color 0.3s ease;
 }
  header .logo {
      margin-left: 0px;
@@ -170,13 +248,12 @@ header input:focus::placeholder {
 color: transparent;
 }
 footer {
-   display: grid;
    position: fixed;
    bottom: 0;
    left: 0;
    border-top: var(--color-kvot-accent) solid 1px;
-   background: var(--color-kvot-background);
-   color: var(--color-kvot-bright);
+   background: var(--footer-bg);
+   color: var(--footer-text);
    height: 24px;
    width:100%;
    padding:1px;
@@ -184,6 +261,26 @@ footer {
    font-size:15px;
    padding-top:5px;
    font-family:RawengulkSans;
+   transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+.footer-content {
+   display: flex;
+   align-items: center;
+   justify-content: center;
+   width: 100%;
+   position: relative;
+}
+
+.footer-center {
+   /* centered content */
+}
+
+footer .theme-toggle {
+   position: absolute;
+   right: 8px;
+   top: 50%;
+   transform: translateY(-50%);
 }
 
 .content {
@@ -193,7 +290,7 @@ footer {
   width:100%;
   height: calc(100vh - 74px);
   font-family:RawengulkSans;
-  color: var(--color-kvot-background);
+  color: var(--text-primary);
  /* */
 }
 #contact {   
@@ -249,7 +346,7 @@ h1 {
 	font-family:RawengulkSans;
 }
  a {
-     color: var(--color-kvot-bright);
+     color: var(--link-color);
      text-decoration: none;
 }
  .smallsvg:hover {
@@ -359,3 +456,53 @@ h1 {
     padding: 0.4em;
     text-align: center;
   }
+
+/* ==========================================================================
+   THEME TOGGLE BUTTON
+   ========================================================================== */
+.theme-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 6px;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--footer-text);
+  transition: transform 0.3s ease;
+  vertical-align: middle;
+}
+.theme-toggle:hover {
+  transform: scale(1.15);
+}
+
+footer .theme-toggle:hover {
+  transform: translateY(-50%) scale(1.15);
+}
+
+/* ==========================================================================
+   THEMED GENERIC ELEMENTS
+   ========================================================================== */
+input, select, textarea {
+  background-color: var(--input-bg);
+  color: var(--input-text);
+  border-color: var(--input-border);
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+fieldset {
+  border-color: var(--border-color);
+}
+
+legend {
+  color: var(--text-primary);
+}
+
+table {
+  color: var(--text-primary);
+}
+
+pre {
+  background-color: var(--code-bg);
+  color: var(--code-text);
+}
+
