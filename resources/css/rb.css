@@ -467,6 +467,27 @@
     .info-section.link-info.soft {
       border-left-color: var(--color-kvot-primary);
     }
+
+    /* PDF Histogram in info panel */
+    .pdf-histogram-container {
+      margin-top: 12px;
+      padding: 10px;
+      border: 1px solid var(--color-border);
+      border-radius: 6px;
+      background: var(--bg-surface, var(--color-hover-bg));
+    }
+    .pdf-histogram-container .info-label {
+      margin-bottom: 6px;
+    }
+    .pdf-histogram-chart {
+      width: 100%;
+      height: 200px;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .pdf-histogram-chart.pdf-histogram-small {
+      height: 140px;
+    }
     
     /* Tree Group Children Container */
     .tree-group-children {
@@ -828,6 +849,11 @@
 
     [data-theme="dark"] .tree-item.group.expanded {
       color: #c5d8b4;
+    }
+
+    [data-theme="dark"] .pdf-histogram-container {
+      background: var(--bg-secondary, #2a221b);
+      border-color: var(--color-border);
     }
 
     [data-theme="dark"] .link-badge {
