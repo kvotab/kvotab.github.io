@@ -177,6 +177,23 @@ function togglesort() {
     $('#tree').jstree(true).refresh();
 }
 
+// ── Theme helpers for Cytoscape ───────────────────────────────────────────────
+function isDarkMode() {
+    return document.documentElement.getAttribute('data-theme') === 'dark';
+}
+function cyEdgeColor()    { return isDarkMode() ? '#b8a898' : '#000'; }
+function cyBgColor()      { return isDarkMode() ? '#1a1410' : 'white'; }
+function cyNodeBgColor()  { return isDarkMode() ? '#0f0b08' : 'white'; }
+function cyTextColor()    { return isDarkMode() ? '#b8a898' : 'gray'; }
+function cyNodeTextColor(){ return isDarkMode() ? '#f3b87b' : 'black'; }
+function cyLevelFill()    { return isDarkMode() ? '#5a4520' : '#FFF4A3'; }
+function cyLevelStroke()  { return isDarkMode() ? '#5a4f42' : 'black'; }
+function plotlyPaperBg()  { return isDarkMode() ? '#332b23' : 'rgb(253,254,255)'; }
+function plotlyPlotBg()   { return isDarkMode() ? '#2a221b' : 'rgb(255,255,255)'; }
+function plotlyFontColor(){ return isDarkMode() ? '#e8ddd0' : '#333'; }
+function plotlyGridColor(){ return isDarkMode() ? '#5a4f42' : '#eee'; }
+function plotlyLineColor(){ return isDarkMode() ? '#5a4f42' : '#bbb'; }
+
 // ── Cytoscape setup ──────────────────────────────────────────────────────────
 var CY = cytoscape({
     container: document.getElementById("cy"),
@@ -188,14 +205,15 @@ var CY = cytoscape({
                 if (element.data("Z") === 0) {
                     return "data:image/svg+xml;charset=utf-8," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg"></svg>');
                 } else {
+                    var txtCol = cyNodeTextColor();
                     var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="10em" height="10em">';
                     if (element.data("level") > 0) {
                         var level = 10 - element.data("level") * 10;
-                        svg = svg + '<rect x="0em" y="' + level + 'em" width="10em" height="10em" stroke="black" fill="#FFF4A3" stroke-width=".05em" />';
+                        svg = svg + '<rect x="0em" y="' + level + 'em" width="10em" height="10em" stroke="' + cyLevelStroke() + '" fill="' + cyLevelFill() + '" stroke-width=".05em" />';
                     }
                     svg = svg + '<foreignObject x="0" y="1em" width="10em" height="10em">' +
                         '<body xmlns="http://www.w3.org/1999/xhtml">' +
-                        '<table style="border-spacing:0px;padding:0px;font-family:helvetica neue,helvetica,liberation sans,arial,sans-serif;margin-left:auto; margin-right: auto;">' +
+                        '<table style="border-spacing:0px;padding:0px;font-family:helvetica neue,helvetica,liberation sans,arial,sans-serif;margin-left:auto; margin-right: auto;color:' + txtCol + ';">' +
                         '<tr><td valign="bottom" align="right" style="font-size:1.4em;">' + element.data('A') + "" + element.data('state') + '</td>' +
                         '<td rowspan="2" style="font-size:4em;text-align:left;"><b>' + element.data('Element') + '</b></td></tr>' +
                         '<tr><td valign="top" align="right" style="font-size:1.4em;">' + element.data('Z') + '</td></tr>' +
@@ -208,7 +226,8 @@ var CY = cytoscape({
             },
             "overlay-opacity": 0,
             "background-fit": "cover cover",
-            "background-color": "white",
+            "background-color": function(element) { return element.data('Z') === 0 ? cyBgColor() : cyNodeBgColor(); },
+            "border-color": function(element) { return element.data('Z') === 0 ? cyBgColor() : cyEdgeColor(); },
             "border-width": function (element) {
                 if (element.data("Z") === 0) { return 0; } else { return 2; }
             },
@@ -224,16 +243,16 @@ var CY = cytoscape({
         style: {
             width: 1,
             "overlay-opacity": 0,
-            "line-color": "#000",
-            "target-arrow-color": "#000",
+            "line-color": function(element) { return element.data('mode') === 'SF' ? cyBgColor() : cyEdgeColor(); },
+            "target-arrow-color": function(element) { return element.data('mode') === 'SF' ? cyBgColor() : cyEdgeColor(); },
             "target-arrow-shape": "triangle",
             "curve-style": "bezier",
             "font-family": "sans-serif",
-            'color': 'gray',
+            'color': function(element) { return element.data('mode') === 'SF' ? cyBgColor() : cyTextColor(); },
             'font-size': '10px',
-            'text-background-color': 'white',
+            'text-background-color': function() { return cyBgColor(); },
             'text-background-shape': 'rectangle',
-            'text-background-opacity': '0.7',
+            'text-background-opacity': '0.85',
             "text-wrap": "wrap",
             "label": function (element) {
                 return element.data('mode').replace("&beta;", "\u03B2").replace("&alpha;", "\u03B1") + "\n" + element.data("br");
@@ -250,6 +269,8 @@ var CY = cytoscape({
 
 function styleBorder(rn, onoff) {
     var node = CY.getElementById(rn);
+    // SF nodes stay invisible — never restyle them
+    if (node.data('Z') === 0) return;
     if (onoff) {
         var linesCY = ['solid','dashed','dotted','double'];
         node.style('border-color', "rgb("+node.data().color[0]+","+node[0].data().color[1]+","+node[0].data().color[2]+")");
@@ -258,13 +279,45 @@ function styleBorder(rn, onoff) {
         node.style('background-color', "rgb("+node.data().color[0]+","+node[0].data().color[1]+","+node[0].data().color[2]+")");
         node.style('background-opacity','0.2');
     } else {
-        node.style('border-color', 'black');
+        node.style('border-color', cyEdgeColor());
         node.style('border-style', 'solid');
         node.style('border-width', 1);
-        node.style('background-color', 'white');
+        node.style('background-color', cyNodeBgColor());
         node.style('background-opacity','1');
     }
 }
+
+// Update cytoscape when theme changes
+new MutationObserver(function() {
+    CY.style().update();
+    // Reset all nodes to new theme colors
+    CY.nodes().forEach(function(node) {
+        if (node.data('Z') === 0) {
+            // SF nodes stay invisible
+            node.style('background-color', cyBgColor());
+            node.style('border-color', cyBgColor());
+        } else {
+            node.style('border-color', cyEdgeColor());
+            node.style('background-color', cyNodeBgColor());
+        }
+    });
+    // Update Plotly chart colors on theme change
+    if (CHARTDIALOG && CHARTDIALOG[0] && CHARTDIALOG[0].data) {
+        Plotly.relayout(CHARTDIALOG[0], {
+            paper_bgcolor: plotlyPaperBg(),
+            plot_bgcolor: plotlyPlotBg(),
+            'font.color': plotlyFontColor(),
+            'xaxis.gridcolor': plotlyGridColor(),
+            'xaxis.linecolor': plotlyLineColor(),
+            'xaxis.tickfont.color': plotlyFontColor(),
+            'xaxis.titlefont.color': plotlyFontColor(),
+            'yaxis.gridcolor': plotlyGridColor(),
+            'yaxis.linecolor': plotlyLineColor(),
+            'yaxis.tickfont.color': plotlyFontColor(),
+            'yaxis.titlefont.color': plotlyFontColor(),
+        });
+    }
+}).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
 CY.on('zoom', function (event) {});
 CY.on('mouseover', 'node', function(e) { styleBorder(e.target.data().id, true); });
@@ -800,18 +853,27 @@ function runAndUpdateChart() {
     }
     Plotly.newPlot(CHARTDIALOG[0], data, {
         autosize: true,
-        paper_bgcolor: "rgb(253,254,255)",
-        plot_bgcolor: "rgb(255,255,255)",
+        paper_bgcolor: plotlyPaperBg(),
+        plot_bgcolor: plotlyPlotBg(),
         margin: { t: 4, b: 70 },
+        font: { color: plotlyFontColor() },
         yaxis: {
             title: yaxistitle,
             type: YAXISTYPE,
-            mirror: true, ticks: 'outside', showline: true, linecolor: "#bbb",
+            mirror: true, ticks: 'outside', showline: true,
+            linecolor: plotlyLineColor(),
+            gridcolor: plotlyGridColor(),
+            tickfont: { color: plotlyFontColor() },
+            titlefont: { color: plotlyFontColor() },
         },
         xaxis: {
             title: 'Time (' + timeunit + 's)',
             type: XAXISTYPE,
-            mirror: true, ticks: 'outside', showline: true, linecolor: "#bbb",
+            mirror: true, ticks: 'outside', showline: true,
+            linecolor: plotlyLineColor(),
+            gridcolor: plotlyGridColor(),
+            tickfont: { color: plotlyFontColor() },
+            titlefont: { color: plotlyFontColor() },
         },
     }, {
         displaylogo: false,

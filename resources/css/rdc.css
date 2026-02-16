@@ -23,6 +23,79 @@
     --scroll-bar-color: #5a4f42;
     --scroll-bar-bg-color: #2a221b;
 }
+
+/* jstree dark mode overrides */
+[data-theme="dark"] .jstree-default .jstree-hovered,
+[data-theme="dark"] .jstree-default .jstree-context {
+    background: #3a3028;
+    box-shadow: inset 0 0 1px #5a4f42;
+}
+[data-theme="dark"] .jstree-default .jstree-clicked {
+    background: #4a3f35;
+    box-shadow: inset 0 0 1px #6b5d4f;
+}
+[data-theme="dark"] .jstree-default .jstree-wholerow-hovered {
+    background: #3a3028;
+}
+[data-theme="dark"] .jstree-default .jstree-wholerow-clicked {
+    background: #4a3f35;
+    background-image: none;
+}
+[data-theme="dark"] .jstree-default.jstree-checkbox-no-clicked .jstree-clicked.jstree-hovered,
+[data-theme="dark"] .jstree-default.jstree-checkbox-no-clicked > .jstree-wholerow-ul .jstree-wholerow-clicked.jstree-wholerow-hovered {
+    background: #3a3028;
+}
+[data-theme="dark"] .jstree-default .jstree-anchor {
+    color: var(--text-primary);
+}
+
+/* jQuery UI dialog dark mode overrides */
+[data-theme="dark"] .ui-widget.ui-widget-content {
+    border-color: #5a4f42;
+}
+[data-theme="dark"] .ui-widget-content {
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    border-color: #5a4f42;
+}
+[data-theme="dark"] .ui-widget-header {
+    background: #0f0b08;
+    color: #f3b87b;
+    border-color: #5a4f42;
+}
+[data-theme="dark"] .ui-state-default,
+[data-theme="dark"] .ui-widget-content .ui-state-default,
+[data-theme="dark"] .ui-widget-header .ui-state-default {
+    background: #2a221b;
+    color: var(--text-primary);
+    border-color: #5a4f42;
+}
+[data-theme="dark"] .ui-state-active,
+[data-theme="dark"] .ui-widget-content .ui-state-active,
+[data-theme="dark"] .ui-widget-header .ui-state-active {
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    border-color: #5a4f42;
+}
+[data-theme="dark"] .ui-dialog {
+    border-color: #5a4f42;
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.5);
+}
+[data-theme="dark"] #chartdialog {
+    background-color: var(--bg-surface);
+}
+[data-theme="dark"] .settings select,
+[data-theme="dark"] .settings input {
+    background-color: #2a221b;
+    color: var(--text-primary);
+    border-color: #5a4f42;
+}
+[data-theme="dark"] .js-plotly-plot .plotly .modebar-btn path {
+    fill: #b8a898;
+}
+[data-theme="dark"] .js-plotly-plot .plotly .modebar-btn:hover path {
+    fill: #f3b87b;
+}
 #tree .icon 
 {
     -webkit-mask-image: url("Chemical element.svg");
@@ -399,7 +472,7 @@ nav {
 	padding-top: 0px;
 	width: 12em;
 	overflow-x:	hidden;
-	background-color: var(--bg-secondary, #ffffff);	
+	background-color: var(--bg-primary, #ffffff);	
 	z-index:2;
 }
 pre {
