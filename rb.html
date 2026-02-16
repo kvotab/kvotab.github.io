@@ -360,6 +360,51 @@
     }
     
     /**
+     * Detect if an HDF5 path is a soft link, external link, or broken soft link.
+     * @param {Object} group - h5wasm Group or File object
+     * @param {string} path - Absolute HDF5 path
+     * @param {Object} [obj] - The object returned by group.get(key), if already fetched
+     * @returns {Object|null} Link info or null if not a link
+     */
+    function getLinkInfo(group, path, obj) {
+      try {
+        if (obj && String(obj.type) === 'BrokenSoftLink') {
+          return { type: 'broken', target: obj.target || '?' };
+        }
+        if (obj && String(obj.type) === 'ExternalLink') {
+          return { type: 'external', filename: obj.filename || '?', obj_path: obj.obj_path || '?' };
+        }
+        // Check for resolved soft link
+        const softTarget = group.get_link(path);
+        if (softTarget) {
+          return { type: 'soft', target: softTarget };
+        }
+      } catch (e) { /* not a link */ }
+      return null;
+    }
+
+    /**
+     * Build a small link badge HTML for the tree view.
+     * @param {Object} linkInfo - Link info from getLinkInfo()
+     * @returns {string} HTML string for the badge
+     */
+    function buildLinkBadge(linkInfo) {
+      if (!linkInfo) return '';
+      let tooltip, cls;
+      if (linkInfo.type === 'broken') {
+        tooltip = 'Broken link \u2192 ' + linkInfo.target;
+        cls = 'broken';
+      } else if (linkInfo.type === 'external') {
+        tooltip = 'External \u2192 ' + linkInfo.filename + ':' + linkInfo.obj_path;
+        cls = 'external';
+      } else {
+        tooltip = 'Link \u2192 ' + linkInfo.target;
+        cls = 'soft';
+      }
+      return `<span class="link-badge ${cls}" title="${escapeHtml(tooltip)}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></span>`;
+    }
+
+    /**
      * Escape value for CSV export (handle commas, quotes, newlines)
      */
     function escapeCSV(value) {
@@ -1497,12 +1542,41 @@
             // Skip this node if intersect is active and path is not in the intersection
             if (intersectedPaths && !intersectedPaths.has(path)) continue;
             
+            // Detect link info for badge
+            const linkInfo = getLinkInfo(group, path, obj);
+            const linkBadge = buildLinkBadge(linkInfo);
+            
+            // Handle broken soft links — cannot be traversed
+            if (objType === 'brokensoftlink') {
+              const isSelected = selectedDatasetPath === path && !selectedIsRadionuclidesGroup;
+              const brokenHtml = `<div class="tree-item broken-link ${isSelected ? 'selected' : ''}" onclick="selectDataset('${path.replace(/'/g, "\\'")}', event)" data-path="${escapeHtml(path)}"${fileAttr}>
+                <div class="tree-icon broken-link"></div>
+                <div class="tree-label">${escapeHtml(key)}${linkBadge}</div>
+                <div class="tree-meta" style="color:var(--color-kvot-accent);">broken link</div>
+              </div>`;
+              childrenHtml.push(brokenHtml);
+              continue;
+            }
+            
+            // Handle external links — show external file reference
+            if (objType === 'externallink') {
+              const isSelected = selectedDatasetPath === path && !selectedIsRadionuclidesGroup;
+              const extLabel = linkInfo ? linkInfo.filename : '?';
+              const externalHtml = `<div class="tree-item external-link ${isSelected ? 'selected' : ''}" onclick="selectDataset('${path.replace(/'/g, "\\'")}', event)" data-path="${escapeHtml(path)}"${fileAttr}>
+                <div class="tree-icon external-link"></div>
+                <div class="tree-label">${escapeHtml(key)}${linkBadge}</div>
+                <div class="tree-meta">\u2192 ${escapeHtml(extLabel)}</div>
+              </div>`;
+              childrenHtml.push(externalHtml);
+              continue;
+            }
+            
             if (objType === 'group') {
               const isSelected = selectedDatasetPath === path && selectedIsRadionuclidesGroup;
               const groupHtml = `<div class="tree-item group ${isSelected ? 'expanded' : ''}" onclick="toggleGroup(event)" data-path="${escapeHtml(path)}"${fileAttr}>
                   <div class="tree-toggle ${isSelected ? '' : 'collapsed'}" onclick="event.stopPropagation(); toggleGroupExpansion(event, '${path.replace(/'/g, "\\'")}')">▶</div>
                   <div class="tree-icon folder"></div>
-                  <div class="tree-label">${escapeHtml(key)}</div>
+                  <div class="tree-label">${escapeHtml(key)}${linkBadge}</div>
                 </div>`;
               childrenHtml.push(groupHtml);
               
@@ -1521,7 +1595,7 @@
               const isSelected = selectedDatasetPath === path && !selectedIsRadionuclidesGroup;
               const datasetHtml = `<div class="tree-item dataset ${isSelected ? 'selected' : ''}" onclick="selectDataset('${path.replace(/'/g, "\\'")}', event)" data-path="${escapeHtml(path)}"${fileAttr}>
                 <div class="tree-icon dataset"></div>
-                <div class="tree-label">${escapeHtml(key)}</div>
+                <div class="tree-label">${escapeHtml(key)}${linkBadge}</div>
                 <div class="tree-meta">${escapeHtml(formattedDtype)} [${escapeHtml(shape)}]</div>
               </div>`;
               childrenHtml.push(datasetHtml);
@@ -3036,9 +3110,53 @@
           
           const isFirstFile = fileKey === enabledFiles[0];
           const fileColor = isFirstFile ? '#0066cc' : '#10b981';
+          const nodeType = String(node.type);
+          
+          // Detect link info
+          const linkInfo = getLinkInfo(file, path, node);
           
           html += `<div class="file-data-section" style="border-left-color: ${fileColor};">`;
           html += `<h4>${escapeHtml(fileKey)}</h4>`;
+          
+          // Handle broken soft links
+          if (nodeType === 'BrokenSoftLink') {
+            html += `<div class="info-section">
+              <div class="info-label">Path</div>
+              <div class="info-content">${escapeHtml(path)}</div>
+            </div>`;
+            html += `<div class="info-section">
+              <div class="info-label">Type</div>
+              <div class="info-content">Broken Soft Link</div>
+            </div>`;
+            html += `<div class="info-section link-info broken">
+              <div class="info-label">🔗 Link Target</div>
+              <div class="info-content">${escapeHtml(node.target || '?')} <span style="color:var(--color-kvot-accent);">(target not found)</span></div>
+            </div>`;
+            html += '</div>';
+            continue;
+          }
+          
+          // Handle external links
+          if (nodeType === 'ExternalLink') {
+            html += `<div class="info-section">
+              <div class="info-label">Path</div>
+              <div class="info-content">${escapeHtml(path)}</div>
+            </div>`;
+            html += `<div class="info-section">
+              <div class="info-label">Type</div>
+              <div class="info-content">External Link</div>
+            </div>`;
+            html += `<div class="info-section link-info external">
+              <div class="info-label">🔗 External File</div>
+              <div class="info-content">${escapeHtml(node.filename || '?')}</div>
+            </div>`;
+            html += `<div class="info-section link-info external">
+              <div class="info-label">🔗 External Path</div>
+              <div class="info-content">${escapeHtml(node.obj_path || '?')}</div>
+            </div>`;
+            html += '</div>';
+            continue;
+          }
           
           // Show path, type, dtype, shape only for first file
           if (isFirstFile) {
@@ -3049,8 +3167,16 @@
             
             html += `<div class="info-section">
               <div class="info-label">Type</div>
-              <div class="info-content">${escapeHtml(String(node.type))}</div>
+              <div class="info-content">${escapeHtml(nodeType)}</div>
             </div>`;
+            
+            // Show link info for resolved soft links
+            if (linkInfo && linkInfo.type === 'soft') {
+              html += `<div class="info-section link-info soft">
+                <div class="info-label">🔗 Soft Link</div>
+                <div class="info-content">Target: ${escapeHtml(linkInfo.target)}</div>
+              </div>`;
+            }
             
             if (!isGroup && node.dtype) {
               const readableDtype = formatDataType(node.dtype);
