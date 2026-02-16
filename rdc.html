@@ -182,9 +182,10 @@ function isDarkMode() {
     return document.documentElement.getAttribute('data-theme') === 'dark';
 }
 function cyEdgeColor()    { return isDarkMode() ? '#b8a898' : '#000'; }
-function cyBgColor()      { return isDarkMode() ? '#1a1410' : 'white'; }
-function cyNodeBgColor()  { return isDarkMode() ? '#0f0b08' : 'white'; }
+function cyBgColor()      { return isDarkMode() ? '#2a221b' : 'white'; }
+function cyNodeBgColor()  { return isDarkMode() ? '#2a221b' : 'white'; }
 function cyTextColor()    { return isDarkMode() ? '#b8a898' : 'gray'; }
+function cyTextBgColor()  { return isDarkMode() ? '#1a1410' : 'white'; }
 function cyNodeTextColor(){ return isDarkMode() ? '#f3b87b' : 'black'; }
 function cyLevelFill()    { return isDarkMode() ? '#5a4520' : '#FFF4A3'; }
 function cyLevelStroke()  { return isDarkMode() ? '#5a4f42' : 'black'; }
@@ -226,8 +227,8 @@ var CY = cytoscape({
             },
             "overlay-opacity": 0,
             "background-fit": "cover cover",
-            "background-color": function(element) { return element.data('Z') === 0 ? cyBgColor() : cyNodeBgColor(); },
-            "border-color": function(element) { return element.data('Z') === 0 ? cyBgColor() : cyEdgeColor(); },
+            "background-color": function(element) { return element.data('Z') === 0 ? cyTextBgColor() : cyNodeBgColor(); },
+            "border-color": function(element) { return element.data('Z') === 0 ? cyTextBgColor() : cyEdgeColor(); },
             "border-width": function (element) {
                 if (element.data("Z") === 0) { return 0; } else { return 2; }
             },
@@ -243,16 +244,16 @@ var CY = cytoscape({
         style: {
             width: 1,
             "overlay-opacity": 0,
-            "line-color": function(element) { return element.data('mode') === 'SF' ? cyBgColor() : cyEdgeColor(); },
-            "target-arrow-color": function(element) { return element.data('mode') === 'SF' ? cyBgColor() : cyEdgeColor(); },
+            "line-color": function(element) { return cyEdgeColor(); },
+            "target-arrow-color": function(element) { return cyEdgeColor(); },
             "target-arrow-shape": "triangle",
             "curve-style": "bezier",
             "font-family": "sans-serif",
-            'color': function(element) { return element.data('mode') === 'SF' ? cyBgColor() : cyTextColor(); },
+            'color': function(element) { return cyTextColor(); },
             'font-size': '10px',
-            'text-background-color': function() { return cyBgColor(); },
+            'text-background-color': function() { return cyTextBgColor(); },
             'text-background-shape': 'rectangle',
-            'text-background-opacity': '0.85',
+            'text-background-opacity': '1',
             "text-wrap": "wrap",
             "label": function (element) {
                 return element.data('mode').replace("&beta;", "\u03B2").replace("&alpha;", "\u03B1") + "\n" + element.data("br");
@@ -294,8 +295,8 @@ new MutationObserver(function() {
     CY.nodes().forEach(function(node) {
         if (node.data('Z') === 0) {
             // SF nodes stay invisible
-            node.style('background-color', cyBgColor());
-            node.style('border-color', cyBgColor());
+            node.style('background-color', cyTextBgColor());
+            node.style('border-color', cyTextBgColor());
         } else {
             node.style('border-color', cyEdgeColor());
             node.style('background-color', cyNodeBgColor());

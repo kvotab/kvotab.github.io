@@ -18,6 +18,7 @@
 }
 
 [data-theme="dark"] {
+    --bg-primary: #2a221b;
     --code-color: #f0a0a0;
     --code-bg-color: #2a221b;
     --scroll-bar-color: #5a4f42;
@@ -352,6 +353,7 @@ input[type=number]::-webkit-inner-spin-button {
 	height: calc(100vh - 74px);
 	width: calc(100vw - 12em);
 	z-index:2;
+	background-color: var(--bg-primary, #ffffff);
 }
         .custom-menu-item {
 	display: block;
