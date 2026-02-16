@@ -89,7 +89,7 @@
           </div>
           <div id="histControls" class="chart-controls" style="display: none;">
             <span style="font-weight: 600; font-size: 13px; display: inline-flex; align-items: center; gap: 4px;">📊 Data preview</span>
-            <label id="histLogLabel" style="margin-left: 16px;">
+            <label id="histLogLabel" style="margin-left: auto;">
               <input type="checkbox" id="histLogScale" onchange="toggleHistLog()">
               Log₁₀ scale
             </label>
@@ -688,6 +688,101 @@
     }
 
     /**
+     * Extract histogram entries from a dataset node that has a 'pdf' attribute.
+     * Returns an array of {label, samples, spec, deterministicValue} objects,
+     * or null if no histogram data can be produced.
+     *
+     * @param {Object} node  - HDF5 dataset node
+     * @param {Object} attrs - Already-extracted attribute dict (must contain attrs.pdf)
+     * @param {string} label - Human-readable label prefix for this dataset
+     * @returns {Array|null}
+     */
+    function collectPdfEntries(node, attrs, label) {
+      if (!attrs.pdf) return null;
+      try {
+        let pdfRaw = attrs.pdf;
+        if (typeof pdfRaw === 'string') pdfRaw = JSON.parse(pdfRaw);
+
+        const isLookupTable = Array.isArray(pdfRaw);
+        const indexAttr = attrs.index;
+
+        if (isLookupTable && indexAttr) {
+          const indexLabels = Array.isArray(indexAttr) ? indexAttr : Array.from(indexAttr);
+          const entries = [];
+          for (let i = 0; i < pdfRaw.length; i++) {
+            const spec = pdfRaw[i];
+            if (!spec) {
+              try {
+                let rawData = typeof node.value !== 'undefined' ? node.value : (typeof node.toArray === 'function' ? node.toArray() : undefined);
+                if (rawData !== undefined) {
+                  const arr = Array.isArray(rawData) ? rawData : Array.from(rawData);
+                  entries.push({ label: label + ' – ' + String(indexLabels[i] ?? i), samples: [arr[i]], spec: null, deterministicValue: null });
+                }
+              } catch (_) {}
+              continue;
+            }
+            if (spec.type && spec.type.toLowerCase() === 'raw') {
+              try {
+                let rawData = typeof node.value !== 'undefined' ? node.value : (typeof node.toArray === 'function' ? node.toArray() : undefined);
+                if (rawData !== undefined) {
+                  const flat = Array.isArray(rawData) ? rawData : Array.from(rawData);
+                  const nCols = pdfRaw.length, nRows = Math.floor(flat.length / nCols);
+                  const shift = spec.include_deterministic ? 1 : 0;
+                  const detVal = spec.include_deterministic && nRows > 0 ? flat[0 * nCols + i] : null;
+                  const col = [];
+                  for (let r = shift; r < nRows; r++) col.push(flat[r * nCols + i]);
+                  entries.push({ label: label + ' – ' + String(indexLabels[i] ?? i), samples: col, spec, deterministicValue: detVal });
+                }
+              } catch (_) {}
+            } else {
+              let detVal = null;
+              try {
+                let rawData = typeof node.value !== 'undefined' ? node.value : (typeof node.toArray === 'function' ? node.toArray() : undefined);
+                if (rawData !== undefined) {
+                  const flat = Array.isArray(rawData) ? rawData : Array.from(rawData);
+                  if (flat.length >= pdfRaw.length) detVal = Number(flat[i]);
+                }
+              } catch (_) {}
+              const samples = generatePdfSamples(spec, 1000);
+              if (samples) {
+                entries.push({ label: label + ' – ' + String(indexLabels[i] ?? i), samples: Array.from(samples), spec, deterministicValue: isFinite(detVal) ? detVal : null });
+              }
+            }
+          }
+          return entries.length > 0 ? entries : null;
+        } else if (!isLookupTable && pdfRaw.type) {
+          if (pdfRaw.type.toLowerCase() === 'raw') {
+            try {
+              let rawData = typeof node.value !== 'undefined' ? node.value : (typeof node.toArray === 'function' ? node.toArray() : undefined);
+              if (rawData !== undefined) {
+                const flat = Array.isArray(rawData) ? rawData : Array.from(rawData);
+                const shift = pdfRaw.include_deterministic ? 1 : 0;
+                const detVal = pdfRaw.include_deterministic && flat.length > 0 ? flat[0] : null;
+                return [{ label, samples: flat.slice(shift), spec: pdfRaw, deterministicValue: detVal }];
+              }
+            } catch (_) {}
+          } else {
+            let detVal = null;
+            try {
+              let rawData = typeof node.value !== 'undefined' ? node.value : (typeof node.toArray === 'function' ? node.toArray() : undefined);
+              if (rawData !== undefined) {
+                if (typeof rawData === 'number') detVal = rawData;
+                else if (rawData && rawData.length !== undefined && rawData.length > 0) detVal = Number(rawData[0]);
+              }
+            } catch (_) {}
+            const samples = generatePdfSamples(pdfRaw, 1000);
+            if (samples) {
+              return [{ label, samples: Array.from(samples), spec: pdfRaw, deterministicValue: isFinite(detVal) ? detVal : null }];
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('collectPdfEntries error:', e.message);
+      }
+      return null;
+    }
+
+    /**
      * Compute analytical PDF curve points for a given distribution spec.
      * Accounts for truncation (trmin/trmax/pmin/pmax) and shift.
      * @param {Object} spec - PDF specification object
@@ -1279,7 +1374,7 @@
             const detX = xform(entry.deterministicValue);
             shapes.push({
               type: 'line', x0: detX, x1: detX, y0: 0, y1: 1, yref: 'paper',
-              line: { color: detColor, width: 1.5, dash: 'dashdot' },
+              line: { color: c.line, width: 1.5, dash: 'dashdot' },
             });
           }
         });
@@ -4539,6 +4634,7 @@
       </div>`;
       
       let allTimeDependent = true;
+      const combinedPdfEntries = [];   // collect histogram entries across all selected datasets
       
       for (const item of normalizedItems) {
         const { path, fileKey } = item;
@@ -4602,6 +4698,18 @@
             html += `</div></div>`;
           }
           
+          // Collect PDF histogram entries for combined chart
+          try {
+            if (attrs.pdf) {
+              const datasetName = path.split('/').pop();
+              const shortFile = normalizedItems.length > 1 && new Set(normalizedItems.map(d => d.fileKey)).size > 1
+                ? ' (' + fileKey + ')' : '';
+              const entryLabel = datasetName + shortFile;
+              const pdfEntries = collectPdfEntries(dataset, attrs, entryLabel);
+              if (pdfEntries) combinedPdfEntries.push(...pdfEntries);
+            }
+          } catch (_) {}
+
           // Add Excel download button for this dataset
           const escapedPath = path.replace(/'/g, "\\'");
           const escapedFileKey = fileKey.replace(/'/g, "\\'");
@@ -4624,9 +4732,12 @@
       
       infoDiv.innerHTML = html;
       
-      // Create combined chart if all are time-dependent
+      // Create combined chart
       if (allTimeDependent && normalizedItems.length > 0) {
         createMultiDatasetChart(normalizedItems);
+      } else if (combinedPdfEntries.length > 0) {
+        // Show combined PDF histogram for all selected datasets
+        createPdfHistogram({ type: 'lookup', entries: combinedPdfEntries, path: 'Multi-selection' });
       } else {
         document.getElementById('plotlyChartContainer').classList.remove('visible');
         currentChartData = null;
