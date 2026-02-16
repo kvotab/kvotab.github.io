@@ -87,6 +87,13 @@
             <button onclick="applyReleasePresetView()" style="margin-left: auto;">Apply Release View</button>
             <button onclick="applyDosePresetView()">Apply Dose View</button>
           </div>
+          <div id="histControls" class="chart-controls" style="display: none;">
+            <span style="font-weight: 600; font-size: 13px; display: inline-flex; align-items: center; gap: 4px;">📊 Data preview</span>
+            <label id="histLogLabel" style="margin-left: 16px;">
+              <input type="checkbox" id="histLogScale" onchange="toggleHistLog()">
+              Log₁₀ scale
+            </label>
+          </div>
           <div id="plotlyChart"></div>
         </div>
         
@@ -104,6 +111,7 @@
   <div id="map"></div>
   <footer></footer>
 
+  <script src="./resources/js/erf.js"></script>
   <script src="./resources/js/site.js"></script>
   <script>
     KVOT.renderHeader('&nbsp;hdf result browser', '<div class="tabs-container"><div id="fileTabs"></div><button class="add-file-btn" onclick="document.getElementById(\'fileInput\').click()">+ Add Files</button></div>');
@@ -209,6 +217,10 @@
     // Chart state
     /** @type {ChartData|null} Current chart data (traces, layout, path) for export/clipboard */
     let currentChartData = null;
+    /** @type {boolean} True when the chart area is showing a PDF histogram (not a time-series chart) */
+    let currentPdfHistogram = false;
+    /** @type {Object|null} Stored PDF histogram data for re-rendering on theme/log change */
+    let currentPdfHistogramData = null;
     /** @type {string|null} Filename of the first enabled file (determines tree structure source) */
     let currentTreeFile = null;
     
@@ -404,6 +416,332 @@
       return `<span class="link-badge ${cls}" title="${escapeHtml(tooltip)}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></span>`;
     }
 
+    /* ==========================================================================
+       PDF SAMPLING ENGINE
+       Mirrors the Python Distribution class from samp_util.py.
+       Supports: uniform, triangular, dtriangular, normal, exponential,
+       loguniform, logtriangular, logdtriangular, lognormal, raw/empirical.
+       ========================================================================== */
+
+    /** Inverse CDF: Uniform(a, b) */
+    function invUnif(p, a, b) { return a + (b - a) * p; }
+
+    /** Inverse CDF: Triangular(a, b, m) */
+    function invTriang(p, a, b, m) {
+      const fc = (m - a) / (b - a);
+      return p < fc
+        ? a + Math.sqrt((b - a) * (m - a) * p)
+        : b - Math.sqrt((b - a) * (b - m) * (1 - p));
+    }
+
+    /** Inverse CDF: Double-triangular(a, b, m) */
+    function invDtriang(p, a, b, m) {
+      return p <= 0.5
+        ? a + Math.sqrt(2 * p) * (m - a)
+        : b - (b - m) * Math.sqrt(2 * (1 - p));
+    }
+
+    /** Inverse CDF: Normal(mean, std) — uses erfinv from erf.js */
+    function invNorm(p, mean, std) {
+      return mean + std * Math.SQRT2 * erfinv(2 * p - 1);
+    }
+
+    /** Inverse CDF: Exponential(mean) */
+    function invExp(p, mean) { return -mean * Math.log(1 - p); }
+
+    /** Inverse CDF: Log-uniform(a, b) */
+    function invLogu(p, a, b) {
+      return Math.exp(invUnif(p, Math.log(a), Math.log(b)));
+    }
+
+    /** Inverse CDF: Log-triangular(a, b, m) */
+    function invLogt(p, a, b, m) {
+      return Math.exp(invTriang(p, Math.log(a), Math.log(b), Math.log(m)));
+    }
+
+    /** Inverse CDF: Double-log-triangular(a, b, m) */
+    function invLogdt(p, a, b, m) {
+      return Math.exp(invDtriang(p, Math.log(a), Math.log(b), Math.log(m)));
+    }
+
+    /** Inverse CDF: Log-normal(gm, gsd) */
+    function invLogn(p, gm, gsd) {
+      return Math.exp(invNorm(p, Math.log(gm), Math.log(gsd)));
+    }
+
+    /** Inverse CDF: Empirical (quantile interpolation) */
+    function invEmpirical(p, data) {
+      const sorted = Float64Array.from(data).sort();
+      const idx = p * (sorted.length - 1);
+      const lo = Math.floor(idx);
+      const hi = Math.min(lo + 1, sorted.length - 1);
+      const frac = idx - lo;
+      return sorted[lo] + frac * (sorted[hi] - sorted[lo]);
+    }
+
+    /**
+     * CDF helper for truncation support.
+     * Returns CDF(x) for the given distribution.
+     */
+    function cdfForDist(type, x, args) {
+      // Only needed for trmin/trmax — simplified implementations
+      switch (type) {
+        case 'uniform': case 'unif': {
+          const { a, b } = args;
+          return x <= a ? 0 : x >= b ? 1 : (x - a) / (b - a);
+        }
+        case 'triangular': case 'triang': {
+          const { a, b, m } = args;
+          if (x <= a) return 0; if (x >= b) return 1;
+          return x <= m ? (x - a) ** 2 / ((m - a) * (b - a)) : 1 - (b - x) ** 2 / ((b - a) * (b - m));
+        }
+        case 'normal': case 'norm': {
+          const { mean, std } = args;
+          return 0.5 * (1 + erf((x - mean) / (std * Math.SQRT2)));
+        }
+        case 'exponential': case 'exp': {
+          const { mean } = args;
+          return x <= 0 ? 0 : 1 - Math.exp(-x / mean);
+        }
+        case 'loguniform': case 'logu': case 'logunif': {
+          const { a, b } = args;
+          return x <= a ? 0 : x >= b ? 1 : (Math.log(x) - Math.log(a)) / (Math.log(b) - Math.log(a));
+        }
+        case 'lognormal': case 'logn': case 'lognorm': {
+          const { gm, gsd } = args;
+          return 0.5 * (1 + erf((Math.log(x) - Math.log(gm)) / (Math.log(gsd) * Math.SQRT2)));
+        }
+        default: return null;
+      }
+    }
+
+    /**
+     * Evaluate the analytical probability density function (PDF) at x.
+     * @param {string} type - Distribution type key
+     * @param {number} x - Value at which to evaluate
+     * @param {Object} args - Distribution parameters
+     * @returns {number|null} PDF value, or null if type unsupported
+     */
+    function pdfEval(type, x, args) {
+      switch (type) {
+        case 'uniform': case 'unif': {
+          const { a, b } = args;
+          return (x >= a && x <= b) ? 1 / (b - a) : 0;
+        }
+        case 'triangular': case 'triang': {
+          const { a, b, m } = args;
+          if (x < a || x > b) return 0;
+          return x <= m
+            ? 2 * (x - a) / ((b - a) * (m - a))
+            : 2 * (b - x) / ((b - a) * (b - m));
+        }
+        case 'dtriangular': case 'dtriang': {
+          const { a, b, m } = args;
+          if (x < a || x > b) return 0;
+          return x <= m
+            ? (x - a) / ((m - a) * (m - a))
+            : (b - x) / ((b - m) * (b - m));
+        }
+        case 'normal': case 'norm': {
+          const { mean, std } = args;
+          const z = (x - mean) / std;
+          return Math.exp(-0.5 * z * z) / (std * Math.sqrt(2 * Math.PI));
+        }
+        case 'exponential': case 'exp': {
+          const { mean } = args;
+          return x < 0 ? 0 : (1 / mean) * Math.exp(-x / mean);
+        }
+        case 'loguniform': case 'logu': case 'logunif': {
+          const { a, b } = args;
+          return (x <= a || x >= b) ? 0 : 1 / (x * (Math.log(b) - Math.log(a)));
+        }
+        case 'logtriangular': case 'logt': case 'logtriang': {
+          const { a, b, m } = args;
+          if (x <= a || x >= b) return 0;
+          const la = Math.log(a), lb = Math.log(b), lm = Math.log(m), lx = Math.log(x);
+          const fLog = lx <= lm
+            ? 2 * (lx - la) / ((lb - la) * (lm - la))
+            : 2 * (lb - lx) / ((lb - la) * (lb - lm));
+          return fLog / x;
+        }
+        case 'logdtriangular': case 'logdt': case 'logdtriang': {
+          const { a, b, m } = args;
+          if (x <= a || x >= b) return 0;
+          const la = Math.log(a), lb = Math.log(b), lm = Math.log(m), lx = Math.log(x);
+          const fLog = lx <= lm
+            ? (lx - la) / ((lm - la) * (lm - la))
+            : (lb - lx) / ((lb - lm) * (lb - lm));
+          return fLog / x;
+        }
+        case 'lognormal': case 'logn': case 'lognorm': {
+          const { gm, gsd } = args;
+          if (x <= 0) return 0;
+          const mu = Math.log(gm), sigma = Math.log(gsd);
+          const z = (Math.log(x) - mu) / sigma;
+          return Math.exp(-0.5 * z * z) / (x * sigma * Math.sqrt(2 * Math.PI));
+        }
+        default: return null;
+      }
+    }
+
+    /**
+     * Map from type string to inverse-CDF caller.
+     */
+    const DIST_INV = {
+      'unif':           (p, a) => invUnif(p, a.a, a.b),
+      'uniform':        (p, a) => invUnif(p, a.a, a.b),
+      'triang':         (p, a) => invTriang(p, a.a, a.b, a.m),
+      'triangular':     (p, a) => invTriang(p, a.a, a.b, a.m),
+      'dtriang':        (p, a) => invDtriang(p, a.a, a.b, a.m),
+      'dtriangular':    (p, a) => invDtriang(p, a.a, a.b, a.m),
+      'norm':           (p, a) => invNorm(p, a.mean, a.std),
+      'normal':         (p, a) => invNorm(p, a.mean, a.std),
+      'exp':            (p, a) => invExp(p, a.mean),
+      'exponential':    (p, a) => invExp(p, a.mean),
+      'logu':           (p, a) => invLogu(p, a.a, a.b),
+      'logunif':        (p, a) => invLogu(p, a.a, a.b),
+      'loguniform':     (p, a) => invLogu(p, a.a, a.b),
+      'logt':           (p, a) => invLogt(p, a.a, a.b, a.m),
+      'logtriang':      (p, a) => invLogt(p, a.a, a.b, a.m),
+      'logtriangular':  (p, a) => invLogt(p, a.a, a.b, a.m),
+      'logdt':          (p, a) => invLogdt(p, a.a, a.b, a.m),
+      'logdtriang':     (p, a) => invLogdt(p, a.a, a.b, a.m),
+      'logdtriangular': (p, a) => invLogdt(p, a.a, a.b, a.m),
+      'logn':           (p, a) => invLogn(p, a.gm, a.gsd),
+      'lognorm':        (p, a) => invLogn(p, a.gm, a.gsd),
+      'lognormal':      (p, a) => invLogn(p, a.gm, a.gsd),
+      'emp':            (p, a) => invEmpirical(p, a.data),
+      'empirical':      (p, a) => invEmpirical(p, a.data),
+    };
+
+    /**
+     * Generate n random samples from a PDF specification object.
+     * Mirrors Python's Distribution(pdf).rnd() from samp_util.py.
+     *
+     * @param {Object} pdf - PDF spec, e.g. {type:'normal', mean:5, std:1}
+     * @param {number} [n=1000] - Number of samples
+     * @returns {Float64Array|null} Array of samples, or null if type unknown
+     */
+    function generatePdfSamples(pdf, n = 1000) {
+      if (!pdf || !pdf.type) return null;
+      const typeKey = pdf.type.toLowerCase();
+
+      // "raw" type: return the data array from the dataset directly
+      if (typeKey === 'raw') return null; // handled separately by caller
+
+      const invFn = DIST_INV[typeKey];
+      if (!invFn) return null;
+
+      // Distribution parameters (everything except meta-keys)
+      const args = { ...pdf };
+      delete args.type;
+
+      // Truncation params
+      const pmin = pdf.pmin ?? 0;
+      const pmax = pdf.pmax ?? 1;
+      const trmin = pdf.trmin ?? null;
+      const trmax = pdf.trmax ?? null;
+      const shift = pdf.shift ?? 0;
+
+      // Compute effective probability bounds with optional value truncation
+      let effPmin = pmin;
+      let effPmax = pmax;
+      if (trmin !== null) {
+        const c = cdfForDist(typeKey, trmin, args);
+        if (c !== null) effPmin = Math.max(effPmin, c);
+      }
+      if (trmax !== null) {
+        const c = cdfForDist(typeKey, trmax, args);
+        if (c !== null) effPmax = Math.min(effPmax, c);
+      }
+      if (effPmin >= effPmax) effPmin = pmin; // fallback
+
+      const samples = new Float64Array(n);
+      for (let i = 0; i < n; i++) {
+        const u = Math.random();
+        const p = effPmin + (effPmax - effPmin) * u;
+        samples[i] = invFn(p, args) + shift;
+      }
+      return samples;
+    }
+
+    /**
+     * Build a human-readable label for a PDF spec.
+     * @param {Object} pdf
+     * @returns {string}
+     */
+    function pdfLabel(pdf) {
+      if (!pdf || !pdf.type) return '';
+      const t = pdf.type;
+      const parts = [t];
+      const keys = Object.keys(pdf).filter(k => !['type','pmin','pmax','trmin','trmax','shift','include_deterministic'].includes(k));
+      for (const k of keys) {
+        const v = pdf[k];
+        if (typeof v === 'number') {
+          // Compact number: use toPrecision(4) only when needed
+          const s = Number.isInteger(v) ? String(v) : Number(v.toPrecision(4)).toString();
+          parts.push(`${k}=${s}`);
+        }
+        // Skip array / object params (e.g. empirical 'data') to keep the label short
+      }
+      return parts.join(', ');
+    }
+
+    /**
+     * Compute analytical PDF curve points for a given distribution spec.
+     * Accounts for truncation (trmin/trmax/pmin/pmax) and shift.
+     * @param {Object} spec - PDF specification object
+     * @param {number} [nPoints=200] - Number of points to evaluate
+     * @returns {{x:number[], y:number[]}|null} Points for the line overlay
+     */
+    function computePdfOverlay(spec, nPoints = 200) {
+      if (!spec || !spec.type) return null;
+      const typeKey = spec.type.toLowerCase();
+      if (['raw','emp','empirical'].includes(typeKey)) return null;
+
+      const invFn = DIST_INV[typeKey];
+      if (!invFn) return null;
+
+      const args  = { ...spec };
+      const shift = spec.shift ?? 0;
+      const pmin  = spec.pmin  ?? 0;
+      const pmax  = spec.pmax  ?? 1;
+      const trmin = spec.trmin ?? null;
+      const trmax = spec.trmax ?? null;
+
+      // Effective probability bounds (mirrors generatePdfSamples)
+      let effPmin = pmin, effPmax = pmax;
+      if (trmin !== null) {
+        const c = cdfForDist(typeKey, trmin, args);
+        if (c !== null) effPmin = Math.max(effPmin, c);
+      }
+      if (trmax !== null) {
+        const c = cdfForDist(typeKey, trmax, args);
+        if (c !== null) effPmax = Math.min(effPmax, c);
+      }
+      if (effPmin >= effPmax) { effPmin = pmin; effPmax = pmax; }
+
+      // x-range from probability bounds
+      const eps = 1e-9;
+      const xMin = invFn(Math.max(effPmin, eps), args) + shift;
+      const xMax = invFn(Math.min(effPmax, 1 - eps), args) + shift;
+      if (!isFinite(xMin) || !isFinite(xMax) || xMin >= xMax) return null;
+
+      const normFactor = effPmax - effPmin;
+      if (normFactor <= 0) return null;
+
+      const x = [], y = [];
+      for (let i = 0; i <= nPoints; i++) {
+        const xi = xMin + (xMax - xMin) * i / nPoints;
+        const fVal = pdfEval(typeKey, xi - shift, args);
+        if (fVal !== null && isFinite(fVal)) {
+          x.push(xi);
+          y.push(fVal / normFactor);
+        }
+      }
+      return x.length > 0 ? { x, y } : null;
+    }
+
     /**
      * Escape value for CSV export (handle commas, quotes, newlines)
      */
@@ -439,6 +777,7 @@
       
       const typeMap = {
         'i': 'Integer', 'u': 'Unsigned Integer', 'f': 'Float', 'c': 'Complex',
+        'q': 'Integer', 'Q': 'Unsigned Integer',
         'S': 'String (fixed)', 'U': 'Unicode String', 'V': 'Void/Compound',
         'O': 'Object Reference', 'b': 'Boolean', 't': 'Time', 'm': 'Timedelta',
         'M': 'Datetime', 'a': 'Bytes', 'A': 'Any', 'd': 'Float'
@@ -690,11 +1029,19 @@
     // Update Plotly chart colours when theme changes
     new MutationObserver(() => {
       const el = document.getElementById('plotlyChart');
-      if (!el || !currentChartData) return;
+      if (!el) return;
       const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
       const textColor = isDark ? '#e8ddd0' : '#2d2416';
       const gridColor = isDark ? '#4a3f35' : '#e5ddd5';
       const bgColor  = isDark ? '#2a221b' : '#ffffff';
+
+      if (currentPdfHistogram && currentPdfHistogramData) {
+        // Re-render the whole histogram with correct theme colours
+        createPdfHistogram(currentPdfHistogramData);
+        return;
+      }
+
+      if (!currentChartData) return;
       Plotly.relayout(el, {
         paper_bgcolor: bgColor,
         plot_bgcolor: bgColor,
@@ -716,8 +1063,15 @@
       const container = getElement('plotlyChartContainer');
       if (container) {
         container.classList.remove('visible');
+        // Restore chart controls visibility (may have been hidden for PDF histograms)
+        const controls = container.querySelector('.chart-controls');
+        if (controls) controls.style.display = '';
       }
       currentChartData = null;
+      currentPdfHistogram = false;
+      currentPdfHistogramData = null;
+      const histControls = document.getElementById('histControls');
+      if (histControls) histControls.style.display = 'none';
     }
     
     /**
@@ -773,6 +1127,14 @@
       const container = getElement('plotlyChartContainer');
       const config = getPlotlyConfig('chart');
       
+      // Restore chart controls (may have been hidden for PDF histograms)
+      if (container) {
+        const controls = container.querySelector('.chart-controls');
+        if (controls) controls.style.display = '';
+      }
+      const histControls = document.getElementById('histControls');
+      if (histControls) histControls.style.display = 'none';
+
       if (dynamicLegendEnabled) {
         assignLegendRanks(traces);
       }
@@ -785,6 +1147,185 @@
       Plotly.newPlot('plotlyChart', traces, layout, config).then(() => {
         setupDynamicLegend(getElement('plotlyChart'));
       });
+    }
+
+    /**
+     * Render a PDF histogram in the main chart area (#plotlyChart).
+     * Handles both single-distribution and lookup-table (multi-index) cases.
+     * @param {Object} data - pdfHistogramData object
+     */
+    function createPdfHistogram(data) {
+      const container = getElement('plotlyChartContainer');
+      if (!container) return;
+
+      // Store data globally for re-rendering on theme / log toggle
+      currentPdfHistogramData = data;
+
+      // Hide time-series controls, show histogram controls when applicable
+      const controls = container.querySelector('.chart-controls');
+      if (controls) controls.style.display = 'none';
+      const histControls = document.getElementById('histControls');
+
+      // Determine if all sample values are strictly positive (log10 is only meaningful then)
+      let allPositive = true;
+      if (data.type === 'single') {
+        allPositive = data.samples.every(v => v > 0);
+      } else if (data.type === 'lookup') {
+        allPositive = data.entries.every(e => e.samples.every(v => v > 0));
+      }
+      if (histControls) histControls.style.display = allPositive ? '' : 'none';
+
+      const useLog = allPositive && document.getElementById('histLogScale') && document.getElementById('histLogScale').checked;
+
+      const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+      const textColor = isDark ? '#e8ddd0' : '#2d2416';
+      const gridColor = isDark ? '#4a3f35' : '#e5ddd5';
+      const bgColor  = isDark ? '#2a221b' : '#ffffff';
+      const barColor  = isDark ? 'rgba(243,184,123,0.45)' : 'rgba(187,108,93,0.45)';
+      const barLine   = isDark ? 'rgba(243,184,123,0.8)'  : 'rgba(187,108,93,0.8)';
+      const pdfLineColor = isDark ? 'rgba(255,220,160,1)' : 'rgba(140,60,45,1)';
+      const detColor  = isDark ? '#ff6b6b' : '#d63031';
+
+      const palette = [
+        { bar: isDark ? 'rgba(243,184,123,0.35)' : 'rgba(187,108,93,0.35)', line: isDark ? 'rgba(243,184,123,0.8)' : 'rgba(187,108,93,0.8)', pdf: isDark ? 'rgba(255,220,160,1)' : 'rgba(140,60,45,1)' },
+        { bar: isDark ? 'rgba(123,198,243,0.35)' : 'rgba(65,131,196,0.35)',  line: isDark ? 'rgba(123,198,243,0.8)' : 'rgba(65,131,196,0.8)',  pdf: isDark ? 'rgba(160,220,255,1)' : 'rgba(30,90,160,1)' },
+        { bar: isDark ? 'rgba(168,230,160,0.35)' : 'rgba(80,160,72,0.35)',   line: isDark ? 'rgba(168,230,160,0.8)' : 'rgba(80,160,72,0.8)',   pdf: isDark ? 'rgba(190,255,185,1)' : 'rgba(40,120,35,1)' },
+        { bar: isDark ? 'rgba(230,168,230,0.35)' : 'rgba(170,80,170,0.35)',  line: isDark ? 'rgba(230,168,230,0.8)' : 'rgba(170,80,170,0.8)',  pdf: isDark ? 'rgba(250,200,250,1)' : 'rgba(130,40,130,1)' },
+        { bar: isDark ? 'rgba(243,210,123,0.35)' : 'rgba(200,150,50,0.35)',  line: isDark ? 'rgba(243,210,123,0.8)' : 'rgba(200,150,50,0.8)',  pdf: isDark ? 'rgba(255,230,160,1)' : 'rgba(160,110,20,1)' },
+        { bar: isDark ? 'rgba(243,150,150,0.35)' : 'rgba(200,80,80,0.35)',   line: isDark ? 'rgba(243,150,150,0.8)' : 'rgba(200,80,80,0.8)',   pdf: isDark ? 'rgba(255,185,185,1)' : 'rgba(160,40,40,1)' },
+      ];
+
+      /** Transform value into display-space (identity or log10) */
+      const xform = useLog ? v => Math.log10(v) : v => v;
+
+      let traces = [];
+      let shapes = [];
+
+      if (data.type === 'single') {
+        const label = data.spec ? pdfLabel(data.spec) : 'raw';
+
+        // Histogram trace (probability density)
+        traces.push({
+          x: data.samples.map(xform),
+          type: 'histogram',
+          histnorm: 'probability density',
+          marker: { color: barColor, line: { color: barLine, width: 1 } },
+          opacity: 0.85,
+          name: 'Samples',
+        });
+
+        // Analytical PDF overlay line
+        const overlay = data.spec ? computePdfOverlay(data.spec) : null;
+        if (overlay) {
+          if (useLog) {
+            // Change of variable: f_log10(log10(x)) = f(x) · x · ln(10)
+            const xLog = [], yLog = [];
+            for (let k = 0; k < overlay.x.length; k++) {
+              const xv = overlay.x[k];
+              if (xv > 0) {
+                xLog.push(Math.log10(xv));
+                yLog.push(overlay.y[k] * xv * Math.LN10);
+              }
+            }
+            traces.push({ x: xLog, y: yLog, type: 'scatter', mode: 'lines', line: { color: pdfLineColor, width: 2.5 }, name: 'PDF (' + label + ')' });
+          } else {
+            traces.push({ x: overlay.x, y: overlay.y, type: 'scatter', mode: 'lines', line: { color: pdfLineColor, width: 2.5 }, name: 'PDF (' + label + ')' });
+          }
+        }
+
+        // Deterministic value vertical line
+        if (data.deterministicValue !== null && data.deterministicValue !== undefined && isFinite(data.deterministicValue)) {
+          const detX = xform(data.deterministicValue);
+          shapes.push({
+            type: 'line', x0: detX, x1: detX, y0: 0, y1: 1, yref: 'paper',
+            line: { color: detColor, width: 2, dash: 'dashdot' },
+          });
+          traces.push({
+            x: [detX], y: [0], type: 'scatter', mode: 'markers',
+            marker: { color: detColor, size: 10, symbol: 'line-ns-open', line: { width: 2, color: detColor } },
+            name: 'Deterministic (' + Number(data.deterministicValue.toPrecision(4)) + ')',
+            showlegend: true,
+          });
+        }
+      } else if (data.type === 'lookup') {
+        data.entries.forEach((entry, i) => {
+          const c = palette[i % palette.length];
+          const label = entry.spec ? entry.label + ' (' + pdfLabel(entry.spec) + ')' : entry.label;
+
+          traces.push({
+            x: entry.samples.map(xform),
+            type: 'histogram',
+            histnorm: 'probability density',
+            marker: { color: c.bar, line: { color: c.line, width: 1 } },
+            opacity: 0.7,
+            name: label,
+          });
+
+          const overlay = entry.spec ? computePdfOverlay(entry.spec) : null;
+          if (overlay) {
+            if (useLog) {
+              const xLog = [], yLog = [];
+              for (let k = 0; k < overlay.x.length; k++) {
+                const xv = overlay.x[k];
+                if (xv > 0) { xLog.push(Math.log10(xv)); yLog.push(overlay.y[k] * xv * Math.LN10); }
+              }
+              traces.push({ x: xLog, y: yLog, type: 'scatter', mode: 'lines', line: { color: c.pdf, width: 2 }, name: 'PDF ' + entry.label, showlegend: false });
+            } else {
+              traces.push({ x: overlay.x, y: overlay.y, type: 'scatter', mode: 'lines', line: { color: c.pdf, width: 2 }, name: 'PDF ' + entry.label, showlegend: false });
+            }
+          }
+
+          if (entry.deterministicValue !== null && entry.deterministicValue !== undefined && isFinite(entry.deterministicValue)) {
+            const detX = xform(entry.deterministicValue);
+            shapes.push({
+              type: 'line', x0: detX, x1: detX, y0: 0, y1: 1, yref: 'paper',
+              line: { color: detColor, width: 1.5, dash: 'dashdot' },
+            });
+          }
+        });
+      }
+
+      const layout = {
+        barmode: data.type === 'lookup' ? 'overlay' : undefined,
+        paper_bgcolor: bgColor,
+        plot_bgcolor: bgColor,
+        font: { color: textColor },
+        xaxis: {
+          title: useLog ? 'log\u2081\u2080(Value)' : 'Value',
+          gridcolor: gridColor,
+          zerolinecolor: gridColor,
+          color: textColor,
+        },
+        yaxis: {
+          title: 'Probability Density',
+          gridcolor: gridColor,
+          zerolinecolor: gridColor,
+          color: textColor,
+          rangemode: 'tozero',
+        },
+        margin: { t: 20, r: 30, b: 60, l: 60 },
+        showlegend: true,
+        legend: { font: { color: textColor } },
+        shapes: shapes,
+      };
+
+      const config = getPlotlyConfig('pdf_histogram');
+
+      currentPdfHistogram = true;
+      currentChartData = null;
+      container.classList.add('visible');
+
+      Plotly.newPlot('plotlyChart', traces, layout, config);
+    }
+
+    /**
+     * Toggle log\u2081\u2080 scale on the PDF histogram x-axis.
+     * Re-renders the histogram from stored data.
+     */
+    function toggleHistLog() {
+      if (currentPdfHistogramData) {
+        createPdfHistogram(currentPdfHistogramData);
+      }
     }
 
 
@@ -3074,7 +3615,7 @@
       
       const jsonReplacer = (key, value) => {
         if (typeof value === 'bigint') {
-          return value.toString() + 'n';
+          return Number(value);
         }
         if (value && typeof value === 'object' && value.length !== undefined) {
           return Array.from(value);
@@ -3087,6 +3628,7 @@
         let html = '';
         let hasTimeDependentData = false;
         let isRadionuclidesGroup = false;
+        let pdfHistogramData = null;
         
         // Check if this is a radionuclides group
         if (isGroup && enabledFiles.length > 0) {
@@ -3230,9 +3772,20 @@
                 const isScalar = itemCount === 1;
                 const downloadBtnId = `downloadData_${fileKey.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}`;
                 
+                const previewLabel = isScalar ? 'Data Preview' : `Data Preview (first ${preview.length}/${itemCount} items)`;
+                let previewText;
+                if (isScalar) {
+                  // Single value: show without brackets or quotes
+                  let val = preview[0];
+                  if (typeof val === 'bigint') val = Number(val);
+                  previewText = String(val);
+                } else {
+                  previewText = JSON.stringify(preview, jsonReplacer, 2);
+                }
+
                 html += `<div class="info-section">
                   <div class="info-label" style="display: flex; align-items: center; justify-content: space-between;">
-                    <span>Data Preview (first ${preview.length}/${itemCount} items)</span>
+                    <span>${previewLabel}</span>
                     ${!isScalar ? `<button 
                       id="${downloadBtnId}" 
                       class="download-data-btn" 
@@ -3243,7 +3796,7 @@
                       ⬇ Download CSV
                     </button>` : ''}
                   </div>
-                  <div class="info-content">${escapeHtml(JSON.stringify(preview, jsonReplacer, 2))}</div>
+                  <div class="info-content">${escapeHtml(previewText)}</div>
                 </div>`;
                 
                 // Setup download button handler
@@ -3297,6 +3850,116 @@
             html += buildAttributesTable(attrs, jsonReplacer);
           }
           
+          // Collect PDF histogram data (only from the first file that has a pdf attr)
+          if (!isGroup && attrs.pdf && !pdfHistogramData) {
+            try {
+              let pdfRaw = attrs.pdf;
+              // Parse JSON string if needed
+              if (typeof pdfRaw === 'string') {
+                pdfRaw = JSON.parse(pdfRaw);
+              }
+
+              const isLookupTable = Array.isArray(pdfRaw);
+              const indexAttr = attrs.index;
+
+              if (isLookupTable && indexAttr) {
+                // Lookup-table: array of per-index PDF specs
+                const indexLabels = Array.isArray(indexAttr) ? indexAttr : Array.from(indexAttr);
+                const entries = [];
+                for (let i = 0; i < pdfRaw.length; i++) {
+                  const spec = pdfRaw[i];
+                  if (!spec) {
+                    // No pdf for this index — use the node value at that index
+                    try {
+                      let rawData;
+                      if (typeof node.value !== 'undefined') rawData = node.value;
+                      else if (typeof node.toArray === 'function') rawData = node.toArray();
+                      if (rawData !== undefined) {
+                        const arr = Array.isArray(rawData) ? rawData : Array.from(rawData);
+                        entries.push({ label: String(indexLabels[i] ?? i), samples: [arr[i]], spec: null });
+                      }
+                    } catch (_) { /* skip */ }
+                    continue;
+                  }
+
+                  if (spec.type && spec.type.toLowerCase() === 'raw') {
+                    // Raw data: column i from the 2D dataset
+                    try {
+                      let rawData;
+                      if (typeof node.value !== 'undefined') rawData = node.value;
+                      else if (typeof node.toArray === 'function') rawData = node.toArray();
+                      if (rawData !== undefined) {
+                        const flat = Array.isArray(rawData) ? rawData : Array.from(rawData);
+                        const nCols = pdfRaw.length;
+                        const nRows = Math.floor(flat.length / nCols);
+                        const shift = (spec.include_deterministic) ? 1 : 0;
+                        const detVal = (spec.include_deterministic && nRows > 0) ? flat[0 * nCols + i] : null;
+                        const col = [];
+                        for (let r = shift; r < nRows; r++) col.push(flat[r * nCols + i]);
+                        entries.push({ label: String(indexLabels[i] ?? i), samples: col, spec: spec, deterministicValue: detVal });
+                      }
+                    } catch (_) { /* skip */ }
+                  } else {
+                    // Standard distribution — read deterministic value from node column
+                    let detVal = null;
+                    try {
+                      let rawData;
+                      if (typeof node.value !== 'undefined') rawData = node.value;
+                      else if (typeof node.toArray === 'function') rawData = node.toArray();
+                      if (rawData !== undefined) {
+                        const flat = Array.isArray(rawData) ? rawData : Array.from(rawData);
+                        const nCols = pdfRaw.length;
+                        if (flat.length >= nCols) detVal = Number(flat[i]);
+                      }
+                    } catch (_) { /* skip */ }
+                    const samples = generatePdfSamples(spec, 1000);
+                    if (samples) {
+                      entries.push({ label: String(indexLabels[i] ?? i), samples: Array.from(samples), spec: spec, deterministicValue: isFinite(detVal) ? detVal : null });
+                    }
+                  }
+                }
+                if (entries.length > 0) {
+                  pdfHistogramData = { type: 'lookup', entries, path };
+                }
+              } else if (!isLookupTable && pdfRaw.type) {
+                // Single PDF spec
+                if (pdfRaw.type.toLowerCase() === 'raw') {
+                  // Raw data from the dataset
+                  try {
+                    let rawData;
+                    if (typeof node.value !== 'undefined') rawData = node.value;
+                    else if (typeof node.toArray === 'function') rawData = node.toArray();
+                    if (rawData !== undefined) {
+                      const flat = Array.isArray(rawData) ? rawData : Array.from(rawData);
+                      const shift = (pdfRaw.include_deterministic) ? 1 : 0;
+                      const detVal = (pdfRaw.include_deterministic && flat.length > 0) ? flat[0] : null;
+                      pdfHistogramData = { type: 'single', samples: flat.slice(shift), spec: pdfRaw, path, deterministicValue: detVal };
+                    }
+                  } catch (_) { /* skip */ }
+                } else {
+                  // Standard distribution — read deterministic value from the node
+                  let detVal = null;
+                  try {
+                    let rawData;
+                    if (typeof node.value !== 'undefined') rawData = node.value;
+                    else if (typeof node.toArray === 'function') rawData = node.toArray();
+                    if (rawData !== undefined) {
+                      if (typeof rawData === 'number') detVal = rawData;
+                      else if (rawData && rawData.length !== undefined && rawData.length > 0) detVal = Number(rawData[0]);
+                    }
+                  } catch (_) { /* skip */ }
+
+                  const samples = generatePdfSamples(pdfRaw, 1000);
+                  if (samples) {
+                    pdfHistogramData = { type: 'single', samples: Array.from(samples), spec: pdfRaw, path, deterministicValue: isFinite(detVal) ? detVal : null };
+                  }
+                }
+              }
+            } catch (e) {
+              console.warn('Error parsing pdf attribute:', e.message);
+            }
+          }
+          
           // Add Excel download button for datasets (not groups)
           if (!isGroup) {
             const escapedPath = path.replace(/'/g, "\\'");
@@ -3319,10 +3982,15 @@
         
         // Create chart if appropriate
         if (isRadionuclidesGroup) {
+          currentPdfHistogram = false;
           createRadionuclidesChart(path);
         } else if (hasTimeDependentData && !isGroup) {
+          currentPdfHistogram = false;
           createPlotlyChart(path);
+        } else if (pdfHistogramData) {
+          createPdfHistogram(pdfHistogramData);
         } else {
+          currentPdfHistogram = false;
           document.getElementById('plotlyChartContainer').classList.remove('visible');
           currentChartData = null;
         }
@@ -3825,7 +4493,7 @@
             displayValue = JSON.stringify(value, jsonReplacer, 0);
           }
         } else if (typeof value === 'bigint') {
-          displayValue = value.toString() + 'n';
+          displayValue = String(Number(value));
         } else {
           displayValue = String(value);
         }
