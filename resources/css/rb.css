@@ -433,6 +433,11 @@
       cursor: pointer;
     }
 
+    /* Harmonize all checkboxes with the earthy color scheme */
+    input[type="checkbox"] {
+      accent-color: var(--color-kvot-accent);
+    }
+
     #treeSearch {
       width: 100%;
       padding: 8px 32px 8px 12px;
