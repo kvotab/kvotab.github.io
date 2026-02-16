@@ -97,11 +97,32 @@
 [data-theme="dark"] .js-plotly-plot .plotly .modebar-btn:hover path {
     fill: #f3b87b;
 }
+/* Autocomplete dropdown dark mode */
+[data-theme="dark"] .ui-autocomplete {
+    background-color: var(--bg-surface);
+    border-color: #5a4f42;
+    box-shadow: 0 5px 10px rgba(0, 0, 0, 0.5);
+}
+[data-theme="dark"] .ui-autocomplete .ui-menu-item a {
+    color: var(--text-primary);
+}
+[data-theme="dark"] .ui-autocomplete .ui-menu-item a.ui-state-focus,
+[data-theme="dark"] .ui-autocomplete .ui-menu-item a.ui-state-hover {
+    background: #3a3028;
+    color: #f3b87b;
+    border-color: #5a4f42;
+}
+[data-theme="dark"] .ui-autocomplete-category {
+    color: #f3b87b;
+}
 #tree .icon 
 {
-    -webkit-mask-image: url("Chemical element.svg");
-    mask-image: url("Chemical element.svg");
-
+    -webkit-mask-image: url("Chemical%20element.svg");
+    mask-image: url("Chemical%20element.svg");
+    -webkit-mask-size: contain;
+    mask-size: contain;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
 } 
 #tree .Alkali_metal 
 {
@@ -145,6 +166,7 @@
 }
 #tree .treeelement
 {
+    background-image: none!important;
     background-position: 0!important;
     background-size: 16px;
 	margin-top: 0px;
@@ -152,6 +174,7 @@
 }
 #tree .treeelement_open
 {
+    background-image: none!important;
     background-size: 23px;
 }
 #tree .radioisotope
@@ -177,42 +200,52 @@
 .Alkali_metal 
 {
 	background-color: rgba(0, 128, 0, 0.3);
+	border-color: rgb(0, 128, 0);
 }
 .Alkaline_earth_metal 
 {
 	background-color: rgba(86, 0, 36, 0.3);
+	border-color: rgb(86, 0, 36);
 }
 .Transition_metal
 {
 	background-color: rgba(98, 50, 236, 0.3);
+	border-color: rgb(98, 50, 236);
 }
  .Post__transition_metal
 {
 	background-color: rgba(34, 119, 84, 0.3);
+	border-color: rgb(34, 119, 84);
 }
  .Metalloid
 {
 	background-color: rgba(148, 87, 0, 0.3);
+	border-color: rgb(148, 87, 0);
 }
 .Reactive_nonmetal
 {
 	background-color: rgba(0, 96, 240, 0.3);
+	border-color: rgb(0, 96, 240);
 }
 .Noble_gas
 {
 	background-color: rgba(255, 231, 235, 0.3);
+	border-color: rgb(255, 231, 235);
 }
 .Lanthanide
 {
 	background-color: rgba(0, 51, 85, 0.3);
+	border-color: rgb(0, 51, 85);
 }
 .Actinide
 {
 	background-color: rgba(199, 50, 0, 0.3);
+	border-color: rgb(199, 50, 0);
 }
 .Unknown_properties
 {
 	background-color: rgba(111, 103, 79, 0.3);
+	border-color: rgb(111, 103, 79);
 }
 .js-plotly-plot .plotly .modebar {
    transform: translate(-80px,8px);
@@ -249,10 +282,23 @@
     padding: .2em .4em;
     margin: .8em 0 .2em;
     line-height: 1.5;
+    color: var(--text-primary, #333);
 }
 .ui-menu-item{
 	padding: .1em .8em;
     margin: .8em 0 .2em;
+}
+.ui-menu-item a {
+    color: var(--text-primary, #333);
+    text-decoration: none;
+    display: block;
+    padding: .2em .4em;
+}
+.ui-menu-item a.ui-state-focus,
+.ui-menu-item a.ui-state-hover {
+    background: var(--color-kvot-primary, #e0e0e0);
+    color: var(--color-kvot-bright, #000);
+    border-color: var(--border-color, #ccc);
 }
 
 .ui-autocomplete {
@@ -260,6 +306,10 @@
     overflow-y: auto;
     /* prevent horizontal scrollbar */
     overflow-x: hidden;
+    z-index: 10 !important;
+    background-color: var(--bg-surface, #ffffff);
+    border: 1px solid var(--border-color, rgba(0, 0, 0, 0.15));
+    box-shadow: 0 5px 10px rgba(0, 0, 0, 0.2);
 }
   /* IE 6 doesn't support max-height
    * we use height instead, but this forces the menu to always be this tall
@@ -562,9 +612,9 @@ th {
 
 
   #info {
-    position: absolute;
+    position: fixed;
     border: 5px solid;
-    top: 25px;
+    top: 68px;
     left: calc(50% - 200px);
     width:500px;
   padding: 10px;
@@ -574,13 +624,55 @@ th {
 	overflow-y: auto;
 	overflow-x: hidden;
 	white-space: normal;
-	transform: scale(1);
   opacity:0;
-	transform-origin: 0% 0%;
-	transition: all .3s ease-in-out;
+  pointer-events: none;
+	transition: opacity .3s ease-in-out;
+  z-index: 3;
+  max-height: calc(100vh - 100px);
 }
 #info.show {
   opacity:1;
+  pointer-events: auto;
+}
+#info.Alkali_metal {
+  background-color: rgba(0, 128, 0, 0.3);
+  border-color: rgb(0, 128, 0);
+}
+#info.Alkaline_earth_metal {
+  background-color: rgba(86, 0, 36, 0.3);
+  border-color: rgb(86, 0, 36);
+}
+#info.Transition_metal {
+  background-color: rgba(98, 50, 236, 0.3);
+  border-color: rgb(98, 50, 236);
+}
+#info.Post__transition_metal {
+  background-color: rgba(34, 119, 84, 0.3);
+  border-color: rgb(34, 119, 84);
+}
+#info.Metalloid {
+  background-color: rgba(148, 87, 0, 0.3);
+  border-color: rgb(148, 87, 0);
+}
+#info.Reactive_nonmetal {
+  background-color: rgba(0, 96, 240, 0.3);
+  border-color: rgb(0, 96, 240);
+}
+#info.Noble_gas {
+  background-color: rgba(255, 231, 235, 0.3);
+  border-color: rgb(255, 231, 235);
+}
+#info.Lanthanide {
+  background-color: rgba(0, 51, 85, 0.3);
+  border-color: rgb(0, 51, 85);
+}
+#info.Actinide {
+  background-color: rgba(199, 50, 0, 0.3);
+  border-color: rgb(199, 50, 0);
+}
+#info.Unknown_properties {
+  background-color: rgba(111, 103, 79, 0.3);
+  border-color: rgb(111, 103, 79);
 }
 /*
 #periodic_table > rect:hover {
