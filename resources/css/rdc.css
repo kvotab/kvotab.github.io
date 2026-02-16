@@ -115,67 +115,12 @@
 [data-theme="dark"] .ui-autocomplete-category {
     color: #f3b87b;
 }
-#tree .icon 
-{
-    -webkit-mask-image: url("Chemical%20element.svg");
-    mask-image: url("Chemical%20element.svg");
-    -webkit-mask-size: contain;
-    mask-size: contain;
-    -webkit-mask-repeat: no-repeat;
-    mask-repeat: no-repeat;
-} 
-#tree .Alkali_metal 
-{
-	background-color: var(--color-Alkali_metal);
+/* Element icon sizing for jstree data-URI icons */
+#tree .jstree-themeicon-custom {
+    background-size: 16px !important;
 }
-#tree .Alkaline_earth_metal 
-{
-	background-color: var(--color-Alkaline_earth_metal);
-}
-#tree .Transition_metal
-{
-	background-color: var(--color-Transition_metal);
-}
-#tree .Post__transition_metal
-{
-	background-color: var(--color-Post__transition_metal);
-}
-#tree .Metalloid
-{
-	background-color: var(--color-Metalloid);
-}
-#tree .Reactive_nonmetal
-{
-	background-color: var(--color-Reactive_nonmetal);
-}
-#tree .Noble_gas
-{
-	background-color: var(--color-Noble_gas);
-}
-#tree .Lanthanide
-{
-	background-color: var(--color-Lanthanide);
-}
-#tree .Actinide
-{
-	background-color: var(--color-Actinide);
-}
-#tree .Unknown_properties
-{
-	background-color: var(--color-Unknown_properties);
-}
-#tree .treeelement
-{
-    background-image: none!important;
-    background-position: 0!important;
-    background-size: 16px;
-	margin-top: 0px;
-	margin-left: 4px;
-}
-#tree .treeelement_open
-{
-    background-image: none!important;
-    background-size: 23px;
+#tree .jstree-open > .jstree-anchor > .jstree-themeicon-custom {
+    background-size: 23px !important;
 }
 #tree .radioisotope
 {
