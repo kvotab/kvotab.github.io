@@ -28,7 +28,6 @@
 <header></header>
 
 <div class="content">
-    <div id="info"></div>
 
     <!-- The Modal info view -->
     <div id="myModal" class="modal">
@@ -144,6 +143,7 @@
         <input type="number" min="0" style="z-index:10000;width:82%" name="ICMOLE" value="0"> mol</form></div>
 </div>
 
+<div id="info"></div>
 <div id="kvotmap"></div>
 <footer></footer>
 
@@ -718,7 +718,6 @@ $('#tree').jstree({
         infodiv.classList.remove("Unknown_properties");
         infodiv.classList.add(node.type);
         infodiv.classList.add("show");
-        infodiv.style.backgroundColor.replace(')',',0.2)').replace('rgb','rgba');
     }
     runAndUpdateChart();
 }).on('open_node.jstree', function (e, data) {
