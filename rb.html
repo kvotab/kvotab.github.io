@@ -1268,7 +1268,25 @@
       } else if (data.type === 'lookup') {
         allPositive = data.entries.every(e => e.samples.every(v => v > 0));
       }
-      if (histControls) histControls.style.display = allPositive ? '' : 'none';
+
+      // Always show the Data preview header when a histogram is rendered.
+      // Show/hide only the Log10 checkbox based on positivity and clear it when hidden.
+      if (histControls) {
+        histControls.style.display = ''; // show Data preview area for any histogram
+        const logLabel = document.getElementById('histLogLabel');
+        const logCheckbox = document.getElementById('histLogScale');
+        if (logLabel) logLabel.style.display = allPositive ? '' : 'none';
+        if (!allPositive && logCheckbox) logCheckbox.checked = false;
+      }
+      
+      // // Determine if all sample values are strictly positive (log10 is only meaningful then)
+      // let allPositive = true;
+      // if (data.type === 'single') {
+      //   allPositive = data.samples.every(v => v > 0);
+      // } else if (data.type === 'lookup') {
+      //   allPositive = data.entries.every(e => e.samples.every(v => v > 0));
+      // }
+      // if (histControls) histControls.style.display = allPositive ? '' : 'none';
 
       const useLog = allPositive && document.getElementById('histLogScale') && document.getElementById('histLogScale').checked;
 
