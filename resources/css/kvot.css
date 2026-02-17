@@ -192,7 +192,7 @@ body{
 
 header {
      display: grid;
-     grid-template-columns: 150px auto 180px 80px;
+     grid-template-columns: 60px auto 180px 80px;
      position: fixed;
      top: 0;
      left: 0;
@@ -227,13 +227,12 @@ header .logo:hover {
   fill: var(--color-kvot-primary);
 }
 header .title {
-margin:2px;
-margin-left: 8px;
-font-size: 1.5em;
-
-text-align: left;
-   color: var(--color-kvot-bright);
-font-family:RawengulkSans;
+  margin:2px;
+  margin-left: 8px;
+  font-size: 1.5em;
+  text-align: left;
+  color: var(--color-kvot-bright);
+  font-family: RawengulkSans;
 }
 header input {
 width:140px;

@@ -94,7 +94,7 @@
     }
 
     header {
-      grid-template-columns: 50px auto 1fr 80px;
+      grid-template-columns: 60px auto 1fr 80px;
       z-index: 1000000000;
     }
 
