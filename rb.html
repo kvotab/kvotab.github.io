@@ -4006,24 +4006,125 @@
           // Collect PDF histogram data (only from the first file that has a pdf attr)
           if (!isGroup && attrs.pdf && !pdfHistogramData) {
             try {
-              const label = path.split('/').pop();
-              const entries = collectPdfEntries(node, attrs, label);
-              if (entries && entries.length > 0) {
-                if (entries.length === 1 && entries[0].spec) {
-                  const e = entries[0];
-                  pdfHistogramData = {
-                    type: 'single',
-                    samples: Array.from(e.samples, v => (typeof v === 'bigint' ? Number(v) : v)),
-                    spec: e.spec,
-                    path,
-                    deterministicValue: e.deterministicValue ?? null
-                  };
+              let pdfRaw = attrs.pdf;
+              // Parse JSON string if needed
+              if (typeof pdfRaw === 'string') {
+                pdfRaw = JSON.parse(pdfRaw);
+              }
+
+              const isLookupTable = Array.isArray(pdfRaw);
+              const indexAttr = attrs.index;
+
+              if (isLookupTable && indexAttr) {
+                // Lookup-table: array of per-index PDF specs
+                const indexLabels = Array.isArray(indexAttr) ? indexAttr : Array.from(indexAttr);
+                const entries = [];
+                for (let i = 0; i < pdfRaw.length; i++) {
+                  const spec = pdfRaw[i];
+                  if (!spec) {
+                    // No pdf for this index — use the node value at that index
+                    try {
+                      let rawData;
+                      if (typeof node.value !== 'undefined') rawData = node.value;
+                      else if (typeof node.toArray === 'function') rawData = node.toArray();
+                      if (rawData !== undefined) {
+                        const arr = Array.isArray(rawData) ? rawData : Array.from(rawData);
+                        entries.push({ label: String(indexLabels[i] ?? i), samples: [arr[i]], spec: null });
+                      }
+                    } catch (_) { /* skip */ }
+                    continue;
+                  }
+
+                  if (spec.type && spec.type.toLowerCase() === 'raw') {
+                    // Raw data: column i from the 2D dataset
+                    try {
+                      let rawData;
+                      if (typeof node.value !== 'undefined') rawData = node.value;
+                      else if (typeof node.toArray === 'function') rawData = node.toArray();
+                      if (rawData !== undefined) {
+                        const flat = Array.isArray(rawData) ? rawData : Array.from(rawData);
+                        const nCols = pdfRaw.length;
+                        const nRows = Math.floor(flat.length / nCols);
+                        const shift = (spec.include_deterministic) ? 1 : 0;
+                        const detVal = (spec.include_deterministic && nRows > 0) ? flat[0 * nCols + i] : null;
+                        const col = [];
+                        for (let r = shift; r < nRows; r++) col.push(flat[r * nCols + i]);
+                        entries.push({ label: String(indexLabels[i] ?? i), samples: col, spec: spec, deterministicValue: detVal });
+                      }
+                    } catch (_) { /* skip */ }
+                  } else {
+                    // Standard distribution — read deterministic value from node column
+                    let detVal = null;
+                    try {
+                      let rawData;
+                      if (typeof node.value !== 'undefined') rawData = node.value;
+                      else if (typeof node.toArray === 'function') rawData = node.toArray();
+                      if (rawData !== undefined) {
+                        const flat = Array.isArray(rawData) ? rawData : Array.from(rawData);
+                        const nCols = pdfRaw.length;
+                        if (flat.length >= nCols) detVal = Number(flat[i]);
+                      }
+                    } catch (_) { /* skip */ }
+                    const samples = generatePdfSamples(spec, 1000);
+                    if (samples) {
+                      samples = samples.map(v => (typeof v === 'bigint' ? Number(v) : v));
+                      entries.push({ label: String(indexLabels[i] ?? i), samples: Array.from(samples), spec: spec, deterministicValue: isFinite(detVal) ? detVal : null });
+                    }
+                  }
+                }
+                if (entries.length > 0) {
+                  pdfHistogramData = { type: 'lookup', entries, path };
+                }
+              } else if (!isLookupTable && pdfRaw.type) {
+                // Single PDF spec
+                if (pdfRaw.type.toLowerCase() === 'raw') {
+                  // Raw data from the dataset
+                  try {
+                    let rawData;
+                    if (typeof node.value !== 'undefined') rawData = node.value;
+                    else if (typeof node.toArray === 'function') rawData = node.toArray();
+                    if (rawData !== undefined) {
+                      const flat = (Array.isArray(rawData) ? rawData : Array.from(rawData)).map(v => (typeof v === 'bigint' ? Number(v) : v));
+                      const shift = (pdfRaw.include_deterministic) ? 1 : 0;
+                      const detVal = (pdfRaw.include_deterministic && flat.length > 0) ? flat[0] : null;
+                      pdfHistogramData = { type: 'single', samples: flat.slice(shift), spec: pdfRaw, path, deterministicValue: detVal };
+                    }
+                  } catch (_) { /* skip */ }
+              // const label = path.split('/').pop();
+              // const entries = collectPdfEntries(node, attrs, label);
+              // if (entries && entries.length > 0) {
+              //   if (entries.length === 1 && entries[0].spec) {
+              //     const e = entries[0];
+              //     pdfHistogramData = {
+              //       type: 'single',
+              //       samples: Array.from(e.samples, v => (typeof v === 'bigint' ? Number(v) : v)),
+              //       spec: e.spec,
+              //       path,
+              //       deterministicValue: e.deterministicValue ?? null
+              //     };
                 } else {
-                  pdfHistogramData = {
-                    type: 'lookup',
-                    entries: entries.map(ent => ({ ...ent, samples: ent.samples.map(v => (typeof v === 'bigint' ? Number(v) : v)), deterministicValue: ent.deterministicValue ?? null })),
-                    path
-                  };
+                  // Standard distribution — read deterministic value from the node
+                  let detVal = null;
+                  try {
+                    let rawData;
+                    if (typeof node.value !== 'undefined') rawData = node.value;
+                    else if (typeof node.toArray === 'function') rawData = node.toArray();
+                    if (rawData !== undefined) {
+                      if (typeof rawData === 'number') detVal = rawData;
+                      else if (rawData && rawData.length !== undefined && rawData.length > 0) detVal = Number(rawData[0]);
+                    }
+                  } catch (_) { /* skip */ }
+
+                  const samples = generatePdfSamples(pdfRaw, 1000);
+                  if (samples) {
+                    samples = samples.map(v => (typeof v === 'bigint' ? Number(v) : v));
+                    pdfHistogramData = { type: 'single', samples: Array.from(samples), spec: pdfRaw, path, deterministicValue: isFinite(detVal) ? detVal : null };
+                  }
+                  // pdfHistogramData = {
+                  //   type: 'lookup',
+                  //   entries: entries.map(ent => ({ ...ent, samples: ent.samples.map(v => (typeof v === 'bigint' ? Number(v) : v)), deterministicValue: ent.deterministicValue ?? null })),
+                  //   path
+                  // };
                 }
               }
             } catch (err) {
@@ -4549,11 +4650,32 @@
       let attrsHtml = '<table class="attrs-table">';
       attrsHtml += '<tr class="attrs-header"><th>Name</th><th>Value</th></tr>';
       
-      for (const [key, value] of Object.entries(attrs).slice(0, 5)) {
-        let displayValue = String(value);
-        if (displayValue.length > 50) {
-          displayValue = displayValue.substring(0, 50) + '...';
+      for (const [key, value] of Object.entries(attrs)) {
+        let displayValue;
+        if (typeof value === 'string') {
+          displayValue = value;
+        } else if (Array.isArray(value)) {
+          displayValue = `[${value.join(', ')}]`;
+        } else if (value === null) {
+          displayValue = 'null';
+        } else if (value === undefined) {
+          displayValue = 'undefined';
+        } else if (typeof value === 'object') {
+          if (value.length !== undefined) {
+            displayValue = `[${Array.from(value).slice(0, 10).join(', ')}${value.length > 10 ? '...' : ''}]`;
+          } else {
+            displayValue = JSON.stringify(value, jsonReplacer, 0);
+          }
+        } else if (typeof value === 'bigint') {
+          displayValue = String(Number(value));
+        } else {
+          displayValue = String(value);
         }
+      // for (const [key, value] of Object.entries(attrs).slice(0, 5)) {
+      //   let displayValue = String(value);
+      //   if (displayValue.length > 50) {
+      //     displayValue = displayValue.substring(0, 50) + '...';
+      //   }
         attrsHtml += `<tr class="attrs-row">
           <td><strong>${escapeHtml(key)}</strong></td>
           <td class="attrs-value">${escapeHtml(displayValue)}</td>
@@ -4661,25 +4783,32 @@
           
           // Collect PDF histogram entries for combined chart
           try {
-            const label = path.split('/').pop();
-            const entries = collectPdfEntries(dataset, attrs, label);
-            if (entries && entries.length > 0) {
-              if (entries.length === 1 && entries[0].spec) {
-                const e = entries[0];
-                pdfHistogramData = {
-                  type: 'single',
-                  samples: Array.from(e.samples, v => (typeof v === 'bigint' ? Number(v) : v)),
-                  spec: e.spec,
-                  path,
-                  deterministicValue: e.deterministicValue ?? null
-                };
-              } else {
-                pdfHistogramData = {
-                  type: 'lookup',
-                  entries: entries.map(ent => ({ ...ent, samples: ent.samples.map(v => (typeof v === 'bigint' ? Number(v) : v)), deterministicValue: ent.deterministicValue ?? null })),
-                  path
-                };
-              }
+            if (attrs.pdf) {
+              const datasetName = path.split('/').pop();
+              const shortFile = normalizedItems.length > 1 && new Set(normalizedItems.map(d => d.fileKey)).size > 1
+                ? ' (' + fileKey + ')' : '';
+              const entryLabel = datasetName + shortFile;
+              const pdfEntries = collectPdfEntries(dataset, attrs, entryLabel);
+              if (pdfEntries) combinedPdfEntries.push(...pdfEntries);
+            // const label = path.split('/').pop();
+            // const entries = collectPdfEntries(dataset, attrs, label);
+            // if (entries && entries.length > 0) {
+            //   if (entries.length === 1 && entries[0].spec) {
+            //     const e = entries[0];
+            //     pdfHistogramData = {
+            //       type: 'single',
+            //       samples: Array.from(e.samples, v => (typeof v === 'bigint' ? Number(v) : v)),
+            //       spec: e.spec,
+            //       path,
+            //       deterministicValue: e.deterministicValue ?? null
+            //     };
+            //   } else {
+            //     pdfHistogramData = {
+            //       type: 'lookup',
+            //       entries: entries.map(ent => ({ ...ent, samples: ent.samples.map(v => (typeof v === 'bigint' ? Number(v) : v)), deterministicValue: ent.deterministicValue ?? null })),
+            //       path
+            //     };
+            //   }
             }
           } catch (err) {
             console.warn('PDF collect error:', err);
