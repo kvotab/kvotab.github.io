@@ -151,7 +151,7 @@
 <script src="./resources/js/rdc.js"></script>
 <script>
 // ── Shared components ────────────────────────────────────────────────────────
-KVOT.renderHeader('radionuclide decay chains <span style="font-size: 0.5em;">icrp publication 107</span>',
+KVOT.renderHeader('radionuclide decay chains <a href="https://www.icrp.org/publication.asp?id=ICRP%20Publication%20107" style="font-size: 0.5em;">icrp publication 107</a>',
     '<input id="search-input" class="search-input" type="text" placeholder="Search radionuclide..." onfocusout="searchUnfocus(this)"/>');
 KVOT.renderNav('rdc.html');
 
@@ -502,7 +502,7 @@ function decaygraph(ids, rnnode) {
 function printCY() {
     var sel = $('#tree').jstree("get_selected",true)[0].text;
     if (sel.includes('-')) {
-        var blob = CY.png({'bg':'#FFF','full':true,'output':'blob'});
+        var blob = CY.png({'bg':cyTextBgColor(),'full':true,'output':'blob'});
         saveAs(blob, sel+'.png');
     } else {
         console.log('No radionuclide selected');
