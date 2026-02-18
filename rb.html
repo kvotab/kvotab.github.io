@@ -2745,6 +2745,7 @@
       };
 
       // Add root group item only at top level
+      let rootChildren = null;
       if (prefix === '') {
         const isRootSelected = selectedDatasetPath === '/' && selectedIsRadionuclidesGroup;
         const rootLabel = fileName ? fileName : 'root';
@@ -2779,11 +2780,14 @@
 
         frag.appendChild(rootItem);
 
-        const rootChildren = document.createElement('div');
+        rootChildren = document.createElement('div');
         rootChildren.className = 'tree-group-children' + (isRootSelected ? ' expanded' : '');
         rootChildren.style.marginLeft = '20px';
         frag.appendChild(rootChildren);
       }
+
+      // container for child nodes: rootChildren when at top level, otherwise the fragment
+      const container = rootChildren || frag;
 
       try {
         let keys = [];
@@ -2842,7 +2846,7 @@
               const meta = document.createElement('div'); meta.className = 'tree-meta'; meta.style.color = 'var(--color-kvot-accent)'; meta.textContent = 'broken link';
 
               broken.appendChild(icon); broken.appendChild(label); broken.appendChild(meta);
-              frag.appendChild(broken);
+              container.appendChild(broken);
               if (typeof progressCb === 'function') progressCb(1, path);
               continue;
             }
@@ -2861,7 +2865,7 @@
               const meta = document.createElement('div'); meta.className = 'tree-meta'; meta.textContent = `→ ${linkInfo ? linkInfo.filename : '?'}`;
 
               external.appendChild(icon); external.appendChild(label); external.appendChild(meta);
-              frag.appendChild(external);
+              container.appendChild(external);
               if (typeof progressCb === 'function') progressCb(1, path);
               continue;
             }
@@ -2894,7 +2898,7 @@
               if (linkBadgeEl) label.appendChild(linkBadgeEl);
 
               groupItem.appendChild(toggleDiv); groupItem.appendChild(icon); groupItem.appendChild(label);
-              frag.appendChild(groupItem);
+              container.appendChild(groupItem);
               if (typeof progressCb === 'function') progressCb(1, path);
 
               try {
@@ -2903,7 +2907,7 @@
                   placeholder.className = 'tree-group-children' + (isSelected ? ' expanded' : '');
                   placeholder.setAttribute('data-lazy', 'true');
                   placeholder.setAttribute('data-loaded', 'false');
-                  frag.appendChild(placeholder);
+                  container.appendChild(placeholder);
                 } else {
                   const subFrag = await buildTree(obj, path, true, '', intersectedPaths, fileKey, progressCb, false, (typeof maxDepth === 'number' ? maxDepth - 1 : Infinity));
                   const childrenWrapper = document.createElement('div');
@@ -2923,7 +2927,7 @@
                       childrenWrapper.appendChild(empty);
                     }
                   }
-                  frag.appendChild(childrenWrapper);
+                  container.appendChild(childrenWrapper);
                 }
               } catch (subErr) {
                 console.error('Error getting sub-items for', key, subErr);
@@ -2933,7 +2937,7 @@
                 msg.style.color = 'red'; msg.style.padding = '8px'; msg.style.fontSize = '12px';
                 msg.textContent = `(error: ${subErr?.message || subErr})`;
                 errorWrapper.appendChild(msg);
-                frag.appendChild(errorWrapper);
+                container.appendChild(errorWrapper);
                 if (typeof progressCb === 'function') progressCb(1, path);
               }
             } else if (objType === 'dataset') {
@@ -2953,7 +2957,7 @@
               const meta = document.createElement('div'); meta.className = 'tree-meta'; meta.textContent = `${formattedDtype} [${shape}]`;
 
               ds.appendChild(icon); ds.appendChild(label); ds.appendChild(meta);
-              frag.appendChild(ds);
+              container.appendChild(ds);
               if (typeof progressCb === 'function') progressCb(1, path);
             }
           } catch (e) {
@@ -2962,7 +2966,7 @@
             errEl.className = 'tree-item';
             errEl.style.color = 'red'; errEl.style.fontSize = '12px';
             errEl.textContent = `⚠️ ${key}`;
-            frag.appendChild(errEl);
+            container.appendChild(errEl);
           }
 
           if (++_yieldCounter % 50 === 0) await new Promise(r => setTimeout(r, 0));
