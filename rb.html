@@ -4341,17 +4341,18 @@
      */
     function showNodeAttributes(path, isGroup = false) {
       const infoDiv = document.getElementById('info');
-      infoDiv.innerHTML = '<div class="loading">Loading...</div>';
-      
+      while (infoDiv.firstChild) infoDiv.removeChild(infoDiv.firstChild);
+      const loadingNode = document.createElement('div'); loadingNode.className = 'loading'; loadingNode.textContent = 'Loading...';
+      infoDiv.appendChild(loadingNode);
+
       const jsonReplacer = PDFSampler.jsonReplacer;
-      
+
       try {
         const enabledFiles = getEffectiveFiles();
-        let html = '';
         let hasTimeDependentData = false;
         let isRadionuclidesGroup = false;
         let pdfHistogramData = null;
-        
+
         // Check if this is a radionuclides group
         if (isGroup && enabledFiles.length > 0) {
           const firstFile = loadedFiles[enabledFiles[0]];
@@ -4360,387 +4361,174 @@
         } else {
           selectedIsRadionuclidesGroup = false;
         }
-        
-        // Build HTML for each enabled file
+
+        function createInfoSection(labelText, content, extraClass) {
+          const section = document.createElement('div'); section.className = 'info-section' + (extraClass ? ' ' + extraClass : '');
+          const lbl = document.createElement('div'); lbl.className = 'info-label'; lbl.textContent = labelText;
+          const val = document.createElement('div'); val.className = 'info-content';
+          if (content instanceof Node) val.appendChild(content); else val.textContent = (content === null || content === undefined) ? '' : String(content);
+          section.appendChild(lbl); section.appendChild(val);
+          return section;
+        }
+
+        const contentFrag = document.createDocumentFragment();
+
         for (const fileKey of enabledFiles) {
           const file = loadedFiles[fileKey];
-          
-          if (!checkDatasetExistsInFile(file, path)) {
-            continue;
-          }
-          
+          if (!checkDatasetExistsInFile(file, path)) continue;
           const node = FileService.get(file, path);
           if (!node) continue;
-          
+
           const isFirstFile = fileKey === enabledFiles[0];
           const fileColor = isFirstFile ? '#0066cc' : '#10b981';
           const nodeType = String(node.type);
-          
-          // Detect link info
           const linkInfo = getLinkInfo(file, path, node);
-          
-          html += `<div class="file-data-section" style="border-left-color: ${fileColor};">`;
-          html += `<h4>${escapeHtml(fileKey)}</h4>`;
-          
-          // Handle broken soft links
+
+          const fileSection = document.createElement('div');
+          fileSection.className = 'file-data-section';
+          fileSection.style.borderLeftColor = fileColor;
+
+          const h = document.createElement('h4'); h.textContent = fileKey; fileSection.appendChild(h);
+
           if (nodeType === 'BrokenSoftLink') {
-            html += `<div class="info-section">
-              <div class="info-label">Path</div>
-              <div class="info-content">${escapeHtml(path)}</div>
-            </div>`;
-            html += `<div class="info-section">
-              <div class="info-label">Type</div>
-              <div class="info-content">Broken Soft Link</div>
-            </div>`;
-            html += `<div class="info-section link-info broken">
-              <div class="info-label">🔗 Link Target</div>
-              <div class="info-content">${escapeHtml(node.target || '?')} <span style="color:var(--color-kvot-accent);">(target not found)</span></div>
-            </div>`;
-            html += '</div>';
+            fileSection.appendChild(createInfoSection('Path', path));
+            fileSection.appendChild(createInfoSection('Type', 'Broken Soft Link'));
+            const targetNode = document.createElement('span'); targetNode.textContent = (node.target || '?') + ' '; const accent = document.createElement('span'); accent.style.color = 'var(--color-kvot-accent)'; accent.textContent = '(target not found)';
+            const linkContent = document.createElement('div'); linkContent.appendChild(targetNode); linkContent.appendChild(accent);
+            fileSection.appendChild(createInfoSection('🔗 Link Target', linkContent, 'link-info broken'));
+            contentFrag.appendChild(fileSection);
             continue;
           }
-          
-          // Handle external links
+
           if (nodeType === 'ExternalLink') {
-            html += `<div class="info-section">
-              <div class="info-label">Path</div>
-              <div class="info-content">${escapeHtml(path)}</div>
-            </div>`;
-            html += `<div class="info-section">
-              <div class="info-label">Type</div>
-              <div class="info-content">External Link</div>
-            </div>`;
-            html += `<div class="info-section link-info external">
-              <div class="info-label">🔗 External File</div>
-              <div class="info-content">${escapeHtml(node.filename || '?')}</div>
-            </div>`;
-            html += `<div class="info-section link-info external">
-              <div class="info-label">🔗 External Path</div>
-              <div class="info-content">${escapeHtml(node.obj_path || '?')}</div>
-            </div>`;
-            html += '</div>';
+            fileSection.appendChild(createInfoSection('Path', path));
+            fileSection.appendChild(createInfoSection('Type', 'External Link'));
+            fileSection.appendChild(createInfoSection('🔗 External File', node.filename || '?', 'link-info external'));
+            fileSection.appendChild(createInfoSection('🔗 External Path', node.obj_path || '?', 'link-info external'));
+            contentFrag.appendChild(fileSection);
             continue;
           }
-          
-          // Show path, type, dtype, shape only for first file
+
           if (isFirstFile) {
-            html += `<div class="info-section">
-              <div class="info-label">Path</div>
-              <div class="info-content">${escapeHtml(path)}</div>
-            </div>`;
-            
-            html += `<div class="info-section">
-              <div class="info-label">Type</div>
-              <div class="info-content">${escapeHtml(nodeType)}</div>
-            </div>`;
-            
-            // Show link info for resolved soft links
-            if (linkInfo && linkInfo.type === 'soft') {
-              html += `<div class="info-section link-info soft">
-                <div class="info-label">🔗 Soft Link</div>
-                <div class="info-content">Target: ${escapeHtml(linkInfo.target)}</div>
-              </div>`;
-            }
-            
-            if (!isGroup && node.dtype) {
-              const readableDtype = formatDataType(node.dtype);
-              html += `<div class="info-section">
-                <div class="info-label">Data Type</div>
-                <div class="info-content">${escapeHtml(readableDtype)}</div>
-              </div>`;
-            }
-            
-            if (node.shape && Array.isArray(node.shape)) {
-              html += `<div class="info-section">
-                <div class="info-label">Shape</div>
-                <div class="info-content">${node.shape.join(', ')}</div>
-              </div>`;
-            }
+            fileSection.appendChild(createInfoSection('Path', path));
+            fileSection.appendChild(createInfoSection('Type', nodeType));
+            if (linkInfo && linkInfo.type === 'soft') fileSection.appendChild(createInfoSection('🔗 Soft Link', `Target: ${linkInfo.target}`, 'link-info soft'));
+            if (!isGroup && node.dtype) fileSection.appendChild(createInfoSection('Data Type', formatDataType(node.dtype)));
+            if (node.shape && Array.isArray(node.shape)) fileSection.appendChild(createInfoSection('Shape', node.shape.join(', ')));
           }
-          
-          // Show data preview for datasets (not groups)
+
           if (!isGroup) {
-            if (isTimeDependent(node)) {
-              hasTimeDependentData = true;
-            }
-            
+            if (isTimeDependent(node)) hasTimeDependentData = true;
             try {
               let data;
-              if (typeof node.value !== 'undefined') {
-                data = node.value;
-              } else if (typeof node.toArray === 'function') {
-                data = node.toArray();
-              }
-              
-              if (data !== undefined) {
-                let preview;
-                let itemCount;
-                let fullData;
-                
-                if (Array.isArray(data)) {
-                  preview = data.slice(0, 100);
-                  itemCount = data.length;
-                  fullData = data;
-                } else if (data && typeof data === 'object' && data.length !== undefined) {
-                  preview = Array.from(data).slice(0, 100);
-                  itemCount = data.length;
-                  fullData = Array.from(data);
-                } else {
-                  preview = [data];
-                  itemCount = 1;
-                  fullData = [data];
-                }
-                
+              if (typeof node.value !== 'undefined') data = node.value;
+              else if (typeof node.toArray === 'function') data = node.toArray();
+
+              if (typeof data !== 'undefined') {
+                let preview, itemCount, fullData;
+                if (Array.isArray(data)) { preview = data.slice(0, 100); itemCount = data.length; fullData = data; }
+                else if (data && typeof data === 'object' && data.length !== undefined) { preview = Array.from(data).slice(0, 100); itemCount = data.length; fullData = Array.from(data); }
+                else { preview = [data]; itemCount = 1; fullData = [data]; }
+
                 const isScalar = itemCount === 1;
-                const downloadBtnId = `downloadData_${fileKey.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}`;
-                
                 const previewLabel = isScalar ? 'Data Preview' : `Data Preview (first ${preview.length}/${itemCount} items)`;
                 let previewText;
-                if (isScalar) {
-                  // Single value: show without brackets or quotes
-                  let val = preview[0];
-                  val = PDFSampler.toNumber(val);
-                  previewText = String(val);
-                } else {
-                  previewText = JSON.stringify(preview, jsonReplacer, 2);
+                if (isScalar) { let val = preview[0]; val = PDFSampler.toNumber(val); previewText = String(val); }
+                else previewText = JSON.stringify(preview, jsonReplacer, 2);
+
+                const previewSection = document.createElement('div'); previewSection.className = 'info-section';
+                const previewLbl = document.createElement('div'); previewLbl.className = 'info-label';
+                previewLbl.style.display = 'flex'; previewLbl.style.alignItems = 'center'; previewLbl.style.justifyContent = 'space-between';
+                previewLbl.textContent = previewLabel;
+
+                if (!isScalar) {
+                  const dlBtn = document.createElement('button'); dlBtn.className = 'download-data-btn';
+                  dlBtn.style.cssText = 'padding:4px 8px;background:var(--color-kvot-background);color:var(--color-kvot-bright);border:none;border-radius:3px;cursor:pointer;font-size:11px;font-weight:500;transition:all 0.2s;';
+                  dlBtn.title = 'Download full dataset as CSV';
+                  dlBtn.textContent = '⬇ Download CSV';
+                  dlBtn.addEventListener('mouseover', () => dlBtn.style.background = 'var(--color-kvot-primary)');
+                  dlBtn.addEventListener('mouseout', () => dlBtn.style.background = 'var(--color-kvot-background)');
+                  dlBtn.addEventListener('click', () => downloadDatasetAsCSV(node, fullData, path, fileKey));
+                  previewLbl.appendChild(dlBtn);
                 }
 
-                html += `<div class="info-section">
-                  <div class="info-label" style="display: flex; align-items: center; justify-content: space-between;">
-                    <span>${previewLabel}</span>
-                    ${!isScalar ? `<button 
-                      id="${downloadBtnId}" 
-                      class="download-data-btn" 
-                      style="padding: 4px 8px; background: var(--color-kvot-background); color: var(--color-kvot-bright); border: none; border-radius: 3px; cursor: pointer; font-size: 11px; font-weight: 500; transition: all 0.2s;"
-                      onmouseover="this.style.background='var(--color-kvot-primary)'" 
-                      onmouseout="this.style.background='var(--color-kvot-background)'"
-                      title="Download full dataset as CSV">
-                      ⬇ Download CSV
-                    </button>` : ''}
-                  </div>
-                  <div class="info-content">${escapeHtml(previewText)}</div>
-                </div>`;
-                
-                // Setup download button handler
-                if (!isScalar) {
-                  setTimeout(() => {
-                    const downloadBtn = document.getElementById(downloadBtnId);
-                    if (downloadBtn) {
-                      downloadBtn.addEventListener('click', () => {
-                        downloadDatasetAsCSV(node, fullData, path, fileKey);
-                      });
-                    }
-                  }, 0);
-                }
+                const previewContent = document.createElement('div'); previewContent.className = 'info-content'; previewContent.textContent = previewText;
+                previewSection.appendChild(previewLbl); previewSection.appendChild(previewContent);
+                fileSection.appendChild(previewSection);
               }
             } catch (e) {
-              console.warn('Could not read data:', e.message);
+              console.warn('Could not read data:', e && e.message ? e.message : e);
             }
           }
-          
-          // Show attributes table
-          const attrs = {};
-          let hasAttributes = false;
-          
+
+          const attrs = {}; let hasAttributes = false;
           try {
             if (node.attrs && typeof node.attrs === 'object') {
               for (const attrName in node.attrs) {
                 if (!attrName.startsWith('_')) {
                   try {
                     const attrObj = node.attrs[attrName];
-                    let attrValue;
-                    // prefer attrObj.value when present (h5wasm attribute wrapper), otherwise use primitive/string directly
-                    if (attrObj && typeof attrObj === 'object' && 'value' in attrObj) {
-                      attrValue = attrObj.value;
-                    } else {
-                      attrValue = attrObj;
-                    }
-
-                    attrs[attrName] = attrValue;
-                    hasAttributes = true;
-                  } catch (e) {
-                    attrs[attrName] = `(unreadable: ${e.message})`;
-                  }
+                    const attrValue = (attrObj && typeof attrObj === 'object' && 'value' in attrObj) ? attrObj.value : attrObj;
+                    attrs[attrName] = attrValue; hasAttributes = true;
+                  } catch (err) { attrs[attrName] = `(unreadable: ${err && err.message ? err.message : 'error'})`; }
                 }
               }
             }
-          } catch (e) {
-            console.warn('Error reading attributes:', e.message);
-          }
-          
+          } catch (e) { console.warn('Error reading attributes:', e && e.message ? e.message : e); }
+
           if (hasAttributes && Object.keys(attrs).length > 0) {
-            html += buildAttributesTable(attrs, jsonReplacer);
+            const attrEl = buildAttributesTable(attrs, jsonReplacer);
+            if (attrEl) fileSection.appendChild(attrEl);
           }
-          
-          // Collect PDF histogram data (only from the first file that has a pdf attr)
+
           if (!isGroup && attrs.pdf && !pdfHistogramData) {
             try {
-              let pdfRaw = attrs.pdf;
-              // Parse JSON string if needed
-              if (typeof pdfRaw === 'string') {
-                pdfRaw = JSON.parse(pdfRaw);
-              }
-
-              const isLookupTable = Array.isArray(pdfRaw);
-              const indexAttr = attrs.index;
-
+              let pdfRaw = attrs.pdf; if (typeof pdfRaw === 'string') pdfRaw = JSON.parse(pdfRaw);
+              const isLookupTable = Array.isArray(pdfRaw); const indexAttr = attrs.index;
               if (isLookupTable && indexAttr) {
-                // Lookup-table: array of per-index PDF specs
                 const indexLabels = Array.isArray(indexAttr) ? indexAttr : Array.from(indexAttr);
                 const entries = [];
                 for (let i = 0; i < pdfRaw.length; i++) {
                   const spec = pdfRaw[i];
-                  if (!spec) {
-                    // No pdf for this index — use the node value at that index
-                    try {
-                      let rawData;
-                      if (typeof node.value !== 'undefined') rawData = node.value;
-                      else if (typeof node.toArray === 'function') rawData = node.toArray();
-                      if (rawData !== undefined) {
-                        const arr = Array.isArray(rawData) ? rawData : Array.from(rawData);
-                        entries.push({ label: String(indexLabels[i] ?? i), samples: [arr[i]], spec: null });
-                      }
-                    } catch (_) { /* skip */ }
-                    continue;
-                  }
-
-                  if (spec.type && spec.type.toLowerCase() === 'raw') {
-                    // Raw data: column i from the 2D dataset
-                    try {
-                      let rawData;
-                      if (typeof node.value !== 'undefined') rawData = node.value;
-                      else if (typeof node.toArray === 'function') rawData = node.toArray();
-                      if (rawData !== undefined) {
-                        const flat = Array.isArray(rawData) ? rawData : Array.from(rawData);
-                        const nCols = pdfRaw.length;
-                        const nRows = Math.floor(flat.length / nCols);
-                        const shift = (spec.include_deterministic) ? 1 : 0;
-                        const detVal = (spec.include_deterministic && nRows > 0) ? flat[0 * nCols + i] : null;
-                        const col = [];
-                        for (let r = shift; r < nRows; r++) col.push(flat[r * nCols + i]);
-                        entries.push({ label: String(indexLabels[i] ?? i), samples: col, spec: spec, deterministicValue: detVal });
-                      }
-                    } catch (_) { /* skip */ }
-                  } else {
-                    // Standard distribution — read deterministic value from node column
-                    let detVal = null;
-                    try {
-                      let rawData;
-                      if (typeof node.value !== 'undefined') rawData = node.value;
-                      else if (typeof node.toArray === 'function') rawData = node.toArray();
-                      if (rawData !== undefined) {
-                        const flat = Array.isArray(rawData) ? rawData : Array.from(rawData);
-                        const nCols = pdfRaw.length;
-                        if (flat.length >= nCols) detVal = Number(flat[i]);
-                      }
-                    } catch (_) { /* skip */ }
-                    let samples = generatePdfSamples(spec, 1000);
-                    if (samples) {
-                      samples = PDFSampler.normalizeDataArray(samples);
-                      entries.push({ label: String(indexLabels[i] ?? i), samples: Array.from(samples), spec: spec, deterministicValue: isFinite(detVal) ? detVal : null });
-                    } else {
-                      console.warn('generatePdfSamples returned null for spec (lookup index)', spec);
-                    }
-                  }
+                  if (!spec) { try { let rawData; if (typeof node.value !== 'undefined') rawData = node.value; else if (typeof node.toArray === 'function') rawData = node.toArray(); if (rawData !== undefined) { const arr = Array.isArray(rawData) ? rawData : Array.from(rawData); entries.push({ label: String(indexLabels[i] ?? i), samples: [arr[i]], spec: null }); } } catch (_) {} continue; }
+                  if (spec.type && spec.type.toLowerCase() === 'raw') { try { let rawData; if (typeof node.value !== 'undefined') rawData = node.value; else if (typeof node.toArray === 'function') rawData = node.toArray(); if (rawData !== undefined) { const flat = Array.isArray(rawData) ? rawData : Array.from(rawData); const nCols = pdfRaw.length; const nRows = Math.floor(flat.length / nCols); const shift = (spec.include_deterministic) ? 1 : 0; const detVal = (spec.include_deterministic && nRows > 0) ? flat[0 * nCols + i] : null; const col = []; for (let r = shift; r < nRows; r++) col.push(flat[r * nCols + i]); entries.push({ label: String(indexLabels[i] ?? i), samples: col, spec: spec, deterministicValue: detVal }); } catch (_) {} }
+                  else { let detVal = null; try { let rawData; if (typeof node.value !== 'undefined') rawData = node.value; else if (typeof node.toArray === 'function') rawData = node.toArray(); if (rawData !== undefined) { const flat = Array.isArray(rawData) ? rawData : Array.from(rawData); const nCols = pdfRaw.length; if (flat.length >= nCols) detVal = Number(flat[i]); } } catch (_) {} let samples = generatePdfSamples(spec, 1000); if (samples) { samples = PDFSampler.normalizeDataArray(samples); entries.push({ label: String(indexLabels[i] ?? i), samples: Array.from(samples), spec: spec, deterministicValue: isFinite(detVal) ? detVal : null }); } }
                 }
-                if (entries.length > 0) {
-                  pdfHistogramData = { type: 'lookup', entries, path };
-                }
+                if (entries.length > 0) pdfHistogramData = { type: 'lookup', entries, path };
               } else if (!isLookupTable && pdfRaw.type) {
-                // Single PDF spec
-                if (pdfRaw.type.toLowerCase() === 'raw') {
-                  // Raw data from the dataset
-                  try {
-                    let rawData;
-                    if (typeof node.value !== 'undefined') rawData = node.value;
-                    else if (typeof node.toArray === 'function') rawData = node.toArray();
-                    if (rawData !== undefined) {
-                      const flat = PDFSampler.normalizeDataArray(rawData);
-                      const shift = (pdfRaw.include_deterministic) ? 1 : 0;
-                      const detVal = (pdfRaw.include_deterministic && flat.length > 0) ? flat[0] : null;
-                      pdfHistogramData = { type: 'single', samples: flat.slice(shift), spec: pdfRaw, path, deterministicValue: detVal };
-                    }
-                  } catch (_) { /* skip */ }
-              // const label = path.split('/').pop();
-              // const entries = collectPdfEntries(node, attrs, label);
-              // if (entries && entries.length > 0) {
-              //   if (entries.length === 1 && entries[0].spec) {
-              //     const e = entries[0];
-              //     pdfHistogramData = {
-              //       type: 'single',
-              //       samples: Array.from(e.samples, v => (typeof v === 'bigint' ? Number(v) : v)),
-              //       spec: e.spec,
-              //       path,
-              //       deterministicValue: e.deterministicValue ?? null
-              //     };
-                } else {
-                  // Standard distribution — read deterministic value from the node
-                  let detVal = null;
-                  try {
-                    let rawData;
-                    if (typeof node.value !== 'undefined') rawData = node.value;
-                    else if (typeof node.toArray === 'function') rawData = node.toArray();
-                    if (rawData !== undefined) {
-                      if (typeof rawData === 'number') detVal = rawData;
-                      else if (rawData && rawData.length !== undefined && rawData.length > 0) detVal = Number(rawData[0]);
-                    }
-                  } catch (_) { /* skip */ }
-
-                  let samples = generatePdfSamples(pdfRaw, 1000);
-                  if (samples) {
-                    samples = PDFSampler.normalizeDataArray(samples);
-                    pdfHistogramData = { type: 'single', samples: Array.from(samples), spec: pdfRaw, path, deterministicValue: isFinite(detVal) ? detVal : null };
-                  } else {
-                    console.warn('generatePdfSamples returned null for pdf spec', pdfRaw, 'at', path);
-                  }
-                  // pdfHistogramData = {
-                  //   type: 'lookup',
-                  //   entries: entries.map(ent => ({ ...ent, samples: ent.samples.map(v => (typeof v === 'bigint' ? Number(v) : v)), deterministicValue: ent.deterministicValue ?? null })),
-                  //   path
-                  // };
-                }
+                if (pdfRaw.type.toLowerCase() === 'raw') { try { let rawData; if (typeof node.value !== 'undefined') rawData = node.value; else if (typeof node.toArray === 'function') rawData = node.toArray(); if (rawData !== undefined) { const flat = PDFSampler.normalizeDataArray(rawData); const shift = (pdfRaw.include_deterministic) ? 1 : 0; const detVal = (pdfRaw.include_deterministic && flat.length > 0) ? flat[0] : null; pdfHistogramData = { type: 'single', samples: flat.slice(shift), spec: pdfRaw, path, deterministicValue: detVal }; } } catch (_) {} }
+                else { let detVal = null; try { let rawData; if (typeof node.value !== 'undefined') rawData = node.value; else if (typeof node.toArray === 'function') rawData = node.toArray(); if (rawData !== undefined) { if (typeof rawData === 'number') detVal = rawData; else if (rawData && rawData.length !== undefined && rawData.length > 0) detVal = Number(rawData[0]); } } catch (_) {} let samples = generatePdfSamples(pdfRaw, 1000); if (samples) { samples = PDFSampler.normalizeDataArray(samples); pdfHistogramData = { type: 'single', samples: Array.from(samples), spec: pdfRaw, path, deterministicValue: isFinite(detVal) ? detVal : null }; } }
               }
-            } catch (err) {
-              console.warn('PDF collect error:', err);
-            }
+            } catch (err) { console.warn('PDF collect error:', err); }
           }
-          
-          // Add Excel download button for datasets (not groups)
+
           if (!isGroup) {
-            const escapedPath = path.replace(/'/g, "\\'");
-            const escapedFileKey = fileKey.replace(/'/g, "\\'");
-            html += `<div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--color-border);">
-              <button onclick="downloadDatasetAsExcel('${escapedPath}', '${escapedFileKey}')" 
-                style="padding: 6px 12px; background: #217346; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 500; transition: all 0.2s;"
-                onmouseover="this.style.background='#1e6b3f'" 
-                onmouseout="this.style.background='#217346'"
-                title="Download this dataset to Excel">
-                📊 Download Excel
-              </button>
-            </div>`;
+            const excelWrap = document.createElement('div'); excelWrap.style.marginTop = '12px'; excelWrap.style.paddingTop = '12px'; excelWrap.style.borderTop = '1px solid var(--color-border)';
+            const excelBtn = document.createElement('button'); excelBtn.style.cssText = 'padding:6px 12px;background:#217346;color:white;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;transition:all 0.2s;';
+            excelBtn.title = 'Download this dataset to Excel';
+            excelBtn.textContent = '📊 Download Excel';
+            excelBtn.addEventListener('mouseover', () => excelBtn.style.background = '#1e6b3f');
+            excelBtn.addEventListener('mouseout', () => excelBtn.style.background = '#217346');
+            excelBtn.addEventListener('click', () => downloadDatasetAsExcel(path, fileKey));
+            excelWrap.appendChild(excelBtn);
+            fileSection.appendChild(excelWrap);
           }
-          
-          html += '</div>';
+
+          contentFrag.appendChild(fileSection);
         }
-        
-        infoDiv.innerHTML = html || '<div style="color:#999;">No data available for this path</div>';
-        
-        // Create chart if appropriate
-        if (isRadionuclidesGroup) {
-          currentPdfHistogram = false;
-          createRadionuclidesChart(path);
-        } else if (hasTimeDependentData && !isGroup) {
-          currentPdfHistogram = false;
-          createPlotlyChart(path);
-        } else if (pdfHistogramData) {
-          createPdfHistogram(pdfHistogramData);
-        } else {
-          currentPdfHistogram = false;
-          document.getElementById('plotlyChartContainer').classList.remove('visible');
-          currentChartData = null;
-        }
+
+        while (infoDiv.firstChild) infoDiv.removeChild(infoDiv.firstChild);
+        if (contentFrag.childNodes.length > 0) infoDiv.appendChild(contentFrag);
+        else { const noData = document.createElement('div'); noData.style.color = '#999'; noData.textContent = 'No data available for this path'; infoDiv.appendChild(noData); }
+
+        if (isRadionuclidesGroup) { currentPdfHistogram = false; createRadionuclidesChart(path); }
+        else if (hasTimeDependentData && !isGroup) { currentPdfHistogram = false; createPlotlyChart(path); }
+        else if (pdfHistogramData) { createPdfHistogram(pdfHistogramData); }
+        else { currentPdfHistogram = false; document.getElementById('plotlyChartContainer').classList.remove('visible'); currentChartData = null; }
       } catch (e) {
-        infoDiv.innerHTML = `<div class="error">Error: ${escapeHtml(e.message)}</div>`;
+        while (infoDiv.firstChild) infoDiv.removeChild(infoDiv.firstChild);
+        const errDiv = document.createElement('div'); errDiv.className = 'error'; errDiv.textContent = `Error: ${e && e.message ? e.message : 'unknown'}`;
+        infoDiv.appendChild(errDiv);
         console.error(e);
       }
     }
@@ -5218,46 +5006,41 @@
      * @returns {string} HTML string for attributes section
      */
     function buildAttributesTable(attrs, jsonReplacer) {
-      let attrsHtml = '<table class="attrs-table">';
-      attrsHtml += '<tr class="attrs-header"><th>Name</th><th>Value</th></tr>';
-      
+      const wrapper = document.createElement('div'); wrapper.className = 'info-section';
+      const label = document.createElement('div'); label.className = 'info-label'; label.textContent = `Attributes (${Object.keys(attrs).length})`;
+      wrapper.appendChild(label);
+
+      const content = document.createElement('div'); content.className = 'info-content'; content.style.padding = '0'; content.style.overflowX = 'auto';
+      const table = document.createElement('table'); table.className = 'attrs-table';
+
+      const thead = document.createElement('tr'); thead.className = 'attrs-header';
+      const th1 = document.createElement('th'); th1.textContent = 'Name';
+      const th2 = document.createElement('th'); th2.textContent = 'Value';
+      thead.appendChild(th1); thead.appendChild(th2);
+      table.appendChild(thead);
+
       for (const [key, value] of Object.entries(attrs)) {
         let displayValue;
-        if (typeof value === 'string') {
-          displayValue = value;
-        } else if (Array.isArray(value)) {
-          displayValue = `[${value.join(', ')}]`;
-        } else if (value === null) {
-          displayValue = 'null';
-        } else if (value === undefined) {
-          displayValue = 'undefined';
-        } else if (typeof value === 'object') {
-          if (value.length !== undefined) {
-            displayValue = `[${Array.from(value).slice(0, 10).join(', ')}${value.length > 10 ? '...' : ''}]`;
-          } else {
-            displayValue = JSON.stringify(value, jsonReplacer, 0);
-          }
-        } else if (typeof value === 'bigint') {
-          displayValue = String(Number(value));
-        } else {
-          displayValue = String(value);
-        }
-      // for (const [key, value] of Object.entries(attrs).slice(0, 5)) {
-      //   let displayValue = String(value);
-      //   if (displayValue.length > 50) {
-      //     displayValue = displayValue.substring(0, 50) + '...';
-      //   }
-        attrsHtml += `<tr class="attrs-row">
-          <td><strong>${escapeHtml(key)}</strong></td>
-          <td class="attrs-value">${escapeHtml(displayValue)}</td>
-        </tr>`;
+        if (typeof value === 'string') displayValue = value;
+        else if (Array.isArray(value)) displayValue = `[${value.join(', ')}]`;
+        else if (value === null) displayValue = 'null';
+        else if (value === undefined) displayValue = 'undefined';
+        else if (typeof value === 'object') {
+          if (value.length !== undefined) displayValue = `[${Array.from(value).slice(0, 10).join(', ')}${value.length > 10 ? '...' : ''}]`;
+          else displayValue = JSON.stringify(value, jsonReplacer, 0);
+        } else if (typeof value === 'bigint') displayValue = String(Number(value));
+        else displayValue = String(value);
+
+        const row = document.createElement('tr'); row.className = 'attrs-row';
+        const nameTd = document.createElement('td'); const strong = document.createElement('strong'); strong.textContent = key; nameTd.appendChild(strong);
+        const valTd = document.createElement('td'); valTd.className = 'attrs-value'; valTd.textContent = displayValue;
+        row.appendChild(nameTd); row.appendChild(valTd);
+        table.appendChild(row);
       }
-      
-      attrsHtml += '</table>';
-      return `<div class="info-section">
-        <div class="info-label">Attributes (${Object.keys(attrs).length})</div>
-        <div class="info-content" style="padding: 0; overflow-x: auto;">${attrsHtml}</div>
-      </div>`;
+
+      content.appendChild(table);
+      wrapper.appendChild(content);
+      return wrapper;
     }
 
     /**
@@ -5267,65 +5050,62 @@
      */
     function showMultipleDatasetAttributes(items) {
       const infoDiv = document.getElementById('info');
-      infoDiv.innerHTML = `<div class="loading">Loading ${items.length} datasets...</div>`;
-      
-      if (items.length === 0) return;
-      
-      // Normalize: expand null fileKey (intersect mode) to all enabled files
+      while (infoDiv.firstChild) infoDiv.removeChild(infoDiv.firstChild);
+      const loading = document.createElement('div'); loading.className = 'loading'; loading.textContent = `Loading ${items.length} datasets...`;
+      infoDiv.appendChild(loading);
+
+      if (!items || items.length === 0) return;
+
       const normalizedItems = [];
       for (const item of items) {
-        if (item.fileKey && loadedFiles[item.fileKey]) {
-          normalizedItems.push(item);
-        } else {
-          for (const fk of getEnabledFiles()) {
-            normalizedItems.push({ path: item.path, fileKey: fk });
-          }
-        }
+        if (item.fileKey && loadedFiles[item.fileKey]) normalizedItems.push(item);
+        else for (const fk of getEnabledFiles()) normalizedItems.push({ path: item.path, fileKey: fk });
       }
-      
-      let html = `<div style="background: var(--color-kvot-bright); padding: 12px; border-radius: 6px; margin-bottom: 16px; font-weight: 600; color: var(--color-kvot-background);">
-        📊 ${normalizedItems.length} datasets selected
-      </div>`;
-      
+
+      const frag = document.createDocumentFragment();
+      const header = document.createElement('div');
+      header.style.cssText = 'background: var(--color-kvot-bright); padding: 12px; border-radius: 6px; margin-bottom: 16px; font-weight: 600; color: var(--color-kvot-background);';
+      header.textContent = `📊 ${normalizedItems.length} datasets selected`;
+      frag.appendChild(header);
+
+      const makeLabelSection = (label, content, opts = {}) => {
+        const section = document.createElement('div'); section.className = 'info-section';
+        const lbl = document.createElement('div'); lbl.className = 'info-label'; lbl.textContent = label;
+        const val = document.createElement('div'); val.className = 'info-content';
+        if (opts.html) { val.innerHTML = opts.html; } else { val.textContent = (content === undefined || content === null) ? '' : String(content); }
+        section.appendChild(lbl); section.appendChild(val);
+        return section;
+      };
+
       let allTimeDependent = true;
-      const combinedPdfEntries = [];   // collect histogram entries across all selected datasets
-      
+      const combinedPdfEntries = [];
+
       for (const item of normalizedItems) {
         const { path, fileKey } = item;
         const file = loadedFiles[fileKey];
         if (!file) continue;
-        
-        html += `<div class="file-data-section" style="border-left-color: var(--color-kvot-accent);">`;
-        html += `<h4>${escapeHtml(path)} <span style="font-weight:400;font-size:11px;color:#888;">(${escapeHtml(fileKey)})</span></h4>`;
-        
+
+        const fileSection = document.createElement('div'); fileSection.className = 'file-data-section';
+        fileSection.style.borderLeftColor = 'var(--color-kvot-accent)';
+
+        const h4 = document.createElement('h4');
+        h4.textContent = path + ' ';
+        const small = document.createElement('span'); small.style.fontWeight = '400'; small.style.fontSize = '11px'; small.style.color = '#888'; small.textContent = `(${fileKey})`;
+        h4.appendChild(small);
+        fileSection.appendChild(h4);
+
         try {
           const dataset = FileService.get(file, path);
-          if (!dataset) continue;
-          
+          if (!dataset) { frag.appendChild(fileSection); continue; }
+
           const isTimeDep = isTimeDependent(dataset);
           if (!isTimeDep) allTimeDependent = false;
-          
-          html += `<div class="info-section">
-            <div class="info-label">Type</div>
-            <div class="info-content">${escapeHtml(String(dataset.type))} ${isTimeDep ? '⏱️ (time-dependent)' : ''}</div>
-          </div>`;
-          
-          if (dataset.dtype) {
-            const readableDtype = formatDataType(dataset.dtype);
-            html += `<div class="info-section">
-              <div class="info-label">Data Type</div>
-              <div class="info-content">${escapeHtml(readableDtype)}</div>
-            </div>`;
-          }
-          
-          if (dataset.shape && Array.isArray(dataset.shape)) {
-            html += `<div class="info-section">
-              <div class="info-label">Shape</div>
-              <div class="info-content">${dataset.shape.join(', ')}</div>
-            </div>`;
-          }
-          
-          // Show key attributes
+
+          fileSection.appendChild(makeLabelSection('Type', String(dataset.type) + (isTimeDep ? ' ⏱️ (time-dependent)' : '')));
+
+          if (dataset.dtype) fileSection.appendChild(makeLabelSection('Data Type', formatDataType(dataset.dtype)));
+          if (dataset.shape && Array.isArray(dataset.shape)) fileSection.appendChild(makeLabelSection('Shape', dataset.shape.join(', ')));
+
           const attrs = {};
           if (dataset.attrs && typeof dataset.attrs === 'object') {
             for (const attrName in dataset.attrs) {
@@ -5335,83 +5115,59 @@
               }
             }
           }
-          
+
           if (Object.keys(attrs).length > 0) {
-            html += `<div class="info-section">
-              <div class="info-label">Key Attributes</div>
-              <div class="info-content" style="font-size: 11px;">`;
-            
-            for (const [key, value] of Object.entries(attrs).slice(0, 5)) {
-              let displayValue = String(value);
-              if (displayValue.length > 50) {
-                displayValue = displayValue.substring(0, 50) + '...';
-              }
-              html += `<strong>${escapeHtml(key)}:</strong> ${escapeHtml(displayValue)}<br>`;
+            const sec = document.createElement('div'); sec.className = 'info-section';
+            const lbl = document.createElement('div'); lbl.className = 'info-label'; lbl.textContent = 'Key Attributes';
+            const val = document.createElement('div'); val.className = 'info-content'; val.style.fontSize = '11px';
+
+            let count = 0;
+            for (const [k, v] of Object.entries(attrs)) {
+              if (count++ >= 5) break;
+              const row = document.createElement('div');
+              const strong = document.createElement('strong'); strong.textContent = k + ':'; row.appendChild(strong);
+              const txt = document.createTextNode(' ' + (v === undefined || v === null ? '' : String(v)).slice(0, 50) + ((v && String(v).length > 50) ? '...' : ''));
+              row.appendChild(txt);
+              val.appendChild(row);
             }
-            
-            html += `</div></div>`;
+
+            sec.appendChild(lbl); sec.appendChild(val); fileSection.appendChild(sec);
           }
-          
-          // Collect PDF histogram entries for combined chart
+
           try {
             if (attrs.pdf) {
               const datasetName = path.split('/').pop();
-              const shortFile = normalizedItems.length > 1 && new Set(normalizedItems.map(d => d.fileKey)).size > 1
-                ? ' (' + fileKey + ')' : '';
+              const shortFile = (normalizedItems.length > 1 && new Set(normalizedItems.map(d => d.fileKey)).size > 1) ? ' (' + fileKey + ')' : '';
               const entryLabel = datasetName + shortFile;
               const pdfEntries = collectPdfEntries(dataset, attrs, entryLabel);
               if (pdfEntries) combinedPdfEntries.push(...pdfEntries);
-            // const label = path.split('/').pop();
-            // const entries = collectPdfEntries(dataset, attrs, label);
-            // if (entries && entries.length > 0) {
-            //   if (entries.length === 1 && entries[0].spec) {
-            //     const e = entries[0];
-            //     pdfHistogramData = {
-            //       type: 'single',
-            //       samples: Array.from(e.samples, v => (typeof v === 'bigint' ? Number(v) : v)),
-            //       spec: e.spec,
-            //       path,
-            //       deterministicValue: e.deterministicValue ?? null
-            //     };
-            //   } else {
-            //     pdfHistogramData = {
-            //       type: 'lookup',
-            //       entries: entries.map(ent => ({ ...ent, samples: ent.samples.map(v => (typeof v === 'bigint' ? Number(v) : v)), deterministicValue: ent.deterministicValue ?? null })),
-            //       path
-            //     };
-            //   }
             }
-          } catch (err) {
-            console.warn('PDF collect error:', err);
-          }
-          
-          // Add Excel download button for this dataset
-          const escapedPath = path.replace(/'/g, "\\'");
-          const escapedFileKey = fileKey.replace(/'/g, "\\'");
-          html += `<div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--color-border);">
-            <button onclick="downloadDatasetAsExcel('${escapedPath}', '${escapedFileKey}')" 
-              style="padding: 6px 12px; background: #217346; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 500; transition: all 0.2s;"
-              onmouseover="this.style.background='#1e6b3f'" 
-              onmouseout="this.style.background='#217346'"
-              title="Download this dataset to Excel">
-              📊 Download Excel
-            </button>
-          </div>`;
-          
+          } catch (err) { console.warn('PDF collect error:', err); }
+
+          const excelWrap = document.createElement('div'); excelWrap.style.marginTop = '12px'; excelWrap.style.paddingTop = '12px'; excelWrap.style.borderTop = '1px solid var(--color-border)';
+          const excelBtn = document.createElement('button');
+          excelBtn.style.cssText = 'padding: 6px 12px; background: #217346; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 500; transition: all 0.2s;';
+          excelBtn.title = 'Download this dataset to Excel'; excelBtn.textContent = '📊 Download Excel';
+          excelBtn.addEventListener('mouseover', () => excelBtn.style.background = '#1e6b3f');
+          excelBtn.addEventListener('mouseout', () => excelBtn.style.background = '#217346');
+          excelBtn.addEventListener('click', () => downloadDatasetAsExcel(path, fileKey));
+          excelWrap.appendChild(excelBtn);
+          fileSection.appendChild(excelWrap);
+
         } catch (e) {
-          html += `<div class="error">Error loading dataset: ${escapeHtml(e.message)}</div>`;
+          const errDiv = document.createElement('div'); errDiv.className = 'error'; errDiv.textContent = `Error loading dataset: ${e && e.message ? e.message : e}`;
+          fileSection.appendChild(errDiv);
         }
-        
-        html += `</div>`;
+
+        frag.appendChild(fileSection);
       }
-      
-      infoDiv.innerHTML = html;
-      
-      // Create combined chart
+
+      while (infoDiv.firstChild) infoDiv.removeChild(infoDiv.firstChild);
+      infoDiv.appendChild(frag);
+
       if (allTimeDependent && normalizedItems.length > 0) {
         createMultiDatasetChart(normalizedItems);
       } else if (combinedPdfEntries.length > 0) {
-        // Show combined PDF histogram for all selected datasets
         createPdfHistogram({ type: 'lookup', entries: combinedPdfEntries, path: 'Multi-selection' });
       } else {
         document.getElementById('plotlyChartContainer').classList.remove('visible');

@@ -264,6 +264,24 @@
       font-size: 16px;
       font-weight: 600;
     }
+
+    /* Discrete light-bulb icon for multi-select hint — small, muted, hover-highlight */
+    .show-hint-icon {
+      color: var(--color-text-muted);
+      opacity: 0.65;
+      transition: opacity 0.15s ease, transform 0.12s ease;
+      font-size: 14px;
+      line-height: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .show-hint-icon svg { width: 14px; height: 14px; }
+    .show-hint-icon:hover {
+      opacity: 1;
+      transform: translateY(-1px);
+      color: var(--color-text-primary);
+    }
     
     .right-panel-content {
       flex: 1;
