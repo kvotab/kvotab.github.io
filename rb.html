@@ -399,6 +399,27 @@
       try { console.debug('H5Wasm diagnostic filter enabled — SUPPRESS_H5WASM_DIAGNOSTICS = true'); } catch(e){}
     })();
 
+    // Small FileService wrapper for h5wasm File objects. Use FileService.get(file, path),
+    // FileService.keys(file) and FileService.attrs(node) to access HDF5 content safely.
+    window.FileService = {
+      get(file, path) {
+        try { if (!file) return null; return file.get(path); } catch (e) { if (window.SUPPRESS_H5WASM_DIAGNOSTICS) return null; console.warn('FileService.get error:', e && e.message ? e.message : e, path); return null; }
+      },
+      keys(file) {
+        try { if (!file || typeof file.keys !== 'function') return []; return Array.from(file.keys()).sort(); } catch (e) { return []; }
+      },
+      attrs(node) {
+        const out = {};
+        try {
+          if (!node || !node.attrs) return out;
+          for (const name in node.attrs) {
+            try { const a = node.attrs[name]; out[name] = (a && typeof a === 'object' && 'value' in a) ? a.value : a; } catch (err) { out[name] = `(unreadable: ${err.message})`; }
+          }
+        } catch (e) {}
+        return out;
+      }
+    };
+
     /**
      * Escape HTML special characters for safe rendering
      */
@@ -1233,7 +1254,7 @@
      */
     function checkDatasetExistsInFile(file, path) {
       try {
-        const dataset = file.get(path);
+        const dataset = FileService.get(file, path);
         return dataset !== null && dataset !== undefined;
       } catch (e) {
         return false;
@@ -1252,7 +1273,7 @@
       try {
         const file = loadedFiles[fileName];
         if (!file) return false;
-        const node = file.get(path);
+        const node = FileService.get(file, path);
         return node !== null && node !== undefined;
       } catch (e) {
         return false;
@@ -1268,7 +1289,7 @@
      */
     function getTimeData(file) {
       try {
-        const timeDataset = file.get('/time');
+        const timeDataset = FileService.get(file, '/time');
         if (timeDataset && typeof timeDataset.value !== 'undefined') {
           let timeData = timeDataset.value;
           if (timeData && typeof timeData === 'object' && timeData.length !== undefined) {
@@ -1291,7 +1312,7 @@
      */
     function getTimeUnit(file) {
       try {
-        const timeDataset = file.get('/time');
+        const timeDataset = FileService.get(file, '/time');
         if (timeDataset && timeDataset.attrs && typeof timeDataset.attrs === 'object') {
           for (const attrName in timeDataset.attrs) {
             if (attrName === 'unit') {
@@ -1349,7 +1370,7 @@
      */
     function checkGroupForRadionuclides(file, path) {
       try {
-        const group = file.get(path);
+        const group = FileService.get(file, path);
         if (!group || group.type.toLowerCase() !== 'group') {
           return false;
         }
@@ -1524,7 +1545,7 @@
         
         try {
           const file = loadedFiles[checkFile];
-          const dataset = file.get(selectedDatasetPath);
+          const dataset = FileService.get(file, selectedDatasetPath);
           if (dataset && dataset.type.toLowerCase() === 'dataset' && isTimeDependent(dataset)) {
             createPlotlyChart(selectedDatasetPath);
           }
@@ -2612,25 +2633,25 @@
       const plotDiv = getElement('plotlyChart');
       const chartContainer = getElement('plotlyChartContainer');
       plotDiv.innerHTML = '';
-      
+
       // Hide "Show Total" and "Show Ratio" checkboxes (only for radionuclides groups)
       setShowTotalVisible(false);
       setShowRatioVisible(false);
-      
+
       const traces = [];
       const enabledFiles = getEffectiveFiles();
-      
+
       let timeUnit = '';
       let yAxisUnit = '';
       let yAxisName = path.split('/').pop();
-      
+
       if (enabledFiles.length > 0) {
         const firstFile = loadedFiles[enabledFiles[0]];
         timeUnit = getTimeUnit(firstFile);
-        
-        // Get y-axis unit from dataset
+
+        // Get y-axis unit from the first file's dataset (best-effort)
         try {
-          const dataset = firstFile.get(path);
+          const dataset = FileService.get(firstFile, path);
           if (dataset && dataset.attrs && typeof dataset.attrs === 'object') {
             for (const attrName in dataset.attrs) {
               if (attrName === 'unit') {
@@ -2645,38 +2666,38 @@
           console.warn('Could not read unit from dataset:', e);
         }
       }
-      
+
       // Build traces for each enabled file
       for (const fileKey of enabledFiles) {
         const file = loadedFiles[fileKey];
-        
+
         if (!checkDatasetExistsInFile(file, path)) {
           continue;
         }
-        
+
         try {
-          const dataset = file.get(path);
-          
+          const dataset = FileService.get(file, path);
+
           if (!isTimeDependent(dataset)) {
             continue;
           }
-          
+
           const timeData = getTimeData(file);
           if (!timeData) {
             console.warn(`No /time dataset found in ${fileKey}`);
             continue;
           }
-          
+
           let yData;
           if (typeof dataset.value !== 'undefined') {
             yData = dataset.value;
           } else if (typeof dataset.toArray === 'function') {
             yData = dataset.toArray();
           }
-          
+
           if (yData) {
             let yArray = PDFSampler.normalizeDataArray(yData);
-            
+
             // Handle probabilistic data (take mean)
             if (checkIsProbabilistic(dataset)) {
               yArray = computeProbabilisticMean(yArray, timeData);
@@ -2687,7 +2708,7 @@
             if (timeData.length !== yArray.length) {
               console.warn(`Time data length (${timeData.length}) doesn't match data length (${yArray.length}) for ${fileKey}`);
             }
-            
+
             traces.push({
               x: timeData.slice(0, minLength),
               y: yArray.slice(0, minLength),
@@ -2700,19 +2721,17 @@
           console.error(`Error creating trace for ${fileKey}:`, e);
         }
       }
-      
+
       // Render chart if we have data
       if (traces.length > 0) {
         const { xScale, yScale } = getChartScales();
-        
+
         let yAxisTitle = 'Value';
-        if (yAxisUnits.size === 1) {
-          yAxisTitle = `Value (${Array.from(yAxisUnits)[0]})`;
-        } else if (yAxisUnits.size > 1) {
-          yAxisTitle = `Value (${Array.from(yAxisUnits).join(', ')})`;
+        if (yAxisUnit) {
+          yAxisTitle = `Value (${yAxisUnit})`;
         }
-        
-        const paths = normalizedItems.map(d => d.path);
+
+        const paths = [path];
         const layout = createBaseLayout({
           title: path,
           xAxisTitle: timeUnit ? `Time (${timeUnit})` : 'Time',
@@ -2721,7 +2740,7 @@
           yScale
         });
         layout.margin.r = 200; // Extra room for longer legend names
-        
+
         const config = getPlotlyConfig('multi_dataset_chart');
 
         currentChartData = { traces, layout, paths };
@@ -2803,7 +2822,7 @@
         if (!file || !checkDatasetExistsInFile(file, path)) continue;
         
         try {
-          const dataset = file.get(path);
+          const dataset = FileService.get(file, path);
           if (!isTimeDependent(dataset)) continue;
           
           // Get unit
@@ -2975,7 +2994,7 @@
         }
         
         try {
-          const group = file.get(path);
+          const group = FileService.get(file, path);
           if (!group || group.type.toLowerCase() !== 'group') {
             continue;
           }
@@ -3077,7 +3096,7 @@
           const fileData = totalDataByFile[fileKey];
           if (!fileData) continue;
           const file = loadedFiles[fileKey];
-          const group = file.get(path);
+          const group = FileService.get(file, path);
           let datasetKeys = [];
           try {
             if (typeof group.keys === 'function') {
@@ -3547,7 +3566,7 @@
             continue;
           }
           
-          const node = file.get(path);
+          const node = FileService.get(file, path);
           if (!node) continue;
           
           const isFirstFile = fileKey === enabledFiles[0];
@@ -4061,7 +4080,7 @@
           alert('File not found: ' + fileKey);
           return;
         }
-        const node = file.get(path);
+        const node = FileService.get(file, path);
         
         if (!node) {
           alert('Could not access dataset');
@@ -4477,7 +4496,7 @@
         html += `<h4>${escapeHtml(path)} <span style="font-weight:400;font-size:11px;color:#888;">(${escapeHtml(fileKey)})</span></h4>`;
         
         try {
-          const dataset = file.get(path);
+          const dataset = FileService.get(file, path);
           if (!dataset) continue;
           
           const isTimeDep = isTimeDependent(dataset);
