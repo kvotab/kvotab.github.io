@@ -121,6 +121,7 @@
   </script>
 
   <script src="https://cdn.jsdelivr.net/npm/h5wasm@latest/dist/iife/h5wasm.min.js"></script>
+  <script src="./resources/js/pdf-sampler.js"></script>
   <script>
     /* ==========================================================================
        HDF5 FILE VIEWER - JAVASCRIPT APPLICATION
@@ -363,6 +364,41 @@
       return window.h5wasm;
     }
 
+    // Install a lightweight console filter to reduce noisy h5wasm/HDF5 diagnostic
+    // messages that are benign (e.g. "HDF5-DIAG", "Object not found").
+    // Disable by setting `window.SUPPRESS_H5WASM_DIAGNOSTICS = false` in the console.
+    (function installH5WasmDiagFilter(){
+      if (window.SUPPRESS_H5WASM_DIAGNOSTICS === false) return;
+      // default to enabled
+      window.SUPPRESS_H5WASM_DIAGNOSTICS = true;
+      const origError = console.error.bind(console);
+      const origWarn = console.warn.bind(console);
+
+      function looksLikeH5Diag(args) {
+        try {
+          const txt = args.map(a => (typeof a === 'string' ? a : (a && a.message) ? a.message : String(a))).join(' ');
+          if (!txt) return false;
+          // match the common HDF5 diagnostic signatures we saw in the console
+          if (!/HDF5-DIAG|Object not found|minor:\s*Object not found/i.test(txt)) return false;
+          // also prefer messages originating from h5wasm (best-effort check)
+          return /h5wasm(\.min)?\.js|h5wasm/i.test(txt);
+        } catch (e) {
+          return false;
+        }
+      }
+
+      console.error = function(...args) {
+        if (looksLikeH5Diag(args)) return;
+        origError(...args);
+      };
+      console.warn = function(...args) {
+        if (looksLikeH5Diag(args)) return;
+        origWarn(...args);
+      };
+
+      try { console.debug('H5Wasm diagnostic filter enabled — SUPPRESS_H5WASM_DIAGNOSTICS = true'); } catch(e){}
+    })();
+
     /**
      * Escape HTML special characters for safe rendering
      */
@@ -380,20 +416,60 @@
      */
     function getLinkInfo(group, path, obj) {
       try {
+        // don't treat the root "/" as a link
+        if (!path || path === '/') return null;
+
+        // explicit link object types first
         if (obj && String(obj.type) === 'BrokenSoftLink') {
-          return { type: 'broken', target: obj.target || '?' };
+          // normalize target to string when possible
+          const t = obj.target;
+          const targetStr = (typeof t === 'string') ? t
+                            : (t instanceof Uint8Array ? new TextDecoder().decode(t) : (t?.toString?.() ?? '?'));
+          return { type: 'broken', target: targetStr };
         }
         if (obj && String(obj.type) === 'ExternalLink') {
           return { type: 'external', filename: obj.filename || '?', obj_path: obj.obj_path || '?' };
         }
-        // Check for resolved soft link
-        const softTarget = group.get_link(path);
-        if (softTarget) {
-          return { type: 'soft', target: softTarget };
+
+        // If the caller already provided `obj` (group.get(name)), avoid calling
+        // the potentially noisy `group.get_link()` lookup — h5wasm may log
+        // "Object not found" for non-link names. Only attempt get_link when
+        // `obj` is not available.
+        if (!obj && typeof group.get_link === 'function') {
+          const localName = String(path).split('/').pop();
+          try {
+            const softTarget = group.get_link(localName);
+            if (softTarget) {
+              if (typeof softTarget === 'string') return { type: 'soft', target: softTarget };
+              if (softTarget && typeof softTarget === 'object') {
+                if (typeof softTarget.target === 'string') return { type: 'soft', target: softTarget.target };
+                if (softTarget instanceof Uint8Array) {
+                  try { return { type: 'soft', target: new TextDecoder().decode(softTarget) }; } catch (e) {}
+                }
+              }
+            }
+          } catch (e) {
+            // Swallow internal errors from get_link to avoid noisy console output
+          }
         }
-      } catch (e) { /* not a link */ }
+      } catch (e) { /* not a link / ignore noisy return values */ }
       return null;
     }
+    //   try {
+    //     if (obj && String(obj.type) === 'BrokenSoftLink') {
+    //       return { type: 'broken', target: obj.target || '?' };
+    //     }
+    //     if (obj && String(obj.type) === 'ExternalLink') {
+    //       return { type: 'external', filename: obj.filename || '?', obj_path: obj.obj_path || '?' };
+    //     }
+    //     // Check for resolved soft link
+    //     const softTarget = group.get_link(path);
+    //     if (softTarget) {
+    //       return { type: 'soft', target: softTarget };
+    //     }
+    //   } catch (e) { /* not a link */ }
+    //   return null;
+    // }
 
     /**
      * Build a small link badge HTML for the tree view.
@@ -423,197 +499,10 @@
        loguniform, logtriangular, logdtriangular, lognormal, raw/empirical.
        ========================================================================== */
 
-    /** Inverse CDF: Uniform(a, b) */
-    function invUnif(p, a, b) { return a + (b - a) * p; }
 
-    /** Inverse CDF: Triangular(a, b, m) */
-    function invTriang(p, a, b, m) {
-      const fc = (m - a) / (b - a);
-      return p < fc
-        ? a + Math.sqrt((b - a) * (m - a) * p)
-        : b - Math.sqrt((b - a) * (b - m) * (1 - p));
-    }
 
-    /** Inverse CDF: Double-triangular(a, b, m) */
-    function invDtriang(p, a, b, m) {
-      return p <= 0.5
-        ? a + Math.sqrt(2 * p) * (m - a)
-        : b - (b - m) * Math.sqrt(2 * (1 - p));
-    }
 
-    /** Inverse CDF: Normal(mean, std) — uses erfinv from erf.js */
-    function invNorm(p, mean, std) {
-      return mean + std * Math.SQRT2 * erfinv(2 * p - 1);
-    }
-
-    /** Inverse CDF: Exponential(mean) */
-    function invExp(p, mean) { return -mean * Math.log(1 - p); }
-
-    /** Inverse CDF: Log-uniform(a, b) */
-    function invLogu(p, a, b) {
-      return Math.exp(invUnif(p, Math.log(a), Math.log(b)));
-    }
-
-    /** Inverse CDF: Log-triangular(a, b, m) */
-    function invLogt(p, a, b, m) {
-      return Math.exp(invTriang(p, Math.log(a), Math.log(b), Math.log(m)));
-    }
-
-    /** Inverse CDF: Double-log-triangular(a, b, m) */
-    function invLogdt(p, a, b, m) {
-      return Math.exp(invDtriang(p, Math.log(a), Math.log(b), Math.log(m)));
-    }
-
-    /** Inverse CDF: Log-normal(gm, gsd) */
-    function invLogn(p, gm, gsd) {
-      return Math.exp(invNorm(p, Math.log(gm), Math.log(gsd)));
-    }
-
-    /** Inverse CDF: Empirical (quantile interpolation) — accept BigInt inputs safely */
-    function invEmpirical(p, data) {
-      const arr = Array.from(data, v => (typeof v === 'bigint' ? Number(v) : v)).sort((a, b) => a - b);
-      if (arr.length === 0) return NaN;
-      const idx = p * (arr.length - 1);
-      const lo = Math.floor(idx);
-      const hi = Math.min(lo + 1, arr.length - 1);
-      const frac = idx - lo;
-      return arr[lo] + frac * (arr[hi] - arr[lo]);
-    }
-
-    /**
-     * CDF helper for truncation support.
-     * Returns CDF(x) for the given distribution.
-     */
-    function cdfForDist(type, x, args) {
-      // Only needed for trmin/trmax — simplified implementations
-      switch (type) {
-        case 'uniform': case 'unif': {
-          const { a, b } = args;
-          return x <= a ? 0 : x >= b ? 1 : (x - a) / (b - a);
-        }
-        case 'triangular': case 'triang': {
-          const { a, b, m } = args;
-          if (x <= a) return 0; if (x >= b) return 1;
-          return x <= m ? (x - a) ** 2 / ((m - a) * (b - a)) : 1 - (b - x) ** 2 / ((b - a) * (b - m));
-        }
-        case 'normal': case 'norm': {
-          const { mean, std } = args;
-          return 0.5 * (1 + erf((x - mean) / (std * Math.SQRT2)));
-        }
-        case 'exponential': case 'exp': {
-          const { mean } = args;
-          return x <= 0 ? 0 : 1 - Math.exp(-x / mean);
-        }
-        case 'loguniform': case 'logu': case 'logunif': {
-          const { a, b } = args;
-          return x <= a ? 0 : x >= b ? 1 : (Math.log(x) - Math.log(a)) / (Math.log(b) - Math.log(a));
-        }
-        case 'lognormal': case 'logn': case 'lognorm': {
-          const { gm, gsd } = args;
-          return 0.5 * (1 + erf((Math.log(x) - Math.log(gm)) / (Math.log(gsd) * Math.SQRT2)));
-        }
-        default: return null;
-      }
-    }
-
-    /**
-     * Evaluate the analytical probability density function (PDF) at x.
-     * @param {string} type - Distribution type key
-     * @param {number} x - Value at which to evaluate
-     * @param {Object} args - Distribution parameters
-     * @returns {number|null} PDF value, or null if type unsupported
-     */
-    function pdfEval(type, x, args) {
-      switch (type) {
-        case 'uniform': case 'unif': {
-          const { a, b } = args;
-          return (x >= a && x <= b) ? 1 / (b - a) : 0;
-        }
-        case 'triangular': case 'triang': {
-          const { a, b, m } = args;
-          if (x < a || x > b) return 0;
-          return x <= m
-            ? 2 * (x - a) / ((b - a) * (m - a))
-            : 2 * (b - x) / ((b - a) * (b - m));
-        }
-        case 'dtriangular': case 'dtriang': {
-          const { a, b, m } = args;
-          if (x < a || x > b) return 0;
-          return x <= m
-            ? (x - a) / ((m - a) * (m - a))
-            : (b - x) / ((b - m) * (b - m));
-        }
-        case 'normal': case 'norm': {
-          const { mean, std } = args;
-          const z = (x - mean) / std;
-          return Math.exp(-0.5 * z * z) / (std * Math.sqrt(2 * Math.PI));
-        }
-        case 'exponential': case 'exp': {
-          const { mean } = args;
-          return x < 0 ? 0 : (1 / mean) * Math.exp(-x / mean);
-        }
-        case 'loguniform': case 'logu': case 'logunif': {
-          const { a, b } = args;
-          return (x <= a || x >= b) ? 0 : 1 / (x * (Math.log(b) - Math.log(a)));
-        }
-        case 'logtriangular': case 'logt': case 'logtriang': {
-          const { a, b, m } = args;
-          if (x <= a || x >= b) return 0;
-          const la = Math.log(a), lb = Math.log(b), lm = Math.log(m), lx = Math.log(x);
-          const fLog = lx <= lm
-            ? 2 * (lx - la) / ((lb - la) * (lm - la))
-            : 2 * (lb - lx) / ((lb - la) * (lb - lm));
-          return fLog / x;
-        }
-        case 'logdtriangular': case 'logdt': case 'logdtriang': {
-          const { a, b, m } = args;
-          if (x <= a || x >= b) return 0;
-          const la = Math.log(a), lb = Math.log(b), lm = Math.log(m), lx = Math.log(x);
-          const fLog = lx <= lm
-            ? (lx - la) / ((lm - la) * (lm - la))
-            : (lb - lx) / ((lb - lm) * (lb - lm));
-          return fLog / x;
-        }
-        case 'lognormal': case 'logn': case 'lognorm': {
-          const { gm, gsd } = args;
-          if (x <= 0) return 0;
-          const mu = Math.log(gm), sigma = Math.log(gsd);
-          const z = (Math.log(x) - mu) / sigma;
-          return Math.exp(-0.5 * z * z) / (x * sigma * Math.sqrt(2 * Math.PI));
-        }
-        default: return null;
-      }
-    }
-
-    /**
-     * Map from type string to inverse-CDF caller.
-     */
-    const DIST_INV = {
-      'unif':           (p, a) => invUnif(p, a.a, a.b),
-      'uniform':        (p, a) => invUnif(p, a.a, a.b),
-      'triang':         (p, a) => invTriang(p, a.a, a.b, a.m),
-      'triangular':     (p, a) => invTriang(p, a.a, a.b, a.m),
-      'dtriang':        (p, a) => invDtriang(p, a.a, a.b, a.m),
-      'dtriangular':    (p, a) => invDtriang(p, a.a, a.b, a.m),
-      'norm':           (p, a) => invNorm(p, a.mean, a.std),
-      'normal':         (p, a) => invNorm(p, a.mean, a.std),
-      'exp':            (p, a) => invExp(p, a.mean),
-      'exponential':    (p, a) => invExp(p, a.mean),
-      'logu':           (p, a) => invLogu(p, a.a, a.b),
-      'logunif':        (p, a) => invLogu(p, a.a, a.b),
-      'loguniform':     (p, a) => invLogu(p, a.a, a.b),
-      'logt':           (p, a) => invLogt(p, a.a, a.b, a.m),
-      'logtriang':      (p, a) => invLogt(p, a.a, a.b, a.m),
-      'logtriangular':  (p, a) => invLogt(p, a.a, a.b, a.m),
-      'logdt':          (p, a) => invLogdt(p, a.a, a.b, a.m),
-      'logdtriang':     (p, a) => invLogdt(p, a.a, a.b, a.m),
-      'logdtriangular': (p, a) => invLogdt(p, a.a, a.b, a.m),
-      'logn':           (p, a) => invLogn(p, a.gm, a.gsd),
-      'lognorm':        (p, a) => invLogn(p, a.gm, a.gsd),
-      'lognormal':      (p, a) => invLogn(p, a.gm, a.gsd),
-      'emp':            (p, a) => invEmpirical(p, a.data),
-      'empirical':      (p, a) => invEmpirical(p, a.data),
-    };
+    /* DIST_INV moved to resources/js/pdf-sampler.js (use PDFSampler internally) */
 
     /**
      * Generate n random samples from a PDF specification object.
@@ -623,70 +512,14 @@
      * @param {number} [n=1000] - Number of samples
      * @returns {Float64Array|null} Array of samples, or null if type unknown
      */
-    function generatePdfSamples(pdf, n = 1000) {
-      if (!pdf || !pdf.type) return null;
-      const typeKey = pdf.type.toLowerCase();
-
-      // "raw" type: return the data array from the dataset directly
-      if (typeKey === 'raw') return null; // handled separately by caller
-
-      const invFn = DIST_INV[typeKey];
-      if (!invFn) return null;
-
-      // Distribution parameters (everything except meta-keys)
-      const args = { ...pdf };
-      delete args.type;
-
-      // Truncation params
-      const pmin = pdf.pmin ?? 0;
-      const pmax = pdf.pmax ?? 1;
-      const trmin = pdf.trmin ?? null;
-      const trmax = pdf.trmax ?? null;
-      const shift = pdf.shift ?? 0;
-
-      // Compute effective probability bounds with optional value truncation
-      let effPmin = pmin;
-      let effPmax = pmax;
-      if (trmin !== null) {
-        const c = cdfForDist(typeKey, trmin, args);
-        if (c !== null) effPmin = Math.max(effPmin, c);
-      }
-      if (trmax !== null) {
-        const c = cdfForDist(typeKey, trmax, args);
-        if (c !== null) effPmax = Math.min(effPmax, c);
-      }
-      if (effPmin >= effPmax) effPmin = pmin; // fallback
-
-      const samples = new Float64Array(n);
-      for (let i = 0; i < n; i++) {
-        const u = Math.random();
-        const p = effPmin + (effPmax - effPmin) * u;
-        samples[i] = invFn(p, args) + shift;
-      }
-      return samples;
-    }
+    /* Generate PDF samples (delegates to PDFSampler) */
+    function generatePdfSamples(pdf, n = 1000) { return window.PDFSampler.generatePdfSamples(pdf, n); }
 
     /**
      * Build a human-readable label for a PDF spec.
      * @param {Object} pdf
      * @returns {string}
      */
-    function pdfLabel(pdf) {
-      if (!pdf || !pdf.type) return '';
-      const t = pdf.type;
-      const parts = [t];
-      const keys = Object.keys(pdf).filter(k => !['type','pmin','pmax','trmin','trmax','shift','include_deterministic'].includes(k));
-      for (const k of keys) {
-        const v = pdf[k];
-        if (typeof v === 'number') {
-          // Compact number: use toPrecision(4) only when needed
-          const s = Number.isInteger(v) ? String(v) : Number(v.toPrecision(4)).toString();
-          parts.push(`${k}=${s}`);
-        }
-        // Skip array / object params (e.g. empirical 'data') to keep the label short
-      }
-      return parts.join(', ');
-    }
 
     /**
      * Extract histogram entries from a dataset node that has a 'pdf' attribute.
@@ -704,14 +537,7 @@
         let pdfRaw = attrs.pdf;
         if (typeof pdfRaw === 'string') pdfRaw = JSON.parse(pdfRaw);
 
-        const toNumber = v => {
-          if (typeof v === 'bigint') {
-            const n = Number(v);
-            if (!Number.isSafeInteger(n)) console.warn('BigInt -> Number conversion (precision loss possible):', v);
-            return n;
-          }
-          return v;
-        };
+
 
         const isLookupTable = Array.isArray(pdfRaw);
         const indexAttr = attrs.index;
@@ -726,7 +552,7 @@
                 let rawData = typeof node.value !== 'undefined' ? node.value : (typeof node.toArray === 'function' ? node.toArray() : undefined);
                 if (rawData !== undefined) {
                   const arr = Array.isArray(rawData) ? rawData : Array.from(rawData);
-                  entries.push({ label: label + ' – ' + String(indexLabels[i] ?? i), samples: [toNumber(arr[i])], spec: null, deterministicValue: null });
+                  entries.push({ label: label + ' – ' + String(indexLabels[i] ?? i), samples: [PDFSampler.toNumber(arr[i])], spec: null, deterministicValue: null });
                 }
               } catch (_) {}
               continue;
@@ -739,9 +565,9 @@
                   const flat = Array.isArray(rawData) ? rawData : Array.from(rawData);
                   const nCols = pdfRaw.length, nRows = Math.floor(flat.length / nCols);
                   const shift = spec.include_deterministic ? 1 : 0;
-                  const detVal = spec.include_deterministic && nRows > 0 ? toNumber(flat[0 * nCols + i]) : null;
+                  const detVal = spec.include_deterministic && nRows > 0 ? PDFSampler.toNumber(flat[0 * nCols + i]) : null;
                   const col = [];
-                  for (let r = shift; r < nRows; r++) col.push(toNumber(flat[r * nCols + i]));
+                  for (let r = shift; r < nRows; r++) col.push(PDFSampler.toNumber(flat[r * nCols + i]));
                   entries.push({ label: label + ' – ' + String(indexLabels[i] ?? i), samples: col, spec, deterministicValue: detVal });
                 }
               } catch (_) {}
@@ -751,12 +577,12 @@
                 let rawData = typeof node.value !== 'undefined' ? node.value : (typeof node.toArray === 'function' ? node.toArray() : undefined);
                 if (rawData !== undefined) {
                   const flat = Array.isArray(rawData) ? rawData : Array.from(rawData);
-                  if (flat.length >= pdfRaw.length) detVal = toNumber(flat[i]);
+                  if (flat.length >= pdfRaw.length) detVal = PDFSampler.toNumber(flat[i]);
                 }
               } catch (_) {}
               const samples = generatePdfSamples(spec, 1000);
               if (samples) {
-                entries.push({ label: label + ' – ' + String(indexLabels[i] ?? i), samples: Array.from(samples).map(toNumber), spec, deterministicValue: isFinite(detVal) ? detVal : null });
+                entries.push({ label: label + ' – ' + String(indexLabels[i] ?? i), samples: PDFSampler.normalizeDataArray(samples), spec, deterministicValue: isFinite(detVal) ? detVal : null });
               }
             }
           }
@@ -768,8 +594,8 @@
               if (rawData !== undefined) {
                 const flat = Array.isArray(rawData) ? rawData : Array.from(rawData);
                 const shift = pdfRaw.include_deterministic ? 1 : 0;
-                const detVal = pdfRaw.include_deterministic && flat.length > 0 ? toNumber(flat[0]) : null;
-                return [{ label, samples: flat.slice(shift).map(toNumber), spec: pdfRaw, deterministicValue: detVal }];
+                const detVal = pdfRaw.include_deterministic && flat.length > 0 ? PDFSampler.toNumber(flat[0]) : null;
+                return [{ label, samples: flat.slice(shift).map(PDFSampler.toNumber), spec: pdfRaw, deterministicValue: detVal }];
               }
             } catch (_) {}
           } else {
@@ -778,12 +604,12 @@
               let rawData = typeof node.value !== 'undefined' ? node.value : (typeof node.toArray === 'function' ? node.toArray() : undefined);
               if (rawData !== undefined) {
                 if (typeof rawData === 'number') detVal = rawData;
-                else if (rawData && rawData.length !== undefined && rawData.length > 0) detVal = toNumber(rawData[0]);
+                else if (rawData && rawData.length !== undefined && rawData.length > 0) detVal = PDFSampler.toNumber(rawData[0]);
               }
             } catch (_) {}
             const samples = generatePdfSamples(pdfRaw, 1000);
             if (samples) {
-              return [{ label, samples: Array.from(samples).map(toNumber), spec: pdfRaw, deterministicValue: isFinite(detVal) ? detVal : null }];
+              return [{ label, samples: Array.from(samples).map(PDFSampler.toNumber), spec: pdfRaw, deterministicValue: isFinite(detVal) ? detVal : null }];
             }
           }
         }
@@ -800,53 +626,8 @@
      * @param {number} [nPoints=200] - Number of points to evaluate
      * @returns {{x:number[], y:number[]}|null} Points for the line overlay
      */
-    function computePdfOverlay(spec, nPoints = 200) {
-      if (!spec || !spec.type) return null;
-      const typeKey = spec.type.toLowerCase();
-      if (['raw','emp','empirical'].includes(typeKey)) return null;
-
-      const invFn = DIST_INV[typeKey];
-      if (!invFn) return null;
-
-      const args  = { ...spec };
-      const shift = spec.shift ?? 0;
-      const pmin  = spec.pmin  ?? 0;
-      const pmax  = spec.pmax  ?? 1;
-      const trmin = spec.trmin ?? null;
-      const trmax = spec.trmax ?? null;
-
-      // Effective probability bounds (mirrors generatePdfSamples)
-      let effPmin = pmin, effPmax = pmax;
-      if (trmin !== null) {
-        const c = cdfForDist(typeKey, trmin, args);
-        if (c !== null) effPmin = Math.max(effPmin, c);
-      }
-      if (trmax !== null) {
-        const c = cdfForDist(typeKey, trmax, args);
-        if (c !== null) effPmax = Math.min(effPmax, c);
-      }
-      if (effPmin >= effPmax) { effPmin = pmin; effPmax = pmax; }
-
-      // x-range from probability bounds
-      const eps = 1e-9;
-      const xMin = invFn(Math.max(effPmin, eps), args) + shift;
-      const xMax = invFn(Math.min(effPmax, 1 - eps), args) + shift;
-      if (!isFinite(xMin) || !isFinite(xMax) || xMin >= xMax) return null;
-
-      const normFactor = effPmax - effPmin;
-      if (normFactor <= 0) return null;
-
-      const x = [], y = [];
-      for (let i = 0; i <= nPoints; i++) {
-        const xi = xMin + (xMax - xMin) * i / nPoints;
-        const fVal = pdfEval(typeKey, xi - shift, args);
-        if (fVal !== null && isFinite(fVal)) {
-          x.push(xi);
-          y.push(fVal / normFactor);
-        }
-      }
-      return x.length > 0 ? { x, y } : null;
-    }
+    /* Compute PDF overlay (delegates to PDFSampler) */
+    function computePdfOverlay(spec, nPoints = 200) { return window.PDFSampler.computePdfOverlay(spec, nPoints); }
 
     /**
      * Escape value for CSV export (handle commas, quotes, newlines)
@@ -918,30 +699,6 @@
     }
     
     /**
-     * Convert data to a proper array
-     * @param {*} data - The data to convert (array, array-like, or scalar)
-     * @returns {Array} The data as an array
-     */
-    function normalizeDataArray(data) {
-      const toNumber = v => {
-        if (typeof v === 'bigint') {
-          const n = Number(v);
-          if (!Number.isSafeInteger(n)) console.warn('BigInt -> Number conversion (precision loss possible):', v);
-          return n;
-        }
-        return v;
-      };
-
-      if (Array.isArray(data)) {
-        return data.map(toNumber);
-      } else if (data && typeof data === 'object' && data.length !== undefined) {
-        return Array.from(data, toNumber);
-      } else {
-        return [toNumber(data)];
-      }
-    }
-    
-    /**
      * Check if a dataset has the 'probabilistic' attribute set to true
      * @param {Object} dataset - HDF5 dataset with attrs
      * @returns {boolean} True if probabilistic
@@ -967,16 +724,14 @@
      * @returns {Array} Array of mean values per timestep
      */
     function computeProbabilisticMean(yArray, timeData) {
-      const toNum = v => (typeof v === 'bigint' ? Number(v) : v);
-
       if (Array.isArray(yArray[0])) {
         // Array of arrays: each timeSlice has multiple realizations
         return yArray.map(timeSlice => {
           if (Array.isArray(timeSlice)) {
-            const sum = timeSlice.reduce((a, b) => a + toNum(b), 0);
+            const sum = timeSlice.reduce((a, b) => a + PDFSampler.toNumber(b), 0);
             return sum / timeSlice.length;
           }
-          return toNum(timeSlice);
+          return PDFSampler.toNumber(timeSlice);
         });
       } else if (yArray.length > timeData.length && yArray.length % timeData.length === 0) {
         // Flat array: realizations interleaved or sequential
@@ -985,13 +740,13 @@
         for (let t = 0; t < timeData.length; t++) {
           let sum = 0;
           for (let r = 0; r < numRealizations; r++) {
-            sum += toNum(yArray[t * numRealizations + r]);
+            sum += PDFSampler.toNumber(yArray[t * numRealizations + r]);
           }
           means.push(sum / numRealizations);
         }
         return means;
       }
-      return yArray.map(toNum);
+      return yArray.map(PDFSampler.toNumber);
     }
     
     /**
@@ -1337,7 +1092,7 @@
       let shapes = [];
 
       if (data.type === 'single') {
-        const label = data.spec ? pdfLabel(data.spec) : 'raw';
+        const label = data.spec ? PDFSampler.pdfLabel(data.spec) : 'raw';
 
         // Histogram trace (probability density)
         traces.push({
@@ -1385,7 +1140,7 @@
       } else if (data.type === 'lookup') {
         data.entries.forEach((entry, i) => {
           const c = palette[i % palette.length];
-          const label = entry.spec ? entry.label + ' (' + pdfLabel(entry.spec) + ')' : entry.label;
+          const label = entry.spec ? entry.label + ' (' + PDFSampler.pdfLabel(entry.spec) + ')' : entry.label;
 
           traces.push({
             x: entry.samples.map(xform),
@@ -2920,7 +2675,7 @@
           }
           
           if (yData) {
-            let yArray = normalizeDataArray(yData);
+            let yArray = PDFSampler.normalizeDataArray(yData);
             
             // Handle probabilistic data (take mean)
             if (checkIsProbabilistic(dataset)) {
@@ -3079,7 +2834,7 @@
           }
           
           if (yData) {
-            let yArray = normalizeDataArray(yData);
+            let yArray = PDFSampler.normalizeDataArray(yData);
             
             // Handle probabilistic data (take mean)
             if (checkIsProbabilistic(dataset)) {
@@ -3256,7 +3011,7 @@
               }
               
               if (yData) {
-                let yArray = normalizeDataArray(yData);
+                let yArray = PDFSampler.normalizeDataArray(yData);
                 
                 // Handle probabilistic data
                 if (checkIsProbabilistic(dataset)) {
@@ -3766,15 +3521,7 @@
       const infoDiv = document.getElementById('info');
       infoDiv.innerHTML = '<div class="loading">Loading...</div>';
       
-      const jsonReplacer = (key, value) => {
-        if (typeof value === 'bigint') {
-          return Number(value);
-        }
-        if (value && typeof value === 'object' && value.length !== undefined) {
-          return Array.from(value);
-        }
-        return value;
-      };
+      const jsonReplacer = PDFSampler.jsonReplacer;
       
       try {
         const enabledFiles = getEffectiveFiles();
@@ -3930,7 +3677,7 @@
                 if (isScalar) {
                   // Single value: show without brackets or quotes
                   let val = preview[0];
-                  if (typeof val === 'bigint') val = Number(val);
+                  val = PDFSampler.toNumber(val);
                   previewText = String(val);
                 } else {
                   previewText = JSON.stringify(preview, jsonReplacer, 2);
@@ -3976,17 +3723,17 @@
           try {
             if (node.attrs && typeof node.attrs === 'object') {
               for (const attrName in node.attrs) {
-                if (!attrName.startsWith('_') && typeof node.attrs[attrName] === 'object') {
+                if (!attrName.startsWith('_')) {
                   try {
                     const attrObj = node.attrs[attrName];
                     let attrValue;
-                    
-                    if (attrObj && attrObj.value !== null && typeof attrObj.value !== 'undefined') {
+                    // prefer attrObj.value when present (h5wasm attribute wrapper), otherwise use primitive/string directly
+                    if (attrObj && typeof attrObj === 'object' && 'value' in attrObj) {
                       attrValue = attrObj.value;
                     } else {
                       attrValue = attrObj;
                     }
-                    
+
                     attrs[attrName] = attrValue;
                     hasAttributes = true;
                   } catch (e) {
@@ -4065,10 +3812,12 @@
                         if (flat.length >= nCols) detVal = Number(flat[i]);
                       }
                     } catch (_) { /* skip */ }
-                    const samples = generatePdfSamples(spec, 1000);
+                    let samples = generatePdfSamples(spec, 1000);
                     if (samples) {
-                      samples = samples.map(v => (typeof v === 'bigint' ? Number(v) : v));
+                      samples = PDFSampler.normalizeDataArray(samples);
                       entries.push({ label: String(indexLabels[i] ?? i), samples: Array.from(samples), spec: spec, deterministicValue: isFinite(detVal) ? detVal : null });
+                    } else {
+                      console.warn('generatePdfSamples returned null for spec (lookup index)', spec);
                     }
                   }
                 }
@@ -4084,7 +3833,7 @@
                     if (typeof node.value !== 'undefined') rawData = node.value;
                     else if (typeof node.toArray === 'function') rawData = node.toArray();
                     if (rawData !== undefined) {
-                      const flat = (Array.isArray(rawData) ? rawData : Array.from(rawData)).map(v => (typeof v === 'bigint' ? Number(v) : v));
+                      const flat = PDFSampler.normalizeDataArray(rawData);
                       const shift = (pdfRaw.include_deterministic) ? 1 : 0;
                       const detVal = (pdfRaw.include_deterministic && flat.length > 0) ? flat[0] : null;
                       pdfHistogramData = { type: 'single', samples: flat.slice(shift), spec: pdfRaw, path, deterministicValue: detVal };
@@ -4115,10 +3864,12 @@
                     }
                   } catch (_) { /* skip */ }
 
-                  const samples = generatePdfSamples(pdfRaw, 1000);
+                  let samples = generatePdfSamples(pdfRaw, 1000);
                   if (samples) {
-                    samples = samples.map(v => (typeof v === 'bigint' ? Number(v) : v));
+                    samples = PDFSampler.normalizeDataArray(samples);
                     pdfHistogramData = { type: 'single', samples: Array.from(samples), spec: pdfRaw, path, deterministicValue: isFinite(detVal) ? detVal : null };
+                  } else {
+                    console.warn('generatePdfSamples returned null for pdf spec', pdfRaw, 'at', path);
                   }
                   // pdfHistogramData = {
                   //   type: 'lookup',
@@ -4389,17 +4140,15 @@
         const attrs = {};
         if (node.attrs && typeof node.attrs === 'object') {
           for (const attrName in node.attrs) {
-            if (!attrName.startsWith('_') && typeof node.attrs[attrName] === 'object') {
+            if (!attrName.startsWith('_')) {
               try {
                 const attrObj = node.attrs[attrName];
                 let attrValue;
-                
-                if (attrObj && attrObj.value !== null && typeof attrObj.value !== 'undefined') {
+                if (attrObj && typeof attrObj === 'object' && 'value' in attrObj) {
                   attrValue = attrObj.value;
                 } else {
                   attrValue = attrObj;
                 }
-                
                 attrs[attrName] = attrValue;
               } catch (e) {
                 attrs[attrName] = `(unreadable: ${e.message})`;
@@ -4432,7 +4181,7 @@
               displayValue = JSON.stringify(value);
             }
           } else if (typeof value === 'bigint') {
-            displayValue = String(Number(value));
+            displayValue = String(PDFSampler.toNumber(value));
           } else {
             displayValue = String(value);
           }
@@ -4758,9 +4507,9 @@
           const attrs = {};
           if (dataset.attrs && typeof dataset.attrs === 'object') {
             for (const attrName in dataset.attrs) {
-              if (!attrName.startsWith('_') && typeof dataset.attrs[attrName] === 'object') {
+              if (!attrName.startsWith('_')) {
                 const attrObj = dataset.attrs[attrName];
-                attrs[attrName] = attrObj?.value ?? attrObj;
+                attrs[attrName] = (attrObj && typeof attrObj === 'object' && 'value' in attrObj) ? attrObj.value : attrObj;
               }
             }
           }
