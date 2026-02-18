@@ -42,7 +42,7 @@
         <input 
           type="text" 
           id="treeSearch" 
-          placeholder="Search tree (use * for wildcard)..." 
+          placeholder="Search tree (use * for wildcard and '/' for full-path search)" 
           autocomplete="off"
         />
         <button id="clearSearch" class="clear-search-btn" title="Clear search">×</button>
@@ -114,7 +114,7 @@
   <script src="./resources/js/erf.js"></script>
   <script src="./resources/js/site.js"></script>
   <script>
-    KVOT.renderHeader('hdf result browser', '<div class="tabs-container"><div id="fileTabs"></div><div id="fileLoadTicker" class="file-load-ticker" aria-live="polite" hidden><span class="spinner" aria-hidden="true"></span><span class="ticker-text">Loading files…</span><button class="ticker-cancel" onclick="cancelTreeRefresh()" title="Cancel" style="display:none;">✕</button></div><button class="add-file-btn" onclick="document.getElementById(\'fileInput\').click()">+ Add Files</button></div>');
+    KVOT.renderHeader('hdf browser', '<div class="tabs-container"><div id="fileTabs"></div><div id="fileLoadTicker" class="file-load-ticker" aria-live="polite" hidden><span class="spinner" aria-hidden="true"></span><span class="ticker-text">Loading files…</span><button class="ticker-cancel" onclick="cancelTreeRefresh()" title="Cancel" style="display:none;">✕</button></div><button class="add-file-btn" onclick="document.getElementById(\'fileInput\').click()">+ Add Files</button></div>');
     KVOT.renderNav('rb.html');
     KVOT.renderFooter();
     KVOT.initMap('map');
@@ -5430,9 +5430,39 @@
      * @returns {RegExp} Compiled regular expression
      */
     function wildcardToRegex(pattern) {
-      const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
+      const escaped = pattern.replace(/[.+?^${}()|[\\\]\\]/g, '\\$&');
       const regexPattern = escaped.replace(/\*/g, '.*');
       return new RegExp(regexPattern, 'i');
+    }
+
+    /**
+     * Detect whether the search term appears to be a full-path search.
+     * We treat terms containing '/', '.' or whitespace as path searches.
+     * @param {string} term
+     * @returns {boolean}
+     */
+    function isPathSearchTerm(term) {
+      return /[\/\.\s]/.test(String(term));
+    }
+
+    /**
+     * Normalize a path-style search term by treating dots and spaces as '/'
+     * so users may write 'grp.sub dset' or 'grp.sub.dset' and it will match
+     * '/grp/sub/dset' paths in the tree. Keeps '*' wildcards intact.
+     * @param {string} term
+     * @returns {string}
+     */
+    function normalizePathSearchTerm(term) {
+      return String(term).trim().replace(/[\.\s]+/g, '/');
+    }
+
+    /**
+     * Return the last non-empty segment of a path-like search term for
+     * highlighting the node label (final name) in the tree.
+     */
+    function labelSegmentFromPathTerm(term) {
+      const parts = normalizePathSearchTerm(term).split('/').filter(Boolean);
+      return parts.length ? parts[parts.length - 1] : term;
     }
 
     /**
@@ -5494,22 +5524,33 @@
         return;
       }
       
-      const regex = wildcardToRegex(searchTerm);
+      const regexLabel = wildcardToRegex(searchTerm);
+      const isPathSearch = isPathSearchTerm(searchTerm);
+      const pathRegex = isPathSearch ? wildcardToRegex(normalizePathSearchTerm(searchTerm)) : null;
       const matchingItems = new Set();
       const itemsToShow = new Set();
       
-      // First pass: find all matching items
+      // First pass: find all matching items (match label *or* full path when path-style search)
       allItems.forEach(item => {
         const label = item.querySelector('.tree-label');
         if (!label) return;
-        
-        const text = label.textContent;
-        const matches = regex.test(text);
-        
+
+        const text = label.textContent || '';
+        let matches = regexLabel.test(text);
+
+        // If user typed a path-style query (contains /, . or space), also test the
+        // element's `data-path` attribute (full HDF5 path) using a normalized regex.
+        if (!matches && isPathSearch) {
+          const pathAttr = item.getAttribute('data-path') || '';
+          if (pathRegex && pathRegex.test(pathAttr)) matches = true;
+        }
+
         if (matches) {
           matchingItems.add(item);
           item.classList.add('search-match');
-          label.innerHTML = highlightText(text, searchTerm);
+          // Highlight only the final name in the label when doing path searches
+          const labelSearch = isPathSearch ? labelSegmentFromPathTerm(searchTerm) : searchTerm;
+          label.innerHTML = highlightText(text, labelSearch);
         } else {
           item.classList.remove('search-match');
           label.innerHTML = escapeHtml(text);
@@ -5642,7 +5683,9 @@
 
         (async () => {
           try {
-            const regexLocal = wildcardToRegex(searchTerm);
+            const isPathSearchLocal = isPathSearchTerm(searchTerm);
+            const patternForSearch = isPathSearchLocal ? normalizePathSearchTerm(searchTerm) : searchTerm;
+            const regexLocal = wildcardToRegex(patternForSearch);
             const enabled = getEnabledFiles();
             let expansions = 0;
 
