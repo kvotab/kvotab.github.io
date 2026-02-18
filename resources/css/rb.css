@@ -830,6 +830,19 @@
     .file-load-ticker .ticker-progress { width: 160px; height: 6px; background: rgba(0,0,0,0.06); border-radius: 6px; overflow: hidden; }
     .file-load-ticker .ticker-progress-bar { height: 100%; width: 0%; background: var(--color-kvot-accent); transition: width 220ms linear; }
 
+/* cancel button shown inside the inline file-load ticker for long tree recalculations */
+.file-load-ticker .ticker-cancel {
+  background: transparent;
+  border: 0;
+  color: var(--color-kvot-accent);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  display: none;
+}
+.file-load-ticker .ticker-cancel:hover { background: rgba(0,0,0,0.06); }
+
 
 
     /* ==========================================================================

@@ -114,7 +114,7 @@
   <script src="./resources/js/erf.js"></script>
   <script src="./resources/js/site.js"></script>
   <script>
-    KVOT.renderHeader('hdf result browser', '<div class="tabs-container"><div id="fileTabs"></div><div id="fileLoadTicker" class="file-load-ticker" aria-live="polite" hidden><span class="spinner" aria-hidden="true"></span><span class="ticker-text">Loading files…</span></div><button class="add-file-btn" onclick="document.getElementById(\'fileInput\').click()">+ Add Files</button></div>');
+    KVOT.renderHeader('hdf result browser', '<div class="tabs-container"><div id="fileTabs"></div><div id="fileLoadTicker" class="file-load-ticker" aria-live="polite" hidden><span class="spinner" aria-hidden="true"></span><span class="ticker-text">Loading files…</span><button class="ticker-cancel" onclick="cancelTreeRefresh()" title="Cancel" style="display:none;">✕</button></div><button class="add-file-btn" onclick="document.getElementById(\'fileInput\').click()">+ Add Files</button></div>');
     KVOT.renderNav('rb.html');
     KVOT.renderFooter();
     KVOT.initMap('map');
@@ -198,10 +198,20 @@
 
     /** @type {Object.<string, Object>} Map of filename to HDF5 file objects */
     let loadedFiles = {};
+    /**
+     * Raw ArrayBuffer copies for each loaded file. Used when passing the file
+     * into a Web Worker for heavy traversal (keeps main-thread File objects intact).
+     */
+    let loadedFileBuffers = {};
     /** @type {Object.<string, boolean>} Map of filename to enabled/disabled state */
     let fileStates = {};
     /** @type {string[]} Ordered list of filenames (determines tab order) */
     let fileOrder = [];
+
+    // Worker used for heavy tree traversal / intersection
+    let treeWorker = null;
+    let treeWorkerH5Ready = false; // whether h5wasm inside the worker finished initializing
+    const _treeWorkerPending = {};
     
     // Selection state
     /** @type {string|null} Currently selected HDF5 path in the tree view */
@@ -234,6 +244,13 @@
     let searchTimeout = null;
     /** @type {string} Current search/filter term applied to tree view */
     let currentSearchTerm = '';
+
+    // Debounce and cancellation helpers for tab refresh / tree build
+    let _updateTabsDebounceTimer = null;
+    const UPDATE_TABS_DEBOUNCE_MS = 250;
+    // Tree refresh cancellation token/flag (incremented per refresh)
+    window._treeRefreshId = window._treeRefreshId || 0;
+    window._treeRefreshCancelled = false;
     
     // Drag & drop state
     /** @type {number} Counter for drag enter/leave events to handle nested elements */
@@ -1489,7 +1506,46 @@
      */
     function toggleFileState(fileName) {
       fileStates[fileName] = !fileStates[fileName];
-      updateTabs();
+      console.debug('[toggleFileState]', fileName, 'newState=', fileStates[fileName]);
+
+      // Immediate visual update: change the tab element class so colour/state
+      // responds instantly without waiting for the expensive tree recalculation.
+      try {
+        const tabs = document.querySelectorAll('.file-tab');
+        for (const t of tabs) {
+          if (t.getAttribute('data-file') === fileName) {
+            t.classList.toggle('enabled', !!fileStates[fileName]);
+            t.classList.toggle('disabled', !fileStates[fileName]);
+            break;
+          }
+        }
+      } catch (e) { /* ignore DOM update errors */ }
+
+      // If Intersect mode is active, trigger the same UI + full recompute
+      // as toggling the Intersect checkbox (preserves previous fix behavior).
+      if (isIntersectMode()) {
+        try {
+          toggleIntersect();
+          return;
+        } catch (e) {
+          console.warn('[toggleFileState] toggleIntersect fallback', e);
+        }
+      }
+
+      // coalesce rapid toggles to avoid repeated expensive tree rebuilds
+      scheduleUpdateTabs();
+    }
+
+    /**
+     * Schedule an updateTabs call with debounce so rapid tab toggles are coalesced
+     * into a single tree refresh. Useful when users rapidly enable/disable files.
+     */
+    function scheduleUpdateTabs(delay = UPDATE_TABS_DEBOUNCE_MS) {
+      if (_updateTabsDebounceTimer) clearTimeout(_updateTabsDebounceTimer);
+      _updateTabsDebounceTimer = setTimeout(() => {
+        _updateTabsDebounceTimer = null;
+        updateTabs();
+      }, delay);
     }
 
     /**
@@ -1503,6 +1559,7 @@
     async function removeFile(fileName) {
       delete loadedFiles[fileName];
       delete fileStates[fileName];
+      delete loadedFileBuffers[fileName];
       fileOrder = fileOrder.filter(k => k !== fileName);
       
       const enabledFiles = getEnabledFiles();
@@ -1680,6 +1737,17 @@
       if (needRefresh) {
         const isIntersect = isIntersectMode();
 
+        // If there's any in-flight worker intersection request, cancel it
+        // now: the user changed enabled files so we'll start a fresh run.
+        try {
+          for (const wid of Object.keys(_treeWorkerPending)) {
+            try { ensureTreeWorker().postMessage({ cmd: 'cancel', id: wid }); } catch (e) {}
+            try { clearTimeout(_treeWorkerPending[wid]._timeout); } catch (e) {}
+            delete _treeWorkerPending[wid];
+            console.debug('[updateTabs] cancelled in-flight worker id=', wid);
+          }
+        } catch (e) { /* ignore */ }
+
         // Immediate visual feedback in the tree while recalculation runs.
         try {
           const tree = document.getElementById('tree');
@@ -1704,6 +1772,12 @@
           }
         } catch (e) { /* ignore UI update errors */ }
 
+        // mark a refresh token early so the header ticker can show a cancel button
+        if (isIntersect) {
+          window._treeRefreshId = (window._treeRefreshId || 0) + 1;
+          window._treeRefreshCancelled = false;
+        }
+
         // Show header ticker for intersect recalculation as well
         if (isIntersect) {
           try { showFileLoadTicker(0, 0, 'Recalculating intersection...'); } catch (e) {}
@@ -1713,7 +1787,7 @@
         refreshPromise = new Promise((resolve, reject) => {
           setTimeout(() => {
             refreshTreeStructure().then(resolve, reject);
-          }, 20);
+          }, 50);
         }).finally(() => {
           if (isIntersect) {
             try { hideFileLoadTicker(); } catch (e) {}
@@ -1976,6 +2050,13 @@
       resetInfoPanel();
       hideChart();
 
+      // mark a refresh token early so the header ticker cancel button can appear
+      window._treeRefreshId = (window._treeRefreshId || 0) + 1;
+      window._treeRefreshCancelled = false;
+
+      // Show header ticker for long-running intersect recalculations too
+      try { showFileLoadTicker(0, 0, 'Recalculating intersection...'); } catch (e) {}
+
       // Immediately show the Intersection root + inline spinner so the UI
       // responds instantly while the expensive intersection calculation runs.
       try {
@@ -2007,14 +2088,17 @@
       if (cb) cb.disabled = true;
       setTimeout(() => {
         refreshTreeStructure().finally(() => { if (cb) cb.disabled = false; });
-      }, 20);
+      }, 50);
 
       // return immediately so the inline spinner remains visible while work runs
       return;
     }
 
     /**
-     * Recursively collect all paths (groups and datasets) from an HDF5 file.
+     * (sync) Recursively collect all paths (groups and datasets) from an HDF5 file.
+     * NOTE: kept for backward-compatibility and lightweight files; heavy scans
+     * should use `collectAllPathsAsync` to avoid blocking the UI.
+     *
      * @param {Object} group - h5wasm Group object
      * @param {string} prefix - Current path prefix
      * @returns {Set<string>} Set of all paths in the group
@@ -2043,10 +2127,54 @@
     }
 
     /**
+     * Asynchronously collect all paths (groups and datasets) from an HDF5 file
+     * without blocking the main thread. Yields to the event loop periodically
+     * and honors the global cancellation flag `window._treeRefreshCancelled`.
+     *
+     * @param {Object} group - h5wasm Group object
+     * @param {string} prefix - Current path prefix
+     * @param {Object} [opts] - Options: { yieldEvery: number }
+     * @returns {Promise<Set<string>>}
+     */
+    async function collectAllPathsAsync(group, prefix = '', opts = {}) {
+      const paths = new Set();
+      const yieldEvery = (opts && opts.yieldEvery) || 200;
+      let counter = 0;
+
+      async function _traverse(g, p) {
+        if (!g || typeof g.keys !== 'function') return;
+        let keys = [];
+        try { keys = Array.from(g.keys()).sort(); } catch (e) { return; }
+
+        for (const k of keys) {
+          if (window._treeRefreshCancelled) throw new Error('cancelled');
+
+          const path = p ? `${p}/${k}` : `/${k}`;
+          paths.add(path);
+
+          let obj = null;
+          try { obj = g.get(k); } catch (e) { /* unreadable — skip */ }
+
+          if (obj && String(obj.type).toLowerCase() === 'group') {
+            await _traverse(obj, path);
+          }
+
+          if (++counter % yieldEvery === 0) {
+            // yield so the browser can process user input (clicks, cancel)
+            await new Promise(r => setTimeout(r, 0));
+            if (window._treeRefreshCancelled) throw new Error('cancelled');
+          }
+        }
+      }
+
+      await _traverse(group, prefix);
+      return paths;
+    }
+
+    /**
      * Get the set of paths that exist in ALL enabled files (full-path intersection).
-     * Only paths that are present (identical) in every enabled file will be
-     * returned — this enforces that the displayed tree nodes have the same
-     * hierarchy in all enabled files.
+     * Synchronous version for quick checks; for large files use the
+     * `getIntersectedPathsAsync` worker-friendly implementation below.
      *
      * @returns {Set<string>|null} Intersected paths, or null if intersect is off
      */
@@ -2075,6 +2203,260 @@
     }
 
     /**
+     * Async, cooperative version of getIntersectedPaths(). Use this when the
+     * enabled files are large — it yields to the event loop and honors
+     * cancellation so the UI stays responsive and the cancel button works.
+     *
+     * @returns {Promise<Set<string>|null>}
+     */
+    async function getIntersectedPathsAsync() {
+      const checkbox = document.getElementById('intersectCheckbox');
+      if (!checkbox || !checkbox.checked) return null;
+
+      const enabledFiles = getEnabledFiles();
+      if (enabledFiles.length < 2) return null;
+
+      // Prefer using a worker when available and when we have stored file buffers
+      try {
+        const buffersAvailable = enabledFiles.every(k => loadedFileBuffers[k] instanceof ArrayBuffer);
+        if (buffersAvailable) {
+            // If worker exists but h5wasm inside it hasn't finished, wait a
+            // *short* time for readiness before launching a compute. This
+            // prevents immediate fallback when the worker is still warming up.
+            const WORKER_STARTUP_WAIT_MS = 1500;
+            let tryWorker = true;
+            try {
+              ensureTreeWorker();
+              if (!treeWorkerH5Ready) {
+                tryWorker = await ensureTreeWorkerReady(WORKER_STARTUP_WAIT_MS);
+                console.debug('[getIntersectedPathsAsync] worker readiness after wait=', tryWorker);
+              }
+            } catch (e) {
+              tryWorker = false;
+            }
+
+            if (!tryWorker) {
+              console.debug('[getIntersectedPathsAsync] skipping worker path (worker not ready)');
+            } else {
+              // keep worker as the preferred path but *quickly* fallback to the
+              // main-thread collector if the worker doesn't respond fast (eg.
+              // slow h5wasm init inside worker). This prevents the UI spinner
+              // from appearing to hang for long-running worker startups.
+              const WORKER_QUICK_FALLBACK_MS = 5000;
+              const workerP = computeIntersectedPathsViaWorker(enabledFiles);
+              let paths;
+              try {
+                paths = await Promise.race([
+                  workerP,
+                  new Promise((_, rej) => setTimeout(() => rej(new Error('worker quick-fallback')), WORKER_QUICK_FALLBACK_MS))
+                ]);
+                console.debug('[getIntersectedPathsAsync] worker returned', (paths && paths.length) || 0);
+                return new Set(paths || []);
+              } catch (workerErr) {
+                // quick fallback — try to cancel the in-flight worker request so
+                // it doesn't remain pending and interfere with later runs.
+                console.warn('[getIntersectedPathsAsync] worker slow/failed, falling back to main-thread:', workerErr);
+                try {
+                  const wid = workerP && workerP._workerId;
+                  if (wid && _treeWorkerPending[wid]) {
+                    try { clearTimeout(_treeWorkerPending[wid]._timeout); } catch (e) {}
+                    try { ensureTreeWorker().postMessage({ cmd: 'cancel', id: wid }); } catch (e) {}
+                    delete _treeWorkerPending[wid];
+                    console.debug('[getIntersectedPathsAsync] cancelled in-flight worker id=', wid);
+                  }
+                } catch (e) { /* ignore */ }
+
+                // schedule a background retry if/when the worker becomes fully
+                // initialized (h5wasm ready). This mirrors the manual uncheck/
+                // recheck behavior users observed and avoids requiring manual
+                // intervention.
+                try {
+                  ensureTreeWorkerReady(10000).then((ok) => {
+                    if (ok && isIntersectMode()) {
+                      console.debug('[getIntersectedPathsAsync] worker became ready after fallback — scheduling tree refresh');
+                      scheduleUpdateTabs(100);
+                    }
+                  }).catch(() => {});
+                } catch (e) { /* ignore */ }
+              }
+            }
+        }
+      } catch (e) {
+        // ignore and fall back
+      }
+
+      let intersection = null;
+      for (const fileKey of enabledFiles) {
+        if (window._treeRefreshCancelled) throw new Error('cancelled');
+        const file = loadedFiles[fileKey];
+        if (!file) {
+          console.debug('[getIntersectedPathsAsync] skipping not-yet-loaded file=', fileKey);
+          continue;
+        }
+        // use async collector so we don't block the UI
+        console.debug('[getIntersectedPathsAsync] collecting paths for', fileKey);
+        const filePaths = await collectAllPathsAsync(file, '');
+        console.debug('[getIntersectedPathsAsync] collected', filePaths.size, 'paths for', fileKey);
+        if (window._treeRefreshCancelled) throw new Error('cancelled');
+        if (intersection === null) {
+          intersection = filePaths;
+        } else {
+          for (const p of Array.from(intersection)) {
+            if (!filePaths.has(p)) intersection.delete(p);
+          }
+        }
+      }
+      return intersection || new Set();
+    }
+
+
+    // Worker helpers ---------------------------------------------------------
+    function ensureTreeWorker() {
+      if (treeWorker) return treeWorker;
+      try {
+        treeWorkerH5Ready = false;
+        treeWorker = new Worker('resources/js/tree-worker.js');
+        treeWorker.onmessage = (ev) => {
+          const d = ev.data || {};
+          // handle generic notifications (no id) such as worker lifecycle messages
+          if (!d || !d.id) {
+            if (d && d.cmd === 'h5ready') {
+              treeWorkerH5Ready = true;
+              console.debug('[ensureTreeWorker] worker reported h5ready');
+              return;
+            }
+            if (d && d.cmd === 'started') {
+              console.debug('[ensureTreeWorker] worker thread started');
+              return;
+            }
+            // route other generic notifications (ignore by default)
+            if (d && d.cmd === 'progress') {
+              // ignore if not matching a pending request
+            }
+            return;
+          }
+
+          const p = _treeWorkerPending[d.id];
+          if (!p) {
+            console.debug('[ensureTreeWorker] message for unknown id=', d.id, d.cmd);
+            return;
+          }
+          if (d.cmd === 'result') {
+            console.debug('[ensureTreeWorker] worker result id=', d.id, 'paths=', (d.intersectedPaths || []).length);
+            clearTimeout(p._timeout);
+            p.resolve(d.intersectedPaths || []);
+            delete _treeWorkerPending[d.id];
+          } else if (d.cmd === 'progress') {
+            // forward progress to ticker if needed
+            try { updateFileLoadTicker(d.fileIndex, d.totalFiles, 'Calculating intersection...'); } catch (e) {}
+            // extend/reset the worker timeout whenever we get progress so
+            // long-running but active workers aren't prematurely rejected.
+            try {
+              clearTimeout(p._timeout);
+              p._timeout = setTimeout(() => {
+                clearTimeout(p._timeout);
+                delete _treeWorkerPending[d.id];
+                try { treeWorker.postMessage({ cmd: 'cancel', id: d.id }); } catch (e) { /* ignore */ }
+                p.reject(new Error('worker timeout'));
+              }, 30000);
+            } catch (e) { /* ignore */ }
+          } else if (d.cmd === 'error') {
+            console.warn('[ensureTreeWorker] worker error id=', d.id, d.message || '');
+            clearTimeout(p._timeout);
+            p.reject(new Error(d.message || 'worker error'));
+            delete _treeWorkerPending[d.id];
+          } else if (d.cmd === 'cancelled') {
+            console.debug('[ensureTreeWorker] worker cancelled id=', d.id);
+            clearTimeout(p._timeout);
+            p.reject(new Error('cancelled'));
+            delete _treeWorkerPending[d.id];
+          }
+        };
+        treeWorker.onerror = (err) => { console.warn('treeWorker error', err); };
+        return treeWorker;
+      } catch (e) {
+        console.warn('could not create tree worker', e);
+        treeWorker = null;
+        return null;
+      }
+    }
+
+    function computeIntersectedPathsViaWorker(enabledFiles) {
+      // return a Promise that includes the worker request id (if created)
+      let _workerId = null;
+      const p = new Promise((resolve, reject) => {
+        const worker = ensureTreeWorker();
+        if (!worker) return reject(new Error('no worker'));
+        _workerId = `${Date.now()}-${Math.random().toString(36).slice(2,9)}`;
+        const id = _workerId;
+
+        console.debug('[computeIntersectedPathsViaWorker] starting id=', id, 'files=', enabledFiles.length);
+        const files = [];
+        const transfers = [];
+        for (const k of enabledFiles) {
+          const buf = loadedFileBuffers[k];
+          if (!(buf instanceof ArrayBuffer)) {
+            // fallback — abort
+            console.warn('[computeIntersectedPathsViaWorker] missing buffer for', k);
+            return reject(new Error('missing file buffer for ' + k));
+          }
+          const copy = buf.slice(0);
+          files.push({ name: k, buffer: copy });
+          transfers.push(copy);
+        }
+
+        _treeWorkerPending[id] = {
+          resolve,
+          reject,
+          _timeout: setTimeout(() => {
+            // timeout expired — proactively cancel worker and reject
+            try { worker.postMessage({ cmd: 'cancel', id }); } catch (e) { /* ignore */ }
+            try { clearTimeout(_treeWorkerPending[id]._timeout); } catch (e) {}
+            delete _treeWorkerPending[id];
+            console.warn('[computeIntersectedPathsViaWorker] request timed out id=', id);
+            reject(new Error('worker timeout'));
+          }, 30000)
+        };
+        try {
+          worker.postMessage({ cmd: 'computeIntersect', id, files }, transfers);
+        } catch (e) {
+          try { clearTimeout(_treeWorkerPending[id]._timeout); } catch (err) {}
+          delete _treeWorkerPending[id];
+          return reject(e);
+        }
+      });
+
+      // attach the worker id so callers can cancel the in-flight request
+      p._workerId = _workerId;
+      return p;
+    }
+
+    /**
+     * Ensure the tree worker is initialized and h5wasm in-worker is ready.
+     * Returns a Promise<boolean> that resolves true when ready, false on timeout.
+     */
+    function ensureTreeWorkerReady(timeoutMs = 5000) {
+      try {
+        // fast-path if worker already reported h5wasm readiness
+        if (treeWorkerH5Ready) return Promise.resolve(true);
+
+        ensureTreeWorker();
+        // race a pre-warm compute (which forces h5wasm init in the worker)
+        // against a timeout so we don't block file loading indefinitely.
+        return Promise.race([
+          computeIntersectedPathsViaWorker([]).then(() => true).catch((e) => {
+            console.debug('[ensureTreeWorkerReady] pre-warm failed', e && e.message ? e.message : e);
+            return false;
+          }),
+          new Promise(resolve => setTimeout(() => resolve(false), timeoutMs))
+        ]);
+      } catch (e) {
+        console.warn('[ensureTreeWorkerReady] error', e && e.message ? e.message : e);
+        return Promise.resolve(false);
+      }
+    }
+
+    /**
      * Walk the HDF5 group and count items (datasets + groups) so we can show
      * determinate progress while building the tree. Honors the optional
      * intersectedPaths filter.
@@ -2087,7 +2469,10 @@
       let cnt = 0;
       try {
         const keys = (typeof group.keys === 'function') ? Array.from(group.keys()).sort() : [];
+        let _yieldCounter = 0;
         for (const key of keys) {
+          // allow cooperative cancellation/yielding
+          if (window._treeRefreshCancelled) throw new Error('cancelled');
           try {
             const obj = group.get(key);
             if (!obj) continue;
@@ -2101,9 +2486,11 @@
           } catch (e) {
             // ignore individual errors while counting
           }
+          if (++_yieldCounter % 200 === 0) await new Promise(r => setTimeout(r, 0));
         }
       } catch (e) {
         // best-effort counting; return what we've got
+        if (String(e && e.message).toLowerCase().includes('cancel')) throw e;
       }
       return cnt;
     }
@@ -2122,6 +2509,10 @@
 
       // indicate busy for accessibility and automated tests
       try { tree && tree.setAttribute('aria-busy', 'true'); } catch(e) {}
+      // start cancellable refresh token (used by buildTree to abort)
+      window._treeRefreshId = (window._treeRefreshId || 0) + 1;
+      const _myTreeRefreshId = window._treeRefreshId;
+      window._treeRefreshCancelled = false;
       
       if (enabledFiles.length === 0) {
         tree.innerHTML = '<div class="loading">Drop HDF5 files or click "+ Add Files" to start...</div>';
@@ -2130,13 +2521,50 @@
         hideChart();
         searchContainer.classList.remove('visible');
         try { tree && tree.removeAttribute('aria-busy'); } catch(e) {}
+        // reset token if nothing to do
+        window._treeRefreshId = 0;
+        window._treeRefreshCancelled = false;
         return;
       }
       
       try {
-        const intersectedPaths = getIntersectedPaths();
-        try { window._currentIntersectedPaths = intersectedPaths; } catch(e) {}
-        let treeHtml = '';
+        let intersectedPaths = null;
+        try {
+          intersectedPaths = await getIntersectedPathsAsync();
+        } catch (err) {
+          if (String(err && err.message).toLowerCase().includes('cancel')) {
+            // cancelled while computing intersect — abort gracefully
+            tree.innerHTML = '<div class="loading">(cancelled)</div>';
+            hideFileLoadTicker();
+            try { tree && tree.removeAttribute('aria-busy'); } catch (e) {}
+            return;
+          }
+          throw err;
+        }
+        try { window._currentIntersectedPaths = intersectedPaths; console.debug('[refreshTreeStructure] intersectedPaths size=', intersectedPaths ? intersectedPaths.size : 'null', 'enabledFiles=', enabledFiles); } catch(e) {}
+
+        // If intersect produced an empty set unexpectedly, allow one short retry
+        // (handles race where worker/main-thread fallback ran before files were ready)
+        if (isIntersectMode() && intersectedPaths && intersectedPaths.size === 0 && enabledFiles.length > 1) {
+          try {
+            console.debug('[refreshTreeStructure] intersectedPaths empty — retrying once after 150ms');
+            await new Promise(r => setTimeout(r, 150));
+            const retry = await getIntersectedPathsAsync();
+            intersectedPaths = retry || intersectedPaths;
+            try { window._currentIntersectedPaths = intersectedPaths; } catch(e) {}
+            console.debug('[refreshTreeStructure] retry intersectedPaths size=', intersectedPaths ? intersectedPaths.size : 'null');
+          } catch (e) {
+            console.debug('[refreshTreeStructure] retry failed or cancelled', e && e.message);
+          }
+        }
+
+        // abort quickly if a cancellation was requested before we started
+        if (window._treeRefreshCancelled || window._treeRefreshId !== _myTreeRefreshId) {
+          hideFileLoadTicker();
+          try { tree && tree.removeAttribute('aria-busy'); } catch (e) {}
+          return;
+        }
+        let treeHtml = ''; 
 
         // Shallow estimate to avoid a full pre-traversal (fast, best-effort).
         // Use top-level key counts as a cheap heuristic; fall back to
@@ -2192,6 +2620,12 @@
           const file = loadedFiles[enabledFiles[0]];
           const fileHtml = await buildTree(file, '', false, 'Intersection', intersectedPaths, null, progressCb, true);
           tree.insertAdjacentHTML('beforeend', fileHtml || '<div style="color:#999;">No items found</div>');
+          if (window._treeRefreshCancelled || window._treeRefreshId !== _myTreeRefreshId) {
+            tree.insertAdjacentHTML('beforeend', '<div class="loading">(cancelled)</div>');
+            hideFileLoadTicker();
+            try { tree && tree.removeAttribute('aria-busy'); } catch(e) {}
+            return;
+          }
         } else {
           // Non-intersect: append each file as it finishes so UI is responsive
           for (const fileKey of enabledFiles) {
@@ -2200,6 +2634,13 @@
             tree.insertAdjacentHTML('beforeend', fileHtml || '<div style="color:#999;padding:8px;font-size:12px;">(empty)</div>');
             // yield to allow the browser to paint between files
             await new Promise(r => setTimeout(r, 0));
+            // Stop early if the user cancelled the refresh
+            if (window._treeRefreshCancelled || window._treeRefreshId !== _myTreeRefreshId) {
+              tree.insertAdjacentHTML('beforeend', '<div class="loading">(cancelled)</div>');
+              hideFileLoadTicker();
+              try { tree && tree.removeAttribute('aria-busy'); } catch(e) {}
+              return;
+            }
           }
         }
 
@@ -2222,6 +2663,10 @@
         console.error(err);
         searchContainer.classList.remove('visible');
         try { tree && tree.removeAttribute('aria-busy'); } catch(e) {}
+      } finally {
+        // Ensure active refresh token is cleared so UI (cancel button) is hidden
+        window._treeRefreshId = 0;
+        window._treeRefreshCancelled = false;
       }
     }
     
@@ -2329,6 +2774,11 @@
         // yield periodically during long traversals so the browser can paint
         let _yieldCounter = 0;
         for (const key of keys) {
+          // cancellation check: abort quickly if the current refresh is cancelled
+          if (window._treeRefreshCancelled) {
+            console.log('buildTree: aborting early due to cancellation');
+            break;
+          }
           try {
             const obj = group.get(key);
             if (!obj) continue;
@@ -5398,6 +5848,21 @@
     // Initialize cached DOM element references
     initDOMReferences();
 
+    // debug: trace '+ Add Files' button clicks (helps diagnose file-input issues)
+    try {
+      const _addBtn = document.querySelector('.add-file-btn');
+      if (_addBtn) _addBtn.addEventListener('click', () => console.debug('[UI] add-file-btn clicked'));
+    } catch (e) { /* ignore */ }
+
+    // Pre-warm tree worker shortly after startup so first intersect is fast.
+    // Non-blocking: worker/h5wasm init happens in background and reduces
+    // likelihood of the quick-fallback being triggered on first use.
+    try {
+      setTimeout(() => {
+        try { ensureTreeWorker(); computeIntersectedPathsViaWorker([]).catch(() => {}); } catch (e) { /* ignore */ }
+      }, 1200);
+    } catch (e) { /* ignore */ }
+
     // File load ticker helpers (show per-file progress and tree-refresh state)
     function showFileLoadTicker(current = 0, total = 0, text = '') {
       try {
@@ -5406,12 +5871,17 @@
         el.hidden = false;
         const spinner = el.querySelector('.spinner');
         const txt = el.querySelector('.ticker-text');
+        const cancelBtn = el.querySelector('.ticker-cancel');
         if (spinner) spinner.style.display = 'inline-block';
         if (typeof current === 'number' && typeof total === 'number' && total > 0) {
           txt.textContent = `${current}/${total}${text ? ' — ' + text : ' Loading files…'}`;
+          const bar = el.querySelector('.ticker-progress-bar');
+          if (bar && total > 0 && current >= 0) bar.style.width = Math.min(100, Math.floor((current/total)*100)) + '%';
         } else {
           txt.textContent = text || 'Loading...';
         }
+        // show cancel button only when a tree refresh is active
+        if (cancelBtn) cancelBtn.style.display = (window._treeRefreshId ? 'inline-block' : 'none');
       } catch (e) { console.warn('showFileLoadTicker error', e); }
     }
 
@@ -5422,11 +5892,42 @@
         el.hidden = false;
         const txt = el.querySelector('.ticker-text');
         txt.textContent = (typeof current === 'number' && total ? `${current}/${total}` : '') + (text ? (current && total ? ' — ' + text : ' ' + text) : '');
+        const bar = el.querySelector('.ticker-progress-bar');
+        if (bar && total > 0) bar.style.width = Math.min(100, Math.floor((current / total) * 100)) + '%';
+        const cancelBtn = el.querySelector('.ticker-cancel');
+        if (cancelBtn) cancelBtn.style.display = (window._treeRefreshId ? 'inline-block' : 'none');
       } catch (e) { console.warn('updateFileLoadTicker error', e); }
     }
 
     function hideFileLoadTicker() {
-      try { const el = document.getElementById('fileLoadTicker'); if (!el) return; el.hidden = true; const bar = el.querySelector('.ticker-progress-bar'); if (bar) bar.style.width = '0%'; } catch (e) { console.warn(e); }
+      try {
+        const el = document.getElementById('fileLoadTicker');
+        if (!el) return;
+        el.hidden = true;
+        const bar = el.querySelector('.ticker-progress-bar');
+        if (bar) bar.style.width = '0%';
+        const cancelBtn = el.querySelector('.ticker-cancel');
+        if (cancelBtn) cancelBtn.style.display = 'none';
+      } catch (e) { console.warn(e); }
+    }
+
+    function cancelTreeRefresh() {
+      try {
+        if (!window._treeRefreshId) return;
+        window._treeRefreshCancelled = true;
+        window._treeRefreshId = 0;
+        // notify worker if active
+        try { if (treeWorker) treeWorker.postMessage({ cmd: 'cancel' }); } catch (e) { /* ignore */ }
+        const el = document.getElementById('fileLoadTicker');
+        if (el) {
+          el.querySelector('.ticker-text').textContent = 'Cancelling…';
+          const spinner = el.querySelector('.spinner');
+          if (spinner) spinner.style.display = 'none';
+          const btn = el.querySelector('.ticker-cancel');
+          if (btn) btn.style.display = 'none';
+        }
+        console.log('Tree refresh cancellation requested');
+      } catch (e) { console.warn('cancelTreeRefresh failed', e); }
     }
 
 
@@ -5440,13 +5941,16 @@
      */
     document.getElementById('fileInput').addEventListener('change', async (e) => {
       const files = Array.from(e.target.files || []);
+      console.debug('[fileInput.change] files selected=', files.length, files.map(f => f && f.name));
       if (files.length === 0) return;
 
       // show progress ticker (file count known)
       showFileLoadTicker(0, files.length, 'Starting…');
 
       try {
+        console.debug('[fileInput.change] waiting for h5wasm...');
         await waitForH5Wasm();
+        console.debug('[fileInput.change] h5wasm ready');
 
         for (let i = 0; i < files.length; i++) {
           const file = files[i];
@@ -5454,7 +5958,10 @@
           updateFileLoadTicker(i, files.length, file.name);
           try {
             const buffer = await file.arrayBuffer();
-            
+            // keep a copy of the raw buffer so we can send it to the worker later
+            loadedFileBuffers[file.name] = buffer;
+            console.debug('[fileInput.change] stored buffer for', file.name, 'bytes=', buffer && buffer.byteLength);
+
             const { FS, File } = window.h5wasm;
             if (!FS || !File) throw new Error('h5wasm not ready');
             
@@ -5470,21 +5977,31 @@
               fileOrder.push(file.name);
             }
             // log per-file load (toasts removed)
-            console.log(`Loaded ${file.name}`);
+            console.debug('[fileInput.change] Loaded', file.name);
           } catch (err) {
-            console.error(`Error loading ${file.name}:`, err);
+            console.error('[fileInput.change] Error loading', file.name, err);
             alert(`Failed to load ${file.name}`);
           }
         }
         
+        // pre-warm tree worker (wait up to 5s) so first intersection is fast
+        try {
+          const _prewarmOk = await ensureTreeWorkerReady(5000);
+          console.debug('[fileInput.change] worker pre-warm result =', _prewarmOk);
+        } catch (e) {
+          console.debug('[fileInput.change] worker pre-warm threw', e && e.message ? e.message : e);
+        }
+
         // Update tabs (returns a promise that resolves when tree rebuild completes)
         updateFileLoadTicker(files.length, files.length, 'Refreshing tree...');
+        console.debug('[fileInput.change] calling updateTabs()');
         await updateTabs();
+        console.debug('[fileInput.change] updateTabs() completed');
         hideFileLoadTicker();
       } catch (err) {
         hideFileLoadTicker();
+        console.error('[fileInput.change] handler error', err);
         alert(`Error: ${err.message}`);
-        console.error(err);
       }
       
       e.target.value = '';
