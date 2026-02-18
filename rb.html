@@ -512,24 +512,30 @@
     // }
 
     /**
-     * Build a small link badge HTML for the tree view.
+     * Build a small link badge element for the tree view.
      * @param {Object} linkInfo - Link info from getLinkInfo()
-     * @returns {string} HTML string for the badge
+     * @returns {HTMLElement|null} span element or null when no badge
      */
     function buildLinkBadge(linkInfo) {
-      if (!linkInfo) return '';
+      if (!linkInfo) return null;
       let tooltip, cls;
       if (linkInfo.type === 'broken') {
-        tooltip = 'Broken link \u2192 ' + linkInfo.target;
+        tooltip = 'Broken link → ' + linkInfo.target;
         cls = 'broken';
       } else if (linkInfo.type === 'external') {
-        tooltip = 'External \u2192 ' + linkInfo.filename + ':' + linkInfo.obj_path;
+        tooltip = 'External → ' + linkInfo.filename + ':' + linkInfo.obj_path;
         cls = 'external';
       } else {
-        tooltip = 'Link \u2192 ' + linkInfo.target;
+        tooltip = 'Link → ' + linkInfo.target;
         cls = 'soft';
       }
-      return `<span class="link-badge ${cls}" title="${escapeHtml(tooltip)}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></span>`;
+
+      const span = document.createElement('span');
+      span.className = 'link-badge ' + cls;
+      span.title = tooltip;
+      // static SVG icon (safe, not user-provided)
+      span.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>';
+      return span;
     }
 
     /* ==========================================================================
@@ -1893,7 +1899,7 @@
     
     /**
      * Lazy-load children for a group node the first time it is expanded.
-     * Inserts the group's subtree HTML into the adjacent `.tree-group-children`.
+     * Inserts the group's subtree DOM nodes into the adjacent `.tree-group-children`. (expects a DocumentFragment from `buildTree`)
      */
     async function loadGroupChildren(groupItem, path) {
       try {
@@ -1921,8 +1927,16 @@
         // that are not common to all enabled files are filtered out.
         const intersected = window._currentIntersectedPaths || null;
         // render only one level when expanding lazily to keep UI responsive
-        const subHtml = await buildTree(node, path, true, '', intersected, fileKey, null, false, 1);
-        childrenDiv.innerHTML = subHtml || '<div style="color:#999;padding:8px;font-size:12px;">(empty)</div>'; 
+        const subFrag = await buildTree(node, path, true, '', intersected, fileKey, null, false, 1);
+        childrenDiv.replaceChildren();
+        if (subFrag && subFrag.childNodes.length > 0) {
+          childrenDiv.appendChild(subFrag);
+        } else {
+          const empty = document.createElement('div');
+          empty.style.color = '#999'; empty.style.padding = '8px'; empty.style.fontSize = '12px';
+          empty.textContent = '(empty)';
+          childrenDiv.appendChild(empty);
+        }
         childrenDiv.setAttribute('data-loaded', 'true');
         childrenDiv.removeAttribute('data-loading');
       } catch (e) {
@@ -2497,7 +2511,7 @@
 
     /**
      * Refresh the tree view from the first enabled file's structure.
-     * Rebuilds the entire tree HTML and applies any active search filter.
+     * Rebuilds the entire tree DOM and applies any active search filter.
      * Shows loading state during refresh and handles errors gracefully.
      * 
      * @returns {Promise<void>}
@@ -2614,14 +2628,22 @@
         }
 
         // Clear tree and render incrementally so users see content immediately.
-        tree.innerHTML = '';
+        tree.replaceChildren();
         if (intersectedPaths) {
           // Intersect mode: single tree from first file, filtered to common paths
           const file = loadedFiles[enabledFiles[0]];
-          const fileHtml = await buildTree(file, '', false, 'Intersection', intersectedPaths, null, progressCb, true);
-          tree.insertAdjacentHTML('beforeend', fileHtml || '<div style="color:#999;">No items found</div>');
+          const fileFrag = await buildTree(file, '', false, 'Intersection', intersectedPaths, null, progressCb, true);
+          if (fileFrag && fileFrag.childNodes.length > 0) {
+            tree.appendChild(fileFrag);
+          } else {
+            const noItems = document.createElement('div');
+            noItems.style.color = '#999';
+            noItems.textContent = 'No items found';
+            tree.appendChild(noItems);
+          }
           if (window._treeRefreshCancelled || window._treeRefreshId !== _myTreeRefreshId) {
-            tree.insertAdjacentHTML('beforeend', '<div class="loading">(cancelled)</div>');
+            const cancelled = document.createElement('div'); cancelled.className = 'loading'; cancelled.textContent = '(cancelled)';
+            tree.appendChild(cancelled);
             hideFileLoadTicker();
             try { tree && tree.removeAttribute('aria-busy'); } catch(e) {}
             return;
@@ -2630,13 +2652,21 @@
           // Non-intersect: append each file as it finishes so UI is responsive
           for (const fileKey of enabledFiles) {
             const file = loadedFiles[fileKey];
-            const fileHtml = await buildTree(file, '', false, fileKey, null, fileKey, progressCb, true);
-            tree.insertAdjacentHTML('beforeend', fileHtml || '<div style="color:#999;padding:8px;font-size:12px;">(empty)</div>');
+            const fileFrag = await buildTree(file, '', false, fileKey, null, fileKey, progressCb, true);
+            if (fileFrag && fileFrag.childNodes.length > 0) {
+              tree.appendChild(fileFrag);
+            } else {
+              const empty = document.createElement('div');
+              empty.style.color = '#999'; empty.style.padding = '8px'; empty.style.fontSize = '12px';
+              empty.textContent = '(empty)';
+              tree.appendChild(empty);
+            }
             // yield to allow the browser to paint between files
             await new Promise(r => setTimeout(r, 0));
             // Stop early if the user cancelled the refresh
             if (window._treeRefreshCancelled || window._treeRefreshId !== _myTreeRefreshId) {
-              tree.insertAdjacentHTML('beforeend', '<div class="loading">(cancelled)</div>');
+              const cancelled = document.createElement('div'); cancelled.className = 'loading'; cancelled.textContent = '(cancelled)';
+              tree.appendChild(cancelled);
               hideFileLoadTicker();
               try { tree && tree.removeAttribute('aria-busy'); } catch(e) {}
               return;
@@ -2699,47 +2729,68 @@
      * @param {Object} group - h5wasm Group object to traverse
      * @param {string} [prefix=''] - Path prefix for nested items
      * @param {boolean} [isNested=false] - Whether this is a nested call (not root)
-     * @returns {Promise<string>} HTML string for the tree structure
+     * @returns {Promise<DocumentFragment>} DocumentFragment containing tree nodes
      */
     async function buildTree(group, prefix = '', isNested = false, fileName = '', intersectedPaths = null, fileKey = null, progressCb = null, lazyLoad = false, maxDepth = Infinity) {
-      const childrenHtml = [];
+      // Return a DocumentFragment containing tree node elements (not HTML string).
+      const frag = document.createDocumentFragment();
       // depth guard for incremental rendering (maxDepth=0 => render nothing)
-      if (typeof maxDepth === 'number' && maxDepth <= 0) return ''; 
-      const fileAttr = fileKey ? ` data-file="${escapeHtml(fileKey)}"` : '';
-      
+      if (typeof maxDepth === 'number' && maxDepth <= 0) return frag;
+
+      // Helper to attach common attributes and listeners to a .tree-item
+      const makeTreeItem = (classes = '') => {
+        const el = document.createElement('div');
+        el.className = `tree-item ${classes}`.trim();
+        return el;
+      };
+
       // Add root group item only at top level
       if (prefix === '') {
         const isRootSelected = selectedDatasetPath === '/' && selectedIsRadionuclidesGroup;
         const rootLabel = fileName ? fileName : 'root';
-        // decide whether root is expandable under the active intersect filter
         let rootExpandable = true;
         if (intersectedPaths) {
-          // root is expandable if there exists any intersected path deeper than '/'
           rootExpandable = Array.from(intersectedPaths).some(p => p !== '/' && p.startsWith('/'));
         }
-        const toggleHtmlRoot = rootExpandable ? `<div class="tree-toggle ${isRootSelected ? '' : 'collapsed'}" onclick="event.stopPropagation(); toggleGroupExpansion(event, '/')">▶</div>` : `<div class="tree-toggle no-toggle"></div>`;
-        const rootHtml = `<div class="tree-item group root-node ${isRootSelected ? 'expanded' : ''}" onclick="toggleGroup(event)" data-path="/"${fileAttr}>
-          ${toggleHtmlRoot}
-          <div class="tree-icon folder"></div>
-          <div class="tree-label">/ (${escapeHtml(rootLabel)})</div>
-        </div>`;
-        childrenHtml.push(rootHtml);
-        
-        const rootChildrenStart = `<div class="tree-group-children ${isRootSelected ? 'expanded' : ''}" style="margin-left: 20px;">`;
-        childrenHtml.push(rootChildrenStart);
+
+        const rootItem = makeTreeItem('group root-node' + (isRootSelected ? ' expanded' : ''));
+        rootItem.setAttribute('data-path', '/');
+        if (fileKey) rootItem.setAttribute('data-file', fileKey);
+        rootItem.addEventListener('click', toggleGroup);
+
+        const toggleDiv = document.createElement('div');
+        if (rootExpandable) {
+          toggleDiv.className = 'tree-toggle' + (isRootSelected ? '' : ' collapsed');
+          toggleDiv.textContent = '▶';
+          toggleDiv.addEventListener('click', (e) => { e.stopPropagation(); toggleGroupExpansion(e, '/'); });
+        } else {
+          toggleDiv.className = 'tree-toggle no-toggle';
+        }
+        rootItem.appendChild(toggleDiv);
+
+        const icon = document.createElement('div');
+        icon.className = 'tree-icon folder';
+        rootItem.appendChild(icon);
+
+        const label = document.createElement('div');
+        label.className = 'tree-label';
+        label.appendChild(document.createTextNode(`/ (${rootLabel})`));
+        rootItem.appendChild(label);
+
+        frag.appendChild(rootItem);
+
+        const rootChildren = document.createElement('div');
+        rootChildren.className = 'tree-group-children' + (isRootSelected ? ' expanded' : '');
+        rootChildren.style.marginLeft = '20px';
+        frag.appendChild(rootChildren);
       }
-      
+
       try {
         let keys = [];
         try {
-          if (typeof group.keys === 'function') {
-            keys = Array.from(group.keys());
-          }
+          if (typeof group.keys === 'function') keys = Array.from(group.keys());
           keys.sort();
 
-          // If an intersect filter is active and its set is smaller than the
-          // number of keys in this group, derive the allowed child names from
-          // the intersect set (faster than scanning all keys for large groups).
           if (intersectedPaths && intersectedPaths.size > 0 && keys.length > 0 && intersectedPaths.size < keys.length) {
             const allowed = new Set();
             const prefixWithSlash = prefix === '' ? '/' : (prefix + '/');
@@ -2749,156 +2800,180 @@
               const child = rest.split('/')[0];
               if (child) allowed.add(child);
             }
-            if (allowed.size > 0) {
-              keys = keys.filter(k => allowed.has(k));
-            }
+            if (allowed.size > 0) keys = keys.filter(k => allowed.has(k));
           }
         } catch (e) {
           console.error('Error getting keys:', e.message);
-          if (prefix === '') {
-            childrenHtml.push('</div>');
-          }
-          return childrenHtml.join('');
+          return frag;
         }
-        
-        const topLevelLazy = !!lazyLoad && prefix === '';
 
-        if (keys.length === 0) {
-          if (prefix === '') {
-            childrenHtml.push('<div style="color:#999;padding:8px;font-size:12px;">(empty)</div>');
-            childrenHtml.push('</div>');
-          }
-          return childrenHtml.join('');
-        }
-        
-        // yield periodically during long traversals so the browser can paint
+        const topLevelLazy = !!lazyLoad && prefix === '';
+        if (keys.length === 0) return frag;
+
         let _yieldCounter = 0;
         for (const key of keys) {
-          // cancellation check: abort quickly if the current refresh is cancelled
           if (window._treeRefreshCancelled) {
             console.log('buildTree: aborting early due to cancellation');
             break;
           }
+
           try {
             const obj = group.get(key);
             if (!obj) continue;
-            
             const path = prefix ? `${prefix}/${key}` : `/${key}`;
             const objType = String(obj.type).toLowerCase();
-            
-            // Skip this node if intersect is active and path is not in the intersection
+
             if (intersectedPaths && !intersectedPaths.has(path)) continue;
-            
-            // Detect link info for badge
+
             const linkInfo = getLinkInfo(group, path, obj);
-            const linkBadge = buildLinkBadge(linkInfo);
-            
-            // Handle broken soft links — cannot be traversed
+            const linkBadgeEl = buildLinkBadge(linkInfo);
+
             if (objType === 'brokensoftlink') {
               const isSelected = selectedDatasetPath === path && !selectedIsRadionuclidesGroup;
-              const brokenHtml = `<div class="tree-item broken-link ${isSelected ? 'selected' : ''}" onclick="selectDataset('${path.replace(/'/g, "\\'")}', event)" data-path="${escapeHtml(path)}"${fileAttr}>
-                <div class="tree-icon broken-link"></div>
-                <div class="tree-label">${escapeHtml(key)}${linkBadge}</div>
-                <div class="tree-meta" style="color:var(--color-kvot-accent);">broken link</div>
-              </div>`;
-              childrenHtml.push(brokenHtml);
+              const broken = makeTreeItem('broken-link' + (isSelected ? ' selected' : ''));
+              broken.setAttribute('data-path', path);
+              if (fileKey) broken.setAttribute('data-file', fileKey);
+              broken.addEventListener('click', (e) => selectDataset(path, e));
+
+              const icon = document.createElement('div'); icon.className = 'tree-icon broken-link';
+              const label = document.createElement('div'); label.className = 'tree-label';
+              label.appendChild(document.createTextNode(key));
+              if (linkBadgeEl) label.appendChild(linkBadgeEl);
+              const meta = document.createElement('div'); meta.className = 'tree-meta'; meta.style.color = 'var(--color-kvot-accent)'; meta.textContent = 'broken link';
+
+              broken.appendChild(icon); broken.appendChild(label); broken.appendChild(meta);
+              frag.appendChild(broken);
               if (typeof progressCb === 'function') progressCb(1, path);
               continue;
             }
-            
-            // Handle external links — show external file reference
+
             if (objType === 'externallink') {
               const isSelected = selectedDatasetPath === path && !selectedIsRadionuclidesGroup;
-              const extLabel = linkInfo ? linkInfo.filename : '?';
-              const externalHtml = `<div class="tree-item external-link ${isSelected ? 'selected' : ''}" onclick="selectDataset('${path.replace(/'/g, "\\'")}', event)" data-path="${escapeHtml(path)}"${fileAttr}>
-                <div class="tree-icon external-link"></div>
-                <div class="tree-label">${escapeHtml(key)}${linkBadge}</div>
-                <div class="tree-meta">\u2192 ${escapeHtml(extLabel)}</div>
-              </div>`;
-              childrenHtml.push(externalHtml);
+              const external = makeTreeItem('external-link' + (isSelected ? ' selected' : ''));
+              external.setAttribute('data-path', path);
+              if (fileKey) external.setAttribute('data-file', fileKey);
+              external.addEventListener('click', (e) => selectDataset(path, e));
+
+              const icon = document.createElement('div'); icon.className = 'tree-icon external-link';
+              const label = document.createElement('div'); label.className = 'tree-label';
+              label.appendChild(document.createTextNode(key));
+              if (linkBadgeEl) label.appendChild(linkBadgeEl);
+              const meta = document.createElement('div'); meta.className = 'tree-meta'; meta.textContent = `→ ${linkInfo ? linkInfo.filename : '?'}`;
+
+              external.appendChild(icon); external.appendChild(label); external.appendChild(meta);
+              frag.appendChild(external);
               if (typeof progressCb === 'function') progressCb(1, path);
               continue;
             }
-            
+
             if (objType === 'group') {
               const isSelected = selectedDatasetPath === path && selectedIsRadionuclidesGroup;
 
-              // determine whether this group has intersected descendants (if filter active)
               let groupExpandable = true;
               if (intersectedPaths) {
-                // expandability means there is at least one intersected path that
-                // equals this path or is a descendant of it
                 groupExpandable = Array.from(intersectedPaths).some(p => p === path || p.startsWith(path + '/'));
               }
 
-              const toggleHtml = groupExpandable ? `<div class="tree-toggle ${isSelected ? '' : 'collapsed'}" onclick="event.stopPropagation(); toggleGroupExpansion(event, '${path.replace(/'/g, "\\'")}')">▶</div>` : `<div class="tree-toggle no-toggle"></div>`;
+              const groupItem = makeTreeItem('group' + (isSelected ? ' expanded' : ''));
+              groupItem.setAttribute('data-path', path);
+              if (fileKey) groupItem.setAttribute('data-file', fileKey);
+              groupItem.addEventListener('click', toggleGroup);
 
-              const groupHtml = `<div class="tree-item group ${isSelected ? 'expanded' : ''}" onclick="toggleGroup(event)" data-path="${escapeHtml(path)}"${fileAttr}>
-                  ${toggleHtml}
-                  <div class="tree-icon folder"></div>
-                  <div class="tree-label">${escapeHtml(key)}${linkBadge}</div>
-                </div>`;
-              childrenHtml.push(groupHtml);
+              const toggleDiv = document.createElement('div');
+              if (groupExpandable) {
+                toggleDiv.className = 'tree-toggle' + (isSelected ? '' : ' collapsed');
+                toggleDiv.textContent = '▶';
+                toggleDiv.addEventListener('click', (e) => { e.stopPropagation(); toggleGroupExpansion(e, path); });
+              } else {
+                toggleDiv.className = 'tree-toggle no-toggle';
+              }
+
+              const icon = document.createElement('div'); icon.className = 'tree-icon folder';
+              const label = document.createElement('div'); label.className = 'tree-label';
+              label.appendChild(document.createTextNode(key));
+              if (linkBadgeEl) label.appendChild(linkBadgeEl);
+
+              groupItem.appendChild(toggleDiv); groupItem.appendChild(icon); groupItem.appendChild(label);
+              frag.appendChild(groupItem);
               if (typeof progressCb === 'function') progressCb(1, path);
 
               try {
                 if (topLevelLazy && prefix === '') {
-                  // render an empty placeholder that will be populated when the
-                  // user expands this group for the first time
-                  const placeholder = `<div class="tree-group-children ${isSelected ? 'expanded' : ''}" data-lazy="true" data-loaded="false"></div>`;
-                  childrenHtml.push(placeholder);
+                  const placeholder = document.createElement('div');
+                  placeholder.className = 'tree-group-children' + (isSelected ? ' expanded' : '');
+                  placeholder.setAttribute('data-lazy', 'true');
+                  placeholder.setAttribute('data-loaded', 'false');
+                  frag.appendChild(placeholder);
                 } else {
-                  const subItems = await buildTree(obj, path, true, '', intersectedPaths, fileKey, progressCb, false, (typeof maxDepth === 'number' ? maxDepth - 1 : Infinity));
-                  let childrenWrapper = '';
-                  if (subItems && String(subItems).trim() !== '') {
-                    childrenWrapper = `<div class="tree-group-children ${isSelected ? 'expanded' : ''}">${subItems}</div>`;
+                  const subFrag = await buildTree(obj, path, true, '', intersectedPaths, fileKey, progressCb, false, (typeof maxDepth === 'number' ? maxDepth - 1 : Infinity));
+                  const childrenWrapper = document.createElement('div');
+                  childrenWrapper.className = 'tree-group-children' + (isSelected ? ' expanded' : '');
+
+                  if (subFrag && subFrag.childNodes.length > 0) {
+                    childrenWrapper.appendChild(subFrag);
                   } else {
-                    // depth-limited/unrendered subtree — if the group actually has children,
-                    // show a lazy placeholder so further expansion can load them.
                     const hasChildren = (FileService.keys(obj) || []).length > 0;
                     if (hasChildren) {
-                      childrenWrapper = `<div class="tree-group-children ${isSelected ? 'expanded' : ''}" data-lazy="true" data-loaded="false"></div>`;
+                      childrenWrapper.setAttribute('data-lazy', 'true');
+                      childrenWrapper.setAttribute('data-loaded', 'false');
                     } else {
-                      childrenWrapper = `<div class="tree-group-children ${isSelected ? 'expanded' : ''}"><div style="color:#999;padding:8px;font-size:12px;">(empty)</div></div>`;
+                      const empty = document.createElement('div');
+                      empty.style.color = '#999'; empty.style.padding = '8px'; empty.style.fontSize = '12px';
+                      empty.textContent = '(empty)';
+                      childrenWrapper.appendChild(empty);
                     }
                   }
-                  childrenHtml.push(childrenWrapper);
+                  frag.appendChild(childrenWrapper);
                 }
               } catch (subErr) {
                 console.error('Error getting sub-items for', key, subErr);
-                const errorWrapper = `<div class="tree-group-children"><div style="color:red;padding:8px;font-size:12px;">(error: ${escapeHtml(subErr.message)})</div></div>`;
-                childrenHtml.push(errorWrapper);
+                const errorWrapper = document.createElement('div');
+                errorWrapper.className = 'tree-group-children';
+                const msg = document.createElement('div');
+                msg.style.color = 'red'; msg.style.padding = '8px'; msg.style.fontSize = '12px';
+                msg.textContent = `(error: ${subErr?.message || subErr})`;
+                errorWrapper.appendChild(msg);
+                frag.appendChild(errorWrapper);
                 if (typeof progressCb === 'function') progressCb(1, path);
               }
             } else if (objType === 'dataset') {
               const shape = obj.shape?.length ? `${obj.shape.join('×')}` : 'scalar';
               const formattedDtype = formatDataType(obj.dtype);
               const isSelected = selectedDatasetPath === path && !selectedIsRadionuclidesGroup;
-              const datasetHtml = `<div class="tree-item dataset ${isSelected ? 'selected' : ''}" onclick="selectDataset('${path.replace(/'/g, "\\'")}', event)" data-path="${escapeHtml(path)}"${fileAttr}>
-                <div class="tree-icon dataset"></div>
-                <div class="tree-label">${escapeHtml(key)}${linkBadge}</div>
-                <div class="tree-meta">${escapeHtml(formattedDtype)} [${escapeHtml(shape)}]</div>
-              </div>`;
-              childrenHtml.push(datasetHtml);
+
+              const ds = makeTreeItem('dataset' + (isSelected ? ' selected' : ''));
+              ds.setAttribute('data-path', path);
+              if (fileKey) ds.setAttribute('data-file', fileKey);
+              ds.addEventListener('click', (e) => selectDataset(path, e));
+
+              const icon = document.createElement('div'); icon.className = 'tree-icon dataset';
+              const label = document.createElement('div'); label.className = 'tree-label';
+              label.appendChild(document.createTextNode(key));
+              if (linkBadgeEl) label.appendChild(linkBadgeEl);
+              const meta = document.createElement('div'); meta.className = 'tree-meta'; meta.textContent = `${formattedDtype} [${shape}]`;
+
+              ds.appendChild(icon); ds.appendChild(label); ds.appendChild(meta);
+              frag.appendChild(ds);
               if (typeof progressCb === 'function') progressCb(1, path);
             }
           } catch (e) {
-            console.error('Error with key', key, ':', e.message);
-            childrenHtml.push(`<div class="tree-item" style="color:red;font-size:12px;">⚠️ ${escapeHtml(key)}</div>`);
+            console.error('Error with key', key, ':', e.message || e);
+            const errEl = document.createElement('div');
+            errEl.className = 'tree-item';
+            errEl.style.color = 'red'; errEl.style.fontSize = '12px';
+            errEl.textContent = `⚠️ ${key}`;
+            frag.appendChild(errEl);
           }
-          // yield every 50 items to keep UI responsive during large traversals
+
           if (++_yieldCounter % 50 === 0) await new Promise(r => setTimeout(r, 0));
         }
       } catch (e) {
         console.error('buildTree error:', e);
       }
-      
-      if (prefix === '') {
-        childrenHtml.push('</div>');
-      }
-      
-      return childrenHtml.join('');
+
+      return frag;
     }
+
 
 
     /* ==========================================================================
@@ -4483,23 +4558,123 @@
 
           if (!isGroup && attrs.pdf && !pdfHistogramData) {
             try {
-              let pdfRaw = attrs.pdf; if (typeof pdfRaw === 'string') pdfRaw = JSON.parse(pdfRaw);
-              const isLookupTable = Array.isArray(pdfRaw); const indexAttr = attrs.index;
+              let pdfRaw = attrs.pdf;
+              if (typeof pdfRaw === 'string') pdfRaw = JSON.parse(pdfRaw);
+
+              const isLookupTable = Array.isArray(pdfRaw);
+              const indexAttr = attrs.index;
+
               if (isLookupTable && indexAttr) {
                 const indexLabels = Array.isArray(indexAttr) ? indexAttr : Array.from(indexAttr);
                 const entries = [];
+
                 for (let i = 0; i < pdfRaw.length; i++) {
                   const spec = pdfRaw[i];
-                  if (!spec) { try { let rawData; if (typeof node.value !== 'undefined') rawData = node.value; else if (typeof node.toArray === 'function') rawData = node.toArray(); if (rawData !== undefined) { const arr = Array.isArray(rawData) ? rawData : Array.from(rawData); entries.push({ label: String(indexLabels[i] ?? i), samples: [arr[i]], spec: null }); } } catch (_) {} continue; }
-                  if (spec.type && spec.type.toLowerCase() === 'raw') { try { let rawData; if (typeof node.value !== 'undefined') rawData = node.value; else if (typeof node.toArray === 'function') rawData = node.toArray(); if (rawData !== undefined) { const flat = Array.isArray(rawData) ? rawData : Array.from(rawData); const nCols = pdfRaw.length; const nRows = Math.floor(flat.length / nCols); const shift = (spec.include_deterministic) ? 1 : 0; const detVal = (spec.include_deterministic && nRows > 0) ? flat[0 * nCols + i] : null; const col = []; for (let r = shift; r < nRows; r++) col.push(flat[r * nCols + i]); entries.push({ label: String(indexLabels[i] ?? i), samples: col, spec: spec, deterministicValue: detVal }); } catch (_) {} }
-                  else { let detVal = null; try { let rawData; if (typeof node.value !== 'undefined') rawData = node.value; else if (typeof node.toArray === 'function') rawData = node.toArray(); if (rawData !== undefined) { const flat = Array.isArray(rawData) ? rawData : Array.from(rawData); const nCols = pdfRaw.length; if (flat.length >= nCols) detVal = Number(flat[i]); } } catch (_) {} let samples = generatePdfSamples(spec, 1000); if (samples) { samples = PDFSampler.normalizeDataArray(samples); entries.push({ label: String(indexLabels[i] ?? i), samples: Array.from(samples), spec: spec, deterministicValue: isFinite(detVal) ? detVal : null }); } }
+
+                  if (!spec) {
+                    try {
+                      let rawData;
+                      if (typeof node.value !== 'undefined') rawData = node.value;
+                      else if (typeof node.toArray === 'function') rawData = node.toArray();
+
+                      if (rawData !== undefined) {
+                        const arr = Array.isArray(rawData) ? rawData : Array.from(rawData);
+                        entries.push({ label: String(indexLabels[i] ?? i), samples: [arr[i]], spec: null });
+                      }
+                    } catch (_) {
+                      /* skip unreadable */
+                    }
+                    continue;
+                  }
+
+                  if (spec.type && spec.type.toLowerCase() === 'raw') {
+                    try {
+                      let rawData;
+                      if (typeof node.value !== 'undefined') rawData = node.value;
+                      else if (typeof node.toArray === 'function') rawData = node.toArray();
+
+                      if (rawData !== undefined) {
+                        const flat = Array.isArray(rawData) ? rawData : Array.from(rawData);
+                        const nCols = pdfRaw.length;
+                        const nRows = Math.floor(flat.length / nCols);
+                        const shift = spec.include_deterministic ? 1 : 0;
+                        const detVal = (spec.include_deterministic && nRows > 0) ? flat[0 * nCols + i] : null;
+                        const col = [];
+                        for (let r = shift; r < nRows; r++) col.push(flat[r * nCols + i]);
+                        entries.push({ label: String(indexLabels[i] ?? i), samples: col, spec: spec, deterministicValue: detVal });
+                      }
+                    } catch (_) {
+                      /* skip */
+                    }
+                  } else {
+                    // standard distribution spec for this index
+                    let detVal = null;
+                    try {
+                      let rawData;
+                      if (typeof node.value !== 'undefined') rawData = node.value;
+                      else if (typeof node.toArray === 'function') rawData = node.toArray();
+
+                      if (rawData !== undefined) {
+                        const flat = Array.isArray(rawData) ? rawData : Array.from(rawData);
+                        const nCols = pdfRaw.length;
+                        if (flat.length >= nCols) detVal = Number(flat[i]);
+                      }
+                    } catch (_) {
+                      detVal = null;
+                    }
+
+                    const samples = generatePdfSamples(spec, 1000);
+                    if (samples) {
+                      const norm = PDFSampler.normalizeDataArray(samples);
+                      entries.push({ label: String(indexLabels[i] ?? i), samples: Array.from(norm), spec: spec, deterministicValue: isFinite(detVal) ? detVal : null });
+                    } else {
+                      console.warn('generatePdfSamples returned null for spec (lookup index)', spec);
+                    }
+                  }
                 }
+
                 if (entries.length > 0) pdfHistogramData = { type: 'lookup', entries, path };
+
               } else if (!isLookupTable && pdfRaw.type) {
-                if (pdfRaw.type.toLowerCase() === 'raw') { try { let rawData; if (typeof node.value !== 'undefined') rawData = node.value; else if (typeof node.toArray === 'function') rawData = node.toArray(); if (rawData !== undefined) { const flat = PDFSampler.normalizeDataArray(rawData); const shift = (pdfRaw.include_deterministic) ? 1 : 0; const detVal = (pdfRaw.include_deterministic && flat.length > 0) ? flat[0] : null; pdfHistogramData = { type: 'single', samples: flat.slice(shift), spec: pdfRaw, path, deterministicValue: detVal }; } } catch (_) {} }
-                else { let detVal = null; try { let rawData; if (typeof node.value !== 'undefined') rawData = node.value; else if (typeof node.toArray === 'function') rawData = node.toArray(); if (rawData !== undefined) { if (typeof rawData === 'number') detVal = rawData; else if (rawData && rawData.length !== undefined && rawData.length > 0) detVal = Number(rawData[0]); } } catch (_) {} let samples = generatePdfSamples(pdfRaw, 1000); if (samples) { samples = PDFSampler.normalizeDataArray(samples); pdfHistogramData = { type: 'single', samples: Array.from(samples), spec: pdfRaw, path, deterministicValue: isFinite(detVal) ? detVal : null }; } }
+                // single PDF spec
+                if (pdfRaw.type.toLowerCase() === 'raw') {
+                  try {
+                    let rawData;
+                    if (typeof node.value !== 'undefined') rawData = node.value;
+                    else if (typeof node.toArray === 'function') rawData = node.toArray();
+
+                    if (rawData !== undefined) {
+                      const flat = PDFSampler.normalizeDataArray(rawData);
+                      const shift = pdfRaw.include_deterministic ? 1 : 0;
+                      const detVal = (pdfRaw.include_deterministic && flat.length > 0) ? flat[0] : null;
+                      pdfHistogramData = { type: 'single', samples: flat.slice(shift), spec: pdfRaw, path, deterministicValue: detVal };
+                    }
+                  } catch (_) { /* skip */ }
+                } else {
+                  let detVal = null;
+                  try {
+                    let rawData;
+                    if (typeof node.value !== 'undefined') rawData = node.value;
+                    else if (typeof node.toArray === 'function') rawData = node.toArray();
+
+                    if (rawData !== undefined) {
+                      if (typeof rawData === 'number') detVal = rawData;
+                      else if (rawData && rawData.length !== undefined && rawData.length > 0) detVal = Number(rawData[0]);
+                    }
+                  } catch (_) { /* ignore */ }
+
+                  const samples = generatePdfSamples(pdfRaw, 1000);
+                  if (samples) {
+                    const norm = PDFSampler.normalizeDataArray(samples);
+                    pdfHistogramData = { type: 'single', samples: Array.from(norm), spec: pdfRaw, path, deterministicValue: isFinite(detVal) ? detVal : null };
+                  } else {
+                    console.warn('generatePdfSamples returned null for pdf spec', pdfRaw, 'at', path);
+                  }
+                }
               }
-            } catch (err) { console.warn('PDF collect error:', err); }
+            } catch (err) {
+              console.warn('PDF collect error:', err);
+            }
           }
 
           if (!isGroup) {
@@ -5003,7 +5178,7 @@
      * Build HTML table for node attributes
      * @param {Object} attrs - Attributes object
      * @param {Function} jsonReplacer - JSON replacer for BigInt etc.
-     * @returns {string} HTML string for attributes section
+     * @returns {HTMLElement} Element containing the attributes table (DOM)
      */
     function buildAttributesTable(attrs, jsonReplacer) {
       const wrapper = document.createElement('div'); wrapper.className = 'info-section';
