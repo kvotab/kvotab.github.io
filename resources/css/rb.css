@@ -789,6 +789,49 @@
       font-style: italic; 
     }
 
+    /* File load ticker shown next to file tabs while files/tree are being processed */
+    .file-load-ticker {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-left: 12px;
+      font-size: 13px;
+      color: var(--color-text-muted);
+    }
+    .file-load-ticker .spinner {
+      width: 12px;
+      height: 12px;
+      border: 2px solid rgba(0,0,0,0.12);
+      border-top-color: var(--color-kvot-accent);
+      border-radius: 50%;
+      animation: file-load-spin 0.9s linear infinite;
+    }
+    @keyframes file-load-spin { to { transform: rotate(360deg); } }
+    [data-theme="dark"] .file-load-ticker .spinner { border: 2px solid rgba(255,255,255,0.12); }
+    .file-load-ticker[hidden] { display: none !important; }
+
+    /* small inline spinner used inside the tree for fast feedback */
+    .tree-inline-spinner {
+      width: 12px;
+      height: 12px;
+      border: 2px solid rgba(0,0,0,0.12);
+      border-top-color: var(--color-kvot-accent);
+      border-radius: 50%;
+      animation: file-load-spin 0.9s linear infinite;
+      display: inline-block;
+      vertical-align: middle;
+      margin-left: 6px;
+    }
+
+    /* determinate progress bar inside the ticker */
+
+    /* File badges (small colored dots showing which files contain a node) */
+    .tree-toggle.no-toggle { visibility: hidden; width: 12px; display: inline-block; }
+    .file-load-ticker .ticker-progress { width: 160px; height: 6px; background: rgba(0,0,0,0.06); border-radius: 6px; overflow: hidden; }
+    .file-load-ticker .ticker-progress-bar { height: 100%; width: 0%; background: var(--color-kvot-accent); transition: width 220ms linear; }
+
+
+
     /* ==========================================================================
        12. DRAG & DROP SORTING (SortableJS)
        ========================================================================== */

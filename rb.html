@@ -33,7 +33,7 @@
     <div class="panel" id="leftPanel">
       <div class="panel-heading">
         <h3>File Structure</h3>
-        <label id="intersectLabel" class="intersect-checkbox" style="display: none;">
+        <label id="intersectLabel" class="intersect-checkbox" style="display: none;" title="Show only nodes whose full path exists in ALL enabled files">
           <input type="checkbox" id="intersectCheckbox" onchange="toggleIntersect()">
           Intersect Data
         </label>
@@ -114,7 +114,7 @@
   <script src="./resources/js/erf.js"></script>
   <script src="./resources/js/site.js"></script>
   <script>
-    KVOT.renderHeader('hdf result browser', '<div class="tabs-container"><div id="fileTabs"></div><button class="add-file-btn" onclick="document.getElementById(\'fileInput\').click()">+ Add Files</button></div>');
+    KVOT.renderHeader('hdf result browser', '<div class="tabs-container"><div id="fileTabs"></div><div id="fileLoadTicker" class="file-load-ticker" aria-live="polite" hidden><span class="spinner" aria-hidden="true"></span><span class="ticker-text">Loading files…</span></div><button class="add-file-btn" onclick="document.getElementById(\'fileInput\').click()">+ Add Files</button></div>');
     KVOT.renderNav('rb.html');
     KVOT.renderFooter();
     KVOT.initMap('map');
@@ -419,6 +419,8 @@
         return out;
       }
     };
+
+
 
     /**
      * Escape HTML special characters for safe rendering
@@ -918,7 +920,51 @@
         margin: CHART_MARGIN_WITH_LEGEND
       };
     }
-    
+
+    // ChartService: factories for traces and theme relayout helpers
+    window.ChartService = {
+      createBaseLayout: function(opts) { return createBaseLayout(opts); },
+
+      timeSeriesTrace({ x, y, name, line = {}, hovertemplate = undefined, showlegend = true }) {
+        const trace = { x, y, mode: 'lines', type: 'scatter', name, line, showlegend };
+        if (hovertemplate) trace.hovertemplate = hovertemplate;
+        return trace;
+      },
+
+      histogramTrace({ samples, name = 'Samples', color, lineColor, opacity = 0.85, histnorm = 'probability density' }) {
+        return {
+          x: samples,
+          type: 'histogram',
+          histnorm,
+          marker: { color, line: { color: lineColor, width: 1 } },
+          opacity,
+          name
+        };
+      },
+
+      pdfOverlayTrace({ x, y, color, width = 2.5, name = 'PDF', showlegend = true }) {
+        return { x, y, type: 'scatter', mode: 'lines', line: { color, width }, name, showlegend };
+      },
+
+      relayoutForTheme(isDark) {
+        const textColor = isDark ? '#e8ddd0' : '#2d2416';
+        const gridColor = isDark ? '#4a3f35' : '#e5ddd5';
+        const bgColor  = isDark ? '#2a221b' : '#ffffff';
+        return {
+          paper_bgcolor: bgColor,
+          plot_bgcolor: bgColor,
+          'font.color': textColor,
+          'xaxis.gridcolor': gridColor,
+          'xaxis.zerolinecolor': gridColor,
+          'xaxis.color': textColor,
+          'yaxis.gridcolor': gridColor,
+          'yaxis.zerolinecolor': gridColor,
+          'yaxis.color': textColor,
+          'legend.font.color': textColor
+        };
+      }
+    };
+
     // Update Plotly chart colours when theme changes
     new MutationObserver(() => {
       const el = document.getElementById('plotlyChart');
@@ -935,18 +981,7 @@
       }
 
       if (!currentChartData) return;
-      Plotly.relayout(el, {
-        paper_bgcolor: bgColor,
-        plot_bgcolor: bgColor,
-        'font.color': textColor,
-        'xaxis.gridcolor': gridColor,
-        'xaxis.zerolinecolor': gridColor,
-        'xaxis.color': textColor,
-        'yaxis.gridcolor': gridColor,
-        'yaxis.zerolinecolor': gridColor,
-        'yaxis.color': textColor,
-        'legend.font.color': textColor
-      });
+      Plotly.relayout(el, ChartService.relayoutForTheme(isDark));
     }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
     /**
@@ -1116,14 +1151,7 @@
         const label = data.spec ? PDFSampler.pdfLabel(data.spec) : 'raw';
 
         // Histogram trace (probability density)
-        traces.push({
-          x: data.samples.map(xform),
-          type: 'histogram',
-          histnorm: 'probability density',
-          marker: { color: barColor, line: { color: barLine, width: 1 } },
-          opacity: 0.85,
-          name: 'Samples',
-        });
+        traces.push(ChartService.histogramTrace({ samples: data.samples.map(xform), name: 'Samples', color: barColor, lineColor: barLine, opacity: 0.85 }));
 
         // Analytical PDF overlay line
         const overlay = data.spec ? computePdfOverlay(data.spec) : null;
@@ -1138,9 +1166,9 @@
                 yLog.push(overlay.y[k] * xv * Math.LN10);
               }
             }
-            traces.push({ x: xLog, y: yLog, type: 'scatter', mode: 'lines', line: { color: pdfLineColor, width: 2.5 }, name: 'PDF (' + label + ')' });
+            traces.push(ChartService.pdfOverlayTrace({ x: xLog, y: yLog, color: pdfLineColor, width: 2.5, name: `PDF (${label})` }));
           } else {
-            traces.push({ x: overlay.x, y: overlay.y, type: 'scatter', mode: 'lines', line: { color: pdfLineColor, width: 2.5 }, name: 'PDF (' + label + ')' });
+            traces.push(ChartService.pdfOverlayTrace({ x: overlay.x, y: overlay.y, color: pdfLineColor, width: 2.5, name: `PDF (${label})` }));
           }
         }
 
@@ -1163,14 +1191,7 @@
           const c = palette[i % palette.length];
           const label = entry.spec ? entry.label + ' (' + PDFSampler.pdfLabel(entry.spec) + ')' : entry.label;
 
-          traces.push({
-            x: entry.samples.map(xform),
-            type: 'histogram',
-            histnorm: 'probability density',
-            marker: { color: c.bar, line: { color: c.line, width: 1 } },
-            opacity: 0.7,
-            name: label,
-          });
+          traces.push(ChartService.histogramTrace({ samples: entry.samples.map(xform), name: label, color: c.bar, lineColor: c.line, opacity: 0.7 }));
 
           const overlay = entry.spec ? computePdfOverlay(entry.spec) : null;
           if (overlay) {
@@ -1180,9 +1201,9 @@
                 const xv = overlay.x[k];
                 if (xv > 0) { xLog.push(Math.log10(xv)); yLog.push(overlay.y[k] * xv * Math.LN10); }
               }
-              traces.push({ x: xLog, y: yLog, type: 'scatter', mode: 'lines', line: { color: c.pdf, width: 2 }, name: 'PDF ' + entry.label, showlegend: false });
+              traces.push(ChartService.pdfOverlayTrace({ x: xLog, y: yLog, color: c.pdf, width: 2, name: 'PDF ' + entry.label, showlegend: false }));
             } else {
-              traces.push({ x: overlay.x, y: overlay.y, type: 'scatter', mode: 'lines', line: { color: c.pdf, width: 2 }, name: 'PDF ' + entry.label, showlegend: false });
+              traces.push(ChartService.pdfOverlayTrace({ x: overlay.x, y: overlay.y, color: c.pdf, width: 2, name: 'PDF ' + entry.label, showlegend: false }));
             }
           }
 
@@ -1523,16 +1544,19 @@
       // Use selectedFileKey if available, otherwise first enabled file
       const checkFile = selectedFileKey || getTreeFile();
       
-      if (!checkFile || !checkIfPathExistsInFile(checkFile, selectedDatasetPath)) {
-        // Clear selection if path doesn't exist
+      // If the selected path no longer exists in the current file OR
+      // is excluded by the active intersected-path set, clear selection.
+      const intersected = window._currentIntersectedPaths || getIntersectedPaths();
+      if (!checkFile || !checkIfPathExistsInFile(checkFile, selectedDatasetPath) || (isIntersectMode() && intersected && !intersected.has(selectedDatasetPath))) {
+        // Clear selection if path doesn't exist or is outside the intersection
         resetInfoPanel();
         hideChart();
         selectedDatasetPath = null;
         selectedIsRadionuclidesGroup = false;
         selectedFileKey = null;
         
-        document.querySelectorAll('.tree-item.dataset').forEach(el => el.classList.remove('selected'));
-        document.querySelectorAll('.tree-item.group').forEach(el => el.classList.remove('expanded'));
+        document.querySelectorAll('.tree-item.dataset.selected').forEach(el => el.classList.remove('selected'));
+        document.querySelectorAll('.tree-item.group.expanded').forEach(el => el.classList.remove('expanded'));
         return;
       }
 
@@ -1633,8 +1657,8 @@
       
       // Show/hide Intersect checkbox based on number of enabled files
       const intersectLabel = document.getElementById('intersectLabel');
+      const enabledCount = getEnabledFiles().length;
       if (intersectLabel) {
-        const enabledCount = getEnabledFiles().length;
         intersectLabel.style.display = enabledCount > 1 ? 'flex' : 'none';
         // Uncheck if only one file left
         if (enabledCount <= 1) {
@@ -1645,13 +1669,106 @@
       
       console.log('updateTabs - Previous:', previousTreeFile, 'New:', newTreeFile, 'Changed:', treeFileChanged);
       
-      // Always refresh tree: in multi-file mode the set of visible roots changes,
-      // and in intersect mode the intersection set changes when files are toggled.
-      refreshTreeStructure();
-      
-      refreshInfoAndChart();
-    }
+      // Only refresh the tree when necessary (tree root changed or enabled set changed).
+      // This prevents frequent/expensive refreshes and avoids triggering search-aware
+      // background expansions on unrelated UI clicks.
+      const prevEnabledCount = window._lastEnabledCount || 0;
+      const needRefresh = treeFileChanged || (enabledCount !== prevEnabledCount);
+      window._lastEnabledCount = enabledCount;
 
+      let refreshPromise;
+      if (needRefresh) {
+        const isIntersect = isIntersectMode();
+
+        // Immediate visual feedback in the tree while recalculation runs.
+        try {
+          const tree = document.getElementById('tree');
+          if (tree) {
+            if (isIntersect) {
+              tree.innerHTML = `
+                <div class="tree-item group root-node" data-path="/">
+                  <div class="tree-toggle no-toggle"></div>
+                  <div class="tree-icon folder"></div>
+                  <div class="tree-label">/ (Intersection) <span class="tree-inline-spinner" aria-hidden="true"></span></div>
+                </div>
+                <div class="tree-group-children expanded" style="margin-left:20px;">
+                  <div class="loading" style="padding:8px;font-size:12px;">Recalculating intersection…</div>
+                </div>
+              `;
+            } else {
+              tree.innerHTML = `<div class="loading">Refreshing tree… <span class="tree-inline-spinner" aria-hidden="true"></span></div>`;
+            }
+            // force layout so the spinner paints immediately (Safari-safe)
+            void tree.offsetHeight;
+            document.querySelector('.search-container')?.classList.remove('visible');
+          }
+        } catch (e) { /* ignore UI update errors */ }
+
+        // Show header ticker for intersect recalculation as well
+        if (isIntersect) {
+          try { showFileLoadTicker(0, 0, 'Recalculating intersection...'); } catch (e) {}
+        }
+
+        // Run the refresh asynchronously (yield so the spinner is visible first)
+        refreshPromise = new Promise((resolve, reject) => {
+          setTimeout(() => {
+            refreshTreeStructure().then(resolve, reject);
+          }, 20);
+        }).finally(() => {
+          if (isIntersect) {
+            try { hideFileLoadTicker(); } catch (e) {}
+          }
+        });
+      } else {
+        refreshPromise = Promise.resolve();
+      }
+
+      refreshInfoAndChart();
+
+      // Validate multi-selection against the active intersection (if any).
+      function validateSelectedDatasets() {
+        try {
+          if (selectedDatasets && selectedDatasets.length > 0) {
+            const intersected = window._currentIntersectedPaths || getIntersectedPaths();
+            if (isIntersectMode() && intersected && intersected.size > 0) {
+              const before = selectedDatasets.length;
+              selectedDatasets = selectedDatasets.filter(d => intersected.has(d.path));
+              if (selectedDatasets.length === 0) {
+                // clear UI selection
+                resetInfoPanel();
+                hideChart();
+                document.querySelectorAll('.tree-item.dataset.selected').forEach(el => el.classList.remove('selected'));
+              } else if (selectedDatasets.length < before) {
+                // update shown attributes for the remaining selection
+                showMultipleDatasetAttributes(selectedDatasets);
+              }
+            } else {
+              // Non-intersect: remove any selected entries that no longer exist
+              selectedDatasets = selectedDatasets.filter(d => checkIfPathExistsInFile(d.fileKey || getTreeFile(), d.path));
+              if (selectedDatasets.length === 0) {
+                resetInfoPanel();
+                hideChart();
+                document.querySelectorAll('.tree-item.dataset.selected').forEach(el => el.classList.remove('selected'));
+              } else {
+                showMultipleDatasetAttributes(selectedDatasets);
+              }
+            }
+          }
+        } catch (e) { console.warn('validate-selected-datasets error', e); }
+      }
+
+      validateSelectedDatasets();
+
+      // Re-validate selection after async refresh completes (important for intersect changes)
+      if (needRefresh && refreshPromise) {
+        refreshPromise.then(() => {
+          refreshInfoAndChart();
+          validateSelectedDatasets();
+        }).catch(e => console.warn('post-refresh validation failed', e));
+      }
+
+      return refreshPromise;
+    }
 
     /* ==========================================================================
        6. TREE VIEW
@@ -1681,9 +1798,63 @@
           toggle.classList.add('collapsed');
           groupItem.classList.remove('expanded');
         } else {
+          // If children were rendered as lazy placeholders, load them on first expand
+          if (childrenDiv && childrenDiv.getAttribute && childrenDiv.getAttribute('data-lazy') === 'true') {
+            // If intersect mode is active and this path has no allowed descendants,
+            // mark it as loaded-empty and avoid the load to save work.
+            const intersected = window._currentIntersectedPaths || null;
+            if (intersected && !Array.from(intersected).some(p => p === path || p.startsWith(path + '/'))) {
+              childrenDiv.innerHTML = '<div style="color:#999;padding:8px;font-size:12px;">(empty)</div>';
+              childrenDiv.setAttribute('data-loaded', 'true');
+            } else {
+              // fire-and-forget loader; it will set data-loaded when complete
+              loadGroupChildren(groupItem, path).catch(e => console.error('Lazy load failed', e));
+            }
+          }
           childrenDiv.classList.add('expanded');
           toggle.classList.remove('collapsed');
         }
+      }
+    }
+    
+    /**
+     * Lazy-load children for a group node the first time it is expanded.
+     * Inserts the group's subtree HTML into the adjacent `.tree-group-children`.
+     */
+    async function loadGroupChildren(groupItem, path) {
+      try {
+        const childrenDiv = groupItem.nextElementSibling;
+        if (!childrenDiv || childrenDiv.getAttribute('data-loaded') === 'true' || childrenDiv.getAttribute('data-loading') === 'true') return;
+        childrenDiv.setAttribute('data-loading', 'true');
+        childrenDiv.innerHTML = '<div class="loading" style="padding:8px;font-size:12px;">Loading…</div>';
+        const fileKey = groupItem.getAttribute('data-file') || getTreeFile();
+        const file = loadedFiles[fileKey];
+        if (!file) {
+          childrenDiv.innerHTML = '<div style="color:#999;padding:8px;font-size:12px;">(unavailable)</div>';
+          childrenDiv.setAttribute('data-loaded', 'true');
+          childrenDiv.removeAttribute('data-loading');
+          return;
+        }
+        const node = FileService.get(file, path);
+        if (!node) {
+          childrenDiv.innerHTML = '<div style="color:#999;padding:8px;font-size:12px;">(unreadable)</div>';
+          childrenDiv.setAttribute('data-loaded', 'true');
+          childrenDiv.removeAttribute('data-loading');
+          return;
+        }
+        // Build the subtree for this group (non-lazy recursive build).
+        // If intersect mode is active, pass the intersectedPaths so children
+        // that are not common to all enabled files are filtered out.
+        const intersected = window._currentIntersectedPaths || null;
+        // render only one level when expanding lazily to keep UI responsive
+        const subHtml = await buildTree(node, path, true, '', intersected, fileKey, null, false, 1);
+        childrenDiv.innerHTML = subHtml || '<div style="color:#999;padding:8px;font-size:12px;">(empty)</div>'; 
+        childrenDiv.setAttribute('data-loaded', 'true');
+        childrenDiv.removeAttribute('data-loading');
+      } catch (e) {
+        console.error('loadGroupChildren error', e);
+        const childrenDiv = groupItem.nextElementSibling;
+        if (childrenDiv) childrenDiv.innerHTML = `<div style="color:red;padding:8px;font-size:12px;">(error: ${escapeHtml(e.message)})</div>`;
       }
     }
     
@@ -1722,7 +1893,7 @@
         }
         
         selectedIsRadionuclidesGroup = false;
-        document.querySelectorAll('.tree-item.group').forEach(el => {
+        document.querySelectorAll('.tree-item.group.expanded').forEach(el => {
           el.classList.remove('expanded');
         });
         
@@ -1741,8 +1912,8 @@
         selectedDatasetPath = path;
         selectedIsRadionuclidesGroup = false;
         
-        document.querySelectorAll('.tree-item.dataset').forEach(el => el.classList.remove('selected'));
-        document.querySelectorAll('.tree-item.group').forEach(el => el.classList.remove('expanded'));
+        document.querySelectorAll('.tree-item.dataset.selected').forEach(el => el.classList.remove('selected'));
+        document.querySelectorAll('.tree-item.group.expanded').forEach(el => el.classList.remove('expanded'));
         
         datasetElement?.classList.add('selected');
         
@@ -1782,7 +1953,7 @@
           el.classList.remove('selected');
         });
         
-        document.querySelectorAll('.tree-item.group').forEach(el => {
+        document.querySelectorAll('.tree-item.group.expanded').forEach(el => {
           el.classList.remove('expanded');
         });
         
@@ -1795,7 +1966,7 @@
     /**
      * Toggle the Intersect checkbox and rebuild the tree.
      */
-    function toggleIntersect() {
+    async function toggleIntersect() {
       // Clear per-file selection when switching modes
       selectedFileKey = null;
       selectedDatasetPath = null;
@@ -1804,7 +1975,42 @@
       multiSelectMode = false;
       resetInfoPanel();
       hideChart();
-      refreshTreeStructure();
+
+      // Immediately show the Intersection root + inline spinner so the UI
+      // responds instantly while the expensive intersection calculation runs.
+      try {
+        const tree = document.getElementById('tree');
+        if (tree) {
+          tree.innerHTML = `
+            <div class="tree-item group root-node" data-path="/">
+              <div class="tree-toggle no-toggle"></div>
+              <div class="tree-icon folder"></div>
+              <div class="tree-label">/ (Intersection) <span class="tree-inline-spinner" aria-hidden="true"></span></div>
+            </div>
+            <div class="tree-group-children expanded" style="margin-left:20px;">
+              <div class="loading" style="padding:8px;font-size:12px;">Calculating intersection…</div>
+            </div>
+          `;
+          // force layout so browsers (Safari) paint the inserted spinner immediately
+          void tree.offsetHeight;
+          tree.classList.remove('loading');
+          document.querySelector('.search-container')?.classList.remove('visible');
+        }
+      } catch (e) { /* ignore UI update errors */ }
+
+      // Let the browser paint the inline spinner before starting the expensive work.
+      // Use setTimeout to yield to the event loop (more reliable on Safari).
+      await new Promise(r => setTimeout(r, 0));
+
+      // Start refresh asynchronously so the UI paint is never blocked in Safari.
+      const cb = document.getElementById('intersectCheckbox');
+      if (cb) cb.disabled = true;
+      setTimeout(() => {
+        refreshTreeStructure().finally(() => { if (cb) cb.disabled = false; });
+      }, 20);
+
+      // return immediately so the inline spinner remains visible while work runs
+      return;
     }
 
     /**
@@ -1837,7 +2043,11 @@
     }
 
     /**
-     * Get the set of paths that exist in ALL enabled files.
+     * Get the set of paths that exist in ALL enabled files (full-path intersection).
+     * Only paths that are present (identical) in every enabled file will be
+     * returned — this enforces that the displayed tree nodes have the same
+     * hierarchy in all enabled files.
+     *
      * @returns {Set<string>|null} Intersected paths, or null if intersect is off
      */
     function getIntersectedPaths() {
@@ -1865,6 +2075,40 @@
     }
 
     /**
+     * Walk the HDF5 group and count items (datasets + groups) so we can show
+     * determinate progress while building the tree. Honors the optional
+     * intersectedPaths filter.
+     *
+     * @param {Object} group - h5wasm Group or File
+     * @param {Set|null} intersectedPaths - optional filter set
+     * @returns {Promise<number>} total items
+     */
+    async function countTreeItems(group, intersectedPaths = null) {
+      let cnt = 0;
+      try {
+        const keys = (typeof group.keys === 'function') ? Array.from(group.keys()).sort() : [];
+        for (const key of keys) {
+          try {
+            const obj = group.get(key);
+            if (!obj) continue;
+            const path = group === loadedFiles[Object.keys(loadedFiles)[0]] ? `/${key}` : `${group.name || ''}/${key}`;
+            if (intersectedPaths && !intersectedPaths.has(path)) continue;
+            // count this node
+            cnt += 1;
+            if (String(obj.type).toLowerCase() === 'group') {
+              cnt += await countTreeItems(obj, intersectedPaths);
+            }
+          } catch (e) {
+            // ignore individual errors while counting
+          }
+        }
+      } catch (e) {
+        // best-effort counting; return what we've got
+      }
+      return cnt;
+    }
+
+    /**
      * Refresh the tree view from the first enabled file's structure.
      * Rebuilds the entire tree HTML and applies any active search filter.
      * Shows loading state during refresh and handles errors gracefully.
@@ -1875,6 +2119,9 @@
       const tree = document.getElementById('tree');
       const searchContainer = document.querySelector('.search-container');
       const enabledFiles = getEnabledFiles();
+
+      // indicate busy for accessibility and automated tests
+      try { tree && tree.setAttribute('aria-busy', 'true'); } catch(e) {}
       
       if (enabledFiles.length === 0) {
         tree.innerHTML = '<div class="loading">Drop HDF5 files or click "+ Add Files" to start...</div>';
@@ -1882,32 +2129,99 @@
         resetInfoPanel();
         hideChart();
         searchContainer.classList.remove('visible');
+        try { tree && tree.removeAttribute('aria-busy'); } catch(e) {}
         return;
       }
       
       try {
         const intersectedPaths = getIntersectedPaths();
+        try { window._currentIntersectedPaths = intersectedPaths; } catch(e) {}
         let treeHtml = '';
-        
+
+        // Shallow estimate to avoid a full pre-traversal (fast, best-effort).
+        // Use top-level key counts as a cheap heuristic; fall back to
+        // indeterminate mode when the estimate is small/uncertain.
+        let totalItems = 0;
+        try {
+          for (const fk of enabledFiles) {
+            const f = loadedFiles[fk];
+            if (!f || typeof f.keys !== 'function') continue;
+            totalItems += Array.from(f.keys()).length || 0;
+          }
+          // treat small estimates as unknown so UI stays indeterminate
+          if (totalItems < 20) totalItems = 0;
+        } catch (e) {
+          totalItems = 0;
+        }
+
+        // use a single progress callback shared across builds (throttled)
+        let progressSeen = 0;
+        const progressCb = (() => {
+          let lastPct = -1;
+          let lastTs = 0;
+          return (inc = 1, label = '') => {
+            progressSeen += (typeof inc === 'number' ? inc : 1);
+            const now = Date.now();
+            if (totalItems > 0) {
+              const pct = Math.floor((progressSeen / totalItems) * 100);
+              if (pct !== lastPct) {
+                lastPct = pct;
+                updateFileLoadTicker(progressSeen, totalItems, label || 'Building tree...');
+              }
+            } else {
+              // indeterminate — update at most every 500ms or on coarse increments
+              if (now - lastTs > 500 || progressSeen % 100 === 0) {
+                lastTs = now;
+                updateFileLoadTicker(progressSeen, 0, label || 'Building tree...');
+              }
+            }
+          };
+        })();
+
+        if (totalItems > 0) {
+          showFileLoadTicker(0, totalItems, 'Building tree...');
+        } else {
+          // no reliable total — show indeterminate spinner
+          showFileLoadTicker(0, 0, 'Building tree...');
+        }
+
+        // Clear tree and render incrementally so users see content immediately.
+        tree.innerHTML = '';
         if (intersectedPaths) {
           // Intersect mode: single tree from first file, filtered to common paths
           const file = loadedFiles[enabledFiles[0]];
-          treeHtml = await buildTree(file, '', false, 'Intersection', intersectedPaths, null);
+          const fileHtml = await buildTree(file, '', false, 'Intersection', intersectedPaths, null, progressCb, true);
+          tree.insertAdjacentHTML('beforeend', fileHtml || '<div style="color:#999;">No items found</div>');
         } else {
-          // Non-intersect: one tree per enabled file
+          // Non-intersect: append each file as it finishes so UI is responsive
           for (const fileKey of enabledFiles) {
             const file = loadedFiles[fileKey];
-            treeHtml += await buildTree(file, '', false, fileKey, null, fileKey);
+            const fileHtml = await buildTree(file, '', false, fileKey, null, fileKey, progressCb, true);
+            tree.insertAdjacentHTML('beforeend', fileHtml || '<div style="color:#999;padding:8px;font-size:12px;">(empty)</div>');
+            // yield to allow the browser to paint between files
+            await new Promise(r => setTimeout(r, 0));
           }
         }
-        
-        tree.innerHTML = treeHtml || '<div style="color:#999;">No items found</div>';
+
+        // finalize progress and UI
+        if (totalItems > 0) updateFileLoadTicker(totalItems, totalItems, 'Done');
+        hideFileLoadTicker();
+
+        if (!tree.innerHTML || tree.innerHTML.trim() === '') {
+          tree.innerHTML = '<div style="color:#999;">No items found</div>';
+        }
         tree.classList.remove('loading');
         searchContainer.classList.add('visible');
+        try { tree && tree.removeAttribute('aria-busy'); } catch(e) {}
+
+        // Post-refresh validation: ensure the right-panel selection/chart
+        // reflect the newly-built tree / intersected set.
+        try { refreshInfoAndChart(); } catch (e) { console.warn('refreshInfoAndChart after refreshTreeStructure failed', e); }
       } catch (err) {
         tree.innerHTML = `<div class="error">Error loading tree: ${escapeHtml(err.message)}</div>`;
         console.error(err);
         searchContainer.classList.remove('visible');
+        try { tree && tree.removeAttribute('aria-busy'); } catch(e) {}
       }
     }
     
@@ -1925,6 +2239,7 @@
         
         if (hasEnabledFiles && isNotLoading && hasTreeContent) {
           hint.style.display = 'flex';
+          // Notify user that tree refresh completed
         } else {
           hint.style.display = 'none';
         }
@@ -1941,16 +2256,25 @@
      * @param {boolean} [isNested=false] - Whether this is a nested call (not root)
      * @returns {Promise<string>} HTML string for the tree structure
      */
-    async function buildTree(group, prefix = '', isNested = false, fileName = '', intersectedPaths = null, fileKey = null) {
+    async function buildTree(group, prefix = '', isNested = false, fileName = '', intersectedPaths = null, fileKey = null, progressCb = null, lazyLoad = false, maxDepth = Infinity) {
       const childrenHtml = [];
+      // depth guard for incremental rendering (maxDepth=0 => render nothing)
+      if (typeof maxDepth === 'number' && maxDepth <= 0) return ''; 
       const fileAttr = fileKey ? ` data-file="${escapeHtml(fileKey)}"` : '';
       
       // Add root group item only at top level
       if (prefix === '') {
         const isRootSelected = selectedDatasetPath === '/' && selectedIsRadionuclidesGroup;
         const rootLabel = fileName ? fileName : 'root';
+        // decide whether root is expandable under the active intersect filter
+        let rootExpandable = true;
+        if (intersectedPaths) {
+          // root is expandable if there exists any intersected path deeper than '/'
+          rootExpandable = Array.from(intersectedPaths).some(p => p !== '/' && p.startsWith('/'));
+        }
+        const toggleHtmlRoot = rootExpandable ? `<div class="tree-toggle ${isRootSelected ? '' : 'collapsed'}" onclick="event.stopPropagation(); toggleGroupExpansion(event, '/')">▶</div>` : `<div class="tree-toggle no-toggle"></div>`;
         const rootHtml = `<div class="tree-item group root-node ${isRootSelected ? 'expanded' : ''}" onclick="toggleGroup(event)" data-path="/"${fileAttr}>
-          <div class="tree-toggle ${isRootSelected ? '' : 'collapsed'}" onclick="event.stopPropagation(); toggleGroupExpansion(event, '/')">▶</div>
+          ${toggleHtmlRoot}
           <div class="tree-icon folder"></div>
           <div class="tree-label">/ (${escapeHtml(rootLabel)})</div>
         </div>`;
@@ -1967,6 +2291,23 @@
             keys = Array.from(group.keys());
           }
           keys.sort();
+
+          // If an intersect filter is active and its set is smaller than the
+          // number of keys in this group, derive the allowed child names from
+          // the intersect set (faster than scanning all keys for large groups).
+          if (intersectedPaths && intersectedPaths.size > 0 && keys.length > 0 && intersectedPaths.size < keys.length) {
+            const allowed = new Set();
+            const prefixWithSlash = prefix === '' ? '/' : (prefix + '/');
+            for (const p of intersectedPaths) {
+              if (!p.startsWith(prefixWithSlash)) continue;
+              const rest = p.substring(prefixWithSlash.length);
+              const child = rest.split('/')[0];
+              if (child) allowed.add(child);
+            }
+            if (allowed.size > 0) {
+              keys = keys.filter(k => allowed.has(k));
+            }
+          }
         } catch (e) {
           console.error('Error getting keys:', e.message);
           if (prefix === '') {
@@ -1975,6 +2316,8 @@
           return childrenHtml.join('');
         }
         
+        const topLevelLazy = !!lazyLoad && prefix === '';
+
         if (keys.length === 0) {
           if (prefix === '') {
             childrenHtml.push('<div style="color:#999;padding:8px;font-size:12px;">(empty)</div>');
@@ -1983,6 +2326,8 @@
           return childrenHtml.join('');
         }
         
+        // yield periodically during long traversals so the browser can paint
+        let _yieldCounter = 0;
         for (const key of keys) {
           try {
             const obj = group.get(key);
@@ -2007,6 +2352,7 @@
                 <div class="tree-meta" style="color:var(--color-kvot-accent);">broken link</div>
               </div>`;
               childrenHtml.push(brokenHtml);
+              if (typeof progressCb === 'function') progressCb(1, path);
               continue;
             }
             
@@ -2020,26 +2366,59 @@
                 <div class="tree-meta">\u2192 ${escapeHtml(extLabel)}</div>
               </div>`;
               childrenHtml.push(externalHtml);
+              if (typeof progressCb === 'function') progressCb(1, path);
               continue;
             }
             
             if (objType === 'group') {
               const isSelected = selectedDatasetPath === path && selectedIsRadionuclidesGroup;
+
+              // determine whether this group has intersected descendants (if filter active)
+              let groupExpandable = true;
+              if (intersectedPaths) {
+                // expandability means there is at least one intersected path that
+                // equals this path or is a descendant of it
+                groupExpandable = Array.from(intersectedPaths).some(p => p === path || p.startsWith(path + '/'));
+              }
+
+              const toggleHtml = groupExpandable ? `<div class="tree-toggle ${isSelected ? '' : 'collapsed'}" onclick="event.stopPropagation(); toggleGroupExpansion(event, '${path.replace(/'/g, "\\'")}')">▶</div>` : `<div class="tree-toggle no-toggle"></div>`;
+
               const groupHtml = `<div class="tree-item group ${isSelected ? 'expanded' : ''}" onclick="toggleGroup(event)" data-path="${escapeHtml(path)}"${fileAttr}>
-                  <div class="tree-toggle ${isSelected ? '' : 'collapsed'}" onclick="event.stopPropagation(); toggleGroupExpansion(event, '${path.replace(/'/g, "\\'")}')">▶</div>
+                  ${toggleHtml}
                   <div class="tree-icon folder"></div>
                   <div class="tree-label">${escapeHtml(key)}${linkBadge}</div>
                 </div>`;
               childrenHtml.push(groupHtml);
-              
+              if (typeof progressCb === 'function') progressCb(1, path);
+
               try {
-                const subItems = await buildTree(obj, path, true, '', intersectedPaths, fileKey);
-                const childrenWrapper = `<div class="tree-group-children ${isSelected ? 'expanded' : ''}">${subItems || '<div style="color:#999;padding:8px;font-size:12px;">(empty)</div>'}</div>`;
-                childrenHtml.push(childrenWrapper);
+                if (topLevelLazy && prefix === '') {
+                  // render an empty placeholder that will be populated when the
+                  // user expands this group for the first time
+                  const placeholder = `<div class="tree-group-children ${isSelected ? 'expanded' : ''}" data-lazy="true" data-loaded="false"></div>`;
+                  childrenHtml.push(placeholder);
+                } else {
+                  const subItems = await buildTree(obj, path, true, '', intersectedPaths, fileKey, progressCb, false, (typeof maxDepth === 'number' ? maxDepth - 1 : Infinity));
+                  let childrenWrapper = '';
+                  if (subItems && String(subItems).trim() !== '') {
+                    childrenWrapper = `<div class="tree-group-children ${isSelected ? 'expanded' : ''}">${subItems}</div>`;
+                  } else {
+                    // depth-limited/unrendered subtree — if the group actually has children,
+                    // show a lazy placeholder so further expansion can load them.
+                    const hasChildren = (FileService.keys(obj) || []).length > 0;
+                    if (hasChildren) {
+                      childrenWrapper = `<div class="tree-group-children ${isSelected ? 'expanded' : ''}" data-lazy="true" data-loaded="false"></div>`;
+                    } else {
+                      childrenWrapper = `<div class="tree-group-children ${isSelected ? 'expanded' : ''}"><div style="color:#999;padding:8px;font-size:12px;">(empty)</div></div>`;
+                    }
+                  }
+                  childrenHtml.push(childrenWrapper);
+                }
               } catch (subErr) {
                 console.error('Error getting sub-items for', key, subErr);
                 const errorWrapper = `<div class="tree-group-children"><div style="color:red;padding:8px;font-size:12px;">(error: ${escapeHtml(subErr.message)})</div></div>`;
                 childrenHtml.push(errorWrapper);
+                if (typeof progressCb === 'function') progressCb(1, path);
               }
             } else if (objType === 'dataset') {
               const shape = obj.shape?.length ? `${obj.shape.join('×')}` : 'scalar';
@@ -2051,11 +2430,14 @@
                 <div class="tree-meta">${escapeHtml(formattedDtype)} [${escapeHtml(shape)}]</div>
               </div>`;
               childrenHtml.push(datasetHtml);
+              if (typeof progressCb === 'function') progressCb(1, path);
             }
           } catch (e) {
             console.error('Error with key', key, ':', e.message);
             childrenHtml.push(`<div class="tree-item" style="color:red;font-size:12px;">⚠️ ${escapeHtml(key)}</div>`);
           }
+          // yield every 50 items to keep UI responsive during large traversals
+          if (++_yieldCounter % 50 === 0) await new Promise(r => setTimeout(r, 0));
         }
       } catch (e) {
         console.error('buildTree error:', e);
@@ -2709,13 +3091,7 @@
               console.warn(`Time data length (${timeData.length}) doesn't match data length (${yArray.length}) for ${fileKey}`);
             }
 
-            traces.push({
-              x: timeData.slice(0, minLength),
-              y: yArray.slice(0, minLength),
-              mode: 'lines',
-              name: fileKey,
-              type: 'scatter'
-            });
+            traces.push(ChartService.timeSeriesTrace({ x: timeData.slice(0, minLength), y: yArray.slice(0, minLength), name: fileKey }));
           }
         } catch (e) {
           console.error(`Error creating trace for ${fileKey}:`, e);
@@ -2732,7 +3108,7 @@
         }
 
         const paths = [path];
-        const layout = createBaseLayout({
+        const layout = ChartService.createBaseLayout({
           title: path,
           xAxisTitle: timeUnit ? `Time (${timeUnit})` : 'Time',
           yAxisTitle,
@@ -2884,19 +3260,7 @@
               lineWidth = 1.5;
             }
             
-            traces.push({
-              x: trimmedTimeData,
-              y: trimmedYData,
-              mode: 'lines',
-              name: traceName,
-              line: {
-                color: baseColor,
-                dash: lineDash,
-                width: lineWidth
-              },
-              type: 'scatter',
-              hovertemplate: `<b>${traceName}</b><br>Time: %{x}<br>Value: %{y}<extra></extra>`
-            });
+            traces.push(ChartService.timeSeriesTrace({ x: trimmedTimeData, y: trimmedYData, name: traceName, line: { color: baseColor, dash: lineDash, width: lineWidth }, hovertemplate: `<b>${traceName}</b><br>Time: %{x}<br>Value: %{y}<extra></extra>` }));
           }
         } catch (e) {
           console.error(`Error creating trace for ${path} in ${fileKey}:`, e);
@@ -2914,7 +3278,7 @@
         }
         
         const paths = normalizedItems.map(d => d.path);
-        const layout = createBaseLayout({
+        const layout = ChartService.createBaseLayout({
           title: `Comparing ${normalizedItems.length} dataset${normalizedItems.length > 1 ? 's' : ''}`,
           xAxisTitle: timeUnit ? `Time (${timeUnit})` : 'Time',
           yAxisTitle,
@@ -3057,18 +3421,7 @@
                   lineWidth = lineWidth / 2;
                 }
                 
-                traces.push({
-                  x: trimmedTimeData,
-                  y: trimmedYData,
-                  mode: 'lines',
-                  name: traceName,
-                  line: {
-                    color: lineStyle.color,
-                    dash: lineStyle.dash,
-                    width: lineWidth
-                  },
-                  type: 'scatter'
-                });
+                traces.push(ChartService.timeSeriesTrace({ x: trimmedTimeData, y: trimmedYData, name: traceName, line: { color: lineStyle.color, dash: lineStyle.dash, width: lineWidth } }));
               }
             } catch (e) {
               console.error(`Error creating trace for ${datasetKey} in ${fileKey}:`, e);
@@ -3250,7 +3603,7 @@
         const { xScale, yScale } = getChartScales();
         const yAxisTitle = yAxisUnit ? `${yAxisName} (${yAxisUnit})` : yAxisName;
         
-        const layout = createBaseLayout({
+        const layout = ChartService.createBaseLayout({
           title: path,
           xAxisTitle: timeUnit ? `Time (${timeUnit})` : 'Time',
           yAxisTitle,
@@ -4761,6 +5114,115 @@
       });
     }
 
+    // ---- Search-aware lazy expansion helpers --------------------------------
+    if (!window._searchExpansionState) window._searchExpansionState = { lastTerm: null, inProgress: false };
+
+    /**
+     * Async, non-blocking search for matching paths inside an HDF5 file.
+     * Traverses groups with periodic yields to avoid freezing the UI.
+     * Returns up to `limit` matching full paths.
+     */
+    async function asyncFindMatchingPaths(fileNode, regex, limit = 50) {
+      const matches = [];
+      const stack = [{ node: fileNode, prefix: '' }];
+      let processed = 0;
+
+      while (stack.length && matches.length < limit) {
+        const { node, prefix } = stack.pop();
+        let keys = [];
+        try { keys = FileService.keys(node); } catch (e) { continue; }
+
+        for (const key of keys) {
+          const path = prefix ? `${prefix}/${key}` : `/${key}`;
+          if (regex.test(key) || regex.test(path)) {
+            matches.push(path);
+            if (matches.length >= limit) break;
+          }
+
+          try {
+            const child = node.get ? node.get(key) : null;
+            if (child && String(child.type).toLowerCase() === 'group') {
+              stack.push({ node: child, prefix: path });
+            }
+          } catch (e) { /* ignore unreadable nodes */ }
+
+          if (++processed % 200 === 0) await new Promise(r => setTimeout(r, 0));
+        }
+      }
+      return matches;
+    }
+
+    /**
+     * Ensure all ancestor groups for `targetPath` are expanded and loaded.
+     * Loads lazy placeholders top-down using `loadGroupChildren()`.
+     */
+    async function expandAndLoadPath(fileKey, targetPath) {
+      const tree = document.getElementById('tree');
+      const parts = targetPath.split('/').filter(Boolean);
+      let cur = '';
+
+      for (let i = 0; i < parts.length; i++) {
+        cur += '/' + parts[i];
+        const groupItems = Array.from(tree.querySelectorAll('.tree-item.group'));
+        const groupItem = groupItems.find(el => el.getAttribute('data-path') === cur && (el.getAttribute('data-file') === fileKey || !el.getAttribute('data-file')));
+        if (!groupItem) break; // cannot proceed if ancestor DOM node missing
+
+        const childrenDiv = groupItem.nextElementSibling;
+        if (childrenDiv && childrenDiv.getAttribute && childrenDiv.getAttribute('data-lazy') === 'true' && childrenDiv.getAttribute('data-loaded') !== 'true') {
+          await loadGroupChildren(groupItem, cur);
+          await new Promise(r => setTimeout(r, 0));
+        }
+      }
+    }
+
+    // Background expansion trigger (best-effort): find matches that are not
+    // present in the DOM and expand their parents so they become visible.
+    // Runs once per distinct search term to avoid repeated full traversals.
+    (function attachSearchAwareExpansion() {
+      const originalFilter = filterTree;
+      filterTree = function(searchTerm) {
+        originalFilter(searchTerm);
+
+        if (!searchTerm || !searchTerm.trim()) return;
+        if (window._searchExpansionState.inProgress) return;
+        if (window._searchExpansionState.lastTerm === searchTerm) return;
+
+        window._searchExpansionState.lastTerm = searchTerm;
+        window._searchExpansionState.inProgress = true;
+
+        (async () => {
+          try {
+            const regexLocal = wildcardToRegex(searchTerm);
+            const enabled = getEnabledFiles();
+            let expansions = 0;
+
+            for (const fk of enabled) {
+              const file = loadedFiles[fk];
+              if (!file) continue;
+              const matches = await asyncFindMatchingPaths(file, regexLocal, 50);
+              for (const p of matches) {
+                const exists = Array.from(document.querySelectorAll('.tree-item')).some(el => el.getAttribute('data-path') === p && (el.getAttribute('data-file') === fk || !el.getAttribute('data-file')));
+                if (!exists) {
+                  const parentPath = p.substring(0, p.lastIndexOf('/')) || '/';
+                  await expandAndLoadPath(fk, parentPath);
+                  expansions++;
+                  await new Promise(r => setTimeout(r, 10));
+                }
+              }
+            }
+
+            if (expansions > 0) {
+              // re-run synchronously to pick up newly loaded DOM nodes
+              setTimeout(() => filterTree(searchTerm), 80);
+            }
+          } catch (e) {
+            console.error('search-aware expansion error', e);
+          } finally {
+            window._searchExpansionState.inProgress = false;
+          }
+        })();
+      };
+    })();
 
     /* ==========================================================================
        13. DRAG & DROP FILE LOADING
@@ -4935,6 +5397,39 @@
     
     // Initialize cached DOM element references
     initDOMReferences();
+
+    // File load ticker helpers (show per-file progress and tree-refresh state)
+    function showFileLoadTicker(current = 0, total = 0, text = '') {
+      try {
+        const el = document.getElementById('fileLoadTicker');
+        if (!el) return;
+        el.hidden = false;
+        const spinner = el.querySelector('.spinner');
+        const txt = el.querySelector('.ticker-text');
+        if (spinner) spinner.style.display = 'inline-block';
+        if (typeof current === 'number' && typeof total === 'number' && total > 0) {
+          txt.textContent = `${current}/${total}${text ? ' — ' + text : ' Loading files…'}`;
+        } else {
+          txt.textContent = text || 'Loading...';
+        }
+      } catch (e) { console.warn('showFileLoadTicker error', e); }
+    }
+
+    function updateFileLoadTicker(current = 0, total = 0, text = '') {
+      try {
+        const el = document.getElementById('fileLoadTicker');
+        if (!el) return;
+        el.hidden = false;
+        const txt = el.querySelector('.ticker-text');
+        txt.textContent = (typeof current === 'number' && total ? `${current}/${total}` : '') + (text ? (current && total ? ' — ' + text : ' ' + text) : '');
+      } catch (e) { console.warn('updateFileLoadTicker error', e); }
+    }
+
+    function hideFileLoadTicker() {
+      try { const el = document.getElementById('fileLoadTicker'); if (!el) return; el.hidden = true; const bar = el.querySelector('.ticker-progress-bar'); if (bar) bar.style.width = '0%'; } catch (e) { console.warn(e); }
+    }
+
+
     
     /**
      * File input change handler.
@@ -4946,11 +5441,17 @@
     document.getElementById('fileInput').addEventListener('change', async (e) => {
       const files = Array.from(e.target.files || []);
       if (files.length === 0) return;
-      
+
+      // show progress ticker (file count known)
+      showFileLoadTicker(0, files.length, 'Starting…');
+
       try {
         await waitForH5Wasm();
-        
-        for (const file of files) {
+
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i];
+          // update ticker with current file being processed
+          updateFileLoadTicker(i, files.length, file.name);
           try {
             const buffer = await file.arrayBuffer();
             
@@ -4968,15 +5469,20 @@
             if (!fileOrder.includes(file.name)) {
               fileOrder.push(file.name);
             }
+            // log per-file load (toasts removed)
+            console.log(`Loaded ${file.name}`);
           } catch (err) {
             console.error(`Error loading ${file.name}:`, err);
             alert(`Failed to load ${file.name}`);
           }
         }
         
-        updateTabs();
-        await refreshTreeStructure();
+        // Update tabs (returns a promise that resolves when tree rebuild completes)
+        updateFileLoadTicker(files.length, files.length, 'Refreshing tree...');
+        await updateTabs();
+        hideFileLoadTicker();
       } catch (err) {
+        hideFileLoadTicker();
         alert(`Error: ${err.message}`);
         console.error(err);
       }

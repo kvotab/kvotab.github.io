@@ -271,10 +271,6 @@ footer {
    position: relative;
 }
 
-.footer-center {
-   /* centered content */
-}
-
 footer .theme-toggle {
    position: absolute;
    right: 8px;
