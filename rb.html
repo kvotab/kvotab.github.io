@@ -437,6 +437,41 @@
       }
     };
 
+    /**
+     * Simple EventBus (pub/sub) for decoupling UI actions.
+     * - synchronous delivery to preserve existing behavior expectations
+     * - API: EventBus.on(name, fn), .off(name, fn), .emit(name, payload), .once(name, fn)
+     */
+    window.EventBus = (function() {
+      const _handlers = Object.create(null);
+      return {
+        on(name, fn) {
+          if (!name || typeof fn !== 'function') return;
+          (_handlers[name] = _handlers[name] || []).push(fn);
+        },
+        off(name, fn) {
+          if (!name) return;
+          if (!fn) { delete _handlers[name]; return; }
+          const arr = _handlers[name];
+          if (!arr) return;
+          const idx = arr.indexOf(fn);
+          if (idx !== -1) arr.splice(idx, 1);
+        },
+        once(name, fn) {
+          const wrapper = function(payload) { fn(payload); EventBus.off(name, wrapper); };
+          EventBus.on(name, wrapper);
+        },
+        emit(name, payload) {
+          const arr = _handlers[name];
+          if (!arr || !arr.length) return;
+          // synchronous delivery
+          for (let i = 0; i < arr.length; i++) {
+            try { arr[i](payload); } catch (e) { console.error('EventBus handler error for', name, e); }
+          }
+        }
+      };
+    })();
+
 
 
     /**
@@ -989,22 +1024,14 @@
     };
 
     // Update Plotly chart colours when theme changes
-    new MutationObserver(() => {
-      const el = document.getElementById('plotlyChart');
-      if (!el) return;
-      const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-      const textColor = isDark ? '#e8ddd0' : '#2d2416';
-      const gridColor = isDark ? '#4a3f35' : '#e5ddd5';
-      const bgColor  = isDark ? '#2a221b' : '#ffffff';
-
-      if (currentPdfHistogram && currentPdfHistogramData) {
-        // Re-render the whole histogram with correct theme colours
-        createPdfHistogram(currentPdfHistogramData);
-        return;
+    // Notify interested components when theme changes (decoupled via EventBus)
+    new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        if (m.type === 'attributes' && m.attributeName === 'data-theme') {
+          const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+          EventBus.emit('theme:changed', { isDark });
+        }
       }
-
-      if (!currentChartData) return;
-      Plotly.relayout(el, ChartService.relayoutForTheme(isDark));
     }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
     /**
@@ -1959,53 +1986,42 @@
      */
     function selectDataset(path, evt) {
       evt?.stopPropagation();
-      
+
       const isCtrlKey = evt?.ctrlKey || evt?.metaKey;
       const datasetElement = evt?.target?.closest('.tree-item.dataset');
-      
-      // Determine which file this tree node belongs to
       const nodeFileKey = datasetElement?.getAttribute('data-file') || null;
-      
+
       if (isCtrlKey) {
-        // Multi-select mode — allow cross-file selection
+        // Update selection state for multi-select and emit centralized event
         multiSelectMode = true;
         selectedFileKey = null; // clear single-file scope
-        
-        const index = selectedDatasets.findIndex(d => d.path === path && d.fileKey === nodeFileKey);
-        if (index > -1) {
-          selectedDatasets.splice(index, 1);
-          datasetElement?.classList.remove('selected');
+
+        const exists = selectedDatasets.find(d => d.path === path && d.fileKey === nodeFileKey);
+        if (exists) {
+          selectedDatasets = selectedDatasets.filter(d => !(d.path === path && d.fileKey === nodeFileKey));
         } else {
           selectedDatasets.push({ path, fileKey: nodeFileKey });
-          datasetElement?.classList.add('selected');
         }
-        
+
         selectedIsRadionuclidesGroup = false;
-        document.querySelectorAll('.tree-item.group.expanded').forEach(el => {
-          el.classList.remove('expanded');
+        EventBus.emit('selection:changed', {
+          mode: 'multi',
+          items: selectedDatasets.slice()
         });
-        
-        if (selectedDatasets.length > 0) {
-          showMultipleDatasetAttributes(selectedDatasets);
-        } else {
-          resetInfoPanel();
-          document.getElementById('plotlyChartContainer').classList.remove('visible');
-          currentChartData = null;
-        }
       } else {
-        // Single select mode
+        // Single select mode — set state and emit centralized event
         multiSelectMode = false;
         selectedFileKey = nodeFileKey;
         selectedDatasets = [{ path, fileKey: nodeFileKey }];
         selectedDatasetPath = path;
         selectedIsRadionuclidesGroup = false;
-        
-        document.querySelectorAll('.tree-item.dataset.selected').forEach(el => el.classList.remove('selected'));
-        document.querySelectorAll('.tree-item.group.expanded').forEach(el => el.classList.remove('expanded'));
-        
-        datasetElement?.classList.add('selected');
-        
-        showNodeAttributes(path, false);
+
+        EventBus.emit('selection:changed', {
+          mode: 'single',
+          path,
+          fileKey: nodeFileKey,
+          isGroup: false
+        });
       }
     }
     
@@ -2020,34 +2036,28 @@
     function toggleGroup(event) {
       event.stopPropagation();
       const groupItem = event.currentTarget;
-      
+
       if (event.target.classList.contains('tree-toggle')) {
         return;
       }
-      
+
       const path = groupItem.getAttribute('data-path');
       if (path) {
         multiSelectMode = false;
         selectedDatasets = [];
-        
-        // Determine which file this tree node belongs to
+
         const nodeFileKey = groupItem.getAttribute('data-file') || null;
         selectedFileKey = nodeFileKey;
-        
+
         selectedDatasetPath = path;
         selectedIsRadionuclidesGroup = true;
-        
-        document.querySelectorAll('.tree-item.dataset.selected').forEach(el => {
-          el.classList.remove('selected');
+
+        EventBus.emit('selection:changed', {
+          mode: 'group',
+          path,
+          fileKey: nodeFileKey,
+          isGroup: true
         });
-        
-        document.querySelectorAll('.tree-item.group.expanded').forEach(el => {
-          el.classList.remove('expanded');
-        });
-        
-        groupItem.classList.add('expanded');
-        
-        showNodeAttributes(path, true);
       }
     }
 
@@ -5825,6 +5835,79 @@
     
     // Initialize cached DOM element references
     initDOMReferences();
+
+    // EventBus listeners -------------------------------------------------
+    // Centralized selection handler — updates DOM classes and info/chart display
+    EventBus.on('selection:changed', (payload) => {
+      try {
+        const tree = document.getElementById('tree');
+
+        if (!payload || !payload.mode) return;
+
+        if (payload.mode === 'single') {
+          // clear previous selection/expansions
+          document.querySelectorAll('.tree-item.dataset.selected').forEach(el => el.classList.remove('selected'));
+          document.querySelectorAll('.tree-item.group.expanded').forEach(el => el.classList.remove('expanded'));
+
+          // mark the dataset element (if present)
+          const items = Array.from(tree.querySelectorAll('.tree-item')).filter(el => el.getAttribute('data-path') === payload.path && (!payload.fileKey || el.getAttribute('data-file') === payload.fileKey));
+          if (items.length > 0) {
+            const el = items.find(n => n.classList.contains('dataset')) || items[0];
+            if (el) el.classList.add('selected');
+          }
+
+          // show attributes / chart for single selection
+          try { showNodeAttributes(payload.path, false); } catch (e) { console.warn('selection:changed handler showNodeAttributes failed', e); }
+          return;
+        }
+
+        if (payload.mode === 'group') {
+          // clear dataset selection, collapse groups, then expand/select the group
+          document.querySelectorAll('.tree-item.dataset.selected').forEach(el => el.classList.remove('selected'));
+          document.querySelectorAll('.tree-item.group.expanded').forEach(el => el.classList.remove('expanded'));
+
+          const groupEl = Array.from(tree.querySelectorAll('.tree-item.group')).find(el => el.getAttribute('data-path') === payload.path && (!payload.fileKey || el.getAttribute('data-file') === payload.fileKey));
+          if (groupEl) groupEl.classList.add('expanded');
+
+          try { showNodeAttributes(payload.path, true); } catch (e) { console.warn('selection:changed handler showNodeAttributes(group) failed', e); }
+          return;
+        }
+
+        if (payload.mode === 'multi') {
+          // clear previous selection then mark provided items
+          document.querySelectorAll('.tree-item.dataset.selected').forEach(el => el.classList.remove('selected'));
+          const items = Array.isArray(payload.items) ? payload.items : [];
+          for (const it of items) {
+            const found = Array.from(tree.querySelectorAll('.tree-item.dataset')).find(el => el.getAttribute('data-path') === it.path && (!it.fileKey || el.getAttribute('data-file') === it.fileKey));
+            if (found) found.classList.add('selected');
+          }
+
+          try { showMultipleDatasetAttributes(items); } catch (e) { console.warn('selection:changed handler showMultipleDatasetAttributes failed', e); }
+          return;
+        }
+      } catch (e) {
+        console.error('EventBus selection:changed handler error', e);
+      }
+    });
+
+    // Theme-change handler (subscribed to EventBus by MutationObserver)
+    EventBus.on('theme:changed', ({ isDark }) => {
+      try {
+        const el = document.getElementById('plotlyChart');
+        if (!el) return;
+
+        if (currentPdfHistogram && currentPdfHistogramData) {
+          // Re-render the whole histogram with correct theme colours
+          createPdfHistogram(currentPdfHistogramData);
+          return;
+        }
+
+        if (!currentChartData) return;
+        Plotly.relayout(el, ChartService.relayoutForTheme(isDark));
+      } catch (e) {
+        console.warn('theme:changed handler failed', e);
+      }
+    });
 
     // debug: trace '+ Add Files' button clicks (helps diagnose file-input issues)
     try {
