@@ -236,12 +236,15 @@
               <p><input class="arg" data-field="mu" type="number" step="any" inputmode="decimal" value="0" name="Mean of it's natural logarithm" title="Please provide the mean of it's natural logarithm."></p>
             </div>
             <div id="tabs-mean">
+              <p>mean > 0 is the expected value (or mean) of the variable</p>
               <p><input class="arg" data-field="mean" type="number" min="0" step="any" inputmode="decimal" value="1" name="Arithmetic mean" title="Please provide the arithmetic mean (positive)."></p>
             </div>
             <div id="tabs-GM">
+              <p>geometric mean > 0 is the the same as the median value</p>
               <p><input class="arg" data-field="GM" type="number" min="0" step="any" inputmode="decimal" value="1" name="Geometric mean" title="Please provide the geometric mean (positive)."></p>
             </div>
             <div id="tabs-mode">
+              <p>mode > 0 is the most likely value of the variable</p>
               <p><input class="arg" data-field="mode" type="number" min="0" step="any" inputmode="decimal" value="1" name="Mode" title="Please provide the mode (positive)."></p>
             </div>
             <div id="tabs-percentile">
@@ -301,30 +304,39 @@
     const _labelToId = {}; // built from header anchors (label text -> template id suffix) — retained for backward mapping
     const _idToLabel = {}; // reverse map (data-id -> label text) — used for display
 
-    // Combination constraints (pair-based).
-    // Keys are normalized unordered pairs of `data-id` values (sorted, joined with '|').
-    // Presence of a key means that combination is disallowed.
-    const secondTabConstraints = {
-      'GM|mu': { disabled: true },        // mu+GM is not allowed
-      'GM|mean': { disabled: true },      // mean+GM is not allowed
-      'mean|mode': { disabled: true },    // mode+mean not allowed
-      // data combinations: data paired with most other metrics is disallowed
-      'data|mu': { disabled: true }, 'data|mean': { disabled: true }, 'data|GM': { disabled: true }, 'data|mode': { disabled: true },
-      'data|percentile': { disabled: true }, 'data|sigma': { disabled: true }, 'data|SD': { disabled: true }, 'data|GSD': { disabled: true },
-      'data|CV': { disabled: true }, 'data|error': { disabled: true }
+    // Metric rules: declarative, per-metric constraints and fallbacks (easier to extend).
+    // - `exclusive: true` means the metric must be selected alone (e.g. 'data').
+    // - `incompatibleWith` lists other metric ids that cannot be combined with this metric.
+    // - `fallback` is a directional mapping used to auto-replace a disallowed second metric.
+    const metricRules = {
+      mu: { incompatibleWith: ['GM'], fallback: { 'GM': 'sigma' } },
+      GM: { incompatibleWith: ['mu'], fallback: { 'mu': 'GSD' } },
+      mean: { incompatibleWith: ['data'], fallback: { 'GM': 'SD' } },
+      mode: { incompatibleWith: ['data'], fallback: { 'mean': 'SD' } },
+      percentile: { pairable: true },
+      data: { exclusive: true },
+      sigma: { incompatibleWith: ['data','sigma','GSD','CV','error'] },
+      SD: { incompatibleWith: ['data','SD','GSD','CV','error'] },
+      GSD: { incompatibleWith: ['data','sigma','SD','CV','error'] },
+      CV: { incompatibleWith: ['data','sigma','SD','GSD','error'] },
+      error: { incompatibleWith: ['data','sigma','SD','GSD','CV'] }
     };
 
-    // Directional fallbacks (keeps previous UX where the fallback depended on which metric was primary)
-    const fallbackMap = {
-      mu:   { GM: 'sigma' },
-      GM:   { mu: 'GSD' },
-      mean: { GM: 'SD' },
-      mode: { mean: 'SD' }
-    };
+    function isPairDisallowed(a,b){
+      if (!a || !b) return false;
+      const ra = metricRules[a] || {};
+      const rb = metricRules[b] || {};
+      // exclusive metrics (like 'data') cannot be paired with anything else
+      if (ra.exclusive || rb.exclusive) return true;
+      if (ra.incompatibleWith && ra.incompatibleWith.includes(b)) return true;
+      if (rb.incompatibleWith && rb.incompatibleWith.includes(a)) return true;
+      return false;
+    }
 
-    function normalizePair(a,b){ return [a,b].sort().join('|'); }
-    function isPairDisallowed(a,b){ if(!a||!b) return false; return !!secondTabConstraints[normalizePair(a,b)]; }
-    function getFallbackForPair(primaryId, disallowedId){ return (fallbackMap[primaryId] && fallbackMap[primaryId][disallowedId]) ? fallbackMap[primaryId][disallowedId] : null; }
+    function getFallbackForPair(primaryId, disallowedId){
+      const r = metricRules[primaryId] || {};
+      return (r.fallback && r.fallback[disallowedId]) ? r.fallback[disallowedId] : null;
+    }
 
     function renderSelectedTabs() {
       const anchors = Array.from(document.querySelectorAll('#tabs-header a[data-id]'));
@@ -479,7 +491,7 @@
             if (effectiveSel === 'percentile' && idx === 1 && !sel) titleSpan.textContent = 'percentile (pair 2)';
             else titleSpan.textContent = `${display}`;
           } else {
-            titleSpan.textContent = `Metric ${idx+1}`;
+            titleSpan.textContent = '';
           }
         }
 
@@ -627,34 +639,27 @@
         mu = Math.log(args.x1) + Math.log(args.x2 / args.x1) * (0-args.p1/100) / (args.p2/100-args.p1/100);
         return [mu,sigma];
       }
+      if (has('sigma'))sigma = args.sigma;
+      if (has('GSD')) sigma = Math.log(args.GSD);
+      if (has('CV')) sigma = Math.sqrt(Math.log((args.CV**2)+1));
+      if (has('error_factor')) sigma = Math.log(args.error_factor)/1.645;
 
-      // If geometric mean (GM) supplied as input, treat mu = ln(GM) and try to infer sigma from other descriptors
-      if (has('GM') && !has('mu')) {
-        mu = Math.log(args.GM);
-        if (has('GSD')) sigma = Math.log(args.GSD);
-        else if (has('sigma')) sigma = args.sigma;
-        else if (has('CV')) sigma = Math.sqrt(Math.log((args.CV**2)+1));
-        else if (has('mode')) sigma = Math.sqrt(Math.log(args.GM / args.mode));
-        return [mu,sigma];
-      }
-
-      // If mu provided, use it with any other available descriptor
-      if (has('mu')) {
-        mu = args.mu;
+      // If mu or GM provided, use it with any other available descriptor
+      if (has('mu') || has('GM')) {
+        if (has('GM')){
+          mu = Math.log(args.GM);
+        } else {
+          mu = args.mu;
+        }
         if (has('mean')) sigma = Math.sqrt((Math.log(args.mean)-mu)*2);
         else if (has('mode')) sigma = Math.sqrt(mu - Math.log(args.mode));
         else if (has('x') && has('p')) sigma = (Math.log(args.x)-mu)/(Math.exp(args.p/100));
-        else if (has('sigma')) sigma = args.sigma;
-        else if (has('GSD')) sigma = Math.log(args.GSD);
-        else if (has('CV')) sigma = Math.sqrt(Math.log((args.CV**2)+1));
-        else if (has('error_factor')) sigma = Math.log(args.error_factor)/1.645;
         return [mu,sigma];
       }
 
       // If mean provided
       if (has('mean')) {
-        if (has('GM')) sigma = Math.sqrt(2*Math.log(args.mean/args.GM));
-        else if (has('mode')) sigma = Math.sqrt(2*Math.log(args.mean/args.mode)/3);
+        if (has('mode')) sigma = Math.sqrt(2*Math.log(args.mean/args.mode)/3);
         else if (has('x') && has('p')) {
           if (args.mean < args.x) {
             sigma = args.p/100 + Math.sqrt(((args.p/100)**2) + 2 * Math.log(args.mean / args.x));
@@ -662,11 +667,7 @@
             sigma = args.p/100 - Math.sqrt(((args.p/100)**2) + 2 * Math.log(args.mean / args.x));
           }
         }
-        else if (has('sigma')) sigma = args.sigma;
         else if (has('SD')) sigma = Math.sqrt(Math.log((args.SD**2)/(args.mean**2)+1));
-        else if (has('GSD')) sigma = Math.log(args.GSD);
-        else if (has('CV')) sigma = Math.sqrt(Math.log((args.CV**2)+1));
-        else if (has('error_factor')) sigma = Math.log(args.error_factor)/1.645;
         mu = Math.log(args.mean) - (sigma**2)/2;
         return [mu,sigma];
       }
@@ -679,10 +680,7 @@
           } else if (args.mode > args.x) {
             sigma = (-args.p/100 + Math.sqrt((args.p/100)**2  - 4 * Math.log(args.mode / args.x))) / 2;
           }
-        } else if (has('sigma')) sigma = args.sigma;
-        else if (has('GSD')) sigma = Math.log(args.GSD);
-        else if (has('CV')) sigma = Math.sqrt(Math.log((args.CV**2)+1));
-        else if (has('error_factor')) sigma = Math.log(args.error_factor)/1.645;
+        }
         mu = Math.log(args.mode) + sigma**2;
         return [mu,sigma];
       }
