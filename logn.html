@@ -124,15 +124,15 @@
             <!-- Combined header (single header controls up to two selectable tabs; click toggles selection) -->
             <div id="combined-tabs-header" style="margin-bottom:8px;">
               <ul id="tabs-header" role="tablist" aria-label="Metric selector" style="list-style:none;padding:0;margin:0;display:flex;gap:8px;flex-wrap:wrap;">
-                <li><a href="#" data-id="mu">mu</a></li>
+                <li><a href="#" data-id="mu">mean(log)</a></li>
                 <li><a href="#" data-id="mean">mean</a></li>
-                <li><a href="#" data-id="GM">GM</a></li>
+                <li><a href="#" data-id="GM">gm</a></li>
                 <li><a href="#" data-id="mode">mode</a></li>
                 <li><a href="#" data-id="percentile">percentile</a></li>
                 <li><a href="#" data-id="data">data</a></li>
-                <li><a href="#" data-id="sigma">sigma</a></li>
-                <li><a href="#" data-id="SD">SD</a></li>
-                <li><a href="#" data-id="GSD">GSD</a></li>
+                <li><a href="#" data-id="sigma">mean(sd)</a></li>
+                <li><a href="#" data-id="SD">sd</a></li>
+                <li><a href="#" data-id="GSD">gsd</a></li>
                 <li><a href="#" data-id="CV">CV</a></li>
                 <li><a href="#" data-id="error">error factor</a></li>
               </ul>
@@ -171,11 +171,7 @@
 
                   <div id="detailsContainer" style="margin-top:12px;display:block;">
                     <pre id="ln-output" style="white-space:pre-wrap;background:#f7f7f8;border:1px solid #e1e1e1;padding:12px;border-radius:4px;min-height:120px;">No distribution computed yet.</pre>
-                    <div id="chartLegend" class="chart-legend" role="group" aria-label="Chart legend">
-                      <span class="legend-item"><i class="swatch swatch-empirical" aria-hidden="true"></i> Empirical</span>
-                      <span class="legend-item"><i class="swatch swatch-theoretical" aria-hidden="true"></i> Theoretical</span>
-                    </div>
-                    <div id="chart" aria-label="Lognormal density chart" aria-describedby="chartLegend" style="min-height:220px;"></div>
+                    <div id="chart" aria-label="Lognormal density chart" style="min-height:220px;"></div>
                   </div>
                 </div>
               </div>
@@ -236,7 +232,7 @@
 
 
             <div id="tabs-mu">
-              <p>mu (\(\mu\)) is the mean of the associated normal distribution.</p>
+              <p>mu, \(\mu\) [-∞,+∞], is the expected value (or mean) of the variable's natural logarithm</p>
               <p><input class="arg" data-field="mu" type="number" step="any" inputmode="decimal" value="0" name="Mean of it's natural logarithm" title="Please provide the mean of it's natural logarithm."></p>
             </div>
             <div id="tabs-mean">
@@ -256,7 +252,7 @@
               <p><textarea class="arg" id="data" data-field="data" inputmode="decimal" name="Data" title="Please provide raw numeric data (comma/space separated)" placeholder="e.g. 1.2, 2.3, 3.4 (comma/space separated)" rows="6"></textarea></p>
             </div>
             <div id="tabs-sigma">
-              <p>sigma (\(\sigma\)) is the standard deviation of the associated normal distribution.</p>
+              <p>sigma, \(\sigma\) > 0, is the standard deviation of the variable's natural logarithm</p>
               <p><input class="arg" data-field="sigma" type="number" min="0" step="any" inputmode="decimal" value="1" name="Standard deviation of it's natural logarithm" title="Please provide the standard deviation of it's natural logarithm (positive)."></p>
             </div>
             <div id="tabs-SD">
@@ -301,9 +297,9 @@
        - clicking a tab toggles selection; up to two tabs may be selected
        - templates live under #tabs (single source) and are cloned into metric panels on selection
     */
-    const selectedTabs = []; // up to two labels (text from header anchors)
-    const _labelToId = {}; // built from header anchors (label text -> template id suffix)
-    const _idToLabel = {}; // reverse map (data-id -> label text)
+    const selectedTabs = []; // up to two selected `data-id` values (anchor data-id)
+    const _labelToId = {}; // built from header anchors (label text -> template id suffix) — retained for backward mapping
+    const _idToLabel = {}; // reverse map (data-id -> label text) — used for display
 
     // Combination constraints (pair-based).
     // Keys are normalized unordered pairs of `data-id` values (sorted, joined with '|').
@@ -332,7 +328,8 @@
 
     function renderSelectedTabs() {
       const anchors = Array.from(document.querySelectorAll('#tabs-header a[data-id]'));
-      const selectedIds = selectedTabs.map(s => _labelToId[s]).filter(Boolean);
+      // selectedTabs now stores data-id values directly
+      const selectedIds = selectedTabs.filter(Boolean);
       const primaryId = selectedIds.length ? selectedIds[0] : null;
       // any tab that would form a disallowed pair with one of the already-selected ids is considered disabled
       const disabledForSecond = anchors.map(a => a.dataset.id).filter(id => selectedIds.some(selId => isPairDisallowed(selId, id)));
@@ -342,9 +339,10 @@
         const label = a.textContent.trim();
         const id = a.dataset.id;
         const isDisabled = !!(disabledForSecond.includes(id) && !selectedIds.includes(id));
-        a.classList.toggle('selected', selectedTabs.includes(label));
+        // selectedTabs stores data-id values now
+        a.classList.toggle('selected', selectedTabs.includes(id));
         a.classList.toggle('disabled', isDisabled);
-        a.setAttribute('aria-selected', selectedTabs.includes(label) ? 'true' : 'false');
+        a.setAttribute('aria-selected', selectedTabs.includes(id) ? 'true' : 'false');
         if (isDisabled) {
           a.setAttribute('aria-disabled','true');
           a.title = `Not allowed in combination with current selection`;
@@ -374,8 +372,8 @@
       } else if (selectedTabs.length >= maxSelectable) {
         // reached maxSelectable — disable unselected anchors
         anchors.forEach(a => {
-          const label = a.textContent.trim();
-          if (!selectedTabs.includes(label)) {
+          const id = a.dataset.id;
+          if (!selectedTabs.includes(id)) {
             a.classList.add('disabled');
             a.setAttribute('aria-disabled','true');
             a.title = `Maximum of ${maxSelectable} metrics selected — deselect one to change.`;
@@ -427,16 +425,16 @@
       // enforce pair-based constraints (order-independent). for two selections, resolve conflicts.
       if (selectedTabs.length === 2) {
         const A = selectedTabs[0], B = selectedTabs[1];
-        const idA = _labelToId[A], idB = _labelToId[B];
+        const idA = A, idB = B;
         if (isPairDisallowed(idA, idB)) {
           // try to replace the later selection (B) using fallback for A->B
           const fb1 = getFallbackForPair(idA, idB);
-          if (fb1 && _idToLabel[fb1]) {
-            selectedTabs[1] = _idToLabel[fb1];
+          if (fb1) {
+            selectedTabs[1] = fb1;
           } else {
             // try fallback in reverse
             const fb2 = getFallbackForPair(idB, idA);
-            if (fb2 && _idToLabel[fb2]) selectedTabs[1] = _idToLabel[fb2];
+            if (fb2) selectedTabs[1] = fb2;
             else selectedTabs.splice(1,1); // remove second selection
           }
         }
@@ -471,21 +469,22 @@
         const titleSpan = panel.querySelector('h4 span');
         // allow special case: if primary is 'percentile' and the secondary slot is empty,
         // show a second percentile pair input so the user can enter two percentile pairs.
-        const sel = selectedTabs[idx];
+        const sel = selectedTabs[idx]; // data-id or undefined
         const effectiveSel = sel || ((idx === 1 && selectedTabs[0] === 'percentile') ? 'percentile' : null);
 
-        // title: show metric name and slot number (remove 'primary'/'secondary' wording)
+        // title: show metric name (display label) and slot number
         if (titleSpan) {
           if (effectiveSel) {
+            const display = _idToLabel[effectiveSel] || effectiveSel;
             if (effectiveSel === 'percentile' && idx === 1 && !sel) titleSpan.textContent = 'percentile (pair 2)';
-            else titleSpan.textContent = `${effectiveSel} (metric ${idx+1})`;
+            else titleSpan.textContent = `${display}`;
           } else {
             titleSpan.textContent = `Metric ${idx+1}`;
           }
         }
 
         if (!effectiveSel) { content.textContent = 'No metric selected.'; return; }
-        const suf = _labelToId[effectiveSel];
+        const suf = effectiveSel; // already the id used in template ids
         const clone = cloneTemplate(suf, idx+1);
         if (clone) {
           content.appendChild(clone);
@@ -550,21 +549,20 @@
         if (!a) return;
         e.preventDefault();
         const label = a.textContent.trim();
-
-          const candidateId = a.dataset.id;
+        const candidateId = a.dataset.id;
 
         // Special case: selecting 'data' toggles the data-only selection.
         // - clicking an unselected 'data' makes it the sole selection
         // - clicking it again deselects it and returns to normal selection handling
         if (candidateId === 'data') {
-          const idx = selectedTabs.indexOf(label);
+          const idx = selectedTabs.indexOf(candidateId);
           if (idx >= 0) {
             // deselect data
             selectedTabs.splice(idx, 1);
           } else {
             // select data alone
             selectedTabs.length = 0;
-            selectedTabs.push(label);
+            selectedTabs.push(candidateId);
           }
           renderSelectedTabs();
           updatedInput();
@@ -572,7 +570,7 @@
         }
 
         // If data is already selected, no other selection is allowed
-        const hasDataSelected = selectedTabs.some(sel => _labelToId[sel] === 'data');
+        const hasDataSelected = selectedTabs.includes('data');
         if (hasDataSelected && candidateId !== 'data') {
           a.classList.add('disabled-flash');
           setTimeout(() => a.classList.remove('disabled-flash'), 260);
@@ -580,28 +578,28 @@
           return;
         }
 
-        // blocked if visually marked disabled and the label isn't already selected
-        if (a.classList.contains('disabled') && selectedTabs.indexOf(label) === -1) {
+        // blocked if visually marked disabled and the id isn't already selected
+        if (a.classList.contains('disabled') && selectedTabs.indexOf(candidateId) === -1) {
           a.classList.add('disabled-flash');
           setTimeout(() => a.classList.remove('disabled-flash'), 260);
           return;
         }
 
-        const idx = selectedTabs.indexOf(label);
+        const idx = selectedTabs.indexOf(candidateId);
         if (idx >= 0) {
           // deselect
           selectedTabs.splice(idx,1);
         } else {
           const maxSelectable = 2;
-          // check for combination conflicts with already-selected metrics
-          const conflictWith = selectedTabs.find(sel => isPairDisallowed(_labelToId[sel], candidateId));
+          // check for combination conflicts with already-selected metrics (selectedTabs stores ids)
+          const conflictWith = selectedTabs.find(selId => isPairDisallowed(selId, candidateId));
           if (conflictWith) {
             a.classList.add('disabled-flash');
             setTimeout(() => a.classList.remove('disabled-flash'), 260);
-            showMetricInfo(`Combining "${label}" with "${conflictWith}" is not allowed.`);
+            showMetricInfo(`Combining "${label}" with "${_idToLabel[conflictWith] || conflictWith}" is not allowed.`);
             return;
           }
-          if (selectedTabs.length < maxSelectable) selectedTabs.push(label);
+          if (selectedTabs.length < maxSelectable) selectedTabs.push(candidateId);
           else { showMetricInfo('Only two metrics can be selected at once. Deselect one to choose another.'); return; }
         }
 
@@ -768,8 +766,8 @@
 
         default:
           // Generic: collect raw argument fields for both panels and let getMuSigma() do the maths.
-          const mapField = function(label) {
-            return ({ 'mu':'mu', 'GM':'GM', 'mean':'mean', 'mode':'mode', 'sigma':'sigma', 'SD':'SD', 'GSD':'GSD', 'CV':'CV', 'error factor':'error_factor' })[label] || null;
+          const mapField = function(id) {
+            return ({ 'mu':'mu', 'GM':'GM', 'mean':'mean', 'mode':'mode', 'sigma':'sigma', 'SD':'SD', 'GSD':'GSD', 'CV':'CV', 'error':'error_factor' })[id] || null;
           };
           const k1 = mapField(tab1);
           if (k1) {
@@ -888,7 +886,7 @@
           const yl = xl.map(z => normcdf(mu, sigmaPlot, z));
           cdfTraces.push({ x: xl, y: yl, mode: 'lines', line: { color: '#f3b87b' }, name: 'theoretical CDF' });
 
-          Plotly.newPlot(CH, cdfTraces, { autosize:true, responsive:true, showlegend:true, legend:{ orientation:'h', x:0.5, xanchor:'center', y:1.06, font:{ size:11 } }, xaxis:{ title: { text: 'ln(x)', standoff: 8 }, automargin:true }, yaxis:{ range:[0,1], automargin:true }, margin:{ t:28, r:22, b:56, l:40 } });
+          Plotly.newPlot(CH, cdfTraces, { autosize:true, responsive:true, showlegend:false, xaxis:{ title: { text: 'ln(x)', standoff: 8 }, automargin:true }, yaxis:{ range:[0,1], automargin:true }, margin:{ t:28, r:22, b:56, l:40 } });
           return;
         }
 
@@ -901,7 +899,7 @@
         const xg = linspace(Math.exp(mu - 4*sigmaPlot), Math.exp(mu + 4*sigmaPlot), nPts);
         const yg = xg.map(xx => logncdf(mu, sigmaPlot, xx));
         cdfTraces.push({ x: xg, y: yg, mode: 'lines', line: { color: '#f3b87b' }, name: 'theoretical CDF' });
-        Plotly.newPlot(CH, cdfTraces, { autosize:true, responsive:true, showlegend:true, legend:{ orientation:'h', x:0.5, xanchor:'center', y:1.06, font:{ size:11 } }, xaxis:{ automargin:true }, yaxis:{ range:[0,1], automargin:true }, margin:{ t:28, r:22, b:56, l:40 } });
+        Plotly.newPlot(CH, cdfTraces, { autosize:true, responsive:true, showlegend:false, xaxis:{ automargin:true }, yaxis:{ range:[0,1], automargin:true }, margin:{ t:28, r:22, b:56, l:40 } });
         return;
       }
 
@@ -963,8 +961,7 @@
         Plotly.newPlot(CHART, traces, {
           autosize: true,
           responsive: true,
-          showlegend: true,
-          legend: { orientation: 'h', x: 0.5, xanchor: 'center', y: 1.06, font: { size: 11 } },
+          showlegend: false,
           barmode: 'overlay',
           xaxis: { type: 'lin', range: [xl[0], xl[n-1]], title: { text: 'ln(x)', standoff: 8 }, automargin: true },
           yaxis: { automargin: true },
@@ -1006,8 +1003,7 @@
         Plotly.newPlot(CHART, traces, {
           autosize: true,
           responsive: true,
-          showlegend: true,
-          legend: { orientation: 'h', x: 0.5, xanchor: 'center', y: 1.06, font: { size: 11 } },
+          showlegend: false,
           barmode: 'overlay',
           xaxis: { type: 'lin', range: [x[0],x[n-1]], automargin: true },
           yaxis: { automargin: true },
