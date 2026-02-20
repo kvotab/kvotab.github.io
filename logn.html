@@ -248,8 +248,19 @@
               <p><input class="arg" data-field="mode" type="number" min="0" step="any" inputmode="decimal" value="1" name="Mode" title="Please provide the mode (positive)."></p>
             </div>
             <div id="tabs-percentile">
-              <p><input class="arg" data-field="p" type="number" min="0" max="100" step="any" inputmode="decimal" value="5" name="Percentile" title="Please provide a percentile (0–100).">
-                <input class="arg" data-field="x" type="number" min="0" step="any" inputmode="decimal" value="1" name="Value" title="Please provide corresponding positive value."></p>
+              <p style="font-size:0.92rem;color:#333;">
+                Enter a percentile (0 – 100) and the matching positive value.
+              </p>
+              <p style="display:flex;gap:4%;flex-wrap:wrap;">
+                <label style="flex:1; min-width:120px;">
+                  Percentile (%)<br>
+                  <input class="arg" data-field="p" type="number" min="0" max="100" step="any" inputmode="decimal" value="5" placeholder="e.g. 95" title="Please provide a percentile (0–100).">
+                </label>
+                <label style="flex:1; min-width:120px;">
+                  Value (>0)<br>
+                  <input class="arg" data-field="x" type="number" min="0" step="any" inputmode="decimal" value="1" placeholder="e.g. 10" title="Please provide corresponding positive value.">
+                </label>
+              </p>
             </div>
             <div id="tabs-data">
               <p><textarea class="arg" id="data" data-field="data" inputmode="decimal" name="Data" title="Please provide raw numeric data (comma/space separated)" placeholder="e.g. 1.2, 2.3, 3.4 (comma/space separated)" rows="6"></textarea></p>
@@ -315,8 +326,8 @@
       mode: { incompatibleWith: ['data'], fallback: { 'mean': 'SD' } },
       percentile: { pairable: true },
       data: { exclusive: true },
-      sigma: { incompatibleWith: ['data','sigma','GSD','CV','error'] },
-      SD: { incompatibleWith: ['data','SD','GSD','CV','error'] },
+      sigma: { incompatibleWith: ['data','SD','GSD','CV','error'] },
+      SD: { incompatibleWith: ['data','sigma','GSD','CV','error'] },
       GSD: { incompatibleWith: ['data','sigma','SD','CV','error'] },
       CV: { incompatibleWith: ['data','sigma','SD','GSD','error'] },
       error: { incompatibleWith: ['data','sigma','SD','GSD','CV'] }
@@ -333,10 +344,7 @@
       return false;
     }
 
-    function getFallbackForPair(primaryId, disallowedId){
-      const r = metricRules[primaryId] || {};
-      return (r.fallback && r.fallback[disallowedId]) ? r.fallback[disallowedId] : null;
-    }
+
 
     function renderSelectedTabs() {
       const anchors = Array.from(document.querySelectorAll('#tabs-header a[data-id]'));
@@ -436,20 +444,34 @@
 
       // enforce pair-based constraints (order-independent). for two selections, resolve conflicts.
       if (selectedTabs.length === 2) {
-        const A = selectedTabs[0], B = selectedTabs[1];
-        const idA = A, idB = B;
+        const [idA, idB] = selectedTabs;
         if (isPairDisallowed(idA, idB)) {
-          // try to replace the later selection (B) using fallback for A->B
-          const fb1 = getFallbackForPair(idA, idB);
-          if (fb1) {
-            selectedTabs[1] = fb1;
-          } else {
-            // try fallback in reverse
-            const fb2 = getFallbackForPair(idB, idA);
-            if (fb2) selectedTabs[1] = fb2;
-            else selectedTabs.splice(1,1); // remove second selection
-          }
+          // second metric invalid; drop it
+          selectedTabs.splice(1,1);
         }
+      }
+
+      // helper: populate cloned panel from last computed mu/sigma if available
+      function populateFromLast(clone) {
+        if (!window._lastLognormal || typeof window._lastLognormal.mu !== 'number' || typeof window._lastLognormal.sigma !== 'number') return;
+        const { mu, sigma } = window._lastLognormal;
+        const vals = {
+          mu: mu,
+          sigma: sigma,
+          mean: Math.exp(mu + sigma*sigma/2),
+          GM: Math.exp(mu),
+          mode: Math.exp(mu - sigma*sigma),
+          SD: Math.sqrt((Math.exp(sigma*sigma)-1)*Math.exp(2*mu + sigma*sigma)),
+          GSD: Math.exp(sigma),
+          CV: Math.sqrt(Math.exp(sigma*sigma) - 1),
+          error_factor: Math.exp(sigma * 1.645)
+        };
+        Object.entries(vals).forEach(([field, val]) => {
+          const el = clone.querySelector(`[data-field="${field}"]`);
+          if (el && (el.value === '' || el.value === '0' || el.value === '1')) {
+            el.value = val;
+          }
+        });
       }
 
       // helper: clone template node (from #tabs) and prepare it for insertion
@@ -463,6 +485,8 @@
         clone.setAttribute('data-cloned-from', suf);
         // attach input listeners for cloned inputs
         attachArgListeners(clone);
+        // if we have stored mu/sigma, prefill the new inputs
+        populateFromLast(clone);
         return clone;
       }
 
@@ -499,6 +523,13 @@
         const suf = effectiveSel; // already the id used in template ids
         const clone = cloneTemplate(suf, idx+1);
         if (clone) {
+          // if this is the second slot auto‑added for a percentile pair, prefill p=95
+          if (suf === 'percentile' && idx === 1 && !sel) {
+            const pInput = clone.querySelector('[data-field="p"]');
+            if (pInput && pInput.value === '5') { // template default
+              pInput.value = 95;
+            }
+          }
           content.appendChild(clone);
           clone.classList.add('attach-anim');
           setTimeout(() => clone.classList.remove('attach-anim'), 300);
@@ -842,6 +873,13 @@
       txt += `sigma: ${sigma}\n`;
       txt += `Mean: ${mean}\n`;
       txt += `Median: ${median}\n`;
+      // percentiles at 5%,25%,75%,95%
+      const pVals = [0.05,0.25,0.75,0.95];
+      const perc = pVals.map(pct => logninv(mu, sigma, pct)).map(v=>v.toString());
+      txt += `5% percentile: ${perc[0]}\n`;
+      txt += `25% percentile: ${perc[1]}\n`;
+      txt += `75% percentile: ${perc[2]}\n`;
+      txt += `95% percentile: ${perc[3]}\n`;
       txt += `Mode: ${mode}\n`;
       txt += `Standard deviation: ${sd}\n`;
       txt += `Variance: ${variance}\n`;
@@ -860,6 +898,11 @@
       const outEl = document.getElementById('ln-output');
       if (outEl) outEl.textContent = txt;
 
+      // if either mu or sigma is missing, retain previously computed value if available
+      if (window._lastLognormal) {
+        if (mu === undefined) mu = window._lastLognormal.mu;
+        if (sigma === undefined) sigma = window._lastLognormal.sigma;
+      }
       // expose structured result for other scripts/tests (include data stats when available)
       window._lastLognormal = { mu, sigma, mean, median, mode, sd, variance, gsd, CV, skewness, kurtosis, entropy, error_factor, dataStats: args._dataStats || null, dataValues: args._dataValues || null };
 
