@@ -10,6 +10,51 @@
   <script src="https://unpkg.com/leaflet@1.9.2/dist/leaflet.js"></script>
   <link rel="stylesheet" href="./resources/css/kvot.css">  
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
+  <style>
+    /* combined-tabs UI styles */
+    /* hide original jQuery tab headers and only the template content (templates used programmatically) */
+    /* templates live under #tabs-1 only (single source of truth) */
+    #tabs-1 > ul, /* only hide template panels whose ids start with tabs-1- */
+    #tabs-1 > div[id^="tabs-1-"] { display: none !important; }
+    /* header appearance */
+    #tabs-header li { display:inline-block; }
+    #tabs-header a { display:inline-block; padding:4px 8px; border-radius:4px; cursor:pointer; text-decoration:none; color:var(--text-primary); border:1px solid transparent; transition:background .15s, color .15s, opacity .15s; }
+    #tabs-header a.selected { background:#f3b87b; color:#fff; border-color:#f3b87b; }
+    /* disabled state for second-tab choices (visual only; click still handled in JS) */
+    #tabs-header a.disabled { opacity:0.45; cursor: not-allowed; }
+    /* flash when a disabled header is clicked */
+    #tabs-header a.disabled-flash { box-shadow: inset 0 0 0 2px rgba(255,0,0,0.10); }
+
+    /* ensure combined header and metric panels stay visible above the equations table */
+    #combined-tabs-header, #metric-panels { position: relative; z-index: 5; }
+
+    /* two-column layout: left = controls, right = equations; responsive stack on small screens */
+    #logn .logn-columns { display:flex; gap:18px; align-items:flex-start; }
+    #logn .logn-left { flex:1; min-width:0; }
+    #equations-details { width: 360px; flex-shrink:0; margin-top: 8px; }
+    #equations-details .equations-body { position: relative; z-index: 1; background: transparent; padding: 6px 0; }
+    @media (max-width: 920px) { #logn .logn-columns { flex-direction: column; } #equations-details { width: auto; } }
+
+    #equations-details summary.equations-summary { cursor: pointer; padding: 6px 8px; background: rgba(0,0,0,0.03); border-radius: 4px; font-weight:600; margin-bottom:6px; }
+    #equations-details summary.equations-summary::marker { display:none; }
+    #equations-details summary.equations-summary::after { content: '▾'; float: right; transition: transform .18s; }
+    #equations-details[open] summary.equations-summary::after { content: '▴'; }
+
+    /* small visual spacing for metric panels */
+    #metric-panels { margin-bottom: 8px; }
+
+    /* animation for templates when moved into a metric panel */
+    .attach-anim { animation: popIn .22s ease-out; }
+    @keyframes popIn { from { opacity: 0; transform: translateY(6px) scale(0.995); } to { opacity: 1; transform: translateY(0) scale(1); } }
+
+    .metric-panel h4 { font-size:0.95rem; margin:0 0 8px; }
+    #metric-note { font-size:0.88rem; color:#666; margin-top:4px; }
+    #metric-info { display:none; margin-top:6px; color:#a65a00; background:#fff6e6; padding:6px 8px; border-radius:4px; border:1px solid #f0d6b0; font-size:0.9rem; }
+    #metric-info.show { display:block; animation: fadeIn .22s ease-out; }
+    @keyframes fadeIn { from { opacity:0; transform: translateY(-4px); } to { opacity:1; transform: translateY(0); } }
+    /* focus outline for keyboard navigation */
+    #tabs-header a:focus { outline: 2px solid rgba(243,184,123,0.45); box-shadow: 0 0 0 3px rgba(243,184,123,0.08); }
+  </style>
   <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
   <script src="https://cdn.plot.ly/plotly-2.14.0.min.js"></script>
   <script src="./resources/js/erf.js"></script>
@@ -21,158 +66,160 @@
     <div id="chart" class="ui-widget-content"><p class="ui-widget-header">I can be dragged only by this handle</p></div>  
 
     <div id="logn">
+      <div class="logn-columns">
+        <div class="logn-left">
       <table cellpadding="0px" border="0" style="table-layout: fixed;width:100%">
         <tr><td>
           <div id="tabs-1">
-            <ul>
-              <li><a href="#tabs-1-mu">mu</a></li>
-              <li><a href="#tabs-1-mean">mean</a></li>
-              <li><a href="#tabs-1-GM">GM</a></li>
-              <li><a href="#tabs-1-mode">mode</a></li>
-              <li><a href="#tabs-1-percentile">percentile</a></li>
-              <li><a href="#tabs-1-data">data</a></li>
-              <li><a href="#tabs-1-sigma">sigma</a></li>
-              <li><a href="#tabs-1-SD">SD</a></li>
-              <li><a href="#tabs-1-GSD">GSD</a></li>
-              <li><a href="#tabs-1-CV">CV</a></li>
-              <li><a href="#tabs-1-error">error factor</a></li>
-            </ul>
+            <!-- Combined header (single header controls up to two selectable tabs; click toggles selection) -->
+            <div id="combined-tabs-header" style="margin-bottom:8px;">
+              <ul id="tabs-header" role="tablist" aria-label="Metric selector" style="list-style:none;padding:0;margin:0;display:flex;gap:8px;flex-wrap:wrap;">
+                <li><a href="#" data-id="mu">mu</a></li>
+                <li><a href="#" data-id="mean">mean</a></li>
+                <li><a href="#" data-id="GM">GM</a></li>
+                <li><a href="#" data-id="mode">mode</a></li>
+                <li><a href="#" data-id="percentile">percentile</a></li>
+                <li><a href="#" data-id="data">data</a></li>
+                <li><a href="#" data-id="sigma">sigma</a></li>
+                <li><a href="#" data-id="SD">SD</a></li>
+                <li><a href="#" data-id="GSD">GSD</a></li>
+                <li><a href="#" data-id="CV">CV</a></li>
+                <li><a href="#" data-id="error">error factor</a></li>
+              </ul>
+              <div id="metric-note" style="margin-top:6px;font-size:0.88rem;color:#666;">Select up to <strong>two</strong> metrics. Click a selected metric to deselect it.</div>
+              <div id="metric-info" role="status" aria-live="polite" style="display:none;margin-top:6px;color:#a65a00;background:#fff6e6;padding:6px 8px;border-radius:4px;border:1px solid #f0d6b0;font-size:0.9rem;"></div>
+            </div>
+            <!-- metric panels (primary / secondary) -->
+            <div id="metric-panels" style="display:flex;gap:12px;margin-top:6px;align-items:flex-start;">
+              <div class="metric-panel" id="metric1-panel" role="region" aria-labelledby="metric1-title" style="flex:1;min-width:220px;border:1px solid #eee;padding:8px;border-radius:4px;background:#fff;">
+                <h4 id="metric1-title" style="margin:6px 0;"><span>Primary metric</span></h4>
+                <div id="metric1-content" class="metric-content" style="min-height:120px;color:#666;padding:6px;border-radius:4px;">No metric selected.</div>
+              </div>
+              <div class="metric-panel" id="metric2-panel" role="region" aria-labelledby="metric2-title" style="flex:1;min-width:220px;border:1px solid #eee;padding:8px;border-radius:4px;background:#fff;">
+                <h4 id="metric2-title" style="margin:6px 0;display:flex;align-items:center;justify-content:space-between;"><span>Secondary metric (optional)</span></h4>
+                <div id="metric2-content" class="metric-content" style="min-height:120px;color:#666;padding:6px;border-radius:4px;">No metric selected.</div>
+              </div>
+            </div>
+
+            <details id="computed-details" open>
+              <summary class="equations-summary">Computed results</summary>
+              <div class="computed-body">
+                <div id="logn-output" style="margin:8px 0 0 0; border-top:1px solid #e6e6e6; padding-top:12px;">
+                  <span style="display:inline-flex;align-items:center;gap:8px;margin-right:12px;color:#555;">Select one or two tabs above to choose metric(s)</span>
+                  <button id="showDetailsBtn" style="padding:6px 10px;margin-right:8px;">Show details</button>
+                  <button id="previewDetailsBtn" style="padding:6px 10px;margin-right:8px;">Preview</button>
+                  <button id="copyDetailsBtn" style="padding:6px 10px;margin-right:8px;">Copy</button>
+                  <button id="printDetailsBtn" style="padding:6px 10px;margin-right:8px;">Print</button>
+
+                  <div id="detailsContainer" style="margin-top:12px;display:block;">
+                    <pre id="ln-output" style="white-space:pre-wrap;background:#f7f7f8;border:1px solid #e1e1e1;padding:12px;border-radius:4px;min-height:120px;">No distribution computed yet.</pre>
+                  </div>
+                </div>
+              </div>
+            </details>
+
+
             <div id="tabs-1-mu">
-              <p>mu (\\(\\mu\\)) is the mean of the associated normal distribution.</p>
-              <p><input class="arg" id="mu1" value="0" name="Mean of it's natural logarithm" title="Please provide the mean of it's natural logarithm."></p>
+              <p>mu (\(\mu\)) is the mean of the associated normal distribution.</p>
+              <p><input class="arg" id="mu1" data-field="mu" value="0" name="Mean of it's natural logarithm" title="Please provide the mean of it's natural logarithm."></p>
             </div>
             <div id="tabs-1-mean">
-              <p><input class="arg" id="mean1" value="1" name="Arithmetic mean" title="Please provide the arithmetic mean."></p>
+              <p><input class="arg" id="mean1" data-field="mean" value="1" name="Arithmetic mean" title="Please provide the arithmetic mean."></p>
             </div>
             <div id="tabs-1-GM">
-              <p><input class="arg" id="GM1" value="1" name="Geometric mean" title="Please provide the geometric mean."></p>
+              <p><input class="arg" id="GM1" data-field="GM" value="1" name="Geometric mean" title="Please provide the geometric mean."></p>
             </div>
             <div id="tabs-1-mode">
-              <p><input class="arg" id="mode1" value="1" name="Mode" title="Please provide the mode."></p>
+              <p><input class="arg" id="mode1" data-field="mode" value="1" name="Mode" title="Please provide the mode."></p>
             </div>
             <div id="tabs-1-percentile">
-              <p><input class="arg" id="p1" type="number" value="5" name="Percentile" title="Please provide a percentile.">
-                <input class="arg" id="x1" value="0" name="Value" title="Please provide corresponding value."></p>
+              <p><input class="arg" id="p1" data-field="p" type="number" value="5" name="Percentile" title="Please provide a percentile.">
+                <input class="arg" id="x1" data-field="x" value="0" name="Value" title="Please provide corresponding value."></p>
             </div>
             <div id="tabs-1-data">
-              <p><input class="arg" id="data" value="" name="Data" title="Please provide raw data."></p>
+              <p><input class="arg" id="data" data-field="data" value="" name="Data" title="Please provide raw data." placeholder="e.g. 1.2, 2.3, 3.4 (comma/space separated)"></p>
             </div>
             <div id="tabs-1-sigma">
-              <p>sigma (\\(\\sigma\\)) is the standard deviation of the associated normal distribution.</p>
-              <p><input class="arg" id="sigma1" value="1" name="Standard deviation of it's natural logarithm" title="Please provide the standard deviation of it's natural logarithm."></p>
+              <p>sigma (\(\sigma\)) is the standard deviation of the associated normal distribution.</p>
+              <p><input class="arg" id="sigma1" data-field="sigma" value="1" name="Standard deviation of it's natural logarithm" title="Please provide the standard deviation of it's natural logarithm."></p>
             </div>
             <div id="tabs-1-SD">
-              <p><input class="arg" id="SD1" value="0" name="Standard deviation" title="Please provide the arithmetic standard deviation."></p>
+              <p><input class="arg" id="SD1" data-field="SD" value="0" name="Standard deviation" title="Please provide the arithmetic standard deviation."></p>
             </div>
             <div id="tabs-1-GSD">
-              <p><input class="arg" id="GSD1" value="1" name="Geometric mean" title="Please provide the geometric standard deviation."></p>
+              <p><input class="arg" id="GSD1" data-field="GSD" value="1" name="Geometric mean" title="Please provide the geometric standard deviation."></p>
             </div>
             <div id="tabs-1-CV">
-              <p><input class="arg" id="CV1" value="1" name="Coefficient of variation" title="Please provide the coefficient of variation."></p>
+              <p><input class="arg" id="CV1" data-field="CV" value="1" name="Coefficient of variation" title="Please provide the coefficient of variation."></p>
             </div>
             <div id="tabs-1-error">
-              <p><input class="arg" id="error1" value="1" name="Error factor" title="Please provide the error factor."></p>
+              <p><input class="arg" id="error1" data-field="error_factor" value="1" name="Error factor" title="Please provide the error factor."></p>
             </div>
           </div>
         </td></tr>
-        <tr><td>
-          <div id="tabs-2">
-            <ul>
-              <li><a href="#tabs-2-mu">mu</a></li>
-              <li><a href="#tabs-2-mean">mean</a></li>
-              <li><a href="#tabs-2-GM">GM</a></li>
-              <li><a href="#tabs-2-mode">mode</a></li>
-              <li><a href="#tabs-2-percentile">percentile</a></li>
-              <li><a href="#tabs-2-sigma">sigma</a></li>
-              <li><a href="#tabs-2-SD">SD</a></li>
-              <li><a href="#tabs-2-GSD">GSD</a></li>
-              <li><a href="#tabs-2-CV">CV</a></li>
-              <li><a href="#tabs-2-error">error factor</a></li>
-            </ul>
-           <div id="tabs-2-mu">
-              <p>mu (\\(\\mu\\)) is the mean of the associated normal distribution.</p>
-              <p><input class="arg" id="mu2" value="0" name="Mean of it's natural logarithm" title="Please provide the mean of it's natural logarithm."></p>
-            </div>
-            <div id="tabs-2-mean">
-              <p><input class="arg" id="mean2" value="1" name="Arithmetic mean" title="Please provide the arithmetic mean."></p>
-            </div>
-            <div id="tabs-2-GM">
-              <p><input class="arg" id="GM2" value="1" name="Geometric mean" title="Please provide the geometric mean."></p>
-            </div>
-            <div id="tabs-2-mode">
-              <p><input class="arg" id="mode2" value="1" name="Mode" title="Please provide the mode."></p>
-            </div>
-            <div id="tabs-2-percentile">
-              <p><input class="arg" id="p2" type="number" value="5" name="Percentile" title="Please provide a percentile.">
-                <input class="arg" id="x2" value="0" name="Value" title="Please provide corresponding value."></p>
-            </div>
-            <div id="tabs-2-sigma">
-              <p>sigma (\\(\\sigma\\)) is the standard deviation of the associated normal distribution.</p>
-              <p><input class="arg" id="sigma2" value="1" name="Standard deviation of it's natural logarithm" title="Please provide the standard deviation of it's natural logarithm."></p>
-            </div>
-            <div id="tabs-2-SD">
-              <p><input class="arg" id="SD2" value="0" name="Standard deviation" title="Please provide the arithmetic standard deviation."></p>
-            </div>
-            <div id="tabs-2-GSD">
-              <p><input class="arg" id="GSD2" value="1" name="Geometric mean" title="Please provide the geometric standard deviation."></p>
-            </div>
-            <div id="tabs-2-CV">
-              <p><input class="arg" id="CV2" value="1" name="Coefficient of variation" title="Please provide the coefficient of variation."></p>
-            </div>
-            <div id="tabs-2-error">
-              <p><input class="arg" id="error2" value="1" name="Error factor" title="Please provide the error factor."></p>
-            </div>
-          </div>
-        </td></tr>
+
       </table>
-      <table cellpadding="0px" border="0" style="table-layout: fixed;width:100%">
-        <tr><td style="width:100px"></td><td style="width:160px"></td><td style="width:260px"><td ></td></td></tr>
-        <tr>
-          <td colspan="2" >Mean of it's natural logarithm (\\(\\mu\\))</td>
-          <td>Standard deviation of it's natural logarithm (\\(\\sigma\\))</td>
-          <td rowspan="13"></td>
-        </tr> 
-        <tr><td colspan="2"></td><td></td></tr> 
-        <tr>
-          <td colspan="2">Geometric mean (\\(\\mu_g\\))</td>
-          <td >Geometric standard deviation (\\(\\sigma_g\\))</td>
-        </tr> 
-        <tr><td colspan="2"></td><td></td></tr> 
-        <tr>
-          <td colspan="2">Arithmetic mean (\\(\\mu_a\\))</td>
-          <td>Arithmetic standard deviation (\\(\\sigma_a\\))</td>
-        </tr>  
-        <tr><td colspan="2"></td><td></td></tr> 
-        <tr>
-          <td colspan="2">Percentile (\\(p_1\\)) Corresponding value (\\(x_1\\))</td>
-          <td>Percentile (\\(p_2\\)) Corresponding value (\\(x_2\\))</td>
-        </tr> 
-        <tr><td colspan="2"></td><td></td></tr>   
-        <tr><td style="text-align:right;">\\(\\mu=\\)</td><td colspan="2">\\(\\ln{\\mu_g}\\)</td></tr> 
-        <tr><td style="text-align:right;">\\(=\\)</td><td colspan="2">\\(\\ln{(\\mu_a^2/\\sqrt{\\mu_a^2+\\sigma_a^2})}\\)</td></tr>  
-        <tr><td style="text-align:right;">\\(\\sigma=\\)</td><td colspan="2">\\(\\ln{\\sigma_g}\\)</td></tr>  
-        <tr><td style="text-align:right;">\\(=\\)</td><td colspan="2">\\(\\sqrt{\\ln{(1+\\sigma_a^2/\\mu_a^2)}}\\)</td></tr>  
-        <tr><td style="text-align:right;">\\(\\mu_g=\\)</td><td colspan="2">\\(e^{\\mu}\\)</td></tr>  
-        <tr><td style="text-align:right;">\\(=\\)</td><td colspan="2">\\(e^{\\ln{\\mu_a}-\\ln{(1+\\sigma_a^2/\\mu_a^2)}/2}\\)</td></tr> 
-        <tr><td style="text-align:right;">\\(\\sigma_g=\\)</td><td colspan="2">\\(e^{\\sigma}\\)</td></tr>  
-        <tr><td style="text-align:right;">\\(=\\)</td><td colspan="2">\\(e^{\\sqrt{\\ln{(1+\\sigma_a^2/\\mu_a^2)}}}\\)</td></tr> 
-        <tr><td style="text-align:right;">\\(\\mu_a=\\)</td><td colspan="2">\\(e^{\\mu+\\sigma^2/2}\\)</td></tr>  
-        <tr><td style="text-align:right;">\\(=\\)</td><td colspan="2">\\(e^{\\ln{\\mu_g}+{\\ln{\\sigma_g}}^2/2}\\)</td></tr> 
-        <tr><td style="text-align:right;">\\(\\sigma_a=\\)</td><td colspan="2">\\(\\sqrt{(e^{{\\sigma}^2}-1)e^{2\\mu+{\\sigma}^2}}\\)</td></tr>  
-        <tr><td style="text-align:right;">\\(=\\)</td><td colspan="2">\\(e^{\\mu+\\sigma^2/2}(e^{\\sigma^2}-1)\\)</td></tr> 
-        <tr><td style="text-align:right;">\\(=\\)</td><td colspan="2">\\(\\sqrt{(e^{{\\ln{\\sigma_g}}^2}-1)e^{2\\ln{\\mu_g}+{\\ln{\\sigma_g}}^2}}\\)</td></tr> 
-        <tr><td style="text-align:right;">\\(=\\)</td><td colspan="2">\\(CV\\mu_a\\)</td></tr> 
-        <tr><td style="text-align:right;">\\(=\\)</td><td colspan="2">\\(\\mu_a\\sqrt{e^{\\sigma^2}-1}\\)</td></tr> 
-        <tr><td style="text-align:right;">\\(mode=\\)</td><td colspan="2">\\(e^{\\mu-\\sigma^2}\\)</td></tr>  
-        <tr><td style="text-align:right;">\\(=\\)</td><td colspan="2">\\(\\mu_ge^{-\\sigma^2}\\)</td></tr> 
-        <tr><td style="text-align:right;">\\(CV=\\)</td><td colspan="2">\\(\\sqrt{e^{\\sigma^2}-1}\\)</td></tr>  
-        <tr><td style="text-align:right;">\\(=\\)</td><td colspan="2">\\(\\sigma_a/\\mu_a\\)</td></tr> 
-        <tr><td style="text-align:right;">\\(skewness=\\)</td><td colspan="2">\\(CV^3+3CV\\)</td></tr> 
-        <tr><td style="text-align:right;">\\(kurtosis=\\)</td><td colspan="2">\\(CV^8+6CV^6+15CV^4+16CV^2\\)</td></tr> 
-        <tr><td style="text-align:right;">\\(kurtosis=\\)</td><td colspan="2">\\(e^{j\\mu+j^2\\sigma^2/2}\\)</td></tr> 
-        <tr><td style="text-align:right;">\\(entropy=\\)</td><td colspan="2">\\({(1+\\ln{(2\\pi\\sigma^2)})}/2+\\mu\\)</td></tr> 
-      </table>
+
     </div>
+
+
+
+        </div> <!-- .logn-left -->
+
+        <!-- right column: equations (open by default) -->
+        <details id="equations-details" class="kvot-collapsible" aria-expanded="true" open>
+          <summary class="equations-summary">Equations & formulas</summary>
+          <div class="equations-body">
+            <table cellpadding="0px" border="0" style="table-layout: fixed;width:100%">
+              <tr><td style="width:100px"></td><td style="width:160px"></td><td style="width:260px"><td ></td></td></tr>
+              <tr>
+                <td colspan="2" >Mean of it's natural logarithm (\(\mu\))</td>
+                <td>Standard deviation of it's natural logarithm (\(\sigma\))</td>
+                <td rowspan="13"></td>
+              </tr>
+              <tr><td colspan="2"></td><td></td></tr>
+              <tr>
+                <td colspan="2">Geometric mean (\(\mu_g\))</td>
+                <td >Geometric standard deviation (\(\sigma_g\))</td>
+              </tr>
+              <tr><td colspan="2"></td><td></td></tr>
+              <tr>
+                <td colspan="2">Arithmetic mean (\(\mu_a\))</td>
+                <td>Arithmetic standard deviation (\(\sigma_a\))</td>
+              </tr>
+              <tr><td colspan="2"></td><td></td></tr>
+              <tr>
+                <td colspan="2">Percentile (\(p_1\)) Corresponding value (\(x_1\))</td>
+                <td>Percentile (\(p_2\)) Corresponding value (\(x_2\))</td>
+              </tr>
+              <tr><td colspan="2"></td><td></td></tr>
+              <tr><td style="text-align:right;">\(\mu=\)</td><td colspan="2">\(\ln{\mu_g}\)</td></tr>
+              <tr><td style="text-align:right;">\(=\)</td><td colspan="2">\(\ln{(\mu_a^2/\sqrt{\mu_a^2+\sigma_a^2})}\)</td></tr>
+              <tr><td style="text-align:right;">\(\sigma=\)</td><td colspan="2">\(\ln{\sigma_g}\)</td></tr>
+              <tr><td style="text-align:right;">\(=\)</td><td colspan="2">\(\sqrt{\ln{(1+\sigma_a^2/\mu_a^2)}}\)</td></tr>
+              <tr><td style="text-align:right;">\(\mu_g=\)</td><td colspan="2">\(e^{\mu}\)</td></tr>
+              <tr><td style="text-align:right;">\(=\)</td><td colspan="2">\(e^{\ln{\mu_a}-\ln{(1+\sigma_a^2/\mu_a^2)}/2}\)</td></tr>
+              <tr><td style="text-align:right;">\(\sigma_g=\)</td><td colspan="2">\(e^{\sigma}\)</td></tr>
+              <tr><td style="text-align:right;">\(=\)</td><td colspan="2">\(e^{\sqrt{\ln{(1+\sigma_a^2/\mu_a^2)}}}\)</td></tr>
+              <tr><td style="text-align:right;">\(\mu_a=\)</td><td colspan="2">\(e^{\mu+\sigma^2/2}\)</td></tr>
+              <tr><td style="text-align:right;">\(=\)</td><td colspan="2">\(e^{\ln{\mu_g}+{\ln{\sigma_g}}^2/2}\)</td></tr>
+              <tr><td style="text-align:right;">\(\sigma_a=\)</td><td colspan="2">\(\sqrt{(e^{{\sigma}^2}-1)e^{2\mu+{\sigma}^2}}\)</td></tr>
+              <tr><td style="text-align:right;">\(=\)</td><td colspan="2">\(e^{\mu+\sigma^2/2}(e^{\sigma^2}-1)\)</td></tr>
+              <tr><td style="text-align:right;">\(=\)</td><td colspan="2">\(\sqrt{(e^{{\ln{\sigma_g}}^2}-1)e^{2\ln{\mu_g}+{\ln{\sigma_g}}^2}}\)</td></tr>
+              <tr><td style="text-align:right;">\(=\)</td><td colspan="2">\(CV\mu_a\)</td></tr>
+              <tr><td style="text-align:right;">\(=\)</td><td colspan="2">\(\mu_a\sqrt{e^{\sigma^2}-1}\)</td></tr>
+              <tr><td style="text-align:right;">\(mode=\)</td><td colspan="2">\(e^{\mu-\sigma^2}\)</td></tr>
+              <tr><td style="text-align:right;">\(=\)</td><td colspan="2">\(\mu_ge^{-\sigma^2}\)</td></tr>
+              <tr><td style="text-align:right;">\(CV=\)</td><td colspan="2">\(\sqrt{e^{\sigma^2}-1}\)</td></tr>
+              <tr><td style="text-align:right;">\(=\)</td><td colspan="2">\(\sigma_a/\mu_a\)</td></tr>
+              <tr><td style="text-align:right;">\(skewness=\)</td><td colspan="2">\(CV^3+3CV\)</td></tr>
+              <tr><td style="text-align:right;">\(kurtosis=\)</td><td colspan="2">\(CV^8+6CV^6+15CV^4+16CV^2\)</td></tr>
+              <tr><td style="text-align:right;">\(kurtosis=\)</td><td colspan="2">\(e^{j\mu+j^2\sigma^2/2}\)</td></tr>
+              <tr><td style="text-align:right;">\(entropy=\)</td><td colspan="2">\({(1+\ln{(2\pi\sigma^2)})}/2+\mu\)</td></tr>
+            </table>
+          </div>
+        </details>
+      </div> <!-- .logn-columns -->
 
     <div id="map"></div>
   </div>
@@ -187,55 +234,315 @@
     KVOT.renderFooter();
     KVOT.initMap('map');
 
-    var tab1 = "mu";
-    var tab2 = "sigma";
+    /* Combined single header driving two metric panels.  
+       - clicking a tab toggles selection; up to two tabs may be selected
+       - templates live under #tabs-1 (single source) and are cloned into metric panels on selection
+    */
+    const selectedTabs = []; // up to two labels (text from header anchors)
+    const _labelToId = {}; // built from header anchors (label text -> template id suffix)
+    const _idToLabel = {}; // reverse map (data-id -> label text)
 
-    var $tabs2 = $('#tabs-2').tabs({
-      active: 5,
-      activate: function(event,ui){
-        tab2 = ui.newTab.text();
-      }
-    });
-    var $tabs1 = $('#tabs-1').tabs({
-      activate: function(event,ui){
-        tab1 = ui.newTab.text();
-        switch (tab1) {
-          case "mu":
-          case "GM":
-            $tabs2.tabs({ disabled: [0,2,6] }); 
-            switch ($tabs2.tabs('option','active')) {
-              case 0:case 2:case 6:
-                $tabs2.tabs('option','active',(tab1==="GM" ? 7 : 5));
-                break;
-            }
-            break;
-          case "mean":
-            $tabs2.tabs({ disabled: [1] }); 
-            switch ($tabs2.tabs('option','active')) {
-              case 1:
-                $tabs2.tabs('option','active',6);
-                break;
-            }
-            break;
-          case "mode":
-            $tabs2.tabs({ disabled: [3] }); 
-            switch ($tabs2.tabs('option','active')) {
-              case 3:
-                $tabs2.tabs('option','active',6);
-                break;
-            }
-            break;
-          default:
-            $tabs2.tabs({ disabled: [] }); 
-            break;
-        }
-        if (tab1==="data") {
-          $tabs2.hide();
+    // Combination constraints (pair-based).
+    // Keys are normalized unordered pairs of `data-id` values (sorted, joined with '|').
+    // Presence of a key means that combination is disallowed.
+    const secondTabConstraints = {
+      'GM|mu': { disabled: true },        // mu+GM is not allowed
+      'GM|mean': { disabled: true },      // mean+GM is not allowed
+      'mean|mode': { disabled: true },    // mode+mean not allowed
+      // data combinations: data paired with most other metrics is disallowed
+      'data|mu': { disabled: true }, 'data|mean': { disabled: true }, 'data|GM': { disabled: true }, 'data|mode': { disabled: true },
+      'data|percentile': { disabled: true }, 'data|sigma': { disabled: true }, 'data|SD': { disabled: true }, 'data|GSD': { disabled: true },
+      'data|CV': { disabled: true }, 'data|error': { disabled: true }
+    };
+
+    // Directional fallbacks (keeps previous UX where the fallback depended on which metric was primary)
+    const fallbackMap = {
+      mu:   { GM: 'sigma' },
+      GM:   { mu: 'GSD' },
+      mean: { GM: 'SD' },
+      mode: { mean: 'SD' }
+    };
+
+    function normalizePair(a,b){ return [a,b].sort().join('|'); }
+    function isPairDisallowed(a,b){ if(!a||!b) return false; return !!secondTabConstraints[normalizePair(a,b)]; }
+    function getFallbackForPair(primaryId, disallowedId){ return (fallbackMap[primaryId] && fallbackMap[primaryId][disallowedId]) ? fallbackMap[primaryId][disallowedId] : null; }
+
+    function renderSelectedTabs() {
+      const anchors = Array.from(document.querySelectorAll('#tabs-header a[data-id]'));
+      const selectedIds = selectedTabs.map(s => _labelToId[s]).filter(Boolean);
+      const primaryId = selectedIds.length ? selectedIds[0] : null;
+      // any tab that would form a disallowed pair with one of the already-selected ids is considered disabled
+      const disabledForSecond = anchors.map(a => a.dataset.id).filter(id => selectedIds.some(selId => isPairDisallowed(selId, id)));
+
+      // header visual + disabled state (disabled for secondary selections only)
+      anchors.forEach(a => {
+        const label = a.textContent.trim();
+        const id = a.dataset.id;
+        const isDisabled = !!(disabledForSecond.includes(id) && !selectedIds.includes(id));
+        a.classList.toggle('selected', selectedTabs.includes(label));
+        a.classList.toggle('disabled', isDisabled);
+        a.setAttribute('aria-selected', selectedTabs.includes(label) ? 'true' : 'false');
+        if (isDisabled) {
+          a.setAttribute('aria-disabled','true');
+          a.title = `Not allowed in combination with current selection`;
         } else {
-          $tabs2.show();
+          // only remove aria-disabled/title if not disabled by the 'max-selected' rule below
+          if ((a.getAttribute('title') || '').startsWith('Not allowed')) a.removeAttribute('title');
+          if (!a.classList.contains('disabled')) a.removeAttribute('aria-disabled');
+        }
+      });
+
+      // If data is selected it must be the only selection — disable all other tabs.
+      const hasDataSelected = selectedIds.includes('data');
+      const maxSelectable = panelCount();
+      if (hasDataSelected) {
+        anchors.forEach(a => {
+          const id = a.dataset.id;
+          if (id !== 'data') {
+            a.classList.add('disabled');
+            a.setAttribute('aria-disabled','true');
+            a.title = 'Data must be selected alone — deselect data to choose other metrics.';
+          } else {
+            a.classList.remove('disabled');
+            a.removeAttribute('aria-disabled');
+            if ((a.getAttribute('title') || '').startsWith('Maximum of') || (a.getAttribute('title') || '').startsWith('Not allowed')) a.removeAttribute('title');
+          }
+        });
+      } else if (selectedTabs.length >= maxSelectable) {
+        // reached maxSelectable — disable unselected anchors
+        anchors.forEach(a => {
+          const label = a.textContent.trim();
+          if (!selectedTabs.includes(label)) {
+            a.classList.add('disabled');
+            a.setAttribute('aria-disabled','true');
+            a.title = `Maximum of ${maxSelectable} metrics selected — deselect one to change.`;
+          }
+        });
+      } else {
+        // remove any 'max-selected' disables (but keep constraint-based disables)
+        anchors.forEach(a => {
+          const id = a.dataset.id;
+          const isConstraintDisabled = primaryId && disabledForSecond.includes(id) && id !== primaryId;
+          if (!isConstraintDisabled && (a.getAttribute('title') || '').startsWith('Maximum of')) {
+            a.classList.remove('disabled');
+            a.removeAttribute('aria-disabled');
+            a.removeAttribute('title');
+          }
+        });
+      }
+
+      const panels = Array.from(document.querySelectorAll('#metric-panels .metric-panel'));
+
+      // clear any generated content from panels (templates remain under #tabs-1)
+      panels.forEach(panel => {
+        const content = panel.querySelector('.metric-content');
+        while (content && content.firstChild) {
+          const child = content.firstChild;
+          // cloned/generated nodes are removed; templates under #tabs-1 are left intact
+          content.removeChild(child);
+          child.classList && child.classList.remove('attach-anim');
+        }
+      });
+
+      // if data is present in the selection, only the data slot remains visible (data must be selected alone)
+      if (hasDataSelected) {
+        panels.forEach((panel, idx) => {
+          // leave first panel visible for the data input; hide the other
+          if (idx === 0) panel.style.display = '';
+          else {
+            panel.style.display = 'none';
+            if (selectedTabs[idx]) selectedTabs.splice(idx,1);
+          }
+        });
+      } else {
+        panels.forEach(panel => panel.style.display = '');
+      }
+
+      // ensure selectedTabs length does not exceed panel count
+      if (selectedTabs.length > panels.length) selectedTabs.splice(panels.length);
+
+      // enforce pair-based constraints (order-independent). for two selections, resolve conflicts.
+      if (selectedTabs.length === 2) {
+        const A = selectedTabs[0], B = selectedTabs[1];
+        const idA = _labelToId[A], idB = _labelToId[B];
+        if (isPairDisallowed(idA, idB)) {
+          // try to replace the later selection (B) using fallback for A->B
+          const fb1 = getFallbackForPair(idA, idB);
+          if (fb1 && _idToLabel[fb1]) {
+            selectedTabs[1] = _idToLabel[fb1];
+          } else {
+            // try fallback in reverse
+            const fb2 = getFallbackForPair(idB, idA);
+            if (fb2 && _idToLabel[fb2]) selectedTabs[1] = _idToLabel[fb2];
+            else selectedTabs.splice(1,1); // remove second selection
+          }
         }
       }
-    });
+
+      // helper: clone template node (from #tabs-1) and prepare it for insertion
+      function cloneTemplate(suf, panelIndex) {
+        const tpl = document.getElementById(`tabs-1-${suf}`);
+        if (!tpl) return null;
+        const clone = tpl.cloneNode(true);
+        // avoid duplicate IDs in the DOM
+        if (clone.hasAttribute('id')) clone.removeAttribute('id');
+        clone.querySelectorAll('[id]').forEach(el => el.removeAttribute('id'));
+        clone.setAttribute('data-cloned-from', suf);
+        // attach input listeners for cloned inputs
+        attachArgListeners(clone);
+        return clone;
+      }
+
+      // attach event listeners to .arg inputs within a root element
+      function attachArgListeners(root) {
+        (root.querySelectorAll ? Array.from(root.querySelectorAll('.arg')) : []).forEach(function(input) {
+          // avoid double-binding by checking a marker
+          if (input._kvotArgBound) return; input._kvotArgBound = true;
+          input.addEventListener('input', function() { updatedInput(); });
+        });
+      }
+
+      // populate each panel according to selectedTabs (panel index = array index + 1)
+      panels.forEach((panel, idx) => {
+        const content = panel.querySelector('.metric-content');
+        const titleSpan = panel.querySelector('h4 span');
+        // allow special case: if primary is 'percentile' and the secondary slot is empty,
+        // show a second percentile pair input so the user can enter two percentile pairs.
+        const sel = selectedTabs[idx];
+        const effectiveSel = sel || ((idx === 1 && selectedTabs[0] === 'percentile') ? 'percentile' : null);
+
+        // title: show metric name and slot number (remove 'primary'/'secondary' wording)
+        if (titleSpan) {
+          if (effectiveSel) {
+            if (effectiveSel === 'percentile' && idx === 1 && !sel) titleSpan.textContent = 'percentile (pair 2)';
+            else titleSpan.textContent = `${effectiveSel} (metric ${idx+1})`;
+          } else {
+            titleSpan.textContent = `Metric ${idx+1}`;
+          }
+        }
+
+        if (!effectiveSel) { content.textContent = 'No metric selected.'; return; }
+        const suf = _labelToId[effectiveSel];
+        const clone = cloneTemplate(suf, idx+1);
+        if (clone) {
+          content.appendChild(clone);
+          clone.classList.add('attach-anim');
+          setTimeout(() => clone.classList.remove('attach-anim'), 300);
+        }
+      });
+    }
+
+    // helper to show temporary metric-related information near the header
+    function showMetricInfo(msg, timeout = 2600) {
+      const infoEl = document.getElementById('metric-info');
+      if (!infoEl) return;
+      infoEl.textContent = msg;
+      infoEl.classList.add('show');
+      clearTimeout(infoEl._hideTimer);
+      infoEl._hideTimer = setTimeout(() => { infoEl.classList.remove('show'); infoEl._hideTimer = null; }, timeout);
+    }
+
+    // initialize combined-header behavior
+    (function(){
+      // build label->id mapping and add accessibility attributes to anchors
+      const tabAnchors = Array.from(document.querySelectorAll('#tabs-header a[data-id]'));
+      tabAnchors.forEach((a, i) => {
+        const label = a.textContent.trim();
+        const id = a.dataset.id;
+        _labelToId[label] = id;
+        _idToLabel[id] = label;
+        a.setAttribute('role','tab');
+        a.setAttribute('tabindex','0');
+        a.setAttribute('aria-selected','false');
+        // ensure Enter/Space toggles selection when focused
+        a.addEventListener('keydown', function(ev){ if (ev.key === ' ' || ev.key === 'Enter') { ev.preventDefault(); a.click(); } });
+      });
+
+      // keyboard navigation for the header (arrow/home/end)
+      document.getElementById('tabs-header').addEventListener('keydown', function(ev){
+        const focused = document.activeElement.closest && document.activeElement.closest('a[data-id]');
+        if (!focused) return;
+        const idx = tabAnchors.indexOf(focused);
+        if (idx === -1) return;
+        if (ev.key === 'ArrowRight' || ev.key === 'ArrowDown') {
+          // move to next enabled anchor
+          let i = idx; do { i = (i+1) % tabAnchors.length; } while(tabAnchors[i].classList.contains('disabled') && i !== idx);
+          tabAnchors[i].focus(); ev.preventDefault();
+        } else if (ev.key === 'ArrowLeft' || ev.key === 'ArrowUp') {
+          let i = idx; do { i = (i-1+tabAnchors.length) % tabAnchors.length; } while(tabAnchors[i].classList.contains('disabled') && i !== idx);
+          tabAnchors[i].focus(); ev.preventDefault();
+        } else if (ev.key === 'Home') {
+          let i = 0; while(tabAnchors[i].classList.contains('disabled') && i < tabAnchors.length-1) i++;
+          tabAnchors[i].focus(); ev.preventDefault();
+        } else if (ev.key === 'End') {
+          let i = tabAnchors.length-1; while(tabAnchors[i].classList.contains('disabled') && i > 0) i--;
+          tabAnchors[i].focus(); ev.preventDefault(); }
+      });
+
+      // panels are fixed to two; add/remove controls are disabled in this build
+
+      // header click toggles selection (max = current panel count). respect second-tab constraints.
+      document.getElementById('tabs-header').addEventListener('click', function(e){
+        const a = e.target.closest('a[data-id]');
+        if (!a) return;
+        e.preventDefault();
+        const label = a.textContent.trim();
+
+          const candidateId = a.dataset.id;
+
+        // Special case: selecting 'data' makes it the sole selection (clear others)
+        if (candidateId === 'data') {
+          selectedTabs.length = 0;
+          selectedTabs.push(label);
+          renderSelectedTabs();
+          updatedInput();
+          return;
+        }
+
+        // If data is already selected, no other selection is allowed
+        const hasDataSelected = selectedTabs.some(sel => _labelToId[sel] === 'data');
+        if (hasDataSelected && candidateId !== 'data') {
+          a.classList.add('disabled-flash');
+          setTimeout(() => a.classList.remove('disabled-flash'), 260);
+          showMetricInfo('Data can only be selected by itself. Deselect data to choose other metrics.');
+          return;
+        }
+
+        // blocked if visually marked disabled and the label isn't already selected
+        if (a.classList.contains('disabled') && selectedTabs.indexOf(label) === -1) {
+          a.classList.add('disabled-flash');
+          setTimeout(() => a.classList.remove('disabled-flash'), 260);
+          return;
+        }
+
+        const idx = selectedTabs.indexOf(label);
+        if (idx >= 0) {
+          // deselect
+          selectedTabs.splice(idx,1);
+        } else {
+          const maxSelectable = 2;
+          // check for combination conflicts with already-selected metrics
+          const conflictWith = selectedTabs.find(sel => isPairDisallowed(_labelToId[sel], candidateId));
+          if (conflictWith) {
+            a.classList.add('disabled-flash');
+            setTimeout(() => a.classList.remove('disabled-flash'), 260);
+            showMetricInfo(`Combining "${label}" with "${conflictWith}" is not allowed.`);
+            return;
+          }
+          if (selectedTabs.length < maxSelectable) selectedTabs.push(label);
+          else { showMetricInfo('Only two metrics can be selected at once. Deselect one to choose another.'); return; }
+        }
+
+        // render will auto-correct invalid second selections for the current primary
+        renderSelectedTabs();
+        updatedInput();
+      });
+
+      // defaults: Metric1 = mu, Metric2 = sigma (preserves former behaviour)
+      selectedTabs.push('mu','sigma');
+      renderSelectedTabs();
+      updatedInput();
+    })();
 
     $(function() {
       $("#chart").draggable({ handle: "p"});
@@ -248,143 +555,231 @@
     });
 
     function getMuSigma(args){
-      var mu;
-      var sigma;
-      let keys = Object.keys(args);
-      switch (keys[0]) {
-        case "mu":
-          mu = args.mu;
-          switch (keys[1]) {
-            case "mean":        sigma = Math.sqrt((Math.log(args.mean)-mu)*2); break;
-            case "mode":        sigma = Math.sqrt(mu-Math.log(args.mode)); break;
-            case "p": case "x": sigma = (Math.log(args.x)-mu)/(Math.exp(args.p/100)); break;
-            case "sigma":       sigma = args.sigma; break;      
-            case "GSD":         sigma = Math.log(args.GSD); break;
-            case "CV":          sigma = Math.sqrt(Math.log((args.CV**2)+1)); break;
-            case "error_factor":sigma = Math.log(args.error_factor)/1.645; break;
-          }
-        break;
-        case "mean":
-          switch (keys[1]) {
-            case "GM":          sigma = Math.sqrt(2*Math.log(args.mean/args.GM));  break;
-            case "mode":        sigma = Math.sqrt(2*Math.log(args.mean/args.mode)/3); break;
-            case "p": case "x": 
-              if (args.mean<args.x) {
-                sigma = args.p/100 + Math.sqrt(((args.p/100)**2) + 2 * Math.log(args.mean / args.x));
-              } else if (args.mean>args.x) {
-                sigma = args.p/100 - Math.sqrt(((args.p/100)**2) + 2 * Math.log(args.mean / args.x));
-              }
-              break;
-            case "sigma":       sigma = args.sigma; break;         
-            case "SD":          sigma = Math.sqrt(Math.log((args.SD**2)/(args.mean**2)+1)); break;
-            case "GSD":         sigma = Math.log(args.GSD); break;
-            case "CV":          sigma = Math.sqrt(Math.log((args.CV**2)+1)); break;
-            case "error_factor":sigma = Math.log(args.error_factor)/1.645; break;
-          }
-          mu = Math.log(args.mean)-(sigma**2)/2;
-        break;
-        case "mode":
-          switch (keys[1]) {
-            case "p": case "x": 
-              if (args.mode<args.x) {
-                sigma = (-args.p/100 - Math.sqrt((args.p/100)**2 - 4 * Math.log(args.mode / args.x))) / 2;
-              } else if (args.mode>args.x) {
-                sigma = (-args.p/100 + Math.sqrt((args.p/100)**2  - 4 * Math.log(args.mode / args.x))) / 2;
-              }
-              break;
-            case "sigma":       sigma = args.sigma; break;         
-            case "SD":          sigma = Math.sqrt(Math.log((args.SD**2)/(args.mean**2)+1)); break;
-            case "GSD":         sigma = Math.log(args.GSD); break;
-            case "CV":          sigma = Math.sqrt(Math.log((args.CV**2)+1)); break;
-            case "error_factor":sigma = Math.log(args.error_factor)/1.645; break;
-          }
-          mu = Math.log(args.mode)+sigma**2;
-        break;
-        case "p1":
-        case "x1":
-          sigma = Math.log(args.x1 / args.x2) / (args.p1/100 - args.p2/100); 
-          mu = Math.log(args.x1) + Math.log(args.x2 / args.x1) * (0-args.p1/100) / (args.p2/100-args.p1/100); 
-        break;      
+      // Order-independent resolver for mu and sigma.
+      function has(k){ return Object.prototype.hasOwnProperty.call(args,k); }
+      let mu, sigma;
+
+      // two-percentile pair -> direct solve
+      if ((has('p1') || has('x1')) && (has('p2') || has('x2'))) {
+        sigma = Math.log(args.x1 / args.x2) / (args.p1/100 - args.p2/100);
+        mu = Math.log(args.x1) + Math.log(args.x2 / args.x1) * (0-args.p1/100) / (args.p2/100-args.p1/100);
+        return [mu,sigma];
       }
-      return [mu,sigma];
+
+      // If geometric mean (GM) supplied as input, treat mu = ln(GM) and try to infer sigma from other descriptors
+      if (has('GM') && !has('mu')) {
+        mu = Math.log(args.GM);
+        if (has('GSD')) sigma = Math.log(args.GSD);
+        else if (has('sigma')) sigma = args.sigma;
+        else if (has('CV')) sigma = Math.sqrt(Math.log((args.CV**2)+1));
+        else if (has('mode')) sigma = Math.sqrt(Math.log(args.GM / args.mode));
+        return [mu,sigma];
+      }
+
+      // If mu provided, use it with any other available descriptor
+      if (has('mu')) {
+        mu = args.mu;
+        if (has('mean')) sigma = Math.sqrt((Math.log(args.mean)-mu)*2);
+        else if (has('mode')) sigma = Math.sqrt(mu - Math.log(args.mode));
+        else if (has('x') && has('p')) sigma = (Math.log(args.x)-mu)/(Math.exp(args.p/100));
+        else if (has('sigma')) sigma = args.sigma;
+        else if (has('GSD')) sigma = Math.log(args.GSD);
+        else if (has('CV')) sigma = Math.sqrt(Math.log((args.CV**2)+1));
+        else if (has('error_factor')) sigma = Math.log(args.error_factor)/1.645;
+        return [mu,sigma];
+      }
+
+      // If mean provided
+      if (has('mean')) {
+        if (has('GM')) sigma = Math.sqrt(2*Math.log(args.mean/args.GM));
+        else if (has('mode')) sigma = Math.sqrt(2*Math.log(args.mean/args.mode)/3);
+        else if (has('x') && has('p')) {
+          if (args.mean < args.x) {
+            sigma = args.p/100 + Math.sqrt(((args.p/100)**2) + 2 * Math.log(args.mean / args.x));
+          } else if (args.mean > args.x) {
+            sigma = args.p/100 - Math.sqrt(((args.p/100)**2) + 2 * Math.log(args.mean / args.x));
+          }
+        }
+        else if (has('sigma')) sigma = args.sigma;
+        else if (has('SD')) sigma = Math.sqrt(Math.log((args.SD**2)/(args.mean**2)+1));
+        else if (has('GSD')) sigma = Math.log(args.GSD);
+        else if (has('CV')) sigma = Math.sqrt(Math.log((args.CV**2)+1));
+        else if (has('error_factor')) sigma = Math.log(args.error_factor)/1.645;
+        mu = Math.log(args.mean) - (sigma**2)/2;
+        return [mu,sigma];
+      }
+
+      // If mode provided
+      if (has('mode')) {
+        if (has('p') && has('x')) {
+          if (args.mode < args.x) {
+            sigma = (-args.p/100 - Math.sqrt((args.p/100)**2 - 4 * Math.log(args.mode / args.x))) / 2;
+          } else if (args.mode > args.x) {
+            sigma = (-args.p/100 + Math.sqrt((args.p/100)**2  - 4 * Math.log(args.mode / args.x))) / 2;
+          }
+        } else if (has('sigma')) sigma = args.sigma;
+        else if (has('GSD')) sigma = Math.log(args.GSD);
+        else if (has('CV')) sigma = Math.sqrt(Math.log((args.CV**2)+1));
+        else if (has('error_factor')) sigma = Math.log(args.error_factor)/1.645;
+        mu = Math.log(args.mode) + sigma**2;
+        return [mu,sigma];
+      }
+
+      // fallback: unable to determine
+      return [undefined, undefined];
     }
+
+    // Fit a lognormal distribution by MLE.
+    // - accepts either a string (comma/space/semicolon separated) or an array of numbers
+    // - returns { mu, sigma, n, sampleMeanLog, sampleSdLog } or { error }
+    function fitLognormalMLE(data) {
+      let arr = Array.isArray(data) ? data.slice() : String(data || '').split(/[\s,;]+/).map(s => parseFloat(s)).filter(n => !Number.isNaN(n));
+      // keep only positive values (lognormal defined for x>0)
+      arr = arr.filter(v => v > 0);
+      const n = arr.length;
+      if (n === 0) return { error: 'Please provide at least two positive numeric values (comma/space/newline separated).' };
+      const logs = arr.map(v => Math.log(v));
+      const meanLog = logs.reduce((a,b) => a + b, 0) / n;                // MLE uses 1/n
+      const varianceLog = logs.reduce((a,b) => a + Math.pow(b - meanLog, 2), 0) / n; // MLE divisor n
+      const sdLog = Math.sqrt(varianceLog);
+      return { mu: meanLog, sigma: sdLog, n, sampleMeanLog: meanLog, sampleSdLog: sdLog, values: arr };
+    }
+
+    // Read a field value from a metric panel (panelIndex = 1 for primary, 2 for secondary).
+    // Prefers `data-field` attributes but falls back to legacy ids like 'mu1'/'mean2'.
+    function panelValue(panelIndex, key) {
+      const panel = document.getElementById(`metric${panelIndex}-content`);
+      if (!panel) return null;
+      const el = panel.querySelector(`[data-field="${key}"]`) || panel.querySelector(`#${key}${panelIndex}`);
+      return el ? el.value : null;
+    }
+
+    // Fixed panels: only two panels supported
+    function panelCount() { return 2; }
 
     function updatedInput(){
       var args = {};
       var mu;
       var sigma;
+      // read selected tabs from combined header (selectedTabs is managed by the combined-tab UI)
+      const tab1 = (typeof selectedTabs !== 'undefined' && selectedTabs[0]) || 'mu';
+      const tab2 = (typeof selectedTabs !== 'undefined' && selectedTabs[1]) || null;
       switch (tab1) {
-        case "mu":
-        case "GM":
-          if (tab1==="mu") {
-            args.mu = +document.getElementById("mu1").value;        
+        case 'percentile':
+          // primary percentile pair (panel 1)
+          args.p1 = parseFloat(panelValue(1,'p'));
+          args.x1 = parseFloat(panelValue(1,'x'));
+
+          // secondary percentile pair: explicitly selected or rendered into panel 2
+          const p2val = panelValue(2,'p');
+          const x2val = panelValue(2,'x');
+          if ((tab2 === 'percentile') || (selectedTabs[0] === 'percentile' && p2val !== null && p2val !== '')) {
+            args.p2 = parseFloat(p2val);
+            args.x2 = parseFloat(x2val);
+          }
+
+          // validation: ensure numeric and percentiles differ when two pairs provided
+          if (typeof args.p2 !== 'undefined') {
+            if (!isFinite(args.p1) || !isFinite(args.x1) || !isFinite(args.p2) || !isFinite(args.x2) || args.x1 <= 0 || args.x2 <= 0) {
+              args._invalidPercentile = 'Please provide two valid percentile/value pairs (positive values).';
+            } else if (Math.abs(args.p1 - args.p2) < 1e-9) {
+              args._invalidPercentile = 'Percentile probabilities (p1 and p2) must be different to compute mu and sigma.';
+            }
+          }
+          break;
+
+        case 'data': {
+          const raw = panelValue(1,'data') || '';
+          const fit = fitLognormalMLE(raw);
+          if (fit.error || fit.n < 2) {
+            // mark invalid so we can render a clear message and abort plotting
+            args._invalidData = fit.error || 'Please provide at least two positive numeric values.';
           } else {
-            let GM = +document.getElementById("GM1").value;
-            args.mu = Math.log(GM);        
+            args.mu = fit.mu;
+            args.sigma = fit.sigma;
+            args._dataStats = { n: fit.n, sampleMeanLog: fit.sampleMeanLog, sampleSdLog: fit.sampleSdLog };
+            args._dataValues = fit.values || [];
           }
-          switch (tab2) {
-            case "mean": args.mean = +document.getElementById("mean2").value; break;
-            case "mode": args.mode = +document.getElementById("mode2").value; break;
-            case "percentile": args.p = +document.getElementById("p2").value; args.x = +document.getElementById("x2").value; break;
-            case "sigma": args.sigma = +document.getElementById("sigma2").value; break;      
-            case "GSD": args.GSD = +document.getElementById("GSD2").value; break;
-            case "CV": args.CV = +document.getElementById("CV2").value; break;
-            case "error factor": args.error_factor = +document.getElementById("error").value; break;
+        } break;
+
+        default:
+          // Generic: collect raw argument fields for both panels and let getMuSigma() do the maths.
+          const mapField = function(label) {
+            return ({ 'mu':'mu', 'GM':'GM', 'mean':'mean', 'mode':'mode', 'sigma':'sigma', 'SD':'SD', 'GSD':'GSD', 'CV':'CV', 'error factor':'error_factor' })[label] || null;
+          };
+          const k1 = mapField(tab1);
+          if (k1) {
+            const v = panelValue(1, k1);
+            if (v !== null && v !== '') args[k1] = +v;
           }
-          break;
-        case "mean":
-          args.mean = +document.getElementById("mean1").value;
-          switch (tab2) {
-            case "mu": args = {mu: +document.getElementById("mu2").value,"mean":args.mean}; break;
-            case "GM": args.GM = +document.getElementById("GM2").value; break;
-            case "mode": args.mode = +document.getElementById("mode2").value; break;
-            case "percentile": args.p = +document.getElementById("p2").value; args.x = +document.getElementById("x2").value; break;
-            case "sigma": args.sigma = +document.getElementById("sigma2").value; break;
-            case "SD": args.SD = +document.getElementById("SD2").value; break;
-            case "GSD": args.GSD = +document.getElementById("GSD2").value; break;
-            case "CV": args.CV = +document.getElementById("CV2").value; break;
-            case "error factor": args.error_factor = +document.getElementById("error").value; break;
+          // secondary special-case: percentile as second metric provides p/x; otherwise map normally
+          if (tab2 === 'percentile') {
+            args.p = +panelValue(2,'p');
+            args.x = +panelValue(2,'x');
+          } else if (tab2 && tab2 !== 'data') {
+            const k2 = mapField(tab2);
+            if (k2) {
+              const v2 = panelValue(2, k2);
+              if (v2 !== null && v2 !== '') args[k2] = +v2;
+            }
           }
-          break;
-        case "mode":
-          args.mode = +document.getElementById("mode1").value;
-          switch (tab2) {
-            case "mu": args = {mu: +document.getElementById("mu2").value,"mode":args.mode}; break;
-            case "GM": args = {mu: Math.log(+document.getElementById("GM2").value),"mode":args.mode}; break;
-            case "mean": args = {mean: Math.log(+document.getElementById("mean2").value),"mode":args.mode}; break;
-          }
-          break;
-        case "percentile":
-            args.p1 = +document.getElementById("p1").value;
-            args.x1 = +document.getElementById("x1").value;
-          switch (tab2) {
-            case "mu": args = {mu: +document.getElementById("mu2").value,"p":args.p1,"x":args.x1}; break;
-            case "GM": args = {mu: Math.log(+document.getElementById("GM2").value),"p":args.p1,"x":args.x1}; break;
-            case "mean": args = {mean: +document.getElementById("mean2").value,"p":args.p1,"x":args.x1}; break;
-            case "percentile": args.p2 = +document.getElementById("p2").value; args.x2 = +document.getElementById("x2").value; break;
-          }
-          break;
-        case "data":
-          let data = +document.getElementById("data").value;
           break;
       }
-      [mu,sigma] = getMuSigma(args);
+      // if primary is data, we either have fitted mu/sigma or an error marker
+      if (tab1 === 'data') {
+        if (args._invalidData) {
+          const outEl = document.getElementById('ln-output');
+          if (outEl) outEl.textContent = args._invalidData;
+          window._lastLognormal = null;
+          return;
+        }
+        mu = args.mu;
+        sigma = args.sigma;
+      } else if (tab1 === 'percentile' && args._invalidPercentile) {
+        const outEl = document.getElementById('ln-output');
+        if (outEl) outEl.textContent = args._invalidPercentile;
+        window._lastLognormal = null;
+        return;
+      } else {
+        [mu,sigma] = getMuSigma(args);
+      }
       let txt = '';
-      txt += 'mu ' + mu + '\n';
-      txt += 'sigma ' + sigma + '\n';
-      txt += 'Mean ' + Math.exp(mu+(sigma**2)/2) + '\n';
-      txt += 'Median ' + Math.exp(mu) + '\n';
-      txt += 'Mode ' + Math.exp(mu-sigma**2) + '\n';
-      txt += 'Standard deviation ' + Math.sqrt((Math.exp(sigma**2)-1)*Math.exp(2*mu+(sigma**2))) + '\n';
-      txt += 'Variance ' +                     (Math.exp(sigma**2)-1)*Math.exp(2*mu+(sigma**2)) + '\n';
-      txt += 'Geometric standard deviation ' + Math.exp(sigma) + '\n';
-      let CV = Math.sqrt(Math.exp(sigma**2)-1);
-      txt += 'CV ' + CV + '\n';
-      txt += 'Skewness ' + (Math.pow(CV,3)+3*CV) + '\n';
-      txt += 'Kurtosis ' + (Math.pow(CV,8)+6*Math.pow(CV,6)+15*Math.pow(CV,4)+16*Math.pow(CV,2)) + '\n';
-      txt += 'Entropy ' + ((1+Math.log(2*Math.PI*sigma**2))/2+mu) + '\n';
-      txt += 'Error factor ' + Math.exp(sigma*1.645); + '\n';
-      console.log(txt);
+      const mean = Math.exp(mu+(sigma**2)/2);
+      const median = Math.exp(mu);
+      const mode = Math.exp(mu-sigma**2);
+      const sd = Math.sqrt((Math.exp(sigma**2)-1)*Math.exp(2*mu+(sigma**2)));
+      const variance = (Math.exp(sigma**2)-1)*Math.exp(2*mu+(sigma**2));
+      const gsd = Math.exp(sigma);
+      const CV = Math.sqrt(Math.exp(sigma**2)-1);
+      const skewness = (Math.pow(CV,3)+3*CV);
+      const kurtosis = (Math.pow(CV,8)+6*Math.pow(CV,6)+15*Math.pow(CV,4)+16*Math.pow(CV,2));
+      const entropy = ((1+Math.log(2*Math.PI*sigma**2))/2+mu);
+      const error_factor = Math.exp(sigma*1.645);
+
+      txt += `mu: ${mu}\n`;
+      txt += `sigma: ${sigma}\n`;
+      txt += `Mean: ${mean}\n`;
+      txt += `Median: ${median}\n`;
+      txt += `Mode: ${mode}\n`;
+      txt += `Standard deviation: ${sd}\n`;
+      txt += `Variance: ${variance}\n`;
+      txt += `Geometric standard deviation: ${gsd}\n`;
+      txt += `CV: ${CV}\n`;
+      txt += `Skewness: ${skewness}\n`;
+      txt += `Kurtosis: ${kurtosis}\n`;
+      txt += `Entropy: ${entropy}\n`;
+      txt += `Error factor (1.645σ): ${error_factor}\n`;
+
+      if (tab1 === 'data' && args._dataStats) {
+        txt += `\nData (n=${args._dataStats.n}) — mean(log): ${args._dataStats.sampleMeanLog}, sd(log) [MLE]: ${args._dataStats.sampleSdLog}\n`;
+      }
+
+      // render output to the page
+      const outEl = document.getElementById('ln-output');
+      if (outEl) outEl.textContent = txt;
+
+      // expose structured result for other scripts/tests (include data stats when available)
+      window._lastLognormal = { mu, sigma, mean, median, mode, sd, variance, gsd, CV, skewness, kurtosis, entropy, error_factor, dataStats: args._dataStats || null, dataValues: args._dataValues || null };
 
       let n = 1000;
       let p = linspace(0,0.99,n);
@@ -396,26 +791,47 @@
       let y5 = new Array();
       let x95 = new Array();
       let y95 = new Array();
+      // protect against degenerate sigma (all identical data => sigma === 0)
+      const sigmaPlot = (typeof sigma === 'number' && sigma > 0) ? sigma : 1e-6;
       for (let i=1;i<n;i++){
-        x[i] = logninv(mu,sigma,p[i]);
-        y[i] = lognpdf(mu,sigma,x[i]);
-        x5[i] = logninv(mu,sigma,p5[i]);
-        y5[i] = lognpdf(mu,sigma,x5[i]);
-        x95[i] = logninv(mu,sigma,p95[i]);
-        y95[i] = lognpdf(mu,sigma,x95[i]);
+        x[i] = logninv(mu,sigmaPlot,p[i]);
+        y[i] = lognpdf(mu,sigmaPlot,x[i]);
+        x5[i] = logninv(mu,sigmaPlot,p5[i]);
+        y5[i] = lognpdf(mu,sigmaPlot,x5[i]);
+        x95[i] = logninv(mu,sigmaPlot,p95[i]);
+        y95[i] = lognpdf(mu,sigmaPlot,x95[i]);
       }
 
       CHART = document.getElementById('chart');
-      Plotly.newPlot( CHART, [ 
-        { x: x, y: y, fill: 'tozeroy', fillcolor: 'rgba(243,184,123,0.5)', line: { color: '#f3b87b' }, type: 'scatter' },
-        { x: x5, y: y5, fill: 'tozeroy', fillcolor: 'rgba(243,184,123,0.5)', line: { color: '#f3b87b' }, type: 'scatter' },
-        { x: x95, y: y95, fill: 'tozeroy', fillcolor: 'rgba(243,184,123,0.5)', line: { color: '#f3b87b' }, type: 'scatter' },
-        { x:[Math.exp(mu+(sigma**2)/2),Math.exp(mu+(sigma**2)/2)], y:[0,lognpdf( mu, sigma, Math.exp(mu+(sigma**2)/2) )], hovertext:'Mean', mode:'lines', line: { color: '#f3b87b', dash:'solid' }},
-        { x:[Math.exp(mu),Math.exp(mu)], y:[0,lognpdf( mu, sigma, Math.exp(mu) )], hovertext:'50%', mode:'lines', line: { color: '#f3b87b', dash:'dot' }},
-      ], {
+      const traces = [];
+      // If we fitted from data, add a normalized histogram (probability density) of observed values
+      if (tab1 === 'data' && args._dataValues && args._dataValues.length > 0) {
+        const bins = Math.min(50, Math.max(5, Math.round(Math.sqrt(args._dataStats ? args._dataStats.n : args._dataValues.length))));
+        traces.push({
+          x: args._dataValues,
+          type: 'histogram',
+          histnorm: 'probability density',
+          opacity: 0.5,
+          marker: { color: 'rgba(96,96,96,0.28)' },
+          nbinsx: bins,
+          hovertemplate: '%{x}: %{y:.4f}<extra>data</extra>'
+        });
+      }
+
+      // density / envelope traces (draw on top of histogram)
+      traces.push(
+        { x: x, y: y, fill: 'tozeroy', fillcolor: 'rgba(243,184,123,0.5)', line: { color: '#f3b87b' }, type: 'scatter', hoverinfo: 'skip' },
+        { x: x5, y: y5, fill: 'tozeroy', fillcolor: 'rgba(243,184,123,0.5)', line: { color: '#f3b87b' }, type: 'scatter', hoverinfo: 'skip' },
+        { x: x95, y: y95, fill: 'tozeroy', fillcolor: 'rgba(243,184,123,0.5)', line: { color: '#f3b87b' }, type: 'scatter', hoverinfo: 'skip' },
+        { x:[Math.exp(mu+(sigma**2)/2),Math.exp(mu+(sigma**2)/2)], y:[0,lognpdf( mu, sigmaPlot, Math.exp(mu+(sigma**2)/2) )], hovertext:'Mean', mode:'lines', line: { color: '#f3b87b', dash:'solid' }},
+        { x:[Math.exp(mu),Math.exp(mu)], y:[0,lognpdf( mu, sigmaPlot, Math.exp(mu) )], hovertext:'50%', mode:'lines', line: { color: '#f3b87b', dash:'dot' }}
+      );
+
+      Plotly.newPlot(CHART, traces, {
         autosize: true,
         responsive: true,
         showlegend: false,
+        barmode: 'overlay',
         xaxis: { type: 'lin', range: [x[0],x[n-1]] },  
         margin: { t: 0, r: 0, b:20, l:40, autoexpand:false },
         paper_bgcolor: 'rgba(0,0,0,0)',
@@ -427,6 +843,46 @@
     document.querySelectorAll(".arg").forEach(function(input) {
       input.addEventListener("input", function() { updatedInput(); });
     });
+
+    // controls for printing/copying/combining
+    document.getElementById('showDetailsBtn').addEventListener('click', function() { updatedInput(); document.getElementById('ln-output').scrollIntoView({behavior:'smooth'}); });
+    document.getElementById('copyDetailsBtn').addEventListener('click', async function() {
+      const text = document.getElementById('ln-output').textContent || '';
+      try { await navigator.clipboard.writeText(text); this.textContent = 'Copied'; setTimeout(()=> this.textContent = 'Copy', 1200); } catch (e) { alert('Copy failed: ' + e.message); }
+    });
+    document.getElementById('printDetailsBtn').addEventListener('click', function() {
+      const content = document.getElementById('ln-output').textContent || '';
+      const w = window.open('', '_blank');
+      w.document.write('<pre style="font-family:monospace;white-space:pre-wrap;">' + (content.replace(/&/g,'&amp;').replace(/</g,'&lt;')) + '</pre>');
+      w.document.close();
+      w.print();
+    });
+
+    // Preview (print-friendly) — opens a new window showing computed output and the equations (renders MathJax)
+    document.getElementById('previewDetailsBtn').addEventListener('click', function() {
+      updatedInput();
+      const outText = document.getElementById('ln-output').textContent || '';
+      const outTextEsc = outText.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+      const eqEl = document.querySelector('#equations-details .equations-body');
+      const eqHtml = eqEl ? eqEl.innerHTML : '';
+      const preview = window.open('', '_blank');
+      preview.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Lognormal — Preview</title>');
+      preview.document.write('<link rel="stylesheet" href="./resources/css/kvot.css">');
+      preview.document.write('<style>body{font-family:Arial,Helvetica,sans-serif;padding:18px;color:#222} pre{white-space:pre-wrap;background:#f7f7f8;padding:12px;border-radius:4px;border:1px solid #e1e1e1} table{width:100%;border-collapse:collapse} td{padding:4px 6px}</style>');
+      preview.document.write('<script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js">' + '</' + 'script>');
+      preview.document.write('</head><body>');
+      preview.document.write('<h2>Lognormal preview</h2>');
+      preview.document.write('<h3>Computed distribution</h3>');
+      preview.document.write('<pre>' + outTextEsc + '</pre>');
+      preview.document.write('<h3>Equations</h3>');
+      preview.document.write(eqHtml);
+      preview.document.write('<script>window.onload=function(){ if(window.MathJax && MathJax.typesetPromise) MathJax.typesetPromise(); }<' + '/script>');
+      preview.document.write('</body></html>');
+      preview.document.close();
+    });
+
+    // second-metric is now chosen by selecting a second tab in the combined header (no checkbox)
+    // updatedInput() will react to header selection state (selectedTabs).
 
     function unifinv( a, b, p ){ return a+(b-a)*p;}
     function norminv( mu, sigma, p ){ return -Math.sqrt(2)*erfcinv(2*p)*sigma+mu;}
