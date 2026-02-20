@@ -1756,6 +1756,24 @@
           if (cb) cb.checked = false;
         }
       }
+
+      // If there are no enabled files, clear the right-hand panel and selection state
+      if (enabledCount === 0) {
+        try {
+          resetInfoPanel();
+          hideChart();
+          selectedDatasetPath = null;
+          selectedIsRadionuclidesGroup = false;
+          selectedFileKey = null;
+
+          document.querySelectorAll('.tree-item.dataset.selected').forEach(el => el.classList.remove('selected'));
+          document.querySelectorAll('.tree-item.group.expanded').forEach(el => el.classList.remove('expanded'));
+          document.querySelector('.search-container')?.classList.remove('visible');
+
+          // notify listeners that selection was cleared
+          try { EventBus.emit('selection:changed', { mode: 'none' }); } catch (e) {}
+        } catch (e) { console.warn('updateTabs clear-selection-on-no-enabled-files failed', e); }
+      }
       
       console.log('updateTabs - Previous:', previousTreeFile, 'New:', newTreeFile, 'Changed:', treeFileChanged);
       
@@ -5797,7 +5815,21 @@
       try {
         const tree = document.getElementById('tree');
 
-        if (!payload || !payload.mode) return;
+        if (!payload || !payload.mode) return; 
+
+        // support explicit 'none' mode for clearing selection from other components
+
+        if (payload.mode === 'none') {
+          // clear UI selection and right panel
+          document.querySelectorAll('.tree-item.dataset.selected').forEach(el => el.classList.remove('selected'));
+          document.querySelectorAll('.tree-item.group.expanded').forEach(el => el.classList.remove('expanded'));
+          resetInfoPanel();
+          hideChart();
+          selectedDatasetPath = null;
+          selectedIsRadionuclidesGroup = false;
+          selectedFileKey = null;
+          return;
+        }
 
         if (payload.mode === 'single') {
           // clear previous selection/expansions
