@@ -317,7 +317,7 @@ footer .theme-toggle {
     width:100%;
     visibility:visible;
 }
-#p1,#p2 {  
+input[data-field="p"] {  
   width:40px;
 }
 .logolarge {

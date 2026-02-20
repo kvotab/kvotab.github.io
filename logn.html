@@ -13,9 +13,9 @@
   <style>
     /* combined-tabs UI styles */
     /* hide original jQuery tab headers and only the template content (templates used programmatically) */
-    /* templates live under #tabs-1 only (single source of truth) */
-    #tabs-1 > ul, /* only hide template panels whose ids start with tabs-1- */
-    #tabs-1 > div[id^="tabs-1-"] { display: none !important; }
+    /* templates live under #tabs only (single source of truth) */
+    #tabs > ul, /* only hide template panels whose ids start with tabs- */
+    #tabs > div[id^="tabs-"] { display: none !important; }
     /* header appearance */
     #tabs-header li { display:inline-block; }
     #tabs-header a { display:inline-block; padding:4px 8px; border-radius:4px; cursor:pointer; text-decoration:none; color:var(--text-primary); border:1px solid transparent; transition:background .15s, color .15s, opacity .15s; }
@@ -31,14 +31,31 @@
     /* two-column layout: left = controls, right = equations; responsive stack on small screens */
     #logn .logn-columns { display:flex; gap:18px; align-items:flex-start; }
     #logn .logn-left { flex:1; min-width:0; }
-    #equations-details { width: 360px; flex-shrink:0; margin-top: 8px; }
-    #equations-details .equations-body { position: relative; z-index: 1; background: transparent; padding: 6px 0; }
+
+    /* equations: slightly larger, more readable spacing for MathJax and table cells */
+    #equations-details .equations-body { position: relative; z-index: 6; background: transparent; padding: 10px 0 6px; font-size: 0.96rem; line-height: 1.45; color: #222; }
+    #equations-details .equations-body table td { padding: 6px 10px; vertical-align: middle; }
+    /* boost MathJax size slightly so inline formulas align visually with surrounding text */
+    #equations-details .equations-body .mjx-chtml { font-size: 1.02rem; }
     @media (max-width: 920px) { #logn .logn-columns { flex-direction: column; } #equations-details { width: auto; } }
 
-    #equations-details summary.equations-summary { cursor: pointer; padding: 6px 8px; background: rgba(0,0,0,0.03); border-radius: 4px; font-weight:600; margin-bottom:6px; }
-    #equations-details summary.equations-summary::marker { display:none; }
-    #equations-details summary.equations-summary::after { content: '▾'; float: right; transition: transform .18s; }
-    #equations-details[open] summary.equations-summary::after { content: '▴'; }
+    /* chart inside computed results: stack cleanly under the textual output and contain overflow */
+    #detailsContainer { display: flex; flex-direction: column; gap: 12px; align-items: stretch; }
+    #detailsContainer #ln-output { position: static; z-index: auto; width: 100%; box-sizing: border-box; }
+    #detailsContainer #chart { position: static; z-index: auto; min-height:220px; max-height:420px; width:100%; box-sizing:border-box; background: #fff; padding:6px; margin:0; margin-bottom:20px; border-radius:6px; border:1px solid #e6e6e6; box-shadow: 0 1px 4px rgba(0,0,0,0.03); overflow: hidden; }
+    /* ensure Plotly canvas never exceeds its container */
+    #detailsContainer #chart .plotly, #detailsContainer #chart .js-plotly-plot { width: 100% !important; max-width: 100% !important; box-sizing: border-box !important; }
+    #detailsContainer #chart .plotly { height:100% !important; }
+
+    /* make equations visually separated from the computed results */
+    #equations-details { width: 100%; max-width: none; margin-top: 18px; border-top: 1px solid #e6e6e6; padding-top: 12px; }
+    #equations-details summary.equations-summary { margin-top: 6px; }
+
+    /* unified summary style for Computed results + Equations */
+    .equations-summary { cursor: pointer; padding: 6px 8px; background: transparent; border-radius: 4px; font-weight: normal; margin-bottom:6px; }
+    .equations-summary::marker { display:none; }
+    /* remove right-positioned custom arrow so both summaries match */
+    .equations-summary::after { content: ''; }
 
     /* small visual spacing for metric panels */
     #metric-panels { margin-bottom: 8px; }
@@ -54,6 +71,41 @@
     @keyframes fadeIn { from { opacity:0; transform: translateY(-4px); } to { opacity:1; transform: translateY(0); } }
     /* focus outline for keyboard navigation */
     #tabs-header a:focus { outline: 2px solid rgba(243,184,123,0.45); box-shadow: 0 0 0 3px rgba(243,184,123,0.08); }
+
+    /* form control styling — unified, roomy inputs */
+    .metric-content .arg { width: 100%; padding: 8px 10px; border: 1px solid #e6e6e6; border-radius: 6px; font-size: 0.95rem; color: #222; background: #fff; box-sizing: border-box; transition: box-shadow .12s, border-color .12s; }
+    .metric-content .arg:focus { outline: none; box-shadow: 0 0 0 3px rgba(243,184,123,0.08); border-color: #f3b87b; }
+    .metric-content textarea.arg { min-height: 140px; resize: vertical; font-family: inherit; }
+    /* make computed results easier to scan */
+    #ln-output { font-size: 0.95rem; line-height: 1.45; font-family: Menlo, Monaco, 'Courier New', monospace; color: #222; }
+
+    /* keep percentile p/x side-by-side */
+    #tabs-1-percentile .arg { display: inline-block; width: 48%; vertical-align: middle; }
+    #tabs-1-percentile .arg + .arg { margin-left: 4%; }
+
+    /* data textarea visual hint (monospace for lists) */
+    #tabs-1-data .arg { font-family: Menlo, Monaco, 'Courier New', monospace; white-space: pre-wrap; }
+
+    /* reduce number spinner chrome for modern browsers */
+    input[type="number"]::-webkit-outer-spin-button,
+    input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+
+    /* small toggle for ln(x) view */
+    .chart-toggle input[type="checkbox"] { width: 16px; height: 16px; }
+
+    /* segmented control for PDF/CDF (roomier + stronger active state) */
+    .segmented { display:inline-flex; border-radius:6px; overflow:hidden; border:1px solid #e6e6e6; background:#fff; box-shadow: inset 0 -1px 0 rgba(0,0,0,0.02); }
+    .segmented button { appearance:none; -webkit-appearance:none; border:0; background:transparent; padding:8px 14px; margin:0; cursor:pointer; color:#444; font-size:0.92rem; line-height:1; transition: background .12s, color .12s, box-shadow .12s; }
+    .segmented button.active { background:#f3b87b; color:#fff; font-weight:600; box-shadow: inset 0 -3px 0 rgba(0,0,0,0.06); }
+    .segmented button:focus { outline: 2px solid rgba(243,184,123,0.25); box-shadow: 0 0 0 3px rgba(243,184,123,0.06); }
+
+    /* DOM-based chart legend (keeps Plotly layout unchanged) */
+    .chart-legend { display:flex; gap:14px; align-items:center; font-size:0.9rem; color:#555; margin:8px 0 4px 0; }
+    .chart-legend .legend-item { display:inline-flex; gap:8px; align-items:center; }
+    .chart-legend .swatch { width:12px; height:10px; border-radius:2px; display:inline-block; box-shadow: inset 0 -1px 0 rgba(0,0,0,0.06); border:1px solid rgba(0,0,0,0.04); }
+    .chart-legend .swatch.swatch-empirical { background: rgba(96,96,96,0.6); }
+    .chart-legend .swatch.swatch-theoretical { background: #f3b87b; }
   </style>
   <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
   <script src="https://cdn.plot.ly/plotly-2.14.0.min.js"></script>
@@ -63,14 +115,12 @@
 <body>
   <header></header>
   <div class="content">
-    <div id="chart" class="ui-widget-content"><p class="ui-widget-header">I can be dragged only by this handle</p></div>  
-
     <div id="logn">
       <div class="logn-columns">
         <div class="logn-left">
       <table cellpadding="0px" border="0" style="table-layout: fixed;width:100%">
         <tr><td>
-          <div id="tabs-1">
+          <div id="tabs">
             <!-- Combined header (single header controls up to two selectable tabs; click toggles selection) -->
             <div id="combined-tabs-header" style="margin-bottom:8px;">
               <ul id="tabs-header" role="tablist" aria-label="Metric selector" style="list-style:none;padding:0;margin:0;display:flex;gap:8px;flex-wrap:wrap;">
@@ -111,49 +161,115 @@
                   <button id="copyDetailsBtn" style="padding:6px 10px;margin-right:8px;">Copy</button>
                   <button id="printDetailsBtn" style="padding:6px 10px;margin-right:8px;">Print</button>
 
+                  <label class="chart-toggle" style="margin-left:6px;display:inline-flex;align-items:center;gap:8px;font-size:0.92rem;color:#555;"><input id="lnViewToggle" type="checkbox"> Show ln(x) view</label>
+                  <label style="margin-left:10px;font-size:0.92rem;color:#555;display:inline-flex;align-items:center;gap:6px;">View:
+                    <div id="chartMode" class="segmented" role="tablist" aria-label="Chart mode">
+                      <button type="button" data-mode="pdf" aria-pressed="true" class="active" data-chart-mode>PDF</button>
+                      <button type="button" data-mode="cdf" aria-pressed="false" data-chart-mode>CDF</button>
+                    </div>
+                  </label>
+
                   <div id="detailsContainer" style="margin-top:12px;display:block;">
                     <pre id="ln-output" style="white-space:pre-wrap;background:#f7f7f8;border:1px solid #e1e1e1;padding:12px;border-radius:4px;min-height:120px;">No distribution computed yet.</pre>
+                    <div id="chartLegend" class="chart-legend" role="group" aria-label="Chart legend">
+                      <span class="legend-item"><i class="swatch swatch-empirical" aria-hidden="true"></i> Empirical</span>
+                      <span class="legend-item"><i class="swatch swatch-theoretical" aria-hidden="true"></i> Theoretical</span>
+                    </div>
+                    <div id="chart" aria-label="Lognormal density chart" aria-describedby="chartLegend" style="min-height:220px;"></div>
                   </div>
                 </div>
               </div>
             </details>
 
+            <!-- Equations & formulas (full-width) -->
+            <details id="equations-details" class="kvot-collapsible" aria-expanded="true">
+              <summary class="equations-summary">Equations & formulas</summary>
+              <div class="equations-body">
+                <table cellpadding="0px" border="0" style="table-layout: fixed;width:100%">
+                  <tr>
+                    <td colspan="2">Mean of it's natural logarithm (\(\mu\))</td>
+                    <td>Standard deviation of it's natural logarithm (\(\sigma\))</td>
+                  </tr>
+                  <tr><td colspan="2"></td><td></td></tr>
+                  <tr>
+                    <td colspan="2">Geometric mean (\(\mu_g\))</td>
+                    <td>Geometric standard deviation (\(\sigma_g\))</td>
+                  </tr>
+                  <tr><td colspan="2"></td><td></td></tr>
+                  <tr>
+                    <td colspan="2">Arithmetic mean (\(\mu_a\))</td>
+                    <td>Arithmetic standard deviation (\(\sigma_a\))</td>
+                  </tr>
+                  <tr><td colspan="2"></td><td></td></tr>
+                  <tr>
+                    <td colspan="2">Percentile (\(p_1\)) Corresponding value (\(x_1\))</td>
+                    <td>Percentile (\(p_2\)) Corresponding value (\(x_2\))</td>
+                  </tr>
+                  <tr><td colspan="2"></td><td></td></tr>
+                  <tr><td style="text-align:right;">\(\mu=\)</td><td colspan="2">\(\ln{\mu_g}\)</td></tr>
+                  <tr><td style="text-align:right;">\(=\)</td><td colspan="2">\(\ln{(\mu_a^2/\sqrt{\mu_a^2+\sigma_a^2})}\)</td></tr>
+                  <tr><td style="text-align:right;">\(\sigma=\)</td><td colspan="2">\(\ln{\sigma_g}\)</td></tr>
+                  <tr><td style="text-align:right;">\(=\)</td><td colspan="2">\(\sqrt{\ln{(1+\sigma_a^2/\mu_a^2)}}\)</td></tr>
+                  <tr><td style="text-align:right;">\(\mu_g=\)</td><td colspan="2">\(e^{\mu}\)</td></tr>
+                  <tr><td style="text-align:right;">\(=\)</td><td colspan="2">\(e^{\ln{\mu_a}-\ln{(1+\sigma_a^2/\mu_a^2)}/2}\)</td></tr>
+                  <tr><td style="text-align:right;">\(\sigma_g=\)</td><td colspan="2">\(e^{\sigma}\)</td></tr>
+                  <tr><td style="text-align:right;">\(=\)</td><td colspan="2">\(e^{\sqrt{\ln{(1+\sigma_a^2/\mu_a^2)}}}\)</td></tr>
+                  <tr><td style="text-align:right;">\(\mu_a=\)</td><td colspan="2">\(e^{\mu+\sigma^2/2}\)</td></tr>
+                  <tr><td style="text-align:right;">\(=\)</td><td colspan="2">\(e^{\ln{\mu_g}+{\ln{\sigma_g}}^2/2}\)</td></tr>
+                  <tr><td style="text-align:right;">\(\sigma_a=\)</td><td colspan="2">\(\sqrt{(e^{{\sigma}^2}-1)e^{2\mu+{\sigma}^2}}\)</td></tr>
+                  <tr><td style="text-align:right;">\(=\)</td><td colspan="2">\(e^{\mu+\sigma^2/2}(e^{\sigma^2}-1)\)</td></tr>
+                  <tr><td style="text-align:right;">\(=\)</td><td colspan="2">\(\sqrt{(e^{{\ln{\sigma_g}}^2}-1)e^{2\ln{\mu_g}+{\ln{\sigma_g}}^2}}\)</td></tr>
+                  <tr><td style="text-align:right;">\(=\)</td><td colspan="2">\(CV\mu_a\)</td></tr>
+                  <tr><td style="text-align:right;">\(=\)</td><td colspan="2">\(\mu_a\sqrt{e^{\sigma^2}-1}\)</td></tr>
+                  <tr><td style="text-align:right;">\(mode=\)</td><td colspan="2">\(e^{\mu-\sigma^2}\)</td></tr>
+                  <tr><td style="text-align:right;">\(=\)</td><td colspan="2">\(\mu_ge^{-\sigma^2}\)</td></tr>
+                  <tr><td style="text-align:right;">\(CV=\)</td><td colspan="2">\(\sqrt{e^{\sigma^2}-1}\)</td></tr>
+                  <tr><td style="text-align:right;">\(=\)</td><td colspan="2">\(\sigma_a/\mu_a\)</td></tr>
+                  <tr><td style="text-align:right;">\(skewness=\)</td><td colspan="2">\(CV^3+3CV\)</td></tr>
+                  <tr><td style="text-align:right;">\(kurtosis=\)</td><td colspan="2">\(CV^8+6CV^6+15CV^4+16CV^2\)</td></tr>
+                  <tr><td style="text-align:right;">\(kurtosis=\)</td><td colspan="2">\(e^{j\mu+j^2\sigma^2/2}\)</td></tr>
+                  <tr><td style="text-align:right;">\(entropy=\)</td><td colspan="2">\({(1+\ln{(2\pi\sigma^2)})}/2+\mu\)</td></tr>
+                </table>
+              </div>
+            </details>
 
-            <div id="tabs-1-mu">
+
+
+            <div id="tabs-mu">
               <p>mu (\(\mu\)) is the mean of the associated normal distribution.</p>
-              <p><input class="arg" id="mu1" data-field="mu" value="0" name="Mean of it's natural logarithm" title="Please provide the mean of it's natural logarithm."></p>
+              <p><input class="arg" data-field="mu" type="number" step="any" inputmode="decimal" value="0" name="Mean of it's natural logarithm" title="Please provide the mean of it's natural logarithm."></p>
             </div>
-            <div id="tabs-1-mean">
-              <p><input class="arg" id="mean1" data-field="mean" value="1" name="Arithmetic mean" title="Please provide the arithmetic mean."></p>
+            <div id="tabs-mean">
+              <p><input class="arg" data-field="mean" type="number" min="0" step="any" inputmode="decimal" value="1" name="Arithmetic mean" title="Please provide the arithmetic mean (positive)."></p>
             </div>
-            <div id="tabs-1-GM">
-              <p><input class="arg" id="GM1" data-field="GM" value="1" name="Geometric mean" title="Please provide the geometric mean."></p>
+            <div id="tabs-GM">
+              <p><input class="arg" data-field="GM" type="number" min="0" step="any" inputmode="decimal" value="1" name="Geometric mean" title="Please provide the geometric mean (positive)."></p>
             </div>
-            <div id="tabs-1-mode">
-              <p><input class="arg" id="mode1" data-field="mode" value="1" name="Mode" title="Please provide the mode."></p>
+            <div id="tabs-mode">
+              <p><input class="arg" data-field="mode" type="number" min="0" step="any" inputmode="decimal" value="1" name="Mode" title="Please provide the mode (positive)."></p>
             </div>
-            <div id="tabs-1-percentile">
-              <p><input class="arg" id="p1" data-field="p" type="number" value="5" name="Percentile" title="Please provide a percentile.">
-                <input class="arg" id="x1" data-field="x" value="0" name="Value" title="Please provide corresponding value."></p>
+            <div id="tabs-percentile">
+              <p><input class="arg" data-field="p" type="number" min="0" max="100" step="any" inputmode="decimal" value="5" name="Percentile" title="Please provide a percentile (0–100).">
+                <input class="arg" data-field="x" type="number" min="0" step="any" inputmode="decimal" value="1" name="Value" title="Please provide corresponding positive value."></p>
             </div>
-            <div id="tabs-1-data">
-              <p><input class="arg" id="data" data-field="data" value="" name="Data" title="Please provide raw data." placeholder="e.g. 1.2, 2.3, 3.4 (comma/space separated)"></p>
+            <div id="tabs-data">
+              <p><textarea class="arg" id="data" data-field="data" inputmode="decimal" name="Data" title="Please provide raw numeric data (comma/space separated)" placeholder="e.g. 1.2, 2.3, 3.4 (comma/space separated)" rows="6"></textarea></p>
             </div>
-            <div id="tabs-1-sigma">
+            <div id="tabs-sigma">
               <p>sigma (\(\sigma\)) is the standard deviation of the associated normal distribution.</p>
-              <p><input class="arg" id="sigma1" data-field="sigma" value="1" name="Standard deviation of it's natural logarithm" title="Please provide the standard deviation of it's natural logarithm."></p>
+              <p><input class="arg" data-field="sigma" type="number" min="0" step="any" inputmode="decimal" value="1" name="Standard deviation of it's natural logarithm" title="Please provide the standard deviation of it's natural logarithm (positive)."></p>
             </div>
-            <div id="tabs-1-SD">
-              <p><input class="arg" id="SD1" data-field="SD" value="0" name="Standard deviation" title="Please provide the arithmetic standard deviation."></p>
+            <div id="tabs-SD">
+              <p><input class="arg" data-field="SD" type="number" min="0" step="any" inputmode="decimal" value="0" name="Standard deviation" title="Please provide the arithmetic standard deviation (positive)."></p>
             </div>
-            <div id="tabs-1-GSD">
-              <p><input class="arg" id="GSD1" data-field="GSD" value="1" name="Geometric mean" title="Please provide the geometric standard deviation."></p>
+            <div id="tabs-GSD">
+              <p><input class="arg" data-field="GSD" type="number" min="0" step="any" inputmode="decimal" value="1" name="Geometric mean" title="Please provide the geometric standard deviation (positive)."></p>
             </div>
-            <div id="tabs-1-CV">
-              <p><input class="arg" id="CV1" data-field="CV" value="1" name="Coefficient of variation" title="Please provide the coefficient of variation."></p>
+            <div id="tabs-CV">
+              <p><input class="arg" data-field="CV" type="number" min="0" step="any" inputmode="decimal" value="1" name="Coefficient of variation" title="Please provide the coefficient of variation (positive)."></p>
             </div>
-            <div id="tabs-1-error">
-              <p><input class="arg" id="error1" data-field="error_factor" value="1" name="Error factor" title="Please provide the error factor."></p>
+            <div id="tabs-error">
+              <p><input class="arg" data-field="error_factor" type="number" min="0" step="any" inputmode="decimal" value="1" name="Error factor" title="Please provide the error factor (positive)."></p>
             </div>
           </div>
         </td></tr>
@@ -166,60 +282,7 @@
 
         </div> <!-- .logn-left -->
 
-        <!-- right column: equations (open by default) -->
-        <details id="equations-details" class="kvot-collapsible" aria-expanded="true" open>
-          <summary class="equations-summary">Equations & formulas</summary>
-          <div class="equations-body">
-            <table cellpadding="0px" border="0" style="table-layout: fixed;width:100%">
-              <tr><td style="width:100px"></td><td style="width:160px"></td><td style="width:260px"><td ></td></td></tr>
-              <tr>
-                <td colspan="2" >Mean of it's natural logarithm (\(\mu\))</td>
-                <td>Standard deviation of it's natural logarithm (\(\sigma\))</td>
-                <td rowspan="13"></td>
-              </tr>
-              <tr><td colspan="2"></td><td></td></tr>
-              <tr>
-                <td colspan="2">Geometric mean (\(\mu_g\))</td>
-                <td >Geometric standard deviation (\(\sigma_g\))</td>
-              </tr>
-              <tr><td colspan="2"></td><td></td></tr>
-              <tr>
-                <td colspan="2">Arithmetic mean (\(\mu_a\))</td>
-                <td>Arithmetic standard deviation (\(\sigma_a\))</td>
-              </tr>
-              <tr><td colspan="2"></td><td></td></tr>
-              <tr>
-                <td colspan="2">Percentile (\(p_1\)) Corresponding value (\(x_1\))</td>
-                <td>Percentile (\(p_2\)) Corresponding value (\(x_2\))</td>
-              </tr>
-              <tr><td colspan="2"></td><td></td></tr>
-              <tr><td style="text-align:right;">\(\mu=\)</td><td colspan="2">\(\ln{\mu_g}\)</td></tr>
-              <tr><td style="text-align:right;">\(=\)</td><td colspan="2">\(\ln{(\mu_a^2/\sqrt{\mu_a^2+\sigma_a^2})}\)</td></tr>
-              <tr><td style="text-align:right;">\(\sigma=\)</td><td colspan="2">\(\ln{\sigma_g}\)</td></tr>
-              <tr><td style="text-align:right;">\(=\)</td><td colspan="2">\(\sqrt{\ln{(1+\sigma_a^2/\mu_a^2)}}\)</td></tr>
-              <tr><td style="text-align:right;">\(\mu_g=\)</td><td colspan="2">\(e^{\mu}\)</td></tr>
-              <tr><td style="text-align:right;">\(=\)</td><td colspan="2">\(e^{\ln{\mu_a}-\ln{(1+\sigma_a^2/\mu_a^2)}/2}\)</td></tr>
-              <tr><td style="text-align:right;">\(\sigma_g=\)</td><td colspan="2">\(e^{\sigma}\)</td></tr>
-              <tr><td style="text-align:right;">\(=\)</td><td colspan="2">\(e^{\sqrt{\ln{(1+\sigma_a^2/\mu_a^2)}}}\)</td></tr>
-              <tr><td style="text-align:right;">\(\mu_a=\)</td><td colspan="2">\(e^{\mu+\sigma^2/2}\)</td></tr>
-              <tr><td style="text-align:right;">\(=\)</td><td colspan="2">\(e^{\ln{\mu_g}+{\ln{\sigma_g}}^2/2}\)</td></tr>
-              <tr><td style="text-align:right;">\(\sigma_a=\)</td><td colspan="2">\(\sqrt{(e^{{\sigma}^2}-1)e^{2\mu+{\sigma}^2}}\)</td></tr>
-              <tr><td style="text-align:right;">\(=\)</td><td colspan="2">\(e^{\mu+\sigma^2/2}(e^{\sigma^2}-1)\)</td></tr>
-              <tr><td style="text-align:right;">\(=\)</td><td colspan="2">\(\sqrt{(e^{{\ln{\sigma_g}}^2}-1)e^{2\ln{\mu_g}+{\ln{\sigma_g}}^2}}\)</td></tr>
-              <tr><td style="text-align:right;">\(=\)</td><td colspan="2">\(CV\mu_a\)</td></tr>
-              <tr><td style="text-align:right;">\(=\)</td><td colspan="2">\(\mu_a\sqrt{e^{\sigma^2}-1}\)</td></tr>
-              <tr><td style="text-align:right;">\(mode=\)</td><td colspan="2">\(e^{\mu-\sigma^2}\)</td></tr>
-              <tr><td style="text-align:right;">\(=\)</td><td colspan="2">\(\mu_ge^{-\sigma^2}\)</td></tr>
-              <tr><td style="text-align:right;">\(CV=\)</td><td colspan="2">\(\sqrt{e^{\sigma^2}-1}\)</td></tr>
-              <tr><td style="text-align:right;">\(=\)</td><td colspan="2">\(\sigma_a/\mu_a\)</td></tr>
-              <tr><td style="text-align:right;">\(skewness=\)</td><td colspan="2">\(CV^3+3CV\)</td></tr>
-              <tr><td style="text-align:right;">\(kurtosis=\)</td><td colspan="2">\(CV^8+6CV^6+15CV^4+16CV^2\)</td></tr>
-              <tr><td style="text-align:right;">\(kurtosis=\)</td><td colspan="2">\(e^{j\mu+j^2\sigma^2/2}\)</td></tr>
-              <tr><td style="text-align:right;">\(entropy=\)</td><td colspan="2">\({(1+\ln{(2\pi\sigma^2)})}/2+\mu\)</td></tr>
-            </table>
-          </div>
-        </details>
-      </div> <!-- .logn-columns -->
+
 
     <div id="map"></div>
   </div>
@@ -236,7 +299,7 @@
 
     /* Combined single header driving two metric panels.  
        - clicking a tab toggles selection; up to two tabs may be selected
-       - templates live under #tabs-1 (single source) and are cloned into metric panels on selection
+       - templates live under #tabs (single source) and are cloned into metric panels on selection
     */
     const selectedTabs = []; // up to two labels (text from header anchors)
     const _labelToId = {}; // built from header anchors (label text -> template id suffix)
@@ -333,12 +396,12 @@
 
       const panels = Array.from(document.querySelectorAll('#metric-panels .metric-panel'));
 
-      // clear any generated content from panels (templates remain under #tabs-1)
+      // clear any generated content from panels (templates remain under #tabs)
       panels.forEach(panel => {
         const content = panel.querySelector('.metric-content');
         while (content && content.firstChild) {
           const child = content.firstChild;
-          // cloned/generated nodes are removed; templates under #tabs-1 are left intact
+          // cloned/generated nodes are removed; templates under #tabs are left intact
           content.removeChild(child);
           child.classList && child.classList.remove('attach-anim');
         }
@@ -379,9 +442,9 @@
         }
       }
 
-      // helper: clone template node (from #tabs-1) and prepare it for insertion
+      // helper: clone template node (from #tabs) and prepare it for insertion
       function cloneTemplate(suf, panelIndex) {
-        const tpl = document.getElementById(`tabs-1-${suf}`);
+        const tpl = document.getElementById(`tabs-${suf}`);
         if (!tpl) return null;
         const clone = tpl.cloneNode(true);
         // avoid duplicate IDs in the DOM
@@ -490,10 +553,19 @@
 
           const candidateId = a.dataset.id;
 
-        // Special case: selecting 'data' makes it the sole selection (clear others)
+        // Special case: selecting 'data' toggles the data-only selection.
+        // - clicking an unselected 'data' makes it the sole selection
+        // - clicking it again deselects it and returns to normal selection handling
         if (candidateId === 'data') {
-          selectedTabs.length = 0;
-          selectedTabs.push(label);
+          const idx = selectedTabs.indexOf(label);
+          if (idx >= 0) {
+            // deselect data
+            selectedTabs.splice(idx, 1);
+          } else {
+            // select data alone
+            selectedTabs.length = 0;
+            selectedTabs.push(label);
+          }
           renderSelectedTabs();
           updatedInput();
           return;
@@ -544,15 +616,7 @@
       updatedInput();
     })();
 
-    $(function() {
-      $("#chart").draggable({ handle: "p"});
-      $("#chart").resizable({
-        maxHeight: 250,
-        maxWidth: 350,
-        minHeight: 150,
-        minWidth: 150
-      });
-    });
+
 
     function getMuSigma(args){
       // Order-independent resolver for mu and sigma.
@@ -646,11 +710,11 @@
     }
 
     // Read a field value from a metric panel (panelIndex = 1 for primary, 2 for secondary).
-    // Prefers `data-field` attributes but falls back to legacy ids like 'mu1'/'mean2'.
+    // Prefers `data-field` attributes (legacy numeric IDs removed).
     function panelValue(panelIndex, key) {
       const panel = document.getElementById(`metric${panelIndex}-content`);
       if (!panel) return null;
-      const el = panel.querySelector(`[data-field="${key}"]`) || panel.querySelector(`#${key}${panelIndex}`);
+      const el = panel.querySelector(`[data-field="${key}"]`);
       return el ? el.value : null;
     }
 
@@ -725,6 +789,28 @@
           }
           break;
       }
+      // validate numeric inputs collected from panels (exclude data and internal flags)
+      (function(){
+        for (const k of Object.keys(args)) {
+          if (k.startsWith('_') || k === 'data') continue;
+          const v = args[k];
+          // coerce string digits to number
+          const num = (typeof v === 'string' && v !== '') ? Number(v) : v;
+          if (num === '' || num === null || num === undefined) continue;
+          if (!isFinite(num)) { args._invalidNumeric = `Invalid numeric value for ${k}`; break; }
+          // positive-only checks
+          if (['sigma','SD','GSD','CV','error_factor','mean','GM','mode','x','x1','x2'].includes(k) && num <= 0) { args._invalidNumeric = `${k} must be a positive number`; break; }
+          // percentile range
+          if (['p','p1','p2'].includes(k) && (num < 0 || num > 100)) { args._invalidNumeric = `Percentile must be in range 0–100`; break; }
+          args[k] = num; // normalize
+        }
+      })();
+      if (args._invalidNumeric) {
+        const outEl = document.getElementById('ln-output');
+        if (outEl) outEl.textContent = args._invalidNumeric;
+        window._lastLognormal = null;
+        return;
+      }
       // if primary is data, we either have fitted mu/sigma or an error marker
       if (tab1 === 'data') {
         if (args._invalidData) {
@@ -781,6 +867,44 @@
       // expose structured result for other scripts/tests (include data stats when available)
       window._lastLognormal = { mu, sigma, mean, median, mode, sd, variance, gsd, CV, skewness, kurtosis, entropy, error_factor, dataStats: args._dataStats || null, dataValues: args._dataValues || null };
 
+      // if user requested CDF view, draw the empirical/theoretical CDF and skip the PDF plotting
+      const chartMode = (typeof getChartMode === 'function') ? getChartMode() : 'pdf';
+      const lnView = !!(document.getElementById('lnViewToggle') && document.getElementById('lnViewToggle').checked);
+      if (chartMode === 'cdf') {
+        const CH = document.getElementById('chart');
+        const cdfTraces = [];
+        const sigmaPlot = (typeof sigma === 'number' && sigma > 0) ? sigma : 1e-6;
+        const nPts = 800;
+
+        if (lnView) {
+          // empirical ln-CDF
+          if (tab1 === 'data' && args._dataValues && args._dataValues.length > 0) {
+            const sortedLogs = args._dataValues.map(v => Math.log(v)).sort((a,b)=>a-b);
+            const empY = sortedLogs.map((v,i) => (i+1)/sortedLogs.length);
+            cdfTraces.push({ x: sortedLogs, y: empY, mode: 'lines', line: { color: 'rgba(96,96,96,0.8)' , shape: 'hv' }, name: 'empirical ln-CDF' });
+          }
+          // theoretical normal CDF on ln-scale
+          const xl = linspace(mu - 4*sigmaPlot, mu + 4*sigmaPlot, nPts);
+          const yl = xl.map(z => normcdf(mu, sigmaPlot, z));
+          cdfTraces.push({ x: xl, y: yl, mode: 'lines', line: { color: '#f3b87b' }, name: 'theoretical CDF' });
+
+          Plotly.newPlot(CH, cdfTraces, { autosize:true, responsive:true, showlegend:true, legend:{ orientation:'h', x:0.5, xanchor:'center', y:1.06, font:{ size:11 } }, xaxis:{ title: { text: 'ln(x)', standoff: 8 }, automargin:true }, yaxis:{ range:[0,1], automargin:true }, margin:{ t:28, r:22, b:56, l:40 } });
+          return;
+        }
+
+        // standard x-scale CDF
+        if (tab1 === 'data' && args._dataValues && args._dataValues.length > 0) {
+          const sortedX = args._dataValues.slice().sort((a,b)=>a-b);
+          const empY = sortedX.map((v,i)=> (i+1)/sortedX.length);
+          cdfTraces.push({ x: sortedX, y: empY, mode: 'lines', line: { color: 'rgba(96,96,96,0.8)' , shape: 'hv' }, name: 'empirical CDF' });
+        }
+        const xg = linspace(Math.exp(mu - 4*sigmaPlot), Math.exp(mu + 4*sigmaPlot), nPts);
+        const yg = xg.map(xx => logncdf(mu, sigmaPlot, xx));
+        cdfTraces.push({ x: xg, y: yg, mode: 'lines', line: { color: '#f3b87b' }, name: 'theoretical CDF' });
+        Plotly.newPlot(CH, cdfTraces, { autosize:true, responsive:true, showlegend:true, legend:{ orientation:'h', x:0.5, xanchor:'center', y:1.06, font:{ size:11 } }, xaxis:{ automargin:true }, yaxis:{ range:[0,1], automargin:true }, margin:{ t:28, r:22, b:56, l:40 } });
+        return;
+      }
+
       let n = 1000;
       let p = linspace(0,0.99,n);
       let p5 = linspace(0,0.05,n);
@@ -803,40 +927,95 @@
       }
 
       CHART = document.getElementById('chart');
-      const traces = [];
-      // If we fitted from data, add a normalized histogram (probability density) of observed values
-      if (tab1 === 'data' && args._dataValues && args._dataValues.length > 0) {
-        const bins = Math.min(50, Math.max(5, Math.round(Math.sqrt(args._dataStats ? args._dataStats.n : args._dataValues.length))));
-        traces.push({
-          x: args._dataValues,
-          type: 'histogram',
-          histnorm: 'probability density',
-          opacity: 0.5,
-          marker: { color: 'rgba(96,96,96,0.28)' },
-          nbinsx: bins,
-          hovertemplate: '%{x}: %{y:.4f}<extra>data</extra>'
+      const traces = []; // lnView/chartMode already handled above
+
+      if (lnView) {
+        // ln(x) view — histogram of ln(data) and normal density on ln-axis
+        if (tab1 === 'data' && args._dataValues && args._dataValues.length > 0) {
+          const logs = args._dataValues.map(v => Math.log(v));
+          const bins = Math.min(50, Math.max(5, Math.round(Math.sqrt(args._dataStats ? args._dataStats.n : args._dataValues.length))));
+          traces.push({
+            x: logs,
+            type: 'histogram',
+            histnorm: 'probability density',
+            opacity: 0.5,
+            marker: { color: 'rgba(96,96,96,0.28)' },
+            nbinsx: bins,
+            hovertemplate: '%{x:.4f}: %{y:.4f}<extra>ln(data)</extra>',
+            name: 'Empirical (ln)'
+          });
+        }
+
+        // normal density on ln-scale
+        const xl = linspace(mu - 4*sigmaPlot, mu + 4*sigmaPlot, n);
+        const yl = xl.map(z => normpdf(mu, sigmaPlot, z));
+        traces.push({ x: xl, y: yl, fill: 'tozeroy', fillcolor: 'rgba(243,184,123,0.5)', line: { color: '#f3b87b' }, type: 'scatter', hoverinfo: 'skip', name: 'Theoretical (normal)' });
+        const yMax = Math.max.apply(null, yl) || 0.001;
+        traces.push({ x: [mu, mu], y: [0, yMax*0.98], hovertext: 'μ (ln)', mode: 'lines', line: { color: '#f3b87b', dash:'dot' }});
+
+        // responsive margins — increase bottom padding and enable automargin so axis labels are never cropped
+        const cw = CHART ? (CHART.clientWidth || CHART.offsetWidth) : window.innerWidth;
+        const leftMargin = cw < 420 ? 40 : (cw < 720 ? 52 : 68);
+        const rightMargin = cw < 420 ? 20 : 24;
+        const bottomMargin = cw < 420 ? 72 : 56;
+        const topMargin = 24;
+
+        Plotly.newPlot(CHART, traces, {
+          autosize: true,
+          responsive: true,
+          showlegend: true,
+          legend: { orientation: 'h', x: 0.5, xanchor: 'center', y: 1.06, font: { size: 11 } },
+          barmode: 'overlay',
+          xaxis: { type: 'lin', range: [xl[0], xl[n-1]], title: { text: 'ln(x)', standoff: 8 }, automargin: true },
+          yaxis: { automargin: true },
+          margin: { t: topMargin, r: rightMargin, b: bottomMargin, l: leftMargin, autoexpand:false },
+          paper_bgcolor: 'rgba(0,0,0,0)',
+          plot_bgcolor: 'rgba(0,0,0,0)'
+        });
+
+      } else {
+        // standard lognormal view (original behaviour)
+        if (tab1 === 'data' && args._dataValues && args._dataValues.length > 0) {
+          const bins = Math.min(50, Math.max(5, Math.round(Math.sqrt(args._dataStats ? args._dataStats.n : args._dataValues.length))));
+          traces.push({
+            x: args._dataValues,
+            type: 'histogram',
+            histnorm: 'probability density',
+            opacity: 0.5,
+            marker: { color: 'rgba(96,96,96,0.28)' },
+            nbinsx: bins,
+            hovertemplate: '%{x}: %{y:.4f}<extra>data</extra>',
+            name: 'Empirical'
+          });
+        }
+
+        traces.push(
+          { x: x, y: y, fill: 'tozeroy', fillcolor: 'rgba(243,184,123,0.5)', line: { color: '#f3b87b' }, type: 'scatter', hoverinfo: 'skip', name: 'Theoretical' },
+          { x: x5, y: y5, fill: 'tozeroy', fillcolor: 'rgba(243,184,123,0.5)', line: { color: '#f3b87b' }, type: 'scatter', hoverinfo: 'skip' },
+          { x: x95, y: y95, fill: 'tozeroy', fillcolor: 'rgba(243,184,123,0.5)', line: { color: '#f3b87b' }, type: 'scatter', hoverinfo: 'skip' },
+          { x:[Math.exp(mu+(sigma**2)/2),Math.exp(mu+(sigma**2)/2)], y:[0,lognpdf( mu, sigmaPlot, Math.exp(mu+(sigma**2)/2) )], hovertext:'Mean', mode:'lines', line: { color: '#f3b87b', dash:'solid' }},
+          { x:[Math.exp(mu),Math.exp(mu)], y:[0,lognpdf( mu, sigmaPlot, Math.exp(mu) )], hovertext:'50%', mode:'lines', line: { color: '#f3b87b', dash:'dot' }}
+        );
+
+        // compute responsive margins so axis labels/ticks never get cropped
+        const cw = CHART ? (CHART.clientWidth || CHART.offsetWidth) : window.innerWidth;
+        const leftMargin = cw < 420 ? 40 : (cw < 720 ? 52 : 68);
+        const rightMargin = cw < 420 ? 20 : 24;
+        const bottomMargin = cw < 420 ? 72 : 56; // increased bottom space so x-axis labels are visible
+        const topMargin = 24;
+        Plotly.newPlot(CHART, traces, {
+          autosize: true,
+          responsive: true,
+          showlegend: true,
+          legend: { orientation: 'h', x: 0.5, xanchor: 'center', y: 1.06, font: { size: 11 } },
+          barmode: 'overlay',
+          xaxis: { type: 'lin', range: [x[0],x[n-1]], automargin: true },
+          yaxis: { automargin: true },
+          margin: { t: topMargin, r: rightMargin, b: bottomMargin, l: leftMargin, autoexpand:false },
+          paper_bgcolor: 'rgba(0,0,0,0)',
+          plot_bgcolor: 'rgba(0,0,0,0)'
         });
       }
-
-      // density / envelope traces (draw on top of histogram)
-      traces.push(
-        { x: x, y: y, fill: 'tozeroy', fillcolor: 'rgba(243,184,123,0.5)', line: { color: '#f3b87b' }, type: 'scatter', hoverinfo: 'skip' },
-        { x: x5, y: y5, fill: 'tozeroy', fillcolor: 'rgba(243,184,123,0.5)', line: { color: '#f3b87b' }, type: 'scatter', hoverinfo: 'skip' },
-        { x: x95, y: y95, fill: 'tozeroy', fillcolor: 'rgba(243,184,123,0.5)', line: { color: '#f3b87b' }, type: 'scatter', hoverinfo: 'skip' },
-        { x:[Math.exp(mu+(sigma**2)/2),Math.exp(mu+(sigma**2)/2)], y:[0,lognpdf( mu, sigmaPlot, Math.exp(mu+(sigma**2)/2) )], hovertext:'Mean', mode:'lines', line: { color: '#f3b87b', dash:'solid' }},
-        { x:[Math.exp(mu),Math.exp(mu)], y:[0,lognpdf( mu, sigmaPlot, Math.exp(mu) )], hovertext:'50%', mode:'lines', line: { color: '#f3b87b', dash:'dot' }}
-      );
-
-      Plotly.newPlot(CHART, traces, {
-        autosize: true,
-        responsive: true,
-        showlegend: false,
-        barmode: 'overlay',
-        xaxis: { type: 'lin', range: [x[0],x[n-1]] },  
-        margin: { t: 0, r: 0, b:20, l:40, autoexpand:false },
-        paper_bgcolor: 'rgba(0,0,0,0)',
-        plot_bgcolor: 'rgba(0,0,0,0)'
-      });
     }
 
     // loop through each arg-input and add an input event listener
@@ -868,7 +1047,7 @@
       const preview = window.open('', '_blank');
       preview.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Lognormal — Preview</title>');
       preview.document.write('<link rel="stylesheet" href="./resources/css/kvot.css">');
-      preview.document.write('<style>body{font-family:Arial,Helvetica,sans-serif;padding:18px;color:#222} pre{white-space:pre-wrap;background:#f7f7f8;padding:12px;border-radius:4px;border:1px solid #e1e1e1} table{width:100%;border-collapse:collapse} td{padding:4px 6px}</style>');
+      preview.document.write('<style>body{font-family:Arial,Helvetica,sans-serif;padding:18px;color:#222} pre{white-space:pre-wrap;background:#f7f7f8;padding:12px;border-radius:4px;border:1px solid #e1e1e1;font-family:Menlo,monospace;font-size:0.95rem} table{width:100%;border-collapse:collapse} td{padding:8px 10px} .equations-body{font-size:1rem;line-height:1.45} @media print{ body{margin:12mm} pre{font-size:1rem} .equations-body table td{padding:8px 10px} }</style>');
       preview.document.write('<script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js">' + '</' + 'script>');
       preview.document.write('</head><body>');
       preview.document.write('<h2>Lognormal preview</h2>');
@@ -880,6 +1059,30 @@
       preview.document.write('</body></html>');
       preview.document.close();
     });
+
+    // wire ln(x) toggle to re-run calculation and redraw chart
+    const _lnToggle = document.getElementById('lnViewToggle');
+    if (_lnToggle) _lnToggle.addEventListener('change', function(){ updatedInput(); });
+    // segmented chart mode buttons (PDF / CDF)
+    const _chartMode = document.getElementById('chartMode');
+    if (_chartMode) {
+      Array.from(_chartMode.querySelectorAll('[data-chart-mode]')).forEach(function(btn){
+        btn.addEventListener('click', function(){
+          _chartMode.querySelectorAll('[data-chart-mode]').forEach(b => b.classList.remove('active'));
+          this.classList.add('active');
+          // update aria-pressed
+          _chartMode.querySelectorAll('[data-chart-mode]').forEach(b => b.setAttribute('aria-pressed', b.classList.contains('active') ? 'true' : 'false'));
+          updatedInput();
+        });
+      });
+    }
+
+    function getChartMode() {
+      const c = document.getElementById('chartMode');
+      if (!c) return 'pdf';
+      const active = c.querySelector('[data-chart-mode].active');
+      return (active && active.getAttribute('data-mode')) || 'pdf';
+    }
 
     // second-metric is now chosen by selecting a second tab in the combined header (no checkbox)
     // updatedInput() will react to header selection state (selectedTabs).
