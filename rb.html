@@ -5459,6 +5459,9 @@
      */
     function filterTree(searchTerm) {
       currentSearchTerm = searchTerm;
+      // show/hide search ticker depending on term presence
+      if (searchTerm && searchTerm.trim()) showSearchTicker();
+      else hideSearchTicker();
       const tree = document.getElementById('tree');
       const allItems = tree.querySelectorAll('.tree-item');
       const allChildren = tree.querySelectorAll('.tree-group-children');
@@ -5916,6 +5919,8 @@
       window._searchExpansionState.lastTerm = term;
       window._searchExpansionState.inProgress = true;
 
+      showSearchTicker();
+
       (async () => {
         try {
           const isPathSearchLocal = isPathSearchTerm(term);
@@ -5943,6 +5948,7 @@
         } catch (e) {
           console.error('search-aware expansion error', e);
         } finally {
+          hideSearchTicker();
           window._searchExpansionState.inProgress = false;
         }
       })();
@@ -5964,6 +5970,18 @@
     } catch (e) { /* ignore */ }
 
     // File load ticker helpers (show per-file progress and tree-refresh state)
+    // search ticker state – reused file-load ticker element but separate control flag
+    let _searchTickerActive = false;
+    function showSearchTicker() {
+      _searchTickerActive = true;
+      try { showFileLoadTicker(0, 0, 'Searching…'); } catch (e) { /* ignore */ }
+    }
+    function hideSearchTicker() {
+      if (!_searchTickerActive) return;
+      _searchTickerActive = false;
+      try { hideFileLoadTicker(); } catch (e) { /* ignore */ }
+    }
+
     function showFileLoadTicker(current = 0, total = 0, text = '') {
       try {
         const el = document.getElementById('fileLoadTicker');
