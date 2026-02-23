@@ -37,7 +37,8 @@ const KVOT = (() => {
 
   const ALL_PROJECTS = [
     { href: './rdc.html', label: 'radionuclide decay chains' },
-    { href: './rb.html', label: 'hdf result browser' },
+    { href: './rb.html', label: 'hdf browser' },
+    { href: './logn.html', label: 'lognormal conversions' },
   ];
 
   // ── Helper: create an SVG icon ─────────────────────────────────────────────
