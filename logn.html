@@ -26,7 +26,15 @@
     #tabs-header a.disabled-flash { box-shadow: inset 0 0 0 2px rgba(255,0,0,0.10); }
 
     /* ensure combined header and metric panels stay visible above the equations table */
-    #combined-tabs-header, #metric-panels { position: relative; z-index: 5; }
+    /* header remains always on top */
+    header { position: fixed; top: 0; left: 0; right:0; z-index: 20; background: var(--footer-bg); box-shadow: 0 2px 4px rgba(0,0,0,0.08); }
+    /* keep the tabs container pinned beneath the header */
+    #tabs { position: sticky; top: 3.5rem; /* allow for header height */ z-index: 15; background: var(--bg-primary); }
+    #combined-tabs-header, #metric-panels { position: relative; z-index: 1; }
+    /* pad content so it doesn't hide under fixed header and tabs */
+    .content { padding-top: 4rem; padding-bottom: 10rem; }
+    body { padding-bottom: 6rem; }
+    footer { z-index: 25; }
 
     /* two-column layout: left = controls, right = equations; responsive stack on small screens */
     #logn .logn-columns { display:flex; gap:18px; align-items:flex-start; }
@@ -42,7 +50,7 @@
     /* chart inside computed results: stack cleanly under the textual output and contain overflow */
     #detailsContainer { display: flex; flex-direction: column; gap: 12px; align-items: stretch; }
     #detailsContainer #ln-output { position: static; z-index: auto; width: 100%; box-sizing: border-box; }
-    #detailsContainer #chart { position: static; z-index: auto; min-height:220px; max-height:420px; width:100%; box-sizing:border-box; background: #fff; padding:6px; margin:0; margin-bottom:20px; border-radius:6px; border:1px solid #e6e6e6; box-shadow: 0 1px 4px rgba(0,0,0,0.03); overflow: hidden; }
+    #detailsContainer #chart { position: static; z-index: auto; min-height:220px; max-height:420px; width:100%; box-sizing:border-box; background: var(--bg-primary); padding:6px; margin:0; margin-bottom:20px; border-radius:6px; border:1px solid var(--border-color); box-shadow: 0 1px 4px rgba(0,0,0,0.03); overflow: hidden; }
     /* ensure Plotly canvas never exceeds its container */
     #detailsContainer #chart .plotly, #detailsContainer #chart .js-plotly-plot { width: 100% !important; max-width: 100% !important; box-sizing: border-box !important; }
     #detailsContainer #chart .plotly { height:100% !important; }
@@ -73,7 +81,7 @@
     #tabs-header a:focus { outline: 2px solid rgba(243,184,123,0.45); box-shadow: 0 0 0 3px rgba(243,184,123,0.08); }
 
     /* form control styling — unified, roomy inputs */
-    .metric-content .arg { width: 100%; padding: 8px 10px; border: 1px solid #e6e6e6; border-radius: 6px; font-size: 0.95rem; color: #222; background: #fff; box-sizing: border-box; transition: box-shadow .12s, border-color .12s; }
+    .metric-content .arg { width: 100%; padding: 8px 10px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 0.95rem; color: var(--text-primary); background: var(--input-bg); box-sizing: border-box; transition: box-shadow .12s, border-color .12s; }
     .metric-content .arg:focus { outline: none; box-shadow: 0 0 0 3px rgba(243,184,123,0.08); border-color: #f3b87b; }
     .metric-content textarea.arg { min-height: 140px; resize: vertical; font-family: inherit; }
     /* make computed results easier to scan */
@@ -95,7 +103,7 @@
     .chart-toggle input[type="checkbox"] { width: 16px; height: 16px; }
 
     /* segmented control for PDF/CDF (roomier + stronger active state) */
-    .segmented { display:inline-flex; border-radius:6px; overflow:hidden; border:1px solid #e6e6e6; background:#fff; box-shadow: inset 0 -1px 0 rgba(0,0,0,0.02); }
+    .segmented { display:inline-flex; border-radius:6px; overflow:hidden; border:1px solid var(--border-color); background: var(--bg-primary); box-shadow: inset 0 -1px 0 rgba(0,0,0,0.02); }
     .segmented button { appearance:none; -webkit-appearance:none; border:0; background:transparent; padding:8px 14px; margin:0; cursor:pointer; color:#444; font-size:0.92rem; line-height:1; transition: background .12s, color .12s, box-shadow .12s; }
     .segmented button.active { background:#f3b87b; color:#fff; font-weight:600; box-shadow: inset 0 -3px 0 rgba(0,0,0,0.06); }
     .segmented button:focus { outline: 2px solid rgba(243,184,123,0.25); box-shadow: 0 0 0 3px rgba(243,184,123,0.06); }
@@ -106,6 +114,9 @@
     .chart-legend .swatch { width:12px; height:10px; border-radius:2px; display:inline-block; box-shadow: inset 0 -1px 0 rgba(0,0,0,0.06); border:1px solid rgba(0,0,0,0.04); }
     .chart-legend .swatch.swatch-empirical { background: rgba(96,96,96,0.6); }
     .chart-legend .swatch.swatch-theoretical { background: #f3b87b; }
+    /* form controls adapt to theme */
+    input, textarea, select, pre { background: var(--input-bg); color: var(--input-text); border:1px solid var(--input-border); }
+    #chart { background: var(--bg-primary); }
   </style>
   <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
   <script src="https://cdn.plot.ly/plotly-2.14.0.min.js"></script>
@@ -124,30 +135,35 @@
             <!-- Combined header (single header controls up to two selectable tabs; click toggles selection) -->
             <div id="combined-tabs-header" style="margin-bottom:8px;">
               <ul id="tabs-header" role="tablist" aria-label="Metric selector" style="list-style:none;padding:0;margin:0;display:flex;gap:8px;flex-wrap:wrap;">
-                <li><a href="#" data-id="mu">mean(log)</a></li>
+                <li><a href="#" data-id="mu">μ</a></li>
                 <li><a href="#" data-id="mean">mean</a></li>
                 <li><a href="#" data-id="GM">gm</a></li>
                 <li><a href="#" data-id="mode">mode</a></li>
                 <li><a href="#" data-id="percentile">percentile</a></li>
-                <li><a href="#" data-id="data">data</a></li>
-                <li><a href="#" data-id="sigma">mean(sd)</a></li>
+                <li><a href="#" data-id="minmax">min/max</a></li>
+                <li><a href="#" data-id="sigma">σ</a></li>
                 <li><a href="#" data-id="SD">sd</a></li>
                 <li><a href="#" data-id="GSD">gsd</a></li>
                 <li><a href="#" data-id="CV">CV</a></li>
                 <li><a href="#" data-id="error">error factor</a></li>
+                <li><a href="#" data-id="data">data</a></li>
               </ul>
-              <div id="metric-note" style="margin-top:6px;font-size:0.88rem;color:#666;">Select up to <strong>two</strong> metrics. Click a selected metric to deselect it.</div>
-              <div id="metric-info" role="status" aria-live="polite" style="display:none;margin-top:6px;color:#a65a00;background:#fff6e6;padding:6px 8px;border-radius:4px;border:1px solid #f0d6b0;font-size:0.9rem;"></div>
+              <div id="metric-note" style="margin-top:6px;font-size:0.88rem;color:#666;">Select up to <strong>two</strong> non‑data metrics; data may be added as a third. Click a selected metric to deselect it.</div>
+              <div id="metric-info" role="status" aria-live="polite" style="display:none;margin-top:6px;color:var(--color-kvot-accent);background:var(--bg-secondary);padding:6px 8px;border-radius:4px;border:1px solid var(--border-color);font-size:0.9rem;"></div>
             </div>
             <!-- metric panels (primary / secondary) -->
-            <div id="metric-panels" style="display:flex;gap:12px;margin-top:6px;align-items:flex-start;">
-              <div class="metric-panel" id="metric1-panel" role="region" aria-labelledby="metric1-title" style="flex:1;min-width:220px;border:1px solid #eee;padding:8px;border-radius:4px;background:#fff;">
+            <div id="metric-panels" style="display:flex;flex-wrap:wrap;gap:12px;margin-top:6px;align-items:flex-start;">
+              <div class="metric-panel" id="metric1-panel" role="region" aria-labelledby="metric1-title" style="flex:1;min-width:220px;border:1px solid var(--border-color);padding:8px;border-radius:4px;background:var(--bg-secondary);">
                 <h4 id="metric1-title" style="margin:6px 0;"><span>Primary metric</span></h4>
                 <div id="metric1-content" class="metric-content" style="min-height:120px;color:#666;padding:6px;border-radius:4px;">No metric selected.</div>
               </div>
-              <div class="metric-panel" id="metric2-panel" role="region" aria-labelledby="metric2-title" style="flex:1;min-width:220px;border:1px solid #eee;padding:8px;border-radius:4px;background:#fff;">
+              <div class="metric-panel" id="metric2-panel" role="region" aria-labelledby="metric2-title" style="flex:1;min-width:220px;border:1px solid var(--border-color);padding:8px;border-radius:4px;background:var(--bg-secondary);">
                 <h4 id="metric2-title" style="margin:6px 0;display:flex;align-items:center;justify-content:space-between;"><span>Secondary metric (optional)</span></h4>
                 <div id="metric2-content" class="metric-content" style="min-height:120px;color:#666;padding:6px;border-radius:4px;">No metric selected.</div>
+              </div>
+              <div class="metric-panel" id="metric3-panel" role="region" aria-labelledby="metric3-title" style="flex:1 1 100%;min-width:220px;border:1px solid var(--border-color);padding:8px;border-radius:4px;background:var(--bg-secondary);display:none;">
+                <h4 id="metric3-title" style="margin:6px 0;"><span>Data (optional)</span></h4>
+                <div id="metric3-content" class="metric-content" style="min-height:120px;color:#666;padding:6px;border-radius:4px;">No metric selected.</div>
               </div>
             </div>
 
@@ -155,22 +171,15 @@
               <summary class="equations-summary">Computed results</summary>
               <div class="computed-body">
                 <div id="logn-output" style="margin:8px 0 0 0; border-top:1px solid #e6e6e6; padding-top:12px;">
-                  <span style="display:inline-flex;align-items:center;gap:8px;margin-right:12px;color:#555;">Select one or two tabs above to choose metric(s)</span>
-                  <button id="showDetailsBtn" style="padding:6px 10px;margin-right:8px;">Show details</button>
-                  <button id="previewDetailsBtn" style="padding:6px 10px;margin-right:8px;">Preview</button>
-                  <button id="copyDetailsBtn" style="padding:6px 10px;margin-right:8px;">Copy</button>
-                  <button id="printDetailsBtn" style="padding:6px 10px;margin-right:8px;">Print</button>
-
-                  <label class="chart-toggle" style="margin-left:6px;display:inline-flex;align-items:center;gap:8px;font-size:0.92rem;color:#555;"><input id="lnViewToggle" type="checkbox"> Show ln(x) view</label>
-                  <label style="margin-left:10px;font-size:0.92rem;color:#555;display:inline-flex;align-items:center;gap:6px;">View:
-                    <div id="chartMode" class="segmented" role="tablist" aria-label="Chart mode">
-                      <button type="button" data-mode="pdf" aria-pressed="true" class="active" data-chart-mode>PDF</button>
-                      <button type="button" data-mode="cdf" aria-pressed="false" data-chart-mode>CDF</button>
-                    </div>
-                  </label>
-
+                  <!-- results container now only holds output and chart; controls moved below -->
                   <div id="detailsContainer" style="margin-top:12px;display:block;">
-                    <pre id="ln-output" style="white-space:pre-wrap;background:#f7f7f8;border:1px solid #e1e1e1;padding:12px;border-radius:4px;min-height:120px;">No distribution computed yet.</pre>
+                    <pre id="ln-output" style="white-space:pre-wrap;background:var(--bg-secondary);border:1px solid var(--border-color);padding:12px;border-radius:4px;min-height:120px;color:var(--text-primary);">No distribution computed yet.</pre>
+                    <!-- controls placed here: ln(x) toggle (shown only when a chart exists) -->
+                    <div id="result-controls" style="margin-top:8px;display:none;gap:10px;align-items:center;">
+                      <label class="chart-toggle" style="display:inline-flex;align-items:center;gap:8px;font-size:0.92rem;color:#555;">
+                        <input id="lnViewToggle" type="checkbox"> Show ln(x) view
+                      </label>
+                    </div>
                     <div id="chart" aria-label="Lognormal density chart" style="min-height:220px;"></div>
                   </div>
                 </div>
@@ -232,7 +241,7 @@
 
 
             <div id="tabs-mu">
-              <p>mu, \(\mu\) [-∞,+∞], is the expected value (or mean) of the variable's natural logarithm</p>
+              <p>\(\mu\) [-∞,+∞], is the expected value (or mean) of the variable's natural logarithm</p>
               <p><input class="arg" data-field="mu" type="number" step="any" inputmode="decimal" value="0" name="Mean of it's natural logarithm" title="Please provide the mean of it's natural logarithm."></p>
             </div>
             <div id="tabs-mean">
@@ -262,23 +271,54 @@
                 </label>
               </p>
             </div>
+            <div id="tabs-minmax">
+              <p style="font-size:0.92rem;color:#333;">
+                Specify a confidence interval with minimum and maximum (both &gt;0), and a probability (0–100).
+              </p>
+              <p style="display:flex;gap:4%;flex-wrap:wrap;">
+                <label style="flex:1; min-width:100px;">
+                  Min (>0)<br>
+                  <input class="arg" data-field="min" type="number" min="0" step="any" inputmode="decimal" value="1" title="Please provide a positive minimum value.">
+                </label>
+                <label style="flex:1; min-width:100px;">
+                  Max (>0)<br>
+                  <input class="arg" data-field="max" type="number" min="0" step="any" inputmode="decimal" value="2" title="Please provide a positive maximum value.">
+                </label>
+                <label style="flex:1; min-width:120px;">
+                  Probability (%)<br>
+                  <input class="arg" data-field="p" type="number" min="0" max="100" step="any" inputmode="decimal" value="97.5" title="Please provide a probability between 0 and 100.">
+                </label>
+              </p>
+            </div>
             <div id="tabs-data">
               <p><textarea class="arg" id="data" data-field="data" inputmode="decimal" name="Data" title="Please provide raw numeric data (comma/space separated)" placeholder="e.g. 1.2, 2.3, 3.4 (comma/space separated)" rows="6"></textarea></p>
+              <p style="margin-top:6px;font-size:0.92rem;color:#444;">
+                <label>Fit method:
+                  <select class="arg" id="dataMethod" data-field="data_method" style="margin-left:4px;padding:2px 4px;font-size:0.92rem;">
+                    <option value="MLE">Maximum likelihood (MLE)</option>
+                    <option value="MOM">Method of moments (MOM)</option>
+                  </select>
+                </label>
+              </p>
             </div>
             <div id="tabs-sigma">
-              <p>sigma, \(\sigma\) > 0, is the standard deviation of the variable's natural logarithm</p>
+              <p>\(\sigma\) > 0, is the standard deviation of the variable's natural logarithm</p>
               <p><input class="arg" data-field="sigma" type="number" min="0" step="any" inputmode="decimal" value="1" name="Standard deviation of it's natural logarithm" title="Please provide the standard deviation of it's natural logarithm (positive)."></p>
             </div>
             <div id="tabs-SD">
-              <p><input class="arg" data-field="SD" type="number" min="0" step="any" inputmode="decimal" value="0" name="Standard deviation" title="Please provide the arithmetic standard deviation (positive)."></p>
+              <p>sd > 0, is the standard deviation of the variable</p>
+              <p><input class="arg" data-field="SD" type="number" min="0" step="any" inputmode="decimal" value="1" name="Standard deviation" title="Please provide the arithmetic standard deviation (positive)."></p>
             </div>
             <div id="tabs-GSD">
-              <p><input class="arg" data-field="GSD" type="number" min="0" step="any" inputmode="decimal" value="1" name="Geometric mean" title="Please provide the geometric standard deviation (positive)."></p>
+              <p>gsd > 0, is the geometric standard deviation of the variable</p>
+              <p><input class="arg" data-field="GSD" type="number" min="0" step="any" inputmode="decimal" value="1" name="Geometric standard deviation" title="Please provide the geometric standard deviation (positive)."></p>
             </div>
             <div id="tabs-CV">
+              <p>CV > 0, is the coefficient of variation of the variable</p>
               <p><input class="arg" data-field="CV" type="number" min="0" step="any" inputmode="decimal" value="1" name="Coefficient of variation" title="Please provide the coefficient of variation (positive)."></p>
             </div>
             <div id="tabs-error">
+              <p>error > 0, is the error factor of the variable</p>
               <p><input class="arg" data-field="error_factor" type="number" min="0" step="any" inputmode="decimal" value="1" name="Error factor" title="Please provide the error factor (positive)."></p>
             </div>
           </div>
@@ -312,6 +352,7 @@
        - templates live under #tabs (single source) and are cloned into metric panels on selection
     */
     const selectedTabs = []; // up to two selected `data-id` values (anchor data-id)
+    let CHART; // global reference to current Plotly chart (assigned when drawing)
     const _labelToId = {}; // built from header anchors (label text -> template id suffix) — retained for backward mapping
     const _idToLabel = {}; // reverse map (data-id -> label text) — used for display
 
@@ -320,17 +361,18 @@
     // - `incompatibleWith` lists other metric ids that cannot be combined with this metric.
     // - `fallback` is a directional mapping used to auto-replace a disallowed second metric.
     const metricRules = {
-      mu: { incompatibleWith: ['GM'], fallback: { 'GM': 'sigma' } },
-      GM: { incompatibleWith: ['mu'], fallback: { 'mu': 'GSD' } },
-      mean: { incompatibleWith: ['data'], fallback: { 'GM': 'SD' } },
-      mode: { incompatibleWith: ['data'], fallback: { 'mean': 'SD' } },
-      percentile: { pairable: true },
-      data: { exclusive: true },
-      sigma: { incompatibleWith: ['data','SD','GSD','CV','error'] },
-      SD: { incompatibleWith: ['data','sigma','GSD','CV','error'] },
-      GSD: { incompatibleWith: ['data','sigma','SD','CV','error'] },
-      CV: { incompatibleWith: ['data','sigma','SD','GSD','error'] },
-      error: { incompatibleWith: ['data','sigma','SD','GSD','CV'] }
+      mu: { incompatibleWith: ['GM'],},
+      GM: { incompatibleWith: ['mu']},
+      mean: { },
+      mode: { incompatibleWith: ['SD']},
+      percentile: {incompatibleWith: ['SD'], pairable: true },
+      minmax: { incompatibleWith: ['mu','mean','GM','mode','percentile','sigma','SD','GSD','CV','error'], pairable: true },
+      data: {},
+      sigma: { incompatibleWith: ['SD','GSD','CV','error'] },
+      SD: { incompatibleWith: ['sigma','GSD','CV','error','percentile','mode'] },
+      GSD: { incompatibleWith: ['sigma','SD','CV','error'] },
+      CV: { incompatibleWith: ['sigma','SD','GSD','error'] },
+      error: { incompatibleWith: ['sigma','SD','GSD','CV'] }
     };
 
     function isPairDisallowed(a,b){
@@ -373,26 +415,13 @@
         }
       });
 
-      // If data is selected it must be the only selection — disable all other tabs.
-      const hasDataSelected = selectedIds.includes('data');
+      // no special data-exclusive handling anymore
       const maxSelectable = panelCount();
-      if (hasDataSelected) {
+      if (selectedTabs.length >= maxSelectable) {
+        // reached maxSelectable — disable unselected anchors except data (which can always be added)
         anchors.forEach(a => {
           const id = a.dataset.id;
-          if (id !== 'data') {
-            a.classList.add('disabled');
-            a.setAttribute('aria-disabled','true');
-            a.title = 'Data must be selected alone — deselect data to choose other metrics.';
-          } else {
-            a.classList.remove('disabled');
-            a.removeAttribute('aria-disabled');
-            if ((a.getAttribute('title') || '').startsWith('Maximum of') || (a.getAttribute('title') || '').startsWith('Not allowed')) a.removeAttribute('title');
-          }
-        });
-      } else if (selectedTabs.length >= maxSelectable) {
-        // reached maxSelectable — disable unselected anchors
-        anchors.forEach(a => {
-          const id = a.dataset.id;
+          if (id === 'data') return;
           if (!selectedTabs.includes(id)) {
             a.classList.add('disabled');
             a.setAttribute('aria-disabled','true');
@@ -414,6 +443,47 @@
 
       const panels = Array.from(document.querySelectorAll('#metric-panels .metric-panel'));
 
+      // before clearing panels, persist any data input so it can survive deselection
+      panels.forEach(panel => {
+        const ta = panel.querySelector('[data-field="data"]');
+        if (ta) {
+          window._lastDataRaw = ta.value || '';
+        }
+        const sel = panel.querySelector('[data-field="data_method"]');
+        if (sel) {
+          window._lastDataMethod = sel.value;
+        }
+        // also remember percentile entries
+        let pInp = panel.querySelector('[data-field="p"]');
+        const xInp = panel.querySelector('[data-field="x"]');
+        if (pInp && xInp) {
+          window._lastPercentile = window._lastPercentile || {};
+          if (panel.id === 'metric1-panel') {
+            window._lastPercentile.p1 = pInp.value;
+            window._lastPercentile.x1 = xInp.value;
+          } else {
+            window._lastPercentile.p2 = pInp.value;
+            window._lastPercentile.x2 = xInp.value;
+          }
+        }
+        // remember minmax inputs too
+        const minInp = panel.querySelector('[data-field="min"]');
+        const maxInp = panel.querySelector('[data-field="max"]');
+        pInp = panel.querySelector('[data-field="p"]');
+        if (minInp && maxInp && pInp) {
+          window._lastMinmax = window._lastMinmax || {};
+          if (panel.id === 'metric1-panel') {
+            window._lastMinmax.min = minInp.value;
+            window._lastMinmax.max = maxInp.value;
+            window._lastMinmax.p = pInp.value;
+          } else {
+            // secondary slot
+            window._lastMinmax.min2 = minInp.value;
+            window._lastMinmax.max2 = maxInp.value;
+            window._lastMinmax.p2 = pInp.value;
+          }
+        }
+      });
       // clear any generated content from panels (templates remain under #tabs)
       panels.forEach(panel => {
         const content = panel.querySelector('.metric-content');
@@ -425,22 +495,21 @@
         }
       });
 
-      // if data is present in the selection, only the data slot remains visible (data must be selected alone)
-      if (hasDataSelected) {
-        panels.forEach((panel, idx) => {
-          // leave first panel visible for the data input; hide the other
-          if (idx === 0) panel.style.display = '';
-          else {
-            panel.style.display = 'none';
-            if (selectedTabs[idx]) selectedTabs.splice(idx,1);
-          }
-        });
-      } else {
-        panels.forEach(panel => panel.style.display = '');
+      // no special display logic for data; both panels remain visible
+      panels.forEach(panel => panel.style.display = '');
+      // if minmax is chosen as a non-data metric, use only the primary slot and
+      // hide the secondary panel entirely while allowing data (panel3) if present
+      const hasMinmax = selectedIds.includes('minmax');
+      if (hasMinmax) {
+        const panel2 = document.getElementById('metric2-panel');
+        if (panel2) panel2.style.display = 'none';
+        const panel1 = document.getElementById('metric1-panel');
+        if (panel1) panel1.style.flex = '1 1 100%';
       }
 
-      // ensure selectedTabs length does not exceed panel count
-      if (selectedTabs.length > panels.length) selectedTabs.splice(panels.length);
+      // ensure selectedTabs length does not exceed panel count (note panels.length is always 3)
+      const maxSel = panelCount();
+      if (selectedTabs.length > maxSel) selectedTabs.splice(maxSel);
 
       // enforce pair-based constraints (order-independent). for two selections, resolve conflicts.
       if (selectedTabs.length === 2) {
@@ -468,7 +537,8 @@
         };
         Object.entries(vals).forEach(([field, val]) => {
           const el = clone.querySelector(`[data-field="${field}"]`);
-          if (el && (el.value === '' || el.value === '0' || el.value === '1')) {
+          if (el) {
+            // when cloning a new metric, always populate using last computed values
             el.value = val;
           }
         });
@@ -487,6 +557,17 @@
         attachArgListeners(clone);
         // if we have stored mu/sigma, prefill the new inputs
         populateFromLast(clone);
+        // also restore any previous percentile values
+        if (suf === 'percentile' && window._lastPercentile) {
+          const p1 = window._lastPercentile.p1 || '';
+          const x1 = window._lastPercentile.x1 || '';
+          const p2 = window._lastPercentile.p2 || '';
+          const x2 = window._lastPercentile.x2 || '';
+          const pInp = clone.querySelector('[data-field="p"]');
+          const xInp = clone.querySelector('[data-field="x"]');
+          if (pInp) pInp.value = p1 || p2 || pInp.value;
+          if (xInp) xInp.value = x1 || x2 || xInp.value;
+        }
         return clone;
       }
 
@@ -495,42 +576,101 @@
         (root.querySelectorAll ? Array.from(root.querySelectorAll('.arg')) : []).forEach(function(input) {
           // avoid double-binding by checking a marker
           if (input._kvotArgBound) return; input._kvotArgBound = true;
-          input.addEventListener('input', function() { updatedInput(); });
+          input.addEventListener('input', function() {
+            // mark percentile x-values as user-edited so auto-calcs stop
+            if (input.dataset && input.dataset.field === 'x') {
+              const tpl = input.closest('[data-cloned-from="percentile"]');
+              if (tpl) {
+                input._userEdited = true;
+                input._programmatic = false;
+              }
+            }
+            updatedInput();
+          });
         });
       }
 
-      // populate each panel according to selectedTabs (panel index = array index + 1)
+      // determine how tabs map to panel slots when 'data' is involved
+      const hasData = selectedTabs.includes('data');
+      const nonData = selectedTabs.filter(id => id !== 'data');
+      const showPanel3 = hasData && nonData.length >= 1; // panel3 used for data when any other metric exists
+
+      // populate each panel according to computed slots
       panels.forEach((panel, idx) => {
         const content = panel.querySelector('.metric-content');
         const titleSpan = panel.querySelector('h4 span');
-        // allow special case: if primary is 'percentile' and the secondary slot is empty,
-        // show a second percentile pair input so the user can enter two percentile pairs.
-        const sel = selectedTabs[idx]; // data-id or undefined
-        const effectiveSel = sel || ((idx === 1 && selectedTabs[0] === 'percentile') ? 'percentile' : null);
+        let effectiveSel = null;
 
-        // title: show metric name (display label) and slot number
+        if (idx < 2) {
+          if (hasData && nonData.length === 0) {
+            // data-only case: put data in panel1
+            if (idx === 0) effectiveSel = 'data';
+          } else {
+            // assign first two non-data selections (may leave second empty)
+            effectiveSel = nonData[idx] || null;
+            // special-case: if primary is percentile and secondary slot empty, echo pair2
+            if (!effectiveSel && idx === 1 && nonData[0] === 'percentile') {
+              effectiveSel = 'percentile';
+            }
+          }
+        } else if (idx === 2) {
+          if (showPanel3) effectiveSel = 'data';
+          else panel.style.display = 'none';
+        }
+
+        // update title
         if (titleSpan) {
           if (effectiveSel) {
-            const display = _idToLabel[effectiveSel] || effectiveSel;
-            if (effectiveSel === 'percentile' && idx === 1 && !sel) titleSpan.textContent = 'percentile (pair 2)';
-            else titleSpan.textContent = `${display}`;
+            let display = _idToLabel[effectiveSel] || effectiveSel;
+            if (effectiveSel === 'data') display = 'Data';
+            titleSpan.textContent = display;
           } else {
             titleSpan.textContent = '';
           }
         }
 
-        if (!effectiveSel) { content.textContent = 'No metric selected.'; return; }
-        const suf = effectiveSel; // already the id used in template ids
+        if (!effectiveSel) {
+          // if we're panel2 and there's exactly one non-data metric plus data,
+          // hide this slot entirely rather than show an empty message.
+          if (idx === 1 && hasData && (nonData.length === 1 || nonData.length === 0)) {
+            panel.style.display = 'none';
+            return;
+          }
+          if (idx === 2 && !showPanel3) {
+            panel.style.display = 'none';
+            return;
+          }
+          content.textContent = 'No metric selected.';
+          return;
+        }
+
+        const suf = effectiveSel;
         const clone = cloneTemplate(suf, idx+1);
         if (clone) {
-          // if this is the second slot auto‑added for a percentile pair, prefill p=95
-          if (suf === 'percentile' && idx === 1 && !sel) {
+          if (suf === 'percentile' && idx === 1 && !nonData[1]) {
             const pInput = clone.querySelector('[data-field="p"]');
-            if (pInput && pInput.value === '5') { // template default
-              pInput.value = 95;
-            }
+            if (pInput && pInput.value === '5') pInput.value = 95;
           }
           content.appendChild(clone);
+          if (suf === 'data') {
+            // restore any previously entered raw data and method selection
+            if (window._lastDataRaw) {
+              const ta = clone.querySelector('[data-field="data"]');
+              if (ta && !ta.value) ta.value = window._lastDataRaw;
+            }
+            if (window._lastDataMethod) {
+              const sel = clone.querySelector('[data-field="data_method"]');
+              if (sel && !sel.value) sel.value = window._lastDataMethod;
+            }
+            // if also paired with another metric hide the method chooser
+            if (nonData.length > 0) {
+              const methodEl = clone.querySelector('[data-field="data_method"]');
+              if (methodEl) {
+                const wrapper = methodEl.closest('p');
+                if (wrapper) wrapper.style.display = 'none';
+              }
+            }
+          }
           clone.classList.add('attach-anim');
           setTimeout(() => clone.classList.remove('attach-anim'), 300);
         }
@@ -594,32 +734,24 @@
         const label = a.textContent.trim();
         const candidateId = a.dataset.id;
 
-        // Special case: selecting 'data' toggles the data-only selection.
-        // - clicking an unselected 'data' makes it the sole selection
-        // - clicking it again deselects it and returns to normal selection handling
+        // Special case: clicking 'data' simply toggles it like any other metric
+        // (previous behaviour forced it to be sole selection; now we allow up to three metrics,
+        // with data occupying the third slot when two other metrics are present).
         if (candidateId === 'data') {
           const idx = selectedTabs.indexOf(candidateId);
           if (idx >= 0) {
-            // deselect data
             selectedTabs.splice(idx, 1);
           } else {
-            // select data alone
-            selectedTabs.length = 0;
-            selectedTabs.push(candidateId);
+            // data may be added as a third slot even when panelCount() currently returns 2
+            if (selectedTabs.length < 3) {
+              selectedTabs.push(candidateId);
+            }
           }
           renderSelectedTabs();
           updatedInput();
           return;
         }
 
-        // If data is already selected, no other selection is allowed
-        const hasDataSelected = selectedTabs.includes('data');
-        if (hasDataSelected && candidateId !== 'data') {
-          a.classList.add('disabled-flash');
-          setTimeout(() => a.classList.remove('disabled-flash'), 260);
-          showMetricInfo('Data can only be selected by itself. Deselect data to choose other metrics.');
-          return;
-        }
 
         // blocked if visually marked disabled and the id isn't already selected
         if (a.classList.contains('disabled') && selectedTabs.indexOf(candidateId) === -1) {
@@ -633,7 +765,7 @@
           // deselect
           selectedTabs.splice(idx,1);
         } else {
-          const maxSelectable = 2;
+          const maxSelectable = panelCount();
           // check for combination conflicts with already-selected metrics (selectedTabs stores ids)
           const conflictWith = selectedTabs.find(selId => isPairDisallowed(selId, candidateId));
           if (conflictWith) {
@@ -643,18 +775,18 @@
             return;
           }
           if (selectedTabs.length < maxSelectable) selectedTabs.push(candidateId);
-          else { showMetricInfo('Only two metrics can be selected at once. Deselect one to choose another.'); return; }
+          else { showMetricInfo('Only two non-data metrics can be selected. Deselect one to choose another.'); return; }
         }
 
         // render will auto-correct invalid second selections for the current primary
         renderSelectedTabs();
-        updatedInput();
+        computeAndRender(gatherArgsFromPanels());
       });
 
       // defaults: Metric1 = mu, Metric2 = sigma (preserves former behaviour)
       selectedTabs.push('mu','sigma');
       renderSelectedTabs();
-      updatedInput();
+      computeAndRender(gatherArgsFromPanels());
     })();
 
 
@@ -664,27 +796,53 @@
       function has(k){ return Object.prototype.hasOwnProperty.call(args,k); }
       let mu, sigma;
 
-      // two-percentile pair -> direct solve
+      // two-percentile pair -> direct solve (order-independent)
       if ((has('p1') || has('x1')) && (has('p2') || has('x2'))) {
-        sigma = Math.log(args.x1 / args.x2) / (args.p1/100 - args.p2/100);
-        mu = Math.log(args.x1) + Math.log(args.x2 / args.x1) * (0-args.p1/100) / (args.p2/100-args.p1/100);
+        const z1 = norminv(0,1,args.p1/100);
+        const z2 = norminv(0,1,args.p2/100);
+        sigma = Math.log(args.x1 / args.x2) / (z1 - z2);
+        mu = Math.log(args.x1) - z1*sigma;
         return [mu,sigma];
       }
+      if (has('min') && has('max') && has('p')) {
+        p = (1-(args.p/100))/2; // convert to two-tailed
+        const z1 = norminv(0,1,p);
+        const z2 = norminv(0,1,1-p);
+        sigma = Math.log(args.min / args.max) / (z1 - z2);
+        mu = Math.log(args.min) - z1*sigma;
+        // const z = norminv(0,1,args.p/100);
+        // sigma = Math.log(Math.pow(args.max/args.min, 1/(2*z)));
+        // mu = Math.log(args.min) * Math.pow(sigma, z);
+        return [mu,sigma];
+      }
+          
+      // // allow old shorthand names to fall through into the unified logic
+      // if (has('p1') && !has('p')) args.p = args.p1;
+      // if (has('x1') && !has('x')) args.x = args.x1;
+      // if (has('p2') && !has('p')) args.p = args.p2;
+      // if (has('x2') && !has('x')) args.x = args.x2;
+
       if (has('sigma'))sigma = args.sigma;
       if (has('GSD')) sigma = Math.log(args.GSD);
       if (has('CV')) sigma = Math.sqrt(Math.log((args.CV**2)+1));
       if (has('error_factor')) sigma = Math.log(args.error_factor)/1.645;
 
-      // If mu or GM provided, use it with any other available descriptor
+      // If mu or GM is provided
       if (has('mu') || has('GM')) {
         if (has('GM')){
           mu = Math.log(args.GM);
         } else {
           mu = args.mu;
         }
-        if (has('mean')) sigma = Math.sqrt((Math.log(args.mean)-mu)*2);
-        else if (has('mode')) sigma = Math.sqrt(mu - Math.log(args.mode));
-        else if (has('x') && has('p')) sigma = (Math.log(args.x)-mu)/(Math.exp(args.p/100));
+        if (has('mean')) {
+          sigma = Math.sqrt((Math.log(args.mean)-mu)*2);
+        } else if (has('mode')) {
+          sigma = Math.sqrt(mu - Math.log(args.mode));
+        } else if (has('x') && has('p')) {
+          sigma = (mu-Math.log(args.x))/( - norminv(0,1,args.p/100));        
+        } else if (has('SD')) {
+          sigma = Math.sqrt(Math.log((1+Math.sqrt(1+4*args.SD**2/Math.exp(2*mu)))/2));
+        }
         return [mu,sigma];
       }
 
@@ -692,11 +850,7 @@
       if (has('mean')) {
         if (has('mode')) sigma = Math.sqrt(2*Math.log(args.mean/args.mode)/3);
         else if (has('x') && has('p')) {
-          if (args.mean < args.x) {
-            sigma = args.p/100 + Math.sqrt(((args.p/100)**2) + 2 * Math.log(args.mean / args.x));
-          } else if (args.mean > args.x) {
-            sigma = args.p/100 - Math.sqrt(((args.p/100)**2) + 2 * Math.log(args.mean / args.x));
-          }
+          sigma = norminv(0,1,args.p/100) + Math.sqrt(((norminv(0,1,args.p/100))**2) + 2 * Math.log(args.mean / args.x));          
         }
         else if (has('SD')) sigma = Math.sqrt(Math.log((args.SD**2)/(args.mean**2)+1));
         mu = Math.log(args.mean) - (sigma**2)/2;
@@ -706,17 +860,17 @@
       // If mode provided
       if (has('mode')) {
         if (has('p') && has('x')) {
-          if (args.mode < args.x) {
-            sigma = (-args.p/100 - Math.sqrt((args.p/100)**2 - 4 * Math.log(args.mode / args.x))) / 2;
-          } else if (args.mode > args.x) {
-            sigma = (-args.p/100 + Math.sqrt((args.p/100)**2  - 4 * Math.log(args.mode / args.x))) / 2;
-          }
+          sigma = -(norminv(0,1,args.p/100)+Math.sqrt((norminv(0,1,args.p/100))**2+4*Math.log(args.x / args.mode)))/2;
         }
+        else if (has('SD')) sigma = Math.sqrt(Math.log((args.SD**2)/(args.mode**2)+1));
         mu = Math.log(args.mode) + sigma**2;
         return [mu,sigma];
       }
-
-      // fallback: unable to determine
+      if (has('p') && has('x')) {
+        mu = Math.log(args.x) + sigma * Math.sqrt(2)*erfcinv(2*args.p/100);
+        return [mu,sigma];
+      }
+      // fallback: unable to determine 
       return [undefined, undefined];
     }
 
@@ -735,6 +889,18 @@
       const sdLog = Math.sqrt(varianceLog);
       return { mu: meanLog, sigma: sdLog, n, sampleMeanLog: meanLog, sampleSdLog: sdLog, values: arr };
     }
+    // method-of-moments estimator using arithmetic mean/variance
+    function fitLognormalMOM(data) {
+      let arr = Array.isArray(data) ? data.slice() : String(data || '').split(/[\s,;]+/).map(s => parseFloat(s)).filter(n => !Number.isNaN(n));
+      arr = arr.filter(v => v > 0);
+      const n = arr.length;
+      if (n === 0) return { error: 'Please provide at least two positive numeric values (comma/space/newline separated).' };
+      const mean = arr.reduce((a,b) => a+b,0)/n;
+      const variance = arr.reduce((a,b)=>a+Math.pow(b-mean,2),0)/n; // population denom
+      const sigma = Math.sqrt(Math.log(1 + variance/(mean*mean)));
+      const mu = Math.log(mean) - sigma*sigma/2;
+      return { mu, sigma, n, mean, variance, values: arr };
+    }
 
     // Read a field value from a metric panel (panelIndex = 1 for primary, 2 for secondary).
     // Prefers `data-field` attributes (legacy numeric IDs removed).
@@ -745,76 +911,352 @@
       return el ? el.value : null;
     }
 
-    // Fixed panels: only two panels supported
-    function panelCount() { return 2; }
+    // dynamic panels: normally two slots, but if data is selected allow a third accessory panel
+    function panelCount() {
+      if (typeof selectedTabs !== 'undefined' && selectedTabs.includes('data')) return 3;
+      return 2;
+    }
 
-    function updatedInput(){
-      var args = {};
-      var mu;
-      var sigma;
-      // read selected tabs from combined header (selectedTabs is managed by the combined-tab UI)
-      const tab1 = (typeof selectedTabs !== 'undefined' && selectedTabs[0]) || 'mu';
-      const tab2 = (typeof selectedTabs !== 'undefined' && selectedTabs[1]) || null;
-      switch (tab1) {
-        case 'percentile':
-          // primary percentile pair (panel 1)
-          args.p1 = parseFloat(panelValue(1,'p'));
-          args.x1 = parseFloat(panelValue(1,'x'));
+    // helper to show/hide the ln-toggle control strip (previously inside updatedInput)
+    function showControls(show) {
+      const rc = document.getElementById('result-controls');
+      if (rc) rc.style.display = show ? 'flex' : 'none';
+    }
 
-          // secondary percentile pair: explicitly selected or rendered into panel 2
-          const p2val = panelValue(2,'p');
-          const x2val = panelValue(2,'x');
-          if ((tab2 === 'percentile') || (selectedTabs[0] === 'percentile' && p2val !== null && p2val !== '')) {
-            args.p2 = parseFloat(p2val);
-            args.x2 = parseFloat(x2val);
+    // gather current values and selection state from the visible panels
+    // returns { args, tab1, tab2, hasData, nonData }
+    function gatherArgsFromPanels() {
+      const args = {};
+      const hasData = selectedTabs.includes('data');
+      const nonData = selectedTabs.filter(id => id !== 'data');
+      let tab1, tab2;
+      if (hasData && nonData.length >= 2) {
+        tab1 = nonData[0];
+        tab2 = nonData[1];
+      } else if (hasData && nonData.length === 1) {
+        tab1 = nonData[0];
+        tab2 = null;
+      } else if (hasData && nonData.length === 0) {
+        tab1 = 'data';
+        tab2 = null;
+      } else {
+        tab1 = (typeof selectedTabs !== 'undefined' && selectedTabs[0]) || 'mu';
+        tab2 = (typeof selectedTabs !== 'undefined' && selectedTabs[1]) || null;
+      }
+
+      // parse any raw data present (panels 1‑3) but do not fit yet
+      (function(){
+        const raw1 = panelValue(1,'data');
+        const raw2 = panelValue(2,'data');
+        const raw3 = panelValue(3,'data');
+        const raw = raw1 || raw2 || raw3 || '';
+        if (raw) {
+          const arr = String(raw).split(/[\s,;]+/).map(s=>parseFloat(s)).filter(n=>!Number.isNaN(n) && n>0);
+          if (arr.length>0) {
+            args._dataValues = arr;
+            const n = arr.length;
+            const logs = arr.map(v=>Math.log(v));
+            const meanLog = logs.reduce((a,b)=>a+b,0)/n;
+            const varLog = logs.reduce((a,b)=>a+Math.pow(b-meanLog,2),0)/n;
+            args._dataStats = { n, sampleMeanLog: meanLog, sampleSdLog: Math.sqrt(varLog) };
           }
+        }
+      })();
 
-          // validation: ensure numeric and percentiles differ when two pairs provided
-          if (typeof args.p2 !== 'undefined') {
-            if (!isFinite(args.p1) || !isFinite(args.x1) || !isFinite(args.p2) || !isFinite(args.x2) || args.x1 <= 0 || args.x2 <= 0) {
-              args._invalidPercentile = 'Please provide two valid percentile/value pairs (positive values).';
-            } else if (Math.abs(args.p1 - args.p2) < 1e-9) {
-              args._invalidPercentile = 'Percentile probabilities (p1 and p2) must be different to compute mu and sigma.';
-            }
+      // handle percentile first since it needs special extraction
+      if (tab1 === 'percentile') {
+        // read current panel values, fallback to previous ones only when blank
+        const rp = panelValue(1,'p');
+        const rx = panelValue(1,'x');
+        if (rp !== null && rp !== '') args.p1 = parseFloat(rp);
+        else if (window._lastPercentile && window._lastPercentile.p1 !== undefined) args.p1 = parseFloat(window._lastPercentile.p1);
+        if (rx !== null && rx !== '') args.x1 = parseFloat(rx);
+        else if (window._lastPercentile && window._lastPercentile.x1 !== undefined) args.x1 = parseFloat(window._lastPercentile.x1);
+        // if secondary slot also percentile, grab its values
+        const p2val = panelValue(2,'p');
+        const x2val = panelValue(2,'x');
+        if ((tab2 === 'percentile') || (selectedTabs[0] === 'percentile' && p2val !== null && p2val !== '')) {
+          args.p2 = parseFloat(p2val);
+          args.x2 = parseFloat(x2val);
+        }
+        // when percentile is the only metric, assign a sensible opposite percentile
+        if (!tab2) {
+          if (args.p2 === undefined || args.p2 === args.p1) {
+            if (args.p1 === 95) args.p2 = 5;
+            else args.p2 = 95;
+            args.x2 = NaN; // will be computed when needed
           }
-          break;
-
-        case 'data': {
-          const raw = panelValue(1,'data') || '';
-          const fit = fitLognormalMLE(raw);
-          if (fit.error || fit.n < 2) {
-            // mark invalid so we can render a clear message and abort plotting
-            args._invalidData = fit.error || 'Please provide at least two positive numeric values.';
-          } else {
-            args.mu = fit.mu;
-            args.sigma = fit.sigma;
-            args._dataStats = { n: fit.n, sampleMeanLog: fit.sampleMeanLog, sampleSdLog: fit.sampleSdLog };
-            args._dataValues = fit.values || [];
+          if (args.x2 === undefined || args.x2 === args.x1) {
+            args.x2 = NaN; // will be computed when needed
           }
-        } break;
-
-        default:
-          // Generic: collect raw argument fields for both panels and let getMuSigma() do the maths.
+        }
+        // if there is a different secondary metric (like mu), capture it too
+        if (tab2 && tab2 !== 'percentile' && tab2 !== 'data') {
           const mapField = function(id) {
             return ({ 'mu':'mu', 'GM':'GM', 'mean':'mean', 'mode':'mode', 'sigma':'sigma', 'SD':'SD', 'GSD':'GSD', 'CV':'CV', 'error':'error_factor' })[id] || null;
           };
-          const k1 = mapField(tab1);
-          if (k1) {
-            const v = panelValue(1, k1);
-            if (v !== null && v !== '') args[k1] = +v;
+          const k2 = mapField(tab2);
+          if (k2) {
+            const v2 = panelValue(2, k2);
+            if (v2 !== null && v2 !== '') args[k2] = +v2;
           }
-          // secondary special-case: percentile as second metric provides p/x; otherwise map normally
-          if (tab2 === 'percentile') {
-            args.p = +panelValue(2,'p');
-            args.x = +panelValue(2,'x');
-          } else if (tab2 && tab2 !== 'data') {
-            const k2 = mapField(tab2);
-            if (k2) {
-              const v2 = panelValue(2, k2);
-              if (v2 !== null && v2 !== '') args[k2] = +v2;
+          // also copy percentile values into generic fields so getMuSigma can use them alongside mu
+          if (typeof args.p1 === 'number' && typeof args.x1 === 'number') {
+            args.p = args.p1;
+            args.x = args.x1;
+          }
+        }
+        if (typeof args.p2 !== 'undefined') {
+          if (!isFinite(args.p1) || !isFinite(args.x1) || !isFinite(args.p2) || !isFinite(args.x2) || args.x1 <= 0 || args.x2 <= 0) {
+            args._invalidPercentile = 'Please provide two valid percentile/value pairs (positive values).';
+          } else if (Math.abs(args.p1 - args.p2) < 1e-9) {
+            args._invalidPercentile = 'Percentile probabilities (p1 and p2) must be different to compute mu and sigma.';
+          }
+          // further requirements when percentile is the sole primary metric
+          if (!tab2) {
+            // strict open interval for probabilities
+            if (args.p1 <= 0 || args.p1 >= 100 || args.p2 <= 0 || args.p2 >= 100) {
+              args._invalidPercentile = 'Percentile probabilities must be greater than 0 and less than 100.';
             }
+            // values must be positive and distinct
+            if (args.x1 <= 0 || args.x2 <= 0) {
+              args._invalidPercentile = 'Percentile values must be positive.';
+            } else if (Math.abs(args.x1 - args.x2) < 1e-12) {
+              args._invalidPercentile = 'Corresponding values must be different.';
+            }
+            // enforce monotonic ordering
+            if ((args.p1 > args.p2 && args.x1 <= args.x2) || (args.p2 > args.p1 && args.x2 <= args.x1)) {
+              args._invalidPercentile = 'Percentile probabilities and values must have matching order.';
+            }
+          } // end !tab2
+        }
+      } else if (tab1 === 'data' && nonData.length === 0) {
+        const raw = panelValue(1,'data') || '';
+        const arr = String(raw).split(/[\s,;]+/).map(s=>parseFloat(s)).filter(n=>!Number.isNaN(n) && n>0);
+        if (arr.length > 0) {
+          args._dataValues = arr;
+          const n = arr.length;
+          const logs = arr.map(v=>Math.log(v));
+          const meanLog = logs.reduce((a,b)=>a+b,0)/n;
+          const varLog = logs.reduce((a,b)=>a+Math.pow(b-meanLog,2),0)/n;
+          args._dataStats = { n, sampleMeanLog: meanLog, sampleSdLog: Math.sqrt(varLog) };
+        }
+      } else {
+        // at least one non-data metric is primary (possibly with data present)
+        const mapField = function(id) {
+          return ({ 'mu':'mu', 'GM':'GM', 'mean':'mean', 'mode':'mode', 'sigma':'sigma', 'SD':'SD', 'GSD':'GSD', 'CV':'CV', 'error':'error_factor' })[id] || null;
+        };
+        // collect values for the non-data slots
+        const k1 = mapField(tab1);
+        if (k1) {
+          const v = panelValue(1, k1);
+          if (v !== null && v !== '') args[k1] = +v;
+        }
+        if (tab2 === 'percentile') {
+          args.p = +panelValue(2,'p');
+          args.x = +panelValue(2,'x');
+        } else if (tab2 && tab2 !== 'data') {
+          const k2 = mapField(tab2);
+          if (k2) {
+            const v2 = panelValue(2, k2);
+            if (v2 !== null && v2 !== '') args[k2] = +v2;
           }
-          break;
+        }
+        // if data exists but is not the primary, it will be parsed above and used for KS/histogram
+      }
+      // ensure we always capture minmax inputs regardless of which branch executed
+      if (tab1 === 'minmax' || tab2 === 'minmax') {
+        const idx = (tab1 === 'minmax') ? 1 : 2;
+        const minv = panelValue(idx,'min');
+        const maxv = panelValue(idx,'max');
+        const pval = panelValue(idx,'p');
+        if (minv !== null && minv !== '') args.min = +minv;
+        if (maxv !== null && maxv !== '') args.max = +maxv;
+        if (pval !== null && pval !== '') args.p = +pval;
+      }
+      return {args, tab1, tab2, hasData, nonData};
+    }
+
+    function computeAndRender(state){
+      // hide controls by default until a chart is drawn
+      showControls(false);
+      // allow callers to pre-compute the DOM state; use provided args when available
+      var args;
+      if (state && state.args) {
+        args = state.args;
+      } else {
+        args = {};
+      }
+      // if called before the user has entered any data, don't display an error
+      if (Object.keys(args).length === 0 && !window._lastLognormal) {
+        const outEl = document.getElementById('ln-output');
+        if (outEl) outEl.textContent = 'No distribution computed yet.';
+        if (CHART) Plotly.purge(CHART);
+        return;
+      }
+      var mu;
+      var sigma;
+      // read selected tabs from combined header (selectedTabs is managed by the combined-tab UI)
+      const hasData = selectedTabs.includes('data');
+      const nonData = selectedTabs.filter(id => id !== 'data');
+      let tab1, tab2;
+      if (hasData && nonData.length >= 2) {
+        tab1 = nonData[0];
+        tab2 = nonData[1];
+      } else if (hasData && nonData.length === 1) {
+        // one metric + data; treat metric as primary
+        tab1 = nonData[0];
+        tab2 = null;
+      } else if (hasData && nonData.length === 0) {
+        // data only
+        tab1 = 'data';
+        tab2 = null;
+      } else {
+        tab1 = (typeof selectedTabs !== 'undefined' && selectedTabs[0]) || 'mu';
+        tab2 = (typeof selectedTabs !== 'undefined' && selectedTabs[1]) || null;
+      }
+      // if any panel holds raw data, parse it so KS and histogram can be computed later
+      (function(){
+        const raw1 = panelValue(1,'data');
+        const raw2 = panelValue(2,'data');
+        const raw3 = panelValue(3,'data');
+        const raw = raw1 || raw2 || raw3 || '';
+        if (raw) {
+          const arr = String(raw).split(/[\s,;]+/).map(s=>parseFloat(s)).filter(n=>!Number.isNaN(n) && n>0);
+          if (arr.length>0) {
+            args._dataValues = arr;
+            const n = arr.length;
+            const logs = arr.map(v=>Math.log(v));
+            const meanLog = logs.reduce((a,b)=>a+b,0)/n;
+            const varLog = logs.reduce((a,b)=>a+Math.pow(b-meanLog,2),0)/n;
+            args._dataStats = { n, sampleMeanLog: meanLog, sampleSdLog: Math.sqrt(varLog) };
+          }
+        }
+      })();
+      // handle percentile first since it needs special extraction
+      if (tab1 === 'percentile') {
+        // read current panel values, fallback to previous ones only when blank
+        const rp = panelValue(1,'p');
+        const rx = panelValue(1,'x');
+        if (rp !== null && rp !== '') args.p1 = parseFloat(rp);
+        else if (window._lastPercentile && window._lastPercentile.p1 !== undefined) args.p1 = parseFloat(window._lastPercentile.p1);
+        if (rx !== null && rx !== '') args.x1 = parseFloat(rx);
+        else if (window._lastPercentile && window._lastPercentile.x1 !== undefined) args.x1 = parseFloat(window._lastPercentile.x1);
+        // if secondary slot also percentile, grab its values
+        const p2val = panelValue(2,'p');
+        const x2val = panelValue(2,'x');
+        if ((tab2 === 'percentile') || (selectedTabs[0] === 'percentile' && p2val !== null && p2val !== '')) {
+          args.p2 = parseFloat(p2val);
+          args.x2 = parseFloat(x2val);
+        }
+        // // when percentile is the only metric, assign a sensible opposite percentile
+        // if (!tab2) {
+        //   if (args.p2 === undefined || args.p2 === args.p1) {
+        //     if (args.p1 === 95) args.p2 = 5;
+        //     else args.p2 = 95;
+        //     //args.x2 = NaN; // will be computed when needed
+        //   }
+          // if (args.x2 === undefined || args.x2 === args.x1) {
+          //   args.x2 = NaN; // will be computed when needed
+          // }
+        // }
+        // if there is a different secondary metric (like mu), capture it too
+        if (tab2 && tab2 !== 'percentile' && tab2 !== 'data') {
+          const mapField = function(id) {
+            return ({ 'mu':'mu', 'GM':'GM', 'mean':'mean', 'mode':'mode', 'sigma':'sigma', 'SD':'SD', 'GSD':'GSD', 'CV':'CV', 'error':'error_factor' })[id] || null;
+          };
+          const k2 = mapField(tab2);
+          if (k2) {
+            const v2 = panelValue(2, k2);
+            if (v2 !== null && v2 !== '') args[k2] = +v2;
+          }
+          // also copy percentile values into generic fields so getMuSigma can use them alongside mu
+          if (typeof args.p1 === 'number' && typeof args.x1 === 'number') {
+            args.p = args.p1;
+            args.x = args.x1;
+          }
+        }
+        if (typeof args.p2 !== 'undefined') {
+          if (!isFinite(args.p1) || !isFinite(args.x1) || !isFinite(args.p2) || !isFinite(args.x2) || args.x1 <= 0 || args.x2 <= 0) {
+            args._invalidPercentile = 'Please provide two valid percentile/value pairs (positive values).';
+          } else if (Math.abs(args.p1 - args.p2) < 1e-9) {
+            args._invalidPercentile = 'Percentile probabilities (p1 and p2) must be different to compute mu and sigma.';
+          }
+          // further requirements when percentile is the sole primary metric
+          if (!tab2) {
+            // strict open interval for probabilities
+            if (args.p1 <= 0 || args.p1 >= 100 || args.p2 <= 0 || args.p2 >= 100) {
+              args._invalidPercentile = 'Percentile probabilities must be greater than 0 and less than 100.';
+            }
+            // values must be positive and distinct
+            if (args.x1 <= 0 || args.x2 <= 0) {
+              args._invalidPercentile = 'Percentile values must be positive.';
+            } else if (Math.abs(args.x1 - args.x2) < 1e-12) {
+              args._invalidPercentile = 'Corresponding values must be different.';
+            }
+            // enforce monotonic ordering
+            if ((args.p1 > args.p2 && args.x1 <= args.x2) || (args.p2 > args.p1 && args.x2 <= args.x1)) {
+              args._invalidPercentile = 'Percentile probabilities and values must have matching order.';
+            }
+          } // end !tab2
+        }
+      } else if (tab1 === 'data' && nonData.length === 0) {
+        // data-only case: identical to previous 'data' branch
+        const raw = panelValue(1,'data') || '';
+        const arr = String(raw).split(/[\s,;]+/).map(s=>parseFloat(s)).filter(n=>!Number.isNaN(n) && n>0);
+        if (arr.length > 0) {
+          args._dataValues = arr;
+          const n = arr.length;
+          const logs = arr.map(v=>Math.log(v));
+          const meanLog = logs.reduce((a,b)=>a+b,0)/n;
+          const varLog = logs.reduce((a,b)=>a+Math.pow(b-meanLog,2),0)/n;
+          args._dataStats = { n, sampleMeanLog: meanLog, sampleSdLog: Math.sqrt(varLog) };
+        }
+        // compute mu/sigma from data alone
+        const method = panelValue(1,'data_method') || 'MLE';
+        let fit;
+        if (method === 'MOM') fit = fitLognormalMOM(raw);
+        else fit = fitLognormalMLE(raw);
+        if (fit.error || fit.n < 2) {
+          args._invalidData = fit.error || 'Please provide at least two positive numeric values.';
+        } else {
+          mu = args.mu = fit.mu;
+          sigma = args.sigma = fit.sigma;
+          args._dataMethod = method;
+        }
+        if (args._dataValues && args._dataValues.length>0 && typeof mu==='number' && typeof sigma==='number') {
+          const sorted = args._dataValues.slice().sort((a,b)=>a-b);
+          let ks = 0;
+          for (let i=0;i<sorted.length;i++){
+            const emp = (i+1)/sorted.length;
+            const theo = logncdf(mu,sigma,sorted[i]);
+            ks = Math.max(ks, Math.abs(emp-theo));
+          }
+          args._ks = ks;
+        }
+      } else {
+        // at least one non-data metric is primary (possibly with data present)
+        const mapField = function(id) {
+          return ({ 'mu':'mu', 'GM':'GM', 'mean':'mean', 'mode':'mode', 'sigma':'sigma', 'SD':'SD', 'GSD':'GSD', 'CV':'CV', 'error':'error_factor' })[id] || null;
+        };
+        // collect values for the non-data slots
+        const k1 = mapField(tab1);
+        if (k1) {
+          const v = panelValue(1, k1);
+          if (v !== null && v !== '') args[k1] = +v;
+        }
+        if (tab2 === 'percentile') {
+          args.p = +panelValue(2,'p');
+          args.x = +panelValue(2,'x');
+        } else if (tab2 && tab2 !== 'data') {
+          const k2 = mapField(tab2);
+          if (k2) {
+            const v2 = panelValue(2, k2);
+            if (v2 !== null && v2 !== '') args[k2] = +v2;
+          }
+        }
+        // if data exists but is not the primary, it will be parsed above and used for KS/histogram
+        // parameters will be computed after numeric validation below
       }
       // validate numeric inputs collected from panels (exclude data and internal flags)
       (function(){
@@ -826,20 +1268,56 @@
           if (num === '' || num === null || num === undefined) continue;
           if (!isFinite(num)) { args._invalidNumeric = `Invalid numeric value for ${k}`; break; }
           // positive-only checks
-          if (['sigma','SD','GSD','CV','error_factor','mean','GM','mode','x','x1','x2'].includes(k) && num <= 0) { args._invalidNumeric = `${k} must be a positive number`; break; }
+          if (['sigma','SD','GSD','CV','error_factor','mean','GM','mode','x','x1','x2','min','max'].includes(k) && num <= 0) { args._invalidNumeric = `${k} must be a positive number`; break; }
           // percentile range
           if (['p','p1','p2'].includes(k) && (num < 0 || num > 100)) { args._invalidNumeric = `Percentile must be in range 0–100`; break; }
           args[k] = num; // normalize
         }
       })();
+      // additional logical consistency: when both mu and mean are provided, they must agree
+      if (typeof args.mu === 'number' && typeof args.mean === 'number') {
+        if (Math.log(args.mean) <= args.mu) {
+          args._invalidNumeric = `the specified mean value must be larger than e<sup>μ</sup> (${Math.exp(args.mu)})`;
+        }
+      }
+      // mu and mode consistency: mode must be smaller than e^mu (mode=exp(mu-sigma^2) in a true lognormal)
+      if (typeof args.mu === 'number' && typeof args.mode === 'number') {
+        if (args.mode >= Math.exp(args.mu)) {
+          args._invalidNumeric = `mode must be smaller than e<sup>μ</sup> (${Math.exp(args.mu)})`;
+        }
+      }
+      // additional minmax consistency: min < max and a is percentage
+      if (typeof args.min === 'number' && typeof args.max === 'number') {
+        if (args.min >= args.max) {
+          args._invalidNumeric = 'min value must be smaller than max';
+        }
+      }
+      // the percentage parameter for minmax must be strictly between 0 and 100
+      if (typeof args.a === 'number' && (args.a <= 0 || args.a >= 100)) {
+        args._invalidNumeric = 'a must be greater than 0 and less than 100';
+      }
+      // mu + percentile additional requirements
+      if (typeof args.mu === 'number' && (typeof args.p === 'number' || typeof args.p1 === 'number')) {
+        const pval = (typeof args.p === 'number') ? args.p : args.p1;
+        const xval = (typeof args.x === 'number') ? args.x : args.x1;
+        const expmu = Math.exp(args.mu);
+        if (pval === 50) {
+          args._invalidNumeric = '50th percentile cannot be combined with μ.';
+        } else if (pval < 50 && xval >= expmu) {
+          args._invalidNumeric = `For percentile < 50%, value must be less than e<sup>μ</sup> (${expmu}).`;
+        } else if (pval > 50 && xval <= expmu) {
+          args._invalidNumeric = `For percentile > 50%, value must exceed e<sup>μ</sup> (${expmu}).`;
+        }
+      }
       if (args._invalidNumeric) {
         const outEl = document.getElementById('ln-output');
-        if (outEl) outEl.textContent = args._invalidNumeric;
+        if (outEl) outEl.innerHTML = args._invalidNumeric;
+        if (CHART) Plotly.purge(CHART);
         window._lastLognormal = null;
         return;
       }
-      // if primary is data, we either have fitted mu/sigma or an error marker
-      if (tab1 === 'data') {
+      // if primary is data (data-only case), we either have fitted mu/sigma or an error marker
+      if (tab1 === 'data' && nonData.length === 0) {
         if (args._invalidData) {
           const outEl = document.getElementById('ln-output');
           if (outEl) outEl.textContent = args._invalidData;
@@ -853,8 +1331,124 @@
         if (outEl) outEl.textContent = args._invalidPercentile;
         window._lastLognormal = null;
         return;
+      } else if (tab1 === 'percentile' && !tab2 && window._lastLognormal &&
+                 typeof window._lastLognormal.mu === 'number' &&
+                 typeof window._lastLognormal.sigma === 'number' &&
+                 // only reuse when we do *not* have two complete percentile pairs to solve
+                 !(isFinite(args.p1) && isFinite(args.x1) &&
+                   isFinite(args.p2) && isFinite(args.x2))) {
+        // percentile-only mode with insufficient input: keep the previous mu/sigma so
+        // the distribution remains visible until the user supplies both pairs.
+        mu = window._lastLognormal.mu;
+        sigma = window._lastLognormal.sigma;
       } else {
-        [mu,sigma] = getMuSigma(args);
+        // // if minmax values were supplied (they are only allowed alongside data), derive
+        // // sigma using the provided formula and set mu to the log of the geometric mean
+        // if (typeof args.min === 'number' && typeof args.max === 'number' &&
+        //     typeof args.a === 'number' && args.min < args.max && !('mu' in args) && !('sigma' in args)) {
+        //   const z = norminv(0,1,args.a/100);
+        //   if (isFinite(z) && z !== 0) {
+        //     sigma = Math.log(Math.pow(args.max/args.min, 1/(2*z)));
+        //     // user‑requested mu formula: mu = min * sigma^norminv(0,1,a/100)
+        //     mu = math.log(args.min) * Math.pow(sigma, z);
+        //     // store back into args for consistency with downstream code
+        //     args.mu = mu;
+        //     args.sigma = sigma;
+        //   }
+        // } else {
+          [mu,sigma] = getMuSigma(args);
+        // }
+        // // if percentile was paired with another metric, we may still have used a default x
+        // // when solving for sigma. use the *prior* sigma estimate (stored in _lastLognormal)
+        // // to compute a new x, update the field and then resolve mu/sigma again.
+        // if ((tab2 === 'percentile' && tab1 && tab1 !== 'percentile') ||
+        //     (tab1 === 'percentile' && tab2 && tab2 !== 'percentile')) {
+        //   const prevSigma = (window._lastLognormal && typeof window._lastLognormal.sigma === 'number')
+        //                     ? window._lastLognormal.sigma : sigma;
+        //   if (typeof args.p === 'number' || typeof args.p1 === 'number') {
+        //     // determine which percentile to use and compute x accordingly
+        //     let pval,xfield,pinp;
+        //     if (tab2 === 'percentile' && typeof args.p === 'number') {
+        //       pval = args.p;
+        //       args.x = logninv(mu, prevSigma, pval/100);
+        //       pinp = document.querySelector('#metric2-content [data-field="x"]');
+        //       if (pinp && document.activeElement !== pinp && (pinp._programmatic !== false)) {
+        //         const curr = pinp.value;
+        //         if (curr === '' || curr === '1' || !isFinite(parseFloat(curr))) {
+        //           pinp.value = args.x;
+        //           pinp._programmatic = true;
+        //         }
+        //       }
+        //     } else if (tab1 === 'percentile' && typeof args.p1 === 'number') {
+        //       pval = args.p1;
+        //       args.x1 = logninv(mu, prevSigma, pval/100);
+        //       pinp = document.querySelector('#metric1-content [data-field="x"]');
+        //       if (pinp && document.activeElement !== pinp && !pinp._userEdited && (pinp._programmatic !== false)) {
+        //         const curr = pinp.value;
+        //         if (curr === '' || curr === '1' || !isFinite(parseFloat(curr))) {
+        //           pinp.value = args.x1;
+        //           pinp._programmatic = true;
+        //         }
+        //       }
+        //     }
+        //     // recalc using updated args.x/x1
+        //     [mu,sigma] = getMuSigma(args);
+        //   }
+        // }
+      }
+
+      // after mu/sigma are known, update any percentile panels regardless of order
+      if (typeof mu === 'number' && typeof sigma === 'number') {
+        // helper to update a given percentile slot
+        function fillPercentile(panelSelector, pField, xField, pVal) {
+          const pInp = document.querySelector(panelSelector + " [data-field='" + pField + "']");
+          const xInp = document.querySelector(panelSelector + " [data-field='" + xField + "']");
+          if (pInp && xInp && isFinite(sigma) && sigma > 0) {
+            const pnum = parseFloat(pInp.value);
+            if (isFinite(pnum)) {
+              if (document.activeElement !== xInp) {
+                const cur = xInp.value;
+                if ((xInp._programmatic !== false) && (cur === '' || cur === '1' || !isFinite(parseFloat(cur))) && !xInp._userEdited) {
+                  const computed = logninv(mu, sigma, pnum/100);
+                  xInp.value = computed;
+                  xInp._programmatic = true;
+                  if (pField === 'p1') args.x1 = computed;
+                  if (pField === 'p') args.x = computed;
+                }
+              }
+            }
+          }
+        }
+        // auto‑fill only when the secondary panel holds a percentile
+        if (tab2 === 'percentile') {
+          fillPercentile('#metric2-content', 'p', 'x', args.p);
+        }
+      }
+      // compute KS statistic whenever we have both parameters and empirical data
+      if (args._dataValues && args._dataValues.length>0 && typeof mu === 'number' && typeof sigma === 'number') {
+        const sorted = args._dataValues.slice().sort((a,b)=>a-b);
+        let ks = 0;
+        for (let i=0;i<sorted.length;i++){
+          const emp = (i+1)/sorted.length;
+          const theo = logncdf(mu,sigma,sorted[i]);
+          ks = Math.max(ks, Math.abs(emp-theo));
+        }
+        args._ks = ks;
+      }
+      // if we failed to compute valid parameters, bail out early and remove any existing chart
+      if (typeof mu !== 'number' || typeof sigma !== 'number' || !isFinite(mu) || !isFinite(sigma)) {
+        const outEl = document.getElementById('ln-output');
+        if (outEl) outEl.textContent = 'Insufficient or incompatible parameters to compute a lognormal distribution.';
+        if (CHART) Plotly.purge(CHART);
+        // keep previous _lastLognormal intact so new selections can reuse it
+        return;
+      }
+      // formatting helper used in the text output; align values by padding labels
+      function formatLine(label, value) {
+        const lbl = String(label);
+        const val = (value === undefined || value === null) ? '' : String(value);
+        // pad label so values start in the same column (adjust width as needed)
+        return lbl.padEnd(13) + val + '\n';
       }
       let txt = '';
       const mean = Math.exp(mu+(sigma**2)/2);
@@ -869,29 +1463,50 @@
       const entropy = ((1+Math.log(2*Math.PI*sigma**2))/2+mu);
       const error_factor = Math.exp(sigma*1.645);
 
-      txt += `mu: ${mu}\n`;
-      txt += `sigma: ${sigma}\n`;
-      txt += `Mean: ${mean}\n`;
-      txt += `Median: ${median}\n`;
+      txt += formatLine('μ', mu);
+      txt += formatLine('σ', sigma);
+      txt += formatLine('mean', mean);
+      txt += formatLine('sd', sd);
+      txt += formatLine('gm', median);
+      txt += formatLine('gsd', gsd);
       // percentiles at 5%,25%,75%,95%
       const pVals = [0.05,0.25,0.75,0.95];
       const perc = pVals.map(pct => logninv(mu, sigma, pct)).map(v=>v.toString());
-      txt += `5% percentile: ${perc[0]}\n`;
-      txt += `25% percentile: ${perc[1]}\n`;
-      txt += `75% percentile: ${perc[2]}\n`;
-      txt += `95% percentile: ${perc[3]}\n`;
-      txt += `Mode: ${mode}\n`;
-      txt += `Standard deviation: ${sd}\n`;
-      txt += `Variance: ${variance}\n`;
-      txt += `Geometric standard deviation: ${gsd}\n`;
-      txt += `CV: ${CV}\n`;
-      txt += `Skewness: ${skewness}\n`;
-      txt += `Kurtosis: ${kurtosis}\n`;
-      txt += `Entropy: ${entropy}\n`;
-      txt += `Error factor (1.645σ): ${error_factor}\n`;
+      txt += formatLine('5%', perc[0]);
+      txt += formatLine('25%', perc[1]);
+      txt += formatLine('50%', median);
+      txt += formatLine('75%', perc[2]);
+      txt += formatLine('95%', perc[3]);
+      txt += formatLine('mode', mode);
+      txt += formatLine('variance', variance);
+      txt += formatLine('CV', CV);
+      txt += formatLine('skewness', skewness);
+      txt += formatLine('kurtosis', kurtosis);
+      txt += formatLine('entropy', entropy);
+      txt += formatLine('error factor', error_factor);
 
-      if (tab1 === 'data' && args._dataStats) {
-        txt += `\nData (n=${args._dataStats.n}) — mean(log): ${args._dataStats.sampleMeanLog}, sd(log) [MLE]: ${args._dataStats.sampleSdLog}\n`;
+      // always report data stats (format depends on whether other metrics were provided)
+      if (args._dataStats) {
+        if (nonData.length === 0) {
+          // data-only case: include fit method
+          const methodLabel = args._dataMethod === 'MOM' ? 'MOM' : 'MLE';
+          txt += '\nData (n=' + args._dataStats.n + ', method=' + methodLabel + ')\n';
+        } else {
+          // data combined with other metric(s): show arithmetic mean & sd
+          const arr = args._dataValues || [];
+          let mean = NaN, sd = NaN;
+          if (arr.length) {
+            mean = arr.reduce((a,b)=>a+b,0)/arr.length;
+            const variance = arr.reduce((a,b)=>a+Math.pow(b-mean,2),0)/arr.length;
+            sd = Math.sqrt(variance);
+          }
+          let line = '\nData (n=' + args._dataStats.n;
+          if (!isNaN(mean)) line += ', mean=' + mean;
+          if (!isNaN(sd)) line += ', sd=' + sd;
+          line += ')\n';
+          txt += line;
+        }
+        if (args._ks !== undefined) txt += formatLine('KS-statistic:', args._ks.toFixed(4));
       }
 
       // render output to the page
@@ -904,44 +1519,42 @@
         if (sigma === undefined) sigma = window._lastLognormal.sigma;
       }
       // expose structured result for other scripts/tests (include data stats when available)
-      window._lastLognormal = { mu, sigma, mean, median, mode, sd, variance, gsd, CV, skewness, kurtosis, entropy, error_factor, dataStats: args._dataStats || null, dataValues: args._dataValues || null };
+      window._lastLognormal = { mu, sigma, mean, median, mode, sd, variance, gsd, CV, skewness, kurtosis, entropy, error_factor, dataStats: args._dataStats || null, dataValues: args._dataValues || null, ks: args._ks || null };
 
-      // if user requested CDF view, draw the empirical/theoretical CDF and skip the PDF plotting
-      const chartMode = (typeof getChartMode === 'function') ? getChartMode() : 'pdf';
+      // always compute CDF traces (they will be merged with the PDF later)
       const lnView = !!(document.getElementById('lnViewToggle') && document.getElementById('lnViewToggle').checked);
-      if (chartMode === 'cdf') {
-        const CH = document.getElementById('chart');
-        const cdfTraces = [];
-        const sigmaPlot = (typeof sigma === 'number' && sigma > 0) ? sigma : 1e-6;
-        const nPts = 800;
+      const CH = document.getElementById('chart');
+      const cdfTraces = [];
+      // determine current theme background color (resolve CSS variable)
+      const themeBG = getComputedStyle(document.documentElement).getPropertyValue('--bg-primary').trim() || '#ffffff';
+      const sigmaPlot = (typeof sigma === 'number' && sigma > 0) ? sigma : 1e-6;
+      const nPts = 800;
 
-        if (lnView) {
-          // empirical ln-CDF
-          if (tab1 === 'data' && args._dataValues && args._dataValues.length > 0) {
-            const sortedLogs = args._dataValues.map(v => Math.log(v)).sort((a,b)=>a-b);
-            const empY = sortedLogs.map((v,i) => (i+1)/sortedLogs.length);
-            cdfTraces.push({ x: sortedLogs, y: empY, mode: 'lines', line: { color: 'rgba(96,96,96,0.8)' , shape: 'hv' }, name: 'empirical ln-CDF' });
-          }
-          // theoretical normal CDF on ln-scale
-          const xl = linspace(mu - 4*sigmaPlot, mu + 4*sigmaPlot, nPts);
-          const yl = xl.map(z => normcdf(mu, sigmaPlot, z));
-          cdfTraces.push({ x: xl, y: yl, mode: 'lines', line: { color: '#f3b87b' }, name: 'theoretical CDF' });
-
-          Plotly.newPlot(CH, cdfTraces, { autosize:true, responsive:true, showlegend:false, xaxis:{ title: { text: 'ln(x)', standoff: 8 }, automargin:true }, yaxis:{ range:[0,1], automargin:true }, margin:{ t:28, r:22, b:56, l:40 } });
-          return;
+      if (lnView) {
+        // empirical ln-CDF
+        if (args._dataValues && args._dataValues.length > 0) {
+          const sortedLogs = args._dataValues.map(v => Math.log(v)).sort((a,b)=>a-b);
+          const empY = sortedLogs.map((v,i) => (i+1)/sortedLogs.length);
+          cdfTraces.push({ x: sortedLogs, y: empY, mode: 'lines', line: { color: 'rgba(96,96,96,0.8)' , shape: 'hv' }, name: 'empirical ln-CDF', yaxis:'y2' });
         }
+        // theoretical normal CDF on ln-scale using quantiles
+        const pGrid = linspace(0,0.99,nPts);
+        const xl = pGrid.map(p => norminv(mu, sigmaPlot, p));
+        const yl = pGrid.slice(); // CDF value equals p
+        cdfTraces.push({ x: xl, y: yl, mode: 'lines', line: { color: '#6baed6' }, name: 'theoretical CDF', yaxis:'y2' });
+      }
 
-        // standard x-scale CDF
-        if (tab1 === 'data' && args._dataValues && args._dataValues.length > 0) {
+      // standard x-scale CDF (skip in lnView)
+      if (!lnView) {
+        if (args._dataValues && args._dataValues.length > 0) {
           const sortedX = args._dataValues.slice().sort((a,b)=>a-b);
           const empY = sortedX.map((v,i)=> (i+1)/sortedX.length);
-          cdfTraces.push({ x: sortedX, y: empY, mode: 'lines', line: { color: 'rgba(96,96,96,0.8)' , shape: 'hv' }, name: 'empirical CDF' });
+          cdfTraces.push({ x: sortedX, y: empY, mode: 'lines', line: { color: 'rgba(96,96,96,0.8)' , shape: 'hv' }, name: 'empirical CDF', yaxis:'y2' });
         }
-        const xg = linspace(Math.exp(mu - 4*sigmaPlot), Math.exp(mu + 4*sigmaPlot), nPts);
-        const yg = xg.map(xx => logncdf(mu, sigmaPlot, xx));
-        cdfTraces.push({ x: xg, y: yg, mode: 'lines', line: { color: '#f3b87b' }, name: 'theoretical CDF' });
-        Plotly.newPlot(CH, cdfTraces, { autosize:true, responsive:true, showlegend:false, xaxis:{ automargin:true }, yaxis:{ range:[0,1], automargin:true }, margin:{ t:28, r:22, b:56, l:40 } });
-        return;
+        const pGrid = linspace(0,0.99,nPts);
+        const xg = pGrid.map(p => logninv(mu, sigmaPlot, p));
+        const yg = pGrid.slice();
+        cdfTraces.push({ x: xg, y: yg, mode: 'lines', line: { color: '#6baed6' }, name: 'theoretical CDF', yaxis:'y2' });
       }
 
       let n = 1000;
@@ -955,7 +1568,7 @@
       let x95 = new Array();
       let y95 = new Array();
       // protect against degenerate sigma (all identical data => sigma === 0)
-      const sigmaPlot = (typeof sigma === 'number' && sigma > 0) ? sigma : 1e-6;
+      // reuse sigmaPlot previously computed for the CDF section above
       for (let i=1;i<n;i++){
         x[i] = logninv(mu,sigmaPlot,p[i]);
         y[i] = lognpdf(mu,sigmaPlot,x[i]);
@@ -970,7 +1583,7 @@
 
       if (lnView) {
         // ln(x) view — histogram of ln(data) and normal density on ln-axis
-        if (tab1 === 'data' && args._dataValues && args._dataValues.length > 0) {
+        if (args._dataValues && args._dataValues.length > 0) {
           const logs = args._dataValues.map(v => Math.log(v));
           const bins = Math.min(50, Math.max(5, Math.round(Math.sqrt(args._dataStats ? args._dataStats.n : args._dataValues.length))));
           traces.push({
@@ -985,35 +1598,48 @@
           });
         }
 
-        // normal density on ln-scale
-        const xl = linspace(mu - 4*sigmaPlot, mu + 4*sigmaPlot, n);
-        const yl = xl.map(z => normpdf(mu, sigmaPlot, z));
-        traces.push({ x: xl, y: yl, fill: 'tozeroy', fillcolor: 'rgba(243,184,123,0.5)', line: { color: '#f3b87b' }, type: 'scatter', hoverinfo: 'skip', name: 'Theoretical (normal)' });
-        const yMax = Math.max.apply(null, yl) || 0.001;
+        // normal density on ln-scale using same quantile grid as CDF
+        const pGridPdf = linspace(0,0.99,n);
+        const xlq = pGridPdf.map(p => norminv(mu, sigmaPlot, p));
+        const ylq = xlq.map(z => normpdf(mu, sigmaPlot, z));
+        traces.push({ x: xlq, y: ylq, fill: 'tozeroy', fillcolor: 'rgba(243,184,123,0.5)', line: { color: '#f3b87b' }, type: 'scatter', hoverinfo: 'skip', name: 'Theoretical (normal)' });
+        const yMax = Math.max.apply(null, ylq) || 0.001;
         traces.push({ x: [mu, mu], y: [0, yMax*0.98], hovertext: 'μ (ln)', mode: 'lines', line: { color: '#f3b87b', dash:'dot' }});
 
         // responsive margins — increase bottom padding and enable automargin so axis labels are never cropped
         const cw = CHART ? (CHART.clientWidth || CHART.offsetWidth) : window.innerWidth;
         const leftMargin = cw < 420 ? 40 : (cw < 720 ? 52 : 68);
-        const rightMargin = cw < 420 ? 20 : 24;
+        const rightMargin = cw < 420 ? 60 : 80;  // much more room on right
         const bottomMargin = cw < 420 ? 72 : 56;
         const topMargin = 24;
 
-        Plotly.newPlot(CHART, traces, {
+        // merge pdf traces with cdf traces and draw with dual y-axis
+        const pdfTraces = traces;
+        const allTraces = pdfTraces.concat(cdfTraces);
+        // determine x-axis range from whichever data array was used
+        let xRange;
+        if (lnView && typeof xlq !== 'undefined') {
+          xRange = [xlq[0], xlq[xlq.length-1]];
+        } else {
+          xRange = [x[0], x[n-1]];
+        }
+        Plotly.newPlot(CHART, allTraces, {
           autosize: true,
           responsive: true,
           showlegend: false,
           barmode: 'overlay',
-          xaxis: { type: 'lin', range: [xl[0], xl[n-1]], title: { text: 'ln(x)', standoff: 8 }, automargin: true },
-          yaxis: { automargin: true },
-          margin: { t: topMargin, r: rightMargin, b: bottomMargin, l: leftMargin, autoexpand:false },
-          paper_bgcolor: 'rgba(0,0,0,0)',
-          plot_bgcolor: 'rgba(0,0,0,0)'
+          xaxis: { type: 'lin', range: xRange, title: { text: 'ln(x)', standoff: 8 }, automargin: true },
+          yaxis: { automargin: true, range:[0,null], rangemode:'tozero', title: { text: 'PDF', standoff: 8, font:{color:'#f3b87b'} } },
+          yaxis2: { overlaying: 'y', side: 'right', range: [0,1], automargin: true, rangemode:'tozero', title: { text: 'CDF', standoff: 18, pad:{r:18}, font:{color:'#6baed6'} } },
+          margin: { t: topMargin+8, r: rightMargin, b: bottomMargin, l: leftMargin, autoexpand:false },
+          paper_bgcolor: themeBG,
+          plot_bgcolor: themeBG
         });
+        showControls(true);
 
       } else {
         // standard lognormal view (original behaviour)
-        if (tab1 === 'data' && args._dataValues && args._dataValues.length > 0) {
+        if (args._dataValues && args._dataValues.length > 0) {
           const bins = Math.min(50, Math.max(5, Math.round(Math.sqrt(args._dataStats ? args._dataStats.n : args._dataValues.length))));
           traces.push({
             x: args._dataValues,
@@ -1038,35 +1664,54 @@
         // compute responsive margins so axis labels/ticks never get cropped
         const cw = CHART ? (CHART.clientWidth || CHART.offsetWidth) : window.innerWidth;
         const leftMargin = cw < 420 ? 40 : (cw < 720 ? 52 : 68);
-        const rightMargin = cw < 420 ? 20 : 24;
+        const rightMargin = cw < 420 ? 60 : 80;
         const bottomMargin = cw < 420 ? 72 : 56; // increased bottom space so x-axis labels are visible
         const topMargin = 24;
-        Plotly.newPlot(CHART, traces, {
+        const pdfTraces = traces;
+        const allTraces = pdfTraces.concat(cdfTraces);
+        let xRange;
+        if (lnView && typeof xlq !== 'undefined') {
+          xRange = [xlq[0], xlq[xlq.length-1]];
+        } else {
+          xRange = [x[0], x[n-1]];
+        }
+        Plotly.newPlot(CHART, allTraces, {
           autosize: true,
           responsive: true,
           showlegend: false,
           barmode: 'overlay',
-          xaxis: { type: 'lin', range: [x[0],x[n-1]], automargin: true },
-          yaxis: { automargin: true },
-          margin: { t: topMargin, r: rightMargin, b: bottomMargin, l: leftMargin, autoexpand:false },
-          paper_bgcolor: 'rgba(0,0,0,0)',
-          plot_bgcolor: 'rgba(0,0,0,0)'
+          xaxis: { type: 'lin', range: xRange, automargin: true },
+          yaxis: { automargin: true, range:[0,null], rangemode:'tozero', title:{ text:'PDF', standoff:8, font:{color:'#f3b87b'} } },
+          yaxis2: { overlaying: 'y', side: 'right', range: [0,1], automargin: true, rangemode:'tozero', title: { text: 'CDF', standoff: 18, pad:{r:18}, font:{color:'#6baed6'} } },
+          margin: { t: topMargin+8, r: rightMargin, b: bottomMargin, l: leftMargin, autoexpand:false },
+          paper_bgcolor: themeBG,
+          plot_bgcolor: themeBG
         });
+        showControls(true);
       }
+    }
+
+    // wrapper that gathers state then invokes the core calculator logic
+    function updatedInput(){
+      showControls(false);
+      computeAndRender(gatherArgsFromPanels());
     }
 
     // loop through each arg-input and add an input event listener
     document.querySelectorAll(".arg").forEach(function(input) {
       input.addEventListener("input", function() { updatedInput(); });
     });
+    // when theme toggles, recompute the chart so background colors update
+    document.documentElement.addEventListener('kvot-theme-change', function() {
+      if (typeof updatedInput === 'function') updatedInput();
+    });
 
     // controls for printing/copying/combining
-    document.getElementById('showDetailsBtn').addEventListener('click', function() { updatedInput(); document.getElementById('ln-output').scrollIntoView({behavior:'smooth'}); });
-    document.getElementById('copyDetailsBtn').addEventListener('click', async function() {
-      const text = document.getElementById('ln-output').textContent || '';
-      try { await navigator.clipboard.writeText(text); this.textContent = 'Copied'; setTimeout(()=> this.textContent = 'Copy', 1200); } catch (e) { alert('Copy failed: ' + e.message); }
-    });
-    document.getElementById('printDetailsBtn').addEventListener('click', function() {
+    const btnShow = document.getElementById('showDetailsBtn');
+    if (btnShow) btnShow.addEventListener('click', function() { updatedInput(); document.getElementById('ln-output').scrollIntoView({behavior:'smooth'}); });
+    // copy button removed; no listener required
+    const btnPrint = document.getElementById('printDetailsBtn');
+    if (btnPrint) btnPrint.addEventListener('click', function() {
       const content = document.getElementById('ln-output').textContent || '';
       const w = window.open('', '_blank');
       w.document.write('<pre style="font-family:monospace;white-space:pre-wrap;">' + (content.replace(/&/g,'&amp;').replace(/</g,'&lt;')) + '</pre>');
@@ -1075,7 +1720,8 @@
     });
 
     // Preview (print-friendly) — opens a new window showing computed output and the equations (renders MathJax)
-    document.getElementById('previewDetailsBtn').addEventListener('click', function() {
+    const btnPreview = document.getElementById('previewDetailsBtn');
+    if (btnPreview) btnPreview.addEventListener('click', function() {
       updatedInput();
       const outText = document.getElementById('ln-output').textContent || '';
       const outTextEsc = outText.replace(/&/g,'&amp;').replace(/</g,'&lt;');
@@ -1084,7 +1730,7 @@
       const preview = window.open('', '_blank');
       preview.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Lognormal — Preview</title>');
       preview.document.write('<link rel="stylesheet" href="./resources/css/kvot.css">');
-      preview.document.write('<style>body{font-family:Arial,Helvetica,sans-serif;padding:18px;color:#222} pre{white-space:pre-wrap;background:#f7f7f8;padding:12px;border-radius:4px;border:1px solid #e1e1e1;font-family:Menlo,monospace;font-size:0.95rem} table{width:100%;border-collapse:collapse} td{padding:8px 10px} .equations-body{font-size:1rem;line-height:1.45} @media print{ body{margin:12mm} pre{font-size:1rem} .equations-body table td{padding:8px 10px} }</style>');
+      preview.document.write('<style>body{font-family:Arial,Helvetica,sans-serif;padding:18px;color:var(--text-primary)} pre{white-space:pre-wrap;background:var(--bg-secondary);padding:12px;border-radius:4px;border:1px solid var(--border-color);font-family:Menlo,monospace;font-size:0.95rem} table{width:100%;border-collapse:collapse} td{padding:8px 10px} .equations-body{font-size:1rem;line-height:1.45} @media print{ body{margin:12mm} pre{font-size:1rem} .equations-body table td{padding:8px 10px} }</style>');
       preview.document.write('<script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js">' + '</' + 'script>');
       preview.document.write('</head><body>');
       preview.document.write('<h2>Lognormal preview</h2>');
@@ -1100,26 +1746,6 @@
     // wire ln(x) toggle to re-run calculation and redraw chart
     const _lnToggle = document.getElementById('lnViewToggle');
     if (_lnToggle) _lnToggle.addEventListener('change', function(){ updatedInput(); });
-    // segmented chart mode buttons (PDF / CDF)
-    const _chartMode = document.getElementById('chartMode');
-    if (_chartMode) {
-      Array.from(_chartMode.querySelectorAll('[data-chart-mode]')).forEach(function(btn){
-        btn.addEventListener('click', function(){
-          _chartMode.querySelectorAll('[data-chart-mode]').forEach(b => b.classList.remove('active'));
-          this.classList.add('active');
-          // update aria-pressed
-          _chartMode.querySelectorAll('[data-chart-mode]').forEach(b => b.setAttribute('aria-pressed', b.classList.contains('active') ? 'true' : 'false'));
-          updatedInput();
-        });
-      });
-    }
-
-    function getChartMode() {
-      const c = document.getElementById('chartMode');
-      if (!c) return 'pdf';
-      const active = c.querySelector('[data-chart-mode].active');
-      return (active && active.getAttribute('data-mode')) || 'pdf';
-    }
 
     // second-metric is now chosen by selecting a second tab in the combined header (no checkbox)
     // updatedInput() will react to header selection state (selectedTabs).
