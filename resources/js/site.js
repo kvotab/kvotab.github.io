@@ -66,6 +66,8 @@ const KVOT = (() => {
       btn.textContent = theme === 'dark' ? '☀️' : '🌙';
       btn.title = theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode';
     });
+    // notify listeners that theme changed
+    document.documentElement.dispatchEvent(new CustomEvent('kvot-theme-change',{detail:{theme}}));
   }
 
   function toggleTheme() {
