@@ -843,6 +843,35 @@
       align-items: center;
       gap: 8px;
     }
+    .multi-select-hint .hint-close {
+      margin-left: auto;
+      width: 16px;
+      height: 16px;
+      border-radius: 3px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.2s;
+      font-size: 14px;
+      line-height: 1;
+      cursor: pointer;
+    }
+    .multi-select-hint .hint-close:hover {
+      background: rgba(0, 0, 0, 0.2);
+    }
+    [data-theme="dark"] .multi-select-hint .hint-close:hover {
+      background: rgba(53, 41, 33, 0.15);
+    }
+    .show-hint-button {
+      cursor: pointer;
+      font-size: 14px;
+      vertical-align: middle;
+      opacity: 0.6;
+      transition: opacity 0.15s;
+    }
+    .show-hint-button:hover {
+      opacity: 1;
+    }
 
     /* ==========================================================================
        11. STATUS & FEEDBACK STATES
