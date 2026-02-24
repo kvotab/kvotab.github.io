@@ -702,30 +702,33 @@
     .chart-controls .scale-toggle {
       display: inline-flex;
       border: 1px solid var(--color-panel-border);
-      border-radius: 4px;
+      border-radius: 999px; /* pill shape */
       /* no overflow hidden so the dividing line stays straight at corners */
       background: var(--color-panel-bg);
+      cursor: pointer; /* entire area clickable */
+      /* allow clicks even on button elements to bubble to container */
+      user-select: none;
     }
     .chart-controls .scale-toggle button {
       flex: 1;
-      padding: 4px 10px;
+      padding: 3px 10px;
       border: none;
       background: transparent;
       color: var(--color-text-primary);
-      cursor: pointer;
+      cursor: default; /* container handles click */
       font-size: 12px;
       transition: background 0.15s ease, color 0.15s ease;
       position: relative;
       box-sizing: border-box;
     }
     .chart-controls .scale-toggle button:first-child {
-      border-top-left-radius: 4px;
-      border-bottom-left-radius: 4px;
+      border-top-left-radius: 999px;
+      border-bottom-left-radius: 999px;
       /* no border on the inner edge */
     }
     .chart-controls .scale-toggle button:last-child {
-      border-top-right-radius: 4px;
-      border-bottom-right-radius: 4px;
+      border-top-right-radius: 999px;
+      border-bottom-right-radius: 999px;
       border-left: none;
     }
     .chart-controls .scale-toggle button.active {
