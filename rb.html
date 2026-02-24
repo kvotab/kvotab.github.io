@@ -331,8 +331,9 @@
       DOM.fileTabs = document.getElementById('fileTabs');
 
       // attach handlers for scale toggles
-      const scaleButtons = document.querySelectorAll('.scale-toggle button');
-      scaleButtons.forEach(btn => btn.addEventListener('click', handleScaleButtonClick));
+      // no per-button click listeners any more; container handles toggling
+      // const scaleButtons = document.querySelectorAll('.scale-toggle button');
+      // scaleButtons.forEach(btn => btn.addEventListener('click', handleScaleButtonClick));
 
       // load hint preference
       try {
@@ -347,6 +348,18 @@
       const showBtn = document.getElementById('showHintButton');
       if (showBtn) showBtn.addEventListener('click', showMultiSelectHint);
       updateHintToggleButton();
+
+      // make the whole scale-toggle area clickable and simply invert current state
+      ['xScaleToggle','yScaleToggle'].forEach(id => {
+        const cont = document.getElementById(id);
+        if (cont) cont.addEventListener('click', () => {
+          const axis = id.startsWith('x') ? 'x' : 'y';
+          const current = getScaleValue(axis);
+          const newVal = current === 'linear' ? 'log' : 'linear';
+          setScaleValue(axis, newVal);
+          updateChartScales();
+        });
+      });
     }
     
     /**
