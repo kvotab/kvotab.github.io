@@ -4228,6 +4228,8 @@
     function getPlotlyConfig(filename) {
       return {
         displayLogo: false,
+        /* some versions of plotly check lowercase name */
+        displaylogo: false,
         scrollZoom: true,
         showLink: false,
         plotlyServerURL: "https://chart-studio.plotly.com",
