@@ -98,9 +98,10 @@
         </div>
         
         <div>
-          <h3>Dataset Information</h3>
+          <h3>Dataset Information <span id="showHintButton" class="show-hint-button" title="Show tip">💡</span></h3>
             <div class="multi-select-hint" style="display: none;" id="multiSelectHint">
               💡 <strong>Tip:</strong> Hold Ctrl (⌘ on Mac) and click datasets to compare multiple
+              <button id="multiSelectHintClose" class="hint-close" title="Dismiss" style="cursor:pointer;border:none;background:none;font-size:14px;line-height:1;">×</button>
             </div>
             <div id="info">Select a dataset to view its details</div>
         </div>
@@ -238,6 +239,8 @@
     // Dynamic legend state
     /** @type {boolean} When true, legend updates to show only traces visible in current viewport */
     let dynamicLegendEnabled = true;
+    // whether to display the multi-select hint; persisted to localStorage
+    let _showMultiSelectHint = true;
     
     // Search state
     /** @type {number|null} Timeout ID for debounced search input */
@@ -330,6 +333,20 @@
       // attach handlers for scale toggles
       const scaleButtons = document.querySelectorAll('.scale-toggle button');
       scaleButtons.forEach(btn => btn.addEventListener('click', handleScaleButtonClick));
+
+      // load hint preference
+      try {
+        if (localStorage.getItem('rb_showMultiSelectHint') === '0') {
+          _showMultiSelectHint = false;
+        }
+      } catch(_) {}
+      updateMultiSelectHint();
+
+      const closeBtn = document.getElementById('multiSelectHintClose');
+      if (closeBtn) closeBtn.addEventListener('click', dismissMultiSelectHint);
+      const showBtn = document.getElementById('showHintButton');
+      if (showBtn) showBtn.addEventListener('click', showMultiSelectHint);
+      updateHintToggleButton();
     }
     
     /**
@@ -1052,6 +1069,53 @@
       currentPdfHistogramData = null;
       const histControls = document.getElementById('histControls');
       if (histControls) histControls.style.display = 'none';
+    }
+
+    /**
+     * Hide or show the multi-select hint element depending on state.
+     */
+    function updateMultiSelectHint() {
+      const hint = document.getElementById('multiSelectHint');
+      if (!hint) return;
+      let hasData = false;
+      const tree = document.getElementById('tree');
+      if (tree) {
+        // treat any tree-item as evidence of data; loading state will clear hint
+        if (tree.querySelector('.tree-item')) hasData = true;
+      }
+      hint.style.display = (_showMultiSelectHint && hasData) ? '' : 'none';
+    }
+
+    /**
+     * Permanently dismiss the multi-select hint (stored in localStorage).
+     */
+    function dismissMultiSelectHint() {
+      _showMultiSelectHint = false;
+      try { localStorage.setItem('rb_showMultiSelectHint','0'); } catch(_) {}
+      updateMultiSelectHint();
+      updateHintToggleButton();
+    }
+
+    /**
+     * Update visibility of the lamp button that can restore the tip.
+     */
+    function updateHintToggleButton() {
+      const btn = document.getElementById('showHintButton');
+      if (!btn) return;
+      // show when hint is dismissed but tree has data
+      const tree = document.getElementById('tree');
+      const hasData = tree && tree.querySelector('.tree-item');
+      btn.style.display = (!_showMultiSelectHint && hasData) ? '' : 'none';
+    }
+
+    /**
+     * Restore the multi-select hint and hide the lamp.
+     */
+    function showMultiSelectHint() {
+      _showMultiSelectHint = true;
+      try { localStorage.removeItem('rb_showMultiSelectHint'); } catch(_) {}
+      updateMultiSelectHint();
+      updateHintToggleButton();
     }
     
     /**
@@ -2606,6 +2670,8 @@
         if (window._treeRefreshCancelled || window._treeRefreshId !== _myTreeRefreshId) {
           hideFileLoadTicker();
           try { tree && tree.removeAttribute('aria-busy'); } catch (e) {}
+          updateMultiSelectHint();
+          updateHintToggleButton();
           return;
         }
         let treeHtml = ''; 
