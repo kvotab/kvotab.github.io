@@ -4709,6 +4709,22 @@
             }
           }
 
+          // if still no histogram data, and dataset was marked probabilistic without time-dependent
+          if (!isGroup && !pdfHistogramData && checkIsProbabilistic(node) && !hasTimeDependentData) {
+            try {
+              let rawData;
+              if (typeof node.value !== 'undefined') rawData = node.value;
+              else if (typeof node.toArray === 'function') rawData = node.toArray();
+
+              if (rawData !== undefined) {
+                const flat = PDFSampler.normalizeDataArray(rawData);
+                pdfHistogramData = { type: 'single', samples: Array.from(flat), spec: null, path };
+              }
+            } catch (err) {
+              console.warn('Probabilistic histogram error:', err);
+            }
+          }
+
           if (!isGroup) {
             const excelWrap = document.createElement('div'); excelWrap.style.marginTop = '12px'; excelWrap.style.paddingTop = '12px'; excelWrap.style.borderTop = '1px solid var(--color-border)';
             const excelBtn = document.createElement('button'); excelBtn.style.cssText = 'padding:6px 12px;background:#217346;color:white;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;transition:all 0.2s;';
