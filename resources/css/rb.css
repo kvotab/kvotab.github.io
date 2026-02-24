@@ -642,7 +642,8 @@
     }
     
     #plotlyChart {
-      min-height: 500px;
+      /* adjustable minimum height; override via --plotly-chart-min-height */
+      min-height: var(--plotly-chart-min-height, 200px);
       height: 500px;
       max-height: 2000px;
       resize: vertical;
