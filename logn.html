@@ -48,12 +48,18 @@
     @media (max-width: 920px) { #logn .logn-columns { flex-direction: column; } #equations-details { width: auto; } }
 
     /* chart inside computed results: stack cleanly under the textual output and contain overflow */
-    #detailsContainer { display: flex; flex-direction: column; gap: 12px; align-items: stretch; }
-    #detailsContainer #ln-output { position: static; z-index: auto; width: 100%; box-sizing: border-box; }
-    #detailsContainer #chart { position: static; z-index: auto; min-height:220px; max-height:420px; width:100%; box-sizing:border-box; background: var(--bg-primary); padding:6px; margin:0; margin-bottom:20px; border-radius:6px; border:1px solid var(--border-color); box-shadow: 0 1px 4px rgba(0,0,0,0.03); overflow: hidden; }
-    /* ensure Plotly canvas never exceeds its container */
+    #detailsContainer { display: flex; gap: 12px; align-items: stretch; flex-wrap: nowrap; }
+    #detailsContainer #textOutputContainer { flex:1; }
+    #detailsContainer #ln-output { position: static; z-index: auto; width: 100%; box-sizing: border-box; margin:0; }
+    /* push chart container rightward by the gap amount so its right edge reaches the edge of the parent */
+    #detailsContainer #chartContainer { flex:1; display:flex; flex-direction:column; margin-right:-12px; min-width:150px; }
+    /* external ln-view checkbox replaced by modebar button, hide it */
+    #result-controls { display:none !important; }
+    #detailsContainer #chart { position: static; z-index: auto; min-height:220px; max-height:420px; flex:1; width:100%; box-sizing:border-box; background: var(--bg-primary); padding:6px; margin:0; border-radius:6px; border:1px solid var(--border-color); box-shadow: 0 1px 4px rgba(0,0,0,0.03); overflow: hidden; }    /* ensure Plotly canvas never exceeds its container */
     #detailsContainer #chart .plotly, #detailsContainer #chart .js-plotly-plot { width: 100% !important; max-width: 100% !important; box-sizing: border-box !important; }
     #detailsContainer #chart .plotly { height:100% !important; }
+    /* splitter hover feedback */
+    #panelSplitter:hover { background: rgba(0,0,0,0.05); }
 
     /* make equations visually separated from the computed results */
     #equations-details { width: 100%; max-width: none; margin-top: 18px; border-top: 1px solid #e6e6e6; padding-top: 12px; }
@@ -172,15 +178,22 @@
               <div class="computed-body">
                 <div id="logn-output" style="margin:8px 0 0 0; border-top:1px solid #e6e6e6; padding-top:12px;">
                   <!-- results container now only holds output and chart; controls moved below -->
-                  <div id="detailsContainer" style="margin-top:12px;display:block;">
-                    <pre id="ln-output" style="white-space:pre-wrap;background:var(--bg-secondary);border:1px solid var(--border-color);padding:12px;border-radius:4px;min-height:120px;color:var(--text-primary);">No distribution computed yet.</pre>
-                    <!-- controls placed here: ln(x) toggle (shown only when a chart exists) -->
-                    <div id="result-controls" style="margin-top:8px;display:none;gap:10px;align-items:center;">
-                      <label class="chart-toggle" style="display:inline-flex;align-items:center;gap:8px;font-size:0.92rem;color:#555;">
-                        <input id="lnViewToggle" type="checkbox"> Show ln(x) view
-                      </label>
+                  <div id="detailsContainer" style="margin-top:12px;display:flex;gap:12px;flex-wrap:nowrap;">
+                    <div id="textOutputContainer" style="flex:1;">
+                      <pre id="ln-output" style="white-space:pre-wrap;background:var(--bg-secondary);border:1px solid var(--border-color);padding:12px;border-radius:4px;min-height:120px;color:var(--text-primary);">No distribution computed yet.</pre>
                     </div>
-                    <div id="chart" aria-label="Lognormal density chart" style="min-height:220px;"></div>
+                    <!-- draggable splitter -->
+                    <div id="panelSplitter" style="width:6px;cursor:col-resize;background:transparent;position:relative;">
+                      <div style="position:absolute;top:0;bottom:0;left:50%;width:1px;background:var(--border-color);transform:translateX(-50%);"></div>
+                    </div>
+                    <div id="chartContainer" style="flex:1;display:flex;flex-direction:column;">
+                      <div id="result-controls" style="margin-bottom:8px;display:none;gap:10px;align-items:center;justify-content:flex-end;">
+                        <label class="chart-toggle" style="display:inline-flex;align-items:center;gap:8px;font-size:0.92rem;color:#555;">
+                          <input id="lnViewToggle" type="checkbox"> Show ln(x) view
+                        </label>
+                      </div>
+                      <div id="chart" aria-label="Lognormal density chart" style="flex:1;min-height:220px;"></div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1080,6 +1093,11 @@
     function computeAndRender(state){
       // hide controls by default until a chart is drawn
       showControls(false);
+      // hide chart panel and splitter until we know we have valid data
+      const chartContainer = document.getElementById('chartContainer');
+      const splitterEl = document.getElementById('panelSplitter');
+      if (chartContainer) chartContainer.style.display = 'none';
+      if (splitterEl) splitterEl.style.display = 'none';
       // allow callers to pre-compute the DOM state; use provided args when available
       var args;
       if (state && state.args) {
@@ -1512,6 +1530,9 @@
       // render output to the page
       const outEl = document.getElementById('ln-output');
       if (outEl) outEl.textContent = txt;
+      // show chart panel now that we have valid parameters
+      if (chartContainer) chartContainer.style.display = '';
+      if (splitterEl) splitterEl.style.display = '';
 
       // if either mu or sigma is missing, retain previously computed value if available
       if (window._lastLognormal) {
@@ -1623,6 +1644,21 @@
         } else {
           xRange = [x[0], x[n-1]];
         }
+        const configObj = {
+          modeBarButtonsToAdd: [{
+            name: 'toggle lin-log-x',
+            title: 'Toggle linear/log x scale',
+            icon: {
+              width: 448, height: 512,
+              path: 'M246.6 41.4c-12.5-12.5-32.8-12.5-45.3 0l-160 160c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0L224 109.3 361.4 246.6c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3l-160-160zm160 352l-160-160c-12.5-12.5-32.8-12.5-45.3 0l-160 160c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0L224 301.3 361.4 438.6c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3z'
+            },
+            click: function(gd) {
+              const chk = document.getElementById('lnViewToggle');
+              if (chk) { chk.checked = !chk.checked; }
+              updatedInput();
+            }
+          }]
+        };
         Plotly.newPlot(CHART, allTraces, {
           autosize: true,
           responsive: true,
@@ -1634,7 +1670,7 @@
           margin: { t: topMargin+8, r: rightMargin, b: bottomMargin, l: leftMargin, autoexpand:false },
           paper_bgcolor: themeBG,
           plot_bgcolor: themeBG
-        });
+        }, configObj);
         showControls(true);
 
       } else {
@@ -1675,6 +1711,21 @@
         } else {
           xRange = [x[0], x[n-1]];
         }
+        const configObj = {
+          modeBarButtonsToAdd: [{
+            name: 'toggle lin-log-x',
+            title: 'Toggle linear/log x scale',
+            icon: {
+              width: 448, height: 512,
+              path: 'M246.6 41.4c-12.5-12.5-32.8-12.5-45.3 0l-160 160c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0L224 109.3 361.4 246.6c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3l-160-160zm160 352l-160-160c-12.5-12.5-32.8-12.5-45.3 0l-160 160c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0L224 301.3 361.4 438.6c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3z'
+            },
+            click: function(gd) {
+              const chk = document.getElementById('lnViewToggle');
+              if (chk) { chk.checked = !chk.checked; }
+              updatedInput();
+            }
+          }]
+        };
         Plotly.newPlot(CHART, allTraces, {
           autosize: true,
           responsive: true,
@@ -1686,7 +1737,7 @@
           margin: { t: topMargin+8, r: rightMargin, b: bottomMargin, l: leftMargin, autoexpand:false },
           paper_bgcolor: themeBG,
           plot_bgcolor: themeBG
-        });
+        }, configObj);
         showControls(true);
       }
     }
@@ -1761,6 +1812,44 @@
     window.onresize = function() {
       Plotly.Plots.resize(CHART);
     };
+
+    // panel splitter drag
+    (function(){
+      const splitter = document.getElementById('panelSplitter');
+      if (!splitter) return;
+      let dragging = false;
+      let startX, startLeftWidth;
+      const leftPane = document.getElementById('textOutputContainer');
+      const rightPane = document.getElementById('chartContainer');
+      splitter.addEventListener('mousedown', function(e){
+        dragging = true;
+        startX = e.clientX;
+        startLeftWidth = leftPane.getBoundingClientRect().width;
+        document.body.style.cursor = 'col-resize';
+        e.preventDefault();
+      });
+      document.addEventListener('mousemove', function(e){
+        if (!dragging) return;
+        const dx = e.clientX - startX;
+        const newLeft = startLeftWidth + dx;
+        const containerWidth = document.getElementById('detailsContainer').getBoundingClientRect().width;
+        const splitterWidth = splitter.getBoundingClientRect().width;
+        // keep right pane at least 150px
+        const maxLeft = containerWidth - 150 - splitterWidth - 12;
+        if (newLeft > 100 && newLeft < maxLeft) {
+          const rightWidth = containerWidth - newLeft - splitterWidth - 12;
+          leftPane.style.flex = '0 0 ' + newLeft + 'px';
+          rightPane.style.flex = '0 0 ' + rightWidth + 'px';
+          Plotly.Plots.resize(CHART);
+        }
+      });
+      document.addEventListener('mouseup', function(){
+        if (dragging) {
+          dragging = false;
+          document.body.style.cursor = '';
+        }
+      });
+    })();
 
     function linspace(startValue, stopValue, cardinality) {
       var arr = [];

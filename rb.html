@@ -5333,7 +5333,8 @@
               if (count++ >= 5) break;
               const row = document.createElement('div');
               const strong = document.createElement('strong'); strong.textContent = k + ':'; row.appendChild(strong);
-              const txt = document.createTextNode(' ' + (v === undefined || v === null ? '' : String(v)).slice(0, 50) + ((v && String(v).length > 50) ? '...' : ''));
+              //const txt = document.createTextNode(' ' + (v === undefined || v === null ? '' : String(v)).slice(0, 50) + ((v && String(v).length > 50) ? '...' : ''));
+              const txt = document.createTextNode(' ' + (v === undefined || v === null ? '' : String(v)));
               row.appendChild(txt);
               val.appendChild(row);
             }
