@@ -697,6 +697,51 @@
       border-color: var(--color-kvot-primary);
       box-shadow: 0 0 0 3px rgba(52, 65, 38, 0.1);
     }
+
+    /* Split pushbutton for axis scale selection */
+    .chart-controls .scale-toggle {
+      display: inline-flex;
+      border: 1px solid var(--color-panel-border);
+      border-radius: 4px;
+      overflow: hidden;
+      background: var(--color-panel-bg);
+    }
+    .chart-controls .scale-toggle button {
+      flex: 1;
+      padding: 6px 12px;
+      border: none;
+      background: transparent;
+      color: var(--color-text-primary);
+      cursor: pointer;
+      font-size: 13px;
+      transition: background 0.15s ease, color 0.15s ease;
+      position: relative;
+    }
+    .chart-controls .scale-toggle button:first-child {
+      border-right: 1px solid var(--color-panel-border);
+    }
+    .chart-controls .scale-toggle button:last-child {
+      border-left: none;
+    }
+    .chart-controls .scale-toggle button.active {
+      background: var(--color-kvot-bright);
+      color: var(--color-kvot-background);
+    }
+    .chart-controls .scale-toggle button:not(.active):hover {
+      background: var(--color-panel-border);
+    }
+    .chart-controls .scale-toggle button:focus {
+      outline: none;
+    }
+    /* dark mode overrides */
+    [data-theme="dark"] .chart-controls .scale-toggle button:not(.active):hover {
+      background: var(--color-panel-border);
+    }
+    /* make unselected half text stand out but appear dimmer */
+    [data-theme="dark"] .chart-controls .scale-toggle button:not(.active) {
+      color: rgba(255,255,255,0.6); /* semi-transparent white */
+      text-shadow: 0 0 1px rgba(0,0,0,0.5);
+    }
     
     .chart-controls button {
       padding: 6px 12px;

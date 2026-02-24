@@ -59,17 +59,17 @@
           <div class="chart-controls">
             <label>
               X-axis:
-              <select id="xAxisScale" onchange="updateChartScales()">
-                <option value="linear">Linear</option>
-                <option value="log">Log</option>
-              </select>
+              <div class="scale-toggle" id="xScaleToggle">
+                <button data-axis="x" data-value="linear" class="active">lin</button>
+                <button data-axis="x" data-value="log">log</button>
+              </div>
             </label>
             <label>
               Y-axis:
-              <select id="yAxisScale" onchange="updateChartScales()">
-                <option value="linear">Linear</option>
-                <option value="log">Log</option>
-              </select>
+              <div class="scale-toggle" id="yScaleToggle">
+                <button data-axis="y" data-value="linear" class="active">lin</button>
+                <button data-axis="y" data-value="log">log</button>
+              </div>
             </label>
             <label >
               <input type="checkbox" id="dynamicLegend" checked onchange="toggleDynamicLegend()">
@@ -315,8 +315,6 @@
       DOM.plotlyChartContainer = document.getElementById('plotlyChartContainer');
       DOM.info = document.getElementById('info');
       DOM.tree = document.getElementById('tree');
-      DOM.xAxisScale = document.getElementById('xAxisScale');
-      DOM.yAxisScale = document.getElementById('yAxisScale');
       DOM.searchInput = document.getElementById('searchInput');
       DOM.searchResults = document.getElementById('searchResults');
       DOM.tabs = document.getElementById('tabs');
@@ -328,6 +326,10 @@
       DOM.dynamicLegendToggle = document.getElementById('dynamicLegendToggle');
       DOM.dropZone = document.getElementById('dropZone');
       DOM.fileTabs = document.getElementById('fileTabs');
+
+      // attach handlers for scale toggles
+      const scaleButtons = document.querySelectorAll('.scale-toggle button');
+      scaleButtons.forEach(btn => btn.addEventListener('click', handleScaleButtonClick));
     }
     
     /**
@@ -890,8 +892,8 @@
      */
     function getChartScales() {
       return {
-        xScale: getElement('xAxisScale')?.value || 'linear',
-        yScale: getElement('yAxisScale')?.value || 'linear'
+        xScale: getScaleValue('x'),
+        yScale: getScaleValue('y')
       };
     }
 
@@ -3134,8 +3136,8 @@
     function updateChartScales() {
       if (!currentChartData) return;
       
-      const xScale = document.getElementById('xAxisScale').value;
-      const yScale = document.getElementById('yAxisScale').value;
+      const xScale = getScaleValue('x');
+      const yScale = getScaleValue('y');
       
       const update = {
         'xaxis.type': xScale,
@@ -3143,6 +3145,40 @@
       };
       
       Plotly.relayout('plotlyChart', update);
+    }
+
+    /**
+     * Return current scale selection for given axis ('x' or 'y').
+     */
+    function getScaleValue(axis) {
+      const container = document.getElementById(axis + 'ScaleToggle');
+      if (!container) return 'linear';
+      const active = container.querySelector('button.active');
+      return active ? active.dataset.value : 'linear';
+    }
+
+    /**
+     * Set the scale button state for specified axis and value.
+     */
+    function setScaleValue(axis, value) {
+      const container = document.getElementById(axis + 'ScaleToggle');
+      if (!container) return;
+      const buttons = container.querySelectorAll('button');
+      buttons.forEach(btn => {
+        if (btn.dataset.value === value) btn.classList.add('active');
+        else btn.classList.remove('active');
+      });
+    }
+
+    /**
+     * Handler for clicks on the scale toggle buttons.
+     */
+    function handleScaleButtonClick(evt) {
+      const btn = evt.currentTarget;
+      const axis = btn.dataset.axis;
+      const val = btn.dataset.value;
+      setScaleValue(axis, val);
+      updateChartScales();
     }
 
     /**
@@ -3156,8 +3192,8 @@
     function applyReleasePresetView() {
       if (!currentChartData) return;
       
-      document.getElementById('xAxisScale').value = 'log';
-      document.getElementById('yAxisScale').value = 'log';
+      setScaleValue('x', 'log');
+      setScaleValue('y', 'log');
       
       const update = {
         'xaxis.type': 'log',
@@ -3180,8 +3216,8 @@
     function applyDosePresetView() {
       if (!currentChartData) return;
       
-      document.getElementById('xAxisScale').value = 'log';
-      document.getElementById('yAxisScale').value = 'log';
+      setScaleValue('x', 'log');
+      setScaleValue('y', 'log');
       
       const update = {
         'xaxis.type': 'log',
