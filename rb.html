@@ -5301,7 +5301,7 @@
       };
 
       let allTimeDependent = true;
-      const combinedPdfEntries = [];
+      const combinedHistogramEntries = [];
 
       for (const item of normalizedItems) {
         const { path, fileKey } = item;
@@ -5364,7 +5364,21 @@
               const shortFile = (normalizedItems.length > 1 && new Set(normalizedItems.map(d => d.fileKey)).size > 1) ? ' (' + fileKey + ')' : '';
               const entryLabel = datasetName + shortFile;
               const pdfEntries = collectPdfEntries(dataset, attrs, entryLabel);
-              if (pdfEntries) combinedPdfEntries.push(...pdfEntries);
+              if (pdfEntries) combinedHistogramEntries.push(...pdfEntries);
+            } else if (checkIsProbabilistic(dataset) && !isTimeDep) {
+              // no PDF but probabilistic dataset – include raw values in combined entries
+              try {
+                let rawData = typeof dataset.value !== 'undefined' ? dataset.value : (typeof dataset.toArray === 'function' ? dataset.toArray() : undefined);
+                if (rawData !== undefined) {
+                  const flat = Array.isArray(rawData) ? rawData : Array.from(rawData);
+                  const datasetName = path.split('/').pop();
+                  const shortFile = (normalizedItems.length > 1 && new Set(normalizedItems.map(d => d.fileKey)).size > 1) ? ' (' + fileKey + ')' : '';
+                  const entryLabel = datasetName + shortFile;
+                  combinedHistogramEntries.push({ label: entryLabel, samples: flat.map(PDFSampler.toNumber), spec: null, deterministicValue: null });
+                }
+              } catch (err) {
+                console.warn('probabilistic collect error:', err);
+              }
             }
           } catch (err) { console.warn('PDF collect error:', err); }
 
@@ -5391,8 +5405,8 @@
 
       if (allTimeDependent && normalizedItems.length > 0) {
         createMultiDatasetChart(normalizedItems);
-      } else if (combinedPdfEntries.length > 0) {
-        createPdfHistogram({ type: 'lookup', entries: combinedPdfEntries, path: 'Multi-selection' });
+      } else if (combinedHistogramEntries.length > 0) {
+        createPdfHistogram({ type: 'lookup', entries: combinedHistogramEntries, path: 'Multi-selection' });
       } else {
         document.getElementById('plotlyChartContainer').classList.remove('visible');
         currentChartData = null;
