@@ -1548,6 +1548,8 @@
       const cdfTraces = [];
       // determine current theme background color (resolve CSS variable)
       const themeBG = getComputedStyle(document.documentElement).getPropertyValue('--bg-primary').trim() || '#ffffff';
+      const isDarkTheme = document.documentElement.getAttribute('data-theme') === 'dark';
+      const gridColor = isDarkTheme ? '#4a3f35' : '#e5ddd5';
       const sigmaPlot = (typeof sigma === 'number' && sigma > 0) ? sigma : 1e-6;
       const nPts = 800;
 
@@ -1664,12 +1666,33 @@
           responsive: true,
           showlegend: false,
           barmode: 'overlay',
-          xaxis: { type: 'lin', range: xRange, title: { text: 'ln(x)', standoff: 8 }, automargin: true },
-          yaxis: { automargin: true, range:[0,null], rangemode:'tozero', title: { text: 'PDF', standoff: 8, font:{color:'#f3b87b'} } },
-          yaxis2: { overlaying: 'y', side: 'right', range: [0,1], automargin: true, rangemode:'tozero', title: { text: 'CDF', standoff: 18, pad:{r:18}, font:{color:'#6baed6'} } },
+          xaxis: { type: 'lin', range: xRange, title: { text: 'ln(x)', standoff: 8 }, automargin: true,
+                   gridcolor: gridColor, zerolinecolor: gridColor, linecolor: gridColor },
+          yaxis: { automargin: true, range:[0,null], rangemode:'tozero',
+                   title: { text: 'PDF', standoff: 8, font:{color:'#f3b87b'} },
+                   gridcolor: gridColor, zerolinecolor: gridColor, linecolor: gridColor },
+          yaxis2: { overlaying: 'y', side: 'right', range: [0,1], automargin: true, rangemode:'tozero',
+                    title: { text: 'CDF', standoff: 18, pad:{r:18}, font:{color:'#6baed6'} },
+                    gridcolor: gridColor, zerolinecolor: gridColor, linecolor: gridColor },
           margin: { t: topMargin+8, r: rightMargin, b: bottomMargin, l: leftMargin, autoexpand:false },
           paper_bgcolor: themeBG,
-          plot_bgcolor: themeBG
+          plot_bgcolor: themeBG,
+          shapes: [
+            {
+              type: 'rect',
+              xref: 'paper',
+              yref: 'paper',
+              x0: 0,
+              y0: 0,
+              x1: 1,
+              y1: 1,
+              line: {
+                color: gridColor,
+                width: 2
+              },
+              fillcolor: 'rgba(0,0,0,0)'
+            }
+          ]
         }, configObj);
         showControls(true);
 
@@ -1731,12 +1754,33 @@
           responsive: true,
           showlegend: false,
           barmode: 'overlay',
-          xaxis: { type: 'lin', range: xRange, automargin: true },
-          yaxis: { automargin: true, range:[0,null], rangemode:'tozero', title:{ text:'PDF', standoff:8, font:{color:'#f3b87b'} } },
-          yaxis2: { overlaying: 'y', side: 'right', range: [0,1], automargin: true, rangemode:'tozero', title: { text: 'CDF', standoff: 18, pad:{r:18}, font:{color:'#6baed6'} } },
+          xaxis: { type: 'lin', range: xRange, automargin: true,
+                   gridcolor: gridColor, zerolinecolor: gridColor, linecolor: gridColor },
+          yaxis: { automargin: true, range:[0,null], rangemode:'tozero',
+                   title:{ text:'PDF', standoff:8, font:{color:'#f3b87b'} },
+                   gridcolor: gridColor, zerolinecolor: gridColor, linecolor: gridColor },
+          yaxis2: { overlaying: 'y', side: 'right', range: [0,1], automargin: true, rangemode:'tozero',
+                    title: { text: 'CDF', standoff: 18, pad:{r:18}, font:{color:'#6baed6'} },
+                    gridcolor: gridColor, zerolinecolor: gridColor, linecolor: gridColor },
           margin: { t: topMargin+8, r: rightMargin, b: bottomMargin, l: leftMargin, autoexpand:false },
           paper_bgcolor: themeBG,
-          plot_bgcolor: themeBG
+          plot_bgcolor: themeBG,
+          shapes: [
+            {
+              type: 'rect',
+              xref: 'paper',
+              yref: 'paper',
+              x0: 0,
+              y0: 0,
+              x1: 1,
+              y1: 1,
+              line: {
+                color: gridColor,
+                width: 2
+              },
+              fillcolor: 'rgba(0,0,0,0)'
+            }
+          ]
         }, configObj);
         showControls(true);
       }
