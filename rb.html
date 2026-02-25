@@ -1,3 +1,35 @@
+
+<style>
+  #plotlyChartContainer { position: relative; }
+  .plotly-loading {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 10;
+    background: rgba(255,255,255,0.8);
+    padding: 16px 32px;
+    border-radius: 8px;
+    font-size: 1.2em;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .plotly-loading .spinner {
+    width: 24px;
+    height: 24px;
+    border: 4px solid #ccc;
+    border-top: 4px solid #333;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    display: inline-block;
+  }
+  @keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
+</style>
 <!doctype html>
 <html lang="en">
 <head>
@@ -1008,6 +1040,7 @@
           gridcolor: gridColor,
           zerolinecolor: gridColor,
           color: textColor,
+          rangemode: yScale === 'linear' ? 'tozero' : undefined,
           ...CHART_YAXIS_EXPONENT
         },
         hovermode: 'closest',
@@ -1214,9 +1247,22 @@
       
       Plotly.newPlot('plotlyChart', traces, layout, config).then(() => {
         setupDynamicLegend(getElement('plotlyChart'));
+        // Hide loading ticker after chart is rendered
+        if (container) {
+          const loadingDiv = container.querySelector('.plotly-loading');
+          if (loadingDiv) loadingDiv.style.display = 'none';
+        }
       });
     }
 
+        // Plotly.newPlot('plotlyChart', traces, layout, getPlotlyConfig('radionuclide_chart')).then(() => {
+        //   setupDynamicLegend(getElement('plotlyChart'));
+        //   // Hide loading ticker after chart is rendered
+        //   if (chartContainer) {
+        //     const loadingDiv = chartContainer.querySelector('.plotly-loading');
+        //     if (loadingDiv) loadingDiv.style.display = 'none';
+        //   }
+        // });
     /**
      * Render a PDF histogram in the main chart area (#plotlyChart).
      * Handles both single-distribution and lookup-table (multi-index) cases.
@@ -1395,7 +1441,30 @@
       currentChartData = null;
       container.classList.add('visible');
 
-      Plotly.newPlot('plotlyChart', traces, layout, config);
+      // Show loading ticker before chart rendering
+      if (container) {
+        let loadingDiv = container.querySelector('.plotly-loading');
+        if (!loadingDiv) {
+          loadingDiv = document.createElement('div');
+          loadingDiv.className = 'plotly-loading';
+          loadingDiv.innerHTML = '<span class="spinner"></span> Loading...';
+          loadingDiv.style.position = 'absolute';
+          loadingDiv.style.top = '50%';
+          loadingDiv.style.left = '50%';
+          loadingDiv.style.transform = 'translate(-50%, -50%)';
+          loadingDiv.style.zIndex = '10';
+          container.appendChild(loadingDiv);
+        } else {
+          loadingDiv.style.display = '';
+        }
+      }
+      Plotly.newPlot('plotlyChart', traces, layout, config).then(() => {
+        // Hide loading ticker after chart is rendered
+        if (container) {
+          const loadingDiv = container.querySelector('.plotly-loading');
+          if (loadingDiv) loadingDiv.style.display = 'none';
+        }
+      });
     }
 
     /**
@@ -1751,7 +1820,7 @@
       // Path exists, refresh display
       if (selectedIsRadionuclidesGroup) {
         showNodeAttributes(selectedDatasetPath, true);
-        createRadionuclidesChart(selectedDatasetPath);
+        Promise.resolve().then(() => createRadionuclidesChart(selectedDatasetPath));
       } else {
         showNodeAttributes(selectedDatasetPath, false);
         
@@ -3671,7 +3740,7 @@
     function toggleShowTotal() {
       if (selectedIsRadionuclidesGroup && selectedDatasetPath) {
         const savedAxis = captureAxisState();
-        createRadionuclidesChart(selectedDatasetPath, savedAxis);
+        Promise.resolve().then(() => createRadionuclidesChart(selectedDatasetPath, savedAxis));
       }
     }
 
@@ -3685,7 +3754,7 @@
     function toggleShowRatio() {
       if (selectedIsRadionuclidesGroup && selectedDatasetPath) {
         const savedAxis = captureAxisState();
-        createRadionuclidesChart(selectedDatasetPath, savedAxis);
+        Promise.resolve().then(() => createRadionuclidesChart(selectedDatasetPath, savedAxis));
       }
     }
 
@@ -3703,8 +3772,31 @@
      * @returns {void}
      */
     function createPlotlyChart(path) {
-      const plotDiv = getElement('plotlyChart');
       const chartContainer = getElement('plotlyChartContainer');
+      // Ensure chart container and panel are visible before chart generation
+      chartContainer.style.display = '';
+      chartContainer.classList.add('visible');
+      // Show loading ticker overlay
+      let loadingDiv = chartContainer.querySelector('.plotly-loading');
+      if (!loadingDiv) {
+        loadingDiv = document.createElement('div');
+        loadingDiv.className = 'plotly-loading';
+        loadingDiv.innerHTML = '<span class="spinner"></span> Loading...';
+        loadingDiv.style.position = 'absolute';
+        loadingDiv.style.top = '50%';
+        loadingDiv.style.left = '50%';
+        loadingDiv.style.transform = 'translate(-50%, -50%)';
+        loadingDiv.style.zIndex = '10';
+        loadingDiv.style.background = 'rgba(255,255,255,0.8)';
+        loadingDiv.style.padding = '16px 32px';
+        loadingDiv.style.borderRadius = '8px';
+        loadingDiv.style.fontSize = '1.2em';
+        loadingDiv.style.boxShadow = '0 2px 8px rgba(0,0,0,0.15)';
+        chartContainer.appendChild(loadingDiv);
+      } else {
+        loadingDiv.style.display = '';
+      }
+      const plotDiv = getElement('plotlyChart');
       plotDiv.innerHTML = '';
 
       // Hide "Show Total" and "Show Ratio" checkboxes (only for radionuclides groups)
@@ -3811,13 +3903,17 @@
         const config = getPlotlyConfig('multi_dataset_chart');
 
         currentChartData = { traces, layout, paths };
-        const container = getElement('plotlyChartContainer');
-        if (container) container.classList.add('visible');
+        if (chartContainer) chartContainer.classList.add('visible');
         if (dynamicLegendEnabled) {
           assignLegendRanks(traces);
         }
         Plotly.newPlot('plotlyChart', traces, layout, config).then(() => {
           setupDynamicLegend(getElement('plotlyChart'));
+          // Hide loading ticker after chart is rendered
+          if (chartContainer) {
+            const loadingDiv = chartContainer.querySelector('.plotly-loading');
+            if (loadingDiv) loadingDiv.style.display = 'none';
+          }
         });
       } else {
         hideChart();
@@ -3836,7 +3932,34 @@
     function createMultiDatasetChart(items) {
       const plotDiv = getElement('plotlyChart');
       const chartContainer = getElement('plotlyChartContainer');
-      plotDiv.innerHTML = '';
+      // Always show panel and chart container immediately
+      if (chartContainer) {
+        chartContainer.style.display = '';
+        chartContainer.classList.add('visible');
+      }
+      if (plotDiv) plotDiv.innerHTML = '';
+      // Show loading ticker overlay
+      if (chartContainer) {
+        let loadingDiv = chartContainer.querySelector('.plotly-loading');
+        if (!loadingDiv) {
+          loadingDiv = document.createElement('div');
+          loadingDiv.className = 'plotly-loading';
+          loadingDiv.innerHTML = '<span class="spinner"></span> Loading...';
+          loadingDiv.style.position = 'absolute';
+          loadingDiv.style.top = '50%';
+          loadingDiv.style.left = '50%';
+          loadingDiv.style.transform = 'translate(-50%, -50%)';
+          loadingDiv.style.zIndex = '10';
+          loadingDiv.style.background = 'rgba(255,255,255,0.8)';
+          loadingDiv.style.padding = '16px 32px';
+          loadingDiv.style.borderRadius = '8px';
+          loadingDiv.style.fontSize = '1.2em';
+          loadingDiv.style.boxShadow = '0 2px 8px rgba(0,0,0,0.15)';
+          chartContainer.appendChild(loadingDiv);
+        } else {
+          loadingDiv.style.display = '';
+        }
+      }
       
       // Hide "Show Total" and "Show Ratio" checkboxes (only for radionuclides groups)
       setShowTotalVisible(false);
@@ -3986,9 +4109,14 @@
         if (dynamicLegendEnabled) {
           assignLegendRanks(traces);
         }
-        Plotly.newPlot('plotlyChart', traces, layout, config).then(() => {
-          setupDynamicLegend(getElement('plotlyChart'));
-        });
+          Plotly.newPlot('plotlyChart', traces, layout, config).then(() => {
+            setupDynamicLegend(getElement('plotlyChart'));
+            // Hide loading ticker after chart is rendered
+            if (container) {
+              const loadingDiv = container.querySelector('.plotly-loading');
+              if (loadingDiv) loadingDiv.style.display = 'none';
+            }
+          });
       } else {
         hideChart();
       }
@@ -4006,11 +4134,37 @@
      * @param {string} path - HDF5 path to the radionuclides group
      * @returns {void}
      */
-    function createRadionuclidesChart(path, savedAxisState) {
+    async function createRadionuclidesChart(path, savedAxisState) {
       const plotDiv = getElement('plotlyChart');
       const chartContainer = getElement('plotlyChartContainer');
-      plotDiv.innerHTML = '';
-      
+      // Show chart container and loading ticker immediately
+      if (chartContainer) {
+        chartContainer.style.display = '';
+        chartContainer.classList.add('visible');
+        let loadingDiv = chartContainer.querySelector('.plotly-loading');
+        if (!loadingDiv) {
+          loadingDiv = document.createElement('div');
+          loadingDiv.className = 'plotly-loading';
+          loadingDiv.innerHTML = '<span class="spinner"></span> Loading...';
+          loadingDiv.style.position = 'absolute';
+          loadingDiv.style.top = '50%';
+          loadingDiv.style.left = '50%';
+          loadingDiv.style.transform = 'translate(-50%, -50%)';
+          loadingDiv.style.zIndex = '10';
+          loadingDiv.style.background = 'rgba(255,255,255,0.8)';
+          loadingDiv.style.padding = '16px 32px';
+          loadingDiv.style.borderRadius = '8px';
+          loadingDiv.style.fontSize = '1.2em';
+          loadingDiv.style.boxShadow = '0 2px 8px rgba(0,0,0,0.15)';
+          chartContainer.appendChild(loadingDiv);
+        } else {
+          loadingDiv.style.display = '';
+        }
+      }
+      if (plotDiv) plotDiv.innerHTML = '';
+      // Yield to browser for immediate UI update before heavy processing (cross-browser)
+      await new Promise(requestAnimationFrame);
+      await new Promise(resolve => setTimeout(resolve, 0));
       // Show "Show Total" checkbox for radionuclides groups
       setShowTotalVisible(true);
       
@@ -4076,44 +4230,38 @@
               if (!dataset || dataset.type.toLowerCase() !== 'dataset') {
                 continue;
               }
-              
               let yData;
               if (typeof dataset.value !== 'undefined') {
                 yData = dataset.value;
               } else if (typeof dataset.toArray === 'function') {
                 yData = dataset.toArray();
               }
-              
               if (yData) {
                 let yArray = PDFSampler.normalizeDataArray(yData);
-                
                 // Handle probabilistic data
                 if (checkIsProbabilistic(dataset)) {
                   yArray = computeProbabilisticMean(yArray, timeData);
                 }
-
                 const minLength = Math.min(timeData.length, yArray.length);
                 const trimmedTimeData = timeData.slice(0, minLength);
                 const trimmedYData = yArray.slice(0, minLength);
-                
                 // Store data for computing total
                 if (!totalDataByFile[fileKey]) {
                   totalDataByFile[fileKey] = { timeData: trimmedTimeData, dataArrays: [] };
                 }
                 totalDataByFile[fileKey].dataArrays.push(trimmedYData);
-                
                 // Get line style for this radionuclide
                 const lineStyle = getLineStyle(datasetKey);
                 let traceName = datasetKey;
                 let lineWidth = lineStyle.width;
-                
                 if (enabledFiles.length > 1 && enabledFiles.indexOf(fileKey) > 0) {
                   traceName = `${datasetKey} (${filenameDiff(enabledFiles[0], fileKey)})`;
                   lineWidth = lineWidth / 2;
                 }
-                
                 traces.push(ChartService.timeSeriesTrace({ x: trimmedTimeData, y: trimmedYData, name: traceName, line: { color: lineStyle.color, dash: lineStyle.dash, width: lineWidth } }));
               }
+              // Yield to browser for UI update after each dataset
+              await Promise.resolve();
             } catch (e) {
               console.error(`Error creating trace for ${datasetKey} in ${fileKey}:`, e);
             }
@@ -4306,7 +4454,20 @@
         applyAxisState(layout, savedAxisState);
         
         renderChart(traces, layout, path);
+        // Plotly.newPlot('plotlyChart', traces, layout, getPlotlyConfig('radionuclide_chart')).then(() => {
+        //   setupDynamicLegend(getElement('plotlyChart'));
+        //   // Hide loading ticker after chart is rendered
+        //   if (chartContainer) {
+        //     const loadingDiv = chartContainer.querySelector('.plotly-loading');
+        //     if (loadingDiv) loadingDiv.style.display = 'none';
+        //   }
+        // });
       } else {
+        // Hide loading ticker if no traces
+        if (chartContainer) {
+          const loadingDiv = chartContainer.querySelector('.plotly-loading');
+          if (loadingDiv) loadingDiv.style.display = 'none';
+        }
         hideChart();
       }
     }
@@ -4582,8 +4743,10 @@
      * @param {string} path - HDF5 path to the node
      * @param {boolean} isGroup - Whether the node is a group (vs dataset)
      */
-    function showNodeAttributes(path, isGroup = false) {
+    async function showNodeAttributes(path, isGroup = false) {
       const infoDiv = document.getElementById('info');
+      // Make panel visible and show loading immediately
+      infoDiv.style.display = '';
       while (infoDiv.firstChild) infoDiv.removeChild(infoDiv.firstChild);
       const loadingNode = document.createElement('div'); loadingNode.className = 'loading'; loadingNode.textContent = 'Loading...';
       infoDiv.appendChild(loadingNode);
@@ -4880,7 +5043,7 @@
         if (contentFrag.childNodes.length > 0) infoDiv.appendChild(contentFrag);
         else { const noData = document.createElement('div'); noData.style.color = '#999'; noData.textContent = 'No data available for this path'; infoDiv.appendChild(noData); }
 
-        if (isRadionuclidesGroup) { currentPdfHistogram = false; createRadionuclidesChart(path); }
+        if (isRadionuclidesGroup) { currentPdfHistogram = false; await createRadionuclidesChart(path); }
         else if (hasTimeDependentData && !isGroup) { currentPdfHistogram = false; createPlotlyChart(path); }
         else if (pdfHistogramData) { createPdfHistogram(pdfHistogramData); }
         else { currentPdfHistogram = false; document.getElementById('plotlyChartContainer').classList.remove('visible'); currentChartData = null; }
