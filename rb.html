@@ -978,6 +978,12 @@
       const textColor = isDark ? '#e8ddd0' : '#2d2416';
       const gridColor = isDark ? '#4a3f35' : '#e5ddd5';
       const bgColor = isDark ? '#2a221b' : '#ffffff';
+      // use panel background for the page around the axes
+      let panelBg = ''; 
+      try {
+        panelBg = getComputedStyle(document.documentElement).getPropertyValue('--color-panel-bg').trim();
+      } catch (e) { panelBg = isDark ? '#2a221b' : '#faf8f6'; }
+      if (!panelBg) panelBg = isDark ? '#2a221b' : '#faf8f6';
 
       return {
         title: {
@@ -986,7 +992,7 @@
           xanchor: 'left',
           x: 0
         },
-        paper_bgcolor: bgColor,
+        paper_bgcolor: panelBg,
         plot_bgcolor: bgColor,
         font: { color: textColor },
         xaxis: { 
@@ -1040,8 +1046,13 @@
         const textColor = isDark ? '#e8ddd0' : '#2d2416';
         const gridColor = isDark ? '#4a3f35' : '#e5ddd5';
         const bgColor  = isDark ? '#2a221b' : '#ffffff';
+        let panelBg = '';
+        try {
+          panelBg = getComputedStyle(document.documentElement).getPropertyValue('--color-panel-bg').trim();
+        } catch (e) { panelBg = isDark ? '#2a221b' : '#faf8f6'; }
+        if (!panelBg) panelBg = isDark ? '#2a221b' : '#faf8f6';
         return {
-          paper_bgcolor: bgColor,
+          paper_bgcolor: panelBg,
           plot_bgcolor: bgColor,
           'font.color': textColor,
           'xaxis.gridcolor': gridColor,
@@ -1212,6 +1223,13 @@
      * @param {Object} data - pdfHistogramData object
      */
     function createPdfHistogram(data) {
+      // Ensure panelBg is defined for histogram layout
+      const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+      let panelBg = '';
+      try {
+        panelBg = getComputedStyle(document.documentElement).getPropertyValue('--color-panel-bg').trim();
+      } catch (e) { panelBg = isDark ? '#2a221b' : '#faf8f6'; }
+      if (!panelBg) panelBg = isDark ? '#2a221b' : '#faf8f6';
       const container = getElement('plotlyChartContainer');
       if (!container) return;
 
@@ -1252,7 +1270,7 @@
 
       const useLog = allPositive && document.getElementById('histLogScale') && document.getElementById('histLogScale').checked;
 
-      const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+      // ...existing code...
       const textColor = isDark ? '#e8ddd0' : '#2d2416';
       const gridColor = isDark ? '#4a3f35' : '#e5ddd5';
       const bgColor  = isDark ? '#2a221b' : '#ffffff';
@@ -1346,9 +1364,10 @@
         });
       }
 
+
       const layout = {
         barmode: data.type === 'lookup' ? 'overlay' : undefined,
-        paper_bgcolor: bgColor,
+        paper_bgcolor: panelBg,
         plot_bgcolor: bgColor,
         font: { color: textColor },
         xaxis: {
