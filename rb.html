@@ -3970,14 +3970,24 @@
       let timeUnit = '';
       
       // Normalize items: if fileKey is null (intersect mode), expand to all enabled files
+      // Deduplicate so each (path, fileKey) pair is unique
       const normalizedItems = [];
+      const seen = new Set();
       for (const item of items) {
         if (item.fileKey && loadedFiles[item.fileKey]) {
-          normalizedItems.push(item);
+          const key = item.path + '|' + item.fileKey;
+          if (!seen.has(key)) {
+            normalizedItems.push(item);
+            seen.add(key);
+          }
         } else {
           // Intersect mode — expand to all enabled files
           for (const fk of getEnabledFiles()) {
-            normalizedItems.push({ path: item.path, fileKey: fk });
+            const key = item.path + '|' + fk;
+            if (!seen.has(key)) {
+              normalizedItems.push({ path: item.path, fileKey: fk });
+              seen.add(key);
+            }
           }
         }
       }
@@ -4054,26 +4064,20 @@
             const trimmedTimeData = timeData.slice(0, minLength);
             const trimmedYData = yArray.slice(0, minLength);
             
-            // Build trace name — show file label when multiple files, path when multiple paths
+            // Build trace name — always show file label for multi-file selection
             let traceName = datasetName;
             let lineWidth = 2;
             let lineDash = 'solid';
-            
-            if (multiFile && multiPath) {
-              const diffLabel = filenameDiff(uniqueFileKeys[0], fileKey);
-              traceName = `${datasetName} (${diffLabel})`;
-            } else if (multiFile) {
-              traceName = fileKey;
-            }
-            // else just datasetName for single-file multi-path
-            
             if (multiFile) {
+              // Always append fileKey for clarity
+              traceName = `${datasetName} (${fileKey})`;
               const fileIdx = uniqueFileKeys.indexOf(fileKey);
               const dashStyles = ['solid', 'dash', 'dot', 'dashdot'];
               lineDash = dashStyles[fileIdx % dashStyles.length];
               lineWidth = 1.5;
+            } else if (multiPath) {
+              traceName = datasetName;
             }
-            
             traces.push(ChartService.timeSeriesTrace({ x: trimmedTimeData, y: trimmedYData, name: traceName, line: { color: baseColor, dash: lineDash, width: lineWidth }, hovertemplate: `<b>${traceName}</b><br>Time: %{x}<br>Value: %{y}<extra></extra>` }));
           }
         } catch (e) {
@@ -5578,10 +5582,25 @@
 
       if (!items || items.length === 0) return;
 
+      // Deduplicate so each (path, fileKey) pair is unique
       const normalizedItems = [];
+      const seen = new Set();
       for (const item of items) {
-        if (item.fileKey && loadedFiles[item.fileKey]) normalizedItems.push(item);
-        else for (const fk of getEnabledFiles()) normalizedItems.push({ path: item.path, fileKey: fk });
+        if (item.fileKey && loadedFiles[item.fileKey]) {
+          const key = item.path + '|' + item.fileKey;
+          if (!seen.has(key)) {
+            normalizedItems.push(item);
+            seen.add(key);
+          }
+        } else {
+          for (const fk of getEnabledFiles()) {
+            const key = item.path + '|' + fk;
+            if (!seen.has(key)) {
+              normalizedItems.push({ path: item.path, fileKey: fk });
+              seen.add(key);
+            }
+          }
+        }
       }
 
       const frag = document.createDocumentFragment();
