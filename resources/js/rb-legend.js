@@ -1,0 +1,193 @@
+/* ==========================================================================
+   10. DYNAMIC LEGEND
+   ========================================================================== */
+
+/**
+ * Toggle dynamic legend filtering on/off.
+ * When enabled, only traces with data points visible in the current
+ * viewport are shown in the legend. When disabled, all traces are shown.
+ * 
+ * @returns {void}
+ */
+function toggleDynamicLegend() {
+  dynamicLegendEnabled = document.getElementById('dynamicLegend').checked;
+  
+  const plotDiv = document.getElementById('plotlyChart');
+  if (!plotDiv || !plotDiv.data || !plotDiv.layout) {
+    return;
+  }
+  
+  if (!dynamicLegendEnabled) {
+    // Show all legend items (except those explicitly hidden, e.g. by Show Ratio)
+    const showlegendValues = plotDiv.data.map(trace => !trace._hiddenFromLegend);
+    
+    Plotly.restyle(plotDiv, { showlegend: showlegendValues }).then(() => {
+      const statusEl = document.getElementById('legendStatus');
+      if (statusEl) {
+        statusEl.style.display = 'none';
+      }
+    });
+  } else {
+    // Re-apply dynamic filtering based on current view
+    const layout = plotDiv.layout;
+    
+    // Re-apply legend sorting by max Y value
+    assignLegendRanks(plotDiv.data);
+
+    let xRange = layout.xaxis?.range;
+    let yRange = layout.yaxis?.range;
+    
+    if (!xRange || !yRange) {
+      return;
+    }
+    
+    const xIsLog = layout.xaxis?.type === 'log';
+    const yIsLog = layout.yaxis?.type === 'log';
+    
+    const xMin = xIsLog ? Math.pow(10, xRange[0]) : xRange[0];
+    const xMax = xIsLog ? Math.pow(10, xRange[1]) : xRange[1];
+    const yMin = yIsLog ? Math.pow(10, yRange[0]) : yRange[0];
+    const yMax = yIsLog ? Math.pow(10, yRange[1]) : yRange[1];
+    
+    let visibleCount = 0;
+    const showlegendValues = plotDiv.data.map((trace) => {
+      let isVisible = false;
+      
+      for (let j = 0; j < trace.x.length; j++) {
+        const x = trace.x[j];
+        const y = trace.y[j];
+        
+        if (x === null || x === undefined || y === null || y === undefined) {
+          continue;
+        }
+        
+        if (x >= xMin && x <= xMax && y >= yMin && y <= yMax) {
+          isVisible = true;
+          break;
+        }
+      }
+      
+      // Never show in legend if explicitly hidden (e.g. by Show Ratio)
+      const legendVisible = trace._hiddenFromLegend ? false : isVisible;
+      if (legendVisible) visibleCount++;
+      
+      return legendVisible;
+    });
+    
+    const legendrankValues = plotDiv.data.map(t => t.legendrank);
+    Plotly.restyle(plotDiv, { showlegend: showlegendValues, legendrank: legendrankValues }).then(() => {
+      const totalCount = plotDiv.data.length;
+      const statusEl = document.getElementById('legendStatus');
+      
+      if (statusEl) {
+        if (visibleCount < totalCount) {
+          statusEl.textContent = `Showing ${visibleCount}/${totalCount} traces`;
+          statusEl.style.display = 'block';
+        } else {
+          statusEl.style.display = 'none';
+        }
+      }
+    });
+  }
+}
+
+/**
+ * Set up dynamic legend filtering on zoom/pan events.
+ * Attaches a plotly_relayout listener that updates legend visibility
+ * based on which traces have data points in the current viewport.
+ * 
+ * This helps reduce legend clutter when zoomed in on charts with many traces.
+ * A status indicator shows "Showing X/Y traces" when filtering is active.
+ * 
+ * @param {HTMLElement} plotDiv - The Plotly chart DOM element
+ * @returns {void}
+ */
+function setupDynamicLegend(plotDiv) {
+  plotDiv.on('plotly_relayout', function(eventData) {
+    if (!dynamicLegendEnabled) return;
+    
+    if (!eventData || (!eventData['xaxis.range[0]'] && !eventData['xaxis.range'] && !eventData['xaxis.autorange'])) {
+      return;
+    }
+    
+    const fullData = plotDiv.data;
+    const layout = plotDiv.layout;
+    
+    let xRange, yRange;
+    
+    if (eventData['xaxis.autorange'] || eventData['yaxis.autorange']) {
+      // Autorange - show all traces (except those explicitly hidden, e.g. by Show Ratio)
+      const visibility = fullData.map(trace => !trace._hiddenFromLegend);
+      Plotly.restyle(plotDiv, { showlegend: visibility });
+      
+      const statusEl = document.getElementById('legendStatus');
+      if (statusEl) {
+        statusEl.style.display = 'none';
+      }
+      return;
+    }
+    
+    // Get axis ranges
+    if (eventData['xaxis.range[0]'] !== undefined) {
+      xRange = [eventData['xaxis.range[0]'], eventData['xaxis.range[1]']];
+    } else if (eventData['xaxis.range']) {
+      xRange = eventData['xaxis.range'];
+    } else if (layout.xaxis && layout.xaxis.range) {
+      xRange = layout.xaxis.range;
+    }
+    
+    if (eventData['yaxis.range[0]'] !== undefined) {
+      yRange = [eventData['yaxis.range[0]'], eventData['yaxis.range[1]']];
+    } else if (eventData['yaxis.range']) {
+      yRange = eventData['yaxis.range'];
+    } else if (layout.yaxis && layout.yaxis.range) {
+      yRange = layout.yaxis.range;
+    }
+    
+    if (!xRange || !yRange) return;
+    
+    // Convert log scale ranges
+    const xIsLog = layout.xaxis && layout.xaxis.type === 'log';
+    const yIsLog = layout.yaxis && layout.yaxis.type === 'log';
+    
+    const xMin = xIsLog ? Math.pow(10, xRange[0]) : xRange[0];
+    const xMax = xIsLog ? Math.pow(10, xRange[1]) : xRange[1];
+    const yMin = yIsLog ? Math.pow(10, yRange[0]) : yRange[0];
+    const yMax = yIsLog ? Math.pow(10, yRange[1]) : yRange[1];
+    
+    // Check each trace for visibility (respect _hiddenFromLegend flag)
+    const visibility = fullData.map((trace, i) => {
+      if (trace._hiddenFromLegend) return false;
+      for (let j = 0; j < trace.x.length; j++) {
+        const x = trace.x[j];
+        const y = trace.y[j];
+        
+        if (x === null || x === undefined || y === null || y === undefined) {
+          continue;
+        }
+        
+        if (x >= xMin && x <= xMax && y >= yMin && y <= yMax) {
+          return true;
+        }
+      }
+      return false;
+    });
+    
+    Plotly.restyle(plotDiv, { showlegend: visibility }).then(() => {
+      const visibleCount = visibility.filter(v => v).length;
+      const totalCount = fullData.length;
+      const statusEl = document.getElementById('legendStatus');
+      
+      if (statusEl) {
+        if (visibleCount < totalCount) {
+          statusEl.textContent = `Showing ${visibleCount}/${totalCount} traces`;
+          statusEl.style.display = 'block';
+        } else {
+          statusEl.style.display = 'none';
+        }
+      }
+    });
+  });
+}
+
+
