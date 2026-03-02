@@ -197,7 +197,7 @@ function applyReleasePresetView() {
  * Apply preset axis ranges optimized for viewing dose data.
  * Sets both axes to log scale with ranges suitable for dose rates.
  * X-axis: 1,000 - 100,000 (years)
- * Y-axis: 1e-10 - 1e-5 (Sv/year or similar units)
+ * Y-axis: 1e-7 - 2e-5 (Sv/year or similar units)
  * 
  * @returns {void}
  */
@@ -211,7 +211,7 @@ function applyDosePresetView() {
     'xaxis.type': 'log',
     'xaxis.range': [Math.log10(1000), Math.log10(1e5)],
     'yaxis.type': 'log',
-    'yaxis.range': [Math.log10(1e-10), Math.log10(1e-5)]
+    'yaxis.range': [Math.log10(1e-7), Math.log10(2e-5)]
   };
   
   Plotly.relayout('plotlyChart', update);
