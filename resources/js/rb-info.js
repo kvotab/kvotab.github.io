@@ -22,7 +22,7 @@ async function showNodeAttributes(path, isGroup = false) {
     const enabledFiles = getEffectiveFiles();
     let hasTimeDependentData = false;
     let isRadionuclidesGroup = false;
-    let pdfHistogramData = null;
+    const pdfHistogramByFile = [];
 
     // Check if this is a radionuclides group
     if (isGroup && enabledFiles.length > 0) {
@@ -145,7 +145,8 @@ async function showNodeAttributes(path, isGroup = false) {
         if (attrEl) fileSection.appendChild(attrEl);
       }
 
-      if (!isGroup && attrs.pdf && !pdfHistogramData) {
+      if (!isGroup && attrs.pdf) {
+        let filePdfData = null;
         try {
           let pdfRaw = attrs.pdf;
           if (typeof pdfRaw === 'string') pdfRaw = JSON.parse(pdfRaw);
@@ -222,7 +223,7 @@ async function showNodeAttributes(path, isGroup = false) {
               }
             }
 
-            if (entries.length > 0) pdfHistogramData = { type: 'lookup', entries, path };
+            if (entries.length > 0) filePdfData = { type: 'lookup', entries, path };
 
           } else if (!isLookupTable && pdfRaw.type) {
             // single PDF spec
@@ -236,7 +237,7 @@ async function showNodeAttributes(path, isGroup = false) {
                   const flat = PDFSampler.normalizeDataArray(rawData);
                   const shift = pdfRaw.include_deterministic ? 1 : 0;
                   const detVal = (pdfRaw.include_deterministic && flat.length > 0) ? flat[0] : null;
-                  pdfHistogramData = { type: 'single', samples: flat.slice(shift), spec: pdfRaw, path, deterministicValue: detVal };
+                  filePdfData = { type: 'single', samples: flat.slice(shift), spec: pdfRaw, path, deterministicValue: detVal };
                 }
               } catch (_) { /* skip */ }
             } else {
@@ -255,7 +256,7 @@ async function showNodeAttributes(path, isGroup = false) {
               const samples = generatePdfSamples(pdfRaw, 1000);
               if (samples) {
                 const norm = PDFSampler.normalizeDataArray(samples);
-                pdfHistogramData = { type: 'single', samples: Array.from(norm), spec: pdfRaw, path, deterministicValue: isFinite(detVal) ? detVal : null };
+                filePdfData = { type: 'single', samples: Array.from(norm), spec: pdfRaw, path, deterministicValue: isFinite(detVal) ? detVal : null };
               } else {
                 console.warn('generatePdfSamples returned null for pdf spec', pdfRaw, 'at', path);
               }
@@ -264,10 +265,11 @@ async function showNodeAttributes(path, isGroup = false) {
         } catch (err) {
           console.warn('PDF collect error:', err);
         }
+        if (filePdfData) pdfHistogramByFile.push({ fileKey, data: filePdfData });
       }
 
-      // if still no histogram data, and dataset was marked probabilistic without time-dependent
-      if (!isGroup && !pdfHistogramData && checkIsProbabilistic(node) && !hasTimeDependentData) {
+      // if still no histogram data for this file, and dataset was marked probabilistic without time-dependent
+      if (!isGroup && !pdfHistogramByFile.some(e => e.fileKey === fileKey) && checkIsProbabilistic(node) && !hasTimeDependentData) {
         try {
           let rawData;
           if (typeof node.value !== 'undefined') rawData = node.value;
@@ -275,7 +277,7 @@ async function showNodeAttributes(path, isGroup = false) {
 
           if (rawData !== undefined) {
             const flat = PDFSampler.normalizeDataArray(rawData);
-            pdfHistogramData = { type: 'single', samples: Array.from(flat), spec: null, path };
+            pdfHistogramByFile.push({ fileKey, data: { type: 'single', samples: Array.from(flat), spec: null, path } });
           }
         } catch (err) {
           console.warn('Probabilistic histogram error:', err);
@@ -300,6 +302,27 @@ async function showNodeAttributes(path, isGroup = false) {
     while (infoDiv.firstChild) infoDiv.removeChild(infoDiv.firstChild);
     if (contentFrag.childNodes.length > 0) infoDiv.appendChild(contentFrag);
     else { const noData = document.createElement('div'); noData.style.color = '#999'; noData.textContent = 'No data available for this path'; infoDiv.appendChild(noData); }
+
+    // Merge per-file PDF histogram data into a single structure
+    let pdfHistogramData = null;
+    if (pdfHistogramByFile.length === 1) {
+      pdfHistogramData = pdfHistogramByFile[0].data;
+    } else if (pdfHistogramByFile.length > 1) {
+      // Multiple files — combine into a lookup-type structure with file-labelled entries
+      const mergedEntries = [];
+      for (const item of pdfHistogramByFile) {
+        const suffix = ' (' + filenameDiff(enabledFiles[0], item.fileKey) + ')';
+        if (item.data.type === 'single') {
+          const label = (item.data.spec ? PDFSampler.pdfLabel(item.data.spec) : 'raw') + suffix;
+          mergedEntries.push({ label, samples: item.data.samples, spec: item.data.spec, deterministicValue: item.data.deterministicValue });
+        } else if (item.data.type === 'lookup') {
+          for (const entry of item.data.entries) {
+            mergedEntries.push({ ...entry, label: entry.label + suffix });
+          }
+        }
+      }
+      if (mergedEntries.length > 0) pdfHistogramData = { type: 'lookup', entries: mergedEntries, path };
+    }
 
     if (isRadionuclidesGroup) { currentPdfHistogram = false; await createRadionuclidesChart(path); }
     else if (hasTimeDependentData && !isGroup) { currentPdfHistogram = false; createPlotlyChart(path); }
