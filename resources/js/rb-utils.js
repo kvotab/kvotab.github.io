@@ -962,6 +962,7 @@ function renderChart(traces, layout, path) {
   
   Plotly.newPlot('plotlyChart', traces, layout, config).then(() => {
     setupDynamicLegend(getElement('plotlyChart'));
+    refreshDynamicLegend();
     hideChartLoading(container);
   });
 }

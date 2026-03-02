@@ -28,67 +28,82 @@ function toggleDynamicLegend() {
       }
     });
   } else {
-    // Re-apply dynamic filtering based on current view
-    const layout = plotDiv.layout;
-    
-    // Re-apply legend sorting by max Y value
-    assignLegendRanks(plotDiv.data);
-
-    let xRange = layout.xaxis?.range;
-    let yRange = layout.yaxis?.range;
-    
-    if (!xRange || !yRange) {
-      return;
-    }
-    
-    const xIsLog = layout.xaxis?.type === 'log';
-    const yIsLog = layout.yaxis?.type === 'log';
-    
-    const xMin = xIsLog ? Math.pow(10, xRange[0]) : xRange[0];
-    const xMax = xIsLog ? Math.pow(10, xRange[1]) : xRange[1];
-    const yMin = yIsLog ? Math.pow(10, yRange[0]) : yRange[0];
-    const yMax = yIsLog ? Math.pow(10, yRange[1]) : yRange[1];
-    
-    let visibleCount = 0;
-    const showlegendValues = plotDiv.data.map((trace) => {
-      let isVisible = false;
-      
-      for (let j = 0; j < trace.x.length; j++) {
-        const x = trace.x[j];
-        const y = trace.y[j];
-        
-        if (x === null || x === undefined || y === null || y === undefined) {
-          continue;
-        }
-        
-        if (x >= xMin && x <= xMax && y >= yMin && y <= yMax) {
-          isVisible = true;
-          break;
-        }
-      }
-      
-      // Never show in legend if explicitly hidden (e.g. by Show Ratio)
-      const legendVisible = trace._hiddenFromLegend ? false : isVisible;
-      if (legendVisible) visibleCount++;
-      
-      return legendVisible;
-    });
-    
-    const legendrankValues = plotDiv.data.map(t => t.legendrank);
-    Plotly.restyle(plotDiv, { showlegend: showlegendValues, legendrank: legendrankValues }).then(() => {
-      const totalCount = plotDiv.data.length;
-      const statusEl = document.getElementById('legendStatus');
-      
-      if (statusEl) {
-        if (visibleCount < totalCount) {
-          statusEl.textContent = `Showing ${visibleCount}/${totalCount} traces`;
-          statusEl.style.display = 'block';
-        } else {
-          statusEl.style.display = 'none';
-        }
-      }
-    });
+    refreshDynamicLegend();
   }
+}
+
+/**
+ * Re-apply dynamic legend filtering based on the current viewport.
+ * Reads axis ranges from the live Plotly layout and shows only traces
+ * that have data points inside the visible area.
+ *
+ * Call this after any programmatic Plotly.relayout() that changes axes
+ * (scale type, range, preset views, etc.).
+ *
+ * @returns {void}
+ */
+function refreshDynamicLegend() {
+  if (!dynamicLegendEnabled) return;
+
+  const plotDiv = document.getElementById('plotlyChart');
+  if (!plotDiv || !plotDiv.data || !plotDiv.layout) return;
+
+  const layout = plotDiv.layout;
+
+  // Re-apply legend sorting by max Y value
+  assignLegendRanks(plotDiv.data);
+
+  let xRange = layout.xaxis?.range;
+  let yRange = layout.yaxis?.range;
+
+  if (!xRange || !yRange) return;
+
+  const xIsLog = layout.xaxis?.type === 'log';
+  const yIsLog = layout.yaxis?.type === 'log';
+
+  const xMin = xIsLog ? Math.pow(10, xRange[0]) : xRange[0];
+  const xMax = xIsLog ? Math.pow(10, xRange[1]) : xRange[1];
+  const yMin = yIsLog ? Math.pow(10, yRange[0]) : yRange[0];
+  const yMax = yIsLog ? Math.pow(10, yRange[1]) : yRange[1];
+
+  let visibleCount = 0;
+  const showlegendValues = plotDiv.data.map((trace) => {
+    let isVisible = false;
+
+    for (let j = 0; j < trace.x.length; j++) {
+      const x = trace.x[j];
+      const y = trace.y[j];
+
+      if (x === null || x === undefined || y === null || y === undefined) {
+        continue;
+      }
+
+      if (x >= xMin && x <= xMax && y >= yMin && y <= yMax) {
+        isVisible = true;
+        break;
+      }
+    }
+
+    const legendVisible = trace._hiddenFromLegend ? false : isVisible;
+    if (legendVisible) visibleCount++;
+
+    return legendVisible;
+  });
+
+  const legendrankValues = plotDiv.data.map(t => t.legendrank);
+  Plotly.restyle(plotDiv, { showlegend: showlegendValues, legendrank: legendrankValues }).then(() => {
+    const totalCount = plotDiv.data.length;
+    const statusEl = document.getElementById('legendStatus');
+
+    if (statusEl) {
+      if (visibleCount < totalCount) {
+        statusEl.textContent = `Showing ${visibleCount}/${totalCount} traces`;
+        statusEl.style.display = 'block';
+      } else {
+        statusEl.style.display = 'none';
+      }
+    }
+  });
 }
 
 /**
