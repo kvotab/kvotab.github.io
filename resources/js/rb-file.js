@@ -24,22 +24,39 @@ function getTreeFile() {
 }
 
 /**
+ * Get the current tree display mode.
+ * @returns {'separated'|'intersect'|'union'}
+ */
+function getTreeMode() {
+  if (getEnabledFiles().length < 2) return 'separated';
+  const active = document.querySelector('#treeModeContainer button.active');
+  return (active && active.dataset.value) || 'separated';
+}
+
+/**
  * Check if intersect mode is active.
  * @returns {boolean}
  */
 function isIntersectMode() {
-  const cb = document.getElementById('intersectCheckbox');
-  return cb && cb.checked && getEnabledFiles().length > 1;
+  return getTreeMode() === 'intersect';
+}
+
+/**
+ * Check if union mode is active.
+ * @returns {boolean}
+ */
+function isUnionMode() {
+  return getTreeMode() === 'union';
 }
 
 /**
  * Get the list of files to use for info/charts.
- * In non-intersect mode with a specific file selected, returns just that file.
- * In intersect mode, returns all enabled files.
+ * In separated mode with a specific file selected, returns just that file.
+ * In intersect/union modes, returns all enabled files.
  * @returns {string[]}
  */
 function getEffectiveFiles() {
-  if (isIntersectMode()) {
+  if (isIntersectMode() || isUnionMode()) {
     return getEnabledFiles();
   }
   if (selectedFileKey && loadedFiles[selectedFileKey]) {
@@ -71,14 +88,14 @@ function toggleFileState(fileName) {
     }
   } catch (e) { /* ignore DOM update errors */ }
 
-  // If Intersect mode is active, trigger the same UI + full recompute
-  // as toggling the Intersect checkbox (preserves previous fix behavior).
-  if (isIntersectMode()) {
+  // If a merged mode (intersect or union) is active, trigger the same
+  // UI + full recompute as toggling the tree mode selector.
+  if (isIntersectMode() || isUnionMode()) {
     try {
-      toggleIntersect();
+      toggleTreeMode();
       return;
     } catch (e) {
-      console.warn('[toggleFileState] toggleIntersect fallback', e);
+      console.warn('[toggleFileState] toggleTreeMode fallback', e);
     }
   }
 

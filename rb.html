@@ -33,10 +33,9 @@
     <div class="panel" id="leftPanel">
       <div class="panel-heading">
         <h3>File Structure</h3>
-        <label id="intersectLabel" class="intersect-checkbox" style="display: none;" title="Show only nodes whose full path exists in ALL enabled files">
-          <input type="checkbox" id="intersectCheckbox" onchange="toggleIntersect()">
-          Intersect Data
-        </label>
+        <div id="treeModeContainer" class="tree-mode-toggle" style="display: none;" title="Choose how data from multiple files is combined in the tree">
+          <button data-value="separated" class="active" title="Separated: one tree per file">∥</button><button data-value="intersect" title="Intersect: common paths only">∩</button><button data-value="union" title="Union: all paths combined">∪</button>
+        </div>
       </div>
       <div class="search-container">
         <input 
