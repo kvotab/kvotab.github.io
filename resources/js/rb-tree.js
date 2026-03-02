@@ -55,8 +55,12 @@ async function loadGroupChildren(groupItem, path) {
     if (!childrenDiv || childrenDiv.getAttribute('data-loaded') === 'true' || childrenDiv.getAttribute('data-loading') === 'true') return;
     childrenDiv.setAttribute('data-loading', 'true');
     childrenDiv.innerHTML = '<div class="loading" style="padding:8px;font-size:12px;">Loading…</div>';
-    const fileKey = groupItem.getAttribute('data-file') || getTreeFile();
-    const file = loadedFiles[fileKey];
+    const rawFileAttr = groupItem.getAttribute('data-file');
+    // In intersect mode, preserve null fileKey so child nodes remain file-agnostic
+    // (they will be expanded to all enabled files when selected).
+    const fileKey = rawFileAttr || (isIntersectMode() ? null : getTreeFile());
+    const readFileKey = rawFileAttr || getTreeFile();
+    const file = loadedFiles[readFileKey];
     if (!file) {
       childrenDiv.innerHTML = '<div style="color:#999;padding:8px;font-size:12px;">(unavailable)</div>';
       childrenDiv.setAttribute('data-loaded', 'true');
