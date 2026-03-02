@@ -309,15 +309,20 @@ async function showNodeAttributes(path, isGroup = false) {
       pdfHistogramData = pdfHistogramByFile[0].data;
     } else if (pdfHistogramByFile.length > 1) {
       // Multiple files — combine into a lookup-type structure with file-labelled entries
+      // Use buildTraceName-consistent file diffing (each file diffs against a different peer)
+      const allMergeFileKeys = pdfHistogramByFile.map(e => e.fileKey);
       const mergedEntries = [];
       for (const item of pdfHistogramByFile) {
-        const suffix = ' (' + filenameDiff(enabledFiles[0], item.fileKey) + ')';
+        const fileSuffix = ' (' + filenameDiff(
+          item.fileKey === allMergeFileKeys[0] ? allMergeFileKeys[1] : allMergeFileKeys[0],
+          item.fileKey
+        ) + ')';
         if (item.data.type === 'single') {
-          const label = (item.data.spec ? PDFSampler.pdfLabel(item.data.spec) : 'raw') + suffix;
+          const label = (item.data.spec ? PDFSampler.pdfLabel(item.data.spec) : 'raw') + fileSuffix;
           mergedEntries.push({ label, samples: item.data.samples, spec: item.data.spec, deterministicValue: item.data.deterministicValue });
         } else if (item.data.type === 'lookup') {
           for (const entry of item.data.entries) {
-            mergedEntries.push({ ...entry, label: entry.label + suffix });
+            mergedEntries.push({ ...entry, label: entry.label + fileSuffix });
           }
         }
       }
@@ -872,6 +877,10 @@ function showMultipleDatasetAttributes(items) {
   let allTimeDependent = true;
   const combinedHistogramEntries = [];
 
+  // Pre-compute context arrays for buildTraceName
+  const allPaths = normalizedItems.map(d => d.path);
+  const allFileKeys = normalizedItems.map(d => d.fileKey);
+
   for (const item of normalizedItems) {
     const { path, fileKey } = item;
     const file = loadedFiles[fileKey];
@@ -922,8 +931,7 @@ function showMultipleDatasetAttributes(items) {
       try {
         if (attrs.pdf) {
           const datasetName = path.split('/').pop();
-          const shortFile = (normalizedItems.length > 1 && new Set(normalizedItems.map(d => d.fileKey)).size > 1) ? ' (' + fileKey + ')' : '';
-          const entryLabel = datasetName + shortFile;
+          const entryLabel = buildTraceName(datasetName, path, fileKey, allPaths, allFileKeys);
           const pdfEntries = collectPdfEntries(dataset, attrs, entryLabel);
           if (pdfEntries) combinedHistogramEntries.push(...pdfEntries);
         } else if (checkIsProbabilistic(dataset) && !isTimeDep) {
@@ -933,8 +941,7 @@ function showMultipleDatasetAttributes(items) {
             if (rawData !== undefined) {
               const flat = Array.isArray(rawData) ? rawData : Array.from(rawData);
               const datasetName = path.split('/').pop();
-              const shortFile = (normalizedItems.length > 1 && new Set(normalizedItems.map(d => d.fileKey)).size > 1) ? ' (' + fileKey + ')' : '';
-              const entryLabel = datasetName + shortFile;
+              const entryLabel = buildTraceName(datasetName, path, fileKey, allPaths, allFileKeys);
               combinedHistogramEntries.push({ label: entryLabel, samples: flat.map(PDFSampler.toNumber), spec: null, deterministicValue: null });
             }
           } catch (err) {

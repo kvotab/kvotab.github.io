@@ -665,7 +665,7 @@ function createPlotlyChart(path) {
           console.warn(`Time data length (${timeData.length}) doesn't match data length (${yArray.length}) for ${fileKey}`);
         }
 
-        traces.push(ChartService.timeSeriesTrace({ x: timeData.slice(0, minLength), y: yArray.slice(0, minLength), name: fileKey }));
+        traces.push(ChartService.timeSeriesTrace({ x: timeData.slice(0, minLength), y: yArray.slice(0, minLength), name: buildTraceName(yAxisName, path, fileKey, [path], enabledFiles) }));
       }
     } catch (e) {
       console.error(`Error creating trace for ${fileKey}:`, e);
@@ -773,6 +773,10 @@ function createMultiDatasetChart(items) {
   const multiFile = uniqueFileKeys.length > 1;
   const multiPath = uniquePaths.length > 1;
   
+  // Pre-compute context arrays for buildTraceName
+  const allPaths = normalizedItems.map(d => d.path);
+  const allFileKeys = normalizedItems.map(d => d.fileKey);
+
   for (const [itemIndex, item] of normalizedItems.entries()) {
     const { path, fileKey } = item;
     const datasetName = path.split('/').pop();
@@ -819,19 +823,15 @@ function createMultiDatasetChart(items) {
         const trimmedTimeData = timeData.slice(0, minLength);
         const trimmedYData = yArray.slice(0, minLength);
         
-        // Build trace name — always show file label for multi-file selection
-        let traceName = datasetName;
+        // Build trace name — harmonized via buildTraceName
+        const traceName = buildTraceName(datasetName, path, fileKey, allPaths, allFileKeys);
         let lineWidth = 2;
         let lineDash = 'solid';
         if (multiFile) {
-          // Always append fileKey for clarity
-          traceName = `${datasetName} (${fileKey})`;
           const fileIdx = uniqueFileKeys.indexOf(fileKey);
           const dashStyles = ['solid', 'dash', 'dot', 'dashdot'];
           lineDash = dashStyles[fileIdx % dashStyles.length];
           lineWidth = 1.5;
-        } else if (multiPath) {
-          traceName = datasetName;
         }
         traces.push(ChartService.timeSeriesTrace({ x: trimmedTimeData, y: trimmedYData, name: traceName, line: { color: baseColor, dash: lineDash, width: lineWidth }, hovertemplate: `<b>${traceName}</b><br>Time: %{x}<br>Value: %{y}<extra></extra>` }));
       }

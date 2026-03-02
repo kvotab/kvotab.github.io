@@ -622,6 +622,48 @@ function filenameDiff(firstName, secondName) {
 }
 
 /**
+ * Build a harmonized legend label for a dataset trace.
+ *
+ * Disambiguation rules:
+ * 1. Start with the dataset leaf name.
+ * 2. If other items in the selection share the same leaf name from a
+ *    different HDF5 path, prepend the parent path segment.
+ * 3. If multiple files are involved, append a compact file-diff suffix
+ *    (via filenameDiff) so every file gets a short, distinguishing tag.
+ *
+ * @param {string} datasetName - Leaf name (path.split('/').pop())
+ * @param {string} path        - Full HDF5 path to the dataset
+ * @param {string} fileKey     - File key for this trace
+ * @param {string[]} allPaths    - All HDF5 paths in the current selection
+ * @param {string[]} allFileKeys - All file keys in the current selection
+ * @returns {string} Harmonized legend label
+ */
+function buildTraceName(datasetName, path, fileKey, allPaths, allFileKeys) {
+  let name = datasetName;
+
+  // Path disambiguation – add parent segment when another unique path
+  // shares the same leaf name
+  const uniquePaths = [...new Set(allPaths)];
+  if (uniquePaths.some(p => p !== path && p.split('/').pop() === datasetName)) {
+    const parts = path.split('/').filter(Boolean);
+    if (parts.length >= 2) {
+      name = parts.slice(-2).join('/');
+    }
+  }
+
+  // File disambiguation – append compact diff when multiple files are shown
+  const uniqueFiles = [...new Set(allFileKeys)];
+  if (uniqueFiles.length > 1) {
+    // Pick a reference that is *different* from the current file so the
+    // diff highlights what is unique about this file.
+    const ref = (fileKey === uniqueFiles[0]) ? uniqueFiles[1] : uniqueFiles[0];
+    name += ' (' + filenameDiff(ref, fileKey) + ')';
+  }
+
+  return name;
+}
+
+/**
  * Get current axis scale values from UI
  * @returns {{xScale: string, yScale: string}}
  */
