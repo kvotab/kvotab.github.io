@@ -132,7 +132,7 @@ function updateChartScales() {
     'yaxis.type': yScale
   };
   
-  Plotly.relayout('plotlyChart', update);
+  Plotly.relayout('plotlyChart', update).then(() => refreshDynamicLegend());
 }
 
 /**
@@ -190,7 +190,7 @@ function applyReleasePresetView() {
     'yaxis.range': [Math.log10(10000), Math.log10(1e9)]
   };
   
-  Plotly.relayout('plotlyChart', update);
+  Plotly.relayout('plotlyChart', update).then(() => refreshDynamicLegend());
 }
 
 /**
@@ -214,7 +214,7 @@ function applyDosePresetView() {
     'yaxis.range': [Math.log10(1e-7), Math.log10(2e-5)]
   };
   
-  Plotly.relayout('plotlyChart', update);
+  Plotly.relayout('plotlyChart', update).then(() => refreshDynamicLegend());
 }
 
 /**
