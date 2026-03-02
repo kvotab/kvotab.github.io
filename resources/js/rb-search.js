@@ -44,6 +44,48 @@ function labelSegmentFromPathTerm(term) {
 }
 
 /**
+ * Get only the node-name text from a .tree-label element,
+ * excluding child elements like .tree-availability badges.
+ * @param {Element} label
+ * @returns {string}
+ */
+function getLabelText(label) {
+  let text = '';
+  for (const n of label.childNodes) {
+    if (n.nodeType === Node.TEXT_NODE) {
+      text += n.textContent;
+    } else if (n.nodeType === Node.ELEMENT_NODE) {
+      // Include text from highlight spans but skip badge elements
+      if (n.classList.contains('search-highlight')) {
+        text += n.textContent;
+      } else if (n.classList.contains('tree-availability') || n.classList.contains('tree-link-badge')) {
+        // skip badges
+      }
+    }
+  }
+  return text;
+}
+
+/**
+ * Rewrite a .tree-label's text content while preserving child elements
+ * such as .tree-availability badges. Sets the leading text node(s) to
+ * the given HTML string without touching trailing element children.
+ * @param {Element} label
+ * @param {string} html - HTML for the name portion of the label
+ */
+function setLabelHtml(label, html) {
+  // Collect non-text child elements (badges, etc.) to re-append
+  const elements = [];
+  for (const n of Array.from(label.childNodes)) {
+    if (n.nodeType === Node.ELEMENT_NODE && !n.classList.contains('search-highlight')) {
+      elements.push(n);
+    }
+  }
+  label.innerHTML = html;
+  for (const el of elements) label.appendChild(el);
+}
+
+/**
  * Highlight matching text in a string
  * @param {string} text - Original text
  * @param {string} searchTerm - Search term to highlight
@@ -87,8 +129,7 @@ function filterTree(searchTerm) {
       item.classList.remove('search-hidden', 'search-match');
       const label = item.querySelector('.tree-label');
       if (label) {
-        const originalText = label.textContent;
-        label.innerHTML = escapeHtml(originalText);
+        setLabelHtml(label, escapeHtml(getLabelText(label)));
       }
     });
     
@@ -116,7 +157,7 @@ function filterTree(searchTerm) {
     const label = item.querySelector('.tree-label');
     if (!label) return;
 
-    const text = label.textContent || '';
+    const text = getLabelText(label);
     let matches = regexLabel.test(text);
 
     // If user typed a path-style query (contains /, . or space), also test the
@@ -131,10 +172,10 @@ function filterTree(searchTerm) {
       item.classList.add('search-match');
       // Highlight only the final name in the label when doing path searches
       const labelSearch = isPathSearch ? labelSegmentFromPathTerm(searchTerm) : searchTerm;
-      label.innerHTML = highlightText(text, labelSearch);
+      setLabelHtml(label, highlightText(text, labelSearch));
     } else {
       item.classList.remove('search-match');
-      label.innerHTML = escapeHtml(text);
+      setLabelHtml(label, escapeHtml(text));
     }
   });
   

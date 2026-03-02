@@ -540,24 +540,32 @@
 
     .tree-mode-toggle {
       display: inline-flex;
-      align-items: center;
+      align-items: stretch;
       border: 1px solid var(--color-panel-border);
       border-radius: 999px;
       background: var(--color-panel-bg);
       user-select: none;
-      margin-top: -2px;
+      margin-top: -10px;
     }
 
     .tree-mode-toggle button {
       padding: 1px 7px;
       border: none;
+      border-right: 1px solid var(--color-panel-border);
       background: transparent;
       color: var(--color-text-primary);
       cursor: pointer;
-      font-size: 16px;
-      line-height: 1.1;
+      font-size: 18px;
+      line-height: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
       transition: background 0.15s ease, color 0.15s ease;
       box-sizing: border-box;
+    }
+
+    .tree-mode-toggle button:last-child {
+      border-right: none;
     }
 
     .tree-mode-toggle button:first-child {
@@ -576,7 +584,7 @@
     }
 
     .tree-mode-toggle button:not(.active):hover {
-      background: transparent;
+      background: rgba(0,0,0,0.06);
     }
 
     .tree-mode-toggle button:focus {
@@ -592,6 +600,10 @@
       color: rgba(255,255,255,0.6);
     }
 
+    [data-theme="dark"] .tree-mode-toggle button:not(.active):hover {
+      background: rgba(255,255,255,0.1);
+    }
+
     [data-theme="light"] .tree-mode-toggle button:not(.active) {
       color: rgba(0,0,0,0.5);
     }
@@ -599,6 +611,10 @@
     .tree-mode-toggle button[disabled] {
       opacity: 0.4;
       cursor: default;
+    }
+
+    .tree-mode-toggle button[disabled]:hover {
+      background: transparent;
     }
 
     /* Availability badge for union mode tree nodes */

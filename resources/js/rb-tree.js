@@ -219,6 +219,16 @@ async function toggleTreeMode() {
   resetInfoPanel();
   hideChart();
 
+  // Clear any active search so rebuilt tree is fully visible
+  try {
+    const searchInput = document.getElementById('treeSearch');
+    if (searchInput && searchInput.value) {
+      searchInput.value = '';
+      document.getElementById('clearSearch')?.classList.remove('visible');
+      filterTree('');
+    }
+  } catch (e) { /* ignore */ }
+
   // mark a refresh token early so the header ticker cancel button can appear
   window._treeRefreshId = (window._treeRefreshId || 0) + 1;
   window._treeRefreshCancelled = false;
