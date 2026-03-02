@@ -28,10 +28,10 @@ function toggleGroupExpansion(event, path) {
     } else {
       // If children were rendered as lazy placeholders, load them on first expand
       if (childrenDiv && childrenDiv.getAttribute && childrenDiv.getAttribute('data-lazy') === 'true') {
-        // If intersect mode is active and this path has no allowed descendants,
+        // If intersect/union mode is active and this path has no allowed descendants,
         // mark it as loaded-empty and avoid the load to save work.
-        const intersected = window._currentIntersectedPaths || null;
-        if (intersected && !Array.from(intersected).some(p => p === path || p.startsWith(path + '/'))) {
+        const pathFilter = window._currentIntersectedPaths || null;
+        if (pathFilter && !Array.from(pathFilter).some(p => p === path || p.startsWith(path + '/'))) {
           childrenDiv.innerHTML = '<div style="color:#999;padding:8px;font-size:12px;">(empty)</div>';
           childrenDiv.setAttribute('data-loaded', 'true');
         } else {
@@ -56,30 +56,50 @@ async function loadGroupChildren(groupItem, path) {
     childrenDiv.setAttribute('data-loading', 'true');
     childrenDiv.innerHTML = '<div class="loading" style="padding:8px;font-size:12px;">Loading…</div>';
     const rawFileAttr = groupItem.getAttribute('data-file');
-    // In intersect mode, preserve null fileKey so child nodes remain file-agnostic
+    // In intersect/union mode, preserve null fileKey so child nodes remain file-agnostic
     // (they will be expanded to all enabled files when selected).
-    const fileKey = rawFileAttr || (isIntersectMode() ? null : getTreeFile());
+    const mergedMode = isIntersectMode() || isUnionMode();
+    const fileKey = rawFileAttr || (mergedMode ? null : getTreeFile());
     const readFileKey = rawFileAttr || getTreeFile();
-    const file = loadedFiles[readFileKey];
+    let file = loadedFiles[readFileKey];
+
+    // In union mode, the primary file may not have this group.
+    // Try to find any enabled file that does.
+    let node = null;
+    if (file) {
+      try { node = FileService.get(file, path); } catch (e) { /* skip */ }
+    }
+    if (!node && isUnionMode()) {
+      for (const fk of getEnabledFiles()) {
+        if (fk === readFileKey) continue;
+        const altFile = loadedFiles[fk];
+        if (!altFile) continue;
+        try {
+          node = FileService.get(altFile, path);
+          if (node) { file = altFile; break; }
+        } catch (e) { /* skip */ }
+      }
+    }
+
     if (!file) {
       childrenDiv.innerHTML = '<div style="color:#999;padding:8px;font-size:12px;">(unavailable)</div>';
       childrenDiv.setAttribute('data-loaded', 'true');
       childrenDiv.removeAttribute('data-loading');
       return;
     }
-    const node = FileService.get(file, path);
     if (!node) {
       childrenDiv.innerHTML = '<div style="color:#999;padding:8px;font-size:12px;">(unreadable)</div>';
       childrenDiv.setAttribute('data-loaded', 'true');
       childrenDiv.removeAttribute('data-loading');
       return;
     }
-    // Build the subtree for this group (non-lazy recursive build).
-    // If intersect mode is active, pass the intersectedPaths so children
-    // that are not common to all enabled files are filtered out.
-    const intersected = window._currentIntersectedPaths || null;
+    // Build the subtree for this group.
+    // Pass the path filter (intersect or union path set) so children are
+    // correctly filtered or expanded.
+    const pathFilter = window._currentIntersectedPaths || null;
+    const pathOwnership = window._unionPathOwnership || null;
     // render only one level when expanding lazily to keep UI responsive
-    const subFrag = await buildTree(node, path, true, '', intersected, fileKey, null, false, 1);
+    const subFrag = await buildTree(node, path, true, '', pathFilter, fileKey, null, false, 1, pathOwnership);
     childrenDiv.replaceChildren();
     if (subFrag && subFrag.childNodes.length > 0) {
       childrenDiv.appendChild(subFrag);
@@ -189,7 +209,7 @@ function toggleGroup(event) {
 /**
  * Toggle the Intersect checkbox and rebuild the tree.
  */
-async function toggleIntersect() {
+async function toggleTreeMode() {
   // Clear per-file selection when switching modes
   selectedFileKey = null;
   selectedDatasetPath = null;
@@ -203,24 +223,33 @@ async function toggleIntersect() {
   window._treeRefreshId = (window._treeRefreshId || 0) + 1;
   window._treeRefreshCancelled = false;
 
-  // Show header ticker for long-running intersect recalculations too
-  try { showFileLoadTicker(0, 0, 'Recalculating intersection...'); } catch (e) {}
+  const treeMode = getTreeMode();
+  const isMerged = treeMode === 'intersect' || treeMode === 'union';
+  const modeLabel = treeMode === 'intersect' ? 'Intersection' : (treeMode === 'union' ? 'Union' : 'Separated');
 
-  // Immediately show the Intersection root + inline spinner so the UI
-  // responds instantly while the expensive intersection calculation runs.
+  // Show header ticker for long-running recalculations
+  if (isMerged) {
+    try { showFileLoadTicker(0, 0, `Calculating ${modeLabel.toLowerCase()}...`); } catch (e) {}
+  }
+
+  // Immediately show the root + inline spinner so the UI responds instantly
   try {
     const tree = document.getElementById('tree');
     if (tree) {
-      tree.innerHTML = `
-        <div class="tree-item group root-node" data-path="/">
-          <div class="tree-toggle no-toggle"></div>
-          <div class="tree-icon folder"></div>
-          <div class="tree-label">/ (Intersection) <span class="tree-inline-spinner" aria-hidden="true"></span></div>
-        </div>
-        <div class="tree-group-children expanded" style="margin-left:20px;">
-          <div class="loading" style="padding:8px;font-size:12px;">Calculating intersection…</div>
-        </div>
-      `;
+      if (isMerged) {
+        tree.innerHTML = `
+          <div class="tree-item group root-node" data-path="/">
+            <div class="tree-toggle no-toggle"></div>
+            <div class="tree-icon folder"></div>
+            <div class="tree-label">/ (${modeLabel}) <span class="tree-inline-spinner" aria-hidden="true"></span></div>
+          </div>
+          <div class="tree-group-children expanded" style="margin-left:20px;">
+            <div class="loading" style="padding:8px;font-size:12px;">Calculating ${modeLabel.toLowerCase()}…</div>
+          </div>
+        `;
+      } else {
+        tree.innerHTML = `<div class="loading">Refreshing tree… <span class="tree-inline-spinner" aria-hidden="true"></span></div>`;
+      }
       // force layout so browsers (Safari) paint the inserted spinner immediately
       void tree.offsetHeight;
       tree.classList.remove('loading');
@@ -233,10 +262,10 @@ async function toggleIntersect() {
   await new Promise(r => setTimeout(r, 0));
 
   // Start refresh asynchronously so the UI paint is never blocked in Safari.
-  const cb = document.getElementById('intersectCheckbox');
-  if (cb) cb.disabled = true;
+  const tmBtns = document.querySelectorAll('#treeModeContainer button');
+  tmBtns.forEach(b => b.disabled = true);
   setTimeout(() => {
-    refreshTreeStructure().finally(() => { if (cb) cb.disabled = false; });
+    refreshTreeStructure().finally(() => { tmBtns.forEach(b => b.disabled = false); });
   }, 50);
 
   // return immediately so the inline spinner remains visible while work runs
@@ -328,8 +357,7 @@ async function collectAllPathsAsync(group, prefix = '', opts = {}) {
  * @returns {Set<string>|null} Intersected paths, or null if intersect is off
  */
 function getIntersectedPaths() {
-  const checkbox = document.getElementById('intersectCheckbox');
-  if (!checkbox || !checkbox.checked) return null;
+  if (getTreeMode() !== 'intersect') return null;
   
   const enabledFiles = getEnabledFiles();
   if (enabledFiles.length < 2) return null;
@@ -359,8 +387,7 @@ function getIntersectedPaths() {
  * @returns {Promise<Set<string>|null>}
  */
 async function getIntersectedPathsAsync() {
-  const checkbox = document.getElementById('intersectCheckbox');
-  if (!checkbox || !checkbox.checked) return null;
+  if (getTreeMode() !== 'intersect') return null;
 
   const enabledFiles = getEnabledFiles();
   if (enabledFiles.length < 2) return null;
@@ -456,6 +483,46 @@ async function getIntersectedPathsAsync() {
     }
   }
   return intersection || new Set();
+}
+
+/**
+ * Async, cooperative computation of the UNION of all paths across enabled
+ * files. Also builds a path-ownership map so the tree can show which files
+ * contain each node.
+ *
+ * @returns {Promise<{paths: Set<string>, ownership: Map<string, Set<string>>}|null>}
+ *   null if union mode is not active.
+ */
+async function getUnionPathsAsync() {
+  if (getTreeMode() !== 'union') return null;
+
+  const enabledFiles = getEnabledFiles();
+  if (enabledFiles.length < 2) return null;
+
+  /** @type {Set<string>} */
+  const unionPaths = new Set();
+  /** @type {Map<string, Set<string>>} path → Set<fileKey> */
+  const ownership = new Map();
+
+  for (const fileKey of enabledFiles) {
+    if (window._treeRefreshCancelled) throw new Error('cancelled');
+    const file = loadedFiles[fileKey];
+    if (!file) continue;
+
+    console.debug('[getUnionPathsAsync] collecting paths for', fileKey);
+    const filePaths = await collectAllPathsAsync(file, '');
+    console.debug('[getUnionPathsAsync] collected', filePaths.size, 'paths for', fileKey);
+    if (window._treeRefreshCancelled) throw new Error('cancelled');
+
+    for (const p of filePaths) {
+      unionPaths.add(p);
+      let owners = ownership.get(p);
+      if (!owners) { owners = new Set(); ownership.set(p, owners); }
+      owners.add(fileKey);
+    }
+  }
+
+  return { paths: unionPaths, ownership };
 }
 
 
@@ -678,33 +745,61 @@ async function refreshTreeStructure() {
   
   try {
     let intersectedPaths = null;
-    try {
-      intersectedPaths = await getIntersectedPathsAsync();
-    } catch (err) {
-      if (String(err && err.message).toLowerCase().includes('cancel')) {
-        // cancelled while computing intersect — abort gracefully
-        tree.innerHTML = '<div class="loading">(cancelled)</div>';
-        hideFileLoadTicker();
-        try { tree && tree.removeAttribute('aria-busy'); } catch (e) {}
-        return;
-      }
-      throw err;
-    }
-    try { window._currentIntersectedPaths = intersectedPaths; console.debug('[refreshTreeStructure] intersectedPaths size=', intersectedPaths ? intersectedPaths.size : 'null', 'enabledFiles=', enabledFiles); } catch(e) {}
+    let unionResult = null;
+    const treeMode = getTreeMode();
 
-    // If intersect produced an empty set unexpectedly, allow one short retry
-    // (handles race where worker/main-thread fallback ran before files were ready)
-    if (isIntersectMode() && intersectedPaths && intersectedPaths.size === 0 && enabledFiles.length > 1) {
+    // Clear previous union ownership data
+    window._unionPathOwnership = null;
+
+    if (treeMode === 'intersect') {
       try {
-        console.debug('[refreshTreeStructure] intersectedPaths empty — retrying once after 150ms');
-        await new Promise(r => setTimeout(r, 150));
-        const retry = await getIntersectedPathsAsync();
-        intersectedPaths = retry || intersectedPaths;
-        try { window._currentIntersectedPaths = intersectedPaths; } catch(e) {}
-        console.debug('[refreshTreeStructure] retry intersectedPaths size=', intersectedPaths ? intersectedPaths.size : 'null');
-      } catch (e) {
-        console.debug('[refreshTreeStructure] retry failed or cancelled', e && e.message);
+        intersectedPaths = await getIntersectedPathsAsync();
+      } catch (err) {
+        if (String(err && err.message).toLowerCase().includes('cancel')) {
+          tree.innerHTML = '<div class="loading">(cancelled)</div>';
+          hideFileLoadTicker();
+          try { tree && tree.removeAttribute('aria-busy'); } catch (e) {}
+          return;
+        }
+        throw err;
       }
+      try { window._currentIntersectedPaths = intersectedPaths; console.debug('[refreshTreeStructure] intersectedPaths size=', intersectedPaths ? intersectedPaths.size : 'null', 'enabledFiles=', enabledFiles); } catch(e) {}
+
+      // If intersect produced an empty set unexpectedly, allow one short retry
+      if (intersectedPaths && intersectedPaths.size === 0 && enabledFiles.length > 1) {
+        try {
+          console.debug('[refreshTreeStructure] intersectedPaths empty — retrying once after 150ms');
+          await new Promise(r => setTimeout(r, 150));
+          const retry = await getIntersectedPathsAsync();
+          intersectedPaths = retry || intersectedPaths;
+          try { window._currentIntersectedPaths = intersectedPaths; } catch(e) {}
+          console.debug('[refreshTreeStructure] retry intersectedPaths size=', intersectedPaths ? intersectedPaths.size : 'null');
+        } catch (e) {
+          console.debug('[refreshTreeStructure] retry failed or cancelled', e && e.message);
+        }
+      }
+    } else if (treeMode === 'union') {
+      try {
+        unionResult = await getUnionPathsAsync();
+      } catch (err) {
+        if (String(err && err.message).toLowerCase().includes('cancel')) {
+          tree.innerHTML = '<div class="loading">(cancelled)</div>';
+          hideFileLoadTicker();
+          try { tree && tree.removeAttribute('aria-busy'); } catch (e) {}
+          return;
+        }
+        throw err;
+      }
+      if (unionResult) {
+        // Store the union path set as the current path filter (used by lazy loading etc.)
+        intersectedPaths = unionResult.paths;
+        window._currentIntersectedPaths = intersectedPaths;
+        window._unionPathOwnership = unionResult.ownership;
+        console.debug('[refreshTreeStructure] unionPaths size=', intersectedPaths.size);
+      }
+    } else {
+      // Separated mode
+      window._currentIntersectedPaths = null;
     }
 
     // abort quickly if a cancellation was requested before we started
@@ -767,9 +862,11 @@ async function refreshTreeStructure() {
     // Clear tree and render incrementally so users see content immediately.
     tree.replaceChildren();
     if (intersectedPaths) {
-      // Intersect mode: single tree from first file, filtered to common paths
+      // Intersect or Union mode: single tree from first file, filtered/expanded
+      const modeLabel = treeMode === 'union' ? 'Union' : 'Intersection';
+      const pathOwnership = window._unionPathOwnership || null;
       const file = loadedFiles[enabledFiles[0]];
-      const fileFrag = await buildTree(file, '', false, 'Intersection', intersectedPaths, null, progressCb, true);
+      const fileFrag = await buildTree(file, '', false, modeLabel, intersectedPaths, null, progressCb, true, Infinity, pathOwnership);
       if (fileFrag && fileFrag.childNodes.length > 0) {
         tree.appendChild(fileFrag);
       } else {
@@ -868,7 +965,7 @@ refreshTreeStructure = async function() {
  * @param {boolean} [isNested=false] - Whether this is a nested call (not root)
  * @returns {Promise<DocumentFragment>} DocumentFragment containing tree nodes
  */
-async function buildTree(group, prefix = '', isNested = false, fileName = '', intersectedPaths = null, fileKey = null, progressCb = null, lazyLoad = false, maxDepth = Infinity) {
+async function buildTree(group, prefix = '', isNested = false, fileName = '', intersectedPaths = null, fileKey = null, progressCb = null, lazyLoad = false, maxDepth = Infinity, pathOwnership = null) {
   // Return a DocumentFragment containing tree node elements (not HTML string).
   const frag = document.createDocumentFragment();
   // depth guard for incremental rendering (maxDepth=0 => render nothing)
@@ -932,7 +1029,7 @@ async function buildTree(group, prefix = '', isNested = false, fileName = '', in
       if (typeof group.keys === 'function') keys = Array.from(group.keys());
       keys.sort();
 
-      if (intersectedPaths && intersectedPaths.size > 0 && keys.length > 0 && intersectedPaths.size < keys.length) {
+      if (intersectedPaths && intersectedPaths.size > 0) {
         const allowed = new Set();
         const prefixWithSlash = prefix === '' ? '/' : (prefix + '/');
         for (const p of intersectedPaths) {
@@ -941,7 +1038,17 @@ async function buildTree(group, prefix = '', isNested = false, fileName = '', in
           const child = rest.split('/')[0];
           if (child) allowed.add(child);
         }
-        if (allowed.size > 0) keys = keys.filter(k => allowed.has(k));
+        if (pathOwnership) {
+          // Union mode: add keys from other files that this file doesn't have
+          const keySet = new Set(keys);
+          for (const k of allowed) {
+            if (!keySet.has(k)) keys.push(k);
+          }
+          keys.sort();
+        } else if (allowed.size > 0 && keys.length > 0) {
+          // Intersect mode: filter to common keys
+          keys = keys.filter(k => allowed.has(k));
+        }
       }
     } catch (e) {
       console.error('Error getting keys:', e.message);
@@ -959,15 +1066,49 @@ async function buildTree(group, prefix = '', isNested = false, fileName = '', in
       }
 
       try {
-        const obj = group.get(key);
-        if (!obj) continue;
+        let obj = null;
+        try { obj = group.get(key); } catch (e) { /* may not exist in this file */ }
         const path = prefix ? `${prefix}/${key}` : `/${key}`;
+
+        // Union mode: if this file doesn't have the key, try an alternative file
+        let altFileUsed = false;
+        if (!obj && pathOwnership) {
+          const owners = pathOwnership.get(path);
+          if (owners) {
+            for (const fk of owners) {
+              const altFile = loadedFiles[fk];
+              if (!altFile) continue;
+              try {
+                obj = FileService.get(altFile, path);
+                if (obj) { altFileUsed = true; break; }
+              } catch (e) { /* skip */ }
+            }
+          }
+        }
+        if (!obj) continue;
         const objType = String(obj.type).toLowerCase();
 
-        if (intersectedPaths && !intersectedPaths.has(path)) continue;
+        if (intersectedPaths && !pathOwnership && !intersectedPaths.has(path)) continue;
 
         const linkInfo = getLinkInfo(group, path, obj);
         const linkBadgeEl = buildLinkBadge(linkInfo);
+
+        // Union mode: build availability badge when not all files have this path
+        let availBadgeEl = null;
+        if (pathOwnership) {
+          const owners = pathOwnership.get(path);
+          const totalFiles = getEnabledFiles().length;
+          if (owners && owners.size < totalFiles) {
+            availBadgeEl = document.createElement('span');
+            availBadgeEl.className = 'tree-availability';
+            availBadgeEl.textContent = `${owners.size}/${totalFiles}`;
+            const ownerNames = Array.from(owners).map(f => {
+              const parts = f.split('/');
+              return parts[parts.length - 1];
+            });
+            availBadgeEl.title = `Present in ${owners.size} of ${totalFiles} files: ${ownerNames.join(', ')}`;
+          }
+        }
 
         if (objType === 'brokensoftlink') {
           const isSelected = selectedDatasetPath === path && !selectedIsRadionuclidesGroup;
@@ -980,6 +1121,7 @@ async function buildTree(group, prefix = '', isNested = false, fileName = '', in
           const label = document.createElement('div'); label.className = 'tree-label';
           label.appendChild(document.createTextNode(key));
           if (linkBadgeEl) label.appendChild(linkBadgeEl);
+          if (availBadgeEl) label.appendChild(availBadgeEl);
           const meta = document.createElement('div'); meta.className = 'tree-meta'; meta.style.color = 'var(--color-kvot-accent)'; meta.textContent = 'broken link';
 
           broken.appendChild(icon); broken.appendChild(label); broken.appendChild(meta);
@@ -999,6 +1141,7 @@ async function buildTree(group, prefix = '', isNested = false, fileName = '', in
           const label = document.createElement('div'); label.className = 'tree-label';
           label.appendChild(document.createTextNode(key));
           if (linkBadgeEl) label.appendChild(linkBadgeEl);
+          if (availBadgeEl) label.appendChild(availBadgeEl);
           const meta = document.createElement('div'); meta.className = 'tree-meta'; meta.textContent = `→ ${linkInfo ? linkInfo.filename : '?'}`;
 
           external.appendChild(icon); external.appendChild(label); external.appendChild(meta);
@@ -1033,6 +1176,7 @@ async function buildTree(group, prefix = '', isNested = false, fileName = '', in
           const label = document.createElement('div'); label.className = 'tree-label';
           label.appendChild(document.createTextNode(key));
           if (linkBadgeEl) label.appendChild(linkBadgeEl);
+          if (availBadgeEl) label.appendChild(availBadgeEl);
 
           groupItem.appendChild(toggleDiv); groupItem.appendChild(icon); groupItem.appendChild(label);
           container.appendChild(groupItem);
@@ -1046,7 +1190,7 @@ async function buildTree(group, prefix = '', isNested = false, fileName = '', in
               placeholder.setAttribute('data-loaded', 'false');
               container.appendChild(placeholder);
             } else {
-              const subFrag = await buildTree(obj, path, true, '', intersectedPaths, fileKey, progressCb, false, (typeof maxDepth === 'number' ? maxDepth - 1 : Infinity));
+              const subFrag = await buildTree(obj, path, true, '', intersectedPaths, fileKey, progressCb, false, (typeof maxDepth === 'number' ? maxDepth - 1 : Infinity), pathOwnership);
               const childrenWrapper = document.createElement('div');
               childrenWrapper.className = 'tree-group-children' + (isSelected ? ' expanded' : '');
 
@@ -1091,6 +1235,7 @@ async function buildTree(group, prefix = '', isNested = false, fileName = '', in
           const label = document.createElement('div'); label.className = 'tree-label';
           label.appendChild(document.createTextNode(key));
           if (linkBadgeEl) label.appendChild(linkBadgeEl);
+          if (availBadgeEl) label.appendChild(availBadgeEl);
           const meta = document.createElement('div'); meta.className = 'tree-meta'; meta.textContent = `${formattedDtype} [${shape}]`;
 
           ds.appendChild(icon); ds.appendChild(label); ds.appendChild(meta);

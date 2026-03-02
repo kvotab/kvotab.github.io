@@ -172,6 +172,19 @@ function initDOMReferences() {
       updateChartScales();
     });
   });
+
+  // Wire tree-mode toggle buttons (separated / intersect / union)
+  const tmContainer = document.getElementById('treeModeContainer');
+  if (tmContainer) {
+    tmContainer.addEventListener('click', (e) => {
+      const btn = e.target.closest('button');
+      if (!btn || btn.disabled) return;
+      if (btn.classList.contains('active')) return; // already selected
+      tmContainer.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      toggleTreeMode();
+    });
+  }
 }
 
 /**

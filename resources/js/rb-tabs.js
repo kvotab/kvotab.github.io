@@ -73,15 +73,14 @@ function updateTabs() {
   const treeFileChanged = previousTreeFile !== newTreeFile;
   currentTreeFile = newTreeFile;
   
-  // Show/hide Intersect checkbox based on number of enabled files
-  const intersectLabel = document.getElementById('intersectLabel');
+  // Show/hide tree mode selector based on number of enabled files
+  const treeModeContainer = document.getElementById('treeModeContainer');
   const enabledCount = getEnabledFiles().length;
-  if (intersectLabel) {
-    intersectLabel.style.display = enabledCount > 1 ? 'flex' : 'none';
-    // Uncheck if only one file left
+  if (treeModeContainer) {
+    treeModeContainer.style.display = enabledCount > 1 ? 'inline-flex' : 'none';
+    // Reset to separated if only one file left
     if (enabledCount <= 1) {
-      const cb = document.getElementById('intersectCheckbox');
-      if (cb) cb.checked = false;
+      treeModeContainer.querySelectorAll('button').forEach(b => b.classList.toggle('active', b.dataset.value === 'separated'));
     }
   }
 
@@ -114,7 +113,8 @@ function updateTabs() {
 
   let refreshPromise;
   if (needRefresh) {
-    const isIntersect = isIntersectMode();
+    const treeMode = getTreeMode();
+    const isMergedMode = treeMode === 'intersect' || treeMode === 'union';
 
     // If there's any in-flight worker intersection request, cancel it
     // now: the user changed enabled files so we'll start a fresh run.
@@ -131,15 +131,16 @@ function updateTabs() {
     try {
       const tree = document.getElementById('tree');
       if (tree) {
-        if (isIntersect) {
+        if (isMergedMode) {
+          const modeLabel = treeMode === 'intersect' ? 'Intersection' : 'Union';
           tree.innerHTML = `
             <div class="tree-item group root-node" data-path="/">
               <div class="tree-toggle no-toggle"></div>
               <div class="tree-icon folder"></div>
-              <div class="tree-label">/ (Intersection) <span class="tree-inline-spinner" aria-hidden="true"></span></div>
+              <div class="tree-label">/ (${modeLabel}) <span class="tree-inline-spinner" aria-hidden="true"></span></div>
             </div>
             <div class="tree-group-children expanded" style="margin-left:20px;">
-              <div class="loading" style="padding:8px;font-size:12px;">Recalculating intersection…</div>
+              <div class="loading" style="padding:8px;font-size:12px;">Calculating ${modeLabel.toLowerCase()}…</div>
             </div>
           `;
         } else {
@@ -152,14 +153,15 @@ function updateTabs() {
     } catch (e) { /* ignore UI update errors */ }
 
     // mark a refresh token early so the header ticker can show a cancel button
-    if (isIntersect) {
+    if (isMergedMode) {
       window._treeRefreshId = (window._treeRefreshId || 0) + 1;
       window._treeRefreshCancelled = false;
     }
 
-    // Show header ticker for intersect recalculation as well
-    if (isIntersect) {
-      try { showFileLoadTicker(0, 0, 'Recalculating intersection...'); } catch (e) {}
+    // Show header ticker for recalculation
+    if (isMergedMode) {
+      const tickerMsg = treeMode === 'intersect' ? 'Recalculating intersection...' : 'Calculating union...';
+      try { showFileLoadTicker(0, 0, tickerMsg); } catch (e) {}
     }
 
     // Run the refresh asynchronously (yield so the spinner is visible first)
@@ -168,7 +170,7 @@ function updateTabs() {
         refreshTreeStructure().then(resolve, reject);
       }, 50);
     }).finally(() => {
-      if (isIntersect) {
+      if (isMergedMode) {
         try { hideFileLoadTicker(); } catch (e) {}
       }
     });
