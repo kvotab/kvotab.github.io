@@ -291,6 +291,11 @@ document.getElementById('fileInput').addEventListener('change', async (e) => {
         FS.writeFile('/' + filename, data);
         const hf = new File('/' + filename, 'r');
         
+        // If replacing an existing file, close the old handle first
+        if (loadedFiles[file.name]) {
+          try { loadedFiles[file.name].close(); } catch (_) {}
+        }
+
         loadedFiles[file.name] = hf;
         fileStates[file.name] = true;
         if (!fileOrder.includes(file.name)) {
@@ -314,8 +319,8 @@ document.getElementById('fileInput').addEventListener('change', async (e) => {
 
     // Update tabs (returns a promise that resolves when tree rebuild completes)
     updateFileLoadTicker(files.length, files.length, 'Refreshing tree...');
-    console.debug('[fileInput.change] calling updateTabs()');
-    await updateTabs();
+    console.debug('[fileInput.change] calling updateTabs(forceRefresh=true)');
+    await updateTabs(true);
     console.debug('[fileInput.change] updateTabs() completed');
     hideFileLoadTicker();
   } catch (err) {

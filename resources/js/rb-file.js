@@ -50,6 +50,50 @@ function isUnionMode() {
 }
 
 /**
+ * Reset the tree mode toggle to "separated" and clear all selections.
+ * Called whenever file tabs change (enable/disable, add/remove, reorder)
+ * to avoid complex stale-state issues with intersect/union modes.
+ */
+function resetTreeModeToSeparated() {
+  // Reset toggle button UI
+  const treeModeContainer = document.getElementById('treeModeContainer');
+  if (treeModeContainer) {
+    treeModeContainer.querySelectorAll('button').forEach(b =>
+      b.classList.toggle('active', b.dataset.value === 'separated')
+    );
+  }
+
+  // Clear cached intersect/union data
+  window._currentIntersectedPaths = null;
+  window._unionPathOwnership = null;
+
+  // Clear selection state
+  selectedDatasetPath = null;
+  selectedIsRadionuclidesGroup = false;
+  selectedFileKey = null;
+  selectedDatasets = [];
+  multiSelectMode = false;
+
+  // Reset right-hand panel
+  try { resetInfoPanel(); } catch (e) { /* ignore */ }
+  try { hideChart(); } catch (e) { /* ignore */ }
+
+  // Remove visual selection in tree
+  try {
+    document.querySelectorAll('.tree-item.dataset.selected').forEach(el => el.classList.remove('selected'));
+    document.querySelectorAll('.tree-item.group.expanded').forEach(el => el.classList.remove('expanded'));
+  } catch (e) { /* ignore */ }
+
+  // Hide multi-select hint
+  try {
+    const hint = document.getElementById('multiSelectHint');
+    if (hint) hint.style.display = 'none';
+  } catch (e) { /* ignore */ }
+
+  console.debug('[resetTreeModeToSeparated] tree mode reset to separated, selections cleared');
+}
+
+/**
  * Get the list of files to use for info/charts.
  * In separated mode with a specific file selected, returns just that file.
  * In intersect/union modes, returns all enabled files.
@@ -88,18 +132,8 @@ function toggleFileState(fileName) {
     }
   } catch (e) { /* ignore DOM update errors */ }
 
-  // If a merged mode (intersect or union) is active, trigger the same
-  // UI + full recompute as toggling the tree mode selector.
-  if (isIntersectMode() || isUnionMode()) {
-    try {
-      toggleTreeMode();
-      return;
-    } catch (e) {
-      console.warn('[toggleFileState] toggleTreeMode fallback', e);
-    }
-  }
-
-  // coalesce rapid toggles to avoid repeated expensive tree rebuilds
+  // Always reset tree mode to separated and clear selections on any tab change.
+  // updateTabs() will handle the full reset.
   scheduleUpdateTabs();
 }
 
@@ -124,32 +158,34 @@ function scheduleUpdateTabs(delay = UPDATE_TABS_DEBOUNCE_MS) {
  * @returns {Promise<void>}
  */
 async function removeFile(fileName) {
+  const wasEnabled = !!fileStates[fileName];
+
   delete loadedFiles[fileName];
   delete fileStates[fileName];
   delete loadedFileBuffers[fileName];
   fileOrder = fileOrder.filter(k => k !== fileName);
   
-  const enabledFiles = getEnabledFiles();
-  
+  if (!wasEnabled) {
+    // Disabled file had no effect on the tree — just remove its tab element
+    // without resetting tree mode, selections, or triggering a tree rebuild.
+    try {
+      const tab = document.querySelector(`.file-tab[data-file="${CSS.escape(fileName)}"]`);
+      if (tab) tab.remove();
+    } catch (e) { /* ignore */ }
+    return;
+  }
+
+  // Enabled file removed — full reset via updateTabs()
   updateTabs();
   
-  if (enabledFiles.length === 0) {
-    // No enabled files - clear UI
+  if (getEnabledFiles().length === 0) {
+    // No enabled files - show initial placeholder
     currentTreeFile = null;
     const tree = document.getElementById('tree');
     tree.innerHTML = '<div class="loading">Drop HDF5 files or click "+ Add Files" to start...</div>';
     tree.classList.add('loading');
-    resetInfoPanel();
-    hideChart();
-    selectedDatasetPath = null;
-    selectedIsRadionuclidesGroup = false;
     
     document.querySelector('.search-container').classList.remove('visible');
-    
-    const hint = document.getElementById('multiSelectHint');
-    if (hint) {
-      hint.style.display = 'none';
-    }
   }
 }
 
