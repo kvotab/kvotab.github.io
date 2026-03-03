@@ -769,8 +769,8 @@ function createBaseLayout({ title, xAxisTitle, yAxisTitle, xScale = 'linear', yS
 window.ChartService = {
   createBaseLayout: function(opts) { return createBaseLayout(opts); },
 
-  timeSeriesTrace({ x, y, name, line = {}, hovertemplate = undefined, showlegend = true }) {
-    const trace = { x, y, mode: 'lines', type: 'scatter', name, line, showlegend };
+  timeSeriesTrace({ x, y, name, line = {}, hovertemplate = undefined, showlegend = true, ...extra }) {
+    const trace = { x, y, mode: 'lines', type: 'scatter', name, line, showlegend, ...extra };
     if (hovertemplate) trace.hovertemplate = hovertemplate;
     return trace;
   },

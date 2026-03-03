@@ -700,6 +700,7 @@ function createPlotlyChart(path) {
     }
     Plotly.newPlot('plotlyChart', traces, layout, config).then(() => {
       setupDynamicLegend(getElement('plotlyChart'));
+      refreshDynamicLegend();
       hideChartLoading(chartContainer);
     });
   } else {
@@ -870,6 +871,7 @@ function createMultiDatasetChart(items) {
     }
       Plotly.newPlot('plotlyChart', traces, layout, config).then(() => {
         setupDynamicLegend(getElement('plotlyChart'));
+        refreshDynamicLegend();
         hideChartLoading(container);
       });
   } else {
@@ -991,7 +993,7 @@ async function createRadionuclidesChart(path, savedAxisState) {
               traceName = `${datasetKey} (${filenameDiff(enabledFiles[0], fileKey)})`;
               lineWidth = lineWidth / 2;
             }
-            traces.push(ChartService.timeSeriesTrace({ x: trimmedTimeData, y: trimmedYData, name: traceName, line: { color: lineStyle.color, dash: lineStyle.dash, width: lineWidth } }));
+            traces.push(ChartService.timeSeriesTrace({ x: trimmedTimeData, y: trimmedYData, name: traceName, line: { color: lineStyle.color, dash: lineStyle.dash, width: lineWidth }, _datasetKey: datasetKey }));
           }
           // Yield to browser for UI update after each dataset
           await Promise.resolve();
@@ -1091,7 +1093,8 @@ async function createRadionuclidesChart(path, savedAxisState) {
             dash: 'solid',
             width: lineWidth
           },
-          type: 'scatter'
+          type: 'scatter',
+          _datasetKey: '__total__'
         };
       }
     }
