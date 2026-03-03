@@ -67,22 +67,30 @@ function refreshDynamicLegend() {
   const yMax = yIsLog ? Math.pow(10, yRange[1]) : yRange[1];
 
   let visibleCount = 0;
-  const showlegendValues = plotDiv.data.map((trace) => {
-    let isVisible = false;
 
+  // First pass: determine which traces have data in the viewport
+  const traceInView = plotDiv.data.map((trace) => {
     for (let j = 0; j < trace.x.length; j++) {
       const x = trace.x[j];
       const y = trace.y[j];
-
-      if (x === null || x === undefined || y === null || y === undefined) {
-        continue;
-      }
-
-      if (x >= xMin && x <= xMax && y >= yMin && y <= yMax) {
-        isVisible = true;
-        break;
-      }
+      if (x == null || y == null) continue;
+      if (x >= xMin && x <= xMax && y >= yMin && y <= yMax) return true;
     }
+    return false;
+  });
+
+  // Build set of _datasetKey values that have any trace in view,
+  // so hidden companion traces (secondary file) can contribute visibility.
+  const visibleKeys = new Set();
+  plotDiv.data.forEach((trace, i) => {
+    if (traceInView[i] && trace._datasetKey) visibleKeys.add(trace._datasetKey);
+  });
+
+  const showlegendValues = plotDiv.data.map((trace, i) => {
+    // A trace is visible if its own data is in view OR a companion trace
+    // sharing the same _datasetKey has data in view.
+    const isVisible = traceInView[i] ||
+      !!(trace._datasetKey && visibleKeys.has(trace._datasetKey));
 
     const legendVisible = trace._hiddenFromLegend ? false : isVisible;
     if (legendVisible) visibleCount++;
@@ -91,7 +99,9 @@ function refreshDynamicLegend() {
   });
 
   const legendrankValues = plotDiv.data.map(t => t.legendrank);
+  window._dynamicLegendUpdating = true;
   Plotly.restyle(plotDiv, { showlegend: showlegendValues, legendrank: legendrankValues }).then(() => {
+    window._dynamicLegendUpdating = false;
     const totalCount = plotDiv.data.length;
     const statusEl = document.getElementById('legendStatus');
 
@@ -103,7 +113,7 @@ function refreshDynamicLegend() {
         statusEl.style.display = 'none';
       }
     }
-  });
+  }).catch(() => { window._dynamicLegendUpdating = false; });
 }
 
 /**
@@ -120,18 +130,15 @@ function refreshDynamicLegend() {
 function setupDynamicLegend(plotDiv) {
   plotDiv.on('plotly_relayout', function(eventData) {
     if (!dynamicLegendEnabled) return;
+    if (window._dynamicLegendUpdating) return;
     
     if (!eventData || (!eventData['xaxis.range[0]'] && !eventData['xaxis.range'] && !eventData['xaxis.autorange'])) {
       return;
     }
     
-    const fullData = plotDiv.data;
-    const layout = plotDiv.layout;
-    
-    let xRange, yRange;
-    
     if (eventData['xaxis.autorange'] || eventData['yaxis.autorange']) {
       // Autorange - show all traces (except those explicitly hidden, e.g. by Show Ratio)
+      const fullData = plotDiv.data;
       const visibility = fullData.map(trace => !trace._hiddenFromLegend);
       Plotly.restyle(plotDiv, { showlegend: visibility });
       
@@ -142,66 +149,9 @@ function setupDynamicLegend(plotDiv) {
       return;
     }
     
-    // Get axis ranges
-    if (eventData['xaxis.range[0]'] !== undefined) {
-      xRange = [eventData['xaxis.range[0]'], eventData['xaxis.range[1]']];
-    } else if (eventData['xaxis.range']) {
-      xRange = eventData['xaxis.range'];
-    } else if (layout.xaxis && layout.xaxis.range) {
-      xRange = layout.xaxis.range;
-    }
-    
-    if (eventData['yaxis.range[0]'] !== undefined) {
-      yRange = [eventData['yaxis.range[0]'], eventData['yaxis.range[1]']];
-    } else if (eventData['yaxis.range']) {
-      yRange = eventData['yaxis.range'];
-    } else if (layout.yaxis && layout.yaxis.range) {
-      yRange = layout.yaxis.range;
-    }
-    
-    if (!xRange || !yRange) return;
-    
-    // Convert log scale ranges
-    const xIsLog = layout.xaxis && layout.xaxis.type === 'log';
-    const yIsLog = layout.yaxis && layout.yaxis.type === 'log';
-    
-    const xMin = xIsLog ? Math.pow(10, xRange[0]) : xRange[0];
-    const xMax = xIsLog ? Math.pow(10, xRange[1]) : xRange[1];
-    const yMin = yIsLog ? Math.pow(10, yRange[0]) : yRange[0];
-    const yMax = yIsLog ? Math.pow(10, yRange[1]) : yRange[1];
-    
-    // Check each trace for visibility (respect _hiddenFromLegend flag)
-    const visibility = fullData.map((trace, i) => {
-      if (trace._hiddenFromLegend) return false;
-      for (let j = 0; j < trace.x.length; j++) {
-        const x = trace.x[j];
-        const y = trace.y[j];
-        
-        if (x === null || x === undefined || y === null || y === undefined) {
-          continue;
-        }
-        
-        if (x >= xMin && x <= xMax && y >= yMin && y <= yMax) {
-          return true;
-        }
-      }
-      return false;
-    });
-    
-    Plotly.restyle(plotDiv, { showlegend: visibility }).then(() => {
-      const visibleCount = visibility.filter(v => v).length;
-      const totalCount = fullData.length;
-      const statusEl = document.getElementById('legendStatus');
-      
-      if (statusEl) {
-        if (visibleCount < totalCount) {
-          statusEl.textContent = `Showing ${visibleCount}/${totalCount} traces`;
-          statusEl.style.display = 'block';
-        } else {
-          statusEl.style.display = 'none';
-        }
-      }
-    });
+    // Delegate to refreshDynamicLegend which reads ranges from the live layout
+    // and handles _datasetKey grouping for companion trace visibility.
+    refreshDynamicLegend();
   });
 }
 
