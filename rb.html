@@ -18,7 +18,7 @@
     console.log('xlsxwrite.js loaded');
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css">
-  <link rel="stylesheet" href="./resources/css/rb.css?v=20260304">
+  <link rel="stylesheet" href="./resources/css/rb.css?v=20260304b">
 </head>
 <body>
   <div id="dropOverlay">
@@ -28,6 +28,20 @@
   <header></header>
 
   <input id="fileInput" type="file" accept=".h5,.hdf5,.he5" multiple />
+
+  <!-- URL load dialog -->
+  <div id="urlDialog" class="url-dialog-overlay" style="display:none;">
+    <div class="url-dialog">
+      <h3>Load HDF5 from URL</h3>
+      <p>Enter the direct URL to an <code>.h5</code> / <code>.hdf5</code> file.</p>
+      <input type="text" id="urlInput" class="url-input" placeholder="https://example.com/data.h5" autocomplete="off" />
+      <div id="urlError" class="url-error" style="display:none;"></div>
+      <div class="url-dialog-buttons">
+        <button class="url-btn url-btn-cancel" onclick="closeUrlDialog()">Cancel</button>
+        <button class="url-btn url-btn-load" id="urlLoadBtn" onclick="loadFromUrl()">Load</button>
+      </div>
+    </div>
+  </div>
 
   <div class="container">
     <div class="panel" id="leftPanel">
@@ -109,7 +123,7 @@
                 <div class="welcome-section">
                   <h4>Getting Started</h4>
                   <ol>
-                    <li><strong>Load files</strong> — drag &amp; drop <code>.h5</code> / <code>.hdf5</code> files onto the page, or click <em>+ Add Files</em>.</li>
+                    <li><strong>Load files</strong> — drag &amp; drop <code>.h5</code> / <code>.hdf5</code> files onto the page, click <em>+ Add Files</em>, or use <em>🔗 URL</em> to fetch from a remote server.</li>
                     <li><strong>Browse</strong> — expand groups in the tree on the left to explore the file structure.</li>
                     <li><strong>Select</strong> — click a dataset to view its attributes and chart.</li>
                   </ol>
@@ -146,7 +160,7 @@
   <script src="./resources/js/erf.js"></script>
   <script src="./resources/js/site.js"></script>
   <script>
-    KVOT.renderHeader('HDF5 Browser', '<div class="tabs-container"><div id="fileTabs"></div><div id="fileLoadTicker" class="file-load-ticker" aria-live="polite" hidden><span class="spinner" aria-hidden="true"></span><span class="ticker-text">Loading files…</span><button class="ticker-cancel" onclick="cancelTreeRefresh()" title="Cancel" style="display:none;">✕</button></div><button class="add-file-btn" onclick="document.getElementById(\'fileInput\').click()">+ Add Files</button></div>');
+    KVOT.renderHeader('HDF5 Browser', '<div class="tabs-container"><div id="fileTabs"></div><div id="fileLoadTicker" class="file-load-ticker" aria-live="polite" hidden><span class="spinner" aria-hidden="true"></span><span class="ticker-text">Loading files…</span><button class="ticker-cancel" onclick="cancelTreeRefresh()" title="Cancel" style="display:none;">✕</button></div><button class="add-file-btn" onclick="document.getElementById(\'fileInput\').click()">+ Add Files</button><button class="add-file-btn url-file-btn" onclick="openUrlDialog()" title="Load HDF5 file from URL">🔗 URL</button></div>');
     KVOT.renderNav('rb.html');
     KVOT.renderFooter();
     KVOT.initMap('map');
@@ -166,7 +180,7 @@
   <script src="./resources/js/rb-search.js"></script>
   <script src="./resources/js/rb-dragdrop.js"></script>
   <script src="./resources/js/rb-export.js"></script>
-  <script src="./resources/js/rb-init.js?v=20260304"></script>
+  <script src="./resources/js/rb-init.js?v=20260304b"></script>
   <script src="./resources/js/rb-resize.js"></script>
 </body>
 </html>

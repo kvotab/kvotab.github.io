@@ -262,6 +262,141 @@ function cancelTreeRefresh() {
 }
 
 
+/* ==========================================================================
+   URL FILE LOADING
+   ========================================================================== */
+
+/** Open the URL input dialog */
+function openUrlDialog() {
+  const dialog = document.getElementById('urlDialog');
+  const input = document.getElementById('urlInput');
+  const error = document.getElementById('urlError');
+  if (!dialog) return;
+  error.style.display = 'none';
+  error.textContent = '';
+  input.value = '';
+  dialog.style.display = '';
+  input.focus();
+}
+
+/** Close the URL input dialog */
+function closeUrlDialog() {
+  const dialog = document.getElementById('urlDialog');
+  if (dialog) dialog.style.display = 'none';
+}
+
+/**
+ * Fetch an HDF5 file from the URL entered in the dialog,
+ * load it via h5wasm, and add it to the file tabs.
+ */
+async function loadFromUrl() {
+  const input = document.getElementById('urlInput');
+  const errorEl = document.getElementById('urlError');
+  const loadBtn = document.getElementById('urlLoadBtn');
+  const url = (input.value || '').trim();
+
+  errorEl.style.display = 'none';
+  errorEl.textContent = '';
+
+  if (!url) {
+    errorEl.textContent = 'Please enter a URL.';
+    errorEl.style.display = '';
+    return;
+  }
+
+  // Basic URL validation
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch (_) {
+    errorEl.textContent = 'Invalid URL format.';
+    errorEl.style.display = '';
+    return;
+  }
+
+  // Derive a file name from the URL path
+  const pathParts = parsed.pathname.split('/').filter(Boolean);
+  let fileName = pathParts.length > 0 ? decodeURIComponent(pathParts[pathParts.length - 1]) : 'remote.h5';
+  if (!/\.(h5|hdf5|he5)$/i.test(fileName)) {
+    fileName += '.h5';
+  }
+
+  loadBtn.disabled = true;
+  loadBtn.textContent = 'Loading…';
+
+  try {
+    showFileLoadTicker(0, 1, fileName);
+
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status} ${response.statusText}`);
+    }
+
+    const buffer = await response.arrayBuffer();
+    if (buffer.byteLength === 0) {
+      throw new Error('Downloaded file is empty.');
+    }
+
+    await waitForH5Wasm();
+
+    const { FS, File } = window.h5wasm;
+    if (!FS || !File) throw new Error('h5wasm not ready');
+
+    loadedFileBuffers[fileName] = buffer;
+
+    const internalName = `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.h5`;
+    const data = new Uint8Array(buffer);
+    FS.writeFile('/' + internalName, data);
+    const hf = new File('/' + internalName, 'r');
+
+    // Close previous handle if replacing
+    if (loadedFiles[fileName]) {
+      try { loadedFiles[fileName].close(); } catch (_) {}
+    }
+
+    loadedFiles[fileName] = hf;
+    fileStates[fileName] = true;
+    if (!fileOrder.includes(fileName)) {
+      fileOrder.push(fileName);
+    }
+
+    // Pre-warm tree worker
+    try { await ensureTreeWorkerReady(5000); } catch (_) {}
+
+    updateFileLoadTicker(1, 1, 'Refreshing tree…');
+    await updateTabs(true);
+    hideFileLoadTicker();
+    closeUrlDialog();
+    console.debug('[loadFromUrl] Loaded', fileName, 'from', url);
+  } catch (err) {
+    hideFileLoadTicker();
+    console.error('[loadFromUrl] Error loading from URL', url, err);
+    errorEl.textContent = `Failed to load: ${err.message}`;
+    errorEl.style.display = '';
+  } finally {
+    loadBtn.disabled = false;
+    loadBtn.textContent = 'Load';
+  }
+}
+
+// Allow Enter key to submit the URL dialog
+document.addEventListener('DOMContentLoaded', () => {
+  const urlInput = document.getElementById('urlInput');
+  if (urlInput) {
+    urlInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); loadFromUrl(); }
+      if (e.key === 'Escape') { e.preventDefault(); closeUrlDialog(); }
+    });
+  }
+  // Close dialog on overlay click
+  const urlDialog = document.getElementById('urlDialog');
+  if (urlDialog) {
+    urlDialog.addEventListener('click', (e) => {
+      if (e.target === urlDialog) closeUrlDialog();
+    });
+  }
+});
+
 
 /**
  * File input change handler.
