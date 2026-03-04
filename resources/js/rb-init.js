@@ -69,6 +69,17 @@ EventBus.on('selection:changed', (payload) => {
       // clear previous selection then mark provided items
       document.querySelectorAll('.tree-item.dataset.selected').forEach(el => el.classList.remove('selected'));
       const items = Array.isArray(payload.items) ? payload.items : [];
+
+      // If all items were deselected, treat as 'none'
+      if (items.length === 0) {
+        resetInfoPanel();
+        hideChart();
+        selectedDatasetPath = null;
+        selectedIsRadionuclidesGroup = false;
+        selectedFileKey = null;
+        return;
+      }
+
       for (const it of items) {
         const found = Array.from(tree.querySelectorAll('.tree-item.dataset')).find(el => el.getAttribute('data-path') === it.path && (!it.fileKey || el.getAttribute('data-file') === it.fileKey));
         if (found) found.classList.add('selected');

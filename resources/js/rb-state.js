@@ -85,7 +85,42 @@ let dragCounter = 0;
  * Default placeholder message shown in the info panel when no dataset is selected.
  * @constant {string}
  */
-const INFO_PANEL_DEFAULT_MESSAGE = 'Select a dataset to view its details';
+const INFO_PANEL_DEFAULT_MESSAGE = `
+<div class="welcome-panel">
+  <h2>📂 HDF5 Browser</h2>
+  <p>An interactive browser for exploring and visualising HDF5 data files.</p>
+
+  <div class="welcome-section">
+    <h4>Getting Started</h4>
+    <ol>
+      <li><strong>Load files</strong> — drag &amp; drop <code>.h5</code> / <code>.hdf5</code> files onto the page, or click <em>+ Add Files</em>.</li>
+      <li><strong>Browse</strong> — expand groups in the tree on the left to explore the file structure.</li>
+      <li><strong>Select</strong> — click a dataset to view its attributes and chart.</li>
+    </ol>
+  </div>
+
+  <div class="welcome-section">
+    <h4>Tips</h4>
+    <ul>
+      <li><kbd>Ctrl</kbd>-click (<kbd>⌘</kbd> on Mac) datasets to <strong>compare multiple</strong> in one chart.</li>
+      <li>Use the <strong>search bar</strong> to filter the tree — supports <code>*</code> wildcards and <code>/</code> full-path search.</li>
+      <li>Load <strong>multiple files</strong> and use the ∩ (intersect) or ∪ (union) toggle to combine trees.</li>
+      <li>Toggle <strong>Dynamic Legend</strong> to auto-hide traces outside the current view.</li>
+      <li>Right-click the chart to <strong>copy</strong> or <strong>download</strong> data as CSV / Excel.</li>
+    </ul>
+  </div>
+
+  <div class="welcome-section">
+    <h4>Chart Controls</h4>
+    <ul>
+      <li><strong>Scale selectors</strong> — switch axes between linear and log scales.</li>
+      <li><strong>Show Total</strong> — for radionuclide groups, overlay a summed trace.</li>
+      <li><strong>Show Ratio</strong> — when two files are loaded, display max-value ratios per isotope.</li>
+      <li><strong>Preset views</strong> — quickly zoom to common time ranges.</li>
+    </ul>
+  </div>
+</div>
+`;
 
 /**
  * Standard legend positioning for Plotly charts.
