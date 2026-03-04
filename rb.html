@@ -18,7 +18,7 @@
     console.log('xlsxwrite.js loaded');
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css">
-  <link rel="stylesheet" href="./resources/css/rb.css">
+  <link rel="stylesheet" href="./resources/css/rb.css?v=20260304">
 </head>
 <body>
   <div id="dropOverlay">
@@ -97,12 +97,44 @@
         </div>
         
         <div>
-          <h3>Dataset Information <span id="showHintButton" class="show-hint-button" title="Show tip">💡</span></h3>
+          <h3 id="datasetInfoHeading" style="display:none;">Dataset Information <span id="showHintButton" class="show-hint-button" title="Show tip">💡</span></h3>
             <div class="multi-select-hint" style="display: none;" id="multiSelectHint">
               💡 <strong>Tip:</strong> Hold Ctrl (⌘ on Mac) and click datasets to compare multiple
               <button id="multiSelectHintClose" class="hint-close" title="Dismiss" style="cursor:pointer;border:none;background:none;font-size:14px;line-height:1;">×</button>
             </div>
-            <div id="info">Select a dataset to view its details</div>
+            <div id="info">
+              <div class="welcome-panel">
+                <h2>📂 HDF5 Browser</h2>
+                <p>An interactive browser for exploring and visualising HDF5 data files.</p>
+                <div class="welcome-section">
+                  <h4>Getting Started</h4>
+                  <ol>
+                    <li><strong>Load files</strong> — drag &amp; drop <code>.h5</code> / <code>.hdf5</code> files onto the page, or click <em>+ Add Files</em>.</li>
+                    <li><strong>Browse</strong> — expand groups in the tree on the left to explore the file structure.</li>
+                    <li><strong>Select</strong> — click a dataset to view its attributes and chart.</li>
+                  </ol>
+                </div>
+                <div class="welcome-section">
+                  <h4>Tips</h4>
+                  <ul>
+                    <li><kbd>Ctrl</kbd>-click (<kbd>⌘</kbd> on Mac) datasets to <strong>compare multiple</strong> in one chart.</li>
+                    <li>Use the <strong>search bar</strong> to filter the tree — supports <code>*</code> wildcards and <code>/</code> full-path search.</li>
+                    <li>Load <strong>multiple files</strong> and use the ∩ (intersect) or ∪ (union) toggle to combine trees.</li>
+                    <li>Toggle <strong>Dynamic Legend</strong> to auto-hide traces outside the current view.</li>
+                    <li>Right-click the chart to <strong>copy</strong> or <strong>download</strong> data as CSV / Excel.</li>
+                  </ul>
+                </div>
+                <div class="welcome-section">
+                  <h4>Chart Controls</h4>
+                  <ul>
+                    <li><strong>Scale selectors</strong> — switch axes between linear and log scales.</li>
+                    <li><strong>Show Total</strong> — for radionuclide groups, overlay a summed trace.</li>
+                    <li><strong>Show Ratio</strong> — when two files are loaded, display max-value ratios per isotope.</li>
+                    <li><strong>Preset views</strong> — quickly zoom to common time ranges.</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
         </div>
       </div>
     </div>
@@ -122,19 +154,19 @@
 
   <script src="https://cdn.jsdelivr.net/npm/h5wasm@0.9.0/dist/iife/h5wasm.min.js"></script>
   <script src="./resources/js/pdf-sampler.js"></script>
-  <script src="./resources/js/rb-state.js"></script>
-  <script src="./resources/js/rb-utils.js"></script>
+  <script src="./resources/js/rb-state.js?v=20260304"></script>
+  <script src="./resources/js/rb-utils.js?v=20260304"></script>
   <script src="./resources/js/rb-hdf5.js"></script>
   <script src="./resources/js/rb-file.js"></script>
   <script src="./resources/js/rb-tabs.js"></script>
-  <script src="./resources/js/rb-tree.js"></script>
-  <script src="./resources/js/rb-chart.js"></script>
-  <script src="./resources/js/rb-legend.js"></script>
-  <script src="./resources/js/rb-info.js"></script>
+  <script src="./resources/js/rb-tree.js?v=20260304"></script>
+  <script src="./resources/js/rb-chart.js?v=20260304"></script>
+  <script src="./resources/js/rb-legend.js?v=20260304"></script>
+  <script src="./resources/js/rb-info.js?v=20260304"></script>
   <script src="./resources/js/rb-search.js"></script>
   <script src="./resources/js/rb-dragdrop.js"></script>
   <script src="./resources/js/rb-export.js"></script>
-  <script src="./resources/js/rb-init.js"></script>
+  <script src="./resources/js/rb-init.js?v=20260304"></script>
   <script src="./resources/js/rb-resize.js"></script>
 </body>
 </html>

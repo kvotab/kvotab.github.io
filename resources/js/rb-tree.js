@@ -149,10 +149,17 @@ function selectDataset(path, evt) {
     }
 
     selectedIsRadionuclidesGroup = false;
-    EventBus.emit('selection:changed', {
-      mode: 'multi',
-      items: selectedDatasets.slice()
-    });
+
+    if (selectedDatasets.length === 0) {
+      // All nodes deselected — clear chart and info panel
+      multiSelectMode = false;
+      EventBus.emit('selection:changed', { mode: 'none' });
+    } else {
+      EventBus.emit('selection:changed', {
+        mode: 'multi',
+        items: selectedDatasets.slice()
+      });
+    }
   } else {
     // Single select mode — set state and emit centralized event
     multiSelectMode = false;

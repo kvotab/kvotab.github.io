@@ -12,6 +12,8 @@ async function showNodeAttributes(path, isGroup = false) {
   const infoDiv = document.getElementById('info');
   // Make panel visible and show loading immediately
   infoDiv.style.display = '';
+  const heading = document.getElementById('datasetInfoHeading');
+  if (heading) heading.style.display = '';
   while (infoDiv.firstChild) infoDiv.removeChild(infoDiv.firstChild);
   const loadingNode = document.createElement('div'); loadingNode.className = 'loading'; loadingNode.textContent = 'Loading...';
   infoDiv.appendChild(loadingNode);
@@ -833,10 +835,17 @@ function buildAttributesTable(attrs, jsonReplacer) {
 function showMultipleDatasetAttributes(items) {
   const infoDiv = document.getElementById('info');
   while (infoDiv.firstChild) infoDiv.removeChild(infoDiv.firstChild);
+  const heading = document.getElementById('datasetInfoHeading');
+  if (!items || items.length === 0) {
+    resetInfoPanel();
+    hideChart();
+    return;
+  }
+
+  if (heading) heading.style.display = '';
+
   const loading = document.createElement('div'); loading.className = 'loading'; loading.textContent = `Loading ${items.length} datasets...`;
   infoDiv.appendChild(loading);
-
-  if (!items || items.length === 0) return;
 
   // Deduplicate so each (path, fileKey) pair is unique
   const normalizedItems = [];

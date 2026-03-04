@@ -898,6 +898,8 @@ function resetInfoPanel() {
   if (info) {
     info.innerHTML = INFO_PANEL_DEFAULT_MESSAGE;
   }
+  const heading = getElement('datasetInfoHeading');
+  if (heading) heading.style.display = 'none';
 }
 
 /**
