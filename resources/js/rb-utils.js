@@ -627,7 +627,8 @@ function filenameDiff(firstName, secondName) {
  * Disambiguation rules:
  * 1. Start with the dataset leaf name.
  * 2. If other items in the selection share the same leaf name from a
- *    different HDF5 path, prepend the parent path segment.
+ *    different HDF5 path, walk up the hierarchy and include the minimum
+ *    number of trailing path segments needed to make each name unique.
  * 3. If multiple files are involved, append a compact file-diff suffix
  *    (via filenameDiff) so every file gets a short, distinguishing tag.
  *
@@ -641,14 +642,28 @@ function filenameDiff(firstName, secondName) {
 function buildTraceName(datasetName, path, fileKey, allPaths, allFileKeys) {
   let name = datasetName;
 
-  // Path disambiguation – add parent segment when another unique path
-  // shares the same leaf name
+  // Path disambiguation – walk up the hierarchy until this path's trailing
+  // segments are unique among all selected paths sharing the same leaf name.
   const uniquePaths = [...new Set(allPaths)];
-  if (uniquePaths.some(p => p !== path && p.split('/').pop() === datasetName)) {
-    const parts = path.split('/').filter(Boolean);
-    if (parts.length >= 2) {
-      name = parts.slice(-2).join('/');
+  const sameLeaf = uniquePaths.filter(p => p !== path && p.split('/').pop() === datasetName);
+
+  if (sameLeaf.length > 0) {
+    const allSameLeaf = [path, ...sameLeaf];
+    const allSegments = allSameLeaf.map(p => p.split('/').filter(Boolean));
+    const thisSegments = path.split('/').filter(Boolean);
+    const maxDepth = Math.max(...allSegments.map(s => s.length));
+
+    let depth = 2; // start with parent + leaf
+    while (depth <= maxDepth) {
+      const thisSuffix = thisSegments.slice(-depth).join('/');
+      const duplicates = allSegments.filter(segs => segs.slice(-depth).join('/') === thisSuffix);
+      if (duplicates.length <= 1) break;
+      depth++;
     }
+
+    // Clamp to available depth
+    depth = Math.min(depth, thisSegments.length);
+    name = thisSegments.slice(-depth).join('/');
   }
 
   // File disambiguation – append compact diff when multiple files are shown
