@@ -109,6 +109,62 @@ function highlightText(text, searchTerm) {
   return `${before}<span class="search-highlight">${matched}</span>${after}`;
 }
 
+// Saved expand state before search began, keyed by data-path of group items.
+// null when no search is active.
+let _preSearchExpandState = null;
+
+/**
+ * Snapshot the current expand/collapse state of every group in the tree.
+ * Stores which groups have the `expanded` class and whether toggles are collapsed.
+ * @returns {Map<Element, {expanded: boolean, collapsed: boolean}>}
+ */
+function _captureExpandState(tree) {
+  const state = new Map();
+  tree.querySelectorAll('.tree-item.group').forEach(groupItem => {
+    const toggle = groupItem.querySelector('.tree-toggle');
+    const childrenDiv = groupItem.nextElementSibling;
+    state.set(groupItem, {
+      groupExpanded: groupItem.classList.contains('expanded'),
+      toggleCollapsed: toggle ? toggle.classList.contains('collapsed') : true,
+      childrenExpanded: childrenDiv ? childrenDiv.classList.contains('expanded') : false,
+    });
+  });
+  return state;
+}
+
+/**
+ * Restore a previously captured expand/collapse state.
+ * @param {Map<Element, Object>} state
+ */
+function _restoreExpandState(state) {
+  state.forEach((saved, groupItem) => {
+    const toggle = groupItem.querySelector('.tree-toggle');
+    const childrenDiv = groupItem.nextElementSibling;
+
+    if (saved.groupExpanded) {
+      groupItem.classList.add('expanded');
+    } else {
+      groupItem.classList.remove('expanded');
+    }
+
+    if (toggle) {
+      if (saved.toggleCollapsed) {
+        toggle.classList.add('collapsed');
+      } else {
+        toggle.classList.remove('collapsed');
+      }
+    }
+
+    if (childrenDiv && childrenDiv.classList.contains('tree-group-children')) {
+      if (saved.childrenExpanded) {
+        childrenDiv.classList.add('expanded');
+      } else {
+        childrenDiv.classList.remove('expanded');
+      }
+    }
+  });
+}
+
 /**
  * Filter tree view based on search term
  * Shows matching items and their parents, hides non-matching items
@@ -123,7 +179,7 @@ function filterTree(searchTerm) {
   const allItems = tree.querySelectorAll('.tree-item');
   const allChildren = tree.querySelectorAll('.tree-group-children');
   
-  // Clear search - show everything, remove highlights
+  // Clear search - restore pre-search state, remove highlights
   if (!searchTerm.trim()) {
     allItems.forEach(item => {
       item.classList.remove('search-hidden', 'search-match');
@@ -135,15 +191,20 @@ function filterTree(searchTerm) {
     
     allChildren.forEach(child => {
       child.classList.remove('search-expanded');
-      const parentGroup = child.previousElementSibling;
-      if (parentGroup && parentGroup.classList.contains('expanded')) {
-        child.classList.add('expanded');
-      } else {
-        child.classList.remove('expanded');
-      }
     });
+
+    // Restore the expand state that existed before the search started
+    if (_preSearchExpandState) {
+      _restoreExpandState(_preSearchExpandState);
+      _preSearchExpandState = null;
+    }
     
     return;
+  }
+
+  // Save expand state on first search invocation (transition from no-search to search)
+  if (!_preSearchExpandState) {
+    _preSearchExpandState = _captureExpandState(tree);
   }
   
   const regexLabel = wildcardToRegex(searchTerm);
@@ -209,18 +270,17 @@ function filterTree(searchTerm) {
     }
   });
   
-  // Fourth pass: expand parent groups of matches
+  // Fourth pass: visually expand parent groups of matches using search-only classes.
+  // The real expanded/collapsed state is NOT modified — it was captured above
+  // and will be restored when the search is cleared.
   allChildren.forEach(child => {
     const parentGroup = child.previousElementSibling;
     if (parentGroup && itemsToShow.has(parentGroup)) {
       child.classList.add('search-expanded');
-      if (parentGroup) {
-        const toggle = parentGroup.querySelector('.tree-toggle');
-        if (toggle) {
-          toggle.classList.remove('collapsed');
-        }
-        parentGroup.classList.add('expanded');
-      }
+      // Make the toggle arrow point "open" visually during search
+      const toggle = parentGroup.querySelector('.tree-toggle');
+      if (toggle) toggle.classList.remove('collapsed');
+      parentGroup.classList.add('expanded');
     } else if (!child.classList.contains('expanded')) {
       child.classList.remove('search-expanded');
     }
