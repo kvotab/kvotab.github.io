@@ -254,4 +254,16 @@ function setShowRatioVisible(show) {
   }
 }
 
+/**
+ * Show or hide the "Show Max" checkbox based on context.
+ * Visible whenever a time-series chart is displayed.
+ * @param {boolean} show - Whether to show the checkbox
+ */
+function setShowMaxVisible(show) {
+  const label = getElement('showMaxLabel');
+  if (label) {
+    label.style.display = show ? '' : 'none';
+  }
+}
+
 
