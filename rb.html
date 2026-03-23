@@ -96,6 +96,10 @@
               <input type="checkbox" id="showRatio" onchange="toggleShowRatio()">
               Show Ratio
             </label>
+            <label id="showMaxLabel" style="display: none;">
+              <input type="checkbox" id="showMax" onchange="toggleShowMax()">
+              Show Max
+            </label>
             <span id="legendStatus" style=" font-size: 12px; color: var(--color-text-muted);"></span>
             <button onclick="applyReleasePresetView()" style="margin-left: auto;">Apply Release View</button>
             <button onclick="applyDosePresetView()">Apply Dose View</button>
@@ -144,6 +148,7 @@
                     <li><strong>Scale selectors</strong> — switch axes between linear and log scales.</li>
                     <li><strong>Show Total</strong> — for radionuclide groups, overlay a summed trace.</li>
                     <li><strong>Show Ratio</strong> — when two files are loaded, display max-value ratios per isotope.</li>
+                    <li><strong>Show Max</strong> — append maximum trace value to each legend entry (disabled when Show Ratio is active).</li>
                     <li><strong>Preset views</strong> — quickly zoom to common time ranges.</li>
                   </ul>
                 </div>

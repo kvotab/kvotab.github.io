@@ -573,9 +573,45 @@ function toggleShowTotal() {
  * @returns {void}
  */
 function toggleShowRatio() {
+  const ratioChecked = getElement('showRatio')?.checked;
+  setShowMaxVisible(!ratioChecked);
   if (selectedIsRadionuclidesGroup && selectedDatasetPath) {
     const savedAxis = captureAxisState();
     Promise.resolve().then(() => createRadionuclidesChart(selectedDatasetPath, savedAxis));
+  }
+}
+
+/**
+ * Handle "Show Max" checkbox toggle.
+ * When checked, appends the maximum value to each trace's legend name.
+ * Re-renders the current chart (single, multi-select, or radionuclides).
+ * 
+ * @returns {void}
+ */
+function toggleShowMax() {
+  if (selectedIsRadionuclidesGroup && selectedDatasetPath) {
+    const savedAxis = captureAxisState();
+    Promise.resolve().then(() => createRadionuclidesChart(selectedDatasetPath, savedAxis));
+  } else if (selectedDatasets && selectedDatasets.length > 1) {
+    createMultiDatasetChart(selectedDatasets);
+  } else if (selectedDatasetPath) {
+    createPlotlyChart(selectedDatasetPath);
+  }
+}
+
+/**
+ * Append the maximum y-value to each trace's legend name.
+ * Formats as "name (max)" using 3 significant digits.
+ * Skips traces that are hidden from the legend.
+ * @param {Object[]} traces - Plotly trace objects (modified in-place)
+ */
+function annotateTracesWithMax(traces) {
+  for (const trace of traces) {
+    if (trace._hiddenFromLegend) continue;
+    if (!trace.y || trace.y.length === 0) continue;
+    const maxVal = Math.max(...trace.y);
+    const formatted = maxVal === 0 || !isFinite(maxVal) ? String(maxVal) : maxVal.toPrecision(3);
+    trace.name = `${trace.name} (${formatted})`;
   }
 }
 
@@ -601,6 +637,7 @@ function createPlotlyChart(path) {
   // Hide "Show Total" and "Show Ratio" checkboxes (only for radionuclides groups)
   setShowTotalVisible(false);
   setShowRatioVisible(false);
+  setShowMaxVisible(true);
 
   const traces = [];
   const enabledFiles = getEffectiveFiles();
@@ -674,6 +711,12 @@ function createPlotlyChart(path) {
 
   // Render chart if we have data
   if (traces.length > 0) {
+    // Annotate legend with max values if "Show Max" is checked
+    const showMaxCb = getElement('showMax');
+    if (showMaxCb && showMaxCb.checked) {
+      annotateTracesWithMax(traces);
+    }
+
     const { xScale, yScale } = getChartScales();
 
     let yAxisTitle = 'Value';
@@ -726,6 +769,7 @@ function createMultiDatasetChart(items) {
   // Hide "Show Total" and "Show Ratio" checkboxes (only for radionuclides groups)
   setShowTotalVisible(false);
   setShowRatioVisible(false);
+  setShowMaxVisible(true);
   
   const traces = [];
   const yAxisUnits = new Set();
@@ -842,6 +886,12 @@ function createMultiDatasetChart(items) {
   }
   
   if (traces.length > 0) {
+    // Annotate legend with max values if "Show Max" is checked
+    const showMaxCb = getElement('showMax');
+    if (showMaxCb && showMaxCb.checked) {
+      annotateTracesWithMax(traces);
+    }
+
     const { xScale, yScale } = getChartScales();
     
     let yAxisTitle = 'Value';
@@ -902,6 +952,7 @@ async function createRadionuclidesChart(path, savedAxisState) {
   await new Promise(resolve => setTimeout(resolve, 0));
   // Show "Show Total" checkbox for radionuclides groups
   setShowTotalVisible(true);
+  setShowMaxVisible(true);
   
   const traces = [];
   const enabledFiles = getEffectiveFiles();
@@ -1017,6 +1068,9 @@ async function createRadionuclidesChart(path, savedAxisState) {
   // Collect max values per radionuclide per file (needed for ratio display)
   const showRatioCheckbox = getElement('showRatio');
   const showRatioChecked = hasTwoFiles && showRatioCheckbox && showRatioCheckbox.checked;
+
+  // Hide "Show Max" when ratio is active
+  setShowMaxVisible(!showRatioChecked);
   const maxByFileAndName = {}; // { datasetKey: { fileKey: maxVal } }
   if (showRatioChecked) {
     for (const fileKey of enabledFiles) {
@@ -1157,6 +1211,14 @@ async function createRadionuclidesChart(path, savedAxisState) {
   
   // Render chart if we have traces
   if (traces.length > 0) {
+    // Annotate legend with max values if "Show Max" is checked and ratio is not active
+    if (!showRatioChecked) {
+      const showMaxCb = getElement('showMax');
+      if (showMaxCb && showMaxCb.checked) {
+        annotateTracesWithMax(traces);
+      }
+    }
+
     // Get unit from group
     const firstFile = loadedFiles[enabledFiles[0]];
     try {
