@@ -589,14 +589,28 @@ function toggleShowRatio() {
  * @returns {void}
  */
 function toggleShowMax() {
-  if (selectedIsRadionuclidesGroup && selectedDatasetPath) {
-    const savedAxis = captureAxisState();
-    Promise.resolve().then(() => createRadionuclidesChart(selectedDatasetPath, savedAxis));
-  } else if (selectedDatasets && selectedDatasets.length > 1) {
-    createMultiDatasetChart(selectedDatasets);
-  } else if (selectedDatasetPath) {
-    createPlotlyChart(selectedDatasetPath);
+  const plotDiv = getElement('plotlyChart');
+  if (!plotDiv || !plotDiv.data) {
+    return;
   }
+  const showMax = getElement('showMax')?.checked;
+  const newNames = plotDiv.data.map(trace => {
+    if (trace._hiddenFromLegend) return trace.name;
+    // Strip any existing " (…)" max suffix added by us.
+    // Keep suffixes added by other features (ratio, file-diff) by only
+    // removing a trailing parenthesised numeric value we appended.
+    let baseName = trace._baseName || trace.name;
+    if (showMax && trace.y && trace.y.length > 0) {
+      const maxVal = Math.max(...trace.y);
+      const formatted = maxVal === 0 || !isFinite(maxVal) ? String(maxVal) : maxVal.toPrecision(3);
+      trace._baseName = baseName;
+      return `${baseName} (${formatted})`;
+    }
+    // Unchecked — restore base name
+    trace._baseName = baseName;
+    return baseName;
+  });
+  Plotly.restyle(plotDiv, { name: newNames });
 }
 
 /**
@@ -609,6 +623,7 @@ function annotateTracesWithMax(traces) {
   for (const trace of traces) {
     if (trace._hiddenFromLegend) continue;
     if (!trace.y || trace.y.length === 0) continue;
+    trace._baseName = trace.name;
     const maxVal = Math.max(...trace.y);
     const formatted = maxVal === 0 || !isFinite(maxVal) ? String(maxVal) : maxVal.toPrecision(3);
     trace.name = `${trace.name} (${formatted})`;
