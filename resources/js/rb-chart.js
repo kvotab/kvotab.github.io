@@ -169,52 +169,433 @@ function handleScaleButtonClick(evt) {
   updateChartScales();
 }
 
-/**
- * Apply preset axis ranges optimized for viewing release data.
- * Sets both axes to log scale with ranges suitable for radionuclide releases.
- * X-axis: 100 - 100,000 (years)
- * Y-axis: 10,000 - 1e9 (activity units)
- * 
- * @returns {void}
- */
-function applyReleasePresetView() {
+/* ==========================================================================
+   CHART PRESETS — customizable, persistent axis presets
+   ========================================================================== */
+
+const _PRESETS_STORAGE_KEY = 'chartPresets';
+
+const _BUILTIN_PRESETS = [
+  {
+    id: 'default',
+    name: 'Auto range',
+    builtIn: true,
+    xScale: null, yScale: null,
+    xMin: null, xMax: null, yMin: null, yMax: null
+  },
+  {
+    id: 'release',
+    name: 'SFR Release',
+    builtIn: false,
+    xScale: 'log', yScale: 'log',
+    xMin: 100, xMax: 100000, yMin: 10000, yMax: 1e9
+  },
+  {
+    id: 'dose',
+    name: 'SFR Dose',
+    builtIn: false,
+    xScale: 'log', yScale: 'log',
+    xMin: 1000, xMax: 1e5, yMin: 1e-7, yMax: 2e-5
+  }
+];
+
+/** Load presets from localStorage (falls back to built-in defaults). */
+function loadPresets() {
+  try {
+    const raw = localStorage.getItem(_PRESETS_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length) {
+        // Ensure the Default preset is always first
+        if (!parsed.find(p => p.id === 'default')) {
+          parsed.unshift(_BUILTIN_PRESETS[0]);
+        }
+        return parsed;
+      }
+    }
+  } catch (_) { /* ignore corrupt data */ }
+  return JSON.parse(JSON.stringify(_BUILTIN_PRESETS));
+}
+
+/** Save presets array to localStorage. */
+function savePresetsToStorage(presets) {
+  localStorage.setItem(_PRESETS_STORAGE_KEY, JSON.stringify(presets));
+}
+
+/** Populate the preset <select> dropdown. */
+function populatePresetDropdown() {
+  const sel = document.getElementById('presetSelect');
+  if (!sel) return;
+  const presets = loadPresets();
+  sel.innerHTML = '';
+  presets.forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p.id;
+    opt.textContent = p.name;
+    sel.appendChild(opt);
+  });
+}
+
+/** Apply the selected preset to the chart. */
+function applySelectedPreset() {
+  const sel = document.getElementById('presetSelect');
+  if (!sel) return;
+  applyPresetById(sel.value);
+}
+
+/** Apply a preset by its id string. */
+function applyPresetById(id) {
   if (!currentChartData) return;
-  
-  setScaleValue('x', 'log');
-  setScaleValue('y', 'log');
-  
-  const update = {
-    'xaxis.type': 'log',
-    'xaxis.range': [Math.log10(100), Math.log10(100000)],
-    'yaxis.type': 'log',
-    'yaxis.range': [Math.log10(10000), Math.log10(1e9)]
-  };
-  
+  const presets = loadPresets();
+  const preset = presets.find(p => p.id === id);
+  if (!preset) return;
+
+  // Default preset → reset to autorange with current scale toggles
+  if (preset.id === 'default') {
+    Plotly.relayout('plotlyChart', {
+      'xaxis.autorange': true,
+      'yaxis.autorange': true
+    }).then(() => refreshDynamicLegend());
+    return;
+  }
+
+  const update = {};
+  if (preset.xScale) {
+    setScaleValue('x', preset.xScale);
+    update['xaxis.type'] = preset.xScale;
+  }
+  if (preset.yScale) {
+    setScaleValue('y', preset.yScale);
+    update['yaxis.type'] = preset.yScale;
+  }
+
+  if (preset.xMin != null && preset.xMax != null) {
+    update['xaxis.range'] = preset.xScale === 'log'
+      ? [Math.log10(preset.xMin), Math.log10(preset.xMax)]
+      : [preset.xMin, preset.xMax];
+    update['xaxis.autorange'] = false;
+  } else {
+    update['xaxis.autorange'] = true;
+  }
+
+  if (preset.yMin != null && preset.yMax != null) {
+    update['yaxis.range'] = preset.yScale === 'log'
+      ? [Math.log10(preset.yMin), Math.log10(preset.yMax)]
+      : [preset.yMin, preset.yMax];
+    update['yaxis.autorange'] = false;
+  } else {
+    update['yaxis.autorange'] = true;
+  }
+
   Plotly.relayout('plotlyChart', update).then(() => refreshDynamicLegend());
 }
 
-/**
- * Apply preset axis ranges optimized for viewing dose data.
- * Sets both axes to log scale with ranges suitable for dose rates.
- * X-axis: 1,000 - 100,000 (years)
- * Y-axis: 1e-7 - 2e-5 (Sv/year or similar units)
- * 
- * @returns {void}
- */
-function applyDosePresetView() {
-  if (!currentChartData) return;
-  
-  setScaleValue('x', 'log');
-  setScaleValue('y', 'log');
-  
-  const update = {
-    'xaxis.type': 'log',
-    'xaxis.range': [Math.log10(1000), Math.log10(1e5)],
-    'yaxis.type': 'log',
-    'yaxis.range': [Math.log10(1e-7), Math.log10(2e-5)]
+/** Capture the current chart view state as a preset object (without id/name). */
+function _captureCurrentView() {
+  const plotDiv = document.getElementById('plotlyChart');
+  if (!plotDiv || !plotDiv.layout) return null;
+  const xaxis = plotDiv.layout.xaxis || {};
+  const yaxis = plotDiv.layout.yaxis || {};
+  const xScale = getScaleValue('x');
+  const yScale = getScaleValue('y');
+
+  let xMin = null, xMax = null, yMin = null, yMax = null;
+  if (xaxis.range && xaxis.autorange !== true) {
+    xMin = xScale === 'log' ? Math.pow(10, xaxis.range[0]) : xaxis.range[0];
+    xMax = xScale === 'log' ? Math.pow(10, xaxis.range[1]) : xaxis.range[1];
+  }
+  if (yaxis.range && yaxis.autorange !== true) {
+    yMin = yScale === 'log' ? Math.pow(10, yaxis.range[0]) : yaxis.range[0];
+    yMax = yScale === 'log' ? Math.pow(10, yaxis.range[1]) : yaxis.range[1];
+  }
+  return { xScale, yScale, xMin, xMax, yMin, yMax };
+}
+
+/** Save the current chart view as a new preset (prompts for name). */
+function saveCurrentAsPreset() {
+  if (!currentChartData) { alert('No chart to capture.'); return; }
+  const name = prompt('Preset name:');
+  if (!name || !name.trim()) return;
+
+  const view = _captureCurrentView();
+  if (!view) return;
+
+  const presets = loadPresets();
+  const id = 'user_' + Date.now();
+  presets.push(Object.assign({ id, name: name.trim(), builtIn: false }, view));
+  savePresetsToStorage(presets);
+  populatePresetDropdown();
+
+  // Select the newly created preset
+  const sel = document.getElementById('presetSelect');
+  if (sel) sel.value = id;
+}
+
+/* ---------- Preset Manager Dialog ---------- */
+
+function openPresetManager() {
+  const overlay = document.getElementById('presetManagerOverlay');
+  if (!overlay) return;
+  _renderPresetManagerList();
+  overlay.style.display = 'flex';
+}
+
+function closePresetManager() {
+  const overlay = document.getElementById('presetManagerOverlay');
+  if (overlay) overlay.style.display = 'none';
+
+  // Re-sync dropdown: keep current selection if it still exists, else fall back to default
+  const sel = document.getElementById('presetSelect');
+  if (sel) {
+    const prev = sel.value;
+    populatePresetDropdown();
+    const presets = loadPresets();
+    if (presets.find(p => p.id === prev)) {
+      sel.value = prev;
+    } else {
+      sel.value = 'default';
+    }
+    // Apply the (possibly updated) selected preset to the chart
+    applyPresetById(sel.value);
+  }
+}
+
+function _renderPresetManagerList() {
+  const list = document.getElementById('presetManagerList');
+  if (!list) return;
+  const presets = loadPresets();
+  list.innerHTML = '';
+
+  presets.forEach((p, idx) => {
+    const row = document.createElement('div');
+    row.className = 'preset-manager-row';
+    row.dataset.presetId = p.id;
+
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'preset-manager-name';
+    nameSpan.textContent = p.name;
+    if (p.id === 'default') nameSpan.style.fontStyle = 'italic';
+
+    // Summary line showing current axis settings
+    const summary = document.createElement('span');
+    summary.className = 'preset-manager-summary';
+    if (p.id === 'default') {
+      summary.textContent = 'auto';
+    } else {
+      const parts = [];
+      const xS = p.xScale || 'auto';
+      const yS = p.yScale || 'auto';
+      const fmtR = (lo, hi) => (lo != null && hi != null) ? lo + ' – ' + hi : 'auto';
+      parts.push('X: ' + xS + ' [' + fmtR(p.xMin, p.xMax) + ']');
+      parts.push('Y: ' + yS + ' [' + fmtR(p.yMin, p.yMax) + ']');
+      summary.textContent = parts.join('   ');
+    }
+
+    const nameBlock = document.createElement('div');
+    nameBlock.className = 'preset-manager-name-block';
+    nameBlock.appendChild(nameSpan);
+    nameBlock.appendChild(summary);
+    row.appendChild(nameBlock);
+
+    if (p.id !== 'default') {
+      const btnGroup = document.createElement('span');
+      btnGroup.className = 'preset-manager-actions';
+
+      const editBtn = document.createElement('button');
+      editBtn.textContent = 'Edit';
+      editBtn.title = 'Edit preset settings';
+      editBtn.onclick = () => _editPreset(p.id);
+      btnGroup.appendChild(editBtn);
+
+      const captureBtn = document.createElement('button');
+      captureBtn.textContent = 'Capture';
+      captureBtn.title = 'Overwrite with current chart view';
+      captureBtn.onclick = () => _updatePresetFromView(p.id);
+      btnGroup.appendChild(captureBtn);
+
+      const deleteBtn = document.createElement('button');
+      deleteBtn.textContent = 'Delete';
+      deleteBtn.title = 'Delete preset';
+      deleteBtn.className = 'preset-delete-btn';
+      deleteBtn.onclick = () => _deletePreset(p.id);
+      btnGroup.appendChild(deleteBtn);
+
+      row.appendChild(btnGroup);
+    }
+    list.appendChild(row);
+  });
+}
+
+/** Show inline edit form for a preset. */
+function _editPreset(id) {
+  const presets = loadPresets();
+  const p = presets.find(x => x.id === id);
+  if (!p) return;
+
+  // Remove any existing edit form first
+  const prev = document.getElementById('presetEditForm');
+  if (prev) prev.remove();
+
+  const list = document.getElementById('presetManagerList');
+  if (!list) return;
+
+  // Find the row for this preset
+  const rows = list.querySelectorAll('.preset-manager-row');
+  let targetRow = null;
+  rows.forEach(r => { if (r.dataset.presetId === id) targetRow = r; });
+  if (!targetRow) return;
+
+  const form = document.createElement('div');
+  form.id = 'presetEditForm';
+  form.className = 'preset-edit-form';
+
+  const fmtVal = (v) => (v == null ? '' : v);
+
+  form.innerHTML =
+    '<div class="preset-edit-row">' +
+      '<label>Name <input type="text" id="pe_name" class="preset-name-input" value="' + _escAttr(p.name) + '"></label>' +
+    '</div>' +
+    '<div class="preset-edit-row">' +
+      '<label>X scale ' +
+        '<select id="pe_xScale">' +
+          '<option value=""' + (p.xScale == null ? ' selected' : '') + '>auto</option>' +
+          '<option value="linear"' + (p.xScale === 'linear' ? ' selected' : '') + '>linear</option>' +
+          '<option value="log"' + (p.xScale === 'log' ? ' selected' : '') + '>log</option>' +
+        '</select>' +
+      '</label>' +
+      '<label>X min <input type="text" id="pe_xMin" value="' + fmtVal(p.xMin) + '" placeholder="auto"></label>' +
+      '<label>X max <input type="text" id="pe_xMax" value="' + fmtVal(p.xMax) + '" placeholder="auto"></label>' +
+    '</div>' +
+    '<div class="preset-edit-row">' +
+      '<label>Y scale ' +
+        '<select id="pe_yScale">' +
+          '<option value=""' + (p.yScale == null ? ' selected' : '') + '>auto</option>' +
+          '<option value="linear"' + (p.yScale === 'linear' ? ' selected' : '') + '>linear</option>' +
+          '<option value="log"' + (p.yScale === 'log' ? ' selected' : '') + '>log</option>' +
+        '</select>' +
+      '</label>' +
+      '<label>Y min <input type="text" id="pe_yMin" value="' + fmtVal(p.yMin) + '" placeholder="auto"></label>' +
+      '<label>Y max <input type="text" id="pe_yMax" value="' + fmtVal(p.yMax) + '" placeholder="auto"></label>' +
+    '</div>' +
+    '<div class="preset-edit-btns">' +
+      '<button id="pe_save" class="preset-edit-save">Save</button>' +
+      '<button id="pe_cancel">Cancel</button>' +
+    '</div>';
+
+  targetRow.insertAdjacentElement('afterend', form);
+
+  document.getElementById('pe_save').onclick = () => _savePresetEdit(id);
+  document.getElementById('pe_cancel').onclick = () => _cancelPresetEdit();
+}
+
+function _escAttr(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+}
+
+function _parseNum(s) {
+  if (s == null) return null;
+  const t = String(s).trim();
+  if (t === '') return null;
+  const n = Number(t);
+  return isNaN(n) ? null : n;
+}
+
+function _savePresetEdit(id) {
+  const presets = loadPresets();
+  const p = presets.find(x => x.id === id);
+  if (!p) return;
+
+  const nameVal = (document.getElementById('pe_name').value || '').trim();
+  if (!nameVal) { alert('Name cannot be empty.'); return; }
+
+  p.name   = nameVal;
+  p.xScale = document.getElementById('pe_xScale').value || null;
+  p.yScale = document.getElementById('pe_yScale').value || null;
+  p.xMin   = _parseNum(document.getElementById('pe_xMin').value);
+  p.xMax   = _parseNum(document.getElementById('pe_xMax').value);
+  p.yMin   = _parseNum(document.getElementById('pe_yMin').value);
+  p.yMax   = _parseNum(document.getElementById('pe_yMax').value);
+
+  savePresetsToStorage(presets);
+  populatePresetDropdown();
+  _renderPresetManagerList();
+}
+
+function _cancelPresetEdit() {
+  const f = document.getElementById('presetEditForm');
+  if (f) f.remove();
+}
+
+function _updatePresetFromView(id) {
+  if (!currentChartData) { alert('No chart to capture.'); return; }
+  const presets = loadPresets();
+  const p = presets.find(x => x.id === id);
+  if (!p) return;
+  const view = _captureCurrentView();
+  if (!view) return;
+  Object.assign(p, view);
+  savePresetsToStorage(presets);
+  populatePresetDropdown();
+  _renderPresetManagerList();
+}
+
+function _deletePreset(id) {
+  if (!confirm('Delete this preset?')) return;
+  let presets = loadPresets();
+  presets = presets.filter(x => x.id !== id);
+  savePresetsToStorage(presets);
+  populatePresetDropdown();
+  _renderPresetManagerList();
+}
+
+/** Export all presets as a JSON file download. */
+function exportPresets() {
+  const presets = loadPresets();
+  const blob = new Blob([JSON.stringify(presets, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'chart-presets.json';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/** Reset the preset dropdown back to Default (e.g. when a new chart is drawn). */
+function resetPresetDropdown() {
+  const sel = document.getElementById('presetSelect');
+  if (sel) sel.value = 'default';
+}
+
+/** Import presets from a JSON file. */
+function importPresets() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.json,application/json';
+  input.onchange = () => {
+    const file = input.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const imported = JSON.parse(reader.result);
+        if (!Array.isArray(imported)) { alert('Invalid preset file.'); return; }
+        // Validate each entry has at least id and name
+        for (const p of imported) {
+          if (!p.id || !p.name) { alert('Invalid preset entry found.'); return; }
+        }
+        savePresetsToStorage(imported);
+        populatePresetDropdown();
+        _renderPresetManagerList();
+        alert('Imported ' + imported.length + ' preset(s).');
+      } catch (e) {
+        alert('Failed to parse preset file.');
+      }
+    };
+    reader.readAsText(file);
   };
-  
-  Plotly.relayout('plotlyChart', update).then(() => refreshDynamicLegend());
+  input.click();
 }
 
 /**
@@ -644,6 +1025,7 @@ function annotateTracesWithMax(traces) {
  * @returns {void}
  */
 function createPlotlyChart(path) {
+  resetPresetDropdown();
   const chartContainer = getElement('plotlyChartContainer');
   showChartLoading(chartContainer);
   const plotDiv = getElement('plotlyChart');
@@ -776,6 +1158,7 @@ function createPlotlyChart(path) {
  * @returns {void}
  */
 function createMultiDatasetChart(items) {
+  resetPresetDropdown();
   const plotDiv = getElement('plotlyChart');
   const chartContainer = getElement('plotlyChartContainer');
   showChartLoading(chartContainer);
@@ -957,6 +1340,7 @@ function createMultiDatasetChart(items) {
  * @returns {void}
  */
 async function createRadionuclidesChart(path, savedAxisState) {
+  resetPresetDropdown();
   const plotDiv = getElement('plotlyChart');
   const chartContainer = getElement('plotlyChartContainer');
   showChartLoading(chartContainer);

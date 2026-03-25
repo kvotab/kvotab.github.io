@@ -395,6 +395,17 @@ document.addEventListener('DOMContentLoaded', () => {
       if (e.target === urlDialog) closeUrlDialog();
     });
   }
+
+  // Populate chart preset dropdown from localStorage / defaults
+  populatePresetDropdown();
+
+  // Close preset manager on overlay click
+  const presetOverlay = document.getElementById('presetManagerOverlay');
+  if (presetOverlay) {
+    presetOverlay.addEventListener('click', (e) => {
+      if (e.target === presetOverlay) closePresetManager();
+    });
+  }
 });
 
 
