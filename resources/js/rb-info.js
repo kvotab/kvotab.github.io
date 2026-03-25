@@ -320,7 +320,9 @@ async function showNodeAttributes(path, isGroup = false) {
           item.fileKey
         ) + ')';
         if (item.data.type === 'single') {
-          const label = (item.data.spec ? PDFSampler.pdfLabel(item.data.spec) : 'raw') + fileSuffix;
+          const nodeName = item.data.path ? item.data.path.split('/').pop() : '';
+          const specSuffix = item.data.spec ? ' (' + PDFSampler.pdfLabel(item.data.spec) + ')' : '';
+          const label = (nodeName || 'raw') + specSuffix + fileSuffix;
           mergedEntries.push({ label, samples: item.data.samples, spec: item.data.spec, deterministicValue: item.data.deterministicValue });
         } else if (item.data.type === 'lookup') {
           for (const entry of item.data.entries) {
