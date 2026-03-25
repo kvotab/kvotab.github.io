@@ -1095,7 +1095,8 @@ function createPdfHistogram(data) {
   } else if (data.type === 'lookup') {
     data.entries.forEach((entry, i) => {
       const c = palette[i % palette.length];
-      const label = entry.spec ? entry.label + ' (' + PDFSampler.pdfLabel(entry.spec) + ')' : entry.label;
+      const pdfSuffix = entry.spec ? ' (' + PDFSampler.pdfLabel(entry.spec) + ')' : '';
+      const label = (pdfSuffix && entry.label.includes(pdfSuffix)) ? entry.label : entry.label + pdfSuffix;
 
       traces.push(ChartService.histogramTrace({ samples: entry.samples.map(xform), name: label, color: c.bar, lineColor: c.line, opacity: 0.7 }));
 
