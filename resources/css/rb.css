@@ -995,6 +995,201 @@
       background: var(--color-text-primary);
     }
 
+    /* Preset icon buttons (＋ and ⚙) */
+    .preset-icon-btn {
+      padding: 4px 8px !important;
+      font-size: 14px !important;
+      line-height: 1;
+      min-width: 28px;
+    }
+
+    /* ---------- Preset Manager Overlay / Dialog ---------- */
+    .preset-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.45);
+      z-index: 9000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .preset-dialog {
+      background: var(--color-panel-bg);
+      border: 1px solid var(--color-panel-border);
+      border-radius: 8px;
+      width: 460px;
+      max-width: 90vw;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+      overflow: hidden;
+    }
+    .preset-dialog-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--color-panel-border);
+    }
+    .preset-dialog-header h4 {
+      margin: 0;
+      font-size: 15px;
+      color: var(--color-text-primary);
+    }
+    .preset-close-btn {
+      background: none;
+      border: none;
+      font-size: 20px;
+      cursor: pointer;
+      color: var(--color-text-secondary);
+      line-height: 1;
+      padding: 0 4px;
+    }
+    .preset-close-btn:hover {
+      color: var(--color-text-primary);
+    }
+    .preset-manager-list {
+      padding: 8px 16px;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+    .preset-manager-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 0;
+      border-bottom: 1px solid var(--color-hover-bg);
+    }
+    .preset-manager-row:last-child {
+      border-bottom: none;
+    }
+    .preset-manager-name-block {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    .preset-manager-name {
+      font-size: 13px;
+      color: var(--color-text-primary);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .preset-manager-summary {
+      font-size: 11px;
+      color: var(--color-text-secondary);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .preset-manager-actions {
+      display: inline-flex;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+    .preset-manager-actions button {
+      padding: 3px 8px;
+      font-size: 11px;
+      border-radius: 3px;
+      border: 1px solid var(--color-panel-border);
+      background: var(--color-panel-bg);
+      color: var(--color-text-primary);
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .preset-manager-actions button:hover {
+      background: var(--color-hover-bg);
+    }
+    .preset-manager-actions .preset-delete-btn {
+      color: #c0392b;
+      border-color: #c0392b;
+    }
+    .preset-manager-actions .preset-delete-btn:hover {
+      background: #c0392b;
+      color: #fff;
+    }
+    /* Inline edit form inside preset manager */
+    .preset-edit-form {
+      padding: 10px 0;
+      border-bottom: 1px solid var(--color-hover-bg);
+    }
+    .preset-edit-row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 6px;
+      flex-wrap: wrap;
+    }
+    .preset-edit-row label {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 12px;
+      color: var(--color-text-primary);
+      white-space: nowrap;
+    }
+    .preset-edit-row input[type="text"] {
+      width: 80px;
+      padding: 3px 6px;
+      font-size: 12px;
+      border: 1px solid var(--color-panel-border);
+      border-radius: 3px;
+      background: var(--color-panel-bg);
+      color: var(--color-text-primary);
+    }
+    .preset-edit-row .preset-name-input {
+      width: 220px;
+    }
+    .preset-edit-row select {
+      padding: 3px 6px;
+      font-size: 12px;
+      border: 1px solid var(--color-panel-border);
+      border-radius: 3px;
+      background: var(--color-panel-bg);
+      color: var(--color-text-primary);
+    }
+    .preset-edit-btns {
+      display: flex;
+      gap: 6px;
+      margin-top: 6px;
+    }
+    .preset-edit-btns button {
+      padding: 4px 12px;
+      font-size: 12px;
+      border-radius: 3px;
+      border: 1px solid var(--color-panel-border);
+      background: var(--color-panel-bg);
+      color: var(--color-text-primary);
+      cursor: pointer;
+    }
+    .preset-edit-btns button:hover {
+      background: var(--color-hover-bg);
+    }
+    .preset-edit-save {
+      background: var(--color-kvot-bright) !important;
+      color: var(--color-kvot-background) !important;
+      border-color: var(--color-kvot-bright) !important;
+    }
+
+    .preset-dialog-footer {
+      display: flex;
+      gap: 8px;
+      padding: 12px 16px;
+      border-top: 1px solid var(--color-panel-border);
+    }
+    .preset-dialog-footer button {
+      padding: 6px 14px;
+      font-size: 12px;
+      border-radius: 4px;
+      border: 1px solid var(--color-panel-border);
+      background: var(--color-panel-bg);
+      color: var(--color-text-primary);
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .preset-dialog-footer button:hover {
+      background: var(--color-hover-bg);
+    }
+
     /* ==========================================================================
        10. DATASET INFO PANEL
        ========================================================================== */
