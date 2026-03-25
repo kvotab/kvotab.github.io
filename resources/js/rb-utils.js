@@ -1050,8 +1050,100 @@ function createPdfHistogram(data) {
   /** Transform value into display-space (identity or log10) */
   const xform = useLog ? v => Math.log10(v) : v => v;
 
+  // Read checkbox states
+  const showDet = !!(document.getElementById('histDet') && document.getElementById('histDet').checked);
+  const showStats = !!(document.getElementById('histStats') && document.getElementById('histStats').checked);
+  const showPdf = !!(document.getElementById('histPdf') && document.getElementById('histPdf').checked);
+
+  // Detect whether any deterministic values exist and show/hide the checkbox
+  let hasDet = false;
+  let hasPdf = false;
+  if (data.type === 'single') {
+    hasDet = data.deterministicValue != null && isFinite(data.deterministicValue);
+    hasPdf = !!data.spec;
+  } else if (data.type === 'lookup') {
+    hasDet = data.entries.some(e => e.deterministicValue != null && isFinite(e.deterministicValue));
+    hasPdf = data.entries.some(e => !!e.spec);
+  }
+  const detLabel = document.getElementById('histDetLabel');
+  if (detLabel) detLabel.style.display = hasDet ? '' : 'none';
+  const pdfLabel = document.getElementById('histPdfLabel');
+  if (pdfLabel) pdfLabel.style.display = hasPdf ? '' : 'none';
+
   let traces = [];
   let shapes = [];
+
+  /** Interpolate the PDF overlay y-value at a given display-space x. Returns null if not possible. */
+  function _pdfYAt(pdfXArr, pdfYArr, xVal) {
+    if (!pdfXArr || !pdfYArr || pdfXArr.length < 2) return null;
+    // Find bracketing segment
+    for (let k = 0; k < pdfXArr.length - 1; k++) {
+      if ((pdfXArr[k] <= xVal && xVal <= pdfXArr[k + 1]) ||
+          (pdfXArr[k] >= xVal && xVal >= pdfXArr[k + 1])) {
+        const t = (xVal - pdfXArr[k]) / (pdfXArr[k + 1] - pdfXArr[k]);
+        return pdfYArr[k] + t * (pdfYArr[k + 1] - pdfYArr[k]);
+      }
+    }
+    return null;
+  }
+
+  /** Compute statistics from samples and add vertical line traces/shapes. */
+  function _addStatLines(samples, pdfXArr, pdfYArr, lineColor) {
+    if (!samples || samples.length === 0) return;
+    const sorted = [...samples].sort((a, b) => a - b);
+    const n = sorted.length;
+    const arithMean = samples.reduce((s, v) => s + v, 0) / n;
+    const positiveSamples = samples.filter(v => v > 0);
+    const geoMean = positiveSamples.length > 0
+      ? Math.exp(positiveSamples.reduce((s, v) => s + Math.log(v), 0) / positiveSamples.length)
+      : null;
+    const percentile = (p) => {
+      const idx = (p / 100) * (n - 1);
+      const lo = Math.floor(idx), hi = Math.ceil(idx);
+      return lo === hi ? sorted[lo] : sorted[lo] + (idx - lo) * (sorted[hi] - sorted[lo]);
+    };
+    const p5 = percentile(5);
+    const p50 = percentile(50);
+    const p95 = percentile(95);
+
+    const stats = [
+      { val: arithMean, label: 'Mean', dash: 'solid' },
+      { val: geoMean, label: 'Geo. Mean', dash: 'dot' },
+      { val: p5, label: 'P5', dash: 'dash' },
+      { val: p50, label: 'P50 (median)', dash: 'longdash' },
+      { val: p95, label: 'P95', dash: 'dash' },
+    ];
+
+    const statsColor = lineColor || (isDark ? '#80cbc4' : '#00897b');
+
+    stats.forEach(st => {
+      if (st.val == null || !isFinite(st.val)) return;
+      if (useLog && st.val <= 0) return;
+      const xVal = xform(st.val);
+      const pdfY = _pdfYAt(pdfXArr, pdfYArr, xVal);
+      if (pdfY != null) {
+        // Draw as a scatter trace so we get legend entry + exact height
+        traces.push({
+          x: [xVal, xVal], y: [0, pdfY], type: 'scatter', mode: 'lines',
+          line: { color: statsColor, width: 1.5, dash: st.dash },
+          name: st.label + ' (' + Number(st.val.toPrecision(4)) + ')',
+          showlegend: true,
+        });
+      } else {
+        // No PDF overlay → paper-height shape + legend marker
+        shapes.push({
+          type: 'line', x0: xVal, x1: xVal, y0: 0, y1: 1, yref: 'paper',
+          line: { color: statsColor, width: 1.5, dash: st.dash },
+        });
+        traces.push({
+          x: [xVal], y: [0], type: 'scatter', mode: 'markers',
+          marker: { color: statsColor, size: 0.1, opacity: 0 },
+          name: st.label + ' (' + Number(st.val.toPrecision(4)) + ')',
+          showlegend: true,
+        });
+      }
+    });
+  }
 
   if (data.type === 'single') {
     const label = data.spec ? PDFSampler.pdfLabel(data.spec) : 'raw';
@@ -1059,11 +1151,11 @@ function createPdfHistogram(data) {
     // Histogram trace (probability density)
     traces.push(ChartService.histogramTrace({ samples: data.samples.map(xform), name: 'Samples', color: barColor, lineColor: barLine, opacity: 0.85 }));
 
-    // Analytical PDF overlay line
+    // Analytical PDF overlay line (always compute for stat line heights)
     const overlay = data.spec ? computePdfOverlay(data.spec) : null;
+    let pdfXArr = null, pdfYArr = null;
     if (overlay) {
       if (useLog) {
-        // Change of variable: f_log10(log10(x)) = f(x) · x · ln(10)
         const xLog = [], yLog = [];
         for (let k = 0; k < overlay.x.length; k++) {
           const xv = overlay.x[k];
@@ -1072,14 +1164,16 @@ function createPdfHistogram(data) {
             yLog.push(overlay.y[k] * xv * Math.LN10);
           }
         }
-        traces.push(ChartService.pdfOverlayTrace({ x: xLog, y: yLog, color: pdfLineColor, width: 2.5, name: `PDF (${label})` }));
+        pdfXArr = xLog; pdfYArr = yLog;
+        if (showPdf) traces.push(ChartService.pdfOverlayTrace({ x: xLog, y: yLog, color: pdfLineColor, width: 2.5, name: `PDF (${label})` }));
       } else {
-        traces.push(ChartService.pdfOverlayTrace({ x: overlay.x, y: overlay.y, color: pdfLineColor, width: 2.5, name: `PDF (${label})` }));
+        pdfXArr = overlay.x; pdfYArr = overlay.y;
+        if (showPdf) traces.push(ChartService.pdfOverlayTrace({ x: overlay.x, y: overlay.y, color: pdfLineColor, width: 2.5, name: `PDF (${label})` }));
       }
     }
 
     // Deterministic value vertical line
-    if (data.deterministicValue !== null && data.deterministicValue !== undefined && isFinite(data.deterministicValue)) {
+    if (showDet && data.deterministicValue !== null && data.deterministicValue !== undefined && isFinite(data.deterministicValue)) {
       const detX = xform(data.deterministicValue);
       shapes.push({
         type: 'line', x0: detX, x1: detX, y0: 0, y1: 1, yref: 'paper',
@@ -1092,6 +1186,10 @@ function createPdfHistogram(data) {
         showlegend: true,
       });
     }
+
+    // Statistics lines
+    if (showStats) _addStatLines(data.samples, pdfXArr, pdfYArr, null);
+
   } else if (data.type === 'lookup') {
     data.entries.forEach((entry, i) => {
       const c = palette[i % palette.length];
@@ -1101,6 +1199,7 @@ function createPdfHistogram(data) {
       traces.push(ChartService.histogramTrace({ samples: entry.samples.map(xform), name: label, color: c.bar, lineColor: c.line, opacity: 0.7 }));
 
       const overlay = entry.spec ? computePdfOverlay(entry.spec) : null;
+      let pdfXArr = null, pdfYArr = null;
       if (overlay) {
         if (useLog) {
           const xLog = [], yLog = [];
@@ -1108,19 +1207,30 @@ function createPdfHistogram(data) {
             const xv = overlay.x[k];
             if (xv > 0) { xLog.push(Math.log10(xv)); yLog.push(overlay.y[k] * xv * Math.LN10); }
           }
-          traces.push(ChartService.pdfOverlayTrace({ x: xLog, y: yLog, color: c.pdf, width: 2, name: 'PDF ' + entry.label, showlegend: false }));
+          pdfXArr = xLog; pdfYArr = yLog;
+          if (showPdf) traces.push(ChartService.pdfOverlayTrace({ x: xLog, y: yLog, color: c.pdf, width: 2, name: 'PDF ' + entry.label, showlegend: false }));
         } else {
-          traces.push(ChartService.pdfOverlayTrace({ x: overlay.x, y: overlay.y, color: c.pdf, width: 2, name: 'PDF ' + entry.label, showlegend: false }));
+          pdfXArr = overlay.x; pdfYArr = overlay.y;
+          if (showPdf) traces.push(ChartService.pdfOverlayTrace({ x: overlay.x, y: overlay.y, color: c.pdf, width: 2, name: 'PDF ' + entry.label, showlegend: false }));
         }
       }
 
-      if (entry.deterministicValue !== null && entry.deterministicValue !== undefined && isFinite(entry.deterministicValue)) {
+      if (showDet && entry.deterministicValue !== null && entry.deterministicValue !== undefined && isFinite(entry.deterministicValue)) {
         const detX = xform(entry.deterministicValue);
         shapes.push({
           type: 'line', x0: detX, x1: detX, y0: 0, y1: 1, yref: 'paper',
           line: { color: c.line, width: 1.5, dash: 'dashdot' },
         });
+        traces.push({
+          x: [detX], y: [0], type: 'scatter', mode: 'markers',
+          marker: { color: c.line, size: 10, symbol: 'line-ns-open', line: { width: 1.5, color: c.line } },
+          name: 'Det. ' + entry.label + ' (' + Number(entry.deterministicValue.toPrecision(4)) + ')',
+          showlegend: true,
+        });
       }
+
+      // Statistics lines (per entry)
+      if (showStats) _addStatLines(entry.samples, pdfXArr, pdfYArr, c.pdf);
     });
   }
 
@@ -1162,13 +1272,16 @@ function createPdfHistogram(data) {
 }
 
 /**
- * Toggle log\u2081\u2080 scale on the PDF histogram x-axis.
- * Re-renders the histogram from stored data.
+ * Re-render the PDF histogram from stored data.
+ * Called when any histogram checkbox changes.
  */
-function toggleHistLog() {
+function redrawHistogram() {
   if (currentPdfHistogramData) {
     createPdfHistogram(currentPdfHistogramData);
   }
 }
+
+/** @deprecated Use redrawHistogram() */
+function toggleHistLog() { redrawHistogram(); }
 
 

@@ -109,8 +109,20 @@
           </div>
           <div id="histControls" class="chart-controls" style="display: none;">
             <span style="font-weight: 600; font-size: 13px; display: inline-flex; align-items: center; gap: 4px;">📊 Data preview</span>
+            <label id="histDetLabel" style="display: none;">
+              <input type="checkbox" id="histDet" checked onchange="redrawHistogram()">
+              Deterministic
+            </label>
+            <label id="histPdfLabel" style="display: none;">
+              <input type="checkbox" id="histPdf" checked onchange="redrawHistogram()">
+              PDF
+            </label>
+            <label id="histStatsLabel">
+              <input type="checkbox" id="histStats" onchange="redrawHistogram()">
+              Statistics
+            </label>
             <label id="histLogLabel" style="margin-left: auto;">
-              <input type="checkbox" id="histLogScale" onchange="toggleHistLog()">
+              <input type="checkbox" id="histLogScale" onchange="redrawHistogram()">
               Log₁₀ scale
             </label>
           </div>
