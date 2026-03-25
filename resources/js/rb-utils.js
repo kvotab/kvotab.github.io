@@ -1056,14 +1056,16 @@ function createPdfHistogram(data) {
   const showPdf = !!(document.getElementById('histPdf') && document.getElementById('histPdf').checked);
 
   // Detect whether any deterministic values exist and show/hide the checkbox
+  // Detect whether any PDF overlays can be drawn (not raw/empirical)
+  const _canDrawPdf = (spec) => spec && spec.type && !['raw','emp','empirical'].includes(spec.type.toLowerCase());
   let hasDet = false;
   let hasPdf = false;
   if (data.type === 'single') {
     hasDet = data.deterministicValue != null && isFinite(data.deterministicValue);
-    hasPdf = !!data.spec;
+    hasPdf = _canDrawPdf(data.spec);
   } else if (data.type === 'lookup') {
     hasDet = data.entries.some(e => e.deterministicValue != null && isFinite(e.deterministicValue));
-    hasPdf = data.entries.some(e => !!e.spec);
+    hasPdf = data.entries.some(e => _canDrawPdf(e.spec));
   }
   const detLabel = document.getElementById('histDetLabel');
   if (detLabel) detLabel.style.display = hasDet ? '' : 'none';
@@ -1130,14 +1132,14 @@ function createPdfHistogram(data) {
           showlegend: true,
         });
       } else {
-        // No PDF overlay → paper-height shape + legend marker
+        // No PDF overlay → paper-height shape + legend line
         shapes.push({
           type: 'line', x0: xVal, x1: xVal, y0: 0, y1: 1, yref: 'paper',
           line: { color: statsColor, width: 1.5, dash: st.dash },
         });
         traces.push({
-          x: [xVal], y: [0], type: 'scatter', mode: 'markers',
-          marker: { color: statsColor, size: 0.1, opacity: 0 },
+          x: [null], y: [null], type: 'scatter', mode: 'lines',
+          line: { color: statsColor, width: 1.5, dash: st.dash },
           name: st.label + ' (' + Number(st.val.toPrecision(4)) + ')',
           showlegend: true,
         });
