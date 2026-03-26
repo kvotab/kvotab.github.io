@@ -43,7 +43,7 @@ async function copyChartToClipboard() {
     const origPlot  = plotDiv.layout.plot_bgcolor;
 
     if (!isDark) {
-      await Plotly.relayout(plotDiv, { paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)' });
+      await Plotly.relayout(plotDiv, { paper_bgcolor: '#ffffff', plot_bgcolor: '#ffffff' });
     }
 
     // Convert chart to PNG
