@@ -314,7 +314,7 @@
       transition: background 0.15s;
     }
     .sample-data-item:hover {
-      background: var(--color-kvot-background, #f0ebe5);
+      background: rgba(128, 128, 128, 0.1);
     }
     .sample-data-item input[type="checkbox"] {
       flex-shrink: 0;
