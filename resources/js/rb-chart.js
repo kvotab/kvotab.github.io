@@ -1906,7 +1906,7 @@ function getPlotlyConfig(filename) {
         }
       },
       {
-        name: 'Download data as Excel',
+        name: 'Download data and chart in Excel',
         icon: {
           width: 384,
           height: 512,
