@@ -38,6 +38,14 @@ async function copyChartToClipboard() {
       console.log('Permission query not supported, attempting clipboard write anyway');
     }
     
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    const origPaper = plotDiv.layout.paper_bgcolor;
+    const origPlot  = plotDiv.layout.plot_bgcolor;
+
+    if (!isDark) {
+      await Plotly.relayout(plotDiv, { paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)' });
+    }
+
     // Convert chart to PNG
     const dataUrl = await Plotly.toImage(plotDiv, {
       format: 'png',
@@ -45,6 +53,10 @@ async function copyChartToClipboard() {
       height: 800,
       scale: 2
     });
+
+    if (!isDark) {
+      await Plotly.relayout(plotDiv, { paper_bgcolor: origPaper, plot_bgcolor: origPlot });
+    }
     
     const blob = await fetch(dataUrl).then(r => r.blob());
     

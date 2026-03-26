@@ -1819,9 +1819,28 @@ function getPlotlyConfig(filename) {
     scrollZoom: true,
     showLink: false,
     plotlyServerURL: "https://chart-studio.plotly.com",
-    modeBarButtonsToRemove: ['resetScale2d'],
+    modeBarButtonsToRemove: ['resetScale2d', 'toImage'],
     modeBarButtonsToAdd: [
       'v1hovermode',
+      {
+        name: 'Download plot as svg',
+        icon: Plotly.Icons.camera,
+        click: function(gd) {
+          const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+          const origPaper = gd.layout.paper_bgcolor;
+          const origPlot  = gd.layout.plot_bgcolor;
+          const opts = { format: 'svg', filename: filename, height: 600, width: 800, scale: 1 };
+          if (!isDark) {
+            Plotly.relayout(gd, { paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)' }).then(function() {
+              return Plotly.downloadImage(gd, opts);
+            }).then(function() {
+              return Plotly.relayout(gd, { paper_bgcolor: origPaper, plot_bgcolor: origPlot });
+            });
+          } else {
+            Plotly.downloadImage(gd, opts);
+          }
+        }
+      },
       {
         name: 'Copy chart to clipboard',
         icon: {
@@ -1856,14 +1875,7 @@ function getPlotlyConfig(filename) {
         }
       }
     ],
-    responsive: true,
-    toImageButtonOptions: {
-      format: 'svg',
-      filename: filename,
-      height: 600,
-      width: 800,
-      scale: 1
-    }
+    responsive: true
   };
 }
 
