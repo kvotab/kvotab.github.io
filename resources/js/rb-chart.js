@@ -163,7 +163,10 @@ function updateChartScales() {
 
   if (Object.keys(update).length === 0) return;
 
-  Plotly.relayout('plotlyChart', update).then(() => refreshDynamicLegend());
+  Plotly.relayout('plotlyChart', update).then(() => {
+    refreshDynamicLegend();
+    snapLogRangeToDecades(document.getElementById('plotlyChart'));
+  });
 }
 
 /**
@@ -311,7 +314,7 @@ function applyPresetById(id) {
       'yaxis.minor.ticks': 'outside',
       'yaxis.minor.ticklen': 3,
       'yaxis.minor.showgrid': yScale === 'log'
-    }).then(() => { _suppressPresetSync = false; refreshDynamicLegend(); });
+    }).then(() => { _suppressPresetSync = false; refreshDynamicLegend(); snapLogRangeToDecades(document.getElementById('plotlyChart')); });
     return;
   }
 
@@ -366,7 +369,7 @@ function applyPresetById(id) {
   }
 
   _suppressPresetSync = true;
-  Plotly.relayout('plotlyChart', update).then(() => { _suppressPresetSync = false; refreshDynamicLegend(); });
+  Plotly.relayout('plotlyChart', update).then(() => { _suppressPresetSync = false; refreshDynamicLegend(); snapLogRangeToDecades(document.getElementById('plotlyChart')); });
 }
 
 /** Capture the current chart view state as a preset object (without id/name). */
@@ -673,6 +676,40 @@ function _removeCustomOption() {
 }
 
 /**
+ * Snap log-scale axes to full-decade boundaries so the last major
+ * gridline and its tick label are always visible.
+ */
+let _snappingLog = false;
+function snapLogRangeToDecades(plotDiv) {
+  if (!plotDiv || _snappingLog) return Promise.resolve();
+  var fl = plotDiv._fullLayout;
+  if (!fl) return Promise.resolve();
+  var update = {};
+  ['xaxis', 'yaxis'].forEach(function(axis) {
+    var ax = fl[axis];
+    if (!ax || ax.type !== 'log') return;
+    var r = ax.range;
+    if (!r || r.length < 2) return;
+    var r0 = r[0], r1 = r[1];
+    var target0 = Math.floor(r0);
+    var target1 = Math.ceil(r1);
+    if (Math.abs(r0 - target0) > 0.001 || Math.abs(r1 - target1) > 0.001) {
+      update[axis + '.range'] = [target0, target1];
+      update[axis + '.autorange'] = false;
+    }
+  });
+  if (Object.keys(update).length > 0) {
+    _suppressPresetSync = true;
+    _snappingLog = true;
+    return Plotly.relayout(plotDiv, update).then(function() {
+      _suppressPresetSync = false;
+      _snappingLog = false;
+    });
+  }
+  return Promise.resolve();
+}
+
+/**
  * Listen for user-initiated axis changes and sync the preset dropdown.
  * - Manual zoom/pan → switch to "Custom *"
  * - Autoscale (double-click or button) → switch to "Auto range"
@@ -683,11 +720,12 @@ function setupPresetRelayoutSync(plotDiv) {
     if (_suppressPresetSync) return;
     if (!eventData) return;
 
-    // Autoscale → select Auto range
+    // Autoscale → select Auto range, then snap log decades
     if (eventData['xaxis.autorange'] || eventData['yaxis.autorange']) {
       _removeCustomOption();
       const sel = document.getElementById('presetSelect');
       if (sel) sel.value = 'default';
+      snapLogRangeToDecades(plotDiv);
       return;
     }
 
@@ -1274,9 +1312,11 @@ function createPlotlyChart(path) {
       assignLegendRanks(traces);
     }
     Plotly.newPlot('plotlyChart', traces, layout, config).then(() => {
-      setupDynamicLegend(getElement('plotlyChart'));
-      setupPresetRelayoutSync(getElement('plotlyChart'));
+      const pDiv = getElement('plotlyChart');
+      setupDynamicLegend(pDiv);
+      setupPresetRelayoutSync(pDiv);
       refreshDynamicLegend();
+      snapLogRangeToDecades(pDiv);
       hideChartLoading(chartContainer);
     });
   } else {
@@ -1454,9 +1494,11 @@ function createMultiDatasetChart(items) {
       assignLegendRanks(traces);
     }
       Plotly.newPlot('plotlyChart', traces, layout, config).then(() => {
-        setupDynamicLegend(getElement('plotlyChart'));
-        setupPresetRelayoutSync(getElement('plotlyChart'));
+        const pDiv = getElement('plotlyChart');
+        setupDynamicLegend(pDiv);
+        setupPresetRelayoutSync(pDiv);
         refreshDynamicLegend();
+        snapLogRangeToDecades(pDiv);
         hideChartLoading(container);
       });
   } else {

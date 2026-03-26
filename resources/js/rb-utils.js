@@ -764,12 +764,11 @@ function createBaseLayout({ title, xAxisTitle, yAxisTitle, xScale = 'linear', yS
       gridcolor: gridColor,
       zerolinecolor: gridColor,
       color: textColor,
-      showline: true, linecolor: textColor, linewidth: 1,
-      ticks: 'outside', ticklen: 5, tickwidth: 1, tickcolor: textColor,
-      ...(xScale === 'log' ? { dtick: 1, minor: { ticks: 'outside', ticklen: 3, tickwidth: 1, tickcolor: textColor,
+      showline: true, linecolor: gridColor, linewidth: 1, mirror: true,
+      ticks: 'outside', ticklen: 5, tickwidth: 1, tickcolor: gridColor,
+      ...(xScale === 'log' ? { dtick: 1, minor: { ticks: 'outside', ticklen: 3, tickwidth: 1, tickcolor: gridColor,
                showgrid: true, gridcolor: minorGridColor, gridwidth: 1 } }
-             : { minor: { ticks: 'outside', ticklen: 3, tickwidth: 1, tickcolor: textColor } }),
-      mirror: true
+             : { minor: { ticks: 'outside', ticklen: 3, tickwidth: 1, tickcolor: gridColor } }),
     },
     yaxis: { 
       title: yAxisTitle,
@@ -778,12 +777,11 @@ function createBaseLayout({ title, xAxisTitle, yAxisTitle, xScale = 'linear', yS
       zerolinecolor: gridColor,
       color: textColor,
       rangemode: yScale === 'linear' ? 'tozero' : undefined,
-      showline: true, linecolor: textColor, linewidth: 1,
-      ticks: 'outside', ticklen: 5, tickwidth: 1, tickcolor: textColor,
-      ...(yScale === 'log' ? { dtick: 1, minor: { ticks: 'outside', ticklen: 3, tickwidth: 1, tickcolor: textColor,
+      showline: true, linecolor: gridColor, linewidth: 1, mirror: true,
+      ticks: 'outside', ticklen: 5, tickwidth: 1, tickcolor: gridColor,
+      ...(yScale === 'log' ? { dtick: 1, minor: { ticks: 'outside', ticklen: 3, tickwidth: 1, tickcolor: gridColor,
                showgrid: true, gridcolor: minorGridColor, gridwidth: 1 } }
-             : { minor: { ticks: 'outside', ticklen: 3, tickwidth: 1, tickcolor: textColor } }),
-      mirror: true,
+             : { minor: { ticks: 'outside', ticklen: 3, tickwidth: 1, tickcolor: gridColor } }),
       ...CHART_YAXIS_EXPONENT
     },
     hovermode: 'closest',
@@ -835,16 +833,16 @@ window.ChartService = {
       'xaxis.gridcolor': gridColor,
       'xaxis.zerolinecolor': gridColor,
       'xaxis.color': textColor,
-      'xaxis.linecolor': textColor,
-      'xaxis.tickcolor': textColor,
-      'xaxis.minor.tickcolor': textColor,
+      'xaxis.linecolor': gridColor,
+      'xaxis.tickcolor': gridColor,
+      'xaxis.minor.tickcolor': gridColor,
       'xaxis.minor.gridcolor': minorGridColor,
       'yaxis.gridcolor': gridColor,
       'yaxis.zerolinecolor': gridColor,
       'yaxis.color': textColor,
-      'yaxis.linecolor': textColor,
-      'yaxis.tickcolor': textColor,
-      'yaxis.minor.tickcolor': textColor,
+      'yaxis.linecolor': gridColor,
+      'yaxis.tickcolor': gridColor,
+      'yaxis.minor.tickcolor': gridColor,
       'yaxis.minor.gridcolor': minorGridColor,
       'legend.font.color': textColor
     };
@@ -1000,9 +998,11 @@ function renderChart(traces, layout, path) {
   }
   
   Plotly.newPlot('plotlyChart', traces, layout, config).then(() => {
-    setupDynamicLegend(getElement('plotlyChart'));
-    setupPresetRelayoutSync(getElement('plotlyChart'));
+    const pDiv = getElement('plotlyChart');
+    setupDynamicLegend(pDiv);
+    setupPresetRelayoutSync(pDiv);
     refreshDynamicLegend();
+    snapLogRangeToDecades(pDiv);
     hideChartLoading(container);
   });
 }
@@ -1273,7 +1273,6 @@ function createPdfHistogram(data) {
       color: textColor,
       showline: true, linecolor: textColor, linewidth: 1,
       ticks: 'outside', ticklen: 5, tickwidth: 1, tickcolor: textColor,
-      mirror: true,
     },
     yaxis: {
       title: 'Probability Density',
@@ -1283,7 +1282,6 @@ function createPdfHistogram(data) {
       rangemode: 'tozero',
       showline: true, linecolor: textColor, linewidth: 1,
       ticks: 'outside', ticklen: 5, tickwidth: 1, tickcolor: textColor,
-      mirror: true,
     },
     margin: { t: 20, r: 30, b: 60, l: 60 },
     showlegend: true,
