@@ -106,7 +106,9 @@ EventBus.on('theme:changed', ({ isDark }) => {
     }
 
     if (!currentChartData) return;
+    _suppressPresetSync = true;
     Plotly.relayout(el, ChartService.relayoutForTheme(isDark));
+    setTimeout(() => { _suppressPresetSync = false; }, 0);
   } catch (e) {
     console.warn('theme:changed handler failed', e);
   }

@@ -40,3 +40,42 @@
     document.addEventListener('mouseup', onMouseUp);
   });
 })();
+
+// Chart vertical resize handle
+(function() {
+  const handle = document.getElementById('chartResizeHandle');
+  const chart = document.getElementById('plotlyChart');
+  if (!handle || !chart) return;
+  let startY, startHeight;
+
+  handle.addEventListener('mousedown', function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    startY = e.clientY;
+    startHeight = chart.getBoundingClientRect().height;
+    handle.classList.add('active');
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+
+    function onMouseMove(e) {
+      e.preventDefault();
+      const dy = e.clientY - startY;
+      const minH = parseInt(getComputedStyle(chart).minHeight) || 200;
+      const maxH = 2000;
+      const newHeight = Math.max(minH, Math.min(startHeight + dy, maxH));
+      chart.style.height = newHeight + 'px';
+    }
+
+    function onMouseUp() {
+      handle.classList.remove('active');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      window.dispatchEvent(new Event('resize'));
+    }
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  });
+})();
