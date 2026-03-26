@@ -383,8 +383,16 @@ async function loadFromUrl() {
 
 // ── Sample Data dialog ──────────────────────────────────────────────
 
-/** Open the sample-data picker dialog, fetching the manifest. */
-async function openSampleDataDialog() {
+// Inline manifest – update this list when adding/removing sample files
+// in resources/data/.
+var SAMPLE_DATA_FILES = [
+  'SFR_FSAR_CCP0.h5',
+  'SFR_FSAR_CCP1.h5',
+  'SFR_FSAR_CCP32.h5'
+];
+
+/** Open the sample-data picker dialog. */
+function openSampleDataDialog() {
   const dialog  = document.getElementById('sampleDataDialog');
   const listEl  = document.getElementById('sampleDataList');
   const errorEl = document.getElementById('sampleDataError');
@@ -395,39 +403,30 @@ async function openSampleDataDialog() {
   listEl.innerHTML = '';
   dialog.style.display = '';
 
-  try {
-    const resp = await fetch('./resources/data/files.json');
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const files = await resp.json();
-
-    if (!Array.isArray(files) || files.length === 0) {
-      listEl.innerHTML = '<div class="sample-data-empty">No sample files available.</div>';
-      return;
-    }
-
-    files.forEach(name => {
-      const alreadyLoaded = !!loadedFiles[name];
-      const item = document.createElement('div');
-      item.className = 'sample-data-item';
-
-      const cb = document.createElement('input');
-      cb.type = 'checkbox';
-      cb.id = 'sd_' + name;
-      cb.value = name;
-      if (alreadyLoaded) cb.disabled = true;
-
-      const lbl = document.createElement('label');
-      lbl.htmlFor = cb.id;
-      lbl.textContent = name + (alreadyLoaded ? ' (loaded)' : '');
-
-      item.appendChild(cb);
-      item.appendChild(lbl);
-      listEl.appendChild(item);
-    });
-  } catch (err) {
-    errorEl.textContent = 'Could not fetch sample-data manifest: ' + err.message;
-    errorEl.style.display = '';
+  if (SAMPLE_DATA_FILES.length === 0) {
+    listEl.innerHTML = '<div class="sample-data-empty">No sample files available.</div>';
+    return;
   }
+
+  SAMPLE_DATA_FILES.forEach(name => {
+    const alreadyLoaded = !!loadedFiles[name];
+    const item = document.createElement('div');
+    item.className = 'sample-data-item';
+
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.id = 'sd_' + name;
+    cb.value = name;
+    if (alreadyLoaded) cb.disabled = true;
+
+    const lbl = document.createElement('label');
+    lbl.htmlFor = cb.id;
+    lbl.textContent = name + (alreadyLoaded ? ' (loaded)' : '');
+
+    item.appendChild(cb);
+    item.appendChild(lbl);
+    listEl.appendChild(item);
+  });
 }
 
 /** Close the sample-data dialog. */
@@ -454,6 +453,12 @@ async function loadSelectedSampleData() {
   errorEl.style.display = 'none';
   loadBtn.disabled = true;
   loadBtn.textContent = 'Loading…';
+
+  if (window.location.protocol === 'file:') {
+    errorEl.textContent = 'Sample data loading requires HTTP. Serve the folder with e.g. "python3 -m http.server" and open via http://localhost:8000/rb.html';
+    errorEl.style.display = '';
+    return;
+  }
 
   try {
     showFileLoadTicker(0, checked.length, 'Starting…');
