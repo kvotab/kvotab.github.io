@@ -1292,7 +1292,8 @@ function createPdfHistogram(data) {
   const config = getPlotlyConfig('pdf_histogram');
 
   currentPdfHistogram = true;
-  currentChartData = null;
+  // currentChartData = null;
+  currentChartData = { traces, layout, path: null };
   container.classList.add('visible');
 
   showChartLoading(container);
