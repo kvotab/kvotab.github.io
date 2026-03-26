@@ -204,7 +204,15 @@ function initDOMReferences() {
       const current = getScaleValue(axis);
       const newVal = current === 'linear' ? 'log' : 'linear';
       setScaleValue(axis, newVal);
-      updateChartScales();
+      // If Auto range is selected, lin/log toggle should not leave Auto range
+      const sel = document.getElementById('presetSelect');
+      if (sel && sel.value === 'default') {
+        _suppressPresetSync = true;
+        updateChartScales();
+        setTimeout(() => { _suppressPresetSync = false; }, 0);
+      } else {
+        updateChartScales();
+      }
     });
   });
 

@@ -852,8 +852,30 @@
       min-height: var(--plotly-chart-min-height, 200px);
       height: 500px;
       max-height: 2000px;
-      resize: vertical;
-      overflow: auto;
+      overflow: hidden;
+    }
+
+    /* Vertical resize handle below the chart */
+    .chart-resize-handle {
+      height: 8px;
+      cursor: row-resize;
+      background: transparent;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .chart-resize-handle::after {
+      content: '';
+      height: 3px;
+      width: 100%;
+      border-radius: 0;
+      background: transparent;
+      transition: background 0.15s;
+    }
+    .chart-resize-handle:hover::after,
+    .chart-resize-handle.active::after {
+      background: var(--color-kvot-accent);
     }
     
     /* Chart Controls */

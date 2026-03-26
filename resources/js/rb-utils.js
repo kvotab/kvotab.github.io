@@ -739,6 +739,7 @@ function createBaseLayout({ title, xAxisTitle, yAxisTitle, xScale = 'linear', yS
   const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
   const textColor = isDark ? '#e8ddd0' : '#2d2416';
   const gridColor = isDark ? '#4a3f35' : '#e5ddd5';
+  const minorGridColor = isDark ? '#3a322b' : '#f0ebe5';
   const bgColor = isDark ? '#2a221b' : '#ffffff';
   // use panel background for the page around the axes
   let panelBg = ''; 
@@ -762,7 +763,13 @@ function createBaseLayout({ title, xAxisTitle, yAxisTitle, xScale = 'linear', yS
       type: xScale,
       gridcolor: gridColor,
       zerolinecolor: gridColor,
-      color: textColor
+      color: textColor,
+      showline: true, linecolor: textColor, linewidth: 1,
+      ticks: 'outside', ticklen: 5, tickwidth: 1, tickcolor: textColor,
+      ...(xScale === 'log' ? { dtick: 1, minor: { ticks: 'outside', ticklen: 3, tickwidth: 1, tickcolor: textColor,
+               showgrid: true, gridcolor: minorGridColor, gridwidth: 1 } }
+             : { minor: { ticks: 'outside', ticklen: 3, tickwidth: 1, tickcolor: textColor } }),
+      mirror: true
     },
     yaxis: { 
       title: yAxisTitle,
@@ -771,6 +778,12 @@ function createBaseLayout({ title, xAxisTitle, yAxisTitle, xScale = 'linear', yS
       zerolinecolor: gridColor,
       color: textColor,
       rangemode: yScale === 'linear' ? 'tozero' : undefined,
+      showline: true, linecolor: textColor, linewidth: 1,
+      ticks: 'outside', ticklen: 5, tickwidth: 1, tickcolor: textColor,
+      ...(yScale === 'log' ? { dtick: 1, minor: { ticks: 'outside', ticklen: 3, tickwidth: 1, tickcolor: textColor,
+               showgrid: true, gridcolor: minorGridColor, gridwidth: 1 } }
+             : { minor: { ticks: 'outside', ticklen: 3, tickwidth: 1, tickcolor: textColor } }),
+      mirror: true,
       ...CHART_YAXIS_EXPONENT
     },
     hovermode: 'closest',
@@ -808,6 +821,7 @@ window.ChartService = {
   relayoutForTheme(isDark) {
     const textColor = isDark ? '#e8ddd0' : '#2d2416';
     const gridColor = isDark ? '#4a3f35' : '#e5ddd5';
+    const minorGridColor = isDark ? '#3a322b' : '#f0ebe5';
     const bgColor  = isDark ? '#2a221b' : '#ffffff';
     let panelBg = '';
     try {
@@ -821,9 +835,17 @@ window.ChartService = {
       'xaxis.gridcolor': gridColor,
       'xaxis.zerolinecolor': gridColor,
       'xaxis.color': textColor,
+      'xaxis.linecolor': textColor,
+      'xaxis.tickcolor': textColor,
+      'xaxis.minor.tickcolor': textColor,
+      'xaxis.minor.gridcolor': minorGridColor,
       'yaxis.gridcolor': gridColor,
       'yaxis.zerolinecolor': gridColor,
       'yaxis.color': textColor,
+      'yaxis.linecolor': textColor,
+      'yaxis.tickcolor': textColor,
+      'yaxis.minor.tickcolor': textColor,
+      'yaxis.minor.gridcolor': minorGridColor,
       'legend.font.color': textColor
     };
   }
@@ -979,6 +1001,7 @@ function renderChart(traces, layout, path) {
   
   Plotly.newPlot('plotlyChart', traces, layout, config).then(() => {
     setupDynamicLegend(getElement('plotlyChart'));
+    setupPresetRelayoutSync(getElement('plotlyChart'));
     refreshDynamicLegend();
     hideChartLoading(container);
   });
@@ -1032,6 +1055,7 @@ function createPdfHistogram(data) {
   // ...existing code...
   const textColor = isDark ? '#e8ddd0' : '#2d2416';
   const gridColor = isDark ? '#4a3f35' : '#e5ddd5';
+  const minorGridColor = isDark ? '#3a322b' : '#f0ebe5';
   const bgColor  = isDark ? '#2a221b' : '#ffffff';
   const barColor  = isDark ? 'rgba(243,184,123,0.45)' : 'rgba(187,108,93,0.45)';
   const barLine   = isDark ? 'rgba(243,184,123,0.8)'  : 'rgba(187,108,93,0.8)';
@@ -1244,16 +1268,22 @@ function createPdfHistogram(data) {
     font: { color: textColor },
     xaxis: {
       title: useLog ? 'log\u2081\u2080(Value)' : 'Value',
-      gridcolor: gridColor,
-      zerolinecolor: gridColor,
+      showgrid: false,
+      zeroline: false,
       color: textColor,
+      showline: true, linecolor: textColor, linewidth: 1,
+      ticks: 'outside', ticklen: 5, tickwidth: 1, tickcolor: textColor,
+      mirror: true,
     },
     yaxis: {
       title: 'Probability Density',
-      gridcolor: gridColor,
-      zerolinecolor: gridColor,
+      showgrid: false,
+      zeroline: false,
       color: textColor,
       rangemode: 'tozero',
+      showline: true, linecolor: textColor, linewidth: 1,
+      ticks: 'outside', ticklen: 5, tickwidth: 1, tickcolor: textColor,
+      mirror: true,
     },
     margin: { t: 20, r: 30, b: 60, l: 60 },
     showlegend: true,

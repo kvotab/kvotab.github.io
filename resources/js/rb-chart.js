@@ -123,15 +123,46 @@ function getLineStyle(name) {
  */
 function updateChartScales() {
   if (!currentChartData) return;
-  
+
+  const plotDiv = document.getElementById('plotlyChart');
+  const curX = (plotDiv && plotDiv.layout && plotDiv.layout.xaxis && plotDiv.layout.xaxis.type) || 'linear';
+  const curY = (plotDiv && plotDiv.layout && plotDiv.layout.yaxis && plotDiv.layout.yaxis.type) || 'linear';
+
   const xScale = getScaleValue('x');
   const yScale = getScaleValue('y');
-  
-  const update = {
-    'xaxis.type': xScale,
-    'yaxis.type': yScale
-  };
-  
+
+  const update = {};
+  if (xScale !== curX) {
+    update['xaxis.type'] = xScale;
+    if (xScale === 'log') {
+      update['xaxis.dtick'] = 1;
+      update['xaxis.minor.ticks'] = 'outside';
+      update['xaxis.minor.ticklen'] = 3;
+      update['xaxis.minor.showgrid'] = true;
+    } else {
+      update['xaxis.tickmode'] = 'auto';
+      update['xaxis.dtick'] = null;
+      update['xaxis.minor.ticks'] = 'outside';
+      update['xaxis.minor.showgrid'] = false;
+    }
+  }
+  if (yScale !== curY) {
+    update['yaxis.type'] = yScale;
+    if (yScale === 'log') {
+      update['yaxis.dtick'] = 1;
+      update['yaxis.minor.ticks'] = 'outside';
+      update['yaxis.minor.ticklen'] = 3;
+      update['yaxis.minor.showgrid'] = true;
+    } else {
+      update['yaxis.tickmode'] = 'auto';
+      update['yaxis.dtick'] = null;
+      update['yaxis.minor.ticks'] = 'outside';
+      update['yaxis.minor.showgrid'] = false;
+    }
+  }
+
+  if (Object.keys(update).length === 0) return;
+
   Plotly.relayout('plotlyChart', update).then(() => refreshDynamicLegend());
 }
 
@@ -166,7 +197,16 @@ function handleScaleButtonClick(evt) {
   const axis = btn.dataset.axis;
   const val = btn.dataset.value;
   setScaleValue(axis, val);
-  updateChartScales();
+
+  // If Auto range is selected, lin/log toggle should not leave Auto range
+  const sel = document.getElementById('presetSelect');
+  if (sel && sel.value === 'default') {
+    _suppressPresetSync = true;
+    updateChartScales();
+    setTimeout(() => { _suppressPresetSync = false; }, 0);
+  } else {
+    updateChartScales();
+  }
 }
 
 /* ==========================================================================
@@ -174,6 +214,7 @@ function handleScaleButtonClick(evt) {
    ========================================================================== */
 
 const _PRESETS_STORAGE_KEY = 'chartPresets';
+let _suppressPresetSync = false;
 
 const _BUILTIN_PRESETS = [
   {
@@ -240,6 +281,8 @@ function populatePresetDropdown() {
 function applySelectedPreset() {
   const sel = document.getElementById('presetSelect');
   if (!sel) return;
+  if (sel.value === '__custom__') return;
+  _removeCustomOption();
   applyPresetById(sel.value);
 }
 
@@ -252,10 +295,23 @@ function applyPresetById(id) {
 
   // Default preset → reset to autorange with current scale toggles
   if (preset.id === 'default') {
+    const xScale = getScaleValue('x');
+    const yScale = getScaleValue('y');
+    _suppressPresetSync = true;
     Plotly.relayout('plotlyChart', {
       'xaxis.autorange': true,
-      'yaxis.autorange': true
-    }).then(() => refreshDynamicLegend());
+      'yaxis.autorange': true,
+      'xaxis.dtick': xScale === 'log' ? 1 : null,
+      'xaxis.tickmode': xScale === 'log' ? null : 'auto',
+      'xaxis.minor.ticks': 'outside',
+      'xaxis.minor.ticklen': 3,
+      'xaxis.minor.showgrid': xScale === 'log',
+      'yaxis.dtick': yScale === 'log' ? 1 : null,
+      'yaxis.tickmode': yScale === 'log' ? null : 'auto',
+      'yaxis.minor.ticks': 'outside',
+      'yaxis.minor.ticklen': 3,
+      'yaxis.minor.showgrid': yScale === 'log'
+    }).then(() => { _suppressPresetSync = false; refreshDynamicLegend(); });
     return;
   }
 
@@ -263,10 +319,32 @@ function applyPresetById(id) {
   if (preset.xScale) {
     setScaleValue('x', preset.xScale);
     update['xaxis.type'] = preset.xScale;
+    if (preset.xScale === 'log') {
+      update['xaxis.dtick'] = 1;
+      update['xaxis.minor.ticks'] = 'outside';
+      update['xaxis.minor.ticklen'] = 3;
+      update['xaxis.minor.showgrid'] = true;
+    } else {
+      update['xaxis.tickmode'] = 'auto';
+      update['xaxis.dtick'] = null;
+      update['xaxis.minor.ticks'] = 'outside';
+      update['xaxis.minor.showgrid'] = false;
+    }
   }
   if (preset.yScale) {
     setScaleValue('y', preset.yScale);
     update['yaxis.type'] = preset.yScale;
+    if (preset.yScale === 'log') {
+      update['yaxis.dtick'] = 1;
+      update['yaxis.minor.ticks'] = 'outside';
+      update['yaxis.minor.ticklen'] = 3;
+      update['yaxis.minor.showgrid'] = true;
+    } else {
+      update['yaxis.tickmode'] = 'auto';
+      update['yaxis.dtick'] = null;
+      update['yaxis.minor.ticks'] = 'outside';
+      update['yaxis.minor.showgrid'] = false;
+    }
   }
 
   if (preset.xMin != null && preset.xMax != null) {
@@ -287,7 +365,8 @@ function applyPresetById(id) {
     update['yaxis.autorange'] = true;
   }
 
-  Plotly.relayout('plotlyChart', update).then(() => refreshDynamicLegend());
+  _suppressPresetSync = true;
+  Plotly.relayout('plotlyChart', update).then(() => { _suppressPresetSync = false; refreshDynamicLegend(); });
 }
 
 /** Capture the current chart view state as a preset object (without id/name). */
@@ -565,7 +644,63 @@ function exportPresets() {
 /** Reset the preset dropdown back to Default (e.g. when a new chart is drawn). */
 function resetPresetDropdown() {
   const sel = document.getElementById('presetSelect');
-  if (sel) sel.value = 'default';
+  if (!sel) return;
+  const customOpt = sel.querySelector('option[value="__custom__"]');
+  if (customOpt) customOpt.remove();
+  sel.value = 'default';
+}
+
+/** Add/select a temporary "Custom *" option in the preset dropdown. */
+function _markCustomPreset() {
+  const sel = document.getElementById('presetSelect');
+  if (!sel) return;
+  let opt = sel.querySelector('option[value="__custom__"]');
+  if (!opt) {
+    opt = document.createElement('option');
+    opt.value = '__custom__';
+    opt.textContent = 'Custom \u2731';
+    sel.appendChild(opt);
+  }
+  sel.value = '__custom__';
+}
+
+/** Remove the temporary "Custom *" option from the preset dropdown. */
+function _removeCustomOption() {
+  const sel = document.getElementById('presetSelect');
+  if (!sel) return;
+  const opt = sel.querySelector('option[value="__custom__"]');
+  if (opt) opt.remove();
+}
+
+/**
+ * Listen for user-initiated axis changes and sync the preset dropdown.
+ * - Manual zoom/pan → switch to "Custom *"
+ * - Autoscale (double-click or button) → switch to "Auto range"
+ * Programmatic relayouts are ignored via _suppressPresetSync flag.
+ */
+function setupPresetRelayoutSync(plotDiv) {
+  plotDiv.on('plotly_relayout', function(eventData) {
+    if (_suppressPresetSync) return;
+    if (!eventData) return;
+
+    // Autoscale → select Auto range
+    if (eventData['xaxis.autorange'] || eventData['yaxis.autorange']) {
+      _removeCustomOption();
+      const sel = document.getElementById('presetSelect');
+      if (sel) sel.value = 'default';
+      return;
+    }
+
+    // Any user-initiated range or type change → Custom
+    const axisKeys = ['xaxis.range[0]', 'xaxis.range[1]', 'xaxis.range',
+                      'yaxis.range[0]', 'yaxis.range[1]', 'yaxis.range',
+                      'xaxis.type', 'yaxis.type'];
+    const isAxisChange = axisKeys.some(k => k in eventData);
+    if (isAxisChange) {
+      const sel = document.getElementById('presetSelect');
+      if (sel && sel.value !== '__custom__') _markCustomPreset();
+    }
+  });
 }
 
 /** Import presets from a JSON file. */
@@ -1140,6 +1275,7 @@ function createPlotlyChart(path) {
     }
     Plotly.newPlot('plotlyChart', traces, layout, config).then(() => {
       setupDynamicLegend(getElement('plotlyChart'));
+      setupPresetRelayoutSync(getElement('plotlyChart'));
       refreshDynamicLegend();
       hideChartLoading(chartContainer);
     });
@@ -1319,6 +1455,7 @@ function createMultiDatasetChart(items) {
     }
       Plotly.newPlot('plotlyChart', traces, layout, config).then(() => {
         setupDynamicLegend(getElement('plotlyChart'));
+        setupPresetRelayoutSync(getElement('plotlyChart'));
         refreshDynamicLegend();
         hideChartLoading(container);
       });
@@ -1682,6 +1819,7 @@ function getPlotlyConfig(filename) {
     scrollZoom: true,
     showLink: false,
     plotlyServerURL: "https://chart-studio.plotly.com",
+    modeBarButtonsToRemove: ['resetScale2d'],
     modeBarButtonsToAdd: [
       'v1hovermode',
       {
