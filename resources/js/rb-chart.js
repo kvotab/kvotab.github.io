@@ -688,6 +688,8 @@ function snapLogRangeToDecades(plotDiv) {
   ['xaxis', 'yaxis'].forEach(function(axis) {
     var ax = fl[axis];
     if (!ax || ax.type !== 'log') return;
+    // Only snap auto-ranged axes; preserve explicit user/preset limits
+    if (!ax.autorange) return;
     var r = ax.range;
     if (!r || r.length < 2) return;
     var r0 = r[0], r1 = r[1];
