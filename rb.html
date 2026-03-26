@@ -43,6 +43,20 @@
     </div>
   </div>
 
+  <!-- Sample Data dialog -->
+  <div id="sampleDataDialog" class="url-dialog-overlay" style="display:none;">
+    <div class="url-dialog">
+      <h3>📂 Sample Data</h3>
+      <p>Select HDF5 files to load from the server.</p>
+      <div id="sampleDataError" class="url-error" style="display:none;"></div>
+      <div id="sampleDataList" class="sample-data-list"></div>
+      <div class="url-dialog-buttons">
+        <button class="url-btn url-btn-cancel" onclick="closeSampleDataDialog()">Cancel</button>
+        <button class="url-btn url-btn-load" id="sampleDataLoadBtn" onclick="loadSelectedSampleData()">Load Selected</button>
+      </div>
+    </div>
+  </div>
+
   <div class="container">
     <div class="panel" id="leftPanel">
       <div class="panel-heading">
@@ -181,7 +195,7 @@
   <script src="./resources/js/erf.js"></script>
   <script src="./resources/js/site.js"></script>
   <script>
-    KVOT.renderHeader('HDF5 Browser', '<div class="tabs-container"><div id="fileTabs"></div><div id="fileLoadTicker" class="file-load-ticker" aria-live="polite" hidden><span class="spinner" aria-hidden="true"></span><span class="ticker-text">Loading files…</span><button class="ticker-cancel" onclick="cancelTreeRefresh()" title="Cancel" style="display:none;">✕</button></div><button class="add-file-btn" onclick="document.getElementById(\'fileInput\').click()">+ Add Files</button><button class="add-file-btn url-file-btn" onclick="openUrlDialog()" title="Load HDF5 file from URL">🔗 URL</button></div>');
+    KVOT.renderHeader('HDF5 Browser', '<div class="tabs-container"><div id="fileTabs"></div><div id="fileLoadTicker" class="file-load-ticker" aria-live="polite" hidden><span class="spinner" aria-hidden="true"></span><span class="ticker-text">Loading files…</span><button class="ticker-cancel" onclick="cancelTreeRefresh()" title="Cancel" style="display:none;">✕</button></div><button class="add-file-btn" onclick="document.getElementById(\'fileInput\').click()">+ Add Files</button><button class="add-file-btn url-file-btn" onclick="openUrlDialog()" title="Load HDF5 file from URL">🔗 URL</button><button class="add-file-btn" onclick="openSampleDataDialog()" title="Load sample HDF5 files">📂 Sample Data</button></div>');
     KVOT.renderNav('rb.html');
     KVOT.renderFooter();
     KVOT.initMap('map');

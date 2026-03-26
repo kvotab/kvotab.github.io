@@ -299,6 +299,38 @@
       cursor: not-allowed;
     }
 
+    .sample-data-list {
+      max-height: 300px;
+      overflow-y: auto;
+      margin: 12px 0;
+    }
+    .sample-data-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .sample-data-item:hover {
+      background: var(--color-kvot-background, #f0ebe5);
+    }
+    .sample-data-item input[type="checkbox"] {
+      flex-shrink: 0;
+    }
+    .sample-data-item label {
+      cursor: pointer;
+      font-size: 13px;
+      word-break: break-all;
+    }
+    .sample-data-empty {
+      padding: 16px;
+      text-align: center;
+      color: var(--color-text-muted, #888);
+      font-size: 13px;
+    }
+
     /* ==========================================================================
        6. MAIN LAYOUT & PANELS
        ========================================================================== */
