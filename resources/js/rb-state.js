@@ -148,7 +148,7 @@ const CHART_YAXIS_EXPONENT = {
  * Chart margins with extra right padding for legend.
  * @constant {Object}
  */
-const CHART_MARGIN_WITH_LEGEND = { t: 10, r: 150,  b: 60 };
+const CHART_MARGIN_WITH_LEGEND = { t: 25, r: 150,  b: 60 };
 
 
 /* ==========================================================================
