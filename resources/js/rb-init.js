@@ -381,6 +381,125 @@ async function loadFromUrl() {
   }
 }
 
+// ── Sample Data dialog ──────────────────────────────────────────────
+
+/** Open the sample-data picker dialog, fetching the manifest. */
+async function openSampleDataDialog() {
+  const dialog  = document.getElementById('sampleDataDialog');
+  const listEl  = document.getElementById('sampleDataList');
+  const errorEl = document.getElementById('sampleDataError');
+  if (!dialog) return;
+
+  errorEl.style.display = 'none';
+  errorEl.textContent = '';
+  listEl.innerHTML = '';
+  dialog.style.display = '';
+
+  try {
+    const resp = await fetch('./resources/data/files.json');
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const files = await resp.json();
+
+    if (!Array.isArray(files) || files.length === 0) {
+      listEl.innerHTML = '<div class="sample-data-empty">No sample files available.</div>';
+      return;
+    }
+
+    files.forEach(name => {
+      const alreadyLoaded = !!loadedFiles[name];
+      const item = document.createElement('div');
+      item.className = 'sample-data-item';
+
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.id = 'sd_' + name;
+      cb.value = name;
+      if (alreadyLoaded) cb.disabled = true;
+
+      const lbl = document.createElement('label');
+      lbl.htmlFor = cb.id;
+      lbl.textContent = name + (alreadyLoaded ? ' (loaded)' : '');
+
+      item.appendChild(cb);
+      item.appendChild(lbl);
+      listEl.appendChild(item);
+    });
+  } catch (err) {
+    errorEl.textContent = 'Could not fetch sample-data manifest: ' + err.message;
+    errorEl.style.display = '';
+  }
+}
+
+/** Close the sample-data dialog. */
+function closeSampleDataDialog() {
+  const dialog = document.getElementById('sampleDataDialog');
+  if (dialog) dialog.style.display = 'none';
+}
+
+/** Load the files the user checked in the sample-data dialog. */
+async function loadSelectedSampleData() {
+  const listEl  = document.getElementById('sampleDataList');
+  const errorEl = document.getElementById('sampleDataError');
+  const loadBtn = document.getElementById('sampleDataLoadBtn');
+
+  const checked = Array.from(listEl.querySelectorAll('input[type="checkbox"]:checked'))
+                       .map(cb => cb.value);
+
+  if (checked.length === 0) {
+    errorEl.textContent = 'Select at least one file.';
+    errorEl.style.display = '';
+    return;
+  }
+
+  errorEl.style.display = 'none';
+  loadBtn.disabled = true;
+  loadBtn.textContent = 'Loading…';
+
+  try {
+    showFileLoadTicker(0, checked.length, 'Starting…');
+    await waitForH5Wasm();
+    const { FS, File } = window.h5wasm;
+    if (!FS || !File) throw new Error('h5wasm not ready');
+
+    for (let i = 0; i < checked.length; i++) {
+      const fileName = checked[i];
+      updateFileLoadTicker(i, checked.length, fileName);
+
+      const resp = await fetch('./resources/data/' + encodeURIComponent(fileName));
+      if (!resp.ok) throw new Error(`HTTP ${resp.status} for ${fileName}`);
+      const buffer = await resp.arrayBuffer();
+      if (buffer.byteLength === 0) throw new Error(fileName + ' is empty');
+
+      loadedFileBuffers[fileName] = buffer;
+
+      const internalName = `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.h5`;
+      FS.writeFile('/' + internalName, new Uint8Array(buffer));
+      const hf = new File('/' + internalName, 'r');
+
+      if (loadedFiles[fileName]) {
+        try { loadedFiles[fileName].close(); } catch (_) {}
+      }
+      loadedFiles[fileName] = hf;
+      fileStates[fileName] = true;
+      if (!fileOrder.includes(fileName)) fileOrder.push(fileName);
+    }
+
+    try { await ensureTreeWorkerReady(5000); } catch (_) {}
+
+    updateFileLoadTicker(checked.length, checked.length, 'Refreshing tree…');
+    await updateTabs(true);
+    hideFileLoadTicker();
+    closeSampleDataDialog();
+  } catch (err) {
+    hideFileLoadTicker();
+    errorEl.textContent = 'Failed to load: ' + err.message;
+    errorEl.style.display = '';
+  } finally {
+    loadBtn.disabled = false;
+    loadBtn.textContent = 'Load Selected';
+  }
+}
+
 // Allow Enter key to submit the URL dialog
 document.addEventListener('DOMContentLoaded', () => {
   const urlInput = document.getElementById('urlInput');
@@ -395,6 +514,20 @@ document.addEventListener('DOMContentLoaded', () => {
   if (urlDialog) {
     urlDialog.addEventListener('click', (e) => {
       if (e.target === urlDialog) closeUrlDialog();
+    });
+  }
+
+  // Close sample-data dialog on Escape or overlay click
+  const sdDialog = document.getElementById('sampleDataDialog');
+  if (sdDialog) {
+    sdDialog.addEventListener('click', (e) => {
+      if (e.target === sdDialog) closeSampleDataDialog();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && sdDialog.style.display !== 'none') {
+        e.preventDefault();
+        closeSampleDataDialog();
+      }
     });
   }
 
