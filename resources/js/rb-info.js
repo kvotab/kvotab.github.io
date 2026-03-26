@@ -87,7 +87,7 @@ async function showNodeAttributes(path, isGroup = false) {
         fileSection.appendChild(createInfoSection('Type', nodeType));
         if (linkInfo && linkInfo.type === 'soft') fileSection.appendChild(createInfoSection('🔗 Soft Link', `Target: ${linkInfo.target}`, 'link-info soft'));
         if (!isGroup && node.dtype) fileSection.appendChild(createInfoSection('Data Type', formatDataType(node.dtype)));
-        if (node.shape && Array.isArray(node.shape)) fileSection.appendChild(createInfoSection('Shape', node.shape.join(', ')));
+        if (node.shape && Array.isArray(node.shape)) fileSection.appendChild(createInfoSection('Shape', node.shape.length === 0 ? 'Scalar' : node.shape.join(', ')));
       }
 
       if (!isGroup) {
@@ -916,7 +916,17 @@ function showMultipleDatasetAttributes(items) {
       fileSection.appendChild(makeLabelSection('Type', String(dataset.type) + (isTimeDep ? ' ⏱️ (time-dependent)' : '')));
 
       if (dataset.dtype) fileSection.appendChild(makeLabelSection('Data Type', formatDataType(dataset.dtype)));
-      if (dataset.shape && Array.isArray(dataset.shape)) fileSection.appendChild(makeLabelSection('Shape', dataset.shape.join(', ')));
+      if (dataset.shape && Array.isArray(dataset.shape)) fileSection.appendChild(makeLabelSection('Shape', dataset.shape.length === 0 ? 'Scalar' : dataset.shape.join(', ')));
+
+      // Show Data Preview for scalar values
+      if (dataset.shape && Array.isArray(dataset.shape) && dataset.shape.length === 0) {
+        try {
+          const val = typeof dataset.value !== 'undefined' ? dataset.value : (typeof dataset.toArray === 'function' ? dataset.toArray() : undefined);
+          if (val !== undefined) {
+            fileSection.appendChild(makeLabelSection('Data Preview', String(PDFSampler.toNumber(val))));
+          }
+        } catch (e) { /* ignore */ }
+      }
 
       const attrs = getAllAttrs(dataset);
 
