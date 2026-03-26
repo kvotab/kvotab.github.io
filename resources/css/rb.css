@@ -197,6 +197,8 @@
       cursor: pointer;
       font-size: 12px;
       font-weight: 500;
+      line-height: 1.2;
+      box-sizing: border-box;
       transition: background 0.2s;
       margin-left: auto;
       white-space: nowrap;
