@@ -1,7 +1,10 @@
 [
   "SFR_FSAR_CCP0.h5",
-  "SFR_FSAR_CCP1.h5",
   "SFR_FSAR_CCP32.h5",
+  "SFR_FSAR_CCP1.h5",
+  "SFR_FSAR_CCP14.h5",
+  "SFR_FSAR_CCP33.h5",
+  "SFR_FSAR_CCP26.h5",
   "BaseCase_loma_psar_aggregated.h5",
   "BaseCase_loma_fsar_aggregated.h5"
 ]
