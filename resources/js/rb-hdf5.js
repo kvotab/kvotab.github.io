@@ -97,13 +97,13 @@ function isTimeDependent(dataset) {
 }
 
 /**
- * Check if a group contains radionuclide data suitable for special charting.
- * A radionuclides group must have:
- * - IndexLists attribute containing 'Radionuclides'
+ * Check if a group contains data suitable for special time-chart plotting.
+ * A qualifying group must have:
+ * - IndexLists attribute containing 'Radionuclides', 'Repositories', 'NHB', or 'exposed_groups'
  * - time_dependent attribute set to true
  * 
  * These groups get special treatment: all child datasets are plotted together
- * with isotope-specific line styles and colors.
+ * with colored line styles.
  * 
  * @param {Object} file - h5wasm File object
  * @param {string} path - HDF5 path to the group
@@ -116,6 +116,7 @@ function checkGroupForRadionuclides(file, path) {
       return false;
     }
     
+    const chartIndexNames = ['Radionuclides', 'Repositories', 'NHB', 'exposed_groups'];
     let hasRadionuclidesIndex = false;
     let isTimeDependentGroup = false;
     
@@ -125,9 +126,9 @@ function checkGroupForRadionuclides(file, path) {
           const attrObj = group.attrs[attrName];
           if (attrObj && attrObj.value !== null && typeof attrObj.value !== 'undefined') {
             const value = attrObj.value;
-            if (Array.isArray(value) && value.includes('Radionuclides')) {
+            if (Array.isArray(value) && value.some(v => chartIndexNames.includes(v))) {
               hasRadionuclidesIndex = true;
-            } else if (typeof value === 'string' && value === 'Radionuclides') {
+            } else if (typeof value === 'string' && chartIndexNames.includes(value)) {
               hasRadionuclidesIndex = true;
             }
           }
