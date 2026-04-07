@@ -98,7 +98,24 @@ function getLineStyle(name) {
     'Si-32': { color: 'rgb(255,228,181)', dash: 'solid' },
     'Tb-157': { color: 'rgb(221,160,221)', dash: 'solid' },
     'Tb-158': { color: 'rgb(221,160,221)', dash: 'dash' },
-    'Ti-44': { color: 'rgb(218,112,214)', dash: 'solid' }
+    'Ti-44': { color: 'rgb(218,112,214)', dash: 'solid' },
+
+    // Repositories
+    'Silo': { color: 'rgb(255,204,0)', dash: 'solid' },
+    'BMA': { color: 'rgb(153,204,51)', dash: 'solid' },
+    '1BMA': { color: 'rgb(153,204,51)', dash: 'solid' },
+    '2BMA': { color: 'rgb(153,204,51)', dash: 'dash' },
+    'BLA': { color: 'rgb(204,102,255)', dash: 'solid' },
+    '1BLA': { color: 'rgb(204,102,255)', dash: 'solid' },
+    '2-5BLA': { color: 'rgb(204,102,255)', dash: 'dash' },
+    '2BLA': { color: 'rgb(204,102,255)', dash: 'dash' },
+    '3BLA': { color: 'rgb(204,102,255)', dash: 'dot' },
+    '4BLA': { color: 'rgb(204,102,255)', dash: 'dashdot' },
+    '5BLA': { color: 'rgb(204,102,255)', dash: 'longdash' },
+    'BTF': { color: 'rgb(102,153,204)', dash: 'solid' },
+    '1BTF': { color: 'rgb(102,153,204)', dash: 'solid' },
+    '2BTF': { color: 'rgb(102,153,204)', dash: 'dash' },
+    'BRT': { color: 'rgb(192,80,77)', dash: 'solid' },
   };
   
   const defaultStyle = { color: null, dash: 'solid', width: 2 };
