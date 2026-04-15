@@ -1685,3 +1685,31 @@
     .attrs-value {
       color: var(--color-text-secondary);
     }
+
+    /* Formatted JSON inside attribute values */
+    .attrs-json {
+      margin: 0;
+      padding: 6px 8px;
+      background: var(--color-hover-bg, #f5f5f5);
+      border: 1px solid var(--color-panel-border, #ddd);
+      border-radius: 4px;
+      font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
+      font-size: 11px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+
+    /* Rendered HTML inside attribute values */
+    .attrs-html {
+      padding: 6px 8px;
+      background: var(--color-hover-bg, #f5f5f5);
+      border: 1px solid var(--color-panel-border, #ddd);
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 12px;
+      line-height: 1.5;
+      max-height: 300px;
+      overflow-y: auto;
+    }
