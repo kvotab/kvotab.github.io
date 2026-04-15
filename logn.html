@@ -124,6 +124,280 @@
     input, textarea, select, pre { background: var(--input-bg); color: var(--input-text); border:1px solid var(--input-border); }
     #chart { background: var(--bg-primary); }
   </style>
+  <style>
+    /* ===== v2: Professional & Responsive Design Overhaul ===== */
+
+    /* --- PAGE LAYOUT --- */
+    header { position: fixed; top: 0; left: 0; right: 0; z-index: 20; background: var(--footer-bg); box-shadow: 0 2px 8px rgba(0,0,0,0.12); }
+    footer { z-index: 25; }
+    body { padding-bottom: 0 !important; overflow-x: hidden; }
+    .content {
+      position: relative !important; top: auto !important; left: auto !important;
+      height: auto !important; padding-top: 56px !important; padding-bottom: 48px !important;
+      min-height: calc(100vh - 104px);
+    }
+    #logn {
+      position: relative !important; top: auto !important; left: auto !important;
+      width: 100% !important; max-width: 1100px; margin: 0 auto;
+      padding: 28px 32px 48px; box-sizing: border-box;
+    }
+    #logn .logn-columns { display: flex; gap: 18px; align-items: flex-start; }
+    #logn .logn-left { flex: 1; min-width: 0; }
+    #tabs { position: sticky; top: 3rem; z-index: 15; background: var(--bg-primary); padding-bottom: 4px; }
+    #combined-tabs-header, #metric-panels { position: relative; z-index: 1; }
+
+    /* --- TAB HEADER (Pill Selector) --- */
+    #tabs-header {
+      list-style: none !important; padding: 0 !important; margin: 0 !important;
+      display: flex !important; gap: 6px !important; flex-wrap: wrap !important;
+    }
+    #tabs-header li { display: inline-block; }
+    #tabs-header a {
+      display: inline-block; padding: 7px 15px; border-radius: 20px;
+      cursor: pointer; text-decoration: none;
+      font-size: 0.85rem; font-weight: 500; letter-spacing: 0.01em;
+      color: var(--text-secondary); background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      transition: all 0.15s ease;
+      user-select: none; -webkit-user-select: none;
+    }
+    #tabs-header a:hover:not(.disabled):not(.selected) {
+      background: var(--bg-surface); border-color: var(--color-kvot-bright);
+      color: var(--text-primary); box-shadow: 0 1px 6px rgba(0,0,0,0.06);
+    }
+    #tabs-header a.selected {
+      background: var(--color-kvot-bright); color: #fff;
+      border-color: var(--color-kvot-bright);
+      box-shadow: 0 2px 8px rgba(243,184,123,0.35); font-weight: 600;
+    }
+    #tabs-header a.disabled { opacity: 0.35; cursor: not-allowed; }
+    #tabs-header a.disabled-flash { box-shadow: inset 0 0 0 2px rgba(255,0,0,0.12); }
+    #tabs-header a:focus-visible { outline: 2px solid var(--color-kvot-bright); outline-offset: 2px; }
+
+    /* --- METRIC NOTE & INFO --- */
+    #combined-tabs-header { margin-bottom: 14px !important; }
+    #metric-note {
+      font-size: 0.83rem !important; color: var(--text-muted) !important;
+      margin-top: 10px !important; line-height: 1.5;
+    }
+    #metric-note strong { color: var(--text-secondary); }
+    #metric-info {
+      display: none !important; margin-top: 8px !important;
+      color: var(--color-kvot-accent) !important; background: var(--bg-secondary) !important;
+      padding: 8px 12px !important; border-radius: 8px !important;
+      border: 1px solid var(--border-color) !important; font-size: 0.88rem !important;
+      line-height: 1.4;
+    }
+    #metric-info.show { display: block !important; animation: fadeIn 0.2s ease-out; }
+
+    /* --- METRIC PANELS (Cards) --- */
+    #metric-panels {
+      display: flex !important; flex-wrap: wrap !important; gap: 16px !important;
+      margin-top: 16px !important; margin-bottom: 0 !important;
+      align-items: stretch !important;
+    }
+    .metric-panel {
+      flex: 1 !important; min-width: 240px !important;
+      border: 1px solid var(--border-color) !important;
+      padding: 18px !important; border-radius: 12px !important;
+      background: var(--bg-secondary) !important;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+      transition: box-shadow 0.2s ease;
+    }
+    .metric-panel:hover { box-shadow: 0 3px 14px rgba(0,0,0,0.08); }
+    #metric3-panel { flex: 1 1 100% !important; }
+    .metric-panel h4 {
+      font-size: 0.78rem !important; font-weight: 600 !important;
+      text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--text-muted) !important; margin: 0 0 12px !important;
+      padding-bottom: 10px; border-bottom: 1px solid var(--border-color);
+      display: flex !important; align-items: center !important;
+      justify-content: space-between !important;
+    }
+    .metric-content {
+      min-height: 50px !important; color: var(--text-muted) !important;
+      padding: 0 !important; border-radius: 0 !important;
+      font-size: 0.93rem; line-height: 1.55;
+    }
+
+    /* --- DETAILS / SUMMARY (Collapsible Sections) --- */
+    details { margin-top: 24px; border-radius: 10px; }
+    details summary.equations-summary {
+      cursor: pointer; padding: 12px 16px !important;
+      background: var(--bg-secondary) !important;
+      border: 1px solid var(--border-color) !important;
+      border-radius: 10px; font-weight: 600 !important;
+      font-size: 0.9rem; color: var(--text-primary);
+      transition: background 0.12s ease, border-color 0.12s ease;
+      display: flex; align-items: center; gap: 8px;
+      user-select: none; -webkit-user-select: none;
+      margin-bottom: 0 !important;
+    }
+    details summary.equations-summary:hover {
+      background: var(--bg-surface) !important; border-color: var(--color-kvot-bright);
+    }
+    details[open] > summary.equations-summary {
+      border-radius: 10px 10px 0 0; border-bottom-color: transparent;
+    }
+    details summary.equations-summary::marker { display: none; content: ''; }
+    details summary.equations-summary::before {
+      content: '▸'; display: inline-block; transition: transform 0.2s ease;
+      font-size: 0.75em; color: var(--text-muted);
+    }
+    details[open] > summary.equations-summary::before { transform: rotate(90deg); }
+    .equations-summary::after { content: '' !important; }
+    .computed-body,
+    #equations-details .equations-body {
+      padding: 20px; background: var(--bg-secondary);
+      border: 1px solid var(--border-color); border-top: none;
+      border-radius: 0 0 10px 10px;
+      color: var(--text-primary);
+    }
+
+    /* --- COMPUTED RESULTS --- */
+    #logn-output { margin: 0 !important; border-top: none !important; padding-top: 8px !important; }
+    #detailsContainer {
+      margin-top: 8px !important; display: flex !important;
+      gap: 14px !important; flex-wrap: nowrap !important; align-items: stretch;
+    }
+    #detailsContainer #textOutputContainer { flex: 1 !important; min-width: 0; }
+    #detailsContainer #ln-output {
+      white-space: pre-wrap !important;
+      background: var(--bg-primary) !important;
+      border: 1px solid var(--border-color) !important;
+      padding: 16px !important; border-radius: 10px !important;
+      min-height: 120px !important; color: var(--text-primary) !important;
+      font-size: 0.86rem; line-height: 1.6;
+      font-family: 'SF Mono', Menlo, Monaco, 'Courier New', monospace;
+      margin: 0; position: static; z-index: auto;
+      width: 100%; box-sizing: border-box;
+    }
+    #panelSplitter {
+      width: 6px !important; cursor: col-resize !important;
+      background: transparent !important; position: relative !important;
+      flex-shrink: 0;
+    }
+    #panelSplitter > div { display: none; }
+    #panelSplitter::after {
+      content: ''; position: absolute; top: 0; bottom: 0; left: 50%;
+      width: 1px; background: var(--border-color); transform: translateX(-50%);
+      transition: width 0.12s ease, background 0.12s ease;
+    }
+    #panelSplitter:hover::after { width: 3px; background: var(--color-kvot-bright); border-radius: 2px; }
+    #detailsContainer #chartContainer {
+      flex: 1 !important; display: flex !important;
+      flex-direction: column !important; min-width: 150px; margin-right: 0;
+    }
+    #result-controls { display: none !important; }
+    #detailsContainer #chart {
+      position: static !important; right: auto !important; bottom: auto !important;
+      z-index: auto !important; min-height: 220px !important; max-height: 420px;
+      flex: 1 !important; width: 100% !important; height: auto !important;
+      box-sizing: border-box !important; background: var(--bg-primary) !important;
+      padding: 8px !important; margin: 0 !important;
+      border-radius: 10px !important; border: 1px solid var(--border-color) !important;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.03); overflow: hidden;
+    }
+    #detailsContainer #chart .plotly,
+    #detailsContainer #chart .js-plotly-plot { width: 100% !important; max-width: 100% !important; box-sizing: border-box !important; }
+    #detailsContainer #chart .plotly { height: 100% !important; }
+
+    /* --- EQUATIONS TABLE --- */
+    #equations-details { width: 100%; max-width: none; margin-top: 0; border-top: none; padding-top: 0; }
+    #equations-details .equations-body table { width: 100%; border-collapse: collapse; }
+    #equations-details .equations-body table td {
+      padding: 5px 14px; vertical-align: middle;
+    }
+    #equations-details .equations-body table td:first-child { width: 120px; white-space: nowrap; }
+    #equations-details .equations-body .mjx-chtml { font-size: 1.02rem; }
+
+    /* --- FORM CONTROLS --- */
+    .metric-content .arg {
+      width: 100%; padding: 10px 14px;
+      border: 1px solid var(--border-color); border-radius: 8px;
+      font-size: 0.93rem; color: var(--text-primary);
+      background: var(--input-bg); box-sizing: border-box;
+      transition: box-shadow 0.12s, border-color 0.12s;
+      font-family: inherit;
+    }
+    .metric-content .arg:focus {
+      outline: none;
+      box-shadow: 0 0 0 3px rgba(243,184,123,0.15);
+      border-color: var(--color-kvot-bright);
+    }
+    .metric-content textarea.arg {
+      min-height: 140px; resize: vertical;
+      font-family: 'SF Mono', Menlo, Monaco, 'Courier New', monospace;
+      font-size: 0.86rem;
+    }
+    .metric-content p { color: var(--text-secondary); font-size: 0.88rem; line-height: 1.55; margin: 0 0 8px; }
+    .metric-content label { color: var(--text-secondary); font-size: 0.88rem; }
+    #logn input[data-field="p"] { width: auto !important; }
+
+    /* Template layout classes (used in cloned metric panels) */
+    .tab-desc { font-size: 0.88rem; color: var(--text-secondary); line-height: 1.5; margin-bottom: 8px; }
+    .tab-fields { display: flex; gap: 4%; flex-wrap: wrap; margin: 0; }
+    .tab-field { flex: 1; min-width: 100px; }
+    .tab-fit-method { margin-top: 8px; font-size: 0.88rem; color: var(--text-secondary); }
+    .tab-fit-method select { margin-left: 4px; padding: 5px 8px; font-size: 0.88rem; border-radius: 8px; }
+
+    /* Number spinner removal */
+    input[type="number"]::-webkit-outer-spin-button,
+    input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+
+    /* --- CHART LEGEND --- */
+    .chart-legend { display: flex; gap: 14px; align-items: center; font-size: 0.85rem; color: var(--text-muted); margin: 8px 0 4px; }
+    .chart-legend .legend-item { display: inline-flex; gap: 6px; align-items: center; }
+    .chart-legend .swatch { width: 12px; height: 10px; border-radius: 2px; display: inline-block; border: 1px solid rgba(0,0,0,0.04); }
+    .chart-legend .swatch.swatch-empirical { background: rgba(96,96,96,0.6); }
+    .chart-legend .swatch.swatch-theoretical { background: var(--color-kvot-bright); }
+
+    /* --- SEGMENTED CONTROL --- */
+    .segmented { display: inline-flex; border-radius: 8px; overflow: hidden; border: 1px solid var(--border-color); background: var(--bg-primary); }
+    .segmented button {
+      appearance: none; -webkit-appearance: none; border: 0;
+      background: transparent; padding: 8px 16px; margin: 0;
+      cursor: pointer; color: var(--text-secondary);
+      font-size: 0.88rem; line-height: 1; transition: all 0.12s ease;
+    }
+    .segmented button.active { background: var(--color-kvot-bright); color: #fff; font-weight: 600; }
+    .segmented button:hover:not(.active) { background: var(--bg-surface); }
+    .segmented button:focus-visible { outline: 2px solid var(--color-kvot-bright); outline-offset: -2px; }
+
+    /* --- THEMED OVERRIDES --- */
+    input, textarea, select, pre { background: var(--input-bg); color: var(--input-text); border: 1px solid var(--input-border); }
+    #chart { background: var(--bg-primary); }
+
+    /* --- ANIMATIONS --- */
+    .attach-anim { animation: popIn 0.22s ease-out; }
+    @keyframes popIn { from { opacity: 0; transform: translateY(6px) scale(0.995); } to { opacity: 1; transform: translateY(0) scale(1); } }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+
+    /* --- RESPONSIVE --- */
+    @media (max-width: 1200px) {
+      #logn { max-width: none; padding: 24px 20px 40px; }
+    }
+    @media (max-width: 768px) {
+      #logn { padding: 18px 14px 32px; }
+      #logn .logn-columns { flex-direction: column; }
+      #metric-panels { flex-direction: column !important; }
+      .metric-panel { min-width: 0 !important; }
+      #detailsContainer { flex-direction: column !important; }
+      #panelSplitter { display: none; }
+      #detailsContainer #chartContainer { margin-right: 0; }
+      #detailsContainer #chart { max-height: none !important; }
+      #tabs-header { gap: 5px !important; }
+      #tabs-header a { padding: 6px 11px; font-size: 0.82rem; }
+    }
+    @media (max-width: 480px) {
+      #logn { padding: 12px 10px 28px; }
+      .metric-panel { padding: 14px !important; }
+      #detailsContainer #ln-output { padding: 12px !important; font-size: 0.82rem; }
+      #tabs-header a { padding: 5px 9px; font-size: 0.78rem; border-radius: 16px; }
+      details summary.equations-summary { padding: 10px 12px !important; font-size: 0.85rem; }
+    }
+  </style>
   <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
   <script src="https://cdn.plot.ly/plotly-2.14.0.min.js"></script>
   <script src="./resources/js/erf.js"></script>
@@ -135,12 +409,10 @@
     <div id="logn">
       <div class="logn-columns">
         <div class="logn-left">
-      <table cellpadding="0px" border="0" style="table-layout: fixed;width:100%">
-        <tr><td>
           <div id="tabs">
             <!-- Combined header (single header controls up to two selectable tabs; click toggles selection) -->
-            <div id="combined-tabs-header" style="margin-bottom:8px;">
-              <ul id="tabs-header" role="tablist" aria-label="Metric selector" style="list-style:none;padding:0;margin:0;display:flex;gap:8px;flex-wrap:wrap;">
+            <div id="combined-tabs-header">
+              <ul id="tabs-header" role="tablist" aria-label="Metric selector">
                 <li><a href="#" data-id="mu">μ</a></li>
                 <li><a href="#" data-id="mean">mean</a></li>
                 <li><a href="#" data-id="GM">gm</a></li>
@@ -154,45 +426,43 @@
                 <li><a href="#" data-id="error">error factor</a></li>
                 <li><a href="#" data-id="data">data</a></li>
               </ul>
-              <div id="metric-note" style="margin-top:6px;font-size:0.88rem;color:#666;">Select up to <strong>two</strong> non‑data metrics; data may be added as a third. Click a selected metric to deselect it.</div>
-              <div id="metric-info" role="status" aria-live="polite" style="display:none;margin-top:6px;color:var(--color-kvot-accent);background:var(--bg-secondary);padding:6px 8px;border-radius:4px;border:1px solid var(--border-color);font-size:0.9rem;"></div>
+              <div id="metric-note">Select up to <strong>two</strong> non‑data metrics; data may be added as a third. Click a selected metric to deselect it.</div>
+              <div id="metric-info" role="status" aria-live="polite"></div>
             </div>
             <!-- metric panels (primary / secondary) -->
-            <div id="metric-panels" style="display:flex;flex-wrap:wrap;gap:12px;margin-top:6px;align-items:flex-start;">
-              <div class="metric-panel" id="metric1-panel" role="region" aria-labelledby="metric1-title" style="flex:1;min-width:220px;border:1px solid var(--border-color);padding:8px;border-radius:4px;background:var(--bg-secondary);">
-                <h4 id="metric1-title" style="margin:6px 0;"><span>Primary metric</span></h4>
-                <div id="metric1-content" class="metric-content" style="min-height:120px;color:#666;padding:6px;border-radius:4px;">No metric selected.</div>
+            <div id="metric-panels">
+              <div class="metric-panel" id="metric1-panel" role="region" aria-labelledby="metric1-title">
+                <h4 id="metric1-title"><span>Primary metric</span></h4>
+                <div id="metric1-content" class="metric-content">No metric selected.</div>
               </div>
-              <div class="metric-panel" id="metric2-panel" role="region" aria-labelledby="metric2-title" style="flex:1;min-width:220px;border:1px solid var(--border-color);padding:8px;border-radius:4px;background:var(--bg-secondary);">
-                <h4 id="metric2-title" style="margin:6px 0;display:flex;align-items:center;justify-content:space-between;"><span>Secondary metric (optional)</span></h4>
-                <div id="metric2-content" class="metric-content" style="min-height:120px;color:#666;padding:6px;border-radius:4px;">No metric selected.</div>
+              <div class="metric-panel" id="metric2-panel" role="region" aria-labelledby="metric2-title">
+                <h4 id="metric2-title"><span>Secondary metric (optional)</span></h4>
+                <div id="metric2-content" class="metric-content">No metric selected.</div>
               </div>
-              <div class="metric-panel" id="metric3-panel" role="region" aria-labelledby="metric3-title" style="flex:1 1 100%;min-width:220px;border:1px solid var(--border-color);padding:8px;border-radius:4px;background:var(--bg-secondary);display:none;">
-                <h4 id="metric3-title" style="margin:6px 0;"><span>Data (optional)</span></h4>
-                <div id="metric3-content" class="metric-content" style="min-height:120px;color:#666;padding:6px;border-radius:4px;">No metric selected.</div>
+              <div class="metric-panel" id="metric3-panel" role="region" aria-labelledby="metric3-title" style="display:none;">
+                <h4 id="metric3-title"><span>Data (optional)</span></h4>
+                <div id="metric3-content" class="metric-content">No metric selected.</div>
               </div>
             </div>
 
             <details id="computed-details" open>
               <summary class="equations-summary">Computed results</summary>
               <div class="computed-body">
-                <div id="logn-output" style="margin:8px 0 0 0; border-top:1px solid #e6e6e6; padding-top:12px;">
+                <div id="logn-output">
                   <!-- results container now only holds output and chart; controls moved below -->
-                  <div id="detailsContainer" style="margin-top:12px;display:flex;gap:12px;flex-wrap:nowrap;">
-                    <div id="textOutputContainer" style="flex:1;">
-                      <pre id="ln-output" style="white-space:pre-wrap;background:var(--bg-secondary);border:1px solid var(--border-color);padding:12px;border-radius:4px;min-height:120px;color:var(--text-primary);">No distribution computed yet.</pre>
+                  <div id="detailsContainer">
+                    <div id="textOutputContainer">
+                      <pre id="ln-output">No distribution computed yet.</pre>
                     </div>
                     <!-- draggable splitter -->
-                    <div id="panelSplitter" style="width:6px;cursor:col-resize;background:transparent;position:relative;">
-                      <div style="position:absolute;top:0;bottom:0;left:50%;width:1px;background:var(--border-color);transform:translateX(-50%);"></div>
-                    </div>
-                    <div id="chartContainer" style="flex:1;display:flex;flex-direction:column;">
-                      <div id="result-controls" style="margin-bottom:8px;display:none;gap:10px;align-items:center;justify-content:flex-end;">
-                        <label class="chart-toggle" style="display:inline-flex;align-items:center;gap:8px;font-size:0.92rem;color:#555;">
+                    <div id="panelSplitter"></div>
+                    <div id="chartContainer">
+                      <div id="result-controls">
+                        <label class="chart-toggle">
                           <input id="lnViewToggle" type="checkbox"> Show ln(x) view
                         </label>
                       </div>
-                      <div id="chart" aria-label="Lognormal density chart" style="flex:1;min-height:220px;"></div>
+                      <div id="chart" aria-label="Lognormal density chart"></div>
                     </div>
                   </div>
                 </div>
@@ -203,10 +473,10 @@
             <details id="equations-details" class="kvot-collapsible" aria-expanded="true">
               <summary class="equations-summary">Equations & formulas</summary>
               <div class="equations-body">
-                <table cellpadding="0px" border="0" style="table-layout: fixed;width:100%">
+                <table>
                   <tr>
-                    <td colspan="2">Mean of it's natural logarithm (\(\mu\))</td>
-                    <td>Standard deviation of it's natural logarithm (\(\sigma\))</td>
+                    <td colspan="2">Mean of its natural logarithm (\(\mu\))</td>
+                    <td>Standard deviation of its natural logarithm (\(\sigma\))</td>
                   </tr>
                   <tr><td colspan="2"></td><td></td></tr>
                   <tr>
@@ -235,7 +505,7 @@
                   <tr><td style="text-align:right;">\(\mu_a=\)</td><td colspan="2">\(e^{\mu+\sigma^2/2}\)</td></tr>
                   <tr><td style="text-align:right;">\(=\)</td><td colspan="2">\(e^{\ln{\mu_g}+{\ln{\sigma_g}}^2/2}\)</td></tr>
                   <tr><td style="text-align:right;">\(\sigma_a=\)</td><td colspan="2">\(\sqrt{(e^{{\sigma}^2}-1)e^{2\mu+{\sigma}^2}}\)</td></tr>
-                  <tr><td style="text-align:right;">\(=\)</td><td colspan="2">\(e^{\mu+\sigma^2/2}(e^{\sigma^2}-1)\)</td></tr>
+                  <tr><td style="text-align:right;">\(=\)</td><td colspan="2">\(e^{\mu+\sigma^2/2}\sqrt{e^{\sigma^2}-1}\)</td></tr>
                   <tr><td style="text-align:right;">\(=\)</td><td colspan="2">\(\sqrt{(e^{{\ln{\sigma_g}}^2}-1)e^{2\ln{\mu_g}+{\ln{\sigma_g}}^2}}\)</td></tr>
                   <tr><td style="text-align:right;">\(=\)</td><td colspan="2">\(CV\mu_a\)</td></tr>
                   <tr><td style="text-align:right;">\(=\)</td><td colspan="2">\(\mu_a\sqrt{e^{\sigma^2}-1}\)</td></tr>
@@ -245,7 +515,7 @@
                   <tr><td style="text-align:right;">\(=\)</td><td colspan="2">\(\sigma_a/\mu_a\)</td></tr>
                   <tr><td style="text-align:right;">\(skewness=\)</td><td colspan="2">\(CV^3+3CV\)</td></tr>
                   <tr><td style="text-align:right;">\(kurtosis=\)</td><td colspan="2">\(CV^8+6CV^6+15CV^4+16CV^2\)</td></tr>
-                  <tr><td style="text-align:right;">\(kurtosis=\)</td><td colspan="2">\(e^{j\mu+j^2\sigma^2/2}\)</td></tr>
+                  <tr><td style="text-align:right;">\(E[X^j]=\)</td><td colspan="2">\(e^{j\mu+j^2\sigma^2/2}\)</td></tr>
                   <tr><td style="text-align:right;">\(entropy=\)</td><td colspan="2">\({(1+\ln{(2\pi\sigma^2)})}/2+\mu\)</td></tr>
                 </table>
               </div>
@@ -255,7 +525,7 @@
 
             <div id="tabs-mu">
               <p>\(\mu\) [-∞,+∞], is the expected value (or mean) of the variable's natural logarithm</p>
-              <p><input class="arg" data-field="mu" type="number" step="any" inputmode="decimal" value="0" name="Mean of it's natural logarithm" title="Please provide the mean of it's natural logarithm."></p>
+              <p><input class="arg" data-field="mu" type="number" step="any" inputmode="decimal" value="0" name="Mean of its natural logarithm" title="Please provide the mean of its natural logarithm."></p>
             </div>
             <div id="tabs-mean">
               <p>mean > 0 is the expected value (or mean) of the variable</p>
@@ -285,19 +555,19 @@
               </p>
             </div>
             <div id="tabs-minmax">
-              <p style="font-size:0.92rem;color:#333;">
+              <p class="tab-desc">
                 Specify a confidence interval with minimum and maximum (both &gt;0), and a probability (0–100).
               </p>
-              <p style="display:flex;gap:4%;flex-wrap:wrap;">
-                <label style="flex:1; min-width:100px;">
+              <p class="tab-fields">
+                <label class="tab-field">
                   Min (>0)<br>
                   <input class="arg" data-field="min" type="number" min="0" step="any" inputmode="decimal" value="1" title="Please provide a positive minimum value.">
                 </label>
-                <label style="flex:1; min-width:100px;">
+                <label class="tab-field">
                   Max (>0)<br>
                   <input class="arg" data-field="max" type="number" min="0" step="any" inputmode="decimal" value="2" title="Please provide a positive maximum value.">
                 </label>
-                <label style="flex:1; min-width:120px;">
+                <label class="tab-field">
                   Probability (%)<br>
                   <input class="arg" data-field="p" type="number" min="0" max="100" step="any" inputmode="decimal" value="97.5" title="Please provide a probability between 0 and 100.">
                 </label>
@@ -305,9 +575,9 @@
             </div>
             <div id="tabs-data">
               <p><textarea class="arg" id="data" data-field="data" inputmode="decimal" name="Data" title="Please provide raw numeric data (comma/space separated)" placeholder="e.g. 1.2, 2.3, 3.4 (comma/space separated)" rows="6"></textarea></p>
-              <p style="margin-top:6px;font-size:0.92rem;color:#444;">
+              <p class="tab-fit-method">
                 <label>Fit method:
-                  <select class="arg" id="dataMethod" data-field="data_method" style="margin-left:4px;padding:2px 4px;font-size:0.92rem;">
+                  <select class="arg" id="dataMethod" data-field="data_method">
                     <option value="MLE">Maximum likelihood (MLE)</option>
                     <option value="MOM">Method of moments (MOM)</option>
                   </select>
@@ -316,14 +586,14 @@
             </div>
             <div id="tabs-sigma">
               <p>\(\sigma\) > 0, is the standard deviation of the variable's natural logarithm</p>
-              <p><input class="arg" data-field="sigma" type="number" min="0" step="any" inputmode="decimal" value="1" name="Standard deviation of it's natural logarithm" title="Please provide the standard deviation of it's natural logarithm (positive)."></p>
+              <p><input class="arg" data-field="sigma" type="number" min="0" step="any" inputmode="decimal" value="1" name="Standard deviation of its natural logarithm" title="Please provide the standard deviation of its natural logarithm (positive)."></p>
             </div>
             <div id="tabs-SD">
               <p>sd > 0, is the standard deviation of the variable</p>
               <p><input class="arg" data-field="SD" type="number" min="0" step="any" inputmode="decimal" value="1" name="Standard deviation" title="Please provide the arithmetic standard deviation (positive)."></p>
             </div>
             <div id="tabs-GSD">
-              <p>gsd > 0, is the geometric standard deviation of the variable</p>
+              <p>gsd ≥ 1, is the geometric standard deviation of the variable</p>
               <p><input class="arg" data-field="GSD" type="number" min="0" step="any" inputmode="decimal" value="1" name="Geometric standard deviation" title="Please provide the geometric standard deviation (positive)."></p>
             </div>
             <div id="tabs-CV">
@@ -331,21 +601,13 @@
               <p><input class="arg" data-field="CV" type="number" min="0" step="any" inputmode="decimal" value="1" name="Coefficient of variation" title="Please provide the coefficient of variation (positive)."></p>
             </div>
             <div id="tabs-error">
-              <p>error > 0, is the error factor of the variable</p>
+              <p>error factor ≥ 1, is the error factor of the variable (at 90% confidence)</p>
               <p><input class="arg" data-field="error_factor" type="number" min="0" step="any" inputmode="decimal" value="1" name="Error factor" title="Please provide the error factor (positive)."></p>
             </div>
           </div>
-        </td></tr>
-
-      </table>
-
-    </div>
-
-
-
         </div> <!-- .logn-left -->
-
-
+      </div> <!-- .logn-columns -->
+    </div> <!-- #logn -->
 
     <div id="map"></div>
   </div>
@@ -818,7 +1080,7 @@
         return [mu,sigma];
       }
       if (has('min') && has('max') && has('p')) {
-        p = (1-(args.p/100))/2; // convert to two-tailed
+        const p = (1-(args.p/100))/2; // convert to two-tailed
         const z1 = norminv(0,1,p);
         const z2 = norminv(0,1,1-p);
         sigma = Math.log(args.min / args.max) / (z1 - z2);
@@ -873,7 +1135,9 @@
       // If mode provided
       if (has('mode')) {
         if (has('p') && has('x')) {
-          sigma = -(norminv(0,1,args.p/100)+Math.sqrt((norminv(0,1,args.p/100))**2+4*Math.log(args.x / args.mode)))/2;
+          // Quadratic: σ² + σ·z_p - ln(x/mode) = 0  →  σ = (-z_p + √(z_p² + 4·ln(x/mode))) / 2
+          const zp = norminv(0,1,args.p/100);
+          sigma = (-zp + Math.sqrt(zp**2 + 4*Math.log(args.x / args.mode))) / 2;
         }
         else if (has('SD')) sigma = Math.sqrt(Math.log((args.SD**2)/(args.mode**2)+1));
         mu = Math.log(args.mode) + sigma**2;
@@ -1287,6 +1551,8 @@
           if (!isFinite(num)) { args._invalidNumeric = `Invalid numeric value for ${k}`; break; }
           // positive-only checks
           if (['sigma','SD','GSD','CV','error_factor','mean','GM','mode','x','x1','x2','min','max'].includes(k) && num <= 0) { args._invalidNumeric = `${k} must be a positive number`; break; }
+          if (k === 'GSD' && num < 1) { args._invalidNumeric = 'GSD must be ≥ 1 (GSD = 1 gives zero variance)'; break; }
+          if (k === 'error_factor' && num < 1) { args._invalidNumeric = 'Error factor must be ≥ 1'; break; }
           // percentile range
           if (['p','p1','p2'].includes(k) && (num < 0 || num > 100)) { args._invalidNumeric = `Percentile must be in range 0–100`; break; }
           args[k] = num; // normalize
@@ -1302,6 +1568,12 @@
       if (typeof args.mu === 'number' && typeof args.mode === 'number') {
         if (args.mode >= Math.exp(args.mu)) {
           args._invalidNumeric = `mode must be smaller than e<sup>μ</sup> (${Math.exp(args.mu)})`;
+        }
+      }
+      // mean must be greater than mode for a valid lognormal
+      if (typeof args.mean === 'number' && typeof args.mode === 'number') {
+        if (args.mean <= args.mode) {
+          args._invalidNumeric = 'Mean must be greater than mode for a valid lognormal distribution';
         }
       }
       // additional minmax consistency: min < max and a is percentage
