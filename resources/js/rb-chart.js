@@ -238,6 +238,12 @@ let _lockedAxesState = null;
 
 /** Toggle the axes lock on/off. When locking, capture the current view. */
 function toggleAxesLock() {
+  // Prevent locking when on Auto range (default preset)
+  if (!_axesLocked) {
+    const sel = document.getElementById('presetSelect');
+    if (sel && sel.value === 'default') return;
+  }
+
   _axesLocked = !_axesLocked;
   const btn = document.getElementById('lockAxesBtn');
   if (btn) {
@@ -255,6 +261,25 @@ function toggleAxesLock() {
   } else {
     _lockedAxesState = null;
   }
+  _setAxesControlsDisabled(_axesLocked);
+}
+
+/** Enable or disable scale toggles and preset controls based on lock state. */
+function _setAxesControlsDisabled(disabled) {
+  // Scale toggle buttons
+  document.querySelectorAll('#xScaleToggle button, #yScaleToggle button').forEach(b => {
+    b.disabled = disabled;
+  });
+  // Preset select and action buttons
+  const ids = ['presetSelect'];
+  ids.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = disabled;
+  });
+  // Preset bar buttons (save +, manage ⚙) — all preset-icon-btn except the lock itself
+  document.querySelectorAll('.preset-bar .preset-icon-btn:not(.lock-axes-btn)').forEach(b => {
+    b.disabled = disabled;
+  });
 }
 
 /**
