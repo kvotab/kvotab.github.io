@@ -1005,6 +1005,16 @@
     .chart-controls .scale-toggle button:focus {
       outline: none;
     }
+
+    /* Disabled state for scale toggles and preset controls when axes are locked */
+    .chart-controls .scale-toggle button:disabled,
+    .chart-controls select:disabled,
+    .chart-controls .preset-icon-btn:disabled {
+      opacity: 0.35;
+      pointer-events: none;
+      cursor: not-allowed;
+    }
+
     /* dark mode overrides – keep hover transparent */
     [data-theme="dark"] .chart-controls .scale-toggle button:not(.active):hover {
       background: transparent;
