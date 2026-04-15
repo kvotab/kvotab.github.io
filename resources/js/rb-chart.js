@@ -230,6 +230,69 @@ function handleScaleButtonClick(evt) {
 }
 
 /* ==========================================================================
+   AXES LOCK — pin current axes settings for newly selected data
+   ========================================================================== */
+
+let _axesLocked = false;
+let _lockedAxesState = null;
+
+/** Toggle the axes lock on/off. When locking, capture the current view. */
+function toggleAxesLock() {
+  _axesLocked = !_axesLocked;
+  const btn = document.getElementById('lockAxesBtn');
+  if (btn) {
+    btn.classList.toggle('active', _axesLocked);
+    btn.title = _axesLocked ? 'Axes locked — click to unlock' : 'Lock current axes settings';
+    const shackle = btn.querySelector('.lock-shackle');
+    if (shackle) {
+      shackle.setAttribute('d', _axesLocked
+        ? 'M7 11V7a5 5 0 0 1 10 0v4'   // closed
+        : 'M7 11V7a5 5 0 0 1 9.9-.5');  // open
+    }
+  }
+  if (_axesLocked) {
+    _lockedAxesState = _captureCurrentView();
+  } else {
+    _lockedAxesState = null;
+  }
+}
+
+/**
+ * Apply the locked axes state to a layout object.
+ * Sets scale types, ranges and disables autorange when locked.
+ */
+function _applyLockedAxes(layout) {
+  if (!_axesLocked || !_lockedAxesState) return;
+  const s = _lockedAxesState;
+
+  // Apply scale types and update UI toggles
+  if (s.xScale) {
+    layout.xaxis.type = s.xScale;
+    setScaleValue('x', s.xScale);
+  }
+  if (s.yScale) {
+    layout.yaxis.type = s.yScale;
+    setScaleValue('y', s.yScale);
+  }
+
+  // Apply X range
+  if (s.xMin != null && s.xMax != null) {
+    layout.xaxis.range = s.xScale === 'log'
+      ? [Math.log10(s.xMin), Math.log10(s.xMax)]
+      : [s.xMin, s.xMax];
+    layout.xaxis.autorange = false;
+  }
+
+  // Apply Y range
+  if (s.yMin != null && s.yMax != null) {
+    layout.yaxis.range = s.yScale === 'log'
+      ? [Math.log10(s.yMin), Math.log10(s.yMax)]
+      : [s.yMin, s.yMax];
+    layout.yaxis.autorange = false;
+  }
+}
+
+/* ==========================================================================
    CHART PRESETS — customizable, persistent axis presets
    ========================================================================== */
 
@@ -1217,7 +1280,7 @@ function annotateTracesWithMax(traces) {
  * @returns {void}
  */
 function createPlotlyChart(path) {
-  resetPresetDropdown();
+  if (!_axesLocked) resetPresetDropdown();
   const chartContainer = getElement('plotlyChartContainer');
   showChartLoading(chartContainer);
   const plotDiv = getElement('plotlyChart');
@@ -1322,6 +1385,7 @@ function createPlotlyChart(path) {
       yScale
     });
     layout.margin.r = 200; // Extra room for longer legend names
+    _applyLockedAxes(layout);
 
     const config = getPlotlyConfig('multi_dataset_chart');
 
@@ -1353,7 +1417,7 @@ function createPlotlyChart(path) {
  * @returns {void}
  */
 function createMultiDatasetChart(items) {
-  resetPresetDropdown();
+  if (!_axesLocked) resetPresetDropdown();
   const plotDiv = getElement('plotlyChart');
   const chartContainer = getElement('plotlyChartContainer');
   showChartLoading(chartContainer);
@@ -1503,6 +1567,7 @@ function createMultiDatasetChart(items) {
       yScale
     });
     layout.margin.r = 200; // Extra room for longer legend names
+    _applyLockedAxes(layout);
     
     const config = getPlotlyConfig('multi_dataset_chart');
 
@@ -1538,7 +1603,7 @@ function createMultiDatasetChart(items) {
  * @returns {void}
  */
 async function createRadionuclidesChart(path, savedAxisState) {
-  resetPresetDropdown();
+  if (!_axesLocked) resetPresetDropdown();
   const plotDiv = getElement('plotlyChart');
   const chartContainer = getElement('plotlyChartContainer');
   showChartLoading(chartContainer);
@@ -1847,6 +1912,7 @@ async function createRadionuclidesChart(path, savedAxisState) {
     
     // Preserve axis ranges when toggling controls (Show Total, Show Ratio)
     applyAxisState(layout, savedAxisState);
+    _applyLockedAxes(layout);
     
     renderChart(traces, layout, path);
   } else {
