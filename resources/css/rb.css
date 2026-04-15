@@ -1059,6 +1059,24 @@
       min-width: 28px;
     }
 
+    /* Lock axes button */
+    .lock-axes-btn {
+      font-size: 12px !important;
+      opacity: 0.6;
+      transition: opacity 0.15s, background 0.15s, border-color 0.15s, box-shadow 0.15s;
+      display: inline-flex !important;
+      align-items: center;
+      justify-content: center;
+      border: 1.5px solid transparent;
+    }
+    .lock-axes-btn.active {
+      opacity: 1;
+      background: var(--color-accent, #8b6f47) !important;
+      color: #fff !important;
+      border-color: var(--color-accent, #8b6f47);
+      box-shadow: 0 0 6px rgba(139, 111, 71, 0.5);
+    }
+
     /* ---------- Preset Manager Overlay / Dialog ---------- */
     .preset-overlay {
       position: fixed;
