@@ -819,7 +819,35 @@ function buildAttributesTable(attrs, jsonReplacer) {
 
     const row = document.createElement('tr'); row.className = 'attrs-row';
     const nameTd = document.createElement('td'); const strong = document.createElement('strong'); strong.textContent = key; nameTd.appendChild(strong);
-    const valTd = document.createElement('td'); valTd.className = 'attrs-value'; valTd.textContent = displayValue;
+    const valTd = document.createElement('td'); valTd.className = 'attrs-value';
+
+    // Detect JSON string → render as formatted JSON block
+    let rendered = false;
+    if (typeof displayValue === 'string') {
+      const trimmed = displayValue.trim();
+      if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          const pre = document.createElement('pre');
+          pre.className = 'attrs-json';
+          pre.textContent = JSON.stringify(parsed, jsonReplacer, 2);
+          valTd.appendChild(pre);
+          rendered = true;
+        } catch (_) { /* not valid JSON, fall through */ }
+      }
+      // Detect HTML tags → render in a sandboxed container
+      if (!rendered && /<[a-zA-Z][^>]*>/.test(trimmed)) {
+        const htmlWrap = document.createElement('div');
+        htmlWrap.className = 'attrs-html';
+        htmlWrap.innerHTML = trimmed;
+        valTd.appendChild(htmlWrap);
+        rendered = true;
+      }
+    }
+    if (!rendered) {
+      valTd.textContent = displayValue;
+    }
+
     row.appendChild(nameTd); row.appendChild(valTd);
     table.appendChild(row);
   }
