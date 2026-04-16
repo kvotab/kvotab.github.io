@@ -61,8 +61,28 @@ function latlong_init() {
 	if (url_args.length > 0) {
 		url_arguments = url_args 
 		parse_url_arguments();
+	} else {
+		// Initialize panels with the default map position
+		set_lat_long(59.87072523185025, 17.63431259999659);
 	}
 	latlong_init_finished = true;
+}
+
+function use_my_position() {
+	if (!navigator.geolocation) {
+		alert('Geolocation is not supported by your browser.');
+		return;
+	}
+	navigator.geolocation.getCurrentPosition(
+		function(pos) {
+			set_lat_long(pos.coords.latitude, pos.coords.longitude);
+			map.setView([pos.coords.latitude, pos.coords.longitude], 14);
+		},
+		function(err) {
+			alert('Could not get your position: ' + err.message);
+		},
+		{ enableHighAccuracy: true, timeout: 10000 }
+	);
 }
 
 // Set and get functions for external use. Storage, map, etc.
@@ -211,6 +231,7 @@ function update_long() {
 	long_dms.value = convert_long_to_dms(longitude);
 }
 function update_rt90() {
+	var card = document.getElementById('rt90');
 	if ((latitude != null) && (longitude != null) &&
 		(latitude >= -90) && (latitude <= 90) &&
 		(longitude >= -180) && (longitude < 180)) {
@@ -218,12 +239,19 @@ function update_rt90() {
 		var x_y = geodetic_to_grid(latitude, longitude);
 		x_rt90.value = x_y[0];
 		y_rt90.value = x_y[1];
+		var bounds = get_zone_bounds(proj_rt90.value);
+		if (bounds && !point_in_zone_bounds(bounds, latitude, longitude))
+			card.classList.add('out-of-zone');
+		else
+			card.classList.remove('out-of-zone');
 	} else {
 		x_rt90.value = "";
 		y_rt90.value = "";
+		card.classList.remove('out-of-zone');
 	}	
 }
 function update_sweref99() {
+	var card = document.getElementById('sweref99');
 	if ((latitude != null) && (longitude != null) &&
 		(latitude >= -90) && (latitude <= 90) &&
 		(longitude >= -180) && (longitude < 180)) {
@@ -231,35 +259,30 @@ function update_sweref99() {
 		var n_e = geodetic_to_grid(latitude, longitude);
 		n_sweref99.value = n_e[0];
 		e_sweref99.value = n_e[1];
+		var bounds = get_zone_bounds(proj_sweref99.value);
+		if (bounds && !point_in_zone_bounds(bounds, latitude, longitude))
+			card.classList.add('out-of-zone');
+		else
+			card.classList.remove('out-of-zone');
 	} else {
 		n_sweref99.value = "";
 		e_sweref99.value = "";
+		card.classList.remove('out-of-zone');
 	}
 }
 
 // Hide/show infotext.
 function toggle_info() {
-	var info_button = document.getElementById("info_button");
-	var wgs84_info = document.getElementById("wgs84_info");
-	var rt90_info = document.getElementById("rt90_info");
-	var sweref99_info = document.getElementById("sweref99_info");
-	var map_info = document.getElementById("map_info");
-	var about_info = document.getElementById("about_info");
-	if (info_button.value == "info") {
-		info_button.value = "dölj info";
-		wgs84_info.style.display = "block";
-		rt90_info.style.display = "block";
-		sweref99_info.style.display = "block";
-		map_info.style.display = "block";
-		about_info.style.display = "block";
-	} else {
-		info_button.value = "info";
-		wgs84_info.style.display = "none";
-		rt90_info.style.display = "none";
-		sweref99_info.style.display = "none";
-		map_info.style.display = "none";
-		about_info.style.display = "none";
+	var btn = document.getElementById("info_button");
+	var ids = ["wgs84_info", "rt90_info", "sweref99_info", "map_info", "about_info"];
+	var show = !btn.classList.contains("active");
+	btn.classList.toggle("active", show);
+	var display = show ? "block" : "none";
+	for (var i = 0; i < ids.length; i++) {
+		var el = document.getElementById(ids[i]);
+		if (el) el.style.display = display;
 	}
+	setTimeout(function() { if (map) map.invalidateSize(); }, 50);
 }
 
 // Use position if url arguments are supplied.

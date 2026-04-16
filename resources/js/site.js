@@ -36,9 +36,10 @@ const KVOT = (() => {
   // ── All projects ───────────────────────────────────────────────────────────
 
   const ALL_PROJECTS = [
-    { href: './rdc.html', label: 'radionuclide decay chains' },
-    { href: './rb.html', label: 'hdf browser' },
-    { href: './logn.html', label: 'lognormal conversions' },
+    { href: './rdc.html', label: 'Radionuclide Decay Chains' },
+    { href: './rb.html', label: 'HDF5 Browser' },
+    { href: './logn.html', label: 'Lognormal Conversions' },
+    { href: './proj.html', label: 'Swedish Coordinate Conversions' },
   ];
 
   // ── Helper: create an SVG icon ─────────────────────────────────────────────
