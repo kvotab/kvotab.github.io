@@ -10,196 +10,797 @@
   <script src="https://unpkg.com/leaflet@1.9.2/dist/leaflet.js"></script>
   <link rel="stylesheet" href="./resources/css/kvot.css">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
-  <script src="./resources/js/erf.js"></script>
-  <script src="./resources/js/latlong.js"></script>
-  <script src="./resources/js/map.js"></script>
-  <script src="./resources/js/lat_lon_conv.js"></script>
-  <script src="./resources/js/gausskruger.js"></script>
-  <script src="./resources/js/OpenLayers.js"></script>
-  <script src="https://www.openstreetmap.org/openlayers/OpenStreetMap.js"></script>
-  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAqFv9LRHRsYy1r_9WfHpHF7Ja9fCCkM6k"></script>
   <style>
-    body { font: 76%/1.2 Verdana, Helvetica, sans-serif; }
-    h1 { font-size: 1.4em; }
-    a#ext-link { font-size: 0.8em; }
-    label { font-size: 1.0em; }
-    select, input, table, li { font-size: 1.0em; }
-    p { font-size: 0.9em; }
-    div#contact { font-size: 0.75em; }
-    legend { font-weight: bold; }
+    /* ── Proj page layout ───────────────────────────────────────── */
+    .proj-container {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 20px 16px 80px;
+      font-family: RawengulkSans, Verdana, sans-serif;
+    }
+    .btn-info {
+      appearance: none;
+      border: none;
+      border-right: 1px solid var(--border-color);
+      background: var(--bg-surface);
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 0.8rem;
+      font-family: inherit;
+      padding: 6px 0;
+      flex: 0 0 38px;
+      transition: background .15s, color .15s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .btn-info:hover { background: rgba(128,128,128,0.15); color: var(--text-primary); }
+    .btn-info.active { color: var(--color-kvot-bright); }
+    .btn-info svg { width: 18px; height: 18px; fill: currentColor; }
+
+    /* two-column: controls left, map right */
+    .proj-columns {
+      display: flex;
+      gap: 20px;
+      align-items: stretch;
+    }
+    .proj-left { flex: 1; min-width: 0; }
+    .proj-right { flex: 1; min-width: 320px; display: flex; flex-direction: column; }
+    @media (max-width: 740px) {
+      .proj-columns { flex-direction: column; }
+      .proj-right { min-width: 0; }
+    }
+
+    /* cards */
+    .proj-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin-bottom: 14px;
+      box-shadow: 0 1px 4px var(--shadow-color);
+      transition: background .3s, border-color .3s;
+    }
+    .proj-left .proj-card:last-child { margin-bottom: 0; }
+    .proj-card.out-of-zone {
+      background: rgba(204, 51, 51, 0.07);
+      border-color: rgba(204, 51, 51, 0.4);
+    }
+    .proj-card legend {
+      font-weight: 600;
+      font-size: 0.95rem;
+      color: var(--text-primary);
+      padding: 0 6px;
+    }
+    .proj-card fieldset {
+      border: none;
+      margin: 0;
+      padding: 0;
+    }
+
+    /* form grid */
+    .coord-grid {
+      display: grid;
+      grid-template-columns: auto 1fr 1fr;
+      gap: 6px 10px;
+      align-items: center;
+    }
+    .coord-grid .hdr {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      text-align: center;
+      padding-bottom: 2px;
+    }
+    .coord-grid label {
+      font-size: 0.88rem;
+      color: var(--text-secondary);
+      white-space: nowrap;
+    }
+    .proj-card input[type="text"] {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 7px 10px;
+      border: 1px solid var(--input-border);
+      border-radius: 6px;
+      font-size: 0.92rem;
+      color: var(--input-text);
+      background: var(--input-bg);
+      transition: box-shadow .12s, border-color .12s;
+    }
+    .proj-card input[type="text"]:focus {
+      outline: none;
+      box-shadow: 0 0 0 3px rgba(243,184,123,0.12);
+      border-color: #f3b87b;
+    }
+
+    /* projection row */
+    .proj-row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 8px;
+      flex-wrap: wrap;
+    }
+    .proj-row label {
+      font-size: 0.88rem;
+      color: var(--text-secondary);
+      white-space: nowrap;
+    }
+    .proj-row select {
+      flex: 1;
+      min-width: 0;
+      padding: 7px 10px;
+      border: 1px solid var(--input-border);
+      border-radius: 6px;
+      font-size: 0.88rem;
+      color: var(--input-text);
+      background: var(--input-bg);
+      cursor: pointer;
+    }
+    /* grid XY / NE */
+    .grid-row {
+      display: grid;
+      grid-template-columns: auto 1fr auto 1fr;
+      gap: 6px 10px;
+      align-items: center;
+    }
+    .grid-row label {
+      font-size: 0.88rem;
+      color: var(--text-secondary);
+      font-weight: 600;
+    }
+
+    /* info paragraphs */
+    .info-text {
+      display: none;
+      margin-top: 10px;
+      font-size: 0.85rem;
+      line-height: 1.55;
+      color: var(--text-secondary);
+    }
+    .info-text p { margin: 0 0 8px; }
+
+    /* map card */
+    .map-card {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      box-shadow: 0 1px 4px var(--shadow-color);
+      overflow: hidden;
+    }
+    .map-card #coord-map {
+      position: relative !important;
+      top: auto !important;
+      left: auto !important;
+      width: 100% !important;
+      height: auto !important;
+      flex: 1;
+      min-height: 280px;
+      border-radius: 0;
+      z-index: 1;
+    }
+    .map-hint {
+      display: flex;
+      gap: 0;
+      border-top: 1px solid var(--border-color);
+    }
+    .map-hint button {
+      flex: 1;
+      appearance: none;
+      border: none;
+      border-right: 1px solid var(--border-color);
+      background: var(--bg-surface);
+      color: var(--text-secondary);
+      font-size: 0.8rem;
+      font-family: inherit;
+      padding: 6px 0;
+      cursor: pointer;
+      transition: background .15s, color .15s;
+      white-space: nowrap;
+    }
+    .map-hint button:last-child { border-right: none; }
+    .map-hint button:hover {
+      background: var(--color-kvot-bright);
+      color: #fff;
+    }
+    .map-hint button.compact { flex: 0 0 38px; font-size: 1rem; font-weight: 600; }
+    .btn-icon { width: 14px; height: 14px; vertical-align: -2px; margin-right: 2px; }
+    /* Leaflet popup styling */
+    .map-card .leaflet-popup-content {
+      font-family: RawengulkSans, Verdana, sans-serif;
+      font-size: 0.82rem;
+      line-height: 1.5;
+      color: #333;
+    }
+    .map-card .leaflet-popup-content b {
+      font-size: 0.9rem;
+    }
+
+    /* credits */
+    .proj-credits {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      text-align: right;
+      margin-top: 16px;
+    }
+    .proj-credits a { color: var(--link-color); }
+
+    /* ── Bulk transformation panel ─────────────────────────── */
+    .bulk-panel {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin-top: 20px;
+      box-shadow: 0 1px 4px var(--shadow-color);
+    }
+    .bulk-panel legend {
+      font-weight: 600;
+      font-size: 0.95rem;
+      color: var(--text-primary);
+      padding: 0 6px;
+    }
+    .bulk-panel fieldset { border: none; margin: 0; padding: 0; }
+    .bulk-selectors {
+      display: flex;
+      gap: 16px;
+      align-items: flex-end;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+    .bulk-sel-group {
+      flex: 1;
+      min-width: 200px;
+    }
+    .bulk-sel-group label {
+      display: block;
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      margin-bottom: 3px;
+      font-weight: 600;
+    }
+    .bulk-sel-group select {
+      width: 100%;
+      padding: 7px 10px;
+      border: 1px solid var(--input-border);
+      border-radius: 6px;
+      font-size: 0.88rem;
+      color: var(--input-text);
+      background: var(--input-bg);
+      cursor: pointer;
+    }
+    .bulk-arrow {
+      font-size: 1.4rem;
+      color: var(--text-muted);
+      padding-bottom: 4px;
+      user-select: none;
+    }
+    .bulk-io {
+      display: flex;
+      gap: 14px;
+      margin-bottom: 10px;
+    }
+    .bulk-io-col {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+    .bulk-io-col .bulk-label {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      margin-bottom: 3px;
+      font-weight: 600;
+    }
+    .bulk-io textarea {
+      width: 100%;
+      box-sizing: border-box;
+      min-height: 180px;
+      padding: 8px 10px;
+      border: 1px solid var(--input-border);
+      border-radius: 6px;
+      font-family: Menlo, Monaco, 'Courier New', monospace;
+      font-size: 0.85rem;
+      color: var(--input-text);
+      background: var(--input-bg);
+      resize: vertical;
+      tab-size: 12;
+    }
+    .bulk-io textarea:focus {
+      outline: none;
+      box-shadow: 0 0 0 3px rgba(243,184,123,0.12);
+      border-color: #f3b87b;
+    }
+    .bulk-io textarea[readonly] {
+      background: var(--bg-secondary);
+      cursor: default;
+    }
+    .bulk-result-wrap {
+      display: flex;
+      width: 100%;
+      box-sizing: border-box;
+      min-height: 180px;
+      border: 1px solid var(--input-border);
+      border-radius: 6px;
+      background: var(--bg-secondary);
+      overflow: auto;
+      resize: vertical;
+      font-family: Menlo, Monaco, 'Courier New', monospace;
+      font-size: 0.85rem;
+    }
+    .bulk-result-gutter {
+      padding: 8px 6px 8px 8px;
+      text-align: right;
+      color: var(--text-muted);
+      user-select: none;
+      -webkit-user-select: none;
+      white-space: pre-line;
+      line-height: 1.45;
+      border-right: 1px solid var(--input-border);
+      flex-shrink: 0;
+      min-width: 24px;
+    }
+    .bulk-result-text {
+      flex: 1;
+      margin: 0;
+      padding: 8px 10px;
+      white-space: pre;
+      line-height: 1.45;
+      color: var(--input-text);
+      cursor: text;
+    }
+    .bulk-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .bulk-actions .btn-bulk {
+      appearance: none;
+      border: 1px solid var(--border-color);
+      background: var(--bg-surface);
+      color: var(--text-secondary);
+      padding: 7px 18px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.88rem;
+      transition: background .15s, color .15s;
+    }
+    .bulk-actions .btn-bulk:hover { background: var(--color-kvot-bright); color: #fff; }
+    .bulk-actions .btn-bulk.primary {
+      background: var(--color-kvot-accent);
+      color: #fff;
+      border-color: var(--color-kvot-accent);
+    }
+    .bulk-actions .btn-bulk.primary:hover { background: var(--color-kvot-background); }
+    .bulk-actions input[type="file"] { display: none; }
+    .bulk-actions .bulk-status {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+    }
+    .bulk-pin {
+      display: flex; align-items: center; justify-content: center;
+      background: #1a6fb5; color: #fff; border: 2px solid #fff;
+      border-radius: 50%; font-size: 10px; font-weight: 700;
+      line-height: 1; box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+      pointer-events: auto;
+    }
+    .bulk-pin-bad {
+      background: #cc2222;
+    }
+    @media (max-width: 600px) {
+      .bulk-io { flex-direction: column; }
+      .bulk-selectors { flex-direction: column; gap: 8px; }
+      .bulk-arrow { transform: rotate(90deg); text-align: center; }
+    }
   </style>
-  <title>kvot ab - projections</title>
+  <title>Swedish Coordinate Conversions</title>
 </head>
 <body onload="latlong_init();">
   <header></header>
   <div class="content">
-    <div id="boundary" style="width:500px;">
-      <div align="right">
-        <a id="ext-link" type="button" href="https://pap.as/sweref/" target="_blank">tabellkonvertering</a>
-        <input type="button" id="info_button" value="info" onclick="toggle_info();" />
-      </div>
-      
-      <div id="wgs84">
-      <fieldset><legend>SWEREF 99 (~WGS 84)</legend>
-      <table align="center">
-        <tr>
-          <td></td>
-          <td><center>Latitud</center></td>
-          <td><center>Longitud</center></td>
-          <td></td>
-        </tr>
-        <tr>
-          <td>Grader:</td>
-          <td><input type="text" id="lat_dd" onkeyup="keyup_lat_dd(event)" onblur="blur_lat(event);" value="" /></td>
-          <td><input type="text" id="long_dd" onkeyup="keyup_long_dd(event);" onblur="blur_long(event);" value="" /></td>
-        </tr>
-        <tr>
-          <td>Grad/min:</td>
-          <td><input type="text" id="lat_dm" onkeyup="keyup_lat_dm(event)" onblur="blur_lat(event);" value="" /></td>
-          <td><input type="text" id="long_dm" onkeyup="keyup_long_dm(event)" onblur="blur_long(event);" value="" /></td>
-        </tr>
-        <tr>
-          <td>Grad/min/sek:</td>
-          <td><input type="text" id="lat_dms" onkeyup="keyup_lat_dms(event)" onblur="blur_lat(event);" value="" /></td>
-          <td><input type="text" id="long_dms" onkeyup="keyup_long_dms(event)" onblur="blur_long(event);" value="" /></td>
-        </tr>
-      </table>
-      
-      <div id="wgs84_info" style="display: none;" align="left">
-      <p>Mata in latitud/longitud i något av fälten ovan. De flesta
-      format ska accepteras, exempelvis latitud: 58 52 30.0, longitud: 11 8
-      45.0 i fälten för Grad/min/sek. Övriga fält på sidan uppdateras
-      automatiskt.</p>
-      <p>SWEREF 99 och WGS 84 är två olika referenssystem men likheterna
-      är stora och avvikelsen mellan systemen ligger på decimeternivå.
-      GPS-koordinater anges ofta i WGS 84 medan differentiell GPS-mätning från
-      SWEPOS är relaterad till SWEREF 99.</p>
-      <p>För konvertering enbart mellan grad, grad/min och grad/min/sek
-      behöver man inte ta hänsyn till referenssystem. Fungerar alltså även för
-      astronomiskt bruk med Decl. och R.A. även om R.A. är timmar och inte
-      grader.</p>
-      </div>
-      </fieldset>
-      </div>
-      &nbsp;
-      <div id="rt90">
-      <fieldset><legend>RT 90</legend>
-      <table align="center">
-        <tr>
-          <td colspan="4" align="left"><label for="proj_rt90">Kartprojektion:
-          </label> <select id="proj_rt90" onchange="select_proj_rt90(event)"
-            onkeyup="select_proj_rt90(event)">
-            <option value="rt90_7.5_gon_v">RT90 7.5 gon V 0:-15</option>
-            <option value="rt90_5.0_gon_v">RT90 5 gon V 0:-15</option>
-            <option value="rt90_2.5_gon_v" selected="selected">RT90 2.5
-            gon V 0:-15 (Nationell)</option>
-            <option value="rt90_0.0_gon_v">RT90 0 gon V 0:-15</option>
-            <option value="rt90_2.5_gon_o">RT90 2.5 gon O 0:-15</option>
-            <option value="rt90_5.0_gon_o">RT90 5 gon O 0:-15</option>
-          </select></td>
-        </tr>
-        <tr>
-          <td>X:</td>
-          <td><input type="text" id="x_rt90" onkeyup="keyup_rt90(event)" onblur="blur_rt90(event)" value="" /></td>
-          <td>Y:</td>
-          <td><input type="text" id="y_rt90" onkeyup="keyup_rt90(event)" onblur="blur_rt90(event)" value="" /></td>
-        </tr>
-      </table>
-      
-      <div id="rt90_info" style="display: none;" align="left">
-      <p>Välj projektion och mata in X och Y. Övriga fält på sidan
-      uppdateras automatiskt. Heltalsdelen av X och Y ska vara 7 siffror lång
-      och enheten är meter.</p>
-      <p>Projektionen "RT90 2.5 gon V 0:-15" (uttal:
-      rt-90-två-och-en-halv-gon-väst) användes tidigare för allmänna svenska kartor.
-      Övriga projektioner användes för lokala kartor. I nedanstående kartbild
-      går det att aktivera ett kartskikt som visar lämplig zon för
-      respektive kartprojektion.</p>
-      <p>RT 90 och SWEREF 99 är två olika referenssystem där RT 90
-      använder ellipsoiden Bessel 1841 medan SWEREF 99 använder ellipsoiden
-      GRS 80. Transformationen mellan RT 90 och SWEREF 99 sker med Lantmäteriets 
-      direktprojektionssamband vilket är deras officiella transformeringsmetod. </p>
-      </div>
-      </fieldset>
-      </div>
-      &nbsp;
-      <div id="sweref99">
-      <fieldset><legend>SWEREF 99 TM, SWEREF 99 dd mm</legend>
-      <table align="center">
-        <tr>
-          <td colspan="4" align="left"><label for="proj_sweref99">Kartprojektion:
-          </label> <select id="proj_sweref99" onchange="select_proj_sweref99(event)"
-            onkeyup="select_proj_sweref99(event)">
-            <option value="sweref_99_tm" selected="selected">SWEREF 99 TM</option>
-            <option value="sweref_99_1200">SWEREF 99 12 00</option>
-            <option value="sweref_99_1330">SWEREF 99 13 30</option>
-            <option value="sweref_99_1500">SWEREF 99 15 00</option>
-            <option value="sweref_99_1630">SWEREF 99 16 30</option>
-            <option value="sweref_99_1800">SWEREF 99 18 00</option>
-            <option value="sweref_99_1415">SWEREF 99 14 15</option>
-            <option value="sweref_99_1545">SWEREF 99 15 45</option>
-            <option value="sweref_99_1715">SWEREF 99 17 15</option>
-            <option value="sweref_99_1845">SWEREF 99 18 45</option>
-            <option value="sweref_99_2015">SWEREF 99 20 15</option>
-            <option value="sweref_99_2145">SWEREF 99 21 45</option>
-            <option value="sweref_99_2315">SWEREF 99 23 15</option>
-          </select></td>
-        </tr>
-        <tr>
-          <td>N:</td>
-          <td><input type="text" id="n_sweref99" onkeyup="keyup_sweref99(event)" onblur="blur_sweref99(event)" value="" /></td>
-          <td>E:</td>
-          <td><input type="text" id="e_sweref99" onkeyup="keyup_sweref99(event)" onblur="blur_sweref99(event)" value="" /></td>
-        </tr>
-      </table>
-      
-      <div id="sweref99_info" style="display:none;" align="left">
-      <p>Välj projektion och mata in N och E. Övriga fält på sidan
-      uppdateras automatiskt. Heltalsdelen av N ska vara 7 siffror lång och E
-      ska vara 6 siffror. Enheten är meter.</p>
-      <p>Projektionerna för SWEREF 99 har ersatt RT 90 för svenska
-      kartor. Projektionen "SWEREF 99 TM" används för allmänna
-      svenska kartor. Övriga projektioner används för lokala kartor. I
-      nedanstående kartbild går det att aktivera ett kartskikt som visar
-      lämplig zon för respektive kartprojektion.</p>
-      </div>
-      </fieldset>
-      </div>
-      &nbsp;
-      <div>
-      <fieldset><legend>Karta</legend>
-      <div id="map" style="height:370px;"></div>
-      
-      <div id="map_info" style="display:none;" align="left">
-      <p>Klicka på kartan för att se en positions koordinater uttrycka i
-      lat/long, RT 90 och SWEREF 99. Centrering sker automatiskt.</p>
-      <p>Navigering och zoom görs med verktygen till vänster men det går
-      även att navigera i miniatyrfönstret till höger.
-      <b>OBS</b>: Vissa webbläsare (till exempel Internet Explorer) tolkar ett klick
-      i zoom-listen som ett klick på kartan. Använd "+", "-" eller flytta 
-      zoom-markören istället ifall detta problem uppstår.</p>
-      <p>För att byta kartskikt och för att visa lämpliga zoner för valda
-      projektioner klickar man på "+"-tecknet uppe till höger.</p>
-      </div>
-      </fieldset>
-      </div>
-      
-      <div id="contact" align="right">&copy; OpenStreetMaps bidragsgivare&nbsp;&nbsp;&nbsp;</div>
-      <div id="contact"><br/>Arnold Andreasson, 2007-2019.<br/>info@mellifica.se</div>	
-    </div>
-  </div>
+    <div class="proj-container">
 
-  <div id="map1"></div>
+      <div class="proj-columns">
+
+        <!-- ── Left: conversion panels ──────────────────────────── -->
+        <div class="proj-left">
+
+          <!-- WGS84 / SWEREF 99 lat-long -->
+          <div class="proj-card" id="wgs84">
+            <fieldset><legend>SWEREF 99 (~WGS 84)</legend>
+              <div class="coord-grid">
+                <span></span>
+                <span class="hdr">Latitude</span>
+                <span class="hdr">Longitude</span>
+
+                <label for="lat_dd">Degrees</label>
+                <input type="text" id="lat_dd" onkeyup="keyup_lat_dd(event)" onblur="blur_lat(event);">
+                <input type="text" id="long_dd" onkeyup="keyup_long_dd(event)" onblur="blur_long(event);">
+
+                <label for="lat_dm">Deg/min</label>
+                <input type="text" id="lat_dm" onkeyup="keyup_lat_dm(event)" onblur="blur_lat(event);">
+                <input type="text" id="long_dm" onkeyup="keyup_long_dm(event)" onblur="blur_long(event);">
+
+                <label for="lat_dms">Deg/min/sec</label>
+                <input type="text" id="lat_dms" onkeyup="keyup_lat_dms(event)" onblur="blur_lat(event);">
+                <input type="text" id="long_dms" onkeyup="keyup_long_dms(event)" onblur="blur_long(event);">
+              </div>
+              <div class="info-text" id="wgs84_info">
+                <p>Type or paste a latitude and longitude in any row &mdash; decimal
+                degrees, deg/min, or deg/min/sec. The other rows and every panel
+                on the page update instantly. You can also click the map or use
+                <em>My&nbsp;Position</em> to set the location.</p>
+                <p>SWEREF&nbsp;99 and WGS&nbsp;84 differ at the decimetre level.
+                GPS receivers typically output WGS&nbsp;84; SWEPOS differential
+                corrections give SWEREF&nbsp;99. Both use the GRS&nbsp;80 ellipsoid
+                (a&nbsp;=&nbsp;6&thinsp;378&thinsp;137&nbsp;m,
+                1/f&nbsp;=&nbsp;298.257222101).</p>
+              </div>
+            </fieldset>
+          </div>
+
+          <!-- RT 90 -->
+          <div class="proj-card" id="rt90">
+            <fieldset><legend>RT 90</legend>
+              <div class="proj-row">
+                <label for="proj_rt90">Projection:</label>
+                <select id="proj_rt90" onchange="select_proj_rt90(event)" onkeyup="select_proj_rt90(event)">
+                  <option value="rt90_7.5_gon_v">RT90 7.5 gon V 0:-15</option>
+                  <option value="rt90_5.0_gon_v">RT90 5 gon V 0:-15</option>
+                  <option value="rt90_2.5_gon_v" selected>RT90 2.5 gon V 0:-15 (National)</option>
+                  <option value="rt90_0.0_gon_v">RT90 0 gon V 0:-15</option>
+                  <option value="rt90_2.5_gon_o">RT90 2.5 gon O 0:-15</option>
+                  <option value="rt90_5.0_gon_o">RT90 5 gon O 0:-15</option>
+                </select>
+              </div>
+              <div class="grid-row">
+                <label for="x_rt90">X:</label>
+                <input type="text" id="x_rt90" onkeyup="keyup_rt90(event)" onblur="blur_rt90(event)">
+                <label for="y_rt90">Y:</label>
+                <input type="text" id="y_rt90" onkeyup="keyup_rt90(event)" onblur="blur_rt90(event)">
+              </div>
+              <div class="info-text" id="rt90_info">
+                <p>Choose a projection zone and enter X/Y (7-digit integers in
+                metres), or let the page fill them from a lat/long above. The
+                panel turns <span style="color:#c33">red</span> when the current
+                position is outside the selected zone.</p>
+                <p>RT&nbsp;90 was the Swedish national grid from the 1970s until
+                SWEREF&nbsp;99 replaced it. It uses Bessel’s ellipsoid 1841.
+                Six local zones plus one national zone are available;
+                the zone outline and its parameters appear on the map when
+                you change the dropdown. Click the outline for details.</p>
+                <p>The conversion uses Lantm&auml;teriet’s GRS&nbsp;80
+                approximation, which absorbs the Bessel/GRS&nbsp;80 difference
+                into adjusted projection parameters.</p>
+              </div>
+            </fieldset>
+          </div>
+
+          <!-- SWEREF 99 TM / local zones -->
+          <div class="proj-card" id="sweref99">
+            <fieldset><legend>SWEREF 99 TM, SWEREF 99 dd mm</legend>
+              <div class="proj-row">
+                <label for="proj_sweref99">Projection:</label>
+                <select id="proj_sweref99" onchange="select_proj_sweref99(event)" onkeyup="select_proj_sweref99(event)">
+                  <option value="sweref_99_tm" selected>SWEREF 99 TM</option>
+                  <option value="sweref_99_1200">SWEREF 99 12 00</option>
+                  <option value="sweref_99_1330">SWEREF 99 13 30</option>
+                  <option value="sweref_99_1500">SWEREF 99 15 00</option>
+                  <option value="sweref_99_1630">SWEREF 99 16 30</option>
+                  <option value="sweref_99_1800">SWEREF 99 18 00</option>
+                  <option value="sweref_99_1415">SWEREF 99 14 15</option>
+                  <option value="sweref_99_1545">SWEREF 99 15 45</option>
+                  <option value="sweref_99_1715">SWEREF 99 17 15</option>
+                  <option value="sweref_99_1845">SWEREF 99 18 45</option>
+                  <option value="sweref_99_2015">SWEREF 99 20 15</option>
+                  <option value="sweref_99_2145">SWEREF 99 21 45</option>
+                  <option value="sweref_99_2315">SWEREF 99 23 15</option>
+                </select>
+              </div>
+              <div class="grid-row">
+                <label for="n_sweref99">N:</label>
+                <input type="text" id="n_sweref99" onkeyup="keyup_sweref99(event)" onblur="blur_sweref99(event)">
+                <label for="e_sweref99">E:</label>
+                <input type="text" id="e_sweref99" onkeyup="keyup_sweref99(event)" onblur="blur_sweref99(event)">
+              </div>
+              <div class="info-text" id="sweref99_info">
+                <p>Choose a projection and enter N/E (metres), or let the page
+                compute them. N is typically 7 digits, E is 6. The panel turns
+                <span style="color:#c33">red</span> when the position is outside
+                the selected zone.</p>
+                <p><b>SWEREF&nbsp;99&nbsp;TM</b> covers all of Sweden in one zone
+                (central meridian 15°E, scale 0.9996). <b>Local zones</b> (12)
+                each have scale&nbsp;1.0 and are named by their central meridian.
+                The zone boundary shown on the map follows the actual
+                municipality-based definition from Lantm&auml;teriet.</p>
+                <p>Projection: Transverse Mercator (Gauss&ndash;Kr&uuml;ger).
+                Click the zone outline on the map for full parameters.</p>
+              </div>
+            </fieldset>
+          </div>
+        </div><!-- /proj-left -->
+
+        <!-- ── Right: map ───────────────────────────────────────── -->
+        <div class="proj-right">
+          <div class="map-card">
+              <div id="coord-map"></div>
+              <div class="map-hint">
+                <button type="button" class="compact" onclick="map_zoom_in()" title="Zoom in">+</button>
+                <button type="button" class="compact" onclick="map_zoom_out()" title="Zoom out">&minus;</button>
+                <button type="button" id="map_layer_btn" onclick="map_toggle_layer()"><svg class="btn-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="1.8"/><ellipse cx="12" cy="12" rx="4.5" ry="10" fill="none" stroke="currentColor" stroke-width="1.2"/><line x1="2" y1="12" x2="22" y2="12" stroke="currentColor" stroke-width="1.2"/><line x1="3.5" y1="7.5" x2="20.5" y2="7.5" stroke="currentColor" stroke-width="0.8"/><line x1="3.5" y1="16.5" x2="20.5" y2="16.5" stroke="currentColor" stroke-width="0.8"/></svg> Satellite</button>
+                <button type="button" onclick="use_my_position()"><svg style="width:12px;height:18px;vertical-align:-3px;margin-right:3px" viewBox="0 0 25 41"><path d="M12.5 0C5.6 0 0 5.6 0 12.5 0 22 12.5 41 12.5 41S25 22 25 12.5C25 5.6 19.4 0 12.5 0z" fill="#2A81CB"/><circle cx="12.5" cy="12.5" r="5" fill="#fff"/></svg>My Position</button>
+                <button type="button" onclick="addPositionToBulk()"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Add to Bulk</button>
+                <button class="btn-info" id="info_button" onclick="toggle_info();" title="Toggle help text">
+                  <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-6h2v6zm0-8h-2V7h2v4z"/></svg>
+                </button>
+              </div>
+          </div>
+          <div class="info-text" id="map_info" style="margin-top:8px">
+            <p>Click anywhere on the map to set the position &mdash; all panels
+            update instantly. Use <em>My&nbsp;Position</em> to centre the map on
+            your device's GPS location. Switch between street and satellite
+            views with the layer control (top right).</p>
+            <p>The outline shows the coverage of the currently selected RT&nbsp;90
+            and SWEREF&nbsp;99 zones. Click an outline for projection parameters;
+            the dashed line marks the central meridian.</p>
+          </div>
+        </div><!-- /proj-right -->
+
+      </div><!-- /proj-columns -->
+
+      <!-- ── Bulk transformation ─────────────────────────────── -->
+      <div class="bulk-panel">
+        <fieldset><legend>Bulk conversion</legend>
+          <div class="bulk-selectors">
+            <div class="bulk-sel-group">
+              <label for="bulk_from">From</label>
+              <select id="bulk_from" onchange="bulkClearResults()">
+                <option value="wgs84_dd">WGS 84 / SWEREF 99 (lat, lon degrees)</option>
+                <optgroup label="RT 90">
+                  <option value="rt90_7.5_gon_v">RT90 7.5 gon V</option>
+                  <option value="rt90_5.0_gon_v">RT90 5 gon V</option>
+                  <option value="rt90_2.5_gon_v" selected>RT90 2.5 gon V (National)</option>
+                  <option value="rt90_0.0_gon_v">RT90 0 gon V</option>
+                  <option value="rt90_2.5_gon_o">RT90 2.5 gon O</option>
+                  <option value="rt90_5.0_gon_o">RT90 5 gon O</option>
+                </optgroup>
+                <optgroup label="SWEREF 99">
+                  <option value="sweref_99_tm">SWEREF 99 TM</option>
+                  <option value="sweref_99_1200">SWEREF 99 12 00</option>
+                  <option value="sweref_99_1330">SWEREF 99 13 30</option>
+                  <option value="sweref_99_1500">SWEREF 99 15 00</option>
+                  <option value="sweref_99_1630">SWEREF 99 16 30</option>
+                  <option value="sweref_99_1800">SWEREF 99 18 00</option>
+                  <option value="sweref_99_1415">SWEREF 99 14 15</option>
+                  <option value="sweref_99_1545">SWEREF 99 15 45</option>
+                  <option value="sweref_99_1715">SWEREF 99 17 15</option>
+                  <option value="sweref_99_1845">SWEREF 99 18 45</option>
+                  <option value="sweref_99_2015">SWEREF 99 20 15</option>
+                  <option value="sweref_99_2145">SWEREF 99 21 45</option>
+                  <option value="sweref_99_2315">SWEREF 99 23 15</option>
+                </optgroup>
+              </select>
+            </div>
+            <span class="bulk-arrow">&rarr;</span>
+            <div class="bulk-sel-group">
+              <label for="bulk_to">To</label>
+              <select id="bulk_to" onchange="bulkClearResults()">
+                <option value="wgs84_dd">WGS 84 / SWEREF 99 (lat, lon degrees)</option>
+                <optgroup label="RT 90">
+                  <option value="rt90_7.5_gon_v">RT90 7.5 gon V</option>
+                  <option value="rt90_5.0_gon_v">RT90 5 gon V</option>
+                  <option value="rt90_2.5_gon_v">RT90 2.5 gon V (National)</option>
+                  <option value="rt90_0.0_gon_v">RT90 0 gon V</option>
+                  <option value="rt90_2.5_gon_o">RT90 2.5 gon O</option>
+                  <option value="rt90_5.0_gon_o">RT90 5 gon O</option>
+                </optgroup>
+                <optgroup label="SWEREF 99">
+                  <option value="sweref_99_tm" selected>SWEREF 99 TM</option>
+                  <option value="sweref_99_1200">SWEREF 99 12 00</option>
+                  <option value="sweref_99_1330">SWEREF 99 13 30</option>
+                  <option value="sweref_99_1500">SWEREF 99 15 00</option>
+                  <option value="sweref_99_1630">SWEREF 99 16 30</option>
+                  <option value="sweref_99_1800">SWEREF 99 18 00</option>
+                  <option value="sweref_99_1415">SWEREF 99 14 15</option>
+                  <option value="sweref_99_1545">SWEREF 99 15 45</option>
+                  <option value="sweref_99_1715">SWEREF 99 17 15</option>
+                  <option value="sweref_99_1845">SWEREF 99 18 45</option>
+                  <option value="sweref_99_2015">SWEREF 99 20 15</option>
+                  <option value="sweref_99_2145">SWEREF 99 21 45</option>
+                  <option value="sweref_99_2315">SWEREF 99 23 15</option>
+                </optgroup>
+              </select>
+            </div>
+          </div>
+
+          <div class="bulk-io">
+            <div class="bulk-io-col">
+              <span class="bulk-label">Input (col 1, col 2 &mdash; one row per point)</span>
+              <textarea id="bulk_input" oninput="bulkClearResults()" placeholder="6580000&#9;1628000&#10;6590000&#9;1630000&#10;..."></textarea>
+            </div>
+            <div class="bulk-io-col">
+              <span class="bulk-label">Result</span>
+              <div class="bulk-result-wrap">
+                <div class="bulk-result-gutter" id="bulk_gutter"></div>
+                <pre class="bulk-result-text" id="bulk_output"></pre>
+              </div>
+            </div>
+          </div>
+
+          <div class="bulk-actions">
+            <button class="btn-bulk primary" onclick="bulkConvert()">Convert</button>
+            <button class="btn-bulk" onclick="document.getElementById('bulk_file').click()">Load CSV&hellip;</button>
+            <input type="file" id="bulk_file" accept=".csv,.txt,.tsv" onchange="bulkLoadFile(event)">
+            <button class="btn-bulk" onclick="bulkDownload()">Download CSV</button>
+            <button class="btn-bulk" onclick="bulkClear()">Clear</button>
+            <span class="bulk-status" id="bulk_status"></span>
+          </div>
+        </fieldset>
+      </div>
+
+      <div class="info-text" id="about_info" style="margin-top:14px">
+        <p>This page converts coordinates between WGS&nbsp;84 / SWEREF&nbsp;99
+        latitude-longitude, the RT&nbsp;90 grid, and SWEREF&nbsp;99 projected
+        coordinates. All conversions run in the browser &mdash; nothing is sent
+        to a server. Use the <b>Bulk conversion</b> panel below to convert
+        many points at once (paste rows or load a CSV).</p>
+        <p>Reference data:
+          <a href="https://www.lantmateriet.se/sv/geodata/gps-geodesi-och-swepos/Referenssystem/Tvadimensionella-system/SWEREF-99-projektioner/" target="_blank">SWEREF&nbsp;99 projections</a>,
+          <a href="https://www.lantmateriet.se/sv/geodata/gps-geodesi-och-swepos/Referenssystem/Tvadimensionella-system/RT-90/" target="_blank">RT&nbsp;90</a>
+          &ndash; Lantm&auml;teriet.
+        </p>
+      </div>
+
+    </div><!-- /proj-container -->
+  </div>
 
   <footer></footer>
 
+  <script src="./resources/js/latlong.js"></script>
+  <script src="./resources/js/sweref99-zones.js"></script>
+  <script src="./resources/js/map.js"></script>
+  <script src="./resources/js/lat_lon_conv.js"></script>
+  <script src="./resources/js/gausskruger.js"></script>
   <script src="./resources/js/site.js"></script>
   <script>
-    // Render shared components
-    KVOT.renderHeader('projections');
+    KVOT.renderHeader('Swedish Coordinate Conversions');
     KVOT.renderNav('proj.html');
     KVOT.renderFooter();
-    KVOT.initMap('map1');
+
+    /* ── Bulk conversion logic ──────────────────────────────── */
+    function bulkParseRows(text) {
+      return text.trim().split(/\r?\n/).filter(function(r) { return r.trim(); }).map(function(row) {
+        // detect separator: tab, semicolon, comma, or whitespace
+        var parts;
+        if (row.indexOf('\t') !== -1) parts = row.split('\t');
+        else if (row.indexOf(';') !== -1) parts = row.split(';');
+        else if (row.indexOf(',') !== -1) parts = row.split(',');
+        else parts = row.trim().split(/\s+/);
+        return parts.map(function(v) { return parseFloat(v.trim().replace(',', '.')); });
+      });
+    }
+
+    function bulkToLatLon(proj, c1, c2) {
+      if (proj === 'wgs84_dd') return [c1, c2];
+      swedish_params(proj);
+      return grid_to_geodetic(c1, c2);
+    }
+
+    function bulkFromLatLon(proj, lat, lon) {
+      if (proj === 'wgs84_dd') return [lat, lon];
+      swedish_params(proj);
+      return geodetic_to_grid(lat, lon);
+    }
+
+    function bulkConvert() {
+      var fromProj = document.getElementById('bulk_from').value;
+      var toProj = document.getElementById('bulk_to').value;
+      var input = document.getElementById('bulk_input').value;
+      var rows = bulkParseRows(input);
+      var results = [];
+      var errors = 0;
+      var latLons = [];
+      var outOfZone = [];
+      var inputStrs = [];
+      var outputStrs = [];
+      var fromBounds = get_zone_bounds(fromProj);
+      var toBounds = get_zone_bounds(toProj);
+      var outside = 0;
+      rows.forEach(function(r, i) {
+        if (r.length < 2 || isNaN(r[0]) || isNaN(r[1])) { results.push('ERROR row ' + (i+1)); errors++; return; }
+        var ll = bulkToLatLon(fromProj, r[0], r[1]);
+        if (ll[0] == null || ll[1] == null || isNaN(ll[0]) || isNaN(ll[1])) { results.push('ERROR row ' + (i+1)); errors++; return; }
+        var bad = false;
+        if (fromBounds && !point_in_zone_bounds(fromBounds, ll[0], ll[1])) bad = true;
+        if (toBounds && !point_in_zone_bounds(toBounds, ll[0], ll[1])) bad = true;
+        if (bad) outside++;
+        latLons.push(ll);
+        outOfZone.push(bad);
+        var out = bulkFromLatLon(toProj, ll[0], ll[1]);
+        var inStr = r[0] + ', ' + r[1];
+        var outStr;
+        if (toProj === 'wgs84_dd') {
+          outStr = out[0].toFixed(6) + ', ' + out[1].toFixed(6);
+          results.push(out[0].toFixed(6) + '\t' + out[1].toFixed(6));
+        } else {
+          outStr = Math.round(out[0]) + ', ' + Math.round(out[1]);
+          results.push(Math.round(out[0]) + '\t' + Math.round(out[1]));
+        }
+        inputStrs.push(inStr);
+        outputStrs.push(outStr);
+      });
+      document.getElementById('bulk_output').textContent = results.join('\n');
+      var gutter = '';
+      for (var g = 1; g <= results.length; g++) gutter += g + '\n';
+      document.getElementById('bulk_gutter').textContent = gutter;
+      var st = rows.length + ' rows converted';
+      if (errors > 0) st += ', ' + errors + ' errors';
+      if (outside > 0) st += ', ' + outside + ' outside zone';
+      document.getElementById('bulk_status').textContent = st;
+      show_bulk_markers(latLons, outOfZone, inputStrs, outputStrs);
+    }
+
+    function bulkLoadFile(ev) {
+      var file = ev.target.files[0];
+      if (!file) return;
+      var reader = new FileReader();
+      reader.onload = function(e) {
+        document.getElementById('bulk_input').value = e.target.result;
+        document.getElementById('bulk_status').textContent = file.name + ' loaded';
+      };
+      reader.readAsText(file);
+      ev.target.value = ''; // allow re-upload of same file
+    }
+
+    function bulkDownload() {
+      var output = document.getElementById('bulk_output').textContent;
+      if (!output.trim()) return;
+      var fromLabel = document.getElementById('bulk_from').selectedOptions[0].text;
+      var toLabel = document.getElementById('bulk_to').selectedOptions[0].text;
+      var header = '# Converted from: ' + fromLabel + ' → ' + toLabel + '\n';
+      var blob = new Blob([header + output], { type: 'text/csv;charset=utf-8' });
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'converted_coordinates.csv';
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+
+    function bulkClearResults() {
+      document.getElementById('bulk_output').textContent = '';
+      document.getElementById('bulk_gutter').textContent = '';
+      document.getElementById('bulk_status').textContent = '';
+      clear_bulk_markers();
+    }
+
+    function bulkClear() {
+      document.getElementById('bulk_input').value = '';
+      document.getElementById('bulk_output').textContent = '';
+      document.getElementById('bulk_gutter').textContent = '';
+      document.getElementById('bulk_status').textContent = '';
+      clear_bulk_markers();
+    }
+
+    function addPositionToBulk() {
+      if (latitude == null || longitude == null || isNaN(latitude) || isNaN(longitude)) {
+        alert('No valid position set.');
+        return;
+      }
+      var fromProj = document.getElementById('bulk_from').value;
+      var coords = bulkFromLatLon(fromProj, latitude, longitude);
+      var line;
+      if (fromProj === 'wgs84_dd') {
+        line = coords[0].toFixed(6) + '\t' + coords[1].toFixed(6);
+      } else {
+        line = Math.round(coords[0]) + '\t' + Math.round(coords[1]);
+      }
+      var ta = document.getElementById('bulk_input');
+      var cur = ta.value.replace(/\s+$/, '');
+      ta.value = cur ? cur + '\n' + line : line;
+      bulkConvert();
+    }
   </script>
 </body>
 </html>

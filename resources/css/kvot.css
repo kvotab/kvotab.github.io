@@ -202,6 +202,7 @@ header {
      height: 30px;
      width:100%;
      padding:6px;
+     z-index: 10000;
      transition: background-color 0.3s ease, color 0.3s ease;
 }
  header .logo {
