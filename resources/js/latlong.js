@@ -211,11 +211,39 @@ function blur_sweref99(event) {
 
 // Projection changes.
 function select_proj_rt90(event) {
-	show_rt90_meridian(proj_rt90.value); // In map.js.
+	if (document.getElementById('rt90_show_zone').checked)
+		show_rt90_meridian(proj_rt90.value);
+	else
+		show_rt90_meridian(null);
 	update_rt90();
 }
 function select_proj_sweref99(event) {
-	show_sweref99_meridian(proj_sweref99.value); // In map.js.
+	if (document.getElementById('sweref99_show_zone').checked)
+		show_sweref99_meridian(proj_sweref99.value);
+	else
+		show_sweref99_meridian(null);
+	update_sweref99();
+}
+
+// Zone overlay toggles.
+function toggle_rt90_zone() {
+	var on = document.getElementById('rt90_show_zone').checked;
+	if (on)
+		show_rt90_meridian(proj_rt90.value);
+	else {
+		show_rt90_meridian(null);
+		document.getElementById('rt90').classList.remove('out-of-zone');
+	}
+	update_rt90();
+}
+function toggle_sweref99_zone() {
+	var on = document.getElementById('sweref99_show_zone').checked;
+	if (on)
+		show_sweref99_meridian(proj_sweref99.value);
+	else {
+		show_sweref99_meridian(null);
+		document.getElementById('sweref99').classList.remove('out-of-zone');
+	}
 	update_sweref99();
 }
 
@@ -232,6 +260,7 @@ function update_long() {
 }
 function update_rt90() {
 	var card = document.getElementById('rt90');
+	var showZone = document.getElementById('rt90_show_zone').checked;
 	if ((latitude != null) && (longitude != null) &&
 		(latitude >= -90) && (latitude <= 90) &&
 		(longitude >= -180) && (longitude < 180)) {
@@ -239,11 +268,15 @@ function update_rt90() {
 		var x_y = geodetic_to_grid(latitude, longitude);
 		x_rt90.value = x_y[0];
 		y_rt90.value = x_y[1];
-		var bounds = get_zone_bounds(proj_rt90.value);
-		if (bounds && !point_in_zone_bounds(bounds, latitude, longitude))
-			card.classList.add('out-of-zone');
-		else
+		if (showZone) {
+			var bounds = get_zone_bounds(proj_rt90.value);
+			if (bounds && !point_in_zone_bounds(bounds, latitude, longitude))
+				card.classList.add('out-of-zone');
+			else
+				card.classList.remove('out-of-zone');
+		} else {
 			card.classList.remove('out-of-zone');
+		}
 	} else {
 		x_rt90.value = "";
 		y_rt90.value = "";
@@ -252,6 +285,7 @@ function update_rt90() {
 }
 function update_sweref99() {
 	var card = document.getElementById('sweref99');
+	var showZone = document.getElementById('sweref99_show_zone').checked;
 	if ((latitude != null) && (longitude != null) &&
 		(latitude >= -90) && (latitude <= 90) &&
 		(longitude >= -180) && (longitude < 180)) {
@@ -259,11 +293,15 @@ function update_sweref99() {
 		var n_e = geodetic_to_grid(latitude, longitude);
 		n_sweref99.value = n_e[0];
 		e_sweref99.value = n_e[1];
-		var bounds = get_zone_bounds(proj_sweref99.value);
-		if (bounds && !point_in_zone_bounds(bounds, latitude, longitude))
-			card.classList.add('out-of-zone');
-		else
+		if (showZone) {
+			var bounds = get_zone_bounds(proj_sweref99.value);
+			if (bounds && !point_in_zone_bounds(bounds, latitude, longitude))
+				card.classList.add('out-of-zone');
+			else
+				card.classList.remove('out-of-zone');
+		} else {
 			card.classList.remove('out-of-zone');
+		}
 	} else {
 		n_sweref99.value = "";
 		e_sweref99.value = "";
