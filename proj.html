@@ -137,6 +137,16 @@
       background: var(--input-bg);
       cursor: pointer;
     }
+    .zone-toggle {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .zone-toggle input { margin: 0; cursor: pointer; }
     /* grid XY / NE */
     .grid-row {
       display: grid;
@@ -454,6 +464,7 @@
                   <option value="rt90_2.5_gon_o">RT90 2.5 gon O 0:-15</option>
                   <option value="rt90_5.0_gon_o">RT90 5 gon O 0:-15</option>
                 </select>
+                <label class="zone-toggle"><input type="checkbox" id="rt90_show_zone" checked onchange="toggle_rt90_zone()"> Show zone</label>
               </div>
               <div class="grid-row">
                 <label for="x_rt90">X:</label>
@@ -498,6 +509,7 @@
                   <option value="sweref_99_2145">SWEREF 99 21 45</option>
                   <option value="sweref_99_2315">SWEREF 99 23 15</option>
                 </select>
+                <label class="zone-toggle"><input type="checkbox" id="sweref99_show_zone" checked onchange="toggle_sweref99_zone()"> Show zone</label>
               </div>
               <div class="grid-row">
                 <label for="n_sweref99">N:</label>
