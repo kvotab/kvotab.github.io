@@ -413,10 +413,9 @@ async function getIntersectedPathsAsync() {
   try {
     const buffersAvailable = enabledFiles.every(k => loadedFileBuffers[k] instanceof ArrayBuffer);
     if (buffersAvailable) {
-        // If worker exists but h5wasm inside it hasn't finished, wait a
-        // *short* time for readiness before launching a compute. This
-        // prevents immediate fallback when the worker is still warming up.
-        const WORKER_STARTUP_WAIT_MS = 1500;
+        // If worker exists but h5wasm inside it hasn't finished, wait a bit
+        // longer for readiness before launching a compute on slower machines.
+        const WORKER_STARTUP_WAIT_MS = 5000;
         let tryWorker = true;
         try {
           ensureTreeWorker();
@@ -431,11 +430,11 @@ async function getIntersectedPathsAsync() {
         if (!tryWorker) {
           console.debug('[getIntersectedPathsAsync] skipping worker path (worker not ready)');
         } else {
-          // keep worker as the preferred path but *quickly* fallback to the
-          // main-thread collector if the worker doesn't respond fast (eg.
-          // slow h5wasm init inside worker). This prevents the UI spinner
-          // from appearing to hang for long-running worker startups.
-          const WORKER_QUICK_FALLBACK_MS = 5000;
+          // Keep worker as the preferred path but eventually fall back to the
+          // main-thread collector if the worker stalls. Use a longer timeout
+          // so slower machines still complete the worker path instead of
+          // needlessly switching to the fallback.
+          const WORKER_QUICK_FALLBACK_MS = 20000;
           const workerP = computeIntersectedPathsViaWorker(enabledFiles);
           let paths;
           try {
@@ -459,15 +458,16 @@ async function getIntersectedPathsAsync() {
               }
             } catch (e) { /* ignore */ }
 
-            // schedule a background retry if/when the worker becomes fully
-            // initialized (h5wasm ready). This mirrors the manual uncheck/
-            // recheck behavior users observed and avoids requiring manual
-            // intervention.
+            // If the worker finishes warming up shortly after the fallback,
+            // refresh the merged tree in-place without routing through
+            // updateTabs(), which resets the mode to separated.
             try {
               ensureTreeWorkerReady(10000).then((ok) => {
-                if (ok && isIntersectMode()) {
-                  console.debug('[getIntersectedPathsAsync] worker became ready after fallback — scheduling tree refresh');
-                  scheduleUpdateTabs(100);
+                if (ok && isIntersectMode() && !window._treeRefreshId) {
+                  console.debug('[getIntersectedPathsAsync] worker became ready after fallback — refreshing intersection tree');
+                  refreshTreeStructure().catch((refreshErr) => {
+                    console.warn('[getIntersectedPathsAsync] follow-up intersection refresh failed', refreshErr);
+                  });
                 }
               }).catch(() => {});
             } catch (e) { /* ignore */ }
