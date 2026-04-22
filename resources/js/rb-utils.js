@@ -538,6 +538,117 @@ function checkIsProbabilistic(dataset) {
 }
 
 /**
+ * Parse the optional dataset attribute "columns" into a string array.
+ * Supports array values and delimited strings.
+ *
+ * @param {*} columnsAttr
+ * @returns {string[]}
+ */
+function parseColumnsAttribute(columnsAttr) {
+  if (columnsAttr === undefined || columnsAttr === null) return [];
+  if (Array.isArray(columnsAttr)) {
+    return columnsAttr.map(v => String(v).trim()).filter(Boolean);
+  }
+  if (ArrayBuffer.isView(columnsAttr)) {
+    return Array.from(columnsAttr).map(v => String(v).trim()).filter(Boolean);
+  }
+  const txt = String(columnsAttr).trim();
+  if (!txt) return [];
+  return txt
+    .replace(/[\[\]\(\)]/g, '')
+    .split(/[;,|]/)
+    .map(s => s.trim())
+    .filter(Boolean);
+}
+
+/**
+ * Extract a single column as a time series from matrix-like data.
+ * Handles row-major, column-major, nested arrays and flat arrays.
+ *
+ * @param {Array} rawData
+ * @param {number} timeLength
+ * @param {number} columnIndex
+ * @param {number} columnCount
+ * @returns {Array<number|null>|null}
+ */
+function extractColumnSeries(rawData, timeLength, columnIndex, columnCount) {
+  if (!Array.isArray(rawData) || timeLength <= 0 || columnIndex < 0 || columnCount <= 0) return null;
+
+  const toCleanSeries = (arr) => {
+    if (!Array.isArray(arr) || arr.length === 0) return null;
+    const out = arr.map(v => {
+      const n = PDFSampler.toNumber(v);
+      return isFinite(n) ? n : null;
+    });
+    const finiteCount = out.filter(v => v !== null).length;
+    return finiteCount > 0 ? out : null;
+  };
+
+  if (Array.isArray(rawData[0])) {
+    // Row-major nested data: [time][column]
+    const rowMajor = rawData
+      .slice(0, timeLength)
+      .map(row => Array.isArray(row) ? row[columnIndex] : null);
+    const rowMajorClean = toCleanSeries(rowMajor);
+    if (rowMajorClean) return rowMajorClean;
+
+    // Column-major nested data: [column][time]
+    if (rawData.length > columnIndex && Array.isArray(rawData[columnIndex])) {
+      const colMajor = rawData[columnIndex].slice(0, timeLength);
+      const colMajorClean = toCleanSeries(colMajor);
+      if (colMajorClean) return colMajorClean;
+    }
+    return null;
+  }
+
+  if (rawData.length < timeLength * columnCount) return null;
+
+  // Flat row-major: [t0c0, t0c1, ..., t1c0, ...]
+  const flatRowMajor = [];
+  for (let t = 0; t < timeLength; t++) {
+    flatRowMajor.push(rawData[t * columnCount + columnIndex]);
+  }
+  const rowMajorClean = toCleanSeries(flatRowMajor);
+  if (rowMajorClean) return rowMajorClean;
+
+  // Flat column-major: [c0t0, c0t1, ..., c1t0, ...]
+  const flatColMajor = [];
+  for (let t = 0; t < timeLength; t++) {
+    flatColMajor.push(rawData[columnIndex * timeLength + t]);
+  }
+  return toCleanSeries(flatColMajor);
+}
+
+/**
+ * Extract mean / 5% / 95% time series from dataset "columns" metadata.
+ * Returns null when no usable "mean" column is found.
+ *
+ * @param {Object} dataset
+ * @param {Array} rawData
+ * @param {Array} timeData
+ * @returns {{meanSeries: Array<number|null>, p5Series: Array<number|null>|null, p95Series: Array<number|null>|null}|null}
+ */
+function getColumnStatisticsSeries(dataset, rawData, timeData) {
+  const columns = parseColumnsAttribute(getAttr(dataset, 'columns'));
+  if (!columns.length || !Array.isArray(timeData) || timeData.length === 0) return null;
+
+  const normalized = columns.map(c => String(c).trim().toLowerCase().replace(/\s+/g, ''));
+  const meanIndex = columns.length === 1 ? 0 : normalized.indexOf('mean');
+  if (meanIndex < 0) return null;
+
+  const p5Index = normalized.findIndex(c => c === '5%' || c === 'p5' || c === 'p05' || c === 'q05');
+  const p95Index = normalized.findIndex(c => c === '95%' || c === 'p95' || c === 'q95');
+
+  const meanSeries = extractColumnSeries(rawData, timeData.length, meanIndex, columns.length);
+  if (!meanSeries) return null;
+
+  const p5Series = p5Index >= 0 ? extractColumnSeries(rawData, timeData.length, p5Index, columns.length) : null;
+  const p95Series = p95Index >= 0 ? extractColumnSeries(rawData, timeData.length, p95Index, columns.length) : null;
+
+  return { meanSeries, p5Series, p95Series };
+}
+
+/**
  * Compute percentile values from probabilistic data array at a specific percentile level
  * @param {Array} yArray - Raw data array (may contain realizations)
  * @param {Array} timeData - Time data for reference length
