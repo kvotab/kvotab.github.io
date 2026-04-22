@@ -83,8 +83,9 @@ window.FileService = {
  * createRadionuclidesChart, and createPdfHistogram.
  *
  * @param {HTMLElement} container - The #plotlyChartContainer element
+ * @param {string} [message='Loading...'] - Message shown in the overlay
  */
-function showChartLoading(container) {
+function showChartLoading(container, message = 'Loading...') {
   if (!container) return;
   container.style.display = '';
   container.classList.add('visible');
@@ -92,7 +93,7 @@ function showChartLoading(container) {
   if (!loadingDiv) {
     loadingDiv = document.createElement('div');
     loadingDiv.className = 'plotly-loading';
-    loadingDiv.innerHTML = '<span class="spinner"></span> Loading...';
+    loadingDiv.innerHTML = `<span class="spinner"></span> ${message}`;
     // Position is determined by the CSS class; add fallback inline
     // styles only for the properties that the CSS already covers so
     // older cached CSS still works.
@@ -108,6 +109,7 @@ function showChartLoading(container) {
     loadingDiv.style.boxShadow = '0 2px 8px rgba(0,0,0,0.15)';
     container.appendChild(loadingDiv);
   } else {
+    loadingDiv.innerHTML = `<span class="spinner"></span> ${message}`;
     loadingDiv.style.display = '';
   }
 }
@@ -533,6 +535,60 @@ function isTruthyAttribute(value) {
 function checkIsProbabilistic(dataset) {
   const val = getAttr(dataset, 'probabilistic');
   return val !== undefined && isTruthyAttribute(val);
+}
+
+/**
+ * Compute percentile values from probabilistic data array at a specific percentile level
+ * @param {Array} yArray - Raw data array (may contain realizations)
+ * @param {Array} timeData - Time data for reference length
+ * @param {number} percentile - Percentile level (0-100)
+ * @returns {Array} Array of percentile values per timestep
+ */
+function computeProbabilisticPercentile(yArray, timeData, percentile) {
+  if (Array.isArray(yArray[0])) {
+    // Array of arrays: each timeSlice has multiple realizations
+    return yArray.map(timeSlice => {
+      if (Array.isArray(timeSlice)) {
+        const values = timeSlice.map(v => PDFSampler.toNumber(v)).filter(v => isFinite(v));
+        if (values.length === 0) return null;
+        values.sort((a, b) => a - b);
+        const index = (percentile / 100) * (values.length - 1);
+        const lower = Math.floor(index);
+        const upper = Math.ceil(index);
+        const weight = index - lower;
+        if (lower === upper) return values[lower];
+        return values[lower] * (1 - weight) + values[upper] * weight;
+      }
+      return PDFSampler.toNumber(timeSlice);
+    });
+  } else if (yArray.length > timeData.length && yArray.length % timeData.length === 0) {
+    // Flat array: realizations interleaved or sequential
+    const numRealizations = Math.floor(yArray.length / timeData.length);
+    const percentiles = [];
+    for (let t = 0; t < timeData.length; t++) {
+      const values = [];
+      for (let r = 0; r < numRealizations; r++) {
+        const v = PDFSampler.toNumber(yArray[t * numRealizations + r]);
+        if (isFinite(v)) values.push(v);
+      }
+      if (values.length === 0) {
+        percentiles.push(null);
+      } else {
+        values.sort((a, b) => a - b);
+        const index = (percentile / 100) * (values.length - 1);
+        const lower = Math.floor(index);
+        const upper = Math.ceil(index);
+        const weight = index - lower;
+        if (lower === upper) {
+          percentiles.push(values[lower]);
+        } else {
+          percentiles.push(values[lower] * (1 - weight) + values[upper] * weight);
+        }
+      }
+    }
+    return percentiles;
+  }
+  return yArray.map(PDFSampler.toNumber);
 }
 
 /**
@@ -976,7 +1032,7 @@ function assignLegendRanks(traces) {
  * @param {Object} layout - Plotly layout configuration
  * @param {string} path - Dataset path (for storing in currentChartData)
  */
-function renderChart(traces, layout, path) {
+function renderChart(traces, layout, path, afterRender) {
   const container = getElement('plotlyChartContainer');
   const config = getPlotlyConfig('chart');
   
@@ -1003,6 +1059,9 @@ function renderChart(traces, layout, path) {
     setupPresetRelayoutSync(pDiv);
     refreshDynamicLegend();
     snapLogRangeToDecades(pDiv);
+    if (typeof afterRender === 'function') {
+      afterRender(pDiv);
+    }
     hideChartLoading(container);
   });
 }

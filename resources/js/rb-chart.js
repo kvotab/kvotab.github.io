@@ -1275,6 +1275,95 @@ function toggleShowMax() {
 }
 
 /**
+ * Toggle the confidence interval band display.
+ * Adds or removes CI band traces from the current chart.
+ * CI band colors match the corresponding mean trace line colors.
+ */
+async function toggleShowCI() {
+  const plotDiv = getElement('plotlyChart');
+  if (!plotDiv || !plotDiv.data) {
+    return;
+  }
+  const chartContainer = getElement('plotlyChartContainer');
+  
+  const showCI = getElement('showCI')?.checked;
+  const shouldShowLoader = !!showCI;
+  if (shouldShowLoader) {
+    showChartLoading(chartContainer, 'Calculating confidence interval...');
+    await new Promise(requestAnimationFrame);
+    await new Promise(resolve => setTimeout(resolve, 0));
+  }
+  try {
+    // Find existing CI band traces and remove them
+    const existingCIIndices = [];
+    plotDiv.data.forEach((trace, idx) => {
+      if (trace._isCIBand) {
+        existingCIIndices.push(idx);
+      }
+    });
+    
+    if (existingCIIndices.length > 0) {
+      await Plotly.deleteTraces(plotDiv, existingCIIndices);
+    }
+    
+    // If checkbox is now checked, add CI bands for all probabilistic traces
+    if (showCI) {
+      const ciTraces = [];
+      plotDiv.data.forEach((trace) => {
+        if (trace._isProbabilistic && trace._rawData && trace._timeData) {
+          const p5 = computeProbabilisticPercentile(trace._rawData, trace._timeData, 5);
+          const p95 = computeProbabilisticPercentile(trace._rawData, trace._timeData, 95);
+          const minLength = Math.min(trace._timeData.length, p5.length, p95.length);
+          const timeSlice = trace._timeData.slice(0, minLength);
+          const p5Slice = p5.slice(0, minLength);
+          const p95Slice = p95.slice(0, minLength);
+          
+          // Get the trace's line color and convert to semi-transparent fill
+          let traceColor = 'rgba(100, 150, 200, 0.2)';
+          if (trace.line && trace.line.color) {
+            const color = trace.line.color;
+            if (color.startsWith('rgba')) {
+              traceColor = color.replace(/,[\s]*[\d.]+\s*\)$/, ', 0.2)');
+            } else if (color.startsWith('rgb')) {
+              traceColor = color.replace(/^rgb\(/, 'rgba(').replace(/\)$/, ', 0.2)');
+            } else if (color.startsWith('#')) {
+              const hex = color.slice(1);
+              const r = parseInt(hex.substr(0, 2), 16);
+              const g = parseInt(hex.substr(2, 2), 16);
+              const b = parseInt(hex.substr(4, 2), 16);
+              traceColor = `rgba(${r}, ${g}, ${b}, 0.2)`;
+            }
+          }
+          
+          const ciBandTrace = {
+            x: [...timeSlice, ...timeSlice.slice().reverse()],
+            y: [...p95Slice, ...p5Slice.slice().reverse()],
+            fill: 'tozeroy',
+            fillcolor: traceColor,
+            line: { color: 'rgba(255, 255, 255, 0)' },
+            showlegend: false,
+            hoverinfo: 'skip',
+            _hiddenFromLegend: true,
+            _isCIBand: true,
+            mode: 'lines',
+            name: 'CI Band'
+          };
+          ciTraces.push(ciBandTrace);
+        }
+      });
+      
+      if (ciTraces.length > 0) {
+        await Plotly.addTraces(plotDiv, ciTraces);
+      }
+    }
+  } finally {
+    if (shouldShowLoader) {
+      hideChartLoading(chartContainer);
+    }
+  }
+}
+
+/**
  * Append the maximum y-value to each trace's legend name.
  * Formats as "name (max)" using 3 significant digits.
  * Skips traces that are hidden from the legend.
@@ -1309,15 +1398,29 @@ function createPlotlyChart(path) {
   const chartContainer = getElement('plotlyChartContainer');
   showChartLoading(chartContainer);
   const plotDiv = getElement('plotlyChart');
+
+  let wasCIChecked = false;
+  try {
+    const ciCheckbox = getElement('showCI');
+    if (ciCheckbox) {
+      wasCIChecked = !!ciCheckbox.checked;
+    }
+  } catch (e) {
+    // Ignore missing CI control during initial render.
+  }
+
   plotDiv.innerHTML = '';
 
   // Hide "Show Total" and "Show Ratio" checkboxes (only for radionuclides groups)
   setShowTotalVisible(false);
   setShowRatioVisible(false);
   setShowMaxVisible(true);
+  setShowCIVisible(false);  // Will be enabled if we have probabilistic data
 
   const traces = [];
   const enabledFiles = getEffectiveFiles();
+  const probDataInfo = [];  // Track raw data for probabilistic datasets
+  let hasProbabilistic = false;
 
   let timeUnit = '';
   let yAxisUnit = '';
@@ -1367,9 +1470,14 @@ function createPlotlyChart(path) {
 
       if (yData) {
         let yArray = PDFSampler.normalizeDataArray(yData);
+        let isProbabilistic = false;
 
         // Handle probabilistic data (take mean)
         if (checkIsProbabilistic(dataset)) {
+          isProbabilistic = true;
+          hasProbabilistic = true;
+          // Store raw data for CI band computation later
+          probDataInfo.push({ yArray, timeData: timeData.slice() });
           yArray = computeProbabilisticMean(yArray, timeData);
         }
 
@@ -1379,7 +1487,14 @@ function createPlotlyChart(path) {
           console.warn(`Time data length (${timeData.length}) doesn't match data length (${yArray.length}) for ${fileKey}`);
         }
 
-        traces.push(ChartService.timeSeriesTrace({ x: timeData.slice(0, minLength), y: yArray.slice(0, minLength), name: buildTraceName(yAxisName, path, fileKey, [path], enabledFiles) }));
+        const traceObj = ChartService.timeSeriesTrace({ x: timeData.slice(0, minLength), y: yArray.slice(0, minLength), name: buildTraceName(yAxisName, path, fileKey, [path], enabledFiles) });
+        traceObj._isProbabilistic = isProbabilistic;
+        if (isProbabilistic) {
+          // Store raw data and time data on the trace for CI computation
+          traceObj._rawData = PDFSampler.normalizeDataArray(yData);  // Re-normalize to get original structure
+          traceObj._timeData = timeData.slice(0, minLength);
+        }
+        traces.push(traceObj);
       }
     } catch (e) {
       console.error(`Error creating trace for ${fileKey}:`, e);
@@ -1388,6 +1503,11 @@ function createPlotlyChart(path) {
 
   // Render chart if we have data
   if (traces.length > 0) {
+    // Show CI checkbox if we have probabilistic data
+    if (hasProbabilistic) {
+      setShowCIVisible(true);
+    }
+
     // Annotate legend with max values if "Show Max" is checked
     const showMaxCb = getElement('showMax');
     if (showMaxCb && showMaxCb.checked) {
@@ -1412,6 +1532,9 @@ function createPlotlyChart(path) {
     layout.margin.r = 200; // Extra room for longer legend names
     _applyLockedAxes(layout);
 
+    // Show CI checkbox if we have probabilistic data
+    setShowCIVisible(hasProbabilistic);
+    
     const config = getPlotlyConfig('multi_dataset_chart');
 
     currentChartData = { traces, layout, paths };
@@ -1425,6 +1548,14 @@ function createPlotlyChart(path) {
       setupPresetRelayoutSync(pDiv);
       refreshDynamicLegend();
       snapLogRangeToDecades(pDiv);
+      // Restore CI state if we have probabilistic data and it was previously checked
+      if (hasProbabilistic && wasCIChecked) {
+        const ciCheckboxNew = getElement('showCI');
+        if (ciCheckboxNew) {
+          ciCheckboxNew.checked = true;
+          toggleShowCI();
+        }
+      }
       hideChartLoading(chartContainer);
     });
   } else {
@@ -1446,16 +1577,32 @@ function createMultiDatasetChart(items) {
   const plotDiv = getElement('plotlyChart');
   const chartContainer = getElement('plotlyChartContainer');
   showChartLoading(chartContainer);
+  
+    // Save CI state and checkbox reference before clearing
+    let wasCIChecked = false;
+    try {
+      const ciCheckbox = getElement('showCI');
+      if (ciCheckbox) {
+        wasCIChecked = ciCheckbox.checked || false;
+      }
+    } catch (e) {
+      // If checkbox doesn't exist yet, that's fine
+    }
+  
   if (plotDiv) plotDiv.innerHTML = '';
   
   // Hide "Show Total" and "Show Ratio" checkboxes (only for radionuclides groups)
   setShowTotalVisible(false);
   setShowRatioVisible(false);
   setShowMaxVisible(true);
+  setShowCIVisible(false);  // Will be enabled if we have probabilistic data
   
   const traces = [];
   const yAxisUnits = new Set();
+  const probDataInfo = [];  // Track raw data for probabilistic datasets
+  let hasProbabilistic = false;
   let timeUnit = '';
+  const meanTracesByIndex = {};  // Map CI trace back to mean trace for color matching
   
   // Normalize items: if fileKey is null (intersect mode), expand to all enabled files
   // Deduplicate so each (path, fileKey) pair is unique
@@ -1540,9 +1687,14 @@ function createMultiDatasetChart(items) {
       
       if (yData) {
         let yArray = PDFSampler.normalizeDataArray(yData);
+        let isProbabilistic = false;
         
         // Handle probabilistic data (take mean)
         if (checkIsProbabilistic(dataset)) {
+          isProbabilistic = true;
+          hasProbabilistic = true;
+          // Store raw data for CI band computation later
+          probDataInfo.push({ yArray, timeData: timeData.slice() });
           yArray = computeProbabilisticMean(yArray, timeData);
         }
 
@@ -1560,7 +1712,14 @@ function createMultiDatasetChart(items) {
           lineDash = dashStyles[fileIdx % dashStyles.length];
           lineWidth = 1.5;
         }
-        traces.push(ChartService.timeSeriesTrace({ x: trimmedTimeData, y: trimmedYData, name: traceName, line: { color: baseColor, dash: lineDash, width: lineWidth }, hovertemplate: `<b>${traceName}</b><br>Time: %{x}<br>Value: %{y}<extra></extra>` }));
+        const traceObj = ChartService.timeSeriesTrace({ x: trimmedTimeData, y: trimmedYData, name: traceName, line: { color: baseColor, dash: lineDash, width: lineWidth }, hovertemplate: `<b>${traceName}</b><br>Time: %{x}<br>Value: %{y}<extra></extra>` });
+        traceObj._isProbabilistic = isProbabilistic;
+        if (isProbabilistic) {
+          // Store raw data and time data on the trace for CI computation
+          traceObj._rawData = PDFSampler.normalizeDataArray(yData);  // Re-normalize to get original structure
+          traceObj._timeData = trimmedTimeData;
+        }
+        traces.push(traceObj);
       }
     } catch (e) {
       console.error(`Error creating trace for ${path} in ${fileKey}:`, e);
@@ -1568,6 +1727,11 @@ function createMultiDatasetChart(items) {
   }
   
   if (traces.length > 0) {
+    // Show CI checkbox if we have probabilistic data
+    if (hasProbabilistic) {
+      setShowCIVisible(true);
+    }
+
     // Annotate legend with max values if "Show Max" is checked
     const showMaxCb = getElement('showMax');
     if (showMaxCb && showMaxCb.checked) {
@@ -1608,6 +1772,14 @@ function createMultiDatasetChart(items) {
         setupPresetRelayoutSync(pDiv);
         refreshDynamicLegend();
         snapLogRangeToDecades(pDiv);
+        // Restore CI state if we have probabilistic data and it was previously checked
+        if (hasProbabilistic && wasCIChecked) {
+          const ciCheckboxNew = getElement('showCI');
+          if (ciCheckboxNew) {
+            ciCheckboxNew.checked = true;
+            toggleShowCI();
+          }
+        }
         hideChartLoading(container);
       });
   } else {
@@ -1632,6 +1804,15 @@ async function createRadionuclidesChart(path, savedAxisState) {
   const plotDiv = getElement('plotlyChart');
   const chartContainer = getElement('plotlyChartContainer');
   showChartLoading(chartContainer);
+  let wasCIChecked = false;
+  try {
+    const ciCheckbox = getElement('showCI');
+    if (ciCheckbox) {
+      wasCIChecked = !!ciCheckbox.checked;
+    }
+  } catch (e) {
+    // Ignore missing CI control during initial render.
+  }
   try {
   if (plotDiv) plotDiv.innerHTML = '';
   // Yield to browser for immediate UI update before heavy processing (cross-browser)
@@ -1651,9 +1832,44 @@ async function createRadionuclidesChart(path, savedAxisState) {
   
   // Store data for computing total
   const totalDataByFile = {};
+
+  /**
+   * Convert probabilistic raw data into per-timestep realization arrays.
+   * Returns null when the shape is not probabilistic.
+   * @param {Array} rawData
+   * @param {Array} timeData
+   * @returns {Array<Array<number>>|null}
+   */
+  function toProbabilisticTimeSlices(rawData, timeData) {
+    if (!Array.isArray(rawData) || !timeData || timeData.length === 0) {
+      return null;
+    }
+    if (Array.isArray(rawData[0])) {
+      return rawData.slice(0, timeData.length).map(timeSlice => {
+        if (!Array.isArray(timeSlice)) return [PDFSampler.toNumber(timeSlice)];
+        return timeSlice.map(PDFSampler.toNumber);
+      });
+    }
+    if (rawData.length > timeData.length && rawData.length % timeData.length === 0) {
+      const numRealizations = Math.floor(rawData.length / timeData.length);
+      const timeSlices = [];
+      for (let t = 0; t < timeData.length; t++) {
+        const values = [];
+        for (let r = 0; r < numRealizations; r++) {
+          values.push(PDFSampler.toNumber(rawData[t * numRealizations + r]));
+        }
+        timeSlices.push(values);
+      }
+      return timeSlices;
+    }
+    return null;
+  }
   
   // Track the starting index of each file's traces in the traces array
   const fileTraceStartIndex = {};
+  
+  // Track if any probabilistic data exists
+  let hasProbabilistic = false;
 
   let timeUnit = '';
   let yAxisUnit = '';
@@ -1710,9 +1926,13 @@ async function createRadionuclidesChart(path, savedAxisState) {
             yData = dataset.toArray();
           }
           if (yData) {
-            let yArray = PDFSampler.normalizeDataArray(yData);
+            const normalizedRawData = PDFSampler.normalizeDataArray(yData);
+            let yArray = normalizedRawData;
+            let isProbabilistic = false;
             // Handle probabilistic data
             if (checkIsProbabilistic(dataset)) {
+              isProbabilistic = true;
+              hasProbabilistic = true;
               yArray = computeProbabilisticMean(yArray, timeData);
             }
             const minLength = Math.min(timeData.length, yArray.length);
@@ -1720,9 +1940,48 @@ async function createRadionuclidesChart(path, savedAxisState) {
             const trimmedYData = yArray.slice(0, minLength);
             // Store data for computing total
             if (!totalDataByFile[fileKey]) {
-              totalDataByFile[fileKey] = { timeData: trimmedTimeData, dataArrays: [] };
+              totalDataByFile[fileKey] = {
+                timeData: trimmedTimeData,
+                dataArrays: [],
+                probabilisticSlices: null
+              };
             }
             totalDataByFile[fileKey].dataArrays.push(trimmedYData);
+            if (isProbabilistic) {
+              const datasetSlices = toProbabilisticTimeSlices(normalizedRawData, trimmedTimeData);
+              if (datasetSlices) {
+                if (!totalDataByFile[fileKey].probabilisticSlices) {
+                  totalDataByFile[fileKey].probabilisticSlices = datasetSlices.map((values, idx) => {
+                    const deterministicBase = totalDataByFile[fileKey].dataArrays.length > 1
+                      ? totalDataByFile[fileKey].dataArrays
+                          .slice(0, totalDataByFile[fileKey].dataArrays.length - 1)
+                          .reduce((sum, arr) => sum + (arr[idx] || 0), 0)
+                      : 0;
+                    return values.map(v => v + deterministicBase);
+                  });
+                } else {
+                  const totalSlices = totalDataByFile[fileKey].probabilisticSlices;
+                  const compatible = totalSlices.length === datasetSlices.length
+                    && totalSlices.every((values, idx) => values.length === datasetSlices[idx].length);
+                  if (compatible) {
+                    for (let t = 0; t < totalSlices.length; t++) {
+                      for (let r = 0; r < totalSlices[t].length; r++) {
+                        totalSlices[t][r] += datasetSlices[t][r];
+                      }
+                    }
+                  } else {
+                    totalDataByFile[fileKey].probabilisticSlices = null;
+                  }
+                }
+              }
+            } else if (totalDataByFile[fileKey].probabilisticSlices) {
+              const totalSlices = totalDataByFile[fileKey].probabilisticSlices;
+              for (let t = 0; t < Math.min(totalSlices.length, trimmedYData.length); t++) {
+                for (let r = 0; r < totalSlices[t].length; r++) {
+                  totalSlices[t][r] += trimmedYData[t];
+                }
+              }
+            }
             // Get line style for this radionuclide
             const lineStyle = getLineStyle(datasetKey);
             let traceName = datasetKey;
@@ -1731,7 +1990,14 @@ async function createRadionuclidesChart(path, savedAxisState) {
               traceName = `${datasetKey} (${filenameDiff(enabledFiles[0], fileKey)})`;
               lineWidth = lineWidth / 2;
             }
-            traces.push(ChartService.timeSeriesTrace({ x: trimmedTimeData, y: trimmedYData, name: traceName, line: { color: lineStyle.color, dash: lineStyle.dash, width: lineWidth }, _datasetKey: datasetKey }));
+            const traceObj = ChartService.timeSeriesTrace({ x: trimmedTimeData, y: trimmedYData, name: traceName, line: { color: lineStyle.color, dash: lineStyle.dash, width: lineWidth }, _datasetKey: datasetKey });
+            traceObj._isProbabilistic = isProbabilistic;
+            if (isProbabilistic) {
+              // Store raw data and time data on the trace for CI computation
+              traceObj._rawData = normalizedRawData;
+              traceObj._timeData = trimmedTimeData;
+            }
+            traces.push(traceObj);
           }
           // Yield to browser for UI update after each dataset
           await Promise.resolve();
@@ -1837,6 +2103,12 @@ async function createRadionuclidesChart(path, savedAxisState) {
           type: 'scatter',
           _datasetKey: '__total__'
         };
+
+        if (fileData.probabilisticSlices) {
+          totalTracesByFile[fileKey]._isProbabilistic = true;
+          totalTracesByFile[fileKey]._rawData = fileData.probabilisticSlices;
+          totalTracesByFile[fileKey]._timeData = timeData;
+        }
       }
     }
 
@@ -1898,6 +2170,9 @@ async function createRadionuclidesChart(path, savedAxisState) {
   
   // Render chart if we have traces
   if (traces.length > 0) {
+    // Show CI checkbox if we have probabilistic data
+    setShowCIVisible(hasProbabilistic);
+    
     // Annotate legend with max values if "Show Max" is checked and ratio is not active
     if (!showRatioChecked) {
       const showMaxCb = getElement('showMax');
@@ -1939,7 +2214,15 @@ async function createRadionuclidesChart(path, savedAxisState) {
     applyAxisState(layout, savedAxisState);
     _applyLockedAxes(layout);
     
-    renderChart(traces, layout, path);
+    renderChart(traces, layout, path, () => {
+      if (hasProbabilistic && wasCIChecked) {
+        const ciCheckbox = getElement('showCI');
+        if (ciCheckbox) {
+          ciCheckbox.checked = true;
+          toggleShowCI();
+        }
+      }
+    });
   } else {
     hideChartLoading(chartContainer);
     hideChart();

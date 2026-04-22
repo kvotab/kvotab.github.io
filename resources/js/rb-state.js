@@ -274,4 +274,16 @@ function setShowMaxVisible(show) {
   }
 }
 
+/**
+ * Show or hide the "CI (5-95%)" checkbox based on context.
+ * Visible when probabilistic data is being displayed in a time-series chart.
+ * @param {boolean} show - Whether to show the checkbox
+ */
+function setShowCIVisible(show) {
+  const label = getElement('showCILabel');
+  if (label) {
+    label.style.display = show ? '' : 'none';
+  }
+}
+
 
