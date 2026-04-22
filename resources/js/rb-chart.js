@@ -1310,9 +1310,11 @@ async function toggleShowCI() {
     if (showCI) {
       const ciTraces = [];
       plotDiv.data.forEach((trace) => {
-        if (trace._isProbabilistic && trace._rawData && trace._timeData) {
-          const p5 = computeProbabilisticPercentile(trace._rawData, trace._timeData, 5);
-          const p95 = computeProbabilisticPercentile(trace._rawData, trace._timeData, 95);
+        const hasColumnCI = Array.isArray(trace._ciP5) && Array.isArray(trace._ciP95) && trace._timeData;
+        const hasProbCI = trace._isProbabilistic && trace._rawData && trace._timeData;
+        if (hasColumnCI || hasProbCI) {
+          const p5 = hasColumnCI ? trace._ciP5 : computeProbabilisticPercentile(trace._rawData, trace._timeData, 5);
+          const p95 = hasColumnCI ? trace._ciP95 : computeProbabilisticPercentile(trace._rawData, trace._timeData, 95);
           const minLength = Math.min(trace._timeData.length, p5.length, p95.length);
           const timeSlice = trace._timeData.slice(0, minLength);
           const p5Slice = p5.slice(0, minLength);
@@ -1469,11 +1471,22 @@ function createPlotlyChart(path) {
       }
 
       if (yData) {
-        let yArray = PDFSampler.normalizeDataArray(yData);
+        const normalizedRawData = PDFSampler.normalizeDataArray(yData);
+        let yArray = normalizedRawData;
         let isProbabilistic = false;
+        let ciFromColumns = null;
+
+        const colStats = getColumnStatisticsSeries(dataset, normalizedRawData, timeData);
+        if (colStats && Array.isArray(colStats.meanSeries)) {
+          yArray = colStats.meanSeries;
+          if (Array.isArray(colStats.p5Series) && Array.isArray(colStats.p95Series)) {
+            hasProbabilistic = true;
+            ciFromColumns = { p5: colStats.p5Series, p95: colStats.p95Series };
+          }
+        }
 
         // Handle probabilistic data (take mean)
-        if (checkIsProbabilistic(dataset)) {
+        if (!colStats && checkIsProbabilistic(dataset)) {
           isProbabilistic = true;
           hasProbabilistic = true;
           // Store raw data for CI band computation later
@@ -1488,10 +1501,14 @@ function createPlotlyChart(path) {
         }
 
         const traceObj = ChartService.timeSeriesTrace({ x: timeData.slice(0, minLength), y: yArray.slice(0, minLength), name: buildTraceName(yAxisName, path, fileKey, [path], enabledFiles) });
-        traceObj._isProbabilistic = isProbabilistic;
+        traceObj._isProbabilistic = isProbabilistic || !!ciFromColumns;
         if (isProbabilistic) {
           // Store raw data and time data on the trace for CI computation
-          traceObj._rawData = PDFSampler.normalizeDataArray(yData);  // Re-normalize to get original structure
+          traceObj._rawData = normalizedRawData;
+          traceObj._timeData = timeData.slice(0, minLength);
+        } else if (ciFromColumns) {
+          traceObj._ciP5 = ciFromColumns.p5.slice(0, minLength);
+          traceObj._ciP95 = ciFromColumns.p95.slice(0, minLength);
           traceObj._timeData = timeData.slice(0, minLength);
         }
         traces.push(traceObj);
@@ -1686,11 +1703,22 @@ function createMultiDatasetChart(items) {
       }
       
       if (yData) {
-        let yArray = PDFSampler.normalizeDataArray(yData);
+        const normalizedRawData = PDFSampler.normalizeDataArray(yData);
+        let yArray = normalizedRawData;
         let isProbabilistic = false;
+        let ciFromColumns = null;
+
+        const colStats = getColumnStatisticsSeries(dataset, normalizedRawData, timeData);
+        if (colStats && Array.isArray(colStats.meanSeries)) {
+          yArray = colStats.meanSeries;
+          if (Array.isArray(colStats.p5Series) && Array.isArray(colStats.p95Series)) {
+            hasProbabilistic = true;
+            ciFromColumns = { p5: colStats.p5Series, p95: colStats.p95Series };
+          }
+        }
         
         // Handle probabilistic data (take mean)
-        if (checkIsProbabilistic(dataset)) {
+        if (!colStats && checkIsProbabilistic(dataset)) {
           isProbabilistic = true;
           hasProbabilistic = true;
           // Store raw data for CI band computation later
@@ -1713,10 +1741,14 @@ function createMultiDatasetChart(items) {
           lineWidth = 1.5;
         }
         const traceObj = ChartService.timeSeriesTrace({ x: trimmedTimeData, y: trimmedYData, name: traceName, line: { color: baseColor, dash: lineDash, width: lineWidth }, hovertemplate: `<b>${traceName}</b><br>Time: %{x}<br>Value: %{y}<extra></extra>` });
-        traceObj._isProbabilistic = isProbabilistic;
+        traceObj._isProbabilistic = isProbabilistic || !!ciFromColumns;
         if (isProbabilistic) {
           // Store raw data and time data on the trace for CI computation
-          traceObj._rawData = PDFSampler.normalizeDataArray(yData);  // Re-normalize to get original structure
+          traceObj._rawData = normalizedRawData;
+          traceObj._timeData = trimmedTimeData;
+        } else if (ciFromColumns) {
+          traceObj._ciP5 = ciFromColumns.p5.slice(0, minLength);
+          traceObj._ciP95 = ciFromColumns.p95.slice(0, minLength);
           traceObj._timeData = trimmedTimeData;
         }
         traces.push(traceObj);
@@ -1929,8 +1961,18 @@ async function createRadionuclidesChart(path, savedAxisState) {
             const normalizedRawData = PDFSampler.normalizeDataArray(yData);
             let yArray = normalizedRawData;
             let isProbabilistic = false;
+            let ciFromColumns = null;
+
+            const colStats = getColumnStatisticsSeries(dataset, normalizedRawData, timeData);
+            if (colStats && Array.isArray(colStats.meanSeries)) {
+              yArray = colStats.meanSeries;
+              if (Array.isArray(colStats.p5Series) && Array.isArray(colStats.p95Series)) {
+                hasProbabilistic = true;
+                ciFromColumns = { p5: colStats.p5Series, p95: colStats.p95Series };
+              }
+            }
             // Handle probabilistic data
-            if (checkIsProbabilistic(dataset)) {
+            if (!colStats && checkIsProbabilistic(dataset)) {
               isProbabilistic = true;
               hasProbabilistic = true;
               yArray = computeProbabilisticMean(yArray, timeData);
@@ -1991,10 +2033,14 @@ async function createRadionuclidesChart(path, savedAxisState) {
               lineWidth = lineWidth / 2;
             }
             const traceObj = ChartService.timeSeriesTrace({ x: trimmedTimeData, y: trimmedYData, name: traceName, line: { color: lineStyle.color, dash: lineStyle.dash, width: lineWidth }, _datasetKey: datasetKey });
-            traceObj._isProbabilistic = isProbabilistic;
+            traceObj._isProbabilistic = isProbabilistic || !!ciFromColumns;
             if (isProbabilistic) {
               // Store raw data and time data on the trace for CI computation
               traceObj._rawData = normalizedRawData;
+              traceObj._timeData = trimmedTimeData;
+            } else if (ciFromColumns) {
+              traceObj._ciP5 = ciFromColumns.p5.slice(0, minLength);
+              traceObj._ciP95 = ciFromColumns.p95.slice(0, minLength);
               traceObj._timeData = trimmedTimeData;
             }
             traces.push(traceObj);
