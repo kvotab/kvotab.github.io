@@ -2,6 +2,90 @@
    5. TAB MANAGEMENT
    ========================================================================== */
 
+let _fileTabTooltipEl = null;
+
+/**
+ * Ensure a shared tooltip element exists for file tabs.
+ * @returns {HTMLElement}
+ */
+function ensureFileTabTooltip() {
+  if (_fileTabTooltipEl && document.body.contains(_fileTabTooltipEl)) return _fileTabTooltipEl;
+  const el = document.createElement('div');
+  el.id = 'fileTabTooltip';
+  el.className = 'file-tab-tooltip';
+  el.style.display = 'none';
+  document.body.appendChild(el);
+  _fileTabTooltipEl = el;
+  return el;
+}
+
+/**
+ * Very small sanitizer for HTML shown in tooltips.
+ * Removes script/style tags and inline event handlers.
+ *
+ * @param {string} html
+ * @returns {string}
+ */
+function sanitizeTooltipHtml(html) {
+  if (!html) return '';
+  const container = document.createElement('div');
+  container.innerHTML = String(html);
+  container.querySelectorAll('script, style').forEach(n => n.remove());
+  container.querySelectorAll('*').forEach(node => {
+    for (const attr of Array.from(node.attributes || [])) {
+      const attrName = (attr.name || '').toLowerCase();
+      const attrVal = String(attr.value || '').trim().toLowerCase();
+      if (attrName.startsWith('on')) node.removeAttribute(attr.name);
+      if ((attrName === 'href' || attrName === 'src') && attrVal.startsWith('javascript:')) {
+        node.removeAttribute(attr.name);
+      }
+    }
+  });
+  return container.innerHTML;
+}
+
+/**
+ * Read root-level Information attribute HTML from a file, if present.
+ * @param {Object} file
+ * @returns {string}
+ */
+function getRootInformationHtml(file) {
+  if (!file) return '';
+  try {
+    const root = FileService.get(file, '/');
+    const attrCandidates = [
+      getAttr(root, 'Information'),
+      getAttr(root, 'information'),
+      getAttr(file, 'Information'),
+      getAttr(file, 'information')
+    ];
+    const info = attrCandidates.find(v => v !== undefined && v !== null && String(v).trim() !== '');
+    return info !== undefined && info !== null ? String(info) : '';
+  } catch (e) {
+    return '';
+  }
+}
+
+/**
+ * Position tooltip near mouse while keeping it inside viewport.
+ * @param {HTMLElement} tooltip
+ * @param {MouseEvent} evt
+ */
+function positionFileTabTooltip(tooltip, evt) {
+  const margin = 12;
+  const vw = window.innerWidth || document.documentElement.clientWidth;
+  const vh = window.innerHeight || document.documentElement.clientHeight;
+  const rect = tooltip.getBoundingClientRect();
+  let left = evt.clientX + margin;
+  let top = evt.clientY + margin;
+  if (left + rect.width > vw - margin) left = vw - rect.width - margin;
+  if (top + rect.height > vh - margin) top = vh - rect.height - margin;
+  if (left < margin) left = margin;
+  if (top < margin) top = margin;
+  tooltip.style.left = `${left}px`;
+  tooltip.style.top = `${top}px`;
+}
+
 /**
  * Update the file tabs display and reinitialize drag-drop sorting.
  * Renders a tab for each loaded file, handles click-to-toggle and
@@ -16,13 +100,20 @@
 function updateTabs(forceRefresh) {
   const tabsContainer = document.getElementById('fileTabs');
   const previousTreeFile = currentTreeFile;
+  const tooltipHtmlByFile = {};
+
+  for (const key of fileOrder) {
+    const infoHtml = getRootInformationHtml(loadedFiles[key]);
+    const safeInfoHtml = sanitizeTooltipHtml(infoHtml);
+    tooltipHtmlByFile[key] = `<div class="file-tab-tooltip-title">${escapeHtml(key)}</div>${safeInfoHtml ? `<div class="file-tab-tooltip-info">${safeInfoHtml}</div>` : ''}`;
+  }
   
   // Render tabs
   tabsContainer.innerHTML = fileOrder.map(key => {
     const isEnabled = fileStates[key];
     return `
       <div class="file-tab ${isEnabled ? 'enabled' : 'disabled'}" data-file="${escapeHtml(key)}">
-        <div class="file-tab-name" title="${escapeHtml(key)}">${escapeHtml(key)}</div>
+        <div class="file-tab-name">${escapeHtml(key)}</div>
         <div class="file-tab-close" onclick="event.stopPropagation(); removeFile('${key.replace(/'/g, "\\'")}')">×</div>
       </div>
     `;
@@ -31,6 +122,28 @@ function updateTabs(forceRefresh) {
   // Add click handlers for toggle
   document.querySelectorAll('.file-tab').forEach(tab => {
     const fileName = tab.getAttribute('data-file');
+    tab.removeAttribute('title');
+    tab.querySelectorAll('[title]').forEach(el => el.removeAttribute('title'));
+
+    tab.addEventListener('mouseenter', (evt) => {
+      const tooltip = ensureFileTabTooltip();
+      tooltip.innerHTML = tooltipHtmlByFile[fileName] || `<div class="file-tab-tooltip-title">${escapeHtml(fileName || '')}</div>`;
+      tooltip.style.display = 'block';
+      positionFileTabTooltip(tooltip, evt);
+    });
+
+    tab.addEventListener('mousemove', (evt) => {
+      const tooltip = ensureFileTabTooltip();
+      if (tooltip.style.display !== 'none') {
+        positionFileTabTooltip(tooltip, evt);
+      }
+    });
+
+    tab.addEventListener('mouseleave', () => {
+      const tooltip = ensureFileTabTooltip();
+      tooltip.style.display = 'none';
+    });
+
     tab.addEventListener('click', (e) => {
       if (!e.target.classList.contains('file-tab-close')) {
         toggleFileState(fileName);

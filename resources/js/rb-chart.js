@@ -1366,6 +1366,125 @@ async function toggleShowCI() {
 }
 
 /**
+ * Toggle SDOM band display.
+ * SDOM band is mean +/- (sigma / sqrt(n_iter)).
+ */
+async function toggleShowSDOM() {
+  const plotDiv = getElement('plotlyChart');
+  if (!plotDiv || !plotDiv.data) {
+    return;
+  }
+  const chartContainer = getElement('plotlyChartContainer');
+
+  const showSDOM = getElement('showSDOM')?.checked;
+  const shouldShowLoader = !!showSDOM;
+  if (shouldShowLoader) {
+    showChartLoading(chartContainer, 'Calculating SDOM band...');
+    await new Promise(requestAnimationFrame);
+    await new Promise(resolve => setTimeout(resolve, 0));
+  }
+
+  try {
+    const existingIndices = [];
+    plotDiv.data.forEach((trace, idx) => {
+      if (trace._isSDOMBand) {
+        existingIndices.push(idx);
+      }
+    });
+    if (existingIndices.length > 0) {
+      await Plotly.deleteTraces(plotDiv, existingIndices);
+    }
+
+    if (showSDOM) {
+      const sdomTraces = [];
+      plotDiv.data.forEach((trace) => {
+        const hasAttrSDOM = Array.isArray(trace._sdomLower) && Array.isArray(trace._sdomUpper) && trace._timeData;
+        const hasProbSDOM = !!trace._nIter && trace._nIter > 1 && trace._rawData && trace._timeData;
+        if (!hasAttrSDOM && !hasProbSDOM) return;
+
+        const lower = hasAttrSDOM ? trace._sdomLower : (computeProbabilisticSDOMBand(trace._rawData, trace._timeData, trace._nIter)?.lower || []);
+        const upper = hasAttrSDOM ? trace._sdomUpper : (computeProbabilisticSDOMBand(trace._rawData, trace._timeData, trace._nIter)?.upper || []);
+        const minLength = Math.min(trace._timeData.length, lower.length, upper.length);
+        if (minLength <= 0) return;
+
+        const timeSlice = trace._timeData.slice(0, minLength);
+        const lowerSlice = lower.slice(0, minLength);
+        const upperSlice = upper.slice(0, minLength);
+
+        let traceColor = 'rgba(120, 120, 120, 0.18)';
+        let hatchColor = 'rgba(90, 90, 90, 0.22)';
+        if (trace.line && trace.line.color) {
+          const color = trace.line.color;
+          if (color.startsWith('rgba')) {
+            traceColor = color.replace(/,[\s]*[\d.]+\s*\)$/, ', 0.18)');
+            hatchColor = color.replace(/,[\s]*[\d.]+\s*\)$/, ', 0.28)');
+          } else if (color.startsWith('rgb')) {
+            traceColor = color.replace(/^rgb\(/, 'rgba(').replace(/\)$/, ', 0.18)');
+            hatchColor = color.replace(/^rgb\(/, 'rgba(').replace(/\)$/, ', 0.28)');
+          } else if (color.startsWith('#')) {
+            const hex = color.slice(1);
+            const r = parseInt(hex.substr(0, 2), 16);
+            const g = parseInt(hex.substr(2, 2), 16);
+            const b = parseInt(hex.substr(4, 2), 16);
+            traceColor = `rgba(${r}, ${g}, ${b}, 0.18)`;
+            hatchColor = `rgba(${r}, ${g}, ${b}, 0.28)`;
+          }
+        }
+
+        sdomTraces.push({
+          x: [...timeSlice, ...timeSlice.slice().reverse()],
+          y: [...upperSlice, ...lowerSlice.slice().reverse()],
+          fill: 'tozeroy',
+          fillcolor: traceColor,
+          line: { color: 'rgba(255, 255, 255, 0)' },
+          showlegend: false,
+          hoverinfo: 'skip',
+          _hiddenFromLegend: true,
+          _isSDOMBand: true,
+          mode: 'lines',
+          name: 'SDOM Band'
+        });
+
+        // Add a hatch-like overlay using sparse vertical stripe segments.
+        // Use null separators so Plotly renders disjoint line pieces.
+        const stripeX = [];
+        const stripeY = [];
+        const stripeStep = Math.max(1, Math.floor(minLength / 36));
+        for (let i = 0; i < minLength; i += stripeStep) {
+          const low = lowerSlice[i];
+          const up = upperSlice[i];
+          if (low === null || up === null || !isFinite(low) || !isFinite(up)) continue;
+          stripeX.push(timeSlice[i], timeSlice[i], null);
+          stripeY.push(up, low, null);
+        }
+        if (stripeX.length > 0) {
+          sdomTraces.push({
+            x: stripeX,
+            y: stripeY,
+            mode: 'lines',
+            line: { color: hatchColor, width: 1, dash: 'dot' },
+            showlegend: false,
+            hoverinfo: 'skip',
+            _hiddenFromLegend: true,
+            _isSDOMBand: true,
+            _isSDOMHatch: true,
+            name: 'SDOM Hatch'
+          });
+        }
+      });
+
+      if (sdomTraces.length > 0) {
+        await Plotly.addTraces(plotDiv, sdomTraces);
+      }
+    }
+  } finally {
+    if (shouldShowLoader) {
+      hideChartLoading(chartContainer);
+    }
+  }
+}
+
+/**
  * Append the maximum y-value to each trace's legend name.
  * Formats as "name (max)" using 3 significant digits.
  * Skips traces that are hidden from the legend.
@@ -1402,10 +1521,15 @@ function createPlotlyChart(path) {
   const plotDiv = getElement('plotlyChart');
 
   let wasCIChecked = false;
+  let wasSDOMChecked = false;
   try {
     const ciCheckbox = getElement('showCI');
     if (ciCheckbox) {
       wasCIChecked = !!ciCheckbox.checked;
+    }
+    const sdomCheckbox = getElement('showSDOM');
+    if (sdomCheckbox) {
+      wasSDOMChecked = !!sdomCheckbox.checked;
     }
   } catch (e) {
     // Ignore missing CI control during initial render.
@@ -1418,11 +1542,14 @@ function createPlotlyChart(path) {
   setShowRatioVisible(false);
   setShowMaxVisible(true);
   setShowCIVisible(false);  // Will be enabled if we have probabilistic data
+  setShowSDOMVisible(false); // Will be enabled if SDOM is available
 
   const traces = [];
   const enabledFiles = getEffectiveFiles();
   const probDataInfo = [];  // Track raw data for probabilistic datasets
   let hasProbabilistic = false;
+  let hasSDOM = false;
+  const nIterByFile = {};
 
   let timeUnit = '';
   let yAxisUnit = '';
@@ -1445,6 +1572,10 @@ function createPlotlyChart(path) {
   // Build traces for each enabled file
   for (const fileKey of enabledFiles) {
     const file = loadedFiles[fileKey];
+    if (nIterByFile[fileKey] === undefined) {
+      nIterByFile[fileKey] = getRootNIter(file);
+    }
+    const nIter = nIterByFile[fileKey];
 
     if (!checkDatasetExistsInFile(file, path)) {
       continue;
@@ -1475,6 +1606,7 @@ function createPlotlyChart(path) {
         let yArray = normalizedRawData;
         let isProbabilistic = false;
         let ciFromColumns = null;
+        let sdomFromAttr = null;
 
         const colStats = getColumnStatisticsSeries(dataset, normalizedRawData, timeData);
         if (colStats && Array.isArray(colStats.meanSeries)) {
@@ -1494,6 +1626,16 @@ function createPlotlyChart(path) {
           yArray = computeProbabilisticMean(yArray, timeData);
         }
 
+        if (!isProbabilistic) {
+          sdomFromAttr = getDatasetAttributeSDOM(dataset, timeData, nIter);
+          if (sdomFromAttr && Array.isArray(sdomFromAttr.meanSeries)) {
+            yArray = sdomFromAttr.meanSeries;
+            hasSDOM = true;
+          }
+        } else if (nIter && nIter > 1) {
+          hasSDOM = true;
+        }
+
         // Handle length mismatch
         const minLength = Math.min(timeData.length, yArray.length);
         if (timeData.length !== yArray.length) {
@@ -1506,9 +1648,17 @@ function createPlotlyChart(path) {
           // Store raw data and time data on the trace for CI computation
           traceObj._rawData = normalizedRawData;
           traceObj._timeData = timeData.slice(0, minLength);
+          if (nIter && nIter > 1) {
+            traceObj._nIter = nIter;
+          }
         } else if (ciFromColumns) {
           traceObj._ciP5 = ciFromColumns.p5.slice(0, minLength);
           traceObj._ciP95 = ciFromColumns.p95.slice(0, minLength);
+          traceObj._timeData = timeData.slice(0, minLength);
+        }
+        if (sdomFromAttr) {
+          traceObj._sdomLower = sdomFromAttr.lower.slice(0, minLength);
+          traceObj._sdomUpper = sdomFromAttr.upper.slice(0, minLength);
           traceObj._timeData = timeData.slice(0, minLength);
         }
         traces.push(traceObj);
@@ -1551,6 +1701,7 @@ function createPlotlyChart(path) {
 
     // Show CI checkbox if we have probabilistic data
     setShowCIVisible(hasProbabilistic);
+    setShowSDOMVisible(hasSDOM);
     
     const config = getPlotlyConfig('multi_dataset_chart');
 
@@ -1571,6 +1722,13 @@ function createPlotlyChart(path) {
         if (ciCheckboxNew) {
           ciCheckboxNew.checked = true;
           toggleShowCI();
+        }
+      }
+      if (hasSDOM && wasSDOMChecked) {
+        const sdomCheckboxNew = getElement('showSDOM');
+        if (sdomCheckboxNew) {
+          sdomCheckboxNew.checked = true;
+          toggleShowSDOM();
         }
       }
       hideChartLoading(chartContainer);
@@ -1597,10 +1755,15 @@ function createMultiDatasetChart(items) {
   
     // Save CI state and checkbox reference before clearing
     let wasCIChecked = false;
+    let wasSDOMChecked = false;
     try {
       const ciCheckbox = getElement('showCI');
       if (ciCheckbox) {
         wasCIChecked = ciCheckbox.checked || false;
+      }
+      const sdomCheckbox = getElement('showSDOM');
+      if (sdomCheckbox) {
+        wasSDOMChecked = sdomCheckbox.checked || false;
       }
     } catch (e) {
       // If checkbox doesn't exist yet, that's fine
@@ -1613,11 +1776,14 @@ function createMultiDatasetChart(items) {
   setShowRatioVisible(false);
   setShowMaxVisible(true);
   setShowCIVisible(false);  // Will be enabled if we have probabilistic data
+  setShowSDOMVisible(false); // Will be enabled if SDOM is available
   
   const traces = [];
   const yAxisUnits = new Set();
   const probDataInfo = [];  // Track raw data for probabilistic datasets
   let hasProbabilistic = false;
+  let hasSDOM = false;
+  const nIterByFile = {};
   let timeUnit = '';
   const meanTracesByIndex = {};  // Map CI trace back to mean trace for color matching
   
@@ -1676,6 +1842,10 @@ function createMultiDatasetChart(items) {
     
     const file = loadedFiles[fileKey];
     if (!file || !checkDatasetExistsInFile(file, path)) continue;
+    if (nIterByFile[fileKey] === undefined) {
+      nIterByFile[fileKey] = getRootNIter(file);
+    }
+    const nIter = nIterByFile[fileKey];
     
     try {
       const dataset = FileService.get(file, path);
@@ -1707,6 +1877,7 @@ function createMultiDatasetChart(items) {
         let yArray = normalizedRawData;
         let isProbabilistic = false;
         let ciFromColumns = null;
+        let sdomFromAttr = null;
 
         const colStats = getColumnStatisticsSeries(dataset, normalizedRawData, timeData);
         if (colStats && Array.isArray(colStats.meanSeries)) {
@@ -1724,6 +1895,16 @@ function createMultiDatasetChart(items) {
           // Store raw data for CI band computation later
           probDataInfo.push({ yArray, timeData: timeData.slice() });
           yArray = computeProbabilisticMean(yArray, timeData);
+        }
+
+        if (!isProbabilistic) {
+          sdomFromAttr = getDatasetAttributeSDOM(dataset, timeData, nIter);
+          if (sdomFromAttr && Array.isArray(sdomFromAttr.meanSeries)) {
+            yArray = sdomFromAttr.meanSeries;
+            hasSDOM = true;
+          }
+        } else if (nIter && nIter > 1) {
+          hasSDOM = true;
         }
 
         const minLength = Math.min(timeData.length, yArray.length);
@@ -1746,9 +1927,17 @@ function createMultiDatasetChart(items) {
           // Store raw data and time data on the trace for CI computation
           traceObj._rawData = normalizedRawData;
           traceObj._timeData = trimmedTimeData;
+          if (nIter && nIter > 1) {
+            traceObj._nIter = nIter;
+          }
         } else if (ciFromColumns) {
           traceObj._ciP5 = ciFromColumns.p5.slice(0, minLength);
           traceObj._ciP95 = ciFromColumns.p95.slice(0, minLength);
+          traceObj._timeData = trimmedTimeData;
+        }
+        if (sdomFromAttr) {
+          traceObj._sdomLower = sdomFromAttr.lower.slice(0, minLength);
+          traceObj._sdomUpper = sdomFromAttr.upper.slice(0, minLength);
           traceObj._timeData = trimmedTimeData;
         }
         traces.push(traceObj);
@@ -1762,6 +1951,9 @@ function createMultiDatasetChart(items) {
     // Show CI checkbox if we have probabilistic data
     if (hasProbabilistic) {
       setShowCIVisible(true);
+    }
+    if (hasSDOM) {
+      setShowSDOMVisible(true);
     }
 
     // Annotate legend with max values if "Show Max" is checked
@@ -1812,6 +2004,13 @@ function createMultiDatasetChart(items) {
             toggleShowCI();
           }
         }
+        if (hasSDOM && wasSDOMChecked) {
+          const sdomCheckboxNew = getElement('showSDOM');
+          if (sdomCheckboxNew) {
+            sdomCheckboxNew.checked = true;
+            toggleShowSDOM();
+          }
+        }
         hideChartLoading(container);
       });
   } else {
@@ -1837,10 +2036,15 @@ async function createRadionuclidesChart(path, savedAxisState) {
   const chartContainer = getElement('plotlyChartContainer');
   showChartLoading(chartContainer);
   let wasCIChecked = false;
+  let wasSDOMChecked = false;
   try {
     const ciCheckbox = getElement('showCI');
     if (ciCheckbox) {
       wasCIChecked = !!ciCheckbox.checked;
+    }
+    const sdomCheckbox = getElement('showSDOM');
+    if (sdomCheckbox) {
+      wasSDOMChecked = !!sdomCheckbox.checked;
     }
   } catch (e) {
     // Ignore missing CI control during initial render.
@@ -1853,6 +2057,8 @@ async function createRadionuclidesChart(path, savedAxisState) {
   // Show "Show Total" checkbox for radionuclides groups
   setShowTotalVisible(true);
   setShowMaxVisible(true);
+  setShowCIVisible(false);
+  setShowSDOMVisible(false);
   
   const traces = [];
   const enabledFiles = getEffectiveFiles();
@@ -1864,6 +2070,7 @@ async function createRadionuclidesChart(path, savedAxisState) {
   
   // Store data for computing total
   const totalDataByFile = {};
+  const nIterByFile = {};
 
   /**
    * Convert probabilistic raw data into per-timestep realization arrays.
@@ -1902,6 +2109,7 @@ async function createRadionuclidesChart(path, savedAxisState) {
   
   // Track if any probabilistic data exists
   let hasProbabilistic = false;
+  let hasSDOM = false;
 
   let timeUnit = '';
   let yAxisUnit = '';
@@ -1915,6 +2123,10 @@ async function createRadionuclidesChart(path, savedAxisState) {
   // Build traces for each file and each radionuclide
   for (const fileKey of enabledFiles) {
     const file = loadedFiles[fileKey];
+    if (nIterByFile[fileKey] === undefined) {
+      nIterByFile[fileKey] = getRootNIter(file);
+    }
+    const nIter = nIterByFile[fileKey];
     
     // Record where this file's traces begin
     fileTraceStartIndex[fileKey] = traces.length;
@@ -1962,6 +2174,7 @@ async function createRadionuclidesChart(path, savedAxisState) {
             let yArray = normalizedRawData;
             let isProbabilistic = false;
             let ciFromColumns = null;
+            let sdomFromAttr = null;
 
             const colStats = getColumnStatisticsSeries(dataset, normalizedRawData, timeData);
             if (colStats && Array.isArray(colStats.meanSeries)) {
@@ -1977,6 +2190,15 @@ async function createRadionuclidesChart(path, savedAxisState) {
               hasProbabilistic = true;
               yArray = computeProbabilisticMean(yArray, timeData);
             }
+            if (!isProbabilistic) {
+              sdomFromAttr = getDatasetAttributeSDOM(dataset, timeData, nIter);
+              if (sdomFromAttr && Array.isArray(sdomFromAttr.meanSeries)) {
+                yArray = sdomFromAttr.meanSeries;
+                hasSDOM = true;
+              }
+            } else if (nIter && nIter > 1) {
+              hasSDOM = true;
+            }
             const minLength = Math.min(timeData.length, yArray.length);
             const trimmedTimeData = timeData.slice(0, minLength);
             const trimmedYData = yArray.slice(0, minLength);
@@ -1985,7 +2207,8 @@ async function createRadionuclidesChart(path, savedAxisState) {
               totalDataByFile[fileKey] = {
                 timeData: trimmedTimeData,
                 dataArrays: [],
-                probabilisticSlices: null
+                probabilisticSlices: null,
+                nIter
               };
             }
             totalDataByFile[fileKey].dataArrays.push(trimmedYData);
@@ -2038,9 +2261,17 @@ async function createRadionuclidesChart(path, savedAxisState) {
               // Store raw data and time data on the trace for CI computation
               traceObj._rawData = normalizedRawData;
               traceObj._timeData = trimmedTimeData;
+              if (nIter && nIter > 1) {
+                traceObj._nIter = nIter;
+              }
             } else if (ciFromColumns) {
               traceObj._ciP5 = ciFromColumns.p5.slice(0, minLength);
               traceObj._ciP95 = ciFromColumns.p95.slice(0, minLength);
+              traceObj._timeData = trimmedTimeData;
+            }
+            if (sdomFromAttr) {
+              traceObj._sdomLower = sdomFromAttr.lower.slice(0, minLength);
+              traceObj._sdomUpper = sdomFromAttr.upper.slice(0, minLength);
               traceObj._timeData = trimmedTimeData;
             }
             traces.push(traceObj);
@@ -2154,6 +2385,10 @@ async function createRadionuclidesChart(path, savedAxisState) {
           totalTracesByFile[fileKey]._isProbabilistic = true;
           totalTracesByFile[fileKey]._rawData = fileData.probabilisticSlices;
           totalTracesByFile[fileKey]._timeData = timeData;
+          if (fileData.nIter && fileData.nIter > 1) {
+            totalTracesByFile[fileKey]._nIter = fileData.nIter;
+            hasSDOM = true;
+          }
         }
       }
     }
@@ -2218,6 +2453,7 @@ async function createRadionuclidesChart(path, savedAxisState) {
   if (traces.length > 0) {
     // Show CI checkbox if we have probabilistic data
     setShowCIVisible(hasProbabilistic);
+    setShowSDOMVisible(hasSDOM);
     
     // Annotate legend with max values if "Show Max" is checked and ratio is not active
     if (!showRatioChecked) {
@@ -2266,6 +2502,13 @@ async function createRadionuclidesChart(path, savedAxisState) {
         if (ciCheckbox) {
           ciCheckbox.checked = true;
           toggleShowCI();
+        }
+      }
+      if (hasSDOM && wasSDOMChecked) {
+        const sdomCheckbox = getElement('showSDOM');
+        if (sdomCheckbox) {
+          sdomCheckbox.checked = true;
+          toggleShowSDOM();
         }
       }
     });

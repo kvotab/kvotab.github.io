@@ -286,4 +286,16 @@ function setShowCIVisible(show) {
   }
 }
 
+/**
+ * Show or hide the "SDOM" checkbox based on context.
+ * Visible when SDOM can be computed for at least one displayed trace.
+ * @param {boolean} show - Whether to show the checkbox
+ */
+function setShowSDOMVisible(show) {
+  const label = getElement('showSDOMLabel');
+  if (label) {
+    label.style.display = show ? '' : 'none';
+  }
+}
+
 
