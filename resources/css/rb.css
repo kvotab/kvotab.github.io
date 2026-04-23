@@ -187,6 +187,60 @@
     .file-tab.enabled .file-tab-close:hover {
       background: rgba(53, 41, 33, 0.15);
     }
+
+    .file-tab-tooltip {
+      position: fixed;
+      z-index: 2147483647;
+      max-width: 360px;
+      min-width: 180px;
+      max-height: 55vh;
+      overflow: auto;
+      pointer-events: none;
+      background: var(--color-panel-bg);
+      border: 1px solid var(--color-panel-border);
+      border-radius: 8px;
+      box-shadow: 0 8px 22px rgba(0, 0, 0, 0.22);
+      padding: 8px 10px;
+      color: var(--color-text-primary);
+      font-size: 12px;
+      line-height: 1.35;
+      word-break: break-word;
+      overflow-wrap: anywhere;
+    }
+
+    .file-tab-tooltip-title {
+      font-weight: 600;
+      margin-bottom: 6px;
+      color: var(--color-kvot-primary);
+      border-bottom: 1px solid var(--color-panel-border);
+      padding-bottom: 4px;
+    }
+
+    .file-tab-tooltip-info {
+      color: var(--color-text-primary);
+    }
+
+    .file-tab-tooltip-info > :first-child {
+      margin-top: 0;
+    }
+
+    .file-tab-tooltip-info > :last-child {
+      margin-bottom: 0;
+    }
+
+    .file-tab-tooltip-info p,
+    .file-tab-tooltip-info ul,
+    .file-tab-tooltip-info ol,
+    .file-tab-tooltip-info pre,
+    .file-tab-tooltip-info blockquote {
+      margin: 0.3em 0;
+    }
+
+    .file-tab-tooltip-info pre,
+    .file-tab-tooltip-info code {
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
     
     .add-file-btn {
       padding: 4px 10px;

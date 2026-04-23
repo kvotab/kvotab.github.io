@@ -735,6 +735,165 @@ function computeProbabilisticMean(yArray, timeData) {
 }
 
 /**
+ * Get the root-level n_iter attribute from an HDF5 file.
+ * @param {Object} file - h5wasm file object
+ * @returns {number|null} Iteration count when > 1, else null
+ */
+function getRootNIter(file) {
+  try {
+    const root = FileService.get(file, '/');
+    const raw = getAttr(root, 'n_iter');
+    let n = raw;
+    if (Array.isArray(raw) || ArrayBuffer.isView(raw)) {
+      n = Array.from(raw)[0];
+    }
+    n = PDFSampler.toNumber(n);
+    if (isFinite(n) && n > 1) return n;
+  } catch (e) {
+    // ignore
+  }
+  return null;
+}
+
+/**
+ * Normalize an attribute value into a numeric series matching time length.
+ * Accepts scalar, array, typed array, or matrix-like values.
+ *
+ * @param {*} value
+ * @param {number} timeLength
+ * @returns {Array<number>|null}
+ */
+function normalizeAttrSeries(value, timeLength) {
+  if (value === undefined || value === null || !timeLength || timeLength <= 0) return null;
+
+  if (Array.isArray(value) || ArrayBuffer.isView(value)) {
+    const arr = PDFSampler.normalizeDataArray(value);
+    if (Array.isArray(arr[0])) {
+      const out = arr.slice(0, timeLength).map(v => {
+        const n = PDFSampler.toNumber(Array.isArray(v) ? v[0] : v);
+        return isFinite(n) ? n : null;
+      });
+      return out.some(v => v !== null) ? out : null;
+    }
+
+    if (arr.length === 1) {
+      const n = PDFSampler.toNumber(arr[0]);
+      if (!isFinite(n)) return null;
+      return new Array(timeLength).fill(n);
+    }
+
+    const out = arr.slice(0, timeLength).map(v => {
+      const n = PDFSampler.toNumber(v);
+      return isFinite(n) ? n : null;
+    });
+    return out.some(v => v !== null) ? out : null;
+  }
+
+  const n = PDFSampler.toNumber(value);
+  if (!isFinite(n)) return null;
+  return new Array(timeLength).fill(n);
+}
+
+/**
+ * Compute SDOM band from probabilistic realizations.
+ * SDOM = sigma / sqrt(n_iter)
+ *
+ * @param {Array} yArray
+ * @param {Array} timeData
+ * @param {number} nIter
+ * @returns {{lower:Array<number|null>, upper:Array<number|null>}|null}
+ */
+function computeProbabilisticSDOMBand(yArray, timeData, nIter) {
+  if (!nIter || nIter <= 1 || !Array.isArray(timeData) || timeData.length === 0) return null;
+  const sqrtN = Math.sqrt(nIter);
+  const lower = [];
+  const upper = [];
+
+  const pushFromValues = (values) => {
+    const nums = values.map(v => PDFSampler.toNumber(v)).filter(v => isFinite(v));
+    if (!nums.length) {
+      lower.push(null);
+      upper.push(null);
+      return;
+    }
+    const mean = nums.reduce((a, b) => a + b, 0) / nums.length;
+    let variance = 0;
+    for (const v of nums) variance += (v - mean) * (v - mean);
+    variance = nums.length > 1 ? variance / (nums.length - 1) : 0;
+    const sigma = Math.sqrt(Math.max(0, variance));
+    const sdom = sigma / sqrtN;
+    lower.push(mean - sdom);
+    upper.push(mean + sdom);
+  };
+
+  if (Array.isArray(yArray[0])) {
+    for (const timeSlice of yArray.slice(0, timeData.length)) {
+      pushFromValues(Array.isArray(timeSlice) ? timeSlice : [timeSlice]);
+    }
+    return { lower, upper };
+  }
+
+  if (yArray.length > timeData.length && yArray.length % timeData.length === 0) {
+    const numRealizations = Math.floor(yArray.length / timeData.length);
+    for (let t = 0; t < timeData.length; t++) {
+      const vals = [];
+      for (let r = 0; r < numRealizations; r++) {
+        vals.push(yArray[t * numRealizations + r]);
+      }
+      pushFromValues(vals);
+    }
+    return { lower, upper };
+  }
+
+  return null;
+}
+
+/**
+ * Compute SDOM band from dataset attributes mean and sigma.
+ * Requires both attributes and n_iter > 1.
+ *
+ * @param {Object} dataset
+ * @param {Array} timeData
+ * @param {number} nIter
+ * @returns {{meanSeries:Array<number|null>, lower:Array<number|null>, upper:Array<number|null>}|null}
+ */
+function getDatasetAttributeSDOM(dataset, timeData, nIter) {
+  if (!dataset || !nIter || nIter <= 1 || !Array.isArray(timeData) || timeData.length === 0) return null;
+  const meanAttr = getAttr(dataset, 'mean');
+  const sigmaAttr = getAttr(dataset, 'sigma');
+  if (meanAttr === undefined || meanAttr === null || sigmaAttr === undefined || sigmaAttr === null) {
+    return null;
+  }
+
+  const meanSeries = normalizeAttrSeries(meanAttr, timeData.length);
+  const sigmaSeries = normalizeAttrSeries(sigmaAttr, timeData.length);
+  if (!meanSeries || !sigmaSeries) return null;
+
+  const sqrtN = Math.sqrt(nIter);
+  const lower = [];
+  const upper = [];
+  for (let i = 0; i < Math.min(meanSeries.length, sigmaSeries.length); i++) {
+    const m = meanSeries[i];
+    const s = sigmaSeries[i];
+    if (m === null || s === null) {
+      lower.push(null);
+      upper.push(null);
+      continue;
+    }
+    const sdom = PDFSampler.toNumber(s) / sqrtN;
+    if (!isFinite(sdom)) {
+      lower.push(null);
+      upper.push(null);
+      continue;
+    }
+    lower.push(m - sdom);
+    upper.push(m + sdom);
+  }
+
+  return { meanSeries, lower, upper };
+}
+
+/**
  * Compute a compact diff label showing only the parts of secondName
  * that differ from firstName, with '...' replacing matching segments
  * longer than 3 characters. Short matching runs (1-3 chars) are kept.
