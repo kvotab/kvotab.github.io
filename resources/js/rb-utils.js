@@ -742,7 +742,7 @@ function computeProbabilisticMean(yArray, timeData) {
 function getRootNIter(file) {
   try {
     const root = FileService.get(file, '/');
-    const raw = getAttr(root, 'n_iter');
+    const raw = getAttr(root, 'n_iter') ?? getAttr(root, 'Number of iterations');
     let n = raw;
     if (Array.isArray(raw) || ArrayBuffer.isView(raw)) {
       n = Array.from(raw)[0];
