@@ -1606,7 +1606,7 @@ function createPlotlyChart(path) {
         let yArray = normalizedRawData;
         let isProbabilistic = false;
         let ciFromColumns = null;
-        let sdomFromAttr = null;
+        let sdomInfo = null;
 
         const colStats = getColumnStatisticsSeries(dataset, normalizedRawData, timeData);
         if (colStats && Array.isArray(colStats.meanSeries)) {
@@ -1614,6 +1614,25 @@ function createPlotlyChart(path) {
           if (Array.isArray(colStats.p5Series) && Array.isArray(colStats.p95Series)) {
             hasProbabilistic = true;
             ciFromColumns = { p5: colStats.p5Series, p95: colStats.p95Series };
+          }
+          if (nIter && nIter > 1 && Array.isArray(colStats.sigmaSeries)) {
+            const sqrtN = Math.sqrt(nIter);
+            sdomInfo = {
+              meanSeries: colStats.meanSeries,
+              lower: colStats.meanSeries.map((mean, idx) => {
+                const sigma = colStats.sigmaSeries[idx];
+                if (mean === null || sigma === null) return null;
+                const sdom = PDFSampler.toNumber(sigma) / sqrtN;
+                return isFinite(sdom) ? mean - sdom : null;
+              }),
+              upper: colStats.meanSeries.map((mean, idx) => {
+                const sigma = colStats.sigmaSeries[idx];
+                if (mean === null || sigma === null) return null;
+                const sdom = PDFSampler.toNumber(sigma) / sqrtN;
+                return isFinite(sdom) ? mean + sdom : null;
+              })
+            };
+            hasSDOM = true;
           }
         }
 
@@ -1627,9 +1646,9 @@ function createPlotlyChart(path) {
         }
 
         if (!isProbabilistic) {
-          sdomFromAttr = getDatasetAttributeSDOM(dataset, timeData, nIter);
-          if (sdomFromAttr && Array.isArray(sdomFromAttr.meanSeries)) {
-            yArray = sdomFromAttr.meanSeries;
+          sdomInfo = sdomInfo || getDatasetAttributeSDOM(dataset, timeData, nIter);
+          if (sdomInfo && Array.isArray(sdomInfo.meanSeries)) {
+            yArray = sdomInfo.meanSeries;
             hasSDOM = true;
           }
         } else if (nIter && nIter > 1) {
@@ -1656,9 +1675,9 @@ function createPlotlyChart(path) {
           traceObj._ciP95 = ciFromColumns.p95.slice(0, minLength);
           traceObj._timeData = timeData.slice(0, minLength);
         }
-        if (sdomFromAttr) {
-          traceObj._sdomLower = sdomFromAttr.lower.slice(0, minLength);
-          traceObj._sdomUpper = sdomFromAttr.upper.slice(0, minLength);
+        if (sdomInfo) {
+          traceObj._sdomLower = sdomInfo.lower.slice(0, minLength);
+          traceObj._sdomUpper = sdomInfo.upper.slice(0, minLength);
           traceObj._timeData = timeData.slice(0, minLength);
         }
         traces.push(traceObj);
@@ -1877,7 +1896,7 @@ function createMultiDatasetChart(items) {
         let yArray = normalizedRawData;
         let isProbabilistic = false;
         let ciFromColumns = null;
-        let sdomFromAttr = null;
+        let sdomInfo = null;
 
         const colStats = getColumnStatisticsSeries(dataset, normalizedRawData, timeData);
         if (colStats && Array.isArray(colStats.meanSeries)) {
@@ -1885,6 +1904,25 @@ function createMultiDatasetChart(items) {
           if (Array.isArray(colStats.p5Series) && Array.isArray(colStats.p95Series)) {
             hasProbabilistic = true;
             ciFromColumns = { p5: colStats.p5Series, p95: colStats.p95Series };
+          }
+          if (nIter && nIter > 1 && Array.isArray(colStats.sigmaSeries)) {
+            const sqrtN = Math.sqrt(nIter);
+            sdomInfo = {
+              meanSeries: colStats.meanSeries,
+              lower: colStats.meanSeries.map((mean, idx) => {
+                const sigma = colStats.sigmaSeries[idx];
+                if (mean === null || sigma === null) return null;
+                const sdom = PDFSampler.toNumber(sigma) / sqrtN;
+                return isFinite(sdom) ? mean - sdom : null;
+              }),
+              upper: colStats.meanSeries.map((mean, idx) => {
+                const sigma = colStats.sigmaSeries[idx];
+                if (mean === null || sigma === null) return null;
+                const sdom = PDFSampler.toNumber(sigma) / sqrtN;
+                return isFinite(sdom) ? mean + sdom : null;
+              })
+            };
+            hasSDOM = true;
           }
         }
         
@@ -1898,9 +1936,9 @@ function createMultiDatasetChart(items) {
         }
 
         if (!isProbabilistic) {
-          sdomFromAttr = getDatasetAttributeSDOM(dataset, timeData, nIter);
-          if (sdomFromAttr && Array.isArray(sdomFromAttr.meanSeries)) {
-            yArray = sdomFromAttr.meanSeries;
+          sdomInfo = sdomInfo || getDatasetAttributeSDOM(dataset, timeData, nIter);
+          if (sdomInfo && Array.isArray(sdomInfo.meanSeries)) {
+            yArray = sdomInfo.meanSeries;
             hasSDOM = true;
           }
         } else if (nIter && nIter > 1) {
@@ -1935,9 +1973,9 @@ function createMultiDatasetChart(items) {
           traceObj._ciP95 = ciFromColumns.p95.slice(0, minLength);
           traceObj._timeData = trimmedTimeData;
         }
-        if (sdomFromAttr) {
-          traceObj._sdomLower = sdomFromAttr.lower.slice(0, minLength);
-          traceObj._sdomUpper = sdomFromAttr.upper.slice(0, minLength);
+        if (sdomInfo) {
+          traceObj._sdomLower = sdomInfo.lower.slice(0, minLength);
+          traceObj._sdomUpper = sdomInfo.upper.slice(0, minLength);
           traceObj._timeData = trimmedTimeData;
         }
         traces.push(traceObj);
@@ -2174,7 +2212,7 @@ async function createRadionuclidesChart(path, savedAxisState) {
             let yArray = normalizedRawData;
             let isProbabilistic = false;
             let ciFromColumns = null;
-            let sdomFromAttr = null;
+            let sdomInfo = null;
 
             const colStats = getColumnStatisticsSeries(dataset, normalizedRawData, timeData);
             if (colStats && Array.isArray(colStats.meanSeries)) {
@@ -2182,6 +2220,25 @@ async function createRadionuclidesChart(path, savedAxisState) {
               if (Array.isArray(colStats.p5Series) && Array.isArray(colStats.p95Series)) {
                 hasProbabilistic = true;
                 ciFromColumns = { p5: colStats.p5Series, p95: colStats.p95Series };
+              }
+              if (nIter && nIter > 1 && Array.isArray(colStats.sigmaSeries)) {
+                const sqrtN = Math.sqrt(nIter);
+                sdomInfo = {
+                  meanSeries: colStats.meanSeries,
+                  lower: colStats.meanSeries.map((mean, idx) => {
+                    const sigma = colStats.sigmaSeries[idx];
+                    if (mean === null || sigma === null) return null;
+                    const sdom = PDFSampler.toNumber(sigma) / sqrtN;
+                    return isFinite(sdom) ? mean - sdom : null;
+                  }),
+                  upper: colStats.meanSeries.map((mean, idx) => {
+                    const sigma = colStats.sigmaSeries[idx];
+                    if (mean === null || sigma === null) return null;
+                    const sdom = PDFSampler.toNumber(sigma) / sqrtN;
+                    return isFinite(sdom) ? mean + sdom : null;
+                  })
+                };
+                hasSDOM = true;
               }
             }
             // Handle probabilistic data
@@ -2191,9 +2248,9 @@ async function createRadionuclidesChart(path, savedAxisState) {
               yArray = computeProbabilisticMean(yArray, timeData);
             }
             if (!isProbabilistic) {
-              sdomFromAttr = getDatasetAttributeSDOM(dataset, timeData, nIter);
-              if (sdomFromAttr && Array.isArray(sdomFromAttr.meanSeries)) {
-                yArray = sdomFromAttr.meanSeries;
+              sdomInfo = sdomInfo || getDatasetAttributeSDOM(dataset, timeData, nIter);
+              if (sdomInfo && Array.isArray(sdomInfo.meanSeries)) {
+                yArray = sdomInfo.meanSeries;
                 hasSDOM = true;
               }
             } else if (nIter && nIter > 1) {
@@ -2269,9 +2326,9 @@ async function createRadionuclidesChart(path, savedAxisState) {
               traceObj._ciP95 = ciFromColumns.p95.slice(0, minLength);
               traceObj._timeData = trimmedTimeData;
             }
-            if (sdomFromAttr) {
-              traceObj._sdomLower = sdomFromAttr.lower.slice(0, minLength);
-              traceObj._sdomUpper = sdomFromAttr.upper.slice(0, minLength);
+            if (sdomInfo) {
+              traceObj._sdomLower = sdomInfo.lower.slice(0, minLength);
+              traceObj._sdomUpper = sdomInfo.upper.slice(0, minLength);
               traceObj._timeData = trimmedTimeData;
             }
             traces.push(traceObj);

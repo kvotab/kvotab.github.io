@@ -620,13 +620,13 @@ function extractColumnSeries(rawData, timeLength, columnIndex, columnCount) {
 }
 
 /**
- * Extract mean / 5% / 95% time series from dataset "columns" metadata.
+ * Extract mean / 5% / 95% / sigma time series from dataset "columns" metadata.
  * Returns null when no usable "mean" column is found.
  *
  * @param {Object} dataset
  * @param {Array} rawData
  * @param {Array} timeData
- * @returns {{meanSeries: Array<number|null>, p5Series: Array<number|null>|null, p95Series: Array<number|null>|null}|null}
+ * @returns {{meanSeries: Array<number|null>, p5Series: Array<number|null>|null, p95Series: Array<number|null>|null, sigmaSeries: Array<number|null>|null}|null}
  */
 function getColumnStatisticsSeries(dataset, rawData, timeData) {
   const columns = parseColumnsAttribute(getAttr(dataset, 'columns'));
@@ -638,14 +638,16 @@ function getColumnStatisticsSeries(dataset, rawData, timeData) {
 
   const p5Index = normalized.findIndex(c => c === '5%' || c === 'p5' || c === 'p05' || c === 'q05');
   const p95Index = normalized.findIndex(c => c === '95%' || c === 'p95' || c === 'q95');
+  const sigmaIndex = normalized.findIndex(c => c === 'sigma' || c === 'stddev' || c === 'standarddeviation');
 
   const meanSeries = extractColumnSeries(rawData, timeData.length, meanIndex, columns.length);
   if (!meanSeries) return null;
 
   const p5Series = p5Index >= 0 ? extractColumnSeries(rawData, timeData.length, p5Index, columns.length) : null;
   const p95Series = p95Index >= 0 ? extractColumnSeries(rawData, timeData.length, p95Index, columns.length) : null;
+  const sigmaSeries = sigmaIndex >= 0 ? extractColumnSeries(rawData, timeData.length, sigmaIndex, columns.length) : null;
 
-  return { meanSeries, p5Series, p95Series };
+  return { meanSeries, p5Series, p95Series, sigmaSeries };
 }
 
 /**
