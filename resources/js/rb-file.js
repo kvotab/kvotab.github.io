@@ -9,7 +9,11 @@
  * @returns {string[]} Array of enabled filenames in display order
  */
 function getEnabledFiles() {
-  return fileOrder.filter(key => fileStates[key]);
+  return fileOrder.filter(key => {
+    if (!fileStates[key]) return false;
+    if (typeof getFileOrNull === 'function') return !!getFileOrNull(key);
+    return !!loadedFiles[key];
+  });
 }
 
 /**

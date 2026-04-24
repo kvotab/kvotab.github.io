@@ -264,6 +264,62 @@ function cancelTreeRefresh() {
 }
 
 
+/**
+ * Validate that an ArrayBuffer looks like a real HDF5 file before opening it.
+ * Supports userblock offsets (0, 512, 1024, 2048, ...).
+ *
+ * @param {ArrayBuffer} buffer
+ * @returns {{ok:boolean, reason:string}}
+ */
+function validateHdf5Buffer(buffer) {
+  if (!buffer || typeof buffer.byteLength !== 'number' || buffer.byteLength < 8) {
+    return { ok: false, reason: 'File is too small to be a valid HDF5 file.' };
+  }
+
+  const bytes = new Uint8Array(buffer);
+  const sig = [0x89, 0x48, 0x44, 0x46, 0x0d, 0x0a, 0x1a, 0x0a];
+  const maxOffset = Math.min(bytes.length - sig.length, 1024 * 1024);
+
+  let offset = 0;
+  while (offset <= maxOffset) {
+    let matches = true;
+    for (let i = 0; i < sig.length; i++) {
+      if (bytes[offset + i] !== sig[i]) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) return { ok: true, reason: '' };
+    offset = offset === 0 ? 512 : offset * 2;
+  }
+
+  let headText = '';
+  try {
+    headText = new TextDecoder('utf-8').decode(bytes.slice(0, Math.min(256, bytes.length)));
+  } catch (_) {
+    headText = '';
+  }
+
+  if (/version https:\/\/git-lfs\.github\.com\/spec\/v1/i.test(headText)) {
+    return {
+      ok: false,
+      reason: 'This file looks like a Git LFS pointer, not actual HDF5 binary data.'
+    };
+  }
+  if (/^\s*<!doctype html|^\s*<html/i.test(headText)) {
+    return {
+      ok: false,
+      reason: 'Downloaded content is HTML, not an HDF5 file.'
+    };
+  }
+
+  return {
+    ok: false,
+    reason: 'Missing HDF5 signature. The file is not a valid HDF5 payload.'
+  };
+}
+
+
 /* ==========================================================================
    URL FILE LOADING
    ========================================================================== */
@@ -337,6 +393,10 @@ async function loadFromUrl() {
     const buffer = await response.arrayBuffer();
     if (buffer.byteLength === 0) {
       throw new Error('Downloaded file is empty.');
+    }
+    const h5Check = validateHdf5Buffer(buffer);
+    if (!h5Check.ok) {
+      throw new Error(`${fileName}: ${h5Check.reason}`);
     }
 
     await waitForH5Wasm();
@@ -469,6 +529,8 @@ async function loadSelectedSampleData() {
       if (!resp.ok) throw new Error(`HTTP ${resp.status} for ${fileName}`);
       const buffer = await resp.arrayBuffer();
       if (buffer.byteLength === 0) throw new Error(fileName + ' is empty');
+      const h5Check = validateHdf5Buffer(buffer);
+      if (!h5Check.ok) throw new Error(fileName + ': ' + h5Check.reason);
 
       loadedFileBuffers[fileName] = buffer;
 
@@ -570,6 +632,10 @@ document.getElementById('fileInput').addEventListener('change', async (e) => {
       updateFileLoadTicker(i, files.length, file.name);
       try {
         const buffer = await file.arrayBuffer();
+        const h5Check = validateHdf5Buffer(buffer);
+        if (!h5Check.ok) {
+          throw new Error(h5Check.reason);
+        }
         // keep a copy of the raw buffer so we can send it to the worker later
         loadedFileBuffers[file.name] = buffer;
         console.debug('[fileInput.change] stored buffer for', file.name, 'bytes=', buffer && buffer.byteLength);

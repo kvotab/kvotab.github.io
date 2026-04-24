@@ -55,9 +55,7 @@ function getRootInformationHtml(file) {
     const root = FileService.get(file, '/');
     const attrCandidates = [
       getAttr(root, 'Information'),
-      getAttr(root, 'information'),
-      getAttr(file, 'Information'),
-      getAttr(file, 'information')
+      getAttr(root, 'information')
     ];
     const info = attrCandidates.find(v => v !== undefined && v !== null && String(v).trim() !== '');
     return info !== undefined && info !== null ? String(info) : '';
@@ -101,6 +99,9 @@ function updateTabs(forceRefresh) {
   const tabsContainer = document.getElementById('fileTabs');
   const previousTreeFile = currentTreeFile;
   const tooltipHtmlByFile = {};
+
+  // Drop stale handles before any root/attribute reads.
+  fileOrder = fileOrder.filter(key => !!getFileOrNull(key));
 
   for (const key of fileOrder) {
     const infoHtml = getRootInformationHtml(loadedFiles[key]);
