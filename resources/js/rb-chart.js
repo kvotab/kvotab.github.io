@@ -1379,7 +1379,7 @@ async function toggleShowSDOM() {
   const showSDOM = getElement('showSDOM')?.checked;
   const shouldShowLoader = !!showSDOM;
   if (shouldShowLoader) {
-    showChartLoading(chartContainer, 'Calculating SDOM band...');
+    showChartLoading(chartContainer, 'Calculating SEM band...');
     await new Promise(requestAnimationFrame);
     await new Promise(resolve => setTimeout(resolve, 0));
   }
