@@ -45,6 +45,130 @@ function toggleGroupExpansion(event, path) {
   }
 }
 
+let treeInfoTooltipEl = null;
+let treeInfoTooltipTimer = null;
+const TREE_INFO_TOOLTIP_DELAY_MS = 250;
+
+function ensureTreeInfoTooltip() {
+  if (treeInfoTooltipEl && treeInfoTooltipEl.isConnected) return treeInfoTooltipEl;
+  treeInfoTooltipEl = document.createElement('div');
+  treeInfoTooltipEl.id = 'treeInfoTooltip';
+  treeInfoTooltipEl.className = 'tree-info-tooltip';
+  treeInfoTooltipEl.style.display = 'none';
+  document.body.appendChild(treeInfoTooltipEl);
+  return treeInfoTooltipEl;
+}
+
+function hideTreeInfoTooltip() {
+  if (treeInfoTooltipTimer) {
+    clearTimeout(treeInfoTooltipTimer);
+    treeInfoTooltipTimer = null;
+  }
+  if (treeInfoTooltipEl) treeInfoTooltipEl.style.display = 'none';
+}
+
+function positionTreeInfoTooltip(evt) {
+  if (!treeInfoTooltipEl || treeInfoTooltipEl.style.display === 'none' || !evt) return;
+  const pad = 14;
+  const maxX = window.innerWidth - treeInfoTooltipEl.offsetWidth - 8;
+  const maxY = window.innerHeight - treeInfoTooltipEl.offsetHeight - 8;
+  const x = Math.max(8, Math.min(maxX, evt.clientX + pad));
+  const y = Math.max(8, Math.min(maxY, evt.clientY + pad));
+  treeInfoTooltipEl.style.left = `${x}px`;
+  treeInfoTooltipEl.style.top = `${y}px`;
+}
+
+function sanitizeInfoHtml(html) {
+  const template = document.createElement('template');
+  template.innerHTML = String(html || '');
+
+  template.content.querySelectorAll('script, iframe, object, embed').forEach(el => el.remove());
+  template.content.querySelectorAll('*').forEach(el => {
+    Array.from(el.attributes || []).forEach(attr => {
+      const attrName = String(attr.name || '').toLowerCase();
+      const attrValue = String(attr.value || '');
+      if (attrName.startsWith('on')) {
+        el.removeAttribute(attr.name);
+        return;
+      }
+      if ((attrName === 'href' || attrName === 'src') && /^\s*javascript:/i.test(attrValue)) {
+        el.removeAttribute(attr.name);
+      }
+    });
+  });
+
+  return template.innerHTML;
+}
+
+function coerceInfoText(value) {
+  if (value === undefined || value === null) return '';
+  if (typeof value === 'string') return value;
+  if (value instanceof Uint8Array) {
+    try { return new TextDecoder().decode(value); } catch (_) { return ''; }
+  }
+  if (Array.isArray(value)) {
+    if (value.length === 1) return coerceInfoText(value[0]);
+    return value.map(v => coerceInfoText(v)).join('<br>');
+  }
+  return String(value);
+}
+
+function getNodeInformationHtml(node) {
+  try {
+    if (!node || !node.attrs) return '';
+
+    let raw = getAttr(node, 'information');
+    if (raw === undefined) {
+      const key = Object.keys(node.attrs || {}).find(k => String(k).toLowerCase() === 'information');
+      if (key) raw = getAttr(node, key);
+    }
+
+    const info = coerceInfoText(raw).trim();
+    if (!info) return '';
+    return sanitizeInfoHtml(info);
+  } catch (_) {
+    return '';
+  }
+}
+
+function attachTreeInfoHover(element, infoHtml) {
+  if (!element || !infoHtml) return;
+
+  element.addEventListener('mouseenter', (evt) => {
+    if (getTreeMode() !== 'separated') {
+      hideTreeInfoTooltip();
+      return;
+    }
+    if (treeInfoTooltipTimer) {
+      clearTimeout(treeInfoTooltipTimer);
+      treeInfoTooltipTimer = null;
+    }
+    treeInfoTooltipTimer = setTimeout(() => {
+      if (getTreeMode() !== 'separated') {
+        hideTreeInfoTooltip();
+        return;
+      }
+      const tip = ensureTreeInfoTooltip();
+      tip.innerHTML = infoHtml;
+      tip.style.display = 'block';
+      positionTreeInfoTooltip(evt);
+      treeInfoTooltipTimer = null;
+    }, TREE_INFO_TOOLTIP_DELAY_MS);
+  });
+
+  element.addEventListener('mousemove', (evt) => {
+    if (getTreeMode() !== 'separated') {
+      hideTreeInfoTooltip();
+      return;
+    }
+    positionTreeInfoTooltip(evt);
+  });
+
+  element.addEventListener('mouseleave', () => {
+    hideTreeInfoTooltip();
+  });
+}
+
 /**
  * Lazy-load children for a group node the first time it is expanded.
  * Inserts the group's subtree DOM nodes into the adjacent `.tree-group-children`. (expects a DocumentFragment from `buildTree`)
@@ -1010,6 +1134,20 @@ async function buildTree(group, prefix = '', isNested = false, fileName = '', in
     if (fileKey) rootItem.setAttribute('data-file', fileKey);
     rootItem.addEventListener('click', toggleGroup);
 
+    let rootInfoHtml = getNodeInformationHtml(group);
+    if (!rootInfoHtml) {
+      try {
+        const rootNode = FileService.get(group, '/');
+        rootInfoHtml = getNodeInformationHtml(rootNode);
+      } catch (_) {
+        rootInfoHtml = '';
+      }
+    }
+    if (rootInfoHtml) {
+      const rootTooltipHtml = `<div class="file-tab-tooltip-title">${escapeHtml(rootLabel)}</div><div class="file-tab-tooltip-info">${rootInfoHtml}</div>`;
+      attachTreeInfoHover(rootItem, rootTooltipHtml);
+    }
+
     const toggleDiv = document.createElement('div');
     if (rootExpandable) {
       toggleDiv.className = 'tree-toggle' + (isRootSelected ? '' : ' collapsed');
@@ -1180,6 +1318,9 @@ async function buildTree(group, prefix = '', isNested = false, fileName = '', in
           if (fileKey) groupItem.setAttribute('data-file', fileKey);
           groupItem.addEventListener('click', toggleGroup);
 
+          const groupInfoHtml = getNodeInformationHtml(obj);
+          if (groupInfoHtml) attachTreeInfoHover(groupItem, groupInfoHtml);
+
           const toggleDiv = document.createElement('div');
           if (groupExpandable) {
             toggleDiv.className = 'tree-toggle' + (isSelected ? '' : ' collapsed');
@@ -1247,6 +1388,9 @@ async function buildTree(group, prefix = '', isNested = false, fileName = '', in
           ds.setAttribute('data-path', path);
           if (fileKey) ds.setAttribute('data-file', fileKey);
           ds.addEventListener('click', (e) => selectDataset(path, e));
+
+          const datasetInfoHtml = getNodeInformationHtml(obj);
+          if (datasetInfoHtml) attachTreeInfoHover(ds, datasetInfoHtml);
 
           const icon = document.createElement('div'); icon.className = 'tree-icon dataset';
           const label = document.createElement('div'); label.className = 'tree-label';
