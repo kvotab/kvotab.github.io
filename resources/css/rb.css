@@ -256,6 +256,33 @@
       box-shadow: 0 4px 12px rgba(0, 0, 0, 0.16);
       white-space: nowrap;
     }
+
+    .tree-info-tooltip {
+      position: fixed;
+      z-index: 2147483647;
+      pointer-events: none;
+      max-width: 420px;
+      max-height: 55vh;
+      overflow: auto;
+      padding: 8px 10px;
+      border-radius: 8px;
+      border: 1px solid var(--color-panel-border);
+      background: var(--color-panel-bg);
+      color: var(--color-text-primary);
+      font-size: 12px;
+      line-height: 1.35;
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.22);
+      word-break: break-word;
+      overflow-wrap: anywhere;
+    }
+
+    .tree-info-tooltip > :first-child {
+      margin-top: 0;
+    }
+
+    .tree-info-tooltip > :last-child {
+      margin-bottom: 0;
+    }
     
     .add-file-btn {
       padding: 4px 10px;
