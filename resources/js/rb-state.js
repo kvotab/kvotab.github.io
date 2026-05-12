@@ -52,6 +52,8 @@ let currentPdfHistogram = false;
 let currentPdfHistogramData = null;
 /** @type {string|null} Filename of the first enabled file (determines tree structure source) */
 let currentTreeFile = null;
+/** @type {string} Selected background overlay source for special group charts */
+let selectedBackgroundOverlaySource = '__none__';
 
 // Dynamic legend state
 /** @type {boolean} When true, legend updates to show only traces visible in current viewport */
@@ -296,6 +298,33 @@ function setShowSDOMVisible(show) {
   if (label) {
     label.style.display = show ? '' : 'none';
   }
+}
+
+/**
+ * Show or hide the special-chart background source selector.
+ * @param {boolean} show - Whether to show the selector
+ */
+function setBackgroundSelectorVisible(show) {
+  const label = getElement('backgroundSourceLabel');
+  if (label) {
+    label.style.display = show ? '' : 'none';
+  }
+}
+
+/**
+ * Populate the special-chart background source selector.
+ * @param {{value:string,label:string}[]} options
+ * @param {string} selectedValue
+ */
+function populateBackgroundSelector(options, selectedValue) {
+  const select = getElement('backgroundSourceSelect');
+  if (!select) return;
+  const items = Array.isArray(options) ? options : [];
+  select.innerHTML = items.map(option =>
+    `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`
+  ).join('');
+  select.value = items.some(option => option.value === selectedValue) ? selectedValue : '__none__';
+  selectedBackgroundOverlaySource = select.value || '__none__';
 }
 
 

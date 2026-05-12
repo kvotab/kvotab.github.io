@@ -21,107 +21,130 @@
  * getLineStyle('U-238')  // { color: 'rgb(255,0,0)', dash: 'solid', width: 2 }
  * getLineStyle('unknown') // { color: null, dash: 'solid', width: 2 }
  */
-function getLineStyle(name) {
-  const lineStyles = {
-    // Actinides
-    'Ac-227': { color: 'rgb(128,0,0)', dash: 'solid' },
-    'Am-241': { color: 'rgb(72,209,204)', dash: 'dashdot' },
-    'Am-242m': { color: 'rgb(72,209,204)', dash: 'dash' },
-    'Am-243': { color: 'rgb(72,209,204)', dash: 'solid' },
-    'Cm-242': { color: 'rgb(175,238,238)', dash: 'dash' },
-    'Cm-243': { color: 'rgb(175,238,238)', dash: 'solid' },
-    'Cm-244': { color: 'rgb(175,238,238)', dash: 'dot' },
-    'Cm-245': { color: 'rgb(175,238,238)', dash: 'dash' },
-    'Cm-246': { color: 'rgb(175,238,238)', dash: 'dashdot' },
-    'Np-237': { color: 'rgb(218,165,32)', dash: 'solid' },
-    'Pa-231': { color: 'rgb(85,107,47)', dash: 'solid' },
-    'Pu-238': { color: 'rgb(0,255,255)', dash: 'dot' },
-    'Pu-239': { color: 'rgb(0,255,255)', dash: 'solid' },
-    'Pu-240': { color: 'rgb(0,255,255)', dash: 'dash' },
-    'Pu-241': { color: 'rgb(0,255,255)', dash: 'dashdot' },
-    'Pu-242': { color: 'rgb(0,255,255)', dash: 'dash' },
-    'Th-228': { color: 'rgb(75,0,130)', dash: 'dash' },
-    'Th-229': { color: 'rgb(75,0,130)', dash: 'dot' },
-    'Th-230': { color: 'rgb(75,0,130)', dash: 'solid' },
-    'Th-232': { color: 'rgb(75,0,130)', dash: 'dash' },
-    'U-232': { color: 'rgb(255,0,0)', dash: 'longdash' },
-    'U-233': { color: 'rgb(255,0,0)', dash: 'dash' },
-    'U-234': { color: 'rgb(255,0,0)', dash: 'dot' },
-    'U-235': { color: 'rgb(255,0,0)', dash: 'dash' },
-    'U-236': { color: 'rgb(255,0,0)', dash: 'dashdot' },
-    'U-238': { color: 'rgb(255,0,0)', dash: 'solid' },
-    
-    // Fission products
-    'Ag-108m': { color: 'rgb(128,128,0)', dash: 'solid' },
-    'Cs-135': { color: 'rgb(0,128,0)', dash: 'solid' },
-    'Cs-137': { color: 'rgb(0,128,0)', dash: 'dash' },
-    'I-129': { color: 'rgb(30,144,255)', dash: 'solid' },
-    'Pd-107': { color: 'rgb(216,191,216)', dash: 'solid' },
-    'Se-79': { color: 'rgb(112,128,144)', dash: 'solid' },
-    'Sm-151': { color: 'rgb(138,43,226)', dash: 'solid' },
-    'Sn-126': { color: 'rgb(0,0,0)', dash: 'solid' },
-    'Sr-90': { color: 'rgb(255,215,0)', dash: 'solid' },
-    'Tc-99': { color: 'rgb(0,0,128)', dash: 'solid' },
-    'Zr-93': { color: 'rgb(144,238,144)', dash: 'solid' },
-    
-    // Activation products
-    'Be-10': { color: 'rgb(65,105,225)', dash: 'solid' },
-    'C-14': { color: 'rgb(0,0,255)', dash: 'solid' },
-    'C-14-org': { color: 'rgb(0,0,255)', dash: 'solid' },
-    'C-14-ind': { color: 'rgb(0,0,255)', dash: 'dash' },
-    'C-14-inorg': { color: 'rgb(0,0,255)', dash: 'dot' },
-    'Cl-36': { color: 'rgb(210,105,30)', dash: 'solid' },
-    'Co-60': { color: 'rgb(0,255,127)', dash: 'solid' },
-    'H-3': { color: 'rgb(0,0,205)', dash: 'solid' },
-    'Ni-59': { color: 'rgb(255,0,255)', dash: 'solid' },
-    'Ni-63': { color: 'rgb(255,0,255)', dash: 'dash' },
-    'Nb-93m': { color: 'rgb(210,180,140)', dash: 'solid' },
-    'Nb-94': { color: 'rgb(210,180,140)', dash: 'dash' },
-    'Mo-93': { color: 'rgb(0,255,0)', dash: 'solid' },
-    
-    // Other radionuclides
-    'Ar-39': { color: 'rgb(152,251,152)', dash: 'solid' },
-    'Ba-133': { color: 'rgb(70,130,180)', dash: 'solid' },
-    'Ca-41': { color: 'rgb(128,0,128)', dash: 'solid' },
-    'Cd-113m': { color: 'rgb(124,252,0)', dash: 'solid' },
-    'Eu-150': { color: 'rgb(205,133,63)', dash: 'dash' },
-    'Eu-152': { color: 'rgb(205,133,63)', dash: 'solid' },
-    'Gd-148': { color: 'rgb(255,255,0)', dash: 'solid' },
-    'Ho-166m': { color: 'rgb(100,149,237)', dash: 'solid' },
-    'K-40': { color: 'rgb(139,69,19)', dash: 'solid' },
-    'La-137': { color: 'rgb(255,248,220)', dash: 'solid' },
-    'Pb-210': { color: 'rgb(148,0,211)', dash: 'dash' },
-    'Po-210': { color: 'rgb(148,0,211)', dash: 'dot' },
-    'Ra-226': { color: 'rgb(148,0,211)', dash: 'solid' },
-    'Ra-228': { color: 'rgb(148,0,211)', dash: 'dash' },
-    'Re-186m': { color: 'rgb(255,160,122)', dash: 'solid' },
-    'Si-32': { color: 'rgb(255,228,181)', dash: 'solid' },
-    'Tb-157': { color: 'rgb(221,160,221)', dash: 'solid' },
-    'Tb-158': { color: 'rgb(221,160,221)', dash: 'dash' },
-    'Ti-44': { color: 'rgb(218,112,214)', dash: 'solid' },
+const NAMED_LINE_STYLES = {
+  // Actinides
+  'Ac-227': { color: 'rgb(128,0,0)', dash: 'solid' },
+  'Am-241': { color: 'rgb(72,209,204)', dash: 'dashdot' },
+  'Am-242m': { color: 'rgb(72,209,204)', dash: 'dash' },
+  'Am-243': { color: 'rgb(72,209,204)', dash: 'solid' },
+  'Cm-242': { color: 'rgb(175,238,238)', dash: 'dash' },
+  'Cm-243': { color: 'rgb(175,238,238)', dash: 'solid' },
+  'Cm-244': { color: 'rgb(175,238,238)', dash: 'dot' },
+  'Cm-245': { color: 'rgb(175,238,238)', dash: 'dash' },
+  'Cm-246': { color: 'rgb(175,238,238)', dash: 'dashdot' },
+  'Np-237': { color: 'rgb(218,165,32)', dash: 'solid' },
+  'Pa-231': { color: 'rgb(85,107,47)', dash: 'solid' },
+  'Pu-238': { color: 'rgb(0,255,255)', dash: 'dot' },
+  'Pu-239': { color: 'rgb(0,255,255)', dash: 'solid' },
+  'Pu-240': { color: 'rgb(0,255,255)', dash: 'dash' },
+  'Pu-241': { color: 'rgb(0,255,255)', dash: 'dashdot' },
+  'Pu-242': { color: 'rgb(0,255,255)', dash: 'dash' },
+  'Th-228': { color: 'rgb(75,0,130)', dash: 'dash' },
+  'Th-229': { color: 'rgb(75,0,130)', dash: 'dot' },
+  'Th-230': { color: 'rgb(75,0,130)', dash: 'solid' },
+  'Th-232': { color: 'rgb(75,0,130)', dash: 'dash' },
+  'U-232': { color: 'rgb(255,0,0)', dash: 'longdash' },
+  'U-233': { color: 'rgb(255,0,0)', dash: 'dash' },
+  'U-234': { color: 'rgb(255,0,0)', dash: 'dot' },
+  'U-235': { color: 'rgb(255,0,0)', dash: 'dash' },
+  'U-236': { color: 'rgb(255,0,0)', dash: 'dashdot' },
+  'U-238': { color: 'rgb(255,0,0)', dash: 'solid' },
 
-    // Repositories
-    'Silo': { color: 'rgb(255,204,0)', dash: 'solid' },
-    'BMA': { color: 'rgb(153,204,51)', dash: 'solid' },
-    '1BMA': { color: 'rgb(153,204,51)', dash: 'solid' },
-    '2BMA': { color: 'rgb(153,204,51)', dash: 'dash' },
-    'BLA': { color: 'rgb(204,102,255)', dash: 'solid' },
-    '1BLA': { color: 'rgb(204,102,255)', dash: 'solid' },
-    '2-5BLA': { color: 'rgb(204,102,255)', dash: 'dash' },
-    '2BLA': { color: 'rgb(204,102,255)', dash: 'dash' },
-    '3BLA': { color: 'rgb(204,102,255)', dash: 'dot' },
-    '4BLA': { color: 'rgb(204,102,255)', dash: 'dashdot' },
-    '5BLA': { color: 'rgb(204,102,255)', dash: 'longdash' },
-    'BTF': { color: 'rgb(102,153,204)', dash: 'solid' },
-    '1BTF': { color: 'rgb(102,153,204)', dash: 'solid' },
-    '2BTF': { color: 'rgb(102,153,204)', dash: 'dash' },
-    'BRT': { color: 'rgb(192,80,77)', dash: 'solid' },
-  };
-  
+  // Fission products
+  'Ag-108m': { color: 'rgb(128,128,0)', dash: 'solid' },
+  'Cs-135': { color: 'rgb(0,128,0)', dash: 'solid' },
+  'Cs-137': { color: 'rgb(0,128,0)', dash: 'dash' },
+  'I-129': { color: 'rgb(30,144,255)', dash: 'solid' },
+  'Pd-107': { color: 'rgb(216,191,216)', dash: 'solid' },
+  'Se-79': { color: 'rgb(112,128,144)', dash: 'solid' },
+  'Sm-151': { color: 'rgb(138,43,226)', dash: 'solid' },
+  'Sn-126': { color: 'rgb(0,0,0)', dash: 'solid' },
+  'Sr-90': { color: 'rgb(255,215,0)', dash: 'solid' },
+  'Tc-99': { color: 'rgb(0,0,128)', dash: 'solid' },
+  'Zr-93': { color: 'rgb(144,238,144)', dash: 'solid' },
+
+  // Activation products
+  'Be-10': { color: 'rgb(65,105,225)', dash: 'solid' },
+  'C-14': { color: 'rgb(0,0,255)', dash: 'solid' },
+  'C-14-org': { color: 'rgb(0,0,255)', dash: 'solid' },
+  'C-14-ind': { color: 'rgb(0,0,255)', dash: 'dash' },
+  'C-14-inorg': { color: 'rgb(0,0,255)', dash: 'dot' },
+  'Cl-36': { color: 'rgb(210,105,30)', dash: 'solid' },
+  'Co-60': { color: 'rgb(0,255,127)', dash: 'solid' },
+  'H-3': { color: 'rgb(0,0,205)', dash: 'solid' },
+  'Ni-59': { color: 'rgb(255,0,255)', dash: 'solid' },
+  'Ni-63': { color: 'rgb(255,0,255)', dash: 'dash' },
+  'Nb-93m': { color: 'rgb(210,180,140)', dash: 'solid' },
+  'Nb-94': { color: 'rgb(210,180,140)', dash: 'dash' },
+  'Mo-93': { color: 'rgb(0,255,0)', dash: 'solid' },
+
+  // Other radionuclides
+  'Ar-39': { color: 'rgb(152,251,152)', dash: 'solid' },
+  'Ba-133': { color: 'rgb(70,130,180)', dash: 'solid' },
+  'Ca-41': { color: 'rgb(128,0,128)', dash: 'solid' },
+  'Cd-113m': { color: 'rgb(124,252,0)', dash: 'solid' },
+  'Eu-150': { color: 'rgb(205,133,63)', dash: 'dash' },
+  'Eu-152': { color: 'rgb(205,133,63)', dash: 'solid' },
+  'Gd-148': { color: 'rgb(255,255,0)', dash: 'solid' },
+  'Ho-166m': { color: 'rgb(100,149,237)', dash: 'solid' },
+  'K-40': { color: 'rgb(139,69,19)', dash: 'solid' },
+  'La-137': { color: 'rgb(255,248,220)', dash: 'solid' },
+  'Pb-210': { color: 'rgb(148,0,211)', dash: 'dash' },
+  'Po-210': { color: 'rgb(148,0,211)', dash: 'dot' },
+  'Ra-226': { color: 'rgb(148,0,211)', dash: 'solid' },
+  'Ra-228': { color: 'rgb(148,0,211)', dash: 'dash' },
+  'Re-186m': { color: 'rgb(255,160,122)', dash: 'solid' },
+  'Si-32': { color: 'rgb(255,228,181)', dash: 'solid' },
+  'Tb-157': { color: 'rgb(221,160,221)', dash: 'solid' },
+  'Tb-158': { color: 'rgb(221,160,221)', dash: 'dash' },
+  'Ti-44': { color: 'rgb(218,112,214)', dash: 'solid' },
+
+  // Repositories
+  'Silo': { color: 'rgb(255,204,0)', dash: 'solid' },
+  'BMA': { color: 'rgb(153,204,51)', dash: 'solid' },
+  '1BMA': { color: 'rgb(153,204,51)', dash: 'solid' },
+  '2BMA': { color: 'rgb(153,204,51)', dash: 'dash' },
+  'BLA': { color: 'rgb(204,102,255)', dash: 'solid' },
+  '1BLA': { color: 'rgb(204,102,255)', dash: 'solid' },
+  '2-5BLA': { color: 'rgb(204,102,255)', dash: 'dash' },
+  '2BLA': { color: 'rgb(204,102,255)', dash: 'dash' },
+  '3BLA': { color: 'rgb(204,102,255)', dash: 'dot' },
+  '4BLA': { color: 'rgb(204,102,255)', dash: 'dashdot' },
+  '5BLA': { color: 'rgb(204,102,255)', dash: 'longdash' },
+  'BTF': { color: 'rgb(102,153,204)', dash: 'solid' },
+  '1BTF': { color: 'rgb(102,153,204)', dash: 'solid' },
+  '2BTF': { color: 'rgb(102,153,204)', dash: 'dash' },
+  'BRT': { color: 'rgb(192,80,77)', dash: 'solid' },
+
+  // Exposed groups
+  'drained_mire':{color: 'rgb(165,42,42)', dash: 'solid'},
+  'forager':{color: 'rgb(147,197,114)', dash: 'solid'},
+  'garden_plot':{color: 'rgb(0,191,255)', dash: 'solid'},
+  'infield_outland':{color: 'rgb(255,204,0)', dash: 'solid'},
+  'drilled_well':{color: 'rgb(0,0,255)', dash: 'solid'},
+  'drained_mire_irrig':{color: 'rgb(165,42,42)', dash: 'dash'},
+
+  // No color
+  'none': { color: 'rgba(255,255,255,0)', dash: 'solid' },
+
+  // Climate domains
+  'submerged': { color: 'rgb(0,191,255)', dash: 'solid' },
+  'temperate': { color: 'rgb(34,139,34)', dash: 'solid' },
+  'permafrost': { color: 'rgb(70,130,180)', dash: 'solid' },
+  'glacial': { color: 'rgb(255,250,250)', dash: 'solid' },
+
+};
+
+function getNamedColor(name) {
+  const style = NAMED_LINE_STYLES[name];
+  return style && style.color ? style.color : null;
+}
+
+function getLineStyle(name) {
   const defaultStyle = { color: null, dash: 'solid', width: 2 };
   
-  if (name in lineStyles) {
-    return { ...defaultStyle, ...lineStyles[name] };
+  if (name in NAMED_LINE_STYLES) {
+    return { ...defaultStyle, ...NAMED_LINE_STYLES[name] };
   }
   
   return defaultStyle;
@@ -179,6 +202,19 @@ function updateChartScales() {
   }
 
   if (Object.keys(update).length === 0) return;
+
+  // Background overlays in special group charts are baked into layout.shapes.
+  // Rebuild the chart when x-scale changes so segment bounds are recalculated
+  // consistently (especially for log scale with non-positive times).
+  if (xScale !== curX
+      && selectedIsRadionuclidesGroup
+      && selectedDatasetPath
+      && selectedBackgroundOverlaySource
+      && selectedBackgroundOverlaySource !== '__none__') {
+    const savedAxis = captureAxisState();
+    Promise.resolve().then(() => createRadionuclidesChart(selectedDatasetPath, savedAxis));
+    return;
+  }
 
   Plotly.relayout('plotlyChart', update).then(() => {
     refreshDynamicLegend();
@@ -1243,6 +1279,142 @@ function toggleShowRatio() {
 }
 
 /**
+ * Handle background overlay source change for special group charts.
+ * @returns {void}
+ */
+function toggleBackgroundOverlay() {
+  const select = getElement('backgroundSourceSelect');
+  selectedBackgroundOverlaySource = select && select.value ? select.value : '__none__';
+  if (selectedIsRadionuclidesGroup && selectedDatasetPath) {
+    const savedAxis = captureAxisState();
+    Promise.resolve().then(() => createRadionuclidesChart(selectedDatasetPath, savedAxis));
+  }
+}
+
+function ensureBackgroundOverlayTooltip() {
+  let tip = document.getElementById('backgroundOverlayTooltip');
+  if (!tip) {
+    tip = document.createElement('div');
+    tip.id = 'backgroundOverlayTooltip';
+    tip.className = 'chart-bg-tooltip';
+    tip.style.display = 'none';
+    document.body.appendChild(tip);
+  }
+  return tip;
+}
+
+function toComparableAxisValue(v) {
+  const n = Number(v);
+  if (isFinite(n)) return n;
+  const t = Date.parse(v);
+  if (isFinite(t)) return t;
+  return null;
+}
+
+function removeBackgroundOverlayTooltipHandlers(plotDiv) {
+  if (!plotDiv || !plotDiv.__bgTooltipHandlers) return;
+  const h = plotDiv.__bgTooltipHandlers;
+  plotDiv.removeEventListener('mousemove', h.mousemove);
+  plotDiv.removeEventListener('mouseleave', h.mouseleave);
+  delete plotDiv.__bgTooltipHandlers;
+}
+
+function setupBackgroundOverlayTooltip(plotDiv, segments) {
+  if (!plotDiv) return;
+  removeBackgroundOverlayTooltipHandlers(plotDiv);
+
+  const tip = ensureBackgroundOverlayTooltip();
+  tip.style.display = 'none';
+
+  if (!Array.isArray(segments) || segments.length === 0) {
+    return;
+  }
+
+  const fullLayout = plotDiv._fullLayout;
+  const xAxis = fullLayout && fullLayout.xaxis;
+  if (!xAxis) {
+    return;
+  }
+
+  const toAxisLinearValue = (v) => {
+    try {
+      if (xAxis && typeof xAxis.d2l === 'function') {
+        const lv = xAxis.d2l(v);
+        const n = Number(lv);
+        if (isFinite(n)) return n;
+      }
+    } catch (_) {
+      // fallback below
+    }
+    return toComparableAxisValue(v);
+  };
+
+  const normalizedSegments = segments
+    .map(seg => {
+      const x0 = toAxisLinearValue(seg.x0);
+      const x1 = toAxisLinearValue(seg.x1);
+      if (x0 === null || x1 === null) return null;
+      return {
+        ...seg,
+        _x0: Math.min(x0, x1),
+        _x1: Math.max(x0, x1)
+      };
+    })
+    .filter(Boolean);
+
+  if (!normalizedSegments.length) {
+    return;
+  }
+
+  const mousemove = (evt) => {
+    const fullLayout = plotDiv._fullLayout;
+    const xAxis = fullLayout && fullLayout.xaxis;
+    const yAxis = fullLayout && fullLayout.yaxis;
+    if (!xAxis || !yAxis) {
+      tip.style.display = 'none';
+      return;
+    }
+
+    const rect = plotDiv.getBoundingClientRect();
+    const px = evt.clientX - rect.left;
+    const py = evt.clientY - rect.top;
+
+    const inX = px >= xAxis._offset && px <= (xAxis._offset + xAxis._length);
+    const inY = py >= yAxis._offset && py <= (yAxis._offset + yAxis._length);
+    if (!inX || !inY) {
+      tip.style.display = 'none';
+      return;
+    }
+
+    const axisX = xAxis.p2l(px - xAxis._offset);
+    const xVal = Number(axisX);
+    if (!isFinite(xVal)) {
+      tip.style.display = 'none';
+      return;
+    }
+
+    const match = normalizedSegments.find(seg => xVal >= seg._x0 && xVal <= seg._x1);
+    if (!match) {
+      tip.style.display = 'none';
+      return;
+    }
+
+    tip.textContent = match.category || 'Section';
+    tip.style.display = 'block';
+    tip.style.left = `${evt.clientX + 12}px`;
+    tip.style.top = `${evt.clientY + 12}px`;
+  };
+
+  const mouseleave = () => {
+    tip.style.display = 'none';
+  };
+
+  plotDiv.addEventListener('mousemove', mousemove);
+  plotDiv.addEventListener('mouseleave', mouseleave);
+  plotDiv.__bgTooltipHandlers = { mousemove, mouseleave };
+}
+
+/**
  * Handle "Show Max" checkbox toggle.
  * When checked, appends the maximum value to each trace's legend name.
  * Re-renders the current chart (single, multi-select, or radionuclides).
@@ -1543,6 +1715,7 @@ function createPlotlyChart(path) {
   setShowMaxVisible(true);
   setShowCIVisible(false);  // Will be enabled if we have probabilistic data
   setShowSDOMVisible(false); // Will be enabled if SDOM is available
+  setBackgroundSelectorVisible(false);
 
   const traces = [];
   const enabledFiles = getEffectiveFiles();
@@ -1796,6 +1969,7 @@ function createMultiDatasetChart(items) {
   setShowMaxVisible(true);
   setShowCIVisible(false);  // Will be enabled if we have probabilistic data
   setShowSDOMVisible(false); // Will be enabled if SDOM is available
+  setBackgroundSelectorVisible(false);
   
   const traces = [];
   const yAxisUnits = new Set();
@@ -2075,6 +2249,7 @@ async function createRadionuclidesChart(path, savedAxisState) {
   showChartLoading(chartContainer);
   let wasCIChecked = false;
   let wasSDOMChecked = false;
+  let backgroundSourceValue = selectedBackgroundOverlaySource || '__none__';
   try {
     const ciCheckbox = getElement('showCI');
     if (ciCheckbox) {
@@ -2083,6 +2258,10 @@ async function createRadionuclidesChart(path, savedAxisState) {
     const sdomCheckbox = getElement('showSDOM');
     if (sdomCheckbox) {
       wasSDOMChecked = !!sdomCheckbox.checked;
+    }
+    const backgroundSelect = getElement('backgroundSourceSelect');
+    if (backgroundSelect && backgroundSelect.value) {
+      backgroundSourceValue = backgroundSelect.value;
     }
   } catch (e) {
     // Ignore missing CI control during initial render.
@@ -2097,6 +2276,8 @@ async function createRadionuclidesChart(path, savedAxisState) {
   setShowMaxVisible(true);
   setShowCIVisible(false);
   setShowSDOMVisible(false);
+  setBackgroundSelectorVisible(false);
+  populateBackgroundSelector([{ value: '__none__', label: 'No background' }], '__none__');
   
   const traces = [];
   const enabledFiles = getEffectiveFiles();
@@ -2141,6 +2322,183 @@ async function createRadionuclidesChart(path, savedAxisState) {
     }
     return null;
   }
+
+  function isVisibleGroupEndpoint(name) {
+    return !(typeof name === 'string' && name.startsWith('_'));
+  }
+
+  function normalizeBackgroundLabel(name) {
+    return String(name || '').replace(/^_+|_+$/g, '') || String(name || '');
+  }
+
+  function getBackgroundSourceLabel(dataset, datasetKey) {
+    const attrName = getAttr(dataset, 'name') ?? getAttr(dataset, 'Name');
+    if (attrName !== undefined && attrName !== null && String(attrName).trim() !== '') {
+      return String(attrName).trim();
+    }
+    return normalizeBackgroundLabel(datasetKey);
+  }
+
+  function parseIndexNames(indexAttr) {
+    if (indexAttr === undefined || indexAttr === null) return [];
+    if (Array.isArray(indexAttr) || ArrayBuffer.isView(indexAttr)) {
+      return Array.from(indexAttr).map(v => String(v).trim()).filter(Boolean);
+    }
+    if (typeof indexAttr === 'object' && typeof indexAttr.length === 'number') {
+      try {
+        return Array.from(indexAttr).map(v => String(v).trim()).filter(Boolean);
+      } catch (_) {}
+    }
+    if (typeof indexAttr === 'string') {
+      const s = indexAttr.trim();
+      if (!s) return [];
+      try {
+        const parsed = JSON.parse(s);
+        if (Array.isArray(parsed)) {
+          return parsed.map(v => String(v).trim()).filter(Boolean);
+        }
+      } catch (_) {}
+      return s.split(/[;,]/).map(v => v.trim()).filter(Boolean);
+    }
+    return [String(indexAttr).trim()].filter(Boolean);
+  }
+
+  function resolveIndexCategoryName(rawValue, indexNames) {
+    const strVal = String(rawValue).trim();
+    if (!strVal) return null;
+
+    // Direct name match first.
+    if (indexNames.includes(strVal)) return strVal;
+
+    const asNumber = Number(strVal);
+    if (isFinite(asNumber)) {
+      const idx0 = Math.floor(asNumber);
+      if (idx0 >= 0 && idx0 < indexNames.length) return indexNames[idx0];
+      if (idx0 >= 1 && idx0 <= indexNames.length) return indexNames[idx0 - 1];
+    }
+
+    return null;
+  }
+
+  function rgbaFromRgbString(rgb, alpha) {
+    if (!rgb || typeof rgb !== 'string') return null;
+    const m = rgb.match(/rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i);
+    if (!m) return null;
+    return `rgba(${m[1]},${m[2]},${m[3]},${alpha})`;
+  }
+
+  function getCategoryFillColor(name) {
+    const named = getNamedColor(name);
+    if (named) {
+      return rgbaFromRgbString(named, 0.24) || 'rgba(120,120,120,0.24)';
+    }
+    // Deterministic fallback color by hashing name.
+    let hash = 0;
+    for (let i = 0; i < name.length; i++) {
+      hash = ((hash << 5) - hash) + name.charCodeAt(i);
+      hash |= 0;
+    }
+    const hue = Math.abs(hash) % 360;
+    return `hsla(${hue}, 60%, 55%, 0.24)`;
+  }
+
+  function addBackgroundSourcesFromGroup(file, groupPath, list, seenValues) {
+    const sourceGroup = FileService.get(file, groupPath);
+    if (!sourceGroup || String(sourceGroup.type).toLowerCase() !== 'group' || typeof sourceGroup.keys !== 'function') {
+      return;
+    }
+    let keys = [];
+    try {
+      keys = Array.from(sourceGroup.keys()).filter(k => typeof k === 'string' && k.startsWith('_'));
+    } catch (_) {
+      return;
+    }
+    for (const key of keys) {
+      const sourcePath = `${groupPath}/${key}`.replace(/\/+/g, '/');
+      if (seenValues.has(sourcePath)) continue;
+      const dataset = FileService.get(file, sourcePath);
+      if (!dataset || String(dataset.type).toLowerCase() !== 'dataset') continue;
+      if (!isTimeDependent(dataset)) continue;
+      if (!parseIndexNames(getAttr(dataset, 'Index')).length) continue;
+      let label = getBackgroundSourceLabel(dataset, key);
+      if (list.some(item => item.label === label)) {
+        label = groupPath.endsWith('/IndexLists') ? `${label} (IndexLists)` : `${label} (${normalizeBackgroundLabel(key)})`;
+      }
+      list.push({ value: sourcePath, label });
+      seenValues.add(sourcePath);
+    }
+  }
+
+  function collectBackgroundSourceOptions(file, group, groupPath) {
+    const options = [{ value: '__none__', label: 'No background' }];
+    const seenValues = new Set(['__none__']);
+    addBackgroundSourcesFromGroup(file, groupPath, options, seenValues);
+    addBackgroundSourcesFromGroup(file, `${groupPath}/IndexLists`, options, seenValues);
+    return options;
+  }
+
+  function collectIndexBackgroundSegments(file, sourcePath, timeData) {
+    if (!file || !sourcePath || sourcePath === '__none__' || !Array.isArray(timeData) || timeData.length < 2) {
+      return [];
+    }
+
+    const dataset = FileService.get(file, sourcePath);
+    if (!dataset || String(dataset.type).toLowerCase() !== 'dataset') {
+      return [];
+    }
+    if (!isTimeDependent(dataset)) {
+      return [];
+    }
+
+    const indexNames = parseIndexNames(getAttr(dataset, 'Index'));
+    if (!indexNames.length) return [];
+
+    let raw;
+    if (typeof dataset.value !== 'undefined') raw = dataset.value;
+    else if (typeof dataset.toArray === 'function') raw = dataset.toArray();
+    if (!raw) return [];
+
+    const normalized = PDFSampler.normalizeDataArray(raw);
+    const series = Array.isArray(normalized)
+      ? normalized
+      : (ArrayBuffer.isView(normalized) ? Array.from(normalized) : null);
+    if (!series || !series.length) return [];
+
+    const n = Math.min(timeData.length, series.length);
+    if (n < 2) return [];
+    const labels = [];
+    for (let i = 0; i < n; i++) {
+      const point = series[i];
+      const v = Array.isArray(point)
+        ? point[0]
+        : (ArrayBuffer.isView(point) ? point[0] : point);
+      labels.push(resolveIndexCategoryName(v, indexNames));
+    }
+
+    const segments = [];
+    let start = 0;
+    for (let i = 1; i <= n; i++) {
+      const changed = i === n || labels[i] !== labels[start];
+      if (!changed) continue;
+      const category = labels[start];
+      if (category) {
+        const x0 = timeData[start];
+        const x1 = timeData[Math.min(i, n - 1)];
+        if (x0 !== undefined && x1 !== undefined && x1 >= x0) {
+          segments.push({
+            x0,
+            x1,
+            category,
+            color: getCategoryFillColor(category),
+            source: sourcePath
+          });
+        }
+      }
+      start = i;
+    }
+
+    return segments;
+  }
   
   // Track the starting index of each file's traces in the traces array
   const fileTraceStartIndex = {};
@@ -2152,6 +2510,8 @@ async function createRadionuclidesChart(path, savedAxisState) {
   let timeUnit = '';
   let yAxisUnit = '';
   let yAxisName = path.split('/').pop();
+  let indexBackgroundSegments = [];
+  let backgroundSourceOptions = [{ value: '__none__', label: 'No background' }];
   
   if (enabledFiles.length > 0) {
     const firstFile = loadedFiles[enabledFiles[0]];
@@ -2184,11 +2544,25 @@ async function createRadionuclidesChart(path, savedAxisState) {
         console.warn(`No /time dataset found in ${fileKey}`);
         continue;
       }
+
+      if (backgroundSourceOptions.length === 1) {
+        backgroundSourceOptions = collectBackgroundSourceOptions(file, group, path);
+        if (!backgroundSourceOptions.some(option => option.value === backgroundSourceValue)) {
+          backgroundSourceValue = '__none__';
+        }
+        selectedBackgroundOverlaySource = backgroundSourceValue;
+        populateBackgroundSelector(backgroundSourceOptions, backgroundSourceValue);
+        setBackgroundSelectorVisible(backgroundSourceOptions.length > 1);
+      }
+
+      if (!indexBackgroundSegments.length && backgroundSourceValue !== '__none__') {
+        indexBackgroundSegments = collectIndexBackgroundSegments(file, backgroundSourceValue, timeData);
+      }
       
       let datasetKeys = [];
       try {
         if (typeof group.keys === 'function') {
-          datasetKeys = Array.from(group.keys());
+          datasetKeys = Array.from(group.keys()).filter(isVisibleGroupEndpoint);
         }
       } catch (e) {
         console.error('Error getting dataset keys:', e);
@@ -2368,7 +2742,7 @@ async function createRadionuclidesChart(path, savedAxisState) {
       let datasetKeys = [];
       try {
         if (typeof group.keys === 'function') {
-          datasetKeys = Array.from(group.keys());
+          datasetKeys = Array.from(group.keys()).filter(isVisibleGroupEndpoint);
         }
       } catch (e) { /* ignore */ }
       // Match datasetKeys to dataArrays by index
@@ -2511,6 +2885,8 @@ async function createRadionuclidesChart(path, savedAxisState) {
     // Show CI checkbox if we have probabilistic data
     setShowCIVisible(hasProbabilistic);
     setShowSDOMVisible(hasSDOM);
+    populateBackgroundSelector(backgroundSourceOptions, backgroundSourceValue);
+    setBackgroundSelectorVisible(backgroundSourceOptions.length > 1);
     
     // Annotate legend with max values if "Show Max" is checked and ratio is not active
     if (!showRatioChecked) {
@@ -2548,6 +2924,54 @@ async function createRadionuclidesChart(path, savedAxisState) {
       xScale,
       yScale
     });
+
+    if (indexBackgroundSegments.length) {
+      let shapeSegments = indexBackgroundSegments.slice();
+      if (xScale === 'log') {
+        const positiveX = [];
+        for (const trace of traces) {
+          const xVals = Array.isArray(trace.x) ? trace.x : [];
+          for (const xv of xVals) {
+            const n = Number(xv);
+            if (isFinite(n) && n > 0) positiveX.push(n);
+          }
+        }
+        const minPositiveX = positiveX.length ? Math.min(...positiveX) : null;
+        if (minPositiveX !== null) {
+          shapeSegments = shapeSegments
+            .map(seg => {
+              const rawX0 = Number(seg.x0);
+              const rawX1 = Number(seg.x1);
+              if (!isFinite(rawX0) || !isFinite(rawX1)) return null;
+              let x0 = rawX0;
+              let x1 = rawX1;
+              if (x0 <= 0 && x1 <= 0) return null;
+              if (x0 <= 0) x0 = minPositiveX;
+              if (x1 <= 0) x1 = minPositiveX;
+              if (x1 < x0) {
+                const tmp = x0;
+                x0 = x1;
+                x1 = tmp;
+              }
+              if (x1 === x0) return null;
+              return { ...seg, x0, x1 };
+            })
+            .filter(Boolean);
+        }
+      }
+      layout.shapes = (layout.shapes || []).concat(shapeSegments.map(seg => ({
+        type: 'rect',
+        xref: 'x',
+        yref: 'paper',
+        x0: seg.x0,
+        x1: seg.x1,
+        y0: 0,
+        y1: 1,
+        line: { width: 0 },
+        fillcolor: seg.color,
+        layer: 'below'
+      })));
+    }
     
     // Preserve axis ranges when toggling controls (Show Total, Show Ratio)
     applyAxisState(layout, savedAxisState);
@@ -2568,14 +2992,19 @@ async function createRadionuclidesChart(path, savedAxisState) {
           toggleShowSDOM();
         }
       }
+      populateBackgroundSelector(backgroundSourceOptions, backgroundSourceValue);
+      setBackgroundSelectorVisible(backgroundSourceOptions.length > 1);
+      setupBackgroundOverlayTooltip(getElement('plotlyChart'), indexBackgroundSegments);
     });
   } else {
     hideChartLoading(chartContainer);
+    setupBackgroundOverlayTooltip(getElement('plotlyChart'), []);
     hideChart();
   }
   } catch (err) {
     console.error('createRadionuclidesChart failed:', err);
     hideChartLoading(chartContainer);
+    setupBackgroundOverlayTooltip(getElement('plotlyChart'), []);
     hideChart();
   }
 }
