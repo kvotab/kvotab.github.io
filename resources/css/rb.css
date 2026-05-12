@@ -241,6 +241,21 @@
       white-space: pre-wrap;
       word-break: break-word;
     }
+
+    .chart-bg-tooltip {
+      position: fixed;
+      z-index: 2147483647;
+      pointer-events: none;
+      padding: 6px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--color-border);
+      background: var(--color-panel-bg);
+      color: var(--color-text-primary);
+      font-size: 12px;
+      font-weight: 600;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.16);
+      white-space: nowrap;
+    }
     
     .add-file-btn {
       padding: 4px 10px;

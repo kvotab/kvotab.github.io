@@ -1202,6 +1202,13 @@ function hideChart() {
   currentChartData = null;
   currentPdfHistogram = false;
   currentPdfHistogramData = null;
+  selectedBackgroundOverlaySource = '__none__';
+  if (typeof setBackgroundSelectorVisible === 'function') {
+    setBackgroundSelectorVisible(false);
+  }
+  if (typeof populateBackgroundSelector === 'function') {
+    populateBackgroundSelector([{ value: '__none__', label: 'No background' }], '__none__');
+  }
   const histControls = document.getElementById('histControls');
   if (histControls) histControls.style.display = 'none';
 }
