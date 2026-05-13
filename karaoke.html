@@ -119,10 +119,184 @@
       flex-shrink: 0;
       margin-bottom: 2px;
     }
+
+    .edit-toggle {
+      position: fixed;
+      right: 10px;
+      top: 52px;
+      z-index: 25;
+      border: 1px solid var(--border-color);
+      background: var(--surface-bg, #111);
+      color: var(--text-primary, #f0f0f0);
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-family: RawengulkSans, verdana, sans-serif;
+      cursor: pointer;
+    }
+
+    .edit-panel {
+      position: fixed;
+      right: 10px;
+      top: 88px;
+      z-index: 25;
+      width: min(92vw, 520px);
+      max-height: calc(100vh - 100px);
+      overflow: auto;
+      border: 1px solid var(--border-color);
+      background: var(--surface-bg, #111);
+      color: var(--text-primary, #f0f0f0);
+      border-radius: 8px;
+      padding: 10px;
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+      display: none;
+    }
+
+    .edit-panel.visible {
+      display: block;
+    }
+
+    .edit-panel h3 {
+      margin: 0 0 8px;
+      font-family: RawengulkSans, verdana, sans-serif;
+      font-size: 1rem;
+      color: var(--color-kvot-bright);
+    }
+
+    .edit-meta {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .edit-meta label,
+    .edit-row label {
+      display: block;
+      font-size: 0.74rem;
+      opacity: 0.85;
+      margin-bottom: 2px;
+    }
+
+    .edit-panel input,
+    .edit-panel textarea {
+      width: 100%;
+      border: 1px solid var(--border-color);
+      border-radius: 5px;
+      background: rgba(0, 0, 0, 0.15);
+      color: inherit;
+      padding: 5px 6px;
+      font-family: RawengulkSans, verdana, sans-serif;
+    }
+
+    .edit-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .edit-row {
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      padding: 7px;
+      background: rgba(0, 0, 0, 0.12);
+    }
+
+    .edit-row-head {
+      display: grid;
+      grid-template-columns: 44px 80px 1fr;
+      gap: 6px;
+      align-items: end;
+    }
+
+    .row-idx {
+      font-size: 0.78rem;
+      opacity: 0.8;
+      text-align: center;
+      padding-bottom: 7px;
+    }
+
+    .edit-row-actions {
+      display: flex;
+      gap: 6px;
+      margin-top: 6px;
+      flex-wrap: wrap;
+    }
+
+    .edit-panel button {
+      border: 1px solid var(--border-color);
+      background: rgba(0, 0, 0, 0.2);
+      color: inherit;
+      border-radius: 5px;
+      padding: 4px 8px;
+      cursor: pointer;
+      font-family: RawengulkSans, verdana, sans-serif;
+      font-size: 0.8rem;
+    }
+
+    .edit-panel button:hover,
+    .edit-toggle:hover {
+      filter: brightness(1.08);
+    }
+
+    .edit-footer {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: center;
+      margin-top: 8px;
+    }
+
+    .edit-tools {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }
+
+    .edit-status {
+      margin-top: 6px;
+      min-height: 1.1em;
+      font-size: 0.72rem;
+      opacity: 0.8;
+    }
+
+    .edit-hint {
+      font-size: 0.72rem;
+      opacity: 0.75;
+    }
   </style>
 </head>
 <body>
   <header></header>
+
+  <button id="edit-toggle" class="edit-toggle" type="button">Edit Mode</button>
+  <div id="edit-panel" class="edit-panel" aria-hidden="true">
+    <h3>Karaoke Edit Mode</h3>
+    <div class="edit-meta">
+      <div>
+        <label for="edit-time-shift">time_shift (s)</label>
+        <input id="edit-time-shift" type="number" step="0.1">
+      </div>
+      <div>
+        <label for="edit-video-id">VIDEO_ID</label>
+        <input id="edit-video-id" type="text" spellcheck="false">
+      </div>
+    </div>
+    <div id="edit-list" class="edit-list"></div>
+    <div class="edit-footer">
+      <button id="edit-add-row" type="button">+ Add Row</button>
+      <span class="edit-hint">Each row maps to one lyric line in sequence.</span>
+    </div>
+    <div class="edit-tools">
+      <button id="edit-save" type="button">Save</button>
+      <button id="edit-export" type="button">Export JSON</button>
+      <button id="edit-import" type="button">Import JSON</button>
+      <button id="edit-reset" type="button">Reset Defaults</button>
+    </div>
+    <input id="edit-import-file" type="file" accept="application/json,.json" style="display:none">
+    <div id="edit-status" class="edit-status" aria-live="polite"></div>
+  </div>
 
   <div class="karaoke-wrap">
     <div id="yt-player-wrap">
@@ -149,45 +323,187 @@
 
     /* ── Lyrics with start times (seconds) ──────────────────────────────── */
     /* Adjust timestamps to match the actual video if needed.               */
-    const time_shift = 0;
-    const LYRICS = [
+    let TIME_SHIFT = 0;
+    let LYRIC_ROWS = [
       { t:  0,   text: '' },
-      { t:  19+time_shift,   text: 'Är du precis som jag' },
-      { t:  20+time_shift,   text: 'Går till skolan varje dag' },
-      { t:  22+time_shift,   text: 'Men jag får ingen lön' },
-      { t:  24+time_shift,   text: '6 timmar jobb och stön' },
-      { t:  26+time_shift,   text: 'Är du precis som jag' },
-      { t: 28+time_shift,   text: 'Svår att väcka varje dag' },
-      { t: 30+time_shift,   text: 'Lägger läxorna på hög' },
-      { t: 32+time_shift,   text: 'Min hjärna är så trög' },
-      { t: 34+time_shift,   text: 'Är du precis som jag' },
-      { t: 36+time_shift,   text: 'Går ut femman just idag' },
-      { t: 38+time_shift,   text: 'Nu är det slut med test' },
-      { t: 39+time_shift,   text: 'Välkommen till vår stora fest' },
-      { t: 42+time_shift,   text: 'Sen så lyckas jag' },
-      { t: 44+time_shift,   text: 'Domarringen är så bra' },
-      { t: 45+time_shift,   text: 'Detta måste firas nu' },
-      { t: 48+time_shift,   text: 'Därför börjar jag dansa min dans' },
-      { t: 52+time_shift,   text: 'Här får alla en chans.' },
-      { t: 56+time_shift,  text: 'Som från ingenstans' },
-      { t: 60+time_shift,  text: 'Kom och sola i vår glans' },
-      { t: 63+time_shift,  text: 'För jag kan inte sitta still' },
-      { t: 64+time_shift,  text: 'Nu får jag göra som jag vill' },
-      { t: 67+time_shift,  text: 'För nu ska vi gå, gå, gå' },
-      { t: 68+time_shift,  text: 'På sommar, lov, lov, lov' },
-      { t: 71+time_shift,  text: 'Jag kan inte sitta still' },
-      { t: 73+time_shift,  text: 'Nu får jag göra som jag vill' },
-      { t: 75+time_shift,  text: 'Nästa steg det väntar där, är, är' },
-      { t: 76+time_shift,  text: 'Men vi minns hur bra de var här' },
-      { t: 81+time_shift,  text: '' },
+      { t: 19, text: 'Är du precis som jag' },
+      { t: 20, text: 'Går till skolan varje dag' },
+      { t: 22, text: 'Men jag får ingen lön' },
+      { t: 24, text: '6 timmar jobb och stön' },
+      { t: 26, text: 'Är du precis som jag' },
+      { t: 28, text: 'Svår att väcka varje dag' },
+      { t: 30, text: 'Lägger läxorna på hög' },
+      { t: 32, text: 'Min hjärna är så trög' },
+      { t: 34, text: 'Är du precis som jag' },
+      { t: 36, text: 'Går ut femman just idag' },
+      { t: 38, text: 'Nu är det slut med test' },
+      { t: 39, text: 'Välkommen till vår stora fest' },
+      { t: 42, text: 'Sen så lyckas jag' },
+      { t: 44, text: 'Domarringen är så bra' },
+      { t: 45, text: 'Detta måste firas nu' },
+      { t: 48, text: 'Därför börjar jag dansa min dans' },
+      { t: 52, text: 'Här får alla en chans.' },
+      { t: 56, text: 'Som från ingenstans' },
+      { t: 60, text: 'Kom och sola i vår glans' },
+      { t: 63, text: 'För jag kan inte sitta still' },
+      { t: 64, text: 'Nu får jag göra som jag vill' },
+      { t: 67, text: 'För nu ska vi gå, gå, gå' },
+      { t: 68, text: 'På sommar, lov, lov, lov' },
+      { t: 71, text: 'Jag kan inte sitta still' },
+      { t: 73, text: 'Nu får jag göra som jag vill' },
+      { t: 75, text: 'Nästa steg det väntar där, är, är' },
+      { t: 76, text: 'Men vi minns hur bra de var här' },
+      { t: 81, text: '' },
     ];
-    const VIDEO_ID = 'mwBqXgljq7g';
+    let VIDEO_ID = 'mwBqXgljq7g';
+    let LYRICS = [];
+    const KARAOKE_STORAGE_KEY = 'kvot:karaoke-editor:v1';
+    const DEFAULT_TIME_SHIFT = TIME_SHIFT;
+    const DEFAULT_VIDEO_ID = VIDEO_ID;
+    const DEFAULT_LYRIC_ROWS = JSON.parse(JSON.stringify(LYRIC_ROWS));
     // const VIDEO_ID = '6LaiReEDH28';
 
     /* ── YouTube IFrame API ─────────────────────────────────────────────── */
     const POLL_INTERVAL_MS = 250;
     let player, pollTimer;
     let currentIdx = -1;
+
+    function rebuildLyrics() {
+      LYRICS = LYRIC_ROWS.map(row => ({
+        t: Number(row.t || 0) + Number(TIME_SHIFT || 0),
+        text: String(row.text || '')
+      }));
+    }
+
+    function snapshotEditorState() {
+      return {
+        timeShift: Number(TIME_SHIFT || 0),
+        videoId: String(VIDEO_ID || ''),
+        lyricRows: LYRIC_ROWS.map(row => ({
+          t: Number(row.t || 0),
+          text: String(row.text || '')
+        }))
+      };
+    }
+
+    function setEditStatus(msg) {
+      const el = document.getElementById('edit-status');
+      if (!el) return;
+      el.textContent = msg || '';
+    }
+
+    function persistEditorState() {
+      try {
+        localStorage.setItem(KARAOKE_STORAGE_KEY, JSON.stringify(snapshotEditorState()));
+        setEditStatus('Saved locally');
+      } catch (_) {
+        setEditStatus('Could not save locally');
+      }
+    }
+
+    function applyEditorState(state) {
+      if (!state || typeof state !== 'object') return false;
+      if (typeof state.timeShift === 'number' && Number.isFinite(state.timeShift)) {
+        TIME_SHIFT = state.timeShift;
+      }
+      if (typeof state.videoId === 'string' && state.videoId.trim()) {
+        VIDEO_ID = state.videoId.trim();
+      }
+      if (Array.isArray(state.lyricRows)) {
+        LYRIC_ROWS = state.lyricRows.map(row => ({
+          t: Number(row && row.t),
+          text: String((row && row.text) || '')
+        })).filter(row => Number.isFinite(row.t));
+        if (LYRIC_ROWS.length === 0) LYRIC_ROWS = [{ t: 0, text: '' }];
+      }
+      rebuildLyrics();
+      currentIdx = -1;
+      return true;
+    }
+
+    function loadPersistedEditorState() {
+      try {
+        const raw = localStorage.getItem(KARAOKE_STORAGE_KEY);
+        if (!raw) return false;
+        const parsed = JSON.parse(raw);
+        return applyEditorState(parsed);
+      } catch (_) {
+        return false;
+      }
+    }
+
+    function exportEditorJson() {
+      const data = JSON.stringify(snapshotEditorState(), null, 2);
+      const blob = new Blob([data], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'karaoke-editor-state.json';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setEditStatus('Exported JSON');
+    }
+
+    function importEditorJsonFromText(raw) {
+      if (!raw || !raw.trim()) return false;
+      try {
+        const parsed = JSON.parse(raw);
+        if (!applyEditorState(parsed)) throw new Error('invalid state');
+        persistEditorState();
+        refreshEditPanelFromState();
+        if (player && typeof player.loadVideoById === 'function') {
+          player.loadVideoById(VIDEO_ID);
+        }
+        tick();
+        setEditStatus('Imported JSON');
+        return true;
+      } catch (_) {
+        setEditStatus('Import failed: invalid JSON');
+        return false;
+      }
+    }
+
+    function importEditorJsonFromFile(file) {
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        const text = typeof reader.result === 'string' ? reader.result : '';
+        importEditorJsonFromText(text);
+      };
+      reader.onerror = () => {
+        setEditStatus('Import failed: could not read file');
+      };
+      try {
+        reader.readAsText(file);
+      } catch (_) {
+        setEditStatus('Import failed: could not read file');
+      }
+    }
+
+    function resetEditorDefaults() {
+      TIME_SHIFT = DEFAULT_TIME_SHIFT;
+      VIDEO_ID = DEFAULT_VIDEO_ID;
+      LYRIC_ROWS = JSON.parse(JSON.stringify(DEFAULT_LYRIC_ROWS));
+      rebuildLyrics();
+      currentIdx = -1;
+      persistEditorState();
+      refreshEditPanelFromState();
+      if (player && typeof player.loadVideoById === 'function') {
+        player.loadVideoById(VIDEO_ID);
+      }
+      tick();
+      setEditStatus('Reset to defaults');
+    }
+
+    function refreshEditPanelFromState() {
+      const shiftInput = document.getElementById('edit-time-shift');
+      const videoInput = document.getElementById('edit-video-id');
+      if (shiftInput) shiftInput.value = String(TIME_SHIFT);
+      if (videoInput) videoInput.value = VIDEO_ID;
+      renderEditRows();
+    }
 
     function escapeHtml(str) {
       return String(str || '')
@@ -209,6 +525,8 @@
         },
         events: {
           onReady: () => {
+            rebuildLyrics();
+            initEditMode();
             pollTimer = setInterval(tick, POLL_INTERVAL_MS);
           },
         },
@@ -225,7 +543,6 @@
       let idx = 0;
       for (let i = 0; i < LYRICS.length; i++) {
         if (LYRICS[i].t <= t) idx = i;
-        else break;
       }
       return idx;
     }
@@ -247,6 +564,7 @@
 
     function tick() {
       if (!player || typeof player.getCurrentTime !== 'function') return;
+      if (!LYRICS || LYRICS.length === 0) return;
       const state = player.getPlayerState();
       if (state === YT.PlayerState.UNSTARTED || state === YT.PlayerState.ENDED) return;
 
@@ -272,6 +590,182 @@
       const curr = LYRICS[idx].text;
       document.getElementById('line-curr').innerHTML = renderCurrentLine(curr, lineProgress);
     }
+
+    function swapRows(i, j) {
+      const tmp = LYRIC_ROWS[i];
+      LYRIC_ROWS[i] = LYRIC_ROWS[j];
+      LYRIC_ROWS[j] = tmp;
+    }
+
+    function renderEditRows() {
+      const list = document.getElementById('edit-list');
+      if (!list) return;
+
+      list.innerHTML = '';
+      LYRIC_ROWS.forEach((row, i) => {
+        const rowEl = document.createElement('div');
+        rowEl.className = 'edit-row';
+        rowEl.innerHTML = `
+          <div class="edit-row-head">
+            <div class="row-idx">#${i}</div>
+            <div>
+              <label>time (s)</label>
+              <input type="number" step="0.1" data-role="time" value="${Number(row.t)}">
+            </div>
+            <div>
+              <label>text</label>
+              <input type="text" data-role="text" value="${escapeHtml(row.text)}">
+            </div>
+          </div>
+          <div class="edit-row-actions">
+            <button type="button" data-action="up">↑</button>
+            <button type="button" data-action="down">↓</button>
+            <button type="button" data-action="setnow">Set t = current</button>
+            <button type="button" data-action="addbelow">+ Below</button>
+            <button type="button" data-action="remove">Remove</button>
+          </div>
+        `;
+
+        const timeInput = rowEl.querySelector('[data-role="time"]');
+        const textInput = rowEl.querySelector('[data-role="text"]');
+        timeInput.addEventListener('input', () => {
+          LYRIC_ROWS[i].t = Number(timeInput.value || 0);
+          rebuildLyrics();
+          currentIdx = -1;
+          tick();
+          persistEditorState();
+        });
+        textInput.addEventListener('input', () => {
+          LYRIC_ROWS[i].text = textInput.value;
+          rebuildLyrics();
+          currentIdx = -1;
+          tick();
+          persistEditorState();
+        });
+
+        rowEl.querySelector('[data-action="up"]').addEventListener('click', () => {
+          if (i <= 0) return;
+          swapRows(i, i - 1);
+          rebuildLyrics();
+          renderEditRows();
+          currentIdx = -1;
+          tick();
+          persistEditorState();
+        });
+
+        rowEl.querySelector('[data-action="down"]').addEventListener('click', () => {
+          if (i >= LYRIC_ROWS.length - 1) return;
+          swapRows(i, i + 1);
+          rebuildLyrics();
+          renderEditRows();
+          currentIdx = -1;
+          tick();
+          persistEditorState();
+        });
+
+        rowEl.querySelector('[data-action="setnow"]').addEventListener('click', () => {
+          if (!player || typeof player.getCurrentTime !== 'function') return;
+          LYRIC_ROWS[i].t = Math.max(0, Number(player.getCurrentTime() - TIME_SHIFT));
+          rebuildLyrics();
+          renderEditRows();
+          currentIdx = -1;
+          tick();
+          persistEditorState();
+        });
+
+        rowEl.querySelector('[data-action="addbelow"]').addEventListener('click', () => {
+          LYRIC_ROWS.splice(i + 1, 0, { t: Number(row.t), text: '' });
+          rebuildLyrics();
+          renderEditRows();
+          persistEditorState();
+        });
+
+        rowEl.querySelector('[data-action="remove"]').addEventListener('click', () => {
+          if (LYRIC_ROWS.length <= 1) return;
+          LYRIC_ROWS.splice(i, 1);
+          rebuildLyrics();
+          renderEditRows();
+          currentIdx = -1;
+          tick();
+          persistEditorState();
+        });
+
+        list.appendChild(rowEl);
+      });
+    }
+
+    function initEditMode() {
+      const panel = document.getElementById('edit-panel');
+      const toggle = document.getElementById('edit-toggle');
+      const shiftInput = document.getElementById('edit-time-shift');
+      const videoInput = document.getElementById('edit-video-id');
+      const addBtn = document.getElementById('edit-add-row');
+      const saveBtn = document.getElementById('edit-save');
+      const exportBtn = document.getElementById('edit-export');
+      const importBtn = document.getElementById('edit-import');
+      const importFileInput = document.getElementById('edit-import-file');
+      const resetBtn = document.getElementById('edit-reset');
+      if (!panel || !toggle || !shiftInput || !videoInput || !addBtn || !saveBtn || !exportBtn || !importBtn || !importFileInput || !resetBtn) return;
+
+      refreshEditPanelFromState();
+
+      toggle.addEventListener('click', () => {
+        const isOpen = panel.classList.toggle('visible');
+        panel.setAttribute('aria-hidden', isOpen ? 'false' : 'true');
+        toggle.textContent = isOpen ? 'Close Edit Mode' : 'Edit Mode';
+      });
+
+      shiftInput.addEventListener('input', () => {
+        TIME_SHIFT = Number(shiftInput.value || 0);
+        rebuildLyrics();
+        currentIdx = -1;
+        tick();
+        persistEditorState();
+      });
+
+      videoInput.addEventListener('change', () => {
+        const nextId = (videoInput.value || '').trim();
+        if (!nextId || nextId === VIDEO_ID) return;
+        VIDEO_ID = nextId;
+        if (player && typeof player.loadVideoById === 'function') {
+          player.loadVideoById(VIDEO_ID);
+        }
+        persistEditorState();
+      });
+
+      addBtn.addEventListener('click', () => {
+        const last = LYRIC_ROWS[LYRIC_ROWS.length - 1];
+        const nextT = last ? Number(last.t) + 2 : 0;
+        LYRIC_ROWS.push({ t: nextT, text: '' });
+        rebuildLyrics();
+        renderEditRows();
+        persistEditorState();
+      });
+
+      saveBtn.addEventListener('click', () => {
+        persistEditorState();
+      });
+
+      exportBtn.addEventListener('click', () => {
+        exportEditorJson();
+      });
+
+      importBtn.addEventListener('click', () => {
+        importFileInput.click();
+      });
+
+      importFileInput.addEventListener('change', () => {
+        const file = importFileInput.files && importFileInput.files[0] ? importFileInput.files[0] : null;
+        if (file) importEditorJsonFromFile(file);
+        importFileInput.value = '';
+      });
+
+      resetBtn.addEventListener('click', () => {
+        resetEditorDefaults();
+      });
+    }
+
+    loadPersistedEditorState();
 
     // Load YouTube IFrame API
     const tag = document.createElement('script');
