@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <link rel="stylesheet" href="./resources/css/kvot.css">
+  <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
+  <title>karaoke – kvot ab</title>
+  <style>
+    .karaoke-wrap {
+      position: absolute;
+      top: 43px;
+      left: 0;
+      width: 100%;
+      height: calc(100vh - 74px);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      overflow: hidden;
+    }
+
+    /* ── video container ── */
+    #yt-player-wrap {
+      position: relative;
+      width: 100%;
+      max-width: 780px;
+      flex-shrink: 0;
+    }
+    #yt-player-wrap iframe {
+      display: block;
+      width: 100%;
+      aspect-ratio: 16/9;
+      border: none;
+    }
+
+    /* ── lyric stage ── */
+    #lyric-stage {
+      flex: 1 1 auto;
+      width: 100%;
+      max-width: 780px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 8px 16px 4px;
+      box-sizing: border-box;
+      overflow: hidden;
+      gap: 6px;
+    }
+
+    .lyric-line {
+      font-family: RawengulkSans, verdana, sans-serif;
+      text-align: center;
+      transition: all 0.35s ease;
+      line-height: 1.25;
+      max-width: 100%;
+      white-space: pre-wrap;
+    }
+
+    /* previous line */
+    .lyric-prev {
+      font-size: clamp(0.75rem, 1.6vw, 1.1rem);
+      color: var(--text-muted);
+      opacity: 0.55;
+    }
+
+    /* active / current line */
+    .lyric-current {
+      font-size: clamp(1.1rem, 3vw, 2rem);
+      color: var(--color-kvot-bright);
+      text-shadow: 0 0 18px var(--color-kvot-accent), 0 2px 6px rgba(0,0,0,0.6);
+      font-weight: bold;
+    }
+
+    /* next line */
+    .lyric-next {
+      font-size: clamp(0.75rem, 1.6vw, 1.1rem);
+      color: var(--text-secondary);
+      opacity: 0.7;
+    }
+
+    /* ── progress bar ── */
+    #lyric-progress {
+      width: 100%;
+      max-width: 780px;
+      height: 3px;
+      background: var(--border-color);
+      flex-shrink: 0;
+      margin-bottom: 2px;
+    }
+    #lyric-progress-bar {
+      height: 100%;
+      background: var(--color-kvot-accent);
+      width: 0%;
+      transition: width 0.5s linear;
+    }
+
+    /* ── time indicator ── */
+    #lyric-time {
+      font-family: RawengulkSans, verdana, sans-serif;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      flex-shrink: 0;
+      margin-bottom: 2px;
+    }
+  </style>
+</head>
+<body>
+  <header></header>
+
+  <div class="karaoke-wrap">
+    <div id="yt-player-wrap">
+      <div id="yt-player"></div>
+    </div>
+
+    <div id="lyric-progress"><div id="lyric-progress-bar"></div></div>
+    <div id="lyric-time"></div>
+
+    <div id="lyric-stage">
+      <div class="lyric-line lyric-prev"  id="line-prev"></div>
+      <div class="lyric-line lyric-current" id="line-curr"></div>
+      <div class="lyric-line lyric-next"  id="line-next"></div>
+    </div>
+  </div>
+
+  <footer></footer>
+
+  <script src="./resources/js/site.js"></script>
+  <script>
+    KVOT.renderHeader('karaoke');
+    KVOT.renderNav('karaoke.html');
+    KVOT.renderFooter();
+
+    /* ── Lyrics with start times (seconds) ──────────────────────────────── */
+    /* Adjust timestamps to match the actual video if needed.               */
+    const LYRICS = [
+      { t:  0,   text: '' },
+      { t: 18,   text: 'Är du precis som jag, går till skolan varje dag?' },
+      { t: 29,   text: 'Men jag får ingen lön, 6 timmar jobb och stön.' },
+      { t: 40,   text: 'Är du precis som jag, svår att väcka varje dag?' },
+      { t: 51,   text: 'Lägger läxorna på hög, min hjärna är så trög.' },
+      { t: 63,   text: 'Är du precis som jag, går ut femman just idag?' },
+      { t: 74,   text: 'Nu är det slut med test, välkommen till vår stora fest.' },
+      { t: 85,   text: 'Sen så lyckas jag, domarringen är så bra.' },
+      { t: 96,   text: 'Detta måste firas nu.' },
+      { t: 107,  text: 'Därför börjar jag dansa min dans, här får alla en chans.' },
+      { t: 118,  text: 'Som från ingenstans, kom och sola i vår glans.' },
+      { t: 129,  text: 'För jag kan inte sitta still.' },
+      { t: 136,  text: 'Nu får jag göra som jag vill.' },
+      { t: 143,  text: 'För nu ska vi gå, gå, gå.' },
+      { t: 150,  text: 'På sommar, lov, lov, lov.' },
+      { t: 157,  text: 'Jag kan inte sitta still.' },
+      { t: 164,  text: 'Nu får jag göra som jag vill.' },
+      { t: 171,  text: 'Nästa steg det väntar där, är, är.' },
+      { t: 182,  text: 'Men vi minns hur bra de var här.' },
+      { t: 195,  text: '' },
+    ];
+
+    const VIDEO_ID = '6LaiReEDH28';
+
+    /* ── YouTube IFrame API ─────────────────────────────────────────────── */
+    const POLL_INTERVAL_MS = 250;
+    let player, pollTimer;
+    let currentIdx = -1;
+
+    function onYouTubeIframeAPIReady() {
+      player = new YT.Player('yt-player', {
+        videoId: VIDEO_ID,
+        playerVars: {
+          rel: 0,
+          modestbranding: 1,
+          cc_load_policy: 1,
+          hl: 'sv',
+        },
+        events: {
+          onReady: () => {
+            pollTimer = setInterval(tick, POLL_INTERVAL_MS);
+          },
+        },
+      });
+    }
+
+    function fmt(s) {
+      const m = Math.floor(s / 60);
+      const sec = Math.floor(s % 60);
+      return m + ':' + String(sec).padStart(2, '0');
+    }
+
+    function findIdx(t) {
+      let idx = 0;
+      for (let i = 0; i < LYRICS.length; i++) {
+        if (LYRICS[i].t <= t) idx = i;
+        else break;
+      }
+      return idx;
+    }
+
+    function tick() {
+      if (!player || typeof player.getCurrentTime !== 'function') return;
+      const state = player.getPlayerState();
+      if (state === YT.PlayerState.UNSTARTED || state === YT.PlayerState.ENDED) return;
+
+      const t = player.getCurrentTime();
+      const dur = player.getDuration();
+      if (!dur) return;
+
+      // progress bar
+      document.getElementById('lyric-progress-bar').style.width = (t / dur * 100) + '%';
+      document.getElementById('lyric-time').textContent = fmt(t) + ' / ' + fmt(dur);
+
+      // find current lyric
+      const idx = findIdx(t);
+      if (idx === currentIdx) return;
+      currentIdx = idx;
+
+      const prev = idx > 0 ? LYRICS[idx - 1].text : '';
+      const curr = LYRICS[idx].text;
+      const next = idx < LYRICS.length - 1 ? LYRICS[idx + 1].text : '';
+
+      document.getElementById('line-prev').textContent = prev;
+      document.getElementById('line-curr').textContent = curr;
+      document.getElementById('line-next').textContent = next;
+    }
+
+    // Load YouTube IFrame API
+    const tag = document.createElement('script');
+    tag.src = 'https://www.youtube.com/iframe_api';
+    document.head.appendChild(tag);
+  </script>
+</body>
+</html>
