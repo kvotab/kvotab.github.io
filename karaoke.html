@@ -160,7 +160,9 @@
     const VIDEO_ID = '6LaiReEDH28';
 
     /* ── YouTube IFrame API ─────────────────────────────────────────────── */
-    let player, pollTimer, currentIdx = -1;
+    const POLL_INTERVAL_MS = 250;
+    let player, pollTimer;
+    let currentIdx = -1;
 
     function onYouTubeIframeAPIReady() {
       player = new YT.Player('yt-player', {
@@ -173,7 +175,7 @@
         },
         events: {
           onReady: () => {
-            pollTimer = setInterval(tick, 250);
+            pollTimer = setInterval(tick, POLL_INTERVAL_MS);
           },
         },
       });
@@ -200,7 +202,8 @@
       if (state === YT.PlayerState.UNSTARTED || state === YT.PlayerState.ENDED) return;
 
       const t = player.getCurrentTime();
-      const dur = player.getDuration() || 1;
+      const dur = player.getDuration();
+      if (!dur) return;
 
       // progress bar
       document.getElementById('lyric-progress-bar').style.width = (t / dur * 100) + '%';
