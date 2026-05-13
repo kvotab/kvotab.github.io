@@ -40,6 +40,7 @@ const KVOT = (() => {
     { href: './rb.html', label: 'HDF5 Browser' },
     { href: './logn.html', label: 'Lognormal Conversions' },
     { href: './proj.html', label: 'Swedish Coordinate Conversions' },
+    { href: './karaoke.html', label: 'Karaoke' },
   ];
 
   // ── Helper: create an SVG icon ─────────────────────────────────────────────
