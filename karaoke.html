@@ -73,6 +73,21 @@
       font-weight: bold;
     }
 
+    .karaoke-fill {
+      display: inline;
+      background-image: linear-gradient(
+        90deg,
+        var(--color-kvot-accent) 0%,
+        var(--color-kvot-accent) var(--fill, 0%),
+        var(--color-kvot-bright) var(--fill, 0%),
+        var(--color-kvot-bright) 100%
+      );
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      -webkit-text-fill-color: transparent;
+    }
+
     /* next line */
     .lyric-next {
       font-size: clamp(0.75rem, 1.6vw, 1.1rem);
@@ -134,36 +149,36 @@
 
     /* ── Lyrics with start times (seconds) ──────────────────────────────── */
     /* Adjust timestamps to match the actual video if needed.               */
-    const time_shift = 18;
+    const time_shift = 0;
     const LYRICS = [
       { t:  0,   text: '' },
-      { t:  0+time_shift,   text: 'Är du precis som jag' },
-      { t:  2+time_shift,   text: 'Går till skolan varje dag' },
-      { t:  4+time_shift,   text: 'Men jag får ingen lön' },
-      { t:  6+time_shift,   text: '6 timmar jobb och stön' },
-      { t:  8+time_shift,   text: 'Är du precis som jag' },
-      { t: 10+time_shift,   text: 'Svår att väcka varje dag' },
-      { t: 12+time_shift,   text: 'Lägger läxorna på hög' },
-      { t: 14+time_shift,   text: 'Min hjärna är så trög' },
-      { t: 16+time_shift,   text: 'Är du precis som jag' },
-      { t: 18+time_shift,   text: 'Går ut femman just idag' },
-      { t: 20+time_shift,   text: 'Nu är det slut med test' },
-      { t: 22+time_shift,   text: 'Välkommen till vår stora fest' },
-      { t: 24+time_shift,   text: 'Sen så lyckas jag' },
-      { t: 26+time_shift,   text: 'Domarringen är så bra' },
-      { t: 28+time_shift,   text: 'Detta måste firas nu' },
-      { t: 30+time_shift,  text: 'Därför börjar jag dansa min dans' },
-      { t: 36+time_shift,  text: 'Här får alla en chans.' },
-      { t: 38+time_shift,  text: 'Som från ingenstans' },
-      { t: 40+time_shift,  text: 'Kom och sola i vår glans' },
-      { t: 42+time_shift,  text: 'För jag kan inte sitta still' },
-      { t: 44+time_shift,  text: 'Nu får jag göra som jag vill' },
-      { t: 46+time_shift,  text: 'För nu ska vi gå, gå, gå' },
-      { t: 48+time_shift,  text: 'På sommar, lov, lov, lov' },
-      { t: 50+time_shift,  text: 'Jag kan inte sitta still' },
-      { t: 52+time_shift,  text: 'Nu får jag göra som jag vill' },
-      { t: 57+time_shift,  text: 'Nästa steg det väntar där, är, är' },
-      { t: 68+time_shift,  text: 'Men vi minns hur bra de var här' },
+      { t:  19+time_shift,   text: 'Är du precis som jag' },
+      { t:  20+time_shift,   text: 'Går till skolan varje dag' },
+      { t:  22+time_shift,   text: 'Men jag får ingen lön' },
+      { t:  24+time_shift,   text: '6 timmar jobb och stön' },
+      { t:  26+time_shift,   text: 'Är du precis som jag' },
+      { t: 28+time_shift,   text: 'Svår att väcka varje dag' },
+      { t: 30+time_shift,   text: 'Lägger läxorna på hög' },
+      { t: 32+time_shift,   text: 'Min hjärna är så trög' },
+      { t: 34+time_shift,   text: 'Är du precis som jag' },
+      { t: 36+time_shift,   text: 'Går ut femman just idag' },
+      { t: 38+time_shift,   text: 'Nu är det slut med test' },
+      { t: 39+time_shift,   text: 'Välkommen till vår stora fest' },
+      { t: 42+time_shift,   text: 'Sen så lyckas jag' },
+      { t: 44+time_shift,   text: 'Domarringen är så bra' },
+      { t: 45+time_shift,   text: 'Detta måste firas nu' },
+      { t: 48+time_shift,   text: 'Därför börjar jag dansa min dans' },
+      { t: 53+time_shift,   text: 'Här får alla en chans.' },
+      { t: 56+time_shift,  text: 'Som från ingenstans' },
+      { t: 60+time_shift,  text: 'Kom och sola i vår glans' },
+      { t: 63+time_shift,  text: 'För jag kan inte sitta still' },
+      { t: 64+time_shift,  text: 'Nu får jag göra som jag vill' },
+      { t: 67+time_shift,  text: 'För nu ska vi gå, gå, gå' },
+      { t: 68+time_shift,  text: 'På sommar, lov, lov, lov' },
+      { t: 71+time_shift,  text: 'Jag kan inte sitta still' },
+      { t: 73+time_shift,  text: 'Nu får jag göra som jag vill' },
+      { t: 75+time_shift,  text: 'Nästa steg det väntar där, är, är' },
+      { t: 76+time_shift,  text: 'Men vi minns hur bra de var här' },
       { t: 81+time_shift,  text: '' },
     ];
     const VIDEO_ID = 'mwBqXgljq7g';
@@ -173,6 +188,15 @@
     const POLL_INTERVAL_MS = 250;
     let player, pollTimer;
     let currentIdx = -1;
+
+    function escapeHtml(str) {
+      return String(str || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
 
     function onYouTubeIframeAPIReady() {
       player = new YT.Player('yt-player', {
@@ -206,6 +230,21 @@
       return idx;
     }
 
+    function getLineProgress(t, idx) {
+      const start = LYRICS[idx]?.t ?? 0;
+      const nextStart = (idx < LYRICS.length - 1) ? LYRICS[idx + 1].t : start + 2;
+      const span = Math.max(0.05, nextStart - start);
+      const p = (t - start) / span;
+      return Math.max(0, Math.min(1, p));
+    }
+
+    function renderCurrentLine(text, progress) {
+      const safe = escapeHtml(text);
+      const pct = Math.round(progress * 1000) / 10;
+      if (!safe) return '';
+      return `<span class="karaoke-fill" style="--fill:${pct}%">${safe}</span>`;
+    }
+
     function tick() {
       if (!player || typeof player.getCurrentTime !== 'function') return;
       const state = player.getPlayerState();
@@ -219,18 +258,19 @@
       document.getElementById('lyric-progress-bar').style.width = (t / dur * 100) + '%';
       document.getElementById('lyric-time').textContent = fmt(t) + ' / ' + fmt(dur);
 
-      // find current lyric
       const idx = findIdx(t);
-      if (idx === currentIdx) return;
-      currentIdx = idx;
+      const lineProgress = getLineProgress(t, idx);
 
-      const prev = idx > 0 ? LYRICS[idx - 1].text : '';
+      if (idx !== currentIdx) {
+        currentIdx = idx;
+        const prev = idx > 0 ? LYRICS[idx - 1].text : '';
+        const next = idx < LYRICS.length - 1 ? LYRICS[idx + 1].text : '';
+        document.getElementById('line-prev').textContent = prev;
+        document.getElementById('line-next').textContent = next;
+      }
+
       const curr = LYRICS[idx].text;
-      const next = idx < LYRICS.length - 1 ? LYRICS[idx + 1].text : '';
-
-      document.getElementById('line-prev').textContent = prev;
-      document.getElementById('line-curr').textContent = curr;
-      document.getElementById('line-next').textContent = next;
+      document.getElementById('line-curr').innerHTML = renderCurrentLine(curr, lineProgress);
     }
 
     // Load YouTube IFrame API
