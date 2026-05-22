@@ -131,8 +131,22 @@ const NAMED_LINE_STYLES = {
   'submerged': { color: 'rgb(0,191,255)', dash: 'solid' },
   'temperate': { color: 'rgb(34,139,34)', dash: 'solid' },
   'permafrost': { color: 'rgb(70,130,180)', dash: 'solid' },
+  'periglacial': { color: 'rgb(70,130,180)', dash: 'solid' },
   'glacial': { color: 'rgb(255,250,250)', dash: 'solid' },
 
+  // Chemical degradation states
+  'State I': { color: 'rgb(79,99,39)', dash: 'solid' },
+  'State II': { color: 'rgb(119,147,60)', dash: 'solid' },
+  'State IIIa': { color: 'rgb(154,187,89)', dash: 'solid' },
+  'State IIIb': { color: 'rgb(195,215,156)', dash: 'solid' },
+  'State IV': { color: 'rgb(255,255,255)', dash: 'solid' },
+  // physical degradation states
+  'Intact': { color: 'rgb(54,95,146)', dash: 'solid' },
+  'Moderately degraded': { color: 'rgb(149,179,216)', dash: 'solid' },
+  'Severely degraded': { color: 'rgb(185,205,229)', dash: 'solid' },
+  'Completely degraded': { color: 'rgb(220,230,242)', dash: 'solid' },
+  'No barrier': { color: 'rgb(255,255,255)', dash: 'solid' },
+  
 };
 
 function getNamedColor(name) {
@@ -1288,6 +1302,9 @@ function toggleBackgroundOverlay() {
   if (selectedIsRadionuclidesGroup && selectedDatasetPath) {
     const savedAxis = captureAxisState();
     Promise.resolve().then(() => createRadionuclidesChart(selectedDatasetPath, savedAxis));
+  } else if (!selectedIsRadionuclidesGroup && selectedDatasetPath) {
+    const savedAxis = captureAxisState();
+    Promise.resolve().then(() => createPlotlyChart(selectedDatasetPath, savedAxis));
   }
 }
 
@@ -1657,6 +1674,59 @@ async function toggleShowSDOM() {
 }
 
 /**
+ * Toggle a specific iteration's time-series as a dotted line on the current chart.
+ * Reads the iteration number (1-based) from #showIterNum and adds one dotted trace
+ * per probabilistic base trace, using the same line color.
+ */
+function toggleShowIteration() {
+  const plotDiv = getElement('plotlyChart');
+  if (!plotDiv || !plotDiv.data) return;
+
+  // Remove any existing iteration traces first
+  const existingIndices = plotDiv.data
+    .map((trace, idx) => trace._isIterTrace ? idx : -1)
+    .filter(idx => idx >= 0);
+  if (existingIndices.length > 0) {
+    Plotly.deleteTraces(plotDiv, existingIndices);
+  }
+
+  // Read and validate the requested iteration number
+  const iterInput = getElement('showIterNum');
+  const iterNumRaw = iterInput ? parseInt(iterInput.value, 10) : NaN;
+  if (!isFinite(iterNumRaw) || iterNumRaw < 1) return;
+
+  const iterTraces = [];
+  // Use currentChartData.traces for reliable _rawData access (Plotly may not preserve custom props)
+  const sourceTraces = (currentChartData && Array.isArray(currentChartData.traces))
+    ? currentChartData.traces : (plotDiv.data || []);
+  sourceTraces.forEach(trace => {
+    if (!trace._rawData || !trace._timeData) return;
+    const numRealizations = trace._numRealizations;
+    if (!numRealizations || iterNumRaw > numRealizations) return;
+    const r = iterNumRaw - 1;
+    const y = [];
+    for (let t = 0; t < trace._timeData.length; t++) {
+      y.push(PDFSampler.toNumber(trace._rawData[t * numRealizations + r]));
+    }
+    const color = (trace.line && trace.line.color) ? trace.line.color : '#888888';
+    iterTraces.push({
+      x: trace._timeData.slice(),
+      y,
+      type: 'scatter',
+      mode: 'lines',
+      name: `Iter.\u00a0${iterNumRaw} \u2013 ${trace.name}`,
+      line: { color, width: 1, dash: 'dot' },
+      showlegend: true,
+      _isIterTrace: true,
+    });
+  });
+
+  if (iterTraces.length > 0) {
+    Plotly.addTraces(plotDiv, iterTraces);
+  }
+}
+
+/**
  * Append the maximum y-value to each trace's legend name.
  * Formats as "name (max)" using 3 significant digits.
  * Skips traces that are hidden from the legend.
@@ -1686,7 +1756,7 @@ function annotateTracesWithMax(traces) {
  * @param {string} path - HDF5 path to the dataset
  * @returns {void}
  */
-function createPlotlyChart(path) {
+function createPlotlyChart(path, savedAxisState) {
   if (!_axesLocked) resetPresetDropdown();
   const chartContainer = getElement('plotlyChartContainer');
   showChartLoading(chartContainer);
@@ -1694,6 +1764,7 @@ function createPlotlyChart(path) {
 
   let wasCIChecked = false;
   let wasSDOMChecked = false;
+  let backgroundSourceValue = selectedBackgroundOverlaySource || '__none__';
   try {
     const ciCheckbox = getElement('showCI');
     if (ciCheckbox) {
@@ -1702,6 +1773,10 @@ function createPlotlyChart(path) {
     const sdomCheckbox = getElement('showSDOM');
     if (sdomCheckbox) {
       wasSDOMChecked = !!sdomCheckbox.checked;
+    }
+    const backgroundSelect = getElement('backgroundSourceSelect');
+    if (backgroundSelect && backgroundSelect.value) {
+      backgroundSourceValue = backgroundSelect.value;
     }
   } catch (e) {
     // Ignore missing CI control during initial render.
@@ -1716,6 +1791,7 @@ function createPlotlyChart(path) {
   setShowCIVisible(false);  // Will be enabled if we have probabilistic data
   setShowSDOMVisible(false); // Will be enabled if SDOM is available
   setBackgroundSelectorVisible(false);
+  setIterationSelectorVisible(false);
 
   const traces = [];
   const enabledFiles = getEffectiveFiles();
@@ -1727,6 +1803,8 @@ function createPlotlyChart(path) {
   let timeUnit = '';
   let yAxisUnit = '';
   let yAxisName = path.split('/').pop();
+  let backgroundSourceOptions = [{ value: '__none__', label: 'No background' }];
+  let indexBackgroundSegments = [];
 
   if (enabledFiles.length > 0) {
     const firstFile = loadedFiles[enabledFiles[0]];
@@ -1739,6 +1817,26 @@ function createPlotlyChart(path) {
       if (unit !== undefined && unit !== null) yAxisUnit = unit;
     } catch (e) {
       console.warn('Could not read unit from dataset:', e);
+    }
+
+    // Collect background source options from parent group or root IndexLists
+    try {
+      const parentPath = path.substring(0, path.lastIndexOf('/')) || '/';
+      backgroundSourceOptions = collectBackgroundSourceOptions(firstFile, null, parentPath);
+      if (!backgroundSourceOptions.some(o => o.value === backgroundSourceValue)) {
+        backgroundSourceValue = '__none__';
+      }
+      selectedBackgroundOverlaySource = backgroundSourceValue;
+      populateBackgroundSelector(backgroundSourceOptions, backgroundSourceValue);
+      setBackgroundSelectorVisible(backgroundSourceOptions.length > 1);
+      if (backgroundSourceValue !== '__none__') {
+        const timeData = getTimeData(firstFile);
+        if (timeData) {
+          indexBackgroundSegments = collectIndexBackgroundSegments(firstFile, backgroundSourceValue, timeData);
+        }
+      }
+    } catch (e) {
+      // Background collection is best-effort
     }
   }
 
@@ -1840,6 +1938,7 @@ function createPlotlyChart(path) {
           // Store raw data and time data on the trace for CI computation
           traceObj._rawData = normalizedRawData;
           traceObj._timeData = timeData.slice(0, minLength);
+          traceObj._numRealizations = Math.floor(normalizedRawData.length / timeData.length);
           if (nIter && nIter > 1) {
             traceObj._nIter = nIter;
           }
@@ -1889,12 +1988,53 @@ function createPlotlyChart(path) {
       yScale
     });
     layout.margin.r = 200; // Extra room for longer legend names
+
+    if (indexBackgroundSegments.length) {
+      let shapeSegments = indexBackgroundSegments.slice();
+      if (xScale === 'log') {
+        const positiveX = [];
+        for (const trace of traces) {
+          const xVals = Array.isArray(trace.x) ? trace.x : [];
+          for (const xv of xVals) {
+            const n = Number(xv);
+            if (isFinite(n) && n > 0) positiveX.push(n);
+          }
+        }
+        const minPositiveX = positiveX.length ? Math.min(...positiveX) : null;
+        if (minPositiveX !== null) {
+          shapeSegments = shapeSegments
+            .map(seg => {
+              const rawX0 = Number(seg.x0);
+              const rawX1 = Number(seg.x1);
+              if (!isFinite(rawX0) || !isFinite(rawX1)) return null;
+              let x0 = rawX0; let x1 = rawX1;
+              if (x0 <= 0 && x1 <= 0) return null;
+              if (x0 <= 0) x0 = minPositiveX;
+              if (x1 <= 0) x1 = minPositiveX;
+              if (x1 < x0) { const tmp = x0; x0 = x1; x1 = tmp; }
+              if (x1 === x0) return null;
+              return { ...seg, x0, x1 };
+            })
+            .filter(Boolean);
+        }
+      }
+      layout.shapes = (layout.shapes || []).concat(shapeSegments.map(seg => ({
+        type: 'rect', xref: 'x', yref: 'paper',
+        x0: seg.x0, x1: seg.x1, y0: 0, y1: 1,
+        line: { width: 0 }, fillcolor: seg.color, layer: 'below'
+      })));
+    }
+
+    applyAxisState(layout, savedAxisState);
     _applyLockedAxes(layout);
 
     // Show CI checkbox if we have probabilistic data
     setShowCIVisible(hasProbabilistic);
     setShowSDOMVisible(hasSDOM);
-    
+    const _iterMax = traces.filter(t => t._numRealizations).reduce((m, t) => Math.max(m, t._numRealizations), 0);
+    setIterationSelectorVisible(_iterMax > 0);
+    if (_iterMax > 0) setIterationSelectorMax(_iterMax);
+
     const config = getPlotlyConfig('multi_dataset_chart');
 
     currentChartData = { traces, layout, paths };
@@ -1923,6 +2063,13 @@ function createPlotlyChart(path) {
           toggleShowSDOM();
         }
       }
+      const _iterInput = getElement('showIterNum');
+      if (_iterInput && _iterInput.value && parseInt(_iterInput.value, 10) >= 1) {
+        toggleShowIteration();
+      }
+      populateBackgroundSelector(backgroundSourceOptions, backgroundSourceValue);
+      setBackgroundSelectorVisible(backgroundSourceOptions.length > 1);
+      setupBackgroundOverlayTooltip(getElement('plotlyChart'), indexBackgroundSegments);
       hideChartLoading(chartContainer);
     });
   } else {
@@ -1970,6 +2117,7 @@ function createMultiDatasetChart(items) {
   setShowCIVisible(false);  // Will be enabled if we have probabilistic data
   setShowSDOMVisible(false); // Will be enabled if SDOM is available
   setBackgroundSelectorVisible(false);
+  setIterationSelectorVisible(false);
   
   const traces = [];
   const yAxisUnits = new Set();
@@ -2139,6 +2287,7 @@ function createMultiDatasetChart(items) {
           // Store raw data and time data on the trace for CI computation
           traceObj._rawData = normalizedRawData;
           traceObj._timeData = trimmedTimeData;
+          traceObj._numRealizations = Math.floor(normalizedRawData.length / timeData.length);
           if (nIter && nIter > 1) {
             traceObj._nIter = nIter;
           }
@@ -2167,6 +2316,9 @@ function createMultiDatasetChart(items) {
     if (hasSDOM) {
       setShowSDOMVisible(true);
     }
+    const _iterMax = traces.filter(t => t._numRealizations).reduce((m, t) => Math.max(m, t._numRealizations), 0);
+    setIterationSelectorVisible(_iterMax > 0);
+    if (_iterMax > 0) setIterationSelectorMax(_iterMax);
 
     // Annotate legend with max values if "Show Max" is checked
     const showMaxCb = getElement('showMax');
@@ -2223,6 +2375,10 @@ function createMultiDatasetChart(items) {
             toggleShowSDOM();
           }
         }
+        const _iterInput = getElement('showIterNum');
+        if (_iterInput && _iterInput.value && parseInt(_iterInput.value, 10) >= 1) {
+          toggleShowIteration();
+        }
         hideChartLoading(container);
       });
   } else {
@@ -2242,6 +2398,205 @@ function createMultiDatasetChart(items) {
  * @param {string} path - HDF5 path to the radionuclides group
  * @returns {void}
  */
+function isVisibleGroupEndpoint(name) {
+  return !(typeof name === 'string' && name.startsWith('_'));
+}
+
+function normalizeBackgroundLabel(name) {
+  return String(name || '').replace(/^_+|_+$/g, '') || String(name || '');
+}
+
+function getBackgroundSourceLabel(dataset, datasetKey) {
+  const attrName = getAttr(dataset, 'name') ?? getAttr(dataset, 'Name');
+  if (attrName !== undefined && attrName !== null && String(attrName).trim() !== '') {
+    return String(attrName).trim();
+  }
+  return normalizeBackgroundLabel(datasetKey);
+}
+
+function parseIndexNames(indexAttr) {
+  if (indexAttr === undefined || indexAttr === null) return [];
+  if (Array.isArray(indexAttr) || ArrayBuffer.isView(indexAttr)) {
+    return Array.from(indexAttr).map(v => String(v).trim()).filter(Boolean);
+  }
+  if (typeof indexAttr === 'object' && typeof indexAttr.length === 'number') {
+    try {
+      return Array.from(indexAttr).map(v => String(v).trim()).filter(Boolean);
+    } catch (_) {}
+  }
+  if (typeof indexAttr === 'string') {
+    const s = indexAttr.trim();
+    if (!s) return [];
+    try {
+      const parsed = JSON.parse(s);
+      if (Array.isArray(parsed)) {
+        return parsed.map(v => String(v).trim()).filter(Boolean);
+      }
+    } catch (_) {}
+    return s.split(/[;,]/).map(v => v.trim()).filter(Boolean);
+  }
+  return [String(indexAttr).trim()].filter(Boolean);
+}
+
+function resolveIndexCategoryName(rawValue, indexNames) {
+  const strVal = String(rawValue).trim();
+  if (!strVal) return null;
+  if (indexNames.includes(strVal)) return strVal;
+  const asNumber = Number(strVal);
+  if (isFinite(asNumber)) {
+    const idx0 = Math.floor(asNumber);
+    if (idx0 >= 0 && idx0 < indexNames.length) return indexNames[idx0];
+    if (idx0 >= 1 && idx0 <= indexNames.length) return indexNames[idx0 - 1];
+  }
+  return null;
+}
+
+function rgbaFromRgbString(rgb, alpha) {
+  if (!rgb || typeof rgb !== 'string') return null;
+  const m = rgb.match(/rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i);
+  if (!m) return null;
+  return `rgba(${m[1]},${m[2]},${m[3]},${alpha})`;
+}
+
+function getCategoryFillColor(name) {
+  const named = getNamedColor(name);
+  if (named) {
+    return rgbaFromRgbString(named, 0.24) || 'rgba(120,120,120,0.24)';
+  }
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = ((hash << 5) - hash) + name.charCodeAt(i);
+    hash |= 0;
+  }
+  const hue = Math.abs(hash) % 360;
+  return `hsla(${hue}, 60%, 55%, 0.24)`;
+}
+
+function readDatasetNumericVector(dataset) {
+  let raw;
+  if (typeof dataset.value !== 'undefined') raw = dataset.value;
+  else if (typeof dataset.toArray === 'function') raw = dataset.toArray();
+  if (raw == null) return null;
+  const normalized = PDFSampler.normalizeDataArray(raw);
+  const arr = Array.isArray(normalized)
+    ? normalized
+    : (ArrayBuffer.isView(normalized) ? Array.from(normalized) : null);
+  if (!arr || !arr.length) return null;
+  const flat = arr.map(pt => Array.isArray(pt) ? pt[0] : (ArrayBuffer.isView(pt) ? pt[0] : pt));
+  const nums = flat.map(Number);
+  return nums.every(isFinite) ? nums : null;
+}
+
+function hasDataTimeBackground(dataset) {
+  const indexArr = parseIndexNames(getAttr(dataset, 'Index'));
+  if (!indexArr.length) return false;
+  const dataArr = readDatasetNumericVector(dataset);
+  return dataArr !== null && dataArr.length === indexArr.length;
+}
+
+function collectDataTimeSegments(dataset, sourcePath) {
+  const timeArr = readDatasetNumericVector(dataset);
+  const categoryNames = parseIndexNames(getAttr(dataset, 'Index'));
+  if (!timeArr || !categoryNames.length || timeArr.length !== categoryNames.length) return [];
+  const segments = [];
+  for (let i = 0; i < timeArr.length; i++) {
+    const x0 = i === 0 ? 0 : timeArr[i - 1];
+    const x1 = timeArr[i];
+    if (!isFinite(x0) || !isFinite(x1) || x1 < x0) continue;
+    const category = categoryNames[i];
+    if (!category) continue;
+    segments.push({ x0, x1, category, color: getCategoryFillColor(category), source: sourcePath });
+  }
+  return segments;
+}
+
+function addBackgroundSourcesFromGroup(file, groupPath, list, seenValues) {
+  const sourceGroup = FileService.get(file, groupPath);
+  if (!sourceGroup || String(sourceGroup.type).toLowerCase() !== 'group' || typeof sourceGroup.keys !== 'function') {
+    return;
+  }
+  let keys = [];
+  try {
+    keys = Array.from(sourceGroup.keys()).filter(k => typeof k === 'string' && k.startsWith('_'));
+  } catch (_) {
+    return;
+  }
+  for (const key of keys) {
+    const sourcePath = `${groupPath}/${key}`.replace(/\/+/g, '/');
+    if (seenValues.has(sourcePath)) continue;
+    const dataset = FileService.get(file, sourcePath);
+    if (!dataset || String(dataset.type).toLowerCase() !== 'dataset') continue;
+    const isTimeDep = isTimeDependent(dataset);
+    const hasDataTime = !isTimeDep && hasDataTimeBackground(dataset);
+    if (!isTimeDep && !hasDataTime) continue;
+    if (!parseIndexNames(getAttr(dataset, 'Index')).length) continue;
+    let label = getBackgroundSourceLabel(dataset, key);
+    if (list.some(item => item.label === label)) {
+      label = groupPath.endsWith('/IndexLists') ? `${label} (IndexLists)` : `${label} (${normalizeBackgroundLabel(key)})`;
+    }
+    list.push({ value: sourcePath, label });
+    seenValues.add(sourcePath);
+  }
+}
+
+function collectBackgroundSourceOptions(file, group, groupPath) {
+  const options = [{ value: '__none__', label: 'No background' }];
+  const seenValues = new Set(['__none__']);
+  addBackgroundSourcesFromGroup(file, groupPath, options, seenValues);
+  addBackgroundSourcesFromGroup(file, `${groupPath}/IndexLists`, options, seenValues);
+  addBackgroundSourcesFromGroup(file, '/IndexLists', options, seenValues);
+  return options;
+}
+
+function collectIndexBackgroundSegments(file, sourcePath, timeData) {
+  if (!file || !sourcePath || sourcePath === '__none__' || !Array.isArray(timeData) || timeData.length < 2) {
+    return [];
+  }
+  const dataset = FileService.get(file, sourcePath);
+  if (!dataset || String(dataset.type).toLowerCase() !== 'dataset') {
+    return [];
+  }
+  if (!isTimeDependent(dataset)) {
+    if (!hasDataTimeBackground(dataset)) return [];
+    return collectDataTimeSegments(dataset, sourcePath);
+  }
+  const indexNames = parseIndexNames(getAttr(dataset, 'Index'));
+  if (!indexNames.length) return [];
+  let raw;
+  if (typeof dataset.value !== 'undefined') raw = dataset.value;
+  else if (typeof dataset.toArray === 'function') raw = dataset.toArray();
+  if (!raw) return [];
+  const normalized = PDFSampler.normalizeDataArray(raw);
+  const series = Array.isArray(normalized)
+    ? normalized
+    : (ArrayBuffer.isView(normalized) ? Array.from(normalized) : null);
+  if (!series || !series.length) return [];
+  const n = Math.min(timeData.length, series.length);
+  if (n < 2) return [];
+  const labels = [];
+  for (let i = 0; i < n; i++) {
+    const point = series[i];
+    const v = Array.isArray(point) ? point[0] : (ArrayBuffer.isView(point) ? point[0] : point);
+    labels.push(resolveIndexCategoryName(v, indexNames));
+  }
+  const segments = [];
+  let start = 0;
+  for (let i = 1; i <= n; i++) {
+    const changed = i === n || labels[i] !== labels[start];
+    if (!changed) continue;
+    const category = labels[start];
+    if (category) {
+      const x0 = timeData[start];
+      const x1 = timeData[Math.min(i, n - 1)];
+      if (x0 !== undefined && x1 !== undefined && x1 >= x0) {
+        segments.push({ x0, x1, category, color: getCategoryFillColor(category), source: sourcePath });
+      }
+    }
+    start = i;
+  }
+  return segments;
+}
+
 async function createRadionuclidesChart(path, savedAxisState) {
   if (!_axesLocked) resetPresetDropdown();
   const plotDiv = getElement('plotlyChart');
@@ -2277,6 +2632,7 @@ async function createRadionuclidesChart(path, savedAxisState) {
   setShowCIVisible(false);
   setShowSDOMVisible(false);
   setBackgroundSelectorVisible(false);
+  setIterationSelectorVisible(false);
   populateBackgroundSelector([{ value: '__none__', label: 'No background' }], '__none__');
   
   const traces = [];
@@ -2323,183 +2679,6 @@ async function createRadionuclidesChart(path, savedAxisState) {
     return null;
   }
 
-  function isVisibleGroupEndpoint(name) {
-    return !(typeof name === 'string' && name.startsWith('_'));
-  }
-
-  function normalizeBackgroundLabel(name) {
-    return String(name || '').replace(/^_+|_+$/g, '') || String(name || '');
-  }
-
-  function getBackgroundSourceLabel(dataset, datasetKey) {
-    const attrName = getAttr(dataset, 'name') ?? getAttr(dataset, 'Name');
-    if (attrName !== undefined && attrName !== null && String(attrName).trim() !== '') {
-      return String(attrName).trim();
-    }
-    return normalizeBackgroundLabel(datasetKey);
-  }
-
-  function parseIndexNames(indexAttr) {
-    if (indexAttr === undefined || indexAttr === null) return [];
-    if (Array.isArray(indexAttr) || ArrayBuffer.isView(indexAttr)) {
-      return Array.from(indexAttr).map(v => String(v).trim()).filter(Boolean);
-    }
-    if (typeof indexAttr === 'object' && typeof indexAttr.length === 'number') {
-      try {
-        return Array.from(indexAttr).map(v => String(v).trim()).filter(Boolean);
-      } catch (_) {}
-    }
-    if (typeof indexAttr === 'string') {
-      const s = indexAttr.trim();
-      if (!s) return [];
-      try {
-        const parsed = JSON.parse(s);
-        if (Array.isArray(parsed)) {
-          return parsed.map(v => String(v).trim()).filter(Boolean);
-        }
-      } catch (_) {}
-      return s.split(/[;,]/).map(v => v.trim()).filter(Boolean);
-    }
-    return [String(indexAttr).trim()].filter(Boolean);
-  }
-
-  function resolveIndexCategoryName(rawValue, indexNames) {
-    const strVal = String(rawValue).trim();
-    if (!strVal) return null;
-
-    // Direct name match first.
-    if (indexNames.includes(strVal)) return strVal;
-
-    const asNumber = Number(strVal);
-    if (isFinite(asNumber)) {
-      const idx0 = Math.floor(asNumber);
-      if (idx0 >= 0 && idx0 < indexNames.length) return indexNames[idx0];
-      if (idx0 >= 1 && idx0 <= indexNames.length) return indexNames[idx0 - 1];
-    }
-
-    return null;
-  }
-
-  function rgbaFromRgbString(rgb, alpha) {
-    if (!rgb || typeof rgb !== 'string') return null;
-    const m = rgb.match(/rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i);
-    if (!m) return null;
-    return `rgba(${m[1]},${m[2]},${m[3]},${alpha})`;
-  }
-
-  function getCategoryFillColor(name) {
-    const named = getNamedColor(name);
-    if (named) {
-      return rgbaFromRgbString(named, 0.24) || 'rgba(120,120,120,0.24)';
-    }
-    // Deterministic fallback color by hashing name.
-    let hash = 0;
-    for (let i = 0; i < name.length; i++) {
-      hash = ((hash << 5) - hash) + name.charCodeAt(i);
-      hash |= 0;
-    }
-    const hue = Math.abs(hash) % 360;
-    return `hsla(${hue}, 60%, 55%, 0.24)`;
-  }
-
-  function addBackgroundSourcesFromGroup(file, groupPath, list, seenValues) {
-    const sourceGroup = FileService.get(file, groupPath);
-    if (!sourceGroup || String(sourceGroup.type).toLowerCase() !== 'group' || typeof sourceGroup.keys !== 'function') {
-      return;
-    }
-    let keys = [];
-    try {
-      keys = Array.from(sourceGroup.keys()).filter(k => typeof k === 'string' && k.startsWith('_'));
-    } catch (_) {
-      return;
-    }
-    for (const key of keys) {
-      const sourcePath = `${groupPath}/${key}`.replace(/\/+/g, '/');
-      if (seenValues.has(sourcePath)) continue;
-      const dataset = FileService.get(file, sourcePath);
-      if (!dataset || String(dataset.type).toLowerCase() !== 'dataset') continue;
-      if (!isTimeDependent(dataset)) continue;
-      if (!parseIndexNames(getAttr(dataset, 'Index')).length) continue;
-      let label = getBackgroundSourceLabel(dataset, key);
-      if (list.some(item => item.label === label)) {
-        label = groupPath.endsWith('/IndexLists') ? `${label} (IndexLists)` : `${label} (${normalizeBackgroundLabel(key)})`;
-      }
-      list.push({ value: sourcePath, label });
-      seenValues.add(sourcePath);
-    }
-  }
-
-  function collectBackgroundSourceOptions(file, group, groupPath) {
-    const options = [{ value: '__none__', label: 'No background' }];
-    const seenValues = new Set(['__none__']);
-    addBackgroundSourcesFromGroup(file, groupPath, options, seenValues);
-    addBackgroundSourcesFromGroup(file, `${groupPath}/IndexLists`, options, seenValues);
-    return options;
-  }
-
-  function collectIndexBackgroundSegments(file, sourcePath, timeData) {
-    if (!file || !sourcePath || sourcePath === '__none__' || !Array.isArray(timeData) || timeData.length < 2) {
-      return [];
-    }
-
-    const dataset = FileService.get(file, sourcePath);
-    if (!dataset || String(dataset.type).toLowerCase() !== 'dataset') {
-      return [];
-    }
-    if (!isTimeDependent(dataset)) {
-      return [];
-    }
-
-    const indexNames = parseIndexNames(getAttr(dataset, 'Index'));
-    if (!indexNames.length) return [];
-
-    let raw;
-    if (typeof dataset.value !== 'undefined') raw = dataset.value;
-    else if (typeof dataset.toArray === 'function') raw = dataset.toArray();
-    if (!raw) return [];
-
-    const normalized = PDFSampler.normalizeDataArray(raw);
-    const series = Array.isArray(normalized)
-      ? normalized
-      : (ArrayBuffer.isView(normalized) ? Array.from(normalized) : null);
-    if (!series || !series.length) return [];
-
-    const n = Math.min(timeData.length, series.length);
-    if (n < 2) return [];
-    const labels = [];
-    for (let i = 0; i < n; i++) {
-      const point = series[i];
-      const v = Array.isArray(point)
-        ? point[0]
-        : (ArrayBuffer.isView(point) ? point[0] : point);
-      labels.push(resolveIndexCategoryName(v, indexNames));
-    }
-
-    const segments = [];
-    let start = 0;
-    for (let i = 1; i <= n; i++) {
-      const changed = i === n || labels[i] !== labels[start];
-      if (!changed) continue;
-      const category = labels[start];
-      if (category) {
-        const x0 = timeData[start];
-        const x1 = timeData[Math.min(i, n - 1)];
-        if (x0 !== undefined && x1 !== undefined && x1 >= x0) {
-          segments.push({
-            x0,
-            x1,
-            category,
-            color: getCategoryFillColor(category),
-            source: sourcePath
-          });
-        }
-      }
-      start = i;
-    }
-
-    return segments;
-  }
-  
   // Track the starting index of each file's traces in the traces array
   const fileTraceStartIndex = {};
   
@@ -2692,6 +2871,7 @@ async function createRadionuclidesChart(path, savedAxisState) {
               // Store raw data and time data on the trace for CI computation
               traceObj._rawData = normalizedRawData;
               traceObj._timeData = trimmedTimeData;
+              traceObj._numRealizations = Math.floor(normalizedRawData.length / timeData.length);
               if (nIter && nIter > 1) {
                 traceObj._nIter = nIter;
               }
@@ -2885,6 +3065,9 @@ async function createRadionuclidesChart(path, savedAxisState) {
     // Show CI checkbox if we have probabilistic data
     setShowCIVisible(hasProbabilistic);
     setShowSDOMVisible(hasSDOM);
+    const _iterMax = traces.filter(t => t._numRealizations).reduce((m, t) => Math.max(m, t._numRealizations), 0);
+    setIterationSelectorVisible(_iterMax > 0);
+    if (_iterMax > 0) setIterationSelectorMax(_iterMax);
     populateBackgroundSelector(backgroundSourceOptions, backgroundSourceValue);
     setBackgroundSelectorVisible(backgroundSourceOptions.length > 1);
     
@@ -2994,6 +3177,10 @@ async function createRadionuclidesChart(path, savedAxisState) {
       }
       populateBackgroundSelector(backgroundSourceOptions, backgroundSourceValue);
       setBackgroundSelectorVisible(backgroundSourceOptions.length > 1);
+      const _iterInput = getElement('showIterNum');
+      if (_iterInput && _iterInput.value && parseInt(_iterInput.value, 10) >= 1) {
+        toggleShowIteration();
+      }
       setupBackgroundOverlayTooltip(getElement('plotlyChart'), indexBackgroundSegments);
     });
   } else {

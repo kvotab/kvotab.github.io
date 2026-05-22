@@ -301,6 +301,24 @@ function setShowSDOMVisible(show) {
 }
 
 /**
+ * Show or hide the iteration number input for time-series charts.
+ * @param {boolean} show - Whether to show the selector
+ */
+function setIterationSelectorVisible(show) {
+  const label = getElement('showIterLabel');
+  if (label) label.style.display = show ? '' : 'none';
+}
+
+/**
+ * Set the maximum valid iteration on the time-series iteration input.
+ * @param {number} max
+ */
+function setIterationSelectorMax(max) {
+  const input = getElement('showIterNum');
+  if (input) input.max = max;
+}
+
+/**
  * Show or hide the special-chart background source selector.
  * @param {boolean} show - Whether to show the selector
  */
