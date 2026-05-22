@@ -1209,6 +1209,9 @@ function hideChart() {
   if (typeof populateBackgroundSelector === 'function') {
     populateBackgroundSelector([{ value: '__none__', label: 'No background' }], '__none__');
   }
+  if (typeof setIterationSelectorVisible === 'function') {
+    setIterationSelectorVisible(false);
+  }
   const histControls = document.getElementById('histControls');
   if (histControls) histControls.style.display = 'none';
 }
@@ -1399,6 +1402,7 @@ function createPdfHistogram(data) {
   const barLine   = isDark ? 'rgba(243,184,123,0.8)'  : 'rgba(187,108,93,0.8)';
   const pdfLineColor = isDark ? 'rgba(255,220,160,1)' : 'rgba(140,60,45,1)';
   const detColor  = isDark ? '#ff6b6b' : '#d63031';
+  const iterColor  = isDark ? '#74b9ff' : '#0984e3';
 
   const palette = [
     { bar: isDark ? 'rgba(243,184,123,0.35)' : 'rgba(187,108,93,0.35)', line: isDark ? 'rgba(243,184,123,0.8)' : 'rgba(187,108,93,0.8)', pdf: isDark ? 'rgba(255,220,160,1)' : 'rgba(140,60,45,1)' },
@@ -1416,6 +1420,20 @@ function createPdfHistogram(data) {
   const showDet = !!(document.getElementById('histDet') && document.getElementById('histDet').checked);
   const showStats = !!(document.getElementById('histStats') && document.getElementById('histStats').checked);
   const showPdf = !!(document.getElementById('histPdf') && document.getElementById('histPdf').checked);
+
+  // Iteration selector: determine max valid iteration and read current value
+  const iterInput = document.getElementById('histIterNum');
+  const iterNumRaw = iterInput ? parseInt(iterInput.value, 10) : NaN;
+  let maxIterCount = 0;
+  if (data.type === 'single') {
+    maxIterCount = data.samples.length;
+  } else if (data.type === 'lookup') {
+    data.entries.forEach(e => { if (e.samples.length > maxIterCount) maxIterCount = e.samples.length; });
+  }
+  const iterLabel = document.getElementById('histIterLabel');
+  if (iterLabel) iterLabel.style.display = maxIterCount > 0 ? '' : 'none';
+  if (iterInput) iterInput.max = maxIterCount;
+  const iterNum = (isFinite(iterNumRaw) && iterNumRaw >= 1 && iterNumRaw <= maxIterCount) ? iterNumRaw : null;
 
   // Detect whether any deterministic values exist and show/hide the checkbox
   // Detect whether any PDF overlays can be drawn (not raw/empirical)
@@ -1551,6 +1569,24 @@ function createPdfHistogram(data) {
       });
     }
 
+    // Iteration vertical line
+    if (iterNum !== null) {
+      const iterVal = data.samples[iterNum - 1];
+      if (iterVal != null && isFinite(iterVal) && (!useLog || iterVal > 0)) {
+        const iterX = xform(iterVal);
+        shapes.push({
+          type: 'line', x0: iterX, x1: iterX, y0: 0, y1: 1, yref: 'paper',
+          line: { color: iterColor, width: 1.5, dash: 'dot' },
+        });
+        traces.push({
+          x: [iterX], y: [0], type: 'scatter', mode: 'markers',
+          marker: { color: iterColor, size: 10, symbol: 'line-ns-open', line: { width: 2, color: iterColor } },
+          name: 'Iteration ' + iterNum + ' (' + Number(iterVal.toPrecision(4)) + ')',
+          showlegend: true,
+        });
+      }
+    }
+
     // Statistics lines
     if (showStats) _addStatLines(data.samples, pdfXArr, pdfYArr, null);
 
@@ -1591,6 +1627,24 @@ function createPdfHistogram(data) {
           name: 'Det. ' + entry.label + ' (' + Number(entry.deterministicValue.toPrecision(4)) + ')',
           showlegend: true,
         });
+      }
+
+      // Iteration vertical line (per entry)
+      if (iterNum !== null && iterNum <= entry.samples.length) {
+        const iterVal = entry.samples[iterNum - 1];
+        if (iterVal != null && isFinite(iterVal) && (!useLog || iterVal > 0)) {
+          const iterX = xform(iterVal);
+          shapes.push({
+            type: 'line', x0: iterX, x1: iterX, y0: 0, y1: 1, yref: 'paper',
+            line: { color: c.line, width: 1.5, dash: 'dot' },
+          });
+          traces.push({
+            x: [iterX], y: [0], type: 'scatter', mode: 'markers',
+            marker: { color: c.line, size: 10, symbol: 'line-ns-open', line: { width: 1.5, color: c.line } },
+            name: 'Iter. ' + iterNum + ' – ' + entry.label + ' (' + Number(iterVal.toPrecision(4)) + ')',
+            showlegend: true,
+          });
+        }
       }
 
       // Statistics lines (per entry)

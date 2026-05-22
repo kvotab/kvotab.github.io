@@ -122,6 +122,9 @@
               <input type="checkbox" id="showSDOM" onchange="toggleShowSDOM()" title="Standard Error of the Mean (SEM)">
               SEM
             </label>
+            <label id="showIterLabel" style="display: none;" title="Show a dotted line for this iteration (1-based)">
+              Show iteration: <input type="number" id="showIterNum" min="1" value="" style="width:60px;margin-left:4px;" oninput="toggleShowIteration()" title="Show this realization as a dotted line on the chart (1-based)">
+            </label>
             <label id="backgroundSourceLabel" style="display: none;">
               Background:
               <select id="backgroundSourceSelect" onchange="toggleBackgroundOverlay()" title="Background overlay source"></select>
@@ -151,6 +154,9 @@
             <label id="histLogLabel">
               <input type="checkbox" id="histLogScale" onchange="redrawHistogram()">
               Log₁₀ scale
+            </label>
+            <label id="histIterLabel" style="display: none;">
+              Iteration: <input type="number" id="histIterNum" min="1" value="" style="width:60px;margin-left:4px;" oninput="redrawHistogram()" title="Show a vertical line for this iteration (1-based index)">
             </label>
           </div>
           <div id="plotlyChart"></div>
