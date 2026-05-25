@@ -151,17 +151,20 @@ const NAMED_LINE_STYLES = {
 };
 
 function getNamedColor(name) {
-  const style = NAMED_LINE_STYLES[name];
+  if (!name) return null;
+  const style = NAMED_LINE_STYLES[name] || NAMED_LINE_STYLES[name.toLowerCase()];
   return style && style.color ? style.color : null;
 }
 
 function getLineStyle(name) {
   const defaultStyle = { color: null, dash: 'solid', width: 2 };
-  
   if (name in NAMED_LINE_STYLES) {
     return { ...defaultStyle, ...NAMED_LINE_STYLES[name] };
   }
-  
+  const lower = name && name.toLowerCase();
+  if (lower && lower in NAMED_LINE_STYLES) {
+    return { ...defaultStyle, ...NAMED_LINE_STYLES[lower] };
+  }
   return defaultStyle;
 }
 
