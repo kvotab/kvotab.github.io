@@ -133,6 +133,7 @@ const NAMED_LINE_STYLES = {
   'permafrost': { color: 'rgb(70,130,180)', dash: 'solid' },
   'periglacial': { color: 'rgb(70,130,180)', dash: 'solid' },
   'glacial': { color: 'rgb(255,250,250)', dash: 'solid' },
+  'glacial thawed': { color: 'rgb(224, 234, 239)', dash: 'solid' },
 
   // Chemical degradation states
   'State I': { color: 'rgb(79,99,39)', dash: 'solid' },
