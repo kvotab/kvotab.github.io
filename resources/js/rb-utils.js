@@ -1287,7 +1287,7 @@ function assignLegendRanks(traces) {
   const thin = [];
   for (let i = 0; i < traces.length; i++) {
     const w = traces[i].line?.width || 2;
-    const maxY = Math.max(...(traces[i].y || []).filter(v => v != null && isFinite(v)));
+    const maxY = (traces[i].y || []).reduce((m, v) => (v != null && isFinite(v) && v > m) ? v : m, -Infinity);
     const entry = { index: i, maxY: isFinite(maxY) ? maxY : 0 };
     if (w >= 2) {
       thick.push(entry);
