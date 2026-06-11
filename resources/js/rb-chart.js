@@ -91,6 +91,7 @@ const NAMED_LINE_STYLES = {
   'La-137': { color: 'rgb(255,248,220)', dash: 'solid' },
   'Pb-210': { color: 'rgb(148,0,211)', dash: 'dash' },
   'Po-210': { color: 'rgb(148,0,211)', dash: 'dot' },
+  'Rn-222': { color: 'rgb(148,0,211)', dash: 'dashdot' },
   'Ra-226': { color: 'rgb(148,0,211)', dash: 'solid' },
   'Ra-228': { color: 'rgb(148,0,211)', dash: 'dash' },
   'Re-186m': { color: 'rgb(255,160,122)', dash: 'solid' },
@@ -148,6 +149,8 @@ const NAMED_LINE_STYLES = {
   'Completely degraded': { color: 'rgb(220,230,242)', dash: 'solid' },
   'No barrier': { color: 'rgb(255,255,255)', dash: 'solid' },
   
+  // Total line has black color
+  'Total': { color: 'rgb(0,0,0)', dash: 'solid' },
 };
 
 function getNamedColor(name) {
@@ -1455,7 +1458,7 @@ function toggleShowMax() {
     // removing a trailing parenthesised numeric value we appended.
     let baseName = trace._baseName || trace.name;
     if (showMax && trace.y && trace.y.length > 0) {
-      const maxVal = Math.max(...trace.y);
+      const maxVal = trace.y.reduce((m, v) => v > m ? v : m, -Infinity);
       const formatted = maxVal === 0 || !isFinite(maxVal) ? String(maxVal) : maxVal.toPrecision(3);
       trace._baseName = baseName;
       return `${baseName} (${formatted})`;
@@ -1686,18 +1689,70 @@ function toggleShowIteration() {
   const plotDiv = getElement('plotlyChart');
   if (!plotDiv || !plotDiv.data) return;
 
-  // Remove any existing iteration traces first
+  // Read and validate the requested iteration number
+  const iterInput = getElement('showIterNum');
+  const iterNumRaw = iterInput ? parseInt(iterInput.value, 10) : NaN;
+  if (!isFinite(iterNumRaw) || iterNumRaw < 1) return;
+
+  // ── Probabilistic-time mode ──────────────────────────────────────────────
+  // The /time dataset is a matrix; each iteration has its own time axis.
+  // Instead of adding a dotted overlay we replace the base trace data.
+  if (currentChartData && currentChartData._isProbTimeChart) {
+    const sourceTraces = Array.isArray(currentChartData.traces) ? currentChartData.traces : [];
+    const hasSingleDatasetProbTimeTraces = sourceTraces.some(t => t._isProbTime);
+
+    if (hasSingleDatasetProbTimeTraces) {
+      // ── createPlotlyChart variant: restyle x/y on individual traces ──
+      const xUpdates = [];
+      const yUpdates = [];
+      const indices  = [];
+
+      // Find the index of each prob-time trace in the plotDiv (excluding any
+      // legacy overlay traces that may be present).
+      const plotTraces = plotDiv.data || [];
+      sourceTraces.forEach(trace => {
+        if (!trace._isProbTime) return;
+        const plotIdx = plotTraces.findIndex(pt => pt === trace || (pt.name === trace.name && !pt._isIterTrace));
+        if (plotIdx < 0) return;
+
+        const iterIdx = Math.min(iterNumRaw - 1, trace._nIter - 1);
+        const timeRow = trace._probTimeMatrix.matrix[iterIdx];
+        const iterLen = trace._probTimeMatrix.iterLengths[iterIdx];
+
+        const x = timeRow.slice(0, iterLen);
+        const y = [];
+        for (let t = 0; t < iterLen; t++) {
+          y.push(PDFSampler.toNumber(trace._probYFlat[t * trace._probMaxLen + iterIdx]));
+        }
+
+        // Keep the trace object in sync so subsequent calls stay correct
+        trace.x = x;
+        trace.y = y;
+
+        xUpdates.push(x);
+        yUpdates.push(y);
+        indices.push(plotIdx);
+      });
+
+      if (indices.length > 0) {
+        Plotly.restyle(plotDiv, { x: xUpdates, y: yUpdates }, indices);
+      }
+    } else {
+      // ── createRadionuclidesChart variant: full redraw with new iteration ──
+      const savedAxis = captureAxisState();
+      Promise.resolve().then(() => createRadionuclidesChart(selectedDatasetPath, savedAxis));
+    }
+    return;
+  }
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // Remove any existing iteration overlay traces first
   const existingIndices = plotDiv.data
     .map((trace, idx) => trace._isIterTrace ? idx : -1)
     .filter(idx => idx >= 0);
   if (existingIndices.length > 0) {
     Plotly.deleteTraces(plotDiv, existingIndices);
   }
-
-  // Read and validate the requested iteration number
-  const iterInput = getElement('showIterNum');
-  const iterNumRaw = iterInput ? parseInt(iterInput.value, 10) : NaN;
-  if (!isFinite(iterNumRaw) || iterNumRaw < 1) return;
 
   const iterTraces = [];
   // Use currentChartData.traces for reliable _rawData access (Plotly may not preserve custom props)
@@ -1741,7 +1796,7 @@ function annotateTracesWithMax(traces) {
     if (trace._hiddenFromLegend) continue;
     if (!trace.y || trace.y.length === 0) continue;
     trace._baseName = trace.name;
-    const maxVal = Math.max(...trace.y);
+    const maxVal = trace.y.reduce((m, v) => v > m ? v : m, -Infinity);
     const formatted = maxVal === 0 || !isFinite(maxVal) ? String(maxVal) : maxVal.toPrecision(3);
     trace.name = `${trace.name} (${formatted})`;
   }
@@ -1802,7 +1857,14 @@ function createPlotlyChart(path, savedAxisState) {
   const probDataInfo = [];  // Track raw data for probabilistic datasets
   let hasProbabilistic = false;
   let hasSDOM = false;
+  let hasProbTime = false;          // Any file has a probabilistic /time matrix
+  let probTimeIterMax = 0;          // Maximum nIter across all prob-time files
   const nIterByFile = {};
+
+  // Determine the currently-selected iteration index (0-based, default 0)
+  const _iterInputEarly = getElement('showIterNum');
+  const _selectedIterNum  = (_iterInputEarly && _iterInputEarly.value) ? parseInt(_iterInputEarly.value, 10) : 1;
+  const _selectedIterIdx  = (isFinite(_selectedIterNum) && _selectedIterNum >= 1) ? _selectedIterNum - 1 : 0;
 
   let timeUnit = '';
   let yAxisUnit = '';
@@ -1878,6 +1940,45 @@ function createPlotlyChart(path, savedAxisState) {
 
       if (yData) {
         const normalizedRawData = PDFSampler.normalizeDataArray(yData);
+
+        // ── Probabilistic time matrix ────────────────────────────────────────
+        // When /time carries a 'probabilistic' attribute the time axis is a
+        // matrix [nIter × maxLen].  Each iteration has its own time series
+        // that ends when values stop being strictly increasing.  Statistics
+        // (mean, CI, SDOM) cannot be computed; only a single iteration is shown.
+        if (checkTimeProbabilistic(file)) {
+          const timeMatrix = getProbabilisticTimeMatrix(file);
+          if (!timeMatrix) continue;  // Malformed – skip
+
+          hasProbTime = true;
+          if (timeMatrix.nIter > probTimeIterMax) probTimeIterMax = timeMatrix.nIter;
+
+          const iterIdx  = Math.min(_selectedIterIdx, timeMatrix.nIter - 1);
+          const timeRow  = timeMatrix.matrix[iterIdx];
+          const iterLen  = timeMatrix.iterLengths[iterIdx];
+          const iterTimeData = timeRow.slice(0, iterLen);
+
+          // Extract y values for this iteration.
+          // Y-data layout matches time matrix: flat[t_i * maxLen + k] = y at time step t_i for iter k.
+          const iterYData = [];
+          for (let t = 0; t < iterLen; t++) {
+            iterYData.push(PDFSampler.toNumber(normalizedRawData[t * timeMatrix.maxLen + iterIdx]));
+          }
+
+          const traceObj = ChartService.timeSeriesTrace({
+            x: iterTimeData,
+            y: iterYData,
+            name: buildTraceName(yAxisName, path, fileKey, [path], enabledFiles)
+          });
+          traceObj._isProbTime     = true;
+          traceObj._probTimeMatrix = timeMatrix;
+          traceObj._probYFlat      = normalizedRawData;
+          traceObj._probMaxLen     = timeMatrix.maxLen;
+          traceObj._nIter          = timeMatrix.nIter;
+          traces.push(traceObj);
+          continue;  // Skip the regular probabilistic / column-stats path
+        }
+        // ─────────────────────────────────────────────────────────────────────
         let yArray = normalizedRawData;
         let isProbabilistic = false;
         let ciFromColumns = null;
@@ -2032,16 +2133,20 @@ function createPlotlyChart(path, savedAxisState) {
     applyAxisState(layout, savedAxisState);
     _applyLockedAxes(layout);
 
-    // Show CI checkbox if we have probabilistic data
-    setShowCIVisible(hasProbabilistic);
-    setShowSDOMVisible(hasSDOM);
-    const _iterMax = traces.filter(t => t._numRealizations).reduce((m, t) => Math.max(m, t._numRealizations), 0);
+    // Show CI / SDOM controls only for regular (non prob-time) probabilistic data
+    setShowCIVisible(hasProbabilistic && !hasProbTime);
+    setShowSDOMVisible(hasSDOM && !hasProbTime);
+
+    // Iteration selector: prob-time charts always show it; regular prob charts
+    // show it only when there are realizations stored on the traces.
+    const _regularIterMax = traces.filter(t => t._numRealizations).reduce((m, t) => Math.max(m, t._numRealizations), 0);
+    const _iterMax = hasProbTime ? probTimeIterMax : _regularIterMax;
     setIterationSelectorVisible(_iterMax > 0);
     if (_iterMax > 0) setIterationSelectorMax(_iterMax);
 
     const config = getPlotlyConfig('multi_dataset_chart');
 
-    currentChartData = { traces, layout, paths };
+    currentChartData = { traces, layout, paths, _isProbTimeChart: hasProbTime };
     if (chartContainer) chartContainer.classList.add('visible');
     if (dynamicLegendEnabled) {
       assignLegendRanks(traces);
@@ -2053,23 +2158,27 @@ function createPlotlyChart(path, savedAxisState) {
       refreshDynamicLegend();
       snapLogRangeToDecades(pDiv);
       // Restore CI state if we have probabilistic data and it was previously checked
-      if (hasProbabilistic && wasCIChecked) {
+      if (hasProbabilistic && !hasProbTime && wasCIChecked) {
         const ciCheckboxNew = getElement('showCI');
         if (ciCheckboxNew) {
           ciCheckboxNew.checked = true;
           toggleShowCI();
         }
       }
-      if (hasSDOM && wasSDOMChecked) {
+      if (hasSDOM && !hasProbTime && wasSDOMChecked) {
         const sdomCheckboxNew = getElement('showSDOM');
         if (sdomCheckboxNew) {
           sdomCheckboxNew.checked = true;
           toggleShowSDOM();
         }
       }
-      const _iterInput = getElement('showIterNum');
-      if (_iterInput && _iterInput.value && parseInt(_iterInput.value, 10) >= 1) {
-        toggleShowIteration();
+      // For regular probabilistic data, add dotted iteration overlay if one is selected.
+      // For prob-time charts the correct iteration is already baked into the traces.
+      if (!hasProbTime) {
+        const _iterInput = getElement('showIterNum');
+        if (_iterInput && _iterInput.value && parseInt(_iterInput.value, 10) >= 1) {
+          toggleShowIteration();
+        }
       }
       populateBackgroundSelector(backgroundSourceOptions, backgroundSourceValue);
       setBackgroundSelectorVisible(backgroundSourceOptions.length > 1);
@@ -2630,8 +2739,9 @@ async function createRadionuclidesChart(path, savedAxisState) {
   // Yield to browser for immediate UI update before heavy processing (cross-browser)
   await new Promise(requestAnimationFrame);
   await new Promise(resolve => setTimeout(resolve, 0));
-  // Show "Show Total" checkbox for radionuclides groups
+  // Show "Show Total" checkbox for radionuclides groups (suppressed if a "Total" sub-node already exists)
   setShowTotalVisible(true);
+  let hasTotalSubNode = false;
   setShowMaxVisible(true);
   setShowCIVisible(false);
   setShowSDOMVisible(false);
@@ -2641,15 +2751,22 @@ async function createRadionuclidesChart(path, savedAxisState) {
   
   const traces = [];
   const enabledFiles = getEffectiveFiles();
-  
+
+  // Determine the currently-selected iteration index (0-based, default 0)
+  const _iterInputEarly = getElement('showIterNum');
+  const _selectedIterNum = (_iterInputEarly && _iterInputEarly.value) ? parseInt(_iterInputEarly.value, 10) : 1;
+  const _selectedIterIdx = (isFinite(_selectedIterNum) && _selectedIterNum >= 1) ? _selectedIterNum - 1 : 0;
+
   // Show "Show Ratio" checkbox only when exactly 2 files are enabled (thick + thin lines)
   // and secondary file has data for this path — will be set after building traces
   const hasTwoFiles = enabledFiles.length === 2;
   setShowRatioVisible(false);
-  
+
   // Store data for computing total
   const totalDataByFile = {};
   const nIterByFile = {};
+  let hasProbTime = false;          // any file has probabilistic /time
+  let probTimeIterMax = 0;
 
   /**
    * Convert probabilistic raw data into per-timestep realization arrays.
@@ -2728,6 +2845,30 @@ async function createRadionuclidesChart(path, savedAxisState) {
         continue;
       }
 
+      // Resolve probabilistic time matrix: if /time is a [nIter × maxLen] matrix,
+      // extract the selected iteration's time series so all downstream code works
+      // with a plain 1-D time array of the correct length.
+      let probTimeForFile = null;
+      if (checkTimeProbabilistic(file)) {
+        const timeMatrix = getProbabilisticTimeMatrix(file);
+        if (!timeMatrix) {
+          console.warn(`Could not read probabilistic time matrix in ${fileKey}`);
+          continue;
+        }
+        hasProbTime = true;
+        if (timeMatrix.nIter > probTimeIterMax) probTimeIterMax = timeMatrix.nIter;
+        const iterIdx  = Math.min(_selectedIterIdx, timeMatrix.nIter - 1);
+        const timeRow  = timeMatrix.matrix[iterIdx];
+        const iterLen  = timeMatrix.iterLengths[iterIdx];
+        probTimeForFile = {
+          effectiveTimeData: timeRow.slice(0, iterLen),
+          iterIdx,
+          maxLen: timeMatrix.maxLen,
+          nIter:  timeMatrix.nIter,
+        };
+      }
+      const effectiveTimeData = probTimeForFile ? probTimeForFile.effectiveTimeData : timeData;
+
       if (backgroundSourceOptions.length === 1) {
         backgroundSourceOptions = collectBackgroundSourceOptions(file, group, path);
         if (!backgroundSourceOptions.some(option => option.value === backgroundSourceValue)) {
@@ -2751,6 +2892,7 @@ async function createRadionuclidesChart(path, savedAxisState) {
         console.error('Error getting dataset keys:', e);
         continue;
       }
+      if (datasetKeys.includes('Total')) hasTotalSubNode = true;
       
       for (const datasetKey of datasetKeys) {
         try {
@@ -2771,7 +2913,18 @@ async function createRadionuclidesChart(path, savedAxisState) {
             let ciFromColumns = null;
             let sdomInfo = null;
 
-            const colStats = getColumnStatisticsSeries(dataset, normalizedRawData, timeData);
+            // ── Probabilistic time: extract the selected iteration's y values ──
+            // Y-data layout: flat[t_i * maxLen + k] = y at time step t_i for iteration k.
+            if (probTimeForFile) {
+              const { iterIdx, maxLen, effectiveTimeData: ptTimeData } = probTimeForFile;
+              const iterLen = ptTimeData.length;
+              yArray = [];
+              for (let t = 0; t < iterLen; t++) {
+                yArray.push(PDFSampler.toNumber(normalizedRawData[t * maxLen + iterIdx]));
+              }
+            } else {
+            // ── Regular (non prob-time) path ─────────────────────────────────
+            const colStats = getColumnStatisticsSeries(dataset, normalizedRawData, effectiveTimeData);
             if (colStats && Array.isArray(colStats.meanSeries)) {
               yArray = colStats.meanSeries;
               if (Array.isArray(colStats.p5Series) && Array.isArray(colStats.p95Series)) {
@@ -2802,10 +2955,10 @@ async function createRadionuclidesChart(path, savedAxisState) {
             if (!colStats && checkIsProbabilistic(dataset)) {
               isProbabilistic = true;
               hasProbabilistic = true;
-              yArray = computeProbabilisticMean(yArray, timeData);
+              yArray = computeProbabilisticMean(yArray, effectiveTimeData);
             }
             if (!isProbabilistic) {
-              sdomInfo = sdomInfo || getDatasetAttributeSDOM(dataset, timeData, nIter);
+              sdomInfo = sdomInfo || getDatasetAttributeSDOM(dataset, effectiveTimeData, nIter);
               if (sdomInfo && Array.isArray(sdomInfo.meanSeries)) {
                 yArray = sdomInfo.meanSeries;
                 hasSDOM = true;
@@ -2813,8 +2966,9 @@ async function createRadionuclidesChart(path, savedAxisState) {
             } else if (nIter && nIter > 1) {
               hasSDOM = true;
             }
-            const minLength = Math.min(timeData.length, yArray.length);
-            const trimmedTimeData = timeData.slice(0, minLength);
+            } // end regular path
+            const minLength = Math.min(effectiveTimeData.length, yArray.length);
+            const trimmedTimeData = effectiveTimeData.slice(0, minLength);
             const trimmedYData = yArray.slice(0, minLength);
             // Store data for computing total
             if (!totalDataByFile[fileKey]) {
@@ -2875,7 +3029,7 @@ async function createRadionuclidesChart(path, savedAxisState) {
               // Store raw data and time data on the trace for CI computation
               traceObj._rawData = normalizedRawData;
               traceObj._timeData = trimmedTimeData;
-              traceObj._numRealizations = Math.floor(normalizedRawData.length / timeData.length);
+              traceObj._numRealizations = Math.floor(normalizedRawData.length / effectiveTimeData.length);
               if (nIter && nIter > 1) {
                 traceObj._nIter = nIter;
               }
@@ -2901,6 +3055,9 @@ async function createRadionuclidesChart(path, savedAxisState) {
       console.error(`Error processing group for ${fileKey}:`, e);
     }
   }
+
+  // Hide "Show Total" if a "Total" sub-node already exists in the group
+  if (hasTotalSubNode) setShowTotalVisible(false);
   
   // Now that traces are built, show "Show Ratio" only if both files contributed data
   if (hasTwoFiles) {
@@ -2933,7 +3090,7 @@ async function createRadionuclidesChart(path, savedAxisState) {
       for (let i = 0; i < datasetKeys.length && i < fileData.dataArrays.length; i++) {
         const key = datasetKeys[i];
         const arr = fileData.dataArrays[i];
-        const maxVal = Math.max(...arr);
+        const maxVal = arr.reduce((m, v) => v > m ? v : m, -Infinity);
         if (!maxByFileAndName[key]) maxByFileAndName[key] = {};
         maxByFileAndName[key][fileKey] = maxVal;
       }
@@ -2955,7 +3112,7 @@ async function createRadionuclidesChart(path, savedAxisState) {
 
   // Add total traces, each at the top of its corresponding file's group in the legend
   const showTotalCheckbox = getElement('showTotal');
-  if (showTotalCheckbox && showTotalCheckbox.checked) {
+  if (!hasTotalSubNode && showTotalCheckbox && showTotalCheckbox.checked) {
     // Compute total per file and collect total max values for ratio
     const totalMaxByFile = {}; // { fileKey: maxTotalValue }
     const totalTracesByFile = {}; // { fileKey: traceObject }
@@ -2972,7 +3129,7 @@ async function createRadionuclidesChart(path, savedAxisState) {
           }
         }
         
-        totalMaxByFile[fileKey] = Math.max(...totalY);
+        totalMaxByFile[fileKey] = totalY.reduce((m, v) => v > m ? v : m, -Infinity);
 
         let traceName = 'Total';
         let lineWidth = 2;
@@ -3066,10 +3223,12 @@ async function createRadionuclidesChart(path, savedAxisState) {
   
   // Render chart if we have traces
   if (traces.length > 0) {
-    // Show CI checkbox if we have probabilistic data
-    setShowCIVisible(hasProbabilistic);
-    setShowSDOMVisible(hasSDOM);
-    const _iterMax = traces.filter(t => t._numRealizations).reduce((m, t) => Math.max(m, t._numRealizations), 0);
+    // Show CI / SDOM controls only for regular (non prob-time) probabilistic data
+    setShowCIVisible(hasProbabilistic && !hasProbTime);
+    setShowSDOMVisible(hasSDOM && !hasProbTime);
+    // Iteration selector: prob-time charts always show it
+    const _regularIterMax = traces.filter(t => t._numRealizations).reduce((m, t) => Math.max(m, t._numRealizations), 0);
+    const _iterMax = hasProbTime ? probTimeIterMax : _regularIterMax;
     setIterationSelectorVisible(_iterMax > 0);
     if (_iterMax > 0) setIterationSelectorMax(_iterMax);
     populateBackgroundSelector(backgroundSourceOptions, backgroundSourceValue);
@@ -3165,14 +3324,18 @@ async function createRadionuclidesChart(path, savedAxisState) {
     _applyLockedAxes(layout);
     
     renderChart(traces, layout, path, () => {
-      if (hasProbabilistic && wasCIChecked) {
+      // Mark the chart so toggleShowIteration knows this is a prob-time chart
+      if (hasProbTime && currentChartData) {
+        currentChartData._isProbTimeChart = true;
+      }
+      if (hasProbabilistic && !hasProbTime && wasCIChecked) {
         const ciCheckbox = getElement('showCI');
         if (ciCheckbox) {
           ciCheckbox.checked = true;
           toggleShowCI();
         }
       }
-      if (hasSDOM && wasSDOMChecked) {
+      if (hasSDOM && !hasProbTime && wasSDOMChecked) {
         const sdomCheckbox = getElement('showSDOM');
         if (sdomCheckbox) {
           sdomCheckbox.checked = true;
@@ -3181,9 +3344,11 @@ async function createRadionuclidesChart(path, savedAxisState) {
       }
       populateBackgroundSelector(backgroundSourceOptions, backgroundSourceValue);
       setBackgroundSelectorVisible(backgroundSourceOptions.length > 1);
-      const _iterInput = getElement('showIterNum');
-      if (_iterInput && _iterInput.value && parseInt(_iterInput.value, 10) >= 1) {
-        toggleShowIteration();
+      if (!hasProbTime) {
+        const _iterInput = getElement('showIterNum');
+        if (_iterInput && _iterInput.value && parseInt(_iterInput.value, 10) >= 1) {
+          toggleShowIteration();
+        }
       }
       setupBackgroundOverlayTooltip(getElement('plotlyChart'), indexBackgroundSegments);
     });
