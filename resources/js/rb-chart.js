@@ -266,26 +266,6 @@ function setScaleValue(axis, value) {
   });
 }
 
-/**
- * Handler for clicks on the scale toggle buttons.
- */
-function handleScaleButtonClick(evt) {
-  const btn = evt.currentTarget;
-  const axis = btn.dataset.axis;
-  const val = btn.dataset.value;
-  setScaleValue(axis, val);
-
-  // If Auto range is selected, lin/log toggle should not leave Auto range
-  const sel = document.getElementById('presetSelect');
-  if (sel && sel.value === 'default') {
-    _suppressPresetSync = true;
-    updateChartScales();
-    setTimeout(() => { _suppressPresetSync = false; }, 0);
-  } else {
-    updateChartScales();
-  }
-}
-
 /* ==========================================================================
    AXES LOCK — pin current axes settings for newly selected data
    ========================================================================== */

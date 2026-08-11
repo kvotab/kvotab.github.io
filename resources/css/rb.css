@@ -1842,3 +1842,45 @@
       max-height: 300px;
       overflow-y: auto;
     }
+
+    /* Info panel action buttons (Download CSV / Download Excel) */
+    .info-btn-csv {
+      padding: 4px 8px;
+      background: var(--color-kvot-background);
+      color: var(--color-kvot-bright);
+      border: none;
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 500;
+      transition: background 0.2s;
+    }
+    .info-btn-csv:hover { background: var(--color-kvot-primary); }
+
+    .info-btn-excel {
+      padding: 6px 12px;
+      background: #217346;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 500;
+      transition: background 0.2s;
+    }
+    .info-btn-excel:hover { background: #1e6b3f; }
+
+    .info-multi-header {
+      background: var(--color-kvot-bright);
+      padding: 12px;
+      border-radius: 6px;
+      margin-bottom: 16px;
+      font-weight: 600;
+      color: var(--color-kvot-background);
+    }
+
+    .info-excel-footer {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid var(--color-border);
+    }

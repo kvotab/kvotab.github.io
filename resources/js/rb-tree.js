@@ -951,7 +951,6 @@ async function refreshTreeStructure() {
       updateHintToggleButton();
       return;
     }
-    let treeHtml = ''; 
 
     // Shallow estimate to avoid a full pre-traversal (fast, best-effort).
     // Use top-level key counts as a cheap heuristic; fall back to
@@ -1075,25 +1074,12 @@ async function refreshTreeStructure() {
   }
 }
 
-// Decorator: Show multi-select hint after tree refresh
-const originalRefreshTreeStructure2 = refreshTreeStructure;
+// Decorator: update multi-select hint visibility after each tree refresh
+const _refreshTreeStructureBase = refreshTreeStructure;
 refreshTreeStructure = async function() {
-  await originalRefreshTreeStructure2();
-  const hint = document.getElementById('multiSelectHint');
-  const tree = document.getElementById('tree');
-  
-  if (hint) {
-    const hasEnabledFiles = getEnabledFiles().length > 0;
-    const isNotLoading = !tree.classList.contains('loading');
-    const hasTreeContent = tree.querySelector('.tree-item') !== null;
-    
-    if (hasEnabledFiles && isNotLoading && hasTreeContent) {
-      hint.style.display = 'flex';
-      // Notify user that tree refresh completed
-    } else {
-      hint.style.display = 'none';
-    }
-  }
+  await _refreshTreeStructureBase();
+  updateMultiSelectHint();
+  updateHintToggleButton();
 };
 
 /**
@@ -1216,7 +1202,7 @@ async function buildTree(group, prefix = '', isNested = false, fileName = '', in
     let _yieldCounter = 0;
     for (const key of keys) {
       if (window._treeRefreshCancelled) {
-        console.log('buildTree: aborting early due to cancellation');
+        console.debug('buildTree: aborting early due to cancellation');
         break;
       }
 

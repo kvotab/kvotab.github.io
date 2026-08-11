@@ -203,23 +203,17 @@
 	background-color: var(--bg-surface, rgb(253,254,255)); 
 	border-color: var(--border-color, #bbb); 
 	border-radius:10px;
-	/* //border:1;*/
 	border:0;
 	padding:0px;
 	padding-top:50px;
 	padding-bottom:5px;
-	/* //width: 500px; 
-	//height: 350px;	
-	//z-index:3; 
-	//box-shadow: 0 5px 10px rgba(0, 0, 0, 0.2);
-	//color:black;*/
 }
 .no-close .ui-dialog-titlebar-close {
   display: none;
 }
 	.ui-dialog { 
 	border-color: #eee; 
-	border:1;
+	border-width: 1px;
 	box-shadow: 0 5px 10px rgba(0, 0, 0, 0.2);
 }
 .ui-autocomplete-category {
@@ -497,9 +491,109 @@ pre {
     border-radius: 20px;
     border: 3px solid var(--scroll-bar-bg-color);
 }
+/* ── IC (initial inventory) native dialog ──────────────────────────────────── */
+.ic-dialog {
+  border: 1px solid var(--border-color, #ccc);
+  border-radius: 12px;
+  padding: 0;
+  background: var(--bg-surface, #fff);
+  color: var(--text-primary, #333);
+  box-shadow: 0 8px 32px rgba(0,0,0,.25);
+  min-width: 320px;
+  max-width: 420px;
+}
+.ic-dialog::backdrop {
+  background: rgba(0,0,0,.35);
+}
+.ic-dialog-title {
+  margin: 0;
+  padding: 14px 18px 12px;
+  font-size: 1rem;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border-color, #eee);
+  color: var(--color-kvot-bright);
+  background: var(--color-kvot-background);
+  border-radius: 11px 11px 0 0;
+}
+.ic-dialog-body {
+  display: flex;
+  gap: 14px;
+  padding: 18px;
+}
+.ic-field {
+  flex: 1;
+  font-size: .88rem;
+  color: var(--text-secondary, #555);
+}
+.ic-field input {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 7px 10px;
+  border: 1px solid var(--border-color, #ccc);
+  border-radius: 6px;
+  font-size: .93rem;
+  background: var(--input-bg, #fff);
+  color: var(--input-text, #333);
+  box-sizing: border-box;
+}
+.ic-field input:focus {
+  outline: none;
+  border-color: var(--color-kvot-bright);
+  box-shadow: 0 0 0 3px rgba(243,184,123,.15);
+}
+.ic-dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 18px 14px;
+  border-top: 1px solid var(--border-color, #eee);
+}
+.ic-btn {
+  padding: 7px 18px;
+  border: none;
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: .9rem;
+  font-weight: 500;
+  transition: background .15s;
+}
+.ic-btn-ok     { background: var(--color-kvot-bright); color: #fff; }
+.ic-btn-ok:hover { background: var(--color-kvot-accent); }
+.ic-btn-cancel { background: var(--bg-secondary, #eee); color: var(--text-primary, #333); }
+.ic-btn-cancel:hover { background: var(--border-color, #ddd); }
+[data-theme="dark"] .ic-btn-cancel { background: var(--bg-surface); }
+[data-theme="dark"] .ic-btn-cancel:hover { background: var(--bg-primary); }
+
+/* ── Element info panel table ────────────────────────────────────────────── */
+.element-info-table {
+  font-size: 1em;
+  border-collapse: collapse;
+  width: 100%;
+}
+.element-info-table td, .element-info-table th {
+  padding: 3px 6px;
+  vertical-align: top;
+}
+.element-info-table th {
+  text-align: right;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--text-secondary, #555);
+  padding-right: 10px;
+}
+.elem-Z      { font-size: 2.2em; font-weight: 700; line-height: 1; }
+.elem-weight { font-size: 1.6em; }
+.elem-symbol { font-size: 5.5em; font-weight: 700; line-height: 1; display: block; margin: .1em 0; }
+.elem-name   { font-size: 1.6em; vertical-align: bottom; padding-top: 8px; }
+.elem-type   { font-size: 1.2em; vertical-align: bottom; color: var(--text-secondary, #666); }
+.elem-pt     { width: 230px; }
+.elem-info     { padding: 6px 0; }
+.elem-discovery { padding: 4px 0 8px; color: var(--text-secondary, #555); font-size: .95em; }
 /* The Modal information-window */
 .modal {
 	display: none;
+  display: none;
 	position: fixed;
 	z-index: 1000000;
 	padding-top: 40px;
@@ -666,19 +760,29 @@ th {
    background-repeat: no-repeat;
    background-position-y: center;
 }
+/* ── Sort toggle ─────────────────────────────────────────────────────────── */
 .sort {
 	position: fixed;
-	left:10px;
-	bottom:0px;
-    width: 65px;
-    height: 26px;
-	z-index:5;
-    font-size: 19px;
-	font-family:RawengulkSans;
-    color: var(--color-kvot-bright);
-	line-height: 13px;
-	
-} 
+	left: 10px;
+	bottom: 0;
+	width: 70px;
+	height: 26px;
+	z-index: 5;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+.sort-labels {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	line-height: 1;
+	font-size: 13px;
+	color: var(--color-kvot-bright);
+}
+.sort-arrow { font-size: 16px; line-height: 1; }
+.sort-z     { font-size: 11px; line-height: 1; }
+.sorttext   { font-size: 12px; min-height: 1em; }
 	
 .togglesort {
 	position: relative;

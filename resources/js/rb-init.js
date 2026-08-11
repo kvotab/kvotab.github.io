@@ -169,12 +169,6 @@ EventBus.on('search:changed', ({ term }) => {
   })();
 });
 
-// debug: trace '+ Add Files' button clicks (helps diagnose file-input issues)
-try {
-  const _addBtn = document.querySelector('.add-file-btn');
-  if (_addBtn) _addBtn.addEventListener('click', () => console.debug('[UI] add-file-btn clicked'));
-} catch (e) { /* ignore */ }
-
 // Pre-warm tree worker shortly after startup so first intersect is fast.
 // Non-blocking: worker/h5wasm init happens in background and reduces
 // likelihood of the quick-fallback being triggered on first use.
@@ -615,78 +609,55 @@ document.addEventListener('DOMContentLoaded', () => {
  */
 document.getElementById('fileInput').addEventListener('change', async (e) => {
   const files = Array.from(e.target.files || []);
-  console.debug('[fileInput.change] files selected=', files.length, files.map(f => f && f.name));
   if (files.length === 0) return;
 
-  // show progress ticker (file count known)
   showFileLoadTicker(0, files.length, 'Starting…');
 
   try {
-    console.debug('[fileInput.change] waiting for h5wasm...');
     await waitForH5Wasm();
-    console.debug('[fileInput.change] h5wasm ready');
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      // update ticker with current file being processed
       updateFileLoadTicker(i, files.length, file.name);
       try {
         const buffer = await file.arrayBuffer();
         const h5Check = validateHdf5Buffer(buffer);
-        if (!h5Check.ok) {
-          throw new Error(h5Check.reason);
-        }
-        // keep a copy of the raw buffer so we can send it to the worker later
+        if (!h5Check.ok) throw new Error(h5Check.reason);
+
         loadedFileBuffers[file.name] = buffer;
-        console.debug('[fileInput.change] stored buffer for', file.name, 'bytes=', buffer && buffer.byteLength);
 
         const { FS, File } = window.h5wasm;
         if (!FS || !File) throw new Error('h5wasm not ready');
-        
+
         const filename = `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.h5`;
-        const data = new Uint8Array(buffer);
-        
-        FS.writeFile('/' + filename, data);
+        FS.writeFile('/' + filename, new Uint8Array(buffer));
         const hf = new File('/' + filename, 'r');
-        
-        // If replacing an existing file, close the old handle first
+
         if (loadedFiles[file.name]) {
           try { loadedFiles[file.name].close(); } catch (_) {}
         }
 
         loadedFiles[file.name] = hf;
         fileStates[file.name] = true;
-        if (!fileOrder.includes(file.name)) {
-          fileOrder.push(file.name);
-        }
-        // log per-file load (toasts removed)
-        console.debug('[fileInput.change] Loaded', file.name);
+        if (!fileOrder.includes(file.name)) fileOrder.push(file.name);
       } catch (err) {
-        console.error('[fileInput.change] Error loading', file.name, err);
+        console.error('[fileInput] Error loading', file.name, err);
         alert(`Failed to load ${file.name}`);
       }
     }
-    
-    // pre-warm tree worker (wait up to 5s) so first intersection is fast
-    try {
-      const _prewarmOk = await ensureTreeWorkerReady(5000);
-      console.debug('[fileInput.change] worker pre-warm result =', _prewarmOk);
-    } catch (e) {
-      console.debug('[fileInput.change] worker pre-warm threw', e && e.message ? e.message : e);
-    }
 
-    // Update tabs (returns a promise that resolves when tree rebuild completes)
+    // Pre-warm tree worker
+    try { await ensureTreeWorkerReady(5000); } catch (_) {}
+
     updateFileLoadTicker(files.length, files.length, 'Refreshing tree...');
-    console.debug('[fileInput.change] calling updateTabs(forceRefresh=true)');
     await updateTabs(true);
-    console.debug('[fileInput.change] updateTabs() completed');
     hideFileLoadTicker();
   } catch (err) {
     hideFileLoadTicker();
-    console.error('[fileInput.change] handler error', err);
+    console.error('[fileInput] handler error', err);
     alert(`Error: ${err.message}`);
   }
-  
+
   e.target.value = '';
 });
 
@@ -743,7 +714,6 @@ document.getElementById('treeSearch').addEventListener('keydown', (e) => {
   }
 });
 
-/**
 /**
  * Decorator: Re-apply search filter after tree structure refresh.
  * Ensures that if the user has an active search term, it persists
