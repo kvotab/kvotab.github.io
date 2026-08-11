@@ -97,15 +97,14 @@
     </div>
 
     <div class="sort">
-        <table width="100%"><tr>        
-            <td rowspan="2"><div class="togglesort" onclick="togglesort()">
-            <div class="circle"></div>
-        </div></td>
-        <td style="text-align:right;vertical-align:top;line-height:5px;"><div class="sorttext">&nbsp;</div></td>
-        <td rowspan="2" style="font-size: 30px;">&darr;</td></tr>
-        <tr>   
-            <td style="text-align:right;">z</td>
-        </tr></table>
+      <button class="togglesort" id="sortToggle" title="Sort by z-number / alphabetical" aria-pressed="false">
+        <div class="circle"></div>
+      </button>
+      <span class="sort-labels">
+        <span class="sorttext"></span>
+        <span class="sort-arrow">↓</span>
+        <span class="sort-z">z</span>
+      </span>
     </div>
 
     <div id="map" style="display:block"></div>
@@ -139,8 +138,21 @@
     </div>
 
     <div id="cy"></div>	
-    <div id="icdialog" style="display:none"><form><input type="number" min="0" style="z-index:10000;width:82%" name="ICBQ" value="0"> Bq<br><br>
-        <input type="number" min="0" style="z-index:10000;width:82%" name="ICMOLE" value="0"> mol</form></div>
+    <dialog id="icdialog" class="ic-dialog">
+      <h3 id="icdialog-title" class="ic-dialog-title">Initial inventory</h3>
+      <div class="ic-dialog-body">
+        <label class="ic-field">Activity<br>
+          <input type="number" min="0" id="ic-bq" name="ICBQ" value="0"> Bq
+        </label>
+        <label class="ic-field">Amount<br>
+          <input type="number" min="0" id="ic-mole" name="ICMOLE" value="0"> mol
+        </label>
+      </div>
+      <div class="ic-dialog-footer">
+        <button id="ic-cancel" class="ic-btn ic-btn-cancel">Cancel</button>
+        <button id="ic-ok" class="ic-btn ic-btn-ok">OK</button>
+      </div>
+    </dialog>
 </div>
 
 <div id="info"></div>
@@ -152,7 +164,7 @@
 <script>
 // ── Shared components ────────────────────────────────────────────────────────
 KVOT.renderHeader('Radionuclide Decay Chains <a href="https://www.icrp.org/publication.asp?id=ICRP%20Publication%20107" style="font-size: 0.5em;">ICRP Publication 107</a>',
-    '<input id="search-input" class="search-input" type="text" placeholder="Search radionuclide..." onfocusout="searchUnfocus(this)"/>');
+    '<input id="search-input" class="search-input" type="text" placeholder="Search radionuclide..." autocomplete="off"/>');
 KVOT.renderNav('rdc.html');
 
 var extraFooterIcons = ' | ' +
@@ -164,18 +176,26 @@ KVOT.initMap('kvotmap');
 // ── Sort toggle ──────────────────────────────────────────────────────────────
 var Asort = false;
 function togglesort() {
-    var toggle = document.querySelector('.togglesort');
-    var text = document.querySelector('.sorttext');
+    const toggle = document.getElementById('sortToggle');
+    const text = document.querySelector('.sorttext');
     Asort = !Asort;
     if (Asort) {
         toggle.classList.add('activesort');
-        text.innerHTML = 'a';
+        toggle.setAttribute('aria-pressed', 'true');
+        text.textContent = 'a';
     } else {
         toggle.classList.remove('activesort');
-        text.innerHTML = '&nbsp;';
+        toggle.setAttribute('aria-pressed', 'false');
+        text.textContent = '';
     }
     $('#tree').jstree(true).refresh();
 }
+document.addEventListener('DOMContentLoaded', function() {
+    const sortBtn = document.getElementById('sortToggle');
+    if (sortBtn) sortBtn.addEventListener('click', togglesort);
+    const searchInput = document.getElementById('search-input');
+    if (searchInput) searchInput.addEventListener('blur', function() { this.value = ''; });
+});
 
 // ── Theme helpers for Cytoscape ───────────────────────────────────────────────
 function isDarkMode() {
@@ -432,19 +452,23 @@ var modal = document.getElementById("myModal");
 var btn = document.getElementById("myBtn");
 var span = document.getElementsByClassName("close")[0];
 
-btn.onclick = function() { modal.style.display = "block"; };
-span.onclick = function() { modal.style.display = "none"; };
-window.onclick = function(event) {
-    if (event.target == modal) { modal.style.display = "none"; }
-};
+btn.addEventListener('click', function() { modal.style.display = "block"; });
+span.addEventListener('click', function() { modal.style.display = "none"; });
+window.addEventListener('click', function(event) {
+    if (event.target === modal) { modal.style.display = "none"; }
+});
 
-window.onload = function() {
+window.addEventListener('load', function() {
     $('#tree').jstree(true).show_all();
     $('#tree').jstree('select_node', 'U-238');
-};
+});
+
+window.addEventListener('resize', function() {
+    if (CHARTDIALOG && CHARTDIALOG[0]) { Plotly.Plots.resize(CHARTDIALOG[0]); }
+});
 
 function selectElement(Z) {
-    $('#tree').jstree(true).show_all();    
+    $('#tree').jstree(true).show_all();
     $('#tree').jstree('select_node', datatree[Z].text);
 }
 
@@ -572,33 +596,43 @@ function updateLevelICrunAndUpdateChart() {
 }
 
 function updateIC(node) {
-    $("#icdialog").dialog({
-        title: "Set initial inventory for " + node.id(),
-        modal: true,
-        buttons: {
-            'OK': function () {
-                var IC = $('input[name="ICBQ"]').val();
-                node.data().IC = Number(IC);
-                updateLevel("IC");
-                runAndUpdateChart();
-                $(this).dialog('close');
-            },
-            'Cancel': function () {
-                $(this).dialog('close');
-            }
-        },
-        open: function (event, ui) {
-            $('input[name="ICBQ"]').val(node.data().IC);
-            $('input[name="ICMOLE"]').val(node.data().IC*60*60*24*365.242196*getRn(node.id()).Halflife_y/Math.log(2)/6.02214179E23);
+    const dlg      = document.getElementById('icdialog');
+    const titleEl  = document.getElementById('icdialog-title');
+    const bqInput  = document.getElementById('ic-bq');
+    const molInput = document.getElementById('ic-mole');
+    const rndata   = getRn(node.id());
+    const factor   = 60*60*24*365.242196 * rndata.Halflife_y / Math.log(2) / 6.02214179e23;
 
-            $('input[name="ICMOLE"]').change(function() {
-                $('input[name="ICBQ"]').val(Number($('input[name="ICMOLE"]').val())/(60*60*24*365.242196*getRn(node.id()).Halflife_y/Math.log(2)/6.02214179E23));
-            });
-            $('input[name="ICBQ"]').change(function() {
-                $('input[name="ICMOLE"]').val(Number($('input[name="ICBQ"]').val())*(60*60*24*365.242196*getRn(node.id()).Halflife_y/Math.log(2)/6.02214179E23));
-            });
+    titleEl.textContent = 'Initial inventory — ' + node.id();
+    bqInput.value  = node.data().IC;
+    molInput.value = node.data().IC * factor;
+
+    bqInput.oninput  = () => { molInput.value = Number(bqInput.value)  * factor; };
+    molInput.oninput = () => { bqInput.value  = Number(molInput.value) / factor; };
+
+    const okBtn     = document.getElementById('ic-ok');
+    const cancelBtn = document.getElementById('ic-cancel');
+
+    function closeDialog() { dlg.close(); }
+    function onOk() {
+        node.data().IC = Number(bqInput.value);
+        updateLevel('IC');
+        runAndUpdateChart();
+        closeDialog();
+        okBtn.removeEventListener('click', onOk);
+        cancelBtn.removeEventListener('click', closeDialog);
+    }
+    okBtn.addEventListener('click', onOk);
+    cancelBtn.addEventListener('click', closeDialog);
+    dlg.addEventListener('click', function onOverlay(e) {
+        if (e.target === dlg) {
+            closeDialog();
+            okBtn.removeEventListener('click', onOk);
+            cancelBtn.removeEventListener('click', closeDialog);
+            dlg.removeEventListener('click', onOverlay);
         }
     });
+    dlg.showModal();
 }
 
 // ── jstree ───────────────────────────────────────────────────────────────────
@@ -691,44 +725,42 @@ $('#tree').jstree({
         CY.ready(function () { CY.fit([], 20); });
     }
     else if (node) {
-        var html = "";
-        html=html+"<table border=0 style='font-size: 1.4em' cellpadding=0 cellspacing=0>";
-        html=html+"<tr><td><b style='font-size: 2.5em'>"+node.a_attr.Z +"</b></td><td style='font-size: 2em'>"+node.a_attr.weight.replace('\u2013','') +"</td><td width='290' rowspan='4'>"+getPeriodicTable(node.a_attr.Z)+"</td></tr>";
-        html=html+"<tr style='line-height: 5em;'><td colspan=2><b style='vertical-align:top;font-size:7em'>"+node.a_attr.symbol+"</b></td></tr>";
-        html=html+"<tr><td style='vertical-align: bottom;padding-top:10px;font-size: 2em' colspan=2>"+node.text+"</td></tr>";
-        html=html+"<tr><td style='vertical-align: bottom;font-size: 1.5em' colspan=2>"+node.a_attr.type+"</td></tr>";
-        html=html+"<tr><td colspan=3>"+node.a_attr.info+"</td></tr>";
-        html=html+"<tr><td colspan=3><br>Discovered "+node.a_attr.year +" by "+node.a_attr.discoverer +". "+node.a_attr.note +"<br><br></td></tr>";
-        html=html+"<tr><th colspan=2>Origin of name</th><td>"+node.a_attr.origin_name +"</td></tr>";
-        html=html+"<tr><th colspan=2>Atomic mass</th><td>"+node.a_attr.weight +" g/mol</td></tr>";
-        html=html+"<tr><th colspan=2>Standard state</th><td class='"+node.a_attr.phase.replace(' (expected)','')+"'>"+node.a_attr.phase +"</td></tr>";
-        html=html+"<tr><th colspan=2 style='vertical-align: bottom;'>Electron configuration</th><td>"+node.a_attr.electron +"</td></tr>";
-        html=html+"<tr><th colspan=2>Oxidation states</th><td>"+node.a_attr.oxi +"</td></tr>";
-        html=html+"<tr><th colspan=2>Electronegativity (Pauling scale)</th><td>"+node.a_attr.electro +"</td></tr>";
-        html=html+"<tr><th colspan=2>Atomic radius (van der Waals)</th><td>"+node.a_attr.radius +" pm</td></tr>";
-        html=html+"<tr><th colspan=2>Ionization energy</th><td>"+node.a_attr.ion +" eV</td></tr>";
-        html=html+"<tr><th colspan=2>Electron affinity</th><td>"+node.a_attr.affin +" eV</td></tr>";
-        html=html+"<tr><th colspan=2>Melting point</th><td>"+node.a_attr.melting +"\u00B0C</td></tr>";
-        html=html+"<tr><th colspan=2>Boiling point</th><td>"+node.a_attr.boiling +"\u00B0C</td></tr>";
-        html=html+"<tr><th colspan=2>Specific heat capacity</th><td>"+node.a_attr.heat +" J/g \u00B7 K</td></tr>";
-        html=html+"<tr><th colspan=2 style='vertical-align: bottom;'>Density</th><td>"+node.a_attr.density +" g/cm<sup>3</sup></td></tr>";
-        html=html+"<tr><th colspan=2>Earth</th><td>"+node.a_attr.earth +"%</td></tr>";
-        html=html+"<tr><th colspan=2>Abundance in the Earth's crust</th><td>"+node.a_attr.abundance +" mg/kg</td></tr>";
-        html=html+"<tr><th colspan=2>Block</th><td>"+node.a_attr.block+"</td></tr>";
-        html=html+"<tr><th colspan=2>Origin</th><td>"+node.a_attr.origin +"</td></tr>";
-        html=html+"</table>";
-        infodiv.innerHTML = html;
+        const a = node.a_attr;
+        infodiv.innerHTML = `
+          <table class="element-info-table">
+            <tr>
+              <td><b class="elem-Z">${a.Z}</b></td>
+              <td class="elem-weight">${a.weight.replace('\u2013','')}</td>
+              <td rowspan="4" class="elem-pt">${getPeriodicTable(a.Z)}</td>
+            </tr>
+            <tr><td colspan="2"><b class="elem-symbol">${a.symbol}</b></td></tr>
+            <tr><td colspan="2" class="elem-name">${node.text}</td></tr>
+            <tr><td colspan="2" class="elem-type">${a.type}</td></tr>
+            <tr><td colspan="3" class="elem-info">${a.info}</td></tr>
+            <tr><td colspan="3" class="elem-discovery">Discovered ${a.year} by ${a.discoverer}. ${a.note}</td></tr>
+            <tr><th colspan="2">Origin of name</th><td>${a.origin_name}</td></tr>
+            <tr><th colspan="2">Atomic mass</th><td>${a.weight} g/mol</td></tr>
+            <tr><th colspan="2">Standard state</th>
+                <td class="${a.phase.replace(' (expected)','')}">${a.phase}</td></tr>
+            <tr><th colspan="2">Electron configuration</th><td>${a.electron}</td></tr>
+            <tr><th colspan="2">Oxidation states</th><td>${a.oxi}</td></tr>
+            <tr><th colspan="2">Electronegativity (Pauling)</th><td>${a.electro}</td></tr>
+            <tr><th colspan="2">Atomic radius (van der Waals)</th><td>${a.radius} pm</td></tr>
+            <tr><th colspan="2">Ionization energy</th><td>${a.ion} eV</td></tr>
+            <tr><th colspan="2">Electron affinity</th><td>${a.affin} eV</td></tr>
+            <tr><th colspan="2">Melting point</th><td>${a.melting}\u00B0C</td></tr>
+            <tr><th colspan="2">Boiling point</th><td>${a.boiling}\u00B0C</td></tr>
+            <tr><th colspan="2">Specific heat capacity</th><td>${a.heat} J/g\u00B7K</td></tr>
+            <tr><th colspan="2">Density</th><td>${a.density} g/cm<sup>3</sup></td></tr>
+            <tr><th colspan="2">Abundance (Earth's crust)</th><td>${a.abundance} mg/kg</td></tr>
+            <tr><th colspan="2">Block</th><td>${a.block}</td></tr>
+            <tr><th colspan="2">Origin</th><td>${a.origin}</td></tr>
+          </table>`;
 
-        infodiv.classList.remove("Alkali_metal");
-        infodiv.classList.remove("Alkaline_earth_metal");
-        infodiv.classList.remove("Transition_metal");
-        infodiv.classList.remove("Post__transition_metal");
-        infodiv.classList.remove("Metalloid");
-        infodiv.classList.remove("Reactive_nonmetal");
-        infodiv.classList.remove("Noble_gas");
-        infodiv.classList.remove("Lanthanide");
-        infodiv.classList.remove("Actinide");
-        infodiv.classList.remove("Unknown_properties");
+        const ELEMENT_TYPES = ['Alkali_metal','Alkaline_earth_metal','Transition_metal',
+            'Post__transition_metal','Metalloid','Reactive_nonmetal','Noble_gas',
+            'Lanthanide','Actinide','Unknown_properties'];
+        infodiv.classList.remove(...ELEMENT_TYPES);
         infodiv.classList.add(node.type);
         infodiv.classList.add("show");
     }
@@ -795,10 +827,14 @@ function runAndUpdateChart() {
         timeunit = document.getElementById("timeunit").value;
         var timescale = 1;
         switch (timeunit) {
-            case "second": timescale /= 60;
-            case "minute": timescale /= 60;
-            case "hour": timescale /= 24;
-            case "day": timescale /= 365.25;
+            case "second": timescale /= 60;  // seconds → minutes
+            /* falls through */
+            case "minute": timescale /= 60;  // minutes → hours
+            /* falls through */
+            case "hour":   timescale /= 24;  // hours   → days
+            /* falls through */
+            case "day":    timescale /= 365.25; // days  → years
+            /* falls through */
             case "year":
         }
         var tspan = [0, endtime * timescale];
@@ -935,7 +971,6 @@ function runAndUpdateChart() {
     });
     
     Plotly.Plots.resize(CHARTDIALOG[0]);
-    window.onresize = function () { Plotly.Plots.resize(CHARTDIALOG[0]); };
 
     CHARTDIALOG[0].on('plotly_hover', function (data) {
         var rn = data.points.map(function (d) { return d.data.name; });

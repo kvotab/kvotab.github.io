@@ -81,14 +81,17 @@ $(function () {
 
 
 function formatBR(br) {
+    const SUP = ['\u2070','\u00B9','\u00B2','\u00B3','\u2074','\u2075','\u2076','\u2077','\u2078','\u2079'];
     if (br >= 0.1) {
-        br = Math.round(br * 100).toString();
+        return Math.round(br * 100) + '%';
     } else if (br >= 0.005) {
-        br = (Math.round(br * 1000) / 10).toString();
+        return (Math.round(br * 1000) / 10) + '%';
     } else {
-        br = (br * 100).toExponential(1).replace(/e\-?/, '×10⁻').replace('⁻0', '⁻⁰').replace('⁻1', '⁻¹').replace('⁻2', '⁻²').replace('⁻3', '⁻³').replace('⁻4', '⁻⁴').replace('⁻5', '⁻⁵').replace('⁻6', '⁻⁶').replace('⁻7', '⁻⁷').replace('⁻8', '⁻⁸').replace('⁻9', '⁻⁹').replace('⁻10', '⁻¹⁰');
+        const exp = (br * 100).toExponential(1);
+        return exp.replace(/e-(\d+)/, (_, n) =>
+            '\u00D710\u207B' + n.split('').map(d => SUP[+d]).join('')
+        ) + '%';
     }
-    return br.concat("%");
 }
 function rotate(xy, degree) {
     let x = Math.cos(degree) * xy.x - Math.sin(degree) * xy.y;
@@ -136,30 +139,10 @@ function searchUnfocus(input) {
     input.value = "";
 }
 function getRn(rn) {
-    const index = decaydata.findIndex(object => {
-        return object.name === rn;
-    });
-    return decaydata[index];
+    return decaydata.find(obj => obj.name === rn);
 }
 
 
-
-function toggleMap() {
-  var x = document.getElementById("map");
-  var y = document.getElementById("tree");
-  var z = document.getElementById("cy");
-  if (x.style.visibility === "hidden") {
-    x.style.visibility = "visible";
-    y.style.visibility = "hidden";
-    z.style.visibility = "hidden";
-  } else {
-    x.style.visibility = "hidden";
-    y.style.visibility = "visible";
-    z.style.visibility = "visible";
-  }
-}
-
-                            
 
 
 function createRect(x,y,z){

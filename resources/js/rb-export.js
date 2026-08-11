@@ -17,17 +17,15 @@ async function copyChartToClipboard() {
     alert('No chart available to copy');
     return;
   }
-  
+
   const plotDiv = document.getElementById('plotlyChart');
-  const btn = event.target;
-  const originalText = btn.textContent;
-  
+
   try {
     // Check clipboard API availability
     if (!navigator.clipboard || !navigator.clipboard.write) {
       throw new Error('Clipboard API not supported');
     }
-    
+
     // Try to request permission if needed
     try {
       const permissionStatus = await navigator.permissions.query({ name: 'clipboard-write' });
@@ -35,9 +33,9 @@ async function copyChartToClipboard() {
         throw new Error('Clipboard permission denied');
       }
     } catch (permErr) {
-      console.log('Permission query not supported, attempting clipboard write anyway');
+      // Permission query not universally supported; attempt the write anyway
     }
-    
+
     const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
     const origPaper = plotDiv.layout.paper_bgcolor;
     const origPlot  = plotDiv.layout.plot_bgcolor;
@@ -46,65 +44,29 @@ async function copyChartToClipboard() {
       await Plotly.relayout(plotDiv, { paper_bgcolor: '#ffffff', plot_bgcolor: '#ffffff' });
     }
 
-    // Convert chart to PNG
-    const dataUrl = await Plotly.toImage(plotDiv, {
-      format: 'png',
-      width: 1200,
-      height: 800,
-      scale: 2
-    });
+    const dataUrl = await Plotly.toImage(plotDiv, { format: 'png', width: 1200, height: 800, scale: 2 });
 
     if (!isDark) {
       await Plotly.relayout(plotDiv, { paper_bgcolor: origPaper, plot_bgcolor: origPlot });
     }
-    
+
     const blob = await fetch(dataUrl).then(r => r.blob());
-    
-    // Write to clipboard
-    await navigator.clipboard.write([
-      new ClipboardItem({
-        'image/png': blob
-      })
-    ]);
-    
-    // Show success feedback
-    btn.textContent = '✓ Copied!';
-    btn.style.background = 'var(--color-kvot-accent)';
-    
-    setTimeout(() => {
-      btn.textContent = originalText;
-      btn.style.background = '';
-    }, 2000);
-    
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+
   } catch (err) {
     console.error('Clipboard copy failed:', err);
-    
-    // Fallback to download
+
+    // Fallback: download as PNG
     try {
-      const dataUrl = await Plotly.toImage(plotDiv, {
-        format: 'png',
-        width: 1200,
-        height: 800,
-        scale: 2
-      });
-      
+      const dataUrl = await Plotly.toImage(plotDiv, { format: 'png', width: 1200, height: 800, scale: 2 });
       const link = document.createElement('a');
       link.href = dataUrl;
       link.download = `chart_${Date.now()}.png`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      
-      // Show download feedback
-      btn.textContent = '⬇ Downloaded';
-      btn.style.background = 'var(--color-kvot-accent)';
-      
-      setTimeout(() => {
-        btn.textContent = originalText;
-        btn.style.background = '';
-      }, 2000);
-      
-      if (err.message.includes('denied') || err.message.includes('permission')) {
+
+      if (err.message && (err.message.includes('denied') || err.message.includes('permission'))) {
         alert('Clipboard access was denied. The chart has been downloaded instead.');
       }
     } catch (downloadErr) {

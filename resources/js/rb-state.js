@@ -172,17 +172,14 @@ function initDOMReferences() {
   DOM.plotlyChartContainer = document.getElementById('plotlyChartContainer');
   DOM.info = document.getElementById('info');
   DOM.tree = document.getElementById('tree');
-  DOM.searchInput = document.getElementById('searchInput');
-  DOM.searchResults = document.getElementById('searchResults');
-  DOM.tabs = document.getElementById('tabs');
+  DOM.searchInput = document.getElementById('treeSearch');
+  DOM.fileTabs = document.getElementById('fileTabs');
   DOM.showTotal = document.getElementById('showTotal');
-  DOM.showTotalContainer = document.getElementById('showTotalContainer');
   DOM.showTotalLabel = document.getElementById('showTotalLabel');
   DOM.showRatio = document.getElementById('showRatio');
   DOM.showRatioLabel = document.getElementById('showRatioLabel');
-  DOM.dynamicLegendToggle = document.getElementById('dynamicLegendToggle');
-  DOM.dropZone = document.getElementById('dropZone');
-  DOM.fileTabs = document.getElementById('fileTabs');
+  DOM.dynamicLegend = document.getElementById('dynamicLegend');
+  DOM.dropOverlay = document.getElementById('dropOverlay');
 
   // load hint preference
   try {

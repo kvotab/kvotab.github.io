@@ -109,47 +109,48 @@ function updateTabs(forceRefresh) {
     tooltipHtmlByFile[key] = `<div class="file-tab-tooltip-title">${escapeHtml(key)}</div>${safeInfoHtml ? `<div class="file-tab-tooltip-info">${safeInfoHtml}</div>` : ''}`;
   }
   
-  // Render tabs
+  // Render tabs (no inline event handlers — listeners attached below)
   tabsContainer.innerHTML = fileOrder.map(key => {
     const isEnabled = fileStates[key];
     return `
       <div class="file-tab ${isEnabled ? 'enabled' : 'disabled'}" data-file="${escapeHtml(key)}">
         <div class="file-tab-name">${escapeHtml(key)}</div>
-        <div class="file-tab-close" onclick="event.stopPropagation(); removeFile('${key.replace(/'/g, "\\'")}')">×</div>
+        <div class="file-tab-close" title="Remove file">×</div>
       </div>
     `;
   }).join('');
-  
-  // Add click handlers for toggle
+
+  // Attach event listeners to each tab
   document.querySelectorAll('.file-tab').forEach(tab => {
     const fileName = tab.getAttribute('data-file');
     tab.removeAttribute('title');
-    tab.querySelectorAll('[title]').forEach(el => el.removeAttribute('title'));
 
+    // Tooltip
     tab.addEventListener('mouseenter', (evt) => {
       const tooltip = ensureFileTabTooltip();
       tooltip.innerHTML = tooltipHtmlByFile[fileName] || `<div class="file-tab-tooltip-title">${escapeHtml(fileName || '')}</div>`;
       tooltip.style.display = 'block';
       positionFileTabTooltip(tooltip, evt);
     });
-
     tab.addEventListener('mousemove', (evt) => {
       const tooltip = ensureFileTabTooltip();
-      if (tooltip.style.display !== 'none') {
-        positionFileTabTooltip(tooltip, evt);
-      }
+      if (tooltip.style.display !== 'none') positionFileTabTooltip(tooltip, evt);
     });
-
     tab.addEventListener('mouseleave', () => {
-      const tooltip = ensureFileTabTooltip();
-      tooltip.style.display = 'none';
+      ensureFileTabTooltip().style.display = 'none';
     });
 
-    tab.addEventListener('click', (e) => {
-      if (!e.target.classList.contains('file-tab-close')) {
-        toggleFileState(fileName);
-      }
-    });
+    // Close button — stopPropagation prevents the tab toggle from also firing
+    const closeBtn = tab.querySelector('.file-tab-close');
+    if (closeBtn) {
+      closeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        removeFile(fileName);
+      });
+    }
+
+    // Tab body — toggle enabled/disabled state
+    tab.addEventListener('click', () => toggleFileState(fileName));
   });
   
   // Initialize SortableJS for drag reordering
@@ -170,9 +171,7 @@ function updateTabs(forceRefresh) {
         currentTreeFile = newTreeFile;
         
         const treeFileChanged = previousFirst !== newTreeFile;
-        
-        console.log('Drag ended - Previous:', previousFirst, 'New:', newTreeFile, 'Changed:', treeFileChanged);
-        
+
         // Reset tree mode and selections on reorder
         resetTreeModeToSeparated();
 
@@ -204,8 +203,6 @@ function updateTabs(forceRefresh) {
     document.querySelector('.search-container')?.classList.remove('visible');
     try { EventBus.emit('selection:changed', { mode: 'none' }); } catch (e) {}
   }
-  
-  console.log('updateTabs - Previous:', previousTreeFile, 'New:', newTreeFile, 'Changed:', treeFileChanged);
   
   // Only refresh the tree when necessary (tree root changed or enabled set changed).
   // This prevents frequent/expensive refreshes and avoids triggering search-aware

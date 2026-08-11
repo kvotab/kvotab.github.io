@@ -77,6 +77,22 @@ window.FileService = {
    ========================================================================== */
 
 /**
+ * Return the CSS panel-background colour for Plotly chart backgrounds.
+ * Reads --color-panel-bg from the document root; falls back to a hard-coded
+ * value when the property is absent (e.g. before stylesheets have loaded).
+ *
+ * @returns {string} CSS colour string
+ */
+function getPanelBgColor() {
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  try {
+    const val = getComputedStyle(document.documentElement).getPropertyValue('--color-panel-bg').trim();
+    if (val) return val;
+  } catch (_) {}
+  return isDark ? '#2a221b' : '#faf8f6';
+}
+
+/**
  * Show or create the loading overlay on the chart container.
  * Centralises the duplicated loading-div creation that was previously
  * inlined in createPlotlyChart, createMultiDatasetChart,
@@ -1069,12 +1085,7 @@ function createBaseLayout({ title, xAxisTitle, yAxisTitle, xScale = 'linear', yS
   const gridColor = isDark ? '#4a3f35' : '#e5ddd5';
   const minorGridColor = isDark ? '#3a322b' : '#f0ebe5';
   const bgColor = isDark ? '#2a221b' : '#ffffff';
-  // use panel background for the page around the axes
-  let panelBg = ''; 
-  try {
-    panelBg = getComputedStyle(document.documentElement).getPropertyValue('--color-panel-bg').trim();
-  } catch (e) { panelBg = isDark ? '#2a221b' : '#faf8f6'; }
-  if (!panelBg) panelBg = isDark ? '#2a221b' : '#faf8f6';
+  const panelBg = getPanelBgColor();
 
   return {
     title: {
@@ -1149,11 +1160,7 @@ window.ChartService = {
     const gridColor = isDark ? '#4a3f35' : '#e5ddd5';
     const minorGridColor = isDark ? '#3a322b' : '#f0ebe5';
     const bgColor  = isDark ? '#2a221b' : '#ffffff';
-    let panelBg = '';
-    try {
-      panelBg = getComputedStyle(document.documentElement).getPropertyValue('--color-panel-bg').trim();
-    } catch (e) { panelBg = isDark ? '#2a221b' : '#faf8f6'; }
-    if (!panelBg) panelBg = isDark ? '#2a221b' : '#faf8f6';
+    const panelBg = getPanelBgColor();
     return {
       paper_bgcolor: panelBg,
       plot_bgcolor: bgColor,
@@ -1356,11 +1363,7 @@ function renderChart(traces, layout, path, afterRender) {
 function createPdfHistogram(data) {
   // Ensure panelBg is defined for histogram layout
   const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-  let panelBg = '';
-  try {
-    panelBg = getComputedStyle(document.documentElement).getPropertyValue('--color-panel-bg').trim();
-  } catch (e) { panelBg = isDark ? '#2a221b' : '#faf8f6'; }
-  if (!panelBg) panelBg = isDark ? '#2a221b' : '#faf8f6';
+  let panelBg = getPanelBgColor();
   const container = getElement('plotlyChartContainer');
   if (!container) return;
 
@@ -1703,8 +1706,5 @@ function redrawHistogram() {
     createPdfHistogram(currentPdfHistogramData);
   }
 }
-
-/** @deprecated Use redrawHistogram() */
-function toggleHistLog() { redrawHistogram(); }
 
 

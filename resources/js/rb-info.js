@@ -115,12 +115,9 @@ async function showNodeAttributes(path, isGroup = false) {
             previewLbl.textContent = previewLabel;
 
             if (!isScalar) {
-              const dlBtn = document.createElement('button'); dlBtn.className = 'download-data-btn';
-              dlBtn.style.cssText = 'padding:4px 8px;background:var(--color-kvot-background);color:var(--color-kvot-bright);border:none;border-radius:3px;cursor:pointer;font-size:11px;font-weight:500;transition:all 0.2s;';
+              const dlBtn = document.createElement('button'); dlBtn.className = 'info-btn-csv';
               dlBtn.title = 'Download full dataset as CSV';
               dlBtn.textContent = '⬇ Download CSV';
-              dlBtn.addEventListener('mouseover', () => dlBtn.style.background = 'var(--color-kvot-primary)');
-              dlBtn.addEventListener('mouseout', () => dlBtn.style.background = 'var(--color-kvot-background)');
               dlBtn.addEventListener('click', () => downloadDatasetAsCSV(node, fullData, path, fileKey));
               previewLbl.appendChild(dlBtn);
             }
@@ -287,12 +284,10 @@ async function showNodeAttributes(path, isGroup = false) {
       }
 
       if (!isGroup) {
-        const excelWrap = document.createElement('div'); excelWrap.style.marginTop = '12px'; excelWrap.style.paddingTop = '12px'; excelWrap.style.borderTop = '1px solid var(--color-border)';
-        const excelBtn = document.createElement('button'); excelBtn.style.cssText = 'padding:6px 12px;background:#217346;color:white;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;transition:all 0.2s;';
+        const excelWrap = document.createElement('div'); excelWrap.className = 'info-excel-footer';
+        const excelBtn = document.createElement('button'); excelBtn.className = 'info-btn-excel';
         excelBtn.title = 'Download this dataset to Excel';
         excelBtn.textContent = '📊 Download Excel';
-        excelBtn.addEventListener('mouseover', () => excelBtn.style.background = '#1e6b3f');
-        excelBtn.addEventListener('mouseout', () => excelBtn.style.background = '#217346');
         excelBtn.addEventListener('click', () => downloadDatasetAsExcel(path, fileKey));
         excelWrap.appendChild(excelBtn);
         fileSection.appendChild(excelWrap);
@@ -900,7 +895,7 @@ function showMultipleDatasetAttributes(items) {
 
   const frag = document.createDocumentFragment();
   const header = document.createElement('div');
-  header.style.cssText = 'background: var(--color-kvot-bright); padding: 12px; border-radius: 6px; margin-bottom: 16px; font-weight: 600; color: var(--color-kvot-background);';
+  header.className = 'info-multi-header';
   header.textContent = `📊 ${normalizedItems.length} datasets selected`;
   frag.appendChild(header);
 
@@ -999,12 +994,10 @@ function showMultipleDatasetAttributes(items) {
         }
       } catch (err) { console.warn('PDF collect error:', err); }
 
-      const excelWrap = document.createElement('div'); excelWrap.style.marginTop = '12px'; excelWrap.style.paddingTop = '12px'; excelWrap.style.borderTop = '1px solid var(--color-border)';
+      const excelWrap = document.createElement('div'); excelWrap.className = 'info-excel-footer';
       const excelBtn = document.createElement('button');
-      excelBtn.style.cssText = 'padding: 6px 12px; background: #217346; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 500; transition: all 0.2s;';
+      excelBtn.className = 'info-btn-excel';
       excelBtn.title = 'Download this dataset to Excel'; excelBtn.textContent = '📊 Download Excel';
-      excelBtn.addEventListener('mouseover', () => excelBtn.style.background = '#1e6b3f');
-      excelBtn.addEventListener('mouseout', () => excelBtn.style.background = '#217346');
       excelBtn.addEventListener('click', () => downloadDatasetAsExcel(path, fileKey));
       excelWrap.appendChild(excelBtn);
       fileSection.appendChild(excelWrap);
