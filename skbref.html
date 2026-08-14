@@ -1,0 +1,1067 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <link href="https://unpkg.com/leaflet@1.9.2/dist/leaflet.css" rel="stylesheet">
+  <script src="https://unpkg.com/leaflet@1.9.2/dist/leaflet.js"></script>
+  <link rel="stylesheet" href="./resources/css/kvot.css">
+  <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
+  <title>SKB Reference Checker</title>
+  <style>
+    /* Layout */
+    header { position:fixed;top:0;left:0;right:0;z-index:20;background:var(--footer-bg);box-shadow:0 2px 8px rgba(0,0,0,.12); }
+    body   { overflow-x:hidden; }
+    .content { padding-top:56px;padding-bottom:48px;min-height:calc(100vh - 104px); }
+    #app { width:100%;max-width:980px;margin:0 auto;padding:28px 28px 56px;box-sizing:border-box; }
+
+    /* Drop zone */
+    #dropzone {
+      border:2px dashed var(--border-color);border-radius:14px;
+      padding:48px 24px;text-align:center;cursor:pointer;
+      background:var(--bg-secondary);transition:border-color .15s,background .15s;
+      margin-bottom:24px;
+    }
+    #dropzone.drag-over { border-color:var(--color-kvot-bright);background:color-mix(in srgb,var(--color-kvot-bright) 6%,var(--bg-secondary)); }
+    #dropzone input[type=file] { display:none; }
+    #dropzone .dz-icon { font-size:2.4rem;margin-bottom:10px;opacity:.6; }
+    #dropzone .dz-label { font-size:1rem;font-weight:600;color:var(--text-primary);margin-bottom:4px; }
+    #dropzone .dz-sub { font-size:.84rem;color:var(--text-muted); }
+    #dropzone .dz-btn {
+      display:inline-block;margin-top:14px;padding:8px 20px;border-radius:20px;
+      background:var(--color-kvot-bright);color:#fff;font-size:.88rem;font-weight:600;
+      border:none;cursor:pointer;transition:opacity .15s;
+    }
+    #dropzone .dz-btn:hover { opacity:.88; }
+
+    /* Progress / status */
+    #status-bar { display:none;align-items:center;gap:10px;padding:12px 16px;
+      background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:10px;
+      margin-bottom:20px;font-size:.88rem;color:var(--text-secondary); }
+    #status-bar.show { display:flex; }
+    .spinner { width:16px;height:16px;border:2px solid var(--border-color);
+      border-top-color:var(--color-kvot-bright);border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0; }
+    @keyframes spin { to { transform:rotate(360deg); } }
+
+    /* Summary cards */
+    #summary-cards { display:none;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px; }
+    #summary-cards.show { display:grid; }
+    .sum-card { background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:10px;
+      padding:14px 16px;text-align:center; }
+    .sum-card.warn  { border-color:var(--color-kvot-accent);background:color-mix(in srgb,var(--color-kvot-accent) 8%,var(--bg-secondary)); }
+    .sum-card.ok    { border-color:#5cb85c;background:color-mix(in srgb,#5cb85c 8%,var(--bg-secondary)); }
+    .sum-label { font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text-muted);margin-bottom:4px; }
+    .sum-value { font-size:1.5rem;font-weight:700;color:var(--text-primary);font-family:'SF Mono',Menlo,monospace; }
+    .sum-card.warn .sum-value { color:var(--color-kvot-accent); }
+    .sum-card.ok   .sum-value { color:#5cb85c; }
+
+    /* Result sections (collapsible) */
+    .result-section { margin-bottom:16px;border-radius:10px; }
+    .result-section summary {
+      cursor:pointer;padding:11px 16px;background:var(--bg-secondary);border:1px solid var(--border-color);
+      border-radius:10px;font-weight:600;font-size:.88rem;color:var(--text-primary);
+      display:flex;align-items:center;gap:8px;list-style:none;
+      transition:background .12s,border-color .12s;user-select:none;-webkit-user-select:none;
+    }
+    .result-section summary::-webkit-details-marker { display:none; }
+    .result-section summary::before { content:'▸';font-size:.72em;color:var(--text-muted);transition:transform .2s;flex-shrink:0; }
+    .result-section[open]>summary::before { transform:rotate(90deg); }
+    .result-section summary:hover { background:var(--bg-surface);border-color:var(--color-kvot-bright); }
+    .result-section[open]>summary { border-radius:10px 10px 0 0;border-bottom-color:transparent; }
+    .section-badge {
+      margin-left:auto;font-size:.74rem;font-weight:700;padding:2px 10px;
+      border-radius:12px;background:var(--border-color);color:var(--text-muted);
+    }
+    .section-badge.error  { background:color-mix(in srgb,var(--color-kvot-accent) 18%,var(--bg-secondary));color:var(--color-kvot-accent); }
+    .section-badge.warn   { background:color-mix(in srgb,#f0ad4e 18%,var(--bg-secondary));color:#c87d0a; }
+    .section-badge.good   { background:color-mix(in srgb,#5cb85c 18%,var(--bg-secondary));color:#357a35; }
+    [data-theme="dark"] .section-badge.warn  { color:#f0c060; }
+    [data-theme="dark"] .section-badge.good  { color:#6dd36d; }
+    .section-body { padding:16px 18px;background:var(--bg-secondary);border:1px solid var(--border-color);border-top:none;border-radius:0 0 10px 10px; }
+
+    /* Reference table */
+    .ref-table { width:100%;border-collapse:collapse;font-size:.86rem; }
+    .ref-table th { text-align:left;padding:8px 10px;font-size:.72rem;font-weight:700;text-transform:uppercase;
+      letter-spacing:.06em;color:var(--text-muted);border-bottom:1px solid var(--border-color);white-space:nowrap; }
+    .ref-table td { padding:8px 10px;vertical-align:top;border-bottom:1px solid var(--border-color);line-height:1.4; }
+    .ref-table tr:last-child td { border-bottom:none; }
+    .ref-table tr:hover td { background:var(--bg-surface); }
+    .ref-key { font-family:'SF Mono',Menlo,monospace;font-size:.83rem;color:var(--color-kvot-accent);white-space:nowrap; }
+    .ref-text { color:var(--text-secondary);max-width:420px; }
+    .ref-text em { font-style:normal;background:color-mix(in srgb,var(--color-kvot-bright) 18%,transparent);
+      border-radius:3px;padding:0 2px; }
+    .cite-count { font-weight:700;color:var(--text-primary); }
+    .cite-pages { font-size:.78rem;color:var(--text-muted);margin-top:2px; }
+    .issue-list { margin:0;padding:0 0 0 16px;color:var(--color-kvot-accent);font-size:.84rem; }
+    .issue-list li { margin-bottom:2px; }
+    .warn-row td { background:color-mix(in srgb,#f0ad4e 5%,var(--bg-secondary)); }
+    .error-row td { background:color-mix(in srgb,var(--color-kvot-accent) 5%,var(--bg-secondary)); }
+
+    /* Orphan / missing lists */
+    .tag-list { display:flex;flex-wrap:wrap;gap:6px;margin-top:0; }
+    .tag { display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:14px;
+      font-size:.82rem;font-weight:500;border:1px solid var(--border-color);background:var(--bg-secondary); }
+    .tag.error-tag { border-color:var(--color-kvot-accent);color:var(--color-kvot-accent);
+      background:color-mix(in srgb,var(--color-kvot-accent) 8%,var(--bg-secondary)); }
+    .tag.warn-tag  { border-color:#f0ad4e;color:#c87d0a;
+      background:color-mix(in srgb,#f0ad4e 8%,var(--bg-secondary)); }
+    [data-theme="dark"] .tag.warn-tag { color:#f0c060; }
+    .tag code { font-family:'SF Mono',Menlo,monospace;font-size:.82rem; }
+
+    /* Document info bar */
+    #doc-info { display:none;padding:10px 16px;background:var(--bg-secondary);
+      border:1px solid var(--border-color);border-radius:8px;margin-bottom:20px;
+      font-size:.84rem;color:var(--text-secondary);line-height:1.6; }
+    #doc-info.show { display:block; }
+    #doc-info strong { color:var(--text-primary); }
+
+    /* Reset button */
+    #reset-btn { display:none;float:right;margin-top:-4px;padding:5px 14px;
+      background:var(--bg-secondary);border:1px solid var(--border-color);
+      border-radius:8px;font-size:.82rem;color:var(--text-secondary);cursor:pointer; }
+    #reset-btn:hover { border-color:var(--color-kvot-bright);color:var(--text-primary); }
+    #reset-btn.show { display:inline-block; }
+
+    /* Empty state */
+    .empty-notice { color:var(--text-muted);font-size:.88rem;font-style:italic;padding:6px 0; }
+
+    /* Responsive */
+    @media (max-width:700px) { #summary-cards{grid-template-columns:1fr 1fr} }
+    @media (max-width:480px) { #app{padding:14px 12px 32px} #summary-cards{grid-template-columns:1fr 1fr;gap:8px} }
+  </style>
+</head>
+<body>
+  <header></header>
+  <div class="content">
+    <div id="app">
+
+      <button id="reset-btn" title="Analyse another document">↩ New document</button>
+
+      <!-- Drop zone -->
+      <div id="dropzone" role="region" aria-label="Upload Word document">
+        <input type="file" id="file-input" accept=".docx">
+        <div class="dz-icon">📄</div>
+        <div class="dz-label">Drop a Word file here</div>
+        <div class="dz-sub">or click to browse &mdash; .docx only</div>
+        <button class="dz-btn" type="button" onclick="document.getElementById('file-input').click()">Choose file</button>
+      </div>
+
+      <!-- Status bar -->
+      <div id="status-bar"><div class="spinner"></div><span id="status-msg">Analysing&hellip;</span></div>
+
+      <!-- Document info -->
+      <div id="doc-info"></div>
+
+      <!-- Summary cards -->
+      <div id="summary-cards">
+        <div class="sum-card" id="card-total">
+          <div class="sum-label">References in list</div>
+          <div class="sum-value" id="cnt-total">—</div>
+        </div>
+        <div class="sum-card" id="card-cited">
+          <div class="sum-label">Cited in text</div>
+          <div class="sum-value" id="cnt-cited">—</div>
+        </div>
+        <div class="sum-card" id="card-orphan">
+          <div class="sum-label">Orphan in-text</div>
+          <div class="sum-value" id="cnt-orphan">—</div>
+        </div>
+        <div class="sum-card" id="card-issues">
+          <div class="sum-label">Format issues</div>
+          <div class="sum-value" id="cnt-issues">—</div>
+        </div>
+      </div>
+
+      <!-- Results -->
+      <div id="results"></div>
+
+    </div>
+    <div id="map"></div>
+  </div>
+  <footer></footer>
+
+  <script src="./resources/js/site.js"></script>
+  <script>
+    KVOT.renderHeader('SKB Reference Checker');
+    KVOT.renderNav('skbref.html');
+    KVOT.renderFooter();
+    KVOT.initMap('map');
+  </script>
+
+  <!-- JSZip for unzipping .docx (docx = zip of XML) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
+  <script>
+  /* ====================================================================
+     SKB Reference Checker — core logic
+     ====================================================================
+
+     SKB reference style (from "Angivande av referenser i publika rapporter"
+     and "Skrivhandboken"):
+
+     IN-TEXT CITATIONS
+     -----------------
+     • Numbered style:  [1]  [1, 2]  [1–3]  [1, 3, 5]
+       Alternate forms: (1)  1)  (ref 1)  ref. [1]
+     • Author-year style: (Author 2024)  (Author et al. 2024)
+       Author and Author (2024)  (Author 2024, Author2 2023)
+     • SKB report shorthand: SKB 2011a  SKB (2011b)  SKB TR-10-48
+     • Broad search also catches: Ref [1], se [1], see [1], jfr [1]
+
+     REFERENCE LIST
+     --------------
+     Detected by heading matching "References", "Litteratur", "Referencer",
+     "Referenslista", "Bibliography" or similar (case-insensitive).
+
+     SKB FORMAT RULES CHECKED
+     ------------------------
+     1. Report number present for SKB reports (TR-XX-YY, R-XX-YY, P-XX-YY,
+        IPR-XX-YY, RD&D-XX, SKB-R-XX-YY, STUDSVIK/NW-XX-YY, etc.)
+     2. Year present and in plausible range (1900–2099)
+     3. Author(s) present — not just a URL
+     4. For numbered lists: entry starts with digit (or [digit])
+     5. Title should be present (rough check: entry long enough)
+     6. Trailing period or expected end punctuation
+  ==================================================================== */
+
+  // ── DOM refs ──────────────────────────────────────────────────────────────
+  const dropzone   = document.getElementById('dropzone');
+  const fileInput  = document.getElementById('file-input');
+  const statusBar  = document.getElementById('status-bar');
+  const statusMsg  = document.getElementById('status-msg');
+  const docInfo    = document.getElementById('doc-info');
+  const summCards  = document.getElementById('summary-cards');
+  const results    = document.getElementById('results');
+  const resetBtn   = document.getElementById('reset-btn');
+
+  // ── Drag-and-drop wiring ──────────────────────────────────────────────────
+  dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('drag-over'); });
+  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag-over'));
+  dropzone.addEventListener('drop', e => {
+    e.preventDefault(); dropzone.classList.remove('drag-over');
+    const f = e.dataTransfer.files[0];
+    if (f) handleFile(f);
+  });
+  dropzone.addEventListener('click', e => {
+    if (e.target.closest('.dz-btn') || e.target === fileInput) return;
+    fileInput.click();
+  });
+  fileInput.addEventListener('change', () => { if (fileInput.files[0]) handleFile(fileInput.files[0]); });
+  resetBtn.addEventListener('click', resetUI);
+
+  // ── Reset ─────────────────────────────────────────────────────────────────
+  function resetUI() {
+    dropzone.style.display = '';
+    statusBar.classList.remove('show');
+    docInfo.classList.remove('show');
+    summCards.classList.remove('show');
+    results.innerHTML = '';
+    resetBtn.classList.remove('show');
+    fileInput.value = '';
+  }
+
+  // ── Status helpers ────────────────────────────────────────────────────────
+  function showStatus(msg) {
+    statusMsg.textContent = msg;
+    statusBar.classList.add('show');
+  }
+  function hideStatus() { statusBar.classList.remove('show'); }
+
+  // ── Main entry ────────────────────────────────────────────────────────────
+  async function handleFile(file) {
+    if (!file.name.endsWith('.docx')) {
+      alert('Please upload a .docx file.');
+      return;
+    }
+    dropzone.style.display = 'none';
+    showStatus('Reading file…');
+    try {
+      const buf = await file.arrayBuffer();
+      showStatus('Unzipping .docx…');
+      const zip = await JSZip.loadAsync(buf);
+
+      // Extract main document XML
+      const docXml = await zip.file('word/document.xml')?.async('string');
+      if (!docXml) throw new Error('word/document.xml not found — is this a valid .docx?');
+
+      // Optional: extract numbering for numbered lists
+      const numXml = await zip.file('word/numbering.xml')?.async('string') || '';
+
+      showStatus('Parsing document…');
+      await yieldToBrowser();
+
+      const { paragraphs, fullText, isSwedish } = parseDocXml(docXml);
+
+      showStatus('Finding reference list…');
+      await yieldToBrowser();
+      const { refListParagraphs, bodyParagraphs, refListStart } = splitAtRefList(paragraphs);
+
+      showStatus('Extracting references…');
+      await yieldToBrowser();
+      const refEntries = extractRefEntries(refListParagraphs);
+
+      showStatus('Finding in-text citations…');
+      await yieldToBrowser();
+      const inTextCites = findInTextCites(bodyParagraphs);
+
+      showStatus('Cross-referencing…');
+      await yieldToBrowser();
+      const report = crossReference(refEntries, inTextCites, bodyParagraphs);
+
+      showStatus('Checking SKB format rules…');
+      await yieldToBrowser();
+      const formatIssues = checkSkbFormat(refEntries);
+
+      // Inject duplicate-key errors into format issues so they surface in that panel
+      for (const dupes of report.duplicateKeys) {
+        for (const e of dupes) {
+          formatIssues.push({ key: e.key, issue: `Duplicate key in reference list — ${dupes.length} entries share the same key`, severity: 'error' });
+        }
+      }
+
+      hideStatus();
+      renderResults(file.name, refEntries, inTextCites, report, formatIssues, paragraphs.length, refListStart, isSwedish);
+    } catch (err) {
+      hideStatus();
+      results.innerHTML = `<div style="color:var(--color-kvot-accent);padding:16px;background:var(--bg-secondary);border:1px solid;border-color:var(--color-kvot-accent);border-radius:8px;">
+        <strong>Error:</strong> ${escHtml(err.message)}</div>`;
+      resetBtn.classList.add('show');
+    }
+  }
+
+  function yieldToBrowser() { return new Promise(r => setTimeout(r, 0)); }
+
+  // ── DOCX XML parser ───────────────────────────────────────────────────────
+  function parseDocXml(xml) {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(xml, 'application/xml');
+    const NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+
+    // Detect document language from w:lang attributes on runs
+    let isSwedish = false;
+    const langNodes = doc.getElementsByTagNameNS(NS, 'lang');
+    for (let i = 0; i < langNodes.length && i < 40; i++) {
+      const val = langNodes[i].getAttribute('w:val') || '';
+      if (/^sv/i.test(val)) { isSwedish = true; break; }
+    }
+
+    const paragraphNodes = doc.getElementsByTagNameNS(NS, 'p');
+    const paragraphs = [];
+
+    for (let i = 0; i < paragraphNodes.length; i++) {
+      const pNode = paragraphNodes[i];
+      const text = extractTextFromParagraph(pNode, NS);
+      // Get style name for heading detection
+      const pPr = pNode.getElementsByTagNameNS(NS, 'pPr')[0];
+      let style = '';
+      if (pPr) {
+        const pStyle = pPr.getElementsByTagNameNS(NS, 'pStyle')[0];
+        if (pStyle) style = (pStyle.getAttribute('w:val') || '').toLowerCase();
+      }
+      // Get numbering level (for numbered list entries)
+      let numId = '', ilvl = '';
+      if (pPr) {
+        const numPr = pPr.getElementsByTagNameNS(NS, 'numPr')[0];
+        if (numPr) {
+          const ni = numPr.getElementsByTagNameNS(NS, 'numId')[0];
+          const il = numPr.getElementsByTagNameNS(NS, 'ilvl')[0];
+          numId = ni ? (ni.getAttribute('w:val') || '') : '';
+          ilvl  = il ? (il.getAttribute('w:val') || '') : '';
+        }
+      }
+      paragraphs.push({ text: text.trim(), style, numId, ilvl, index: i });
+    }
+
+    // Second pass: tag each paragraph with the nearest enclosing heading text
+    let currentSection = '';
+    for (const p of paragraphs) {
+      const lvl = headingLevel(p.style);
+      if (lvl > 0 && p.text.trim()) currentSection = p.text.trim();
+      p.section = currentSection;
+    }
+
+    const fullText = paragraphs.map(p => p.text).join('\n');
+    return { paragraphs, fullText, isSwedish };
+  }
+
+  function extractTextFromParagraph(pNode, NS) {
+    let text = '';
+    // Track field nesting; skip result text of numbering/formatting fields (SEQ, PAGE, etc.)
+    const fieldStack = []; // {skip: bool, inResult: bool}
+
+    function walk(node) {
+      for (let child = node.firstChild; child; child = child.nextSibling) {
+        if (child.nodeType !== 1) continue;
+        if (child.namespaceURI === NS) {
+          switch (child.localName) {
+            case 'fldChar': {
+              const type = child.getAttribute('w:fldCharType');
+              if      (type === 'begin')    fieldStack.push({ skip: false, inResult: false });
+              else if (type === 'separate' && fieldStack.length) fieldStack[fieldStack.length-1].inResult = true;
+              else if (type === 'end'      && fieldStack.length) fieldStack.pop();
+              break;
+            }
+            case 'instrText':
+              if (fieldStack.length) {
+                const instr = (child.textContent || '').trim();
+                if (/^(SEQ|CAPTION|PAGE|NUMPAGES|REF\b|PAGEREF|STYLEREF|TOC|TC\b|XE\b|AUTONUMLGL|AUTONUM|MERGEFIELD)\b/i.test(instr))
+                  fieldStack[fieldStack.length-1].skip = true;
+              }
+              break;
+            case 't':
+              if (!fieldStack.some(f => f.inResult && f.skip))
+                text += child.textContent || '';
+              break;
+            default:
+              walk(child);
+          }
+        } else {
+          walk(child);
+        }
+      }
+    }
+
+    walk(pNode);
+    return text;
+  }
+
+  // ── Split document at reference list heading ──────────────────────────────
+  const REF_HEADING_RE = /^\s*(?:\d[\d.]*\s+)?(?:references?|referenser)\s*$/i;
+
+  function splitAtRefList(paragraphs) {
+    let refListStart = -1;
+    for (let i = 0; i < paragraphs.length; i++) {
+      const p = paragraphs[i];
+      // Check style name
+      const isHeading = p.style.startsWith('heading') || p.style.startsWith('rubrik') ||
+                        p.style.includes('heading') || p.style === 'title';
+    
+      const textMatch = REF_HEADING_RE.test(p.text);
+      if (isHeading && textMatch) {
+        // Verify at least a few entries follow
+        const preview = paragraphs.slice(i + 1, i + 6).map(x => x.text).join(' ');
+        if (preview.length > 10) {
+          refListStart = i;
+          break;
+        }
+      }
+    }
+    if (refListStart === -1) {
+      // Fallback: look for a block of paragraphs that look like numbered refs
+      for (let i = Math.floor(paragraphs.length * 0.6); i < paragraphs.length; i++) {
+        if (/^\[?\d+\]?[\.\s]/.test(paragraphs[i].text) && paragraphs[i].text.length > 20) {
+          // Check that at least 3 consecutive ones also look like refs
+          let count = 0;
+          for (let j = i; j < Math.min(i + 5, paragraphs.length); j++) {
+            if (/^\[?\d+\]?[\.\s]/.test(paragraphs[j].text) && paragraphs[j].text.length > 20) count++;
+          }
+          if (count >= 3) { refListStart = i - 1; break; }
+        }
+      }
+    }
+    if (refListStart === -1) {
+      return { refListParagraphs: [], bodyParagraphs: paragraphs, refListStart: -1 };
+    }
+
+    // Stop at the next heading or appendix-like section after the reference list
+    const SECTION_END_RE = /^\s*(?:\d[\d.]*\s+)?(?:appendix|appendices|bilaga|bilagor|annex|glossary|ordlista|index)\b/i;
+    let refListEnd = paragraphs.length;
+    for (let i = refListStart + 1; i < paragraphs.length; i++) {
+      const p = paragraphs[i];
+      if (!p.text.trim()) continue;
+      if (headingLevel(p.style) > 0 || SECTION_END_RE.test(p.text)) {
+        refListEnd = i;
+        break;
+      }
+    }
+
+    return {
+      refListParagraphs: paragraphs.slice(refListStart + 1, refListEnd),
+      bodyParagraphs:    paragraphs.slice(0, refListStart + 1),
+      refListStart
+    };
+  }
+
+  // ── Extract reference list entries ────────────────────────────────────────
+  function extractRefEntries(refParas) {
+    const entries = [];
+    let current = null;
+    let autoNum = 0; // tracks sequence for Word auto-numbered lists
+
+    for (const p of refParas) {
+      const t = p.text.trim();
+      // Word auto-numbered list: number lives in numbering XML, not in text
+      const isListItem = p.numId && p.numId !== '0';
+
+      if (!t) {
+        if (current) { entries.push(current); current = null; }
+        continue;
+      }
+      // Explicit number prefix: [1] text   1. text   1) text
+      const numMatch = t.match(/^(?:\[(\d+)\]|(\d+)[.)\s]\s)/);
+      if (numMatch) {
+        if (current) entries.push(current);
+        const num = numMatch[1] || numMatch[2];
+        autoNum = parseInt(num, 10);
+        const key = `[${num}]`;
+        const body = t.replace(/^\[?\d+\]?[.)\s]+/, '').trim();
+        current = { key, num: autoNum, body, raw: t, paraIndex: p.index, type: 'numbered' };
+      } else if (isListItem) {
+        // Auto-numbered Word list: each list paragraph is its own entry
+        if (current) entries.push(current);
+        autoNum++;
+        current = { key: `[${autoNum}]`, num: autoNum, body: t, raw: t, paraIndex: p.index, type: 'numbered' };
+      } else if (current && looksLikeRefStart(t)) {
+        // No blank line but text pattern suggests a new author-year entry
+        entries.push(current);
+        const ayKey = extractAuthorYearKey(t);
+        current = { key: ayKey || t.slice(0, 40), num: null, body: t, raw: t, paraIndex: p.index, type: 'author-year' };
+      } else if (current) {
+        // Continuation of previous entry
+        current.body += ' ' + t;
+        current.raw  += ' ' + t;
+      } else {
+        const ayKey = extractAuthorYearKey(t);
+        current = { key: ayKey || t.slice(0, 40), num: null, body: t, raw: t, paraIndex: p.index, type: 'author-year' };
+      }
+    }
+    if (current) entries.push(current);
+    return entries;
+  }
+
+  // Heuristic: does this line look like the start of a new reference entry?
+  function looksLikeRefStart(text) {
+    // Must start with Author-like token AND contain a plausible year
+    // Supports: compound surnames, accented names, comma-sep initials, org-name-only (SKB, 2008)
+    const startsLikeAuthor = /^[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ\-]+(?:\s+[A-ZÀ-ÖØ-Þ][a-zà-öø-ÿ][A-Za-zÀ-ÖØ-Þà-öø-ÿ\-]+)*(?:(?:\s+|,\s*)[A-ZÀ-ÖØ-Þ]{1,2}(?:-[A-ZÀ-ÖØ-Þ]{1,2})?\.?,|,\s*[A-ZÀ-ÖØ-Þ]|\s+(?:and|och|&|m\.fl)|,\s*[1-9]\d{3})/.test(text);
+    const hasYear = /\b(?:1[89]\d{2}|2\d{3})[a-z]?\b/.test(text);
+    return startsLikeAuthor && hasYear;
+  }
+
+  function extractAuthorYearKey(text) {
+    // Extended Latin-1 ranges: UC=uppercase, LC=lowercase, AC=any case
+    const UC = 'A-ZÀ-ÖØ-Þ', LC = 'a-zà-öø-ÿ', AC = 'A-Za-zÀ-ÖØ-Þà-öø-ÿ';
+    // Lastname: one or more words; 2nd+ words need ≥3 chars so single initials are excluded
+    const LD  = `[${UC}][${AC}\\-]+(?:\\s+[${UC}][${LC}][${AC}\\-]+)*`;
+    const INI = `[${UC}]{1,2}(?:-[${UC}]{1,2})?`;  // P, PO, P-O
+    const SEP = `(?:\\s+|,\\s*)`;                  // space or comma separator
+    // SKB format: first author must end "Initial," to disambiguate from normal sentences
+    if (new RegExp(`^${LD}${SEP}${INI}\\.?,`).test(text)) {
+      const skb = text.match(new RegExp(`^((?:${LD}${SEP}${INI}\\.?(?:,\\s*)?)+)(\\d{4}[a-z]?)`));
+      if (skb) {
+        const lastnames = skb[1].split(/,\s*/)
+          .map(p => p.trim().match(new RegExp(`^([${UC}][${AC}\\-]+(?:\\s+[${UC}][${LC}][${AC}\\-]+)*)`)))
+          .filter(Boolean).map(m => m[1]);
+        const year = skb[2];
+        if (lastnames.length === 1) return `${lastnames[0]} ${year}`;
+        if (lastnames.length === 2) return `${lastnames[0]} and ${lastnames[1]} ${year}`;
+        if (lastnames.length > 2)  return `${lastnames[0]} et al. ${year}`;
+      }
+    }
+    // Standard formats: Lastname 2020 / Lastname, F. 2020 / Lastname et al. 2020 / Org, 2020
+    const m = text.match(/^([A-ZÅÄÖ][A-Za-zåäöÅÄÖ\-]+(?:\s+(?:et\s+al\.?|m\.fl\.?))?(?:,\s*[A-ZÅÄÖ][A-Za-zåäöÅÄÖ\.]+)?)(?:,\s*|\s+)(\d{4}[a-z]?)/);
+    if (m) return `${m[1]} ${m[2]}`;
+    return null;
+  }
+
+  // ── Find in-text citations ────────────────────────────────────────────────
+  /*
+    Patterns detected (broad search as instructed):
+    Numbered:  [1]  [1,2]  [1, 2, 3]  [1-3]  [1–5]  (1)  1)  ref[1]  Ref [1]  se [1]
+    Author-year: (Smith 2020)  Smith (2020)  Smith et al. (2020)  (Smith et al. 2020)
+                 (Smith & Jones 2020)  (Smith and Jones 2020)
+    SKB specific: SKB 2011  SKB (2011a)  SKB TR-10-48  (SKB 2011)  se SKB (2011)
+  */
+  const NUMBERED_CITE_RE = /(?:(?:ref(?:erence)?s?\.?\s*)?(?:\[(\d+(?:[,;\s–\-]+\d+)*)\]|\((\d+(?:[,;\s–\-]+\d+)*)\)(?!\s*[A-ZÅÄÖa-zåäö]))|\b(\d+)\)(?=\s|$))/gi;
+  // et_al pattern covers both English (et al.) and Swedish (m.fl.)
+  const ET_AL = '(?:et\\s+al\\.?|m\\.fl\\.?)';
+  const AUTHOR_YEAR_RE = new RegExp(`\\(\\s*([A-ZÅÄÖ][A-Za-zåäöÅÄÖ\\-]+(?:\\s+(?:${ET_AL}|and|och|&)\\s+[A-ZÅÄÖ][A-Za-zåäöÅÄÖ\\-]+)?)\\s+(\\d{4}[a-z]?)(?:\\s*,\\s*(?:s\\.|pp?\\.)?\\ *\\d[–\\-\\d\\s]*)?\\)`, 'gi');
+  const AUTHOR_YEAR_INLINE_RE = new RegExp(`\\b([A-ZÅÄÖ][A-Za-zåäöÅÄÖ\\-]+(?:\\s+${ET_AL})?)\\s+\\((\\d{4}[a-z]?)\\)`, 'gi');
+  const SKB_CITE_RE = /\bSKB\s+(?:\((\d{4}[a-z]?(?:[,\s]+\d{4}[a-z]?)*)\)|(\d{4}[a-z]?)(?:\s*,\s*\d{4}[a-z]?)*|([A-Z]{1,4}-\d{2}-\d+))/gi;
+  const MULTIPLE_IN_BRACKET_RE = /\[(\d+(?:[,;\s]+\d+)+)\]/g;
+
+  // Returns a 1–3 level heading number from a Word style name
+  function headingLevel(style) {
+    const m = style.match(/^(?:heading|rubrik|överskrift|berschrift|titre|t[iî]tulo)\s*([1-6])$/) ||
+              style.match(/^([1-6])$/);
+    return m ? parseInt(m[1]) : 0;
+  }
+
+  function findInTextCites(bodyParas) {
+    const citations = []; // { key, raw, paraIndex, section, paraText, type }
+
+    for (const p of bodyParas) {
+      const text = p.text;
+      if (!text.trim()) continue;
+
+      // Numbered citations in brackets/parens
+      findNumberedCitations(text, p.index, p.section, text, citations);
+
+      // Author-year citations
+      findAuthorYearCitations(text, p.index, p.section, text, citations);
+
+      // SKB-specific
+      findSkbCitations(text, p.index, p.section, text, citations);
+    }
+
+    // Deduplicate by key+paraIndex
+    const seen = new Set();
+    return citations.filter(c => {
+      const k = `${c.key}||${c.paraIndex}`;
+      if (seen.has(k)) return false;
+      seen.add(k); return true;
+    });
+  }
+
+  function findNumberedCitations(text, paraIndex, section, paraText, out) {
+    // [1,2,3]  [1-3]  [1–5]  — brackets are unambiguous; require numbers ≥ 1
+    const re1 = /\[([1-9]\d{0,2}(?:\s*[,;]\s*[1-9]\d{0,2}|\s*[–\-]\s*[1-9]\d{0,2})*)\]/g;
+    // (1) or (1,2) — parentheses are ambiguous; apply strict guards to reduce false positives from equations
+    // (?<![0-9.]) excludes after digit/decimal; (?!\s*[=+\-*/<>^]) excludes equation contexts like "(43) = x"
+    const re2 = /(?<![0-9.])\(([1-9]\d{0,2}(?:\s*[,;]\s*[1-9]\d{0,2})*)\)(?!\s*[A-Za-zÀ-ÖØ-Þà-öø-ÿ])(?!\s*[=+\-*\/<>^×÷])/g;
+    const re3 = /\bref(?:erence)?s?\.?\s*\[(\d+(?:\s*[,;]\s*\d+)*)\]/gi;
+
+    for (const re of [re1, re2, re3]) {
+      let m;
+      re.lastIndex = 0;
+      while ((m = re.exec(text)) !== null) {
+        const nums = expandRanges(m[1]);
+        for (const n of nums) {
+          out.push({ key: `[${n}]`, raw: m[0], paraIndex, section, paraText, type: 'numbered', num: n });
+        }
+      }
+    }
+  }
+
+  function expandRanges(str) {
+    // "1,2,3" or "1-3" or "1–5" → [1,2,3] etc.
+    const nums = new Set();
+    const parts = str.split(/\s*[,;]\s*/);
+    for (const part of parts) {
+      const range = part.match(/(\d+)\s*[–\-]\s*(\d+)/);
+      if (range) {
+        const lo = parseInt(range[1]), hi = parseInt(range[2]);
+        for (let i = lo; i <= Math.min(hi, lo + 20); i++) nums.add(i);
+      } else {
+        const n = parseInt(part.trim());
+        if (!isNaN(n)) nums.add(n);
+      }
+    }
+    return [...nums];
+  }
+
+  function findAuthorYearCitations(text, paraIndex, section, paraText, out) {
+    let m;
+    // (Author 2020) or (Author et al./m.fl. 2020) or (Author and/och Author 2020)
+    const re1 = new RegExp(`\\(\\s*([A-ZÅÄÖ][A-Za-zåäöÅÄÖ\\-]+(?:\\s+${ET_AL}|\\s+(?:and|och|&)\\s+[A-ZÅÄÖ][A-Za-zåäöÅÄÖ\\-]+)?)(?:,\\s*|\\s+)(\\d{4}[a-z]?)\\s*(?:,\\s*[sp\\d\\.–\\- ]+)?\\)`, 'gi');
+    re1.lastIndex = 0;
+    while ((m = re1.exec(text)) !== null) {
+      const key = `${m[1].trim()} ${m[2]}`;
+      out.push({ key, raw: m[0], paraIndex, section, paraText, type: 'author-year', author: m[1].trim(), year: m[2] });
+    }
+    // Author (2020) or Author and/och Author (2020) or Author et al./m.fl. (2020) inline
+    const re2 = new RegExp(`\\b([A-ZÅÄÖ][A-Za-zåäöÅÄÖ\\-]+(?:\\s+${ET_AL}|\\s+(?:and|och|&)\\s+[A-ZÅÄÖ][A-Za-zåäöÅÄÖ\\-]+)?)\\s+\\((\\d{4}[a-z]?)\\)`, 'gi');
+    re2.lastIndex = 0;
+    while ((m = re2.exec(text)) !== null) {
+      const key = `${m[1].trim()} ${m[2]}`;
+      out.push({ key, raw: m[0], paraIndex, section, paraText, type: 'author-year', author: m[1].trim(), year: m[2] });
+    }
+    // Explicit fallbacks for et al. / m.fl. — bypass template expansion, match (Author et al. year)
+    const re3 = /\(\s*([A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ\-]+)\s+et\s+al\.?\s*(?:,\s*)?(\d{4}[a-z]?)\s*(?:,\s*[sp\d\.–\- ]+)?\)/gi;
+    re3.lastIndex = 0;
+    while ((m = re3.exec(text)) !== null) {
+      const key = `${m[1].trim()} et al. ${m[2]}`;
+      out.push({ key, raw: m[0], paraIndex, section, paraText, type: 'author-year', author: m[1].trim(), year: m[2] });
+    }
+    // Explicit fallback for Author et al. (year) inline form
+    const re4 = /\b([A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ\-]+)\s+et\s+al\.?\s+\((\d{4}[a-z]?)\)/gi;
+    re4.lastIndex = 0;
+    while ((m = re4.exec(text)) !== null) {
+      const key = `${m[1].trim()} et al. ${m[2]}`;
+      out.push({ key, raw: m[0], paraIndex, section, paraText, type: 'author-year', author: m[1].trim(), year: m[2] });
+    }
+  }
+
+  function findSkbCitations(text, paraIndex, section, paraText, out) {
+    const re = /\bSKB\s+(?:\((\d{4}[a-z]?(?:[,\s]+\d{4}[a-z]?)*)\)|(\d{4}[a-z]?)(?!\s*\w)|([A-Z]{1,3}-\d{2}-\d+))/gi;
+    let m;
+    re.lastIndex = 0;
+    while ((m = re.exec(text)) !== null) {
+      if (m[1]) {
+        const years = m[1].split(/\s*,\s*/);
+        for (const y of years) {
+          const yr = y.trim();
+          if (/^\d{4}[a-z]?$/.test(yr))
+            out.push({ key: `SKB ${yr}`, raw: m[0], paraIndex, section, paraText, type: 'skb-year' });
+        }
+      } else if (m[2]) {
+        out.push({ key: `SKB ${m[2]}`, raw: m[0], paraIndex, section, paraText, type: 'skb-year' });
+      } else if (m[3]) {
+        out.push({ key: `SKB ${m[3]}`, raw: m[0], paraIndex, section, paraText, type: 'skb-report' });
+      }
+    }
+  }
+
+  // ── Cross-reference citations ↔ list ──────────────────────────────────────
+  function crossReference(refEntries, inTextCites, bodyParas) {
+    // refByKey maps normalised key → array of entries (supports duplicate keys)
+    const refByKey = new Map();
+    const refByNum = new Map();
+
+    for (const e of refEntries) {
+      const nk = normaliseKey(e.key);
+      if (!refByKey.has(nk)) refByKey.set(nk, []);
+      refByKey.get(nk).push(e);
+      if (e.num !== null) refByNum.set(e.num, e);
+      e.cites = [];
+    }
+
+    // Detect keys that appear more than once in the list
+    const duplicateKeys = [];
+    for (const [, entries] of refByKey) {
+      if (entries.length > 1) duplicateKeys.push(entries);
+    }
+
+    const orphanCites = [];
+
+    for (const c of inTextCites) {
+      let matched = false;
+      if (c.type === 'numbered' && refByNum.has(c.num)) {
+        refByNum.get(c.num).cites.push(c);
+        matched = true;
+      } else {
+        const nk = normaliseKey(c.key);
+        if (refByKey.has(nk)) {
+          // Assign to ALL entries sharing this key so none appear "never cited"
+          for (const entry of refByKey.get(nk)) entry.cites.push(c);
+          matched = true;
+        } else {
+          for (const [rk, entries] of refByKey) {
+            if (fuzzyMatch(nk, rk)) {
+              for (const entry of entries) entry.cites.push(c);
+              matched = true; break;
+            }
+          }
+        }
+      }
+      if (!matched) orphanCites.push(c);
+    }
+
+    const uncitedRefs = refEntries.filter(e => e.cites.length === 0);
+    return { orphanCites, uncitedRefs, duplicateKeys };
+  }
+
+  function normaliseKey(k) {
+    return k.toLowerCase().replace(/[\s.,;:!?'"()\[\]{}]/g, '').replace(/et\s*al\.?/g, 'etal');
+  }
+
+  function fuzzyMatch(a, b) {
+    if (a.length < 4 || b.length < 4) return false;
+    // Check if one contains the other or 80% overlap
+    if (b.includes(a) || a.includes(b)) return true;
+    // Simple bigram similarity
+    const bg = s => { const r = new Set(); for (let i = 0; i < s.length - 1; i++) r.add(s.slice(i, i+2)); return r; };
+    const ba = bg(a), bb = bg(b);
+    let common = 0;
+    for (const bi of ba) if (bb.has(bi)) common++;
+    return common / Math.max(ba.size, bb.size) > 0.7;
+  }
+
+  // ── SKB format rule checker ───────────────────────────────────────────────
+  /*
+    Rules derived from SKB writing guidelines:
+    1. Year must be present (4 digits, 1900-2099, optionally followed by a/b/c)
+    2. SKB report number format: TR-XX-XX  R-XX-XX  P-XX-XX  IPR-XX-XX
+       TR = Technical Report, R = Report, P = Project Report, IPR = Interim…
+    3. Authors: at least one name (not just URL, not just organisation)
+    4. Entry should have title (quoted or in italics — hard to detect from plain text,
+       so we check minimum length and structure)
+    5. For SKB internal refs: publisher "SKB" or "Swedish Nuclear Fuel and Waste Management Co"
+    6. No trailing comma / incorrect punctuation at end
+    7. URL-only references should also have access date
+    8. For journal articles: volume/issue pattern present
+    9. Numbered entries should be sequential
+  */
+  const SKB_REPORT_RE = /\b(?:SKB\s+)?(?:TR|R|P|IPR|RD|SR|TM|U|F)-\d{2,}-\d+\b/i;
+  const YEAR_IN_TEXT_RE = /\b(1[9][0-9]{2}|2[0-9]{3})[a-z]?\b/;
+  const SEQUENTIAL_GAP_THRESHOLD = 5;
+
+  function checkSkbFormat(refEntries) {
+    const issues = []; // { key, issue, severity }
+
+    // Check sequential numbering
+    const numbered = refEntries.filter(e => e.num !== null).sort((a, b) => a.num - b.num);
+    for (let i = 0; i < numbered.length - 1; i++) {
+      const gap = numbered[i + 1].num - numbered[i].num;
+      if (gap > 1) issues.push({ key: numbered[i + 1].key, issue: `Numbering gap: expected [${numbered[i].num + 1}] before [${numbered[i + 1].num}]`, severity: 'warn' });
+    }
+
+    for (const e of refEntries) {
+      const text = e.body;
+      const entryIssues = [];
+
+      // Rule 1: Year present
+      if (!YEAR_IN_TEXT_RE.test(text)) {
+        entryIssues.push({ issue: 'No year detected in reference', severity: 'warn' });
+      }
+
+      // Rule 2: SKB report number format (only if "SKB" appears)
+      if (/\bskb\b/i.test(text) && !SKB_REPORT_RE.test(text)) {
+        // Could be SKB year-only citation — only warn if it looks like a report
+        if (/(report|rapport|technical|intern)\b/i.test(text)) {
+          entryIssues.push({ issue: 'SKB report reference lacks report number (e.g. TR-XX-XX)', severity: 'error' });
+        }
+      }
+
+      // Rule 3: Author present — not just URL
+      const isUrlOnly = /^https?:\/\//.test(text.trim());
+      if (isUrlOnly) {
+        entryIssues.push({ issue: 'URL-only reference; add author, title, and access date', severity: 'error' });
+      }
+      // Check for at least something that looks like an author (capitalized last name before year)
+      const hasAuthorLike = /[A-ZÅÄÖ][a-zåäö]+/.test(text.split(YEAR_IN_TEXT_RE)[0] || text);
+      if (!hasAuthorLike && !isUrlOnly) {
+        entryIssues.push({ issue: 'Author name not clearly identifiable', severity: 'warn' });
+      }
+
+      // Rule 4: Entry length (too short to have all needed info)
+      if (text.length < 30) {
+        entryIssues.push({ issue: 'Entry seems too short — likely incomplete', severity: 'warn' });
+      }
+
+      // Rule 5: URL references should have access date
+      if (/https?:\/\//.test(text) && !/(?:accessed|hämtad|hämtat|visited|retrieved|besökt)\s/i.test(text)) {
+        entryIssues.push({ issue: 'URL present but no access date (e.g. "Accessed 2024-01-01")', severity: 'warn' });
+      }
+
+      // Rule 6: Trailing punctuation — should end with period
+      const last = text.trim().slice(-1);
+      if (text.length > 20 && last !== '.' && last !== ')') {
+        entryIssues.push({ issue: `Reference does not end with a period (ends with "${last}")`, severity: 'info' });
+      }
+
+      // Rule 7: For what appears to be a journal — check for volume/issue or doi
+      const looksLikeJournal = /\bvol\.?\s*\d|pp?\.?\s*\d|doi[:.\s]/i.test(text);
+      // (no action needed here, just detection for completeness)
+
+      // Rule 8: No CAPS-only author abbreviations where full name expected
+      if (/^\[?\d+\]?\s+[A-ZÅÄÖ]{3,}[,\s]/.test(e.raw)) {
+        entryIssues.push({ issue: 'Author appears to be in ALL CAPS — use "Lastname, Firstname" format', severity: 'info' });
+      }
+
+      if (entryIssues.length > 0) {
+        for (const ei of entryIssues) issues.push({ key: e.key, ...ei });
+      }
+    }
+
+    return issues;
+  }
+
+  // ── Render results ────────────────────────────────────────────────────────
+  function renderResults(filename, refEntries, inTextCites, report, formatIssues, totalParas, refListStart, isSwedish) {
+    const { orphanCites, uncitedRefs } = report;
+
+    // Document info
+    const refSection = refListStart >= 0
+      ? `Reference list found at paragraph ${refListStart + 1} of ${totalParas}.`
+      : '<strong style="color:var(--color-kvot-accent)">No reference list section detected.</strong> The tool searched the full document for numbered entries.';
+    docInfo.innerHTML = `<strong>${escHtml(filename)}</strong>
+      ${isSwedish ? '<span style="background:color-mix(in srgb,#5cb85c 12%,var(--bg-secondary));color:#357a35;border:1px solid #5cb85c;border-radius:6px;padding:1px 8px;font-size:.78rem;font-weight:700;margin-left:4px">🇸🇪 Svenska</span>' : ''}
+      &mdash; ${totalParas} paragraphs &nbsp;·&nbsp; 
+      ${refEntries.length} reference list entries &nbsp;·&nbsp; 
+      ${inTextCites.length} in-text citation occurrences &nbsp;·&nbsp; 
+      ${refSection}`;
+    docInfo.classList.add('show');
+
+    // Summary cards
+    const nIssues = formatIssues.length;
+    const nOrphan = orphanCites.length;
+    const nCited  = refEntries.filter(e => e.cites.length > 0).length;
+    const nTotal  = refEntries.length;
+
+    setText('cnt-total',  nTotal);
+    setText('cnt-cited',  nCited);
+    setText('cnt-orphan', nOrphan);
+    setText('cnt-issues', nIssues);
+
+    setCardClass('card-total',  nTotal > 0  ? 'ok' : 'warn');
+    setCardClass('card-cited',  nCited === nTotal && nTotal > 0 ? 'ok' : nCited > 0 ? '' : 'warn');
+    setCardClass('card-orphan', nOrphan === 0 ? 'ok' : 'warn');
+    setCardClass('card-issues', nIssues === 0 ? 'ok' : 'warn');
+    summCards.classList.add('show');
+
+    // Results sections
+    let html = '';
+
+    // 1. All references with citation counts
+    html += buildRefListSection(refEntries);
+
+    // 2. Orphan in-text citations
+    html += buildOrphanSection(orphanCites);
+
+    // 3. Uncited references
+    html += buildUncitedSection(uncitedRefs);
+
+    // 4. Format issues
+    html += buildFormatSection(formatIssues, refEntries);
+
+    results.innerHTML = html;
+    resetBtn.classList.add('show');
+
+    // Open first section if issues found
+    if (nOrphan > 0 || nIssues > 0) {
+      const firstDetails = results.querySelector('details.result-section');
+      if (firstDetails) firstDetails.open = true;
+    }
+  }
+
+  function buildRefListSection(refEntries) {
+    const badge = refEntries.length > 0
+      ? `<span class="section-badge good">${refEntries.length}</span>`
+      : `<span class="section-badge error">none</span>`;
+
+    let rows = '';
+    if (refEntries.length === 0) {
+      rows = `<tr><td colspan="4"><em class="empty-notice">No reference list detected in document.</em></td></tr>`;
+    } else {
+      for (const e of refEntries) {
+        const n = e.cites.length;
+        const cls = n === 0 ? 'warn-row' : '';
+        // Unique section labels where this reference is cited
+        const secs = [...new Map(e.cites.map(c => [c.section || '', c])).keys()]
+          .filter(Boolean).slice(0, 5).map(s => escHtml(truncate(s, 50)));
+        const locText = secs.length > 0
+          ? secs.join('<br>')
+          : (e.cites.length > 0 ? '(no heading found)' : '');
+        rows += `<tr class="${cls}">
+          <td><span class="ref-key">${escHtml(e.key)}</span></td>
+          <td class="ref-text">${truncate(escHtml(e.body), 120)}</td>
+          <td class="cite-count">${n === 0 ? '<span style="color:var(--color-kvot-accent)">0 ⚠</span>' : n}</td>
+          <td class="cite-pages" style="font-size:.8rem">${locText}</td>
+        </tr>`;
+      }
+    }
+    return `<details class="result-section" ${refEntries.length > 0 ? 'open' : ''}>
+      <summary>Reference list entries ${badge}</summary>
+      <div class="section-body">
+        <table class="ref-table">
+          <thead><tr>
+            <th>Key</th><th>Reference text</th><th>Cited (#)</th><th>In section(s)</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </details>`;
+  }
+
+  function buildOrphanSection(orphanCites) {
+    const n = orphanCites.length;
+    const badgeCls = n === 0 ? 'good' : 'error';
+    const badge = `<span class="section-badge ${badgeCls}">${n === 0 ? '✓ none' : n}</span>`;
+
+    let body = '';
+    if (n === 0) {
+      body = `<p class="empty-notice">All in-text citations match a reference list entry.</p>`;
+    } else {
+      const rows = orphanCites.map(c => {
+        const sec = c.section ? truncate(c.section, 55) : '—';
+        return `<tr class="error-row">
+          <td><span class="ref-key">${escHtml(c.key)}</span></td>
+          <td class="ref-text">${truncate(escHtml(c.paraText), 100)}</td>
+          <td style="font-size:.8rem;color:var(--text-secondary)">${escHtml(sec)}</td>
+          <td style="font-size:.8rem;color:var(--text-muted)">${escHtml(c.type)}</td>
+        </tr>`;
+      }).join('');
+      body = `<table class="ref-table">
+        <thead><tr><th>Citation</th><th>Context</th><th>In section</th><th>Type</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+    }
+    return `<details class="result-section" ${n > 0 ? 'open' : ''}>
+      <summary>In-text citations with no matching reference list entry ${badge}</summary>
+      <div class="section-body">${body}</div>
+    </details>`;
+  }
+
+  function buildUncitedSection(uncitedRefs) {
+    const n = uncitedRefs.length;
+    const badgeCls = n === 0 ? 'good' : 'warn';
+    const badge = `<span class="section-badge ${badgeCls}">${n === 0 ? '✓ none' : n}</span>`;
+
+    let body = '';
+    if (n === 0) {
+      body = `<p class="empty-notice">Every reference in the list is cited at least once.</p>`;
+    } else {
+      body = `<div class="tag-list">` +
+        uncitedRefs.map(e => `<div class="tag warn-tag">⚠ <code>${escHtml(e.key)}</code></div>`).join('') +
+        `</div>
+        <p style="margin-top:12px;font-size:.84rem;color:var(--text-muted)">
+          These references appear in the list but are never cited in the body text.
+          Consider removing them or adding in-text citations.
+        </p>`;
+    }
+    return `<details class="result-section">
+      <summary>Reference list entries never cited in text ${badge}</summary>
+      <div class="section-body">${body}</div>
+    </details>`;
+  }
+
+  function buildFormatSection(issues, refEntries) {
+    const n = issues.length;
+    const badgeCls = n === 0 ? 'good' : 'warn';
+    const badge = `<span class="section-badge ${badgeCls}">${n === 0 ? '✓ none' : n}</span>`;
+
+    let body = '';
+    if (n === 0) {
+      body = `<p class="empty-notice">No SKB format rule violations detected.</p>`;
+    } else {
+      // Group by key
+      const byKey = new Map();
+      for (const iss of issues) {
+        if (!byKey.has(iss.key)) byKey.set(iss.key, []);
+        byKey.get(iss.key).push(iss);
+      }
+      // Find ref entry text for each key
+      const refMap = new Map(refEntries.map(e => [e.key, e.body]));
+
+      let rows = '';
+      for (const [key, iss] of byKey) {
+        const sevClass = iss.some(i => i.severity === 'error') ? 'error-row' :
+                         iss.some(i => i.severity === 'warn')  ? 'warn-row' : '';
+        const issHtml = `<ul class="issue-list">${iss.map(i => `<li>[${i.severity.toUpperCase()}] ${escHtml(i.issue)}</li>`).join('')}</ul>`;
+        rows += `<tr class="${sevClass}">
+          <td><span class="ref-key">${escHtml(key)}</span></td>
+          <td class="ref-text">${truncate(escHtml(refMap.get(key) || ''), 100)}</td>
+          <td>${issHtml}</td>
+        </tr>`;
+      }
+      body = `<p style="font-size:.84rem;color:var(--text-secondary);margin-bottom:12px;">
+        Rules checked: year present · SKB report number format · author identifiable · 
+        entry completeness · URL access date · end punctuation · sequential numbering.
+      </p>
+      <table class="ref-table">
+        <thead><tr><th>Key</th><th>Reference text</th><th>Issues</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+    }
+    return `<details class="result-section">
+      <summary>SKB format rule issues ${badge}</summary>
+      <div class="section-body">${body}</div>
+    </details>`;
+  }
+
+  // ── Utility ───────────────────────────────────────────────────────────────
+  function escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+  function truncate(s, n) { return s.length > n ? s.slice(0, n) + '…' : s; }
+  function setText(id, val) { const el = document.getElementById(id); if (el) el.textContent = val; }
+  function setCardClass(id, cls) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.remove('warn','ok');
+    if (cls) el.classList.add(cls);
+  }
+  </script>
+</body>
+</html>
