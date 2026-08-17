@@ -434,10 +434,12 @@
       const p = paragraphs[i];
       // Check style name
       const isHeading = p.style.startsWith('heading') || p.style.startsWith('rubrik') ||
-                        p.style.includes('heading') || p.style === 'title';
+                        p.style.includes('heading') || p.style.startsWith('appendixrubrik') || p.style === 'title';
     
       const textMatch = REF_HEADING_RE.test(p.text);
+      
       if (isHeading && textMatch) {
+      
         // Verify at least a few entries follow
         const preview = paragraphs.slice(i + 1, i + 6).map(x => x.text).join(' ');
         if (preview.length > 10) {
@@ -533,7 +535,7 @@
   function looksLikeRefStart(text) {
     // Must start with Author-like token AND contain a plausible year
     // Supports: compound surnames, accented names, comma-sep initials, org-name-only (SKB, 2008)
-    const startsLikeAuthor = /^[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ\-]+(?:\s+[A-ZÀ-ÖØ-Þ][a-zà-öø-ÿ][A-Za-zÀ-ÖØ-Þà-öø-ÿ\-]+)*(?:(?:\s+|,\s*)[A-ZÀ-ÖØ-Þ]{1,2}(?:-[A-ZÀ-ÖØ-Þ]{1,2})?\.?,|,\s*[A-ZÀ-ÖØ-Þ]|\s+(?:and|och|&|m\.fl)|,\s*[1-9]\d{3})/.test(text);
+    const startsLikeAuthor = /^[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ\-]+(?:\s+[A-ZÀ-ÖØ-Þ][a-zà-öø-ÿ][A-Za-zÀ-ÖØ-Þà-öø-ÿ\-]+)*(?:(?:\s+|,\s*)[A-ZÀ-ÖØ-Þ]{1,2}(?:[.\- ][A-ZÀ-ÖØ-Þ]{1,2})*\.?,|,\s*[A-ZÀ-ÖØ-Þ]|\s+(?:and|och|&|m\.fl)|,\s*[1-9]\d{3})/.test(text);
     const hasYear = /\b(?:1[89]\d{2}|2\d{3})[a-z]?\b/.test(text);
     return startsLikeAuthor && hasYear;
   }
@@ -543,7 +545,7 @@
     const UC = 'A-ZÀ-ÖØ-Þ', LC = 'a-zà-öø-ÿ', AC = 'A-Za-zÀ-ÖØ-Þà-öø-ÿ';
     // Lastname: one or more words; 2nd+ words need ≥3 chars so single initials are excluded
     const LD  = `[${UC}][${AC}\\-]+(?:\\s+[${UC}][${LC}][${AC}\\-]+)*`;
-    const INI = `[${UC}]{1,2}(?:-[${UC}]{1,2})?`;  // P, PO, P-O
+    const INI = `[${UC}]{1,2}(?:[.\\- ][${UC}]{1,2})*\\.?`;  // P, P., P-O, P.O., J G, J.A.
     const SEP = `(?:\\s+|,\\s*)`;                  // space or comma separator
     // SKB format: first author must end "Initial," to disambiguate from normal sentences
     if (new RegExp(`^${LD}${SEP}${INI}\\.?,`).test(text)) {
@@ -559,7 +561,7 @@
       }
     }
     // Standard formats: Lastname 2020 / Lastname, F. 2020 / Lastname et al. 2020 / Org, 2020
-    const m = text.match(/^([A-ZÅÄÖ][A-Za-zåäöÅÄÖ\-]+(?:\s+(?:et\s+al\.?|m\.fl\.?))?(?:,\s*[A-ZÅÄÖ][A-Za-zåäöÅÄÖ\.]+)?)(?:,\s*|\s+)(\d{4}[a-z]?)/);
+    const m = text.match(/^([A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ\-]+(?:\s+(?:et\s+al\.?|m\.fl\.?))?(?:,\s*[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ\.]+)?)(?:,\s*|\s+)(\d{4}[a-z]?)/);
     if (m) return `${m[1]} ${m[2]}`;
     return null;
   }
@@ -575,8 +577,8 @@
   const NUMBERED_CITE_RE = /(?:(?:ref(?:erence)?s?\.?\s*)?(?:\[(\d+(?:[,;\s–\-]+\d+)*)\]|\((\d+(?:[,;\s–\-]+\d+)*)\)(?!\s*[A-ZÅÄÖa-zåäö]))|\b(\d+)\)(?=\s|$))/gi;
   // et_al pattern covers both English (et al.) and Swedish (m.fl.)
   const ET_AL = '(?:et\\s+al\\.?|m\\.fl\\.?)';
-  const AUTHOR_YEAR_RE = new RegExp(`\\(\\s*([A-ZÅÄÖ][A-Za-zåäöÅÄÖ\\-]+(?:\\s+(?:${ET_AL}|and|och|&)\\s+[A-ZÅÄÖ][A-Za-zåäöÅÄÖ\\-]+)?)\\s+(\\d{4}[a-z]?)(?:\\s*,\\s*(?:s\\.|pp?\\.)?\\ *\\d[–\\-\\d\\s]*)?\\)`, 'gi');
-  const AUTHOR_YEAR_INLINE_RE = new RegExp(`\\b([A-ZÅÄÖ][A-Za-zåäöÅÄÖ\\-]+(?:\\s+${ET_AL})?)\\s+\\((\\d{4}[a-z]?)\\)`, 'gi');
+  const AUTHOR_YEAR_RE = new RegExp(`\\(\\s*([A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ\\-]+(?:\\s+(?:${ET_AL}|and|och|&)\\s+[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ\\-]+)?)\\s+(\\d{4}[a-z]?)(?:\\s*,\\s*(?:s\\.|pp?\\.)?\\ *\\d[–\\-\\d\\s]*)?\\)`, 'gi');
+  const AUTHOR_YEAR_INLINE_RE = new RegExp(`\\b([A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ\\-]+(?:\\s+${ET_AL})?)\\s+\\((\\d{4}[a-z]?)\\)`, 'gi');
   const SKB_CITE_RE = /\bSKB\s+(?:\((\d{4}[a-z]?(?:[,\s]+\d{4}[a-z]?)*)\)|(\d{4}[a-z]?)(?:\s*,\s*\d{4}[a-z]?)*|([A-Z]{1,4}-\d{2}-\d+))/gi;
   const MULTIPLE_IN_BRACKET_RE = /\[(\d+(?:[,;\s]+\d+)+)\]/g;
 
@@ -653,14 +655,14 @@
   function findAuthorYearCitations(text, paraIndex, section, paraText, out) {
     let m;
     // (Author 2020) or (Author et al./m.fl. 2020) or (Author and/och Author 2020)
-    const re1 = new RegExp(`\\(\\s*([A-ZÅÄÖ][A-Za-zåäöÅÄÖ\\-]+(?:\\s+${ET_AL}|\\s+(?:and|och|&)\\s+[A-ZÅÄÖ][A-Za-zåäöÅÄÖ\\-]+)?)(?:,\\s*|\\s+)(\\d{4}[a-z]?)\\s*(?:,\\s*[sp\\d\\.–\\- ]+)?\\)`, 'gi');
+    const re1 = new RegExp(`\\(\\s*([A-Z\u00c0-\u00d6\u00d8-\u00de][A-Za-z\u00c0-\u00d6\u00d8-\u00de\u00e0-\u00f6\u00f8-\u00ff\\-]+(?:\\s+${ET_AL}|\\s+(?:and|och|&)\\s+[A-Z\u00c0-\u00d6\u00d8-\u00de][A-Za-z\u00c0-\u00d6\u00d8-\u00de\u00e0-\u00f6\u00f8-\u00ff\\-]+)?)(?:,\\s*|\\s+)(\\d{4}[a-z]?)\\s*(?:,\\s*[sp\\d\\.–\\- ]+)?\\)`, 'gi');
     re1.lastIndex = 0;
     while ((m = re1.exec(text)) !== null) {
       const key = `${m[1].trim()} ${m[2]}`;
       out.push({ key, raw: m[0], paraIndex, section, paraText, type: 'author-year', author: m[1].trim(), year: m[2] });
     }
     // Author (2020) or Author and/och Author (2020) or Author et al./m.fl. (2020) inline
-    const re2 = new RegExp(`\\b([A-ZÅÄÖ][A-Za-zåäöÅÄÖ\\-]+(?:\\s+${ET_AL}|\\s+(?:and|och|&)\\s+[A-ZÅÄÖ][A-Za-zåäöÅÄÖ\\-]+)?)\\s+\\((\\d{4}[a-z]?)\\)`, 'gi');
+    const re2 = new RegExp(`\\b([A-Z\u00c0-\u00d6\u00d8-\u00de][A-Za-z\u00c0-\u00d6\u00d8-\u00de\u00e0-\u00f6\u00f8-\u00ff\\-]+(?:\\s+${ET_AL}|\\s+(?:and|och|&)\\s+[A-Z\u00c0-\u00d6\u00d8-\u00de][A-Za-z\u00c0-\u00d6\u00d8-\u00de\u00e0-\u00f6\u00f8-\u00ff\\-]+)?)\\s+\\((\\d{4}[a-z]?)\\)`, 'gi');
     re2.lastIndex = 0;
     while ((m = re2.exec(text)) !== null) {
       const key = `${m[1].trim()} ${m[2]}`;
