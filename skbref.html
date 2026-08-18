@@ -201,16 +201,13 @@
 
      IN-TEXT CITATIONS
      -----------------
-     • Numbered style:  [1]  [1, 2]  [1–3]  [1, 3, 5]
-       Alternate forms: (1)  1)  (ref 1)  ref. [1]
      • Author-year style: (Author 2024)  (Author et al. 2024)
        Author and Author (2024)  (Author 2024, Author2 2023)
      • SKB report shorthand: SKB 2011a  SKB (2011b)  SKB TR-10-48
-     • Broad search also catches: Ref [1], se [1], see [1], jfr [1]
 
      REFERENCE LIST
      --------------
-     Detected by heading matching "References", "Litteratur", "Referencer",
+     Detected by heading matching "References", "Litteratur", "Referenser",
      "Referenslista", "Bibliography" or similar (case-insensitive).
 
      SKB FORMAT RULES CHECKED
@@ -426,7 +423,7 @@
   }
 
   // ── Split document at reference list heading ──────────────────────────────
-  const REF_HEADING_RE = /^\s*(?:\d[\d.]*\s+)?(?:references?|referenser)\s*$/i;
+  const REF_HEADING_RE = /^\s*(?:\d[\d.]*\s+)?(?:references?|referenser|referenslista|litteratur|bibliography)\s*$/i;
 
   function splitAtRefList(paragraphs) {
     let refListStart = -1;
@@ -568,19 +565,16 @@
 
   // ── Find in-text citations ────────────────────────────────────────────────
   /*
-    Patterns detected (broad search as instructed):
-    Numbered:  [1]  [1,2]  [1, 2, 3]  [1-3]  [1–5]  (1)  1)  ref[1]  Ref [1]  se [1]
+    Patterns detected:
     Author-year: (Smith 2020)  Smith (2020)  Smith et al. (2020)  (Smith et al. 2020)
                  (Smith & Jones 2020)  (Smith and Jones 2020)
     SKB specific: SKB 2011  SKB (2011a)  SKB TR-10-48  (SKB 2011)  se SKB (2011)
   */
-  const NUMBERED_CITE_RE = /(?:(?:ref(?:erence)?s?\.?\s*)?(?:\[(\d+(?:[,;\s–\-]+\d+)*)\]|\((\d+(?:[,;\s–\-]+\d+)*)\)(?!\s*[A-ZÅÄÖa-zåäö]))|\b(\d+)\)(?=\s|$))/gi;
   // et_al pattern covers both English (et al.) and Swedish (m.fl.)
   const ET_AL = '(?:et\\s+al\\.?|m\\.fl\\.?)';
   const AUTHOR_YEAR_RE = new RegExp(`\\(\\s*([A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ\\-]+(?:\\s+(?:${ET_AL}|and|och|&)\\s+[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ\\-]+)?)\\s+(\\d{4}[a-z]?)(?:\\s*,\\s*(?:s\\.|pp?\\.)?\\ *\\d[–\\-\\d\\s]*)?\\)`, 'gi');
   const AUTHOR_YEAR_INLINE_RE = new RegExp(`\\b([A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ\\-]+(?:\\s+${ET_AL})?)\\s+\\((\\d{4}[a-z]?)\\)`, 'gi');
   const SKB_CITE_RE = /\bSKB\s+(?:\((\d{4}[a-z]?(?:[,\s]+\d{4}[a-z]?)*)\)|(\d{4}[a-z]?)(?:\s*,\s*\d{4}[a-z]?)*|([A-Z]{1,4}-\d{2}-\d+))/gi;
-  const MULTIPLE_IN_BRACKET_RE = /\[(\d+(?:[,;\s]+\d+)+)\]/g;
 
   // Returns a 1–3 level heading number from a Word style name
   function headingLevel(style) {
@@ -596,9 +590,6 @@
       const text = p.text;
       if (!text.trim()) continue;
 
-      // Numbered citations in brackets/parens
-      findNumberedCitations(text, p.index, p.section, text, citations);
-
       // Author-year citations
       findAuthorYearCitations(text, p.index, p.section, text, citations);
 
@@ -613,43 +604,6 @@
       if (seen.has(k)) return false;
       seen.add(k); return true;
     });
-  }
-
-  function findNumberedCitations(text, paraIndex, section, paraText, out) {
-    // [1,2,3]  [1-3]  [1–5]  — brackets are unambiguous; require numbers ≥ 1
-    const re1 = /\[([1-9]\d{0,2}(?:\s*[,;]\s*[1-9]\d{0,2}|\s*[–\-]\s*[1-9]\d{0,2})*)\]/g;
-    // (1) or (1,2) — parentheses are ambiguous; apply strict guards to reduce false positives from equations
-    // (?<![0-9.]) excludes after digit/decimal; (?!\s*[=+\-*/<>^]) excludes equation contexts like "(43) = x"
-    const re2 = /(?<![0-9.])\(([1-9]\d{0,2}(?:\s*[,;]\s*[1-9]\d{0,2})*)\)(?!\s*[A-Za-zÀ-ÖØ-Þà-öø-ÿ])(?!\s*[=+\-*\/<>^×÷])/g;
-    const re3 = /\bref(?:erence)?s?\.?\s*\[(\d+(?:\s*[,;]\s*\d+)*)\]/gi;
-
-    for (const re of [re1, re2, re3]) {
-      let m;
-      re.lastIndex = 0;
-      while ((m = re.exec(text)) !== null) {
-        const nums = expandRanges(m[1]);
-        for (const n of nums) {
-          out.push({ key: `[${n}]`, raw: m[0], paraIndex, section, paraText, type: 'numbered', num: n });
-        }
-      }
-    }
-  }
-
-  function expandRanges(str) {
-    // "1,2,3" or "1-3" or "1–5" → [1,2,3] etc.
-    const nums = new Set();
-    const parts = str.split(/\s*[,;]\s*/);
-    for (const part of parts) {
-      const range = part.match(/(\d+)\s*[–\-]\s*(\d+)/);
-      if (range) {
-        const lo = parseInt(range[1]), hi = parseInt(range[2]);
-        for (let i = lo; i <= Math.min(hi, lo + 20); i++) nums.add(i);
-      } else {
-        const n = parseInt(part.trim());
-        if (!isNaN(n)) nums.add(n);
-      }
-    }
-    return [...nums];
   }
 
   function findAuthorYearCitations(text, paraIndex, section, paraText, out) {
@@ -866,7 +820,7 @@
     // Document info
     const refSection = refListStart >= 0
       ? `Reference list found at paragraph ${refListStart + 1} of ${totalParas}.`
-      : '<strong style="color:var(--color-kvot-accent)">No reference list section detected.</strong> The tool searched the full document for numbered entries.';
+      : '<strong style="color:var(--color-kvot-accent)">No reference list section detected.</strong> The tool scanned the full document for references.';
     docInfo.innerHTML = `<strong>${escHtml(filename)}</strong>
       ${isSwedish ? '<span style="background:color-mix(in srgb,#5cb85c 12%,var(--bg-secondary));color:#357a35;border:1px solid #5cb85c;border-radius:6px;padding:1px 8px;font-size:.78rem;font-weight:700;margin-left:4px">🇸🇪 Svenska</span>' : ''}
       &mdash; ${totalParas} paragraphs &nbsp;·&nbsp; 
@@ -937,7 +891,7 @@
           : (e.cites.length > 0 ? '(no heading found)' : '');
         rows += `<tr class="${cls}">
           <td><span class="ref-key">${escHtml(e.key)}</span></td>
-          <td class="ref-text">${truncate(escHtml(e.body), 120)}</td>
+          <td class="ref-text">${truncate(escHtml(e.body), 150)}</td>
           <td class="cite-count">${n === 0 ? '<span style="color:var(--color-kvot-accent)">0 ⚠</span>' : n}</td>
           <td class="cite-pages" style="font-size:.8rem">${locText}</td>
         </tr>`;
