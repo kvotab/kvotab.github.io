@@ -426,60 +426,162 @@
   const REF_HEADING_RE = /^\s*(?:\d[\d.]*\s+)?(?:references?|referenser|referenslista|litteratur|bibliography)\s*$/i;
 
   function splitAtRefList(paragraphs) {
-    let refListStart = -1;
-    for (let i = 0; i < paragraphs.length; i++) {
-      const p = paragraphs[i];
-      // Check style name
-      const isHeading = p.style.startsWith('heading') || p.style.startsWith('rubrik') ||
-                        p.style.includes('heading') || p.style.startsWith('appendixrubrik') || p.style === 'title';
-    
-      const textMatch = REF_HEADING_RE.test(p.text);
-      
-      if (isHeading && textMatch) {
-      
-        // Verify at least a few entries follow
-        const preview = paragraphs.slice(i + 1, i + 6).map(x => x.text).join(' ');
-        if (preview.length > 10) {
-          refListStart = i;
+  let refListStart = -1;
+
+  /*
+    Find the reference-list heading.
+  */
+  for (let i = 0; i < paragraphs.length; i++) {
+    const paragraph = paragraphs[i];
+
+    const isHeading =
+      paragraph.style.startsWith('heading') ||
+      paragraph.style.startsWith('rubrik') ||
+      paragraph.style.includes('heading') ||
+      paragraph.style.startsWith('appendixrubrik') ||
+      paragraph.style === 'title';
+
+    const textMatch = REF_HEADING_RE.test(
+      paragraph.text
+    );
+
+    if (isHeading && textMatch) {
+      /*
+        Verify that some meaningful text follows the heading.
+      */
+      const preview = paragraphs
+        .slice(i + 1, i + 6)
+        .map(item => item.text)
+        .join(' ');
+
+      if (preview.length > 10) {
+        refListStart = i;
+        break;
+      }
+    }
+  }
+
+  /*
+    Fallback for numbered reference lists when no recognised reference
+    heading was found.
+  */
+  if (refListStart === -1) {
+    for (
+      let i = Math.floor(paragraphs.length * 0.6);
+      i < paragraphs.length;
+      i++
+    ) {
+      const text = paragraphs[i].text;
+
+      if (
+        /^\[?\d+\]?[\.\s]/.test(text) &&
+        text.length > 20
+      ) {
+        let count = 0;
+
+        for (
+          let j = i;
+          j < Math.min(i + 5, paragraphs.length);
+          j++
+        ) {
+          if (
+            /^\[?\d+\]?[\.\s]/.test(
+              paragraphs[j].text
+            ) &&
+            paragraphs[j].text.length > 20
+          ) {
+            count++;
+          }
+        }
+
+        if (count >= 3) {
+          refListStart = i - 1;
           break;
         }
       }
     }
-    if (refListStart === -1) {
-      // Fallback: look for a block of paragraphs that look like numbered refs
-      for (let i = Math.floor(paragraphs.length * 0.6); i < paragraphs.length; i++) {
-        if (/^\[?\d+\]?[\.\s]/.test(paragraphs[i].text) && paragraphs[i].text.length > 20) {
-          // Check that at least 3 consecutive ones also look like refs
-          let count = 0;
-          for (let j = i; j < Math.min(i + 5, paragraphs.length); j++) {
-            if (/^\[?\d+\]?[\.\s]/.test(paragraphs[j].text) && paragraphs[j].text.length > 20) count++;
-          }
-          if (count >= 3) { refListStart = i - 1; break; }
-        }
-      }
-    }
-    if (refListStart === -1) {
-      return { refListParagraphs: [], bodyParagraphs: paragraphs, refListStart: -1 };
-    }
+  }
 
-    // Stop at the next heading or appendix-like section after the reference list
-    const SECTION_END_RE = /^\s*(?:\d[\d.]*\s+)?(?:appendix|appendices|bilaga|bilagor|annex|glossary|ordlista|index)\b/i;
-    let refListEnd = paragraphs.length;
-    for (let i = refListStart + 1; i < paragraphs.length; i++) {
-      const p = paragraphs[i];
-      if (!p.text.trim()) continue;
-      if (headingLevel(p.style) > 0 || SECTION_END_RE.test(p.text)) {
-        refListEnd = i;
-        break;
-      }
-    }
-
+  /*
+    If there is no reference list, search the full document for
+    in-text citations.
+  */
+  if (refListStart === -1) {
     return {
-      refListParagraphs: paragraphs.slice(refListStart + 1, refListEnd),
-      bodyParagraphs:    paragraphs.slice(0, refListStart + 1),
-      refListStart
+      refListParagraphs: [],
+      bodyParagraphs: paragraphs,
+      refListStart: -1
     };
   }
+
+  /*
+    Find the end of the reference list.
+
+    A new heading or an appendix-like heading marks the end of the
+    references.
+  */
+  const SECTION_END_RE =
+    /^\s*(?:\d[\d.]*\s+)?(?:appendix|appendices|bilaga|bilagor|annex|glossary|ordlista|index)\b/i;
+
+  let refListEnd = paragraphs.length;
+
+  for (
+    let i = refListStart + 1;
+    i < paragraphs.length;
+    i++
+  ) {
+    const paragraph = paragraphs[i];
+
+    if (!paragraph.text.trim()) {
+      continue;
+    }
+
+    if (
+      headingLevel(paragraph.style) > 0 ||
+      SECTION_END_RE.test(paragraph.text)
+    ) {
+      refListEnd = i;
+      break;
+    }
+  }
+
+  /*
+    Reference-list paragraphs exclude both the reference heading and
+    the heading that follows the reference list.
+  */
+  const refListParagraphs = paragraphs.slice(
+    refListStart + 1,
+    refListEnd
+  );
+
+  /*
+    Search for citations everywhere except inside the reference list.
+
+    Text before the reference-list heading is included.
+
+    Text beginning with the heading after the reference list is also
+    included, so citations in appendices are detected.
+  */
+  const beforeReferenceList = paragraphs.slice(
+    0,
+    refListStart
+  );
+
+  const afterReferenceList = paragraphs.slice(
+    refListEnd
+  );
+
+  const bodyParagraphs = [
+    ...beforeReferenceList,
+    ...afterReferenceList
+  ];
+
+  return {
+    refListParagraphs,
+    bodyParagraphs,
+    refListStart
+  };
+}
 
   // ── Extract reference list entries ────────────────────────────────────────
   function extractRefEntries(refParas) {
@@ -598,12 +700,22 @@
 
   // Heuristic: does this line look like the start of a new reference entry?
   function looksLikeRefStart(text) {
-  // A leading SKB report identifier is sufficient evidence that this is
-  // the beginning of a new reference.
+  // A leading SKB report identifier marks a new reference.
   if (extractSkbReportKey(text, true)) {
     return true;
   }
 
+  /*
+    If a valid author-year key can be extracted, this is the start
+    of a reference. This also supports lowercase surname particles:
+
+      van Loon L R, ...
+      von Schenck H, ...
+      de Vries L M, ...
+  */
+  return extractAuthorYearKey(text) !== null;
+}
+/*
   // Otherwise, look for an author-like beginning and a plausible year.
   const startsLikeAuthor =
     /^[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ\-]+(?:\s+[A-ZÀ-ÖØ-Þ][a-zà-öø-ÿ][A-Za-zÀ-ÖØ-Þà-öø-ÿ\-]+)*(?:(?:\s+|,\s*)[A-ZÀ-ÖØ-Þ]{1,2}(?:[.\- ][A-ZÀ-ÖØ-Þ]{1,2})*\.?,|,\s*[A-ZÀ-ÖØ-Þ]|\s+(?:and|och|&|m\.fl)|,\s*[1-9]\d{3})/.test(text);
@@ -613,7 +725,7 @@
 
   return startsLikeAuthor && hasYear;
 }
-
+*/
  function extractAuthorYearKey(text) {
   /*
     Handle comma-separated SKB author lists such as:
@@ -898,7 +1010,26 @@ function collectReferenceAliases(entry) {
     });
   }
 
-  function findAuthorYearCitations(
+/*
+  A citation surname can optionally begin with one or more lowercase
+  surname particles.
+
+  Examples:
+    Smith
+    van Loon
+    von Schenck
+    de Vries
+    van der Meer
+    af Geijerstam
+  */
+const SURNAME_PARTICLE =
+  '(?:(?:van|von|de|del|della|der|den|di|da|dos|du|la|le|af)\\s+)*';
+
+const CITATION_SURNAME =
+  `${SURNAME_PARTICLE}` +
+  '[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ-]+';
+
+function findAuthorYearCitations(
   text,
   paraIndex,
   section,
@@ -908,28 +1039,83 @@ function collectReferenceAliases(entry) {
   let match;
 
   /*
-    ---------------------------------------------------------------
+    A publication year is considered plausible between 1800 and 2099,
+    optionally followed by a lowercase letter.
+
+    Examples:
+      1997
+      2006
+      2019a
+
+    Values such as 2500, 5000 and 9000 are not treated as publication
+    years.
+  */
+  const publicationYearPattern =
+    '(?:1[89]\\d{2}|20\\d{2})[a-z]?';
+
+  /*
+    Citation surname. Lowercase surname particles are allowed, but an
+    uppercase surname word must follow them.
+
+    Examples:
+      Smith
+      Öhman
+      Auqué
+      van Loon
+      von Schenck
+      de Vries
+      van der Meer
+  */
+  const surnamePattern =
+    '(?:(?:van|von|de|del|della|der|den|di|da|dos|du|la|le|af)\\s+)*' +
+    '[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ-]+';
+
+  /*
+    Author or organisation.
+
+    Examples:
+      Smith
+      Öhman
+      SSM
+      SKB
+      van Loon
+  */
+  const authorNamePattern =
+    `(?:[A-ZÅÄÖ]{2,}|${surnamePattern})`;
+
+  /*
+    Complete citation-author pattern.
+
+    Examples:
+      Smith
+      SSM
+      Öhman et al.
+      van Loon et al.
+      Avila and Bergström
+      Avila och Bergström
+      Avila & Bergström
+  */
+  const citationAuthorPattern =
+    `(?:${authorNamePattern})` +
+    `(?:\\s+(?:et\\s+al\\.?|m\\.fl\\.?))?` +
+    `(?:\\s+(?:and|och|&)\\s+${authorNamePattern})?`;
+
+  /*
+    ===============================================================
     1. Parenthetical citation groups
-    ---------------------------------------------------------------
+    ===============================================================
 
-    Handles examples such as:
+    Handles:
 
-      (Smith 2020)
-      (Smith et al. 2020)
+      (Avila and Bergström 2006)
+      (Öhman et al. 2014)
+      (van Loon et al. 1997)
       (SSM 2017, 2018, Walke et al. 2017)
-      (SKB 2019; Smith 2020)
-      (Smith and Jones 2020)
-      (Smith och Jones 2020)
 
-    A year appearing by itself after a comma inherits the preceding
-    author or organisation:
+    It does not interpret lowercase prose as an author:
 
-      SSM 2017, 2018
-
-    produces:
-
-      SSM 2017
-      SSM 2018
+      (time slices at 2000 AD, 2100 AD)
+      (points 2500, 2750, 3000)
   */
   const parentheticalGroupRe = /\(([^()]*)\)/g;
 
@@ -941,17 +1127,17 @@ function collectReferenceAliases(entry) {
     const groupText = match[1];
 
     /*
-      Split at commas and semicolons.
+      Split multiple citations at commas and semicolons.
 
       Example:
 
-        "e.g. SSM 2017, 2018, Walke et al. 2017"
+        SSM 2017, 2018, Walke et al. 2017
 
       becomes:
 
-        "e.g. SSM 2017"
-        "2018"
-        "Walke et al. 2017"
+        SSM 2017
+        2018
+        Walke et al. 2017
     */
     const parts = groupText
       .split(/\s*[,;]\s*/)
@@ -961,28 +1147,16 @@ function collectReferenceAliases(entry) {
     let previousAuthor = null;
 
     for (const part of parts) {
-      /*
-        Match an explicit author/organisation and year.
+      const explicitCitationRe = new RegExp(
+        `(?:^|[^A-Za-zÀ-ÖØ-Þà-öø-ÿ])` +
+        `(${citationAuthorPattern})` +
+        `\\s+` +
+        `(${publicationYearPattern})` +
+        `(?=$|[^A-Za-zÀ-ÖØ-Þà-öø-ÿ0-9])`,
+        'g'
+      );
 
-        Recognised examples:
-
-          SSM 2017
-          SKB 2019
-          Smith 2020
-          Walke et al. 2017
-          Andersson m.fl. 2018
-          Smith and Jones 2020
-          Smith och Jones 2020
-
-        Organisation abbreviations such as SSM, SKB and OECD are
-        explicitly supported.
-      */
-      const explicitCitationRe =
-        /\b((?:[A-ZÅÄÖ]{2,}|[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ-]+)(?:\s+(?:et\s+al\.?|m\.fl\.?))?(?:\s+(?:and|och|&)\s+(?:[A-ZÅÄÖ]{2,}|[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ-]+))?)\s+((?:1[89]\d{2}|2\d{3})[a-z]?)\b/gi;
-
-      explicitCitationRe.lastIndex = 0;
-
-      let explicitMatch = null;
+      let explicitMatch;
       let foundExplicitCitation = false;
 
       while (
@@ -995,14 +1169,13 @@ function collectReferenceAliases(entry) {
         const year = explicitMatch[2];
 
         /*
-          SKB year references are already handled by
-          findSkbCitations(). Do not add them here as ordinary
-          author-year citations.
+          SKB year citations are handled separately by
+          findSkbCitations().
         */
         if (author.toUpperCase() !== 'SKB') {
           out.push({
             key: `${author} ${year}`,
-            raw: explicitMatch[0],
+            raw: `${author} ${year}`,
             paraIndex,
             section,
             paraText,
@@ -1027,54 +1200,66 @@ function collectReferenceAliases(entry) {
 
           SSM 2017, 2018
 
-        The second part, "2018", becomes "SSM 2018".
+        produces:
+
+          SSM 2017
+          SSM 2018
+
+        A bare year does not inherit anything unless an explicit author
+        has already been found in the same parenthetical group.
       */
-      const inheritedYearMatch = part.match(
-        /^((?:1[89]\d{2}|2\d{3})[a-z]?)$/
+      const inheritedYearRe = new RegExp(
+        `^(${publicationYearPattern})$`
       );
+
+      const inheritedYearMatch =
+        part.match(inheritedYearRe);
 
       if (
         inheritedYearMatch &&
-        previousAuthor
+        previousAuthor &&
+        previousAuthor.toUpperCase() !== 'SKB'
       ) {
         const year = inheritedYearMatch[1];
 
-        /*
-          As above, leave SKB year citations to findSkbCitations().
-        */
-        if (previousAuthor.toUpperCase() !== 'SKB') {
-          out.push({
-            key: `${previousAuthor} ${year}`,
-            raw: part,
-            paraIndex,
-            section,
-            paraText,
-            type: 'author-year',
-            author: previousAuthor,
-            year
-          });
-        }
+        out.push({
+          key: `${previousAuthor} ${year}`,
+          raw: part,
+          paraIndex,
+          section,
+          paraText,
+          type: 'author-year',
+          author: previousAuthor,
+          year
+        });
       }
     }
   }
 
   /*
-    ---------------------------------------------------------------
-    2. Narrative/inline citations
-    ---------------------------------------------------------------
+    ===============================================================
+    2. Narrative citations
+    ===============================================================
 
-    Handles citations outside parenthetical citation groups:
+    Handles:
 
-      Smith (2020)
-      Walke et al. (2017)
-      Andersson m.fl. (2018)
-      Smith and Jones (2020)
-      Smith och Jones (2020)
+      Auqué et al. (2013)
+      Auqué et al. (2013, Tables 5-1–5-3)
+      Öhman et al. (2014)
+      van Loon et al. (1997)
+      Avila and Bergström (2006)
       SSM (2017)
   */
-  const inlineCitationRe =
-  /\b((?:[A-ZÅÄÖ]{2,}|[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ-]+)(?:\s+(?:et\s+al\.?|m\.fl\.?))?(?:\s+(?:and|och|&)\s+(?:[A-ZÅÄÖ]{2,}|[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ-]+))?)\s+\(((?:1[89]\d{2}|2\d{3})[a-z]?)(?:\s*,\s*[^()]*)?\)/gi;
-  
+  const inlineCitationRe = new RegExp(
+    `(?:^|[^A-Za-zÀ-ÖØ-Þà-öø-ÿ])` +
+    `(${citationAuthorPattern})` +
+    `\\s+\\(` +
+    `(${publicationYearPattern})` +
+    `(?:\\s*,\\s*[^()]*)?` +
+    `\\)`,
+    'g'
+  );
+
   inlineCitationRe.lastIndex = 0;
 
   while (
@@ -1083,16 +1268,14 @@ function collectReferenceAliases(entry) {
     const author = normaliseCitationAuthor(match[1]);
     const year = match[2];
 
-    /*
-      SKB (2019) is handled by findSkbCitations().
-    */
+    // SKB (2019) is handled by findSkbCitations().
     if (author.toUpperCase() === 'SKB') {
       continue;
     }
 
     out.push({
       key: `${author} ${year}`,
-      raw: match[0],
+      raw: `${author} (${year})`,
       paraIndex,
       section,
       paraText,
@@ -1102,6 +1285,14 @@ function collectReferenceAliases(entry) {
     });
   }
 }
+function normaliseCitationAuthor(author) {
+  return String(author)
+    .replace(/\s+/g, ' ')
+    .replace(/\bet\s+al\.?$/i, 'et al.')
+    .replace(/\bm\.fl\.?$/i, 'm.fl.')
+    .trim();
+}
+
 /*
   Normalise minor variations in author citation text.
 
@@ -1241,11 +1432,13 @@ function normaliseCitationAuthor(author) {
   
 function normaliseKey(key) {
   return normaliseDashes(key)
+    .normalize('NFC')
     .toLowerCase()
     .replace(/et\s*al\.?/g, 'etal')
     .replace(/\s*-\s*/g, '-')
     .replace(/[\s.,;:!?'"()\[\]{}]/g, '');
 }
+``
   function fuzzyMatch(a, b) {
     if (a.length < 4 || b.length < 4) return false;
     // Check if one contains the other or 80% overlap
