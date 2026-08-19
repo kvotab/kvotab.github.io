@@ -483,136 +483,63 @@
 
   // ── Extract reference list entries ────────────────────────────────────────
   function extractRefEntries(refParas) {
-  const entries = [];
-  let current = null;
-  let autoNum = 0;
+    const entries = [];
+    let current = null;
+    let autoNum = 0; // tracks sequence for Word auto-numbered lists
 
-  for (const p of refParas) {
-    const text = p.text.trim();
+    for (const p of refParas) {
+      const t = p.text.trim();
+      // Word auto-numbered list: number lives in numbering XML, not in text
+      const isListItem = p.numId && p.numId !== '0';
 
-    // For a Word auto-numbered list, the displayed number is stored in
-    // numbering.xml rather than in the paragraph text.
-    const isListItem = p.numId && p.numId !== '0';
-
-    if (!text) {
-      if (current) {
-        entries.push(current);
-        current = null;
+      if (!t) {
+        if (current) { entries.push(current); current = null; }
+        continue;
       }
-      continue;
+      // Explicit number prefix: [1] text   1. text   1) text
+      const numMatch = t.match(/^(?:\[(\d+)\]|(\d+)[.)\s]\s)/);
+      if (numMatch) {
+        if (current) entries.push(current);
+        const num = numMatch[1] || numMatch[2];
+        autoNum = parseInt(num, 10);
+        const key = `[${num}]`;
+        const body = t.replace(/^\[?\d+\]?[.)\s]+/, '').trim();
+        current = { key, num: autoNum, body, raw: t, paraIndex: p.index, type: 'numbered' };
+      } else if (isListItem) {
+        // Auto-numbered Word list: each list paragraph is its own entry
+        if (current) entries.push(current);
+        autoNum++;
+        current = { key: `[${autoNum}]`, num: autoNum, body: t, raw: t, paraIndex: p.index, type: 'numbered' };
+      } else if (current && looksLikeRefStart(t)) {
+        // No blank line but text pattern suggests a new author-year entry
+        entries.push(current);
+        const ayKey = extractAuthorYearKey(t);
+        current = { key: ayKey || t.slice(0, 40), num: null, body: t, raw: t, paraIndex: p.index, type: 'author-year' };
+      } else if (current) {
+        // Continuation of previous entry
+        current.body += ' ' + t;
+        current.raw  += ' ' + t;
+      } else {
+        const ayKey = extractAuthorYearKey(t);
+        current = { key: ayKey || t.slice(0, 40), num: null, body: t, raw: t, paraIndex: p.index, type: 'author-year' };
+      }
     }
+    if (current) entries.push(current);
 
-    // Explicit number prefixes:
-    // [1] Reference text
-    // 1. Reference text
-    // 1) Reference text
-    const numMatch =
-      text.match(/^(?:\[(\d+)\]|(\d+)[.)\s]\s)/);
-
-    if (numMatch) {
-      if (current) {
-        entries.push(current);
-      }
-
-      const num = numMatch[1] || numMatch[2];
-      autoNum = parseInt(num, 10);
-
-      const key = `[${num}]`;
-
-      const body = text
-        .replace(/^\[?\d+\]?[.)\s]+/, '')
-        .trim();
-
-      current = {
-        key,
-        num: autoNum,
-        body,
-        raw: text,
-        paraIndex: p.index,
-        type: 'numbered'
-      };
-    } else if (isListItem) {
-      // Word auto-numbered list: each list paragraph is one entry.
-      if (current) {
-        entries.push(current);
-      }
-
-      autoNum++;
-
-      current = {
-        key: `[${autoNum}]`,
-        num: autoNum,
-        body: text,
-        raw: text,
-        paraIndex: p.index,
-        type: 'numbered'
-      };
-    } else if (current && looksLikeRefStart(text)) {
-      // No blank paragraph, but this paragraph looks like the beginning
-      // of a new author-year or SKB report reference.
-      entries.push(current);
-
-      const referenceKey = extractReferenceKey(text);
-      const leadingSkbKey = extractSkbReportKey(text, true);
-
-      current = {
-        key: referenceKey || text.slice(0, 40),
-        num: null,
-        body: text,
-        raw: text,
-        paraIndex: p.index,
-        type: leadingSkbKey ? 'skb-report' : 'author-year'
-      };
-    } else if (current) {
-      // Continuation of the previous entry.
-      current.body += ' ' + text;
-      current.raw += ' ' + text;
-    } else {
-      // First unnumbered reference entry.
-      const referenceKey = extractReferenceKey(text);
-      const leadingSkbKey = extractSkbReportKey(text, true);
-
-      current = {
-        key: referenceKey || text.slice(0, 40),
-        num: null,
-        body: text,
-        raw: text,
-        paraIndex: p.index,
-        type: leadingSkbKey ? 'skb-report' : 'author-year'
-      };
+    for (const entry of entries) {
+      entry.aliases = collectReferenceAliases(entry);
     }
+    return entries;
   }
-
-  if (current) {
-    entries.push(current);
-  }
-
-  // Generate aliases after the full reference text has been assembled.
-  for (const entry of entries) {
-    entry.aliases = collectReferenceAliases(entry);
-  }
-
-  return entries;
-}
-
 
   // Heuristic: does this line look like the start of a new reference entry?
   function looksLikeRefStart(text) {
-  // A leading SKB report identifier is sufficient evidence that this is
-  // the beginning of a new reference.
-  if (extractSkbReportKey(text, true)) {
-    return true;
+    // Must start with Author-like token AND contain a plausible year
+    // Supports: compound surnames, accented names, comma-sep initials, org-name-only (SKB, 2008)
+    const startsLikeAuthor = /^[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ\-]+(?:\s+[A-ZÀ-ÖØ-Þ][a-zà-öø-ÿ][A-Za-zÀ-ÖØ-Þà-öø-ÿ\-]+)*(?:(?:\s+|,\s*)[A-ZÀ-ÖØ-Þ]{1,2}(?:[.\- ][A-ZÀ-ÖØ-Þ]{1,2})*\.?,|,\s*[A-ZÀ-ÖØ-Þ]|\s+(?:and|och|&|m\.fl)|,\s*[1-9]\d{3})/.test(text);
+    const hasYear = /\b(?:1[89]\d{2}|2\d{3})[a-z]?\b/.test(text);
+    return startsLikeAuthor && hasYear;
   }
-
-  // Otherwise, look for an author-like beginning and a plausible year.
-  const startsLikeAuthor =
-    /^[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ\-]+(?:\s+[A-ZÀ-ÖØ-Þ][a-zà-öø-ÿ][A-Za-zÀ-ÖØ-Þà-öø-ÿ\-]+)*(?:(?:\s+|,\s*)[A-ZÀ-ÖØ-Þ]{1,2}(?:[.\- ][A-ZÀ-ÖØ-Þ]{1,2})*\.?,|,\s*[A-ZÀ-ÖØ-Þ]|\s+(?:and|och|&|m\.fl)|,\s*[1-9]\d{3})/.test(text);
-
-  const hasYear =
-    /\b(?:1[89]\d{2}|2\d{3})[a-z]?\b/.test(text);
-
-  return startsLikeAuthor && hasYear;
-}
 
   function extractAuthorYearKey(text) {
     // Extended Latin-1 ranges: UC=uppercase, LC=lowercase, AC=any case
@@ -640,93 +567,23 @@
     return null;
   }
 
-  /*
-  Convert Unicode dash characters commonly introduced by Word or PDF
-  documents to ordinary ASCII hyphens.
-*/
-function normaliseDashes(text) {
-  return String(text).replace(
-    /[\u2010\u2011\u2012\u2013\u2014\u2212]/g,
-    '-'
-  );
-}
-
-/*
-  Extract an SKB report identifier.
-
-  With startOnly = true, the identifier must occur at the beginning of
-  the reference, although an optional list number may precede it.
-*/
-function extractSkbReportKey(text, startOnly = false) {
-  const normalized = normaliseDashes(text);
-   const prefix = startOnly
-    ? String.raw`^\s*(?:(?:\[\d+\]|\d+[.)]*\s*)?`
-    : String.raw`\b`;
-
-  const re = new RegExp(
-    prefix +
-    String.raw`(?:SKB\s+)?` +
-    String.raw`((?:TR|R|P|IPR|RD|SR|TM|U|F)-\d{2,}-\d+)` +
-    String.raw`\b`,
-    'i'
-  );
-
-  const match = normalized.match(re);
-
-  if (!match) {
-    return null;
+  function extractSkbReportKey(text) {
+    const m = text.match(/\b(?:SKB\s+)?((?:TR|R|P|IPR|RD|SR|TM|U|F)-\d{2,}-\d+)\b/i);
+    if (!m) return null;
+    return `SKB ${m[1]}`;
   }
-
-  return `SKB ${match[1].toUpperCase()}`;
-}
-
-/*
-  Select the primary matching key for a reference.
-
-  A leading SKB report number takes precedence over an author-year key.
-*/
-function extractReferenceKey(text) {
-  const leadingSkbKey = extractSkbReportKey(text, true);
-
-  if (leadingSkbKey) {
-    return leadingSkbKey;
-  }
-
-  return extractAuthorYYearKey(text);
-}
 
   function collectReferenceAliases(entry) {
-  const aliases = new Set();
-
-  if (entry && entry.key) {
-    aliases.add(entry.key);
+    const aliases = new Set();
+    if (entry && entry.key) aliases.add(entry.key);
+    if (entry && entry.body) {
+      const ayKey = extractAuthorYearKey(entry.body);
+      if (ayKey) aliases.add(ayKey);
+      const skbKey = extractSkbReportKey(entry.body);
+      if (skbKey) aliases.add(skbKey);
+    }
+    return [...aliases];
   }
-
-  if (entry && entry.body) {
-    // Retain ordinary author-year matching.
-    const authorYearKey = extractAuthorYearKey(entry.body);
-
-    if (authorYearKey) {
-      aliases.add(authorYearKey);
-    }
-
-    // Add an SKB identifier when it is the first item in the reference.
-    const leadingSkbKey = extractSkbReportKey(entry.body, true);
-
-    if (leadingSkbKey) {
-      aliases.add(leadingSkbKey);
-    }
-
-    // Also retain matching for an SKB identifier occurring elsewhere.
-    const anySkbKey = extractSkbReportKey(entry.body);
-
-    if (anySkbKey) {
-      aliases.add(anySkbKey);
-    }
-  }
-
-  return [...aliases];
-}
 
   // ── Find in-text citations ────────────────────────────────────────────────
   /*
@@ -803,65 +660,25 @@ function extractReferenceKey(text) {
     }
   }
 
-  function findSkbCitations(
-  text,
-  paraIndex,
-  section,
-  paraText,
-  out
-) {
-  // Normalise Word/PDF dash characters before matching.
-  const normalizedText = normaliseDashes(text);
-
-  const re =
-    /\bSKB\s+(?:\((\d{4}[a-z]?(?:[,\s]+\d{4}[a-z]?)*)\)|(\d{4}[a-z]?)(?!\s*\w)|((?:TR|R|P|IPR|RD|SR|TM|U|F)-\d{2,}-\d+))/gi;
-
-  let match;
-  re.lastIndex = 0;
-
-  while ((match = re.exec(normalizedText)) !== null) {
-    // Parenthesised SKB year or years:
-    // SKB (2019), SKB (2019a), SKB (2019a, 2020)
-    if (match[1]) {
-      const years = match[1].split(/\s*,\s*/);
-
-      for (const value of years) {
-        const year = value.trim();
-
-        if (/^\d{4}[a-z]?*/.test(year)) {
-          out.push({
-            key: `SKB ${year}`,
-            raw: match[0],
-            paraIndex,
-            section,
-            paraText,
-            type: 'skb-year'
-          });
+  function findSkbCitations(text, paraIndex, section, paraText, out) {
+    const re = /\bSKB\s+(?:\((\d{4}[a-z]?(?:[,\s]+\d{4}[a-z]?)*)\)|(\d{4}[a-z]?)(?!\s*\w)|([A-Z]{1,3}-\d{2}-\d+))/gi;
+    let m;
+    re.lastIndex = 0;
+    while ((m = re.exec(text)) !== null) {
+      if (m[1]) {
+        const years = m[1].split(/\s*,\s*/);
+        for (const y of years) {
+          const yr = y.trim();
+          if (/^\d{4}[a-z]?$/.test(yr))
+            out.push({ key: `SKB ${yr}`, raw: m[0], paraIndex, section, paraText, type: 'skb-year' });
         }
+      } else if (m[2]) {
+        out.push({ key: `SKB ${m[2]}`, raw: m[0], paraIndex, section, paraText, type: 'skb-year' });
+      } else if (m[3]) {
+        out.push({ key: `SKB ${m[3]}`, raw: m[0], paraIndex, section, paraText, type: 'skb-report' });
       }
-    } else if (match[2]) {
-      // Non-parenthesised ye*r: SKB 2019
-      out.push({
-      key: `SKB ${match[2]}`,
-      raw: match[0],
-      paraIndex,
-      section,
-      paraText,
-      type: 'skb-year'
-      });
-    } else if (match[3]) {
-      // SKB report identifier: SKB TR-19-01
-      out.push({
-        key: `SKB ${match[3].toUpperCase()}`,
-        raw: match[0],
-        paraIndex,
-        section,
-        paraText,
-        type: 'skb-report'
-      });
     }
   }
-}
 
   // ── Cross-reference citations ↔ list ──────────────────────────────────────
   function crossReference(refEntries, inTextCites, bodyParas) {
@@ -922,14 +739,10 @@ function extractReferenceKey(text) {
     return { orphanCites, uncitedRefs, duplicateKeys };
   }
 
-  
-function normaliseKey(key) {
-  return normaliseDashes(key)
-    .toLowerCase()
-    .replace(/et\s*al\.?/g, 'etal')
-    .replace(/\s*-\s*/g, '-')
-    .replace(/[\s.,;:!?'"()\[\]{}]/g, '');
-}
+  function normaliseKey(k) {
+    return k.toLowerCase().replace(/[\s.,;:!?'"()\[\]{}]/g, '').replace(/et\s*al\.?/g, 'etal');
+  }
+
   function fuzzyMatch(a, b) {
     if (a.length < 4 || b.length < 4) return false;
     // Check if one contains the other or 80% overlap
@@ -957,8 +770,7 @@ function normaliseKey(key) {
     8. For journal articles: volume/issue pattern present
     9. Numbered entries should be sequential
   */
-  const SKB_REPORT_RE =
-  /\b(?:SKB\s+)?(?:TR|R|P|IPR|RD|SR|TM|U|F)[-\u2010\u2011\u2012\u2013\u2014\u2212]\d{2,}[-\u2010\u2011\u2012\u2013\u2014\u2212]\d+\b/i;
+  const SKB_REPORT_RE = /\b(?:SKB\s+)?(?:TR|R|P|IPR|RD|SR|TM|U|F)-\d{2,}-\d+\b/i;
   const YEAR_IN_TEXT_RE = /\b(1[9][0-9]{2}|2[0-9]{3})[a-z]?\b/;
   const SEQUENTIAL_GAP_THRESHOLD = 5;
 
