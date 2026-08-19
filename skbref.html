@@ -898,37 +898,226 @@ function collectReferenceAliases(entry) {
     });
   }
 
-  function findAuthorYearCitations(text, paraIndex, section, paraText, out) {
-    let m;
-    // (Author 2020) or (Author et al./m.fl. 2020) or (Author and/och Author 2020)
-    const re1 = new RegExp(`\\(\\s*([A-Z\u00c0-\u00d6\u00d8-\u00de][A-Za-z\u00c0-\u00d6\u00d8-\u00de\u00e0-\u00f6\u00f8-\u00ff\\-]+(?:\\s+${ET_AL}|\\s+(?:and|och|&)\\s+[A-Z\u00c0-\u00d6\u00d8-\u00de][A-Za-z\u00c0-\u00d6\u00d8-\u00de\u00e0-\u00f6\u00f8-\u00ff\\-]+)?)(?:,\\s*|\\s+)(\\d{4}[a-z]?)\\s*(?:,\\s*[sp\\d\\.–\\- ]+)?\\)`, 'gi');
-    re1.lastIndex = 0;
-    while ((m = re1.exec(text)) !== null) {
-      const key = `${m[1].trim()} ${m[2]}`;
-      out.push({ key, raw: m[0], paraIndex, section, paraText, type: 'author-year', author: m[1].trim(), year: m[2] });
-    }
-    // Author (2020) or Author and/och Author (2020) or Author et al./m.fl. (2020) inline
-    const re2 = new RegExp(`\\b([A-Z\u00c0-\u00d6\u00d8-\u00de][A-Za-z\u00c0-\u00d6\u00d8-\u00de\u00e0-\u00f6\u00f8-\u00ff\\-]+(?:\\s+${ET_AL}|\\s+(?:and|och|&)\\s+[A-Z\u00c0-\u00d6\u00d8-\u00de][A-Za-z\u00c0-\u00d6\u00d8-\u00de\u00e0-\u00f6\u00f8-\u00ff\\-]+)?)\\s+\\((\\d{4}[a-z]?)\\)`, 'gi');
-    re2.lastIndex = 0;
-    while ((m = re2.exec(text)) !== null) {
-      const key = `${m[1].trim()} ${m[2]}`;
-      out.push({ key, raw: m[0], paraIndex, section, paraText, type: 'author-year', author: m[1].trim(), year: m[2] });
-    }
-    // Explicit fallbacks for et al. / m.fl. — bypass template expansion, match (Author et al. year)
-    const re3 = /\(\s*([A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ\-]+)\s+et\s+al\.?\s*(?:,\s*)?(\d{4}[a-z]?)\s*(?:,\s*[sp\d\.–\- ]+)?\)/gi;
-    re3.lastIndex = 0;
-    while ((m = re3.exec(text)) !== null) {
-      const key = `${m[1].trim()} et al. ${m[2]}`;
-      out.push({ key, raw: m[0], paraIndex, section, paraText, type: 'author-year', author: m[1].trim(), year: m[2] });
-    }
-    // Explicit fallback for Author et al. (year) inline form
-    const re4 = /\b([A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ\-]+)\s+et\s+al\.?\s+\((\d{4}[a-z]?)\)/gi;
-    re4.lastIndex = 0;
-    while ((m = re4.exec(text)) !== null) {
-      const key = `${m[1].trim()} et al. ${m[2]}`;
-      out.push({ key, raw: m[0], paraIndex, section, paraText, type: 'author-year', author: m[1].trim(), year: m[2] });
+  function findAuthorYearCitations(
+  text,
+  paraIndex,
+  section,
+  paraText,
+  out
+) {
+  let match;
+
+  /*
+    ---------------------------------------------------------------
+    1. Parenthetical citation groups
+    ---------------------------------------------------------------
+
+    Handles examples such as:
+
+      (Smith 2020)
+      (Smith et al. 2020)
+      (SSM 2017, 2018, Walke et al. 2017)
+      (SKB 2019; Smith 2020)
+      (Smith and Jones 2020)
+      (Smith och Jones 2020)
+
+    A year appearing by itself after a comma inherits the preceding
+    author or organisation:
+
+      SSM 2017, 2018
+
+    produces:
+
+      SSM 2017
+      SSM 2018
+  */
+  const parentheticalGroupRe = /\(([^()]*)\)/g;
+
+  parentheticalGroupRe.lastIndex = 0;
+
+  while (
+    (match = parentheticalGroupRe.exec(text)) !== null
+  ) {
+    const groupText = match[1];
+
+    /*
+      Split at commas and semicolons.
+
+      Example:
+
+        "e.g. SSM 2017, 2018, Walke et al. 2017"
+
+      becomes:
+
+        "e.g. SSM 2017"
+        "2018"
+        "Walke et al. 2017"
+    */
+    const parts = groupText
+      .split(/\s*[,;]\s*/)
+      .map(part => part.trim())
+      .filter(Boolean);
+
+    let previousAuthor = null;
+
+    for (const part of parts) {
+      /*
+        Match an explicit author/organisation and year.
+
+        Recognised examples:
+
+          SSM 2017
+          SKB 2019
+          Smith 2020
+          Walke et al. 2017
+          Andersson m.fl. 2018
+          Smith and Jones 2020
+          Smith och Jones 2020
+
+        Organisation abbreviations such as SSM, SKB and OECD are
+        explicitly supported.
+      */
+      const explicitCitationRe =
+        /\b((?:[A-ZÅÄÖ]{2,}|[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ-]+)(?:\s+(?:et\s+al\.?|m\.fl\.?))?(?:\s+(?:and|och|&)\s+(?:[A-ZÅÄÖ]{2,}|[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ-]+))?)\s+((?:1[89]\d{2}|2\d{3})[a-z]?)\b/gi;
+
+      explicitCitationRe.lastIndex = 0;
+
+      let explicitMatch = null;
+      let foundExplicitCitation = false;
+
+      while (
+        (explicitMatch = explicitCitationRe.exec(part)) !== null
+      ) {
+        const author = normaliseCitationAuthor(
+          explicitMatch[1]
+        );
+
+        const year = explicitMatch[2];
+
+        /*
+          SKB year references are already handled by
+          findSkbCitations(). Do not add them here as ordinary
+          author-year citations.
+        */
+        if (author.toUpperCase() !== 'SKB') {
+          out.push({
+            key: `${author} ${year}`,
+            raw: explicitMatch[0],
+            paraIndex,
+            section,
+            paraText,
+            type: 'author-year',
+            author,
+            year
+          });
+        }
+
+        previousAuthor = author;
+        foundExplicitCitation = true;
+      }
+
+      if (foundExplicitCitation) {
+        continue;
+      }
+
+      /*
+        A year by itself inherits the preceding author.
+
+        Example:
+
+          SSM 2017, 2018
+
+        The second part, "2018", becomes "SSM 2018".
+      */
+      const inheritedYearMatch = part.match(
+        /^((?:1[89]\d{2}|2\d{3})[a-z]?)$/
+      );
+
+      if (
+        inheritedYearMatch &&
+        previousAuthor
+      ) {
+        const year = inheritedYearMatch[1];
+
+        /*
+          As above, leave SKB year citations to findSkbCitations().
+        */
+        if (previousAuthor.toUpperCase() !== 'SKB') {
+          out.push({
+            key: `${previousAuthor} ${year}`,
+            raw: part,
+            paraIndex,
+            section,
+            paraText,
+            type: 'author-year',
+            author: previousAuthor,
+            year
+          });
+        }
+      }
     }
   }
+
+  /*
+    ---------------------------------------------------------------
+    2. Narrative/inline citations
+    ---------------------------------------------------------------
+
+    Handles citations outside parenthetical citation groups:
+
+      Smith (2020)
+      Walke et al. (2017)
+      Andersson m.fl. (2018)
+      Smith and Jones (2020)
+      Smith och Jones (2020)
+      SSM (2017)
+  */
+  const inlineCitationRe =
+  /\b((?:[A-ZÅÄÖ]{2,}|[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ-]+)(?:\s+(?:et\s+al\.?|m\.fl\.?))?(?:\s+(?:and|och|&)\s+(?:[A-ZÅÄÖ]{2,}|[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ-]+))?)\s+\(((?:1[89]\d{2}|2\d{3})[a-z]?)(?:\s*,\s*[^()]*)?\)/gi;
+  
+  inlineCitationRe.lastIndex = 0;
+
+  while (
+    (match = inlineCitationRe.exec(text)) !== null
+  ) {
+    const author = normaliseCitationAuthor(match[1]);
+    const year = match[2];
+
+    /*
+      SKB (2019) is handled by findSkbCitations().
+    */
+    if (author.toUpperCase() === 'SKB') {
+      continue;
+    }
+
+    out.push({
+      key: `${author} ${year}`,
+      raw: match[0],
+      paraIndex,
+      section,
+      paraText,
+      type: 'author-year',
+      author,
+      year
+    });
+  }
+}
+/*
+  Normalise minor variations in author citation text.
+
+  Examples:
+
+    "Walke et al"  -> "Walke et al."
+    "Walke et al." -> "Walke et al."
+    "Smith   and   Jones" -> "Smith and Jones"
+*/
+function normaliseCitationAuthor(author) {
+  return String(author)
+    .replace(/\s+/g, ' ')
+    .replace(/\bet\s+al\.?$/i, 'et al.')
+    .replace(/\bm\.fl\.?$/i, 'm.fl.')
+    .trim();
+}
 
   function findSkbCitations(
   text,
