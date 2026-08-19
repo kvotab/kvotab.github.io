@@ -525,6 +525,10 @@
       }
     }
     if (current) entries.push(current);
+
+    for (const entry of entries) {
+      entry.aliases = collectReferenceAliases(entry);
+    }
     return entries;
   }
 
@@ -561,6 +565,24 @@
     const m = text.match(/^([A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ\-]+(?:\s+(?:et\s+al\.?|m\.fl\.?))?(?:,\s*[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ\.]+)?)(?:,\s*|\s+)(\d{4}[a-z]?)/);
     if (m) return `${m[1]} ${m[2]}`;
     return null;
+  }
+
+  function extractSkbReportKey(text) {
+    const m = text.match(/\b(?:SKB\s+)?((?:TR|R|P|IPR|RD|SR|TM|U|F)-\d{2,}-\d+)\b/i);
+    if (!m) return null;
+    return `SKB ${m[1]}`;
+  }
+
+  function collectReferenceAliases(entry) {
+    const aliases = new Set();
+    if (entry && entry.key) aliases.add(entry.key);
+    if (entry && entry.body) {
+      const ayKey = extractAuthorYearKey(entry.body);
+      if (ayKey) aliases.add(ayKey);
+      const skbKey = extractSkbReportKey(entry.body);
+      if (skbKey) aliases.add(skbKey);
+    }
+    return [...aliases];
   }
 
   // ── Find in-text citations ────────────────────────────────────────────────
@@ -662,12 +684,18 @@
   function crossReference(refEntries, inTextCites, bodyParas) {
     // refByKey maps normalised key → array of entries (supports duplicate keys)
     const refByKey = new Map();
+    const refByAlias = new Map();
     const refByNum = new Map();
 
     for (const e of refEntries) {
       const nk = normaliseKey(e.key);
       if (!refByKey.has(nk)) refByKey.set(nk, []);
       refByKey.get(nk).push(e);
+      for (const alias of (e.aliases || [])) {
+        const na = normaliseKey(alias);
+        if (!refByAlias.has(na)) refByAlias.set(na, []);
+        refByAlias.get(na).push(e);
+      }
       if (e.num !== null) refByNum.set(e.num, e);
       e.cites = [];
     }
@@ -690,6 +718,10 @@
         if (refByKey.has(nk)) {
           // Assign to ALL entries sharing this key so none appear "never cited"
           for (const entry of refByKey.get(nk)) entry.cites.push(c);
+          matched = true;
+        } else if (refByAlias.has(nk)) {
+          // Match on alternate reference keys, e.g. SKB R-13-27 → author-year entry
+          for (const entry of refByAlias.get(nk)) entry.cites.push(c);
           matched = true;
         } else {
           for (const [rk, entries] of refByKey) {
