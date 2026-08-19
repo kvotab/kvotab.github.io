@@ -614,31 +614,134 @@
   return startsLikeAuthor && hasYear;
 }
 
-  function extractAuthorYearKey(text) {
-    // Extended Latin-1 ranges: UC=uppercase, LC=lowercase, AC=any case
-    const UC = 'A-ZÀ-ÖØ-Þ', LC = 'a-zà-öø-ÿ', AC = 'A-Za-zÀ-ÖØ-Þà-öø-ÿ';
-    // Lastname: one or more words; 2nd+ words need ≥3 chars so single initials are excluded
-    const LD  = `[${UC}][${AC}\\-]+(?:\\s+[${UC}][${LC}][${AC}\\-]+)*`;
-    const INI = `[${UC}]{1,2}(?:[.\\- ][${UC}]{1,2})*\\.?`;  // P, P., P-O, P.O., J G, J.A.
-    const SEP = `(?:\\s+|,\\s*)`;                  // space or comma separator
-    // SKB format: first author must end "Initial," to disambiguate from normal sentences
-    if (new RegExp(`^${LD}${SEP}${INI}\\.?,`).test(text)) {
-      const skb = text.match(new RegExp(`^((?:${LD}${SEP}${INI}\\.?(?:,\\s*)?)+)(\\d{4}[a-z]?)`));
-      if (skb) {
-        const lastnames = skb[1].split(/,\s*/)
-          .map(p => p.trim().match(new RegExp(`^([${UC}][${AC}\\-]+(?:\\s+[${UC}][${LC}][${AC}\\-]+)*)`)))
-          .filter(Boolean).map(m => m[1]);
-        const year = skb[2];
-        if (lastnames.length === 1) return `${lastnames[0]} ${year}`;
-        if (lastnames.length === 2) return `${lastnames[0]} and ${lastnames[1]} ${year}`;
-        if (lastnames.length > 2)  return `${lastnames[0]} et al. ${year}`;
+ function extractAuthorYearKey(text) {
+  /*
+    Handle comma-separated SKB author lists such as:
+
+    Abarca E, Idiart A, de Vries L M, Silva O,
+    Molinero J, von Schenck H, 2013. Title...
+  */
+  const listMatch = text.match(
+    /^(.+?),\s*((?:1[89]\d{2}|2\d{3})[a-z]?)\b/
+  );
+
+  if (listMatch) {
+    const authorPart = listMatch[1].trim();
+    const year = listMatch[2];
+
+    const authorItems = authorPart
+      .split(',')
+      .map(item => item.trim())
+      .filter(Boolean);
+
+    const surnames = [];
+
+    for (const item of authorItems) {
+      const words = item
+        .split(/\s+/)
+        .filter(Boolean);
+
+      /*
+        Remove initials from the end of the author item.
+
+        Recognised initial forms:
+          E
+          E.
+          J-O
+          J-O.
+      */
+      while (
+        words.length > 1 &&
+        isAuthorInitial(words[words.length - 1])
+      ) {
+        words.pop();
       }
+
+      /*
+        If no initials were removed, or nothing remains as the surname,
+        this item is not considered a valid author.
+      */
+      if (
+        words.length === 0 ||
+        words.length === item.split(/\s+/).length
+      ) {
+        surnames.length = 0;
+        break;
+      }
+
+      surnames.push(words.join(' '));
     }
-    // Standard formats: Lastname 2020 / Lastname, F. 2020 / Lastname et al. 2020 / Org, 2020
-    const m = text.match(/^([A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ\-]+(?:\s+(?:et\s+al\.?|m\.fl\.?))?(?:,\s*[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ\.]+)?)(?:,\s*|\s+)(\d{4}[a-z]?)/);
-    if (m) return `${m[1]} ${m[2]}`;
-    return null;
+
+    if (surnames.length === 1) {
+      return `${surnames[0]} ${year}`;
+    }
+
+    if (surnames.length === 2) {
+      return `${surnames[0]} and ${surnames[1]} ${year}`;
+    }
+
+    if (surnames.length > 2) {
+      return `${surnames[0]} et al. ${year}`;
+    }
   }
+
+  /*
+    Fallback for references already using a simpler author-year form:
+
+      Smith 2020
+      Smith, J. 2020
+      Smith et al. 2020
+      SKB 2019
+  */
+  const standardMatch = text.match(
+    /^([A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ-]+(?:\s+(?:et\s+al\.?|m\.fl\.?))?(?:,\s*[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ.]+)?)(?:,\s*|\s+)(\d{4}[a-z]?)/
+  );
+
+  if (standardMatch) {
+    return `${standardMatch[1]} ${standardMatch[2]}`;
+  }
+
+  return null;
+}
+
+/*
+  Return true when a word is an author initial.
+
+  Accepted examples:
+    A
+    A.
+    J-O
+    J-O.
+*/
+function isAuthorInitial(value) {
+  const cleaned = value.endsWith('.')
+    ? value.slice(0, -1)
+    : value;
+
+  if (cleaned.length === 1) {
+    return isUppercaseLetter(cleaned);
+  }
+
+  if (
+    cleaned.length === 3 &&
+    cleaned.charAt(1) === '-'
+  ) {
+    return (
+      isUppercaseLetter(cleaned.charAt(0)) &&
+      isUppercaseLetter(cleaned.charAt(2))
+    );
+  }
+
+  return false;
+}
+
+/*
+  Check whether a character is an uppercase Latin letter, including
+  common accented letters.
+*/
+function isUppercaseLetter(character) {
+  return /^[A-ZÀ-ÖØ-Þ]$/.test(character);
+}
 
 /*
   Convert Unicode dash characters commonly introduced by Word or PDF
