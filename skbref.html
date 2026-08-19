@@ -640,7 +640,7 @@
     return null;
   }
 
-  /*
+/*
   Convert Unicode dash characters commonly introduced by Word or PDF
   documents to ordinary ASCII hyphens.
 */
@@ -659,8 +659,9 @@ function normaliseDashes(text) {
 */
 function extractSkbReportKey(text, startOnly = false) {
   const normalized = normaliseDashes(text);
-   const prefix = startOnly
-    ? String.raw`^\s*(?:(?:\[\d+\]|\d+[.)]*\s*)?`
+
+  const prefix = startOnly
+    ? String.raw`^\s*(?:(?:\[\d+\]|\d+[.)])\s*)?`
     : String.raw`\b`;
 
   const re = new RegExp(
@@ -692,10 +693,10 @@ function extractReferenceKey(text) {
     return leadingSkbKey;
   }
 
-  return extractAuthorYYearKey(text);
+  return extractAuthorYearKey(text);
 }
 
-  function collectReferenceAliases(entry) {
+function collectReferenceAliases(entry) {
   const aliases = new Set();
 
   if (entry && entry.key) {
@@ -828,7 +829,7 @@ function extractReferenceKey(text) {
       for (const value of years) {
         const year = value.trim();
 
-        if (/^\d{4}[a-z]?*/.test(year)) {
+        if (/^\d{4}[a-z]?$/.test(year)) {
           out.push({
             key: `SKB ${year}`,
             raw: match[0],
