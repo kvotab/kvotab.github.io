@@ -618,11 +618,14 @@
   /*
     Handle comma-separated SKB author lists such as:
 
-    Abarca E, Idiart A, de Vries L M, Silva O,
-    Molinero J, von Schenck H, 2013. Title...
+      Elfwing M, von Schenck H, Åstrand P-G, 2018. Title...
+      Abarca E, Idiart A, de Vries L M, Silva O, 2013. Title...
+
+    The last comma before the year separates the author list from
+    the publication year.
   */
   const listMatch = text.match(
-    /^(.+?),\s*((?:1[89]\d{2}|2\d{3})[a-z]?)\b/
+    /^(.+),\s*((?:1[89]\d{2}|2\d{3})[a-z]?)\s*[.,]/
   );
 
   if (listMatch) {
@@ -637,39 +640,46 @@
     const surnames = [];
 
     for (const item of authorItems) {
-      const words = item
+      const originalWords = item
         .split(/\s+/)
         .filter(Boolean);
 
-      /*
-        Remove initials from the end of the author item.
+      const words = [...originalWords];
+      let removedInitial = false;
 
-        Recognised initial forms:
-          E
-          E.
-          J-O
-          J-O.
+      /*
+        Remove all initials from the end of the author item.
+
+        Examples:
+
+          Elfwing M       -> Elfwing
+          von Schenck H   -> von Schenck
+          Åstrand P-G     -> Åstrand
+          de Vries L M    -> de Vries
       */
       while (
         words.length > 1 &&
         isAuthorInitial(words[words.length - 1])
       ) {
         words.pop();
+        removedInitial = true;
       }
 
       /*
-        If no initials were removed, or nothing remains as the surname,
-        this item is not considered a valid author.
+        A valid item must contain at least one surname word and at least
+        one initial must have been removed.
       */
-      if (
-        words.length === 0 ||
-        words.length === item.split(/\s+/).length
-      ) {
+      if (!removedInitial || words.length === 0) {
         surnames.length = 0;
         break;
       }
 
-      surnames.push(words.join(' '));
+      const surname = words
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      surnames.push(surname);
     }
 
     if (surnames.length === 1) {
@@ -686,7 +696,8 @@
   }
 
   /*
-    Fallback for references already using a simpler author-year form:
+    Fallback for references already expressed in a simpler
+    author-year form:
 
       Smith 2020
       Smith, J. 2020
@@ -705,30 +716,42 @@
 }
 
 /*
-  Return true when a word is an author initial.
+  Return true if the value is one or more initials.
 
   Accepted examples:
+
     A
     A.
-    J-O
-    J-O.
+    P-G
+    P-G.
+    LM
+    L.M.
 */
 function isAuthorInitial(value) {
-  const cleaned = value.endsWith('.')
-    ? value.slice(0, -1)
-    : value;
+  let cleaned = String(value)
+    .trim()
+    .replace(/\./g, '');
 
-  if (cleaned.length === 1) {
-    return isUppercaseLetter(cleaned);
+  /*
+    Handle hyphenated initials such as P-G.
+  */
+  if (cleaned.includes('-')) {
+    const parts = cleaned.split('-');
+
+    return (
+      parts.length === 2 &&
+      parts.every(part => isUppercaseLetter(part))
+    );
   }
 
-  if (
-    cleaned.length === 3 &&
-    cleaned.charAt(1) === '-'
-  ) {
-    return (
-      isUppercaseLetter(cleaned.charAt(0)) &&
-      isUppercaseLetter(cleaned.charAt(2))
+  /*
+    Handle single or combined initials such as A, LM, or PÖ.
+    Limit the length to avoid interpreting an uppercase surname or
+    organisation abbreviation as initials.
+  */
+  if (cleaned.length >= 1 && cleaned.length <= 3) {
+    return [...cleaned].every(
+      character => isUppercaseLetter(character)
     );
   }
 
@@ -737,7 +760,7 @@ function isAuthorInitial(value) {
 
 /*
   Check whether a character is an uppercase Latin letter, including
-  common accented letters.
+  Swedish and other commonly used accented characters.
 */
 function isUppercaseLetter(character) {
   return /^[A-ZÀ-ÖØ-Þ]$/.test(character);
