@@ -168,6 +168,9 @@
     .forbidden-match { color: var(--color-kvot-accent); font-weight: 700; }
     .forbidden-context { max-width: 520px; color: var(--text-secondary); }
     .forbidden-rule { font-family: 'SF Mono', Menlo, monospace; font-size: .76rem; color: var(--text-muted); }
+    .invalid-citation-match { color: var(--color-kvot-accent); font-weight: 700; }
+    .invalid-citation-context { max-width: 560px; color: var(--text-secondary); }
+    .invalid-citation-reason { color: var(--text-secondary); font-size: .82rem; }
 
     @media (max-width: 700px) { #summary-cards { grid-template-columns: 1fr 1fr; } }
     @media (max-width: 480px) { #app { padding: 14px 12px 32px; } #summary-cards { gap: 8px; } }
@@ -1209,6 +1212,72 @@
       }
 ];
 
+    /*
+      Patterns that indicate likely malformed in-text citations. These rules
+      are intentionally separate from normal citation extraction so they can
+      report suspicious text without changing cross-reference results.
+    */
+    const POTENTIAL_INVALID_CITATION_RULES = [
+      /* Clearly malformed variants of "Surname et al. (2024)". */
+      {
+        pattern: String.raw`\b[\p{L}][\p{L}'’\-]{0,24}\s+et\.al\.?\s*\((?:1[89]|20)\d{2}(?:,\s*(?:1[89]|20)\d{2})*\)`,
+        description: 'Use “et al.” rather than “et.al.”.'
+      },
+      {
+        pattern: String.raw`\b[\p{L}][\p{L}'’\-]{0,24}\s+et\.\s+al\.?\s*\((?:1[89]|20)\d{2}(?:,\s*(?:1[89]|20)\d{2})*\)`,
+        description: 'Remove the period after “et”; write “et al.”.'
+      },
+      {
+        pattern: String.raw`\b[\p{L}][\p{L}'’\-]{0,24}\s+et\s+al(?!\.)\s*\((?:1[89]|20)\d{2}(?:,\s*(?:1[89]|20)\d{2})*\)`,
+        description: 'Add a period after “al”; write “et al.”.'
+      },
+
+      /* Punctuation that is normally not used in narrative citations. */
+      {
+        pattern: String.raw`\b[\p{L}][\p{L}'’\-]{0,24},\s*\((?:1[89]|20)\d{2}\)`,
+        description: 'Possible stray comma between the author name and the parenthesized year.'
+      },
+      {
+        pattern: String.raw`\b[\p{L}][\p{L}'’\-]{0,24}\s+&\s+[\p{L}][\p{L}'’\-]{0,24}\s*\((?:1[89]|20)\d{2}\)`,
+        description: 'In narrative text, use “and” rather than “&” between two authors.'
+      },
+      {
+        pattern: String.raw`\b[\p{L}][\p{L}'’\-]{0,24},\s+and\s+[\p{L}][\p{L}'’\-]{0,24}\s*\((?:1[89]|20)\d{2}\)`,
+        description: 'Possible unnecessary comma before “and” in a two-author narrative citation.'
+      },
+
+      /* SKB report citations with the report number incorrectly parenthesized. */
+      {
+        pattern: String.raw`\bSKB\s*\(\s*(?:TR|R|P|IPR|RD|SR|TM|U|F)-\d{2,}-\d+\s*\)`,
+        description: 'Place the report number directly after SKB, for example “SKB TR-23-01”.'
+      },
+      {
+        pattern: String.raw`\bSKB\s+(?:TR|R|P|IPR|RD|SR|TM|U|F)\s+\d{2,}-\d+\b`,
+        description: 'A hyphen appears to be missing between the report series and year, for example “SKB TR-23-01”.'
+      },
+      {
+        pattern: String.raw`\bSKB\s+(?:TR|R|P|IPR|RD|SR|TM|U|F)-\d{2,}\s+-?\s*\d+\b`,
+        description: 'The SKB report number contains suspicious whitespace around its second hyphen.'
+      },
+
+      /* Kept for possible future use, but disabled because these are valid. */
+      {
+        enabled: false,
+        pattern: String.raw`\b[\p{L}][\p{L}'’\-]{0,24}\s*\((?:1[89]|20)\d{2}\)`,
+        description: 'Disabled: a single-author narrative citation such as “Smith (2020)” is valid.'
+      },
+      {
+        enabled: false,
+        pattern: String.raw`\b[\p{L}][\p{L}'’\-]{0,24}\s+and\s+[\p{L}][\p{L}'’\-]{0,24}\s*\((?:1[89]|20)\d{2}\)`,
+        description: 'Disabled: a two-author narrative citation such as “Smith and Jones (2020)” is valid.'
+      },
+      {
+        enabled: false,
+        pattern: String.raw`\(\s*SKB\s+(?:TR|R|P|IPR|RD|SR|TM|U|F)-\d{2,}-\d+\s*\)`,
+        description: 'Disabled: a correctly formed SKB report citation may validly occur inside sentence-level parentheses.'
+      }
+    ];
+
     let currentReport = null;
     let currentRefEntries = [];
     let currentFilename = '';
@@ -1287,6 +1356,7 @@
         showStatus('Finding reference list…');
         await yieldToBrowser();
         const { refListParagraphs, bodyParagraphs, refListStart } = splitAtRefList(paragraphs);
+        const potentialInvalidCitations = findPotentialInvalidCitations(bodyParagraphs);
         console.info('Reference-list detection', {
           totalParagraphCount: paragraphs.length,
           refListStart,
@@ -1330,7 +1400,7 @@
         setProgress(100);
         hideStatus();
         setTimeout(hideProgress, 450);
-        renderResults(file.name, refEntries, inTextCites, report, formatIssues, forbiddenMatches, paragraphs.length, refListStart, isSwedish);
+        renderResults(file.name, refEntries, inTextCites, report, formatIssues, forbiddenMatches, potentialInvalidCitations, paragraphs.length, refListStart, isSwedish);
       } catch (error) {
         hideStatus();
         hideProgress();
@@ -2140,6 +2210,85 @@ ${exportedResults.innerHTML}
       URL.revokeObjectURL(url);
     }
 
+    function findPotentialInvalidCitations(paragraphs) {
+      const matches = [];
+
+      for (let ruleIndex = 0; ruleIndex < POTENTIAL_INVALID_CITATION_RULES.length; ruleIndex++) {
+        const rule = POTENTIAL_INVALID_CITATION_RULES[ruleIndex];
+        if (rule.enabled === false) continue;
+        let expression;
+
+        try {
+          expression = new RegExp(rule.pattern, 'gu');
+        } catch (error) {
+          console.warn('Invalid potential-citation regular expression:', rule.pattern, error);
+          continue;
+        }
+
+        for (const paragraph of paragraphs) {
+          const text = paragraph.text || '';
+          expression.lastIndex = 0;
+          let match;
+
+          while ((match = expression.exec(text)) !== null) {
+            const contextStart = Math.max(0, match.index - 65);
+            const contextEnd = Math.min(text.length, match.index + match[0].length + 65);
+
+            matches.push({
+              ruleIndex,
+              pattern: rule.pattern,
+              description: rule.description,
+              match: match[0],
+              paragraphIndex: paragraph.index,
+              section: paragraph.section || '',
+              context: `${contextStart > 0 ? '…' : ''}${text.slice(contextStart, contextEnd)}${contextEnd < text.length ? '…' : ''}`
+            });
+
+            if (match[0].length === 0) expression.lastIndex++;
+          }
+        }
+      }
+
+      /* Remove duplicate findings caused by overlapping rules. */
+      const seen = new Set();
+      return matches.filter(item => {
+        const key = `${item.paragraphIndex}\u0000${item.match}\u0000${item.description}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    }
+
+    function buildPotentialInvalidCitationsSection(matches) {
+      /* The pane should exist only when at least one potential mistake exists. */
+      if (!matches.length) return '';
+
+      const rows = matches.map(item => `
+        <tr class="error-row">
+          <td>
+            <span class="invalid-citation-match">${escHtml(item.match)}</span>
+            <div class="forbidden-rule">${escHtml(item.pattern)}</div>
+          </td>
+          <td class="invalid-citation-reason">${escHtml(item.description)}</td>
+          <td>
+            <div class="cite-pages">paragraph ${item.paragraphIndex + 1}${item.section ? ` · ${escHtml(item.section)}` : ''}</div>
+            <div class="invalid-citation-context">${escHtml(item.context)}</div>
+          </td>
+        </tr>`).join('');
+
+      return section(
+        'Potential invalid in-text citations',
+        matches.length,
+        `<table class="ref-table">
+           <thead>
+             <tr><th>Potential mistake</th><th>Problem description</th><th>Location and context</th></tr>
+           </thead>
+           <tbody>${rows}</tbody>
+         </table>`,
+        false
+      );
+    }
+
     function findForbiddenWordMatches(paragraphs) {
       const matches = [];
       for (let ruleIndex = 0; ruleIndex < FORBIDDEN_WORD_RULES.length; ruleIndex++) {
@@ -2222,7 +2371,7 @@ ${exportedResults.innerHTML}
       );
     }
 
-    function renderResults(filename, entries, citations, report, issues, forbiddenMatches, total, start, isSwedish) {
+    function renderResults(filename, entries, citations, report, issues, forbiddenMatches, potentialInvalidCitations, total, start, isSwedish) {
       docInfo.innerHTML = `<strong>${escHtml(filename)}</strong> ${isSwedish ? '🇸🇪 Svenska — ' : ''}${total} paragraphs · ${entries.length} reference list entries · ${citations.length} in-text citation occurrences · ${start >= 0 ? `Reference list found at paragraph ${start + 1}.` : 'No reference list section detected.'}`;
       docInfo.classList.add('show');
       const cited = entries.filter(entry => entry.cites.length).length;
@@ -2232,7 +2381,7 @@ ${exportedResults.innerHTML}
       setSummary('issues', issues.length, issues.length ? 'warn' : 'ok');
       summaryCards.classList.add('show');
       resultActions.classList.add('show');
-      results.innerHTML = buildRefListSection(entries) + buildOrphanSection(report.orphanCites) + buildUncitedSection(report.uncitedRefs) + buildFormatSection(issues, entries) + buildForbiddenWordsSection(forbiddenMatches);
+      results.innerHTML = buildRefListSection(entries) + buildOrphanSection(report.orphanCites) + buildPotentialInvalidCitationsSection(potentialInvalidCitations) + buildUncitedSection(report.uncitedRefs) + buildFormatSection(issues, entries) + buildForbiddenWordsSection(forbiddenMatches);
       resetBtn.classList.add('show');
     }
 
