@@ -2,251 +2,118 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <link href="https://unpkg.com/leaflet@1.9.2/dist/leaflet.css" rel="stylesheet">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.2/dist/leaflet.css">
   <script src="https://unpkg.com/leaflet@1.9.2/dist/leaflet.js"></script>
   <link rel="stylesheet" href="./resources/css/kvot.css">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <title>SKB Reference Checker</title>
   <style>
-    /* Layout */
-    header { position:fixed;top:0;left:0;right:0;z-index:20;background:var(--footer-bg);box-shadow:0 2px 8px rgba(0,0,0,.12); }
-    body   { overflow-x:hidden; }
-    .content { padding-top:56px;padding-bottom:48px;min-height:calc(100vh - 104px); }
-    #app { width:100%;max-width:980px;margin:0 auto;padding:28px 28px 56px;box-sizing:border-box; }
+    header { position: fixed; inset: 0 0 auto; z-index: 20; background: var(--footer-bg); box-shadow: 0 2px 8px rgba(0,0,0,.12); }
+    body { overflow-x: hidden; }
+    .content { min-height: calc(100vh - 104px); padding: 56px 0 48px; }
+    #app { box-sizing: border-box; width: 100%; max-width: 980px; margin: 0 auto; padding: 28px 28px 56px; }
 
-    /* Drop zone */
-    #dropzone {
-      border:2px dashed var(--border-color);border-radius:14px;
-      padding:48px 24px;text-align:center;cursor:pointer;
-      background:var(--bg-secondary);transition:border-color .15s,background .15s;
-      margin-bottom:24px;
-    }
-    #dropzone.drag-over { border-color:var(--color-kvot-bright);background:color-mix(in srgb,var(--color-kvot-bright) 6%,var(--bg-secondary)); }
-    #dropzone input[type=file] { display:none; }
-    #dropzone .dz-icon { font-size:2.4rem;margin-bottom:10px;opacity:.6; }
-    #dropzone .dz-label { font-size:1rem;font-weight:600;color:var(--text-primary);margin-bottom:4px; }
-    #dropzone .dz-sub { font-size:.84rem;color:var(--text-muted); }
-    #dropzone .dz-btn {
-      display:inline-block;margin-top:14px;padding:8px 20px;border-radius:20px;
-      background:var(--color-kvot-bright);color:#fff;font-size:.88rem;font-weight:600;
-      border:none;cursor:pointer;transition:opacity .15s;
-    }
-    #dropzone .dz-btn:hover { opacity:.88; }
-/* Optional Zotero lookup */
-#zotero-actions {
-  display: none;
-  clear: both;
-  align-items: center;
-  gap: 12px;
-  padding: 16px;
-  margin-top: 4px;
-  margin-bottom: 20px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: 10px;
-}
+    #dropzone { margin-bottom: 24px; padding: 48px 24px; border: 2px dashed var(--border-color); border-radius: 14px; background: var(--bg-secondary); text-align: center; cursor: pointer; transition: border-color .15s, background .15s; }
+    #dropzone.drag-over { border-color: var(--color-kvot-bright); background: color-mix(in srgb, var(--color-kvot-bright) 6%, var(--bg-secondary)); }
+    #dropzone input { display: none; }
+    #dropzone .dz-icon { margin-bottom: 10px; font-size: 2.4rem; opacity: .6; }
+    #dropzone .dz-label { margin-bottom: 4px; color: var(--text-primary); font-size: 1rem; font-weight: 600; }
+    #dropzone .dz-sub { color: var(--text-muted); font-size: .84rem; }
+    .primary-btn { display: inline-block; padding: 8px 20px; border: 0; border-radius: 20px; background: var(--color-kvot-bright); color: #fff; font-size: .88rem; font-weight: 600; cursor: pointer; transition: opacity .15s; }
+    #dropzone .primary-btn { margin-top: 14px; }
+    .primary-btn:hover:not(:disabled) { opacity: .88; }
+    .primary-btn:disabled { cursor: wait; opacity: .6; }
 
-#zotero-actions.show {
-  display: flex;
-}
+    #status-bar { display: none; align-items: center; gap: 10px; margin-bottom: 20px; padding: 12px 16px; border: 1px solid var(--border-color); border-radius: 10px; background: var(--bg-secondary); color: var(--text-secondary); font-size: .88rem; }
+    #status-bar.show { display: flex; }
+    .spinner { width: 16px; height: 16px; flex: 0 0 auto; border: 2px solid var(--border-color); border-top-color: var(--color-kvot-bright); border-radius: 50%; animation: spin .7s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
 
-#zotero-check-btn {
-  display: inline-block;
-  padding: 8px 20px;
-  border: none;
-  border-radius: 20px;
-  background: var(--color-kvot-bright);
-  color: #fff;
-  font-size: .88rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: opacity .15s;
-}
+    #doc-info { display: none; margin-bottom: 20px; padding: 10px 16px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-secondary); color: var(--text-secondary); font-size: .84rem; line-height: 1.6; }
+    #doc-info.show { display: block; }
+    #doc-info strong { color: var(--text-primary); }
 
-#zotero-check-btn:hover:not(:disabled) {
-  opacity: .88;
-}
+    #summary-cards { display: none; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 24px; }
+    #summary-cards.show { display: grid; }
+    .sum-card { padding: 14px 16px; border: 1px solid var(--border-color); border-radius: 10px; background: var(--bg-secondary); text-align: center; }
+    .sum-card.warn { border-color: var(--color-kvot-accent); background: color-mix(in srgb, var(--color-kvot-accent) 8%, var(--bg-secondary)); }
+    .sum-card.ok { border-color: #5cb85c; background: color-mix(in srgb, #5cb85c 8%, var(--bg-secondary)); }
+    .sum-label { margin-bottom: 4px; color: var(--text-muted); font-size: .7rem; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
+    .sum-value { color: var(--text-primary); font: 700 1.5rem 'SF Mono', Menlo, monospace; }
+    .sum-card.warn .sum-value { color: var(--color-kvot-accent); }
+    .sum-card.ok .sum-value { color: #5cb85c; }
 
-#zotero-check-btn:disabled {
-  cursor: default;
-  opacity: .6;
-}
+    #zotero-actions { display: none; clear: both; align-items: center; gap: 12px; margin: 4px 0 20px; padding: 16px; border: 1px solid var(--border-color); border-radius: 10px; background: var(--bg-secondary); }
+    #zotero-actions.show { display: flex; }
+    #zotero-status { display: none; color: var(--text-muted); font-size: .84rem; line-height: 1.5; }
+    #zotero-status.show { display: inline; }
+    #zotero-results { margin-bottom: 20px; }
 
-#zotero-status {
-  display: none;
-  line-height: 1.5;
-  font-size: .84rem;
-  color: var(--text-muted);
-}
+    #reset-btn { display: none; float: right; margin-top: -4px; padding: 5px 14px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-secondary); color: var(--text-secondary); font-size: .82rem; cursor: pointer; }
+    #reset-btn.show { display: inline-block; }
+    #reset-btn:hover { border-color: var(--color-kvot-bright); color: var(--text-primary); }
 
-#zotero-status.show {
-  display: inline;
-}
+    .result-section { margin-bottom: 16px; border-radius: 10px; }
+    .result-section summary { display: flex; align-items: center; gap: 8px; padding: 11px 16px; border: 1px solid var(--border-color); border-radius: 10px; background: var(--bg-secondary); color: var(--text-primary); font-size: .88rem; font-weight: 600; cursor: pointer; list-style: none; user-select: none; }
+    .result-section summary::-webkit-details-marker { display: none; }
+    .result-section summary::before { content: '▸'; flex: 0 0 auto; color: var(--text-muted); font-size: .72em; transition: transform .2s; }
+    .result-section[open] > summary::before { transform: rotate(90deg); }
+    .result-section[open] > summary { border-radius: 10px 10px 0 0; border-bottom-color: transparent; }
+    .result-section summary:hover { border-color: var(--color-kvot-bright); background: var(--bg-surface); }
+    .section-body { padding: 16px 18px; border: 1px solid var(--border-color); border-top: 0; border-radius: 0 0 10px 10px; background: var(--bg-secondary); }
+    .section-badge { margin-left: auto; padding: 2px 10px; border-radius: 12px; background: var(--border-color); color: var(--text-muted); font-size: .74rem; font-weight: 700; }
+    .section-badge.error { background: color-mix(in srgb, var(--color-kvot-accent) 18%, var(--bg-secondary)); color: var(--color-kvot-accent); }
+    .section-badge.warn { background: color-mix(in srgb, #f0ad4e 18%, var(--bg-secondary)); color: #c87d0a; }
+    .section-badge.good { background: color-mix(in srgb, #5cb85c 18%, var(--bg-secondary)); color: #357a35; }
 
-#zotero-results {
-  margin-bottom: 20px;
-}
+    .ref-table { width: 100%; border-collapse: collapse; font-size: .86rem; }
+    .ref-table th { padding: 8px 10px; border-bottom: 1px solid var(--border-color); color: var(--text-muted); font-size: .72rem; font-weight: 700; letter-spacing: .06em; text-align: left; text-transform: uppercase; white-space: nowrap; }
+    .ref-table td { padding: 8px 10px; border-bottom: 1px solid var(--border-color); line-height: 1.4; vertical-align: top; }
+    .ref-table tr:last-child td { border-bottom: 0; }
+    .ref-table tr:hover td { background: var(--bg-surface); }
+    .ref-key { color: var(--color-kvot-accent); font: .83rem 'SF Mono', Menlo, monospace; white-space: nowrap; }
+    .ref-text { max-width: 420px; color: var(--text-secondary); }
+    .cite-count { color: var(--text-primary); font-weight: 700; }
+    .cite-pages { margin-top: 2px; color: var(--text-muted); font-size: .78rem; }
+    .warn-row td { background: color-mix(in srgb, #f0ad4e 5%, var(--bg-secondary)); }
+    .error-row td { background: color-mix(in srgb, var(--color-kvot-accent) 5%, var(--bg-secondary)); }
+    .issue-list { margin: 0; padding-left: 16px; color: var(--color-kvot-accent); font-size: .84rem; }
+    .tag-list { display: flex; flex-wrap: wrap; gap: 6px; }
+    .tag { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border: 1px solid var(--border-color); border-radius: 14px; background: var(--bg-secondary); font-size: .82rem; font-weight: 500; }
+    .tag.warn-tag { border-color: #f0ad4e; background: color-mix(in srgb, #f0ad4e 8%, var(--bg-secondary)); color: #c87d0a; }
+    .empty-notice { padding: 6px 0; color: var(--text-muted); font-size: .88rem; font-style: italic; }
 
-    /* Progress / status */
-    #status-bar { display:none;align-items:center;gap:10px;padding:12px 16px;
-      background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:10px;
-      margin-bottom:20px;font-size:.88rem;color:var(--text-secondary); }
-    #status-bar.show { display:flex; }
-    .spinner { width:16px;height:16px;border:2px solid var(--border-color);
-      border-top-color:var(--color-kvot-bright);border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0; }
-    @keyframes spin { to { transform:rotate(360deg); } }
-
-    /* Summary cards */
-    #summary-cards { display:none;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px; }
-    #summary-cards.show { display:grid; }
-    .sum-card { background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:10px;
-      padding:14px 16px;text-align:center; }
-    .sum-card.warn  { border-color:var(--color-kvot-accent);background:color-mix(in srgb,var(--color-kvot-accent) 8%,var(--bg-secondary)); }
-    .sum-card.ok    { border-color:#5cb85c;background:color-mix(in srgb,#5cb85c 8%,var(--bg-secondary)); }
-    .sum-label { font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text-muted);margin-bottom:4px; }
-    .sum-value { font-size:1.5rem;font-weight:700;color:var(--text-primary);font-family:'SF Mono',Menlo,monospace; }
-    .sum-card.warn .sum-value { color:var(--color-kvot-accent); }
-    .sum-card.ok   .sum-value { color:#5cb85c; }
-
-    /* Result sections (collapsible) */
-    .result-section { margin-bottom:16px;border-radius:10px; }
-    .result-section summary {
-      cursor:pointer;padding:11px 16px;background:var(--bg-secondary);border:1px solid var(--border-color);
-      border-radius:10px;font-weight:600;font-size:.88rem;color:var(--text-primary);
-      display:flex;align-items:center;gap:8px;list-style:none;
-      transition:background .12s,border-color .12s;user-select:none;-webkit-user-select:none;
-    }
-    .result-section summary::-webkit-details-marker { display:none; }
-    .result-section summary::before { content:'▸';font-size:.72em;color:var(--text-muted);transition:transform .2s;flex-shrink:0; }
-    .result-section[open]>summary::before { transform:rotate(90deg); }
-    .result-section summary:hover { background:var(--bg-surface);border-color:var(--color-kvot-bright); }
-    .result-section[open]>summary { border-radius:10px 10px 0 0;border-bottom-color:transparent; }
-    .section-badge {
-      margin-left:auto;font-size:.74rem;font-weight:700;padding:2px 10px;
-      border-radius:12px;background:var(--border-color);color:var(--text-muted);
-    }
-    .section-badge.error  { background:color-mix(in srgb,var(--color-kvot-accent) 18%,var(--bg-secondary));color:var(--color-kvot-accent); }
-    .section-badge.warn   { background:color-mix(in srgb,#f0ad4e 18%,var(--bg-secondary));color:#c87d0a; }
-    .section-badge.good   { background:color-mix(in srgb,#5cb85c 18%,var(--bg-secondary));color:#357a35; }
-    [data-theme="dark"] .section-badge.warn  { color:#f0c060; }
-    [data-theme="dark"] .section-badge.good  { color:#6dd36d; }
-    .section-body { padding:16px 18px;background:var(--bg-secondary);border:1px solid var(--border-color);border-top:none;border-radius:0 0 10px 10px; }
-    .section-body a:hover {
-      text-decoration: underline;
-    }
-
-    /* Reference table */
-    .ref-table { width:100%;border-collapse:collapse;font-size:.86rem; }
-    .ref-table th { text-align:left;padding:8px 10px;font-size:.72rem;font-weight:700;text-transform:uppercase;
-      letter-spacing:.06em;color:var(--text-muted);border-bottom:1px solid var(--border-color);white-space:nowrap; }
-    .ref-table td { padding:8px 10px;vertical-align:top;border-bottom:1px solid var(--border-color);line-height:1.4; }
-    .ref-table tr:last-child td { border-bottom:none; }
-    .ref-table tr:hover td { background:var(--bg-surface); }
-    .ref-key { font-family:'SF Mono',Menlo,monospace;font-size:.83rem;color:var(--color-kvot-accent);white-space:nowrap; }
-    .ref-text { color:var(--text-secondary);max-width:420px; }
-    .ref-text em { font-style:normal;background:color-mix(in srgb,var(--color-kvot-bright) 18%,transparent);
-      border-radius:3px;padding:0 2px; }
-    .cite-count { font-weight:700;color:var(--text-primary); }
-    .cite-pages { font-size:.78rem;color:var(--text-muted);margin-top:2px; }
-    .issue-list { margin:0;padding:0 0 0 16px;color:var(--color-kvot-accent);font-size:.84rem; }
-    .issue-list li { margin-bottom:2px; }
-    .warn-row td { background:color-mix(in srgb,#f0ad4e 5%,var(--bg-secondary)); }
-    .error-row td { background:color-mix(in srgb,var(--color-kvot-accent) 5%,var(--bg-secondary)); }
-
-    /* Orphan / missing lists */
-    .tag-list { display:flex;flex-wrap:wrap;gap:6px;margin-top:0; }
-    .tag { display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:14px;
-      font-size:.82rem;font-weight:500;border:1px solid var(--border-color);background:var(--bg-secondary); }
-    .tag.error-tag { border-color:var(--color-kvot-accent);color:var(--color-kvot-accent);
-      background:color-mix(in srgb,var(--color-kvot-accent) 8%,var(--bg-secondary)); }
-    .tag.warn-tag  { border-color:#f0ad4e;color:#c87d0a;
-      background:color-mix(in srgb,#f0ad4e 8%,var(--bg-secondary)); }
-    [data-theme="dark"] .tag.warn-tag { color:#f0c060; }
-    .tag code { font-family:'SF Mono',Menlo,monospace;font-size:.82rem; }
-
-    /* Document info bar */
-    #doc-info { display:none;padding:10px 16px;background:var(--bg-secondary);
-      border:1px solid var(--border-color);border-radius:8px;margin-bottom:20px;
-      font-size:.84rem;color:var(--text-secondary);line-height:1.6; }
-    #doc-info.show { display:block; }
-    #doc-info strong { color:var(--text-primary); }
-
-    /* Reset button */
-    #reset-btn { display:none;float:right;margin-top:-4px;padding:5px 14px;
-      background:var(--bg-secondary);border:1px solid var(--border-color);
-      border-radius:8px;font-size:.82rem;color:var(--text-secondary);cursor:pointer; }
-    #reset-btn:hover { border-color:var(--color-kvot-bright);color:var(--text-primary); }
-    #reset-btn.show { display:inline-block; }
-
-    /* Empty state */
-    .empty-notice { color:var(--text-muted);font-size:.88rem;font-style:italic;padding:6px 0; }
-
-    /* Responsive */
-    @media (max-width:700px) { #summary-cards{grid-template-columns:1fr 1fr} }
-    @media (max-width:480px) { #app{padding:14px 12px 32px} #summary-cards{grid-template-columns:1fr 1fr;gap:8px} }
+    @media (max-width: 700px) { #summary-cards { grid-template-columns: 1fr 1fr; } #zotero-actions { align-items: stretch; flex-direction: column; } }
+    @media (max-width: 480px) { #app { padding: 14px 12px 32px; } #summary-cards { gap: 8px; } }
   </style>
 </head>
 <body>
   <header></header>
   <div class="content">
     <div id="app">
-
       <button id="reset-btn" title="Analyse another document">↩ New document</button>
-
-      <!-- Drop zone -->
       <div id="dropzone" role="region" aria-label="Upload Word document">
         <input type="file" id="file-input" accept=".docx">
         <div class="dz-icon">📄</div>
         <div class="dz-label">Drop a Word file here</div>
-        <div class="dz-sub">or click to browse &mdash; .docx only</div>
-        <button class="dz-btn" type="button" onclick="document.getElementById('file-input').click()">Choose file</button>
+        <div class="dz-sub">or click to browse — .docx only</div>
+        <button class="primary-btn" id="choose-file-btn" type="button">Choose file</button>
       </div>
-
-      <!-- Status bar -->
-      <div id="status-bar"><div class="spinner"></div><span id="status-msg">Analysing&hellip;</span></div>
-
-      <!-- Document info -->
+      <div id="status-bar"><div class="spinner"></div><span id="status-msg">Analysing…</span></div>
       <div id="doc-info"></div>
-
-      <!-- Summary cards -->
       <div id="summary-cards">
-        <div class="sum-card" id="card-total">
-          <div class="sum-label">References in list</div>
-          <div class="sum-value" id="cnt-total">—</div>
-        </div>
-        <div class="sum-card" id="card-cited">
-          <div class="sum-label">Cited in text</div>
-          <div class="sum-value" id="cnt-cited">—</div>
-        </div>
-        <div class="sum-card" id="card-orphan">
-          <div class="sum-label">Orphan in-text</div>
-          <div class="sum-value" id="cnt-orphan">—</div>
-        </div>
-        <div class="sum-card" id="card-issues">
-          <div class="sum-label">Format issues</div>
-          <div class="sum-value" id="cnt-issues">—</div>
-        </div>
+        <div class="sum-card" id="card-total"><div class="sum-label">References in list</div><div class="sum-value" id="cnt-total">—</div></div>
+        <div class="sum-card" id="card-cited"><div class="sum-label">Cited in text</div><div class="sum-value" id="cnt-cited">—</div></div>
+        <div class="sum-card" id="card-orphan"><div class="sum-label">Orphan in-text</div><div class="sum-value" id="cnt-orphan">—</div></div>
+        <div class="sum-card" id="card-issues"><div class="sum-label">Format issues</div><div class="sum-value" id="cnt-issues">—</div></div>
       </div>
-
-      <!-- Optional Zotero lookup -->
-<div id="zotero-actions">
-  <button
-    id="zotero-check-btn"
-    type="button"
-  >
-    Check unmatched references in Zotero
-  </button>
-
-  <span id="zotero-status"></span>
-</div>
-
-<!-- Zotero lookup results -->
-<div id="zotero-results"></div>
-
-<!-- Normal document-analysis results -->
-<div id="results"></div>
-
+      <div id="zotero-actions">
+        <button id="zotero-check-btn" class="primary-btn" type="button">Check unmatched references in Zotero</button>
+        <span id="zotero-status"></span>
+      </div>
+      <div id="zotero-results"></div>
+      <div id="results"></div>
     </div>
     <div id="map"></div>
   </div>
@@ -259,3597 +126,341 @@
     KVOT.renderFooter();
     KVOT.initMap('map');
   </script>
-
-  <!-- JSZip for unzipping .docx (docx = zip of XML) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-
   <script>
-  /* ====================================================================
-     SKB Reference Checker — core logic
-     ====================================================================
+    'use strict';
 
-     SKB reference style (from "Angivande av referenser i publika rapporter"
-     and "Skrivhandboken"):
+    const $ = id => document.getElementById(id);
+    const dropzone = $('dropzone');
+    const fileInput = $('file-input');
+    const statusBar = $('status-bar');
+    const statusMsg = $('status-msg');
+    const docInfo = $('doc-info');
+    const summaryCards = $('summary-cards');
+    const results = $('results');
+    const resetBtn = $('reset-btn');
+    const zoteroActions = $('zotero-actions');
+    const zoteroCheckBtn = $('zotero-check-btn');
+    const zoteroStatus = $('zotero-status');
+    const zoteroResults = $('zotero-results');
 
-     IN-TEXT CITATIONS
-     -----------------
-     • Author-year style: (Author 2024)  (Author et al. 2024)
-       Author and Author (2024)  (Author 2024, Author2 2023)
-     • SKB report shorthand: SKB 2011a  SKB (2011b)  SKB TR-10-48
+    const ZOTERO_CONFIG = Object.freeze({
+      groupId: '6640399', apiVersion: '3', minimumScore: 55,
+      maximumCandidates: 3, searchResultLimit: 15,
+      searchTimeoutMilliseconds: 10000,
+      maximumOrphanLookups: 5, maximumUncitedLookups: 5
+    });
 
-     REFERENCE LIST
-     --------------
-     Detected by heading matching "References", "Litteratur", "Referenser",
-     "Referenslista", "Bibliography" or similar (case-insensitive).
+    let currentReport = null;
+    let zoteroLookupRunning = false;
+    const zoteroSearchCache = new Map();
+    const examinedZoteroItemKeys = new Set();
 
-     SKB FORMAT RULES CHECKED
-     ------------------------
-     1. Report number present for SKB reports (TR-XX-YY, R-XX-YY, P-XX-YY,
-        IPR-XX-YY, RD&D-XX, SKB-R-XX-YY, STUDSVIK/NW-XX-YY, etc.)
-     2. Year present and in plausible range (1900–2099)
-     3. Author(s) present — not just a URL
-     4. For numbered lists: entry starts with digit (or [digit])
-     5. Title should be present (rough check: entry long enough)
-     6. Trailing period or expected end punctuation
-  ==================================================================== */
+    dropzone.addEventListener('dragover', event => { event.preventDefault(); dropzone.classList.add('drag-over'); });
+    dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag-over'));
+    dropzone.addEventListener('drop', event => { event.preventDefault(); dropzone.classList.remove('drag-over'); if (event.dataTransfer.files[0]) handleFile(event.dataTransfer.files[0]); });
+    dropzone.addEventListener('click', event => { if (!event.target.closest('button') && event.target !== fileInput) fileInput.click(); });
+    $('choose-file-btn').addEventListener('click', event => { event.stopPropagation(); fileInput.click(); });
+    fileInput.addEventListener('change', () => { if (fileInput.files[0]) handleFile(fileInput.files[0]); });
+    resetBtn.addEventListener('click', resetUI);
+    zoteroCheckBtn.addEventListener('click', runOptionalZoteroCheck);
 
-  // ── DOM refs ──────────────────────────────────────────────────────────────
-  const dropzone   = document.getElementById('dropzone');
-  const fileInput  = document.getElementById('file-input');
-  const statusBar  = document.getElementById('status-bar');
-  const statusMsg  = document.getElementById('status-msg');
-  const docInfo    = document.getElementById('doc-info');
-  const summCards  = document.getElementById('summary-cards');
-  const results    = document.getElementById('results');
-  const resetBtn   = document.getElementById('reset-btn');
-const zoteroActions =
-  document.getElementById('zotero-actions');
-
-const zoteroCheckBtn =
-  document.getElementById('zotero-check-btn');
-
-const zoteroStatus =
-  document.getElementById('zotero-status');
-
-const zoteroResults =
-  document.getElementById('zotero-results');
-
-/*
-  Store the most recent analysis so the Zotero button can use it
-  without parsing the Word document again.
-*/
-let currentReport = null;
-let currentRefEntries = [];
-let zoteroLookupRunning = false;
-
-/*
-  ===============================================================
-  Zotero Web API configuration
-  ===============================================================
-
-  The library is public, so no API key is needed.
-*/
-const ZOTERO_CONFIG = {
-  groupId: '6640399',
-  apiVersion: '3',
-  minimumScore: 55,
-  maximumCandidates: 3,
-
-  searchResultLimit: 15,
-  searchTimeoutMilliseconds: 10000,
-
-  maximumOrphanLookups: 5,
-  maximumUncitedLookups: 5
-};
-
-  // ── Drag-and-drop wiring ──────────────────────────────────────────────────
-  dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('drag-over'); });
-  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag-over'));
-  dropzone.addEventListener('drop', e => {
-    e.preventDefault(); dropzone.classList.remove('drag-over');
-    const f = e.dataTransfer.files[0];
-    if (f) handleFile(f);
-  });
-  dropzone.addEventListener('click', e => {
-    if (e.target.closest('.dz-btn') || e.target === fileInput) return;
-    fileInput.click();
-  });
-  fileInput.addEventListener('change', () => { if (fileInput.files[0]) handleFile(fileInput.files[0]); });
-  resetBtn.addEventListener('click', resetUI);
-
-  zoteroCheckBtn.addEventListener(
-  'click',
-  runOptionalZoteroCheck
-);
-
-  // ── Reset ─────────────────────────────────────────────────────────────────
-  function resetUI() {
-  dropzone.style.display = '';
-
-  statusBar.classList.remove('show');
-  docInfo.classList.remove('show');
-  summCards.classList.remove('show');
-
-  results.innerHTML = '';
-
-  resetBtn.classList.remove('show');
-  fileInput.value = '';
-
-  /*
-    Clear the stored normal analysis.
-  */
-  currentReport = null;
-  currentRefEntries = [];
-
-  /*
-    Reset the optional Zotero interface.
-  */
-  zoteroLookupRunning = false;
-zoteroActions.classList.remove('show');
-
-zoteroStatus.classList.remove('show');
-zoteroStatus.textContent = '';
-
-  zoteroResults.innerHTML = '';
-
-  zoteroCheckBtn.disabled = false;
-  zoteroCheckBtn.textContent =
-    'Check unmatched references in Zotero';
-}
-function showZoteroButton(report) {
-  if (!report) {
-    zoteroActions.classList.remove('show');
-    return;
-  }
-
-  const orphanCount =
-    Array.isArray(report.orphanCites)
-      ? report.orphanCites.length
-      : 0;
-
-  const uncitedCount =
-    Array.isArray(report.uncitedRefs)
-      ? report.uncitedRefs.length
-      : 0;
-
-  zoteroActions.classList.add('show');
-
-  zoteroStatus.classList.remove('show');
-  zoteroStatus.textContent = '';
-
-  zoteroResults.innerHTML = '';
-
-  if (
-    orphanCount === 0 &&
-    uncitedCount === 0
-  ) {
-    zoteroCheckBtn.disabled = true;
-    zoteroCheckBtn.textContent =
-      'Check Zotero — no unmatched items';
-
-    return;
-  }
-
-  zoteroCheckBtn.disabled = false;
-
-  zoteroCheckBtn.textContent =
-    `Check Zotero (` +
-    `${orphanCount} orphan citation` +
-    `${orphanCount === 1 ? '' : 's'}, ` +
-    `${uncitedCount} uncited reference` +
-    `${uncitedCount === 1 ? '' : 's'})`;
-}
-
-async function runOptionalZoteroCheck() {
-  if (
-    zoteroLookupRunning ||
-    !currentReport
-  ) {
-    return;
-  }
-
-  zoteroLookupRunning = true;
-
-  zoteroCheckBtn.disabled = true;
-  zoteroCheckBtn.textContent =
-    'Checking Zotero…';
-
-  showZoteroStatus(
-    'Preparing targeted Zotero searches…'
-  );
-
-  zoteroResults.innerHTML = '';
-
-  try {
-    const orphanCites =
-      currentReport.orphanCites || [];
-
-    const uncitedRefs =
-      currentReport.uncitedRefs || [];
-
-    if (
-      orphanCites.length === 0 &&
-      uncitedRefs.length === 0
-    ) {
-      zoteroResults.innerHTML =
-        buildZoteroMatchSection({
-          available: true,
-          error: null,
-          itemCount: 0,
-          orphanMatches: [],
-          uncitedMatches: [],
-          skippedOrphanCount: 0,
-          skippedUncitedCount: 0
-        });
-
-      showZoteroStatus(
-        'There are no unmatched items to check.'
-      );
-
-      return;
+    function showStatus(message) { statusMsg.textContent = message; statusBar.classList.add('show'); }
+    function hideStatus() { statusBar.classList.remove('show'); }
+    function showZoteroStatus(message) { zoteroStatus.textContent = message; zoteroStatus.classList.add('show'); }
+    function yieldToBrowser() { return new Promise(resolve => setTimeout(resolve, 0)); }
+    function withTimeout(promise, milliseconds, message) {
+      let timer;
+      const timeout = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(message)), milliseconds); });
+      return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
     }
 
-    const zoteroResult = await withTimeout(
-      analyseAgainstZotero(
-        orphanCites,
-        uncitedRefs
-      ),
-      60000,
-      'The Zotero check exceeded 60 seconds and was stopped.'
-    );
-
-    zoteroResults.innerHTML =
-      buildZoteroMatchSection(
-        zoteroResult
-      );
-
-    showZoteroStatus(
-      'Zotero check completed.'
-    );
-  } catch (error) {
-    console.warn(
-      'Zotero lookup could not be completed:',
-      error
-    );
-
-    const message =
-      error instanceof Error
-        ? error.message
-        : String(error);
-
-    zoteroResults.innerHTML =
-      buildZoteroMatchSection({
-        available: false,
-        error: message,
-        itemCount: 0,
-        orphanMatches: [],
-        uncitedMatches: []
-      });
-
-    showZoteroStatus(
-      'Zotero check could not be completed.'
-    );
-  } finally {
-    zoteroLookupRunning = false;
-
-    const orphanCount =
-      currentReport &&
-      Array.isArray(currentReport.orphanCites)
-        ? currentReport.orphanCites.length
-        : 0;
-
-    const uncitedCount =
-      currentReport &&
-      Array.isArray(currentReport.uncitedRefs)
-        ? currentReport.uncitedRefs.length
-        : 0;
-
-    if (
-      orphanCount === 0 &&
-      uncitedCount === 0
-    ) {
-      zoteroCheckBtn.disabled = true;
-      zoteroCheckBtn.textContent =
-        'Check Zotero — no unmatched items';
-    } else {
+    function resetUI() {
+      dropzone.style.display = '';
+      statusBar.classList.remove('show');
+      docInfo.classList.remove('show');
+      summaryCards.classList.remove('show');
+      results.innerHTML = '';
+      zoteroResults.innerHTML = '';
+      resetBtn.classList.remove('show');
+      zoteroActions.classList.remove('show');
+      zoteroStatus.classList.remove('show');
+      zoteroStatus.textContent = '';
       zoteroCheckBtn.disabled = false;
-      zoteroCheckBtn.textContent =
-        'Check Zotero again';
+      zoteroCheckBtn.textContent = 'Check unmatched references in Zotero';
+      fileInput.value = '';
+      currentReport = null;
+      zoteroLookupRunning = false;
     }
-  }
-}
 
-  // ── Status helpers ────────────────────────────────────────────────────────
-  function showStatus(msg) {
-    statusMsg.textContent = msg;
-    statusBar.classList.add('show');
-  }
-  function hideStatus() { statusBar.classList.remove('show'); }
-  function showZoteroStatus(message) {
-    zoteroStatus.textContent = message;
-    zoteroStatus.classList.add('show');
-  }
-  // ── Main entry ────────────────────────────────────────────────────────────
-  async function handleFile(file) {
-    if (!file.name.endsWith('.docx')) {
-      alert('Please upload a .docx file.');
-      return;
-    }
-    dropzone.style.display = 'none';
-    showStatus('Reading file…');
-    try {
-      const buf = await file.arrayBuffer();
-      showStatus('Unzipping .docx…');
-      const zip = await JSZip.loadAsync(buf);
-
-      // Extract main document XML
-      const docXml = await zip.file('word/document.xml')?.async('string');
-      if (!docXml) throw new Error('word/document.xml not found — is this a valid .docx?');
-
-      // Optional: extract numbering for numbered lists
-      const numXml = await zip.file('word/numbering.xml')?.async('string') || '';
-
-      showStatus('Parsing document…');
-      await yieldToBrowser();
-
-      const { paragraphs, fullText, isSwedish } = parseDocXml(docXml);
-
-      showStatus('Finding reference list…');
-      await yieldToBrowser();
-      const { refListParagraphs, bodyParagraphs, refListStart } = splitAtRefList(paragraphs);
-
-      showStatus('Extracting references…');
-      await yieldToBrowser();
-      const refEntries = extractRefEntries(refListParagraphs);
-
-      showStatus('Finding in-text citations…');
-      await yieldToBrowser();
-      const inTextCites = findInTextCites(
-        bodyParagraphs,
-        refEntries
-      );
-
-      showStatus('Cross-referencing…');
-await yieldToBrowser();
-
-const report = crossReference(
-  refEntries,
-  inTextCites,
-  bodyParagraphs
-);
-/*
-  Retain the parsed results for the optional Zotero lookup.
-*/
-currentReport = report;
-currentRefEntries = refEntries;
-
-showStatus('Checking SKB format rules…');
-      await yieldToBrowser();
-      const formatIssues = checkSkbFormat(refEntries);
-
-      // Inject duplicate-key errors into format issues so they surface in that panel
-      for (const dupes of report.duplicateKeys) {
-        for (const e of dupes) {
-          formatIssues.push({ key: e.key, issue: `Duplicate key in reference list — ${dupes.length} entries share the same key`, severity: 'error' });
-        }
+    function showZoteroButton(report) {
+      const orphanCount = Array.isArray(report?.orphanCites) ? report.orphanCites.length : 0;
+      const uncitedCount = Array.isArray(report?.uncitedRefs) ? report.uncitedRefs.length : 0;
+      zoteroActions.classList.add('show');
+      zoteroStatus.classList.remove('show');
+      zoteroResults.innerHTML = '';
+      if (!orphanCount && !uncitedCount) {
+        zoteroCheckBtn.disabled = true;
+        zoteroCheckBtn.textContent = 'Check Zotero — no unmatched items';
+        return;
       }
-
-      hideStatus();
-      renderResults(file.name, refEntries, inTextCites, report, formatIssues, paragraphs.length, refListStart, isSwedish);
-      /*
-Show the optional Zotero button after the normal analysis has
-completed and its results have been displayed.
-*/
-showZoteroButton(report);
-    } catch (err) {
-      hideStatus();
-      results.innerHTML = `<div style="color:var(--color-kvot-accent);padding:16px;background:var(--bg-secondary);border:1px solid;border-color:var(--color-kvot-accent);border-radius:8px;">
-        <strong>Error:</strong> ${escHtml(err.message)}</div>`;
-      resetBtn.classList.add('show');
-    }
-  }
-
-  function yieldToBrowser() { return new Promise(r => setTimeout(r, 0)); }
-
-function withTimeout(
-  promise,
-  timeoutMilliseconds,
-  message
-) {
-  let timeoutId;
-
-  const timeoutPromise = new Promise(
-    (_, reject) => {
-      timeoutId = setTimeout(() => {
-        reject(new Error(message));
-      }, timeoutMilliseconds);
-    }
-  );
-
-  return Promise.race([
-    promise,
-    timeoutPromise
-  ]).finally(() => {
-    clearTimeout(timeoutId);
-  });
-}
-
-  // ── DOCX XML parser ───────────────────────────────────────────────────────
-  function parseDocXml(xml) {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(xml, 'application/xml');
-    const NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
-
-    // Detect document language from w:lang attributes on runs
-    let isSwedish = false;
-    const langNodes = doc.getElementsByTagNameNS(NS, 'lang');
-    for (let i = 0; i < langNodes.length && i < 40; i++) {
-      const val = langNodes[i].getAttribute('w:val') || '';
-      if (/^sv/i.test(val)) { isSwedish = true; break; }
+      zoteroCheckBtn.disabled = false;
+      zoteroCheckBtn.textContent = `Check Zotero (${orphanCount} orphan citation${orphanCount === 1 ? '' : 's'}, ${uncitedCount} uncited reference${uncitedCount === 1 ? '' : 's'})`;
     }
 
-    const paragraphNodes = doc.getElementsByTagNameNS(NS, 'p');
-    const paragraphs = [];
-
-    for (let i = 0; i < paragraphNodes.length; i++) {
-      const pNode = paragraphNodes[i];
-      const text = extractTextFromParagraph(pNode, NS);
-      // Get style name for heading detection
-      const pPr = pNode.getElementsByTagNameNS(NS, 'pPr')[0];
-      let style = '';
-      if (pPr) {
-        const pStyle = pPr.getElementsByTagNameNS(NS, 'pStyle')[0];
-        if (pStyle) style = (pStyle.getAttribute('w:val') || '').toLowerCase();
-      }
-      // Get numbering level (for numbered list entries)
-      let numId = '', ilvl = '';
-      if (pPr) {
-        const numPr = pPr.getElementsByTagNameNS(NS, 'numPr')[0];
-        if (numPr) {
-          const ni = numPr.getElementsByTagNameNS(NS, 'numId')[0];
-          const il = numPr.getElementsByTagNameNS(NS, 'ilvl')[0];
-          numId = ni ? (ni.getAttribute('w:val') || '') : '';
-          ilvl  = il ? (il.getAttribute('w:val') || '') : '';
-        }
-      }
-      paragraphs.push({ text: text.trim(), style, numId, ilvl, index: i });
-    }
-
-    // Second pass: tag each paragraph with the nearest enclosing heading text
-    let currentSection = '';
-    for (const p of paragraphs) {
-      const lvl = headingLevel(p.style);
-      if (lvl > 0 && p.text.trim()) currentSection = p.text.trim();
-      p.section = currentSection;
-    }
-
-    const fullText = paragraphs.map(p => p.text).join('\n');
-    return { paragraphs, fullText, isSwedish };
-  }
-
-  function extractTextFromParagraph(pNode, NS) {
-    let text = '';
-    // Track field nesting; skip result text of numbering/formatting fields (SEQ, PAGE, etc.)
-    const fieldStack = []; // {skip: bool, inResult: bool}
-
-    function walk(node) {
-      for (let child = node.firstChild; child; child = child.nextSibling) {
-        if (child.nodeType !== 1) continue;
-        if (child.namespaceURI === NS) {
-          switch (child.localName) {
-            case 'fldChar': {
-              const type = child.getAttribute('w:fldCharType');
-              if      (type === 'begin')    fieldStack.push({ skip: false, inResult: false });
-              else if (type === 'separate' && fieldStack.length) fieldStack[fieldStack.length-1].inResult = true;
-              else if (type === 'end'      && fieldStack.length) fieldStack.pop();
-              break;
-            }
-            case 'instrText':
-              if (fieldStack.length) {
-                const instr = (child.textContent || '').trim();
-                if (/^(SEQ|CAPTION|PAGE|NUMPAGES|REF\b|PAGEREF|STYLEREF|TOC|TC\b|XE\b|AUTONUMLGL|AUTONUM|MERGEFIELD)\b/i.test(instr))
-                  fieldStack[fieldStack.length-1].skip = true;
-              }
-              break;
-            case 't':
-              if (!fieldStack.some(f => f.inResult && f.skip))
-                text += child.textContent || '';
-              break;
-            default:
-              walk(child);
-          }
-        } else {
-          walk(child);
-        }
-      }
-    }
-
-    walk(pNode);
-    return text;
-  }
-
-  // ── Split document at reference list heading ──────────────────────────────
-  const REF_HEADING_RE = /^\s*(?:\d[\d.]*\s+)?(?:references?|referenser|referenslista|litteratur|bibliography)\s*$/i;
-
-  function splitAtRefList(paragraphs) {
-  let refListStart = -1;
-
-  /*
-    Find the reference-list heading.
-  */
-  for (let i = 0; i < paragraphs.length; i++) {
-    const paragraph = paragraphs[i];
-
-    const isHeading =
-      paragraph.style.startsWith('heading') ||
-      paragraph.style.startsWith('rubrik') ||
-      paragraph.style.includes('heading') ||
-      paragraph.style.startsWith('appendixrubrik') ||
-      paragraph.style === 'title';
-
-    const textMatch = REF_HEADING_RE.test(
-      paragraph.text
-    );
-
-    if (isHeading && textMatch) {
-      /*
-        Verify that some meaningful text follows the heading.
-      */
-      const preview = paragraphs
-        .slice(i + 1, i + 6)
-        .map(item => item.text)
-        .join(' ');
-
-      if (preview.length > 10) {
-        refListStart = i;
-        break;
-      }
-    }
-  }
-
-  /*
-    Fallback for numbered reference lists when no recognised reference
-    heading was found.
-  */
-  if (refListStart === -1) {
-    for (
-      let i = Math.floor(paragraphs.length * 0.6);
-      i < paragraphs.length;
-      i++
-    ) {
-      const text = paragraphs[i].text;
-
-      if (
-        /^\[?\d+\]?[\.\s]/.test(text) &&
-        text.length > 20
-      ) {
-        let count = 0;
-
-        for (
-          let j = i;
-          j < Math.min(i + 5, paragraphs.length);
-          j++
-        ) {
-          if (
-            /^\[?\d+\]?[\.\s]/.test(
-              paragraphs[j].text
-            ) &&
-            paragraphs[j].text.length > 20
-          ) {
-            count++;
-          }
-        }
-
-        if (count >= 3) {
-          refListStart = i - 1;
-          break;
-        }
-      }
-    }
-  }
-
-  /*
-    If there is no reference list, search the full document for
-    in-text citations.
-  */
-  if (refListStart === -1) {
-    return {
-      refListParagraphs: [],
-      bodyParagraphs: paragraphs,
-      refListStart: -1
-    };
-  }
-
-  /*
-    Find the end of the reference list.
-
-    A new heading or an appendix-like heading marks the end of the
-    references.
-  */
-  const SECTION_END_RE =
-    /^\s*(?:\d[\d.]*\s+)?(?:appendix|appendices|bilaga|bilagor|annex|glossary|ordlista|index)\b/i;
-
-  let refListEnd = paragraphs.length;
-
-  for (
-    let i = refListStart + 1;
-    i < paragraphs.length;
-    i++
-  ) {
-    const paragraph = paragraphs[i];
-
-    if (!paragraph.text.trim()) {
-      continue;
-    }
-
-    /*
-  The internal headings belong to the reference section and must not end
-  it, even if Word assigns them a heading style.
-*/
-if (isInternalReferenceHeading(paragraph.text)) {
-  continue;
-}
-
-if (
-  headingLevel(paragraph.style) > 0 ||
-  SECTION_END_RE.test(paragraph.text)
-) {
-  refListEnd = i;
-  break;
-}
-  }
-
-  /*
-    Reference-list paragraphs exclude both the reference heading and
-    the heading that follows the reference list.
-  */
-  const refListParagraphs = paragraphs.slice(
-    refListStart + 1,
-    refListEnd
-  );
-
-  /*
-    Search for citations everywhere except inside the reference list.
-
-    Text before the reference-list heading is included.
-
-    Text beginning with the heading after the reference list is also
-    included, so citations in appendices are detected.
-  */
-  const beforeReferenceList = paragraphs.slice(
-    0,
-    refListStart
-  );
-
-  const afterReferenceList = paragraphs.slice(
-    refListEnd
-  );
-
-  const bodyParagraphs = [
-    ...beforeReferenceList,
-    ...afterReferenceList
-  ];
-
-  return {
-    refListParagraphs,
-    bodyParagraphs,
-    refListStart
-  };
-}
-/*
-  Special headings used inside an SKB reference list.
-
-  These paragraphs describe the organisation of the reference list and
-  are not themselves reference entries.
-*/
-const ABBREVIATED_REFERENCES_HEADING_RE =
-  /^\s*References with abbreviated names\s*[.:]?\s*$/i;
-
-const OTHER_REFERENCES_HEADING_RE =
-  /^\s*Other references\s*[.:]?\s*$/i;
-
-/*
-  Return true when the paragraph is one of the internal reference-list
-  headings rather than a reference entry.
-*/
-function isInternalReferenceHeading(text) {
-  return (
-    ABBREVIATED_REFERENCES_HEADING_RE.test(text) ||
-    OTHER_REFERENCES_HEADING_RE.test(text)
-  );
-}
-
-/*
-  Extract the abbreviated citation name from a special reference.
-
-  Example:
-
-    Post-closure safety report, 2023. Post-closure safety ...
-
-  returns:
-
-    Post-closure safety report
-*/
-function extractAbbreviatedReferenceName(text) {
-  const match = String(text).match(
-    /^\s*(.+?)\s*,\s*((?:1[89]\d{2}|20\d{2})[a-z]?)\s*[.]/
-  );
-
-  if (!match) {
-    return null;
-  }
-
-  const abbreviatedName = match[1]
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  /*
-    Avoid accepting an empty or unreasonably long abbreviation if a
-    malformed paragraph is encountered.
-  */
-  if (
-    abbreviatedName.length < 2 ||
-    abbreviatedName.length > 200
-  ) {
-    return null;
-  }
-
-  return abbreviatedName;
-}
-  // ── Extract reference list entries ────────────────────────────────────────
-  function extractRefEntries(refParas) {
-  const entries = [];
-
-  let current = null;
-  let autoNum = 0;
-
-  /*
-    This becomes true after:
-
-      References with abbreviated names
-
-    and false again after:
-
-      Other references
-  */
-  let inAbbreviatedSection = false;
-
-  /*
-    Save the current entry before changing section type or reaching the
-    end of the reference list.
-  */
-  function finishCurrentEntry() {
-    if (!current) {
-      return;
-    }
-
-    entries.push(current);
-    current = null;
-  }
-
-  /*
-    Create an unnumbered reference entry.
-
-    In the abbreviated-name section, the leading phrase before ", YEAR."
-    becomes the primary matching key.
-  */
-  function createUnnumberedEntry(text, paragraph) {
-    if (inAbbreviatedSection) {
-      const abbreviatedName =
-        extractAbbreviatedReferenceName(text);
-
-      if (abbreviatedName) {
-        return {
-          key: abbreviatedName,
-          num: null,
-          body: text,
-          raw: text,
-          paraIndex: paragraph.index,
-          type: 'abbreviated-name',
-          abbreviatedName
-        };
-      }
-    }
-
-    const referenceKey = extractReferenceKey(text);
-    const leadingSkbKey = extractSkbReportKey(
-      text,
-      true
-    );
-
-    return {
-      key: referenceKey || text.slice(0, 40),
-      num: null,
-      body: text,
-      raw: text,
-      paraIndex: paragraph.index,
-      type: leadingSkbKey
-        ? 'skb-report'
-        : 'author-year',
-      abbreviatedName: null
-    };
-  }
-
-  for (const paragraph of refParas) {
-    const text = paragraph.text.trim();
-
-    /*
-      Enter the abbreviated-name subsection.
-
-      This paragraph is a definition/heading, not a reference.
-    */
-    if (
-      ABBREVIATED_REFERENCES_HEADING_RE.test(text)
-    ) {
-      finishCurrentEntry();
-      inAbbreviatedSection = true;
-      continue;
-    }
-
-    /*
-      Leave the abbreviated-name subsection and resume ordinary
-      reference parsing.
-
-      This paragraph is also a definition/heading, not a reference.
-    */
-    if (OTHER_REFERENCES_HEADING_RE.test(text)) {
-      finishCurrentEntry();
-      inAbbreviatedSection = false;
-      continue;
-    }
-
-    /*
-      Ignore empty paragraphs, but first finish any pending reference.
-    */
-    if (!text) {
-      finishCurrentEntry();
-      continue;
-    }
-
-    /*
-      For a Word auto-numbered list, the displayed list number is stored
-      in the Word numbering data rather than in the paragraph text.
-    */
-    const isListItem =
-      paragraph.numId &&
-      paragraph.numId !== '0';
-
-    /*
-      Explicit number prefixes:
-
-        [1] Reference text
-        1. Reference text
-        1) Reference text
-    */
-    const numMatch = text.match(
-      /^(?:\[(\d+)\]|(\d+)[.)\s]\s)/
-    );
-
-    if (numMatch) {
-      finishCurrentEntry();
-
-      const numberText =
-        numMatch[1] || numMatch[2];
-
-      autoNum = parseInt(numberText, 10);
-
-      const body = text
-        .replace(/^\[?\d+\]?[.)\s]+/, '')
-        .trim();
-
-      /*
-        Numbered abbreviated references can still use their abbreviated
-        name as an alias, while retaining the visible list number as the
-        primary key.
-      */
-      const abbreviatedName = inAbbreviatedSection
-        ? extractAbbreviatedReferenceName(body)
-        : null;
-
-      current = {
-        key: `[${numberText}]`,
-        num: autoNum,
-        body,
-        raw: text,
-        paraIndex: paragraph.index,
-        type: abbreviatedName
-          ? 'abbreviated-name'
-          : 'numbered',
-        abbreviatedName
-      };
-
-      continue;
-    }
-
-    /*
-      Word auto-numbered reference.
-    */
-    if (isListItem) {
-      finishCurrentEntry();
-      autoNum++;
-
-      const abbreviatedName = inAbbreviatedSection
-        ? extractAbbreviatedReferenceName(text)
-        : null;
-
-      current = {
-        key: `[${autoNum}]`,
-        num: autoNum,
-        body: text,
-        raw: text,
-        paraIndex: paragraph.index,
-        type: abbreviatedName
-          ? 'abbreviated-name'
-          : 'numbered',
-        abbreviatedName
-      };
-
-      continue;
-    }
-
-    /*
-      Inside the abbreviated-name section, every paragraph matching:
-
-        Abbreviated name, YEAR. ...
-
-      begins a new reference.
-    */
-    if (inAbbreviatedSection) {
-      const abbreviatedName =
-        extractAbbreviatedReferenceName(text);
-
-      if (abbreviatedName) {
-        finishCurrentEntry();
-
-        current = createUnnumberedEntry(
-          text,
-          paragraph
-        );
-
-        continue;
-      }
-    }
-
-    /*
-      Ordinary reference-start detection.
-    */
-    if (
-      current &&
-      looksLikeRefStart(text)
-    ) {
-      finishCurrentEntry();
-
-      current = createUnnumberedEntry(
-        text,
-        paragraph
-      );
-
-      continue;
-    }
-
-    /*
-      If a reference is already open and this paragraph does not look
-      like a new entry, treat it as continuation text.
-    */
-    if (current) {
-      current.body += ' ' + text;
-      current.raw += ' ' + text;
-      continue;
-    }
-
-    /*
-      First unnumbered reference entry.
-    */
-    current = createUnnumberedEntry(
-      text,
-      paragraph
-    );
-  }
-
-  finishCurrentEntry();
-
-  /*
-    Generate all matching aliases after every multi-paragraph reference
-    has been fully assembled.
-  */
-  for (const entry of entries) {
-    entry.aliases = collectReferenceAliases(entry);
-  }
-
-  return entries;
-}
-
-
-  // Heuristic: does this line look like the start of a new reference entry?
-  function looksLikeRefStart(text) {
-  // A leading SKB report identifier marks a new reference.
-  if (extractSkbReportKey(text, true)) {
-    return true;
-  }
-
-  /*
-    If a valid author-year key can be extracted, this is the start
-    of a reference. This also supports lowercase surname particles:
-
-      van Loon L R, ...
-      von Schenck H, ...
-      de Vries L M, ...
-  */
-  return extractAuthorYearKey(text) !== null;
-}
-
- function extractAuthorYearKey(text) {
-  /*
-    Handle comma-separated SKB author lists such as:
-
-      Elfwing M, von Schenck H, Åstrand P-G, 2018. Title...
-      Abarca E, Idiart A, de Vries L M, Silva O, 2013. Title...
-
-    The last comma before the year separates the author list from
-    the publication year.
-  */
-  const listMatch = text.match(
-    /^(.+),\s*((?:1[89]\d{2}|20\d{2})[a-z]?)\s*[.,]/
-  );
-
-  if (listMatch) {
-    const authorPart = listMatch[1].trim();
-    const year = listMatch[2];
-
-    const authorItems = authorPart
-      .split(',')
-      .map(item => item.trim())
-      .filter(Boolean);
-
-    const surnames = [];
-
-    for (const item of authorItems) {
-      const originalWords = item
-        .split(/\s+/)
-        .filter(Boolean);
-
-      const words = [...originalWords];
-      let removedInitial = false;
-
-      /*
-        Remove all initials from the end of the author item.
-
-        Examples:
-
-          Elfwing M       -> Elfwing
-          von Schenck H   -> von Schenck
-          Åstrand P-G     -> Åstrand
-          de Vries L M    -> de Vries
-      */
-      while (
-        words.length > 1 &&
-        isAuthorInitial(words[words.length - 1])
-      ) {
-        words.pop();
-        removedInitial = true;
-      }
-
-      /*
-        A valid item must contain at least one surname word and at least
-        one initial must have been removed.
-      */
-      if (!removedInitial || words.length === 0) {
-        surnames.length = 0;
-        break;
-      }
-
-      const surname = words
-        .join(' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-
-      surnames.push(surname);
-    }
-
-    if (surnames.length === 1) {
-      return `${surnames[0]} ${year}`;
-    }
-
-    if (surnames.length === 2) {
-      return `${surnames[0]} and ${surnames[1]} ${year}`;
-    }
-
-    if (surnames.length > 2) {
-      return `${surnames[0]} et al. ${year}`;
-    }
-  }
-
-  /*
-    Fallback for references already expressed in a simpler
-    author-year form:
-
-      Smith 2020
-      Smith, J. 2020
-      Smith et al. 2020
-      SKB 2019
-  */
-  const standardMatch = text.match(
-    /^([A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ-]+(?:\s+(?:et\s+al\.?|m\.fl\.?))?(?:,\s*[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ.]+)?)(?:,\s*|\s+)((?:1[89]\d{2}|20\d{2})[a-z]?)/
-  );
-
-  if (standardMatch) {
-    return `${standardMatch[1]} ${standardMatch[2]}`;
-  }
-
-  return null;
-}
-
-/*
-  Return true if the value is one or more initials.
-
-  Accepted examples:
-
-    A
-    A.
-    P-G
-    P-G.
-    LM
-    L.M.
-*/
-function isAuthorInitial(value) {
-  let cleaned = String(value)
-    .trim()
-    .replace(/\./g, '');
-
-  /*
-    Handle hyphenated initials such as P-G.
-  */
-  if (cleaned.includes('-')) {
-    const parts = cleaned.split('-');
-
-    return (
-      parts.length === 2 &&
-      parts.every(part => isUppercaseLetter(part))
-    );
-  }
-
-  /*
-    Handle single or combined initials such as A, LM, or PÖ.
-    Limit the length to avoid interpreting an uppercase surname or
-    organisation abbreviation as initials.
-  */
-  if (cleaned.length >= 1 && cleaned.length <= 3) {
-    return [...cleaned].every(
-      character => isUppercaseLetter(character)
-    );
-  }
-
-  return false;
-}
-
-/*
-  Check whether a character is an uppercase Latin letter, including
-  Swedish and other commonly used accented characters.
-*/
-function isUppercaseLetter(character) {
-  return /^[A-ZÀ-ÖØ-Þ]$/.test(character);
-}
-
-/*
-  Convert Unicode dash characters commonly introduced by Word or PDF
-  documents to ordinary ASCII hyphens.
-*/
-function normaliseDashes(text) {
-  return String(text).replace(
-    /[\u2010\u2011\u2012\u2013\u2014\u2212]/g,
-    '-'
-  );
-}
-
-/*
-  Extract an SKB report identifier.
-
-  With startOnly = true, the identifier must occur at the beginning of
-  the reference, although an optional list number may precede it.
-*/
-function extractSkbReportKey(
-  text,
-  startOnly = false
-) {
-  const normalized = normaliseDashes(text)
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  const prefix = startOnly
-    ? String.raw`^\s*(?:(?:\[\d+\]|\d+[.)])\s*)?`
-    : String.raw`(?:^|[^A-Za-z0-9])`;
-
-  const expression = new RegExp(
-    prefix +
-    String.raw`(?:SKB[\s-]*)?` +
-    String.raw`((?:TR|R|P|IPR|RD|SR|TM|U|F)-\d{2,}-\d+)` +
-    String.raw`(?=$|[^A-Za-z0-9])`,
-    'i'
-  );
-
-  const match = normalized.match(
-    expression
-  );
-
-  if (!match) {
-    return null;
-  }
-
-  return `SKB ${match[1].toUpperCase()}`;
-}
-
-/*
-  Select the primary matching key for a reference.
-
-  A leading SKB report number takes precedence over an author-year key.
-*/
-function extractReferenceKey(text) {
-  const leadingSkbKey = extractSkbReportKey(text, true);
-
-  if (leadingSkbKey) {
-    return leadingSkbKey;
-  }
-
-  return extractAuthorYearKey(text);
-}
-
-function collectReferenceAliases(entry) {
-  const aliases = new Set();
-
-  if (entry && entry.key) {
-    aliases.add(entry.key);
-  }
-
-  /*
-    An abbreviated name is always a valid citation alias, including for
-    numbered reference lists where the primary key may be "[1]".
-  */
-  if (
-    entry &&
-    entry.abbreviatedName
-  ) {
-    aliases.add(entry.abbreviatedName);
-  }
-
-  if (entry && entry.body) {
-    /*
-      Keep ordinary author-year matching when the reference also has a
-      conventional author-year form.
-    */
-    const authorYearKey =
-      extractAuthorYearKey(entry.body);
-
-    if (authorYearKey) {
-      aliases.add(authorYearKey);
-    }
-
-    /*
-      Add a leading SKB report identifier.
-    */
-    const leadingSkbKey =
-      extractSkbReportKey(entry.body, true);
-
-    if (leadingSkbKey) {
-      aliases.add(leadingSkbKey);
-    }
-
-    /*
-      Also retain an SKB report identifier occurring elsewhere in the
-      reference.
-    */
-    const anySkbKey =
-      extractSkbReportKey(entry.body);
-
-    if (anySkbKey) {
-      aliases.add(anySkbKey);
-    }
-  }
-
-  return [...aliases];
-}
-
-  // ── Find in-text citations ────────────────────────────────────────────────
-  
-  // Returns a 1–3 level heading number from a Word style name
-  function headingLevel(style) {
-    const m = style.match(/^(?:heading|rubrik|överskrift|berschrift|titre|t[iî]tulo)\s*([1-6])$/) ||
-              style.match(/^([1-6])$/);
-    return m ? parseInt(m[1]) : 0;
-  }
-
-  function findInTextCites(
-  bodyParas,
-  refEntries
-) {
-  const citations = [];
-
-  /*
-    Obtain the list of known abbreviated citation names from the
-    reference section before scanning the body text.
-
-    This is why references must be parsed before citation searching.
-  */
-  const abbreviatedReferences = refEntries
-    .filter(entry => {
-      return (
-        entry.type === 'abbreviated-name' &&
-        entry.abbreviatedName
-      );
-    })
-    .map(entry => ({
-      key: entry.abbreviatedName,
-      entry
-    }));
-
-  /*
-    Search longer abbreviated names before shorter names.
-
-    This prevents a shorter abbreviation from matching inside a longer
-    abbreviation if both happen to be defined.
-  */
-  abbreviatedReferences.sort(
-    (a, b) => b.key.length - a.key.length
-  );
-
-  for (const paragraph of bodyParas) {
-    const text = paragraph.text;
-
-    if (!text.trim()) {
-      continue;
-    }
-
-    /*
-      Ordinary author-year citations.
-    */
-    findAuthorYearCitations(
-      text,
-      paragraph.index,
-      paragraph.section,
-      text,
-      citations
-    );
-
-    /*
-      SKB report and SKB year citations.
-    */
-    findSkbCitations(
-      text,
-      paragraph.index,
-      paragraph.section,
-      text,
-      citations
-    );
-
-    /*
-      Citations using names defined in the special reference subsection.
-    */
-    findAbbreviatedNameCitations(
-      text,
-      paragraph.index,
-      paragraph.section,
-      text,
-      abbreviatedReferences,
-      citations
-    );
-  }
-
-  /*
-    Deduplicate each citation key within the same paragraph.
-
-    If the same abbreviated name appears twice in one paragraph, it is
-    currently counted as one citation occurrence, consistent with the
-    existing behaviour for other citation types.
-  */
-  const seen = new Set();
-
-  return citations.filter(citation => {
-    const identifier =
-      `${normaliseKey(citation.key)}||${citation.paraIndex}`;
-
-    if (seen.has(identifier)) {
-      return false;
-    }
-
-    seen.add(identifier);
-    return true;
-  });
-}
- /*
-  Escape characters that have special meanings inside regular
-  expressions.
-*/
-function escapeRegExp(text) {
-  return String(text).replace(
-    /[.*+?^${}()|[\]\\]/g,
-    '\\$&'
-  );
-}
-
-/*
-  Find citations that use a name defined under:
-
-    References with abbreviated names
-
-  The search is based on the exact list of names extracted from the
-  reference section. It therefore does not guess that arbitrary prose is
-  an abbreviated citation.
-*/
-function findAbbreviatedNameCitations(
-  text,
-  paraIndex,
-  section,
-  paraText,
-  abbreviatedReferences,
-  out
-) {
-  const normalizedText = String(text).normalize('NFC');
-  for (const abbreviation of abbreviatedReferences) {
-    const name = abbreviation.key.normalize('NFC');   
-
-    /*
-      Permit ordinary flexible whitespace between words.
-
-      A defined name such as:
-
-        Post-closure safety report
-
-      will still match if Word has introduced repeated spaces.
-    */
-    const namePattern = escapeRegExp(name)
-      .replace(/\s+/g, '\\s+');
-
-    /*
-      Do not use JavaScript's \b because it is unreliable with accented
-      characters. Instead, require that the abbreviation is not directly
-      preceded or followed by a letter or digit.
-
-      The "i" flag is appropriate here because the complete abbreviation
-      came from the reference list. Unlike generic author detection, this
-      cannot turn arbitrary lowercase prose such as "points 2500" into a
-      citation.
-    */
-    const expression = new RegExp(
-      `(?:^|[^A-Za-zÀ-ÖØ-Þà-öø-ÿ0-9])` +
-      `(${namePattern})` +
-      `(?=$|[^A-Za-zÀ-ÖØ-Þà-öø-ÿ0-9])`,
-      'g'
-    );
-
-    let match;
-
-    while (
-      (match = expression.exec(normalizedText)) !== null
-    ) {
-      out.push({
-        key: name,
-        raw: match[1],
-        paraIndex,
-        section,
-        paraText,
-        type: 'abbreviated-name',
-        author: name,
-        year: null
-      });
-
-      /*
-        Defensive protection against zero-length matches. A valid
-        abbreviation is never empty, but this prevents an infinite loop
-        if malformed data is encountered.
-      */
-      if (match[0].length === 0) {
-        expression.lastIndex++;
-      }
-    }
-  }
-}
-
-function findAuthorYearCitations(
-  text,
-  paraIndex,
-  section,
-  paraText,
-  out
-) {
-  let match;
-
-  /*
-    A publication year is considered plausible between 1800 and 2099,
-    optionally followed by a lowercase letter.
-
-    Examples:
-      1997
-      2006
-      2019a
-
-    Values such as 2500, 5000 and 9000 are not treated as publication
-    years.
-  */
-  const publicationYearPattern =
-    '(?:1[89]\\d{2}|20\\d{2})[a-z]?';
-
-  /*
-    Citation surname. Lowercase surname particles are allowed, but an
-    uppercase surname word must follow them.
-
-    Examples:
-      Smith
-      Öhman
-      Auqué
-      van Loon
-      von Schenck
-      de Vries
-      van der Meer
-  */
-  const surnamePattern =
-    '(?:(?:van|von|de|del|della|der|den|di|da|dos|du|la|le|af)\\s+)*' +
-    '[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ-]+';
-
-  /*
-    Author or organisation.
-
-    Examples:
-      Smith
-      Öhman
-      SSM
-      SKB
-      van Loon
-  */
-  const authorNamePattern =
-    `(?:[A-ZÅÄÖ]{2,}|${surnamePattern})`;
-
-  /*
-    Complete citation-author pattern.
-
-    Examples:
-      Smith
-      SSM
-      Öhman et al.
-      van Loon et al.
-      Avila and Bergström
-      Avila och Bergström
-      Avila & Bergström
-  */
-  const citationAuthorPattern =
-    `(?:${authorNamePattern})` +
-    `(?:\\s+(?:et\\s+al\\.?|m\\.fl\\.?))?` +
-    `(?:\\s+(?:and|och|&)\\s+${authorNamePattern})?`;
-
-  /*
-    ===============================================================
-    1. Parenthetical citation groups
-    ===============================================================
-
-    Handles:
-
-      (Avila and Bergström 2006)
-      (Öhman et al. 2014)
-      (van Loon et al. 1997)
-      (SSM 2017, 2018, Walke et al. 2017)
-
-    It does not interpret lowercase prose as an author:
-
-      (time slices at 2000 AD, 2100 AD)
-      (points 2500, 2750, 3000)
-  */
-  const parentheticalGroupRe = /\(([^()]*)\)/g;
-
-  parentheticalGroupRe.lastIndex = 0;
-
-  while (
-    (match = parentheticalGroupRe.exec(text)) !== null
-  ) {
-    const groupText = match[1];
-
-    /*
-      Split multiple citations at commas and semicolons.
-
-      Example:
-
-        SSM 2017, 2018, Walke et al. 2017
-
-      becomes:
-
-        SSM 2017
-        2018
-        Walke et al. 2017
-    */
-    const parts = groupText
-      .split(/\s*[,;]\s*/)
-      .map(part => part.trim())
-      .filter(Boolean);
-
-    let previousAuthor = null;
-
-    for (const part of parts) {
-      const explicitCitationRe = new RegExp(
-        `(?:^|[^A-Za-zÀ-ÖØ-Þà-öø-ÿ])` +
-        `(${citationAuthorPattern})` +
-        `\\s+` +
-        `(${publicationYearPattern})` +
-        `(?=$|[^A-Za-zÀ-ÖØ-Þà-öø-ÿ0-9])`,
-        'g'
-      );
-
-      let explicitMatch;
-      let foundExplicitCitation = false;
-
-      while (
-        (explicitMatch = explicitCitationRe.exec(part)) !== null
-      ) {
-        const author = normaliseCitationAuthor(
-          explicitMatch[1]
-        );
-
-        const year = explicitMatch[2];
-
-        /*
-          SKB year citations are handled separately by
-          findSkbCitations().
-        */
-        if (author.toUpperCase() !== 'SKB') {
-          out.push({
-            key: `${author} ${year}`,
-            raw: `${author} ${year}`,
-            paraIndex,
-            section,
-            paraText,
-            type: 'author-year',
-            author,
-            year
-          });
-        }
-
-        previousAuthor = author;
-        foundExplicitCitation = true;
-      }
-
-      if (foundExplicitCitation) {
-        continue;
-      }
-
-      /*
-        A year by itself inherits the preceding author.
-
-        Example:
-
-          SSM 2017, 2018
-
-        produces:
-
-          SSM 2017
-          SSM 2018
-
-        A bare year does not inherit anything unless an explicit author
-        has already been found in the same parenthetical group.
-      */
-      const inheritedYearRe = new RegExp(
-        `^(${publicationYearPattern})$`
-      );
-
-      const inheritedYearMatch =
-        part.match(inheritedYearRe);
-
-      if (
-        inheritedYearMatch &&
-        previousAuthor &&
-        previousAuthor.toUpperCase() !== 'SKB'
-      ) {
-        const year = inheritedYearMatch[1];
-
-        out.push({
-          key: `${previousAuthor} ${year}`,
-          raw: part,
-          paraIndex,
-          section,
-          paraText,
-          type: 'author-year',
-          author: previousAuthor,
-          year
-        });
-      }
-    }
-  }
-
-  /*
-    ===============================================================
-    2. Narrative citations
-    ===============================================================
-
-    Handles:
-
-      Auqué et al. (2013)
-      Auqué et al. (2013, Tables 5-1–5-3)
-      Öhman et al. (2014)
-      van Loon et al. (1997)
-      Avila and Bergström (2006)
-      SSM (2017)
-  */
-  const inlineCitationRe = new RegExp(
-    `(?:^|[^A-Za-zÀ-ÖØ-Þà-öø-ÿ])` +
-    `(${citationAuthorPattern})` +
-    `\\s+\\(` +
-    `(${publicationYearPattern})` +
-    `(?:\\s*,\\s*[^()]*)?` +
-    `\\)`,
-    'g'
-  );
-
-  inlineCitationRe.lastIndex = 0;
-
-  while (
-    (match = inlineCitationRe.exec(text)) !== null
-  ) {
-    const author = normaliseCitationAuthor(match[1]);
-    const year = match[2];
-
-    // SKB (2019) is handled by findSkbCitations().
-    if (author.toUpperCase() === 'SKB') {
-      continue;
-    }
-
-    out.push({
-      key: `${author} ${year}`,
-      raw: `${author} (${year})`,
-      paraIndex,
-      section,
-      paraText,
-      type: 'author-year',
-      author,
-      year
-    });
-  }
-}
-
-/*
-  Normalise minor variations in author citation text.
-
-  Examples:
-
-    "Walke et al"  -> "Walke et al."
-    "Walke et al." -> "Walke et al."
-    "Smith   and   Jones" -> "Smith and Jones"
-*/
-function normaliseCitationAuthor(author) {
-  return String(author)
-    .replace(/\s+/g, ' ')
-    .replace(/\bet\s+al\.?$/i, 'et al.')
-    .replace(/\bm\.fl\.?$/i, 'm.fl.')
-    .trim();
-}
-
-  function findSkbCitations(
-  text,
-  paraIndex,
-  section,
-  paraText,
-  out
-) {
-  // Normalise Word/PDF dash characters before matching.
-  const normalizedText = normaliseDashes(text);
-
-  const re =
-    /\bSKB\s+(?:\(((?:1[89]\d{2}|20\d{2})[a-z]?(?:[,\s]+(?:1[89]\d{2}|20\d{2})[a-z]?)*)\)|((?:1[89]\d{2}|20\d{2})[a-z]?)(?!\s*\w)|((?:TR|R|P|IPR|RD|SR|TM|U|F)-\d{2,}-\d+))/gi;
-
-  let match;
-  re.lastIndex = 0;
-
-  while ((match = re.exec(normalizedText)) !== null) {
-    // Parenthesised SKB year or years:
-    // SKB (2019), SKB (2019a), SKB (2019a, 2020)
-    if (match[1]) {
-      const years = match[1].split(/\s*,\s*/);
-
-      for (const value of years) {
-        const year = value.trim();
-
-        if (/^(?:1[89]\d{2}|20\d{2})[a-z]?$/.test(year)) {
-          out.push({
-            key: `SKB ${year}`,
-            raw: match[0],
-            paraIndex,
-            section,
-            paraText,
-            type: 'skb-year'
-          });
-        }
-      }
-    } else if (match[2]) {
-      // Non-parenthesised ye*r: SKB 2019
-      out.push({
-      key: `SKB ${match[2]}`,
-      raw: match[0],
-      paraIndex,
-      section,
-      paraText,
-      type: 'skb-year'
-      });
-    } else if (match[3]) {
-      // SKB report identifier: SKB TR-19-01
-      out.push({
-        key: `SKB ${match[3].toUpperCase()}`,
-        raw: match[0],
-        paraIndex,
-        section,
-        paraText,
-        type: 'skb-report'
-      });
-    }
-  }
-}
-
-  // ── Cross-reference citations ↔ list ──────────────────────────────────────
-  function crossReference(refEntries, inTextCites, bodyParas) {
-    // refByKey maps normalised key → array of entries (supports duplicate keys)
-    const refByKey = new Map();
-    const refByAlias = new Map();
-    const refByNum = new Map();
-
-    for (const e of refEntries) {
-      const nk = normaliseKey(e.key);
-      if (!refByKey.has(nk)) refByKey.set(nk, []);
-      refByKey.get(nk).push(e);
-      for (const alias of (e.aliases || [])) {
-        const na = normaliseKey(alias);
-        if (!refByAlias.has(na)) refByAlias.set(na, []);
-        refByAlias.get(na).push(e);
-      }
-      if (e.num !== null) refByNum.set(e.num, e);
-      e.cites = [];
-    }
-
-    // Detect keys that appear more than once in the list
-    const duplicateKeys = [];
-    for (const [, entries] of refByKey) {
-      if (entries.length > 1) duplicateKeys.push(entries);
-    }
-
-    const orphanCites = [];
-
-    for (const c of inTextCites) {
-      let matched = false;
-      if (c.type === 'numbered' && refByNum.has(c.num)) {
-        refByNum.get(c.num).cites.push(c);
-        matched = true;
-      } else {
-        const nk = normaliseKey(c.key);
-        if (refByKey.has(nk)) {
-          // Assign to ALL entries sharing this key so none appear "never cited"
-          for (const entry of refByKey.get(nk)) entry.cites.push(c);
-          matched = true;
-        } else if (refByAlias.has(nk)) {
-          // Match on alternate reference keys, e.g. SKB R-13-27 → author-year entry
-          for (const entry of refByAlias.get(nk)) entry.cites.push(c);
-          matched = true;
-        } else {
-          for (const [rk, entries] of refByKey) {
-            if (fuzzyMatch(nk, rk)) {
-              for (const entry of entries) entry.cites.push(c);
-              matched = true; break;
-            }
-          }
-        }
-      }
-      if (!matched) orphanCites.push(c);
-    }
-
-    const uncitedRefs = refEntries.filter(e => e.cites.length === 0);
-    return { orphanCites, uncitedRefs, duplicateKeys };
-  }
-
-  
-function normaliseKey(key) {
-  return normaliseDashes(key)
-    .normalize('NFC')
-    .toLowerCase()
-    .replace(/et\s*al\.?/g, 'etal')
-    .replace(/\s*-\s*/g, '-')
-    .replace(/[\s.,;:!?'"()\[\]{}]/g, '');
-}
-
-  function fuzzyMatch(a, b) {
-    if (a.length < 4 || b.length < 4) return false;
-    // Check if one contains the other or 80% overlap
-    if (b.includes(a) || a.includes(b)) return true;
-    // Simple bigram similarity
-    const bg = s => { const r = new Set(); for (let i = 0; i < s.length - 1; i++) r.add(s.slice(i, i+2)); return r; };
-    const ba = bg(a), bb = bg(b);
-    let common = 0;
-    for (const bi of ba) if (bb.has(bi)) common++;
-    return common / Math.max(ba.size, bb.size) > 0.7;
-  }
-
-  // ── SKB format rule checker ───────────────────────────────────────────────
-  /*
-    Rules derived from SKB writing guidelines:
-    1. Year must be present (4 digits, 1900-2099, optionally followed by a/b/c)
-    2. SKB report number format: TR-XX-XX  R-XX-XX  P-XX-XX  IPR-XX-XX
-       TR = Technical Report, R = Report, P = Project Report, IPR = Interim…
-    3. Authors: at least one name (not just URL, not just organisation)
-    4. Entry should have title (quoted or in italics — hard to detect from plain text,
-       so we check minimum length and structure)
-    5. For SKB internal refs: publisher "SKB" or "Swedish Nuclear Fuel and Waste Management Co"
-    6. No trailing comma / incorrect punctuation at end
-    7. URL-only references should also have access date
-    8. For journal articles: volume/issue pattern present
-    9. Numbered entries should be sequential
-  */
-  const SKB_REPORT_RE =
-  /\b(?:SKB\s+)?(?:TR|R|P|IPR|RD|SR|TM|U|F)[-\u2010\u2011\u2012\u2013\u2014\u2212]\d{2,}[-\u2010\u2011\u2012\u2013\u2014\u2212]\d+\b/i;
-  const YEAR_IN_TEXT_RE = /\b(1[89][0-9]{2}|20[0-9]{2})[a-z]?\b/;
-  const SEQUENTIAL_GAP_THRESHOLD = 5;
-
-  function checkSkbFormat(refEntries) {
-    const issues = []; // { key, issue, severity }
-
-    // Check sequential numbering
-    const numbered = refEntries.filter(e => e.num !== null).sort((a, b) => a.num - b.num);
-    for (let i = 0; i < numbered.length - 1; i++) {
-      const gap = numbered[i + 1].num - numbered[i].num;
-      if (gap > 1) issues.push({ key: numbered[i + 1].key, issue: `Numbering gap: expected [${numbered[i].num + 1}] before [${numbered[i + 1].num}]`, severity: 'warn' });
-    }
-
-    for (const e of refEntries) {
-      const text = e.body;
-      const entryIssues = [];
-
-      // Rule 1: Year present
-      if (!YEAR_IN_TEXT_RE.test(text)) {
-        entryIssues.push({ issue: 'No year detected in reference', severity: 'warn' });
-      }
-
-      // Rule 2: SKB report number format (only if "SKB" appears)
-      if (/\bskb\b/i.test(text) && !SKB_REPORT_RE.test(text)) {
-        // Could be SKB year-only citation — only warn if it looks like a report
-        if (/(report|rapport|technical|intern)\b/i.test(text)) {
-          entryIssues.push({ issue: 'SKB report reference lacks report number (e.g. TR-XX-XX)', severity: 'error' });
-        }
-      }
-
-      // Rule 3: Author present — not just URL
-      const isUrlOnly = /^https?:\/\//.test(text.trim());
-      if (isUrlOnly) {
-        entryIssues.push({ issue: 'URL-only reference; add author, title, and access date', severity: 'error' });
-      }
-      // Check for at least something that looks like an author (capitalized last name before year)
-      const hasAuthorLike = /[A-ZÅÄÖ][a-zåäö]+/.test(text.split(YEAR_IN_TEXT_RE)[0] || text);
-      if (
-        !hasAuthorLike &&
-        !isUrlOnly &&
-          e.type !== 'abbreviated-name'
-        ) {
-        entryIssues.push({
-          issue: 'Author name not clearly identifiable',
-          severity: 'warn'
-        });
-      }
-
-      // Rule 4: Entry length (too short to have all needed info)
-      if (text.length < 30) {
-        entryIssues.push({ issue: 'Entry seems too short — likely incomplete', severity: 'warn' });
-      }
-
-      // Rule 5: URL references should have access date
-      if (/https?:\/\//.test(text) && !/(?:accessed|hämtad|hämtat|visited|retrieved|besökt)\s/i.test(text)) {
-        entryIssues.push({ issue: 'URL present but no access date (e.g. "Accessed 2024-01-01")', severity: 'warn' });
-      }
-
-      // Rule 6: Trailing punctuation — should end with period
-      const last = text.trim().slice(-1);
-      if (text.length > 20 && last !== '.' && last !== ')') {
-        entryIssues.push({ issue: `Reference does not end with a period (ends with "${last}")`, severity: 'info' });
-      }
-
-      // Rule 7: For what appears to be a journal — check for volume/issue or doi
-      const looksLikeJournal = /\bvol\.?\s*\d|pp?\.?\s*\d|doi[:.\s]/i.test(text);
-      // (no action needed here, just detection for completeness)
-
-      // Rule 8: No CAPS-only author abbreviations where full name expected
-      if (
-        e.type !== 'abbreviated-name' &&
-          /^\[?\d+\]?\s+[A-ZÅÄÖ]{3,}[,\s]/.test(e.raw)
-      ) {
-        entryIssues.push({
-          issue: 'Author appears to be in ALL CAPS — use "Lastname, Firstname" format',
-          severity: 'info'
-       });
-      }
-
-      if (entryIssues.length > 0) {
-        for (const ei of entryIssues) issues.push({ key: e.key, ...ei });
-      }
-    }
-
-    return issues;
-  }
-
-/* ==================================================================
-   Zotero Web API integration
-   ================================================================== */
-/*
-  Cache Zotero searches for this browser session.
-
-  If several citations produce the same query, Zotero is only called
-  once.
-*/
-const zoteroSearchCache = new Map();
-async function searchZoteroItems(
-  query,
-  {
-    qmode = 'titleCreatorYear',
-    limit = 25,
-    timeoutMilliseconds = 15000
-  } = {}
-) {
-  const cleanedQuery = String(query || '')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  if (!cleanedQuery) {
-    return [];
-  }
-
-  const cacheKey =
-    `${qmode}||${cleanedQuery.toLowerCase()}`;
-
-  if (zoteroSearchCache.has(cacheKey)) {
-    return zoteroSearchCache.get(cacheKey);
-  }
-
-  const groupId = String(
-    ZOTERO_CONFIG.groupId || ''
-  ).trim();
-
-  if (!/^\d+$/.test(groupId)) {
-    throw new Error(
-      'Zotero group ID is missing or invalid.'
-    );
-  }
-
-  const parameters = new URLSearchParams({
-    format: 'json',
-    include: 'data',
-    q: cleanedQuery,
-    qmode,
-    itemType: '-attachment',
-    limit: String(limit)
-  });
-
-  const url =
-    `https://api.zotero.org/groups/${groupId}/items/top?` +
-    parameters.toString();
-
-  const controller = new AbortController();
-
-  const timeoutId = setTimeout(() => {
-    controller.abort();
-  }, timeoutMilliseconds);
-
-  console.log(
-  'Starting Zotero API search:',
-  {
-    query: cleanedQuery,
-    qmode,
-    limit,
-    timeoutMilliseconds,
-    url
-  }
-);
-  try {    
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'Zotero-API-Version':
-          ZOTERO_CONFIG.apiVersion,
-        Accept: 'application/json'
-      },
-      signal: controller.signal
-    });
-console.log(
-  'Zotero API response received:',
-  {
-    query: cleanedQuery,
-    status: response.status,
-    ok: response.ok
-  }
-);
-
-    if (!response.ok) {
-      let details = '';
-
+    async function handleFile(file) {
+      if (!file.name.toLowerCase().endsWith('.docx')) { alert('Please upload a .docx file.'); return; }
+      dropzone.style.display = 'none';
+      showStatus('Reading file…');
       try {
-        details = await response.text();
-      } catch {
-        details = '';
-      }
-
-      throw new Error(
-        `Zotero API returned HTTP ${response.status}` +
-        (
-          details
-            ? `: ${details.slice(0, 180)}`
-            : ''
-        )
-      );
-    }
-
-    const returnedItems = await response.json();
-    console.log(
-  'Zotero API items returned:',
-  {
-    query: cleanedQuery,
-    itemCount: Array.isArray(returnedItems)? returnedItems.length: null
-  }
-);
-    if (!Array.isArray(returnedItems)) {
-      throw new Error(
-        'Zotero returned an unexpected search response.'
-      );
-    }
-
-    const items = returnedItems.filter(item => {
-      const itemType =
-        item &&
-        item.data &&
-        item.data.itemType;
-
-      return (
-        itemType &&
-        itemType !== 'attachment' &&
-        itemType !== 'note' &&
-        itemType !== 'annotation'
-      );
-    });
-
-    zoteroSearchCache.set(cacheKey, items);
-
-    return items;
-  } catch (error) {
-    if (error.name === 'AbortError') {
-      throw new Error(
-        `Zotero search timed out after ` +
-        `${Math.round(timeoutMilliseconds / 1000)} seconds.`
-      );
-    }
-
-    throw error;
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}
-
-function buildZoteroQueriesForCitation(citation) {
-  const queries = [];
-
-  const key = String(citation.key || '')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  if (!key) {
-    return queries;
-  }
-
-  /*
-    SKB report citation:
-
-      SKB R-06-68
-
-    Try the report code both with and without "SKB".
-  */
-  if (citation.type === 'skb-report') {
-  queries.push({
-    query: key.replace(
-      /^SKB\s+/i,
-      ''
-    ),
-    qmode: 'everything'
-  });
-
-  return deduplicateZoteroQueries(
-    queries
-  );
-}
-
-  /*
-    Author-year citation:
-
-      Avila and Bergström 2006
-      Öhman et al. 2014
-      SSM 2017
-
-    Remove citation syntax that may reduce Zotero quick-search quality.
-  */
-  if (citation.type === 'author-year') {
-    const simplified = key
-      .replace(/\bet\s+al\.?/gi, '')
-      .replace(/\bm\.fl\.?/gi, '')
-      .replace(/\b(?:and|och|&)\b/gi, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-    queries.push({
-      query: simplified,
-      qmode: 'titleCreatorYear'
-    });
-
-    /*
-      First author and year is a useful fallback if Zotero does not
-      return results for the complete citation.
-    */
-    const yearMatch = simplified.match(
-      /\b(?:1[89]\d{2}|20\d{2})[a-z]?\b/i
-    );
-
-    const firstAuthor = simplified
-      .replace(
-        /\b(?:1[89]\d{2}|20\d{2})[a-z]?\b.*$/i,
-        ''
-      )
-      .trim()
-      .split(/\s+/)[0];
-
-    if (firstAuthor && yearMatch) {
-      queries.push({
-        query: `${firstAuthor} ${yearMatch[0]}`,
-        qmode: 'titleCreatorYear'
-      });
-    }
-
-    return deduplicateZoteroQueries(queries);
-  }
-
-  /*
-    Defined abbreviated citation name.
-  */
-  if (citation.type === 'abbreviated-name') {
-    queries.push({
-      query: key,
-      qmode: 'titleCreatorYear'
-    });
-
-    queries.push({
-      query: key,
-      qmode: 'everything'
-    });
-
-    return deduplicateZoteroQueries(queries);
-  }
-
-  queries.push({
-    query: key,
-    qmode: 'titleCreatorYear'
-  });
-
-  return deduplicateZoteroQueries(queries);
-}
-
-function buildZoteroQueriesForReference(entry) {
-  const queries = [];
-
-  /*
-    Search by title first because Zotero quick search reliably searches
-    title metadata.
-  */
-  const title =
-    getDocumentReferenceTitle(entry);
-
-  if (title) {
-    const titleQuery = title
-      .split(/\s+/)
-      .filter(Boolean)
-      .slice(0, 12)
-      .join(' ');
-
-    if (titleQuery) {
-      queries.push({
-        query: titleQuery,
-        qmode: 'titleCreatorYear'
-      });
-    }
-  }
-
-  /*
-    Also try the SKB Report Number. If Zotero returns the record, the
-    result is verified against data.reportNumber.
-  */
-  const reportKey =
-    getDocumentReferenceReportKey(entry);
-
-  if (reportKey) {
-    queries.push({
-      query: reportKey.replace(
-        /^SKB\s+/i,
-        ''
-      ),
-      qmode: 'everything'
-    });
-  }
-
-  /*
-    Author/year fallback.
-  */
-  if (entry.key) {
-    const simplifiedKey = String(entry.key)
-      .replace(/\bet\s+al\.?/gi, '')
-      .replace(/\bm\.fl\.?/gi, '')
-      .replace(
-        /(?:\band\b|\boch\b|&)/gi,
-        ' '
-      )
-      .replace(/\s+/g, ' ')
-      .trim();
-
-    if (simplifiedKey) {
-      queries.push({
-        query: simplifiedKey,
-        qmode: 'titleCreatorYear'
-      });
-    }
-  }
-
-  return deduplicateZoteroQueries(
-    queries
-  );
-}
-
-function deduplicateZoteroQueries(queries) {
-  const seen = new Set();
-
-  return queries.filter(item => {
-    const key =
-      `${item.qmode}||${item.query.toLowerCase()}`;
-
-    if (
-      !item.query ||
-      seen.has(key)
-    ) {
-      return false;
-    }
-
-    seen.add(key);
-    return true;
-  });
-}
-
-async function searchZoteroWithFallbacks(
-  queries,
-  source,
-  scoringFunction
-) {
-  const candidatesByKey = new Map();
-  const errors = [];
-
-  /*
-    At most two queries per citation/reference. The first query should
-    be the strongest one, and the second is a fallback.
-  */
-  const queriesToRun = queries.slice(0, 2);
-
-  for (const search of queriesToRun) {
-    showZoteroStatus(
-      `Searching Zotero for ` +
-      `“${truncate(search.query, 45)}”…`
-    );
-
-    await yieldToBrowser();
-
-    let items;
-
-    try {
-      items = await searchZoteroItems(
-        search.query,
-        {
-          qmode: search.qmode,
-          limit:
-            ZOTERO_CONFIG.searchResultLimit,
-          timeoutMilliseconds:
-            ZOTERO_CONFIG
-              .searchTimeoutMilliseconds
+        const zip = await JSZip.loadAsync(await file.arrayBuffer());
+        showStatus('Unzipping .docx…');
+        const docXml = await zip.file('word/document.xml')?.async('string');
+        if (!docXml) throw new Error('word/document.xml not found — is this a valid .docx?');
+        showStatus('Parsing document…'); await yieldToBrowser();
+        const { paragraphs, isSwedish } = parseDocXml(docXml);
+        showStatus('Finding reference list…'); await yieldToBrowser();
+        const { refListParagraphs, bodyParagraphs, refListStart } = splitAtRefList(paragraphs);
+        showStatus('Extracting references…'); await yieldToBrowser();
+        const refEntries = extractRefEntries(refListParagraphs);
+        showStatus('Finding in-text citations…'); await yieldToBrowser();
+        const inTextCites = findInTextCites(bodyParagraphs, refEntries);
+        showStatus('Cross-referencing…'); await yieldToBrowser();
+        const report = crossReference(refEntries, inTextCites);
+        currentReport = report;
+        showStatus('Checking SKB format rules…'); await yieldToBrowser();
+        const formatIssues = checkSkbFormat(refEntries);
+        for (const duplicates of report.duplicateKeys) {
+          for (const entry of duplicates) formatIssues.push({ key: entry.key, issue: `Duplicate key in reference list — ${duplicates.length} entries share the same key`, severity: 'error' });
         }
-      );
-    } catch (error) {
-      console.warn(
-        'Zotero search failed:',
-        {
-          query: search.query,
-          qmode: search.qmode,
-          error
+        hideStatus();
+        renderResults(file.name, refEntries, inTextCites, report, formatIssues, paragraphs.length, refListStart, isSwedish);
+        showZoteroButton(report);
+      } catch (error) {
+        hideStatus();
+        results.innerHTML = `<div style="color:var(--color-kvot-accent);padding:16px;background:var(--bg-secondary);border:1px solid var(--color-kvot-accent);border-radius:8px"><strong>Error:</strong> ${escHtml(error.message)}</div>`;
+        resetBtn.classList.add('show');
+      }
+    }
+
+    function parseDocXml(xml) {
+      const doc = new DOMParser().parseFromString(xml, 'application/xml');
+      const NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+      let isSwedish = false;
+      for (const node of [...doc.getElementsByTagNameNS(NS, 'lang')].slice(0, 40)) if (/^sv/i.test(node.getAttribute('w:val') || '')) { isSwedish = true; break; }
+      const paragraphs = [...doc.getElementsByTagNameNS(NS, 'p')].map((node, index) => {
+        const pPr = node.getElementsByTagNameNS(NS, 'pPr')[0];
+        const styleNode = pPr?.getElementsByTagNameNS(NS, 'pStyle')[0];
+        const numPr = pPr?.getElementsByTagNameNS(NS, 'numPr')[0];
+        return { text: extractTextFromParagraph(node, NS).trim(), style: (styleNode?.getAttribute('w:val') || '').toLowerCase(), numId: numPr?.getElementsByTagNameNS(NS, 'numId')[0]?.getAttribute('w:val') || '', index };
+      });
+      let section = '';
+      for (const paragraph of paragraphs) { if (headingLevel(paragraph.style) && paragraph.text) section = paragraph.text; paragraph.section = section; }
+      return { paragraphs, isSwedish };
+    }
+
+    function extractTextFromParagraph(node, NS) {
+      let text = '';
+      const fields = [];
+      (function walk(parent) {
+        for (let child = parent.firstChild; child; child = child.nextSibling) {
+          if (child.nodeType !== 1) continue;
+          if (child.namespaceURI !== NS) { walk(child); continue; }
+          if (child.localName === 'fldChar') {
+            const type = child.getAttribute('w:fldCharType');
+            if (type === 'begin') fields.push({ skip: false, result: false });
+            else if (type === 'separate' && fields.length) fields.at(-1).result = true;
+            else if (type === 'end' && fields.length) fields.pop();
+          } else if (child.localName === 'instrText' && fields.length) {
+            if (/^(SEQ|CAPTION|PAGE|NUMPAGES|REF\b|PAGEREF|STYLEREF|TOC|TC\b|XE\b|AUTONUMLGL|AUTONUM|MERGEFIELD)\b/i.test((child.textContent || '').trim())) fields.at(-1).skip = true;
+          } else if (child.localName === 't') {
+            if (!fields.some(field => field.result && field.skip)) text += child.textContent || '';
+          } else walk(child);
         }
-      );
-
-      errors.push(
-        error instanceof Error
-          ? error.message
-          : String(error)
-      );
-
-      /*
-        Continue with the fallback query rather than stopping the
-        complete analysis.
-      */
-      continue;
+      })(node);
+      return text;
     }
 
-    const preparedItems =
-      prepareZoteroItems(items);
+    const REF_HEADING_RE = /^\s*(?:\d[\d.]*\s+)?(?:references?|referenser|referenslista|litteratur|bibliography)\s*$/i;
+    const INTERNAL_REF_HEADING_RE = /^\s*(?:References with abbreviated names|Other references)\s*[.:]?\s*$/i;
+    function headingLevel(style) { const match = style.match(/^(?:heading|rubrik|överskrift|berschrift|titre|t[iî]tulo)\s*([1-6])$/) || style.match(/^([1-6])$/); return match ? Number(match[1]) : 0; }
 
-    for (const candidate of preparedItems) {
-      const result = scoringFunction(
-        source,
-        candidate
-      );
+    function splitAtRefList(paragraphs) {
+      let start = paragraphs.findIndex((p, i) => (headingLevel(p.style) || p.style.includes('heading') || p.style === 'title') && REF_HEADING_RE.test(p.text) && paragraphs.slice(i + 1, i + 6).map(x => x.text).join(' ').length > 10);
+      if (start < 0) return { refListParagraphs: [], bodyParagraphs: paragraphs, refListStart: -1 };
+      let end = paragraphs.length;
+      const endRe = /^\s*(?:\d[\d.]*\s+)?(?:appendix|appendices|bilaga|bilagor|annex|glossary|ordlista|index)\b/i;
+      for (let i = start + 1; i < paragraphs.length; i++) {
+        if (!paragraphs[i].text || INTERNAL_REF_HEADING_RE.test(paragraphs[i].text)) continue;
+        if (headingLevel(paragraphs[i].style) || endRe.test(paragraphs[i].text)) { end = i; break; }
+      }
+      return { refListParagraphs: paragraphs.slice(start + 1, end), bodyParagraphs: [...paragraphs.slice(0, start), ...paragraphs.slice(end)], refListStart: start };
+    }
 
-      const existing =
-        candidatesByKey.get(candidate.key);
+    function extractAbbreviatedReferenceName(text) { const match = String(text).match(/^\s*(.+?)\s*,\s*((?:1[89]\d{2}|20\d{2})[a-z]?)\s*[.]/); return match && match[1].trim().length <= 200 ? match[1].replace(/\s+/g, ' ').trim() : null; }
+    function looksLikeRefStart(text) { return Boolean(extractSkbReportKey(text, true) || extractAuthorYearKey(text)); }
 
-      if (
-        !existing ||
-        result.score > existing.score
-      ) {
-        candidatesByKey.set(
-          candidate.key,
-          {
-            ...candidate,
-            score: result.score,
-            reasons: result.reasons,
-            searchQuery: search.query
-          }
-        );
+    function extractRefEntries(paragraphs) {
+      const entries = []; let current = null; let autoNum = 0; let abbreviated = false;
+      const finish = () => { if (current) entries.push(current); current = null; };
+      const create = (text, paragraph) => {
+        const abbreviatedName = abbreviated ? extractAbbreviatedReferenceName(text) : null;
+        const reportKey = extractSkbReportKey(text, true);
+        return { key: abbreviatedName || extractReferenceKey(text) || text.slice(0, 40), num: null, body: text, raw: text, paraIndex: paragraph.index, type: abbreviatedName ? 'abbreviated-name' : reportKey ? 'skb-report' : 'author-year', abbreviatedName };
+      };
+      for (const paragraph of paragraphs) {
+        const text = paragraph.text.trim();
+        if (/^\s*References with abbreviated names\s*[.:]?\s*$/i.test(text)) { finish(); abbreviated = true; continue; }
+        if (/^\s*Other references\s*[.:]?\s*$/i.test(text)) { finish(); abbreviated = false; continue; }
+        if (!text) { finish(); continue; }
+        const number = text.match(/^(?:\[(\d+)\]|(\d+)[.)\s]\s)/);
+        if (number || (paragraph.numId && paragraph.numId !== '0')) {
+          finish(); autoNum = number ? Number(number[1] || number[2]) : autoNum + 1;
+          const body = number ? text.replace(/^\[?\d+\]?[.)\s]+/, '').trim() : text;
+          const abbreviatedName = abbreviated ? extractAbbreviatedReferenceName(body) : null;
+          current = { key: `[${autoNum}]`, num: autoNum, body, raw: text, paraIndex: paragraph.index, type: abbreviatedName ? 'abbreviated-name' : 'numbered', abbreviatedName };
+        } else if ((abbreviated && extractAbbreviatedReferenceName(text)) || (current && looksLikeRefStart(text))) {
+          finish(); current = create(text, paragraph);
+        } else if (current) { current.body += ` ${text}`; current.raw += ` ${text}`; }
+        else current = create(text, paragraph);
+      }
+      finish();
+      for (const entry of entries) entry.aliases = collectReferenceAliases(entry);
+      return entries;
+    }
+
+    function extractAuthorYearKey(text) {
+      const list = text.match(/^(.+),\s*((?:1[89]\d{2}|20\d{2})[a-z]?)\s*[.,]/);
+      if (list) {
+        const surnames = list[1].split(',').map(part => part.trim().split(/\s+/)).map(words => { let removed = false; while (words.length > 1 && isAuthorInitial(words.at(-1))) { words.pop(); removed = true; } return removed ? words.join(' ') : ''; }).filter(Boolean);
+        if (surnames.length === 1) return `${surnames[0]} ${list[2]}`;
+        if (surnames.length === 2) return `${surnames[0]} and ${surnames[1]} ${list[2]}`;
+        if (surnames.length > 2) return `${surnames[0]} et al. ${list[2]}`;
+      }
+      const simple = text.match(/^([A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ-]+(?:\s+(?:et\s+al\.?|m\.fl\.?))?(?:,\s*[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ.]+)?)(?:,\s*|\s+)((?:1[89]\d{2}|20\d{2})[a-z]?)/);
+      return simple ? `${simple[1]} ${simple[2]}` : null;
+    }
+    function isAuthorInitial(value) { const clean = String(value).replace(/\./g, ''); return clean.split('-').every(part => /^[A-ZÀ-ÖØ-Þ]{1,3}$/.test(part)); }
+    function normaliseDashes(text) { return String(text).replace(/[\u2010\u2011\u2012\u2013\u2014\u2212]/g, '-'); }
+    function extractSkbReportKey(text, startOnly = false) {
+      const normalized = normaliseDashes(text).replace(/\s+/g, ' ').trim();
+      const prefix = startOnly ? '^\\s*(?:(?:\\[\\d+\\]|\\d+[.)])\\s*)?' : '(?:^|[^A-Za-z0-9])';
+      const match = normalized.match(new RegExp(prefix + '(?:SKB[\\s-]*)?((?:TR|R|P|IPR|RD|SR|TM|U|F)-\\d{2,}-\\d+)(?=$|[^A-Za-z0-9])', 'i'));
+      return match ? `SKB ${match[1].toUpperCase()}` : null;
+    }
+    function extractReferenceKey(text) { return extractSkbReportKey(text, true) || extractAuthorYearKey(text); }
+    function collectReferenceAliases(entry) { const aliases = new Set([entry.key, entry.abbreviatedName, extractAuthorYearKey(entry.body), extractSkbReportKey(entry.body, true), extractSkbReportKey(entry.body)]); return [...aliases].filter(Boolean); }
+
+    function findInTextCites(paragraphs, entries) {
+      const citations = [];
+      const abbreviations = entries.filter(entry => entry.abbreviatedName).map(entry => entry.abbreviatedName).sort((a,b) => b.length - a.length);
+      for (const paragraph of paragraphs) {
+        if (!paragraph.text) continue;
+        findAuthorYearCitations(paragraph, citations);
+        findSkbCitations(paragraph, citations);
+        for (const name of abbreviations) {
+          const regex = new RegExp(`(?:^|[^A-Za-zÀ-ÖØ-Þà-öø-ÿ0-9])(${escapeRegExp(name).replace(/\\s+/g, '\\\\s+')})(?=$|[^A-Za-zÀ-ÖØ-Þà-öø-ÿ0-9])`, 'gi');
+          let match; while ((match = regex.exec(paragraph.text))) citations.push({ key: name, raw: match[1], paraIndex: paragraph.index, section: paragraph.section, paraText: paragraph.text, type: 'abbreviated-name', author: name, year: null });
+        }
+      }
+      const seen = new Set(); return citations.filter(c => { const id = `${normaliseKey(c.key)}|${c.paraIndex}`; if (seen.has(id)) return false; seen.add(id); return true; });
+    }
+    function findAuthorYearCitations(paragraph, out) {
+      const year = '(?:1[89]\\d{2}|20\\d{2})[a-z]?';
+      const surname = '(?:(?:van|von|de|del|della|der|den|di|da|dos|du|la|le|af)\\s+)*[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ-]+';
+      const author = `(?:[A-ZÅÄÖ]{2,}|${surname})(?:\\s+(?:et\\s+al\\.?|m\\.fl\\.?))?(?:\\s+(?:and|och|&)\\s+(?:[A-ZÅÄÖ]{2,}|${surname}))?`;
+      for (const group of paragraph.text.matchAll(/\(([^()]*)\)/g)) {
+        let previous = null;
+        for (const part of group[1].split(/\s*[,;]\s*/).map(x => x.trim()).filter(Boolean)) {
+          const match = part.match(new RegExp(`(?:^|[^A-Za-zÀ-ÖØ-Þà-öø-ÿ])(${author})\\s+(${year})(?=$|[^A-Za-zÀ-ÖØ-Þà-öø-ÿ0-9])`));
+          if (match) { const a = normaliseCitationAuthor(match[1]); previous = a; if (a.toUpperCase() !== 'SKB') out.push(makeCitation(`${a} ${match[2]}`, paragraph, 'author-year', a, match[2])); }
+          else if (previous && new RegExp(`^${year}$`).test(part) && previous.toUpperCase() !== 'SKB') out.push(makeCitation(`${previous} ${part}`, paragraph, 'author-year', previous, part));
+        }
+      }
+      const inline = new RegExp(`(?:^|[^A-Za-zÀ-ÖØ-Þà-öø-ÿ])(${author})\\s+\\((${year})(?:\\s*,\\s*[^()]*)?\\)`, 'g');
+      let match; while ((match = inline.exec(paragraph.text))) { const a = normaliseCitationAuthor(match[1]); if (a.toUpperCase() !== 'SKB') out.push(makeCitation(`${a} ${match[2]}`, paragraph, 'author-year', a, match[2])); }
+    }
+    function findSkbCitations(paragraph, out) {
+      const regex = /\bSKB\s+(?:\(((?:1[89]\d{2}|20\d{2})[a-z]?(?:[,\s]+(?:1[89]\d{2}|20\d{2})[a-z]?)*)\)|((?:1[89]\d{2}|20\d{2})[a-z]?)|((?:TR|R|P|IPR|RD|SR|TM|U|F)-\d{2,}-\d+))/gi;
+      let match; while ((match = regex.exec(normaliseDashes(paragraph.text)))) {
+        if (match[1]) for (const y of match[1].split(/\s*,\s*/)) out.push(makeCitation(`SKB ${y}`, paragraph, 'skb-year'));
+        else if (match[2]) out.push(makeCitation(`SKB ${match[2]}`, paragraph, 'skb-year'));
+        else out.push(makeCitation(`SKB ${match[3].toUpperCase()}`, paragraph, 'skb-report'));
       }
     }
+    function makeCitation(key, paragraph, type, author = null, year = null) { return { key, raw: key, paraIndex: paragraph.index, section: paragraph.section, paraText: paragraph.text, type, author, year }; }
+    function normaliseCitationAuthor(author) { return String(author).replace(/\s+/g, ' ').replace(/\bet\s+al\.?$/i, 'et al.').replace(/\bm\.fl\.?$/i, 'm.fl.').trim(); }
+    function escapeRegExp(text) { return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
-    const scores = [
-      ...candidatesByKey.values()
-    ].map(candidate => candidate.score);
-
-    const bestScore =
-      scores.length > 0
-        ? Math.max(...scores)
-        : 0;
-
-    /*
-      Do not run fallbacks when a confident match was already found.
-    */
-    if (bestScore >= 90) {
-      break;
+    function normaliseKey(key) { return normaliseDashes(key).normalize('NFC').toLowerCase().replace(/et\s*al\.?/g, 'etal').replace(/\s*-\s*/g, '-').replace(/[\s.,;:!?\'"()\[\]{}]/g, ''); }
+    function fuzzyMatch(a, b) { if (a.length < 4 || b.length < 4) return false; if (a.includes(b) || b.includes(a)) return true; const grams = s => new Set([...Array(Math.max(0,s.length-1))].map((_,i)=>s.slice(i,i+2))); const x=grams(a), y=grams(b); return [...x].filter(g=>y.has(g)).length / Math.max(x.size,y.size,1) > .7; }
+    function crossReference(entries, citations) {
+      const byKey = new Map(), byAlias = new Map(), byNum = new Map();
+      for (const entry of entries) { entry.cites=[]; const key=normaliseKey(entry.key); (byKey.get(key)||byKey.set(key,[]).get(key)).push(entry); for(const alias of entry.aliases||[]) { const a=normaliseKey(alias); (byAlias.get(a)||byAlias.set(a,[]).get(a)).push(entry); } if(entry.num!==null) byNum.set(entry.num,entry); }
+      const orphanCites=[];
+      for(const citation of citations) { let matches=[]; if(citation.type==='numbered'&&byNum.has(citation.num)) matches=[byNum.get(citation.num)]; else { const key=normaliseKey(citation.key); matches=byKey.get(key)||byAlias.get(key)||[]; if(!matches.length) for(const [candidate,list] of byKey) if(fuzzyMatch(key,candidate)){matches=list;break;} } if(matches.length) matches.forEach(entry=>entry.cites.push(citation)); else orphanCites.push(citation); }
+      return { orphanCites, uncitedRefs: entries.filter(entry=>!entry.cites.length), duplicateKeys:[...byKey.values()].filter(list=>list.length>1) };
     }
-  }
 
-  /*
-    If all searches failed, return no candidates. One failed Zotero
-    lookup should not terminate the entire document analysis.
-  */
-  if (
-    errors.length === queriesToRun.length &&
-    queriesToRun.length > 0
-  ) {
-    console.warn(
-      'All Zotero fallback searches failed:',
-      errors
-    );
-
-    return [];
-  }
-
-  return [...candidatesByKey.values()]
-    .filter(candidate => {
-      return (
-        candidate.score >=
-        ZOTERO_CONFIG.minimumScore
-      );
-    })
-    .sort((a, b) => b.score - a.score)
-    .slice(
-      0,
-      ZOTERO_CONFIG.maximumCandidates
-    );
-}
-
-
-async function analyseAgainstZotero(
-  orphanCites,
-  uncitedRefs
-) {
-  const orphanCitesToCheck = orphanCites.slice(
-    0,
-    ZOTERO_CONFIG.maximumOrphanLookups
-  );
-
-  const uncitedRefsToCheck = uncitedRefs.slice(
-    0,
-    ZOTERO_CONFIG.maximumUncitedLookups
-  );
-
-  const orphanMatches = [];
-
-  for (
-    let index = 0;
-    index < orphanCitesToCheck.length;
-    index++
-  ) {
-    const citation = orphanCitesToCheck[index];
-
-    showZoteroStatus(
-      `Searching Zotero for orphan citation ` +
-      `${index + 1} of ${orphanCitesToCheck.length}: ` +
-      `${truncate(citation.key, 35)}…`
-    );
-
-    await yieldToBrowser();
-
-    const queries =
-      buildZoteroQueriesForCitation(citation);
-
-    const candidates =
-      await searchZoteroWithFallbacks(
-        queries,
-        citation,
-        scoreOrphanCitationAgainstZotero
-      );
-
-    orphanMatches.push({
-      source: citation,
-      candidates
-    });
-  }
-
-  const uncitedMatches = [];
-
-  for (
-    let index = 0;
-    index < uncitedRefsToCheck.length;
-    index++
-  ) {
-    const entry = uncitedRefsToCheck[index];
-
-    showZoteroStatus(
-      `Searching Zotero for uncited reference ` +
-      `${index + 1} of ${uncitedRefsToCheck.length}: ` +
-      `${truncate(entry.key, 35)}…`
-    );
-
-    await yieldToBrowser();
-
-    const queries =
-      buildZoteroQueriesForReference(entry);
-
-    const candidates =
-      await searchZoteroWithFallbacks(
-        queries,
-        entry,
-        scoreDocumentReferenceAgainstZotero
-      );
-
-    uncitedMatches.push({
-      source: entry,
-      candidates
-    });
-  }
-
-  return {
-    available: true,
-    error: null,
-
-    itemCount: countUniqueZoteroCandidates(
-      orphanMatches,
-      uncitedMatches
-    ),
-
-    orphanMatches,
-    uncitedMatches,
-
-    skippedOrphanCount:
-      orphanCites.length -
-      orphanCitesToCheck.length,
-
-    skippedUncitedCount:
-      uncitedRefs.length -
-      uncitedRefsToCheck.length
-  };
-}
-
-function countUniqueZoteroCandidates(
-  orphanMatches,
-  uncitedMatches
-) {
-  const keys = new Set();
-
-  for (const result of [
-    ...orphanMatches,
-    ...uncitedMatches
-  ]) {
-    for (const candidate of result.candidates) {
-      if (candidate.key) {
-        keys.add(candidate.key);
-      }
+    const YEAR_RE = /\b(1[89]\d{2}|20\d{2})[a-z]?\b/;
+    function checkSkbFormat(entries) {
+      const issues=[];
+      const numbered=entries.filter(e=>e.num!==null).sort((a,b)=>a.num-b.num);
+      for(let i=0;i<numbered.length-1;i++) if(numbered[i+1].num-numbered[i].num>1) issues.push({key:numbered[i+1].key,issue:`Numbering gap: expected [${numbered[i].num+1}] before [${numbered[i+1].num}]`,severity:'warn'});
+      for(const entry of entries){ const text=entry.body; if(!YEAR_RE.test(text)) issues.push({key:entry.key,issue:'No year detected in reference',severity:'warn'}); if(text.length<30) issues.push({key:entry.key,issue:'Entry seems too short — likely incomplete',severity:'warn'}); if(/^https?:\/\//.test(text)) issues.push({key:entry.key,issue:'URL-only reference; add author, title, and access date',severity:'error'}); if(/https?:\/\//.test(text)&&!/(?:accessed|hämtad|hämtat|visited|retrieved|besökt)\s/i.test(text)) issues.push({key:entry.key,issue:'URL present but no access date',severity:'warn'}); const last=text.trim().slice(-1); if(text.length>20&&!['.',')'].includes(last)) issues.push({key:entry.key,issue:`Reference does not end with a period (ends with "${last}")`,severity:'info'}); }
+      return issues;
     }
-  }
 
-  return keys.size;
-}
-
-
-
-/*
-  Extract a plausible publication year from a Zotero date field.
-
-  Handles values such as:
-
-    2019
-    2019-05
-    2019-05-14
-    May 2019
-*/
-function getZoteroYear(item) {
-  const date =
-    item &&
-    item.data &&
-    item.data.date
-      ? String(item.data.date)
-      : '';
-
-  const match = date.match(
-    /\b(?:1[89]\d{2}|20\d{2})[a-z]?\b/i
-  );
-
-  return match ? match[0] : null;
-}
-
-/*
-  Return author/creator surnames from a Zotero item.
-*/
-function getZoteroAuthors(item) {
-  const creators =
-    item &&
-    item.data &&
-    Array.isArray(item.data.creators)
-      ? item.data.creators
-      : [];
-
-  return creators
-    .filter(creator => {
-      if (!creator) {
-        return false;
-      }
-
-      return [
-        'author',
-        'bookAuthor',
-        'reporter',
-        'inventor',
-        'programmer'
-      ].includes(creator.creatorType);
-    })
-    .map(creator => {
-      return String(
-        creator.lastName ||
-        creator.name ||
-        ''
-      ).trim();
-    })
-    .filter(Boolean);
-}
-
-/*
-  Return a report number from commonly used Zotero report fields.
-*/
-function getZoteroReportNumber(item) {
-  const data =
-    item && item.data
-      ? item.data
-      : {};
-
-  return String(
-    data.reportNumber || ''
-  ).trim();
-}
-
-/*
-  Extract an SKB report identifier from all useful Zotero metadata.
-*/
-function getZoteroSkbReportKey(item) {
-  const reportNumber =
-    getZoteroReportNumber(item);
-
-  if (!reportNumber) {
-    return null;
-  }
-
-  return extractSkbReportKey(
-    reportNumber
-  );
-}
-
-/*
-  Build the standard author-year key from Zotero metadata.
-*/
-function getZoteroAuthorYearKey(item) {
-  const authors = getZoteroAuthors(item);
-  const year = getZoteroYear(item);
-
-  if (!year || authors.length === 0) {
-    return null;
-  }
-
-  if (authors.length === 1) {
-    return `${authors[0]} ${year}`;
-  }
-
-  if (authors.length === 2) {
-    return (
-      `${authors[0]} and ${authors[1]} ${year}`
-    );
-  }
-
-  return `${authors[0]} et al. ${year}`;
-}
-
-/*
-  Build all useful aliases for a Zotero item.
-*/
-function getZoteroAliases(item) {
-  const aliases = new Set();
-
-  const authorYear =
-    getZoteroAuthorYearKey(item);
-
-  if (authorYear) {
-    aliases.add(authorYear);
-  }
-
-  const reportKey =
-    getZoteroSkbReportKey(item);
-
-  if (reportKey) {
-    aliases.add(reportKey);
-  }
-
-  const data = item && item.data
-    ? item.data
-    : {};
-
-  /*
-    If a short title has been defined in Zotero, treat it as a possible
-    abbreviated citation name.
-  */
-  if (data.shortTitle) {
-    aliases.add(
-      String(data.shortTitle).trim()
-    );
-  }
-
-  return [...aliases].filter(Boolean);
-}
-
-/*
-  Produce a normalized title suitable for similarity comparison.
-*/
-function normaliseTitle(value) {
-  return normaliseDashes(value || '')
-    .normalize('NFC')
-    .toLowerCase()
-    .replace(/&/g, ' and ')
-    .replace(/[^a-zà-öø-ÿ0-9]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-/*
-  Convert text into word tokens while ignoring very short words.
-*/
-function titleTokens(value) {
-  return new Set(
-    normaliseTitle(value)
-      .split(' ')
-      .filter(word => word.length >= 3)
-  );
-}
-
-/*
-  Jaccard-style title similarity from 0 to 1.
-*/
-function titleSimilarity(a, b) {
-  const first = titleTokens(a);
-  const second = titleTokens(b);
-
-  if (first.size === 0 || second.size === 0) {
-    return 0;
-  }
-
-  let common = 0;
-
-  for (const token of first) {
-    if (second.has(token)) {
-      common++;
+    async function runOptionalZoteroCheck() {
+      if (zoteroLookupRunning || !currentReport) return;
+      zoteroLookupRunning = true; zoteroCheckBtn.disabled = true; zoteroCheckBtn.textContent = 'Checking Zotero…'; zoteroResults.innerHTML=''; examinedZoteroItemKeys.clear(); showZoteroStatus('Preparing targeted Zotero searches…');
+      try {
+        const result = await withTimeout(analyseAgainstZotero(currentReport.orphanCites||[], currentReport.uncitedRefs||[]), 60000, 'The Zotero check exceeded 60 seconds and was stopped.');
+        zoteroResults.innerHTML = buildZoteroMatchSection(result); showZoteroStatus('Zotero check completed.');
+      } catch(error) { zoteroResults.innerHTML=buildZoteroMatchSection({available:false,error:error.message,itemCount:0,orphanMatches:[],uncitedMatches:[]}); showZoteroStatus('Zotero check could not be completed.'); }
+      finally { zoteroLookupRunning=false; zoteroCheckBtn.disabled=false; zoteroCheckBtn.textContent='Check Zotero again'; }
     }
-  }
 
-  const union =
-    first.size + second.size - common;
-
-  return union > 0
-    ? common / union
-    : 0;
-}
-
-/*
-  Extract the first plausible title portion from a parsed document
-  reference.
-
-  This does not need to be perfect. It is used only as one component of
-  a candidate score.
-*/
-function getDocumentReferenceTitle(entry) {
-  let text = String(entry.body || '').trim();
-
-  /*
-    Remove a leading SKB code.
-  */
-  text = text.replace(
-    /^\s*SKB\s+(?:TR|R|P|IPR|RD|SR|TM|U|F)-\d{2,}-\d+\s*[.,]?\s*/i,
-    ''
-  );
-
-  /*
-    Remove a leading comma-separated author list and year.
-  */
-  text = text.replace(
-    /^.+?,\s*(?:1[89]\d{2}|20\d{2})[a-z]?\s*[.]\s*/,
-    ''
-  );
-
-  /*
-    Remove a simple author-year prefix.
-  */
-  text = text.replace(
-    /^.+?\s+(?:1[89]\d{2}|20\d{2})[a-z]?\s*[.]\s*/,
-    ''
-  );
-
-  /*
-    The first sentence normally contains the title.
-  */
-  const firstSentence = text.split(/\.\s+/)[0];
-
-  return firstSentence.trim();
-}
-
-/*
-  Extract a year directly from a document reference.
-*/
-function getDocumentReferenceYear(entry) {
-  const match = String(entry.body || '').match(
-    /\b(?:1[89]\d{2}|20\d{2})[a-z]?\b/i
-  );
-
-  return match ? match[0] : null;
-}
-
-/*
-  Extract an SKB report key from a document reference.
-*/
-function getDocumentReferenceReportKey(entry) {
-  return extractSkbReportKey(
-    entry.body || ''
-  );
-}
-
-/*
-  Create candidate-scoring metadata once for each Zotero item.
-*/
-function prepareZoteroItems(items) {
-  return items.map(item => {
-    const data = item.data || {};
-
-    const aliases = getZoteroAliases(item);
-
-    return {
-      item,
-      key: item.key,
-      title: String(data.title || '').trim(),
-      shortTitle: String(
-        data.shortTitle || ''
-      ).trim(),
-      year: getZoteroYear(item),
-      authors: getZoteroAuthors(item),
-      authorYearKey:
-        getZoteroAuthorYearKey(item),
-      reportKey:
-        getZoteroSkbReportKey(item),
-      reportNumber:
-        getZoteroReportNumber(item),
-      aliases,
-      normalizedAliases: aliases.map(
-        normaliseKey
-      ),
-      itemType: data.itemType || '',
-      url: createZoteroItemUrl(item)
-    };
-  });
-}
-
-/*
-  Link to the item in the public Zotero group library.
-*/
-function createZoteroItemUrl(item) {
-  if (
-    item &&
-    item.links &&
-    item.links.alternate &&
-    item.links.alternate.href
-  ) {
-    return item.links.alternate.href;
-  }
-
-  const groupId = String(
-    ZOTERO_CONFIG.groupId
-  );
-
-  const itemKey =
-    item && item.key
-      ? item.key
-      : '';
-
-  return (
-    `https://www.zotero.org/groups/` +
-    `${encodeURIComponent(groupId)}/items/` +
-    `${encodeURIComponent(itemKey)}`
-  );
-}
-
-/*
-  Rank one orphan in-text citation against a Zotero item.
-*/
-function scoreOrphanCitationAgainstZotero(
-  citation,
-  candidate
-) {
-  let score = 0;
-  const reasons = [];
-
-  const citationKey = normaliseKey(
-    citation.key
-  );
-
-  /*
-    An exact generated alias is the strongest match.
-  */
-  if (
-    candidate.normalizedAliases.includes(
-      citationKey
-    )
-  ) {
-    score += 90;
-    reasons.push('exact citation alias');
-  }
-
-  /*
-    Exact report-number matches are effectively identifiers.
-  */
-  if (
-    citation.type === 'skb-report' &&
-    candidate.reportKey &&
-    normaliseKey(candidate.reportKey) === citationKey
-  ) {
-    score = Math.max(score, 98);
-    reasons.push('exact SKB report number');
-  }
-
-  /*
-    Compare citation year to Zotero year.
-  */
-  const citationYear =
-    citation.year ||
-    (
-      String(citation.key).match(
-        /\b(?:1[89]\d{2}|20\d{2})[a-z]?\b/i
-      ) || []
-    )[0] ||
-    null;
-
-  if (
-    citationYear &&
-    candidate.year &&
-    citationYear.toLowerCase() ===
-      candidate.year.toLowerCase()
-  ) {
-    score += 10;
-    reasons.push('same year');
-  }
-
-  /*
-    Compare the leading cited surname with Zotero's first author.
-  */
-  if (
-    citation.author &&
-    candidate.authors.length > 0
-  ) {
-    const citedFirstName = String(
-      citation.author
-    )
-      .replace(/\s+(?:et\s+al\.?|m\.fl\.?).*$/i, '')
-      .replace(/\s+(?:and|och|&).*$/i, '')
-      .trim();
-
-    const zoteroFirstName =
-      candidate.authors[0];
-
-    if (
-      normaliseKey(citedFirstName) ===
-      normaliseKey(zoteroFirstName)
-    ) {
-      score += 25;
-      reasons.push('same first author');
+    async function searchZoteroItems(query,{qmode='titleCreatorYear',limit=15,timeoutMilliseconds=10000}={}) {
+      const cleaned=String(query||'').replace(/\s+/g,' ').trim(); if(!cleaned)return[];
+      const cacheKey=`${qmode}|${cleaned.toLowerCase()}`; if(zoteroSearchCache.has(cacheKey))return zoteroSearchCache.get(cacheKey);
+      const parameters=new URLSearchParams({format:'json',include:'data',q:cleaned,qmode,itemType:'-attachment',limit:String(limit)});
+      const controller=new AbortController(); const timer=setTimeout(()=>controller.abort(),timeoutMilliseconds);
+      try { const response=await fetch(`https://api.zotero.org/groups/${ZOTERO_CONFIG.groupId}/items/top?${parameters}`,{headers:{'Zotero-API-Version':ZOTERO_CONFIG.apiVersion,Accept:'application/json'},signal:controller.signal}); if(!response.ok)throw new Error(`Zotero API returned HTTP ${response.status}`); const returned=await response.json(); if(!Array.isArray(returned))throw new Error('Zotero returned an unexpected response.'); returned.forEach(item=>item?.key&&examinedZoteroItemKeys.add(item.key)); const items=returned.filter(item=>!['attachment','note','annotation'].includes(item?.data?.itemType)); zoteroSearchCache.set(cacheKey,items); return items; }
+      catch(error){ if(error.name==='AbortError')throw new Error(`Zotero search timed out after ${Math.round(timeoutMilliseconds/1000)} seconds.`); throw error; } finally{clearTimeout(timer);}
     }
-  }
 
-  return {
-    score: Math.min(score, 100),
-    reasons
-  };
-}
+    function buildZoteroQueriesForCitation(citation){ const key=String(citation.key||'').trim(); if(!key)return[]; if(citation.type==='skb-report')return[{query:key.replace(/^SKB\s+/i,''),qmode:'everything'}]; const simple=key.replace(/\bet\s+al\.?|\bm\.fl\.?/gi,'').replace(/(?:\band\b|\boch\b|&)/gi,' ').replace(/\s+/g,' ').trim(); return dedupeQueries([{query:simple,qmode:'titleCreatorYear'}]); }
+    function buildZoteroQueriesForReference(entry){ const title=getDocumentReferenceTitle(entry).split(/\s+/).filter(Boolean).slice(0,12).join(' '); const report=getDocumentReferenceReportKey(entry); const key=String(entry.key||'').replace(/\bet\s+al\.?|\bm\.fl\.?/gi,'').replace(/(?:\band\b|\boch\b|&)/gi,' ').replace(/\s+/g,' ').trim(); return dedupeQueries([{query:title,qmode:'titleCreatorYear'},{query:report?.replace(/^SKB\s+/i,''),qmode:'everything'},{query:key,qmode:'titleCreatorYear'}]); }
+    function dedupeQueries(queries){ const seen=new Set(); return queries.filter(item=>{ if(!item.query)return false; const key=`${item.qmode}|${item.query.toLowerCase()}`; if(seen.has(key))return false; seen.add(key); return true; }); }
+    async function searchZoteroWithFallbacks(queries,source,score){ const candidates=new Map(); for(const search of queries.slice(0,2)){ showZoteroStatus(`Searching Zotero for “${truncate(search.query,45)}”…`); let items=[]; try{items=await searchZoteroItems(search.query,{qmode:search.qmode,limit:ZOTERO_CONFIG.searchResultLimit,timeoutMilliseconds:ZOTERO_CONFIG.searchTimeoutMilliseconds});}catch(error){console.warn(error);continue;} for(const candidate of prepareZoteroItems(items)){ const result=score(source,candidate); if(!candidates.has(candidate.key)||result.score>candidates.get(candidate.key).score)candidates.set(candidate.key,{...candidate,...result}); } if(Math.max(0,...[...candidates.values()].map(x=>x.score))>=90)break; } return [...candidates.values()].filter(x=>x.score>=ZOTERO_CONFIG.minimumScore).sort((a,b)=>b.score-a.score).slice(0,ZOTERO_CONFIG.maximumCandidates); }
+    async function analyseAgainstZotero(orphanCites,uncitedRefs){ const orphans=orphanCites.slice(0,ZOTERO_CONFIG.maximumOrphanLookups), uncited=uncitedRefs.slice(0,ZOTERO_CONFIG.maximumUncitedLookups); const orphanMatches=[],uncitedMatches=[]; for(let i=0;i<orphans.length;i++){showZoteroStatus(`Searching orphan citation ${i+1} of ${orphans.length}…`);orphanMatches.push({source:orphans[i],candidates:await searchZoteroWithFallbacks(buildZoteroQueriesForCitation(orphans[i]),orphans[i],scoreOrphanCitationAgainstZotero)});} for(let i=0;i<uncited.length;i++){showZoteroStatus(`Searching uncited reference ${i+1} of ${uncited.length}…`);uncitedMatches.push({source:uncited[i],candidates:await searchZoteroWithFallbacks(buildZoteroQueriesForReference(uncited[i]),uncited[i],scoreDocumentReferenceAgainstZotero)});} return{available:true,error:null,itemCount:examinedZoteroItemKeys.size,orphanMatches,uncitedMatches,skippedOrphanCount:orphanCites.length-orphans.length,skippedUncitedCount:uncitedRefs.length-uncited.length}; }
 
-/*
-  Rank one uncited document reference against a Zotero item.
-*/
-function scoreDocumentReferenceAgainstZotero(
-  entry,
-  candidate
-) {
-  let score = 0;
-  const reasons = [];
+    function getZoteroYear(item){return String(item?.data?.date||'').match(/\b(?:1[89]\d{2}|20\d{2})[a-z]?\b/i)?.[0]||null;}
+    function getZoteroAuthors(item){return (item?.data?.creators||[]).filter(c=>['author','bookAuthor','reporter','inventor','programmer'].includes(c.creatorType)).map(c=>String(c.lastName||c.name||'').trim()).filter(Boolean);}
+    function getZoteroReportNumber(item){return String(item?.data?.reportNumber||'').trim();}
+    function getZoteroSkbReportKey(item){return extractSkbReportKey(getZoteroReportNumber(item));}
+    function getZoteroAuthorYearKey(item){const a=getZoteroAuthors(item),y=getZoteroYear(item);return !a.length||!y?null:a.length===1?`${a[0]} ${y}`:a.length===2?`${a[0]} and ${a[1]} ${y}`:`${a[0]} et al. ${y}`;}
+    function prepareZoteroItems(items){return items.map(item=>{const aliases=[getZoteroAuthorYearKey(item),getZoteroSkbReportKey(item),item.data?.shortTitle].filter(Boolean);return{key:item.key,title:String(item.data?.title||''),year:getZoteroYear(item),authors:getZoteroAuthors(item),reportKey:getZoteroSkbReportKey(item),aliases,normalizedAliases:aliases.map(normaliseKey),url:item.links?.alternate?.href||`https://www.zotero.org/groups/${ZOTERO_CONFIG.groupId}/items/${item.key}`};});}
+    function normaliseTitle(value){return normaliseDashes(value||'').normalize('NFC').toLowerCase().replace(/&/g,' and ').replace(/[^a-zà-öø-ÿ0-9]+/g,' ').replace(/\s+/g,' ').trim();}
+    function titleSimilarity(a,b){const x=new Set(normaliseTitle(a).split(' ').filter(w=>w.length>=3)),y=new Set(normaliseTitle(b).split(' ').filter(w=>w.length>=3));if(!x.size||!y.size)return 0;const common=[...x].filter(w=>y.has(w)).length;return common/(x.size+y.size-common);}
+    function getDocumentReferenceTitle(entry){return String(entry.body||'').replace(/^\s*SKB\s+(?:TR|R|P|IPR|RD|SR|TM|U|F)-\d{2,}-\d+\s*[.,]?\s*/i,'').replace(/^.+?,\s*(?:1[89]\d{2}|20\d{2})[a-z]?\s*[.]\s*/,'').replace(/^.+?\s+(?:1[89]\d{2}|20\d{2})[a-z]?\s*[.]\s*/,'').split(/\.\s+/)[0].trim();}
+    function getDocumentReferenceYear(entry){return String(entry.body||'').match(/\b(?:1[89]\d{2}|20\d{2})[a-z]?\b/i)?.[0]||null;}
+    function getDocumentReferenceReportKey(entry){return extractSkbReportKey(entry.body||'');}
+    function scoreOrphanCitationAgainstZotero(citation,candidate){let score=0;const reasons=[];const key=normaliseKey(citation.key);if(candidate.normalizedAliases.includes(key)){score+=90;reasons.push('exact citation alias');}if(citation.type==='skb-report'&&candidate.reportKey&&normaliseKey(candidate.reportKey)===key){score=Math.max(score,98);reasons.push('exact SKB report number');}const year=citation.year||String(citation.key).match(/\b(?:1[89]\d{2}|20\d{2})[a-z]?\b/i)?.[0];if(year&&candidate.year&&year.toLowerCase()===candidate.year.toLowerCase()){score+=10;reasons.push('same year');}return{score:Math.min(score,100),reasons};}
+    function scoreDocumentReferenceAgainstZotero(entry,candidate){let score=0;const reasons=[];const aliases=new Set((entry.aliases||[entry.key]).map(normaliseKey));if(candidate.normalizedAliases.some(a=>aliases.has(a))){score+=65;reasons.push('exact reference alias');}const report=getDocumentReferenceReportKey(entry);if(report&&candidate.reportKey&&normaliseKey(report)===normaliseKey(candidate.reportKey)){score+=70;reasons.push('exact SKB report number');}const year=getDocumentReferenceYear(entry);if(year&&candidate.year&&year.toLowerCase()===candidate.year.toLowerCase()){score+=10;reasons.push('same year');}const similarity=titleSimilarity(getDocumentReferenceTitle(entry),candidate.title);if(similarity>=.85){score+=35;reasons.push('very similar title');}else if(similarity>=.65){score+=25;reasons.push('similar title');}else if(similarity>=.45){score+=15;reasons.push('partly similar title');}return{score:Math.min(score,100),reasons};}
 
-  const entryAliases = new Set(
-    (entry.aliases || [entry.key])
-      .map(normaliseKey)
-  );
-
-  /*
-    Exact document-key or alias match.
-  */
-  for (const alias of candidate.normalizedAliases) {
-    if (entryAliases.has(alias)) {
-      score += 65;
-      reasons.push('exact reference alias');
-      break;
-    }
-  }
-
-  /*
-    Exact report-number match.
-  */
-  const documentReportKey =
-    getDocumentReferenceReportKey(entry);
-
-  if (
-    documentReportKey &&
-    candidate.reportKey &&
-    normaliseKey(documentReportKey) ===
-      normaliseKey(candidate.reportKey)
-  ) {
-    score += 70;
-    reasons.push('exact SKB report number');
-  }
-
-  /*
-    Same publication year.
-  */
-  const documentYear =
-    getDocumentReferenceYear(entry);
-
-  if (
-    documentYear &&
-    candidate.year &&
-    documentYear.toLowerCase() ===
-      candidate.year.toLowerCase()
-  ) {
-    score += 10;
-    reasons.push('same year');
-  }
-
-  /*
-    Title similarity.
-  */
-  const documentTitle =
-    getDocumentReferenceTitle(entry);
-
-  if (
-    documentTitle &&
-    candidate.title
-  ) {
-    const similarity = titleSimilarity(
-      documentTitle,
-      candidate.title
-    );
-
-    if (similarity >= 0.85) {
-      score += 35;
-      reasons.push('very similar title');
-    } else if (similarity >= 0.65) {
-      score += 25;
-      reasons.push('similar title');
-    } else if (similarity >= 0.45) {
-      score += 15;
-      reasons.push('partly similar title');
-    }
-  }
-
-  return {
-    score: Math.min(score, 100),
-    reasons
-  };
-}
-
-
-
-  // ── Render results ────────────────────────────────────────────────────────
-  function renderResults(filename, refEntries, inTextCites, report, formatIssues, totalParas, refListStart, isSwedish) {
-    const { orphanCites, uncitedRefs } = report;
-
-    // Document info
-    const refSection = refListStart >= 0
-      ? `Reference list found at paragraph ${refListStart + 1} of ${totalParas}.`
-      : '<strong style="color:var(--color-kvot-accent)">No reference list section detected.</strong> The tool scanned the full document for references.';
-    docInfo.innerHTML = `<strong>${escHtml(filename)}</strong>
-      ${isSwedish ? '<span style="background:color-mix(in srgb,#5cb85c 12%,var(--bg-secondary));color:#357a35;border:1px solid #5cb85c;border-radius:6px;padding:1px 8px;font-size:.78rem;font-weight:700;margin-left:4px">🇸🇪 Svenska</span>' : ''}
-      &mdash; ${totalParas} paragraphs &nbsp;·&nbsp; 
-      ${refEntries.length} reference list entries &nbsp;·&nbsp; 
-      ${inTextCites.length} in-text citation occurrences &nbsp;·&nbsp; 
-      ${refSection}`;
-    docInfo.classList.add('show');
-
-    // Summary cards
-    const nIssues = formatIssues.length;
-    const nOrphan = orphanCites.length;
-    const nCited  = refEntries.filter(e => e.cites.length > 0).length;
-    const nTotal  = refEntries.length;
-
-    setText('cnt-total',  nTotal);
-    setText('cnt-cited',  nCited);
-    setText('cnt-orphan', nOrphan);
-    setText('cnt-issues', nIssues);
-
-    setCardClass('card-total',  nTotal > 0  ? 'ok' : 'warn');
-    setCardClass('card-cited',  nCited === nTotal && nTotal > 0 ? 'ok' : nCited > 0 ? '' : 'warn');
-    setCardClass('card-orphan', nOrphan === 0 ? 'ok' : 'warn');
-    setCardClass('card-issues', nIssues === 0 ? 'ok' : 'warn');
-    summCards.classList.add('show');
-
-    // Results sections
-    let html = '';
-
-    // 1. All references with citation counts
-    html += buildRefListSection(refEntries);
-
-    // 2. Orphan in-text citations
-    html += buildOrphanSection(orphanCites);
-
-    // 3. Uncited references
-    html += buildUncitedSection(uncitedRefs);
-
-// 4. Format issues
-html += buildFormatSection(
-  formatIssues,
-  refEntries
-);
-
-    results.innerHTML = html;
-    resetBtn.classList.add('show');
-
-    // Open first section if issues found
-    if (nOrphan > 0 || nIssues > 0) {
-      const firstDetails = results.querySelector('details.result-section');
-      if (firstDetails) firstDetails.open = true;
-    }
-  }
-
-  function buildRefListSection(refEntries) {
-    const badge = refEntries.length > 0
-      ? `<span class="section-badge good">${refEntries.length}</span>`
-      : `<span class="section-badge error">none</span>`;
-
-    let rows = '';
-    if (refEntries.length === 0) {
-      rows = `<tr><td colspan="4"><em class="empty-notice">No reference list detected in document.</em></td></tr>`;
-    } else {
-      for (const e of refEntries) {
-        const n = e.cites.length;
-        const cls = n === 0 ? 'warn-row' : '';
-        // Unique section labels where this reference is cited
-        const secs = [...new Map(e.cites.map(c => [c.section || '', c])).keys()]
-          .filter(Boolean).slice(0, 5).map(s => escHtml(truncate(s, 50)));
-        const locText = secs.length > 0
-          ? secs.join('<br>')
-          : (e.cites.length > 0 ? '(no heading found)' : '');
-        rows += `<tr class="${cls}">
-          <td><span class="ref-key">${escHtml(e.key)}</span></td>
-          <td class="ref-text">${truncate(escHtml(e.body), 150)}</td>
-          <td class="cite-count">${n === 0 ? '<span style="color:var(--color-kvot-accent)">0 ⚠</span>' : n}</td>
-          <td class="cite-pages" style="font-size:.8rem">${locText}</td>
-        </tr>`;
-      }
-    }
-    return `<details class="result-section" ${refEntries.length > 0 ? 'open' : ''}>
-      <summary>Reference list entries ${badge}</summary>
-      <div class="section-body">
-        <table class="ref-table">
-          <thead><tr>
-            <th>Key</th><th>Reference text</th><th>Cited (#)</th><th>In section(s)</th>
-          </tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
-    </details>`;
-  }
-
-  function buildOrphanSection(orphanCites) {
-    const n = orphanCites.length;
-    const badgeCls = n === 0 ? 'good' : 'error';
-    const badge = `<span class="section-badge ${badgeCls}">${n === 0 ? '✓ none' : n}</span>`;
-
-    let body = '';
-    if (n === 0) {
-      body = `<p class="empty-notice">All in-text citations match a reference list entry.</p>`;
-    } else {
-      const rows = orphanCites.map(c => {
-        const sec = c.section ? truncate(c.section, 55) : '—';
-        return `<tr class="error-row">
-          <td><span class="ref-key">${escHtml(c.key)}</span></td>
-          <td class="ref-text">${truncate(escHtml(c.paraText), 100)}</td>
-          <td style="font-size:.8rem;color:var(--text-secondary)">${escHtml(sec)}</td>
-          <td style="font-size:.8rem;color:var(--text-muted)">${escHtml(c.type)}</td>
-        </tr>`;
-      }).join('');
-      body = `<table class="ref-table">
-        <thead><tr><th>Citation</th><th>Context</th><th>In section</th><th>Type</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>`;
-    }
-    return `<details class="result-section" ${n > 0 ? 'open' : ''}>
-      <summary>In-text citations with no matching reference list entry ${badge}</summary>
-      <div class="section-body">${body}</div>
-    </details>`;
-  }
-
-  function buildUncitedSection(uncitedRefs) {
-    const n = uncitedRefs.length;
-    const badgeCls = n === 0 ? 'good' : 'warn';
-    const badge = `<span class="section-badge ${badgeCls}">${n === 0 ? '✓ none' : n}</span>`;
-
-    let body = '';
-    if (n === 0) {
-      body = `<p class="empty-notice">Every reference in the list is cited at least once.</p>`;
-    } else {
-      body = `<div class="tag-list">` +
-        uncitedRefs.map(e => `<div class="tag warn-tag">⚠ <code>${escHtml(e.key)}</code></div>`).join('') +
-        `</div>
-        <p style="margin-top:12px;font-size:.84rem;color:var(--text-muted)">
-          These references appear in the list but are never cited in the body text.
-          Consider removing them or adding in-text citations.
-        </p>`;
-    }
-    return `<details class="result-section">
-      <summary>Reference list entries never cited in text ${badge}</summary>
-      <div class="section-body">${body}</div>
-    </details>`;
-  }
-function buildZoteroMatchSection(zoteroResult) {
-  /*
-    Zotero is not configured or the request failed.
-  */
-  if (
-    !zoteroResult ||
-    !zoteroResult.available
-  ) {
-    const message =
-      zoteroResult &&
-      zoteroResult.error
-        ? escHtml(zoteroResult.error)
-        : 'Zotero lookup was not performed.';
-
-    return `
-      <details class="result-section">
-        <summary>
-          Probable matches in Zotero
-          <span class="section-badge warn">
-            unavailable
-          </span>
-        </summary>
-        <div class="section-body">
-          <p class="empty-notice">
-            ${message}
-          </p>
-        </div>
-      </details>
-    `;
-  }
-
-  const orphanResults =
-    zoteroResult.orphanMatches.filter(
-      result => result.candidates.length > 0
-    );
-
-  const uncitedResults =
-    zoteroResult.uncitedMatches.filter(
-      result => result.candidates.length > 0
-    );
-
-  const matchCount =
-    orphanResults.length +
-    uncitedResults.length;
-
-  const badgeClass =
-    matchCount > 0 ? 'warn' : 'good';
-
-  const badgeText =
-    matchCount > 0
-      ? String(matchCount)
-      : '✓ none';
-
-  let body = `
-    <p style="
-      margin:0 0 14px;
-      font-size:.84rem;
-      color:var(--text-secondary);
-    ">Examined
-<strong>${zoteroResult.itemCount}</strong>
-distinct Zotero records returned by targeted searches of the public
-<code>skb_references</code> library.
-      These are suggestions only; document results have not been
-      changed automatically.
-    </p>
-  `;
-
-  if (matchCount === 0) {
-    body += `
-      <p class="empty-notice">
-        No probable Zotero matches were found for orphan citations
-        or uncited document references.
-      </p>
-    `;
-  }
-
-  if (orphanResults.length > 0) {
-    body += `
-      <h3 style="
-        margin:8px 0 10px;
-        font-size:.9rem;
-        color:var(--text-primary);
-      ">
-        Orphan citations with probable Zotero matches
-      </h3>
-      ${buildZoteroCandidateTable(
-        orphanResults,
-        'citation'
-      )}
-    `;
-  }
-
-  if (uncitedResults.length > 0) {
-    body += `
-      <h3 style="
-        margin:18px 0 10px;
-        font-size:.9rem;
-        color:var(--text-primary);
-      ">
-        Uncited references with probable Zotero matches
-      </h3>
-      ${buildZoteroCandidateTable(
-        uncitedResults,
-        'reference'
-      )}
-    `;
-  }
-
-  return `
-    <details class="result-section"
-      ${matchCount > 0 ? 'open' : ''}>
-      <summary>
-        Probable matches in Zotero
-        <span class="section-badge ${badgeClass}">
-          ${badgeText}
-        </span>
-      </summary>
-      <div class="section-body">
-        ${body}
-      </div>
-    </details>
-  `;
-}
-
-function buildZoteroCandidateTable(
-  results,
-  sourceType
-) {
-  const rows = results.map(result => {
-    const sourceText =
-      sourceType === 'citation'
-        ? result.source.key
-        : result.source.key;
-
-    const candidatesHtml = result.candidates
-      .map(candidate => {
-        const authors =
-          candidate.authors.length > 0
-            ? candidate.authors.join(', ')
-            : 'No creator recorded';
-
-        const year =
-          candidate.year || 'No year';
-
-        const reasonText =
-          candidate.reasons.length > 0
-            ? candidate.reasons.join(', ')
-            : 'metadata similarity';
-
-        const reportText =
-          candidate.reportKey
-            ? `<div style="
-                 margin-top:3px;
-                 color:var(--text-muted);
-               ">
-                 ${escHtml(candidate.reportKey)}
-               </div>`
-            : '';
-
-        return `
-          <div style="
-            margin-bottom:10px;
-            padding:9px 11px;
-            border:1px solid var(--border-color);
-            border-radius:8px;
-            background:var(--bg-surface);
-          ">
-            <div style="
-              display:flex;
-              align-items:flex-start;
-              gap:8px;
-            ">
-              <strong style="
-                color:var(--text-primary);
-                flex:1;
-              ">
-                ${escHtml(
-                  candidate.title ||
-                  '(untitled Zotero item)'
-                )}
-              </strong>
-
-              <span class="section-badge ${
-                candidate.score >= 90
-                  ? 'good'
-                  : 'warn'
-              }" style="margin-left:0">
-                ${candidate.score}%
-              </span>
-            </div>
-
-            <div style="
-              margin-top:4px;
-              font-size:.8rem;
-              color:var(--text-secondary);
-            ">
-              ${escHtml(authors)}
-              ·
-              ${escHtml(year)}
-            </div>
-
-            ${reportText}
-
-            <div style="
-              margin-top:4px;
-              font-size:.76rem;
-              color:var(--text-muted);
-            ">
-              Match basis: ${escHtml(reasonText)}
-            </div>
-
-            <div style="margin-top:6px">
-              <a href="${escHtml(candidate.url)}" 
-              target="_blank"
-              rel="noopener noreferrer"
-              style="
-                color:var(--color-kvot-bright);
-                font-size:.8rem;
-              ">
-                Open Zotero record ↗
-              </a>
-            </div>
-          </div>
-        `;
-      })
-      .join('');
-
-    return `
-      <tr>
-        <td style="width:28%;vertical-align:top">
-          <span class="ref-key">
-            ${escHtml(sourceText)}
-          </span>
-        </td>
-        <td>
-          ${candidatesHtml}
-        </td>
-      </tr>
-    `;
-  }).join('');
-
-  return `
-    <table class="ref-table">
-      <thead>
-        <tr>
-          <th>
-            ${
-              sourceType === 'citation'
-                ? 'Orphan citation'
-                : 'Uncited reference'
-            }
-          </th>
-          <th>Probable Zotero record(s)</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${rows}
-      </tbody>
-    </table>
-  `;
-}
-
-  function buildFormatSection(issues, refEntries) {
-    const n = issues.length;
-    const badgeCls = n === 0 ? 'good' : 'warn';
-    const badge = `<span class="section-badge ${badgeCls}">${n === 0 ? '✓ none' : n}</span>`;
-
-    let body = '';
-    if (n === 0) {
-      body = `<p class="empty-notice">No SKB format rule violations detected.</p>`;
-    } else {
-      // Group by key
-      const byKey = new Map();
-      for (const iss of issues) {
-        if (!byKey.has(iss.key)) byKey.set(iss.key, []);
-        byKey.get(iss.key).push(iss);
-      }
-      // Find ref entry text for each key
-      const refMap = new Map(refEntries.map(e => [e.key, e.body]));
-
-      let rows = '';
-      for (const [key, iss] of byKey) {
-        const sevClass = iss.some(i => i.severity === 'error') ? 'error-row' :
-                         iss.some(i => i.severity === 'warn')  ? 'warn-row' : '';
-        const issHtml = `<ul class="issue-list">${iss.map(i => `<li>[${i.severity.toUpperCase()}] ${escHtml(i.issue)}</li>`).join('')}</ul>`;
-        rows += `<tr class="${sevClass}">
-          <td><span class="ref-key">${escHtml(key)}</span></td>
-          <td class="ref-text">${truncate(escHtml(refMap.get(key) || ''), 100)}</td>
-          <td>${issHtml}</td>
-        </tr>`;
-      }
-      body = `<p style="font-size:.84rem;color:var(--text-secondary);margin-bottom:12px;">
-        Rules checked: year present · SKB report number format · author identifiable · 
-        entry completeness · URL access date · end punctuation · sequential numbering.
-      </p>
-      <table class="ref-table">
-        <thead><tr><th>Key</th><th>Reference text</th><th>Issues</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>`;
-    }
-    return `<details class="result-section">
-      <summary>SKB format rule issues ${badge}</summary>
-      <div class="section-body">${body}</div>
-    </details>`;
-  }
-
-  // ── Utility ───────────────────────────────────────────────────────────────
-  function escHtml(s) {
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-  }
-  function truncate(s, n) { return s.length > n ? s.slice(0, n) + '…' : s; }
-  function setText(id, val) { const el = document.getElementById(id); if (el) el.textContent = val; }
-  function setCardClass(id, cls) {
-    const el = document.getElementById(id);
-    if (!el) return;
-    el.classList.remove('warn','ok');
-    if (cls) el.classList.add(cls);
-  }
+    function renderResults(filename,entries,citations,report,issues,total,start,isSwedish){docInfo.innerHTML=`<strong>${escHtml(filename)}</strong> ${isSwedish?'🇸🇪 Svenska — ':''}${total} paragraphs · ${entries.length} reference list entries · ${citations.length} in-text citation occurrences · ${start>=0?`Reference list found at paragraph ${start+1}.`:'No reference list section detected.'}`;docInfo.classList.add('show');const cited=entries.filter(e=>e.cites.length).length;setSummary('total',entries.length,entries.length?'ok':'warn');setSummary('cited',cited,cited===entries.length&&entries.length?'ok':cited?'':'warn');setSummary('orphan',report.orphanCites.length,report.orphanCites.length?'warn':'ok');setSummary('issues',issues.length,issues.length?'warn':'ok');summaryCards.classList.add('show');results.innerHTML=buildRefListSection(entries)+buildOrphanSection(report.orphanCites)+buildUncitedSection(report.uncitedRefs)+buildFormatSection(issues,entries);resetBtn.classList.add('show');}
+    function buildRefListSection(entries){const rows=entries.length?entries.map(e=>`<tr class="${e.cites.length?'':'warn-row'}"><td><span class="ref-key">${escHtml(e.key)}</span></td><td class="ref-text">${truncate(escHtml(e.body),150)}</td><td class="cite-count">${e.cites.length}</td><td class="cite-pages">${[...new Set(e.cites.map(c=>c.section).filter(Boolean))].slice(0,5).map(escHtml).join('<br>')}</td></tr>`).join(''):'<tr><td colspan="4" class="empty-notice">No reference list detected.</td></tr>';return section('Reference list entries',entries.length,`<table class="ref-table"><thead><tr><th>Key</th><th>Reference text</th><th>Cited (#)</th><th>In section(s)</th></tr></thead><tbody>${rows}</tbody></table>`,true);}
+    function buildOrphanSection(items){const body=items.length?`<table class="ref-table"><thead><tr><th>Citation</th><th>Context</th><th>Section</th><th>Type</th></tr></thead><tbody>${items.map(c=>`<tr class="error-row"><td><span class="ref-key">${escHtml(c.key)}</span></td><td>${truncate(escHtml(c.paraText),100)}</td><td>${escHtml(c.section||'—')}</td><td>${escHtml(c.type)}</td></tr>`).join('')}</tbody></table>`:'<p class="empty-notice">All in-text citations match a reference list entry.</p>';return section('In-text citations with no matching reference list entry',items.length,body,items.length>0);}
+    function buildUncitedSection(items){const body=items.length?`<div class="tag-list">${items.map(e=>`<div class="tag warn-tag">⚠ <code>${escHtml(e.key)}</code></div>`).join('')}</div>`:'<p class="empty-notice">Every reference in the list is cited at least once.</p>';return section('Reference list entries never cited in text',items.length,body);}
+    function buildFormatSection(issues,entries){const map=new Map(entries.map(e=>[e.key,e.body]));const groups=new Map();issues.forEach(i=>(groups.get(i.key)||groups.set(i.key,[]).get(i.key)).push(i));const body=issues.length?`<table class="ref-table"><thead><tr><th>Key</th><th>Reference text</th><th>Issues</th></tr></thead><tbody>${[...groups].map(([key,list])=>`<tr><td><span class="ref-key">${escHtml(key)}</span></td><td>${truncate(escHtml(map.get(key)||''),100)}</td><td><ul class="issue-list">${list.map(i=>`<li>[${i.severity.toUpperCase()}] ${escHtml(i.issue)}</li>`).join('')}</ul></td></tr>`).join('')}</tbody></table>`:'<p class="empty-notice">No SKB format rule violations detected.</p>';return section('SKB format rule issues',issues.length,body);}
+    function buildZoteroMatchSection(result){if(!result.available)return section('Probable matches in Zotero','unavailable',`<p class="empty-notice">${escHtml(result.error||'Zotero lookup failed.')}</p>`);const matches=[...result.orphanMatches,...result.uncitedMatches].filter(x=>x.candidates.length);const body=`<p>Examined <strong>${result.itemCount}</strong> distinct Zotero records returned by targeted searches.</p>${matches.length?buildZoteroCandidateTable(matches):'<p class="empty-notice">No probable Zotero matches were found.</p>'}`;return section('Probable matches in Zotero',matches.length,body,matches.length>0);}
+    function buildZoteroCandidateTable(groups){return `<table class="ref-table"><thead><tr><th>Document item</th><th>Probable Zotero record(s)</th></tr></thead><tbody>${groups.map(group=>`<tr><td><span class="ref-key">${escHtml(group.source.key)}</span></td><td>${group.candidates.map(c=>`<div style="margin-bottom:10px;padding:9px 11px;border:1px solid var(--border-color);border-radius:8px"><strong>${escHtml(c.title||'(untitled)')}</strong> <span class="section-badge ${c.score>=90?'good':'warn'}">${c.score}%</span><div>${escHtml(c.authors.join(', ')||'No creator')} · ${escHtml(c.year||'No year')}</div>${c.reportKey?`<div>${escHtml(c.reportKey)}</div>`:''}<div>Match basis: ${escHtml(c.reasons.join(', '))}</div><a href="${escHtml(c.url)}" target="_blank" rel="noopener noreferrer">Open Zotero record ↗</a></div>`).join('')}</td></tr>`).join('')}</tbody></table>`;}
+    function section(title,count,body,open=false){const good=!count||count==='unavailable';return `<details class="result-section" ${open?'open':''}><summary>${title}<span class="section-badge ${good?'good':'warn'}">${count===0?'✓ none':count}</span></summary><div class="section-body">${body}</div></details>`;}
+    function setSummary(name,value,state){$(`cnt-${name}`).textContent=value;const card=$(`card-${name}`);card.classList.remove('warn','ok');if(state)card.classList.add(state);}
+    function escHtml(value){return String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+    function truncate(value,length){return value.length>length?`${value.slice(0,length)}…`:value;}
   </script>
 </body>
 </html>
