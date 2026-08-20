@@ -347,7 +347,11 @@ let zoteroResult = {
   uncitedMatches: []
 };
 
-showStatus('Checking Zotero library…');
+showStatus(
+  `Preparing Zotero searches for ` +
+  `${report.orphanCites.length} orphan citations and ` +
+  `${report.uncitedRefs.length} uncited references…`
+);
 await yieldToBrowser();
 
 try {
@@ -3032,47 +3036,6 @@ function findZoteroCandidates(
     );
 }
 
-/*
-  Main Zotero analysis entry point.
-*/
-async function analyseAgainstZotero(
-  orphanCites,
-  uncitedRefs
-) {
-  const items = await fetchAllZoteroItems();
-  const preparedItems =
-    prepareZoteroItems(items);
-
-  const orphanMatches = orphanCites.map(
-    citation => ({
-      source: citation,
-      candidates: findZoteroCandidates(
-        citation,
-        preparedItems,
-        scoreOrphanCitationAgainstZotero
-      )
-    })
-  );
-
-  const uncitedMatches = uncitedRefs.map(
-    entry => ({
-      source: entry,
-      candidates: findZoteroCandidates(
-        entry,
-        preparedItems,
-        scoreDocumentReferenceAgainstZotero
-      )
-    })
-  );
-
-  return {
-    available: true,
-    error: null,
-    itemCount: preparedItems.length,
-    orphanMatches,
-    uncitedMatches
-  };
-}
 
   // ── Render results ────────────────────────────────────────────────────────
   function renderResults(filename, refEntries, inTextCites, report, formatIssues, totalParas, refListStart, isSwedish, zoteroResult) {
