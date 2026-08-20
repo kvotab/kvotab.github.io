@@ -35,13 +35,57 @@
     #dropzone .dz-btn:hover { opacity:.88; }
 /* Optional Zotero lookup */
 #zotero-actions {
+  display: none;
   clear: both;
+  align-items: center;
+  gap: 12px;
   padding: 16px;
-  margin-top: 20px;
-  margin-bottom: 16px;
+  margin-top: 4px;
+  margin-bottom: 20px;
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: 10px;
+}
+
+#zotero-actions.show {
+  display: flex;
+}
+
+#zotero-check-btn {
+  display: inline-block;
+  padding: 8px 20px;
+  border: none;
+  border-radius: 20px;
+  background: var(--color-kvot-bright);
+  color: #fff;
+  font-size: .88rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity .15s;
+}
+
+#zotero-check-btn:hover:not(:disabled) {
+  opacity: .88;
+}
+
+#zotero-check-btn:disabled {
+  cursor: default;
+  opacity: .6;
+}
+
+#zotero-status {
+  display: none;
+  line-height: 1.5;
+  font-size: .84rem;
+  color: var(--text-muted);
+}
+
+#zotero-status.show {
+  display: inline;
+}
+
+#zotero-results {
+  margin-bottom: 20px;
 }
 
 #zotero-check-btn {
@@ -210,31 +254,23 @@
         </div>
       </div>
 
-      <!-- Results -->
-<div id="results"></div>
-
-<!-- Optional Zotero lookup -->
-<div id="zotero-actions" style="display:none;margin-top:20px">
+      <!-- Optional Zotero lookup -->
+<div id="zotero-actions">
   <button
     id="zotero-check-btn"
     type="button"
-    class="dz-btn"
   >
     Check unmatched references in Zotero
   </button>
 
-  <span
-    id="zotero-status"
-    style="
-      display:none;
-      margin-left:10px;
-      font-size:.84rem;
-      color:var(--text-muted);
-    "
-  ></span>
+  <span id="zotero-status"></span>
 </div>
 
+<!-- Zotero lookup results -->
 <div id="zotero-results"></div>
+
+<!-- Normal document-analysis results -->
+<div id="results"></div>
 
     </div>
     <div id="map"></div>
@@ -327,8 +363,8 @@ const ZOTERO_CONFIG = {
   searchResultLimit: 15,
   searchTimeoutMilliseconds: 10000,
 
-  maximumOrphanLookups: 30,
-  maximumUncitedLookups: 30
+  maximumOrphanLookups: 5,
+  maximumUncitedLookups: 5
 };
 
   // ── Drag-and-drop wiring ──────────────────────────────────────────────────
@@ -374,11 +410,10 @@ const ZOTERO_CONFIG = {
     Reset the optional Zotero interface.
   */
   zoteroLookupRunning = false;
+zoteroActions.classList.remove('show');
 
-  zoteroActions.style.display = 'none';
-
-  zoteroStatus.style.display = 'none';
-  zoteroStatus.textContent = '';
+zoteroStatus.classList.remove('show');
+zoteroStatus.textContent = '';
 
   zoteroResults.innerHTML = '';
 
@@ -388,41 +423,46 @@ const ZOTERO_CONFIG = {
 }
 function showZoteroButton(report) {
   if (!report) {
-    zoteroActions.style.display = 'none';
+    zoteroActions.classList.remove('show');
     return;
   }
 
   const orphanCount =
-    report.orphanCites.length;
+    Array.isArray(report.orphanCites)
+      ? report.orphanCites.length
+      : 0;
 
   const uncitedCount =
-    report.uncitedRefs.length;
+    Array.isArray(report.uncitedRefs)
+      ? report.uncitedRefs.length
+      : 0;
 
-  zoteroActions.style.display = 'block';
+  zoteroActions.classList.add('show');
 
-  zoteroCheckBtn.disabled = false;
+  zoteroStatus.classList.remove('show');
+  zoteroStatus.textContent = '';
+
+  zoteroResults.innerHTML = '';
 
   if (
     orphanCount === 0 &&
     uncitedCount === 0
   ) {
+    zoteroCheckBtn.disabled = true;
     zoteroCheckBtn.textContent =
       'Check Zotero — no unmatched items';
 
-    zoteroCheckBtn.disabled = true;
-  } else {
-    zoteroCheckBtn.textContent =
-      `Check Zotero (` +
-      `${orphanCount} orphan citation` +
-      `${orphanCount === 1 ? '' : 's'}, ` +
-      `${uncitedCount} uncited reference` +
-      `${uncitedCount === 1 ? '' : 's'})`;
+    return;
   }
 
-  zoteroStatus.style.display = 'none';
-  zoteroStatus.textContent = '';
+  zoteroCheckBtn.disabled = false;
 
-  zoteroResults.innerHTML = '';
+  zoteroCheckBtn.textContent =
+    `Check Zotero (` +
+    `${orphanCount} orphan citation` +
+    `${orphanCount === 1 ? '' : 's'}, ` +
+    `${uncitedCount} uncited reference` +
+    `${uncitedCount === 1 ? '' : 's'})`;
 }
 
 async function runOptionalZoteroCheck() {
@@ -548,8 +588,8 @@ async function runOptionalZoteroCheck() {
   }
   function hideStatus() { statusBar.classList.remove('show'); }
   function showZoteroStatus(message) {
-    zoteroStatus.style.display = 'inline';
     zoteroStatus.textContent = message;
+    zoteroStatus.classList.add('show');
   }
   // ── Main entry ────────────────────────────────────────────────────────────
   async function handleFile(file) {
