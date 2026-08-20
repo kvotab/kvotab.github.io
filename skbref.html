@@ -357,20 +357,58 @@ showStatus(
   `${report.orphanCites.length} orphan citations and ` +
   `${report.uncitedRefs.length} uncited references…`
 );
+
 await yieldToBrowser();
 
 try {
-  zoteroResult = await analyseAgainstZotero(
-    report.orphanCites,
-    report.uncitedRefs
-  );
+  /*
+    Do not contact Zotero when there is nothing to investigate.
+  */
+  if (
+    report.orphanCites.length === 0 &&
+    report.uncitedRefs.length === 0
+  ) {
+    zoteroResult = {
+      available: true,
+      error: null,
+      itemCount: 0,
+      orphanMatches: [],
+      uncitedMatches: [],
+      skippedOrphanCount: 0,
+      skippedUncitedCount: 0
+    };
+  } else {
+    /*
+      Apply an overall limit so Zotero can never prevent the document
+      analysis from completing indefinitely.
+    */
+    zoteroResult = await withTimeout(
+      analyseAgainstZotero(
+        report.orphanCites,
+        report.uncitedRefs
+      ),
+      60000,
+      'The complete Zotero analysis exceeded 60 seconds.'
+    );
+  }
 } catch (zoteroError) {
   console.warn(
     'Zotero lookup could not be completed:',
     zoteroError
   );
 
-  zoteroResult.error = zoteroError.message;
+  zoteroResult = {
+    available: false,
+    error:
+      zoteroError instanceof Error
+        ? zoteroError.message
+        : String(zoteroError),
+    itemCount: 0,
+    orphanMatches: [],
+    uncitedMatches: [],
+    skippedOrphanCount: 0,
+    skippedUncitedCount: 0
+  };
 }
 
 showStatus('Checking SKB format rules…');
@@ -395,6 +433,29 @@ showStatus('Checking SKB format rules…');
   }
 
   function yieldToBrowser() { return new Promise(r => setTimeout(r, 0)); }
+
+function withTimeout(
+  promise,
+  timeoutMilliseconds,
+  message
+) {
+  let timeoutId;
+
+  const timeoutPromise = new Promise(
+    (_, reject) => {
+      timeoutId = setTimeout(() => {
+        reject(new Error(message));
+      }, timeoutMilliseconds);
+    }
+  );
+
+  return Promise.race([
+    promise,
+    timeoutPromise
+  ]).finally(() => {
+    clearTimeout(timeoutId);
+  });
+}
 
   // ── DOCX XML parser ───────────────────────────────────────────────────────
   function parseDocXml(xml) {
@@ -2039,7 +2100,17 @@ async function searchZoteroItems(
     controller.abort();
   }, timeoutMilliseconds);
 
-  try {
+  console.log(
+  'Starting Zotero API search:',
+  {
+    query: cleanedQuery,
+    qmode,
+    limit,
+    timeoutMilliseconds,
+    url
+  }
+);
+  try {    
     const response = await fetch(url, {
       method: 'GET',
       headers: {
@@ -2049,6 +2120,14 @@ async function searchZoteroItems(
       },
       signal: controller.signal
     });
+console.log(
+  'Zotero API response received:',
+  {
+    query: cleanedQuery,
+    status: response.status,
+    ok: response.ok
+  }
+);
 
     if (!response.ok) {
       let details = '';
@@ -2070,7 +2149,13 @@ async function searchZoteroItems(
     }
 
     const returnedItems = await response.json();
-
+    console.log(
+  'Zotero API items returned:',
+  {
+    query: cleanedQuery,
+    itemCount: Array.isArray(returnedItems)? returnedItems.length: null
+  }
+);
     if (!Array.isArray(returnedItems)) {
       throw new Error(
         'Zotero returned an unexpected search response.'
@@ -2298,21 +2383,58 @@ async function searchZoteroWithFallbacks(
   scoringFunction
 ) {
   const candidatesByKey = new Map();
+  const errors = [];
 
-  for (const search of queries) {
+  /*
+    At most two queries per citation/reference. The first query should
+    be the strongest one, and the second is a fallback.
+  */
+  const queriesToRun = queries.slice(0, 2);
+
+  for (const search of queriesToRun) {
     showStatus(
-      `Searching Zotero for “${truncate(search.query, 45)}”…`
+      `Searching Zotero for ` +
+      `“${truncate(search.query, 45)}”…`
     );
 
     await yieldToBrowser();
 
-    const items = await searchZoteroItems(
-      search.query,
-      {
-        qmode: search.qmode,
-        limit: 25
-      }
-    );
+    let items;
+
+    try {
+      items = await searchZoteroItems(
+        search.query,
+        {
+          qmode: search.qmode,
+          limit:
+            ZOTERO_CONFIG.searchResultLimit,
+          timeoutMilliseconds:
+            ZOTERO_CONFIG
+              .searchTimeoutMilliseconds
+        }
+      );
+    } catch (error) {
+      console.warn(
+        'Zotero search failed:',
+        {
+          query: search.query,
+          qmode: search.qmode,
+          error
+        }
+      );
+
+      errors.push(
+        error instanceof Error
+          ? error.message
+          : String(error)
+      );
+
+      /*
+        Continue with the fallback query rather than stopping the
+        complete analysis.
+      */
+      continue;
+    }
 
     const preparedItems =
       prepareZoteroItems(items);
@@ -2330,28 +2452,49 @@ async function searchZoteroWithFallbacks(
         !existing ||
         result.score > existing.score
       ) {
-        candidatesByKey.set(candidate.key, {
-          ...candidate,
-          score: result.score,
-          reasons: result.reasons,
-          searchQuery: search.query
-        });
+        candidatesByKey.set(
+          candidate.key,
+          {
+            ...candidate,
+            score: result.score,
+            reasons: result.reasons,
+            searchQuery: search.query
+          }
+        );
       }
     }
 
-    /*
-      If the first search found a highly confident candidate, do not
-      make additional API calls.
-    */
-    const bestScore = Math.max(
-      0,
-      ...[...candidatesByKey.values()]
-        .map(candidate => candidate.score)
-    );
+    const scores = [
+      ...candidatesByKey.values()
+    ].map(candidate => candidate.score);
 
+    const bestScore =
+      scores.length > 0
+        ? Math.max(...scores)
+        : 0;
+
+    /*
+      Do not run fallbacks when a confident match was already found.
+    */
     if (bestScore >= 90) {
       break;
     }
+  }
+
+  /*
+    If all searches failed, return no candidates. One failed Zotero
+    lookup should not terminate the entire document analysis.
+  */
+  if (
+    errors.length === queriesToRun.length &&
+    queriesToRun.length > 0
+  ) {
+    console.warn(
+      'All Zotero fallback searches failed:',
+      errors
+    );
+
+    return [];
   }
 
   return [...candidatesByKey.values()]
@@ -2368,23 +2511,37 @@ async function searchZoteroWithFallbacks(
     );
 }
 
+
 async function analyseAgainstZotero(
   orphanCites,
   uncitedRefs
 ) {
+  const orphanCitesToCheck = orphanCites.slice(
+    0,
+    ZOTERO_CONFIG.maximumOrphanLookups
+  );
+
+  const uncitedRefsToCheck = uncitedRefs.slice(
+    0,
+    ZOTERO_CONFIG.maximumUncitedLookups
+  );
+
   const orphanMatches = [];
 
   for (
     let index = 0;
-    index < orphanCites.length;
+    index < orphanCitesToCheck.length;
     index++
   ) {
-    const citation = orphanCites[index];
+    const citation = orphanCitesToCheck[index];
 
     showStatus(
       `Searching Zotero for orphan citation ` +
-      `${index + 1} of ${orphanCites.length}…`
+      `${index + 1} of ${orphanCitesToCheck.length}: ` +
+      `${truncate(citation.key, 35)}…`
     );
+
+    await yieldToBrowser();
 
     const queries =
       buildZoteroQueriesForCitation(citation);
@@ -2406,15 +2563,18 @@ async function analyseAgainstZotero(
 
   for (
     let index = 0;
-    index < uncitedRefs.length;
+    index < uncitedRefsToCheck.length;
     index++
   ) {
-    const entry = uncitedRefs[index];
+    const entry = uncitedRefsToCheck[index];
 
     showStatus(
       `Searching Zotero for uncited reference ` +
-      `${index + 1} of ${uncitedRefs.length}…`
+      `${index + 1} of ${uncitedRefsToCheck.length}: ` +
+      `${truncate(entry.key, 35)}…`
     );
+
+    await yieldToBrowser();
 
     const queries =
       buildZoteroQueriesForReference(entry);
@@ -2436,17 +2596,21 @@ async function analyseAgainstZotero(
     available: true,
     error: null,
 
-    /*
-      This no longer means the total library size. It counts distinct
-      Zotero items returned by searches.
-    */
     itemCount: countUniqueZoteroCandidates(
       orphanMatches,
       uncitedMatches
     ),
 
     orphanMatches,
-    uncitedMatches
+    uncitedMatches,
+
+    skippedOrphanCount:
+      orphanCites.length -
+      orphanCitesToCheck.length,
+
+    skippedUncitedCount:
+      uncitedRefs.length -
+      uncitedRefsToCheck.length
   };
 }
 
@@ -3007,39 +3171,6 @@ function scoreDocumentReferenceAgainstZotero(
   };
 }
 
-/*
-  Find and rank candidate items for a source object.
-*/
-function findZoteroCandidates(
-  source,
-  preparedItems,
-  scoringFunction
-) {
-  return preparedItems
-    .map(candidate => {
-      const result = scoringFunction(
-        source,
-        candidate
-      );
-
-      return {
-        ...candidate,
-        score: result.score,
-        reasons: result.reasons
-      };
-    })
-    .filter(candidate => {
-      return (
-        candidate.score >=
-        ZOTERO_CONFIG.minimumScore
-      );
-    })
-    .sort((a, b) => b.score - a.score)
-    .slice(
-      0,
-      ZOTERO_CONFIG.maximumCandidates
-    );
-}
 
 
   // ── Render results ────────────────────────────────────────────────────────
