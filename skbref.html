@@ -1971,137 +1971,497 @@ function normaliseKey(key) {
 /* ==================================================================
    Zotero Web API integration
    ================================================================== */
-
 /*
-  Download one page of top-level Zotero records from the public group
-  library.
+  Cache Zotero searches for this browser session.
+
+  If several citations produce the same query, Zotero is only called
+  once.
 */
-async function fetchZoteroItemPage(start, limit) {
+const zoteroSearchCache = new Map();
+async function searchZoteroItems(
+  query,
+  {
+    qmode = 'titleCreatorYear',
+    limit = 25,
+    timeoutMilliseconds = 15000
+  } = {}
+) {
+  const cleanedQuery = String(query || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!cleanedQuery) {
+    return [];
+  }
+
+  const cacheKey =
+    `${qmode}||${cleanedQuery.toLowerCase()}`;
+
+  if (zoteroSearchCache.has(cacheKey)) {
+    return zoteroSearchCache.get(cacheKey);
+  }
+
   const groupId = String(
     ZOTERO_CONFIG.groupId || ''
   ).trim();
 
-  if (
-    !groupId ||
-    groupId === 'REPLACE_WITH_NUMERIC_GROUP_ID' ||
-    !/^\d+$/.test(groupId)
-  ) {
+  if (!/^\d+$/.test(groupId)) {
     throw new Error(
-      'Set ZOTERO_CONFIG.groupId to the numeric ID of the ' +
-      'public skb_references Zotero group.'
+      'Zotero group ID is missing or invalid.'
     );
   }
 
   const parameters = new URLSearchParams({
     format: 'json',
     include: 'data',
-    start: String(start),
-    limit: String(limit),
-    sort: 'dateModified',
-    direction: 'desc'
+    q: cleanedQuery,
+    qmode,
+    itemType: '-attachment',
+    limit: String(limit)
   });
+
   const url =
     `https://api.zotero.org/groups/${groupId}/items/top?` +
     parameters.toString();
 
-  const response = await fetch(url, {
-    method: 'GET',
-    headers: {
-      'Zotero-API-Version': ZOTERO_CONFIG.apiVersion,
-      'Accept': 'application/json'
+  const controller = new AbortController();
+
+  const timeoutId = setTimeout(() => {
+    controller.abort();
+  }, timeoutMilliseconds);
+
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Zotero-API-Version':
+          ZOTERO_CONFIG.apiVersion,
+        Accept: 'application/json'
+      },
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      let details = '';
+
+      try {
+        details = await response.text();
+      } catch {
+        details = '';
+      }
+
+      throw new Error(
+        `Zotero API returned HTTP ${response.status}` +
+        (
+          details
+            ? `: ${details.slice(0, 180)}`
+            : ''
+        )
+      );
     }
-  });
 
-  if (!response.ok) {
-    let details = '';
+    const returnedItems = await response.json();
 
-    try {
-      details = await response.text();
-    } catch {
-      details = '';
+    if (!Array.isArray(returnedItems)) {
+      throw new Error(
+        'Zotero returned an unexpected search response.'
+      );
     }
 
-    throw new Error(
-      `Zotero API returned HTTP ${response.status}` +
-      (details ? `: ${details.slice(0, 180)}` : '')
-    );
+    const items = returnedItems.filter(item => {
+      const itemType =
+        item &&
+        item.data &&
+        item.data.itemType;
+
+      return (
+        itemType &&
+        itemType !== 'attachment' &&
+        itemType !== 'note' &&
+        itemType !== 'annotation'
+      );
+    });
+
+    zoteroSearchCache.set(cacheKey, items);
+
+    return items;
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      throw new Error(
+        `Zotero search timed out after ` +
+        `${Math.round(timeoutMilliseconds / 1000)} seconds.`
+      );
+    }
+
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  const items = await response.json();
-
-  if (!Array.isArray(items)) {
-    throw new Error(
-      'Zotero returned an unexpected response.'
-    );
-  }
-
-  return {
-    items,
-    totalResults: Number(
-      response.headers.get('Total-Results') || 0
-    )
-  };
 }
 
-/*
-  Download all top-level Zotero items.
+function buildZoteroQueriesForCitation(citation) {
+  const queries = [];
 
-  Zotero item responses are paginated, so this requests one page at a
-  time until the complete public group library has been obtained.
-*/
-async function fetchAllZoteroItems() {
-  const allItems = [];
+  const key = String(citation.key || '')
+    .replace(/\s+/g, ' ')
+    .trim();
 
-  const pageSize =
-    ZOTERO_CONFIG.pageSize || 100;
-
-  let start = 0;
-  let expectedTotal = null;
-
-  while (true) {
-    const page = await fetchZoteroItemPage(
-      start,
-      pageSize
-    );
-
-    if (expectedTotal === null) {
-      expectedTotal = page.totalResults;
-    }
-
-    allItems.push(...page.items);
-
-    if (
-      page.items.length < pageSize ||
-      (
-        expectedTotal > 0 &&
-        allItems.length >= expectedTotal
-      )
-    ) {
-      break;
-    }
-
-    start += pageSize;
+  if (!key) {
+    return queries;
   }
 
   /*
-    Top-level requests should normally exclude child attachments, but
-    retain an explicit filter in case the library contains unexpected
-    item structures.
-  */
-  return allItems.filter(item => {
-    const itemType =
-      item &&
-      item.data &&
-      item.data.itemType;
+    SKB report citation:
 
-    return (
-      itemType &&
-      itemType !== 'attachment' &&
-      itemType !== 'note' &&
-      itemType !== 'annotation'
+      SKB R-06-68
+
+    Try the report code both with and without "SKB".
+  */
+  if (citation.type === 'skb-report') {
+    queries.push({
+      query: key,
+      qmode: 'everything'
+    });
+
+    queries.push({
+      query: key.replace(/^SKB\s+/i, ''),
+      qmode: 'everything'
+    });
+
+    return deduplicateZoteroQueries(queries);
+  }
+
+  /*
+    Author-year citation:
+
+      Avila and Bergström 2006
+      Öhman et al. 2014
+      SSM 2017
+
+    Remove citation syntax that may reduce Zotero quick-search quality.
+  */
+  if (citation.type === 'author-year') {
+    const simplified = key
+      .replace(/\bet\s+al\.?/gi, '')
+      .replace(/\bm\.fl\.?/gi, '')
+      .replace(/\b(?:and|och|&)\b/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    queries.push({
+      query: simplified,
+      qmode: 'titleCreatorYear'
+    });
+
+    /*
+      First author and year is a useful fallback if Zotero does not
+      return results for the complete citation.
+    */
+    const yearMatch = simplified.match(
+      /\b(?:1[89]\d{2}|20\d{2})[a-z]?\b/i
     );
+
+    const firstAuthor = simplified
+      .replace(
+        /\b(?:1[89]\d{2}|20\d{2})[a-z]?\b.*$/i,
+        ''
+      )
+      .trim()
+      .split(/\s+/)[0];
+
+    if (firstAuthor && yearMatch) {
+      queries.push({
+        query: `${firstAuthor} ${yearMatch[0]}`,
+        qmode: 'titleCreatorYear'
+      });
+    }
+
+    return deduplicateZoteroQueries(queries);
+  }
+
+  /*
+    Defined abbreviated citation name.
+  */
+  if (citation.type === 'abbreviated-name') {
+    queries.push({
+      query: key,
+      qmode: 'titleCreatorYear'
+    });
+
+    queries.push({
+      query: key,
+      qmode: 'everything'
+    });
+
+    return deduplicateZoteroQueries(queries);
+  }
+
+  queries.push({
+    query: key,
+    qmode: 'titleCreatorYear'
+  });
+
+  return deduplicateZoteroQueries(queries);
+}
+
+function buildZoteroQueriesForReference(entry) {
+  const queries = [];
+
+  /*
+    Report number is the strongest available search term.
+  */
+  const reportKey =
+    getDocumentReferenceReportKey(entry);
+
+  if (reportKey) {
+    queries.push({
+      query: reportKey,
+      qmode: 'everything'
+    });
+
+    queries.push({
+      query: reportKey.replace(/^SKB\s+/i, ''),
+      qmode: 'everything'
+    });
+  }
+
+  /*
+    Search using the generated document key.
+  */
+  if (entry.key) {
+    const simplifiedKey = String(entry.key)
+      .replace(/\bet\s+al\.?/gi, '')
+      .replace(/\bm\.fl\.?/gi, '')
+      .replace(/\b(?:and|och|&)\b/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    queries.push({
+      query: simplifiedKey,
+      qmode: 'titleCreatorYear'
+    });
+  }
+
+  /*
+    Search with a distinctive initial title fragment.
+
+    Limiting this avoids sending a very long query.
+  */
+  const title = getDocumentReferenceTitle(entry);
+
+  if (title) {
+    const titleQuery = title
+      .split(/\s+/)
+      .slice(0, 12)
+      .join(' ');
+
+    queries.push({
+      query: titleQuery,
+      qmode: 'titleCreatorYear'
+    });
+  }
+
+  return deduplicateZoteroQueries(queries);
+}
+
+function deduplicateZoteroQueries(queries) {
+  const seen = new Set();
+
+  return queries.filter(item => {
+    const key =
+      `${item.qmode}||${item.query.toLowerCase()}`;
+
+    if (
+      !item.query ||
+      seen.has(key)
+    ) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
   });
 }
+
+async function searchZoteroWithFallbacks(
+  queries,
+  source,
+  scoringFunction
+) {
+  const candidatesByKey = new Map();
+
+  for (const search of queries) {
+    showStatus(
+      `Searching Zotero for “${truncate(search.query, 45)}”…`
+    );
+
+    await yieldToBrowser();
+
+    const items = await searchZoteroItems(
+      search.query,
+      {
+        qmode: search.qmode,
+        limit: 25
+      }
+    );
+
+    const preparedItems =
+      prepareZoteroItems(items);
+
+    for (const candidate of preparedItems) {
+      const result = scoringFunction(
+        source,
+        candidate
+      );
+
+      const existing =
+        candidatesByKey.get(candidate.key);
+
+      if (
+        !existing ||
+        result.score > existing.score
+      ) {
+        candidatesByKey.set(candidate.key, {
+          ...candidate,
+          score: result.score,
+          reasons: result.reasons,
+          searchQuery: search.query
+        });
+      }
+    }
+
+    /*
+      If the first search found a highly confident candidate, do not
+      make additional API calls.
+    */
+    const bestScore = Math.max(
+      0,
+      ...[...candidatesByKey.values()]
+        .map(candidate => candidate.score)
+    );
+
+    if (bestScore >= 90) {
+      break;
+    }
+  }
+
+  return [...candidatesByKey.values()]
+    .filter(candidate => {
+      return (
+        candidate.score >=
+        ZOTERO_CONFIG.minimumScore
+      );
+    })
+    .sort((a, b) => b.score - a.score)
+    .slice(
+      0,
+      ZOTERO_CONFIG.maximumCandidates
+    );
+}
+
+async function analyseAgainstZotero(
+  orphanCites,
+  uncitedRefs
+) {
+  const orphanMatches = [];
+
+  for (
+    let index = 0;
+    index < orphanCites.length;
+    index++
+  ) {
+    const citation = orphanCites[index];
+
+    showStatus(
+      `Searching Zotero for orphan citation ` +
+      `${index + 1} of ${orphanCites.length}…`
+    );
+
+    const queries =
+      buildZoteroQueriesForCitation(citation);
+
+    const candidates =
+      await searchZoteroWithFallbacks(
+        queries,
+        citation,
+        scoreOrphanCitationAgainstZotero
+      );
+
+    orphanMatches.push({
+      source: citation,
+      candidates
+    });
+  }
+
+  const uncitedMatches = [];
+
+  for (
+    let index = 0;
+    index < uncitedRefs.length;
+    index++
+  ) {
+    const entry = uncitedRefs[index];
+
+    showStatus(
+      `Searching Zotero for uncited reference ` +
+      `${index + 1} of ${uncitedRefs.length}…`
+    );
+
+    const queries =
+      buildZoteroQueriesForReference(entry);
+
+    const candidates =
+      await searchZoteroWithFallbacks(
+        queries,
+        entry,
+        scoreDocumentReferenceAgainstZotero
+      );
+
+    uncitedMatches.push({
+      source: entry,
+      candidates
+    });
+  }
+
+  return {
+    available: true,
+    error: null,
+
+    /*
+      This no longer means the total library size. It counts distinct
+      Zotero items returned by searches.
+    */
+    itemCount: countUniqueZoteroCandidates(
+      orphanMatches,
+      uncitedMatches
+    ),
+
+    orphanMatches,
+    uncitedMatches
+  };
+}
+
+function countUniqueZoteroCandidates(
+  orphanMatches,
+  uncitedMatches
+) {
+  const keys = new Set();
+
+  for (const result of [
+    ...orphanMatches,
+    ...uncitedMatches
+  ]) {
+    for (const candidate of result.candidates) {
+      if (candidate.key) {
+        keys.add(candidate.key);
+      }
+    }
+  }
+
+  return keys.size;
+}
+
+
 
 /*
   Extract a plausible publication year from a Zotero date field.
@@ -2430,17 +2790,27 @@ function prepareZoteroItems(items) {
   Link to the item in the public Zotero group library.
 */
 function createZoteroItemUrl(item) {
+  if (
+    item &&
+    item.links &&
+    item.links.alternate &&
+    item.links.alternate.href
+  ) {
+    return item.links.alternate.href;
+  }
+
   const groupId = String(
     ZOTERO_CONFIG.groupId
   );
 
-  const itemKey = item && item.key
-    ? item.key
-    : '';
+  const itemKey =
+    item && item.key
+      ? item.key
+      : '';
 
   return (
     `https://www.zotero.org/groups/` +
-    `${encodeURIComponent(groupId)}/skb_references/items/` +
+    `${encodeURIComponent(groupId)}/items/` +
     `${encodeURIComponent(itemKey)}`
   );
 }
@@ -2918,11 +3288,10 @@ function buildZoteroMatchSection(zoteroResult) {
       margin:0 0 14px;
       font-size:.84rem;
       color:var(--text-secondary);
-    ">
-      Checked
-      <strong>${zoteroResult.itemCount}</strong>
-      top-level items in the public
-      <code>skb_references</code> Zotero library.
+    ">Examined
+<strong>${zoteroResult.itemCount}</strong>
+distinct Zotero records returned by targeted searches of the public
+<code>skb_references</code> library.
       These are suggestions only; document results have not been
       changed automatically.
     </p>
