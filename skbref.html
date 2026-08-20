@@ -165,6 +165,9 @@
     .zotero-candidate-title { flex: 1; color: var(--text-primary); font-weight: 700; }
     .zotero-probability { flex: 0 0 auto; padding: 2px 7px; border-radius: 10px; background: color-mix(in srgb, #5cb85c 18%, var(--bg-secondary)); color: #357a35; font-weight: 700; }
     .zotero-candidate a { color: var(--color-kvot-bright); }
+    .forbidden-match { color: var(--color-kvot-accent); font-weight: 700; }
+    .forbidden-context { max-width: 520px; color: var(--text-secondary); }
+    .forbidden-rule { font-family: 'SF Mono', Menlo, monospace; font-size: .76rem; color: var(--text-muted); }
 
     @media (max-width: 700px) { #summary-cards { grid-template-columns: 1fr 1fr; } }
     @media (max-width: 480px) { #app { padding: 14px 12px 32px; } #summary-cards { gap: 8px; } }
@@ -239,6 +242,973 @@
       maximumOrphanLookups: 5, maximumUncitedLookups: 5
     });
 
+    /*
+      Forbidden-word rules. Rules with enabled: false correspond to lines
+      prefixed with # in the source list and remain available for revision.
+    */
+    const FORBIDDEN_WORD_RULES = [
+      {
+            "enabled": true,
+            "pattern": "BRT",
+            "description": "bör vara 1BRT"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Ff]lux",
+            "description": "Använd release? (om det gäller activity release)"
+      },
+      {
+            "enabled": true,
+            "pattern": "(?<!AB) SVAFO",
+            "description": "bör vara AB SVAFO"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Aa]nnual effective dose",
+            "description": "Använd sparsamt"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Cc]ommitted dose",
+            "description": "?"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Ff]ractures?",
+            "description": "Använd inte för betong"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Ff]racturing",
+            "description": "Använd inte för betong"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Cc]racks?",
+            "description": "Använd inte för berg"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Pp]rogen(y|ies)",
+            "description": "Använd: decay product"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Dd]aughter products?",
+            "description": "Använd: decay product"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Dd]eposit",
+            "description": "?"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Dd]ose-deliverer",
+            "description": "?"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Gg]rout",
+            "description": "kringgjutning använd inte för igjutning"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Ff]ar-field",
+            "description": "bör oftast vara geosphere"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Mm]ass flux",
+            "description": "?"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Ee]mbedment",
+            "description": "igjutning använd inte för kringgjutning"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Pp]lacing",
+            "description": "Kan ibland vara location"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Pp]lace",
+            "description": "Kan ibland vara location"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Ll]ow and intermediate level waste",
+            "description": "bör vara low- and intermediate-level waste"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Pp]eak",
+            "description": "bör oftast vara maximum"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Nn]ear field",
+            "description": "bör vara near-field"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Nn]earfield",
+            "description": "bör vara near-field"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Oo]perational phase",
+            "description": "Använd:operational period"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Oo]perating period",
+            "description": "Använd:operational period"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Cc]onservative(ly)?",
+            "description": "använd cautious eller pessimistic"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Nn]uclides?",
+            "description": "bör vara radionuclide(s)"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Uu]plift",
+            "description": "Använd inte om det gäller havsnivån"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Rr]ebound",
+            "description": "Använd inte om det gäller havsnivån"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Ll]and rise",
+            "description": "Använd inte om det gäller havsnivån"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Rr]etention factor",
+            "description": "?"
+      },
+      {
+            "enabled": true,
+            "pattern": "(?<![Tt]he) PSAR",
+            "description": "PSAR som inte föregås av the"
+      },
+      {
+            "enabled": true,
+            "pattern": "(?<![Tt]he) SR-PSU",
+            "description": "SR-PSU som inte föregås av the"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Ss]horeline development",
+            "description": "shoreline displacement/regression?"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Ss]horeline evolution",
+            "description": "shoreline displacement/regression?"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Ss]horelevel",
+            "description": "Menar du: shoreline?n"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Ss]hore-line",
+            "description": "?"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Ss]hore-level",
+            "description": "relative sea-level?"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Ss]orption distribution coefficient",
+            "description": "?"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Ll]inear distribution coefficient",
+            "description": "?"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Ss]orption partitioning coefficient",
+            "description": "?"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Ss]orption reduction coefficient",
+            "description": "?"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Tt]he Silo",
+            "description": "det ska inte vara stort S här"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Cc]onstruction concrete",
+            "description": "Använd: structural concrete"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Ww]aste container",
+            "description": "Använd: waste packaging"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Rr]epository section",
+            "description": "Använd: waste vault"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Rr]epository vault",
+            "description": "Använd: waste vault"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Pp]ipes",
+            "description": "channels?"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Dd]iversionary",
+            "description": "'gas evacuation system'?"
+      },
+      {
+            "enabled": false,
+            "pattern": "SKB\\s\\(\\s?[12]",
+            "description": "old style SKB reference"
+      },
+      {
+            "enabled": true,
+            "pattern": "SKB\\s[12]",
+            "description": "old style SKB reference"
+      },
+      {
+            "enabled": true,
+            "pattern": "[0-9]%",
+            "description": "missing space before unit"
+      },
+      {
+            "enabled": true,
+            "pattern": "[0-9]°C",
+            "description": "missing space before unit"
+      },
+      {
+            "enabled": false,
+            "pattern": "[0-9]m ",
+            "description": "missing space before unit"
+      },
+      {
+            "enabled": true,
+            "pattern": "[0-9](meters?|metres?) ",
+            "description": "missing space before unit"
+      },
+      {
+            "enabled": true,
+            "pattern": "[0-9]mm ",
+            "description": "missing space before unit"
+      },
+      {
+            "enabled": true,
+            "pattern": "[0-9]years ",
+            "description": "missing space before unit"
+      },
+      {
+            "enabled": true,
+            "pattern": "0000",
+            "description": "missing space in large number"
+      },
+      {
+            "enabled": false,
+            "pattern": "Crawford et al.",
+            "description": "most often only Crawford"
+      },
+      {
+            "enabled": false,
+            "pattern": "Mårtensson et al. 2022 ",
+            "description": "Eller ska det vara?:2021"
+      },
+      {
+            "enabled": false,
+            "pattern": "(?<!s)[iy]ze",
+            "description": "American English?"
+      },
+      {
+            "enabled": false,
+            "pattern": "\\s{2,}",
+            "description": "more than 1 whitespace"
+      },
+      {
+            "enabled": false,
+            "pattern": "0 0",
+            "description": "non non-breaking half space"
+      },
+      {
+            "enabled": false,
+            "pattern": "[0-9],[0-9]",
+            "description": "?"
+      },
+      {
+            "enabled": false,
+            "pattern": "\\bchapter [0-9]",
+            "description": "not capitalized"
+      },
+      {
+            "enabled": false,
+            "pattern": "\\bsection [0-9]",
+            "description": "not capitalized"
+      },
+      {
+            "enabled": false,
+            "pattern": "\\bfigure [0-9]",
+            "description": "not capitalized"
+      },
+      {
+            "enabled": false,
+            "pattern": "\\btable [0-9]",
+            "description": "not capitalized"
+      },
+      {
+            "enabled": true,
+            "pattern": "[0-9].X",
+            "description": "Trasig referens"
+      },
+      {
+            "enabled": true,
+            "pattern": "#",
+            "description": "Trasig referens"
+      },
+      {
+            "enabled": true,
+            "pattern": "[0-9][eE]",
+            "description": "Excel format"
+      },
+      {
+            "enabled": true,
+            "pattern": "et\\. ?al\\.?",
+            "description": "Är det en onödig punkt efter \"et\" ?"
+      },
+      {
+            "enabled": true,
+            "pattern": "et al[^.]",
+            "description": "Saknas punkt efter \"al\""
+      },
+      {
+            "enabled": true,
+            "pattern": "Kd",
+            "description": "Kolla att det är kursivt K och nedsänkt och rakt d"
+      },
+      {
+            "enabled": false,
+            "pattern": "(?<!Figure) [0-9]{1,}-[0-9]{1,}-[0-9]{1,}-[0-9]{1,}",
+            "description": "Ska det vara intervall, med tankstreck?"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Cc]olor",
+            "description": "American English? BE=colour"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Mm]ath",
+            "description": "American English? BE=maths"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Mm]ail",
+            "description": "American English? BE=post"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Tt]rapezoid",
+            "description": "American English? BE=trapezium"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Dd]efense",
+            "description": "American English? BE=defence"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Aa]luminum",
+            "description": "American English? BE=aluminium"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Cc]anceled",
+            "description": "American English? BE=cancelled"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Ff]ulfill",
+            "description": "American English? BE=fulfil"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Aa]ging",
+            "description": "American English? BE=ageing"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Cc]enter",
+            "description": "American English? BE=centre"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Ss]occer",
+            "description": "American English? BE=football"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Mm]illimeter",
+            "description": "American English? BE=millimetre"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Kk]ilometer",
+            "description": "American English? BE=kilometre"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Cc]entimeter",
+            "description": "American English? BE=centimetre"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Mm]eter",
+            "description": "American English? BE=metre"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Cc]haracterize",
+            "description": "American English? BE=characterise"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Cc]ivilization",
+            "description": "American English? BE=civilisation"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Oo]rganize",
+            "description": "American English? BE=organise"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Bb]ehavior",
+            "description": "American English? BE=behaviour"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Rr]umor",
+            "description": "American English? BE=rumour"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Dd]onut",
+            "description": "American English? BE=doughnut"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Yy]ogurt",
+            "description": "American English? BE=yoghurt"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Gg]ray",
+            "description": "American English? BE=grey (om det inte handlar om absorberad dos)"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Ff]orward(?!s)",
+            "description": "American English? bör sluta med s på BE"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Tt]oward(?!s)",
+            "description": "American English? bör sluta med s på BE"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Rr]ightward(?!s)",
+            "description": "American English? bör sluta med s på BE"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Ss]ophisticated",
+            "description": "Använd inte om barriers"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Aa]dvanced",
+            "description": "Använd inte om barriers"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Ee]ffective",
+            "description": "Undvik för barriers"
+      },
+      {
+            "enabled": false,
+            "pattern": "(left|right) panel",
+            "description": "Vissa dubbelfigurer har utgått"
+      },
+      {
+            "enabled": false,
+            "pattern": "pane",
+            "description": "Vi skriver i regel panel"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Ss]ection.0.*",
+            "description": "Trasig referens"
+      },
+      {
+            "enabled": true,
+            "pattern": " ([a-zA-Z]{2,})\\s\\1 ",
+            "description": "upprepat ord"
+      },
+      {
+            "enabled": true,
+            "pattern": "Biosphere synthesis (?!report)",
+            "description": "BS som inte följs av 'report'"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Cc]oncrete grout",
+            "description": "skriv bara grout"
+      },
+      {
+            "enabled": false,
+            "pattern": "extended SFR",
+            "description": "Kan ibland räcka med bara 'SFR'"
+      },
+      {
+            "enabled": false,
+            "pattern": "[Ff]uel damage",
+            "description": "?"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Ff]uel-damage",
+            "description": "Bör vara utan bindestreck?"
+      },
+      {
+            "enabled": true,
+            "pattern": "SEQ",
+            "description": "Trasig referens"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Hh]ittar inte",
+            "description": "Trasig referens"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Ff]loor",
+            "description": "Kan ibland vara slab"
+      },
+      {
+            "enabled": false,
+            "pattern": "[Ss]lab",
+            "description": "Bra jobbat"
+      },
+      {
+            "enabled": false,
+            "pattern": "[Rr]oof",
+            "description": "Troligen OK, men Johan vill ha ceiling på vissa ställen"
+      },
+      {
+            "enabled": false,
+            "pattern": "[Cc]ompared to",
+            "description": "Ska ofta vara compared with"
+      },
+      {
+            "enabled": false,
+            "pattern": "[Cc]ompared with",
+            "description": "Ska ibland (men sällan) vara compared to"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Vv]alues in parentheses",
+            "description": "Troligen OK (om det inte ska vara brackets)"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Vv]alues in brackets",
+            "description": "Bör ofta vara parentheses, som är ett specialfall av brackets"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Aa]nnual near-field release",
+            "description": "Vi skriver oftast 'Annual release from the near-field'"
+      },
+      {
+            "enabled": false,
+            "pattern": "[Mm]igration",
+            "description": "Lite överanvänt, kan man tycka."
+      },
+      {
+            "enabled": true,
+            "pattern": "1-2BMA",
+            "description": "Ska vara annat streck"
+      },
+      {
+            "enabled": true,
+            "pattern": "1-2BTF",
+            "description": "Ska vara annat streck"
+      },
+      {
+            "enabled": true,
+            "pattern": "1-5BLA",
+            "description": "Ska vara annat streck"
+      },
+      {
+            "enabled": true,
+            "pattern": "F-PSAR",
+            "description": "Ska oftast vara SR-PSU"
+      },
+      {
+            "enabled": true,
+            "pattern": "FPSAR",
+            "description": "Kan vara F-PSAR, men oftast SR-PSU"
+      },
+      {
+            "enabled": true,
+            "pattern": "Main report",
+            "description": "Ska oftast vara: Post-closure safety report"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Kk]aisson",
+            "description": "Felstavning som slunkit igenom några gånger"
+      },
+      {
+            "enabled": true,
+            "pattern": "([Kk]|[Cc])aisoon",
+            "description": "Felstavning som slunkit igenom några gånger"
+      },
+      {
+            "enabled": true,
+            "pattern": "([Kk]|[Cc])aison",
+            "description": "Felstavning som slunkit igenom några gånger"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Cc]apasity",
+            "description": "Felstavning som slunkit igenom några gånger"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Cc]autiuos",
+            "description": "Felstavning som slunkit igenom några gånger"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Cc]autius",
+            "description": "Felstavning som slunkit igenom några gånger"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Cc]autios",
+            "description": "Felstavning som slunkit igenom några gånger"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Ss]qrutinised?",
+            "description": "Felstavning som slunkit igenom några gånger"
+      },
+      {
+            "enabled": false,
+            "pattern": "Inventory report",
+            "description": "Ska förmodligen vara 'SKB R-18-07'"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Dd]isposed of",
+            "description": "Det kanske räcker med 'disposed' utan 'of'"
+      },
+      {
+            "enabled": false,
+            "pattern": "BMA",
+            "description": "Menar du verkligen BÅDA BMA"
+      },
+      {
+            "enabled": false,
+            "pattern": "BLA",
+            "description": "Menar du verkligen ALLA BLA"
+      },
+      {
+            "enabled": false,
+            "pattern": "BTF",
+            "description": "Menar du verkligen BÅDA BTF"
+      },
+      {
+            "enabled": true,
+            "pattern": "Figur",
+            "description": "Fel språk? (kan vara krashad korsreferens)"
+      },
+      {
+            "enabled": true,
+            "pattern": "Tabell",
+            "description": "Fel språk? (kan vara krashad korsreferens)"
+      },
+      {
+            "enabled": false,
+            "pattern": "Huvudrapporten",
+            "description": "?"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Pp]ost closure (safety)",
+            "description": "saknas '-' ?"
+      },
+      {
+            "enabled": false,
+            "pattern": "Tables 7-4 to 7-4",
+            "description": "typo i RNT (gör till pattern) ?"
+      },
+      {
+            "enabled": false,
+            "pattern": "global warming",
+            "description": "så heter inte basfallet längre ?"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Rr]eference inventory (at|by) 2075",
+            "description": "Använd: Reference inventory for"
+      },
+      {
+            "enabled": true,
+            "pattern": "SR-PSU \\(PSAR\\).",
+            "description": "Använd: the PSAR"
+      },
+      {
+            "enabled": true,
+            "pattern": "Model tools summary report",
+            "description": "Bör nog vara: Model tools report"
+      },
+      {
+            "enabled": true,
+            "pattern": "Åstrand.et.al..\\(2021\\)",
+            "description": "should be 2022"
+      },
+      {
+            "enabled": true,
+            "pattern": "Mårtensson.et.al..2021",
+            "description": "Ska det vara?:2022"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Ww]ith regards",
+            "description": "Google: 'With regard to is the only spelling of this phrase that you should use.'"
+      },
+      {
+            "enabled": true,
+            "pattern": "Facilia",
+            "description": "företaget finns ej mer, ska det vara SKB,Kemakta,Kvot AB eller nåt annat?"
+      },
+      {
+            "enabled": false,
+            "pattern": "SDM",
+            "description": "Överväg att skriva SDM-PSU"
+      },
+      {
+            "enabled": true,
+            "pattern": "calculate case",
+            "description": "calculation case?"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Dd]ifferences? to",
+            "description": "differences from?"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Dd]oses for humans",
+            "description": "doses to humans?"
+      },
+      {
+            "enabled": true,
+            "pattern": "rates for non-human",
+            "description": "rates to non-human?"
+      },
+      {
+            "enabled": false,
+            "pattern": "are covered",
+            "description": "are to be covered?"
+      },
+      {
+            "enabled": false,
+            "pattern": "are disposed",
+            "description": "are to be disposed?"
+      },
+      {
+            "enabled": false,
+            "pattern": "are installed",
+            "description": "are to be installed ?"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Cc]riterions",
+            "description": "criteria"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Ff]orecasted",
+            "description": "forecast?"
+      },
+      {
+            "enabled": true,
+            "pattern": "represented with",
+            "description": "represented by? om det handlar om compartments"
+      },
+      {
+            "enabled": true,
+            "pattern": "embayment",
+            "description": "bay"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Uu]nclosed repository",
+            "description": "ska vara: unsealed repository"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Ss]ections?.[0-9]{1,} ",
+            "description": "Section där det borde vara Chapter?"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Cc]hapters?.[0-9]{1,}.[0-9]{1,} ",
+            "description": "Chapter där det borde vara Section?"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Ss]eabed",
+            "description": "Använd: sea om submerged är det som avses"
+      },
+      {
+            "enabled": true,
+            "pattern": "SFR is submerged",
+            "description": "Kan behöva omformuleras"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Aa]ssessment time",
+            "description": "Använd helst: asessment period (undvik: time period,time frame eller time span )"
+      },
+      {
+            "enabled": true,
+            "pattern": "demonstrating fulfilment ",
+            "description": "Ändra RNT-rapport beskrivningen? (Är listan med huvudreferenser uppdaterad)"
+      },
+      {
+            "enabled": false,
+            "pattern": "Model tools summary report",
+            "description": "Model tools report?"
+      },
+      {
+            "enabled": false,
+            "pattern": "Assessment activities and input data report",
+            "description": "Activities and input data report?"
+      },
+      {
+            "enabled": true,
+            "pattern": "FEP-report",
+            "description": "FEP report?"
+      },
+      {
+            "enabled": true,
+            "pattern": "FHA-report",
+            "description": "FHA report?"
+      },
+      {
+            "enabled": true,
+            "pattern": "Post-closure safety Report",
+            "description": "Det bör vara litet r"
+      },
+      {
+            "enabled": true,
+            "pattern": "Activities and input data Report",
+            "description": "Det bör vara litet r"
+      },
+      {
+            "enabled": true,
+            "pattern": "Waste process Report",
+            "description": "Det bör vara litet r"
+      },
+      {
+            "enabled": true,
+            "pattern": "Barrier process Report",
+            "description": "Det bör vara litet r"
+      },
+      {
+            "enabled": true,
+            "pattern": "Biosphere synthesis Report",
+            "description": "Det bör vara litet r"
+      },
+      {
+            "enabled": true,
+            "pattern": "Climate Report",
+            "description": "Det bör vara litet r"
+      },
+      {
+            "enabled": true,
+            "pattern": "Data Report",
+            "description": "Det bör vara litet r"
+      },
+      {
+            "enabled": true,
+            "pattern": "FEP Report",
+            "description": "Det bör vara litet r"
+      },
+      {
+            "enabled": true,
+            "pattern": "FHA Report",
+            "description": "Det bör vara litet r"
+      },
+      {
+            "enabled": true,
+            "pattern": "Geosphere process Report",
+            "description": "Det bör vara litet r"
+      },
+      {
+            "enabled": true,
+            "pattern": "Initial state Report",
+            "description": "Det bör vara litet r"
+      },
+      {
+            "enabled": true,
+            "pattern": "Model tools Report",
+            "description": "Det bör vara litet r"
+      },
+      {
+            "enabled": true,
+            "pattern": "Radionuclide transport Report",
+            "description": "Det bör vara litet r"
+      },
+      {
+            "enabled": true,
+            "pattern": "[Ff]low barriers?",
+            "description": "Hydraulic barriers?"
+      }
+];
+
     let currentReport = null;
     let currentRefEntries = [];
     let currentFilename = '';
@@ -312,6 +1282,7 @@
         showStatus('Parsing document…');
         await yieldToBrowser();
         const { paragraphs, isSwedish } = parseDocXml(docXml);
+        const forbiddenMatches = findForbiddenWordMatches(paragraphs);
         setProgress(45);
         showStatus('Finding reference list…');
         await yieldToBrowser();
@@ -359,7 +1330,7 @@
         setProgress(100);
         hideStatus();
         setTimeout(hideProgress, 450);
-        renderResults(file.name, refEntries, inTextCites, report, formatIssues, paragraphs.length, refListStart, isSwedish);
+        renderResults(file.name, refEntries, inTextCites, report, formatIssues, forbiddenMatches, paragraphs.length, refListStart, isSwedish);
       } catch (error) {
         hideStatus();
         hideProgress();
@@ -1169,7 +2140,89 @@ ${exportedResults.innerHTML}
       URL.revokeObjectURL(url);
     }
 
-    function renderResults(filename, entries, citations, report, issues, total, start, isSwedish) {
+    function findForbiddenWordMatches(paragraphs) {
+      const matches = [];
+      for (let ruleIndex = 0; ruleIndex < FORBIDDEN_WORD_RULES.length; ruleIndex++) {
+        const rule = FORBIDDEN_WORD_RULES[ruleIndex];
+        if (!rule.enabled) continue;
+        let expression;
+        try {
+          expression = new RegExp(rule.pattern, 'gu');
+        } catch (error) {
+          console.warn('Invalid forbidden-word regular expression:', rule.pattern, error);
+          continue;
+        }
+        for (const paragraph of paragraphs) {
+          const text = paragraph.text || '';
+          expression.lastIndex = 0;
+          let match;
+          while ((match = expression.exec(text)) !== null) {
+            const start = Math.max(0, match.index - 55);
+            const end = Math.min(text.length, match.index + match[0].length + 55);
+            matches.push({
+              ruleIndex,
+              pattern: rule.pattern,
+              description: rule.description,
+              match: match[0],
+              paragraphIndex: paragraph.index,
+              section: paragraph.section || '',
+              context: `${start > 0 ? '…' : ''}${text.slice(start, end)}${end < text.length ? '…' : ''}`
+            });
+            if (match[0].length === 0) expression.lastIndex++;
+          }
+        }
+      }
+      return matches;
+    }
+
+    function buildForbiddenWordsSection(matches) {
+      if (!matches.length) {
+        return section(
+          'Forbidden words and expressions',
+          0,
+          '<p class="empty-notice">No enabled forbidden-word patterns matched the document text.</p>'
+        );
+      }
+
+      const grouped = new Map();
+      for (const item of matches) {
+        const key = `${item.pattern}\u0000${item.description}`;
+        if (!grouped.has(key)) grouped.set(key, []);
+        grouped.get(key).push(item);
+      }
+
+      const rows = [...grouped.values()].map(items => {
+        const first = items[0];
+        const contexts = items.slice(0, 12).map(item => `
+          <div style="margin-bottom:8px">
+            <span class="forbidden-match">${escHtml(item.match)}</span>
+            <span class="cite-pages">paragraph ${item.paragraphIndex + 1}${item.section ? ` · ${escHtml(item.section)}` : ''}</span>
+            <div class="forbidden-context">${escHtml(item.context)}</div>
+          </div>`).join('');
+        const remaining = items.length > 12
+          ? `<div class="empty-notice">…and ${items.length - 12} more occurrence(s).</div>`
+          : '';
+        return `
+          <tr class="warn-row">
+            <td><span class="forbidden-match">${escHtml(first.match)}</span><div class="forbidden-rule">${escHtml(first.pattern)}</div></td>
+            <td>${escHtml(first.description)}</td>
+            <td class="cite-count">${items.length}</td>
+            <td>${contexts}${remaining}</td>
+          </tr>`;
+      }).join('');
+
+      return section(
+        'Forbidden words and expressions',
+        matches.length,
+        `<table class="ref-table">
+           <thead><tr><th>Match / rule</th><th>Problem description</th><th>Count</th><th>Locations and context</th></tr></thead>
+           <tbody>${rows}</tbody>
+         </table>`,
+        false
+      );
+    }
+
+    function renderResults(filename, entries, citations, report, issues, forbiddenMatches, total, start, isSwedish) {
       docInfo.innerHTML = `<strong>${escHtml(filename)}</strong> ${isSwedish ? '🇸🇪 Svenska — ' : ''}${total} paragraphs · ${entries.length} reference list entries · ${citations.length} in-text citation occurrences · ${start >= 0 ? `Reference list found at paragraph ${start + 1}.` : 'No reference list section detected.'}`;
       docInfo.classList.add('show');
       const cited = entries.filter(entry => entry.cites.length).length;
@@ -1179,7 +2232,7 @@ ${exportedResults.innerHTML}
       setSummary('issues', issues.length, issues.length ? 'warn' : 'ok');
       summaryCards.classList.add('show');
       resultActions.classList.add('show');
-      results.innerHTML = buildRefListSection(entries) + buildOrphanSection(report.orphanCites) + buildUncitedSection(report.uncitedRefs) + buildFormatSection(issues, entries);
+      results.innerHTML = buildRefListSection(entries) + buildOrphanSection(report.orphanCites) + buildUncitedSection(report.uncitedRefs) + buildFormatSection(issues, entries) + buildForbiddenWordsSection(forbiddenMatches);
       resetBtn.classList.add('show');
     }
 
@@ -1227,7 +2280,7 @@ ${exportedResults.innerHTML}
     }
 
     function buildUncitedSection(items){const body=items.length?`<div class="tag-list">${items.map(e=>`<div class="tag warn-tag">⚠ <code>${escHtml(e.key)}</code></div>`).join('')}</div>`:'<p class="empty-notice">Every reference in the list is cited at least once.</p>';return section('Reference list entries never cited in text',items.length,body);}
-    function buildFormatSection(issues,entries){const map=new Map(entries.map(e=>[e.key,e.body]));const groups=new Map();issues.forEach(i=>(groups.get(i.key)||groups.set(i.key,[]).get(i.key)).push(i));const body=issues.length?`<table class="ref-table"><thead><tr><th>Key</th><th>Reference text</th><th>Issues</th></tr></thead><tbody>${[...groups].map(([key,list])=>`<tr><td><span class="ref-key">${escHtml(key)}</span></td><td>${truncate(escHtml(map.get(key)||''),100)}</td><td><ul class="issue-list">${list.map(i=>`<li>[${i.severity.toUpperCase()}] ${escHtml(i.issue)}</li>`).join('')}</ul></td></tr>`).join('')}</tbody></table>`:'<p class="empty-notice">No SKB format rule violations detected.</p>';return section('SKB format rule issues',issues.length,body);}
+    function buildFormatSection(issues,entries){const map=new Map(entries.map(e=>[e.key,e.body]));const groups=new Map();issues.forEach(i=>(groups.get(i.key)||groups.set(i.key,[]).get(i.key)).push(i));const body=issues.length?`<table class="ref-table"><thead><tr><th>Key</th><th>Reference text</th><th>Issues</th></tr></thead><tbody>${[...groups].map(([key,list])=>`<tr><td><span class="ref-key">${escHtml(key)}</span></td><td>${truncate(escHtml(map.get(key)||''),100)}</td><td><ul class="issue-list">${list.map(i=>`<li>[${i.severity.toUpperCase()}] ${escHtml(i.issue)}</li>`).join('')}</ul></td></tr>`).join('')}</tbody></table>`:'<p class="empty-notice">No SKB reference format rule violations detected.</p>';return section('SKB reference format rule issues',issues.length,body);}
     function section(title,count,body,open=false){const good=!count||count==='unavailable';return `<details class="result-section" ${open?'open':''}><summary>${title}<span class="section-badge ${good?'good':'warn'}">${count===0?'✓ none':count}</span></summary><div class="section-body">${body}</div></details>`;}
     function setSummary(name,value,state){$(`cnt-${name}`).textContent=value;const card=$(`card-${name}`);card.classList.remove('warn','ok');if(state)card.classList.add(state);}
     function escHtml(value){return String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
