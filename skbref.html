@@ -934,17 +934,7 @@ function extractAbbreviatedReferenceName(text) {
   */
   return extractAuthorYearKey(text) !== null;
 }
-/*
-  // Otherwise, look for an author-like beginning and a plausible year.
-  const startsLikeAuthor =
-    /^[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ\-]+(?:\s+[A-ZÀ-ÖØ-Þ][a-zà-öø-ÿ][A-Za-zÀ-ÖØ-Þà-öø-ÿ\-]+)*(?:(?:\s+|,\s*)[A-ZÀ-ÖØ-Þ]{1,2}(?:[.\- ][A-ZÀ-ÖØ-Þ]{1,2})*\.?,|,\s*[A-ZÀ-ÖØ-Þ]|\s+(?:and|och|&|m\.fl)|,\s*[1-9]\d{3})/.test(text);
 
-  const hasYear =
-    /\b(?:1[89]\d{2}|2\d{3})[a-z]?\b/.test(text);
-
-  return startsLikeAuthor && hasYear;
-}
-*/
  function extractAuthorYearKey(text) {
   /*
     Handle comma-separated SKB author lists such as:
@@ -1372,7 +1362,7 @@ function findAbbreviatedNameCitations(
       `(?:^|[^A-Za-zÀ-ÖØ-Þà-öø-ÿ0-9])` +
       `(${namePattern})` +
       `(?=$|[^A-Za-zÀ-ÖØ-Þà-öø-ÿ0-9])`,
-      'gi'
+      'g'
     );
 
     let match;
@@ -1688,7 +1678,7 @@ function normaliseCitationAuthor(author) {
   const normalizedText = normaliseDashes(text);
 
   const re =
-    /\bSKB\s+(?:\((\d{4}[a-z]?(?:[,\s]+\d{4}[a-z]?)*)\)|(\d{4}[a-z]?)(?!\s*\w)|((?:TR|R|P|IPR|RD|SR|TM|U|F)-\d{2,}-\d+))/gi;
+    /\bSKB\s+(?:\(((?:1[89]\d{2}|20\d{2})[a-z]?(?:[,\s]+(?:1[89]\d{2}|20\d{2})[a-z]?)*)\)|((?:1[89]\d{2}|20\d{2})[a-z]?)(?!\s*\w)|((?:TR|R|P|IPR|RD|SR|TM|U|F)-\d{2,}-\d+))/gi;
 
   let match;
   re.lastIndex = 0;
@@ -1702,7 +1692,7 @@ function normaliseCitationAuthor(author) {
       for (const value of years) {
         const year = value.trim();
 
-        if (/^\d{4}[a-z]?$/.test(year)) {
+        if (/^(?:1[89]\d{2}|20\d{2})[a-z]?$/.test(year)) {
           out.push({
             key: `SKB ${year}`,
             raw: match[0],
@@ -1835,7 +1825,7 @@ function normaliseKey(key) {
   */
   const SKB_REPORT_RE =
   /\b(?:SKB\s+)?(?:TR|R|P|IPR|RD|SR|TM|U|F)[-\u2010\u2011\u2012\u2013\u2014\u2212]\d{2,}[-\u2010\u2011\u2012\u2013\u2014\u2212]\d+\b/i;
-  const YEAR_IN_TEXT_RE = /\b(1[9][0-9]{2}|2[0-9]{3})[a-z]?\b/;
+  const YEAR_IN_TEXT_RE = /\b(1[89][0-9]{2}|20[0-9]{2})[a-z]?\b/;
   const SEQUENTIAL_GAP_THRESHOLD = 5;
 
   function checkSkbFormat(refEntries) {
@@ -1904,8 +1894,14 @@ function normaliseKey(key) {
       // (no action needed here, just detection for completeness)
 
       // Rule 8: No CAPS-only author abbreviations where full name expected
-      if (/^\[?\d+\]?\s+[A-ZÅÄÖ]{3,}[,\s]/.test(e.raw)) {
-        entryIssues.push({ issue: 'Author appears to be in ALL CAPS — use "Lastname, Firstname" format', severity: 'info' });
+      if (
+        e.type !== 'abbreviated-name' &&
+          /^\[?\d+\]?\s+[A-ZÅÄÖ]{3,}[,\s]/.test(e.raw)
+      ) {
+        entryIssues.push({
+          issue: 'Author appears to be in ALL CAPS — use "Lastname, Firstname" format',
+          severity: 'info'
+       });
       }
 
       if (entryIssues.length > 0) {
