@@ -176,7 +176,30 @@
       </div>
 
       <!-- Results -->
-      <div id="results"></div>
+<div id="results"></div>
+
+<!-- Optional Zotero lookup -->
+<div id="zotero-actions" style="display:none;margin-top:20px">
+  <button
+    id="zotero-check-btn"
+    type="button"
+    class="dz-btn"
+  >
+    Check unmatched references in Zotero
+  </button>
+
+  <span
+    id="zotero-status"
+    style="
+      display:none;
+      margin-left:10px;
+      font-size:.84rem;
+      color:var(--text-muted);
+    "
+  ></span>
+</div>
+
+<div id="zotero-results"></div>
 
     </div>
     <div id="map"></div>
@@ -233,6 +256,25 @@
   const summCards  = document.getElementById('summary-cards');
   const results    = document.getElementById('results');
   const resetBtn   = document.getElementById('reset-btn');
+const zoteroActions =
+  document.getElementById('zotero-actions');
+
+const zoteroCheckBtn =
+  document.getElementById('zotero-check-btn');
+
+const zoteroStatus =
+  document.getElementById('zotero-status');
+
+const zoteroResults =
+  document.getElementById('zotero-results');
+
+/*
+  Store the most recent analysis so the Zotero button can use it
+  without parsing the Word document again.
+*/
+let currentReport = null;
+let currentRefEntries = [];
+let zoteroLookupRunning = false;
 
 /*
   ===============================================================
@@ -269,16 +311,174 @@ const ZOTERO_CONFIG = {
   fileInput.addEventListener('change', () => { if (fileInput.files[0]) handleFile(fileInput.files[0]); });
   resetBtn.addEventListener('click', resetUI);
 
+  zoteroCheckBtn.addEventListener(
+  'click',
+  runOptionalZoteroCheck
+);
+
   // ── Reset ─────────────────────────────────────────────────────────────────
   function resetUI() {
-    dropzone.style.display = '';
-    statusBar.classList.remove('show');
-    docInfo.classList.remove('show');
-    summCards.classList.remove('show');
-    results.innerHTML = '';
-    resetBtn.classList.remove('show');
-    fileInput.value = '';
+  dropzone.style.display = '';
+
+  statusBar.classList.remove('show');
+  docInfo.classList.remove('show');
+  summCards.classList.remove('show');
+
+  results.innerHTML = '';
+
+  resetBtn.classList.remove('show');
+  fileInput.value = '';
+
+  /*
+    Clear the stored normal analysis.
+  */
+  currentReport = null;
+  currentRefEntries = [];
+
+  /*
+    Reset the optional Zotero interface.
+  */
+  zoteroLookupRunning = false;
+
+  zoteroActions.style.display = 'none';
+
+  zoteroStatus.style.display = 'none';
+  zoteroStatus.textContent = '';
+
+  zoteroResults.innerHTML = '';
+
+  zoteroCheckBtn.disabled = false;
+  zoteroCheckBtn.textContent =
+    'Check unmatched references in Zotero';
+}
+function showZoteroButton(report) {
+  if (!report) {
+    zoteroActions.style.display = 'none';
+    return;
   }
+
+  const orphanCount =
+  report.orphanCites.length;
+
+  const uncitedCount =
+    report.uncitedRefs.length;
+if (
+  orphanCount === 0 &&
+  uncitedCount === 0
+) {
+  zoteroActions.style.display = 'none';
+  return;
+}
+  zoteroActions.style.display = 'block';
+
+  zoteroCheckBtn.disabled = false;
+
+  zoteroCheckBtn.textContent =
+    `Check Zotero (` +
+    `${orphanCount} orphan citation` +
+    `${orphanCount === 1 ? '' : 's'}, ` +
+    `${uncitedCount} uncited reference` +
+    `${uncitedCount === 1 ? '' : 's'})`;
+
+  zoteroStatus.style.display = 'none';
+  zoteroStatus.textContent = '';
+  zoteroResults.innerHTML = '';
+}
+
+async function runOptionalZoteroCheck() {
+  if (
+    zoteroLookupRunning ||
+    !currentReport
+  ) {
+    return;
+  }
+
+  zoteroLookupRunning = true;
+
+  zoteroCheckBtn.disabled = true;
+  zoteroCheckBtn.textContent =
+    'Checking Zotero…';
+
+  showZoteroStatus(
+    'Preparing targeted Zotero searches…'
+  );
+
+  zoteroResults.innerHTML = '';
+
+  try {
+    const orphanCites =
+      currentReport.orphanCites || [];
+
+    const uncitedRefs =
+      currentReport.uncitedRefs || [];
+
+    if (
+      orphanCites.length === 0 &&
+      uncitedRefs.length === 0
+    ) {
+      zoteroResults.innerHTML =
+        buildZoteroMatchSection({
+          available: true,
+          error: null,
+          itemCount: 0,
+          orphanMatches: [],
+          uncitedMatches: [],
+          skippedOrphanCount: 0,
+          skippedUncitedCount: 0
+        });
+
+      showZoteroStatus(
+        'There are no unmatched items to check.'
+      );
+
+      return;
+    }
+
+    const zoteroResult = await withTimeout(
+      analyseAgainstZotero(
+        orphanCites,
+        uncitedRefs
+      ),
+      60000,
+      'The Zotero check exceeded 60 seconds and was stopped.'
+    );
+
+    zoteroResults.innerHTML =
+      buildZoteroMatchSection(zoteroResult);
+
+    showZoteroStatus(
+      'Zotero check completed.'
+    );
+  } catch (error) {
+    console.warn(
+      'Zotero lookup could not be completed:',
+      error
+    );
+
+    const message =
+      error instanceof Error
+        ? error.message
+        : String(error);
+
+    zoteroResults.innerHTML =
+      buildZoteroMatchSection({
+        available: false,
+        error: message,
+        itemCount: 0,
+        orphanMatches: [],
+        uncitedMatches: []
+      });
+    showZoteroStatus(
+      'Zotero check could not be completed.'
+    );
+  } finally {
+    zoteroLookupRunning = false;
+
+    zoteroCheckBtn.disabled = false;
+    zoteroCheckBtn.textContent =
+      'Check Zotero again';
+  }
+}
 
   // ── Status helpers ────────────────────────────────────────────────────────
   function showStatus(msg) {
@@ -286,7 +486,10 @@ const ZOTERO_CONFIG = {
     statusBar.classList.add('show');
   }
   function hideStatus() { statusBar.classList.remove('show'); }
-
+  function showZoteroStatus(message) {
+    zoteroStatus.style.display = 'inline';
+    zoteroStatus.textContent = message;
+  }
   // ── Main entry ────────────────────────────────────────────────────────────
   async function handleFile(file) {
     if (!file.name.endsWith('.docx')) {
@@ -335,81 +538,11 @@ const report = crossReference(
   inTextCites,
   bodyParagraphs
 );
-
 /*
-  Search the public Zotero group library for probable matches to:
-
-    - orphan in-text citations;
-    - uncited document references.
-
-  Zotero failures do not stop the normal document analysis.
+  Retain the parsed results for the optional Zotero lookup.
 */
-let zoteroResult = {
-  available: false,
-  error: null,
-  itemCount: 0,
-  orphanMatches: [],
-  uncitedMatches: []
-};
-
-showStatus(
-  `Preparing Zotero searches for ` +
-  `${report.orphanCites.length} orphan citations and ` +
-  `${report.uncitedRefs.length} uncited references…`
-);
-
-await yieldToBrowser();
-
-try {
-  /*
-    Do not contact Zotero when there is nothing to investigate.
-  */
-  if (
-    report.orphanCites.length === 0 &&
-    report.uncitedRefs.length === 0
-  ) {
-    zoteroResult = {
-      available: true,
-      error: null,
-      itemCount: 0,
-      orphanMatches: [],
-      uncitedMatches: [],
-      skippedOrphanCount: 0,
-      skippedUncitedCount: 0
-    };
-  } else {
-    /*
-      Apply an overall limit so Zotero can never prevent the document
-      analysis from completing indefinitely.
-    */
-    zoteroResult = await withTimeout(
-      analyseAgainstZotero(
-        report.orphanCites,
-        report.uncitedRefs
-      ),
-      60000,
-      'The complete Zotero analysis exceeded 60 seconds.'
-    );
-  }
-} catch (zoteroError) {
-  console.warn(
-    'Zotero lookup could not be completed:',
-    zoteroError
-  );
-
-  zoteroResult = {
-    available: false,
-    error:
-      zoteroError instanceof Error
-        ? zoteroError.message
-        : String(zoteroError),
-    itemCount: 0,
-    orphanMatches: [],
-    uncitedMatches: [],
-    skippedOrphanCount: 0,
-    skippedUncitedCount: 0
-  };
-}
+currentReport = report;
+currentRefEntries = refEntries;
 
 showStatus('Checking SKB format rules…');
       await yieldToBrowser();
@@ -423,7 +556,7 @@ showStatus('Checking SKB format rules…');
       }
 
       hideStatus();
-      renderResults(file.name, refEntries, inTextCites, report, formatIssues, paragraphs.length, refListStart, isSwedish, zoteroResult);
+      renderResults(file.name, refEntries, inTextCites, report, formatIssues, paragraphs.length, refListStart, isSwedish);
     } catch (err) {
       hideStatus();
       results.innerHTML = `<div style="color:var(--color-kvot-accent);padding:16px;background:var(--bg-secondary);border:1px solid;border-color:var(--color-kvot-accent);border-radius:8px;">
@@ -434,6 +567,28 @@ showStatus('Checking SKB format rules…');
 
   function yieldToBrowser() { return new Promise(r => setTimeout(r, 0)); }
 
+  function withTimeout(
+  promise,
+  timeoutMilliseconds,
+  message
+) {
+  let timeoutId;
+
+  const timeoutPromise = new Promise(
+    (_, reject) => {
+      timeoutId = setTimeout(() => {
+        reject(new Error(message));
+      }, timeoutMilliseconds);
+    }
+  );
+
+  return Promise.race([
+    promise,
+    timeoutPromise
+  ]).finally(() => {
+    clearTimeout(timeoutId);
+  });
+}
 function withTimeout(
   promise,
   timeoutMilliseconds,
@@ -3174,7 +3329,7 @@ function scoreDocumentReferenceAgainstZotero(
 
 
   // ── Render results ────────────────────────────────────────────────────────
-  function renderResults(filename, refEntries, inTextCites, report, formatIssues, totalParas, refListStart, isSwedish, zoteroResult) {
+  function renderResults(filename, refEntries, inTextCites, report, formatIssues, totalParas, refListStart, isSwedish) {
     const { orphanCites, uncitedRefs } = report;
 
     // Document info
@@ -3218,12 +3373,7 @@ function scoreDocumentReferenceAgainstZotero(
     // 3. Uncited references
     html += buildUncitedSection(uncitedRefs);
 
-    // 4. Probable Zotero matches
-html += buildZoteroMatchSection(
-  zoteroResult
-);
-
-// 5. Format issues
+// 4. Format issues
 html += buildFormatSection(
   formatIssues,
   refEntries
