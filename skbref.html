@@ -1469,22 +1469,29 @@ function normaliseDashes(text) {
   With startOnly = true, the identifier must occur at the beginning of
   the reference, although an optional list number may precede it.
 */
-function extractSkbReportKey(text, startOnly = false) {
-  const normalized = normaliseDashes(text);
+function extractSkbReportKey(
+  text,
+  startOnly = false
+) {
+  const normalized = normaliseDashes(text)
+    .replace(/\s+/g, ' ')
+    .trim();
 
   const prefix = startOnly
     ? String.raw`^\s*(?:(?:\[\d+\]|\d+[.)])\s*)?`
-    : String.raw`\b`;
+    : String.raw`(?:^|[^A-Za-z0-9])`;
 
-  const re = new RegExp(
+  const expression = new RegExp(
     prefix +
-    String.raw`(?:SKB\s+)?` +
+    String.raw`(?:SKB[\s-]*)?` +
     String.raw`((?:TR|R|P|IPR|RD|SR|TM|U|F)-\d{2,}-\d+)` +
-    String.raw`\b`,
+    String.raw`(?=$|[^A-Za-z0-9])`,
     'i'
   );
 
-  const match = normalized.match(re);
+  const match = normalized.match(
+    expression
+  );
 
   if (!match) {
     return null;
@@ -2540,47 +2547,21 @@ function buildZoteroQueriesForCitation(citation) {
 function buildZoteroQueriesForReference(entry) {
   const queries = [];
 
-  /*
-    Report number is the strongest available search term.
-  */
   const reportKey =
     getDocumentReferenceReportKey(entry);
 
   if (reportKey) {
     queries.push({
-      query: reportKey,
-      qmode: 'everything'
-    });
-
-    queries.push({
-      query: reportKey.replace(/^SKB\s+/i, ''),
+      query: reportKey.replace(
+        /^SKB\s+/i,
+        ''
+      ),
       qmode: 'everything'
     });
   }
 
-  /*
-    Search using the generated document key.
-  */
-  if (entry.key) {
-    const simplifiedKey = String(entry.key)
-      .replace(/\bet\s+al\.?/gi, '')
-      .replace(/\bm\.fl\.?/gi, '')
-      .replace(/\b(?:and|och|&)\b/gi, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-    queries.push({
-      query: simplifiedKey,
-      qmode: 'titleCreatorYear'
-    });
-  }
-
-  /*
-    Search with a distinctive initial title fragment.
-
-    Limiting this avoids sending a very long query.
-  */
-  const title = getDocumentReferenceTitle(entry);
+  const title =
+    getDocumentReferenceTitle(entry);
 
   if (title) {
     const titleQuery = title
@@ -2594,7 +2575,26 @@ function buildZoteroQueriesForReference(entry) {
     });
   }
 
-  return deduplicateZoteroQueries(queries);
+  if (entry.key) {
+    const simplifiedKey = String(entry.key)
+      .replace(/\bet\s+al\.?/gi, '')
+      .replace(/\bm\.fl\.?/gi, '')
+      .replace(
+        /(?:\band\b|\boch\b|&)/gi,
+        ' '
+      )
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    queries.push({
+      query: simplifiedKey,
+      qmode: 'titleCreatorYear'
+    });
+  }
+
+  return deduplicateZoteroQueries(
+    queries
+  );
 }
 
 function deduplicateZoteroQueries(queries) {
@@ -2939,55 +2939,30 @@ function getZoteroAuthors(item) {
   Return a report number from commonly used Zotero report fields.
 */
 function getZoteroReportNumber(item) {
-  const data = item && item.data
-    ? item.data
-    : {};
+  const data =
+    item && item.data
+      ? item.data
+      : {};
 
-  const directValue = String(
-    data.reportNumber ||
-    data.number ||
-    ''
+  return String(
+    data.reportNumber || ''
   ).trim();
-
-  if (directValue) {
-    return directValue;
-  }
-
-  /*
-    As a fallback, look in Extra. Institutional libraries sometimes
-    carry report metadata there.
-  */
-  const extra = String(data.extra || '');
-
-  const extraMatch = extra.match(
-    /(?:report\s*(?:number|no\.?)|number)\s*:\s*([^\r\n]+)/i
-  );
-
-  return extraMatch
-    ? extraMatch[1].trim()
-    : '';
 }
 
 /*
   Extract an SKB report identifier from all useful Zotero metadata.
 */
 function getZoteroSkbReportKey(item) {
-  const data = item && item.data
-    ? item.data
-    : {};
+  const reportNumber =
+    getZoteroReportNumber(item);
 
-  const searchableText = [
-    getZoteroReportNumber(item),
-    data.title,
-    data.shortTitle,
-    data.seriesTitle,
-    data.series,
-    data.extra
-  ]
-    .filter(Boolean)
-    .join(' ');
+  if (!reportNumber) {
+    return null;
+  }
 
-  return extractSkbReportKey(searchableText);
+  return extractSkbReportKey(
+    reportNumber
+  );
 }
 
 /*
