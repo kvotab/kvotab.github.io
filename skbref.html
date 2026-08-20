@@ -50,6 +50,55 @@
     #zotero-status.show { display: inline; }
     #zotero-results { margin-bottom: 20px; }
 
+    /* Animated progress bar used by document and Zotero processing. */
+    #progress-track {
+      display: none;
+      position: relative;
+      height: 7px;
+      margin: -10px 0 20px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: var(--border-color);
+    }
+    #progress-track.show { display: block; }
+    #progress-fill {
+      width: 0;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--color-kvot-bright);
+      transition: width .28s ease;
+    }
+    #progress-track.indeterminate #progress-fill {
+      width: 35%;
+      animation: progress-sweep 1.15s ease-in-out infinite;
+    }
+    @keyframes progress-sweep {
+      0% { transform: translateX(-110%); }
+      100% { transform: translateX(320%); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      #progress-fill { transition: none; }
+      #progress-track.indeterminate #progress-fill { animation-duration: 2.5s; }
+    }
+
+    #result-actions {
+      display: none;
+      justify-content: flex-end;
+      margin: -4px 0 20px;
+    }
+    #result-actions.show { display: flex; }
+    #download-results-btn {
+      padding: 7px 16px;
+      border: 1px solid var(--border-color);
+      border-radius: 20px;
+      background: var(--bg-secondary);
+      color: var(--text-primary);
+      font-size: .84rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    #download-results-btn:hover { border-color: var(--color-kvot-bright); }
+
     #reset-btn { display: none; float: right; margin-top: -4px; padding: 5px 14px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-secondary); color: var(--text-secondary); font-size: .82rem; cursor: pointer; }
     #reset-btn.show { display: inline-block; }
     #reset-btn:hover { border-color: var(--color-kvot-bright); color: var(--text-primary); }
@@ -101,12 +150,18 @@
         <button class="primary-btn" id="choose-file-btn" type="button">Choose file</button>
       </div>
       <div id="status-bar"><div class="spinner"></div><span id="status-msg">Analysing…</span></div>
+      <div id="progress-track" role="progressbar" aria-label="Processing progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+        <div id="progress-fill"></div>
+      </div>
       <div id="doc-info"></div>
       <div id="summary-cards">
         <div class="sum-card" id="card-total"><div class="sum-label">References in list</div><div class="sum-value" id="cnt-total">—</div></div>
         <div class="sum-card" id="card-cited"><div class="sum-label">Cited in text</div><div class="sum-value" id="cnt-cited">—</div></div>
         <div class="sum-card" id="card-orphan"><div class="sum-label">Orphan in-text</div><div class="sum-value" id="cnt-orphan">—</div></div>
         <div class="sum-card" id="card-issues"><div class="sum-label">Format issues</div><div class="sum-value" id="cnt-issues">—</div></div>
+      </div>
+      <div id="result-actions">
+        <button id="download-results-btn" type="button">Download analysis report</button>
       </div>
       <div id="zotero-actions">
         <button id="zotero-check-btn" class="primary-btn" type="button">Check unmatched references in Zotero</button>
@@ -143,6 +198,10 @@
     const zoteroCheckBtn = $('zotero-check-btn');
     const zoteroStatus = $('zotero-status');
     const zoteroResults = $('zotero-results');
+    const progressTrack = $('progress-track');
+    const progressFill = $('progress-fill');
+    const resultActions = $('result-actions');
+    const downloadResultsBtn = $('download-results-btn');
 
     const ZOTERO_CONFIG = Object.freeze({
       groupId: '6640399', apiVersion: '3', minimumScore: 55,
@@ -152,6 +211,7 @@
     });
 
     let currentReport = null;
+    let currentFilename = '';
     let zoteroLookupRunning = false;
     const zoteroSearchCache = new Map();
     const examinedZoteroItemKeys = new Set();
@@ -164,10 +224,23 @@
     fileInput.addEventListener('change', () => { if (fileInput.files[0]) handleFile(fileInput.files[0]); });
     resetBtn.addEventListener('click', resetUI);
     zoteroCheckBtn.addEventListener('click', runOptionalZoteroCheck);
+    downloadResultsBtn.addEventListener('click', downloadAnalysisReport);
 
     function showStatus(message) { statusMsg.textContent = message; statusBar.classList.add('show'); }
     function hideStatus() { statusBar.classList.remove('show'); }
     function showZoteroStatus(message) { zoteroStatus.textContent = message; zoteroStatus.classList.add('show'); }
+    function setProgress(value, indeterminate = false) {
+      progressTrack.classList.add('show');
+      progressTrack.classList.toggle('indeterminate', indeterminate);
+      const safeValue = Math.max(0, Math.min(100, Number(value) || 0));
+      progressFill.style.width = indeterminate ? '' : `${safeValue}%`;
+      progressTrack.setAttribute('aria-valuenow', String(Math.round(safeValue)));
+    }
+    function hideProgress() {
+      progressTrack.classList.remove('show', 'indeterminate');
+      progressFill.style.width = '0%';
+      progressTrack.setAttribute('aria-valuenow', '0');
+    }
     function yieldToBrowser() { return new Promise(resolve => setTimeout(resolve, 0)); }
     function withTimeout(promise, milliseconds, message) {
       let timer;
@@ -182,6 +255,8 @@
       summaryCards.classList.remove('show');
       results.innerHTML = '';
       zoteroResults.innerHTML = '';
+      hideProgress();
+      resultActions.classList.remove('show');
       resetBtn.classList.remove('show');
       zoteroActions.classList.remove('show');
       zoteroStatus.classList.remove('show');
@@ -190,6 +265,7 @@
       zoteroCheckBtn.textContent = 'Check unmatched references in Zotero';
       fileInput.value = '';
       currentReport = null;
+      currentFilename = '';
       zoteroLookupRunning = false;
     }
 
@@ -211,33 +287,45 @@
     async function handleFile(file) {
       if (!file.name.toLowerCase().endsWith('.docx')) { alert('Please upload a .docx file.'); return; }
       dropzone.style.display = 'none';
+      currentFilename = file.name;
+      setProgress(5);
       showStatus('Reading file…');
       try {
         const zip = await JSZip.loadAsync(await file.arrayBuffer());
+        setProgress(15);
         showStatus('Unzipping .docx…');
         const docXml = await zip.file('word/document.xml')?.async('string');
         if (!docXml) throw new Error('word/document.xml not found — is this a valid .docx?');
+        setProgress(30);
         showStatus('Parsing document…'); await yieldToBrowser();
         const { paragraphs, isSwedish } = parseDocXml(docXml);
+        setProgress(45);
         showStatus('Finding reference list…'); await yieldToBrowser();
         const { refListParagraphs, bodyParagraphs, refListStart } = splitAtRefList(paragraphs);
+        setProgress(58);
         showStatus('Extracting references…'); await yieldToBrowser();
         const refEntries = extractRefEntries(refListParagraphs);
+        setProgress(70);
         showStatus('Finding in-text citations…'); await yieldToBrowser();
         const inTextCites = findInTextCites(bodyParagraphs, refEntries);
+        setProgress(82);
         showStatus('Cross-referencing…'); await yieldToBrowser();
         const report = crossReference(refEntries, inTextCites);
         currentReport = report;
+        setProgress(92);
         showStatus('Checking SKB format rules…'); await yieldToBrowser();
         const formatIssues = checkSkbFormat(refEntries);
         for (const duplicates of report.duplicateKeys) {
           for (const entry of duplicates) formatIssues.push({ key: entry.key, issue: `Duplicate key in reference list — ${duplicates.length} entries share the same key`, severity: 'error' });
         }
+        setProgress(100);
         hideStatus();
+        setTimeout(hideProgress, 450);
         renderResults(file.name, refEntries, inTextCites, report, formatIssues, paragraphs.length, refListStart, isSwedish);
         showZoteroButton(report);
       } catch (error) {
         hideStatus();
+        hideProgress();
         results.innerHTML = `<div style="color:var(--color-kvot-accent);padding:16px;background:var(--bg-secondary);border:1px solid var(--color-kvot-accent);border-radius:8px"><strong>Error:</strong> ${escHtml(error.message)}</div>`;
         resetBtn.classList.add('show');
       }
@@ -413,12 +501,12 @@
 
     async function runOptionalZoteroCheck() {
       if (zoteroLookupRunning || !currentReport) return;
-      zoteroLookupRunning = true; zoteroCheckBtn.disabled = true; zoteroCheckBtn.textContent = 'Checking Zotero…'; zoteroResults.innerHTML=''; examinedZoteroItemKeys.clear(); showZoteroStatus('Preparing targeted Zotero searches…');
+      zoteroLookupRunning = true; zoteroCheckBtn.disabled = true; zoteroCheckBtn.textContent = 'Checking Zotero…'; zoteroResults.innerHTML=''; examinedZoteroItemKeys.clear(); setProgress(0, true); showZoteroStatus('Preparing targeted Zotero searches…');
       try {
         const result = await withTimeout(analyseAgainstZotero(currentReport.orphanCites||[], currentReport.uncitedRefs||[]), 60000, 'The Zotero check exceeded 60 seconds and was stopped.');
         zoteroResults.innerHTML = buildZoteroMatchSection(result); showZoteroStatus('Zotero check completed.');
       } catch(error) { zoteroResults.innerHTML=buildZoteroMatchSection({available:false,error:error.message,itemCount:0,orphanMatches:[],uncitedMatches:[]}); showZoteroStatus('Zotero check could not be completed.'); }
-      finally { zoteroLookupRunning=false; zoteroCheckBtn.disabled=false; zoteroCheckBtn.textContent='Check Zotero again'; }
+      finally { hideProgress(); zoteroLookupRunning=false; zoteroCheckBtn.disabled=false; zoteroCheckBtn.textContent='Check Zotero again'; }
     }
 
     async function searchZoteroItems(query,{qmode='titleCreatorYear',limit=15,timeoutMilliseconds=10000}={}) {
@@ -450,7 +538,43 @@
     function scoreOrphanCitationAgainstZotero(citation,candidate){let score=0;const reasons=[];const key=normaliseKey(citation.key);if(candidate.normalizedAliases.includes(key)){score+=90;reasons.push('exact citation alias');}if(citation.type==='skb-report'&&candidate.reportKey&&normaliseKey(candidate.reportKey)===key){score=Math.max(score,98);reasons.push('exact SKB report number');}const year=citation.year||String(citation.key).match(/\b(?:1[89]\d{2}|20\d{2})[a-z]?\b/i)?.[0];if(year&&candidate.year&&year.toLowerCase()===candidate.year.toLowerCase()){score+=10;reasons.push('same year');}return{score:Math.min(score,100),reasons};}
     function scoreDocumentReferenceAgainstZotero(entry,candidate){let score=0;const reasons=[];const aliases=new Set((entry.aliases||[entry.key]).map(normaliseKey));if(candidate.normalizedAliases.some(a=>aliases.has(a))){score+=65;reasons.push('exact reference alias');}const report=getDocumentReferenceReportKey(entry);if(report&&candidate.reportKey&&normaliseKey(report)===normaliseKey(candidate.reportKey)){score+=70;reasons.push('exact SKB report number');}const year=getDocumentReferenceYear(entry);if(year&&candidate.year&&year.toLowerCase()===candidate.year.toLowerCase()){score+=10;reasons.push('same year');}const similarity=titleSimilarity(getDocumentReferenceTitle(entry),candidate.title);if(similarity>=.85){score+=35;reasons.push('very similar title');}else if(similarity>=.65){score+=25;reasons.push('similar title');}else if(similarity>=.45){score+=15;reasons.push('partly similar title');}return{score:Math.min(score,100),reasons};}
 
-    function renderResults(filename,entries,citations,report,issues,total,start,isSwedish){docInfo.innerHTML=`<strong>${escHtml(filename)}</strong> ${isSwedish?'🇸🇪 Svenska — ':''}${total} paragraphs · ${entries.length} reference list entries · ${citations.length} in-text citation occurrences · ${start>=0?`Reference list found at paragraph ${start+1}.`:'No reference list section detected.'}`;docInfo.classList.add('show');const cited=entries.filter(e=>e.cites.length).length;setSummary('total',entries.length,entries.length?'ok':'warn');setSummary('cited',cited,cited===entries.length&&entries.length?'ok':cited?'':'warn');setSummary('orphan',report.orphanCites.length,report.orphanCites.length?'warn':'ok');setSummary('issues',issues.length,issues.length?'warn':'ok');summaryCards.classList.add('show');results.innerHTML=buildRefListSection(entries)+buildOrphanSection(report.orphanCites)+buildUncitedSection(report.uncitedRefs)+buildFormatSection(issues,entries);resetBtn.classList.add('show');}
+    function downloadAnalysisReport() {
+      if (!results.innerHTML.trim()) return;
+      const reportTitle = currentFilename
+        ? `SKB Reference Checker — ${currentFilename}`
+        : 'SKB Reference Checker report';
+      const generated = new Date().toLocaleString();
+      const reportHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${escHtml(reportTitle)}</title>
+<style>
+body{max-width:1000px;margin:0 auto;padding:32px;font:15px/1.5 system-ui,sans-serif;color:#222}h1{font-size:1.5rem}small{color:#666}.result-section{margin:16px 0;border:1px solid #ccc;border-radius:8px}.result-section summary{padding:10px 14px;font-weight:700}.section-body{padding:14px}.section-badge{float:right}.ref-table{width:100%;border-collapse:collapse}.ref-table th,.ref-table td{padding:7px;border-bottom:1px solid #ddd;text-align:left;vertical-align:top}.ref-key,code{font-family:monospace}.tag{display:inline-block;margin:3px;padding:3px 8px;border:1px solid #d6a54a;border-radius:12px}a{color:#075fa8}
+</style>
+</head>
+<body>
+<h1>${escHtml(reportTitle)}</h1>
+<p><small>Generated ${escHtml(generated)}</small></p>
+${docInfo.innerHTML}
+${zoteroResults.innerHTML}
+${results.innerHTML}
+</body>
+</html>`;
+      const blob = new Blob([reportHtml], { type: 'text/html;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      const baseName = (currentFilename || 'skb-reference-report').replace(/\.docx$/i, '').replace(/[^a-z0-9_-]+/gi, '-');
+      link.href = url;
+      link.download = `${baseName}-analysis.html`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    function renderResults(filename,entries,citations,report,issues,total,start,isSwedish){docInfo.innerHTML=`<strong>${escHtml(filename)}</strong> ${isSwedish?'🇸🇪 Svenska — ':''}${total} paragraphs · ${entries.length} reference list entries · ${citations.length} in-text citation occurrences · ${start>=0?`Reference list found at paragraph ${start+1}.`:'No reference list section detected.'}`;docInfo.classList.add('show');const cited=entries.filter(e=>e.cites.length).length;setSummary('total',entries.length,entries.length?'ok':'warn');setSummary('cited',cited,cited===entries.length&&entries.length?'ok':cited?'':'warn');setSummary('orphan',report.orphanCites.length,report.orphanCites.length?'warn':'ok');setSummary('issues',issues.length,issues.length?'warn':'ok');summaryCards.classList.add('show');resultActions.classList.add('show');results.innerHTML=buildRefListSection(entries)+buildOrphanSection(report.orphanCites)+buildUncitedSection(report.uncitedRefs)+buildFormatSection(issues,entries);resetBtn.classList.add('show');}
     function buildRefListSection(entries){const rows=entries.length?entries.map(e=>`<tr class="${e.cites.length?'':'warn-row'}"><td><span class="ref-key">${escHtml(e.key)}</span></td><td class="ref-text">${truncate(escHtml(e.body),150)}</td><td class="cite-count">${e.cites.length}</td><td class="cite-pages">${[...new Set(e.cites.map(c=>c.section).filter(Boolean))].slice(0,5).map(escHtml).join('<br>')}</td></tr>`).join(''):'<tr><td colspan="4" class="empty-notice">No reference list detected.</td></tr>';return section('Reference list entries',entries.length,`<table class="ref-table"><thead><tr><th>Key</th><th>Reference text</th><th>Cited (#)</th><th>In section(s)</th></tr></thead><tbody>${rows}</tbody></table>`,true);}
     function buildOrphanSection(items){const body=items.length?`<table class="ref-table"><thead><tr><th>Citation</th><th>Context</th><th>Section</th><th>Type</th></tr></thead><tbody>${items.map(c=>`<tr class="error-row"><td><span class="ref-key">${escHtml(c.key)}</span></td><td>${truncate(escHtml(c.paraText),100)}</td><td>${escHtml(c.section||'—')}</td><td>${escHtml(c.type)}</td></tr>`).join('')}</tbody></table>`:'<p class="empty-notice">All in-text citations match a reference list entry.</p>';return section('In-text citations with no matching reference list entry',items.length,body,items.length>0);}
     function buildUncitedSection(items){const body=items.length?`<div class="tag-list">${items.map(e=>`<div class="tag warn-tag">⚠ <code>${escHtml(e.key)}</code></div>`).join('')}</div>`:'<p class="empty-notice">Every reference in the list is cited at least once.</p>';return section('Reference list entries never cited in text',items.length,body);}
