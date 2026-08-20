@@ -88,31 +88,6 @@
   margin-bottom: 20px;
 }
 
-#zotero-check-btn {
-  display: inline-block;
-  padding: 8px 20px;
-  border: none;
-  border-radius: 20px;
-  background: var(--color-kvot-bright);
-  color: #fff;
-  font-size: .88rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: opacity .15s;
-}
-
-#zotero-check-btn:hover {
-  opacity: .88;
-}
-
-#zotero-check-btn:disabled {
-  cursor: wait;
-  opacity: .6;
-}
-
-#zotero-status {
-  line-height: 1.5;
-}
     /* Progress / status */
     #status-bar { display:none;align-items:center;gap:10px;padding:12px 16px;
       background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:10px;
@@ -524,7 +499,9 @@ async function runOptionalZoteroCheck() {
     );
 
     zoteroResults.innerHTML =
-      buildZoteroMatchSection(zoteroResult);
+      buildZoteroMatchSection(
+        zoteroResult
+      );
 
     showZoteroStatus(
       'Zotero check completed.'
@@ -548,37 +525,38 @@ async function runOptionalZoteroCheck() {
         orphanMatches: [],
         uncitedMatches: []
       });
+
     showZoteroStatus(
       'Zotero check could not be completed.'
     );
   } finally {
-  zoteroLookupRunning = false;
+    zoteroLookupRunning = false;
 
-  const orphanCount =
-    currentReport &&
-    currentReport.orphanCites
-      ? currentReport.orphanCites.length
-      : 0;
+    const orphanCount =
+      currentReport &&
+      Array.isArray(currentReport.orphanCites)
+        ? currentReport.orphanCites.length
+        : 0;
 
-  const uncitedCount =
-    currentReport &&
-    currentReport.uncitedRefs
-      ? currentReport.uncitedRefs.length
-      : 0;
+    const uncitedCount =
+      currentReport &&
+      Array.isArray(currentReport.uncitedRefs)
+        ? currentReport.uncitedRefs.length
+        : 0;
 
-  if (
-    orphanCount === 0 &&
-    uncitedCount === 0
-  ) {
-    zoteroCheckBtn.disabled = true;
-    zoteroCheckBtn.textContent =
-      'Check Zotero — no unmatched items';
-  } else {
-    zoteroCheckBtn.disabled = false;
-    zoteroCheckBtn.textContent =
-      'Check Zotero again';
+    if (
+      orphanCount === 0 &&
+      uncitedCount === 0
+    ) {
+      zoteroCheckBtn.disabled = true;
+      zoteroCheckBtn.textContent =
+        'Check Zotero — no unmatched items';
+    } else {
+      zoteroCheckBtn.disabled = false;
+      zoteroCheckBtn.textContent =
+        'Check Zotero again';
+    }
   }
-}
 }
 
   // ── Status helpers ────────────────────────────────────────────────────────
@@ -2458,18 +2436,18 @@ function buildZoteroQueriesForCitation(citation) {
     Try the report code both with and without "SKB".
   */
   if (citation.type === 'skb-report') {
-    queries.push({
-      query: key,
-      qmode: 'everything'
-    });
+  queries.push({
+    query: key.replace(
+      /^SKB\s+/i,
+      ''
+    ),
+    qmode: 'everything'
+  });
 
-    queries.push({
-      query: key.replace(/^SKB\s+/i, ''),
-      qmode: 'everything'
-    });
-
-    return deduplicateZoteroQueries(queries);
-  }
+  return deduplicateZoteroQueries(
+    queries
+  );
+}
 
   /*
     Author-year citation:
@@ -2547,6 +2525,32 @@ function buildZoteroQueriesForCitation(citation) {
 function buildZoteroQueriesForReference(entry) {
   const queries = [];
 
+  /*
+    Search by title first because Zotero quick search reliably searches
+    title metadata.
+  */
+  const title =
+    getDocumentReferenceTitle(entry);
+
+  if (title) {
+    const titleQuery = title
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 12)
+      .join(' ');
+
+    if (titleQuery) {
+      queries.push({
+        query: titleQuery,
+        qmode: 'titleCreatorYear'
+      });
+    }
+  }
+
+  /*
+    Also try the SKB Report Number. If Zotero returns the record, the
+    result is verified against data.reportNumber.
+  */
   const reportKey =
     getDocumentReferenceReportKey(entry);
 
@@ -2560,21 +2564,9 @@ function buildZoteroQueriesForReference(entry) {
     });
   }
 
-  const title =
-    getDocumentReferenceTitle(entry);
-
-  if (title) {
-    const titleQuery = title
-      .split(/\s+/)
-      .slice(0, 12)
-      .join(' ');
-
-    queries.push({
-      query: titleQuery,
-      qmode: 'titleCreatorYear'
-    });
-  }
-
+  /*
+    Author/year fallback.
+  */
   if (entry.key) {
     const simplifiedKey = String(entry.key)
       .replace(/\bet\s+al\.?/gi, '')
@@ -2586,10 +2578,12 @@ function buildZoteroQueriesForReference(entry) {
       .replace(/\s+/g, ' ')
       .trim();
 
-    queries.push({
-      query: simplifiedKey,
-      qmode: 'titleCreatorYear'
-    });
+    if (simplifiedKey) {
+      queries.push({
+        query: simplifiedKey,
+        qmode: 'titleCreatorYear'
+      });
+    }
   }
 
   return deduplicateZoteroQueries(
