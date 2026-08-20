@@ -244,9 +244,14 @@
 const ZOTERO_CONFIG = {
   groupId: '6640399',
   apiVersion: '3',
-  pageSize: 100,
   minimumScore: 55,
-  maximumCandidates: 3
+  maximumCandidates: 3,
+
+  searchResultLimit: 15,
+  searchTimeoutMilliseconds: 10000,
+
+  maximumOrphanLookups: 30,
+  maximumUncitedLookups: 30
 };
 
   // ── Drag-and-drop wiring ──────────────────────────────────────────────────
