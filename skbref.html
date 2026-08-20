@@ -44,13 +44,7 @@
     .sum-card.warn .sum-value { color: var(--color-kvot-accent); }
     .sum-card.ok .sum-value { color: #5cb85c; }
 
-    #zotero-actions { display: none; clear: both; align-items: center; gap: 12px; margin: 4px 0 20px; padding: 16px; border: 1px solid var(--border-color); border-radius: 10px; background: var(--bg-secondary); }
-    #zotero-actions.show { display: flex; }
-    #zotero-status { display: none; color: var(--text-muted); font-size: .84rem; line-height: 1.5; }
-    #zotero-status.show { display: inline; }
-    #zotero-results { margin-bottom: 20px; }
-
-    /* Animated progress bar used by document and Zotero processing. */
+    /* Animated progress bar used during document processing. */
     #progress-track {
       display: none;
       position: relative;
@@ -87,6 +81,16 @@
       margin: -4px 0 20px;
     }
     #result-actions.show { display: flex; }
+    #zotero-search-options {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin-right: auto;
+      color: var(--text-secondary);
+      font-size: .84rem;
+      cursor: pointer;
+    }
+    #zotero-search-options input { accent-color: var(--color-kvot-bright); }
     #download-results-btn {
       padding: 7px 16px;
       border: 1px solid var(--border-color);
@@ -133,7 +137,36 @@
     .tag.warn-tag { border-color: #f0ad4e; background: color-mix(in srgb, #f0ad4e 8%, var(--bg-secondary)); color: #c87d0a; }
     .empty-notice { padding: 6px 0; color: var(--text-muted); font-size: .88rem; font-style: italic; }
 
-    @media (max-width: 700px) { #summary-cards { grid-template-columns: 1fr 1fr; } #zotero-actions { align-items: stretch; flex-direction: column; } }
+    .zotero-cell { min-width: 165px; }
+    .zotero-row-btn {
+      padding: 6px 12px;
+      border: 1px solid var(--color-kvot-bright);
+      border-radius: 16px;
+      background: var(--bg-secondary);
+      color: var(--color-kvot-bright);
+      font-size: .78rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .zotero-row-btn:hover:not(:disabled) { background: var(--bg-surface); }
+    .zotero-row-btn.searching { border-color: var(--color-kvot-accent); color: var(--color-kvot-accent); }
+    .zotero-inline-results { margin-top: 8px; }
+    .zotero-inline-status { color: var(--text-muted); font-size: .78rem; }
+    .zotero-candidate {
+      margin-top: 8px;
+      padding: 9px 10px;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      background: var(--bg-surface);
+      color: var(--text-secondary);
+      font-size: .8rem;
+    }
+    .zotero-candidate-head { display: flex; align-items: flex-start; gap: 8px; }
+    .zotero-candidate-title { flex: 1; color: var(--text-primary); font-weight: 700; }
+    .zotero-probability { flex: 0 0 auto; padding: 2px 7px; border-radius: 10px; background: color-mix(in srgb, #5cb85c 18%, var(--bg-secondary)); color: #357a35; font-weight: 700; }
+    .zotero-candidate a { color: var(--color-kvot-bright); }
+
+    @media (max-width: 700px) { #summary-cards { grid-template-columns: 1fr 1fr; } }
     @media (max-width: 480px) { #app { padding: 14px 12px 32px; } #summary-cards { gap: 8px; } }
   </style>
 </head>
@@ -161,13 +194,12 @@
         <div class="sum-card" id="card-issues"><div class="sum-label">Format issues</div><div class="sum-value" id="cnt-issues">—</div></div>
       </div>
       <div id="result-actions">
-        <button id="download-results-btn" type="button">Download analysis report</button>
+        <label id="zotero-search-options" title="When enabled, show plausible matches based on similar author names, years, titles, and report numbers, even when metadata is not identical.">
+          <input id="zotero-fuzzy-match" type="checkbox" checked>
+          Include fuzzy Zotero matches
+        </label>
+        <button id="download-results-btn" type="button" title="Download the current document analysis and any completed Zotero results as a standalone HTML file">Download analysis report</button>
       </div>
-      <div id="zotero-actions">
-        <button id="zotero-check-btn" class="primary-btn" type="button">Check unmatched references in Zotero</button>
-        <span id="zotero-status"></span>
-      </div>
-      <div id="zotero-results"></div>
       <div id="results"></div>
     </div>
     <div id="map"></div>
@@ -194,27 +226,24 @@
     const summaryCards = $('summary-cards');
     const results = $('results');
     const resetBtn = $('reset-btn');
-    const zoteroActions = $('zotero-actions');
-    const zoteroCheckBtn = $('zotero-check-btn');
-    const zoteroStatus = $('zotero-status');
-    const zoteroResults = $('zotero-results');
     const progressTrack = $('progress-track');
     const progressFill = $('progress-fill');
     const resultActions = $('result-actions');
     const downloadResultsBtn = $('download-results-btn');
+    const zoteroFuzzyMatch = $('zotero-fuzzy-match');
 
     const ZOTERO_CONFIG = Object.freeze({
-      groupId: '6640399', apiVersion: '3', minimumScore: 55,
-      maximumCandidates: 3, searchResultLimit: 15,
-      searchTimeoutMilliseconds: 10000,
+      groupId: '6640399', apiVersion: '3', minimumScore: 45,
+      maximumCandidates: 5, searchResultLimit: 15,
+      searchTimeoutMilliseconds: 30000,
       maximumOrphanLookups: 5, maximumUncitedLookups: 5
     });
 
     let currentReport = null;
+    let currentRefEntries = [];
     let currentFilename = '';
-    let zoteroLookupRunning = false;
+    const activeInlineZoteroSearches = new Map();
     const zoteroSearchCache = new Map();
-    const examinedZoteroItemKeys = new Set();
 
     dropzone.addEventListener('dragover', event => { event.preventDefault(); dropzone.classList.add('drag-over'); });
     dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag-over'));
@@ -223,12 +252,11 @@
     $('choose-file-btn').addEventListener('click', event => { event.stopPropagation(); fileInput.click(); });
     fileInput.addEventListener('change', () => { if (fileInput.files[0]) handleFile(fileInput.files[0]); });
     resetBtn.addEventListener('click', resetUI);
-    zoteroCheckBtn.addEventListener('click', runOptionalZoteroCheck);
     downloadResultsBtn.addEventListener('click', downloadAnalysisReport);
+    results.addEventListener('click', handleInlineZoteroClick);
 
     function showStatus(message) { statusMsg.textContent = message; statusBar.classList.add('show'); }
     function hideStatus() { statusBar.classList.remove('show'); }
-    function showZoteroStatus(message) { zoteroStatus.textContent = message; zoteroStatus.classList.add('show'); }
     function setProgress(value, indeterminate = false) {
       progressTrack.classList.add('show');
       progressTrack.classList.toggle('indeterminate', indeterminate);
@@ -249,43 +277,27 @@
     }
 
     function resetUI() {
+      for (const controller of activeInlineZoteroSearches.values()) controller.abort();
+      activeInlineZoteroSearches.clear();
       dropzone.style.display = '';
       statusBar.classList.remove('show');
       docInfo.classList.remove('show');
       summaryCards.classList.remove('show');
       results.innerHTML = '';
-      zoteroResults.innerHTML = '';
       hideProgress();
       resultActions.classList.remove('show');
       resetBtn.classList.remove('show');
-      zoteroActions.classList.remove('show');
-      zoteroStatus.classList.remove('show');
-      zoteroStatus.textContent = '';
-      zoteroCheckBtn.disabled = false;
-      zoteroCheckBtn.textContent = 'Check unmatched references in Zotero';
       fileInput.value = '';
       currentReport = null;
+      currentRefEntries = [];
       currentFilename = '';
-      zoteroLookupRunning = false;
-    }
-
-    function showZoteroButton(report) {
-      const orphanCount = Array.isArray(report?.orphanCites) ? report.orphanCites.length : 0;
-      const uncitedCount = Array.isArray(report?.uncitedRefs) ? report.uncitedRefs.length : 0;
-      zoteroActions.classList.add('show');
-      zoteroStatus.classList.remove('show');
-      zoteroResults.innerHTML = '';
-      if (!orphanCount && !uncitedCount) {
-        zoteroCheckBtn.disabled = true;
-        zoteroCheckBtn.textContent = 'Check Zotero — no unmatched items';
-        return;
-      }
-      zoteroCheckBtn.disabled = false;
-      zoteroCheckBtn.textContent = `Check Zotero (${orphanCount} orphan citation${orphanCount === 1 ? '' : 's'}, ${uncitedCount} uncited reference${uncitedCount === 1 ? '' : 's'})`;
     }
 
     async function handleFile(file) {
-      if (!file.name.toLowerCase().endsWith('.docx')) { alert('Please upload a .docx file.'); return; }
+      if (!file.name.toLowerCase().endsWith('.docx')) {
+        alert('Please upload a .docx file.');
+        return;
+      }
       dropzone.style.display = 'none';
       currentFilename = file.name;
       setProgress(5);
@@ -297,32 +309,44 @@
         const docXml = await zip.file('word/document.xml')?.async('string');
         if (!docXml) throw new Error('word/document.xml not found — is this a valid .docx?');
         setProgress(30);
-        showStatus('Parsing document…'); await yieldToBrowser();
+        showStatus('Parsing document…');
+        await yieldToBrowser();
         const { paragraphs, isSwedish } = parseDocXml(docXml);
         setProgress(45);
-        showStatus('Finding reference list…'); await yieldToBrowser();
+        showStatus('Finding reference list…');
+        await yieldToBrowser();
         const { refListParagraphs, bodyParagraphs, refListStart } = splitAtRefList(paragraphs);
         setProgress(58);
-        showStatus('Extracting references…'); await yieldToBrowser();
+        showStatus('Extracting references…');
+        await yieldToBrowser();
         const refEntries = extractRefEntries(refListParagraphs);
         setProgress(70);
-        showStatus('Finding in-text citations…'); await yieldToBrowser();
+        showStatus('Finding in-text citations…');
+        await yieldToBrowser();
         const inTextCites = findInTextCites(bodyParagraphs, refEntries);
         setProgress(82);
-        showStatus('Cross-referencing…'); await yieldToBrowser();
+        showStatus('Cross-referencing…');
+        await yieldToBrowser();
         const report = crossReference(refEntries, inTextCites);
         currentReport = report;
+        currentRefEntries = refEntries;
         setProgress(92);
-        showStatus('Checking SKB format rules…'); await yieldToBrowser();
+        showStatus('Checking SKB format rules…');
+        await yieldToBrowser();
         const formatIssues = checkSkbFormat(refEntries);
         for (const duplicates of report.duplicateKeys) {
-          for (const entry of duplicates) formatIssues.push({ key: entry.key, issue: `Duplicate key in reference list — ${duplicates.length} entries share the same key`, severity: 'error' });
+          for (const entry of duplicates) {
+            formatIssues.push({
+              key: entry.key,
+              issue: `Duplicate key in reference list — ${duplicates.length} entries share the same key`,
+              severity: 'error'
+            });
+          }
         }
         setProgress(100);
         hideStatus();
         setTimeout(hideProgress, 450);
         renderResults(file.name, refEntries, inTextCites, report, formatIssues, paragraphs.length, refListStart, isSwedish);
-        showZoteroButton(report);
       } catch (error) {
         hideStatus();
         hideProgress();
@@ -335,15 +359,25 @@
       const doc = new DOMParser().parseFromString(xml, 'application/xml');
       const NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
       let isSwedish = false;
-      for (const node of [...doc.getElementsByTagNameNS(NS, 'lang')].slice(0, 40)) if (/^sv/i.test(node.getAttribute('w:val') || '')) { isSwedish = true; break; }
+      for (const node of [...doc.getElementsByTagNameNS(NS, 'lang')].slice(0, 40)) {
+        if (/^sv/i.test(node.getAttribute('w:val') || '')) { isSwedish = true; break; }
+      }
       const paragraphs = [...doc.getElementsByTagNameNS(NS, 'p')].map((node, index) => {
         const pPr = node.getElementsByTagNameNS(NS, 'pPr')[0];
         const styleNode = pPr?.getElementsByTagNameNS(NS, 'pStyle')[0];
         const numPr = pPr?.getElementsByTagNameNS(NS, 'numPr')[0];
-        return { text: extractTextFromParagraph(node, NS).trim(), style: (styleNode?.getAttribute('w:val') || '').toLowerCase(), numId: numPr?.getElementsByTagNameNS(NS, 'numId')[0]?.getAttribute('w:val') || '', index };
+        return {
+          text: extractTextFromParagraph(node, NS).trim(),
+          style: (styleNode?.getAttribute('w:val') || '').toLowerCase(),
+          numId: numPr?.getElementsByTagNameNS(NS, 'numId')[0]?.getAttribute('w:val') || '',
+          index
+        };
       });
       let section = '';
-      for (const paragraph of paragraphs) { if (headingLevel(paragraph.style) && paragraph.text) section = paragraph.text; paragraph.section = section; }
+      for (const paragraph of paragraphs) {
+        if (headingLevel(paragraph.style) && paragraph.text) section = paragraph.text;
+        paragraph.section = section;
+      }
       return { paragraphs, isSwedish };
     }
 
@@ -371,30 +405,53 @@
 
     const REF_HEADING_RE = /^\s*(?:\d[\d.]*\s+)?(?:references?|referenser|referenslista|litteratur|bibliography)\s*$/i;
     const INTERNAL_REF_HEADING_RE = /^\s*(?:References with abbreviated names|Other references)\s*[.:]?\s*$/i;
-    function headingLevel(style) { const match = style.match(/^(?:heading|rubrik|överskrift|berschrift|titre|t[iî]tulo)\s*([1-6])$/) || style.match(/^([1-6])$/); return match ? Number(match[1]) : 0; }
+
+    function headingLevel(style) {
+      const match = style.match(/^(?:heading|rubrik|överskrift|berschrift|titre|t[iî]tulo)\s*([1-6])$/) || style.match(/^([1-6])$/);
+      return match ? Number(match[1]) : 0;
+    }
 
     function splitAtRefList(paragraphs) {
-      let start = paragraphs.findIndex((p, i) => (headingLevel(p.style) || p.style.includes('heading') || p.style === 'title') && REF_HEADING_RE.test(p.text) && paragraphs.slice(i + 1, i + 6).map(x => x.text).join(' ').length > 10);
+      let start = paragraphs.findIndex((paragraph, index) =>
+        (headingLevel(paragraph.style) || paragraph.style.includes('heading') || paragraph.style === 'title') &&
+        REF_HEADING_RE.test(paragraph.text) &&
+        paragraphs.slice(index + 1, index + 6).map(item => item.text).join(' ').length > 10
+      );
       if (start < 0) return { refListParagraphs: [], bodyParagraphs: paragraphs, refListStart: -1 };
       let end = paragraphs.length;
       const endRe = /^\s*(?:\d[\d.]*\s+)?(?:appendix|appendices|bilaga|bilagor|annex|glossary|ordlista|index)\b/i;
-      for (let i = start + 1; i < paragraphs.length; i++) {
-        if (!paragraphs[i].text || INTERNAL_REF_HEADING_RE.test(paragraphs[i].text)) continue;
-        if (headingLevel(paragraphs[i].style) || endRe.test(paragraphs[i].text)) { end = i; break; }
+      for (let index = start + 1; index < paragraphs.length; index++) {
+        const paragraph = paragraphs[index];
+        if (!paragraph.text || INTERNAL_REF_HEADING_RE.test(paragraph.text)) continue;
+        if (headingLevel(paragraph.style) || endRe.test(paragraph.text)) { end = index; break; }
       }
-      return { refListParagraphs: paragraphs.slice(start + 1, end), bodyParagraphs: [...paragraphs.slice(0, start), ...paragraphs.slice(end)], refListStart: start };
+      return {
+        refListParagraphs: paragraphs.slice(start + 1, end),
+        bodyParagraphs: [...paragraphs.slice(0, start), ...paragraphs.slice(end)],
+        refListStart: start
+      };
     }
 
-    function extractAbbreviatedReferenceName(text) { const match = String(text).match(/^\s*(.+?)\s*,\s*((?:1[89]\d{2}|20\d{2})[a-z]?)\s*[.]/); return match && match[1].trim().length <= 200 ? match[1].replace(/\s+/g, ' ').trim() : null; }
-    function looksLikeRefStart(text) { return Boolean(extractSkbReportKey(text, true) || extractAuthorYearKey(text)); }
+    function extractAbbreviatedReferenceName(text) {
+      const match = String(text).match(/^\s*(.+?)\s*,\s*((?:1[89]\d{2}|20\d{2})[a-z]?)\s*[.]/);
+      return match && match[1].trim().length <= 200 ? match[1].replace(/\s+/g, ' ').trim() : null;
+    }
 
     function extractRefEntries(paragraphs) {
-      const entries = []; let current = null; let autoNum = 0; let abbreviated = false;
+      const entries = [];
+      let current = null;
+      let autoNum = 0;
+      let abbreviated = false;
       const finish = () => { if (current) entries.push(current); current = null; };
       const create = (text, paragraph) => {
         const abbreviatedName = abbreviated ? extractAbbreviatedReferenceName(text) : null;
         const reportKey = extractSkbReportKey(text, true);
-        return { key: abbreviatedName || extractReferenceKey(text) || text.slice(0, 40), num: null, body: text, raw: text, paraIndex: paragraph.index, type: abbreviatedName ? 'abbreviated-name' : reportKey ? 'skb-report' : 'author-year', abbreviatedName };
+        return {
+          key: abbreviatedName || extractReferenceKey(text) || text.slice(0, 40),
+          num: null, body: text, raw: text, paraIndex: paragraph.index,
+          type: abbreviatedName ? 'abbreviated-name' : reportKey ? 'skb-report' : 'author-year',
+          abbreviatedName
+        };
       };
       for (const paragraph of paragraphs) {
         const text = paragraph.text.trim();
@@ -403,24 +460,33 @@
         if (!text) { finish(); continue; }
         const number = text.match(/^(?:\[(\d+)\]|(\d+)[.)\s]\s)/);
         if (number || (paragraph.numId && paragraph.numId !== '0')) {
-          finish(); autoNum = number ? Number(number[1] || number[2]) : autoNum + 1;
+          finish();
+          autoNum = number ? Number(number[1] || number[2]) : autoNum + 1;
           const body = number ? text.replace(/^\[?\d+\]?[.)\s]+/, '').trim() : text;
           const abbreviatedName = abbreviated ? extractAbbreviatedReferenceName(body) : null;
           current = { key: `[${autoNum}]`, num: autoNum, body, raw: text, paraIndex: paragraph.index, type: abbreviatedName ? 'abbreviated-name' : 'numbered', abbreviatedName };
         } else if ((abbreviated && extractAbbreviatedReferenceName(text)) || (current && looksLikeRefStart(text))) {
           finish(); current = create(text, paragraph);
-        } else if (current) { current.body += ` ${text}`; current.raw += ` ${text}`; }
-        else current = create(text, paragraph);
+        } else if (current) {
+          current.body += ` ${text}`;
+          current.raw += ` ${text}`;
+        } else current = create(text, paragraph);
       }
       finish();
       for (const entry of entries) entry.aliases = collectReferenceAliases(entry);
       return entries;
     }
 
+    function looksLikeRefStart(text) { return Boolean(extractSkbReportKey(text, true) || extractAuthorYearKey(text)); }
+
     function extractAuthorYearKey(text) {
       const list = text.match(/^(.+),\s*((?:1[89]\d{2}|20\d{2})[a-z]?)\s*[.,]/);
       if (list) {
-        const surnames = list[1].split(',').map(part => part.trim().split(/\s+/)).map(words => { let removed = false; while (words.length > 1 && isAuthorInitial(words.at(-1))) { words.pop(); removed = true; } return removed ? words.join(' ') : ''; }).filter(Boolean);
+        const surnames = list[1].split(',').map(part => part.trim().split(/\s+/)).map(words => {
+          let removed = false;
+          while (words.length > 1 && isAuthorInitial(words.at(-1))) { words.pop(); removed = true; }
+          return removed ? words.join(' ') : '';
+        }).filter(Boolean);
         if (surnames.length === 1) return `${surnames[0]} ${list[2]}`;
         if (surnames.length === 2) return `${surnames[0]} and ${surnames[1]} ${list[2]}`;
         if (surnames.length > 2) return `${surnames[0]} et al. ${list[2]}`;
@@ -428,101 +494,352 @@
       const simple = text.match(/^([A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ-]+(?:\s+(?:et\s+al\.?|m\.fl\.?))?(?:,\s*[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ.]+)?)(?:,\s*|\s+)((?:1[89]\d{2}|20\d{2})[a-z]?)/);
       return simple ? `${simple[1]} ${simple[2]}` : null;
     }
-    function isAuthorInitial(value) { const clean = String(value).replace(/\./g, ''); return clean.split('-').every(part => /^[A-ZÀ-ÖØ-Þ]{1,3}$/.test(part)); }
+
+    function isAuthorInitial(value) {
+      const clean = String(value).replace(/\./g, '');
+      return clean.split('-').every(part => /^[A-ZÀ-ÖØ-Þ]{1,3}$/.test(part));
+    }
+
     function normaliseDashes(text) { return String(text).replace(/[\u2010\u2011\u2012\u2013\u2014\u2212]/g, '-'); }
+
     function extractSkbReportKey(text, startOnly = false) {
       const normalized = normaliseDashes(text).replace(/\s+/g, ' ').trim();
       const prefix = startOnly ? '^\\s*(?:(?:\\[\\d+\\]|\\d+[.)])\\s*)?' : '(?:^|[^A-Za-z0-9])';
       const match = normalized.match(new RegExp(prefix + '(?:SKB[\\s-]*)?((?:TR|R|P|IPR|RD|SR|TM|U|F)-\\d{2,}-\\d+)(?=$|[^A-Za-z0-9])', 'i'));
       return match ? `SKB ${match[1].toUpperCase()}` : null;
     }
+
     function extractReferenceKey(text) { return extractSkbReportKey(text, true) || extractAuthorYearKey(text); }
-    function collectReferenceAliases(entry) { const aliases = new Set([entry.key, entry.abbreviatedName, extractAuthorYearKey(entry.body), extractSkbReportKey(entry.body, true), extractSkbReportKey(entry.body)]); return [...aliases].filter(Boolean); }
+    function collectReferenceAliases(entry) {
+      return [...new Set([entry.key, entry.abbreviatedName, extractAuthorYearKey(entry.body), extractSkbReportKey(entry.body, true), extractSkbReportKey(entry.body)])].filter(Boolean);
+    }
 
     function findInTextCites(paragraphs, entries) {
       const citations = [];
-      const abbreviations = entries.filter(entry => entry.abbreviatedName).map(entry => entry.abbreviatedName).sort((a,b) => b.length - a.length);
+      const abbreviations = entries.filter(entry => entry.abbreviatedName).map(entry => entry.abbreviatedName).sort((a, b) => b.length - a.length);
       for (const paragraph of paragraphs) {
         if (!paragraph.text) continue;
         findAuthorYearCitations(paragraph, citations);
         findSkbCitations(paragraph, citations);
         for (const name of abbreviations) {
           const regex = new RegExp(`(?:^|[^A-Za-zÀ-ÖØ-Þà-öø-ÿ0-9])(${escapeRegExp(name).replace(/\\s+/g, '\\\\s+')})(?=$|[^A-Za-zÀ-ÖØ-Þà-öø-ÿ0-9])`, 'gi');
-          let match; while ((match = regex.exec(paragraph.text))) citations.push({ key: name, raw: match[1], paraIndex: paragraph.index, section: paragraph.section, paraText: paragraph.text, type: 'abbreviated-name', author: name, year: null });
+          let match;
+          while ((match = regex.exec(paragraph.text))) citations.push({ key: name, raw: match[1], paraIndex: paragraph.index, section: paragraph.section, paraText: paragraph.text, type: 'abbreviated-name', author: name, year: null });
         }
       }
-      const seen = new Set(); return citations.filter(c => { const id = `${normaliseKey(c.key)}|${c.paraIndex}`; if (seen.has(id)) return false; seen.add(id); return true; });
+      const seen = new Set();
+      return citations.filter(citation => {
+        const id = `${normaliseKey(citation.key)}|${citation.paraIndex}`;
+        if (seen.has(id)) return false;
+        seen.add(id); return true;
+      });
     }
+
     function findAuthorYearCitations(paragraph, out) {
       const year = '(?:1[89]\\d{2}|20\\d{2})[a-z]?';
       const surname = '(?:(?:van|von|de|del|della|der|den|di|da|dos|du|la|le|af)\\s+)*[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ-]+';
       const author = `(?:[A-ZÅÄÖ]{2,}|${surname})(?:\\s+(?:et\\s+al\\.?|m\\.fl\\.?))?(?:\\s+(?:and|och|&)\\s+(?:[A-ZÅÄÖ]{2,}|${surname}))?`;
       for (const group of paragraph.text.matchAll(/\(([^()]*)\)/g)) {
         let previous = null;
-        for (const part of group[1].split(/\s*[,;]\s*/).map(x => x.trim()).filter(Boolean)) {
+        for (const part of group[1].split(/\s*[,;]\s*/).map(item => item.trim()).filter(Boolean)) {
           const match = part.match(new RegExp(`(?:^|[^A-Za-zÀ-ÖØ-Þà-öø-ÿ])(${author})\\s+(${year})(?=$|[^A-Za-zÀ-ÖØ-Þà-öø-ÿ0-9])`));
-          if (match) { const a = normaliseCitationAuthor(match[1]); previous = a; if (a.toUpperCase() !== 'SKB') out.push(makeCitation(`${a} ${match[2]}`, paragraph, 'author-year', a, match[2])); }
-          else if (previous && new RegExp(`^${year}$`).test(part) && previous.toUpperCase() !== 'SKB') out.push(makeCitation(`${previous} ${part}`, paragraph, 'author-year', previous, part));
+          if (match) {
+            const normalizedAuthor = normaliseCitationAuthor(match[1]);
+            previous = normalizedAuthor;
+            if (normalizedAuthor.toUpperCase() !== 'SKB') out.push(makeCitation(`${normalizedAuthor} ${match[2]}`, paragraph, 'author-year', normalizedAuthor, match[2]));
+          } else if (previous && new RegExp(`^${year}$`).test(part) && previous.toUpperCase() !== 'SKB') {
+            out.push(makeCitation(`${previous} ${part}`, paragraph, 'author-year', previous, part));
+          }
         }
       }
       const inline = new RegExp(`(?:^|[^A-Za-zÀ-ÖØ-Þà-öø-ÿ])(${author})\\s+\\((${year})(?:\\s*,\\s*[^()]*)?\\)`, 'g');
-      let match; while ((match = inline.exec(paragraph.text))) { const a = normaliseCitationAuthor(match[1]); if (a.toUpperCase() !== 'SKB') out.push(makeCitation(`${a} ${match[2]}`, paragraph, 'author-year', a, match[2])); }
+      let match;
+      while ((match = inline.exec(paragraph.text))) {
+        const normalizedAuthor = normaliseCitationAuthor(match[1]);
+        if (normalizedAuthor.toUpperCase() !== 'SKB') out.push(makeCitation(`${normalizedAuthor} ${match[2]}`, paragraph, 'author-year', normalizedAuthor, match[2]));
+      }
     }
+
     function findSkbCitations(paragraph, out) {
       const regex = /\bSKB\s+(?:\(((?:1[89]\d{2}|20\d{2})[a-z]?(?:[,\s]+(?:1[89]\d{2}|20\d{2})[a-z]?)*)\)|((?:1[89]\d{2}|20\d{2})[a-z]?)|((?:TR|R|P|IPR|RD|SR|TM|U|F)-\d{2,}-\d+))/gi;
-      let match; while ((match = regex.exec(normaliseDashes(paragraph.text)))) {
-        if (match[1]) for (const y of match[1].split(/\s*,\s*/)) out.push(makeCitation(`SKB ${y}`, paragraph, 'skb-year'));
+      let match;
+      while ((match = regex.exec(normaliseDashes(paragraph.text)))) {
+        if (match[1]) for (const value of match[1].split(/\s*,\s*/)) out.push(makeCitation(`SKB ${value}`, paragraph, 'skb-year'));
         else if (match[2]) out.push(makeCitation(`SKB ${match[2]}`, paragraph, 'skb-year'));
         else out.push(makeCitation(`SKB ${match[3].toUpperCase()}`, paragraph, 'skb-report'));
       }
     }
-    function makeCitation(key, paragraph, type, author = null, year = null) { return { key, raw: key, paraIndex: paragraph.index, section: paragraph.section, paraText: paragraph.text, type, author, year }; }
+
+    function makeCitation(key, paragraph, type, author = null, year = null) {
+      return { key, raw: key, paraIndex: paragraph.index, section: paragraph.section, paraText: paragraph.text, type, author, year };
+    }
     function normaliseCitationAuthor(author) { return String(author).replace(/\s+/g, ' ').replace(/\bet\s+al\.?$/i, 'et al.').replace(/\bm\.fl\.?$/i, 'm.fl.').trim(); }
     function escapeRegExp(text) { return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
-
     function normaliseKey(key) { return normaliseDashes(key).normalize('NFC').toLowerCase().replace(/et\s*al\.?/g, 'etal').replace(/\s*-\s*/g, '-').replace(/[\s.,;:!?\'"()\[\]{}]/g, ''); }
-    function fuzzyMatch(a, b) { if (a.length < 4 || b.length < 4) return false; if (a.includes(b) || b.includes(a)) return true; const grams = s => new Set([...Array(Math.max(0,s.length-1))].map((_,i)=>s.slice(i,i+2))); const x=grams(a), y=grams(b); return [...x].filter(g=>y.has(g)).length / Math.max(x.size,y.size,1) > .7; }
+
+    function fuzzyMatch(first, second) {
+      if (first.length < 4 || second.length < 4) return false;
+      if (first.includes(second) || second.includes(first)) return true;
+      const grams = value => new Set([...Array(Math.max(0, value.length - 1))].map((_, index) => value.slice(index, index + 2)));
+      const left = grams(first), right = grams(second);
+      return [...left].filter(gram => right.has(gram)).length / Math.max(left.size, right.size, 1) > .7;
+    }
+
     function crossReference(entries, citations) {
       const byKey = new Map(), byAlias = new Map(), byNum = new Map();
-      for (const entry of entries) { entry.cites=[]; const key=normaliseKey(entry.key); (byKey.get(key)||byKey.set(key,[]).get(key)).push(entry); for(const alias of entry.aliases||[]) { const a=normaliseKey(alias); (byAlias.get(a)||byAlias.set(a,[]).get(a)).push(entry); } if(entry.num!==null) byNum.set(entry.num,entry); }
-      const orphanCites=[];
-      for(const citation of citations) { let matches=[]; if(citation.type==='numbered'&&byNum.has(citation.num)) matches=[byNum.get(citation.num)]; else { const key=normaliseKey(citation.key); matches=byKey.get(key)||byAlias.get(key)||[]; if(!matches.length) for(const [candidate,list] of byKey) if(fuzzyMatch(key,candidate)){matches=list;break;} } if(matches.length) matches.forEach(entry=>entry.cites.push(citation)); else orphanCites.push(citation); }
-      return { orphanCites, uncitedRefs: entries.filter(entry=>!entry.cites.length), duplicateKeys:[...byKey.values()].filter(list=>list.length>1) };
+      for (const entry of entries) {
+        entry.cites = [];
+        const key = normaliseKey(entry.key);
+        (byKey.get(key) || byKey.set(key, []).get(key)).push(entry);
+        for (const alias of entry.aliases || []) {
+          const normalized = normaliseKey(alias);
+          (byAlias.get(normalized) || byAlias.set(normalized, []).get(normalized)).push(entry);
+        }
+        if (entry.num !== null) byNum.set(entry.num, entry);
+      }
+      const orphanCites = [];
+      for (const citation of citations) {
+        let matches = [];
+        if (citation.type === 'numbered' && byNum.has(citation.num)) matches = [byNum.get(citation.num)];
+        else {
+          const key = normaliseKey(citation.key);
+          matches = byKey.get(key) || byAlias.get(key) || [];
+          if (!matches.length) for (const [candidate, list] of byKey) if (fuzzyMatch(key, candidate)) { matches = list; break; }
+        }
+        if (matches.length) matches.forEach(entry => entry.cites.push(citation));
+        else orphanCites.push(citation);
+      }
+      return { orphanCites, uncitedRefs: entries.filter(entry => !entry.cites.length), duplicateKeys: [...byKey.values()].filter(list => list.length > 1) };
     }
 
     const YEAR_RE = /\b(1[89]\d{2}|20\d{2})[a-z]?\b/;
     function checkSkbFormat(entries) {
-      const issues=[];
-      const numbered=entries.filter(e=>e.num!==null).sort((a,b)=>a.num-b.num);
-      for(let i=0;i<numbered.length-1;i++) if(numbered[i+1].num-numbered[i].num>1) issues.push({key:numbered[i+1].key,issue:`Numbering gap: expected [${numbered[i].num+1}] before [${numbered[i+1].num}]`,severity:'warn'});
-      for(const entry of entries){ const text=entry.body; if(!YEAR_RE.test(text)) issues.push({key:entry.key,issue:'No year detected in reference',severity:'warn'}); if(text.length<30) issues.push({key:entry.key,issue:'Entry seems too short — likely incomplete',severity:'warn'}); if(/^https?:\/\//.test(text)) issues.push({key:entry.key,issue:'URL-only reference; add author, title, and access date',severity:'error'}); if(/https?:\/\//.test(text)&&!/(?:accessed|hämtad|hämtat|visited|retrieved|besökt)\s/i.test(text)) issues.push({key:entry.key,issue:'URL present but no access date',severity:'warn'}); const last=text.trim().slice(-1); if(text.length>20&&!['.',')'].includes(last)) issues.push({key:entry.key,issue:`Reference does not end with a period (ends with "${last}")`,severity:'info'}); }
+      const issues = [];
+      const numbered = entries.filter(entry => entry.num !== null).sort((a, b) => a.num - b.num);
+      for (let index = 0; index < numbered.length - 1; index++) {
+        if (numbered[index + 1].num - numbered[index].num > 1) issues.push({ key: numbered[index + 1].key, issue: `Numbering gap: expected [${numbered[index].num + 1}] before [${numbered[index + 1].num}]`, severity: 'warn' });
+      }
+      for (const entry of entries) {
+        const text = entry.body;
+        if (!YEAR_RE.test(text)) issues.push({ key: entry.key, issue: 'No year detected in reference', severity: 'warn' });
+        if (text.length < 30) issues.push({ key: entry.key, issue: 'Entry seems too short — likely incomplete', severity: 'warn' });
+        if (/^https?:\/\//.test(text)) issues.push({ key: entry.key, issue: 'URL-only reference; add author, title, and access date', severity: 'error' });
+        if (/https?:\/\//.test(text) && !/(?:accessed|hämtad|hämtat|visited|retrieved|besökt)\s/i.test(text)) issues.push({ key: entry.key, issue: 'URL present but no access date', severity: 'warn' });
+        const last = text.trim().slice(-1);
+        if (text.length > 20 && !['.', ')'].includes(last)) issues.push({ key: entry.key, issue: `Reference does not end with a period (ends with "${last}")`, severity: 'info' });
+      }
       return issues;
     }
 
-    async function runOptionalZoteroCheck() {
-      if (zoteroLookupRunning || !currentReport) return;
-      zoteroLookupRunning = true; zoteroCheckBtn.disabled = true; zoteroCheckBtn.textContent = 'Checking Zotero…'; zoteroResults.innerHTML=''; examinedZoteroItemKeys.clear(); setProgress(0, true); showZoteroStatus('Preparing targeted Zotero searches…');
-      try {
-        const result = await withTimeout(analyseAgainstZotero(currentReport.orphanCites||[], currentReport.uncitedRefs||[]), 60000, 'The Zotero check exceeded 60 seconds and was stopped.');
-        zoteroResults.innerHTML = buildZoteroMatchSection(result); showZoteroStatus('Zotero check completed.');
-      } catch(error) { zoteroResults.innerHTML=buildZoteroMatchSection({available:false,error:error.message,itemCount:0,orphanMatches:[],uncitedMatches:[]}); showZoteroStatus('Zotero check could not be completed.'); }
-      finally { hideProgress(); zoteroLookupRunning=false; zoteroCheckBtn.disabled=false; zoteroCheckBtn.textContent='Check Zotero again'; }
-    }
+    async function searchZoteroItems(
+      query,
+      { qmode = 'titleCreatorYear', limit = 15, timeoutMilliseconds = 30000, signal } = {}
+    ) {
+      const cleaned = String(query || '').replace(/\s+/g, ' ').trim();
+      if (!cleaned) return [];
 
-    async function searchZoteroItems(query,{qmode='titleCreatorYear',limit=15,timeoutMilliseconds=10000}={}) {
-      const cleaned=String(query||'').replace(/\s+/g,' ').trim(); if(!cleaned)return[];
-      const cacheKey=`${qmode}|${cleaned.toLowerCase()}`; if(zoteroSearchCache.has(cacheKey))return zoteroSearchCache.get(cacheKey);
-      const parameters=new URLSearchParams({format:'json',include:'data',q:cleaned,qmode,itemType:'-attachment',limit:String(limit)});
-      const controller=new AbortController(); const timer=setTimeout(()=>controller.abort(),timeoutMilliseconds);
-      try { const response=await fetch(`https://api.zotero.org/groups/${ZOTERO_CONFIG.groupId}/items/top?${parameters}`,{headers:{'Zotero-API-Version':ZOTERO_CONFIG.apiVersion,Accept:'application/json'},signal:controller.signal}); if(!response.ok)throw new Error(`Zotero API returned HTTP ${response.status}`); const returned=await response.json(); if(!Array.isArray(returned))throw new Error('Zotero returned an unexpected response.'); returned.forEach(item=>item?.key&&examinedZoteroItemKeys.add(item.key)); const items=returned.filter(item=>!['attachment','note','annotation'].includes(item?.data?.itemType)); zoteroSearchCache.set(cacheKey,items); return items; }
-      catch(error){ if(error.name==='AbortError')throw new Error(`Zotero search timed out after ${Math.round(timeoutMilliseconds/1000)} seconds.`); throw error; } finally{clearTimeout(timer);}
+      const cacheKey = `${qmode}|${cleaned.toLowerCase()}`;
+      if (zoteroSearchCache.has(cacheKey)) return zoteroSearchCache.get(cacheKey);
+
+      const parameters = new URLSearchParams({
+        format: 'json', include: 'data', q: cleaned, qmode,
+        itemType: '-attachment', limit: String(limit)
+      });
+      const timeoutController = new AbortController();
+      const abortFromCaller = () => timeoutController.abort();
+      signal?.addEventListener('abort', abortFromCaller, { once: true });
+      const timer = setTimeout(() => timeoutController.abort(), timeoutMilliseconds);
+
+      try {
+        const response = await fetch(
+          `https://api.zotero.org/groups/${ZOTERO_CONFIG.groupId}/items/top?${parameters}`,
+          {
+            headers: {
+              'Zotero-API-Version': ZOTERO_CONFIG.apiVersion,
+              Accept: 'application/json'
+            },
+            signal: timeoutController.signal
+          }
+        );
+        if (!response.ok) throw new Error(`Zotero API returned HTTP ${response.status}`);
+        const returned = await response.json();
+        if (!Array.isArray(returned)) throw new Error('Zotero returned an unexpected response.');
+        const items = returned.filter(item => !['attachment', 'note', 'annotation'].includes(item?.data?.itemType));
+        zoteroSearchCache.set(cacheKey, items);
+        return items;
+      } finally {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', abortFromCaller);
+      }
     }
 
     function buildZoteroQueriesForCitation(citation){ const key=String(citation.key||'').trim(); if(!key)return[]; if(citation.type==='skb-report')return[{query:key.replace(/^SKB\s+/i,''),qmode:'everything'}]; const simple=key.replace(/\bet\s+al\.?|\bm\.fl\.?/gi,'').replace(/(?:\band\b|\boch\b|&)/gi,' ').replace(/\s+/g,' ').trim(); return dedupeQueries([{query:simple,qmode:'titleCreatorYear'}]); }
     function buildZoteroQueriesForReference(entry){ const title=getDocumentReferenceTitle(entry).split(/\s+/).filter(Boolean).slice(0,12).join(' '); const report=getDocumentReferenceReportKey(entry); const key=String(entry.key||'').replace(/\bet\s+al\.?|\bm\.fl\.?/gi,'').replace(/(?:\band\b|\boch\b|&)/gi,' ').replace(/\s+/g,' ').trim(); return dedupeQueries([{query:title,qmode:'titleCreatorYear'},{query:report?.replace(/^SKB\s+/i,''),qmode:'everything'},{query:key,qmode:'titleCreatorYear'}]); }
     function dedupeQueries(queries){ const seen=new Set(); return queries.filter(item=>{ if(!item.query)return false; const key=`${item.qmode}|${item.query.toLowerCase()}`; if(seen.has(key))return false; seen.add(key); return true; }); }
-    async function searchZoteroWithFallbacks(queries,source,score){ const candidates=new Map(); for(const search of queries.slice(0,2)){ showZoteroStatus(`Searching Zotero for “${truncate(search.query,45)}”…`); let items=[]; try{items=await searchZoteroItems(search.query,{qmode:search.qmode,limit:ZOTERO_CONFIG.searchResultLimit,timeoutMilliseconds:ZOTERO_CONFIG.searchTimeoutMilliseconds});}catch(error){console.warn(error);continue;} for(const candidate of prepareZoteroItems(items)){ const result=score(source,candidate); if(!candidates.has(candidate.key)||result.score>candidates.get(candidate.key).score)candidates.set(candidate.key,{...candidate,...result}); } if(Math.max(0,...[...candidates.values()].map(x=>x.score))>=90)break; } return [...candidates.values()].filter(x=>x.score>=ZOTERO_CONFIG.minimumScore).sort((a,b)=>b.score-a.score).slice(0,ZOTERO_CONFIG.maximumCandidates); }
-    async function analyseAgainstZotero(orphanCites,uncitedRefs){ const orphans=orphanCites.slice(0,ZOTERO_CONFIG.maximumOrphanLookups), uncited=uncitedRefs.slice(0,ZOTERO_CONFIG.maximumUncitedLookups); const orphanMatches=[],uncitedMatches=[]; for(let i=0;i<orphans.length;i++){showZoteroStatus(`Searching orphan citation ${i+1} of ${orphans.length}…`);orphanMatches.push({source:orphans[i],candidates:await searchZoteroWithFallbacks(buildZoteroQueriesForCitation(orphans[i]),orphans[i],scoreOrphanCitationAgainstZotero)});} for(let i=0;i<uncited.length;i++){showZoteroStatus(`Searching uncited reference ${i+1} of ${uncited.length}…`);uncitedMatches.push({source:uncited[i],candidates:await searchZoteroWithFallbacks(buildZoteroQueriesForReference(uncited[i]),uncited[i],scoreDocumentReferenceAgainstZotero)});} return{available:true,error:null,itemCount:examinedZoteroItemKeys.size,orphanMatches,uncitedMatches,skippedOrphanCount:orphanCites.length-orphans.length,skippedUncitedCount:uncitedRefs.length-uncited.length}; }
+    function buildZoteroQueriesForFullReference(entry) {
+      const queries = [];
+      const reportKey = getDocumentReferenceReportKey(entry);
+      const title = getDocumentReferenceTitle(entry);
+      const authorYear = extractAuthorYearKey(entry.body) || entry.key || '';
+      const year = getDocumentReferenceYear(entry) || '';
+      const firstAuthor = extractFirstAuthorSurname(entry.body, authorYear);
+
+      // Identifier query: strongest when Zotero quick search indexes the field.
+      if (reportKey) {
+        queries.push({
+          query: reportKey.replace(/^SKB\s+/i, ''),
+          qmode: 'everything'
+        });
+      }
+
+      // Normalize punctuation and dash variants before title quick search.
+      const normalizedTitle = normaliseTitle(title);
+      if (normalizedTitle) {
+        queries.push({ query: normalizedTitle, qmode: 'titleCreatorYear' });
+      }
+
+      // Short creator/year searches are more robust than one long combined query.
+      if (firstAuthor && year) {
+        queries.push({ query: `${firstAuthor} ${year}`, qmode: 'titleCreatorYear' });
+      }
+      if (firstAuthor) {
+        queries.push({ query: firstAuthor, qmode: 'titleCreatorYear' });
+      }
+      if (authorYear) {
+        queries.push({ query: authorYear, qmode: 'titleCreatorYear' });
+      }
+
+      return dedupeQueries(queries);
+    }
+
+    function extractFirstAuthorSurname(referenceText, authorYearKey = '') {
+      const commaMatch = String(referenceText).match(/^\s*([^,]+),/);
+      if (commaMatch) {
+        const words = commaMatch[1].trim().split(/\s+/);
+        while (words.length > 1 && isAuthorInitial(words.at(-1))) words.pop();
+        if (words.length) return words.join(' ');
+      }
+      return String(authorYearKey)
+        .replace(/\bet\s+al\.?/gi, '')
+        .replace(/\bm\.fl\.?/gi, '')
+        .replace(/\s+(?:1[89]\d{2}|20\d{2})[a-z]?.*$/i, '')
+        .trim()
+        .split(/\s+(?:and|och|&)\s+/i)[0]
+        .trim();
+    }
+
+    async function findZoteroCandidates(queries, source, scoreFunction, signal) {
+      const candidates = new Map();
+      for (const search of queries) {
+        if (signal.aborted) throw new DOMException('Search canceled', 'AbortError');
+        let items = [];
+        try {
+          items = await searchZoteroItems(search.query, {
+            qmode: search.qmode,
+            limit: ZOTERO_CONFIG.searchResultLimit,
+            timeoutMilliseconds: ZOTERO_CONFIG.searchTimeoutMilliseconds,
+            signal
+          });
+        } catch (error) {
+          if (error.name === 'AbortError') throw error;
+          console.warn('Zotero query failed:', search.query, error);
+          continue;
+        }
+        for (const candidate of prepareZoteroItems(items)) {
+          const scored = scoreFunction(source, candidate);
+          const existing = candidates.get(candidate.key);
+          if (!existing || scored.score > existing.score) {
+            candidates.set(candidate.key, { ...candidate, ...scored });
+          }
+        }
+      }
+      const minimumScore = zoteroFuzzyMatch.checked
+        ? ZOTERO_CONFIG.minimumScore
+        : 70;
+      return [...candidates.values()]
+        .filter(candidate => candidate.score >= minimumScore)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, ZOTERO_CONFIG.maximumCandidates);
+    }
+
+    function handleInlineZoteroClick(event) {
+      const button = event.target.closest('.zotero-row-btn');
+      if (!button) return;
+      const searchId = button.dataset.searchId;
+      if (activeInlineZoteroSearches.has(searchId)) {
+        activeInlineZoteroSearches.get(searchId).abort();
+        return;
+      }
+      if (button.dataset.kind === 'reference') {
+        runReferenceZoteroSearch(Number(button.dataset.index), button);
+      } else {
+        runCitationZoteroSearch(Number(button.dataset.index), button);
+      }
+    }
+
+    async function runReferenceZoteroSearch(index, button) {
+      const entry = currentRefEntries[index];
+      if (!entry) return;
+      await runInlineZoteroSearch({
+        source: entry,
+        queries: buildZoteroQueriesForFullReference(entry),
+        scorer: scoreDocumentReferenceAgainstZotero,
+        button,
+        emptyMessage: 'No probable Zotero match found for this reference.'
+      });
+    }
+
+    async function runCitationZoteroSearch(index, button) {
+      const citation = currentReport?.orphanCites?.[index];
+      if (!citation) return;
+      await runInlineZoteroSearch({
+        source: citation,
+        queries: buildZoteroQueriesForCitation(citation),
+        scorer: scoreOrphanCitationAgainstZotero,
+        button,
+        emptyMessage: 'No probable Zotero match found for this citation key.'
+      });
+    }
+
+    async function runInlineZoteroSearch({ source, queries, scorer, button, emptyMessage }) {
+      const searchId = button.dataset.searchId;
+      const resultContainer = $(button.dataset.resultId);
+      const controller = new AbortController();
+      activeInlineZoteroSearches.set(searchId, controller);
+      button.classList.add('searching');
+      button.textContent = 'Cancel search';
+      const modeLabel = zoteroFuzzyMatch.checked ? 'fuzzy matching enabled' : 'strict matching';
+      resultContainer.innerHTML = `<div class="zotero-inline-status">Searching Zotero (${modeLabel})…</div>`;
+
+      try {
+        const candidates = await findZoteroCandidates(queries, source, scorer, controller.signal);
+        resultContainer.innerHTML = candidates.length
+          ? candidates.map(buildInlineZoteroCandidate).join('')
+          : `<div class="zotero-inline-status">${escHtml(emptyMessage)}</div>`;
+      } catch (error) {
+        resultContainer.innerHTML = error.name === 'AbortError'
+          ? '<div class="zotero-inline-status">Search canceled.</div>'
+          : `<div class="zotero-inline-status">Search failed: ${escHtml(error.message)}</div>`;
+      } finally {
+        activeInlineZoteroSearches.delete(searchId);
+        button.classList.remove('searching');
+        button.textContent = 'Check Zotero';
+      }
+    }
+
+    function buildInlineZoteroCandidate(candidate) {
+      return `
+        <div class="zotero-candidate">
+          <div class="zotero-candidate-head">
+            <div class="zotero-candidate-title">${escHtml(candidate.title || '(untitled Zotero item)')}</div>
+            <span class="zotero-probability">${candidate.score}%</span>
+          </div>
+          <div>${escHtml(candidate.authors.join(', ') || 'No creator recorded')} · ${escHtml(candidate.year || 'No year')}</div>
+          ${candidate.reportKey ? `<div>Report Number: ${escHtml(candidate.reportKey)}</div>` : ''}
+          <div>Match basis: ${escHtml(candidate.reasons.join(', ') || 'metadata similarity')}</div>
+          <a href="${escHtml(candidate.url)}" target="_blank" rel="noopener noreferrer">Open Zotero record ↗</a>
+        </div>`;
+    }
 
     function getZoteroYear(item){return String(item?.data?.date||'').match(/\b(?:1[89]\d{2}|20\d{2})[a-z]?\b/i)?.[0]||null;}
     function getZoteroAuthors(item){return (item?.data?.creators||[]).filter(c=>['author','bookAuthor','reporter','inventor','programmer'].includes(c.creatorType)).map(c=>String(c.lastName||c.name||'').trim()).filter(Boolean);}
@@ -530,13 +847,127 @@
     function getZoteroSkbReportKey(item){return extractSkbReportKey(getZoteroReportNumber(item));}
     function getZoteroAuthorYearKey(item){const a=getZoteroAuthors(item),y=getZoteroYear(item);return !a.length||!y?null:a.length===1?`${a[0]} ${y}`:a.length===2?`${a[0]} and ${a[1]} ${y}`:`${a[0]} et al. ${y}`;}
     function prepareZoteroItems(items){return items.map(item=>{const aliases=[getZoteroAuthorYearKey(item),getZoteroSkbReportKey(item),item.data?.shortTitle].filter(Boolean);return{key:item.key,title:String(item.data?.title||''),year:getZoteroYear(item),authors:getZoteroAuthors(item),reportKey:getZoteroSkbReportKey(item),aliases,normalizedAliases:aliases.map(normaliseKey),url:item.links?.alternate?.href||`https://www.zotero.org/groups/${ZOTERO_CONFIG.groupId}/items/${item.key}`};});}
-    function normaliseTitle(value){return normaliseDashes(value||'').normalize('NFC').toLowerCase().replace(/&/g,' and ').replace(/[^a-zà-öø-ÿ0-9]+/g,' ').replace(/\s+/g,' ').trim();}
-    function titleSimilarity(a,b){const x=new Set(normaliseTitle(a).split(' ').filter(w=>w.length>=3)),y=new Set(normaliseTitle(b).split(' ').filter(w=>w.length>=3));if(!x.size||!y.size)return 0;const common=[...x].filter(w=>y.has(w)).length;return common/(x.size+y.size-common);}
-    function getDocumentReferenceTitle(entry){return String(entry.body||'').replace(/^\s*SKB\s+(?:TR|R|P|IPR|RD|SR|TM|U|F)-\d{2,}-\d+\s*[.,]?\s*/i,'').replace(/^.+?,\s*(?:1[89]\d{2}|20\d{2})[a-z]?\s*[.]\s*/,'').replace(/^.+?\s+(?:1[89]\d{2}|20\d{2})[a-z]?\s*[.]\s*/,'').split(/\.\s+/)[0].trim();}
-    function getDocumentReferenceYear(entry){return String(entry.body||'').match(/\b(?:1[89]\d{2}|20\d{2})[a-z]?\b/i)?.[0]||null;}
-    function getDocumentReferenceReportKey(entry){return extractSkbReportKey(entry.body||'');}
-    function scoreOrphanCitationAgainstZotero(citation,candidate){let score=0;const reasons=[];const key=normaliseKey(citation.key);if(candidate.normalizedAliases.includes(key)){score+=90;reasons.push('exact citation alias');}if(citation.type==='skb-report'&&candidate.reportKey&&normaliseKey(candidate.reportKey)===key){score=Math.max(score,98);reasons.push('exact SKB report number');}const year=citation.year||String(citation.key).match(/\b(?:1[89]\d{2}|20\d{2})[a-z]?\b/i)?.[0];if(year&&candidate.year&&year.toLowerCase()===candidate.year.toLowerCase()){score+=10;reasons.push('same year');}return{score:Math.min(score,100),reasons};}
-    function scoreDocumentReferenceAgainstZotero(entry,candidate){let score=0;const reasons=[];const aliases=new Set((entry.aliases||[entry.key]).map(normaliseKey));if(candidate.normalizedAliases.some(a=>aliases.has(a))){score+=65;reasons.push('exact reference alias');}const report=getDocumentReferenceReportKey(entry);if(report&&candidate.reportKey&&normaliseKey(report)===normaliseKey(candidate.reportKey)){score+=70;reasons.push('exact SKB report number');}const year=getDocumentReferenceYear(entry);if(year&&candidate.year&&year.toLowerCase()===candidate.year.toLowerCase()){score+=10;reasons.push('same year');}const similarity=titleSimilarity(getDocumentReferenceTitle(entry),candidate.title);if(similarity>=.85){score+=35;reasons.push('very similar title');}else if(similarity>=.65){score+=25;reasons.push('similar title');}else if(similarity>=.45){score+=15;reasons.push('partly similar title');}return{score:Math.min(score,100),reasons};}
+    function normaliseTitle(value) {
+      return normaliseDashes(value || '')
+        .normalize('NFC')
+        .toLowerCase()
+        .replace(/&/g, ' and ')
+        .replace(/[^a-zà-öø-ÿ0-9]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+
+    function titleSimilarity(firstValue, secondValue) {
+      const first = new Set(normaliseTitle(firstValue).split(' ').filter(word => word.length >= 2));
+      const second = new Set(normaliseTitle(secondValue).split(' ').filter(word => word.length >= 2));
+      if (!first.size || !second.size) return 0;
+      const common = [...first].filter(word => second.has(word)).length;
+      return common / (first.size + second.size - common);
+    }
+
+    function stringSimilarity(firstValue, secondValue) {
+      const first = normaliseTitle(firstValue).replace(/\s+/g, '');
+      const second = normaliseTitle(secondValue).replace(/\s+/g, '');
+      if (!first || !second) return 0;
+      if (first === second) return 1;
+      const bigrams = value => {
+        const result = new Map();
+        for (let index = 0; index < value.length - 1; index++) {
+          const gram = value.slice(index, index + 2);
+          result.set(gram, (result.get(gram) || 0) + 1);
+        }
+        return result;
+      };
+      const left = bigrams(first);
+      const right = bigrams(second);
+      let intersection = 0;
+      for (const [gram, count] of left) {
+        intersection += Math.min(count, right.get(gram) || 0);
+      }
+      return (2 * intersection) / Math.max(1, first.length + second.length - 2);
+    }
+
+    function getDocumentReferenceTitle(entry) {
+      return String(entry.body || '')
+        .replace(/^\s*SKB\s+(?:TR|R|P|IPR|RD|SR|TM|U|F)-\d{2,}-\d+\s*[.,]?\s*/i, '')
+        .replace(/^.+?,\s*(?:1[89]\d{2}|20\d{2})[a-z]?\s*[.]\s*/, '')
+        .replace(/^.+?\s+(?:1[89]\d{2}|20\d{2})[a-z]?\s*[.]\s*/, '')
+        .split(/\.\s+/)[0]
+        .trim();
+    }
+
+    function getDocumentReferenceYear(entry) {
+      return String(entry.body || '').match(/\b(?:1[89]\d{2}|20\d{2})[a-z]?\b/i)?.[0] || null;
+    }
+
+    function getDocumentReferenceReportKey(entry) {
+      return extractSkbReportKey(entry.body || '');
+    }
+
+    function scoreOrphanCitationAgainstZotero(citation, candidate) {
+      let score = 0;
+      const reasons = [];
+      const citationKey = normaliseKey(citation.key);
+      if (candidate.normalizedAliases.includes(citationKey)) {
+        score += 90;
+        reasons.push('exact citation alias');
+      }
+      if (citation.type === 'skb-report' && candidate.reportKey && normaliseKey(candidate.reportKey) === citationKey) {
+        score = Math.max(score, 98);
+        reasons.push('exact SKB report number');
+      }
+      const year = citation.year || String(citation.key).match(/\b(?:1[89]\d{2}|20\d{2})[a-z]?\b/i)?.[0];
+      if (year && candidate.year && year.toLowerCase() === candidate.year.toLowerCase()) {
+        score += 10;
+        reasons.push('same year');
+      }
+      if (citation.author && candidate.authors.length) {
+        const citedAuthor = citation.author.replace(/\s+(?:et\s+al\.?|m\.fl\.?).*$/i, '').split(/\s+(?:and|och|&)\s+/i)[0];
+        const similarity = stringSimilarity(citedAuthor, candidate.authors[0]);
+        if (similarity >= .9) { score += 25; reasons.push('same first author'); }
+        else if (zoteroFuzzyMatch.checked && similarity >= .72) { score += 15; reasons.push('similar first author'); }
+      }
+      return { score: Math.min(score, 100), reasons };
+    }
+
+    function scoreDocumentReferenceAgainstZotero(entry, candidate) {
+      let score = 0;
+      const reasons = [];
+      const aliases = new Set((entry.aliases || [entry.key]).map(normaliseKey));
+
+      if (candidate.normalizedAliases.some(alias => aliases.has(alias))) {
+        score += 65;
+        reasons.push('exact reference alias');
+      }
+
+      const documentReport = getDocumentReferenceReportKey(entry);
+      if (documentReport && candidate.reportKey && normaliseKey(documentReport) === normaliseKey(candidate.reportKey)) {
+        score += 75;
+        reasons.push('exact SKB report number');
+      }
+
+      const documentYear = getDocumentReferenceYear(entry);
+      if (documentYear && candidate.year && documentYear.toLowerCase() === candidate.year.toLowerCase()) {
+        score += 10;
+        reasons.push('same year');
+      }
+
+      const documentTitle = getDocumentReferenceTitle(entry);
+      const titleScore = titleSimilarity(documentTitle, candidate.title);
+      if (titleScore >= .9) { score += 45; reasons.push('near-exact title'); }
+      else if (titleScore >= .75) { score += 38; reasons.push('very similar title'); }
+      else if (titleScore >= .55) { score += 28; reasons.push('similar title'); }
+      else if (zoteroFuzzyMatch.checked && titleScore >= .35) { score += 18; reasons.push('partly similar title'); }
+
+      const documentFirstAuthor = extractFirstAuthorSurname(entry.body, extractAuthorYearKey(entry.body) || entry.key);
+      if (documentFirstAuthor && candidate.authors.length) {
+        const authorScore = stringSimilarity(documentFirstAuthor, candidate.authors[0]);
+        if (authorScore >= .92) { score += 30; reasons.push('same first author'); }
+        else if (zoteroFuzzyMatch.checked && authorScore >= .72) { score += 18; reasons.push('similar first author'); }
+      }
+
+      return { score: Math.min(score, 100), reasons };
+    }
 
     function downloadAnalysisReport() {
       if (!results.innerHTML.trim()) return;
@@ -544,6 +975,20 @@
         ? `SKB Reference Checker — ${currentFilename}`
         : 'SKB Reference Checker report';
       const generated = new Date().toLocaleString();
+
+      /*
+        Create a clean copy of the analysis for export. The interactive
+        Check Zotero buttons are useful on the live page, but should not
+        appear in the downloaded report. Completed Zotero matches remain.
+      */
+      const exportedResults = results.cloneNode(true);
+      exportedResults.querySelectorAll('.zotero-row-btn').forEach(button => {
+        button.remove();
+      });
+      exportedResults.querySelectorAll('.zotero-inline-results:empty').forEach(container => {
+        container.remove();
+      });
+
       const reportHtml = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -558,8 +1003,7 @@ body{max-width:1000px;margin:0 auto;padding:32px;font:15px/1.5 system-ui,sans-se
 <h1>${escHtml(reportTitle)}</h1>
 <p><small>Generated ${escHtml(generated)}</small></p>
 ${docInfo.innerHTML}
-${zoteroResults.innerHTML}
-${results.innerHTML}
+${exportedResults.innerHTML}
 </body>
 </html>`;
       const blob = new Blob([reportHtml], { type: 'text/html;charset=utf-8' });
@@ -574,13 +1018,65 @@ ${results.innerHTML}
       URL.revokeObjectURL(url);
     }
 
-    function renderResults(filename,entries,citations,report,issues,total,start,isSwedish){docInfo.innerHTML=`<strong>${escHtml(filename)}</strong> ${isSwedish?'🇸🇪 Svenska — ':''}${total} paragraphs · ${entries.length} reference list entries · ${citations.length} in-text citation occurrences · ${start>=0?`Reference list found at paragraph ${start+1}.`:'No reference list section detected.'}`;docInfo.classList.add('show');const cited=entries.filter(e=>e.cites.length).length;setSummary('total',entries.length,entries.length?'ok':'warn');setSummary('cited',cited,cited===entries.length&&entries.length?'ok':cited?'':'warn');setSummary('orphan',report.orphanCites.length,report.orphanCites.length?'warn':'ok');setSummary('issues',issues.length,issues.length?'warn':'ok');summaryCards.classList.add('show');resultActions.classList.add('show');results.innerHTML=buildRefListSection(entries)+buildOrphanSection(report.orphanCites)+buildUncitedSection(report.uncitedRefs)+buildFormatSection(issues,entries);resetBtn.classList.add('show');}
-    function buildRefListSection(entries){const rows=entries.length?entries.map(e=>`<tr class="${e.cites.length?'':'warn-row'}"><td><span class="ref-key">${escHtml(e.key)}</span></td><td class="ref-text">${truncate(escHtml(e.body),150)}</td><td class="cite-count">${e.cites.length}</td><td class="cite-pages">${[...new Set(e.cites.map(c=>c.section).filter(Boolean))].slice(0,5).map(escHtml).join('<br>')}</td></tr>`).join(''):'<tr><td colspan="4" class="empty-notice">No reference list detected.</td></tr>';return section('Reference list entries',entries.length,`<table class="ref-table"><thead><tr><th>Key</th><th>Reference text</th><th>Cited (#)</th><th>In section(s)</th></tr></thead><tbody>${rows}</tbody></table>`,true);}
-    function buildOrphanSection(items){const body=items.length?`<table class="ref-table"><thead><tr><th>Citation</th><th>Context</th><th>Section</th><th>Type</th></tr></thead><tbody>${items.map(c=>`<tr class="error-row"><td><span class="ref-key">${escHtml(c.key)}</span></td><td>${truncate(escHtml(c.paraText),100)}</td><td>${escHtml(c.section||'—')}</td><td>${escHtml(c.type)}</td></tr>`).join('')}</tbody></table>`:'<p class="empty-notice">All in-text citations match a reference list entry.</p>';return section('In-text citations with no matching reference list entry',items.length,body,items.length>0);}
+    function renderResults(filename, entries, citations, report, issues, total, start, isSwedish) {
+      docInfo.innerHTML = `<strong>${escHtml(filename)}</strong> ${isSwedish ? '🇸🇪 Svenska — ' : ''}${total} paragraphs · ${entries.length} reference list entries · ${citations.length} in-text citation occurrences · ${start >= 0 ? `Reference list found at paragraph ${start + 1}.` : 'No reference list section detected.'}`;
+      docInfo.classList.add('show');
+      const cited = entries.filter(entry => entry.cites.length).length;
+      setSummary('total', entries.length, entries.length ? 'ok' : 'warn');
+      setSummary('cited', cited, cited === entries.length && entries.length ? 'ok' : cited ? '' : 'warn');
+      setSummary('orphan', report.orphanCites.length, report.orphanCites.length ? 'warn' : 'ok');
+      setSummary('issues', issues.length, issues.length ? 'warn' : 'ok');
+      summaryCards.classList.add('show');
+      resultActions.classList.add('show');
+      results.innerHTML = buildRefListSection(entries) + buildOrphanSection(report.orphanCites) + buildUncitedSection(report.uncitedRefs) + buildFormatSection(issues, entries);
+      resetBtn.classList.add('show');
+    }
+
+    function buildRefListSection(entries) {
+      const rows = entries.length
+        ? entries.map((entry, index) => {
+            const sections = [...new Set(entry.cites.map(citation => citation.section).filter(Boolean))]
+              .slice(0, 5).map(escHtml).join('<br>');
+            return `
+              <tr class="${entry.cites.length ? '' : 'warn-row'}">
+                <td><span class="ref-key">${escHtml(entry.key)}</span></td>
+                <td class="ref-text">${escHtml(entry.body)}</td>
+                <td class="cite-count">${entry.cites.length}</td>
+                <td class="cite-pages">${sections}</td>
+                <td class="zotero-cell">
+                  <button class="zotero-row-btn" type="button" data-kind="reference" data-index="${index}" data-search-id="reference-${index}" data-result-id="zotero-reference-${index}" title="Search Zotero using authors, publication year, and title extracted from this reference">Check Zotero</button>
+                  <div id="zotero-reference-${index}" class="zotero-inline-results"></div>
+                </td>
+              </tr>`;
+          }).join('')
+        : '<tr><td colspan="5" class="empty-notice">No reference list detected.</td></tr>';
+      return section(
+        'Reference list entries',
+        entries.length,
+        `<table class="ref-table"><thead><tr><th>Key</th><th>Reference text</th><th>Cited (#)</th><th>In section(s)</th><th>Zotero</th></tr></thead><tbody>${rows}</tbody></table>`,
+        true
+      );
+    }
+
+    function buildOrphanSection(items) {
+      const body = items.length
+        ? `<table class="ref-table"><thead><tr><th>Citation</th><th>Context</th><th>Section</th><th>Type</th><th>Zotero</th></tr></thead><tbody>${items.map((citation, index) => `
+            <tr class="error-row">
+              <td><span class="ref-key">${escHtml(citation.key)}</span></td>
+              <td>${truncate(escHtml(citation.paraText), 100)}</td>
+              <td>${escHtml(citation.section || '—')}</td>
+              <td>${escHtml(citation.type)}</td>
+              <td class="zotero-cell">
+                <button class="zotero-row-btn" type="button" data-kind="citation" data-index="${index}" data-search-id="citation-${index}" data-result-id="zotero-citation-${index}" title="Search Zotero using this citation key">Check Zotero</button>
+                <div id="zotero-citation-${index}" class="zotero-inline-results"></div>
+              </td>
+            </tr>`).join('')}</tbody></table>`
+        : '<p class="empty-notice">All in-text citations match a reference list entry.</p>';
+      return section('In-text citations with no matching reference list entry', items.length, body, items.length > 0);
+    }
+
     function buildUncitedSection(items){const body=items.length?`<div class="tag-list">${items.map(e=>`<div class="tag warn-tag">⚠ <code>${escHtml(e.key)}</code></div>`).join('')}</div>`:'<p class="empty-notice">Every reference in the list is cited at least once.</p>';return section('Reference list entries never cited in text',items.length,body);}
     function buildFormatSection(issues,entries){const map=new Map(entries.map(e=>[e.key,e.body]));const groups=new Map();issues.forEach(i=>(groups.get(i.key)||groups.set(i.key,[]).get(i.key)).push(i));const body=issues.length?`<table class="ref-table"><thead><tr><th>Key</th><th>Reference text</th><th>Issues</th></tr></thead><tbody>${[...groups].map(([key,list])=>`<tr><td><span class="ref-key">${escHtml(key)}</span></td><td>${truncate(escHtml(map.get(key)||''),100)}</td><td><ul class="issue-list">${list.map(i=>`<li>[${i.severity.toUpperCase()}] ${escHtml(i.issue)}</li>`).join('')}</ul></td></tr>`).join('')}</tbody></table>`:'<p class="empty-notice">No SKB format rule violations detected.</p>';return section('SKB format rule issues',issues.length,body);}
-    function buildZoteroMatchSection(result){if(!result.available)return section('Probable matches in Zotero','unavailable',`<p class="empty-notice">${escHtml(result.error||'Zotero lookup failed.')}</p>`);const matches=[...result.orphanMatches,...result.uncitedMatches].filter(x=>x.candidates.length);const body=`<p>Examined <strong>${result.itemCount}</strong> distinct Zotero records returned by targeted searches.</p>${matches.length?buildZoteroCandidateTable(matches):'<p class="empty-notice">No probable Zotero matches were found.</p>'}`;return section('Probable matches in Zotero',matches.length,body,matches.length>0);}
-    function buildZoteroCandidateTable(groups){return `<table class="ref-table"><thead><tr><th>Document item</th><th>Probable Zotero record(s)</th></tr></thead><tbody>${groups.map(group=>`<tr><td><span class="ref-key">${escHtml(group.source.key)}</span></td><td>${group.candidates.map(c=>`<div style="margin-bottom:10px;padding:9px 11px;border:1px solid var(--border-color);border-radius:8px"><strong>${escHtml(c.title||'(untitled)')}</strong> <span class="section-badge ${c.score>=90?'good':'warn'}">${c.score}%</span><div>${escHtml(c.authors.join(', ')||'No creator')} · ${escHtml(c.year||'No year')}</div>${c.reportKey?`<div>${escHtml(c.reportKey)}</div>`:''}<div>Match basis: ${escHtml(c.reasons.join(', '))}</div><a href="${escHtml(c.url)}" target="_blank" rel="noopener noreferrer">Open Zotero record ↗</a></div>`).join('')}</td></tr>`).join('')}</tbody></table>`;}
     function section(title,count,body,open=false){const good=!count||count==='unavailable';return `<details class="result-section" ${open?'open':''}><summary>${title}<span class="section-badge ${good?'good':'warn'}">${count===0?'✓ none':count}</span></summary><div class="section-body">${body}</div></details>`;}
     function setSummary(name,value,state){$(`cnt-${name}`).textContent=value;const card=$(`card-${name}`);card.classList.remove('warn','ok');if(state)card.classList.add(state);}
     function escHtml(value){return String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
