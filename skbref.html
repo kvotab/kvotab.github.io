@@ -299,7 +299,10 @@
 
       showStatus('Finding in-text citations…');
       await yieldToBrowser();
-      const inTextCites = findInTextCites(bodyParagraphs);
+      const inTextCites = findInTextCites(
+        bodyParagraphs,
+        refEntries
+      );
 
       showStatus('Cross-referencing…');
       await yieldToBrowser();
@@ -536,13 +539,21 @@
       continue;
     }
 
-    if (
-      headingLevel(paragraph.style) > 0 ||
-      SECTION_END_RE.test(paragraph.text)
-    ) {
-      refListEnd = i;
-      break;
-    }
+    /*
+  The internal headings belong to the reference section and must not end
+  it, even if Word assigns them a heading style.
+*/
+if (isInternalReferenceHeading(paragraph.text)) {
+  continue;
+}
+
+if (
+  headingLevel(paragraph.style) > 0 ||
+  SECTION_END_RE.test(paragraph.text)
+) {
+  refListEnd = i;
+  break;
+}
   }
 
   /*
@@ -582,114 +593,322 @@
     refListStart
   };
 }
+/*
+  Special headings used inside an SKB reference list.
 
+  These paragraphs describe the organisation of the reference list and
+  are not themselves reference entries.
+*/
+const ABBREVIATED_REFERENCES_HEADING_RE =
+  /^\s*References with abbreviated names\s*[.:]?\s*$/i;
+
+const OTHER_REFERENCES_HEADING_RE =
+  /^\s*Other references\s*[.:]?\s*$/i;
+
+/*
+  Return true when the paragraph is one of the internal reference-list
+  headings rather than a reference entry.
+*/
+function isInternalReferenceHeading(text) {
+  return (
+    ABBREVIATED_REFERENCES_HEADING_RE.test(text) ||
+    OTHER_REFERENCES_HEADING_RE.test(text)
+  );
+}
+
+/*
+  Extract the abbreviated citation name from a special reference.
+
+  Example:
+
+    Post-closure safety report, 2023. Post-closure safety ...
+
+  returns:
+
+    Post-closure safety report
+*/
+function extractAbbreviatedReferenceName(text) {
+  const match = String(text).match(
+    /^\s*(.+?)\s*,\s*((?:1[89]\d{2}|20\d{2})[a-z]?)\s*[.]/
+  );
+
+  if (!match) {
+    return null;
+  }
+
+  const abbreviatedName = match[1]
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  /*
+    Avoid accepting an empty or unreasonably long abbreviation if a
+    malformed paragraph is encountered.
+  */
+  if (
+    abbreviatedName.length < 2 ||
+    abbreviatedName.length > 200
+  ) {
+    return null;
+  }
+
+  return abbreviatedName;
+}
   // ── Extract reference list entries ────────────────────────────────────────
   function extractRefEntries(refParas) {
   const entries = [];
+
   let current = null;
   let autoNum = 0;
 
-  for (const p of refParas) {
-    const text = p.text.trim();
+  /*
+    This becomes true after:
 
-    // For a Word auto-numbered list, the displayed number is stored in
-    // numbering.xml rather than in the paragraph text.
-    const isListItem = p.numId && p.numId !== '0';
+      References with abbreviated names
 
-    if (!text) {
-      if (current) {
-        entries.push(current);
-        current = null;
+    and false again after:
+
+      Other references
+  */
+  let inAbbreviatedSection = false;
+
+  /*
+    Save the current entry before changing section type or reaching the
+    end of the reference list.
+  */
+  function finishCurrentEntry() {
+    if (!current) {
+      return;
+    }
+
+    entries.push(current);
+    current = null;
+  }
+
+  /*
+    Create an unnumbered reference entry.
+
+    In the abbreviated-name section, the leading phrase before ", YEAR."
+    becomes the primary matching key.
+  */
+  function createUnnumberedEntry(text, paragraph) {
+    if (inAbbreviatedSection) {
+      const abbreviatedName =
+        extractAbbreviatedReferenceName(text);
+
+      if (abbreviatedName) {
+        return {
+          key: abbreviatedName,
+          num: null,
+          body: text,
+          raw: text,
+          paraIndex: paragraph.index,
+          type: 'abbreviated-name',
+          abbreviatedName
+        };
       }
+    }
+
+    const referenceKey = extractReferenceKey(text);
+    const leadingSkbKey = extractSkbReportKey(
+      text,
+      true
+    );
+
+    return {
+      key: referenceKey || text.slice(0, 40),
+      num: null,
+      body: text,
+      raw: text,
+      paraIndex: paragraph.index,
+      type: leadingSkbKey
+        ? 'skb-report'
+        : 'author-year',
+      abbreviatedName: null
+    };
+  }
+
+  for (const paragraph of refParas) {
+    const text = paragraph.text.trim();
+
+    /*
+      Enter the abbreviated-name subsection.
+
+      This paragraph is a definition/heading, not a reference.
+    */
+    if (
+      ABBREVIATED_REFERENCES_HEADING_RE.test(text)
+    ) {
+      finishCurrentEntry();
+      inAbbreviatedSection = true;
       continue;
     }
 
-    // Explicit number prefixes:
-    // [1] Reference text
-    // 1. Reference text
-    // 1) Reference text
-    const numMatch =
-      text.match(/^(?:\[(\d+)\]|(\d+)[.)\s]\s)/);
+    /*
+      Leave the abbreviated-name subsection and resume ordinary
+      reference parsing.
+
+      This paragraph is also a definition/heading, not a reference.
+    */
+    if (OTHER_REFERENCES_HEADING_RE.test(text)) {
+      finishCurrentEntry();
+      inAbbreviatedSection = false;
+      continue;
+    }
+
+    /*
+      Ignore empty paragraphs, but first finish any pending reference.
+    */
+    if (!text) {
+      finishCurrentEntry();
+      continue;
+    }
+
+    /*
+      For a Word auto-numbered list, the displayed list number is stored
+      in the Word numbering data rather than in the paragraph text.
+    */
+    const isListItem =
+      paragraph.numId &&
+      paragraph.numId !== '0';
+
+    /*
+      Explicit number prefixes:
+
+        [1] Reference text
+        1. Reference text
+        1) Reference text
+    */
+    const numMatch = text.match(
+      /^(?:\[(\d+)\]|(\d+)[.)\s]\s)/
+    );
 
     if (numMatch) {
-      if (current) {
-        entries.push(current);
-      }
+      finishCurrentEntry();
 
-      const num = numMatch[1] || numMatch[2];
-      autoNum = parseInt(num, 10);
+      const numberText =
+        numMatch[1] || numMatch[2];
 
-      const key = `[${num}]`;
+      autoNum = parseInt(numberText, 10);
 
       const body = text
         .replace(/^\[?\d+\]?[.)\s]+/, '')
         .trim();
 
+      /*
+        Numbered abbreviated references can still use their abbreviated
+        name as an alias, while retaining the visible list number as the
+        primary key.
+      */
+      const abbreviatedName = inAbbreviatedSection
+        ? extractAbbreviatedReferenceName(body)
+        : null;
+
       current = {
-        key,
+        key: `[${numberText}]`,
         num: autoNum,
         body,
         raw: text,
-        paraIndex: p.index,
-        type: 'numbered'
+        paraIndex: paragraph.index,
+        type: abbreviatedName
+          ? 'abbreviated-name'
+          : 'numbered',
+        abbreviatedName
       };
-    } else if (isListItem) {
-      // Word auto-numbered list: each list paragraph is one entry.
-      if (current) {
-        entries.push(current);
-      }
 
+      continue;
+    }
+
+    /*
+      Word auto-numbered reference.
+    */
+    if (isListItem) {
+      finishCurrentEntry();
       autoNum++;
+
+      const abbreviatedName = inAbbreviatedSection
+        ? extractAbbreviatedReferenceName(text)
+        : null;
 
       current = {
         key: `[${autoNum}]`,
         num: autoNum,
         body: text,
         raw: text,
-        paraIndex: p.index,
-        type: 'numbered'
+        paraIndex: paragraph.index,
+        type: abbreviatedName
+          ? 'abbreviated-name'
+          : 'numbered',
+        abbreviatedName
       };
-    } else if (current && looksLikeRefStart(text)) {
-      // No blank paragraph, but this paragraph looks like the beginning
-      // of a new author-year or SKB report reference.
-      entries.push(current);
 
-      const referenceKey = extractReferenceKey(text);
-      const leadingSkbKey = extractSkbReportKey(text, true);
+      continue;
+    }
 
-      current = {
-        key: referenceKey || text.slice(0, 40),
-        num: null,
-        body: text,
-        raw: text,
-        paraIndex: p.index,
-        type: leadingSkbKey ? 'skb-report' : 'author-year'
-      };
-    } else if (current) {
-      // Continuation of the previous entry.
+    /*
+      Inside the abbreviated-name section, every paragraph matching:
+
+        Abbreviated name, YEAR. ...
+
+      begins a new reference.
+    */
+    if (inAbbreviatedSection) {
+      const abbreviatedName =
+        extractAbbreviatedReferenceName(text);
+
+      if (abbreviatedName) {
+        finishCurrentEntry();
+
+        current = createUnnumberedEntry(
+          text,
+          paragraph
+        );
+
+        continue;
+      }
+    }
+
+    /*
+      Ordinary reference-start detection.
+    */
+    if (
+      current &&
+      looksLikeRefStart(text)
+    ) {
+      finishCurrentEntry();
+
+      current = createUnnumberedEntry(
+        text,
+        paragraph
+      );
+
+      continue;
+    }
+
+    /*
+      If a reference is already open and this paragraph does not look
+      like a new entry, treat it as continuation text.
+    */
+    if (current) {
       current.body += ' ' + text;
       current.raw += ' ' + text;
-    } else {
-      // First unnumbered reference entry.
-      const referenceKey = extractReferenceKey(text);
-      const leadingSkbKey = extractSkbReportKey(text, true);
-
-      current = {
-        key: referenceKey || text.slice(0, 40),
-        num: null,
-        body: text,
-        raw: text,
-        paraIndex: p.index,
-        type: leadingSkbKey ? 'skb-report' : 'author-year'
-      };
+      continue;
     }
+
+    /*
+      First unnumbered reference entry.
+    */
+    current = createUnnumberedEntry(
+      text,
+      paragraph
+    );
   }
 
-  if (current) {
-    entries.push(current);
-  }
+  finishCurrentEntry();
 
-  // Generate aliases after the full reference text has been assembled.
+  /*
+    Generate all matching aliases after every multi-paragraph reference
+    has been fully assembled.
+  */
   for (const entry of entries) {
     entry.aliases = collectReferenceAliases(entry);
   }
@@ -941,23 +1160,45 @@ function collectReferenceAliases(entry) {
     aliases.add(entry.key);
   }
 
+  /*
+    An abbreviated name is always a valid citation alias, including for
+    numbered reference lists where the primary key may be "[1]".
+  */
+  if (
+    entry &&
+    entry.abbreviatedName
+  ) {
+    aliases.add(entry.abbreviatedName);
+  }
+
   if (entry && entry.body) {
-    // Retain ordinary author-year matching.
-    const authorYearKey = extractAuthorYearKey(entry.body);
+    /*
+      Keep ordinary author-year matching when the reference also has a
+      conventional author-year form.
+    */
+    const authorYearKey =
+      extractAuthorYearKey(entry.body);
 
     if (authorYearKey) {
       aliases.add(authorYearKey);
     }
 
-    // Add an SKB identifier when it is the first item in the reference.
-    const leadingSkbKey = extractSkbReportKey(entry.body, true);
+    /*
+      Add a leading SKB report identifier.
+    */
+    const leadingSkbKey =
+      extractSkbReportKey(entry.body, true);
 
     if (leadingSkbKey) {
       aliases.add(leadingSkbKey);
     }
 
-    // Also retain matching for an SKB identifier occurring elsewhere.
-    const anySkbKey = extractSkbReportKey(entry.body);
+    /*
+      Also retain an SKB report identifier occurring elsewhere in the
+      reference.
+    */
+    const anySkbKey =
+      extractSkbReportKey(entry.body);
 
     if (anySkbKey) {
       aliases.add(anySkbKey);
@@ -987,29 +1228,190 @@ function collectReferenceAliases(entry) {
     return m ? parseInt(m[1]) : 0;
   }
 
-  function findInTextCites(bodyParas) {
-    const citations = []; // { key, raw, paraIndex, section, paraText, type }
+  function findInTextCites(
+  bodyParas,
+  refEntries
+) {
+  const citations = [];
 
-    for (const p of bodyParas) {
-      const text = p.text;
-      if (!text.trim()) continue;
+  /*
+    Obtain the list of known abbreviated citation names from the
+    reference section before scanning the body text.
 
-      // Author-year citations
-      findAuthorYearCitations(text, p.index, p.section, text, citations);
+    This is why references must be parsed before citation searching.
+  */
+  const abbreviatedReferences = refEntries
+    .filter(entry => {
+      return (
+        entry.type === 'abbreviated-name' &&
+        entry.abbreviatedName
+      );
+    })
+    .map(entry => ({
+      key: entry.abbreviatedName,
+      entry
+    }));
 
-      // SKB-specific
-      findSkbCitations(text, p.index, p.section, text, citations);
+  /*
+    Search longer abbreviated names before shorter names.
+
+    This prevents a shorter abbreviation from matching inside a longer
+    abbreviation if both happen to be defined.
+  */
+  abbreviatedReferences.sort(
+    (a, b) => b.key.length - a.key.length
+  );
+
+  for (const paragraph of bodyParas) {
+    const text = paragraph.text;
+
+    if (!text.trim()) {
+      continue;
     }
 
-    // Deduplicate by key+paraIndex
-    const seen = new Set();
-    return citations.filter(c => {
-      const k = `${c.key}||${c.paraIndex}`;
-      if (seen.has(k)) return false;
-      seen.add(k); return true;
-    });
+    /*
+      Ordinary author-year citations.
+    */
+    findAuthorYearCitations(
+      text,
+      paragraph.index,
+      paragraph.section,
+      text,
+      citations
+    );
+
+    /*
+      SKB report and SKB year citations.
+    */
+    findSkbCitations(
+      text,
+      paragraph.index,
+      paragraph.section,
+      text,
+      citations
+    );
+
+    /*
+      Citations using names defined in the special reference subsection.
+    */
+    findAbbreviatedNameCitations(
+      text,
+      paragraph.index,
+      paragraph.section,
+      text,
+      abbreviatedReferences,
+      citations
+    );
   }
 
+  /*
+    Deduplicate each citation key within the same paragraph.
+
+    If the same abbreviated name appears twice in one paragraph, it is
+    currently counted as one citation occurrence, consistent with the
+    existing behaviour for other citation types.
+  */
+  const seen = new Set();
+
+  return citations.filter(citation => {
+    const identifier =
+      `${normaliseKey(citation.key)}||${citation.paraIndex}`;
+
+    if (seen.has(identifier)) {
+      return false;
+    }
+
+    seen.add(identifier);
+    return true;
+  });
+}
+ /*
+  Escape characters that have special meanings inside regular
+  expressions.
+*/
+function escapeRegExp(text) {
+  return String(text).replace(
+    /[.*+?^${}()|[\]\\]/g,
+    '\\$&'
+  );
+}
+
+/*
+  Find citations that use a name defined under:
+
+    References with abbreviated names
+
+  The search is based on the exact list of names extracted from the
+  reference section. It therefore does not guess that arbitrary prose is
+  an abbreviated citation.
+*/
+function findAbbreviatedNameCitations(
+  text,
+  paraIndex,
+  section,
+  paraText,
+  abbreviatedReferences,
+  out
+) {
+  for (const abbreviation of abbreviatedReferences) {
+    const name = abbreviation.key;
+
+    /*
+      Permit ordinary flexible whitespace between words.
+
+      A defined name such as:
+
+        Post-closure safety report
+
+      will still match if Word has introduced repeated spaces.
+    */
+    const namePattern = escapeRegExp(name)
+      .replace(/\s+/g, '\\s+');
+
+    /*
+      Do not use JavaScript's \b because it is unreliable with accented
+      characters. Instead, require that the abbreviation is not directly
+      preceded or followed by a letter or digit.
+
+      The "i" flag is appropriate here because the complete abbreviation
+      came from the reference list. Unlike generic author detection, this
+      cannot turn arbitrary lowercase prose such as "points 2500" into a
+      citation.
+    */
+    const expression = new RegExp(
+      `(?:^|[^A-Za-zÀ-ÖØ-Þà-öø-ÿ0-9])` +
+      `(${namePattern})` +
+      `(?=$|[^A-Za-zÀ-ÖØ-Þà-öø-ÿ0-9])`,
+      'gi'
+    );
+
+    let match;
+
+    while (
+      (match = expression.exec(text)) !== null
+    ) {
+      out.push({
+        key: name,
+        raw: match[1],
+        paraIndex,
+        section,
+        paraText,
+        type: 'abbreviated-name',
+        author: name,
+        year: null
+      });
+
+      /*
+        Defensive protection against zero-length matches. A valid
+        abbreviation is never empty, but this prevents an infinite loop
+        if malformed data is encountered.
+      */
+      if (match[0].length === 0) {
+        expression.lastIndex++;
+      }
+    }
+  }
+}
 /*
   A citation surname can optionally begin with one or more lowercase
   surname particles.
