@@ -33,7 +33,42 @@
       border:none;cursor:pointer;transition:opacity .15s;
     }
     #dropzone .dz-btn:hover { opacity:.88; }
+/* Optional Zotero lookup */
+#zotero-actions {
+  clear: both;
+  padding: 16px;
+  margin-top: 20px;
+  margin-bottom: 16px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+}
 
+#zotero-check-btn {
+  display: inline-block;
+  padding: 8px 20px;
+  border: none;
+  border-radius: 20px;
+  background: var(--color-kvot-bright);
+  color: #fff;
+  font-size: .88rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity .15s;
+}
+
+#zotero-check-btn:hover {
+  opacity: .88;
+}
+
+#zotero-check-btn:disabled {
+  cursor: wait;
+  opacity: .6;
+}
+
+#zotero-status {
+  line-height: 1.5;
+}
     /* Progress / status */
     #status-bar { display:none;align-items:center;gap:10px;padding:12px 16px;
       background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:10px;
@@ -358,30 +393,35 @@ function showZoteroButton(report) {
   }
 
   const orphanCount =
-  report.orphanCites.length;
+    report.orphanCites.length;
 
   const uncitedCount =
     report.uncitedRefs.length;
-if (
-  orphanCount === 0 &&
-  uncitedCount === 0
-) {
-  zoteroActions.style.display = 'none';
-  return;
-}
+
   zoteroActions.style.display = 'block';
 
   zoteroCheckBtn.disabled = false;
 
-  zoteroCheckBtn.textContent =
-    `Check Zotero (` +
-    `${orphanCount} orphan citation` +
-    `${orphanCount === 1 ? '' : 's'}, ` +
-    `${uncitedCount} uncited reference` +
-    `${uncitedCount === 1 ? '' : 's'})`;
+  if (
+    orphanCount === 0 &&
+    uncitedCount === 0
+  ) {
+    zoteroCheckBtn.textContent =
+      'Check Zotero — no unmatched items';
+
+    zoteroCheckBtn.disabled = true;
+  } else {
+    zoteroCheckBtn.textContent =
+      `Check Zotero (` +
+      `${orphanCount} orphan citation` +
+      `${orphanCount === 1 ? '' : 's'}, ` +
+      `${uncitedCount} uncited reference` +
+      `${uncitedCount === 1 ? '' : 's'})`;
+  }
 
   zoteroStatus.style.display = 'none';
   zoteroStatus.textContent = '';
+
   zoteroResults.innerHTML = '';
 }
 
@@ -472,12 +512,33 @@ async function runOptionalZoteroCheck() {
       'Zotero check could not be completed.'
     );
   } finally {
-    zoteroLookupRunning = false;
+  zoteroLookupRunning = false;
 
+  const orphanCount =
+    currentReport &&
+    currentReport.orphanCites
+      ? currentReport.orphanCites.length
+      : 0;
+
+  const uncitedCount =
+    currentReport &&
+    currentReport.uncitedRefs
+      ? currentReport.uncitedRefs.length
+      : 0;
+
+  if (
+    orphanCount === 0 &&
+    uncitedCount === 0
+  ) {
+    zoteroCheckBtn.disabled = true;
+    zoteroCheckBtn.textContent =
+      'Check Zotero — no unmatched items';
+  } else {
     zoteroCheckBtn.disabled = false;
     zoteroCheckBtn.textContent =
       'Check Zotero again';
   }
+}
 }
 
   // ── Status helpers ────────────────────────────────────────────────────────
@@ -557,6 +618,11 @@ showStatus('Checking SKB format rules…');
 
       hideStatus();
       renderResults(file.name, refEntries, inTextCites, report, formatIssues, paragraphs.length, refListStart, isSwedish);
+      /*
+Show the optional Zotero button after the normal analysis has
+completed and its results have been displayed.
+*/
+showZoteroButton(report);
     } catch (err) {
       hideStatus();
       results.innerHTML = `<div style="color:var(--color-kvot-accent);padding:16px;background:var(--bg-secondary);border:1px solid;border-color:var(--color-kvot-accent);border-radius:8px;">
@@ -567,28 +633,6 @@ showStatus('Checking SKB format rules…');
 
   function yieldToBrowser() { return new Promise(r => setTimeout(r, 0)); }
 
-  function withTimeout(
-  promise,
-  timeoutMilliseconds,
-  message
-) {
-  let timeoutId;
-
-  const timeoutPromise = new Promise(
-    (_, reject) => {
-      timeoutId = setTimeout(() => {
-        reject(new Error(message));
-      }, timeoutMilliseconds);
-    }
-  );
-
-  return Promise.race([
-    promise,
-    timeoutPromise
-  ]).finally(() => {
-    clearTimeout(timeoutId);
-  });
-}
 function withTimeout(
   promise,
   timeoutMilliseconds,
@@ -2547,7 +2591,7 @@ async function searchZoteroWithFallbacks(
   const queriesToRun = queries.slice(0, 2);
 
   for (const search of queriesToRun) {
-    showStatus(
+    showZoteroStatus(
       `Searching Zotero for ` +
       `“${truncate(search.query, 45)}”…`
     );
@@ -2690,7 +2734,7 @@ async function analyseAgainstZotero(
   ) {
     const citation = orphanCitesToCheck[index];
 
-    showStatus(
+    showZoteroStatus(
       `Searching Zotero for orphan citation ` +
       `${index + 1} of ${orphanCitesToCheck.length}: ` +
       `${truncate(citation.key, 35)}…`
@@ -2723,7 +2767,7 @@ async function analyseAgainstZotero(
   ) {
     const entry = uncitedRefsToCheck[index];
 
-    showStatus(
+    showZoteroStatus(
       `Searching Zotero for uncited reference ` +
       `${index + 1} of ${uncitedRefsToCheck.length}: ` +
       `${truncate(entry.key, 35)}…`
