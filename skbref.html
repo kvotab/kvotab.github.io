@@ -956,7 +956,7 @@ function extractAbbreviatedReferenceName(text) {
     the publication year.
   */
   const listMatch = text.match(
-    /^(.+),\s*((?:1[89]\d{2}|2\d{3})[a-z]?)\s*[.,]/
+    /^(.+),\s*((?:1[89]\d{2}|20\d{2})[a-z]?)\s*[.,]/
   );
 
   if (listMatch) {
@@ -1036,7 +1036,7 @@ function extractAbbreviatedReferenceName(text) {
       SKB 2019
   */
   const standardMatch = text.match(
-    /^([A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ-]+(?:\s+(?:et\s+al\.?|m\.fl\.?))?(?:,\s*[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ.]+)?)(?:,\s*|\s+)(\d{4}[a-z]?)/
+    /^([A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ-]+(?:\s+(?:et\s+al\.?|m\.fl\.?))?(?:,\s*[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ.]+)?)(?:,\s*|\s+)((?:1[89]\d{2}|20\d{2})[a-z]?)/
   );
 
   if (standardMatch) {
@@ -1209,18 +1209,7 @@ function collectReferenceAliases(entry) {
 }
 
   // ── Find in-text citations ────────────────────────────────────────────────
-  /*
-    Patterns detected:
-    Author-year: (Smith 2020)  Smith (2020)  Smith et al. (2020)  (Smith et al. 2020)
-                 (Smith & Jones 2020)  (Smith and Jones 2020)
-    SKB specific: SKB 2011  SKB (2011a)  SKB TR-10-48  (SKB 2011)  se SKB (2011)
-  */
-  // et_al pattern covers both English (et al.) and Swedish (m.fl.)
-  const ET_AL = '(?:et\\s+al\\.?|m\\.fl\\.?)';
-  const AUTHOR_YEAR_RE = new RegExp(`\\(\\s*([A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ\\-]+(?:\\s+(?:${ET_AL}|and|och|&)\\s+[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ\\-]+)?)\\s+(\\d{4}[a-z]?)(?:\\s*,\\s*(?:s\\.|pp?\\.)?\\ *\\d[–\\-\\d\\s]*)?\\)`, 'gi');
-  const AUTHOR_YEAR_INLINE_RE = new RegExp(`\\b([A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ\\-]+(?:\\s+${ET_AL})?)\\s+\\((\\d{4}[a-z]?)\\)`, 'gi');
-  const SKB_CITE_RE = /\bSKB\s+(?:\((\d{4}[a-z]?(?:[,\s]+\d{4}[a-z]?)*)\)|(\d{4}[a-z]?)(?:\s*,\s*\d{4}[a-z]?)*|([A-Z]{1,4}-\d{2}-\d+))/gi;
-
+  
   // Returns a 1–3 level heading number from a Word style name
   function headingLevel(style) {
     const m = style.match(/^(?:heading|rubrik|överskrift|berschrift|titre|t[iî]tulo)\s*([1-6])$/) ||
@@ -1353,8 +1342,9 @@ function findAbbreviatedNameCitations(
   abbreviatedReferences,
   out
 ) {
+  const normalizedText = String(text).normalize('NFC');
   for (const abbreviation of abbreviatedReferences) {
-    const name = abbreviation.key;
+    const name = abbreviation.key.normalize('NFC');   
 
     /*
       Permit ordinary flexible whitespace between words.
@@ -1388,7 +1378,7 @@ function findAbbreviatedNameCitations(
     let match;
 
     while (
-      (match = expression.exec(text)) !== null
+      (match = expression.exec(normalizedText)) !== null
     ) {
       out.push({
         key: name,
@@ -1412,24 +1402,6 @@ function findAbbreviatedNameCitations(
     }
   }
 }
-/*
-  A citation surname can optionally begin with one or more lowercase
-  surname particles.
-
-  Examples:
-    Smith
-    van Loon
-    von Schenck
-    de Vries
-    van der Meer
-    af Geijerstam
-  */
-const SURNAME_PARTICLE =
-  '(?:(?:van|von|de|del|della|der|den|di|da|dos|du|la|le|af)\\s+)*';
-
-const CITATION_SURNAME =
-  `${SURNAME_PARTICLE}` +
-  '[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ-]+';
 
 function findAuthorYearCitations(
   text,
@@ -1687,13 +1659,6 @@ function findAuthorYearCitations(
     });
   }
 }
-function normaliseCitationAuthor(author) {
-  return String(author)
-    .replace(/\s+/g, ' ')
-    .replace(/\bet\s+al\.?$/i, 'et al.')
-    .replace(/\bm\.fl\.?$/i, 'm.fl.')
-    .trim();
-}
 
 /*
   Normalise minor variations in author citation text.
@@ -1840,7 +1805,7 @@ function normaliseKey(key) {
     .replace(/\s*-\s*/g, '-')
     .replace(/[\s.,;:!?'"()\[\]{}]/g, '');
 }
-``
+
   function fuzzyMatch(a, b) {
     if (a.length < 4 || b.length < 4) return false;
     // Check if one contains the other or 80% overlap
@@ -1907,8 +1872,15 @@ function normaliseKey(key) {
       }
       // Check for at least something that looks like an author (capitalized last name before year)
       const hasAuthorLike = /[A-ZÅÄÖ][a-zåäö]+/.test(text.split(YEAR_IN_TEXT_RE)[0] || text);
-      if (!hasAuthorLike && !isUrlOnly) {
-        entryIssues.push({ issue: 'Author name not clearly identifiable', severity: 'warn' });
+      if (
+        !hasAuthorLike &&
+        !isUrlOnly &&
+          e.type !== 'abbreviated-name'
+        ) {
+        entryIssues.push({
+          issue: 'Author name not clearly identifiable',
+          severity: 'warn'
+        });
       }
 
       // Rule 4: Entry length (too short to have all needed info)
