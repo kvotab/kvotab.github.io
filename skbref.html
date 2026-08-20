@@ -316,6 +316,19 @@
         showStatus('Finding reference list…');
         await yieldToBrowser();
         const { refListParagraphs, bodyParagraphs, refListStart } = splitAtRefList(paragraphs);
+        console.info('Reference-list detection', {
+          totalParagraphCount: paragraphs.length,
+          refListStart,
+          referenceParagraphCount: refListParagraphs.length,
+          paragraphsAroundStart: paragraphs
+            .slice(Math.max(0, refListStart - 3), refListStart + 8)
+            .map((item, offset) => ({
+              index: Math.max(0, refListStart - 3) + offset,
+              style: item.style,
+              text: item.text
+            })),
+          firstReferenceParagraphs: refListParagraphs.slice(0, 8).map(item => item.text)
+        });
         setProgress(58);
         showStatus('Extracting references…');
         await yieldToBrowser();
@@ -403,7 +416,7 @@
       return text;
     }
 
-    const REF_HEADING_RE = /^\s*(?:\d[\d.]*\s+)?(?:references?|referenser|referenslista|litteratur|bibliography)\s*$/i;
+    const REF_HEADING_RE = /^[\s\u00a0]*(?:\d[\d.]*[\s\u00a0]+)?(?:references?|referenser|referenslista|litteratur|bibliography)[\s\u00a0]*[.:]?[\s\u00a0]*$/i;
     const INTERNAL_REF_HEADING_RE = /^\s*(?:References with abbreviated names|Other references)\s*[.:]?\s*$/i;
 
     function headingLevel(style) {
@@ -411,30 +424,167 @@
       return match ? Number(match[1]) : 0;
     }
 
-    function splitAtRefList(paragraphs) {
-      let start = paragraphs.findIndex((paragraph, index) =>
-        (headingLevel(paragraph.style) || paragraph.style.includes('heading') || paragraph.style === 'title') &&
-        REF_HEADING_RE.test(paragraph.text) &&
-        paragraphs.slice(index + 1, index + 6).map(item => item.text).join(' ').length > 10
-      );
-      if (start < 0) return { refListParagraphs: [], bodyParagraphs: paragraphs, refListStart: -1 };
-      let end = paragraphs.length;
-      const endRe = /^\s*(?:\d[\d.]*\s+)?(?:appendix|appendices|bilaga|bilagor|annex|glossary|ordlista|index)\b/i;
-      for (let index = start + 1; index < paragraphs.length; index++) {
-        const paragraph = paragraphs[index];
-        if (!paragraph.text || INTERNAL_REF_HEADING_RE.test(paragraph.text)) continue;
-        if (headingLevel(paragraph.style) || endRe.test(paragraph.text)) { end = index; break; }
-      }
-      return {
-        refListParagraphs: paragraphs.slice(start + 1, end),
-        bodyParagraphs: [...paragraphs.slice(0, start), ...paragraphs.slice(end)],
-        refListStart: start
-      };
+    function normaliseHeadingText(value) {
+      return String(value || '')
+        .normalize('NFC')
+        .replace(/[\u00a0\u2007\u202f]/g, ' ')
+        .replace(/[\u200b\u200c\u200d\ufeff]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
     }
 
     function extractAbbreviatedReferenceName(text) {
-      const match = String(text).match(/^\s*(.+?)\s*,\s*((?:1[89]\d{2}|20\d{2})[a-z]?)\s*[.]/);
-      return match && match[1].trim().length <= 200 ? match[1].replace(/\s+/g, ' ').trim() : null;
+      const match = normaliseHeadingText(text).match(
+        /^\s*(.+?)\s*,\s*((?:1[89]\d{2}|20\d{2})[a-z]?)\s*[.]/
+      );
+
+      if (!match) return null;
+
+      const abbreviatedName = match[1]
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      return abbreviatedName.length >= 2 && abbreviatedName.length <= 200
+        ? abbreviatedName
+        : null;
+    }
+
+    function splitAtRefList(paragraphs) {
+      const explicitEndRe = /^\s*(?:\d[\d.]*\s+)?(?:appendix|appendices|bilaga|bilagor|annex|glossary|ordlista|index)\b/i;
+
+      function findExplicitEnd(startIndex) {
+        for (let index = startIndex + 1; index < paragraphs.length; index++) {
+          const text = normaliseHeadingText(paragraphs[index].text);
+          if (text && explicitEndRe.test(text)) return index;
+        }
+        return paragraphs.length;
+      }
+
+      function countPlausibleReferences(startIndex, endIndex) {
+        let count = 0;
+        for (let index = startIndex + 1; index < endIndex; index++) {
+          const text = normaliseHeadingText(paragraphs[index].text);
+          if (!text || INTERNAL_REF_HEADING_RE.test(text) || isReferenceSectionNotice(text)) continue;
+          if (extractAbbreviatedReferenceName(text) || looksLikeRefStart(text)) count++;
+        }
+        return count;
+      }
+
+      /*
+        Build all useful anchors. In some DOCX files Word's XML order does
+        not match the visual order, particularly when text boxes or custom
+        layout containers are involved. Selecting only the first "References"
+        heading can therefore select a heading at the very end of document.xml.
+      */
+      const candidates = [];
+
+      for (let index = 0; index < paragraphs.length; index++) {
+        const text = normaliseHeadingText(paragraphs[index].text);
+
+        if (REF_HEADING_RE.test(text)) {
+          const end = findExplicitEnd(index);
+          candidates.push({
+            start: index,
+            end,
+            kind: 'main heading',
+            plausibleCount: countPlausibleReferences(index, end)
+          });
+        }
+
+        if (/^References with abbreviated names\s*[.:]?$/i.test(text)) {
+          const start = index - 1;
+          const end = findExplicitEnd(start);
+          candidates.push({
+            start,
+            end,
+            kind: 'abbreviated-references heading',
+            plausibleCount: countPlausibleReferences(start, end)
+          });
+        }
+
+        if (/^Other references\s*[.:]?$/i.test(text)) {
+          const start = index - 1;
+          const end = findExplicitEnd(start);
+          candidates.push({
+            start,
+            end,
+            kind: 'other-references heading',
+            plausibleCount: countPlausibleReferences(start, end)
+          });
+        }
+      }
+
+      /*
+        Prefer the anchor that actually has reference-like paragraphs after
+        it. This avoids choosing a visually correct but XML-last heading.
+      */
+      candidates.sort((first, second) =>
+        second.plausibleCount - first.plausibleCount ||
+        (second.end - second.start) - (first.end - first.start)
+      );
+
+      let selected = candidates.find(candidate => candidate.plausibleCount > 0) || null;
+
+      /* Ordinary author-year fallback if none of the headings yielded data. */
+      if (!selected) {
+        const scanFrom = Math.floor(paragraphs.length * 0.45);
+        for (let index = scanFrom; index < paragraphs.length; index++) {
+          const text = normaliseHeadingText(paragraphs[index].text);
+          if (!looksLikeRefStart(text) && !extractAbbreviatedReferenceName(text)) continue;
+
+          const end = findExplicitEnd(index - 1);
+          const plausibleCount = countPlausibleReferences(index - 1, end);
+          if (plausibleCount >= 3) {
+            selected = {
+              start: index - 1,
+              end,
+              kind: 'reference-pattern fallback',
+              plausibleCount
+            };
+            break;
+          }
+        }
+      }
+
+      if (!selected) {
+        console.warn('No reference-list anchor produced reference-like paragraphs.', {
+          paragraphCount: paragraphs.length,
+          candidates
+        });
+        return {
+          refListParagraphs: [],
+          bodyParagraphs: paragraphs,
+          refListStart: -1
+        };
+      }
+
+      const start = Math.max(-1, selected.start);
+      const end = Math.max(start + 1, selected.end);
+      const refListParagraphs = paragraphs.slice(start + 1, end);
+
+      console.info('Selected reference-list anchor', {
+        ...selected,
+        paragraphCount: paragraphs.length,
+        extractedParagraphCount: refListParagraphs.length,
+        firstExtractedParagraphs: refListParagraphs.slice(0, 8).map(item => item.text)
+      });
+
+      return {
+        refListParagraphs,
+        bodyParagraphs: [
+          ...paragraphs.slice(0, Math.max(0, start)),
+          ...paragraphs.slice(end)
+        ],
+        refListStart: Math.max(0, start)
+      };
+    }
+
+    function isReferenceSectionNotice(text) {
+      const normalized = normaliseHeadingText(text);
+      return (
+        /^SKB[’'\u2019]s?\s*\(Svensk Kärnbränslehantering AB\) publications can be found at/i.test(normalized) ||
+        /^SKBdoc documents will be submitted upon request/i.test(normalized)
+      );
     }
 
     function extractRefEntries(paragraphs) {
@@ -457,6 +607,7 @@
         const text = paragraph.text.trim();
         if (/^\s*References with abbreviated names\s*[.:]?\s*$/i.test(text)) { finish(); abbreviated = true; continue; }
         if (/^\s*Other references\s*[.:]?\s*$/i.test(text)) { finish(); abbreviated = false; continue; }
+        if (isReferenceSectionNotice(text)) { finish(); continue; }
         if (!text) { finish(); continue; }
         const number = text.match(/^(?:\[(\d+)\]|(\d+)[.)\s]\s)/);
         if (number || (paragraph.numId && paragraph.numId !== '0')) {
