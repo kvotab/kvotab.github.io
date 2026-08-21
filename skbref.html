@@ -1673,6 +1673,10 @@
 
     function extractAuthorYearKey(text) {
       /*
+        Editor suffixes are part of the citation key. For example,
+        "Aquilonius(ed) K, 2010" produces "Aquilonius(ed) 2010".
+      */
+      /*
         Accept both the normal form "Authors, 2022. Title" and the common
         punctuation error "Authors, 2022 Title". Without this fallback, a
         reference missing the period after its year is treated as continuation
@@ -1691,7 +1695,7 @@
         if (surnames.length === 2) return `${surnames[0]} and ${surnames[1]} ${list[2]}`;
         if (surnames.length > 2) return `${surnames[0]} et al. ${list[2]}`;
       }
-      const simple = text.match(/^([A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ-]+(?:\s+(?:et\s+al\.?|m\.fl\.?))?(?:,\s*[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ.]+)?)(?:,\s*|\s+)((?:1[89]\d{2}|20\d{2})[a-z]?)/);
+      const simple = text.match(/^([A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ-]+(?:\s*\(ed\))?(?:\s+(?:et\s+al\.?|m\.fl\.?))?(?:,\s*[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ.]+)?)(?:,\s*|\s+)((?:1[89]\d{2}|20\d{2})[a-z]?)/i);
       return simple ? `${simple[1]} ${simple[2]}` : null;
     }
 
@@ -1735,32 +1739,176 @@
       });
     }
 
-    function findAuthorYearCitations(paragraph, out) {
-      const year = '(?:1[89]\\d{2}|20\\d{2})[a-z]?';
-      const surname = '(?:(?:van|von|de|del|della|der|den|di|da|dos|du|la|le|af)\\s+)*[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-Þà-öø-ÿ-]+';
-      const author = `(?:[A-ZÅÄÖ]{2,}|${surname})(?:\\s+(?:et\\s+al\\.?|m\\.fl\\.?))?(?:\\s+(?:and|och|&)\\s+(?:[A-ZÅÄÖ]{2,}|${surname}))?`;
-      for (const group of paragraph.text.matchAll(/\(([^()]*)\)/g)) {
-        let previous = null;
-        for (const part of group[1].split(/\s*[,;]\s*/).map(item => item.trim()).filter(Boolean)) {
-          const match = part.match(new RegExp(`(?:^|[^A-Za-zÀ-ÖØ-Þà-öø-ÿ])(${author})\\s+(${year})(?=$|[^A-Za-zÀ-ÖØ-Þà-öø-ÿ0-9])`));
-          if (match) {
-            const normalizedAuthor = normaliseCitationAuthor(match[1]);
-            previous = normalizedAuthor;
-            if (normalizedAuthor.toUpperCase() !== 'SKB') out.push(makeCitation(`${normalizedAuthor} ${match[2]}`, paragraph, 'author-year', normalizedAuthor, match[2]));
-          } else if (previous && new RegExp(`^${year}$`).test(part) && previous.toUpperCase() !== 'SKB') {
-            out.push(makeCitation(`${previous} ${part}`, paragraph, 'author-year', previous, part));
+    function extractCitationParentheticalGroups(text) {
+      const groups = [];
+      let depth = 0;
+      let groupStart = -1;
+
+      for (let index = 0; index < text.length; index++) {
+        const character = text[index];
+
+        if (character === '(') {
+          if (depth === 0) groupStart = index;
+          depth++;
+          continue;
+        }
+
+        if (character === ')' && depth > 0) {
+          depth--;
+
+          if (depth === 0 && groupStart >= 0) {
+            groups.push({
+              raw: text.slice(groupStart, index + 1),
+              content: text.slice(groupStart + 1, index),
+              start: groupStart,
+              end: index + 1
+            });
+            groupStart = -1;
           }
         }
       }
-      const inline = new RegExp(`(?:^|[^A-Za-zÀ-ÖØ-Þà-öø-ÿ])(${author})\\s+\\((${year})(?:\\s*,\\s*[^()]*)?\\)`, 'g');
-      let match;
-      while ((match = inline.exec(paragraph.text))) {
-        const normalizedAuthor = normaliseCitationAuthor(match[1]);
-        if (normalizedAuthor.toUpperCase() !== 'SKB') out.push(makeCitation(`${normalizedAuthor} ${match[2]}`, paragraph, 'author-year', normalizedAuthor, match[2]));
+
+      return groups;
+    }
+
+    function findAuthorYearCitations(paragraph, out) {
+      const publicationYear = '(?:1[89]\\d{2}|20\\d{2})[a-z]?';
+      const surname = "(?:[\\p{L}][\\p{L}'’\\-]{0,40})(?:\\s+[\\p{L}][\\p{L}'’\\-]{0,40})*(?:\\s*\\(ed\\))?";
+      const organisation = '[A-ZÅÄÖ]{2,}';
+
+      function citationAuthorFromText(authorText) {
+        const cleaned = String(authorText)
+          .replace(/^\s*(?:see|e\.g\.|cf\.)\s+/i, '')
+          .replace(/\s+/g, ' ')
+          .replace(/[,;]\s*$/, '')
+          .trim();
+
+        if (!cleaned) return null;
+
+        const etAlMatch = cleaned.match(
+          /^(.+?)\s+(?:et\s+al\.?|m\.fl\.?)$/i
+        );
+        if (etAlMatch) {
+          return `${etAlMatch[1].trim()} et al.`;
+        }
+
+        /*
+          Citation styles sometimes write all authors inside parentheses:
+          (Lidman, Boily, Laudon, & Köhler, 2017). The reference-list key is
+          first-author + et al., so convert lists of three or more authors.
+        */
+        const listedAuthors = cleaned
+          .replace(/,?\s*&\s*/g, ', ')
+          .split(/\s*,\s*/)
+          .map(value => value.trim())
+          .filter(Boolean);
+
+        if (listedAuthors.length >= 3) {
+          return `${listedAuthors[0]} et al.`;
+        }
+
+        if (listedAuthors.length === 2) {
+          return `${listedAuthors[0]} and ${listedAuthors[1]}`;
+        }
+
+        return cleaned
+          .replace(/\s*\(ed\)\s*/gi, '(ed) ')
+          .replace(/\s*&\s*/g, ' and ')
+          .replace(/\s+och\s+/gi, ' and ')
+          .replace(/\s+/g, ' ')
+          .trim();
+      }
+
+      function addCitation(authorText, year, raw) {
+        const author = citationAuthorFromText(authorText);
+        if (!author || author.toUpperCase() === 'SKB') return;
+
+        out.push({
+          ...makeCitation(`${author} ${year}`, paragraph, 'author-year', author, year),
+          raw
+        });
+      }
+
+      /*
+        Parenthetical citations in the supplied document use comma style:
+        (Grolander et al., 2024), (SSM, 2008), and semicolon-separated groups.
+        A balanced-parentheses scanner is required because editor suffixes such
+        as Aquilonius(ed) introduce nested parentheses inside the citation.
+        The old parser split at every comma, separating authors from years and
+        therefore finding no citations.
+      */
+      for (const groupMatch of extractCitationParentheticalGroups(paragraph.text)) {
+        const group = groupMatch.content;
+        const citationParts = group.split(/\s*;\s*/).filter(Boolean);
+
+        for (const citationPart of citationParts) {
+          const firstYearMatch = citationPart.match(
+            new RegExp(`(?:^|,\\s*|\\s+)(${publicationYear})(?=$|[,\\s])`, 'iu')
+          );
+          if (!firstYearMatch) continue;
+
+          const authorText = citationPart
+            .slice(0, firstYearMatch.index)
+            .replace(/[,\s]+$/, '')
+            .trim();
+
+          if (!authorText) continue;
+
+          const firstYear = firstYearMatch[1];
+          addCitation(authorText, firstYear, citationPart.trim());
+
+          /* Handle repeated years and suffix shorthand: (SKB, 2008, 2009)
+             and (SSM, 2021a, b) -> 2021a and 2021b. */
+          const remainder = citationPart.slice(
+            firstYearMatch.index + firstYearMatch[0].length
+          );
+          const baseYear = firstYear.slice(0, 4);
+
+          for (const extra of remainder.split(/\s*,\s*/).map(v => v.trim()).filter(Boolean)) {
+            if (new RegExp(`^${publicationYear}$`, 'i').test(extra)) {
+              addCitation(authorText, extra, citationPart.trim());
+            } else if (/^[a-z]$/i.test(extra)) {
+              addCitation(authorText, `${baseYear}${extra.toLowerCase()}`, citationPart.trim());
+            }
+          }
+        }
+      }
+
+      /* Narrative citations: Grolander et al. (2024), Smith and Jones (2020). */
+      const narrativeAuthor = `(?:${organisation}|${surname})(?:\\s+(?:et\\s+al\\.?|m\\.fl\\.?))?(?:\\s+(?:and|och|&)\\s+(?:${organisation}|${surname}))?`;
+      const narrativeExpression = new RegExp(
+        `(?:^|[^\\p{L}])(${narrativeAuthor})\\s*\\((${publicationYear})(?:\\s*,\\s*[^()]*)?\\)`,
+        'gu'
+      );
+
+      let narrativeMatch;
+      while ((narrativeMatch = narrativeExpression.exec(paragraph.text)) !== null) {
+        addCitation(
+          narrativeMatch[1],
+          narrativeMatch[2],
+          `${narrativeMatch[1]} (${narrativeMatch[2]})`
+        );
       }
     }
 
     function findSkbCitations(paragraph, out) {
+      /* Parenthetical author-year form used throughout Swedish documents:
+         (SKB, 2014), (SKB, 2008, 2009), and (SKB, 2021a, b). */
+      const parentheticalSkb = /\(\s*SKB\s*,\s*((?:1[89]\d{2}|20\d{2})[a-z]?)([^()]*)\)/gi;
+      let parentheticalMatch;
+      while ((parentheticalMatch = parentheticalSkb.exec(paragraph.text)) !== null) {
+        const firstYear = parentheticalMatch[1];
+        out.push(makeCitation(`SKB ${firstYear}`, paragraph, 'skb-year'));
+        const baseYear = firstYear.slice(0, 4);
+        for (const extra of parentheticalMatch[2].split(/\s*,\s*/).map(value => value.trim()).filter(Boolean)) {
+          if (/^(?:1[89]\d{2}|20\d{2})[a-z]?$/.test(extra)) {
+            out.push(makeCitation(`SKB ${extra}`, paragraph, 'skb-year'));
+          } else if (/^[a-z]$/i.test(extra)) {
+            out.push(makeCitation(`SKB ${baseYear}${extra.toLowerCase()}`, paragraph, 'skb-year'));
+          }
+        }
+      }
+
       const regex = /\bSKB\s+(?:\(((?:1[89]\d{2}|20\d{2})[a-z]?(?:[,\s]+(?:1[89]\d{2}|20\d{2})[a-z]?)*)\)|((?:1[89]\d{2}|20\d{2})[a-z]?)|((?:TR|R|P|IPR|RD|SR|TM|U|F)-\d{2,}-\d+))/gi;
       let match;
       while ((match = regex.exec(normaliseDashes(paragraph.text)))) {
@@ -2164,12 +2312,18 @@
       let matchedAuthors = 0;
 
       for (const documentAuthor of documentAuthors) {
+        const comparableDocumentAuthor = documentAuthor
+          .replace(/\s*\(ed\)\s*/gi, '')
+          .trim();
         let bestIndex = -1;
         let bestSimilarity = 0;
 
         for (let index = 0; index < zoteroAuthors.length; index++) {
           if (usedZoteroIndexes.has(index)) continue;
-          const similarity = stringSimilarity(documentAuthor, zoteroAuthors[index]);
+          const similarity = stringSimilarity(
+            comparableDocumentAuthor,
+            zoteroAuthors[index].replace(/\s*\(ed\)\s*/gi, '').trim()
+          );
           if (similarity > bestSimilarity) {
             bestSimilarity = similarity;
             bestIndex = index;
