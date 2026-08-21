@@ -1672,7 +1672,15 @@
     function looksLikeRefStart(text) { return Boolean(extractSkbReportKey(text, true) || extractAuthorYearKey(text)); }
 
     function extractAuthorYearKey(text) {
-      const list = text.match(/^(.+),\s*((?:1[89]\d{2}|20\d{2})[a-z]?)\s*[.,]/);
+      /*
+        Accept both the normal form "Authors, 2022. Title" and the common
+        punctuation error "Authors, 2022 Title". Without this fallback, a
+        reference missing the period after its year is treated as continuation
+        text and gets merged into the preceding reference.
+      */
+      const list = text.match(
+        /^(.+),\s*((?:1[89]\d{2}|20\d{2})[a-z]?)(?=\s*[.,]|\s+[A-ZÅÄÖÀ-ÖØ-Þ])/u
+      );
       if (list) {
         const surnames = list[1].split(',').map(part => part.trim().split(/\s+/)).map(words => {
           let removed = false;
@@ -1814,6 +1822,13 @@
       for (const entry of entries) {
         const text = entry.body;
         if (!YEAR_RE.test(text)) issues.push({ key: entry.key, issue: 'No year detected in reference', severity: 'warn' });
+        if (/^.+,\s*(?:1[89]\d{2}|20\d{2})[a-z]?\s+[A-ZÅÄÖÀ-ÖØ-Þ]/u.test(text)) {
+          issues.push({
+            key: entry.key,
+            issue: 'Missing period after publication year',
+            severity: 'warn'
+          });
+        }
         if (text.length < 30) issues.push({ key: entry.key, issue: 'Entry seems too short — likely incomplete', severity: 'warn' });
         if (/^https?:\/\//.test(text)) issues.push({ key: entry.key, issue: 'URL-only reference; add author, title, and access date', severity: 'error' });
         if (/https?:\/\//.test(text) && !/(?:accessed|hämtad|hämtat|visited|retrieved|besökt)\s/i.test(text)) issues.push({ key: entry.key, issue: 'URL present but no access date', severity: 'warn' });
@@ -2024,7 +2039,7 @@
         <div class="zotero-candidate">
           <div class="zotero-candidate-head">
             <div class="zotero-candidate-title">${escHtml(candidate.title || '(untitled Zotero item)')}</div>
-            <span class="zotero-probability">${candidate.score}%</span>
+            <span class="zotero-probability" title="Match confidence based on title, complete author list, year, and Report Number">${candidate.score}% confidence</span>
           </div>
           <div>${escHtml(candidate.authors.join(', ') || 'No creator recorded')} · ${escHtml(candidate.year || 'No year')}</div>
           ${candidate.reportKey ? `<div>Report Number: ${escHtml(candidate.reportKey)}</div>` : ''}
@@ -2082,8 +2097,8 @@
     function getDocumentReferenceTitle(entry) {
       return String(entry.body || '')
         .replace(/^\s*SKB\s+(?:TR|R|P|IPR|RD|SR|TM|U|F)-\d{2,}-\d+\s*[.,]?\s*/i, '')
-        .replace(/^.+?,\s*(?:1[89]\d{2}|20\d{2})[a-z]?\s*[.]\s*/, '')
-        .replace(/^.+?\s+(?:1[89]\d{2}|20\d{2})[a-z]?\s*[.]\s*/, '')
+        .replace(/^.+?,\s*(?:1[89]\d{2}|20\d{2})[a-z]?\s*(?:[.]\s*|(?=[A-ZÅÄÖÀ-ÖØ-Þ]))/u, '')
+        .replace(/^.+?\s+(?:1[89]\d{2}|20\d{2})[a-z]?\s*(?:[.]\s*|(?=[A-ZÅÄÖÀ-ÖØ-Þ]))/u, '')
         .split(/\.\s+/)[0]
         .trim();
     }
@@ -2122,43 +2137,127 @@
       return { score: Math.min(score, 100), reasons };
     }
 
+    function getDocumentReferenceAuthors(entry) {
+      const text = String(entry.body || '');
+      const authorBlockMatch = text.match(
+        /^(.+),\s*(?:1[89]\d{2}|20\d{2})[a-z]?(?=\s*[.]|\s+[A-ZÅÄÖÀ-ÖØ-Þ])/u
+      );
+
+      if (!authorBlockMatch) return [];
+
+      return authorBlockMatch[1]
+        .split(',')
+        .map(author => {
+          const words = author.trim().split(/\s+/).filter(Boolean);
+          while (words.length > 1 && isAuthorInitial(words.at(-1))) {
+            words.pop();
+          }
+          return words.join(' ').trim();
+        })
+        .filter(Boolean);
+    }
+
+    function authorListSimilarity(documentAuthors, zoteroAuthors) {
+      if (!documentAuthors.length || !zoteroAuthors.length) return 0;
+
+      const usedZoteroIndexes = new Set();
+      let matchedAuthors = 0;
+
+      for (const documentAuthor of documentAuthors) {
+        let bestIndex = -1;
+        let bestSimilarity = 0;
+
+        for (let index = 0; index < zoteroAuthors.length; index++) {
+          if (usedZoteroIndexes.has(index)) continue;
+          const similarity = stringSimilarity(documentAuthor, zoteroAuthors[index]);
+          if (similarity > bestSimilarity) {
+            bestSimilarity = similarity;
+            bestIndex = index;
+          }
+        }
+
+        if (bestIndex >= 0 && bestSimilarity >= .88) {
+          usedZoteroIndexes.add(bestIndex);
+          matchedAuthors++;
+        }
+      }
+
+      const precision = matchedAuthors / zoteroAuthors.length;
+      const recall = matchedAuthors / documentAuthors.length;
+      return precision + recall > 0
+        ? (2 * precision * recall) / (precision + recall)
+        : 0;
+    }
+
     function scoreDocumentReferenceAgainstZotero(entry, candidate) {
-      let score = 0;
       const reasons = [];
-      const aliases = new Set((entry.aliases || [entry.key]).map(normaliseKey));
-
-      if (candidate.normalizedAliases.some(alias => aliases.has(alias))) {
-        score += 65;
-        reasons.push('exact reference alias');
-      }
-
       const documentReport = getDocumentReferenceReportKey(entry);
-      if (documentReport && candidate.reportKey && normaliseKey(documentReport) === normaliseKey(candidate.reportKey)) {
-        score += 75;
-        reasons.push('exact SKB report number');
-      }
 
-      const documentYear = getDocumentReferenceYear(entry);
-      if (documentYear && candidate.year && documentYear.toLowerCase() === candidate.year.toLowerCase()) {
-        score += 10;
-        reasons.push('same year');
+      /*
+        An exact Report Number is a true identifier and may stand on its own.
+      */
+      if (
+        documentReport &&
+        candidate.reportKey &&
+        normaliseKey(documentReport) === normaliseKey(candidate.reportKey)
+      ) {
+        return {
+          score: 100,
+          reasons: ['exact SKB report number']
+        };
       }
 
       const documentTitle = getDocumentReferenceTitle(entry);
       const titleScore = titleSimilarity(documentTitle, candidate.title);
-      if (titleScore >= .9) { score += 45; reasons.push('near-exact title'); }
-      else if (titleScore >= .75) { score += 38; reasons.push('very similar title'); }
-      else if (titleScore >= .55) { score += 28; reasons.push('similar title'); }
-      else if (zoteroFuzzyMatch.checked && titleScore >= .35) { score += 18; reasons.push('partly similar title'); }
+      const documentYear = getDocumentReferenceYear(entry);
+      const sameYear = Boolean(
+        documentYear &&
+        candidate.year &&
+        documentYear.toLowerCase() === candidate.year.toLowerCase()
+      );
+      const documentAuthors = getDocumentReferenceAuthors(entry);
+      const authorsScore = authorListSimilarity(documentAuthors, candidate.authors);
 
-      const documentFirstAuthor = extractFirstAuthorSurname(entry.body, extractAuthorYearKey(entry.body) || entry.key);
-      if (documentFirstAuthor && candidate.authors.length) {
-        const authorScore = stringSimilarity(documentFirstAuthor, candidate.authors[0]);
-        if (authorScore >= .92) { score += 30; reasons.push('same first author'); }
-        else if (zoteroFuzzyMatch.checked && authorScore >= .72) { score += 18; reasons.push('similar first author'); }
-      }
+      /*
+        Title is the main identity check. An author-year alias such as
+        "Abarca et al. 2016" is not unique and must never be treated as an
+        exact reference match by itself.
+      */
+      if (titleScore >= .9) reasons.push('near-exact title');
+      else if (titleScore >= .75) reasons.push('very similar title');
+      else if (titleScore >= .55) reasons.push('similar title');
+      else if (titleScore >= .35) reasons.push('partly similar title');
+      else reasons.push('different title');
 
-      return { score: Math.min(score, 100), reasons };
+      if (authorsScore >= .95) reasons.push('same author list');
+      else if (authorsScore >= .7) reasons.push('mostly same authors');
+      else if (authorsScore >= .4) reasons.push('some shared authors');
+      else if (documentAuthors.length && candidate.authors.length) reasons.push('different author list');
+
+      if (sameYear) reasons.push('same year');
+
+      /*
+        Weighted evidence: title 55%, complete author-list agreement 30%,
+        and year 15%. This is a ranking confidence, not a statistical
+        probability derived from a trained model.
+      */
+      let score = Math.round(
+        titleScore * 55 +
+        authorsScore * 30 +
+        (sameYear ? 15 : 0)
+      );
+
+      /*
+        A substantially different title cannot be a high-confidence match,
+        even if the first author and year happen to agree.
+      */
+      if (titleScore < .2) score = Math.min(score, 35);
+      else if (titleScore < .35) score = Math.min(score, 49);
+
+      return {
+        score: Math.min(score, 100),
+        reasons
+      };
     }
 
     function downloadAnalysisReport() {
