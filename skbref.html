@@ -2978,12 +2978,45 @@ ${exportedResults.innerHTML}
           }
         }
 
-        /* High-confidence mathematical spacing checks. */
-        for (const match of text.matchAll(/\d(?:[+−=×±<>]|-(?=\d))\d/g)) {
+        /*
+          High-confidence mathematical spacing checks.
+          Hyphenated identifiers and internal cross-references such as
+          Figure 1-1, Table 2-3, Section 4-2, SKB TR-10-02, SFR1, and
+          document numbers are not mathematical subtraction expressions.
+          A plain hyphen is therefore checked separately and only in a
+          mathematical-looking context.
+        */
+        const mathematicalOperatorExpression = /\d(?:[+−=×±<>])\d/g;
+        for (const match of text.matchAll(mathematicalOperatorExpression)) {
           issues.push(makeOfficialIssue({
             match: match[0],
-            description: 'Mathematical binary operators and relation signs should be surrounded by spaces. Use a true minus sign for subtraction.',
+            description: 'Mathematical binary operators and relation signs should be surrounded by spaces.',
             source: 'technical', paragraph
+          }));
+        }
+
+        const subtractionExpression = /(?<![\p{L}\d])[-+−]?\d+(?:[.,]\d+)?-[-+−]?\d+(?:[.,]\d+)?(?![\p{L}\d-])/gu;
+        for (const match of text.matchAll(subtractionExpression)) {
+          const before = text.slice(Math.max(0, match.index - 28), match.index);
+          const after = text.slice(match.index + match[0].length, match.index + match[0].length + 28);
+          const surrounding = `${before}${match[0]}${after}`;
+
+          const isCrossReference = /(?:Figure|Figur|Table|Tabell|Section|Avsnitt|Chapter|Kapitel|Appendix|Bilaga|Equation|Ekvation)\s*$/i.test(before);
+          const isIdentifier = /(?:SKB|SFR|SFL|Clab|SSMFS|SFS|ISO|IEC|EN|TR|R|P|IPR|RD|SR|TM|U|F|SKBdoc|document(?:\s+id)?|dokument(?:\s+id)?)\s*-?\s*$/i.test(before);
+          const isRangeContext = /(?:range|interval|between|from|to|through|years?|pages?|samples?|temperatures?|sections?|figures?|tables?)\s*$/i.test(before) || /^\s*(?:years?|pages?|samples?|°C|K|kg|m|mm|cm|km|s|min|h|%|‰)\b/i.test(after);
+
+          const tokenStart = Math.max(0, match.index - 14);
+          const tokenEnd = Math.min(text.length, match.index + match[0].length + 2);
+          const tokenContext = text.slice(tokenStart, tokenEnd);
+          const isReportNumber = /(?:^|[^A-Za-z0-9])(?:SKB\s+)?(?:TR|R|P|IPR|RD|SR|TM|U|F)-\d{2,}-\d+(?=$|[^A-Za-z0-9])/i.test(tokenContext);
+
+          if (isCrossReference || isIdentifier || isRangeContext || isReportNumber) continue;
+
+          issues.push(makeOfficialIssue({
+            match: match[0],
+            description: 'Possible subtraction written with a hyphen. Use a true minus sign and surround a binary subtraction operator with spaces. If this is an identifier or range, review it manually.',
+            source: 'technical', paragraph,
+            context: surrounding
           }));
         }
       }
