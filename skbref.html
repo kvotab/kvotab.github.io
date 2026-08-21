@@ -1954,14 +1954,60 @@
       const surname = "(?:[\\p{L}][\\p{L}'’\\-]{0,40})(?:\\s+[\\p{L}][\\p{L}'’\\-]{0,40})*(?:\\s*\\(ed\\))?";
       const organisation = '[A-ZÅÄÖ]{2,}';
 
+      function extractCitationAuthorCandidate(prefixText) {
+        let candidate = String(prefixText || '')
+          .replace(/[,;\s]+$/, '')
+          .trim()
+          .replace(/^(?:e\.g\.|cf\.|see)\s+/iu, '');
+
+        if (!candidate) return null;
+
+        /*
+          If explanatory prose precedes a citation inside the same pair of
+          parentheses, keep only the text after the final citation-introducing
+          boundary. Example: "cases 1, 11, and 15 in Öhman and Odén 2018"
+          gives "Öhman and Odén", not "cases 1 et al.".
+        */
+        const boundaries = [
+          /\b(?:in|by|from|see|cf\.|according to|reported by|described by)\s+([^;]+)$/iu
+        ];
+        for (const boundary of boundaries) {
+          const boundaryMatch = candidate.match(boundary);
+          if (boundaryMatch) candidate = boundaryMatch[1].trim();
+        }
+
+        /* Colons, digits and sentence punctuation indicate ordinary prose,
+           not an author or institutional-author expression. */
+        if (/[:!?]/u.test(candidate) || /\d/u.test(candidate)) return null;
+        if (/\.(?!\s*(?:al|fl)\.?\s*$)/iu.test(candidate.replace(/\bet\s+al\.?$/iu, '').replace(/\bm\.fl\.?$/iu, ''))) return null;
+
+        const nameParticle = '(?:van|von|de|del|della|der|den|di|da|dos|du|la|le|af)';
+        const surnameWord = "[\\p{Lu}][\\p{L}'’\\-]{0,40}";
+        const surname = `(?:(?:${nameParticle})\\s+)*${surnameWord}(?:\\s+${surnameWord})*`;
+        const organisation = '[A-ZÅÄÖ]{2,}(?:-[A-ZÅÄÖ]{2,})?';
+        const editorSuffix = '(?:\\s*\\(ed\\))?';
+        const initials = '(?:\\s+[A-ZÅÄÖ](?:-[A-ZÅÄÖ])?){0,3}';
+        const oneAuthor = `(?:${organisation}|${surname})${editorSuffix}${initials}`;
+        const etAl = `${oneAuthor}\\s+(?:et\\s+al\\.?|m\\.fl\\.?)`;
+        const twoAuthors = `${oneAuthor}\\s+(?:and|och|&)\\s+${oneAuthor}`;
+        const commaAuthors = `${oneAuthor}(?:\\s*,\\s*${oneAuthor}){1,}`;
+        const validAuthorExpression = new RegExp(
+          `^(?:${etAl}|${twoAuthors}|${commaAuthors}|${oneAuthor})$`,
+          'u'
+        );
+
+        return validAuthorExpression.test(candidate) ? candidate : null;
+      }
+
       function citationAuthorFromText(authorText) {
-        const cleaned = String(authorText)
+        const candidate = extractCitationAuthorCandidate(authorText);
+        if (!candidate) return null;
+
+        const cleaned = candidate
           .replace(/^\s*(?:see|e\.g\.|cf\.)\s+/i, '')
           .replace(/\s+/g, ' ')
           .replace(/[,;]\s*$/, '')
           .trim();
-
-        if (!cleaned) return null;
 
         const etAlMatch = cleaned.match(
           /^(.+?)\s+(?:et\s+al\.?|m\.fl\.?)$/i
@@ -2017,38 +2063,98 @@
       */
       for (const groupMatch of extractCitationParentheticalGroups(paragraph.text)) {
         const group = groupMatch.content;
-        const citationParts = group.split(/\s*;\s*/).filter(Boolean);
+        const yearExpression = new RegExp(publicationYear, 'giu');
+        const years = [...group.matchAll(yearExpression)];
+        let previousAuthorText = null;
+        let previousYearEnd = 0;
 
-        for (const citationPart of citationParts) {
-          const firstYearMatch = citationPart.match(
-            new RegExp(`(?:^|,\\s*|\\s+)(${publicationYear})(?=$|[,\\s])`, 'iu')
-          );
-          if (!firstYearMatch) continue;
+        for (const yearMatch of years) {
+          const year = yearMatch[0];
+          const yearStart = yearMatch.index;
+          const textBeforeYear = group.slice(0, yearStart);
 
-          const authorText = citationPart
-            .slice(0, firstYearMatch.index)
-            .replace(/[,\s]+$/, '')
-            .trim();
+          /*
+            Try every comma/semicolon boundary before this year. The earliest
+            valid candidate preserves full author lists, while later boundaries
+            allow a new citation after repeated years, for example:
+            Bergman et al. 1977, 1979, Bergström 1983.
+          */
+          const candidateStarts = [0];
+          for (const delimiter of textBeforeYear.matchAll(/[,;]\s*/g)) {
+            candidateStarts.push(delimiter.index + delimiter[0].length);
+          }
 
-          if (!authorText) continue;
-
-          const firstYear = firstYearMatch[1];
-          addCitation(authorText, firstYear, citationPart.trim());
-
-          /* Handle repeated years and suffix shorthand: (SKB, 2008, 2009)
-             and (SSM, 2021a, b) -> 2021a and 2021b. */
-          const remainder = citationPart.slice(
-            firstYearMatch.index + firstYearMatch[0].length
-          );
-          const baseYear = firstYear.slice(0, 4);
-
-          for (const extra of remainder.split(/\s*,\s*/).map(v => v.trim()).filter(Boolean)) {
-            if (new RegExp(`^${publicationYear}$`, 'i').test(extra)) {
-              addCitation(authorText, extra, citationPart.trim());
-            } else if (/^[a-z]$/i.test(extra)) {
-              addCitation(authorText, `${baseYear}${extra.toLowerCase()}`, citationPart.trim());
+          let authorText = null;
+          for (const candidateStart of candidateStarts) {
+            const candidate = textBeforeYear.slice(candidateStart).trim();
+            if (extractCitationAuthorCandidate(candidate)) {
+              authorText = candidate;
+              break;
             }
           }
+
+          /* A bare subsequent year inherits the preceding author. */
+          if (!authorText && previousAuthorText) {
+            const betweenYears = group.slice(previousYearEnd, yearStart);
+            if (/^[\s,]*$/.test(betweenYears)) {
+              authorText = previousAuthorText;
+            }
+          }
+
+          if (authorText) {
+            addCitation(authorText, year, group.trim());
+            previousAuthorText = authorText;
+          }
+
+          previousYearEnd = yearStart + year.length;
+        }
+
+        /* Suffix shorthand: (SSM 2021a, b) -> SSM 2021a and SSM 2021b. */
+        if (previousAuthorText && years.length) {
+          const lastYear = years.at(-1)[0];
+          const suffixTail = group.slice(years.at(-1).index + lastYear.length);
+          const baseYear = lastYear.slice(0, 4);
+          for (const suffix of suffixTail.matchAll(/,\s*([a-z])(?=\s*(?:,|$))/gi)) {
+            addCitation(previousAuthorText, `${baseYear}${suffix[1].toLowerCase()}`, group.trim());
+          }
+        }
+      }
+
+      /*
+        Direct narrative citations with a single surname are handled first.
+        This deliberately simple pass catches constructions such as
+        "based on Crawford (2018)" without trying to interpret the preceding
+        prose as part of the author name.
+      */
+      const directNarrativeExpression = /(?:^|[^\p{L}'’\-])((?:(?:van|von|de|del|della|der|den|di|da|dos|du|la|le|af)\s+)*[\p{Lu}][\p{L}'’\-]{0,40}(?:\s*\(ed\))?)\s*\(((?:1[89]\d{2}|20\d{2})[a-z]?)\)/gu;
+      let directNarrativeMatch;
+      while ((directNarrativeMatch = directNarrativeExpression.exec(paragraph.text)) !== null) {
+        addCitation(
+          directNarrativeMatch[1],
+          directNarrativeMatch[2],
+          `${directNarrativeMatch[1]} (${directNarrativeMatch[2]})`
+        );
+      }
+
+      /*
+        Narrative citations can contain several years inside one pair of
+        parentheses, for example Vidstrand et al. (2013, 2014b). Extract the
+        author once and create one citation for every full year listed.
+      */
+      const multiYearNarrativeExpression = /(?:^|[^\p{L}'’\-])((?:(?:van|von|de|del|della|der|den|di|da|dos|du|la|le|af)\s+)*[\p{Lu}][\p{L}'’\-]{0,40}(?:\s*\(ed\))?(?:\s+(?:et\s+al\.?|m\.fl\.?))?|(?:(?:van|von|de|del|della|der|den|di|da|dos|du|la|le|af)\s+)*[\p{Lu}][\p{L}'’\-]{0,40}\s+(?:and|och|&)\s+(?:(?:van|von|de|del|della|der|den|di|da|dos|du|la|le|af)\s+)*[\p{Lu}][\p{L}'’\-]{0,40})\s*\(((?:1[89]\d{2}|20\d{2})[a-z]?(?:\s*,\s*(?:1[89]\d{2}|20\d{2})[a-z]?)+)\)/gu;
+      let multiYearNarrativeMatch;
+      while ((multiYearNarrativeMatch = multiYearNarrativeExpression.exec(paragraph.text)) !== null) {
+        const authorText = multiYearNarrativeMatch[1];
+        const years = multiYearNarrativeMatch[2]
+          .split(/\s*,\s*/)
+          .filter(Boolean);
+
+        for (const year of years) {
+          addCitation(
+            authorText,
+            year,
+            `${authorText} (${multiYearNarrativeMatch[2]})`
+          );
         }
       }
 
@@ -2070,6 +2176,13 @@
     }
 
     function findSkbCitations(paragraph, out) {
+      /* Report-number form with the report number in parentheses after SKB. */
+      const parentheticalReport = /\bSKB\s*\(\s*((?:TR|R|P|IPR|RD|SR|TM|U|F)-\d{2,}-\d+)\s*\)/gi;
+      let reportMatch;
+      while ((reportMatch = parentheticalReport.exec(normaliseDashes(paragraph.text))) !== null) {
+        out.push(makeCitation(`SKB ${reportMatch[1].toUpperCase()}`, paragraph, 'skb-report'));
+      }
+
       /* Parenthetical author-year form used throughout Swedish documents:
          (SKB, 2014), (SKB, 2008, 2009), and (SKB, 2021a, b). */
       const parentheticalSkb = /\(\s*SKB\s*,\s*((?:1[89]\d{2}|20\d{2})[a-z]?)([^()]*)\)/gi;
