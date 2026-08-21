@@ -210,6 +210,9 @@
     .invalid-citation-match { color: var(--color-kvot-accent); font-weight: 700; }
     .invalid-citation-context { max-width: 560px; color: var(--text-secondary); }
     .invalid-citation-reason { color: var(--text-secondary); font-size: .82rem; }
+    .official-rule-source { color: var(--text-muted); font-size: .74rem; margin-top: 3px; }
+    .official-rule-match { color: var(--color-kvot-accent); font-weight: 700; }
+    .official-rule-context { max-width: 560px; color: var(--text-secondary); }
 
     @media (max-width: 700px) { #summary-cards { grid-template-columns: 1fr 1fr; } }
     @media (max-width: 480px) { #app { padding: 14px 12px 32px; } #summary-cards { gap: 8px; } }
@@ -1404,6 +1407,45 @@
       }
     ];
 
+    const SKB_RULE_SOURCES = Object.freeze({
+      references: 'Angivande av referenser i publika rapporter inklusive engelsk guide',
+      handbook: 'Skrivhandboken – En guide för skrivregler på SKB',
+      technical: 'Fördjupade skrivregler för publika rapporter: storheter, enheter, matematik och kemi samt språk'
+    });
+
+    /* High-confidence text checks derived from the three official SKB guides. */
+    const OFFICIAL_SKB_TEXT_RULES = [
+      { pattern: String.raw`\d(?:\u0020|\t)*(?:%|‰)`, reject: String.raw`\d\u00a0(?:%|‰)`, description: 'Use a non-breaking space between a number and % or ‰.', source: 'technical' },
+      { pattern: String.raw`\d(?:\u0020|\t)*°C`, reject: String.raw`\d\u00a0°C`, description: 'Use a non-breaking space between the number and °C.', source: 'technical' },
+      { pattern: String.raw`\b\d+(?:\.\d+)?[eE][+−-]?\d+\b`, description: 'Do not use E notation in running text; use × 10 with an exponent.', source: 'technical' },
+      { pattern: String.raw`\b\d{1,3}(?:,\d{3})+\b`, description: 'Use spaces, not commas, as thousands separators.', source: 'technical' },
+      { pattern: String.raw`\b(?:from\s+[-+−]?\d+(?:\.\d+)?|between\s+[-+−]?\d+(?:\.\d+)?)\s*[–-]\s*[-+−]?\d+(?:\.\d+)?\b`, description: 'Do not combine “from” or “between” with a dash range; use “from … to” or “between … and”.', source: 'technical' },
+      { pattern: String.raw`\b(?:and/or)\b`, description: 'Avoid “and/or”; rewrite with “or both” or another unambiguous construction.', source: 'technical' },
+      { pattern: String.raw`\b(?:E\.g\.|I\.e\.)`, description: 'Do not begin a sentence with e.g. or i.e.; spell out “For example” or rewrite.', source: 'technical' },
+      { pattern: String.raw`\be\.g\.,`, description: 'In British English, do not place a comma directly after e.g.', source: 'technical' },
+      { pattern: String.raw`\bi\.e\.,`, description: 'In British English, do not place a comma directly after i.e.', source: 'technical' },
+      { pattern: String.raw`\be\.g\.[^.!?]{0,80}\betc\.`, description: 'Do not use etc. in a list introduced by e.g.', source: 'technical' },
+      { pattern: String.raw`\bi\.e\.[^.!?]{0,80}\betc\.`, description: 'Do not use etc. in a list introduced by i.e.', source: 'technical' },
+      { pattern: String.raw`\betc(?!\.)\b`, description: 'The abbreviation etc. must end with a period and should be preceded by a comma.', source: 'technical' },
+      { pattern: String.raw`\b(?:wasn't|weren't|isn't|aren't|doesn't|don't|didn't|can't|couldn't|shouldn't|wouldn't|hasn't|haven't|hadn't)\b`, flags: 'giu', description: 'Avoid contracted forms in scientific text.', source: 'technical' },
+      { pattern: String.raw`\b(?:SKB|SSM|OKG)('s|´s|’s)\b`, description: 'In Swedish, write the genitive with colon and s, for example SKB:s.', source: 'handbook', language: 'sv' },
+      { pattern: String.raw`\b[Ii]dag\b`, description: 'Write “i dag” as two words.', source: 'handbook', language: 'sv' },
+      { pattern: String.raw`\b[Ii]stället\b`, description: 'Write “i stället” as two words.', source: 'handbook', language: 'sv' },
+      { pattern: String.raw`\b[Ss]kall\b`, description: 'SKB recommends “ska” rather than “skall”.', source: 'handbook', language: 'sv' },
+      { pattern: String.raw`\b[Tt]idplan(?:en|er|erna|s)?\b`, description: 'Use “tidsplan” rather than “tidplan”.', source: 'handbook', language: 'sv' },
+      { pattern: String.raw`\b[Hh]emsida(?:n|or|orna)?\b`, description: 'Use “webbplats” rather than “hemsida”.', source: 'handbook', language: 'sv' },
+      { pattern: String.raw`\b[Mm]ail(?:et|en|ar)?\b`, description: 'Use “mejl” or “e-post” rather than “mail”.', source: 'handbook', language: 'sv' },
+      { pattern: String.raw`\b[Uu]tbränt kärnbränsle\b`, description: 'Use “använt kärnbränsle”.', source: 'handbook', language: 'sv' },
+      { pattern: String.raw`\b[Ss]kippschakt\b`, description: 'Use “skipschakt”.', source: 'handbook', language: 'sv' },
+      { pattern: String.raw`\b[Pp]ressrelease\b`, description: 'Use “pressmeddelande”.', source: 'handbook', language: 'sv' },
+      { pattern: String.raw`\b(?:CLAB|ClAB|clab)\b`, description: 'The facility name is written “Clab”.', source: 'handbook' },
+      { pattern: String.raw`\b(?:figure|table|chapter|section|appendix)\s+[A-Z]?\d`, flags: 'gu', description: 'A numbered Figure, Table, Chapter, Section or Appendix starts with a capital letter in English.', source: 'technical', language: 'en' },
+      { pattern: String.raw`\b(?:Figur|Tabell)\s+\d`, flags: 'gu', description: 'In Swedish running text, write numbered references with lower-case “figur” and “tabell”.', source: 'handbook', language: 'sv' },
+      { pattern: String.raw`\b(?:figur|tabell)\s+\d`, flags: 'gu', description: 'In English running text, write numbered references as “Figure” and “Table”.', source: 'handbook', language: 'en' },
+      { pattern: String.raw`\b\d+\s*(?:kg|g|mg|µg|m|cm|mm|km|s|min|h|d|Hz|Pa|kPa|MPa|V|mV|A|mA|W|kW|MW|J|kJ|mol|Bq|Gy|Sv)\b`, description: 'Use a non-breaking space between a numerical value and a unit symbol.', source: 'technical', custom: 'unit-space' },
+      { pattern: String.raw`\b\d+\s*[xX]\s*10(?:\^?[-+]?\d+|[⁰¹²³⁴⁵⁶⁷⁸⁹]+)`, description: 'Use the multiplication sign ×, not the letter x, in scientific notation.', source: 'technical' }
+    ];
+
     let currentReport = null;
     let currentRefEntries = [];
     let currentFilename = '';
@@ -1484,6 +1526,7 @@
         await yieldToBrowser();
         const { paragraphs, isSwedish } = parseDocXml(docXml);
         const forbiddenMatches = findForbiddenWordMatches(paragraphs);
+        const officialWritingIssues = findOfficialSkbTextIssues(paragraphs, isSwedish);
         setProgress(45);
         showStatus('Finding reference list…');
         await yieldToBrowser();
@@ -1506,6 +1549,9 @@
         showStatus('Extracting references…');
         await yieldToBrowser();
         const refEntries = extractRefEntries(refListParagraphs);
+        officialWritingIssues.push(
+          ...findOfficialSkbReferenceIssues(refEntries, refListParagraphs, isSwedish)
+        );
         setProgress(70);
         showStatus('Finding in-text citations…');
         await yieldToBrowser();
@@ -1532,7 +1578,7 @@
         setProgress(100);
         hideStatus();
         setTimeout(hideProgress, 450);
-        renderResults(file.name, refEntries, inTextCites, report, formatIssues, forbiddenMatches, potentialInvalidCitations, paragraphs.length, refListStart, isSwedish);
+        renderResults(file.name, refEntries, inTextCites, report, formatIssues, forbiddenMatches, potentialInvalidCitations, officialWritingIssues, paragraphs.length, refListStart, isSwedish);
       } catch (error) {
         hideStatus();
         hideProgress();
@@ -2812,6 +2858,244 @@ ${exportedResults.innerHTML}
       URL.revokeObjectURL(url);
     }
 
+    function makeOfficialIssue({ match, description, source, paragraph, context, severity = 'warning' }) {
+      return {
+        match,
+        description,
+        source: SKB_RULE_SOURCES[source] || source,
+        paragraphIndex: paragraph?.index ?? null,
+        section: paragraph?.section || '',
+        context: context || paragraph?.text || '',
+        severity
+      };
+    }
+
+    function findOfficialSkbTextIssues(paragraphs, isSwedish) {
+      const issues = [];
+      const language = isSwedish ? 'sv' : 'en';
+
+      for (const paragraph of paragraphs) {
+        const text = paragraph.text || '';
+
+        /* Heading checks use actual Word heading styles. */
+        if (headingLevel(paragraph.style) > 0 && text) {
+          if (/[.!?]$/.test(text)) {
+            issues.push(makeOfficialIssue({
+              match: text,
+              description: 'Headings should not end with punctuation.',
+              source: 'handbook', paragraph
+            }));
+          }
+          if (text.trim().split(/\s+/).length > 6) {
+            issues.push(makeOfficialIssue({
+              match: text,
+              description: 'Keep headings as short as possible, preferably fewer than six words.',
+              source: 'handbook', paragraph, severity: 'review'
+            }));
+          }
+        }
+
+        if (/^\s*\d/.test(text) && /[.!?](?:\s|$)/.test(text)) {
+          issues.push(makeOfficialIssue({
+            match: text.match(/^\s*\S+/)?.[0] || text.slice(0, 20),
+            description: 'A sentence should not begin with a numeral; spell out the number or rewrite the sentence.',
+            source: 'technical', paragraph, severity: 'review'
+          }));
+        }
+
+        for (const rule of OFFICIAL_SKB_TEXT_RULES) {
+          if (rule.language && rule.language !== language) continue;
+          const expression = new RegExp(rule.pattern, rule.flags || 'gu');
+          let match;
+          while ((match = expression.exec(text)) !== null) {
+            if (rule.custom === 'unit-space') {
+              const between = match[0].match(/^\d+(.*?)[A-Za-zµ]/)?.[1] || '';
+              if (between.includes('\u00a0')) continue;
+            }
+            if (rule.reject && new RegExp(rule.reject, 'u').test(match[0])) continue;
+            const start = Math.max(0, match.index - 55);
+            const end = Math.min(text.length, match.index + match[0].length + 55);
+            issues.push(makeOfficialIssue({
+              match: match[0], description: rule.description, source: rule.source,
+              paragraph,
+              context: `${start > 0 ? '…' : ''}${text.slice(start, end)}${end < text.length ? '…' : ''}`
+            }));
+            if (!match[0].length) expression.lastIndex++;
+          }
+        }
+
+        /* Official Harvard citation punctuation checks. */
+        for (const group of extractCitationParentheticalGroups(text)) {
+          const content = group.content;
+          if (!/(?:1[89]\d{2}|20\d{2})/.test(content)) continue;
+
+          for (const commaYear of content.matchAll(/(?:^|[;,]\s*)([^;,()]{1,80}?),\s*((?:1[89]\d{2}|20\d{2})[a-z]?)/gu)) {
+            issues.push(makeOfficialIssue({
+              match: commaYear[0].replace(/^[;,]\s*/, ''),
+              description: 'Do not place a comma between the author name and publication year in an SKB Harvard in-text citation.',
+              source: 'references', paragraph, context: group.raw
+            }));
+          }
+
+          if (/;/.test(content)) {
+            issues.push(makeOfficialIssue({
+              match: group.raw,
+              description: 'Separate different sources with commas, not semicolons, in an SKB Harvard citation.',
+              source: 'references', paragraph, context: group.raw
+            }));
+          }
+
+          if (/\b[\p{L}][\p{L}'’\-]*\s*&\s*[\p{L}]/u.test(content)) {
+            issues.push(makeOfficialIssue({
+              match: group.raw,
+              description: isSwedish ? 'Use “och”, not &, between two authors in a Swedish in-text citation.' : 'Use “and”, not &, between two authors in an English in-text citation.',
+              source: 'references', paragraph, context: group.raw
+            }));
+          }
+
+          if (/\([Ee][Dd]\)/.test(content)) {
+            issues.push(makeOfficialIssue({
+              match: group.raw,
+              description: 'Do not include the editor suffix “(ed)” in an in-text citation; cite the editor surname and year only.',
+              source: 'references', paragraph, context: group.raw
+            }));
+          }
+
+          if (/\b(?:p|pp)\./i.test(content)) {
+            issues.push(makeOfficialIssue({
+              match: group.raw,
+              description: 'Write p or pp without a period in an English page citation.',
+              source: 'references', paragraph, context: group.raw
+            }));
+          }
+
+          if (isSwedish && /\b(?:p|pp)\s+\d/i.test(content)) {
+            issues.push(makeOfficialIssue({
+              match: group.raw,
+              description: 'Use “s” for page references in Swedish text, not p or pp.',
+              source: 'references', paragraph, context: group.raw
+            }));
+          }
+        }
+
+        /* High-confidence mathematical spacing checks. */
+        for (const match of text.matchAll(/\d(?:[+−=×±<>]|-(?=\d))\d/g)) {
+          issues.push(makeOfficialIssue({
+            match: match[0],
+            description: 'Mathematical binary operators and relation signs should be surrounded by spaces. Use a true minus sign for subtraction.',
+            source: 'technical', paragraph
+          }));
+        }
+      }
+
+      const seen = new Set();
+      return issues.filter(issue => {
+        const key = `${issue.paragraphIndex}\u0000${issue.match}\u0000${issue.description}`;
+        if (seen.has(key)) return false;
+        seen.add(key); return true;
+      });
+    }
+
+    function findOfficialSkbReferenceIssues(entries, refParagraphs, isSwedish) {
+      const issues = [];
+      const allRefText = refParagraphs.map(p => p.text).join('\n');
+
+      for (const entry of entries) {
+        const paragraph = { index: entry.paraIndex, section: 'References', text: entry.body };
+        const text = entry.body || '';
+
+        if (/\bet\s+al\.?\b/i.test(text)) {
+          issues.push(makeOfficialIssue({
+            match: text.match(/\bet\s+al\.?\b/i)[0],
+            description: 'Write all author names in the reference list; do not use et al.',
+            source: 'references', paragraph
+          }));
+        }
+
+        const authorBlock = text.match(/^(.+?),\s*(?:1[89]\d{2}|20\d{2})[a-z]?\b/);
+        if (authorBlock && /\s(?:and|och|&)\s/i.test(authorBlock[1])) {
+          issues.push(makeOfficialIssue({
+            match: authorBlock[1],
+            description: 'Separate all authors with commas in the reference list; do not use and, och or &.',
+            source: 'references', paragraph
+          }));
+        }
+
+        if (/^[^,]+,\s*[A-ZÅÄÖ](?:\.|,)/u.test(text)) {
+          issues.push(makeOfficialIssue({
+            match: text.slice(0, Math.min(45, text.length)),
+            description: 'Do not place a comma after the surname or periods after author initials.',
+            source: 'references', paragraph
+          }));
+        }
+
+        if (/SKBdoc\s+\d+/i.test(text) && !/SKBdoc\s+\d+\s+ver(?:sion)?\s+\d/i.test(text)) {
+          issues.push(makeOfficialIssue({
+            match: text.match(/SKBdoc\s+\d+/i)[0],
+            description: 'An SKBdoc reference must include its version.',
+            source: 'references', paragraph
+          }));
+        }
+
+        if (/\bSKB\s+(?:TR|R|P|IPR|RD|SR|TM|U|F)-\d{2,}-\d+\b/i.test(text) && /,\s*(?:Stockholm|Sweden|Sverige)\.?\s*$/i.test(text)) {
+          issues.push(makeOfficialIssue({
+            match: text.match(/,\s*(?:Stockholm|Sweden|Sverige)\.?\s*$/i)[0],
+            description: 'Do not give publication place or country for an SKB report.',
+            source: 'references', paragraph
+          }));
+        }
+
+        if (/https?:\/\//i.test(text) && !/(?:Available at:|Tillgänglig:)/i.test(text) && !/doi\.org/i.test(text)) {
+          issues.push(makeOfficialIssue({
+            match: text.match(/https?:\/\/\S+/i)?.[0] || 'URL',
+            description: isSwedish ? 'Introduce a web address with “Tillgänglig:”.' : 'Introduce a web address with “Available at:”.',
+            source: 'references', paragraph
+          }));
+        }
+
+        if (/\b\d+\s*-\s*\d+\b/.test(text) && !/\b(?:TR|R|P|IPR|RD|SR|TM|U|F)-\d{2,}-\d+\b/i.test(text)) {
+          issues.push(makeOfficialIssue({
+            match: text.match(/\b\d+\s*-\s*\d+\b/)[0],
+            description: 'Use an en dash (–), not a hyphen, in page and numerical ranges.',
+            source: 'references', paragraph
+          }));
+        }
+      }
+
+      const hasSkbPublication = entries.some(e => /\bSKB\s+(?:TR|R|P|IPR|RD|SR|TM|U|F)-/i.test(e.body));
+      const hasSkbdoc = entries.some(e => /\bSKBdoc\s+\d+/i.test(e.body));
+      if (hasSkbPublication && !/(?:publications can be found|publikationer.*(?:hämtas|finns))/i.test(allRefText)) {
+        issues.push(makeOfficialIssue({
+          match: 'Reference-list introduction',
+          description: 'Add the prescribed availability notice for SKB publications before the reference list.',
+          source: 'references', context: 'The reference list contains SKB publications but no availability notice was detected.'
+        }));
+      }
+      if (hasSkbdoc && !/(?:SKBdoc documents will be submitted|SKBdoc-dokument lämnas ut)/i.test(allRefText)) {
+        issues.push(makeOfficialIssue({
+          match: 'Reference-list introduction',
+          description: 'Add the prescribed availability notice for SKBdoc documents before the reference list.',
+          source: 'references', context: 'The reference list contains SKBdoc documents but no availability notice was detected.'
+        }));
+      }
+      return issues;
+    }
+
+    function buildOfficialSkbWritingSection(issues) {
+      if (!issues.length) {
+        return section('Official SKB writing-rule issues', 0,
+          '<p class="empty-notice">No automatically checkable violations of the three official SKB guides were detected.</p>');
+      }
+      const rows = issues.map(issue => `
+        <tr class="warn-row">
+          <td><span class="official-rule-match">${escHtml(issue.match)}</span></td>
+          <td>${escHtml(issue.description)}<div class="official-rule-source">Source: ${escHtml(issue.source)}</div></td>
+          <td>${issue.paragraphIndex === null ? '' : `<div class="cite-pages">paragraph ${issue.paragraphIndex + 1}${issue.section ? ` · ${escHtml(issue.section)}` : ''}</div>`}<div class="official-rule-context">${escHtml(issue.context)}</div></td>
+        </tr>`).join('');
+      return section('Official SKB writing-rule issues', issues.length,
+        `<table class="ref-table"><thead><tr><th>Matched text</th><th>Warning and source</th><th>Location and context</th></tr></thead><tbody>${rows}</tbody></table>`, false);
+    }
+
     function findPotentialInvalidCitations(paragraphs) {
       const matches = [];
 
@@ -2973,7 +3257,7 @@ ${exportedResults.innerHTML}
       );
     }
 
-    function renderResults(filename, entries, citations, report, issues, forbiddenMatches, potentialInvalidCitations, total, start, isSwedish) {
+    function renderResults(filename, entries, citations, report, issues, forbiddenMatches, potentialInvalidCitations, officialWritingIssues, total, start, isSwedish) {
       docInfo.innerHTML = `<strong>${escHtml(filename)}</strong> ${isSwedish ? '🇸🇪 Svenska — ' : ''}${total} paragraphs · ${entries.length} reference list entries · ${citations.length} in-text citation occurrences · ${start >= 0 ? `Reference list found at paragraph ${start + 1}.` : 'No reference list section detected.'}`;
       docInfo.classList.add('show');
       const cited = entries.filter(entry => entry.cites.length).length;
@@ -2983,7 +3267,7 @@ ${exportedResults.innerHTML}
       setSummary('issues', issues.length, issues.length ? 'warn' : 'ok');
       summaryCards.classList.add('show');
       resultActions.classList.add('show');
-      results.innerHTML = buildRefListSection(entries) + buildOrphanSection(report.orphanCites) + buildPotentialInvalidCitationsSection(potentialInvalidCitations) + buildUncitedSection(report.uncitedRefs) + buildFormatSection(issues, entries) + buildForbiddenWordsSection(forbiddenMatches);
+      results.innerHTML = buildRefListSection(entries) + buildOrphanSection(report.orphanCites) + buildPotentialInvalidCitationsSection(potentialInvalidCitations) + buildUncitedSection(report.uncitedRefs) + buildFormatSection(issues, entries) + buildOfficialSkbWritingSection(officialWritingIssues) + buildForbiddenWordsSection(forbiddenMatches);
       resetBtn.classList.add('show');
     }
 
