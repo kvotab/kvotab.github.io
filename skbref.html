@@ -296,11 +296,12 @@
             </div>
             <div class="zotero-settings-actions">
               <button id="zotero-save-settings" class="zotero-row-btn" type="button">Apply settings</button>
+              <button id="zotero-test-local-access" class="zotero-row-btn" type="button" hidden>Request/test local access</button>
               <button id="zotero-reset-settings" class="zotero-row-btn" type="button">Restore default</button>
               <span id="zotero-settings-status"></span>
             </div>
             <div class="zotero-settings-note">
-              Credentials are kept only in this page's memory and are not included in downloaded reports. For security, prefer an API key over a username and password. A local Zotero database requires Zotero's local API to be enabled and the page to be served over HTTP rather than opened as a file.
+              Credentials are kept only in this page's memory and are not included in downloaded reports. For security, prefer an API key over a username and password. A local Zotero database requires Zotero's local API to be enabled. Edge must also grant this site Local Network Access; use “Request/test local access” after selecting the local source.
             </div>
           </div>
         </details>
@@ -347,6 +348,7 @@
     const zoteroUsername = $('zotero-username');
     const zoteroPassword = $('zotero-password');
     const zoteroSettingsStatus = $('zotero-settings-status');
+    const zoteroTestLocalAccess = $('zotero-test-local-access');
 
     const ZOTERO_CONFIG = Object.freeze({
       groupId: '6640399', apiVersion: '3', minimumScore: 45,
@@ -1420,6 +1422,7 @@
     zoteroSourceType.addEventListener('change', updateZoteroSettingsVisibility);
     zoteroAuthType.addEventListener('change', updateZoteroSettingsVisibility);
     $('zotero-save-settings').addEventListener('click', applyZoteroSettings);
+    zoteroTestLocalAccess.addEventListener('click', testLocalZoteroAccess);
     $('zotero-reset-settings').addEventListener('click', restoreDefaultZoteroSettings);
     updateZoteroSettingsVisibility();
 
@@ -2121,6 +2124,7 @@
       document.querySelector('[data-setting="user-id"]').hidden = source !== 'web-user';
       document.querySelector('[data-setting="custom-url"]').hidden = source !== 'custom';
       document.querySelector('[data-setting="local-url"]').hidden = source !== 'local';
+      zoteroTestLocalAccess.hidden = source !== 'local';
 
       if (source === 'local') {
         zoteroAuthType.value = 'none';
@@ -2133,6 +2137,61 @@
       document.querySelector('[data-setting="api-key"]').hidden = auth !== 'api-key';
       document.querySelector('[data-setting="username"]').hidden = auth !== 'basic';
       document.querySelector('[data-setting="password"]').hidden = auth !== 'basic';
+    }
+
+    async function getLocalNetworkPermissionState() {
+      if (!navigator.permissions?.query) return 'unknown';
+      try {
+        const result = await navigator.permissions.query({
+          name: 'local-network-access'
+        });
+        return result.state;
+      } catch {
+        return 'unknown';
+      }
+    }
+
+    async function testLocalZoteroAccess() {
+      const endpoint = zoteroLocalUrl.value.trim();
+      if (!/^https?:\/\//i.test(endpoint)) {
+        zoteroSettingsStatus.textContent = 'Enter a complete local API URL first.';
+        return;
+      }
+
+      zoteroTestLocalAccess.disabled = true;
+      const permissionBefore = await getLocalNetworkPermissionState();
+      zoteroSettingsStatus.textContent = permissionBefore === 'denied'
+        ? 'Local network access is denied for this site. Change the permission in Edge site settings.'
+        : 'Requesting access to Zotero on this computer…';
+
+      try {
+        const testUrl = new URL(endpoint);
+        testUrl.searchParams.set('format', 'json');
+        testUrl.searchParams.set('limit', '1');
+        testUrl.searchParams.set('v', ZOTERO_CONFIG.apiVersion);
+
+        const response = await fetch(testUrl, {
+          method: 'GET',
+          headers: { Accept: 'application/json' },
+          targetAddressSpace: 'loopback'
+        });
+
+        if (!response.ok) {
+          throw new Error(`Zotero local API returned HTTP ${response.status}.`);
+        }
+
+        zoteroSettingsStatus.textContent = 'Local Zotero access is working.';
+      } catch (error) {
+        const permissionAfter = await getLocalNetworkPermissionState();
+        if (permissionAfter === 'denied') {
+          zoteroSettingsStatus.textContent = 'Edge denied local network access for this site. Allow it in Site permissions → Local network access, then retry.';
+        } else {
+          zoteroSettingsStatus.textContent = 'Local Zotero access failed. Ensure Zotero is running, local API access is enabled, and Edge permits kvotab.se to access devices on the local network.';
+        }
+        console.warn('Local Zotero access test failed:', error);
+      } finally {
+        zoteroTestLocalAccess.disabled = false;
+      }
     }
 
     function readZoteroSettingsForm() {
@@ -2286,7 +2345,10 @@
           `${endpoint}${endpoint.includes('?') ? '&' : '?'}${parameters}`,
           {
             headers: createZoteroRequestHeaders(settings),
-            signal: timeoutController.signal
+            signal: timeoutController.signal,
+            ...(settings.sourceType === 'local'
+              ? { targetAddressSpace: 'loopback' }
+              : {})
           }
         );
         if (!response.ok) throw new Error(`Zotero API returned HTTP ${response.status}`);
@@ -2299,12 +2361,12 @@
         if (error.name === 'AbortError') throw error;
 
         if (settings.sourceType === 'local' && error instanceof TypeError) {
-          const fileOriginAdvice = location.protocol === 'file:'
+          const originAdvice = location.protocol === 'file:'
             ? ' This page is opened with file://. Serve the folder over http://localhost instead, then reload the page.'
-            : '';
+            : ' Edge may have denied Local Network Access for this site. Open Zotero settings and use “Request/test local access”, or allow this site in Edge Site permissions → Local network access.';
           throw new Error(
             'The browser could not access the Zotero local API. Confirm that Zotero is running and that “Allow other applications on this computer to communicate with Zotero” is enabled.' +
-            fileOriginAdvice
+            originAdvice
           );
         }
 
