@@ -2153,6 +2153,14 @@
       const directNarrativeExpression = /(?:^|[^\p{L}'’\-])((?:(?:van|von|de|del|della|der|den|di|da|dos|du|la|le|af)\s+)*[\p{Lu}][\p{L}'’\-]{0,40}(?:\s*\(ed\))?)\s*\(((?:1[89]\d{2}|20\d{2})[a-z]?)\)/gu;
       let directNarrativeMatch;
       while ((directNarrativeMatch = directNarrativeExpression.exec(paragraph.text)) !== null) {
+        const authorOffset = directNarrativeMatch[0].lastIndexOf(directNarrativeMatch[1]);
+        const authorStart = directNarrativeMatch.index + Math.max(0, authorOffset);
+        const precedingText = paragraph.text.slice(Math.max(0, authorStart - 20), authorStart);
+
+        /* A single-author pass must not extract only the second surname from
+           a two-author citation such as “Öhman and Odén (2018)”. */
+        if (/(?:\band|\boch|&)\s*$/iu.test(precedingText)) continue;
+
         addCitation(
           directNarrativeMatch[1],
           directNarrativeMatch[2],
