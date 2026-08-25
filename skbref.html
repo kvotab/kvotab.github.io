@@ -204,6 +204,10 @@
     .zotero-candidate-title { flex: 1; color: var(--text-primary); font-weight: 700; }
     .zotero-probability { flex: 0 0 auto; padding: 2px 7px; border-radius: 10px; background: color-mix(in srgb, #5cb85c 18%, var(--bg-secondary)); color: #357a35; font-weight: 700; }
     .zotero-candidate a { color: var(--color-kvot-bright); }
+    .zotero-formatted-reference { margin-top:9px; padding:9px 10px; border-left:3px solid var(--color-kvot-bright); background:var(--bg-secondary); color:var(--text-primary); line-height:1.5; }
+    .zotero-copy-reference { margin-top:7px; }
+    .csl-style-status { color:var(--text-muted); font-size:.76rem; }
+    .csl-file-name { font-family:'SF Mono',Menlo,monospace; }
     .forbidden-match { color: var(--color-kvot-accent); font-weight: 700; }
     .forbidden-context { max-width: 520px; color: var(--text-secondary); }
     .forbidden-rule { font-family: 'SF Mono', Menlo, monospace; font-size: .76rem; color: var(--text-muted); }
@@ -292,6 +296,12 @@
                 <label for="zotero-password">Password</label>
                 <input id="zotero-password" type="password" autocomplete="current-password">
               </div>
+              <div class="zotero-setting full">
+                <label for="zotero-csl-file">CSL bibliography style</label>
+                <input id="zotero-csl-file" type="file" accept=".csl,.xml,text/xml,application/xml">
+                <div class="csl-style-status">Active style: <span id="zotero-csl-style-name" class="csl-file-name">SKB 17 (author-date)</span></div>
+                <button id="zotero-reset-csl" class="zotero-row-btn" type="button">Restore built-in SKB-17 style</button>
+              </div>
               <label class="zotero-checkbox full" title="Show plausible matches based on similar titles, author names, years, and report numbers.">
                 <input id="zotero-fuzzy-match" type="checkbox" checked>
                 Include fuzzy Zotero matches
@@ -304,7 +314,7 @@
               <span id="zotero-settings-status"></span>
             </div>
             <div class="zotero-settings-note">
-              Credentials are kept only in this page's memory and are not included in downloaded reports. For security, prefer an API key over a username and password. A local Zotero database requires Zotero's local API to be enabled. Edge must also grant this site Local Network Access; use “Request/test local access” after selecting the local source.
+              Credentials and uploaded CSL source are kept only in this page's memory and are not included in downloaded reports. The built-in default style is 2135447 - SKB-17.csl. For security, prefer an API key over a username and password. A local Zotero database requires Zotero's local API to be enabled. Edge must also grant this site Local Network Access; use “Request/test local access” after selecting the local source.
             </div>
           </div>
         </details>
@@ -352,6 +362,9 @@
     const zoteroPassword = $('zotero-password');
     const zoteroSettingsStatus = $('zotero-settings-status');
     const zoteroTestLocalAccess = $('zotero-test-local-access');
+    const zoteroCslFile = $('zotero-csl-file');
+    const zoteroCslStyleName = $('zotero-csl-style-name');
+    const zoteroResetCsl = $('zotero-reset-csl');
 
     const ZOTERO_CONFIG = Object.freeze({
       groupId: '6640399', apiVersion: '3', minimumScore: 45,
@@ -373,6 +386,15 @@
     });
 
     let activeZoteroSettings = { ...DEFAULT_ZOTERO_SETTINGS };
+
+    const DEFAULT_CSL_STYLE = Object.freeze({
+      fileName: '2135447 - SKB-17.csl',
+      title: 'SKB 17 (author-date)',
+      id: 'SKB-17',
+      supported: true
+    });
+    let activeCslStyle = { ...DEFAULT_CSL_STYLE };
+    const zoteroCandidateStore = new Map();
 
     /*
       Forbidden-word rules. Rules with enabled: false correspond to lines
@@ -1465,6 +1487,8 @@
     zoteroAuthType.addEventListener('change', updateZoteroSettingsVisibility);
     $('zotero-save-settings').addEventListener('click', applyZoteroSettings);
     zoteroTestLocalAccess.addEventListener('click', testLocalZoteroAccess);
+    zoteroCslFile.addEventListener('change', loadCslStyleFile);
+    zoteroResetCsl.addEventListener('click', restoreDefaultCslStyle);
     $('zotero-reset-settings').addEventListener('click', restoreDefaultZoteroSettings);
     updateZoteroSettingsVisibility();
 
@@ -2626,6 +2650,11 @@
     }
 
     function handleInlineZoteroClick(event) {
+      const copyButton = event.target.closest('.zotero-copy-reference');
+      if (copyButton) {
+        copyFormattedZoteroReference(copyButton);
+        return;
+      }
       const button = event.target.closest('.zotero-row-btn');
       if (!button) return;
       const searchId = button.dataset.searchId;
@@ -2691,8 +2720,11 @@
     }
 
     function buildInlineZoteroCandidate(candidate) {
+      const candidateId = 'zc-' + candidate.key + '-' + Math.random().toString(36).slice(2, 9);
+      const formatted = formatZoteroBibliography(candidate.data);
+      zoteroCandidateStore.set(candidateId, formatted);
       return `
-        <div class="zotero-candidate">
+        <div class="zotero-candidate" data-zotero-candidate-id="${escHtml(candidateId)}">
           <div class="zotero-candidate-head">
             <div class="zotero-candidate-title">${escHtml(candidate.title || '(untitled Zotero item)')}</div>
             <span class="zotero-probability" title="Match confidence based on title, complete author list, year, and Report Number">${candidate.score}% confidence</span>
@@ -2701,7 +2733,118 @@
           ${candidate.reportKey ? `<div>Report Number: ${escHtml(candidate.reportKey)}</div>` : ''}
           <div>Match basis: ${escHtml(candidate.reasons.join(', ') || 'metadata similarity')}</div>
           ${candidate.url ? `<a href="${escHtml(candidate.url)}" target="_blank" rel="noopener noreferrer">Open Zotero record ↗</a>` : ''}
+          <div class="zotero-formatted-reference">${formatted.html}</div>
+          <button class="zotero-row-btn zotero-copy-reference" type="button" data-candidate-id="${escHtml(candidateId)}">Copy formatted reference</button>
         </div>`;
+    }
+
+    async function loadCslStyleFile() {
+      const file = zoteroCslFile.files[0];
+      if (!file) return;
+      try {
+        const xml = await file.text();
+        const documentXml = new DOMParser().parseFromString(xml, 'application/xml');
+        if (documentXml.querySelector('parsererror') || documentXml.documentElement.localName !== 'style') {
+          throw new Error('The selected file is not valid CSL XML.');
+        }
+        const title = [...documentXml.getElementsByTagNameNS('*', 'title')][0]?.textContent?.trim() || file.name;
+        const bibliography = documentXml.getElementsByTagNameNS('*', 'bibliography')[0];
+        if (!bibliography) throw new Error('The CSL style has no bibliography definition.');
+        activeCslStyle = { fileName:file.name, title, id:documentXml.getElementsByTagNameNS('*','id')[0]?.textContent?.trim()||'', supported:/SKB\s*17/i.test(title), xml };
+        zoteroCslStyleName.textContent = title + (activeCslStyle.supported ? '' : ' (compatible subset)');
+        zoteroSettingsStatus.textContent = activeCslStyle.supported ? 'CSL style loaded.' : 'CSL loaded. The built-in formatter supports the SKB-17 bibliography structure and a compatible CSL subset.';
+        reformatDisplayedZoteroCandidates();
+      } catch (error) {
+        zoteroCslFile.value = '';
+        zoteroSettingsStatus.textContent = error.message;
+      }
+    }
+
+    function restoreDefaultCslStyle() {
+      activeCslStyle = { ...DEFAULT_CSL_STYLE };
+      zoteroCslFile.value = '';
+      zoteroCslStyleName.textContent = activeCslStyle.title;
+      zoteroSettingsStatus.textContent = 'Built-in SKB-17 style restored.';
+      reformatDisplayedZoteroCandidates();
+    }
+
+    function cslText(value) { return String(value || '').replace(/\s+/g, ' ').trim(); }
+    function formatCslName(creator) {
+      if (creator.name) return cslText(creator.name);
+      const family = cslText(creator.lastName);
+      const given = cslText(creator.firstName);
+      const initials = given.split(/[\s-]+/).filter(Boolean).map(part => part[0]?.toUpperCase() || '').join(' ');
+      return [family, initials].filter(Boolean).join(' ');
+    }
+    function cslCreators(data, type) { return (data.creators || []).filter(c => c.creatorType === type); }
+    function formatZoteroBibliography(data) {
+      data = data || {};
+      let creators = cslCreators(data, 'author');
+      let role = '';
+      if (!creators.length) { creators = cslCreators(data, 'editor'); role = creators.length ? ' (red)' : ''; }
+      if (!creators.length) creators = cslCreators(data, 'translator');
+      const author = creators.map(formatCslName).filter(Boolean).join(', ') + role;
+      const year = cslText(data.date).match(/\b(?:1[89]\d{2}|20\d{2})[a-z]?\b/i)?.[0] || 'u å';
+      const headText = [author || cslText(data.title) || 'Untitled', year].join(', ') + '.';
+      const title = cslText(data.title);
+      const type = cslText(data.itemType);
+      const parts = [];
+      if (title && author) parts.push(title + '.');
+      if (['journalArticle','magazineArticle','newspaperArticle'].includes(type)) {
+        const journal = cslText(data.publicationTitle);
+        const volume = cslText(data.volume);
+        const pages = cslText(data.pages);
+        const j = [journal, volume].filter(Boolean).join(' ');
+        if (j || pages) parts.push([j, pages].filter(Boolean).join(', ') + '.');
+        if (data.DOI) parts.push('https://doi.org/' + cslText(data.DOI).replace(/^https?:\/\/(?:dx\.)?doi\.org\//i,''));
+      } else if (['book','bookSection','conferencePaper'].includes(type)) {
+        const editors = cslCreators(data,'editor').map(formatCslName).filter(Boolean);
+        if (editors.length && type !== 'book') parts.push('I ' + editors.join(', ') + ' (red).');
+        const container = cslText(data.bookTitle || data.proceedingsTitle || data.publicationTitle);
+        const volume = cslText(data.volume);
+        const placePublisher = [cslText(data.place), cslText(data.publisher)].filter(Boolean).join(': ');
+        const pages = cslText(data.pages);
+        const publication = [ [container,volume].filter(Boolean).join(' '), placePublisher, pages ].filter(Boolean).join(', ');
+        if (publication) parts.push(publication + '.');
+      } else {
+        const number = cslText(data.reportNumber || data.number);
+        const archive = [cslText(data.archive), cslText(data.archiveLocation)].filter(Boolean).join(' ');
+        const publisher = cslText(data.publisher || data.institution || data.company);
+        const tail = [number, archive, publisher].filter(Boolean).join(', ');
+        if (tail) parts.push(tail + '.');
+      }
+      const plain = [headText, ...parts].join(' ').replace(/\s+/g,' ').trim();
+      const html = '<strong>' + escHtml(headText) + '</strong>' + (parts.length ? ' ' + parts.map(escHtml).join(' ') : '');
+      return { plain, html };
+    }
+
+    async function copyFormattedZoteroReference(button) {
+      const formatted = zoteroCandidateStore.get(button.dataset.candidateId);
+      if (!formatted) return;
+      try {
+        if (navigator.clipboard && window.ClipboardItem) {
+          await navigator.clipboard.write([new ClipboardItem({
+            'text/plain': new Blob([formatted.plain], {type:'text/plain'}),
+            'text/html': new Blob([formatted.html], {type:'text/html'})
+          })]);
+        } else {
+          await navigator.clipboard.writeText(formatted.plain);
+        }
+        const old = button.textContent; button.textContent = 'Copied';
+        setTimeout(() => button.textContent = old, 1400);
+      } catch {
+        const area=document.createElement('textarea'); area.value=formatted.plain; document.body.appendChild(area); area.select(); document.execCommand('copy'); area.remove();
+        button.textContent='Copied as plain text'; setTimeout(()=>button.textContent='Copy formatted reference',1400);
+      }
+    }
+
+    function reformatDisplayedZoteroCandidates() {
+      document.querySelectorAll('.zotero-candidate[data-zotero-candidate-id]').forEach(node => {
+        const id=node.dataset.zoteroCandidateId, existing=zoteroCandidateStore.get(id);
+        if (!existing) return;
+        const target=node.querySelector('.zotero-formatted-reference');
+        if (target) target.innerHTML=existing.html;
+      });
     }
 
     function getZoteroYear(item){return String(item?.data?.date||'').match(/\b(?:1[89]\d{2}|20\d{2})[a-z]?\b/i)?.[0]||null;}
@@ -2709,7 +2852,7 @@
     function getZoteroReportNumber(item){return String(item?.data?.reportNumber||'').trim();}
     function getZoteroSkbReportKey(item){return extractSkbReportKey(getZoteroReportNumber(item));}
     function getZoteroAuthorYearKey(item){const a=getZoteroAuthors(item),y=getZoteroYear(item);return !a.length||!y?null:a.length===1?`${a[0]} ${y}`:a.length===2?`${a[0]} and ${a[1]} ${y}`:`${a[0]} et al. ${y}`;}
-    function prepareZoteroItems(items){return items.map(item=>{const aliases=[getZoteroAuthorYearKey(item),getZoteroSkbReportKey(item),item.data?.shortTitle].filter(Boolean);return{key:item.key,title:String(item.data?.title||''),year:getZoteroYear(item),authors:getZoteroAuthors(item),reportKey:getZoteroSkbReportKey(item),aliases,normalizedAliases:aliases.map(normaliseKey),url:item.links?.alternate?.href||''};});}
+    function prepareZoteroItems(items){return items.map(item=>{const aliases=[getZoteroAuthorYearKey(item),getZoteroSkbReportKey(item),item.data?.shortTitle].filter(Boolean);return{key:item.key,title:String(item.data?.title||''),year:getZoteroYear(item),authors:getZoteroAuthors(item),reportKey:getZoteroSkbReportKey(item),aliases,normalizedAliases:aliases.map(normaliseKey),url:item.links?.alternate?.href||'',data:item.data||{}};});}
     function normaliseTitle(value) {
       return normaliseDashes(value || '')
         .normalize('NFC')
