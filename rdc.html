@@ -27,11 +27,54 @@
 .footer-icon-button{display:inline-flex;align-items:center;justify-content:center;padding:2px;margin:0 2px;border:0;background:transparent;color:inherit;cursor:pointer;vertical-align:middle}
 .footer-icon-button:focus-visible,.help-close-button:focus-visible{outline:2px solid currentColor;outline-offset:2px}
 .help-dialog{box-sizing:border-box;width:min(900px,90vw);max-width:min(900px,90vw);height:auto;max-height:85vh;margin:auto;padding:0;border:0;overflow:hidden;background:transparent;color:inherit}
-.help-dialog[open]{display:block}
-.help-dialog::backdrop{background:rgba(0,0,0,.55)}
-.help-dialog .modal-content{box-sizing:border-box;width:100%;max-height:85vh;margin:0;overflow:auto}
-.help-close-button{float:right;border:0;background:transparent;font-size:1.8rem;cursor:pointer}
+.help-dialog[open]{display:block}.help-dialog::backdrop{background:rgba(0,0,0,.55)}
+.help-dialog .modal-content{box-sizing:border-box;width:100%;max-height:85vh;margin:0;overflow:auto}.help-close-button{float:right;border:0;background:transparent;font-size:1.8rem;cursor:pointer}
 .rdc-status{position:fixed;z-index:10000;left:50%;top:1rem;transform:translateX(-50%);max-width:min(720px,90vw);padding:.75rem 1rem;border-radius:.35rem;background:#7a1f1f;color:#fff;box-shadow:0 2px 10px rgba(0,0,0,.3)}
+
+/* Professional decay-chart dialog */
+.rdc-chart-window.ui-dialog{overflow:hidden;border:1px solid rgba(74,57,43,.28)!important;border-radius:14px!important;background:#fff!important;box-shadow:0 20px 55px rgba(35,25,17,.28),0 3px 10px rgba(35,25,17,.12)!important}
+.rdc-chart-window .ui-dialog-titlebar{min-height:46px;padding:0 48px 0 17px!important;border:0!important;border-bottom:1px solid rgba(255,255,255,.12)!important;border-radius:0!important;background:linear-gradient(135deg,#34281f,#5b4635)!important;color:#fff!important;display:flex;align-items:center}
+.rdc-chart-window .ui-dialog-title{font-size:15px;font-weight:650;letter-spacing:.015em;overflow:visible!important;white-space:nowrap}
+.rdc-chart-window .ui-dialog-titlebar-close{top:50%!important;right:11px!important;width:29px!important;height:29px!important;margin-top:-15px!important;border:1px solid rgba(255,255,255,.25)!important;border-radius:8px!important;background:rgba(255,255,255,.08)!important}
+.rdc-chart-window .ui-dialog-titlebar-close:hover{background:rgba(255,255,255,.2)!important}
+.rdc-chart-window .ui-dialog-content{padding:0!important;border:0!important;background:#fff!important}
+#chartdialog{box-sizing:border-box;min-width:410px;min-height:310px;overflow:hidden!important;color:#30271f}
+#chartdialog .settings{position:relative;z-index:5;display:grid;grid-template-columns:minmax(220px,1.45fr) minmax(210px,1fr) auto;gap:13px;align-items:end;box-sizing:border-box;width:100%;padding:13px 15px 12px;border-bottom:1px solid #e8e1d8;background:linear-gradient(180deg,#fcfbf9,#f4f1ec)}
+.chart-field{min-width:0}.chart-label{display:block;margin:0 0 5px 2px;color:#6a594b;font-size:11px;font-weight:700;letter-spacing:.055em;line-height:1.2;text-transform:uppercase}
+.chart-control{box-sizing:border-box;width:100%;height:36px;padding:0 10px;border:1px solid #cdc1b5;border-radius:8px;background:#fff;color:#30271f;font:inherit;font-size:13px;box-shadow:0 1px 2px rgba(45,35,27,.06);transition:border-color .15s,box-shadow .15s}
+.chart-control:hover{border-color:#a98f78}.chart-control:focus{border-color:#af6c35;outline:0;box-shadow:0 0 0 3px rgba(184,105,43,.16)}
+.chart-time-row{display:grid;grid-template-columns:minmax(78px,.72fr) minmax(100px,1fr);gap:7px}.chart-badge{display:inline-flex;align-items:center;gap:6px;margin-bottom:8px;padding:5px 8px;border:1px solid #ddd4ca;border-radius:999px;background:rgba(255,255,255,.75);color:#766555;font-size:10px;font-weight:650;white-space:nowrap}.chart-badge span{width:7px;height:7px;border-radius:50%;background:#4e9a67;box-shadow:0 0 0 3px rgba(78,154,103,.14)}
+#chartdialog .modebar{top:8px!important;right:10px!important;padding:3px 4px!important;border:1px solid rgba(99,80,63,.18);border-radius:8px;background:rgba(255,255,255,.92)!important;box-shadow:0 3px 10px rgba(45,34,25,.1)}#chartdialog .modebar-btn{border-radius:5px}#chartdialog .modebar-btn:hover{background:rgba(177,103,45,.12)}#chartdialog .modebar-btn path{fill:#655347!important}
+@media(max-width:720px){#chartdialog .settings{grid-template-columns:1fr 1fr}.chart-badge{display:none}}@media(max-width:520px){#chartdialog{min-width:300px}#chartdialog .settings{grid-template-columns:1fr}}
+html[data-theme="dark"] .rdc-chart-window.ui-dialog{border-color:#59493b!important;background:#28211a!important;box-shadow:0 20px 55px rgba(0,0,0,.58)!important}html[data-theme="dark"] .rdc-chart-window .ui-dialog-titlebar{background:linear-gradient(135deg,#201914,#3b2e24)!important}html[data-theme="dark"] .rdc-chart-window .ui-dialog-content{background:#2a221b!important}html[data-theme="dark"] #chartdialog .settings{border-color:#514235;background:linear-gradient(180deg,#342a22,#2b231c)}html[data-theme="dark"] .chart-label{color:#c8b5a2}html[data-theme="dark"] .chart-control{border-color:#695748;background:#211b16;color:#eee3d8;box-shadow:none}html[data-theme="dark"] .chart-badge{border-color:#59493c;background:rgba(25,20,16,.65);color:#c8b5a2}html[data-theme="dark"] #chartdialog .modebar{border-color:rgba(220,195,171,.16);background:rgba(34,27,22,.9)!important}html[data-theme="dark"] #chartdialog .modebar-btn path{fill:#d5c2af!important}
+
+/* Final integrated chart shell and plot clearance */
+.rdc-chart-window.ui-dialog{box-sizing:border-box!important;padding:0!important;overflow:hidden!important;border:1px solid #cfc5bb!important;border-radius:14px!important;background:#fff!important;background-clip:padding-box!important;box-shadow:0 16px 44px rgba(41,31,23,.20),0 2px 8px rgba(41,31,23,.10)!important}
+.rdc-chart-window .ui-dialog-titlebar{box-sizing:border-box!important;width:100%!important;min-height:44px!important;margin:0!important;padding:0 48px 0 17px!important;border:0!important;border-bottom:1px solid #ded6ce!important;border-radius:13px 13px 0 0!important;background:linear-gradient(180deg,#faf8f5 0%,#f0ece7 100%)!important;color:#40342a!important}
+.rdc-chart-window .ui-dialog-title{padding-left:0!important;color:#40342a!important;font-size:14px!important;font-weight:700!important}
+.rdc-chart-window .ui-dialog-title::before{display:none!important}
+.rdc-chart-window .ui-dialog-titlebar-close{border:1px solid #d3c8bd!important;background:#fff!important;color:#5a493c!important;box-shadow:0 1px 2px rgba(45,35,27,.06)}
+.rdc-chart-window .ui-dialog-titlebar-close:hover,.rdc-chart-window .ui-dialog-titlebar-close:focus-visible{border-color:#b7a696!important;background:#eee7df!important}
+.rdc-chart-window .ui-dialog-content{box-sizing:border-box!important;width:100%!important;margin:0!important;padding:0!important;border:0!important;border-radius:0 0 13px 13px!important;background:#fff!important}
+#chartdialog{position:relative!important;overflow:hidden!important}
+#chartdialog .settings{position:absolute!important;top:0;left:0;right:0;z-index:20;box-shadow:0 3px 8px rgba(49,37,27,.07)}
+#chartdialog .modebar{top:calc(var(--chart-toolbar-top,96px) - 36px)!important;right:6px!important;left:auto!important;z-index:50!important;opacity:1!important;visibility:visible!important}
+html[data-theme="dark"] .rdc-chart-window.ui-dialog{border-color:#5b4b3e!important;background:#2a221b!important;box-shadow:0 18px 48px rgba(0,0,0,.52)!important}
+html[data-theme="dark"] .rdc-chart-window .ui-dialog-titlebar{border-bottom-color:#554638!important;background:linear-gradient(180deg,#393028 0%,#302820 100%)!important;color:#eadfd4!important}
+html[data-theme="dark"] .rdc-chart-window .ui-dialog-title{color:#eadfd4!important}
+html[data-theme="dark"] .rdc-chart-window .ui-dialog-titlebar-close{border-color:#665448!important;background:#241e19!important;color:#eadfd4!important}
+
+#chartdialog .modebar-container{opacity:1!important;}
+
+#chartdialog .modebar,
+#chartdialog .modebar-container,
+#chartdialog .modebar--hover {
+    opacity: 1 !important;
+    visibility: visible !important;
+    display: flex !important;
+    pointer-events: auto !important;
+}
+
 </style>
 </head>
 <body>
@@ -125,9 +168,11 @@
         <div id="tree" class="demo1"></div>
     </nav>
 
-    <div id="chartdialog" class="ui-state-active">	
-        <div class="settings" id="settings">
-            <select name="chartunit" id="chartunit" class="ui-state-default ui-corner-all">
+    <div id="chartdialog" class="ui-state-active" aria-label="Radionuclide decay chart">
+        <div class="settings" id="settings" role="group" aria-label="Chart settings">
+            <div class="chart-field chart-field-quantity">
+            <label class="chart-label" for="chartunit">Displayed quantity</label>
+            <select name="chartunit" id="chartunit" class="chart-control">
                 <option value="Bq">Activity (Bq)</option>
                 <option value="Mole">Amount (mol)</option>
                 <option value="DCC_ing">Radiotoxicity on ingestion (Sv)</option>
@@ -136,16 +181,22 @@
                 <option value="Electron_energy">Electron energy emission rate, including beta (MeV/s)</option>
                 <option value="Photon_energy">Photon energy emission rate (MeV/s)</option>
                 <option value="Total_energy">Total energy emission rate (MeV/s)</option>
-            </select>				
-            <label id="timelabel" for="timeinput" class="ui-state-default ui-corner-all">Time
-            <input id="timeinput" type="number" min="0" value="100">
-            <select name="timeunit" id="timeunit">
+            </select>
+            </div>
+            <div class="chart-field chart-field-time">
+            <label id="timelabel" for="timeinput" class="chart-label">Time horizon</label>
+            <div class="chart-time-row">
+            <input id="timeinput" class="chart-control" type="number" min="0" value="100">
+            <select name="timeunit" id="timeunit" class="chart-control" aria-label="Time unit">
                 <option value='second'>seconds</option>
                 <option value='minute'>minutes</option>
                 <option value='hour'>hours</option>
                 <option value='day'>days</option>
                 <option value='year' selected>years</option>
-            </select></label>			
+            </select>
+            </div>
+            </div>
+            <div class="chart-badge" aria-hidden="true"><span></span>Interactive model</div>
         </div>
     </div>
 
@@ -184,18 +235,12 @@ var extraFooterIcons = ' | ' +
     '<button type="button" id="myBtn" class="footer-icon-button" aria-label="Open help"><svg aria-hidden="true" focusable="false" class="smallsvg" xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="white" viewBox="0 0 512 512"><path d="M464 256A208 208 0 1 0 48 256a208 208 0 1 0 416 0zM0 256a256 256 0 1 1 512 0A256 256 0 1 1 0 256zm169.8-90.7c7.9-22.3 29.1-37.3 52.8-37.3h58.3c34.9 0 63.1 28.3 63.1 63.1c0 22.6-12.1 43.5-31.7 54.8L280 264.4c-.2 13-10.9 23.6-24 23.6c-13.3 0-24-10.7-24-24V250.5c0-8.6 4.6-16.5 12.1-20.8l44.3-25.4c4.7-2.7 7.6-7.7 7.6-13.1c0-8.4-6.8-15.1-15.1-15.1H222.6c-3.4 0-6.4 2.1-7.5 5.3l-.4 1.2c-4.4 12.5-18.2 19-30.6 14.6s-19-18.2-14.6-30.6l.4-1.2zM224 352a32 32 0 1 1 64 0 32 32 0 1 1 -64 0z"/></svg></button>';
 KVOT.renderFooter(extraFooterIcons);
 KVOT.initMap('kvotmap');
-function showUserError(message, error) {
-    var status = document.getElementById('rdc-status');
-    status.textContent = message; status.hidden = false;
-    if (error) console.error(message, error);
-}
-function clearUserError() {
-    var status = document.getElementById('rdc-status');
-    status.textContent = ''; status.hidden = true;
-}
+function showUserError(message,error){var x=document.getElementById('rdc-status');x.textContent=message;x.hidden=false;if(error)console.error(message,error);}
+function clearUserError(){var x=document.getElementById('rdc-status');x.textContent='';x.hidden=true;}
 
 // ── Sort toggle ──────────────────────────────────────────────────────────────
 var Asort = false;
+var lastSearchResults = [];
 function togglesort() {
     const toggle = document.getElementById('sortToggle');
     const text = document.querySelector('.sorttext');
@@ -211,19 +256,129 @@ function togglesort() {
     }
     $('#tree').jstree(true).refresh();
 }
+function findExactTreeNode(tree, value) {
+    var query = String(value || '').trim();
+    if (!query) return null;
+    var node = tree.get_node(query);
+    if (node && node.id !== '#') return node;
+    var normalized = query.toLocaleLowerCase();
+    var flatNodes = tree.get_json('#', { flat: true });
+    var exactMatch = flatNodes.find(function (candidate) {
+        return candidate.id !== '#' && String(candidate.text || '').trim().toLocaleLowerCase() === normalized;
+    });
+    return exactMatch ? tree.get_node(exactMatch.id) : null;
+}
+function selectExactTreeNode(value, options) {
+    var tree = $('#tree').jstree(true);
+    if (!tree) return false;
+    var target = findExactTreeNode(tree, value);
+    if (!target) return false;
+    options = options || {};
+    tree.search(''); tree.show_all(); tree.deselect_all(true);
+    if (options.closeOtherBranches !== false) tree.close_all();
+    lastSearchResults = [];
+    target.parents.slice().reverse().forEach(function (parentId) {
+        if (parentId !== '#') tree.open_node(parentId);
+    });
+    tree.select_node(target.id);
+    var input = document.getElementById('search-input');
+    if (input && options.preserveInput !== true) input.value = '';
+    return true;
+}
+
 document.addEventListener('DOMContentLoaded', function() {
     const sortBtn = document.getElementById('sortToggle');
     if (sortBtn) sortBtn.addEventListener('click', togglesort);
     const searchInput = document.getElementById('search-input');
-    if (searchInput) searchInput.addEventListener('blur', function() { this.value = ''; });
-    var chartUnit = document.getElementById('chartunit');
-    var timeInput = document.getElementById('timeinput');
-    var timeUnit = document.getElementById('timeunit');
-    var printButton = document.getElementById('print-decay-chain');
-    if (chartUnit) chartUnit.addEventListener('change', updateLevelICrunAndUpdateChart);
-    if (timeInput) timeInput.addEventListener('change', runAndUpdateChart);
-    if (timeUnit) timeUnit.addEventListener('change', runAndUpdateChart);
-    if (printButton) printButton.addEventListener('click', printCY);
+    if (searchInput) {
+        var searchTimer;
+        var valueMonitor;
+        var lastObservedValue = searchInput.value;
+        var lastSelectedValue = '';
+
+        function tryExactSearchSelection(preserveInput) {
+            var value = searchInput.value;
+            if (!value || value === lastSelectedValue) return false;
+            if (!selectExactTreeNode(value, { preserveInput: preserveInput })) return false;
+            lastSelectedValue = value;
+            lastObservedValue = value;
+            clearTimeout(searchTimer);
+            return true;
+        }
+
+        function commitSearchSelection() {
+            clearTimeout(searchTimer);
+            lastSelectedValue = '';
+            if (!tryExactSearchSelection(false)) {
+                $('#tree').jstree(true).search(searchInput.value);
+            }
+        }
+
+        function checkDropdownValue() {
+            var currentValue = searchInput.value;
+            if (currentValue !== lastObservedValue) {
+                lastObservedValue = currentValue;
+                lastSelectedValue = '';
+                if (tryExactSearchSelection(true)) return;
+                clearTimeout(searchTimer);
+                searchTimer = setTimeout(function () {
+                    $('#tree').jstree(true).search(currentValue);
+                }, 200);
+            }
+        }
+
+        searchInput.addEventListener('focus', function () {
+            lastObservedValue = this.value;
+            clearInterval(valueMonitor);
+            // Native and third-party dropdowns do not always emit input/change
+            // before their mouse-selection callback finishes. Monitor the value
+            // while focused so a committed Ra-226 selection is detected directly.
+            valueMonitor = setInterval(checkDropdownValue, 40);
+        });
+
+        searchInput.addEventListener('input', function () {
+            lastObservedValue = this.value;
+            lastSelectedValue = '';
+            clearTimeout(searchTimer);
+            if (tryExactSearchSelection(true)) return;
+            var query = this.value;
+            searchTimer = setTimeout(function () {
+                $('#tree').jstree(true).search(query);
+            }, 200);
+        });
+
+        // Re-check after pointer selection at several event-loop points because
+        // autocomplete implementations commit their value at different moments.
+        document.addEventListener('pointerup', function () {
+            if (document.activeElement !== searchInput) return;
+            [0, 50, 150].forEach(function (delay) {
+                setTimeout(checkDropdownValue, delay);
+            });
+        }, true);
+
+        searchInput.addEventListener('change', commitSearchSelection);
+        searchInput.addEventListener('blur', function () {
+            clearInterval(valueMonitor);
+            valueMonitor = null;
+            checkDropdownValue();
+        });
+        searchInput.addEventListener('keydown', function (event) {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                commitSearchSelection();
+            } else if (event.key === 'Escape') {
+                clearTimeout(searchTimer);
+                lastSelectedValue = '';
+                lastObservedValue = '';
+                this.value = '';
+                $('#tree').jstree(true).search('');
+            }
+        });
+    }
+    var chartUnit=document.getElementById('chartunit'),timeInput=document.getElementById('timeinput'),timeUnit=document.getElementById('timeunit'),printButton=document.getElementById('print-decay-chain');
+    if(chartUnit)chartUnit.addEventListener('change',updateLevelICrunAndUpdateChart);
+    if(timeInput)timeInput.addEventListener('change',runAndUpdateChart); if(timeUnit)timeUnit.addEventListener('change',runAndUpdateChart);
+    if(printButton)printButton.addEventListener('click',printCY);
 });
 
 // ── Theme helpers for Cytoscape ───────────────────────────────────────────────
@@ -477,21 +632,45 @@ CY.cxtmenu({
 });
 
 // ── Help dialog ───────────────────────────────────────────────────────────────
-var modal = document.getElementById('myModal');
-var btn = document.getElementById('myBtn');
-var closeHelpButton = modal.querySelector('.close');
-btn.addEventListener('click', function () { modal.showModal(); });
-closeHelpButton.addEventListener('click', function () { modal.close(); });
-modal.addEventListener('click', function (event) { if (event.target === modal) modal.close(); });
+var modal=document.getElementById('myModal'),btn=document.getElementById('myBtn'),closeHelpButton=modal.querySelector('.close');
+btn.addEventListener('click',function(){modal.showModal();});closeHelpButton.addEventListener('click',function(){modal.close();});
+modal.addEventListener('click',function(e){if(e.target===modal)modal.close();});
 
 window.addEventListener('load', function() {
-    $('#tree').jstree(true).show_all();
-    $('#tree').jstree('select_node', 'U-238');
+    try { validateRadionuclideData(); } catch (error) { showUserError(error.message, error); }
 });
 
-window.addEventListener('resize', function() {
-    if (CHARTDIALOG && CHARTDIALOG[0]) { Plotly.Plots.resize(CHARTDIALOG[0]); }
-});
+var chartResizeFrame = null;
+function resizeDecayChart() {
+    if (chartResizeFrame !== null) return;
+    chartResizeFrame=window.requestAnimationFrame(function () {
+        chartResizeFrame=null;
+        if(typeof CHARTDIALOG!=='undefined'&&CHARTDIALOG&&CHARTDIALOG[0]&&CHARTDIALOG[0].data){
+            getChartTopInset();
+            Plotly.Plots.resize(CHARTDIALOG[0]);
+        }
+    });
+}
+
+window.addEventListener('resize', resizeDecayChart);
+
+// Keep the Plotly canvas synchronized with the jQuery UI dialog while the
+// resize handle is being dragged, not only after another chart input changes.
+$('#chartdialog').on('dialogresize dialogresizestop dialogopen', resizeDecayChart);
+
+// Also observe layout-driven size changes that do not emit jQuery UI events.
+if (typeof ResizeObserver === 'function') {
+    var chartDialogResizeObserver = new ResizeObserver(resizeDecayChart);
+    chartDialogResizeObserver.observe(document.getElementById('chartdialog'));
+}
+
+function styleDecayChartDialog() {
+    if (typeof CHARTDIALOG === 'undefined' || !CHARTDIALOG || !CHARTDIALOG.length) return;
+    CHARTDIALOG.closest('.ui-dialog').addClass('rdc-chart-window');
+    try { CHARTDIALOG.dialog('option','title','Radionuclide decay evolution'); } catch (error) { }
+}
+window.addEventListener('load', styleDecayChartDialog);
+$('#chartdialog').on('dialogopen', styleDecayChartDialog);
 
 function selectElement(Z) {
     $('#tree').jstree(true).show_all();
@@ -629,94 +808,165 @@ const icOkButton = document.getElementById('ic-ok');
 const icCancelButton = document.getElementById('ic-cancel');
 let activeInventoryNode = null;
 let activeInventoryFactor = 0;
-
 function updateIC(node) {
-    const rndata = getRn(node.id());
-    activeInventoryNode = node;
-    activeInventoryFactor = 60 * 60 * 24 * 365.242196 * rndata.Halflife_y / Math.log(2) / 6.02214076e23;
-
-    icDialogTitle.textContent = 'Initial inventory: ' + node.id();
-    icBqInput.value = node.data('IC');
-    icMolInput.value = Number(icBqInput.value) * activeInventoryFactor;
-    icDialog.showModal();
+ const rndata=getRn(node.id()); activeInventoryNode=node;
+ activeInventoryFactor=60*60*24*365.242196*rndata.Halflife_y/Math.log(2)/6.02214076e23;
+ icDialogTitle.textContent='Initial inventory: '+node.id(); icBqInput.value=node.data('IC');
+ icMolInput.value=Number(icBqInput.value)*activeInventoryFactor; icDialog.showModal();
 }
-
-icBqInput.addEventListener('input', function () {
-    icMolInput.value = Number(icBqInput.value) * activeInventoryFactor;
+icBqInput.addEventListener('input',function(){icMolInput.value=Number(icBqInput.value)*activeInventoryFactor;});
+icMolInput.addEventListener('input',function(){icBqInput.value=activeInventoryFactor>0?Number(icMolInput.value)/activeInventoryFactor:0;});
+icOkButton.addEventListener('click',function(){
+ if(!activeInventoryNode)return; const activity=Number(icBqInput.value);
+ if(!Number.isFinite(activity)||activity<0){icBqInput.setCustomValidity('Enter a non-negative finite activity.');icBqInput.reportValidity();return;}
+ icBqInput.setCustomValidity(''); activeInventoryNode.data('IC',activity);updateLevel('IC');runAndUpdateChart();icDialog.close();
 });
+icCancelButton.addEventListener('click',function(){icDialog.close();});
+icDialog.addEventListener('click',function(e){if(e.target===icDialog)icDialog.close();});
+icDialog.addEventListener('close',function(){activeInventoryNode=null;activeInventoryFactor=0;icBqInput.setCustomValidity('');});
 
-icMolInput.addEventListener('input', function () {
-    icBqInput.value = activeInventoryFactor > 0
-        ? Number(icMolInput.value) / activeInventoryFactor
-        : 0;
-});
-
-icOkButton.addEventListener('click', function () {
-    if (!activeInventoryNode) return;
-
-    const activity = Number(icBqInput.value);
-    if (!Number.isFinite(activity) || activity < 0) {
-        icBqInput.setCustomValidity('Enter a non-negative finite activity.');
-        icBqInput.reportValidity();
-        return;
-    }
-
-    icBqInput.setCustomValidity('');
-    activeInventoryNode.data('IC', activity);
-    updateLevel('IC');
-    runAndUpdateChart();
-    icDialog.close();
-});
-
-icCancelButton.addEventListener('click', function () {
-    icDialog.close();
-});
-
-icDialog.addEventListener('click', function (event) {
-    if (event.target === icDialog) icDialog.close();
-});
-
-icDialog.addEventListener('close', function () {
-    activeInventoryNode = null;
-    activeInventoryFactor = 0;
-    icBqInput.setCustomValidity('');
-});
-
-function chooseDefaultTimeScale(halfLifeYears) {
-    var choices = [
-        {unit:'year',factor:1},{unit:'day',factor:365.25},
-        {unit:'hour',factor:365.25*24},{unit:'minute',factor:365.25*24*60},
-        {unit:'second',factor:365.25*24*60*60}
-    ];
-    for (var i=0;i<choices.length;i++) {
-        var value=halfLifeYears*choices[i].factor;
-        if (value>1 || i===choices.length-1) return {unit:choices[i].unit,value:value};
-    }
+function collectRadionuclideNames(nodes, names) {
+    names = names || [];
+    (nodes || []).forEach(function (node) {
+        if (node && typeof node.type === 'string' && node.type.endsWith('isotope')) names.push(node.text);
+        if (node && Array.isArray(node.children)) collectRadionuclideNames(node.children, names);
+    });
+    return names;
 }
+function validateRadionuclideData() {
+    var errors = [], warnings = [], roundingWarnings = [], incompleteWarnings = [], seen = new Set();
+    var names = collectRadionuclideNames(datatree, []);
+    names.forEach(function (name) {
+        if (seen.has(name)) { errors.push('Duplicate radionuclide identifier: ' + name); return; }
+        seen.add(name);
+        var rn;
+        try { rn = getRn(name); } catch (error) { errors.push('Missing radionuclide data: ' + name); return; }
+        if (!rn) { errors.push('Missing radionuclide data: ' + name); return; }
+        if (rn.Halflife !== 'Stable' && (!Number.isFinite(Number(rn.Halflife_y)) || Number(rn.Halflife_y) <= 0)) errors.push(name + ': invalid half-life');
+        ['Alpha_energy','Electron_energy','Photon_energy'].forEach(function (field) {
+            if (rn[field] !== undefined && (!Number.isFinite(Number(rn[field])) || Number(rn[field]) < 0)) errors.push(name + ': invalid ' + field);
+        });
+        var total = 0;
+        (rn.Progenies || []).forEach(function (branch) {
+            var fraction = Number(branch.br);
+            if (!Number.isFinite(fraction) || fraction < 0 || fraction > 1) errors.push(name + ': invalid branching fraction for ' + branch.name);
+            else total += fraction;
+            if (branch.name !== 'SF') {
+                try { if (!getRn(branch.name)) errors.push(name + ': unknown daughter ' + branch.name); }
+                catch (error) { errors.push(name + ': unknown daughter ' + branch.name); }
+            }
+        });
+        var branchWarningTolerance = 1e-6;
+        var branchErrorTolerance = 1e-3;
+        if (total > 1 + branchErrorTolerance) {
+            errors.push(name + ': branching fractions sum to ' + total.toPrecision(12));
+        } else if (total > 1 + branchWarningTolerance) {
+            roundingWarnings.push(name + ': branching fractions sum to ' + total.toPrecision(12) + ' due to source-data rounding');
+        } else if (total > 0 && total < 0.999 && rn.Progenies && rn.Progenies.length) {
+            incompleteWarnings.push(name + ': branching fractions sum to ' + total.toPrecision(12));
+        }
+    });
+    if (errors.length) throw new Error('Radionuclide data validation failed (' + errors.length + '): ' + errors.slice(0, 8).join('; '));
+    warnings = roundingWarnings.concat(incompleteWarnings);
+    var verboseValidation = new URLSearchParams(window.location.search).get('validate') === 'verbose';
+    if (verboseValidation) {
+        var summary = 'RDC radionuclide data validation passed for ' + names.length + ' entries';
+        if (roundingWarnings.length || incompleteWarnings.length) {
+            summary += ' (' + roundingWarnings.length + ' rounded branch totals normalized';
+            summary += ', ' + incompleteWarnings.length + ' incomplete branch totals noted)';
+        }
+        console.info(summary + '.');
+        if (warnings.length) {
+            console.groupCollapsed('RDC validation details (' + warnings.length + ')');
+            if (roundingWarnings.length) console.info('Rounded totals normalized:', roundingWarnings);
+            if (incompleteWarnings.length) console.info('Incomplete totals:', incompleteWarnings);
+            console.groupEnd();
+        }
+    }
+    return {
+        radionuclides: names.length,
+        warnings: warnings,
+        roundedBranchTotals: roundingWarnings,
+        incompleteBranchTotals: incompleteWarnings
+    };
+}
+window.validateRadionuclideData = validateRadionuclideData;
+
+function chooseDefaultTimeScale(y){var c=[{unit:'year',factor:1},{unit:'day',factor:365.25},{unit:'hour',factor:365.25*24},{unit:'minute',factor:365.25*24*60},{unit:'second',factor:365.25*24*60*60}];for(var i=0;i<c.length;i++){var v=y*c[i].factor;if(v>1||i===c.length-1)return{unit:c[i].unit,value:v};}}
 function runRdcScientificTests() {
-    var failures=[];
-    function close(name,a,e,t){if(!Number.isFinite(a)||Math.abs(a-e)>t*Math.max(1,Math.abs(e)))failures.push(name);}
-    function equal(name,a,e){if(a!==e)failures.push(name);}
-    var lambda=Math.log(2)/10;
-    close('single radionuclide decay',100*Math.exp(-lambda*10),50,1e-12);
-    var lp=Math.log(2)/2, ld=Math.log(2)/8, time=5, a0=100;
-    var daughter=a0*ld/(ld-lp)*(Math.exp(-lp*time)-Math.exp(-ld*time));
-    close('parent-daughter Bateman solution',daughter,15.721436067628932,1e-12);
-    var secondsPerYear=60*60*24*365.242196, avogadro=6.02214076e23;
-    var factor=secondsPerYear*30/Math.log(2)/avogadro, activity=12345;
-    close('Bq/mol conversion round trip',(activity*factor)/factor,activity,1e-12);
-    equal('30-minute unit',chooseDefaultTimeScale(30/(365.25*24*60)).unit,'minute');
-    equal('30-second unit',chooseDefaultTimeScale(30/(365.25*24*60*60)).unit,'second');
-    if(typeof ndf==='function'){
-        var result=ndf(function(t,y){return[-lambda*y[0]];},[0,10],[100],{Refine:4,AbsTol:1e-12,RelTol:1e-8,Jacobian:[[-lambda]]});
+    var failures = [];
+    function close(name, actual, expected, tolerance) {
+        if (!Number.isFinite(actual) || Math.abs(actual - expected) > tolerance * Math.max(1, Math.abs(expected))) failures.push(name + ' (' + actual + ' vs ' + expected + ')');
+    }
+    function equal(name, actual, expected) { if (actual !== expected) failures.push(name + ' (' + actual + ' vs ' + expected + ')'); }
+    var ln2 = Math.log(2), lambda = ln2 / 10;
+    close('single radionuclide at one half-life', 100 * Math.exp(-lambda * 10), 50, 1e-12);
+    close('stable daughter ingrowth', 100 * (1 - Math.exp(-lambda * 10)), 50, 1e-12);
+    var lp = ln2 / 2, ld = ln2 / 8, t = 5, a0 = 100;
+    var daughter = a0 * ld / (ld - lp) * (Math.exp(-lp * t) - Math.exp(-ld * t));
+    close('two-member Bateman chain', daughter, 15.721436067628932, 1e-12);
+    var branchA = 0.7, branchB = 0.3, decayed = 100 * (1 - Math.exp(-lambda * 10));
+    close('branch A production', branchA * decayed, 35, 1e-12);
+    close('branch B production', branchB * decayed, 15, 1e-12);
+    close('branch conservation', branchA * decayed + branchB * decayed, decayed, 1e-12);
+    var roundedBranchTotal = 1.000005;
+    var normalizedA = 0.7000035 / roundedBranchTotal;
+    var normalizedB = 0.3000015 / roundedBranchTotal;
+    close('rounded branch normalization', normalizedA + normalizedB, 1, 1e-12);
+    var parentSlow = ln2 / 100, daughterFast = ln2 / 1;
+    var equilibriumRatio = daughterFast / (daughterFast - parentSlow);
+    close('secular-equilibrium ratio approaches unity', equilibriumRatio, 1.0101010101010102, 1e-12);
+    var transientParent = ln2 / 10, transientDaughter = ln2 / 20;
+    var transientPeak = Math.log(transientDaughter / transientParent) / (transientDaughter - transientParent);
+    close('transient-equilibrium peak time', transientPeak, 20, 1e-12);
+    var secondsPerYear = 60 * 60 * 24 * 365.242196, avogadro = 6.02214076e23;
+    var molFactor = secondsPerYear * 30 / ln2 / avogadro, activity = 12345;
+    close('Bq/mol round trip', activity * molFactor / molFactor, activity, 1e-12);
+    equal('30-minute scale', chooseDefaultTimeScale(30 / (365.25 * 24 * 60)).unit, 'minute');
+    equal('30-second scale', chooseDefaultTimeScale(30 / (365.25 * 24 * 60 * 60)).unit, 'second');
+    var logData = prepareDataForXAxis([{x:[0,1,2],y:[4,5,6]}], 'log');
+    equal('log axis removes zero', logData[0].x.length, 2); equal('log axis preserves y alignment', logData[0].y[0], 5);
+    if (typeof ndf === 'function') {
+        var result = ndf(function(time,y){return[-lambda*y[0]];},[0,10],[100],{Refine:4,AbsTol:1e-12,RelTol:1e-8,Jacobian:[[-lambda]]});
         close('numerical solver',result.yout[0][result.yout[0].length-1],50,1e-5);
     }
-    if(failures.length)throw new Error('Scientific self-tests failed: '+failures.join(', '));
+    if (failures.length) throw new Error('Scientific self-tests failed: ' + failures.join('; '));
     console.info('RDC scientific self-tests passed.'); return true;
 }
-window.runRdcScientificTests=runRdcScientificTests;
-if(new URLSearchParams(window.location.search).get('selftest')==='1'){
-    try{runRdcScientificTests();}catch(error){showUserError(error.message,error);}
+window.runRdcScientificTests = runRdcScientificTests;
+if (new URLSearchParams(window.location.search).get('selftest') === '1') {
+    try { runRdcScientificTests(); } catch (error) { showUserError(error.message, error); }
+}
+
+function appendSanitizedMarkup(container, markup) {
+    var doc = new DOMParser().parseFromString(String(markup || ''), 'text/html');
+    doc.querySelectorAll('script,iframe,object,embed,link,meta').forEach(function (element) { element.remove(); });
+    doc.body.querySelectorAll('*').forEach(function (element) {
+        Array.from(element.attributes).forEach(function (attribute) {
+            if (/^on/i.test(attribute.name) || /^(javascript|data):/i.test(attribute.value.trim())) element.removeAttribute(attribute.name);
+        });
+    });
+    Array.from(doc.body.childNodes).forEach(function (node) { container.appendChild(document.importNode(node, true)); });
+}
+function renderElementInformation(container, node, a) {
+    container.replaceChildren();
+    var table = document.createElement('table'); table.className = 'element-info-table';
+    function row(cells) { var tr=document.createElement('tr'); cells.forEach(function(c){tr.appendChild(c);});table.appendChild(tr);return tr; }
+    function cell(tag,text,className,colspan){var e=document.createElement(tag);if(className)e.className=className;if(colspan)e.colSpan=colspan;if(text!==undefined)e.textContent=text;return e;}
+    var z=cell('td'); var zb=document.createElement('b');zb.className='elem-Z';zb.textContent=a.Z;z.appendChild(zb);
+    var weight=cell('td',String(a.weight||'').replace('–',''),'elem-weight');
+    var periodic=cell('td',undefined,'elem-pt');periodic.rowSpan=4;appendSanitizedMarkup(periodic,getPeriodicTable(a.Z));row([z,weight,periodic]);
+    var symbol=cell('td',undefined,null,2), sb=document.createElement('b');sb.className='elem-symbol';sb.textContent=a.symbol;symbol.appendChild(sb);row([symbol]);
+    row([cell('td',node.text,'elem-name',2)]);row([cell('td',a.type,'elem-type',2)]);row([cell('td',a.info,'elem-info',3)]);
+    row([cell('td','Discovered '+a.year+' by '+a.discoverer+'. '+a.note,'elem-discovery',3)]);
+    function labelled(label,value){row([cell('th',label,null,2),cell('td',value)]);}
+    labelled('Origin of name',a.origin_name);labelled('Atomic mass',a.weight+' g/mol');
+    var phase=cell('td',a.phase);phase.className=String(a.phase||'').replace(' (expected)','');row([cell('th','Standard state',null,2),phase]);
+    labelled('Electron configuration',a.electron);labelled('Oxidation states',a.oxi);labelled('Electronegativity (Pauling)',a.electro);
+    labelled('Atomic radius (van der Waals)',a.radius+' pm');labelled('Ionization energy',a.ion+' eV');labelled('Electron affinity',a.affin+' eV');
+    labelled('Melting point',a.melting+'°C');labelled('Boiling point',a.boiling+'°C');labelled('Specific heat capacity',a.heat+' J/g·K');
+    labelled('Density',a.density+' g/cm³');labelled("Abundance (Earth's crust)",a.abundance+' mg/kg');labelled('Block',a.block);labelled('Origin',a.origin);
+    container.appendChild(table);
 }
 
 // ── jstree ───────────────────────────────────────────────────────────────────
@@ -749,25 +999,12 @@ $('#tree').jstree({
         "show_only_matches": false,
     },
     "sort": function (a, b) {
-        const nodeA = this.get_node(a);
-        const nodeB = this.get_node(b);
-        if (!nodeA || !nodeB) return 0;
-
-        const aIsIsotope = nodeA.type.endsWith('isotope');
-        const bIsIsotope = nodeB.type.endsWith('isotope');
-        if (aIsIsotope && bIsIsotope) {
-            return nodeA.text.localeCompare(nodeB.text, undefined, { numeric: true });
-        }
-        if (aIsIsotope !== bIsIsotope) {
-            return aIsIsotope ? 1 : -1;
-        }
-        if (Asort) {
-            return nodeA.text.localeCompare(nodeB.text);
-        }
-
-        const zA = Number(nodeA.a_attr && nodeA.a_attr.Z);
-        const zB = Number(nodeB.a_attr && nodeB.a_attr.Z);
-        return (zA - zB) || nodeA.text.localeCompare(nodeB.text);
+        const nodeA=this.get_node(a), nodeB=this.get_node(b); if(!nodeA||!nodeB)return 0;
+        const ai=nodeA.type.endsWith('isotope'), bi=nodeB.type.endsWith('isotope');
+        if(ai&&bi)return nodeA.text.localeCompare(nodeB.text,undefined,{numeric:true});
+        if(ai!==bi)return ai?1:-1; if(Asort)return nodeA.text.localeCompare(nodeB.text);
+        const za=Number(nodeA.a_attr&&nodeA.a_attr.Z), zb=Number(nodeB.a_attr&&nodeB.a_attr.Z);
+        return (za-zb)||nodeA.text.localeCompare(nodeB.text);
     },
 }).on("changed.jstree", function (e, data) {
     $('#tree').jstree(true).show_all();
@@ -802,9 +1039,8 @@ $('#tree').jstree({
             position: { x: x, y: y },
         });
 
-        var defaultScale = chooseDefaultTimeScale(rnnode.Halflife_y);
-        var unit = defaultScale.unit;
-        var halflife = defaultScale.value;
+        var defaultScale=chooseDefaultTimeScale(rnnode.Halflife_y);
+        var unit=defaultScale.unit, halflife=defaultScale.value;
 
         var expvalue = 1 + Math.ceil(Math.log10(halflife));
         document.getElementById("timeinput").value = "1e" + expvalue;
@@ -814,37 +1050,7 @@ $('#tree').jstree({
     }
     else if (node) {
         const a = node.a_attr;
-        infodiv.innerHTML = `
-          <table class="element-info-table">
-            <tr>
-              <td><b class="elem-Z">${a.Z}</b></td>
-              <td class="elem-weight">${a.weight.replace('\u2013','')}</td>
-              <td rowspan="4" class="elem-pt">${getPeriodicTable(a.Z)}</td>
-            </tr>
-            <tr><td colspan="2"><b class="elem-symbol">${a.symbol}</b></td></tr>
-            <tr><td colspan="2" class="elem-name">${node.text}</td></tr>
-            <tr><td colspan="2" class="elem-type">${a.type}</td></tr>
-            <tr><td colspan="3" class="elem-info">${a.info}</td></tr>
-            <tr><td colspan="3" class="elem-discovery">Discovered ${a.year} by ${a.discoverer}. ${a.note}</td></tr>
-            <tr><th colspan="2">Origin of name</th><td>${a.origin_name}</td></tr>
-            <tr><th colspan="2">Atomic mass</th><td>${a.weight} g/mol</td></tr>
-            <tr><th colspan="2">Standard state</th>
-                <td class="${a.phase.replace(' (expected)','')}">${a.phase}</td></tr>
-            <tr><th colspan="2">Electron configuration</th><td>${a.electron}</td></tr>
-            <tr><th colspan="2">Oxidation states</th><td>${a.oxi}</td></tr>
-            <tr><th colspan="2">Electronegativity (Pauling)</th><td>${a.electro}</td></tr>
-            <tr><th colspan="2">Atomic radius (van der Waals)</th><td>${a.radius} pm</td></tr>
-            <tr><th colspan="2">Ionization energy</th><td>${a.ion} eV</td></tr>
-            <tr><th colspan="2">Electron affinity</th><td>${a.affin} eV</td></tr>
-            <tr><th colspan="2">Melting point</th><td>${a.melting}\u00B0C</td></tr>
-            <tr><th colspan="2">Boiling point</th><td>${a.boiling}\u00B0C</td></tr>
-            <tr><th colspan="2">Specific heat capacity</th><td>${a.heat} J/g\u00B7K</td></tr>
-            <tr><th colspan="2">Density</th><td>${a.density} g/cm<sup>3</sup></td></tr>
-            <tr><th colspan="2">Abundance (Earth's crust)</th><td>${a.abundance} mg/kg</td></tr>
-            <tr><th colspan="2">Block</th><td>${a.block}</td></tr>
-            <tr><th colspan="2">Origin</th><td>${a.origin}</td></tr>
-          </table>`;
-
+        renderElementInformation(infodiv, node, a);
         const ELEMENT_TYPES = ['Alkali_metal','Alkaline_earth_metal','Transition_metal',
             'Post__transition_metal','Metalloid','Reactive_nonmetal','Noble_gas',
             'Lanthanide','Actinide','Unknown_properties'];
@@ -853,19 +1059,67 @@ $('#tree').jstree({
         infodiv.classList.add("show");
     }
     runAndUpdateChart();
-}).on('search.jstree', function (nodes, data, res) {
-    data.instance.deselect_all();
-    data.instance.close_all();
-    if (data.nodes.length === 0) {
-        $('#tree').jstree(true).hide_all();
-    } else if (data.nodes.length > 0) {
-        data.instance.select_node(data.res[0]);
-    }
-}).on('loaded.jstree', function(e, data) {
-    $('#tree').jstree('search', 'U-238');
+}).on('search.jstree', function (event, data) {
+    lastSearchResults = (data.nodes || []).slice();
+    if (lastSearchResults.length === 0 && String(data.str || '').trim()) $('#tree').jstree(true).hide_all();
+    else $('#tree').jstree(true).show_all();
+}).on('loaded.jstree', function () {
+    if (!selectExactTreeNode('U-238')) showUserError('The default radionuclide U-238 could not be found in the tree.');
 });
 
 // ── Chart ────────────────────────────────────────────────────────────────────
+function prepareDataForXAxis(traces, axisType) {
+    if (axisType !== 'log') return traces;
+    return traces.map(function (trace) {
+        var x = [], y = [];
+        for (var i = 0; i < trace.x.length; i++) {
+            if (Number.isFinite(trace.x[i]) && trace.x[i] > 0) { x.push(trace.x[i]); y.push(trace.y[i]); }
+        }
+        return Object.assign({}, trace, { x: x, y: y });
+    });
+}
+
+function csvEscape(value) {
+    var text = value === null || value === undefined ? '' : String(value);
+    return /[",\r\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+}
+function formatCsvNumber(value) { return Number.isFinite(Number(value)) ? Number(value).toPrecision(12) : ''; }
+function buildChartCsv(traces, order, timeunit, yAxisTitle) {
+    var rows = [];
+    rows.push(['RDC export']); rows.push(['Data source','ICRP Publication 107']);
+    rows.push(['Quantity',yAxisTitle]); rows.push(['Time unit',timeunit]);
+    rows.push(['Initial inventories (Bq)'].concat(order.map(function(name){
+        var node = CY.getElementById(name); return formatCsvNumber(node.data('IC'));
+    })));
+    rows.push([]);
+    rows.push(['Time ('+timeunit+')'].concat(order.map(function(name){return name+' - '+yAxisTitle;})));
+    var count = traces.length ? traces[0].x.length : 0;
+    for (var i=0;i<count;i++) {
+        var row=[formatCsvNumber(traces[0].x[i])];
+        for(var j=0;j<traces.length;j++)row.push(formatCsvNumber(traces[j].y[i])); rows.push(row);
+    }
+    return '\ufeff' + rows.map(function(row){return row.map(csvEscape).join(',');}).join('\r\n');
+}
+
+function getChartTopInset() {
+    var settings=document.getElementById('settings');
+    var height=settings?Math.ceil(settings.getBoundingClientRect().height):0;
+    var inset=height+28;
+    document.getElementById('chartdialog').style.setProperty('--chart-toolbar-top',inset+'px');
+    return inset;
+}
+
+function forceVisibleModebar() {
+    if (!CHARTDIALOG || !CHARTDIALOG[0]) return;
+    CHARTDIALOG[0].querySelectorAll('.modebar,.modebar-container,.modebar--hover').forEach(function(el){
+        el.classList.remove('modebar--hover');
+        el.style.opacity='1';
+        el.style.visibility='visible';
+        el.style.display='flex';
+        el.style.pointerEvents='auto';
+    });
+}
+
 function runAndUpdateChart() {
     clearUserError();
     var order = CY.nodes().filter(function (node) {
@@ -898,13 +1152,21 @@ function runAndUpdateChart() {
         CHARTDIALOG.dialog("open");
     }
     for (var i = 0; i < n; i++) {
-        for (var j = 0; j < currns[i].Progenies.length; j++) {
-            var pos = order.indexOf(currns[i].Progenies[j].name);
+        var progenies = currns[i].Progenies || [];
+        var branchTotal = progenies.reduce(function (sum, progeny) {
+            var branch = Number(progeny.br);
+            return Number.isFinite(branch) && branch >= 0 ? sum + branch : sum;
+        }, 0);
+        var normalizeBranches = branchTotal > 1 && branchTotal <= 1.001;
+        for (var j = 0; j < progenies.length; j++) {
+            var pos = order.indexOf(progenies[j].name);
             if (pos > -1) {
-                dydt_data[pos][dydt_data[pos].length] = {
-                    br: Number(currns[i].Progenies[j].br),
+                var branch = Number(progenies[j].br);
+                if (normalizeBranches) branch /= branchTotal;
+                dydt_data[pos].push({
+                    br: branch,
                     index: i
-                };
+                });
             }
         }
     }
@@ -912,16 +1174,9 @@ function runAndUpdateChart() {
     var yaxistitle = "Activity (Bq)";
     var data = new Array(n);
     if (n > 0) {
-        var timeInputElement = document.getElementById("timeinput");
-        var endtime = Number(timeInputElement.value);
-        if (!Number.isFinite(endtime) || endtime <= 0) {
-            timeInputElement.setCustomValidity('Enter a positive finite time.');
-            timeInputElement.reportValidity();
-            showUserError('The chart time must be a positive finite number.');
-            return;
-        }
-        timeInputElement.setCustomValidity('');
-        timeunit = document.getElementById("timeunit").value;
+        var timeInputElement=document.getElementById("timeinput"),endtime=Number(timeInputElement.value);
+        if(!Number.isFinite(endtime)||endtime<=0){timeInputElement.setCustomValidity('Enter a positive finite time.');timeInputElement.reportValidity();showUserError('The chart time must be a positive finite number.');return;}
+        timeInputElement.setCustomValidity(''); timeunit=document.getElementById("timeunit").value;
         var timescale = 1;
         switch (timeunit) {
             case "second": timescale /= 60;  // seconds → minutes
@@ -946,8 +1201,7 @@ function runAndUpdateChart() {
             }
         }
         var result;
-        try {
-            result = ndf(function(t, y) {
+        try { result = ndf(function(t, y) {
             var dydt = new Array(n);
             for (var i = 0; i < n; i++) {
                 dydt[i] = -y[i];
@@ -963,14 +1217,8 @@ function runAndUpdateChart() {
             RelTol: 1e-6,
             Jacobian: Jacobian
         });
-        } catch (error) {
-            showUserError('The decay calculation could not be completed. Try a shorter time range or review the inventory values.', error);
-            return;
-        }
-        if (!result || !Array.isArray(result.tout) || !Array.isArray(result.yout)) {
-            showUserError('The decay solver returned an invalid result.');
-            return;
-        }
+        } catch(error){showUserError('The decay calculation could not be completed. Try a shorter time range or review the inventory values.',error);return;}
+        if(!result||!Array.isArray(result.tout)||!Array.isArray(result.yout)){showUserError('The decay solver returned an invalid result.');return;}
 
         var tout = result.tout;
         var yout = result.yout;
@@ -1004,11 +1252,12 @@ function runAndUpdateChart() {
             };
         }
     }
-    Plotly.react(CHARTDIALOG[0], data, {
+    var displayData = prepareDataForXAxis(data, XAXISTYPE);
+    Plotly.react(CHARTDIALOG[0], displayData, {
         autosize: true,
         paper_bgcolor: plotlyPaperBg(),
         plot_bgcolor: plotlyPlotBg(),
-        margin: { t: 4, b: 70 },
+        margin: { t: getChartTopInset() + 12, r: 28, b: 70, l: 72 },
         font: { color: plotlyFontColor() },
         yaxis: {
             title: yaxistitle,
@@ -1042,14 +1291,10 @@ function runAndUpdateChart() {
             title: "Download data as csv",
             icon: Plotly.Icons.disk,
             click: function(gd) {
-                var blobdata = ["Time (" + timeunit + ")"];
-                for (var j = 0; j < n; j++) { blobdata[0] = blobdata[0] + "," + order[j]; }
-                for (var i = 0; i < data[0].x.length; i++) {
-                    blobdata[i + 1] = data[0].x[i];
-                    for (var j = 0; j < n; j++) { blobdata[i + 1] = blobdata[i + 1] + "," + data[j].y[i]; }
-                }
-                var blob = new Blob([blobdata.join("\r\n")], { type: "text/csv" });
-                saveAs(blob, gd.layout.yaxis.title.text + ".csv");
+                var csv = buildChartCsv(data, order, timeunit, yaxistitle);
+                var blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+                var safeName = String(yaxistitle).replace(/[^a-z0-9._-]+/gi, '_');
+                saveAs(blob, safeName + ".csv");
             },
         },{
             name: "linLogY",
@@ -1070,19 +1315,41 @@ function runAndUpdateChart() {
                 path: 'M470.6 278.6c12.5-12.5 12.5-32.8 0-45.3l-160-160c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3L402.7 256 265.4 393.4c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0l160-160zm-352 160l160-160c12.5-12.5 12.5-32.8 0-45.3l-160-160c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3L210.7 256 73.4 393.4c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0z'
             },
             click: function(gd) {
-                if (gd.layout.xaxis.type === "linear") { XAXISTYPE = 'log'; } else { XAXISTYPE = 'linear'; }
-                Plotly.relayout(CHARTDIALOG[0],{'xaxis.type': XAXISTYPE});             
+                XAXISTYPE = gd.layout.xaxis.type === "linear" ? 'log' : 'linear';
+                runAndUpdateChart();
             },
         }, 'togglespikelines', 'hoverclosest', 'hovercompare'],
         showEditInChartStudio: true,
         plotlyServerURL: "https://chart-studio.plotly.com",
     });
     
-    Plotly.Plots.resize(CHARTDIALOG[0]);
+    resizeDecayChart();
+    setTimeout(forceVisibleModebar,0);
+    CHARTDIALOG[0].removeAllListeners && (
+        CHARTDIALOG[0].removeAllListeners('plotly_afterplot'),
+        CHARTDIALOG[0].removeAllListeners('plotly_relayout'),
+        CHARTDIALOG[0].removeAllListeners('plotly_redraw'),
+        CHARTDIALOG[0].removeAllListeners('plotly_update')
+    );
+    CHARTDIALOG[0].on('plotly_afterplot', forceVisibleModebar);
+    CHARTDIALOG[0].on('plotly_relayout', forceVisibleModebar);
+    CHARTDIALOG[0].on('plotly_redraw', forceVisibleModebar);
+    CHARTDIALOG[0].on('plotly_update', forceVisibleModebar);
 
-    if (typeof CHARTDIALOG[0].removeAllListeners === 'function') {
-        CHARTDIALOG[0].removeAllListeners('plotly_hover');
-        CHARTDIALOG[0].removeAllListeners('plotly_unhover');
+setTimeout(function () {
+    var containers = CHARTDIALOG[0].querySelectorAll('.modebar, .modebar-container, .modebar--hover');
+    containers.forEach(function (element) {
+        element.classList.remove('modebar--hover');
+        element.style.opacity = '1';
+        element.style.visibility = 'visible';
+        element.style.display = 'flex';
+        element.style.pointerEvents = 'auto';
+    });
+}, 0);
+
+
+    if(typeof CHARTDIALOG[0].removeAllListeners==='function'){
+        CHARTDIALOG[0].removeAllListeners('plotly_hover'); CHARTDIALOG[0].removeAllListeners('plotly_unhover');
     }
     CHARTDIALOG[0].on('plotly_hover', function (data) {
         var rn = data.points.map(function (d) { return d.data.name; });
