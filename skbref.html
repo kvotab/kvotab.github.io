@@ -206,11 +206,10 @@
     .zotero-candidate a { color: var(--color-kvot-bright); }
     .zotero-formatted-reference { margin-top:9px; padding:9px 10px; border-left:3px solid var(--color-kvot-bright); background:var(--bg-secondary); color:var(--text-primary); line-height:1.5; }
     .zotero-copy-reference { margin-top:7px; }
-    .csl-style-status { color:var(--text-muted); font-size:.76rem; }
-    .csl-file-name { font-family:'SF Mono',Menlo,monospace; }
     .forbidden-match { color: var(--color-kvot-accent); font-weight: 700; }
     .forbidden-context { max-width: 520px; color: var(--text-secondary); }
     .forbidden-rule { font-family: 'SF Mono', Menlo, monospace; font-size: .76rem; color: var(--text-muted); }
+    .rule-name{display:block;color:var(--text-primary);font-weight:800;line-height:1.35}.rule-id{display:block;margin-top:3px;color:var(--text-muted);font:.7rem 'SF Mono',Menlo,monospace;overflow-wrap:anywhere}.rule-legacy-id{display:block;margin-top:2px;color:var(--text-muted);font:.66rem 'SF Mono',Menlo,monospace;opacity:.78;overflow-wrap:anywhere}
     .invalid-citation-match { color: var(--color-kvot-accent); font-weight: 700; }
     .invalid-citation-context { max-width: 560px; color: var(--text-secondary); }
     .invalid-citation-reason { color: var(--text-secondary); font-size: .82rem; }
@@ -222,11 +221,16 @@
     .citation-source-badge.plain { background:color-mix(in srgb,#6b7280 12%,var(--bg-secondary)); color:var(--text-secondary); border:1px solid var(--border-color); }
     .citation-source-badge.field { background:color-mix(in srgb,#c87d0a 14%,var(--bg-secondary)); color:#9a6108; border:1px solid color-mix(in srgb,#c87d0a 45%,var(--border-color)); }
     .citation-source-detail { margin-top:3px; color:var(--text-muted); font-size:.72rem; line-height:1.35; }
+    .citation-context { max-width:560px; color:var(--text-secondary); line-height:1.48; overflow-wrap:anywhere; }
+    .citation-context-match { color:var(--text-primary); font-weight:800; background:color-mix(in srgb,var(--color-kvot-bright) 17%,transparent); border-radius:3px; padding:0 2px; }
+    .citation-location-region { display:block; color:var(--text-primary); font-weight:700; }
+    .citation-location-paragraph { display:block; margin-top:2px; color:var(--text-muted); font-size:.76rem; }
     .rule-summary-filters { display:flex; gap:12px; flex-wrap:wrap; align-items:end; margin:0 0 14px; padding:12px; background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:8px; }
     .rule-summary-filters label { display:grid; gap:4px; color:var(--text-secondary); font-size:.78rem; font-weight:700; }
     .rule-summary-filters select { min-width:180px; padding:7px 9px; color:var(--text-primary); background:var(--bg-primary); border:1px solid var(--border-color); border-radius:6px; }
     .rule-location-link { display:inline-block; color:var(--color-kvot-bright); text-decoration:underline; text-underline-offset:2px; font-weight:700; }
     .rule-full-context { max-width:760px; color:var(--text-secondary); white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.5; }
+    .rule-context-match{color:var(--text-primary);font-weight:800;background:color-mix(in srgb,#f0ad4e 24%,transparent);border-radius:3px;padding:0 2px}
     .rule-finding-row:target { outline:3px solid var(--color-kvot-bright); outline-offset:-3px; background:color-mix(in srgb,var(--color-kvot-bright) 9%,var(--bg-primary)); scroll-margin-top:24px; }
     .rule-summary-row[hidden], .rule-detail-item[hidden], .rule-document-group[hidden] { display:none; }
     .rule-document-group { margin:14px 0; border:1px solid var(--border-color); border-radius:8px; overflow:hidden; }
@@ -242,6 +246,7 @@
     .language-badge.en { color:#6c3b93; }
     .language-badge.mixed { color:#9a6108; }
     .language-badge.unknown { color:var(--text-muted); }
+    .language-intervals{margin-top:8px;padding:8px 10px;border-left:3px solid var(--border-color);background:var(--bg-secondary);font-size:.76rem}.language-intervals>summary{cursor:pointer;font-weight:800}.language-interval{padding:6px 8px;border:1px solid var(--border-color);border-radius:6px;margin-top:6px}.language-interval-text{display:block;margin-top:3px;white-space:pre-wrap}.language-source{color:var(--text-muted);font-family:'SF Mono',Menlo,monospace}
 
     @media (max-width: 700px) { #summary-cards { grid-template-columns: 1fr 1fr; } }
     @media (max-width: 480px) { #app { padding: 14px 12px 32px; } #summary-cards { gap: 8px; } }
@@ -321,12 +326,6 @@
                 <label for="zotero-password">Password</label>
                 <input id="zotero-password" type="password" autocomplete="current-password">
               </div>
-              <div class="zotero-setting full">
-                <label for="zotero-csl-file">CSL bibliography style</label>
-                <input id="zotero-csl-file" type="file" accept=".csl,.xml,text/xml,application/xml">
-                <div class="csl-style-status">Active style: <span id="zotero-csl-style-name" class="csl-file-name">SKB 17 (author-date)</span></div>
-                <button id="zotero-reset-csl" class="zotero-row-btn" type="button">Restore built-in SKB-17 style</button>
-              </div>
               <label class="zotero-checkbox full" title="Show plausible matches based on similar titles, author names, years, and report numbers.">
                 <input id="zotero-fuzzy-match" type="checkbox" checked>
                 Include fuzzy Zotero matches
@@ -339,7 +338,7 @@
               <span id="zotero-settings-status"></span>
             </div>
             <div class="zotero-settings-note">
-              Credentials and uploaded CSL source are kept only in this page's memory and are not included in downloaded reports. The built-in default style is 2135447 - SKB-17.csl. For security, prefer an API key over a username and password. A local Zotero database requires Zotero's local API to be enabled. Edge must also grant this site Local Network Access; use “Request/test local access” after selecting the local source.
+              Credentials are kept only in this page's memory and are not included in downloaded reports. References are formatted by the built-in SKB reference formatter. For security, prefer an API key over a username and password. A local Zotero database requires Zotero's local API to be enabled. Edge must also grant this site Local Network Access; use “Request/test local access” after selecting the local source.
             </div>
           </div>
         </details>
@@ -389,9 +388,6 @@
     const zoteroPassword = $('zotero-password');
     const zoteroSettingsStatus = $('zotero-settings-status');
     const zoteroTestLocalAccess = $('zotero-test-local-access');
-    const zoteroCslFile = $('zotero-csl-file');
-    const zoteroCslStyleName = $('zotero-csl-style-name');
-    const zoteroResetCsl = $('zotero-reset-csl');
 
     const ZOTERO_CONFIG = Object.freeze({
       groupId: '6640399', apiVersion: '3', minimumScore: 45,
@@ -413,15 +409,7 @@
     });
 
     let activeZoteroSettings = { ...DEFAULT_ZOTERO_SETTINGS };
-
-    const DEFAULT_CSL_STYLE = Object.freeze({
-      fileName: '2135447 - SKB-17.csl',
-      title: 'SKB 17 (author-date)',
-      id: 'SKB-17',
-      supported: true
-    });
-    let activeCslStyle = { ...DEFAULT_CSL_STYLE };
-    const zoteroCandidateStore = new Map();
+    const zoteroFormattedReferenceStore = new Map();
 
     /*
       Review-word and expression rules. Rules with enabled: false correspond to lines
@@ -1529,15 +1517,10 @@
       return (hash >>> 0).toString(36);
     }
 
-    function ensureRuleMetadata(rules, family, defaults = {}) {
-      for (const rule of rules) {
-        rule.id ||= RULE_ID_OVERRIDES[rule.pattern] || `${family}-${stableRuleHash(`${rule.pattern}|${rule.description || ''}`)}`;
-        rule.category ||= defaults.category || family;
-        rule.severity ||= defaults.severity || 'review';
-        rule.flags ||= defaults.flags || 'gu';
-      }
-      return rules;
-    }
+    function readableRuleSlug(value){return String(value||'').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[åä]/g,'a').replace(/ö/g,'o').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,58).replace(/-+$/g,'');}
+    function ruleDisplayName(rule,family){const d=String(rule.label||rule.description||'').trim();if(d&&d!=='?')return d.charAt(0).toUpperCase()+d.slice(1);return `Review ${String(rule.pattern||family).replace(/\\b/g,'').slice(0,65)}`;}
+    function createReadableRuleId(rule,family,used){const category=readableRuleSlug(rule.category||family)||family,name=readableRuleSlug(rule.label||rule.description||rule.pattern)||'unnamed-rule';let id=`${family}-${category}-${name}`;if(used.has(id))id+=`-${stableRuleHash(`${rule.pattern}|${rule.description||''}`).slice(0,5)}`;used.add(id);return id;}
+    function ensureRuleMetadata(rules,family,defaults={}){const used=new Set();for(const rule of rules){rule.category||=defaults.category||family;rule.severity||=defaults.severity||'review';rule.flags||=defaults.flags||'gu';rule.label||=ruleDisplayName(rule,family);const previous=rule.id||RULE_ID_OVERRIDES[rule.pattern]||`${family}-${stableRuleHash(`${rule.pattern}|${rule.description||''}`)}`;const readable=!/^\w+-[a-z0-9]{5,8}$/.test(previous)&&previous.split('-').length>=3;const canonical=readable?previous:createReadableRuleId(rule,family,used);rule.legacyIds=[...new Set([...(rule.legacyIds||[]),previous].filter(id=>id&&id!==canonical))];rule.id=canonical;used.add(canonical);}return rules;}
 
     ensureRuleMetadata(FORBIDDEN_WORD_RULES, 'review', { category: 'terminology', severity: 'review', flags: 'gu' });
     ensureRuleMetadata(POTENTIAL_INVALID_CITATION_RULES, 'citation', { category: 'citation', severity: 'warning', flags: 'gu' });
@@ -1560,7 +1543,7 @@
       ];
       const failures = [];
       for (const [ruleId, positives, negatives] of cases) {
-        const rule = [...FORBIDDEN_WORD_RULES, ...POTENTIAL_INVALID_CITATION_RULES, ...OFFICIAL_SKB_TEXT_RULES].find(item => item.id === ruleId);
+        const rule = [...FORBIDDEN_WORD_RULES, ...POTENTIAL_INVALID_CITATION_RULES, ...OFFICIAL_SKB_TEXT_RULES].find(item => item.id === ruleId || (item.legacyIds || []).includes(ruleId));
         if (!rule) { failures.push(`Missing rule ${ruleId}`); continue; }
         const expression = new RegExp(rule.pattern, rule.flags || 'gu');
         for (const value of positives) { expression.lastIndex = 0; if (!expression.test(value)) failures.push(`${ruleId} should match: ${value}`); }
@@ -1611,12 +1594,8 @@
       if(mixed.language!=='mixed')failures.push('Mixed metadata classification failed');
       if(fallbackSv.language!=='sv')failures.push('Swedish text fallback failed');
       if(fallbackEn.language!=='en')failures.push('English text fallback failed');
-      const profile=calculateDocumentLanguage([{text:'svensk text',language:'sv',languageEvidence:{sv:10}},{text:'English text with more letters',language:'en',languageEvidence:{en:26}},{text:'mixed',language:'mixed',languageEvidence:{sv:2,en:3}}]);
+      const profile=calculateDocumentLanguage([{text:'svensk text',language:'sv'},{text:'English text with more letters',language:'en'},{text:'mixed',language:'mixed'}]);
       if(!['en','mixed'].includes(profile.language)||profile.mixedParagraphs!==1)failures.push('Document language profile failed');
-      const sparse=classify('This is an English paragraph with Swedish template metadata and enough English function words.',{sv:3,en:0,other:0,unknown:78});
-      if(sparse.language!=='en')failures.push('Sparse Swedish template metadata overrode English text');
-      const lowCoverage=calculateDocumentLanguage([{text:'Mostly unknown text content',language:'unknown',languageEvidence:{unknown:24}},{text:'sv',language:'sv',languageEvidence:{sv:2}}]);
-      if(lowCoverage.language!=='unknown')failures.push('Low known-language coverage should remain unknown');
       if(failures.length)console.error('Language regression tests failed:',failures);else console.info('Language regression tests passed (Swedish, English, mixed and fallback cases).');
       return failures;
     }
@@ -1645,8 +1624,6 @@
     zoteroAuthType.addEventListener('change', updateZoteroSettingsVisibility);
     $('zotero-save-settings').addEventListener('click', applyZoteroSettings);
     zoteroTestLocalAccess.addEventListener('click', testLocalZoteroAccess);
-    zoteroCslFile.addEventListener('change', loadCslStyleFile);
-    zoteroResetCsl.addEventListener('click', restoreDefaultCslStyle);
     $('zotero-reset-settings').addEventListener('click', restoreDefaultZoteroSettings);
     updateZoteroSettingsVisibility();
 
@@ -1703,21 +1680,23 @@
         setProgress(15);
         showStatus('Unzipping .docx…');
         const docXml = await zip.file('word/document.xml')?.async('string');
+        const stylesXml = await zip.file('word/styles.xml')?.async('string') || '';
         if (!docXml) throw new Error('word/document.xml not found — is this a valid .docx?');
         setProgress(30);
         showStatus('Parsing document…');
         await yieldToBrowser();
-        const { paragraphs, isSwedish, languageProfile } = parseDocXml(docXml);
+        const { paragraphs, isSwedish, languageProfile } = parseDocXml(docXml, stylesXml);
         let forbiddenMatches = findForbiddenWordMatches(paragraphs);
         let officialWritingIssues = findOfficialSkbTextIssues(paragraphs, languageProfile);
         setProgress(45);
         showStatus('Finding reference list…');
         await yieldToBrowser();
-        const { refListParagraphs, bodyParagraphs, refListStart } = splitAtRefList(paragraphs);
+        const { refListParagraphs, bodyParagraphs, refListStart, refListEnd } = splitAtRefList(paragraphs);
         let potentialInvalidCitations = findPotentialInvalidCitations(bodyParagraphs);
         console.info('Reference-list detection', {
           totalParagraphCount: paragraphs.length,
           refListStart,
+          refListEnd,
           referenceParagraphCount: refListParagraphs.length,
           paragraphsAroundStart: paragraphs
             .slice(Math.max(0, refListStart - 3), refListStart + 8)
@@ -1800,73 +1779,25 @@
       const language=sv>en?'sv':'en'; return{language,confidence:Math.min(.75,Math.max(.5,Math.abs(sv-en)/total)),evidence:{sv,en}};
     }
 
-    function getWordLanguage(node, NS) {
-      const lang = node?.getElementsByTagNameNS(NS,'lang')[0];
-      return normaliseWordLanguage(lang?.getAttribute('w:val') || lang?.getAttributeNS(NS,'val') || '');
-    }
-
-    function extractRunVisibleText(run, NS) {
-      let value = '';
-      (function walk(node) {
-        for (let child = node.firstChild; child; child = child.nextSibling) {
-          if (child.nodeType !== 1) continue;
-          if (child.namespaceURI !== NS) { walk(child); continue; }
-          if (child.localName === 't') value += child.textContent || '';
-          else if (child.localName === 'tab') value += '\t';
-          else if (child.localName === 'br' || child.localName === 'cr') value += ' ';
-          else if (child.localName !== 'instrText') walk(child);
-        }
-      })(run);
-      return value;
-    }
-
-    function extractParagraphLanguageEvidence(node, NS) {
-      const pPr = node.getElementsByTagNameNS(NS,'pPr')[0];
-      const paragraphLanguage = getWordLanguage(pPr,NS);
-      const counts = { sv:0, en:0, other:0, unknown:0 };
-      const ranges = [];
-      let offset = 0;
-      const runs = [...node.getElementsByTagNameNS(NS,'r')];
-      for(const run of runs){
-        const text=extractRunVisibleText(run,NS);
-        if(!text)continue;
-        const runLanguage = getWordLanguage(run.getElementsByTagNameNS(NS,'rPr')[0],NS);
-        const language = runLanguage !== 'unknown' ? runLanguage : paragraphLanguage;
-        const letters=countLetters(text); counts[language]=(counts[language]||0)+letters;
-        ranges.push({start:offset,end:offset+text.length,language,letters});
-        offset+=text.length;
-      }
-      return {counts,ranges,paragraphLanguage,visibleLength:offset};
-    }
+    function getDirectWordLanguage(node,NS){if(!node)return{language:'unknown',raw:'',source:'none'};const lang=[...node.childNodes].find(c=>c.nodeType===1&&c.namespaceURI===NS&&c.localName==='lang')||node.getElementsByTagNameNS(NS,'lang')[0];const raw=lang?.getAttribute('w:val')||lang?.getAttributeNS(NS,'val')||'';return{language:normaliseWordLanguage(raw),raw,source:'direct'};}
+    function parseWordStyles(xml,NS){const empty={styles:new Map(),defaultStyles:{paragraph:'',character:''},docDefault:{language:'unknown',raw:'',source:'none'}};if(!xml)return empty;const doc=new DOMParser().parseFromString(xml,'application/xml'),styles=new Map();for(const node of [...doc.getElementsByTagNameNS(NS,'style')]){const id=node.getAttribute('w:styleId')||node.getAttributeNS(NS,'styleId')||'';if(!id)continue;const based=node.getElementsByTagNameNS(NS,'basedOn')[0],basedOn=based?.getAttribute('w:val')||based?.getAttributeNS(NS,'val')||'',type=node.getAttribute('w:type')||node.getAttributeNS(NS,'type')||'',isDefault=['1','true'].includes((node.getAttribute('w:default')||node.getAttributeNS(NS,'default')||'').toLowerCase()),nameNode=node.getElementsByTagNameNS(NS,'name')[0],name=nameNode?.getAttribute('w:val')||nameNode?.getAttributeNS(NS,'val')||id,rPr=[...node.childNodes].find(c=>c.nodeType===1&&c.namespaceURI===NS&&c.localName==='rPr'),direct=getDirectWordLanguage(rPr,NS);styles.set(id,{id,basedOn,type,isDefault,name,language:direct.language,rawLanguage:direct.raw});}const defaultStyles={paragraph:'',character:''};for(const style of styles.values())if(style.isDefault&&Object.hasOwn(defaultStyles,style.type))defaultStyles[style.type]=style.id;const rp=doc.getElementsByTagNameNS(NS,'docDefaults')[0]?.getElementsByTagNameNS(NS,'rPrDefault')[0]?.getElementsByTagNameNS(NS,'rPr')[0],direct=getDirectWordLanguage(rp,NS);return{styles,defaultStyles,docDefault:{language:direct.language,raw:direct.raw,source:'document default'}};}
+    function resolveStyleLanguage(id,model,visited=new Set()){if(!id||visited.has(id))return null;visited.add(id);const style=model.styles.get(id);if(!style)return null;if(style.language!=='unknown')return{language:style.language,raw:style.rawLanguage,source:`${style.type||'style'} style: ${style.name} (${style.id})`};return resolveStyleLanguage(style.basedOn,model,visited);}
+    function getStyleId(props,name,NS){const node=props?.getElementsByTagNameNS(NS,name)[0];return node?.getAttribute('w:val')||node?.getAttributeNS(NS,'val')||'';}
+    function resolveRunLanguage(run,paragraph,model,NS){const rp=run.getElementsByTagNameNS(NS,'rPr')[0],direct=getDirectWordLanguage(rp,NS);if(direct.language!=='unknown')return{...direct,source:'run direct formatting'};const char=resolveStyleLanguage(getStyleId(rp,'rStyle',NS)||model.defaultStyles.character,model);if(char)return char;const pp=paragraph.getElementsByTagNameNS(NS,'pPr')[0],pd=getDirectWordLanguage(pp,NS);if(pd.language!=='unknown')return{...pd,source:'paragraph direct formatting'};const ps=resolveStyleLanguage(getStyleId(pp,'pStyle',NS)||model.defaultStyles.paragraph,model);if(ps)return ps;if(model.docDefault.language!=='unknown')return model.docDefault;return{language:'unknown',raw:'',source:'no language metadata'};}
+    function extractRunVisibleText(run,NS){let value='';(function walk(node){for(let c=node.firstChild;c;c=c.nextSibling){if(c.nodeType!==1)continue;if(c.namespaceURI!==NS){walk(c);continue;}if(c.localName==='t')value+=c.textContent||'';else if(c.localName==='tab')value+='\\t';else if(c.localName==='br'||c.localName==='cr')value+=' ';else if(c.localName!=='instrText')walk(c);}})(run);return value;}
+    function extractParagraphLanguageEvidence(node,NS,model){const counts={sv:0,en:0,other:0,unknown:0},ranges=[];let offset=0;for(const run of [...node.getElementsByTagNameNS(NS,'r')]){const text=extractRunVisibleText(run,NS);if(!text)continue;const resolved=resolveRunLanguage(run,node,model,NS),letters=countLetters(text);counts[resolved.language]=(counts[resolved.language]||0)+letters;const prev=ranges.at(-1);if(prev&&prev.end===offset&&prev.language===resolved.language&&prev.source===resolved.source){prev.end+=text.length;prev.letters+=letters;prev.text+=text;}else ranges.push({start:offset,end:offset+text.length,language:resolved.language,rawLanguage:resolved.raw,source:resolved.source,letters,text});offset+=text.length;}return{counts,ranges};}
 
     function classifyParagraphLanguage(text, metadata) {
-      const counts={sv:0,en:0,other:0,unknown:0,...metadata.counts};
-      const totalLetters=Math.max(1,countLetters(text));
-      const markedTotal=counts.sv+counts.en+counts.other;
-      const metadataCoverage=Math.min(1,markedTotal/totalLetters);
-      const inferred=inferLanguageFromText(text);
-
-      /* Do not let one short language-marked run classify an otherwise
-         unmarked paragraph. Word templates commonly leave sparse metadata. */
-      if(markedTotal>0 && metadataCoverage>=.5){
-        const ranked=[['sv',counts.sv],['en',counts.en],['other',counts.other]].sort((a,b)=>b[1]-a[1]);
-        const dominance=ranked[0][1]/markedTotal;
-        const confidence=dominance*metadataCoverage;
-        if(dominance>=.7)return{language:ranked[0][0],confidence,evidence:counts,source:'word-language',metadataCoverage};
-        return{language:'mixed',confidence:Math.max(.5,1-dominance),evidence:counts,source:'word-language',metadataCoverage};
-      }
-
-      if(inferred.language!=='unknown'){
-        const confidence=Math.min(.75,Math.max(inferred.confidence,metadataCoverage*.6));
-        return{language:inferred.language,confidence,evidence:{...counts,inferredSv:inferred.evidence.sv,inferredEn:inferred.evidence.en},source:markedTotal?'word-language+text-fallback':'text-fallback',metadataCoverage};
-      }
-
+      const counts={...metadata.counts};
+      const markedTotal=(counts.sv||0)+(counts.en||0)+(counts.other||0);
       if(markedTotal>0){
-        const ranked=[['sv',counts.sv],['en',counts.en],['other',counts.other]].sort((a,b)=>b[1]-a[1]);
-        const dominance=ranked[0][1]/markedTotal;
-        return{language:dominance>=.7?ranked[0][0]:'mixed',confidence:dominance*metadataCoverage,evidence:counts,source:'sparse-word-language',metadataCoverage};
+        const ranked=[['sv',counts.sv||0],['en',counts.en||0],['other',counts.other||0]].sort((a,b)=>b[1]-a[1]);
+        const share=ranked[0][1]/markedTotal;
+        if(share>=.7)return{language:ranked[0][0],confidence:share,evidence:counts,source:'word-language'};
+        return{language:'mixed',confidence:1-share,evidence:counts,source:'word-language'};
       }
-      return{language:'unknown',confidence:0,evidence:counts,source:'unknown',metadataCoverage:0};
+      const inferred=inferLanguageFromText(text);
+      return{...inferred,evidence:{...counts,inferredSv:inferred.evidence.sv,inferredEn:inferred.evidence.en},source:inferred.language==='unknown'?'unknown':'text-fallback'};
     }
 
     function calculateDocumentLanguage(paragraphs) {
@@ -1874,22 +1805,14 @@
       let mixedParagraphs=0;
       for(const paragraph of paragraphs){
         const letters=countLetters(paragraph.text);
-        const evidence=paragraph.languageEvidence||{};
-        const marked=(evidence.sv||0)+(evidence.en||0)+(evidence.other||0);
-        if(paragraph.language==='mixed'){
-          mixedParagraphs++;
-          if(marked){distribution.sv+=evidence.sv||0;distribution.en+=evidence.en||0;distribution.other+=evidence.other||0;distribution.unknown+=Math.max(0,letters-marked);}
-          else distribution.mixed+=letters;
-        } else if(['sv','en','other'].includes(paragraph.language)) {
-          distribution[paragraph.language]+=letters;
-        } else distribution.unknown+=letters;
+        const language=paragraph.language || 'unknown';
+        distribution[language]=(distribution[language]||0)+letters;
+        if(language==='mixed')mixedParagraphs++;
       }
-      const total=Object.values(distribution).reduce((a,b)=>a+b,0);
-      const ranked=[['sv',distribution.sv],['en',distribution.en],['other',distribution.other]].sort((a,b)=>b[1]-a[1]);
-      const dominantShare=total?ranked[0][1]/total:0;
-      const knownShare=total?(distribution.sv+distribution.en+distribution.other)/total:0;
-      const language=dominantShare>=.7&&knownShare>=.7?ranked[0][0]:knownShare>=.5?'mixed':'unknown';
-      return{language,confidence:dominantShare,knownCoverage:knownShare,distribution,mixedParagraphs,totalLetters:total};
+      const known=(distribution.sv||0)+(distribution.en||0)+(distribution.other||0);
+      const ranked=[['sv',distribution.sv||0],['en',distribution.en||0],['other',distribution.other||0]].sort((a,b)=>b[1]-a[1]);
+      const share=known?ranked[0][1]/known:0;
+      return{language:share>=.7?ranked[0][0]:known?'mixed':'unknown',confidence:share,distribution,mixedParagraphs,totalLetters:Object.values(distribution).reduce((a,b)=>a+b,0)};
     }
 
     function languageAtRange(paragraph,start,end) {
@@ -1900,9 +1823,10 @@
       const language=counts.sv===counts.en?'mixed':counts.sv>counts.en?'sv':'en';return{language,confidence:Math.max(counts.sv,counts.en)/total};
     }
 
-    function parseDocXml(xml) {
+    function parseDocXml(xml, stylesXml = '') {
       const doc = new DOMParser().parseFromString(xml, 'application/xml');
       const NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+      const styleModel = parseWordStyles(stylesXml, NS);
       const paragraphs = [...doc.getElementsByTagNameNS(NS, 'p')].map((node, index) => {
         const pPr = node.getElementsByTagNameNS(NS, 'pPr')[0];
         const styleNode = pPr?.getElementsByTagNameNS(NS, 'pStyle')[0];
@@ -1911,14 +1835,12 @@
         const rawText = extracted.text;
         const leadingTrim = rawText.length - rawText.trimStart().length;
         const trimmedText = rawText.trim();
-        const languageMetadata=extractParagraphLanguageEvidence(node,NS);
+        const languageMetadata=extractParagraphLanguageEvidence(node,NS,styleModel);
         languageMetadata.ranges = languageMetadata.ranges.map(range => ({
           ...range,
           start: Math.max(0, range.start - leadingTrim),
           end: Math.max(0, Math.min(trimmedText.length, range.end - leadingTrim))
         })).filter(range => range.end > range.start);
-        const coveredEnd = languageMetadata.ranges.at(-1)?.end || 0;
-        if (coveredEnd < trimmedText.length) languageMetadata.ranges.push({start:coveredEnd,end:trimmedText.length,language:'unknown',letters:countLetters(trimmedText.slice(coveredEnd))});
         const language=classifyParagraphLanguage(trimmedText,languageMetadata);
         return {
           text: trimmedText, fields: extracted.fields,
@@ -2116,16 +2038,42 @@
           paragraphCount: paragraphs.length,
           candidates
         });
+        for (const paragraph of paragraphs) {
+          paragraph.documentRegion = 'body';
+          paragraph.regionLabel = 'Main text';
+        }
         return {
           refListParagraphs: [],
           bodyParagraphs: paragraphs,
-          refListStart: -1
+          refListStart: -1,
+          refListEnd: -1
         };
       }
 
       const start = Math.max(-1, selected.start);
       const end = Math.max(start + 1, selected.end);
       const refListParagraphs = paragraphs.slice(start + 1, end);
+
+      let mainLocationSection = 'Main text';
+      for (let index = 0; index <= start; index++) {
+        const paragraph = paragraphs[index];
+        const headingText = normaliseHeadingText(paragraph.text);
+        if (headingText && headingLevel(paragraph.style) && !REF_HEADING_RE.test(headingText)) mainLocationSection = headingText;
+        paragraph.documentRegion = 'before-references';
+        paragraph.regionLabel = mainLocationSection;
+      }
+      for (let index = start + 1; index < end; index++) {
+        paragraphs[index].documentRegion = 'references';
+        paragraphs[index].regionLabel = 'References';
+      }
+      let postReferenceSection = 'After references';
+      for (let index = end; index < paragraphs.length; index++) {
+        const paragraph = paragraphs[index];
+        const headingText = normaliseHeadingText(paragraph.text);
+        if (headingText && (headingLevel(paragraph.style) || explicitEndRe.test(headingText))) postReferenceSection = headingText;
+        paragraph.documentRegion = 'after-references';
+        paragraph.regionLabel = postReferenceSection;
+      }
 
       console.info('Selected reference-list anchor', {
         ...selected,
@@ -2140,7 +2088,8 @@
           ...paragraphs.slice(0, Math.max(0, start)),
           ...paragraphs.slice(end)
         ],
-        refListStart: Math.max(0, start)
+        refListStart: Math.max(0, start),
+        refListEnd: end
       };
     }
 
@@ -2252,7 +2201,7 @@
         for (const name of abbreviations) {
           const regex = new RegExp(`(?:^|[^A-Za-zÀ-ÖØ-Þà-öø-ÿ0-9])(${escapeRegExp(name).replace(/\\s+/g, '\\\\s+')})(?=$|[^A-Za-zÀ-ÖØ-Þà-öø-ÿ0-9])`, 'gi');
           let match;
-          while ((match = regex.exec(paragraph.text))) citations.push({ key: name, raw: match[1], paraIndex: paragraph.index, section: paragraph.section, paraText: paragraph.text, type: 'abbreviated-name', author: name, year: null });
+          while ((match = regex.exec(paragraph.text))) citations.push({ key: name, raw: match[1], paraIndex: paragraph.index, paragraphNumber: paragraph.index + 1, section: paragraph.section, documentRegion: paragraph.documentRegion || 'body', regionLabel: paragraph.regionLabel || paragraph.section || 'Main text', paraText: paragraph.text, type: 'abbreviated-name', author: name, year: null });
         }
         classifyCitationSources(paragraph, citations);
       }
@@ -2662,7 +2611,14 @@
     }
 
     function makeCitation(key, paragraph, type, author = null, year = null) {
-      return { key, raw: key, paraIndex: paragraph.index, section: paragraph.section, paraText: paragraph.text, type, author, year };
+      return {
+        key, raw: key, paraIndex: paragraph.index,
+        paragraphNumber: paragraph.index + 1,
+        section: paragraph.section,
+        documentRegion: paragraph.documentRegion || 'body',
+        regionLabel: paragraph.regionLabel || paragraph.section || 'Main text',
+        paraText: paragraph.text, type, author, year
+      };
     }
     function normaliseCitationAuthor(author) { return String(author).replace(/\s+/g, ' ').replace(/\bet\s+al\.?$/i, 'et al.').replace(/\bm\.fl\.?$/i, 'm.fl.').trim(); }
     function escapeRegExp(text) { return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
@@ -3239,8 +3195,8 @@
 
     function buildInlineZoteroCandidate(candidate) {
       const candidateId = 'zc-' + candidate.key + '-' + Math.random().toString(36).slice(2, 9);
-      const formatted = formatZoteroBibliography(candidate.data);
-      zoteroCandidateStore.set(candidateId, formatted);
+      const formatted = formatSkbReference(candidate.data);
+      zoteroFormattedReferenceStore.set(candidateId, formatted);
       return `
         <div class="zotero-candidate" data-zotero-candidate-id="${escHtml(candidateId)}">
           <div class="zotero-candidate-head">
@@ -3249,7 +3205,6 @@
           </div>
           <div>${escHtml(candidate.authors.join(', ') || 'No creator recorded')} · ${escHtml(candidate.year || 'No year')}</div>
           ${candidate.reportKey ? `<div>Report Number: ${escHtml(candidate.reportKey)}</div>` : ''}
-          ${candidate.data?.language ? `<div>Language metadata: ${escHtml(candidate.data.language)}${formatted.languageNote ? ` → ${escHtml(formatted.languageNote)}` : ' → no language note required'}</div>` : '<div>Language metadata: not recorded</div>'}
           <div>Match basis: ${escHtml(candidate.reasons.join(', ') || 'metadata similarity')}</div>
           ${candidate.url ? `<a href="${escHtml(candidate.url)}" target="_blank" rel="noopener noreferrer">Open Zotero record ↗</a>` : ''}
           <div class="zotero-formatted-reference">${formatted.html}</div>
@@ -3257,135 +3212,66 @@
         </div>`;
     }
 
-    async function loadCslStyleFile() {
-      const file = zoteroCslFile.files[0];
-      if (!file) return;
-      try {
-        const xml = await file.text();
-        const documentXml = new DOMParser().parseFromString(xml, 'application/xml');
-        if (documentXml.querySelector('parsererror') || documentXml.documentElement.localName !== 'style') {
-          throw new Error('The selected file is not valid CSL XML.');
-        }
-        const title = [...documentXml.getElementsByTagNameNS('*', 'title')][0]?.textContent?.trim() || file.name;
-        const bibliography = documentXml.getElementsByTagNameNS('*', 'bibliography')[0];
-        if (!bibliography) throw new Error('The CSL style has no bibliography definition.');
-        activeCslStyle = { fileName:file.name, title, id:documentXml.getElementsByTagNameNS('*','id')[0]?.textContent?.trim()||'', supported:/SKB\s*17/i.test(title), xml };
-        zoteroCslStyleName.textContent = title + (activeCslStyle.supported ? '' : ' (compatible subset)');
-        zoteroSettingsStatus.textContent = activeCslStyle.supported ? 'CSL style loaded.' : 'CSL loaded. The built-in formatter supports the SKB-17 bibliography structure and a compatible CSL subset.';
-        reformatDisplayedZoteroCandidates();
-      } catch (error) {
-        zoteroCslFile.value = '';
-        zoteroSettingsStatus.textContent = error.message;
-      }
-    }
-
-    function restoreDefaultCslStyle() {
-      activeCslStyle = { ...DEFAULT_CSL_STYLE };
-      zoteroCslFile.value = '';
-      zoteroCslStyleName.textContent = activeCslStyle.title;
-      zoteroSettingsStatus.textContent = 'Built-in SKB-17 style restored.';
-      reformatDisplayedZoteroCandidates();
-    }
-
-    function cslText(value) { return String(value || '').replace(/\s+/g, ' ').trim(); }
-    function formatCslName(creator) {
-      if (creator.name) return cslText(creator.name);
-      const family = cslText(creator.lastName);
-      const given = cslText(creator.firstName);
+    function skbText(value) { return String(value || '').replace(/\s+/g, ' ').trim(); }
+    function formatSkbName(creator) {
+      if (creator.name) return skbText(creator.name);
+      const family = skbText(creator.lastName);
+      const given = skbText(creator.firstName);
       const initials = given.split(/[\s-]+/).filter(Boolean).map(part => part[0]?.toUpperCase() || '').join(' ');
       return [family, initials].filter(Boolean).join(' ');
     }
-    function cslCreators(data, type) { return (data.creators || []).filter(c => c.creatorType === type); }
-
+    function skbCreators(data, type) { return (data.creators || []).filter(c => c.creatorType === type); }
     function normalizeZoteroLanguage(value) {
-      const raw = cslText(value);
-      if (!raw) return { code: '', name: '', isEnglish: false };
-      const normalized = raw.toLowerCase().replace(/_/g, '-').replace(/\s+/g, ' ').trim();
-      const base = normalized.split('-')[0];
-      const aliases = {
-        sv: 'Swedish', swe: 'Swedish', swedish: 'Swedish', svenska: 'Swedish',
-        en: 'English', eng: 'English', english: 'English', engelska: 'English',
-        fi: 'Finnish', fin: 'Finnish', finnish: 'Finnish', suomi: 'Finnish',
-        de: 'German', deu: 'German', ger: 'German', german: 'German', deutsch: 'German',
-        fr: 'French', fra: 'French', fre: 'French', french: 'French', francais: 'French', français: 'French',
-        da: 'Danish', dan: 'Danish', danish: 'Danish', dansk: 'Danish',
-        no: 'Norwegian', nor: 'Norwegian', norwegian: 'Norwegian', norsk: 'Norwegian'
-      };
-      const name = aliases[normalized] || aliases[base] || '';
-      return { code: normalized, name, isEnglish: name === 'English' };
+      const raw=skbText(value);if(!raw)return{code:'',name:'',isEnglish:false};
+      const normalized=raw.toLowerCase().replace(/_/g,'-').replace(/\s+/g,' ').trim(),base=normalized.split('-')[0];
+      const aliases={sv:'Swedish',swe:'Swedish',swedish:'Swedish',svenska:'Swedish',en:'English',eng:'English',english:'English',engelska:'English',fi:'Finnish',fin:'Finnish',finnish:'Finnish',de:'German',deu:'German',ger:'German',german:'German',fr:'French',fra:'French',fre:'French',french:'French',da:'Danish',dan:'Danish',danish:'Danish',no:'Norwegian',nor:'Norwegian',norwegian:'Norwegian'};
+      const name=aliases[normalized]||aliases[base]||'';return{code:normalized,name,isEnglish:name==='English'};
     }
-
-    function zoteroLanguageNote(value) {
-      const language = normalizeZoteroLanguage(value);
-      if (!language.code || language.isEnglish) return '';
-      if (language.name) return `(In ${language.name}.)`;
-      /* Preserve an explicitly recorded but unknown language rather than
-         silently dropping it. The value is metadata, not executable HTML. */
-      return `(In ${cslText(value)}.)`;
-    }
-
-    function runZoteroLanguageFormatterRegressionTests() {
-      const failures = [];
-      const cases = [
-        ['Swedish', '(In Swedish.)'], ['sv', '(In Swedish.)'], ['swe', '(In Swedish.)'],
-        ['sv-SE', '(In Swedish.)'], ['Svenska', '(In Swedish.)'],
-        ['English', ''], ['en-GB', ''], ['', ''], ['Finnish', '(In Finnish.)']
-      ];
-      for (const [input, expected] of cases) {
-        const actual = zoteroLanguageNote(input);
-        if (actual !== expected) failures.push(`${input || '(empty)'}: expected ${expected || '(empty)'}, got ${actual || '(empty)'}`);
-      }
-      if (failures.length) console.error('Zotero language formatter regression tests failed:', failures);
-      else console.info(`Zotero language formatter regression tests passed (${cases.length} cases).`);
-      return failures;
-    }
-    runZoteroLanguageFormatterRegressionTests();
-
-    function formatZoteroBibliography(data) {
+    function zoteroLanguageNote(value){const language=normalizeZoteroLanguage(value);if(!language.code||language.isEnglish)return'';return `(In ${language.name||skbText(value)}.)`;}
+    function formatSkbReference(data) {
       data = data || {};
-      let creators = cslCreators(data, 'author');
+      let creators = skbCreators(data, 'author');
       let role = '';
-      if (!creators.length) { creators = cslCreators(data, 'editor'); role = creators.length ? ' (red)' : ''; }
-      if (!creators.length) creators = cslCreators(data, 'translator');
-      const author = creators.map(formatCslName).filter(Boolean).join(', ') + role;
-      const year = cslText(data.date).match(/\b(?:1[89]\d{2}|20\d{2})[a-z]?\b/i)?.[0] || 'u å';
-      const headText = [author || cslText(data.title) || 'Untitled', year].join(', ') + '.';
-      const title = cslText(data.title);
-      const type = cslText(data.itemType);
+      if (!creators.length) { creators = skbCreators(data, 'editor'); role = creators.length ? ' (red)' : ''; }
+      if (!creators.length) creators = skbCreators(data, 'translator');
+      const author = creators.map(formatSkbName).filter(Boolean).join(', ') + role;
+      const year = skbText(data.date).match(/\b(?:1[89]\d{2}|20\d{2})[a-z]?\b/i)?.[0] || 'u å';
+      const headText = [author || skbText(data.title) || 'Untitled', year].join(', ') + '.';
+      const title = skbText(data.title);
+      const type = skbText(data.itemType);
       const parts = [];
       if (title && author) parts.push(title + '.');
       if (['journalArticle','magazineArticle','newspaperArticle'].includes(type)) {
-        const journal = cslText(data.publicationTitle);
-        const volume = cslText(data.volume);
-        const pages = cslText(data.pages);
+        const journal = skbText(data.publicationTitle);
+        const volume = skbText(data.volume);
+        const pages = skbText(data.pages);
         const j = [journal, volume].filter(Boolean).join(' ');
         if (j || pages) parts.push([j, pages].filter(Boolean).join(', ') + '.');
-        if (data.DOI) parts.push('https://doi.org/' + cslText(data.DOI).replace(/^https?:\/\/(?:dx\.)?doi\.org\//i,''));
+        if (data.DOI) parts.push('https://doi.org/' + skbText(data.DOI).replace(/^https?:\/\/(?:dx\.)?doi\.org\//i,''));
       } else if (['book','bookSection','conferencePaper'].includes(type)) {
-        const editors = cslCreators(data,'editor').map(formatCslName).filter(Boolean);
+        const editors = skbCreators(data,'editor').map(formatSkbName).filter(Boolean);
         if (editors.length && type !== 'book') parts.push('I ' + editors.join(', ') + ' (red).');
-        const container = cslText(data.bookTitle || data.proceedingsTitle || data.publicationTitle);
-        const volume = cslText(data.volume);
-        const placePublisher = [cslText(data.place), cslText(data.publisher)].filter(Boolean).join(': ');
-        const pages = cslText(data.pages);
+        const container = skbText(data.bookTitle || data.proceedingsTitle || data.publicationTitle);
+        const volume = skbText(data.volume);
+        const placePublisher = [skbText(data.place), skbText(data.publisher)].filter(Boolean).join(': ');
+        const pages = skbText(data.pages);
         const publication = [ [container,volume].filter(Boolean).join(' '), placePublisher, pages ].filter(Boolean).join(', ');
         if (publication) parts.push(publication + '.');
       } else {
-        const number = cslText(data.reportNumber || data.number);
-        const archive = [cslText(data.archive), cslText(data.archiveLocation)].filter(Boolean).join(' ');
-        const publisher = cslText(data.publisher || data.institution || data.company);
+        const number = skbText(data.reportNumber || data.number);
+        const archive = [skbText(data.archive), skbText(data.archiveLocation)].filter(Boolean).join(' ');
+        const publisher = skbText(data.publisher || data.institution || data.company);
         const tail = [number, archive, publisher].filter(Boolean).join(', ');
         if (tail) parts.push(tail + '.');
       }
-      const languageNote = zoteroLanguageNote(data.language);
-      if (languageNote) parts.push(languageNote);
+      const languageNote=zoteroLanguageNote(data.language);if(languageNote)parts.push(languageNote);
       const plain = [headText, ...parts].join(' ').replace(/\s+/g,' ').trim();
       const html = '<strong>' + escHtml(headText) + '</strong>' + (parts.length ? ' ' + parts.map(escHtml).join(' ') : '');
       return { plain, html, languageNote };
     }
 
     async function copyFormattedZoteroReference(button) {
-      const formatted = zoteroCandidateStore.get(button.dataset.candidateId);
+      const formatted = zoteroFormattedReferenceStore.get(button.dataset.candidateId);
       if (!formatted) return;
       try {
         if (navigator.clipboard && window.ClipboardItem) {
@@ -3402,15 +3288,6 @@
         const area=document.createElement('textarea'); area.value=formatted.plain; document.body.appendChild(area); area.select(); document.execCommand('copy'); area.remove();
         button.textContent='Copied as plain text'; setTimeout(()=>button.textContent='Copy formatted reference',1400);
       }
-    }
-
-    function reformatDisplayedZoteroCandidates() {
-      document.querySelectorAll('.zotero-candidate[data-zotero-candidate-id]').forEach(node => {
-        const id=node.dataset.zoteroCandidateId, existing=zoteroCandidateStore.get(id);
-        if (!existing) return;
-        const target=node.querySelector('.zotero-formatted-reference');
-        if (target) target.innerHTML=existing.html;
-      });
     }
 
     function getZoteroYear(item){return String(item?.data?.date||'').match(/\b(?:1[89]\d{2}|20\d{2})[a-z]?\b/i)?.[0]||null;}
@@ -3648,7 +3525,7 @@
           const id = item.ruleId || 'unidentified-rule';
           const key = `${family}\u0000${id}\u0000${item.severity || 'review'}`;
           if (!grouped.has(key)) grouped.set(key, {
-            family, ruleId: id, severity: item.severity || 'review',
+            family, ruleId: id, ruleName: item.ruleName || item.description || item.issue || id, legacyRuleIds: item.legacyRuleIds || [], severity: item.severity || 'review',
             category: item.category || '', guidance: item.description || item.issue || '',
             occurrences: 0, examples: [], locations: []
           });
@@ -3659,9 +3536,9 @@
           if (!group.locations.includes(location)) group.locations.push(location);
         }
       }
-      const header = ['Rule ID','Family','Severity','Category','Occurrences','Guidance','Examples','Locations'];
+      const header = ['Rule name','Rule ID','Legacy rule IDs','Family','Severity','Category','Occurrences','Guidance','Examples','Locations'];
       const rows = [...grouped.values()].sort((a,b)=>b.occurrences-a.occurrences || a.ruleId.localeCompare(b.ruleId)).map(item => [
-        item.ruleId,item.family,item.severity,item.category,item.occurrences,item.guidance,item.examples.join(' | '),item.locations.join(' | ')
+        item.ruleName,item.ruleId,item.legacyRuleIds.join(' | '),item.family,item.severity,item.category,item.occurrences,item.guidance,item.examples.join(' | '),item.locations.join(' | ')
       ]);
       const csv = '\ufeff' + [header, ...rows].map(row => row.map(csvCell).join(',')).join('\r\n');
       const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
@@ -3719,11 +3596,12 @@ ${exportedResults.innerHTML}
       URL.revokeObjectURL(url);
     }
 
-    function makeOfficialIssue({ match, description, source, paragraph, context, severity = 'warning', ruleId = '', category = 'technical', matchStart = null, matchEnd = null }) {
+    function makeOfficialIssue({ match, description, source, paragraph, context, severity = 'warning', ruleId = '', ruleName = '', legacyRuleIds = [], category = 'technical', matchStart = null, matchEnd = null }) {
       return {
         match,
         description,
-        ruleId: ruleId || `official-${stableRuleHash(`${description}|${match}`)}`,
+        ruleId: ruleId || `official-${readableRuleSlug(description||match)||stableRuleHash(`${description}|${match}`)}`,
+        ruleName: ruleName || description || 'Official SKB rule', legacyRuleIds,
         category, matchStart, matchEnd,
         source: SKB_RULE_SOURCES[source] || source,
         paragraphIndex: paragraph?.index ?? null,
@@ -3733,6 +3611,7 @@ ${exportedResults.innerHTML}
         language: paragraph?.language || 'unknown',
         languageConfidence: paragraph?.languageConfidence || 0,
         languageSource: paragraph?.languageSource || 'unknown',
+        languageRanges: paragraph?.languageRanges || [],
         severity
       };
     }
@@ -3790,7 +3669,7 @@ ${exportedResults.innerHTML}
             const end = Math.min(text.length, match.index + match[0].length + 55);
             issues.push(makeOfficialIssue({
               match: match[0], description: rule.description, source: rule.source,
-              ruleId: rule.id, category: rule.category, severity: rule.severity,
+              ruleId: rule.id, ruleName: rule.label, legacyRuleIds: rule.legacyIds || [], category: rule.category, severity: rule.severity,
               matchStart: match.index, matchEnd: match.index + match[0].length,
               paragraph,
               context: `${start > 0 ? '…' : ''}${text.slice(start, end)}${end < text.length ? '…' : ''}`
@@ -3994,10 +3873,10 @@ ${exportedResults.innerHTML}
         '<p class="empty-notice">No automatically checkable violations of the three official SKB guides were detected.</p>');
       const body = buildGroupedRuleDetails(issues, 'official', issue => `
         <article id="${findingAnchorId(issue, 'official')}" class="rule-detail-item rule-finding-row" data-part="${escHtml(ruleDocumentPartKey(issue))}" data-severity="${escHtml(issue.severity || 'warning')}" data-rule-id="${escHtml(issue.ruleId || 'unidentified-rule')}">
-          <div class="rule-detail-head"><span class="official-rule-match">${escHtml(issue.match)}</span><code>${escHtml(issue.ruleId || '')}</code><span class="tag">${escHtml(issue.severity || 'warning')}</span>${languageBadge(issue.language, issue.languageConfidence)}</div>
+          <div class="rule-detail-head"><span class="official-rule-match">${escHtml(issue.match)}</span><span><span class="rule-name">${escHtml(issue.ruleName||issue.description)}</span><span class="rule-id">${escHtml(issue.ruleId||'')}</span>${issue.legacyRuleIds?.length?`<span class="rule-legacy-id">Legacy: ${escHtml(issue.legacyRuleIds.join(', '))}</span>`:''}</span><span class="tag">${escHtml(issue.severity || 'warning')}</span>${languageBadge(issue.language, issue.languageConfidence)}</div>
           <div class="rule-detail-guidance">${escHtml(issue.description)}<div class="official-rule-source">Source: ${escHtml(issue.source)}</div></div>
           <div>${findingLocationLink(issue, 'official')}</div>
-          <div class="rule-full-context">${escHtml(issue.fullContext || issue.context)}</div>
+          <div class="rule-full-context">${renderRuleContext(issue)}</div>${languageIntervalsDetails(issue)}
         </article>`);
       return section('Official SKB writing-rule issues', issues.length,
         `<div class="rule-detail-container">${buildRuleDetailFilters(issues)}${body}</div>`, false);
@@ -4067,6 +3946,8 @@ ${exportedResults.innerHTML}
             matches.push({
               ruleIndex,
               ruleId: rule.id,
+              ruleName: rule.label,
+              legacyRuleIds: rule.legacyIds || [],
               category: rule.category,
               severity: rule.severity,
               pattern: rule.pattern,
@@ -4098,10 +3979,10 @@ ${exportedResults.innerHTML}
       if (!matches.length) return '';
       const body = buildGroupedRuleDetails(matches, 'citation', item => `
         <article id="${findingAnchorId(item, 'citation')}" class="rule-detail-item rule-finding-row" data-part="${escHtml(ruleDocumentPartKey(item))}" data-severity="${escHtml(item.severity || 'warning')}" data-rule-id="${escHtml(item.ruleId || 'unidentified-rule')}">
-          <div class="rule-detail-head"><span class="invalid-citation-match">${escHtml(item.match)}</span><code>${escHtml(item.ruleId || '')}</code><span class="tag">${escHtml(item.severity || 'warning')}</span></div>
+          <div class="rule-detail-head"><span class="invalid-citation-match">${escHtml(item.match)}</span><span><span class="rule-name">${escHtml(item.ruleName||item.description)}</span><span class="rule-id">${escHtml(item.ruleId||'')}</span>${item.legacyRuleIds?.length?`<span class="rule-legacy-id">Legacy: ${escHtml(item.legacyRuleIds.join(', '))}</span>`:''}</span><span class="tag">${escHtml(item.severity || 'warning')}</span></div>
           <div class="rule-detail-guidance">${escHtml(item.description)}</div>
           <div>${findingLocationLink(item, 'citation')}</div>
-          <div class="rule-full-context">${escHtml(item.fullContext || item.context)}</div>
+          <div class="rule-full-context">${renderRuleContext(item)}</div>${languageIntervalsDetails(item)}
           <div class="forbidden-rule">${escHtml(item.pattern)}</div>
         </article>`);
       return section('Potential invalid in-text citations', matches.length,
@@ -4136,6 +4017,8 @@ ${exportedResults.innerHTML}
             matches.push({
               ruleIndex,
               ruleId: rule.id,
+              ruleName: rule.label,
+              legacyRuleIds: rule.legacyIds || [],
               category: rule.category,
               severity: rule.severity,
               pattern: rule.pattern,
@@ -4151,7 +4034,8 @@ ${exportedResults.innerHTML}
               context: `${start > 0 ? '…' : ''}${text.slice(start, end)}${end < text.length ? '…' : ''}`,
               fullContext: text,
               language: languageAtRange(paragraph, match.index, match.index + match[0].length).language,
-              languageConfidence: languageAtRange(paragraph, match.index, match.index + match[0].length).confidence
+              languageConfidence: languageAtRange(paragraph, match.index, match.index + match[0].length).confidence,
+              languageRanges: paragraph.languageRanges || []
             });
             if (match[0].length === 0) expression.lastIndex++;
           }
@@ -4159,6 +4043,8 @@ ${exportedResults.innerHTML}
       }
       return matches;
     }
+
+    function renderRuleContext(item){const text=String(item?.fullContext||item?.context||item?.match||'');if(!text)return'';let start=Number.isFinite(item?.matchStart)?item.matchStart:-1,end=Number.isFinite(item?.matchEnd)?item.matchEnd:-1;if(!item?.fullContext||start<0||end<=start||end>text.length){const literal=String(item?.match||'');start=literal?text.indexOf(literal):-1;end=start>=0?start+literal.length:-1;}if(start<0||end<=start||end>text.length)return escHtml(text);return `${escHtml(text.slice(0,start))}<strong class="rule-context-match">${escHtml(text.slice(start,end))}</strong>${escHtml(text.slice(end))}`;}
 
     function findingAnchorId(item, family = 'rule') {
       const part = stableRuleHash(item.sourcePart || item.sourceLabel || 'main');
@@ -4288,7 +4174,7 @@ ${exportedResults.innerHTML}
       for (const item of all) {
         const id = item.ruleId || 'unidentified-rule';
         const key = `${item.familyKey}\u0000${id}\u0000${item.severity || 'review'}`;
-        if (!byRule.has(key)) byRule.set(key, { id, severity: item.severity || 'review', family: item.family, familyKey: item.familyKey, description: item.description || item.issue || '', count: 0, examples: [] });
+        if (!byRule.has(key)) byRule.set(key, { id, name:item.ruleName||item.description||item.issue||id, legacyIds:item.legacyRuleIds||[], severity: item.severity || 'review', family: item.family, familyKey: item.familyKey, description: item.description || item.issue || '', count: 0, examples: [] });
         const ruleGroup = byRule.get(key); ruleGroup.count++;
         if (ruleGroup.examples.length < 3) ruleGroup.examples.push(item);
         const severity = item.severity || 'review';
@@ -4302,8 +4188,8 @@ ${exportedResults.innerHTML}
         <span class="rule-filter-count">${byRule.size} rule(s) shown</span>
       </div>`;
       const severityTags = [...bySeverity].sort((a,b)=>a[0].localeCompare(b[0])).map(([severity,count]) => `<span class="tag">${escHtml(severity)}: <strong>${count}</strong></span>`).join('');
-      const rows = [...byRule.values()].sort((a,b)=>b.count-a.count || a.id.localeCompare(b.id)).map(item => `<tr class="rule-summary-row" data-family="${escHtml(item.familyKey)}" data-severity="${escHtml(item.severity)}"><td><code>${escHtml(item.id)}</code></td><td>${escHtml(item.family)}</td><td>${escHtml(item.severity)}</td><td class="cite-count">${item.count}</td><td>${escHtml(item.description)}</td><td>${item.examples.map(example => `<div class="rule-full-context">${escHtml(example.fullContext || example.context || example.match || '')}</div><div>${findingLocationLink(example, example.detailFamily)}</div>`).join('')}</td></tr>`).join('');
-      return section('Rule findings summary', byRule.size, `<div class="rule-summary-container">${filters}<div class="tag-list" style="margin-bottom:12px">${severityTags}</div><table class="ref-table"><thead><tr><th>Rule ID</th><th>Family</th><th>Severity</th><th>Occurrences</th><th>Guidance</th><th>Examples and locations</th></tr></thead><tbody>${rows}</tbody></table></div>`, false);
+      const rows = [...byRule.values()].sort((a,b)=>b.count-a.count || a.id.localeCompare(b.id)).map(item => `<tr class="rule-summary-row" data-family="${escHtml(item.familyKey)}" data-severity="${escHtml(item.severity)}"><td><span class="rule-name">${escHtml(item.name)}</span><span class="rule-id">${escHtml(item.id)}</span>${item.legacyIds.length?`<span class="rule-legacy-id">Legacy: ${escHtml(item.legacyIds.join(', '))}</span>`:''}</td><td>${escHtml(item.family)}</td><td>${escHtml(item.severity)}</td><td class="cite-count">${item.count}</td><td>${escHtml(item.description)}</td><td>${item.examples.map(example => `<div class="rule-full-context">${renderRuleContext(example)}</div><div>${findingLocationLink(example, example.detailFamily)}</div>`).join('')}</td></tr>`).join('');
+      return section('Rule findings summary', byRule.size, `<div class="rule-summary-container">${filters}<div class="tag-list" style="margin-bottom:12px">${severityTags}</div><table class="ref-table"><thead><tr><th>Rule name / ID</th><th>Family</th><th>Severity</th><th>Occurrences</th><th>Guidance</th><th>Examples and locations</th></tr></thead><tbody>${rows}</tbody></table></div>`, false);
     }
 
     function buildForbiddenWordsSection(matches) {
@@ -4317,24 +4203,26 @@ ${exportedResults.innerHTML}
         grouped.get(key).push(item);
       }
       const ruleSummaryRows = [...grouped.values()].map(items => ({
-        ruleId: items[0].ruleId || 'unidentified-rule', severity: items[0].severity || 'review', count: items.length,
+        ruleId: items[0].ruleId || 'unidentified-rule', ruleName:items[0].ruleName||items[0].description, legacyIds:items[0].legacyRuleIds||[], severity: items[0].severity || 'review', count: items.length,
         description: items[0].description, examples: items.slice(0,3)
       })).sort((a,b)=>b.count-a.count || a.ruleId.localeCompare(b.ruleId));
       const severitySummary = [...severityCounts].sort((a,b)=>a[0].localeCompare(b[0])).map(([severity,count]) => `<span class="tag">${escHtml(severity)}: <strong>${count}</strong></span>`).join('');
       const ruleSummary = `<details style="margin-bottom:14px"><summary style="cursor:pointer;font-weight:700">Summary by rule ID and severity</summary>
         <div class="tag-list" style="margin:10px 0">${severitySummary}</div>
-        <table class="ref-table"><thead><tr><th>Rule ID</th><th>Severity</th><th>Occurrences</th><th>Guidance</th><th>Examples</th></tr></thead><tbody>${ruleSummaryRows.map(item => `<tr><td><code>${escHtml(item.ruleId)}</code></td><td>${escHtml(item.severity)}</td><td class="cite-count">${item.count}</td><td>${escHtml(item.description)}</td><td>${item.examples.map(example => `<div class="rule-full-context">${escHtml(example.fullContext || example.context || example.match)}</div><div>${findingLocationLink(example,'review')}</div>`).join('')}</td></tr>`).join('')}</tbody></table></details>`;
+        <table class="ref-table"><thead><tr><th>Rule name / ID</th><th>Severity</th><th>Occurrences</th><th>Guidance</th><th>Examples</th></tr></thead><tbody>${ruleSummaryRows.map(item => `<tr><td><span class="rule-name">${escHtml(item.ruleName)}</span><span class="rule-id">${escHtml(item.ruleId)}</span>${item.legacyIds.length?`<span class="rule-legacy-id">Legacy: ${escHtml(item.legacyIds.join(', '))}</span>`:''}</td><td>${escHtml(item.severity)}</td><td class="cite-count">${item.count}</td><td>${escHtml(item.description)}</td><td>${item.examples.map(example => `<div class="rule-full-context">${renderRuleContext(example)}</div><div>${findingLocationLink(example,'review')}</div>`).join('')}</td></tr>`).join('')}</tbody></table></details>`;
       const details = buildGroupedRuleDetails(matches, 'review', item => `
         <article id="${findingAnchorId(item, 'review')}" class="rule-detail-item rule-finding-row" data-part="${escHtml(ruleDocumentPartKey(item))}" data-severity="${escHtml(item.severity || 'review')}" data-rule-id="${escHtml(item.ruleId || 'unidentified-rule')}">
-          <div class="rule-detail-head"><span class="forbidden-match">${escHtml(item.match)}</span><code>${escHtml(item.ruleId || '')}</code><span class="tag">${escHtml(item.severity || 'review')}</span>${languageBadge(item.language, item.languageConfidence)}</div>
+          <div class="rule-detail-head"><span class="forbidden-match">${escHtml(item.match)}</span><span><span class="rule-name">${escHtml(item.ruleName||item.description)}</span><span class="rule-id">${escHtml(item.ruleId||'')}</span>${item.legacyRuleIds?.length?`<span class="rule-legacy-id">Legacy: ${escHtml(item.legacyRuleIds.join(', '))}</span>`:''}</span><span class="tag">${escHtml(item.severity || 'review')}</span>${languageBadge(item.language, item.languageConfidence)}</div>
           <div class="rule-detail-guidance">${escHtml(item.description)}</div>
           <div>${findingLocationLink(item, 'review')}</div>
-          <div class="rule-full-context">${escHtml(item.fullContext || item.context)}</div>
+          <div class="rule-full-context">${renderRuleContext(item)}</div>${languageIntervalsDetails(item)}
           <div class="forbidden-rule">${escHtml(item.pattern)}</div>
         </article>`);
       return section('Words and expressions to review', matches.length,
         `<div class="rule-detail-container">${ruleSummary}${buildRuleDetailFilters(matches)}${details}</div>`, false);
     }
+
+    function languageIntervalsDetails(item){const ranges=item.languageRanges||[];if(!ranges.length)return'';const text=item.fullContext||item.context||'';return `<details class="language-intervals"><summary>Language intervals and inheritance sources (${ranges.length})</summary>${ranges.map(r=>`<div class="language-interval">${languageBadge(r.language,0)} <span>${r.start}–${r.end}</span> <span class="language-source">${escHtml(r.source||'unknown source')}${r.rawLanguage?` · ${escHtml(r.rawLanguage)}`:''}</span><span class="language-interval-text">${escHtml(r.text??text.slice(r.start,r.end))}</span></div>`).join('')}</details>`;}
 
     function languageName(language) { return ({sv:'Swedish',en:'English',mixed:'Mixed',other:'Other',unknown:'Unknown'})[language] || language; }
     function languageBadge(language, confidence = 0) { const value=language||'unknown'; return `<span class="language-badge ${escHtml(value)}">${escHtml(value.toUpperCase())}${confidence?` · ${Math.round(confidence*100)}%`:''}</span>`; }
@@ -4345,7 +4233,7 @@ ${exportedResults.innerHTML}
       const distribution=languageProfile.distribution||{};
       const totalLanguageLetters=Math.max(1,(distribution.sv||0)+(distribution.en||0)+(distribution.other||0)+(distribution.unknown||0)+(distribution.mixed||0));
       const languageSummary=['sv','en','other','mixed','unknown'].filter(key=>distribution[key]).map(key=>languageBadge(key,(distribution[key]||0)/totalLanguageLetters)).join(' ');
-      docInfo.innerHTML = `<strong>${escHtml(filename)}</strong> ${total} paragraphs · ${entries.length} reference list entries · ${citations.length} citation occurrences (${zoteroCitationCount} Zotero fields, ${plainCitationCount} plain text) · ${start >= 0 ? `Reference list found at paragraph ${start + 1}.` : 'No reference list section detected.'}<div class="language-summary"><strong>Primary language: ${escHtml(languageName(languageProfile.language||'unknown'))} · ${Math.round((languageProfile.confidence||0)*100)}% of analysed text</strong><span class="language-badge unknown">Known-language coverage: ${Math.round((languageProfile.knownCoverage||0)*100)}%</span>${languageSummary}<span class="language-badge mixed">Mixed paragraphs: ${languageProfile.mixedParagraphs||0}</span></div>`;
+      docInfo.innerHTML = `<strong>${escHtml(filename)}</strong> ${total} paragraphs · ${entries.length} reference list entries · ${citations.length} citation occurrences (${zoteroCitationCount} Zotero fields, ${plainCitationCount} plain text) · ${start >= 0 ? `Reference list found at paragraph ${start + 1}.` : 'No reference list section detected.'}<div class="language-summary"><strong>Primary language: ${escHtml(languageName(languageProfile.language||'unknown'))} · ${Math.round((languageProfile.confidence||0)*100)}% confidence</strong>${languageSummary}<span class="language-badge mixed">Mixed paragraphs: ${languageProfile.mixedParagraphs||0}</span></div>`;
       docInfo.classList.add('show');
       const cited = entries.filter(entry => entry.cites.length).length;
       setSummary('total', entries.length, entries.length ? 'ok' : 'warn');
@@ -4386,6 +4274,47 @@ ${exportedResults.innerHTML}
       );
     }
 
+    function findCitationDisplaySpan(citation) {
+      const text = String(citation?.paraText || '');
+      if (!text) return null;
+      if (Number.isFinite(citation?.matchStart) && Number.isFinite(citation?.matchEnd) && citation.matchStart >= 0 && citation.matchEnd > citation.matchStart && citation.matchEnd <= text.length) return {start:citation.matchStart,end:citation.matchEnd};
+      const candidates=[];
+      if(citation?.author&&citation?.year)candidates.push(`${citation.author} (${citation.year})`,`${citation.author} ${citation.year}`);
+      candidates.push(citation?.key,citation?.raw);
+      for(const value of candidates){const candidate=String(value||'').trim();if(!candidate)continue;const offset=text.indexOf(candidate);if(offset>=0)return{start:offset,end:offset+candidate.length};}
+      const year=String(citation?.year||citation?.key?.match(/\b(?:1[89]\d{2}|20\d{2})[a-z]?\b/i)?.[0]||'');
+      const author=String(citation?.author||citation?.key||'').replace(/\s+(?:1[89]\d{2}|20\d{2})[a-z]?.*$/i,'').trim();
+      if(author&&year){const pattern=escapeRegExp(author).replace(/\\\s+/g,'\\\\s+');const match=new RegExp(`${pattern}[\\s,;()]*${escapeRegExp(year)}`,'i').exec(text);if(match)return{start:match.index,end:match.index+match[0].length};}
+      return null;
+    }
+
+    function renderCitationContext(citation,radius=90){
+      const text=String(citation?.paraText||'');if(!text)return'';
+      const span=findCitationDisplaySpan(citation);
+      if(!span){const shortened=text.length>radius*2?`${text.slice(0,radius*2)}…`:text;return escHtml(shortened);}
+      const start=Math.max(0,span.start-radius),end=Math.min(text.length,span.end+radius);
+      return `${start>0?'…':''}${escHtml(text.slice(start,span.start))}<strong class="citation-context-match">${escHtml(text.slice(span.start,span.end))}</strong>${escHtml(text.slice(span.end,end))}${end<text.length?'…':''}`;
+    }
+
+    function citationLocation(citation){
+      const paragraphNumber=citation.paragraphNumber||((citation.paraIndex??0)+1);
+      let section=citation.regionLabel||citation.section||'Main text';
+      if(citation.documentRegion==='after-references'&&(!section||REF_HEADING_RE.test(normaliseHeadingText(section))))section='After references';
+      if(citation.documentRegion==='references')section='References';
+      return{section,paragraphNumber};
+    }
+    function renderCitationLocation(citation){const location=citationLocation(citation);return `<span class="citation-location-region">${escHtml(location.section)}</span><span class="citation-location-paragraph">Document paragraph ${location.paragraphNumber}</span>`;}
+
+    function runCitationDisplayRegressionTests(){
+      const failures=[];
+      const after=citationLocation({documentRegion:'after-references',regionLabel:'References',paragraphNumber:240});if(after.section!=='After references'||after.paragraphNumber!==240)failures.push('Post-reference location failed');
+      const appendix=citationLocation({documentRegion:'after-references',regionLabel:'Appendix A',paragraphNumber:241});if(appendix.section!=='Appendix A')failures.push('Post-reference heading failed');
+      const citation={paraText:'Long introductory wording before Vieira and Rosa (1996) and more text afterwards.',author:'Vieira and Rosa',year:'1996',key:'Vieira and Rosa 1996'};
+      const context=renderCitationContext(citation,12);if(!context.startsWith('…')||!context.includes('<strong class="citation-context-match">Vieira and Rosa (1996)</strong>'))failures.push('Citation-centred highlight failed');
+      if(failures.length)console.error('Citation display regression tests failed:',failures);else console.info('Citation display regression tests passed.');return failures;
+    }
+    runCitationDisplayRegressionTests();
+
     function buildCitationOccurrencesSection(items) {
       const zoteroCount = items.filter(item => item.citationSource === 'zotero').length;
       const plainCount = items.filter(item => item.citationSource === 'plain').length;
@@ -4399,8 +4328,8 @@ ${exportedResults.innerHTML}
         <tr>
           <td><span class="ref-key">${escHtml(citation.key)}</span></td>
           <td>${citationSourceBadge(citation)}<div class="citation-source-detail">${escHtml(citation.citationSourceDetail || '')}</div></td>
-          <td>${escHtml(citation.section || '—')}<div class="cite-pages">paragraph ${citation.paraIndex + 1}</div></td>
-          <td class="ref-text">${truncate(escHtml(citation.paraText || ''), 150)}</td>
+          <td>${renderCitationLocation(citation)}</td>
+          <td><div class="citation-context">${renderCitationContext(citation)}</div></td>
         </tr>`).join('') : '<tr><td colspan="4" class="empty-notice">No citation occurrences detected.</td></tr>';
       return section('Citation occurrences and Word source', items.length,
         `${summary}<table class="ref-table"><thead><tr><th>Citation key</th><th>Source</th><th>Location</th><th>Context</th></tr></thead><tbody>${rows}</tbody></table>`, false);
@@ -4412,8 +4341,8 @@ ${exportedResults.innerHTML}
             <tr class="error-row">
               <td><span class="ref-key">${escHtml(citation.key)}</span></td>
               <td>${citationSourceBadge(citation)}</td>
-              <td>${truncate(escHtml(citation.paraText), 100)}</td>
-              <td>${escHtml(citation.section || '—')}</td>
+              <td><div class="citation-context">${renderCitationContext(citation)}</div></td>
+              <td>${renderCitationLocation(citation)}</td>
               <td>${escHtml(citation.type)}</td>
               <td class="zotero-cell">
                 <button class="zotero-row-btn" type="button" data-kind="citation" data-index="${index}" data-search-id="citation-${index}" data-result-id="zotero-citation-${index}" title="Search Zotero using this citation key">Check Zotero</button>
