@@ -626,7 +626,7 @@
                 <button type="button" class="compact" onclick="map_zoom_in()" title="Zoom in" aria-label="Zoom map in">+</button>
                 <button type="button" class="compact" onclick="map_zoom_out()" title="Zoom out" aria-label="Zoom map out">&minus;</button>
                 <button type="button" id="map_layer_btn" onclick="map_toggle_layer()" aria-label="Switch map layer" aria-pressed="false"><svg class="btn-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="1.8"/><ellipse cx="12" cy="12" rx="4.5" ry="10" fill="none" stroke="currentColor" stroke-width="1.2"/><line x1="2" y1="12" x2="22" y2="12" stroke="currentColor" stroke-width="1.2"/><line x1="3.5" y1="7.5" x2="20.5" y2="7.5" stroke="currentColor" stroke-width="0.8"/><line x1="3.5" y1="16.5" x2="20.5" y2="16.5" stroke="currentColor" stroke-width="0.8"/></svg> Satellite</button>
-                <button type="button" onclick="use_my_position()"><svg style="width:12px;height:18px;vertical-align:-3px;margin-right:3px" viewBox="0 0 25 41"><path d="M12.5 0C5.6 0 0 5.6 0 12.5 0 22 12.5 41 12.5 41S25 22 25 12.5C25 5.6 19.4 0 12.5 0z" fill="#2A81CB"/><circle cx="12.5" cy="12.5" r="5" fill="#fff"/></svg>My Position</button>
+                <button type="button" id="my_position_btn"><svg style="width:12px;height:18px;vertical-align:-3px;margin-right:3px" viewBox="0 0 25 41"><path d="M12.5 0C5.6 0 0 5.6 0 12.5 0 22 12.5 41 12.5 41S25 22 25 12.5C25 5.6 19.4 0 12.5 0z" fill="#2A81CB"/><circle cx="12.5" cy="12.5" r="5" fill="#fff"/></svg>My Position</button>
                 <button type="button" id="copy_share_link" title="Copy a link to this position">Copy link</button>
                 <button type="button" onclick="addPositionToBulk()"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Add to Bulk</button>
                 <button type="button" class="btn-info" id="info_button" onclick="toggle_info();" title="Toggle help text" aria-label="Toggle help text" aria-expanded="false" aria-controls="wgs84_info rt90_info sweref99_info map_info about_info">
@@ -816,6 +816,20 @@
   <script src="./resources/js/gausskruger.js"></script>
   <script src="./resources/js/site.js"></script>
   <script>
+    // Capture the Leaflet instance created for the coordinate map.
+    (function captureLeafletMapFactory() {
+      if (!window.L || typeof L.map !== 'function' || L.map.__kvotCaptureInstalled) return;
+      var originalLeafletMap = L.map;
+      function capturedLeafletMap() {
+        var instance = originalLeafletMap.apply(this, arguments);
+        var container = instance && typeof instance.getContainer === 'function' ? instance.getContainer() : null;
+        if (container && container.id === 'coord-map') window.kvotCoordinateMap = instance;
+        return instance;
+      }
+      Object.keys(originalLeafletMap).forEach(function(key) { capturedLeafletMap[key] = originalLeafletMap[key]; });
+      capturedLeafletMap.__kvotCaptureInstalled = true;
+      L.map = capturedLeafletMap;
+    }());
     KVOT.renderHeader('Swedish Coordinate Conversions');
     KVOT.renderNav('proj.html');
     KVOT.renderFooter();
@@ -1058,11 +1072,57 @@
     }
     function filteredResults(){var f=document.getElementById('result_filter').value,q=document.getElementById('result_search').value.toLowerCase();return phase3Results.filter(function(r){return(f==='all'||r.status===f||(f==='valid'&&r.status==='valid'))&&(!q||String(r.id).toLowerCase().includes(q)||String(r.fields).toLowerCase().includes(q));});}
     function renderResultsTable(){var panel=document.getElementById('results_panel');panel.hidden=false;var rows=filteredResults(),t=document.getElementById('results_table');t.textContent='';var tr=t.createTHead().insertRow();['Row','ID/name','Input 1','Input 2','Output 1','Output 2','Status','Map'].forEach(function(h){var th=document.createElement('th');th.textContent=h;tr.appendChild(th);});var tb=t.createTBody(),opt=getOutputOptions(),to=document.getElementById('bulk_to').value;rows.slice(0,2000).forEach(function(r){var row=tb.insertRow();row.dataset.status=r.status;var vals=[r.sourceLine,r.id,r.input1,r.input2,r.status==='error'?'':(to==='wgs84_dd'?r.output1.toFixed(opt.geo):r.output1.toFixed(opt.grid)),r.status==='error'?'':(to==='wgs84_dd'?r.output2.toFixed(opt.geo):r.output2.toFixed(opt.grid)),r.status==='error'?r.error:(r.outside?'Outside zone':'Valid')];vals.forEach(function(v){row.insertCell().textContent=v;});var c=row.insertCell();if(r.status!=='error'){var b=document.createElement('button');b.type='button';b.className='table-action';b.textContent='Show';b.onclick=function(){focusResultOnMap(r,row);};c.appendChild(b);}});if(rows.length>2000){var row=tb.insertRow();row.insertCell().textContent='Showing first 2,000 of '+rows.length+' matching rows.';}}
-    function focusResultOnMap(r,row){document.querySelectorAll('#results_table tr.selected').forEach(function(x){x.classList.remove('selected');});row.classList.add('selected');if(window.coord_map&&typeof coord_map.setView==='function')coord_map.setView([r.lat,r.lon],Math.max(coord_map.getZoom(),14));showToast('Map centred on row '+r.sourceLine+'.');}
+    function focusResultOnMap(r,row){
+      document.querySelectorAll('#results_table tr.selected').forEach(function(x){x.classList.remove('selected');});
+      row.classList.add('selected');
+      var map=window.kvotCoordinateMap||window.coord_map;
+      if(map&&typeof map.setView==='function'){
+        var zoom=typeof map.getZoom==='function'?Math.max(map.getZoom(),14):14;
+        map.setView([r.lat,r.lon],zoom,{animate:true});
+        if(typeof map.invalidateSize==='function')setTimeout(function(){map.invalidateSize();},0);
+        showToast('Map centred on row '+r.sourceLine+'.');
+      }else showToast('The map is not ready yet. Please try again.',true);
+    }
     function exportStructured(validOnly){var rows=validOnly?phase3Results.filter(function(r){return r.status!=='error';}):phase3Results,opt=getOutputOptions(),to=document.getElementById('bulk_to').value,sep=opt.separator;var headers=(phase3Rows[0]&&phase3Rows[0].headers||[]).concat(['converted_1','converted_2','conversion_status','conversion_error']);function quote(v){v=String(v==null?'':v);return /["\r\n,;\t]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;}var lines=[headers.map(quote).join(sep)];rows.forEach(function(r){var a=r.status==='error'?'':(to==='wgs84_dd'?r.output1.toFixed(opt.geo):r.output1.toFixed(opt.grid)),b=r.status==='error'?'':(to==='wgs84_dd'?r.output2.toFixed(opt.geo):r.output2.toFixed(opt.grid));lines.push(r.fields.concat([a,b,r.status,r.error||'']).map(quote).join(sep));});var blob=new Blob(['\uFEFF'+lines.join('\n')+'\n'],{type:'text/csv;charset=utf-8'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=validOnly?'converted_valid_rows.csv':'converted_coordinates.csv';a.click();setTimeout(function(){URL.revokeObjectURL(a.href);},1000);}
-    function urlState(){var u=new URL(location.href);if(Number.isFinite(window.latitude)&&Number.isFinite(window.longitude)){u.searchParams.set('lat',latitude.toFixed(6));u.searchParams.set('lon',longitude.toFixed(6));}u.searchParams.set('rt90',document.getElementById('proj_rt90').value);u.searchParams.set('sweref',document.getElementById('proj_sweref99').value);if(window.coord_map&&coord_map.getZoom)u.searchParams.set('zoom',coord_map.getZoom());return u;}
+    function urlState(){var u=new URL(location.href);if(Number.isFinite(window.latitude)&&Number.isFinite(window.longitude)){u.searchParams.set('lat',latitude.toFixed(6));u.searchParams.set('lon',longitude.toFixed(6));}u.searchParams.set('rt90',document.getElementById('proj_rt90').value);u.searchParams.set('sweref',document.getElementById('proj_sweref99').value);var map=window.kvotCoordinateMap||window.coord_map;if(map&&typeof map.getZoom==='function')u.searchParams.set('zoom',map.getZoom());return u;}
     async function copyShareLink(){try{var u=urlState();history.replaceState(null,'',u);await navigator.clipboard.writeText(u.href);showToast('Shareable link copied.');}catch(err){showToast('Could not copy the link.',true);}}
-    function loadUrlState(){var q=new URLSearchParams(location.search),defaultLat=59.329323,defaultLon=18.068581,lat=q.has('lat')?Number(q.get('lat')):defaultLat,lon=q.has('lon')?Number(q.get('lon')):defaultLon,zoom=q.has('zoom')?Number(q.get('zoom')):12;function setSelect(id,val){var el=document.getElementById(id);if(val&&Array.from(el.options).some(function(o){return o.value===val;}))el.value=val;}setSelect('proj_rt90',q.get('rt90'));setSelect('proj_sweref99',q.get('sweref'));if(!Number.isFinite(lat)||Math.abs(lat)>90)lat=defaultLat;if(!Number.isFinite(lon)||Math.abs(lon)>180)lon=defaultLon;if(!Number.isFinite(zoom))zoom=12;setTimeout(function(){if(typeof latlong_event==='function')latlong_event(lat,lon);else if(typeof set_lat_long==='function')set_lat_long(lat,lon);if(window.coord_map&&coord_map.setView)coord_map.setView([lat,lon],Math.min(18,Math.max(3,zoom)));},0);}
+    function applyPagePosition(lat,lon,zoom){
+      if(!Number.isFinite(lat)||Math.abs(lat)>90||!Number.isFinite(lon)||Math.abs(lon)>180)return false;
+      var applied=false;
+      try{if(typeof latlong_event==='function'){latlong_event(lat,lon);applied=true;}}catch(err){}
+      if(!applied){try{if(typeof set_lat_long==='function'){set_lat_long(lat,lon);applied=true;}}catch(err){}}
+      var map=window.kvotCoordinateMap||window.coord_map;
+      if(map&&typeof map.setView==='function')map.setView([lat,lon],Math.min(18,Math.max(3,Number.isFinite(zoom)?zoom:12)));
+      return applied;
+    }
+    function loadUrlState(){
+      var q=new URLSearchParams(location.search),defaultLat=59.329323,defaultLon=18.068581;
+      var lat=q.has('lat')?Number(q.get('lat')):defaultLat;
+      var lon=q.has('lon')?Number(q.get('lon')):defaultLon;
+      var zoom=q.has('zoom')?Number(q.get('zoom')):12;
+      function setSelect(id,val){var el=document.getElementById(id);if(val&&Array.from(el.options).some(function(o){return o.value===val;}))el.value=val;}
+      setSelect('proj_rt90',q.get('rt90'));setSelect('proj_sweref99',q.get('sweref'));
+      if(!Number.isFinite(lat)||Math.abs(lat)>90)lat=defaultLat;
+      if(!Number.isFinite(lon)||Math.abs(lon)>180)lon=defaultLon;
+      if(!Number.isFinite(zoom))zoom=12;
+      setTimeout(function(){applyPagePosition(lat,lon,zoom);},0);
+    }
+    function useMyPositionReliable(){
+      var button=document.getElementById('my_position_btn');
+      if(!window.isSecureContext){showToast('Location requires HTTPS or localhost.',true);return;}
+      if(!navigator.geolocation){showToast('Geolocation is not supported by this browser.',true);return;}
+      if(button){button.disabled=true;button.setAttribute('aria-busy','true');}
+      showToast('Requesting your position…');
+      navigator.geolocation.getCurrentPosition(function(position){
+        applyPagePosition(position.coords.latitude,position.coords.longitude,15);
+        showToast('Position updated'+(Number.isFinite(position.coords.accuracy)?' (accuracy about '+Math.round(position.coords.accuracy)+' m).':'.'));
+        if(button){button.disabled=false;button.removeAttribute('aria-busy');}
+      },function(error){
+        var messages={1:'Location permission was denied. Allow location access for this site and try again.',2:'Your position is currently unavailable.',3:'The location request timed out.'};
+        showToast(messages[error.code]||'Could not determine your position.',true);
+        if(button){button.disabled=false;button.removeAttribute('aria-busy');}
+      },{enableHighAccuracy:true,timeout:12000,maximumAge:30000});
+    }
     function runSelfTests(){var tests=[];function test(name,fn){try{fn();tests.push([name,true]);}catch(e){tests.push([name,false,e.message]);}}function near(a,b,t){if(Math.abs(a-b)>t)throw Error(a+' differs from '+b);}
       test('Quoted CSV parser',function(){var r=csvParseLine('"A,1";2;3',';');if(r.length!==3||r[0]!=='A,1')throw Error('quoted field failed');});
       test('WGS passthrough',function(){var r=bulkToLatLon('wgs84_dd',59.329323,18.068581);near(r[0],59.329323,1e-12);near(r[1],18.068581,1e-12);});
@@ -1070,7 +1130,7 @@
       test('SWEREF round trip',function(){var g=bulkFromLatLon('sweref_99_tm',59.329323,18.068581),ll=bulkToLatLon('sweref_99_tm',g[0],g[1]);near(ll[0],59.329323,1e-7);near(ll[1],18.068581,1e-7);});
       test('RT90 round trip',function(){var g=bulkFromLatLon('rt90_2.5_gon_v',59.329323,18.068581),ll=bulkToLatLon('rt90_2.5_gon_v',g[0],g[1]);near(ll[0],59.329323,2e-6);near(ll[1],18.068581,2e-6);});
       var pass=tests.filter(function(x){return x[1];}).length,el=document.getElementById('test_summary');el.className='test-summary '+(pass===tests.length?'pass':'fail');el.textContent=pass+' of '+tests.length+' tests passed'+(pass<tests.length?': '+tests.filter(function(x){return!x[1];}).map(function(x){return x[0]+' ('+x[2]+')';}).join('; '):'.');}
-    function initPhase3(){loadUrlState();document.getElementById('copy_share_link').addEventListener('click',copyShareLink);document.getElementById('bulk_cancel').addEventListener('click',function(){cancelPhase3Worker(true);});document.getElementById('run_self_tests').addEventListener('click',runSelfTests);document.getElementById('export_valid').addEventListener('click',function(){exportStructured(true);});document.getElementById('result_filter').addEventListener('change',renderResultsTable);document.getElementById('result_search').addEventListener('input',renderResultsTable);['import_delimiter','import_header','import_col1','import_col2','import_id'].forEach(function(id){document.getElementById(id).addEventListener('change',buildImportModel);});document.getElementById('bulk_input').addEventListener('input',scheduleImportPreview);window.addEventListener('beforeunload',function(){cancelPhase3Worker(false);});}
+    function initPhase3(){loadUrlState();document.getElementById('my_position_btn').addEventListener('click',useMyPositionReliable);document.getElementById('copy_share_link').addEventListener('click',copyShareLink);document.getElementById('bulk_cancel').addEventListener('click',function(){cancelPhase3Worker(true);});document.getElementById('run_self_tests').addEventListener('click',runSelfTests);document.getElementById('export_valid').addEventListener('click',function(){exportStructured(true);});document.getElementById('result_filter').addEventListener('change',renderResultsTable);document.getElementById('result_search').addEventListener('input',renderResultsTable);['import_delimiter','import_header','import_col1','import_col2','import_id'].forEach(function(id){document.getElementById(id).addEventListener('change',buildImportModel);});document.getElementById('bulk_input').addEventListener('input',scheduleImportPreview);window.addEventListener('beforeunload',function(){cancelPhase3Worker(false);});}
 
     /* Phase 2: workflow helpers. Kept inline so deployment remains one page file. */
     function showToast(message, isError) {
