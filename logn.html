@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Revised 2026-08-26: explicit mu/sigma defaults, fully visible statistics, discreet settings below results, configurable chart shading, unit-aware x-axis label, and corrected shared-scope chart percentile range. -->
+<!-- Enhanced v6: configurable chart range, shading, and percentile reference line ending at the PDF in both views. -->
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -8,8 +8,7 @@
   <script src="https://unpkg.com/leaflet@1.9.2/dist/leaflet.js"></script>
   <link rel="stylesheet" href="./resources/css/kvot.css">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
-  <title>Lognormal Conversions - Enhanced</title>
-  <meta name="description" content="Lognormal conversion, statistics and distribution chart calculator.">
+  <title>Lognormal Conversions</title>
   <style>
     /* Layout */
     header  { position:fixed;top:0;left:0;right:0;z-index:20;background:var(--footer-bg);box-shadow:0 2px 8px rgba(0,0,0,.12); }
@@ -94,20 +93,12 @@
     /* Result details */
     #result-details { display:block; }
 
-    /* Discreet settings, placed after all calculated data */
-    .result-settings { margin-top:12px;border-top:1px solid var(--border-color);padding-top:10px;color:var(--text-muted);font-size:.78rem; }
-    .result-settings summary { cursor:pointer;list-style:none;display:inline-flex;align-items:center;gap:5px;color:var(--text-muted);font-weight:500; }
-    .result-settings summary::-webkit-details-marker { display:none; }
-    .result-settings summary::before { content:'⚙';font-size:.85rem;opacity:.65; }
-    .result-settings[open] summary { color:var(--text-secondary); }
-    .result-settings-body { display:flex;flex-wrap:wrap;gap:10px 16px;align-items:end;margin-top:9px;padding:10px 12px;border:1px solid var(--border-color);border-radius:8px;background:color-mix(in srgb,var(--bg-secondary) 55%,transparent); }
-    .setting-field { display:grid;gap:3px;min-width:105px; }
-    .setting-field span { font-size:.7rem;letter-spacing:.03em;color:var(--text-muted); }
-    .setting-field input,.setting-field select { width:112px;padding:5px 7px;border-radius:6px;border:1px solid var(--border-color);background:var(--input-bg);color:var(--input-text);font:inherit; }
-    .setting-field input[aria-invalid="true"]{border-color:#b4473a!important;box-shadow:0 0 0 2px rgba(180,71,58,.12)!important}
-    .chart-settings-warning{display:none;flex:1 1 100%;padding:8px 10px;border:1px solid color-mix(in srgb,#b4473a 45%,var(--border-color));border-radius:7px;background:color-mix(in srgb,#b4473a 9%,var(--bg-secondary));color:#b4473a;font-size:.76rem;font-weight:600;line-height:1.4}
-    .chart-settings-warning.show{display:block}
-    @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;}}
+    .result-settings{margin-top:12px;border-top:1px solid var(--border-color);padding-top:9px;color:var(--text-muted);font-size:.78rem}
+    .result-settings summary{cursor:pointer;list-style:none;display:inline-flex;align-items:center;gap:5px;color:var(--text-muted);font-weight:500}.result-settings summary::-webkit-details-marker{display:none}.result-settings summary::before{content:'⚙';opacity:.65}
+    .result-settings-body{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:end;margin-top:9px;padding:10px 12px;border:1px solid var(--border-color);border-radius:8px;background:color-mix(in srgb,var(--bg-secondary) 55%,transparent)}
+    .setting-field{display:grid;gap:3px;min-width:105px}.setting-field span{font-size:.7rem;color:var(--text-muted)}.setting-field input,.setting-field select{width:120px;padding:5px 7px;border-radius:6px;border:1px solid var(--border-color);background:var(--input-bg);color:var(--input-text);font:inherit}
+    .setting-note{flex:1 1 100%;margin:0;color:var(--text-muted);font-size:.72rem}.setting-field input[aria-invalid="true"]{border-color:#b4473a!important;box-shadow:0 0 0 2px rgba(180,71,58,.12)!important}
+    .chart-settings-warning{display:none;flex:1 1 100%;padding:8px 10px;border:1px solid #b4473a;border-radius:7px;background:color-mix(in srgb,#b4473a 9%,var(--bg-secondary));color:#b4473a;font-size:.76rem;font-weight:600}.chart-settings-warning.show{display:block}
     /* Stats grid */
     .stats-grid { display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--border-color);border:1px solid var(--border-color);border-radius:10px;overflow:hidden;margin-bottom:12px; }
     .sg-item { background:var(--bg-secondary);padding:10px 14px;display:flex;justify-content:space-between;align-items:baseline;gap:8px; }
@@ -229,7 +220,7 @@
               <div class="sg-item"><span class="sg-label">CV</span><span class="sg-value" id="res-cv">&#8212;</span></div>
               <div class="sg-item"><span class="sg-label">Error factor</span><span class="sg-value" id="res-ef">&#8212;</span></div>
               <div class="sg-item"><span class="sg-label">Skewness</span><span class="sg-value" id="res-skew">&#8212;</span></div>
-              <div class="sg-item"><span class="sg-label">Excess kurtosis</span><span class="sg-value" id="res-kurt">&#8212;</span></div>
+              <div class="sg-item"><span class="sg-label">Kurtosis</span><span class="sg-value" id="res-kurt">&#8212;</span></div>
               <div class="sg-item"><span class="sg-label">Entropy</span><span class="sg-value" id="res-entropy">&#8212;</span></div>
             </div>
             <div class="pct-band">
@@ -252,7 +243,8 @@
                 <label class="setting-field"><span>Chart maximum percentile</span><input id="chartMaxPct" type="number" min="0.002" max="99.999" step="any" value="99.9"></label>
                 <label class="setting-field"><span>Shade from percentile</span><input id="shadeLower" type="number" min="0.001" max="99.998" step="any" value="5"></label>
                 <label class="setting-field"><span>Shade to percentile</span><input id="shadeUpper" type="number" min="0.002" max="99.999" step="any" value="95"></label>
-                <p class="setting-note">Chart minimum and maximum percentiles set the x-axis range. The shaded interval must lie within that range.</p>
+                <label class="setting-field"><span>Reference-line percentile</span><input id="referencePct" type="number" min="0.001" max="99.999" step="any" value="50"></label>
+                <p class="setting-note">Chart bounds set the x-axis range. The shaded interval and reference line must lie within that range.</p>
                 <div id="chartSettingsWarning" class="chart-settings-warning" role="alert" aria-live="assertive"></div>
               </div>
             </details>
@@ -286,10 +278,10 @@
             <tr><td>\(\sigma_g =\)</td><td>\(e^\sigma\)</td></tr>
             <tr><td>\(\sigma_a =\)</td><td>\(\mu_a\sqrt{e^{\sigma^2}-1}\)</td></tr>
             <tr><td>\(\mathrm{CV} =\)</td><td>\(\sqrt{e^{\sigma^2}-1}\)</td></tr>
-            <tr><td>EF \(=\)</td><td>\(e^{1.645\,\sigma}\) (central 90% coverage)</td></tr>
+            <tr><td>EF \(=\)</td><td>\(e^{1.645\,\sigma}\) (90 % confidence)</td></tr>
             <tr class="eq-section"><td colspan="2">Higher moments</td></tr>
             <tr><td>skewness \(=\)</td><td>\(\mathrm{CV}^3+3\,\mathrm{CV}\)</td></tr>
-            <tr><td>excess kurtosis \(=\)</td><td>\(\mathrm{CV}^8+6\,\mathrm{CV}^6+15\,\mathrm{CV}^4+16\,\mathrm{CV}^2\)</td></tr>
+            <tr><td>kurtosis \(=\)</td><td>\(\mathrm{CV}^8+6\,\mathrm{CV}^6+15\,\mathrm{CV}^4+16\,\mathrm{CV}^2\)</td></tr>
             <tr><td>entropy \(=\)</td><td>\(\tfrac{1}{2}(1+\ln 2\pi\sigma^2)+\mu\)</td></tr>
             <tr class="eq-section"><td colspan="2">Percentile inversion</td></tr>
             <tr><td>\(x_p =\)</td><td>\(\exp\bigl(\mu + \sigma\,\Phi^{-1}(p)\bigr)\)</td></tr>
@@ -305,16 +297,16 @@
       <div id="tabs-percentile" style="display:none;">
         <p class="tab-desc">Enter a percentile (0&ndash;100) and its corresponding positive value.</p>
         <div class="tab-fields">
-          <label class="tab-field">Percentile (%)<br><input class="arg" data-field="p" type="number" min="0.000001" max="99.999999" step="any" inputmode="decimal" value="5" placeholder="e.g. 95"></label>
+          <label class="tab-field">Percentile (%)<br><input class="arg" data-field="p" type="number" min="0" max="100" step="any" inputmode="decimal" value="5" placeholder="e.g. 95"></label>
           <label class="tab-field">Value (&gt;0)<br><input class="arg" data-field="x" type="number" min="0" step="any" inputmode="decimal" value="1" placeholder="e.g. 10"></label>
         </div>
       </div>
       <div id="tabs-minmax" style="display:none;">
-        <p class="tab-desc">Central coverage interval: lower and upper bounds (both &gt; 0) and the enclosed probability (strictly between 0 and 100%).</p>
+        <p class="tab-desc">Confidence interval: min, max (both &gt; 0) and a two-tailed probability (0&ndash;100 %).</p>
         <div class="tab-fields">
           <label class="tab-field">Min (&gt;0)<br><input class="arg" data-field="min" type="number" min="0" step="any" inputmode="decimal" value="1"></label>
           <label class="tab-field">Max (&gt;0)<br><input class="arg" data-field="max" type="number" min="0" step="any" inputmode="decimal" value="2"></label>
-          <label class="tab-field">Probability (%)<br><input class="arg" data-field="p" type="number" min="0.000001" max="99.999999" step="any" inputmode="decimal" value="97.5"></label>
+          <label class="tab-field">Probability (%)<br><input class="arg" data-field="p" type="number" min="0" max="100" step="any" inputmode="decimal" value="97.5"></label>
         </div>
       </div>
       <div id="tabs-data" style="display:none;">
@@ -325,7 +317,7 @@
       <div id="tabs-SD" style="display:none;"><p class="tab-desc">Arithmetic standard deviation &gt; 0</p><input class="arg" data-field="SD" type="number" min="0" step="any" inputmode="decimal" value="1" title="Arithmetic standard deviation (positive)"></div>
       <div id="tabs-GSD" style="display:none;"><p class="tab-desc">Geometric standard deviation &#8805; 1</p><input class="arg" data-field="GSD" type="number" min="1" step="any" inputmode="decimal" value="1" title="Geometric standard deviation (>= 1)"></div>
       <div id="tabs-CV" style="display:none;"><p class="tab-desc">Coefficient of variation &gt; 0</p><input class="arg" data-field="CV" type="number" min="0" step="any" inputmode="decimal" value="1" title="Coefficient of variation (positive)"></div>
-      <div id="tabs-error" style="display:none;"><p class="tab-desc">Error factor &#8805; 1 (central 90% coverage interval)</p><input class="arg" data-field="error_factor" type="number" min="1" step="any" inputmode="decimal" value="1" title="Error factor (>= 1)"></div>
+      <div id="tabs-error" style="display:none;"><p class="tab-desc">Error factor &#8805; 1 (90 % confidence interval)</p><input class="arg" data-field="error_factor" type="number" min="1" step="any" inputmode="decimal" value="1" title="Error factor (>= 1)"></div>
 
     </div>
     <div id="map"></div>
@@ -374,10 +366,7 @@
     }
 
     function fmt(v, sig = null) {
-      if (sig === null) {
-        const precision = document.getElementById('precisionSelect');
-        sig = precision ? Number(precision.value) : 5;
-      }
+      if(sig===null){const el=document.getElementById('precisionSelect');sig=el?Number(el.value):5;}
       if (v === undefined || v === null || !isFinite(v)) return '\u2014';
       if (v === 0) return '0';
       const n = +v.toPrecision(sig);
@@ -829,7 +818,7 @@
         if(['sigma','SD','GSD','CV','error_factor','mean','GM','mode','x','x1','x2','min','max'].includes(k)&&num<=0){showError(`${k} must be positive`);return;}
         if(k==='GSD'&&num<1){showError('GSD must be \u2265 1');return;}
         if(k==='error_factor'&&num<1){showError('Error factor must be \u2265 1');return;}
-        if(['p','p1','p2'].includes(k)&&(num<=0||num>=100)){showError('Percentile must be greater than 0 and less than 100');return;}
+        if(['p','p1','p2'].includes(k)&&(num<0||num>100)){showError('Percentile must be 0\u2013100');return;}
         args[k]=num;
       }
 
@@ -863,14 +852,10 @@
 
       // KS statistic
       if(args._dataValues&&args._dataValues.length>0&&typeof mu==='number'&&typeof sigma==='number'){
-        const sorted=args._dataValues.slice().sort((a,b)=>a-b), n=sorted.length;
-        let dPlus=0,dMinus=0;
-        for(let i=0;i<n;i++){
-          const fitted=logncdf(mu,sigma,sorted[i]);
-          dPlus=Math.max(dPlus,(i+1)/n-fitted);
-          dMinus=Math.max(dMinus,fitted-i/n);
-        }
-        args._ks=Math.max(dPlus,dMinus);
+        const sorted=args._dataValues.slice().sort((a,b)=>a-b);
+        let ks=0;
+        for(let i=0;i<sorted.length;i++) ks=Math.max(ks,Math.abs((i+1)/sorted.length-logncdf(mu,sigma,sorted[i])));
+        args._ks=ks;
       }
 
       if(typeof mu!=='number'||typeof sigma!=='number'||!isFinite(mu)||!isFinite(sigma))
@@ -944,20 +929,12 @@
       CHART=chartEl;
 
       const traces=[], cdfTraces=[];
-      // Define chart percentile limits in the common scope so both trace creation and layout can use them.
-      const chartMinRaw=Number(document.getElementById('chartMinPct')?.value ?? 0.1);
-      const chartMaxRaw=Number(document.getElementById('chartMaxPct')?.value ?? 99.9);
-      const chartMinPct=Number.isFinite(chartMinRaw)&&chartMinRaw>0&&chartMinRaw<100 ? chartMinRaw : 0.1;
-      const chartMaxPct=Number.isFinite(chartMaxRaw)&&chartMaxRaw>chartMinPct&&chartMaxRaw<100 ? chartMaxRaw : 99.9;
-      const chartPMin=chartMinPct/100, chartPMax=chartMaxPct/100;
-      const chartXMinLn=norminv(mu,sigmaPlot,chartPMin), chartXMaxLn=norminv(mu,sigmaPlot,chartPMax);
-      const chartXMin=logninv(mu,sigmaPlot,chartPMin), chartXMax=logninv(mu,sigmaPlot,chartPMax);
-      // Shading bounds are shared by both the x and ln(x) chart views.
-      const shadeLowerRaw=Number(document.getElementById('shadeLower')?.value ?? 5);
-      const shadeUpperRaw=Number(document.getElementById('shadeUpper')?.value ?? 95);
-      const shadeLowerPct=Math.min(chartMaxPct,Math.max(chartMinPct,Number.isFinite(shadeLowerRaw)?shadeLowerRaw:5));
-      const shadeUpperPct=Math.min(chartMaxPct,Math.max(chartMinPct,Number.isFinite(shadeUpperRaw)?shadeUpperRaw:95));
-      const shadePMin=shadeLowerPct/100, shadePMax=shadeUpperPct/100;
+      const chartMinPct=Number(document.getElementById('chartMinPct')?.value??.1),chartMaxPct=Number(document.getElementById('chartMaxPct')?.value??99.9);
+      const chartPMin=chartMinPct/100,chartPMax=chartMaxPct/100;
+      const shadeLowerPct=Number(document.getElementById('shadeLower')?.value??5),shadeUpperPct=Number(document.getElementById('shadeUpper')?.value??95);
+      const shadePMin=shadeLowerPct/100,shadePMax=shadeUpperPct/100;
+      const referencePct=Number(document.getElementById('referencePct')?.value??50),referenceP=referencePct/100;
+      const chartXMinLn=norminv(mu,sigmaPlot,chartPMin),chartXMaxLn=norminv(mu,sigmaPlot,chartPMax),chartXMin=logninv(mu,sigmaPlot,chartPMin),chartXMax=logninv(mu,sigmaPlot,chartPMax);
       const shadeLoIndex=Math.max(0,Math.min(nPts-2,Math.round((shadePMin-chartPMin)/(chartPMax-chartPMin)*(nPts-1))));
       const shadeHiIndex=Math.max(shadeLoIndex+1,Math.min(nPts-1,Math.round((shadePMax-chartPMin)/(chartPMax-chartPMin)*(nPts-1))));
       if(lnView){
@@ -965,11 +942,13 @@
           const logs=args._dataValues.map(v=>Math.log(v));
           traces.push({x:logs,type:'histogram',histnorm:'probability density',opacity:.45,marker:{color:'rgba(96,96,96,.25)'},nbinsx:Math.min(50,Math.max(5,Math.round(Math.sqrt(args._dataStats.n)))),hovertemplate:'%{x:.4f}: %{y:.4f}<extra>ln(data)</extra>',name:'Empirical (ln)'});
         }
-        const pg=linspace(chartPMin,chartPMax,nPts), xl=pg.map(p=>norminv(mu,sigmaPlot,p)), yl=xl.map(z=>normpdf(mu,sigmaPlot,z));
-        traces.push({x:xl.slice(0,shadeLoIndex+1),y:yl.slice(0,shadeLoIndex+1),fill:'tozeroy',fillcolor:'rgba(243,184,123,.12)',line:{color:accentClr,width:1},type:'scatter',hoverinfo:'skip',name:`P${fmt(chartMinPct,4)}–P${fmt(shadeLowerPct,4)}`});
-        traces.push({x:xl.slice(shadeLoIndex,shadeHiIndex+1),y:yl.slice(shadeLoIndex,shadeHiIndex+1),fill:'tozeroy',fillcolor:'rgba(243,184,123,.55)',line:{color:accentClr,width:2},type:'scatter',hoverinfo:'skip',name:`P${fmt(shadeLowerPct,4)}–P${fmt(shadeUpperPct,4)}`});
-        traces.push({x:xl.slice(shadeHiIndex),y:yl.slice(shadeHiIndex),fill:'tozeroy',fillcolor:'rgba(243,184,123,.12)',line:{color:accentClr,width:1},type:'scatter',hoverinfo:'skip',name:`P${fmt(shadeUpperPct,4)}–P${fmt(chartMaxPct,4)}`});
-        traces.push({x:[mu,mu],y:[0,(Math.max(...yl)||.001)*.95],mode:'lines',line:{color:accentClr,dash:'dot'},hovertext:'\u03bc',name:'\u03bc'});
+        const pg=linspace(chartPMin,chartPMax,nPts),xl=pg.map(p=>norminv(mu,sigmaPlot,p)),yl=xl.map(z=>normpdf(mu,sigmaPlot,z));
+        traces.push({x:xl.slice(0,shadeLoIndex+1),y:yl.slice(0,shadeLoIndex+1),fill:'tozeroy',fillcolor:'rgba(243,184,123,.12)',line:{color:accentClr,width:1},type:'scatter',hoverinfo:'skip',name:'Outer PDF'});
+        traces.push({x:xl.slice(shadeLoIndex,shadeHiIndex+1),y:yl.slice(shadeLoIndex,shadeHiIndex+1),fill:'tozeroy',fillcolor:'rgba(243,184,123,.55)',line:{color:accentClr,width:2},type:'scatter',hoverinfo:'skip',name:'Shaded PDF'});
+        traces.push({x:xl.slice(shadeHiIndex),y:yl.slice(shadeHiIndex),fill:'tozeroy',fillcolor:'rgba(243,184,123,.12)',line:{color:accentClr,width:1},type:'scatter',hoverinfo:'skip',name:'Outer PDF'});
+        const refLn=norminv(mu,sigmaPlot,referenceP);
+        const refLnHeight=normpdf(mu,sigmaPlot,refLn);
+        traces.push({x:[refLn,refLn],y:[0,refLnHeight],mode:'lines',line:{color:accentClr,dash:'dash',width:1.5},hovertext:`P${fmt(referencePct,5)}`,name:`P${fmt(referencePct,5)}`});
         cdfTraces.push({x:xl,y:pg.slice(),mode:'lines',line:{color:cdfClr},name:'CDF (theoretical)',yaxis:'y2'});
         if(args._dataValues){
           const sl=args._dataValues.map(v=>Math.log(v)).sort((a,b)=>a-b);
@@ -979,16 +958,12 @@
         if(args._dataValues&&args._dataValues.length>0){
           traces.push({x:args._dataValues,type:'histogram',histnorm:'probability density',opacity:.4,marker:{color:'rgba(96,96,96,.22)'},nbinsx:Math.min(50,Math.max(5,Math.round(Math.sqrt(args._dataStats.n)))),hovertemplate:'%{x}: %{y:.4f}<extra>data</extra>',name:'Empirical'});
         }
-        const pg=linspace(chartPMin,chartPMax,nPts), x=pg.map(q=>logninv(mu,sigmaPlot,q)), y=x.map(v=>lognpdf(mu,sigmaPlot,v));
-        const lowerPct=shadeLowerPct,upperPct=shadeUpperPct,shadeLo=shadePMin,shadeHi=shadePMax;
-        const loIndex=shadeLoIndex,hiIndex=shadeHiIndex;
-        traces.push({x:x.slice(0,loIndex+1),y:y.slice(0,loIndex+1),fill:'tozeroy',fillcolor:'rgba(243,184,123,.12)',line:{color:accentClr,width:1},hoverinfo:'skip',name:`< P${fmt(shadeLo*100,4)}`});
-        traces.push({x:x.slice(loIndex,hiIndex+1),y:y.slice(loIndex,hiIndex+1),fill:'tozeroy',fillcolor:'rgba(243,184,123,.55)',line:{color:accentClr,width:2},hoverinfo:'skip',name:`P${fmt(shadeLo*100,4)}–P${fmt(shadeHi*100,4)}`});
-        traces.push({x:x.slice(hiIndex),y:y.slice(hiIndex),fill:'tozeroy',fillcolor:'rgba(243,184,123,.12)',line:{color:accentClr,width:1},hoverinfo:'skip',name:`> P${fmt(shadeHi*100,4)}`});
-        traces.push({x:[logninv(mu,sigmaPlot,shadeLo),logninv(mu,sigmaPlot,shadeLo)],y:[0,lognpdf(mu,sigmaPlot,logninv(mu,sigmaPlot,shadeLo))],mode:'lines',line:{color:accentClr,dash:'dash',width:1},hovertext:`P${fmt(shadeLo*100,4)}`,name:'Shade lower bound'});
-        traces.push({x:[logninv(mu,sigmaPlot,shadeHi),logninv(mu,sigmaPlot,shadeHi)],y:[0,lognpdf(mu,sigmaPlot,logninv(mu,sigmaPlot,shadeHi))],mode:'lines',line:{color:accentClr,dash:'dash',width:1},hovertext:`P${fmt(shadeHi*100,4)}`,name:'Shade upper bound'});
-        traces.push({x:[mean_,mean_],y:[0,lognpdf(mu,sigmaPlot,mean_)],mode:'lines',line:{color:accentClr,dash:'solid',width:1.5},hovertext:'Mean',name:'Mean'});
-        traces.push({x:[median_,median_],y:[0,lognpdf(mu,sigmaPlot,median_)],mode:'lines',line:{color:accentClr,dash:'dot',width:1.5},hovertext:'Median',name:'Median'});
+        const pg=linspace(chartPMin,chartPMax,nPts),x=pg.map(q=>logninv(mu,sigmaPlot,q)),y=x.map(v=>lognpdf(mu,sigmaPlot,v));
+        traces.push({x:x.slice(0,shadeLoIndex+1),y:y.slice(0,shadeLoIndex+1),fill:'tozeroy',fillcolor:'rgba(243,184,123,.12)',line:{color:accentClr,width:1},hoverinfo:'skip',name:'Outer PDF'});
+        traces.push({x:x.slice(shadeLoIndex,shadeHiIndex+1),y:y.slice(shadeLoIndex,shadeHiIndex+1),fill:'tozeroy',fillcolor:'rgba(243,184,123,.55)',line:{color:accentClr,width:2},hoverinfo:'skip',name:'Shaded PDF'});
+        traces.push({x:x.slice(shadeHiIndex),y:y.slice(shadeHiIndex),fill:'tozeroy',fillcolor:'rgba(243,184,123,.12)',line:{color:accentClr,width:1},hoverinfo:'skip',name:'Outer PDF'});
+        const refX=logninv(mu,sigmaPlot,referenceP);
+        traces.push({x:[refX,refX],y:[0,lognpdf(mu,sigmaPlot,refX)],mode:'lines',line:{color:accentClr,dash:'dash',width:1.5},hovertext:`P${fmt(referencePct,5)}`,name:`P${fmt(referencePct,5)}`});
         cdfTraces.push({x,y:pg.slice(),mode:'lines',line:{color:cdfClr,width:1.5},name:'CDF (theoretical)',yaxis:'y2'});
         if(args._dataValues){
           const sx=args._dataValues.slice().sort((a,b)=>a-b);
@@ -1005,7 +980,7 @@
 
       Plotly.react(CHART,allTraces,{
         width:cw,height:ch,showlegend:false,barmode:'overlay',
-        xaxis:{type:'lin',range:lnView?[chartXMinLn,chartXMaxLn]:[chartXMin,chartXMax],automargin:true,title:{text:lnView?((document.getElementById('unitInput')?.value||'').trim()?`ln(${(document.getElementById('unitInput').value||'').trim()})`:'ln(x)'):((document.getElementById('unitInput')?.value||'').trim()||'x'),standoff:6},gridcolor:gridClr,zerolinecolor:gridClr,linecolor:gridClr,color:isDark?'#e8ddd0':'#352921'},
+        xaxis:{type:'lin',range:lnView?[chartXMinLn,chartXMaxLn]:[chartXMin,chartXMax],automargin:true,title:{text:lnView?((document.getElementById('unitInput')?.value||'').trim()?`ln(${document.getElementById('unitInput').value.trim()})`:'ln(x)'):((document.getElementById('unitInput')?.value||'').trim()||'x'),standoff:6},gridcolor:gridClr,zerolinecolor:gridClr,linecolor:gridClr,color:isDark?'#e8ddd0':'#352921'},
         yaxis:{automargin:true,rangemode:'tozero',title:{text:'PDF',standoff:6,font:{color:accentClr}},gridcolor:gridClr,zerolinecolor:gridClr,linecolor:gridClr,color:isDark?'#e8ddd0':'#352921'},
         yaxis2:{overlaying:'y',side:'right',range:[0,1],automargin:true,rangemode:'tozero',title:{text:'CDF',standoff:14,font:{color:cdfClr}},gridcolor:gridClr,zerolinecolor:gridClr,linecolor:gridClr,color:isDark?'#e8ddd0':'#352921'},
         margin:{t:tM,r:rM,b:bM,l:lM,autoexpand:false},
@@ -1040,30 +1015,14 @@
       preview.document.close();
     });
 
-
     function validateChartSettings(){
-      const c1=Number(document.getElementById('chartMinPct')?.value),c2=Number(document.getElementById('chartMaxPct')?.value);
-      const s1=Number(document.getElementById('shadeLower')?.value),s2=Number(document.getElementById('shadeUpper')?.value);
-      const rangeOK=Number.isFinite(c1)&&Number.isFinite(c2)&&c1>0&&c2<100&&c1<c2;
-      const shadeOK=Number.isFinite(s1)&&Number.isFinite(s2)&&rangeOK&&s1>=c1&&s2<=c2&&s1<s2;
-      ['chartMinPct','chartMaxPct'].forEach(id=>document.getElementById(id)?.setAttribute('aria-invalid',rangeOK?'false':'true'));
-      ['shadeLower','shadeUpper'].forEach(id=>document.getElementById(id)?.setAttribute('aria-invalid',shadeOK?'false':'true'));
-      const warning=document.getElementById('chartSettingsWarning');
-      let message='';
-      if(!Number.isFinite(c1)||!Number.isFinite(c2)) message='Enter numeric values for both chart percentiles.';
-      else if(c1<=0||c2>=100) message='Chart percentiles must be strictly greater than 0 and less than 100.';
-      else if(c1>=c2) message='Chart minimum percentile must be lower than chart maximum percentile.';
-      else if(!Number.isFinite(s1)||!Number.isFinite(s2)) message='Enter numeric values for both shading percentiles.';
-      else if(s1<c1||s2>c2) message=`The shaded interval must stay within P${c1} to P${c2}.`;
-      else if(s1>=s2) message='Shade-from percentile must be lower than shade-to percentile.';
-      if(warning){warning.textContent=message;warning.classList.toggle('show',!!message);}
-      return rangeOK&&shadeOK;
+      const c1=Number(document.getElementById('chartMinPct')?.value),c2=Number(document.getElementById('chartMaxPct')?.value),s1=Number(document.getElementById('shadeLower')?.value),s2=Number(document.getElementById('shadeUpper')?.value),r=Number(document.getElementById('referencePct')?.value);
+      const rangeOK=Number.isFinite(c1)&&Number.isFinite(c2)&&c1>0&&c2<100&&c1<c2,shadeOK=Number.isFinite(s1)&&Number.isFinite(s2)&&rangeOK&&s1>=c1&&s2<=c2&&s1<s2,refOK=Number.isFinite(r)&&rangeOK&&r>=c1&&r<=c2;
+      ['chartMinPct','chartMaxPct'].forEach(id=>document.getElementById(id)?.setAttribute('aria-invalid',rangeOK?'false':'true'));['shadeLower','shadeUpper'].forEach(id=>document.getElementById(id)?.setAttribute('aria-invalid',shadeOK?'false':'true'));document.getElementById('referencePct')?.setAttribute('aria-invalid',refOK?'false':'true');
+      let message='';if(!rangeOK)message='Chart percentiles must satisfy 0 < minimum < maximum < 100.';else if(!shadeOK)message=`The shaded interval must remain within P${c1} to P${c2}, with its lower value below its upper value.`;else if(!refOK)message=`The reference-line percentile must be between P${c1} and P${c2}.`;
+      const w=document.getElementById('chartSettingsWarning');if(w){w.textContent=message;w.classList.toggle('show',!!message);}return rangeOK&&shadeOK&&refOK;
     }
-    ['precisionSelect','unitInput','chartMinPct','chartMaxPct','shadeLower','shadeUpper'].forEach(id=>{
-      const el=document.getElementById(id);
-      if(el)el.addEventListener(id==='precisionSelect'?'change':'input',()=>{if(validateChartSettings())updatedInput();});
-    });
-    validateChartSettings();
+    ['precisionSelect','unitInput','chartMinPct','chartMaxPct','shadeLower','shadeUpper','referencePct'].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener(id==='precisionSelect'?'change':'input',()=>{if(validateChartSettings())updatedInput();});});validateChartSettings();
     /* ---- Math helpers -------------------------------------------------- */
     function norminv(mu,sigma,p){return -Math.sqrt(2)*erfcinv(2*p)*sigma+mu;}
     function normcdf(mu,sigma,x){return .5*erfc(-(x-mu)/sigma/Math.sqrt(2));}
