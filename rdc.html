@@ -40,7 +40,7 @@
             <p>
                 This webpage serves as a comprehensive tool for generating illustrations depicting radionuclide decay chains as defined in the <a href="https://www.icrp.org/publication.asp?id=ICRP%20Publication%20107" target="_blank" rel="noopener noreferrer" title="ICRP, 2008.">ICRP 2008</a>-database. Additionally, it offers the functionality to compute and visualize the temporal progression of radionuclide decay and ingrowth based on user-defined initial conditions. Users can access radionuclide-specific settings by right-clicking on a particular radionuclide within the chart.
             </p><p>
-                The time evolution of radionuclide-specific characteristics can be displayed in a range of units including activity (measured in Becquerels, Bq), quantity (measured in moles), radiotoxicity upon ingestion (measured in Sieverts, Sv), external radiotoxicity (measured in Sv/(s m3)), and energy (measured in Mega-electronvolts, MeV). Furthermore, users can opt to view the total energy emitted or analyze it separately according to alpha emissions, electron emissions (including beta emissions), or photon emissions.
+                The time evolution of radionuclide-specific characteristics can be displayed in a range of units including activity (measured in Becquerels, Bq), quantity (measured in moles), radiotoxicity upon ingestion (measured in Sieverts, Sv), external radiotoxicity (measured in Sv/(s m3)), and energy emission rate (measured in megaelectronvolts per second, MeV/s). Furthermore, users can view the total energy emission rate or analyze it separately according to alpha emissions, electron emissions (including beta emissions), or photon emissions.
             </p><p>
                 Conversion coefficients utilized to convert radionuclide activity (measured in Bq) to radiotoxicity upon ingestion (measured in Sv) for adults are sourced from the <a href="https://www.icrp.org/publication.asp?id=icrp%20publication%2072" target="_blank" rel="noopener noreferrer" title="ICRP, 1995.">ICRP 1995</a> guidelines. Similarly, conversion coefficients employed to convert radionuclide activity (measured in Bq) to external radiotoxicity (measured in Sv/(s m3)) in an infinite soil environment are drawn from the <a href="https://www.epa.gov/radiation/federal-guidance-report-no-15-external-exposure-radionuclides-air-water-and-soil" target="_blank" rel="noopener noreferrer" title="EPA, 2019.">EPA 2019</a> recommendations.
             </p><p>
@@ -90,7 +90,7 @@
         
             <h3>References</h3>
             <a href="https://www.icrp.org/publication.asp?id=ICRP%20Publication%20107" target="_blank" rel="noopener noreferrer" title="ICRP, 2008.">ICRP, 2008</a>. <i>Nuclear Decay Data for Dosimetric Calculations</i>. ICRP Publication 107. Ann. ICRP 38 (3). <a href="https://journals.sagepub.com/doi/pdf/10.1177/ANIB_38_3" target="_blank" rel="noopener noreferrer" title="ICRP, 2008.">PDF</a><br>
-            <a href="https://www.icrp.org/publication.asp?id=ICRP%20Publication%20107" target="_blank" rel="noopener noreferrer" title="ICRP, 1995.">ICRP, 1995</a>. <i>Age-dependent Doses to the Members of the Public from Intake of Radionuclides - Part 5 Compilation of Ingestion and Inhalation Coefficients</i>. ICRP Publication 72. Ann. ICRP 26 (1). <a href="https://journals.sagepub.com/doi/pdf/10.1177/ANIB_26_1" target="_blank" rel="noopener noreferrer" title="ICRP, 1995.">PDF</a><br>
+            <a href="https://www.icrp.org/publication.asp?id=ICRP%20Publication%2072" target="_blank" rel="noopener noreferrer" title="ICRP, 1995.">ICRP, 1995</a>. <i>Age-dependent Doses to the Members of the Public from Intake of Radionuclides - Part 5 Compilation of Ingestion and Inhalation Coefficients</i>. ICRP Publication 72. Ann. ICRP 26 (1). <a href="https://journals.sagepub.com/doi/pdf/10.1177/ANIB_26_1" target="_blank" rel="noopener noreferrer" title="ICRP, 1995.">PDF</a><br>
             <a href="https://www.epa.gov/radiation/federal-guidance-report-no-15-external-exposure-radionuclides-air-water-and-soil" target="_blank" rel="noopener noreferrer" title="EPA, 2019.">EPA, 2019</a>. <i>External Exposure to Radionuclides in Air, Water and Soil</i>. Federal Guidance Report No. 15. EPA-402-R-19-002, U.S. Environmental Protection Agency, Washington DC. <a href="https://www.epa.gov/sites/default/files/2019-08/documents/fgr_15_final_508_2019aug02.pdf" target="_blank" rel="noopener noreferrer" title="EPA, 2019.">PDF</a><br>
             <a href="https://pubchem.ncbi.nlm.nih.gov/periodic-table/" target="_blank" rel="noopener noreferrer" title="EPA, 2019.">National Center for Biotechnology Information, 2023</a>. <i>Periodic Table of Elements</i>. Retrieved September 20, 2023 from https://pubchem.ncbi.nlm.nih.gov/periodic-table/ <br>
         </div>
@@ -120,10 +120,10 @@
                 <option value="Mole">Amount (mol)</option>
                 <option value="DCC_ing">Radiotoxicity on ingestion (Sv)</option>
                 <option value="DCC_ext">External radiotoxicity (Sv/s m3)</option>
-                <option value="Alpha_energy">Energy of alpha emissions (MeV)</option>
-                <option value="Electron_energy">Energy of electrons, including beta (MeV)</option>
-                <option value="Photon_energy">Energy of photon emission (MeV)</option>
-                <option value="Total_energy">Total energy (MeV)</option>
+                <option value="Alpha_energy">Alpha energy emission rate (MeV/s)</option>
+                <option value="Electron_energy">Electron energy emission rate, including beta (MeV/s)</option>
+                <option value="Photon_energy">Photon energy emission rate (MeV/s)</option>
+                <option value="Total_energy">Total energy emission rate (MeV/s)</option>
             </select>				
             <label id="timelabel" for="timeinput" class="ui-state-default ui-corner-all">Time
             <input id="timeinput" type="number" min="0" value="100" onchange="runAndUpdateChart()">
@@ -424,7 +424,7 @@ CY.cxtmenu({
                 {	
                     content: '+1 mol',
                     select: function (node) {
-                        node.data().IC = node.data().IC + Math.log(2)/getRn(node.data().id).Halflife_y*6.02214179E23/(60*60*24*365.242196);
+                        node.data().IC = node.data().IC + Math.log(2)/getRn(node.data().id).Halflife_y*6.02214076E23/(60*60*24*365.242196);
                         updateLevel("IC");
                         runAndUpdateChart();									
                     }
@@ -556,7 +556,7 @@ function updateLevel(state, rns, y) {
                 if (unit === "Total_energy") {
                     multfac = rnnode["Alpha_energy"] + rnnode["Electron_energy"] + rnnode["Photon_energy"];
                 } else if (unit === "Mole") {
-                    multfac = 60*60*24*365.242196*rnnode.Halflife_y/Math.log(2)/6.02214179E23;
+                    multfac = 60*60*24*365.242196*rnnode.Halflife_y/Math.log(2)/6.02214076E23;
                 } else {
                     multfac = rnnode[unit];
                 }
@@ -595,45 +595,66 @@ function updateLevelICrunAndUpdateChart() {
     runAndUpdateChart();
 }
 
+const icDialog = document.getElementById('icdialog');
+const icDialogTitle = document.getElementById('icdialog-title');
+const icBqInput = document.getElementById('ic-bq');
+const icMolInput = document.getElementById('ic-mole');
+const icOkButton = document.getElementById('ic-ok');
+const icCancelButton = document.getElementById('ic-cancel');
+let activeInventoryNode = null;
+let activeInventoryFactor = 0;
+
 function updateIC(node) {
-    const dlg      = document.getElementById('icdialog');
-    const titleEl  = document.getElementById('icdialog-title');
-    const bqInput  = document.getElementById('ic-bq');
-    const molInput = document.getElementById('ic-mole');
-    const rndata   = getRn(node.id());
-    const factor   = 60*60*24*365.242196 * rndata.Halflife_y / Math.log(2) / 6.02214179e23;
+    const rndata = getRn(node.id());
+    activeInventoryNode = node;
+    activeInventoryFactor = 60 * 60 * 24 * 365.242196 * rndata.Halflife_y / Math.log(2) / 6.02214076e23;
 
-    titleEl.textContent = 'Initial inventory — ' + node.id();
-    bqInput.value  = node.data().IC;
-    molInput.value = node.data().IC * factor;
-
-    bqInput.oninput  = () => { molInput.value = Number(bqInput.value)  * factor; };
-    molInput.oninput = () => { bqInput.value  = Number(molInput.value) / factor; };
-
-    const okBtn     = document.getElementById('ic-ok');
-    const cancelBtn = document.getElementById('ic-cancel');
-
-    function closeDialog() { dlg.close(); }
-    function onOk() {
-        node.data().IC = Number(bqInput.value);
-        updateLevel('IC');
-        runAndUpdateChart();
-        closeDialog();
-        okBtn.removeEventListener('click', onOk);
-        cancelBtn.removeEventListener('click', closeDialog);
-    }
-    okBtn.addEventListener('click', onOk);
-    cancelBtn.addEventListener('click', closeDialog);
-    dlg.addEventListener('click', function onOverlay(e) {
-        if (e.target === dlg) {
-            closeDialog();
-            okBtn.removeEventListener('click', onOk);
-            cancelBtn.removeEventListener('click', closeDialog);
-            dlg.removeEventListener('click', onOverlay);
-        }
-    });
-    dlg.showModal();
+    icDialogTitle.textContent = 'Initial inventory: ' + node.id();
+    icBqInput.value = node.data('IC');
+    icMolInput.value = Number(icBqInput.value) * activeInventoryFactor;
+    icDialog.showModal();
 }
+
+icBqInput.addEventListener('input', function () {
+    icMolInput.value = Number(icBqInput.value) * activeInventoryFactor;
+});
+
+icMolInput.addEventListener('input', function () {
+    icBqInput.value = activeInventoryFactor > 0
+        ? Number(icMolInput.value) / activeInventoryFactor
+        : 0;
+});
+
+icOkButton.addEventListener('click', function () {
+    if (!activeInventoryNode) return;
+
+    const activity = Number(icBqInput.value);
+    if (!Number.isFinite(activity) || activity < 0) {
+        icBqInput.setCustomValidity('Enter a non-negative finite activity.');
+        icBqInput.reportValidity();
+        return;
+    }
+
+    icBqInput.setCustomValidity('');
+    activeInventoryNode.data('IC', activity);
+    updateLevel('IC');
+    runAndUpdateChart();
+    icDialog.close();
+});
+
+icCancelButton.addEventListener('click', function () {
+    icDialog.close();
+});
+
+icDialog.addEventListener('click', function (event) {
+    if (event.target === icDialog) icDialog.close();
+});
+
+icDialog.addEventListener('close', function () {
+    activeInventoryNode = null;
+    activeInventoryFactor = 0;
+    icBqInput.setCustomValidity('');
+});
 
 // ── jstree ───────────────────────────────────────────────────────────────────
 var xrn;
@@ -664,18 +685,26 @@ $('#tree').jstree({
         "case_sensitive": false,
         "show_only_matches": false,
     },
-    "sort": function (a, b) { 
-        a1 = this.get_node(a);
-        b1 = this.get_node(b);
-        if (a1 && !a1.type.endsWith('isotope')) {
-            if (Asort) {
-                return (a1.text > b1.text) ? 1 : -1;
-            } else {
-                return (Number(a1.a_attr.Z) > Number(b1.a_attr.Z)) ? 1 : -1;
-            }
-        } else {
-            return 1; 
+    "sort": function (a, b) {
+        const nodeA = this.get_node(a);
+        const nodeB = this.get_node(b);
+        if (!nodeA || !nodeB) return 0;
+
+        const aIsIsotope = nodeA.type.endsWith('isotope');
+        const bIsIsotope = nodeB.type.endsWith('isotope');
+        if (aIsIsotope && bIsIsotope) {
+            return nodeA.text.localeCompare(nodeB.text, undefined, { numeric: true });
         }
+        if (aIsIsotope !== bIsIsotope) {
+            return aIsIsotope ? 1 : -1;
+        }
+        if (Asort) {
+            return nodeA.text.localeCompare(nodeB.text);
+        }
+
+        const zA = Number(nodeA.a_attr && nodeA.a_attr.Z);
+        const zB = Number(nodeB.a_attr && nodeB.a_attr.Z);
+        return (zA - zB) || nodeA.text.localeCompare(nodeB.text);
     },
 }).on("changed.jstree", function (e, data) {
     $('#tree').jstree(true).show_all();
@@ -687,7 +716,7 @@ $('#tree').jstree({
     if (node && node.type.endsWith('isotope')) {
         infodiv.classList.remove("show");
         var ids = [node.text];
-        rnnode = getRn(node.text);
+        const rnnode = getRn(node.text);
         xrn = (rnnode.A - rnnode.Z) * 100;
         yrn = rnnode.Z * 100;
         var x = 0;
@@ -715,7 +744,7 @@ $('#tree').jstree({
         if (halflife > 1) {}
         else if (halflife * 365.25 > 1) { halflife *= 365.25; unit = "day"; }
         else if (halflife * 365.25 * 24 > 1) { halflife *= 365.25 * 24; unit = "hour"; }
-        else if (halflife * 365.25 / 24 / 60 > 1) { halflife *= 365.25 * 24 * 60; unit = "minute"; }
+        else if (halflife * 365.25 * 24 * 60 > 1) { halflife *= 365.25 * 24 * 60; unit = "minute"; }
         else { halflife *= 365.25 * 24 * 60 * 60; unit = "second"; }
 
         var expvalue = 1 + Math.ceil(Math.log10(halflife));
@@ -879,7 +908,7 @@ function runAndUpdateChart() {
                 if (unit === "Total_energy") {
                     multfac = rnnode["Alpha_energy"] + rnnode["Electron_energy"] + rnnode["Photon_energy"];
                 } else if (unit === "Mole") {
-                    multfac = 60*60*24*365.242196*rnnode.Halflife_y/Math.log(2)/6.02214179E23;
+                    multfac = 60*60*24*365.242196*rnnode.Halflife_y/Math.log(2)/6.02214076E23;
                 } else {
                     multfac = rnnode[unit];
                 }
@@ -972,6 +1001,10 @@ function runAndUpdateChart() {
     
     Plotly.Plots.resize(CHARTDIALOG[0]);
 
+    if (typeof CHARTDIALOG[0].removeAllListeners === 'function') {
+        CHARTDIALOG[0].removeAllListeners('plotly_hover');
+        CHARTDIALOG[0].removeAllListeners('plotly_unhover');
+    }
     CHARTDIALOG[0].on('plotly_hover', function (data) {
         var rn = data.points.map(function (d) { return d.data.name; });
         var y = data.points.map(function (d) { return d.y; });
