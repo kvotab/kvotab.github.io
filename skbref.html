@@ -130,7 +130,7 @@
       .zotero-settings-grid { grid-template-columns: 1fr; }
       .zotero-setting.full { grid-column: auto; }
     }
-    #download-results-btn {
+    #download-results-btn, #download-rule-summary-btn {
       padding: 7px 16px;
       border: 1px solid var(--border-color);
       border-radius: 20px;
@@ -140,7 +140,7 @@
       font-weight: 600;
       cursor: pointer;
     }
-    #download-results-btn:hover { border-color: var(--color-kvot-bright); }
+    #download-results-btn:hover, #download-rule-summary-btn:hover { border-color: var(--color-kvot-bright); }
 
     #reset-btn { display: none; float: right; margin-top: -4px; padding: 5px 14px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-secondary); color: var(--text-secondary); font-size: .82rem; cursor: pointer; }
     #reset-btn.show { display: inline-block; }
@@ -217,6 +217,31 @@
     .official-rule-source { color: var(--text-muted); font-size: .74rem; margin-top: 3px; }
     .official-rule-match { color: var(--color-kvot-accent); font-weight: 700; }
     .official-rule-context { max-width: 560px; color: var(--text-secondary); }
+    .citation-source-badge { display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:999px; font-size:.72rem; font-weight:700; white-space:nowrap; }
+    .citation-source-badge.zotero { background:color-mix(in srgb,#2f7d32 16%,var(--bg-secondary)); color:#2f7d32; border:1px solid color-mix(in srgb,#2f7d32 48%,var(--border-color)); }
+    .citation-source-badge.plain { background:color-mix(in srgb,#6b7280 12%,var(--bg-secondary)); color:var(--text-secondary); border:1px solid var(--border-color); }
+    .citation-source-badge.field { background:color-mix(in srgb,#c87d0a 14%,var(--bg-secondary)); color:#9a6108; border:1px solid color-mix(in srgb,#c87d0a 45%,var(--border-color)); }
+    .citation-source-detail { margin-top:3px; color:var(--text-muted); font-size:.72rem; line-height:1.35; }
+    .rule-summary-filters { display:flex; gap:12px; flex-wrap:wrap; align-items:end; margin:0 0 14px; padding:12px; background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:8px; }
+    .rule-summary-filters label { display:grid; gap:4px; color:var(--text-secondary); font-size:.78rem; font-weight:700; }
+    .rule-summary-filters select { min-width:180px; padding:7px 9px; color:var(--text-primary); background:var(--bg-primary); border:1px solid var(--border-color); border-radius:6px; }
+    .rule-location-link { display:inline-block; color:var(--color-kvot-bright); text-decoration:underline; text-underline-offset:2px; font-weight:700; }
+    .rule-full-context { max-width:760px; color:var(--text-secondary); white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.5; }
+    .rule-finding-row:target { outline:3px solid var(--color-kvot-bright); outline-offset:-3px; background:color-mix(in srgb,var(--color-kvot-bright) 9%,var(--bg-primary)); scroll-margin-top:24px; }
+    .rule-summary-row[hidden], .rule-detail-item[hidden], .rule-document-group[hidden] { display:none; }
+    .rule-document-group { margin:14px 0; border:1px solid var(--border-color); border-radius:8px; overflow:hidden; }
+    .rule-document-group > summary { cursor:pointer; padding:10px 12px; font-weight:800; background:var(--bg-secondary); }
+    .rule-document-group-body { padding:10px; }
+    .rule-detail-item { margin:0 0 10px; padding:10px; border:1px solid var(--border-color); border-radius:7px; background:var(--bg-primary); }
+    .rule-detail-item:last-child { margin-bottom:0; }
+    .rule-detail-head { display:flex; gap:9px; flex-wrap:wrap; align-items:center; margin-bottom:7px; }
+    .rule-detail-guidance { margin:6px 0; color:var(--text-secondary); }
+    .language-summary { display:flex; gap:8px; flex-wrap:wrap; margin-top:7px; }
+    .language-badge { display:inline-flex; gap:4px; align-items:center; padding:2px 8px; border-radius:999px; font-size:.72rem; font-weight:800; border:1px solid var(--border-color); background:var(--bg-secondary); }
+    .language-badge.sv { color:#165b9c; }
+    .language-badge.en { color:#6c3b93; }
+    .language-badge.mixed { color:#9a6108; }
+    .language-badge.unknown { color:var(--text-muted); }
 
     @media (max-width: 700px) { #summary-cards { grid-template-columns: 1fr 1fr; } }
     @media (max-width: 480px) { #app { padding: 14px 12px 32px; } #summary-cards { gap: 8px; } }
@@ -318,6 +343,7 @@
             </div>
           </div>
         </details>
+        <button id="download-rule-summary-btn" type="button" title="Download the deduplicated rule summary and examples as CSV">Download rule summary CSV</button>
         <button id="download-results-btn" type="button" title="Download the current document analysis and any completed Zotero results as a standalone HTML file">Download analysis report</button>
       </div>
       <div id="results"></div>
@@ -350,6 +376,7 @@
     const progressFill = $('progress-fill');
     const resultActions = $('result-actions');
     const downloadResultsBtn = $('download-results-btn');
+    const downloadRuleSummaryBtn = $('download-rule-summary-btn');
     const zoteroFuzzyMatch = $('zotero-fuzzy-match');
     const zoteroSourceType = $('zotero-source-type');
     const zoteroGroupId = $('zotero-group-id');
@@ -397,7 +424,7 @@
     const zoteroCandidateStore = new Map();
 
     /*
-      Forbidden-word rules. Rules with enabled: false correspond to lines
+      Review-word and expression rules. Rules with enabled: false correspond to lines
       prefixed with # in the source list and remain available for revision.
     */
     const FORBIDDEN_WORD_RULES = [
@@ -408,82 +435,83 @@
       },
       {
             "enabled": true,
-            "pattern": "[Ff]lux",
+            "pattern": "\\b[Ff]lux(?:es)?\\b",
             "description": "Använd release? (om det gäller activity release)"
       },
       {
             "enabled": true,
-            "pattern": "(?<!AB) SVAFO",
+            "pattern": "\\bSVAFO\\b",
+            "custom": "require-ab-prefix",
             "description": "bör vara AB SVAFO"
       },
       {
             "enabled": true,
-            "pattern": "[Aa]nnual effective dose",
+            "pattern": "\\b[Aa]nnual effective dose\\b",
             "description": "Använd sparsamt"
       },
       {
             "enabled": true,
-            "pattern": "[Cc]ommitted dose",
+            "pattern": "\\b[Cc]ommitted dose\\b",
             "description": "?"
       },
       {
             "enabled": true,
-            "pattern": "[Ff]ractures?",
+            "pattern": "\\b[Ff]ractures?\\b",
             "description": "Använd inte för betong"
       },
       {
             "enabled": true,
-            "pattern": "[Ff]racturing",
+            "pattern": "\\b[Ff]racturing\\b",
             "description": "Använd inte för betong"
       },
       {
             "enabled": true,
-            "pattern": "[Cc]racks?",
+            "pattern": "\\b[Cc]racks?\\b",
             "description": "Använd inte för berg"
       },
       {
             "enabled": true,
-            "pattern": "[Pp]rogen(y|ies)",
+            "pattern": "\\b[Pp]rogen(?:y|ies)\\b",
             "description": "Använd: decay product"
       },
       {
             "enabled": true,
-            "pattern": "[Dd]aughter products?",
+            "pattern": "\\b[Dd]aughter products?\\b",
             "description": "Använd: decay product"
       },
       {
             "enabled": true,
-            "pattern": "[Dd]eposit",
+            "pattern": "\\b[Dd]eposit(?:s|ed|ing)?\\b",
             "description": "?"
       },
       {
             "enabled": true,
-            "pattern": "[Dd]ose-deliverer",
+            "pattern": "\\b[Dd]ose-deliverer\\b",
             "description": "?"
       },
       {
             "enabled": true,
-            "pattern": "[Gg]rout",
+            "pattern": "\\b[Gg]rout(?:s|ed|ing)?\\b",
             "description": "kringgjutning använd inte för igjutning"
       },
       {
             "enabled": true,
-            "pattern": "[Ff]ar-field",
+            "pattern": "\\b[Ff]ar-field\\b",
             "description": "bör oftast vara geosphere"
       },
       {
             "enabled": true,
-            "pattern": "[Mm]ass flux",
+            "pattern": "\\b[Mm]ass flux\\b",
             "description": "?"
       },
       {
             "enabled": true,
-            "pattern": "[Ee]mbedment",
+            "pattern": "\\b[Ee]mbedment\\b",
             "description": "igjutning använd inte för kringgjutning"
       },
       {
             "enabled": true,
-            "pattern": "[Pp]lacing",
+            "pattern": "\\b[Pp]lacing\\b",
             "description": "Kan ibland vara location"
       },
       {
@@ -493,37 +521,37 @@
       },
       {
             "enabled": true,
-            "pattern": "[Ll]ow and intermediate level waste",
+            "pattern": "\\b[Ll]ow and intermediate level waste\\b",
             "description": "bör vara low- and intermediate-level waste"
       },
       {
             "enabled": true,
-            "pattern": "[Pp]eak",
+            "pattern": "\\b[Pp]eak\\b",
             "description": "bör oftast vara maximum"
       },
       {
             "enabled": true,
-            "pattern": "[Nn]ear field",
+            "pattern": "\\b[Nn]ear field\\b",
             "description": "bör vara near-field"
       },
       {
             "enabled": true,
-            "pattern": "[Nn]earfield",
+            "pattern": "\\b[Nn]earfield\\b",
             "description": "bör vara near-field"
       },
       {
             "enabled": true,
-            "pattern": "[Oo]perational phase",
+            "pattern": "\\b[Oo]perational phase\\b",
             "description": "Använd:operational period"
       },
       {
             "enabled": true,
-            "pattern": "[Oo]perating period",
+            "pattern": "\\b[Oo]perating period\\b",
             "description": "Använd:operational period"
       },
       {
             "enabled": true,
-            "pattern": "[Cc]onservative(ly)?",
+            "pattern": "\\b[Cc]onservative(?:ly)?\\b",
             "description": "använd cautious eller pessimistic"
       },
       {
@@ -533,112 +561,112 @@
       },
       {
             "enabled": true,
-            "pattern": "[Uu]plift",
+            "pattern": "\\b[Uu]plift(?:ed|ing|s)?\\b",
             "description": "Använd inte om det gäller havsnivån"
       },
       {
             "enabled": true,
-            "pattern": "[Rr]ebound",
+            "pattern": "\\b[Rr]ebound(?:s|ing|ed)?\\b",
             "description": "Använd inte om det gäller havsnivån"
       },
       {
             "enabled": true,
-            "pattern": "[Ll]and rise",
+            "pattern": "\\b[Ll]and rise\\b",
             "description": "Använd inte om det gäller havsnivån"
       },
       {
             "enabled": true,
-            "pattern": "[Rr]etention factor",
+            "pattern": "\\b[Rr]etention factors?\\b",
             "description": "?"
       },
       {
             "enabled": true,
-            "pattern": "(?<![Tt]he) PSAR",
+            "pattern": "(?<![Tt]he)\\s+PSAR\\b",
             "description": "PSAR som inte föregås av the"
       },
       {
             "enabled": true,
-            "pattern": "(?<![Tt]he) SR-PSU",
+            "pattern": "(?<![Tt]he)\\s+SR-PSU\\b",
             "description": "SR-PSU som inte föregås av the"
       },
       {
             "enabled": true,
-            "pattern": "[Ss]horeline development",
+            "pattern": "\\b[Ss]horeline development\\b",
             "description": "shoreline displacement/regression?"
       },
       {
             "enabled": true,
-            "pattern": "[Ss]horeline evolution",
+            "pattern": "\\b[Ss]horeline evolution\\b",
             "description": "shoreline displacement/regression?"
       },
       {
             "enabled": true,
-            "pattern": "[Ss]horelevel",
+            "pattern": "\\b[Ss]horelevel\\b",
             "description": "Menar du: shoreline?n"
       },
       {
             "enabled": true,
-            "pattern": "[Ss]hore-line",
+            "pattern": "\\b[Ss]hore-line\\b",
             "description": "?"
       },
       {
             "enabled": true,
-            "pattern": "[Ss]hore-level",
+            "pattern": "\\b[Ss]hore-level\\b",
             "description": "relative sea-level?"
       },
       {
             "enabled": true,
-            "pattern": "[Ss]orption distribution coefficient",
+            "pattern": "\\b[Ss]orption distribution coefficients?\\b",
             "description": "?"
       },
       {
             "enabled": true,
-            "pattern": "[Ll]inear distribution coefficient",
+            "pattern": "\\b[Ll]inear distribution coefficients?\\b",
             "description": "?"
       },
       {
             "enabled": true,
-            "pattern": "[Ss]orption partitioning coefficient",
+            "pattern": "\\b[Ss]orption partitioning coefficients?\\b",
             "description": "?"
       },
       {
             "enabled": true,
-            "pattern": "[Ss]orption reduction coefficient",
+            "pattern": "\\b[Ss]orption reduction coefficients?\\b",
             "description": "?"
       },
       {
             "enabled": true,
-            "pattern": "[Tt]he Silo",
+            "pattern": "\\b[Tt]he Silo\\b",
             "description": "det ska inte vara stort S här"
       },
       {
             "enabled": true,
-            "pattern": "[Cc]onstruction concrete",
+            "pattern": "\\b[Cc]onstruction concrete\\b",
             "description": "Använd: structural concrete"
       },
       {
             "enabled": true,
-            "pattern": "[Ww]aste container",
+            "pattern": "\\b[Ww]aste containers?\\b",
             "description": "Använd: waste packaging"
       },
       {
             "enabled": true,
-            "pattern": "[Rr]epository section",
+            "pattern": "\\b[Rr]epository sections?\\b",
             "description": "Använd: waste vault"
       },
       {
             "enabled": true,
-            "pattern": "[Rr]epository vault",
+            "pattern": "\\b[Rr]epository vaults?\\b",
             "description": "Använd: waste vault"
       },
       {
             "enabled": true,
-            "pattern": "[Pp]ipes",
+            "pattern": "\\b[Pp]ipes?\\b",
             "description": "channels?"
       },
       {
             "enabled": true,
-            "pattern": "[Dd]iversionary",
+            "pattern": "\\b[Dd]iversionary\\b",
             "description": "'gas evacuation system'?"
       },
       {
@@ -648,17 +676,17 @@
       },
       {
             "enabled": true,
-            "pattern": "SKB\\s[12]",
+            "pattern": "\\bSKB\\s+[12]\\d{3}\\b",
             "description": "old style SKB reference"
       },
       {
             "enabled": true,
-            "pattern": "[0-9]%",
+            "pattern": "\\d%(?![\\p{L}\\p{N}])",
             "description": "missing space before unit"
       },
       {
             "enabled": true,
-            "pattern": "[0-9]°C",
+            "pattern": "\\d°C(?!\\p{L})",
             "description": "missing space before unit"
       },
       {
@@ -668,22 +696,22 @@
       },
       {
             "enabled": true,
-            "pattern": "[0-9](meters?|metres?) ",
+            "pattern": "\\d(?:meters?|metres?)(?!\\p{L})",
             "description": "missing space before unit"
       },
       {
             "enabled": true,
-            "pattern": "[0-9]mm ",
+            "pattern": "\\dmm(?!\\p{L})",
             "description": "missing space before unit"
       },
       {
             "enabled": true,
-            "pattern": "[0-9]years ",
+            "pattern": "\\dyears(?!\\p{L})",
             "description": "missing space before unit"
       },
       {
             "enabled": true,
-            "pattern": "0000",
+            "pattern": "\\b\\d{1,3}0000(?:\\d+)?\\b",
             "description": "missing space in large number"
       },
       {
@@ -738,7 +766,7 @@
       },
       {
             "enabled": true,
-            "pattern": "[0-9].X",
+            "pattern": "\\b\\d+(?:\\.\\d+)*\\.X\\b",
             "description": "Trasig referens"
       },
       {
@@ -747,23 +775,24 @@
             "description": "Trasig referens"
       },
       {
-            "enabled": true,
+            "enabled": false,
+            "id": "technical-scientific-notation-e-obsolete",
             "pattern": "[0-9][eE]",
-            "description": "Excel format"
+            "description": "Disabled: superseded by the precise official scientific-notation rule."
       },
       {
             "enabled": true,
-            "pattern": "et\\. ?al\\.?",
+            "pattern": "\\bet\\.\\s*al\\.?\\b",
             "description": "Är det en onödig punkt efter \"et\" ?"
       },
       {
             "enabled": true,
-            "pattern": "et al[^.]",
+            "pattern": "\\bet al(?!\\.)\\b",
             "description": "Saknas punkt efter \"al\""
       },
       {
             "enabled": true,
-            "pattern": "Kd",
+            "pattern": "\\bKd\\b",
             "description": "Kolla att det är kursivt K och nedsänkt och rakt d"
       },
       {
@@ -773,7 +802,7 @@
       },
       {
             "enabled": true,
-            "pattern": "[Cc]olor",
+            "pattern": "\\b[Cc]olors?\\b",
             "description": "American English? BE=colour"
       },
       {
@@ -783,32 +812,32 @@
       },
       {
             "enabled": true,
-            "pattern": "[Mm]ail",
+            "pattern": "\\b[Mm]ail\\b",
             "description": "American English? BE=post"
       },
       {
             "enabled": true,
-            "pattern": "[Tt]rapezoid",
+            "pattern": "\\b[Tt]rapezoids?\\b",
             "description": "American English? BE=trapezium"
       },
       {
             "enabled": true,
-            "pattern": "[Dd]efense",
+            "pattern": "\\b[Dd]efenses?\\b",
             "description": "American English? BE=defence"
       },
       {
             "enabled": true,
-            "pattern": "[Aa]luminum",
+            "pattern": "\\b[Aa]luminum\\b",
             "description": "American English? BE=aluminium"
       },
       {
             "enabled": true,
-            "pattern": "[Cc]anceled",
+            "pattern": "\\b[Cc]anceled\\b",
             "description": "American English? BE=cancelled"
       },
       {
             "enabled": true,
-            "pattern": "[Ff]ulfill",
+            "pattern": "\\b[Ff]ulfill(?:s|ed|ing|ment)?\\b",
             "description": "American English? BE=fulfil"
       },
       {
@@ -818,27 +847,27 @@
       },
       {
             "enabled": true,
-            "pattern": "[Cc]enter",
+            "pattern": "\\b[Cc]enters?\\b",
             "description": "American English? BE=centre"
       },
       {
             "enabled": true,
-            "pattern": "[Ss]occer",
+            "pattern": "\\b[Ss]occer\\b",
             "description": "American English? BE=football"
       },
       {
             "enabled": true,
-            "pattern": "[Mm]illimeter",
+            "pattern": "\\b[Mm]illimeters?\\b",
             "description": "American English? BE=millimetre"
       },
       {
             "enabled": true,
-            "pattern": "[Kk]ilometer",
+            "pattern": "\\b[Kk]ilometers?\\b",
             "description": "American English? BE=kilometre"
       },
       {
             "enabled": true,
-            "pattern": "[Cc]entimeter",
+            "pattern": "\\b[Cc]entimeters?\\b",
             "description": "American English? BE=centimetre"
       },
       {
@@ -848,42 +877,42 @@
       },
       {
             "enabled": true,
-            "pattern": "[Cc]haracterize",
+            "pattern": "\\b[Cc]haracteriz(?:e|es|ed|ing|ation)\\b",
             "description": "American English? BE=characterise"
       },
       {
             "enabled": true,
-            "pattern": "[Cc]ivilization",
+            "pattern": "\\b[Cc]ivilizations?\\b",
             "description": "American English? BE=civilisation"
       },
       {
             "enabled": true,
-            "pattern": "[Oo]rganize",
+            "pattern": "\\b[Oo]rganiz(?:e|es|ed|ing|ation)\\b",
             "description": "American English? BE=organise"
       },
       {
             "enabled": true,
-            "pattern": "[Bb]ehavior",
+            "pattern": "\\b[Bb]ehaviors?\\b",
             "description": "American English? BE=behaviour"
       },
       {
             "enabled": true,
-            "pattern": "[Rr]umor",
+            "pattern": "\\b[Rr]umors?\\b",
             "description": "American English? BE=rumour"
       },
       {
             "enabled": true,
-            "pattern": "[Dd]onut",
+            "pattern": "\\b[Dd]onuts?\\b",
             "description": "American English? BE=doughnut"
       },
       {
             "enabled": true,
-            "pattern": "[Yy]ogurt",
+            "pattern": "\\b[Yy]ogurts?\\b",
             "description": "American English? BE=yoghurt"
       },
       {
             "enabled": true,
-            "pattern": "[Gg]ray",
+            "pattern": "\\b[Gg]rays?\\b",
             "description": "American English? BE=grey (om det inte handlar om absorberad dos)"
       },
       {
@@ -898,22 +927,22 @@
       },
       {
             "enabled": true,
-            "pattern": "[Rr]ightward(?!s)",
+            "pattern": "\\b[Rr]ightward(?!s)\\b",
             "description": "American English? bör sluta med s på BE"
       },
       {
             "enabled": true,
-            "pattern": "[Ss]ophisticated",
+            "pattern": "\\b[Ss]ophisticated\\b",
             "description": "Använd inte om barriers"
       },
       {
             "enabled": true,
-            "pattern": "[Aa]dvanced",
+            "pattern": "\\b[Aa]dvanced\\b",
             "description": "Använd inte om barriers"
       },
       {
             "enabled": true,
-            "pattern": "[Ee]ffective",
+            "pattern": "\\b[Ee]ffective(?:ly|ness)?\\b",
             "description": "Undvik för barriers"
       },
       {
@@ -928,22 +957,23 @@
       },
       {
             "enabled": true,
-            "pattern": "[Ss]ection.0.*",
+            "pattern": "\\b[Ss]ection\\.0(?:\\d|\\b)",
             "description": "Trasig referens"
       },
       {
             "enabled": true,
-            "pattern": " ([a-zA-Z]{2,})\\s\\1 ",
+            "pattern": "\\b(\\p{L}{2,})\\s+\\1\\b",
+            "flags": "giu",
             "description": "upprepat ord"
       },
       {
             "enabled": true,
-            "pattern": "Biosphere synthesis (?!report)",
+            "pattern": "\\bBiosphere synthesis(?!\\s+report\\b)",
             "description": "BS som inte följs av 'report'"
       },
       {
             "enabled": true,
-            "pattern": "[Cc]oncrete grout",
+            "pattern": "\\b[Cc]oncrete grout\\b",
             "description": "skriv bara grout"
       },
       {
@@ -958,17 +988,17 @@
       },
       {
             "enabled": true,
-            "pattern": "[Ff]uel-damage",
+            "pattern": "\\b[Ff]uel-damage\\b",
             "description": "Bör vara utan bindestreck?"
       },
       {
             "enabled": true,
-            "pattern": "SEQ",
+            "pattern": "\\bSEQ\\b",
             "description": "Trasig referens"
       },
       {
             "enabled": true,
-            "pattern": "[Hh]ittar inte",
+            "pattern": "\\b[Hh]ittar inte\\b",
             "description": "Trasig referens"
       },
       {
@@ -998,17 +1028,17 @@
       },
       {
             "enabled": true,
-            "pattern": "[Vv]alues in parentheses",
+            "pattern": "\\b[Vv]alues in parentheses\\b",
             "description": "Troligen OK (om det inte ska vara brackets)"
       },
       {
             "enabled": true,
-            "pattern": "[Vv]alues in brackets",
+            "pattern": "\\b[Vv]alues in brackets\\b",
             "description": "Bör ofta vara parentheses, som är ett specialfall av brackets"
       },
       {
             "enabled": true,
-            "pattern": "[Aa]nnual near-field release",
+            "pattern": "\\b[Aa]nnual near-field release\\b",
             "description": "Vi skriver oftast 'Annual release from the near-field'"
       },
       {
@@ -1018,72 +1048,72 @@
       },
       {
             "enabled": true,
-            "pattern": "1-2BMA",
+            "pattern": "\\b1-2BMA\\b",
             "description": "Ska vara annat streck"
       },
       {
             "enabled": true,
-            "pattern": "1-2BTF",
+            "pattern": "\\b1-2BTF\\b",
             "description": "Ska vara annat streck"
       },
       {
             "enabled": true,
-            "pattern": "1-5BLA",
+            "pattern": "\\b1-5BLA\\b",
             "description": "Ska vara annat streck"
       },
       {
             "enabled": true,
-            "pattern": "F-PSAR",
+            "pattern": "\\bF-PSAR\\b",
             "description": "Ska oftast vara SR-PSU"
       },
       {
             "enabled": true,
-            "pattern": "FPSAR",
+            "pattern": "\\bFPSAR\\b",
             "description": "Kan vara F-PSAR, men oftast SR-PSU"
       },
       {
             "enabled": true,
-            "pattern": "Main report",
+            "pattern": "\\bMain report\\b",
             "description": "Ska oftast vara: Post-closure safety report"
       },
       {
             "enabled": true,
-            "pattern": "[Kk]aisson",
+            "pattern": "\\b[Kk]aisson\\b",
             "description": "Felstavning som slunkit igenom några gånger"
       },
       {
             "enabled": true,
-            "pattern": "([Kk]|[Cc])aisoon",
+            "pattern": "\\b(?:[Kk]|[Cc])aisoon\\b",
             "description": "Felstavning som slunkit igenom några gånger"
       },
       {
             "enabled": true,
-            "pattern": "([Kk]|[Cc])aison",
+            "pattern": "\\b(?:[Kk]|[Cc])aison\\b",
             "description": "Felstavning som slunkit igenom några gånger"
       },
       {
             "enabled": true,
-            "pattern": "[Cc]apasity",
+            "pattern": "\\b[Cc]apasity\\b",
             "description": "Felstavning som slunkit igenom några gånger"
       },
       {
             "enabled": true,
-            "pattern": "[Cc]autiuos",
+            "pattern": "\\b[Cc]autiuos\\b",
             "description": "Felstavning som slunkit igenom några gånger"
       },
       {
             "enabled": true,
-            "pattern": "[Cc]autius",
+            "pattern": "\\b[Cc]autius\\b",
             "description": "Felstavning som slunkit igenom några gånger"
       },
       {
             "enabled": true,
-            "pattern": "[Cc]autios",
+            "pattern": "\\b[Cc]autios\\b",
             "description": "Felstavning som slunkit igenom några gånger"
       },
       {
             "enabled": true,
-            "pattern": "[Ss]qrutinised?",
+            "pattern": "\\b[Ss]qrutinised?\\b",
             "description": "Felstavning som slunkit igenom några gånger"
       },
       {
@@ -1093,7 +1123,7 @@
       },
       {
             "enabled": true,
-            "pattern": "[Dd]isposed of",
+            "pattern": "\\b[Dd]isposed of\\b",
             "description": "Det kanske räcker med 'disposed' utan 'of'"
       },
       {
@@ -1118,7 +1148,7 @@
       },
       {
             "enabled": true,
-            "pattern": "Tabell",
+            "pattern": "\\bTabell\\b",
             "description": "Fel språk? (kan vara krashad korsreferens)"
       },
       {
@@ -1128,7 +1158,7 @@
       },
       {
             "enabled": true,
-            "pattern": "[Pp]ost closure (safety)",
+            "pattern": "\\b[Pp]ost closure(?: safety)?\\b",
             "description": "saknas '-' ?"
       },
       {
@@ -1143,37 +1173,37 @@
       },
       {
             "enabled": true,
-            "pattern": "[Rr]eference inventory (at|by) 2075",
+            "pattern": "\\b[Rr]eference inventory (?:at|by) 2075\\b",
             "description": "Använd: Reference inventory for"
       },
       {
             "enabled": true,
-            "pattern": "SR-PSU \\(PSAR\\).",
+            "pattern": "\\bSR-PSU\\s+\\(PSAR\\)\\.",
             "description": "Använd: the PSAR"
       },
       {
             "enabled": true,
-            "pattern": "Model tools summary report",
+            "pattern": "\\bModel tools summary report\\b",
             "description": "Bör nog vara: Model tools report"
       },
       {
             "enabled": true,
-            "pattern": "Åstrand.et.al..\\(2021\\)",
+            "pattern": "\\bÅstrand\\s+et\\s+al\\.\\s*\\(2021\\)",
             "description": "should be 2022"
       },
       {
             "enabled": true,
-            "pattern": "Mårtensson.et.al..2021",
+            "pattern": "\\bMårtensson\\s+et\\s+al\\.\\s+2021\\b",
             "description": "Ska det vara?:2022"
       },
       {
             "enabled": true,
-            "pattern": "[Ww]ith regards",
+            "pattern": "\\b[Ww]ith regards\\b",
             "description": "Google: 'With regard to is the only spelling of this phrase that you should use.'"
       },
       {
             "enabled": true,
-            "pattern": "Facilia",
+            "pattern": "\\bFacilia\\b",
             "description": "företaget finns ej mer, ska det vara SKB,Kemakta,Kvot AB eller nåt annat?"
       },
       {
@@ -1183,22 +1213,22 @@
       },
       {
             "enabled": true,
-            "pattern": "calculate case",
+            "pattern": "\\bcalculate case\\b",
             "description": "calculation case?"
       },
       {
             "enabled": true,
-            "pattern": "[Dd]ifferences? to",
+            "pattern": "\\b[Dd]ifferences? to\\b",
             "description": "differences from?"
       },
       {
             "enabled": true,
-            "pattern": "[Dd]oses for humans",
+            "pattern": "\\b[Dd]oses for humans\\b",
             "description": "doses to humans?"
       },
       {
             "enabled": true,
-            "pattern": "rates for non-human",
+            "pattern": "\\brates for non-human\\b",
             "description": "rates to non-human?"
       },
       {
@@ -1218,57 +1248,57 @@
       },
       {
             "enabled": true,
-            "pattern": "[Cc]riterions",
+            "pattern": "\\b[Cc]riterions\\b",
             "description": "criteria"
       },
       {
             "enabled": true,
-            "pattern": "[Ff]orecasted",
+            "pattern": "\\b[Ff]orecasted\\b",
             "description": "forecast?"
       },
       {
             "enabled": true,
-            "pattern": "represented with",
+            "pattern": "\\brepresented with\\b",
             "description": "represented by? om det handlar om compartments"
       },
       {
             "enabled": true,
-            "pattern": "embayment",
+            "pattern": "\\bembayments?\\b",
             "description": "bay"
       },
       {
             "enabled": true,
-            "pattern": "[Uu]nclosed repository",
+            "pattern": "\\b[Uu]nclosed repository\\b",
             "description": "ska vara: unsealed repository"
       },
       {
             "enabled": true,
-            "pattern": "[Ss]ections?.[0-9]{1,} ",
+            "pattern": "\\b[Ss]ections?\\s+[0-9]+\\b",
             "description": "Section där det borde vara Chapter?"
       },
       {
             "enabled": true,
-            "pattern": "[Cc]hapters?.[0-9]{1,}.[0-9]{1,} ",
+            "pattern": "\\b[Cc]hapters?\\s+[0-9]+\\.[0-9]+\\b",
             "description": "Chapter där det borde vara Section?"
       },
       {
             "enabled": true,
-            "pattern": "[Ss]eabed",
+            "pattern": "\\b[Ss]eabed\\b",
             "description": "Använd: sea om submerged är det som avses"
       },
       {
             "enabled": true,
-            "pattern": "SFR is submerged",
+            "pattern": "\\bSFR is submerged\\b",
             "description": "Kan behöva omformuleras"
       },
       {
             "enabled": true,
-            "pattern": "[Aa]ssessment time",
+            "pattern": "\\b[Aa]ssessment time\\b",
             "description": "Använd helst: asessment period (undvik: time period,time frame eller time span )"
       },
       {
             "enabled": true,
-            "pattern": "demonstrating fulfilment ",
+            "pattern": "\\bdemonstrating fulfilment\\b",
             "description": "Ändra RNT-rapport beskrivningen? (Är listan med huvudreferenser uppdaterad)"
       },
       {
@@ -1283,82 +1313,82 @@
       },
       {
             "enabled": true,
-            "pattern": "FEP-report",
+            "pattern": "\\bFEP-report\\b",
             "description": "FEP report?"
       },
       {
             "enabled": true,
-            "pattern": "FHA-report",
+            "pattern": "\\bFHA-report\\b",
             "description": "FHA report?"
       },
       {
             "enabled": true,
-            "pattern": "Post-closure safety Report",
+            "pattern": "\\bPost-closure safety Report\\b",
             "description": "Det bör vara litet r"
       },
       {
             "enabled": true,
-            "pattern": "Activities and input data Report",
+            "pattern": "\\bActivities and input data Report\\b",
             "description": "Det bör vara litet r"
       },
       {
             "enabled": true,
-            "pattern": "Waste process Report",
+            "pattern": "\\bWaste process Report\\b",
             "description": "Det bör vara litet r"
       },
       {
             "enabled": true,
-            "pattern": "Barrier process Report",
+            "pattern": "\\bBarrier process Report\\b",
             "description": "Det bör vara litet r"
       },
       {
             "enabled": true,
-            "pattern": "Biosphere synthesis Report",
+            "pattern": "\\bBiosphere synthesis Report\\b",
             "description": "Det bör vara litet r"
       },
       {
             "enabled": true,
-            "pattern": "Climate Report",
+            "pattern": "\\bClimate Report\\b",
             "description": "Det bör vara litet r"
       },
       {
             "enabled": true,
-            "pattern": "Data Report",
+            "pattern": "\\bData Report\\b",
             "description": "Det bör vara litet r"
       },
       {
             "enabled": true,
-            "pattern": "FEP Report",
+            "pattern": "\\bFEP Report\\b",
             "description": "Det bör vara litet r"
       },
       {
             "enabled": true,
-            "pattern": "FHA Report",
+            "pattern": "\\bFHA Report\\b",
             "description": "Det bör vara litet r"
       },
       {
             "enabled": true,
-            "pattern": "Geosphere process Report",
+            "pattern": "\\bGeosphere process Report\\b",
             "description": "Det bör vara litet r"
       },
       {
             "enabled": true,
-            "pattern": "Initial state Report",
+            "pattern": "\\bInitial state Report\\b",
             "description": "Det bör vara litet r"
       },
       {
             "enabled": true,
-            "pattern": "Model tools Report",
+            "pattern": "\\bModel tools Report\\b",
             "description": "Det bör vara litet r"
       },
       {
             "enabled": true,
-            "pattern": "Radionuclide transport Report",
+            "pattern": "\\bRadionuclide transport Report\\b",
             "description": "Det bör vara litet r"
       },
       {
             "enabled": true,
-            "pattern": "[Ff]low barriers?",
+            "pattern": "\\b[Ff]low barriers?\\b",
             "description": "Hydraulic barriers?"
       }
 ];
@@ -1468,7 +1498,132 @@
       { pattern: String.raw`\b\d+\s*[xX]\s*10(?:\^?[-+]?\d+|[⁰¹²³⁴⁵⁶⁷⁸⁹]+)`, description: 'Use the multiplication sign ×, not the letter x, in scientific notation.', source: 'technical' }
     ];
 
+    const RULE_ID_OVERRIDES = Object.freeze({
+      '\\b[Pp]eak\\b': 'terminology-peak',
+      '\\b[Mm]ail\\b': 'language-en-mail',
+      '\\b\\d+(?:\\.\\d+)*\\.X\\b': 'reference-broken-cross-reference-x',
+      '\\b[Ss]ection\\.0(?:\\d|\\b)': 'reference-broken-section-zero',
+      '\\b(\\p{L}{2,})\\s+\\1\\b': 'language-repeated-word',
+      '\\b\\d+(?:\\.\\d+)?[eE][+−-]?\\d+\\b': 'technical-scientific-notation-e',
+      '\\b[Ff]lux(?:es)?\\b': 'terminology-flux',
+      '\\b[Gg]rout(?:s|ed|ing)?\\b': 'terminology-grout',
+      '\\b[Cc]onservative(?:ly)?\\b': 'language-conservative',
+      '\\b[Cc]olors?\\b': 'language-us-color',
+      '\\b[Oo]rganiz(?:e|es|ed|ing|ation)\\b': 'language-us-organize',
+      '\\b[Bb]ehaviors?\\b': 'language-us-behavior',
+      '\\b[Ss]ections?\\s+[0-9]+\\b': 'reference-section-vs-chapter',
+      '\\b[Cc]hapters?\\s+[0-9]+\\.[0-9]+\\b': 'reference-chapter-vs-section',
+      '\\d%(?![\\p{L}\\p{N}])': 'unit-missing-space-percent',
+      '\\d°C(?!\\p{L})': 'unit-missing-space-celsius',
+      '\\dmm(?!\\p{L})': 'unit-missing-space-millimetre',
+      '\\dyears(?!\\p{L})': 'unit-missing-space-years',
+      '\\b\\d{1,3}0000(?:\\d+)?\\b': 'number-missing-grouping-space'
+    });
+
+    function stableRuleHash(value) {
+      let hash = 2166136261;
+      for (const character of String(value)) {
+        hash ^= character.codePointAt(0);
+        hash = Math.imul(hash, 16777619);
+      }
+      return (hash >>> 0).toString(36);
+    }
+
+    function ensureRuleMetadata(rules, family, defaults = {}) {
+      for (const rule of rules) {
+        rule.id ||= RULE_ID_OVERRIDES[rule.pattern] || `${family}-${stableRuleHash(`${rule.pattern}|${rule.description || ''}`)}`;
+        rule.category ||= defaults.category || family;
+        rule.severity ||= defaults.severity || 'review';
+        rule.flags ||= defaults.flags || 'gu';
+      }
+      return rules;
+    }
+
+    ensureRuleMetadata(FORBIDDEN_WORD_RULES, 'review', { category: 'terminology', severity: 'review', flags: 'gu' });
+    ensureRuleMetadata(POTENTIAL_INVALID_CITATION_RULES, 'citation', { category: 'citation', severity: 'warning', flags: 'gu' });
+    ensureRuleMetadata(OFFICIAL_SKB_TEXT_RULES, 'official', { category: 'technical', severity: 'warning', flags: 'gu' });
+
+    function runReviewRuleRegressionTests() {
+      const cases = [
+        ['terminology-peak', ['peak', 'Peak value'], ['speak', 'speaker', 'speaking']],
+        ['language-en-mail', ['mail', 'Mail'], ['email', 'mailbox', 'mailing']],
+        ['reference-broken-cross-reference-x', ['1.X', '4.2.X'], ['1aX', '2-X', '3 X']],
+        ['reference-broken-section-zero', ['Section.0', 'Section.01'], ['Section 01', 'Section-02', 'SectionA03']],
+        ['language-repeated-word', ['The the beginning', 'word word.', 'ström ström'], ['word, word']],
+        ['terminology-flux', ['flux', 'Fluxes'], ['influx', 'refluxing']],
+        ['terminology-grout', ['grout', 'grouting'], ['aground']],
+        ['language-us-color', ['color', 'Colors'], ['colorado', 'discoloration']],
+        ['language-us-organize', ['organize', 'organization'], ['organizerX']],
+        ['language-us-behavior', ['behavior', 'behaviors'], ['behavioralismX']],
+        ['reference-section-vs-chapter', ['Section 7', 'sections 12'], ['SectionA7', 'intersection 7']],
+        ['reference-chapter-vs-section', ['Chapter 7.2', 'chapters 12.4'], ['Chapter 7', 'ChapterA7.2']]
+      ];
+      const failures = [];
+      for (const [ruleId, positives, negatives] of cases) {
+        const rule = [...FORBIDDEN_WORD_RULES, ...POTENTIAL_INVALID_CITATION_RULES, ...OFFICIAL_SKB_TEXT_RULES].find(item => item.id === ruleId);
+        if (!rule) { failures.push(`Missing rule ${ruleId}`); continue; }
+        const expression = new RegExp(rule.pattern, rule.flags || 'gu');
+        for (const value of positives) { expression.lastIndex = 0; if (!expression.test(value)) failures.push(`${ruleId} should match: ${value}`); }
+        for (const value of negatives) { expression.lastIndex = 0; if (expression.test(value)) failures.push(`${ruleId} should not match: ${value}`); }
+      }
+      const directCases = [
+        [/\bKd\b/gu, ['Kd'], ['SKd', 'Kdata']],
+        [/\bSEQ\b/gu, ['SEQ'], ['SEQUENCE', 'xSEQ']],
+        [/\bF-PSAR\b/gu, ['F-PSAR'], ['XF-PSAR']],
+        [/\b(?:[Kk]|[Cc])aison\b/gu, ['caison', 'Kaison'], ['occasion']],
+        [/\bData Report\b/gu, ['Data Report'], ['Metadata Report']],
+        [/\bTabell\b/gu, ['Tabell'], ['Tabellen']],
+        [/\d%(?![\p{L}\p{N}])/gu, ['5%', '100%'], ['5percent', '5%A']],
+        [/\d°C(?!\p{L})/gu, ['5°C'], ['5°Celsius']],
+        [/\dmm(?!\p{L})/gu, ['5mm'], ['5mmeter']],
+        [/\dyears(?!\p{L})/gu, ['5years'], ['5yearsin']],
+        [/\b\d{1,3}0000(?:\d+)?\b/gu, ['10000', '250000'], ['2000', 'R-10000A']],
+        [/\bBiosphere synthesis(?!\s+report\b)/gu, ['Biosphere synthesis model'], ['Biosphere synthesis report']],
+        [/\bSVAFO\b/gu, ['SVAFO'], ['SVAFOX']]
+      ];
+      const svafoPrefixCases = [['SVAFO', true], ['AB SVAFO', false], ['AB  SVAFO', false], ['Text SVAFO', true]];
+      for (const [value, shouldFlag] of svafoPrefixCases) {
+        const match = /\bSVAFO\b/u.exec(value);
+        const prefix = match ? value.slice(Math.max(0, match.index - 12), match.index).replace(/[\s\u00a0]+$/u, ' ').trimEnd() : '';
+        const flagged = Boolean(match && !/\bAB$/u.test(prefix));
+        if (flagged !== shouldFlag) failures.push(`SVAFO prefix check failed: ${value}`);
+      }
+      for (const [expression, positives, negatives] of directCases) {
+        for (const value of positives) { expression.lastIndex = 0; if (!expression.test(value)) failures.push(`${expression} should match: ${value}`); }
+        for (const value of negatives) { expression.lastIndex = 0; if (expression.test(value)) failures.push(`${expression} should not match: ${value}`); }
+      }
+      if (failures.length) console.error('Review-rule regression tests failed:', failures);
+      else console.info(`Review-rule regression tests passed (${cases.length} rules).`);
+      return failures;
+    }
+    runReviewRuleRegressionTests();
+
+    function runLanguageRegressionTests() {
+      const failures=[];
+      const classify=(text,counts)=>classifyParagraphLanguage(text,{counts,ranges:[],paragraphLanguage:'unknown'});
+      const sv=classify('Detta är en svensk text och den innehåller flera svenska ord.',{sv:52,en:0,other:0,unknown:0});
+      const en=classify('This is an English text and it contains several English words.',{sv:0,en:55,other:0,unknown:0});
+      const mixed=classify('Swedish and English text.',{sv:20,en:18,other:0,unknown:0});
+      const fallbackSv=classify('Detta är en text som inte är markerad med språk.',{sv:0,en:0,other:0,unknown:40});
+      const fallbackEn=classify('This is a text that is not marked with a language.',{sv:0,en:0,other:0,unknown:42});
+      if(sv.language!=='sv'||sv.confidence<.9)failures.push('Swedish metadata majority failed');
+      if(en.language!=='en'||en.confidence<.9)failures.push('English metadata majority failed');
+      if(mixed.language!=='mixed')failures.push('Mixed metadata classification failed');
+      if(fallbackSv.language!=='sv')failures.push('Swedish text fallback failed');
+      if(fallbackEn.language!=='en')failures.push('English text fallback failed');
+      const profile=calculateDocumentLanguage([{text:'svensk text',language:'sv',languageEvidence:{sv:10}},{text:'English text with more letters',language:'en',languageEvidence:{en:26}},{text:'mixed',language:'mixed',languageEvidence:{sv:2,en:3}}]);
+      if(!['en','mixed'].includes(profile.language)||profile.mixedParagraphs!==1)failures.push('Document language profile failed');
+      const sparse=classify('This is an English paragraph with Swedish template metadata and enough English function words.',{sv:3,en:0,other:0,unknown:78});
+      if(sparse.language!=='en')failures.push('Sparse Swedish template metadata overrode English text');
+      const lowCoverage=calculateDocumentLanguage([{text:'Mostly unknown text content',language:'unknown',languageEvidence:{unknown:24}},{text:'sv',language:'sv',languageEvidence:{sv:2}}]);
+      if(lowCoverage.language!=='unknown')failures.push('Low known-language coverage should remain unknown');
+      if(failures.length)console.error('Language regression tests failed:',failures);else console.info('Language regression tests passed (Swedish, English, mixed and fallback cases).');
+      return failures;
+    }
+    runLanguageRegressionTests();
+
     let currentReport = null;
+    let currentRuleFindings = { official: [], citation: [], review: [] };
     let currentRefEntries = [];
     let currentFilename = '';
     const activeInlineZoteroSearches = new Map();
@@ -1482,7 +1637,10 @@
     fileInput.addEventListener('change', () => { if (fileInput.files[0]) handleFile(fileInput.files[0]); });
     resetBtn.addEventListener('click', resetUI);
     downloadResultsBtn.addEventListener('click', downloadAnalysisReport);
+    downloadRuleSummaryBtn.addEventListener('click', downloadRuleSummaryCsv);
     results.addEventListener('click', handleInlineZoteroClick);
+    results.addEventListener('click', handleRuleLocationClick);
+    results.addEventListener('change', handleRuleSummaryFilter);
     zoteroSourceType.addEventListener('change', updateZoteroSettingsVisibility);
     zoteroAuthType.addEventListener('change', updateZoteroSettingsVisibility);
     $('zotero-save-settings').addEventListener('click', applyZoteroSettings);
@@ -1526,6 +1684,7 @@
       resetBtn.classList.remove('show');
       fileInput.value = '';
       currentReport = null;
+      currentRuleFindings = { official: [], citation: [], review: [] };
       currentRefEntries = [];
       currentFilename = '';
     }
@@ -1548,14 +1707,14 @@
         setProgress(30);
         showStatus('Parsing document…');
         await yieldToBrowser();
-        const { paragraphs, isSwedish } = parseDocXml(docXml);
-        const forbiddenMatches = findForbiddenWordMatches(paragraphs);
-        const officialWritingIssues = findOfficialSkbTextIssues(paragraphs, isSwedish);
+        const { paragraphs, isSwedish, languageProfile } = parseDocXml(docXml);
+        let forbiddenMatches = findForbiddenWordMatches(paragraphs);
+        let officialWritingIssues = findOfficialSkbTextIssues(paragraphs, languageProfile);
         setProgress(45);
         showStatus('Finding reference list…');
         await yieldToBrowser();
         const { refListParagraphs, bodyParagraphs, refListStart } = splitAtRefList(paragraphs);
-        const potentialInvalidCitations = findPotentialInvalidCitations(bodyParagraphs);
+        let potentialInvalidCitations = findPotentialInvalidCitations(bodyParagraphs);
         console.info('Reference-list detection', {
           totalParagraphCount: paragraphs.length,
           refListStart,
@@ -1576,6 +1735,15 @@
         officialWritingIssues.push(
           ...findOfficialSkbReferenceIssues(refEntries, refListParagraphs, isSwedish)
         );
+        const deduplicatedFindings = deduplicateRuleFindings(officialWritingIssues, potentialInvalidCitations, forbiddenMatches);
+        officialWritingIssues = deduplicatedFindings.official;
+        potentialInvalidCitations = deduplicatedFindings.citation;
+        forbiddenMatches = deduplicatedFindings.review;
+        currentRuleFindings = {
+          official: officialWritingIssues,
+          citation: potentialInvalidCitations,
+          review: forbiddenMatches
+        };
         setProgress(70);
         showStatus('Finding in-text citations…');
         await yieldToBrowser();
@@ -1602,7 +1770,7 @@
         setProgress(100);
         hideStatus();
         setTimeout(hideProgress, 450);
-        renderResults(file.name, refEntries, inTextCites, report, formatIssues, forbiddenMatches, potentialInvalidCitations, officialWritingIssues, paragraphs.length, refListStart, isSwedish);
+        renderResults(file.name, refEntries, inTextCites, report, formatIssues, forbiddenMatches, potentialInvalidCitations, officialWritingIssues, paragraphs.length, refListStart, isSwedish, languageProfile);
       } catch (error) {
         hideStatus();
         hideProgress();
@@ -1611,52 +1779,206 @@
       }
     }
 
+    function normaliseWordLanguage(value) {
+      const language = String(value || '').trim().toLowerCase().replace('_','-');
+      if (/^sv(?:-|$)/.test(language)) return 'sv';
+      if (/^en(?:-|$)/.test(language)) return 'en';
+      return language ? 'other' : 'unknown';
+    }
+
+    function countLetters(value) {
+      return (String(value || '').match(/\p{L}/gu) || []).length;
+    }
+
+    function inferLanguageFromText(value) {
+      const words = String(value || '').toLowerCase().match(/\p{L}+/gu) || [];
+      if (words.length < 3) return { language: 'unknown', confidence: 0, evidence: { sv:0, en:0 } };
+      const svWords = new Set(['och','att','som','inte','är','för','med','av','till','den','det','en','ett','kan','ska','har','från','vid','eller','samt']);
+      const enWords = new Set(['and','that','which','not','is','are','for','with','of','to','the','a','an','can','shall','has','from','at','or']);
+      let sv=0,en=0; for(const word of words){if(svWords.has(word))sv++;if(enWords.has(word))en++;}
+      const total=sv+en; if(total<2 || sv===en)return{language:'unknown',confidence:0,evidence:{sv,en}};
+      const language=sv>en?'sv':'en'; return{language,confidence:Math.min(.75,Math.max(.5,Math.abs(sv-en)/total)),evidence:{sv,en}};
+    }
+
+    function getWordLanguage(node, NS) {
+      const lang = node?.getElementsByTagNameNS(NS,'lang')[0];
+      return normaliseWordLanguage(lang?.getAttribute('w:val') || lang?.getAttributeNS(NS,'val') || '');
+    }
+
+    function extractRunVisibleText(run, NS) {
+      let value = '';
+      (function walk(node) {
+        for (let child = node.firstChild; child; child = child.nextSibling) {
+          if (child.nodeType !== 1) continue;
+          if (child.namespaceURI !== NS) { walk(child); continue; }
+          if (child.localName === 't') value += child.textContent || '';
+          else if (child.localName === 'tab') value += '\t';
+          else if (child.localName === 'br' || child.localName === 'cr') value += ' ';
+          else if (child.localName !== 'instrText') walk(child);
+        }
+      })(run);
+      return value;
+    }
+
+    function extractParagraphLanguageEvidence(node, NS) {
+      const pPr = node.getElementsByTagNameNS(NS,'pPr')[0];
+      const paragraphLanguage = getWordLanguage(pPr,NS);
+      const counts = { sv:0, en:0, other:0, unknown:0 };
+      const ranges = [];
+      let offset = 0;
+      const runs = [...node.getElementsByTagNameNS(NS,'r')];
+      for(const run of runs){
+        const text=extractRunVisibleText(run,NS);
+        if(!text)continue;
+        const runLanguage = getWordLanguage(run.getElementsByTagNameNS(NS,'rPr')[0],NS);
+        const language = runLanguage !== 'unknown' ? runLanguage : paragraphLanguage;
+        const letters=countLetters(text); counts[language]=(counts[language]||0)+letters;
+        ranges.push({start:offset,end:offset+text.length,language,letters});
+        offset+=text.length;
+      }
+      return {counts,ranges,paragraphLanguage,visibleLength:offset};
+    }
+
+    function classifyParagraphLanguage(text, metadata) {
+      const counts={sv:0,en:0,other:0,unknown:0,...metadata.counts};
+      const totalLetters=Math.max(1,countLetters(text));
+      const markedTotal=counts.sv+counts.en+counts.other;
+      const metadataCoverage=Math.min(1,markedTotal/totalLetters);
+      const inferred=inferLanguageFromText(text);
+
+      /* Do not let one short language-marked run classify an otherwise
+         unmarked paragraph. Word templates commonly leave sparse metadata. */
+      if(markedTotal>0 && metadataCoverage>=.5){
+        const ranked=[['sv',counts.sv],['en',counts.en],['other',counts.other]].sort((a,b)=>b[1]-a[1]);
+        const dominance=ranked[0][1]/markedTotal;
+        const confidence=dominance*metadataCoverage;
+        if(dominance>=.7)return{language:ranked[0][0],confidence,evidence:counts,source:'word-language',metadataCoverage};
+        return{language:'mixed',confidence:Math.max(.5,1-dominance),evidence:counts,source:'word-language',metadataCoverage};
+      }
+
+      if(inferred.language!=='unknown'){
+        const confidence=Math.min(.75,Math.max(inferred.confidence,metadataCoverage*.6));
+        return{language:inferred.language,confidence,evidence:{...counts,inferredSv:inferred.evidence.sv,inferredEn:inferred.evidence.en},source:markedTotal?'word-language+text-fallback':'text-fallback',metadataCoverage};
+      }
+
+      if(markedTotal>0){
+        const ranked=[['sv',counts.sv],['en',counts.en],['other',counts.other]].sort((a,b)=>b[1]-a[1]);
+        const dominance=ranked[0][1]/markedTotal;
+        return{language:dominance>=.7?ranked[0][0]:'mixed',confidence:dominance*metadataCoverage,evidence:counts,source:'sparse-word-language',metadataCoverage};
+      }
+      return{language:'unknown',confidence:0,evidence:counts,source:'unknown',metadataCoverage:0};
+    }
+
+    function calculateDocumentLanguage(paragraphs) {
+      const distribution={sv:0,en:0,other:0,unknown:0,mixed:0};
+      let mixedParagraphs=0;
+      for(const paragraph of paragraphs){
+        const letters=countLetters(paragraph.text);
+        const evidence=paragraph.languageEvidence||{};
+        const marked=(evidence.sv||0)+(evidence.en||0)+(evidence.other||0);
+        if(paragraph.language==='mixed'){
+          mixedParagraphs++;
+          if(marked){distribution.sv+=evidence.sv||0;distribution.en+=evidence.en||0;distribution.other+=evidence.other||0;distribution.unknown+=Math.max(0,letters-marked);}
+          else distribution.mixed+=letters;
+        } else if(['sv','en','other'].includes(paragraph.language)) {
+          distribution[paragraph.language]+=letters;
+        } else distribution.unknown+=letters;
+      }
+      const total=Object.values(distribution).reduce((a,b)=>a+b,0);
+      const ranked=[['sv',distribution.sv],['en',distribution.en],['other',distribution.other]].sort((a,b)=>b[1]-a[1]);
+      const dominantShare=total?ranked[0][1]/total:0;
+      const knownShare=total?(distribution.sv+distribution.en+distribution.other)/total:0;
+      const language=dominantShare>=.7&&knownShare>=.7?ranked[0][0]:knownShare>=.5?'mixed':'unknown';
+      return{language,confidence:dominantShare,knownCoverage:knownShare,distribution,mixedParagraphs,totalLetters:total};
+    }
+
+    function languageAtRange(paragraph,start,end) {
+      const overlaps=(paragraph.languageRanges||[]).filter(range=>range.start<end&&start<range.end&&['sv','en'].includes(range.language));
+      if(!overlaps.length)return{language:paragraph.language,confidence:paragraph.languageConfidence||0};
+      const counts={sv:0,en:0};for(const range of overlaps)counts[range.language]+=Math.max(0,Math.min(end,range.end)-Math.max(start,range.start));
+      const total=counts.sv+counts.en;if(!total)return{language:paragraph.language,confidence:paragraph.languageConfidence||0};
+      const language=counts.sv===counts.en?'mixed':counts.sv>counts.en?'sv':'en';return{language,confidence:Math.max(counts.sv,counts.en)/total};
+    }
+
     function parseDocXml(xml) {
       const doc = new DOMParser().parseFromString(xml, 'application/xml');
       const NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
-      let isSwedish = false;
-      for (const node of [...doc.getElementsByTagNameNS(NS, 'lang')].slice(0, 40)) {
-        if (/^sv/i.test(node.getAttribute('w:val') || '')) { isSwedish = true; break; }
-      }
       const paragraphs = [...doc.getElementsByTagNameNS(NS, 'p')].map((node, index) => {
         const pPr = node.getElementsByTagNameNS(NS, 'pPr')[0];
         const styleNode = pPr?.getElementsByTagNameNS(NS, 'pStyle')[0];
         const numPr = pPr?.getElementsByTagNameNS(NS, 'numPr')[0];
+        const extracted = extractTextFromParagraph(node, NS);
+        const rawText = extracted.text;
+        const leadingTrim = rawText.length - rawText.trimStart().length;
+        const trimmedText = rawText.trim();
+        const languageMetadata=extractParagraphLanguageEvidence(node,NS);
+        languageMetadata.ranges = languageMetadata.ranges.map(range => ({
+          ...range,
+          start: Math.max(0, range.start - leadingTrim),
+          end: Math.max(0, Math.min(trimmedText.length, range.end - leadingTrim))
+        })).filter(range => range.end > range.start);
+        const coveredEnd = languageMetadata.ranges.at(-1)?.end || 0;
+        if (coveredEnd < trimmedText.length) languageMetadata.ranges.push({start:coveredEnd,end:trimmedText.length,language:'unknown',letters:countLetters(trimmedText.slice(coveredEnd))});
+        const language=classifyParagraphLanguage(trimmedText,languageMetadata);
         return {
-          text: extractTextFromParagraph(node, NS).trim(),
+          text: trimmedText, fields: extracted.fields,
+          hasZoteroBibliography: extracted.fields.some(field => field.isZoteroBibliography),
           style: (styleNode?.getAttribute('w:val') || '').toLowerCase(),
-          numId: numPr?.getElementsByTagNameNS(NS, 'numId')[0]?.getAttribute('w:val') || '',
-          index
+          numId: numPr?.getElementsByTagNameNS(NS, 'numId')[0]?.getAttribute('w:val') || '', index,
+          language:language.language, languageConfidence:language.confidence, languageSource:language.source,
+          languageEvidence:language.evidence, languageRanges:languageMetadata.ranges
         };
       });
       let section = '';
-      for (const paragraph of paragraphs) {
-        if (headingLevel(paragraph.style) && paragraph.text) section = paragraph.text;
-        paragraph.section = section;
-      }
-      return { paragraphs, isSwedish };
+      for (const paragraph of paragraphs) { if (headingLevel(paragraph.style) && paragraph.text) section = paragraph.text; paragraph.section = section; }
+      const languageProfile=calculateDocumentLanguage(paragraphs);
+      return { paragraphs, isSwedish: languageProfile.language==='sv', languageProfile };
     }
 
     function extractTextFromParagraph(node, NS) {
       let text = '';
-      const fields = [];
+      const stack = [];
+      const extractedFields = [];
       (function walk(parent) {
         for (let child = parent.firstChild; child; child = child.nextSibling) {
           if (child.nodeType !== 1) continue;
           if (child.namespaceURI !== NS) { walk(child); continue; }
           if (child.localName === 'fldChar') {
             const type = child.getAttribute('w:fldCharType');
-            if (type === 'begin') fields.push({ skip: false, result: false });
-            else if (type === 'separate' && fields.length) fields.at(-1).result = true;
-            else if (type === 'end' && fields.length) fields.pop();
-          } else if (child.localName === 'instrText' && fields.length) {
-            if (/^(SEQ|CAPTION|PAGE|NUMPAGES|REF\b|PAGEREF|STYLEREF|TOC|TC\b|XE\b|AUTONUMLGL|AUTONUM|MERGEFIELD)\b/i.test((child.textContent || '').trim())) fields.at(-1).skip = true;
+            if (type === 'begin') {
+              stack.push({ instruction: '', result: '', inResult: false, start: null, end: null });
+            } else if (type === 'separate' && stack.length) {
+              const field = stack.at(-1);
+              field.inResult = true;
+              field.start = text.length;
+            } else if (type === 'end' && stack.length) {
+              const field = stack.pop();
+              field.end = text.length;
+              const instruction = field.instruction.replace(/\s+/g, ' ').trim();
+              const isZoteroCitation = /^ADDIN\s+ZOTERO_ITEM\s+CSL_CITATION\b/i.test(instruction);
+              const isZoteroBibliography = /^ADDIN\s+ZOTERO_BIBL\b/i.test(instruction);
+              extractedFields.push({
+                type: instruction.match(/^([A-Z]+)/i)?.[1]?.toUpperCase() || 'FIELD',
+                instruction, result: field.result,
+                start: field.start ?? field.end ?? text.length,
+                end: field.end ?? text.length,
+                isZoteroCitation, isZoteroBibliography
+              });
+            }
+          } else if (child.localName === 'instrText' && stack.length) {
+            stack.at(-1).instruction += child.textContent || '';
+          } else if (child.localName === 'tab') {
+            text += '\t';
+          } else if (child.localName === 'br' || child.localName === 'cr') {
+            text += ' ';
           } else if (child.localName === 't') {
-            if (!fields.some(field => field.result && field.skip)) text += child.textContent || '';
+            const value = child.textContent || '';
+            text += value;
+            for (const field of stack) if (field.inResult) field.result += value;
           } else walk(child);
         }
       })(node);
-      return text;
+      return { text, fields: extractedFields };
     }
 
     const REF_HEADING_RE = /^[\s\u00a0]*(?:\d[\d.]*[\s\u00a0]+)?(?:references?|referenser|referenslista|litteratur|bibliography)[\s\u00a0]*[.:]?[\s\u00a0]*$/i;
@@ -1932,6 +2254,7 @@
           let match;
           while ((match = regex.exec(paragraph.text))) citations.push({ key: name, raw: match[1], paraIndex: paragraph.index, section: paragraph.section, paraText: paragraph.text, type: 'abbreviated-name', author: name, year: null });
         }
+        classifyCitationSources(paragraph, citations);
       }
       const seen = new Set();
       return citations.filter(citation => {
@@ -1939,6 +2262,111 @@
         if (seen.has(id)) return false;
         seen.add(id); return true;
       });
+    }
+
+    function normaliseCitationEvidence(value) {
+      return normaliseDashes(String(value || ''))
+        .normalize('NFC').toLowerCase()
+        .replace(/\bet\s+al\.?/g, ' et al ')
+        .replace(/\bm\.fl\.?/g, ' et al ')
+        .replace(/[^\p{L}\p{N}]+/gu, ' ')
+        .replace(/\s+/g, ' ').trim();
+    }
+
+    function citationMatchesField(citation, field) {
+      const fieldText = normaliseCitationEvidence(field.result);
+      if (!fieldText) return false;
+      const keyText = normaliseCitationEvidence(citation.key);
+      if (keyText && fieldText.includes(keyText)) return true;
+      const year = citation.year || String(citation.key).match(/\b(?:1[89]\d{2}|20\d{2})[a-z]?\b/i)?.[0] || '';
+      const report = extractSkbReportKey(citation.key || '');
+      if (report && normaliseCitationEvidence(field.result).includes(normaliseCitationEvidence(report))) return true;
+      const author = String(citation.author || citation.key)
+        .replace(/\s+(?:1[89]\d{2}|20\d{2})[a-z]?.*$/i, '')
+        .replace(/\s+(?:et\s+al\.?|m\.fl\.?).*$/i, '')
+        .split(/\s+(?:and|och|&)\s+/i)[0]
+        .trim();
+      return Boolean(year && author && fieldText.includes(normaliseCitationEvidence(year)) && fieldText.includes(normaliseCitationEvidence(author)));
+    }
+
+    function extractBalancedJsonObject(value, startIndex) {
+      let depth = 0, inString = false, escaped = false;
+      for (let index = startIndex; index < value.length; index++) {
+        const character = value[index];
+        if (inString) {
+          if (escaped) escaped = false;
+          else if (character === '\\') escaped = true;
+          else if (character === '"') inString = false;
+          continue;
+        }
+        if (character === '"') { inString = true; continue; }
+        if (character === '{') depth++;
+        else if (character === '}') {
+          depth--;
+          if (depth === 0) return value.slice(startIndex, index + 1);
+        }
+      }
+      return '';
+    }
+
+    function parseZoteroCitationField(instruction) {
+      const marker = String(instruction || '').match(/ADDIN\s+ZOTERO_ITEM\s+CSL_CITATION\b/i);
+      if (!marker) return null;
+      const objectStart = instruction.indexOf('{', marker.index + marker[0].length);
+      if (objectStart < 0) return null;
+      const json = extractBalancedJsonObject(instruction, objectStart);
+      if (!json) return null;
+      try {
+        const payload = JSON.parse(json);
+        const citationItems = Array.isArray(payload.citationItems) ? payload.citationItems : [];
+        const linkedItems = citationItems.map(citationItem => {
+          const uris = Array.isArray(citationItem.uris) ? citationItem.uris : [];
+          const uri = uris.find(value => /\/items\/[A-Z0-9]+\/?$/i.test(value)) || uris[0] || '';
+          const itemKey = uri.match(/\/items\/([A-Z0-9]+)\/?$/i)?.[1] || citationItem.itemData?.key || '';
+          return { itemKey, uri, itemData: citationItem.itemData || null };
+        }).filter(item => item.itemKey);
+        return { payload, linkedItems };
+      } catch (error) {
+        console.warn('Could not parse Zotero citation field JSON:', error);
+        return null;
+      }
+    }
+
+    function classifyCitationSources(paragraph, allCitations) {
+      const paragraphCitations = allCitations.filter(citation => citation.paraIndex === paragraph.index && !citation.citationSource);
+      const zoteroFields = (paragraph.fields || []).filter(field => field.isZoteroCitation);
+      const otherFields = (paragraph.fields || []).filter(field => !field.isZoteroCitation && !field.isZoteroBibliography && field.result);
+      for (const citation of paragraphCitations) {
+        const zoteroField = zoteroFields.find(field => citationMatchesField(citation, field));
+        if (zoteroField) {
+          citation.citationSource = 'zotero';
+          citation.citationSourceLabel = 'Zotero field';
+          citation.citationSourceDetail = 'ADDIN ZOTERO_ITEM CSL_CITATION';
+          citation.zoteroFieldInstruction = zoteroField.instruction;
+          citation.zoteroFieldData = parseZoteroCitationField(zoteroField.instruction);
+          citation.zoteroItemKeys = citation.zoteroFieldData?.linkedItems.map(item => item.itemKey) || [];
+          continue;
+        }
+        const otherField = otherFields.find(field => citationMatchesField(citation, field));
+        if (otherField) {
+          citation.citationSource = 'field';
+          citation.citationSourceLabel = 'Other Word field';
+          citation.citationSourceDetail = otherField.type || 'FIELD';
+        } else {
+          citation.citationSource = 'plain';
+          citation.citationSourceLabel = 'Plain text';
+          citation.citationSourceDetail = zoteroFields.length
+            ? 'Not matched to the Zotero field present in this paragraph'
+            : 'No Zotero citation field detected';
+        }
+      }
+    }
+
+    function citationSourceBadge(citation) {
+      const source = citation.citationSource || 'plain';
+      const label = citation.citationSourceLabel || 'Plain text';
+      const icon = source === 'zotero' ? 'Z' : source === 'field' ? 'F' : 'T';
+      return `<span class="citation-source-badge ${source}" title="${escHtml(citation.citationSourceDetail || label)}">${icon} ${escHtml(label)}</span>`;
     }
 
     function extractCitationParentheticalGroups(text) {
@@ -2153,14 +2581,6 @@
       const directNarrativeExpression = /(?:^|[^\p{L}'’\-])((?:(?:van|von|de|del|della|der|den|di|da|dos|du|la|le|af)\s+)*[\p{Lu}][\p{L}'’\-]{0,40}(?:\s*\(ed\))?)\s*\(((?:1[89]\d{2}|20\d{2})[a-z]?)\)/gu;
       let directNarrativeMatch;
       while ((directNarrativeMatch = directNarrativeExpression.exec(paragraph.text)) !== null) {
-        const authorOffset = directNarrativeMatch[0].lastIndexOf(directNarrativeMatch[1]);
-        const authorStart = directNarrativeMatch.index + Math.max(0, authorOffset);
-        const precedingText = paragraph.text.slice(Math.max(0, authorStart - 20), authorStart);
-
-        /* A single-author pass must not extract only the second surname from
-           a two-author citation such as “Öhman and Odén (2018)”. */
-        if (/(?:\band|\boch|&)\s*$/iu.test(precedingText)) continue;
-
         addCitation(
           directNarrativeMatch[1],
           directNarrativeMatch[2],
@@ -2474,6 +2894,69 @@
       }
     }
 
+    function getZoteroItemEndpoint(settings, itemKey) {
+      const source = getZoteroItemsEndpoint(settings);
+      const url = new URL(source);
+      url.search = '';
+      url.pathname = url.pathname.replace(/\/items\/top\/?$/i, '/items').replace(/\/$/, '');
+      if (!/\/items$/i.test(url.pathname)) {
+        if (/\/items\//i.test(url.pathname)) url.pathname = url.pathname.replace(/\/items\/.*$/i, '/items');
+        else url.pathname += '/items';
+      }
+      url.pathname += `/${encodeURIComponent(itemKey)}`;
+      return url;
+    }
+
+    async function fetchZoteroItemByKey(itemKey, signal) {
+      const settings = activeZoteroSettings;
+      const url = getZoteroItemEndpoint(settings, itemKey);
+      url.searchParams.set('format', 'json');
+      if (settings.sourceType === 'local') url.searchParams.set('v', ZOTERO_CONFIG.apiVersion);
+      const response = await fetch(url, {
+        headers: createZoteroRequestHeaders(settings),
+        signal,
+        ...(settings.sourceType === 'local' ? { targetAddressSpace: 'loopback' } : {})
+      });
+      if (!response.ok) throw new Error(`Zotero item ${itemKey} returned HTTP ${response.status}`);
+      const item = await response.json();
+      if (!item?.data) throw new Error(`Zotero item ${itemKey} returned incomplete metadata`);
+      return item;
+    }
+
+    async function findCandidatesFromZoteroField(citation, scorer, signal) {
+      const keys = [...new Set(citation.zoteroItemKeys || [])];
+      if (!keys.length) return { candidates: [], failures: [] };
+      const candidates = [], failures = [];
+      for (const itemKey of keys) {
+        try {
+          const item = await fetchZoteroItemByKey(itemKey, signal);
+          const candidate = prepareZoteroItems([item])[0];
+          const scored = scorer(citation, candidate);
+          candidates.push({
+            ...candidate,
+            ...scored,
+            score: 100,
+            reasons: ['linked Zotero citation field', ...(scored.reasons || [])],
+            directFieldLink: true
+          });
+        } catch (error) {
+          if (error.name === 'AbortError') throw error;
+          failures.push(`${itemKey}: ${error.message}`);
+        }
+      }
+      candidates.sort((a,b) => {
+        const aScore = scorer(citation,a).score, bScore = scorer(citation,b).score;
+        return bScore - aScore;
+      });
+      /* A grouped Zotero field can contain several items. Keep the item(s) that
+         best fit the selected citation key, while retaining all on a tie. */
+      if (candidates.length > 1) {
+        const best = scorer(citation,candidates[0]).score;
+        return { candidates: candidates.filter(item => scorer(citation,item).score === best), failures };
+      }
+      return { candidates, failures };
+    }
+
     function createZoteroRequestHeaders(settings) {
       /*
         The local Zotero API is read-only and requires no authentication.
@@ -2568,7 +3051,20 @@
       }
     }
 
-    function buildZoteroQueriesForCitation(citation){ const key=String(citation.key||'').trim(); if(!key)return[]; if(citation.type==='skb-report')return[{query:key.replace(/^SKB\s+/i,''),qmode:'everything'}]; const simple=key.replace(/\bet\s+al\.?|\bm\.fl\.?/gi,'').replace(/(?:\band\b|\boch\b|&)/gi,' ').replace(/\s+/g,' ').trim(); return dedupeQueries([{query:simple,qmode:'titleCreatorYear'}]); }
+    function buildZoteroQueriesForCitation(citation){
+      const key=String(citation.key||'').trim(); if(!key)return[];
+      if(citation.type==='skb-report')return[{query:key.replace(/^SKB\s+/i,''),qmode:'everything'}];
+      const year=key.match(/\b(?:1[89]\d{2}|20\d{2})[a-z]?\b/i)?.[0]||'';
+      const authorText=key.replace(/\s+(?:1[89]\d{2}|20\d{2})[a-z]?\s*$/i,'').replace(/\bet\s+al\.?|\bm\.fl\.?/gi,'').trim();
+      const authors=authorText.split(/\s+(?:and|och|&)\s+/i).map(value=>value.trim()).filter(Boolean);
+      const compact=[...authors,year].filter(Boolean).join(' ');
+      const queries=[
+        {query:key,qmode:'everything'},
+        {query:compact,qmode:'titleCreatorYear'},
+        ...authors.map(author=>({query:[author,year].filter(Boolean).join(' '),qmode:'titleCreatorYear'}))
+      ];
+      return dedupeQueries(queries);
+    }
     function buildZoteroQueriesForReference(entry){ const title=getDocumentReferenceTitle(entry).split(/\s+/).filter(Boolean).slice(0,12).join(' '); const report=getDocumentReferenceReportKey(entry); const key=String(entry.key||'').replace(/\bet\s+al\.?|\bm\.fl\.?/gi,'').replace(/(?:\band\b|\boch\b|&)/gi,' ').replace(/\s+/g,' ').trim(); return dedupeQueries([{query:title,qmode:'titleCreatorYear'},{query:report?.replace(/^SKB\s+/i,''),qmode:'everything'},{query:key,qmode:'titleCreatorYear'}]); }
     function dedupeQueries(queries){ const seen=new Set(); return queries.filter(item=>{ if(!item.query)return false; const key=`${item.qmode}|${item.query.toLowerCase()}`; if(seen.has(key))return false; seen.add(key); return true; }); }
     function buildZoteroQueriesForFullReference(entry) {
@@ -2697,11 +3193,14 @@
         queries: buildZoteroQueriesForCitation(citation),
         scorer: scoreOrphanCitationAgainstZotero,
         button,
-        emptyMessage: 'No probable Zotero match found for this citation key.'
+        directCitation: citation,
+        emptyMessage: citation.citationSource === 'zotero'
+          ? 'The Zotero field was detected, but its linked item could not be retrieved from the selected Zotero database and no search fallback matched.'
+          : 'No probable Zotero match found for this citation key.'
       });
     }
 
-    async function runInlineZoteroSearch({ source, queries, scorer, button, emptyMessage }) {
+    async function runInlineZoteroSearch({ source, queries, scorer, button, emptyMessage, directCitation = null }) {
       const searchId = button.dataset.searchId;
       const resultContainer = $(button.dataset.resultId);
       const controller = new AbortController();
@@ -2709,13 +3208,24 @@
       button.classList.add('searching');
       button.textContent = 'Cancel search';
       const modeLabel = zoteroFuzzyMatch.checked ? 'fuzzy matching enabled' : 'strict matching';
-      resultContainer.innerHTML = `<div class="zotero-inline-status">Searching Zotero (${modeLabel})…</div>`;
+      const directKeys = directCitation?.zoteroItemKeys || [];
+      resultContainer.innerHTML = `<div class="zotero-inline-status">${directKeys.length ? 'Retrieving item linked by the Zotero Word field' : `Searching Zotero (${modeLabel})`}…</div>`;
 
       try {
-        const candidates = await findZoteroCandidates(queries, source, scorer, controller.signal);
-        resultContainer.innerHTML = candidates.length
-          ? candidates.map(buildInlineZoteroCandidate).join('')
-          : `<div class="zotero-inline-status">${escHtml(emptyMessage)}</div>`;
+        let directResult = { candidates: [], failures: [] };
+        if (directCitation?.citationSource === 'zotero' && directKeys.length) {
+          directResult = await findCandidatesFromZoteroField(directCitation, scorer, controller.signal);
+        }
+        if (directResult.candidates.length) {
+          resultContainer.innerHTML = `<div class="zotero-inline-status">Matched directly through ADDIN ZOTERO_ITEM CSL_CITATION.</div>${directResult.candidates.map(buildInlineZoteroCandidate).join('')}`;
+        } else {
+          const candidates = await findZoteroCandidates(queries, source, scorer, controller.signal);
+          const directWarning = directResult.failures.length
+            ? `<div class="zotero-inline-status">Direct Zotero field lookup failed (${escHtml(directResult.failures.join('; '))}). Search fallback was used.</div>` : '';
+          resultContainer.innerHTML = directWarning + (candidates.length
+            ? candidates.map(buildInlineZoteroCandidate).join('')
+            : `<div class="zotero-inline-status">${escHtml(emptyMessage)}</div>`);
+        }
       } catch (error) {
         resultContainer.innerHTML = error.name === 'AbortError'
           ? '<div class="zotero-inline-status">Search canceled.</div>'
@@ -2739,6 +3249,7 @@
           </div>
           <div>${escHtml(candidate.authors.join(', ') || 'No creator recorded')} · ${escHtml(candidate.year || 'No year')}</div>
           ${candidate.reportKey ? `<div>Report Number: ${escHtml(candidate.reportKey)}</div>` : ''}
+          ${candidate.data?.language ? `<div>Language metadata: ${escHtml(candidate.data.language)}${formatted.languageNote ? ` → ${escHtml(formatted.languageNote)}` : ' → no language note required'}</div>` : '<div>Language metadata: not recorded</div>'}
           <div>Match basis: ${escHtml(candidate.reasons.join(', ') || 'metadata similarity')}</div>
           ${candidate.url ? `<a href="${escHtml(candidate.url)}" target="_blank" rel="noopener noreferrer">Open Zotero record ↗</a>` : ''}
           <div class="zotero-formatted-reference">${formatted.html}</div>
@@ -2785,6 +3296,51 @@
       return [family, initials].filter(Boolean).join(' ');
     }
     function cslCreators(data, type) { return (data.creators || []).filter(c => c.creatorType === type); }
+
+    function normalizeZoteroLanguage(value) {
+      const raw = cslText(value);
+      if (!raw) return { code: '', name: '', isEnglish: false };
+      const normalized = raw.toLowerCase().replace(/_/g, '-').replace(/\s+/g, ' ').trim();
+      const base = normalized.split('-')[0];
+      const aliases = {
+        sv: 'Swedish', swe: 'Swedish', swedish: 'Swedish', svenska: 'Swedish',
+        en: 'English', eng: 'English', english: 'English', engelska: 'English',
+        fi: 'Finnish', fin: 'Finnish', finnish: 'Finnish', suomi: 'Finnish',
+        de: 'German', deu: 'German', ger: 'German', german: 'German', deutsch: 'German',
+        fr: 'French', fra: 'French', fre: 'French', french: 'French', francais: 'French', français: 'French',
+        da: 'Danish', dan: 'Danish', danish: 'Danish', dansk: 'Danish',
+        no: 'Norwegian', nor: 'Norwegian', norwegian: 'Norwegian', norsk: 'Norwegian'
+      };
+      const name = aliases[normalized] || aliases[base] || '';
+      return { code: normalized, name, isEnglish: name === 'English' };
+    }
+
+    function zoteroLanguageNote(value) {
+      const language = normalizeZoteroLanguage(value);
+      if (!language.code || language.isEnglish) return '';
+      if (language.name) return `(In ${language.name}.)`;
+      /* Preserve an explicitly recorded but unknown language rather than
+         silently dropping it. The value is metadata, not executable HTML. */
+      return `(In ${cslText(value)}.)`;
+    }
+
+    function runZoteroLanguageFormatterRegressionTests() {
+      const failures = [];
+      const cases = [
+        ['Swedish', '(In Swedish.)'], ['sv', '(In Swedish.)'], ['swe', '(In Swedish.)'],
+        ['sv-SE', '(In Swedish.)'], ['Svenska', '(In Swedish.)'],
+        ['English', ''], ['en-GB', ''], ['', ''], ['Finnish', '(In Finnish.)']
+      ];
+      for (const [input, expected] of cases) {
+        const actual = zoteroLanguageNote(input);
+        if (actual !== expected) failures.push(`${input || '(empty)'}: expected ${expected || '(empty)'}, got ${actual || '(empty)'}`);
+      }
+      if (failures.length) console.error('Zotero language formatter regression tests failed:', failures);
+      else console.info(`Zotero language formatter regression tests passed (${cases.length} cases).`);
+      return failures;
+    }
+    runZoteroLanguageFormatterRegressionTests();
+
     function formatZoteroBibliography(data) {
       data = data || {};
       let creators = cslCreators(data, 'author');
@@ -2821,9 +3377,11 @@
         const tail = [number, archive, publisher].filter(Boolean).join(', ');
         if (tail) parts.push(tail + '.');
       }
+      const languageNote = zoteroLanguageNote(data.language);
+      if (languageNote) parts.push(languageNote);
       const plain = [headText, ...parts].join(' ').replace(/\s+/g,' ').trim();
       const html = '<strong>' + escHtml(headText) + '</strong>' + (parts.length ? ' ' + parts.map(escHtml).join(' ') : '');
-      return { plain, html };
+      return { plain, html, languageNote };
     }
 
     async function copyFormattedZoteroReference(button) {
@@ -3073,6 +3631,45 @@
       };
     }
 
+    function csvCell(value) {
+      const text = String(value ?? '').replace(/\r?\n/g, ' ');
+      return `"${text.replace(/"/g, '""')}"`;
+    }
+
+    function downloadRuleSummaryCsv() {
+      const families = [
+        ['Official SKB rule', currentRuleFindings.official || []],
+        ['Citation rule', currentRuleFindings.citation || []],
+        ['Review rule', currentRuleFindings.review || []]
+      ];
+      const grouped = new Map();
+      for (const [family, items] of families) {
+        for (const item of items) {
+          const id = item.ruleId || 'unidentified-rule';
+          const key = `${family}\u0000${id}\u0000${item.severity || 'review'}`;
+          if (!grouped.has(key)) grouped.set(key, {
+            family, ruleId: id, severity: item.severity || 'review',
+            category: item.category || '', guidance: item.description || item.issue || '',
+            occurrences: 0, examples: [], locations: []
+          });
+          const group = grouped.get(key); group.occurrences++;
+          const example = item.context || item.match || '';
+          if (example && group.examples.length < 5 && !group.examples.includes(example)) group.examples.push(example);
+          const location = item.location || `${item.sourceLabel || 'Main document'} paragraph ${(item.localIndex ?? item.paragraphIndex ?? item.paraIndex ?? 0) + 1}`;
+          if (!group.locations.includes(location)) group.locations.push(location);
+        }
+      }
+      const header = ['Rule ID','Family','Severity','Category','Occurrences','Guidance','Examples','Locations'];
+      const rows = [...grouped.values()].sort((a,b)=>b.occurrences-a.occurrences || a.ruleId.localeCompare(b.ruleId)).map(item => [
+        item.ruleId,item.family,item.severity,item.category,item.occurrences,item.guidance,item.examples.join(' | '),item.locations.join(' | ')
+      ]);
+      const csv = '\ufeff' + [header, ...rows].map(row => row.map(csvCell).join(',')).join('\r\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob), link = document.createElement('a');
+      const baseName = (currentFilename || 'skb-reference-report').replace(/\.docx$/i, '').replace(/[^a-z0-9_-]+/gi, '-');
+      link.href = url; link.download = `${baseName}-rule-summary.csv`; document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(url);
+    }
+
     function downloadAnalysisReport() {
       if (!results.innerHTML.trim()) return;
       const reportTitle = currentFilename
@@ -3122,21 +3719,31 @@ ${exportedResults.innerHTML}
       URL.revokeObjectURL(url);
     }
 
-    function makeOfficialIssue({ match, description, source, paragraph, context, severity = 'warning' }) {
+    function makeOfficialIssue({ match, description, source, paragraph, context, severity = 'warning', ruleId = '', category = 'technical', matchStart = null, matchEnd = null }) {
       return {
         match,
         description,
+        ruleId: ruleId || `official-${stableRuleHash(`${description}|${match}`)}`,
+        category, matchStart, matchEnd,
         source: SKB_RULE_SOURCES[source] || source,
         paragraphIndex: paragraph?.index ?? null,
         section: paragraph?.section || '',
         context: context || paragraph?.text || '',
+        fullContext: paragraph?.text || context || '',
+        language: paragraph?.language || 'unknown',
+        languageConfidence: paragraph?.languageConfidence || 0,
+        languageSource: paragraph?.languageSource || 'unknown',
         severity
       };
     }
 
-    function findOfficialSkbTextIssues(paragraphs, isSwedish) {
+    function findOfficialSkbTextIssues(paragraphs, languageProfile) {
       const issues = [];
-      const language = isSwedish ? 'sv' : 'en';
+      /* Compatibility value for non-pattern checks that still choose Swedish
+         or English wording at document level. Pattern rules use local run and
+         paragraph language through languageAtRange(). */
+      const isSwedish = languageProfile?.language === 'sv';
+      const documentLanguage = languageProfile?.language || 'unknown';
 
       for (const paragraph of paragraphs) {
         const text = paragraph.text || '';
@@ -3168,10 +3775,12 @@ ${exportedResults.innerHTML}
         }
 
         for (const rule of OFFICIAL_SKB_TEXT_RULES) {
-          if (rule.language && rule.language !== language) continue;
           const expression = new RegExp(rule.pattern, rule.flags || 'gu');
           let match;
           while ((match = expression.exec(text)) !== null) {
+            const localLanguage = languageAtRange(paragraph, match.index, match.index + match[0].length);
+            const effectiveLanguage = ['sv','en'].includes(localLanguage.language) && localLanguage.confidence >= .6 ? localLanguage.language : documentLanguage;
+            if (rule.language && !['mixed','unknown'].includes(effectiveLanguage) && rule.language !== effectiveLanguage) continue;
             if (rule.custom === 'unit-space') {
               const between = match[0].match(/^\d+(.*?)[A-Za-zµ]/)?.[1] || '';
               if (between.includes('\u00a0')) continue;
@@ -3181,6 +3790,8 @@ ${exportedResults.innerHTML}
             const end = Math.min(text.length, match.index + match[0].length + 55);
             issues.push(makeOfficialIssue({
               match: match[0], description: rule.description, source: rule.source,
+              ruleId: rule.id, category: rule.category, severity: rule.severity,
+              matchStart: match.index, matchEnd: match.index + match[0].length,
               paragraph,
               context: `${start > 0 ? '…' : ''}${text.slice(start, end)}${end < text.length ? '…' : ''}`
             }));
@@ -3379,18 +3990,54 @@ ${exportedResults.innerHTML}
     }
 
     function buildOfficialSkbWritingSection(issues) {
-      if (!issues.length) {
-        return section('Official SKB writing-rule issues', 0,
-          '<p class="empty-notice">No automatically checkable violations of the three official SKB guides were detected.</p>');
-      }
-      const rows = issues.map(issue => `
-        <tr class="warn-row">
-          <td><span class="official-rule-match">${escHtml(issue.match)}</span></td>
-          <td>${escHtml(issue.description)}<div class="official-rule-source">Source: ${escHtml(issue.source)}</div></td>
-          <td>${issue.paragraphIndex === null ? '' : `<div class="cite-pages">paragraph ${issue.paragraphIndex + 1}${issue.section ? ` · ${escHtml(issue.section)}` : ''}</div>`}<div class="official-rule-context">${escHtml(issue.context)}</div></td>
-        </tr>`).join('');
+      if (!issues.length) return section('Official SKB writing-rule issues', 0,
+        '<p class="empty-notice">No automatically checkable violations of the three official SKB guides were detected.</p>');
+      const body = buildGroupedRuleDetails(issues, 'official', issue => `
+        <article id="${findingAnchorId(issue, 'official')}" class="rule-detail-item rule-finding-row" data-part="${escHtml(ruleDocumentPartKey(issue))}" data-severity="${escHtml(issue.severity || 'warning')}" data-rule-id="${escHtml(issue.ruleId || 'unidentified-rule')}">
+          <div class="rule-detail-head"><span class="official-rule-match">${escHtml(issue.match)}</span><code>${escHtml(issue.ruleId || '')}</code><span class="tag">${escHtml(issue.severity || 'warning')}</span>${languageBadge(issue.language, issue.languageConfidence)}</div>
+          <div class="rule-detail-guidance">${escHtml(issue.description)}<div class="official-rule-source">Source: ${escHtml(issue.source)}</div></div>
+          <div>${findingLocationLink(issue, 'official')}</div>
+          <div class="rule-full-context">${escHtml(issue.fullContext || issue.context)}</div>
+        </article>`);
       return section('Official SKB writing-rule issues', issues.length,
-        `<table class="ref-table"><thead><tr><th>Matched text</th><th>Warning and source</th><th>Location and context</th></tr></thead><tbody>${rows}</tbody></table>`, false);
+        `<div class="rule-detail-container">${buildRuleDetailFilters(issues)}${body}</div>`, false);
+    }
+
+    function findingLocationKey(item) {
+      return `${item.sourcePart || 'word/document.xml'}|${item.paragraphIndex ?? item.paraIndex ?? -1}`;
+    }
+
+    function rangesOverlap(first, second) {
+      if (!Number.isFinite(first.matchStart) || !Number.isFinite(first.matchEnd) || !Number.isFinite(second.matchStart) || !Number.isFinite(second.matchEnd)) return false;
+      return first.matchStart < second.matchEnd && second.matchStart < first.matchEnd;
+    }
+
+    function normaliseFindingText(value) {
+      return String(value || '').normalize('NFC').toLowerCase().replace(/\\s+/g, ' ').trim();
+    }
+
+    function deduplicateRuleFindings(official, citation, review) {
+      const accepted = [];
+      const families = [
+        { items: official, priority: 3 },
+        { items: citation, priority: 2 },
+        { items: review, priority: 1 }
+      ];
+      for (const family of families) {
+        for (const item of family.items) {
+          const duplicate = accepted.find(existing =>
+            findingLocationKey(existing.item) === findingLocationKey(item) &&
+            ((existing.item.ruleId && item.ruleId && existing.item.ruleId === item.ruleId) ||
+             (rangesOverlap(existing.item, item) && normaliseFindingText(existing.item.match) === normaliseFindingText(item.match)))
+          );
+          if (!duplicate) accepted.push({ item, priority: family.priority, family });
+        }
+      }
+      return {
+        official: accepted.filter(entry => entry.family === families[0]).map(entry => entry.item),
+        citation: accepted.filter(entry => entry.family === families[1]).map(entry => entry.item),
+        review: accepted.filter(entry => entry.family === families[2]).map(entry => entry.item)
+      };
     }
 
     function findPotentialInvalidCitations(paragraphs) {
@@ -3402,7 +4049,7 @@ ${exportedResults.innerHTML}
         let expression;
 
         try {
-          expression = new RegExp(rule.pattern, 'gu');
+          expression = new RegExp(rule.pattern, rule.flags || 'gu');
         } catch (error) {
           console.warn('Invalid potential-citation regular expression:', rule.pattern, error);
           continue;
@@ -3419,9 +4066,14 @@ ${exportedResults.innerHTML}
 
             matches.push({
               ruleIndex,
+              ruleId: rule.id,
+              category: rule.category,
+              severity: rule.severity,
               pattern: rule.pattern,
               description: rule.description,
               match: match[0],
+              matchStart: match.index,
+              matchEnd: match.index + match[0].length,
               paragraphIndex: paragraph.index,
               section: paragraph.section || '',
               context: `${contextStart > 0 ? '…' : ''}${text.slice(contextStart, contextEnd)}${contextEnd < text.length ? '…' : ''}`
@@ -3443,33 +4095,17 @@ ${exportedResults.innerHTML}
     }
 
     function buildPotentialInvalidCitationsSection(matches) {
-      /* The pane should exist only when at least one potential mistake exists. */
       if (!matches.length) return '';
-
-      const rows = matches.map(item => `
-        <tr class="error-row">
-          <td>
-            <span class="invalid-citation-match">${escHtml(item.match)}</span>
-            <div class="forbidden-rule">${escHtml(item.pattern)}</div>
-          </td>
-          <td class="invalid-citation-reason">${escHtml(item.description)}</td>
-          <td>
-            <div class="cite-pages">paragraph ${item.paragraphIndex + 1}${item.section ? ` · ${escHtml(item.section)}` : ''}</div>
-            <div class="invalid-citation-context">${escHtml(item.context)}</div>
-          </td>
-        </tr>`).join('');
-
-      return section(
-        'Potential invalid in-text citations',
-        matches.length,
-        `<table class="ref-table">
-           <thead>
-             <tr><th>Potential mistake</th><th>Problem description</th><th>Location and context</th></tr>
-           </thead>
-           <tbody>${rows}</tbody>
-         </table>`,
-        false
-      );
+      const body = buildGroupedRuleDetails(matches, 'citation', item => `
+        <article id="${findingAnchorId(item, 'citation')}" class="rule-detail-item rule-finding-row" data-part="${escHtml(ruleDocumentPartKey(item))}" data-severity="${escHtml(item.severity || 'warning')}" data-rule-id="${escHtml(item.ruleId || 'unidentified-rule')}">
+          <div class="rule-detail-head"><span class="invalid-citation-match">${escHtml(item.match)}</span><code>${escHtml(item.ruleId || '')}</code><span class="tag">${escHtml(item.severity || 'warning')}</span></div>
+          <div class="rule-detail-guidance">${escHtml(item.description)}</div>
+          <div>${findingLocationLink(item, 'citation')}</div>
+          <div class="rule-full-context">${escHtml(item.fullContext || item.context)}</div>
+          <div class="forbidden-rule">${escHtml(item.pattern)}</div>
+        </article>`);
+      return section('Potential invalid in-text citations', matches.length,
+        `<div class="rule-detail-container">${buildRuleDetailFilters(matches)}${body}</div>`, false);
     }
 
     function findForbiddenWordMatches(paragraphs) {
@@ -3479,9 +4115,9 @@ ${exportedResults.innerHTML}
         if (!rule.enabled) continue;
         let expression;
         try {
-          expression = new RegExp(rule.pattern, 'gu');
+          expression = new RegExp(rule.pattern, rule.flags || 'gu');
         } catch (error) {
-          console.warn('Invalid forbidden-word regular expression:', rule.pattern, error);
+          console.warn('Invalid review-rule regular expression:', rule.pattern, error);
           continue;
         }
         for (const paragraph of paragraphs) {
@@ -3489,16 +4125,33 @@ ${exportedResults.innerHTML}
           expression.lastIndex = 0;
           let match;
           while ((match = expression.exec(text)) !== null) {
+            const localLanguage = languageAtRange(paragraph, match.index, match.index + match[0].length);
+            if (rule.language && ['sv','en'].includes(localLanguage.language) && localLanguage.confidence >= .6 && rule.language !== localLanguage.language) continue;
+            if (rule.custom === 'require-ab-prefix') {
+              const prefix = text.slice(Math.max(0, match.index - 12), match.index).replace(/[\s\u00a0]+$/u, ' ').trimEnd();
+              if (/\bAB$/u.test(prefix)) continue;
+            }
             const start = Math.max(0, match.index - 55);
             const end = Math.min(text.length, match.index + match[0].length + 55);
             matches.push({
               ruleIndex,
+              ruleId: rule.id,
+              category: rule.category,
+              severity: rule.severity,
               pattern: rule.pattern,
               description: rule.description,
               match: match[0],
+              matchStart: match.index,
+              matchEnd: match.index + match[0].length,
               paragraphIndex: paragraph.index,
+              localIndex: paragraph.localIndex,
+              sourcePart: paragraph.sourcePart,
+              sourceLabel: paragraph.sourceLabel || 'Main document',
               section: paragraph.section || '',
-              context: `${start > 0 ? '…' : ''}${text.slice(start, end)}${end < text.length ? '…' : ''}`
+              context: `${start > 0 ? '…' : ''}${text.slice(start, end)}${end < text.length ? '…' : ''}`,
+              fullContext: text,
+              language: languageAtRange(paragraph, match.index, match.index + match[0].length).language,
+              languageConfidence: languageAtRange(paragraph, match.index, match.index + match[0].length).confidence
             });
             if (match[0].length === 0) expression.lastIndex++;
           }
@@ -3507,55 +4160,192 @@ ${exportedResults.innerHTML}
       return matches;
     }
 
-    function buildForbiddenWordsSection(matches) {
-      if (!matches.length) {
-        return section(
-          'Forbidden words and expressions',
-          0,
-          '<p class="empty-notice">No enabled forbidden-word patterns matched the document text.</p>'
-        );
+    function findingAnchorId(item, family = 'rule') {
+      const part = stableRuleHash(item.sourcePart || item.sourceLabel || 'main');
+      const paragraph = item.localIndex ?? item.paragraphIndex ?? item.paraIndex ?? 0;
+      const start = Number.isFinite(item.matchStart) ? item.matchStart : 0;
+      return `finding-${family}-${part}-${paragraph}-${start}-${stableRuleHash(item.ruleId || item.description || item.match || '')}`;
+    }
+
+    function findingLocationLabel(item) {
+      const label = item.sourceLabel || (item.sourcePart && item.sourcePart !== 'word/document.xml' ? item.sourcePart : 'Main document');
+      const paragraph = (item.localIndex ?? item.paragraphIndex ?? item.paraIndex ?? 0) + 1;
+      return `${label}, paragraph ${paragraph}${item.section && item.section !== label ? ` · ${item.section}` : ''}`;
+    }
+
+    function findingLocationLink(item, family) {
+      const id = findingAnchorId(item, family);
+      return `<a class="rule-location-link" href="#${escHtml(id)}" title="Jump to this finding in the results">${escHtml(findingLocationLabel(item))}</a>`;
+    }
+
+    function handleRuleLocationClick(event) {
+      const link = event.target.closest('.rule-location-link');
+      if (!link) return;
+      const id = decodeURIComponent(link.getAttribute('href') || '').replace(/^#/, '');
+      const target = id ? document.getElementById(id) : null;
+      if (!target) return;
+      event.preventDefault();
+      let details = target.closest('details');
+      while (details) {
+        details.open = true;
+        details = details.parentElement?.closest('details');
+      }
+      history.replaceState(null, '', `#${id}`);
+      requestAnimationFrame(() => target.scrollIntoView({ behavior: 'smooth', block: 'center' }));
+    }
+
+    function handleRuleSummaryFilter(event) {
+      const summarySelect = event.target.closest('[data-rule-summary-filter]');
+      if (summarySelect) {
+        const container = summarySelect.closest('.rule-summary-container');
+        if (!container) return;
+        const family = container.querySelector('[data-rule-summary-filter="family"]')?.value || 'all';
+        const severity = container.querySelector('[data-rule-summary-filter="severity"]')?.value || 'all';
+        let shown = 0;
+        container.querySelectorAll('.rule-summary-row').forEach(row => {
+          row.hidden = !((family === 'all' || row.dataset.family === family) && (severity === 'all' || row.dataset.severity === severity));
+          if (!row.hidden) shown++;
+        });
+        const count = container.querySelector('.rule-filter-count');
+        if (count) count.textContent = `${shown} rule(s) shown`;
+        return;
       }
 
-      const grouped = new Map();
+      const detailSelect = event.target.closest('[data-rule-detail-filter]');
+      if (!detailSelect) return;
+      const container = detailSelect.closest('.rule-detail-container');
+      if (!container) return;
+      const severity = container.querySelector('[data-rule-detail-filter="severity"]')?.value || 'all';
+      const ruleId = container.querySelector('[data-rule-detail-filter="rule"]')?.value || 'all';
+      const part = container.querySelector('[data-rule-detail-filter="part"]')?.value || 'all';
+      let shown = 0;
+      container.querySelectorAll('.rule-detail-item').forEach(item => {
+        item.hidden = !((severity === 'all' || item.dataset.severity === severity) &&
+          (ruleId === 'all' || item.dataset.ruleId === ruleId) &&
+          (part === 'all' || item.dataset.part === part));
+        if (!item.hidden) shown++;
+      });
+      container.querySelectorAll('.rule-document-group').forEach(group => {
+        const visible = [...group.querySelectorAll('.rule-detail-item')].some(item => !item.hidden);
+        group.hidden = !visible;
+        if (visible) group.open = true;
+      });
+      const count = container.querySelector('.rule-detail-filter-count');
+      if (count) count.textContent = `${shown} finding(s) shown`;
+    }
+
+    function ruleDocumentPartKey(item) {
+      return item.sourcePart || item.sourceLabel || 'word/document.xml';
+    }
+
+    function ruleDocumentPartLabel(item) {
+      if (item.sourceLabel) return item.sourceLabel;
+      const part = item.sourcePart || 'word/document.xml';
+      if (part === 'word/document.xml') return 'Main document';
+      if (/footnotes\.xml$/i.test(part)) return 'Footnotes';
+      if (/endnotes\.xml$/i.test(part)) return 'Endnotes';
+      if (/comments\.xml$/i.test(part)) return 'Comments';
+      const header = part.match(/header(\d+)\.xml$/i); if (header) return `Header ${header[1]}`;
+      const footer = part.match(/footer(\d+)\.xml$/i); if (footer) return `Footer ${footer[1]}`;
+      return part;
+    }
+
+    function buildRuleDetailFilters(items) {
+      const severities = [...new Set(items.map(item => item.severity || 'review'))].sort();
+      const rules = [...new Set(items.map(item => item.ruleId || 'unidentified-rule'))].sort();
+      const parts = [...new Map(items.map(item => [ruleDocumentPartKey(item), ruleDocumentPartLabel(item)])).entries()]
+        .sort((a,b) => a[1].localeCompare(b[1]));
+      return `<div class="rule-summary-filters">
+        <label>Document part<select data-rule-detail-filter="part"><option value="all">All document parts</option>${parts.map(([value,label]) => `<option value="${escHtml(value)}">${escHtml(label)}</option>`).join('')}</select></label>
+        <label>Severity<select data-rule-detail-filter="severity"><option value="all">All severities</option>${severities.map(value => `<option value="${escHtml(value)}">${escHtml(value)}</option>`).join('')}</select></label>
+        <label>Rule ID<select data-rule-detail-filter="rule"><option value="all">All rule IDs</option>${rules.map(value => `<option value="${escHtml(value)}">${escHtml(value)}</option>`).join('')}</select></label>
+        <span class="rule-detail-filter-count">${items.length} finding(s) shown</span>
+      </div>`;
+    }
+
+    function buildGroupedRuleDetails(items, family, renderItem) {
+      const groups = new Map();
+      for (const item of items) {
+        const key = ruleDocumentPartKey(item);
+        if (!groups.has(key)) groups.set(key, { key, label: ruleDocumentPartLabel(item), items: [] });
+        groups.get(key).items.push(item);
+      }
+      return [...groups.values()].sort((a,b) => a.label.localeCompare(b.label)).map(group => `
+        <details class="rule-document-group" data-part="${escHtml(group.key)}" open>
+          <summary>${escHtml(group.label)} · ${group.items.length} finding(s)</summary>
+          <div class="rule-document-group-body">${group.items.map(item => renderItem(item, family, group.key)).join('')}</div>
+        </details>`).join('');
+    }
+
+    function buildRuleFindingSummary(officialIssues, citationIssues, reviewMatches) {
+      const all = [
+        ...officialIssues.map(item => ({ ...item, family: 'Official SKB rule', familyKey: 'official', detailFamily: 'official' })),
+        ...citationIssues.map(item => ({ ...item, family: 'Citation rule', familyKey: 'citation', detailFamily: 'citation' })),
+        ...reviewMatches.map(item => ({ ...item, family: 'Review rule', familyKey: 'review', detailFamily: 'review' }))
+      ];
+      if (!all.length) return section('Rule findings summary', 0, '<p class="empty-notice">No rule findings were detected.</p>');
+      const byRule = new Map(), bySeverity = new Map();
+      for (const item of all) {
+        const id = item.ruleId || 'unidentified-rule';
+        const key = `${item.familyKey}\u0000${id}\u0000${item.severity || 'review'}`;
+        if (!byRule.has(key)) byRule.set(key, { id, severity: item.severity || 'review', family: item.family, familyKey: item.familyKey, description: item.description || item.issue || '', count: 0, examples: [] });
+        const ruleGroup = byRule.get(key); ruleGroup.count++;
+        if (ruleGroup.examples.length < 3) ruleGroup.examples.push(item);
+        const severity = item.severity || 'review';
+        bySeverity.set(severity, (bySeverity.get(severity) || 0) + 1);
+      }
+      const familyOptions = [['all','All families'],['official','Official SKB rule'],['citation','Citation rule'],['review','Review rule']];
+      const severities = [...new Set([...byRule.values()].map(item => item.severity))].sort();
+      const filters = `<div class="rule-summary-filters">
+        <label>Rule family<select data-rule-summary-filter="family">${familyOptions.map(([value,label]) => `<option value="${value}">${label}</option>`).join('')}</select></label>
+        <label>Severity<select data-rule-summary-filter="severity"><option value="all">All severities</option>${severities.map(value => `<option value="${escHtml(value)}">${escHtml(value)}</option>`).join('')}</select></label>
+        <span class="rule-filter-count">${byRule.size} rule(s) shown</span>
+      </div>`;
+      const severityTags = [...bySeverity].sort((a,b)=>a[0].localeCompare(b[0])).map(([severity,count]) => `<span class="tag">${escHtml(severity)}: <strong>${count}</strong></span>`).join('');
+      const rows = [...byRule.values()].sort((a,b)=>b.count-a.count || a.id.localeCompare(b.id)).map(item => `<tr class="rule-summary-row" data-family="${escHtml(item.familyKey)}" data-severity="${escHtml(item.severity)}"><td><code>${escHtml(item.id)}</code></td><td>${escHtml(item.family)}</td><td>${escHtml(item.severity)}</td><td class="cite-count">${item.count}</td><td>${escHtml(item.description)}</td><td>${item.examples.map(example => `<div class="rule-full-context">${escHtml(example.fullContext || example.context || example.match || '')}</div><div>${findingLocationLink(example, example.detailFamily)}</div>`).join('')}</td></tr>`).join('');
+      return section('Rule findings summary', byRule.size, `<div class="rule-summary-container">${filters}<div class="tag-list" style="margin-bottom:12px">${severityTags}</div><table class="ref-table"><thead><tr><th>Rule ID</th><th>Family</th><th>Severity</th><th>Occurrences</th><th>Guidance</th><th>Examples and locations</th></tr></thead><tbody>${rows}</tbody></table></div>`, false);
+    }
+
+    function buildForbiddenWordsSection(matches) {
+      if (!matches.length) return section('Words and expressions to review', 0,
+        '<p class="empty-notice">No enabled review patterns matched the document text.</p>');
+      const grouped = new Map(), severityCounts = new Map();
       for (const item of matches) {
-        const key = `${item.pattern}\u0000${item.description}`;
+        severityCounts.set(item.severity || 'review', (severityCounts.get(item.severity || 'review') || 0) + 1);
+        const key = item.ruleId || `${item.pattern}\u0000${item.description}`;
         if (!grouped.has(key)) grouped.set(key, []);
         grouped.get(key).push(item);
       }
-
-      const rows = [...grouped.values()].map(items => {
-        const first = items[0];
-        const contexts = items.slice(0, 12).map(item => `
-          <div style="margin-bottom:8px">
-            <span class="forbidden-match">${escHtml(item.match)}</span>
-            <span class="cite-pages">paragraph ${item.paragraphIndex + 1}${item.section ? ` · ${escHtml(item.section)}` : ''}</span>
-            <div class="forbidden-context">${escHtml(item.context)}</div>
-          </div>`).join('');
-        const remaining = items.length > 12
-          ? `<div class="empty-notice">…and ${items.length - 12} more occurrence(s).</div>`
-          : '';
-        return `
-          <tr class="warn-row">
-            <td><span class="forbidden-match">${escHtml(first.match)}</span><div class="forbidden-rule">${escHtml(first.pattern)}</div></td>
-            <td>${escHtml(first.description)}</td>
-            <td class="cite-count">${items.length}</td>
-            <td>${contexts}${remaining}</td>
-          </tr>`;
-      }).join('');
-
-      return section(
-        'Forbidden words and expressions',
-        matches.length,
-        `<table class="ref-table">
-           <thead><tr><th>Match / rule</th><th>Problem description</th><th>Count</th><th>Locations and context</th></tr></thead>
-           <tbody>${rows}</tbody>
-         </table>`,
-        false
-      );
+      const ruleSummaryRows = [...grouped.values()].map(items => ({
+        ruleId: items[0].ruleId || 'unidentified-rule', severity: items[0].severity || 'review', count: items.length,
+        description: items[0].description, examples: items.slice(0,3)
+      })).sort((a,b)=>b.count-a.count || a.ruleId.localeCompare(b.ruleId));
+      const severitySummary = [...severityCounts].sort((a,b)=>a[0].localeCompare(b[0])).map(([severity,count]) => `<span class="tag">${escHtml(severity)}: <strong>${count}</strong></span>`).join('');
+      const ruleSummary = `<details style="margin-bottom:14px"><summary style="cursor:pointer;font-weight:700">Summary by rule ID and severity</summary>
+        <div class="tag-list" style="margin:10px 0">${severitySummary}</div>
+        <table class="ref-table"><thead><tr><th>Rule ID</th><th>Severity</th><th>Occurrences</th><th>Guidance</th><th>Examples</th></tr></thead><tbody>${ruleSummaryRows.map(item => `<tr><td><code>${escHtml(item.ruleId)}</code></td><td>${escHtml(item.severity)}</td><td class="cite-count">${item.count}</td><td>${escHtml(item.description)}</td><td>${item.examples.map(example => `<div class="rule-full-context">${escHtml(example.fullContext || example.context || example.match)}</div><div>${findingLocationLink(example,'review')}</div>`).join('')}</td></tr>`).join('')}</tbody></table></details>`;
+      const details = buildGroupedRuleDetails(matches, 'review', item => `
+        <article id="${findingAnchorId(item, 'review')}" class="rule-detail-item rule-finding-row" data-part="${escHtml(ruleDocumentPartKey(item))}" data-severity="${escHtml(item.severity || 'review')}" data-rule-id="${escHtml(item.ruleId || 'unidentified-rule')}">
+          <div class="rule-detail-head"><span class="forbidden-match">${escHtml(item.match)}</span><code>${escHtml(item.ruleId || '')}</code><span class="tag">${escHtml(item.severity || 'review')}</span>${languageBadge(item.language, item.languageConfidence)}</div>
+          <div class="rule-detail-guidance">${escHtml(item.description)}</div>
+          <div>${findingLocationLink(item, 'review')}</div>
+          <div class="rule-full-context">${escHtml(item.fullContext || item.context)}</div>
+          <div class="forbidden-rule">${escHtml(item.pattern)}</div>
+        </article>`);
+      return section('Words and expressions to review', matches.length,
+        `<div class="rule-detail-container">${ruleSummary}${buildRuleDetailFilters(matches)}${details}</div>`, false);
     }
 
-    function renderResults(filename, entries, citations, report, issues, forbiddenMatches, potentialInvalidCitations, officialWritingIssues, total, start, isSwedish) {
-      docInfo.innerHTML = `<strong>${escHtml(filename)}</strong> ${isSwedish ? '🇸🇪 Svenska — ' : ''}${total} paragraphs · ${entries.length} reference list entries · ${citations.length} in-text citation occurrences · ${start >= 0 ? `Reference list found at paragraph ${start + 1}.` : 'No reference list section detected.'}`;
+    function languageName(language) { return ({sv:'Swedish',en:'English',mixed:'Mixed',other:'Other',unknown:'Unknown'})[language] || language; }
+    function languageBadge(language, confidence = 0) { const value=language||'unknown'; return `<span class="language-badge ${escHtml(value)}">${escHtml(value.toUpperCase())}${confidence?` · ${Math.round(confidence*100)}%`:''}</span>`; }
+
+    function renderResults(filename, entries, citations, report, issues, forbiddenMatches, potentialInvalidCitations, officialWritingIssues, total, start, isSwedish, languageProfile = {}) {
+      const zoteroCitationCount = citations.filter(citation => citation.citationSource === 'zotero').length;
+      const plainCitationCount = citations.filter(citation => citation.citationSource === 'plain').length;
+      const distribution=languageProfile.distribution||{};
+      const totalLanguageLetters=Math.max(1,(distribution.sv||0)+(distribution.en||0)+(distribution.other||0)+(distribution.unknown||0)+(distribution.mixed||0));
+      const languageSummary=['sv','en','other','mixed','unknown'].filter(key=>distribution[key]).map(key=>languageBadge(key,(distribution[key]||0)/totalLanguageLetters)).join(' ');
+      docInfo.innerHTML = `<strong>${escHtml(filename)}</strong> ${total} paragraphs · ${entries.length} reference list entries · ${citations.length} citation occurrences (${zoteroCitationCount} Zotero fields, ${plainCitationCount} plain text) · ${start >= 0 ? `Reference list found at paragraph ${start + 1}.` : 'No reference list section detected.'}<div class="language-summary"><strong>Primary language: ${escHtml(languageName(languageProfile.language||'unknown'))} · ${Math.round((languageProfile.confidence||0)*100)}% of analysed text</strong><span class="language-badge unknown">Known-language coverage: ${Math.round((languageProfile.knownCoverage||0)*100)}%</span>${languageSummary}<span class="language-badge mixed">Mixed paragraphs: ${languageProfile.mixedParagraphs||0}</span></div>`;
       docInfo.classList.add('show');
       const cited = entries.filter(entry => entry.cites.length).length;
       setSummary('total', entries.length, entries.length ? 'ok' : 'warn');
@@ -3564,7 +4354,7 @@ ${exportedResults.innerHTML}
       setSummary('issues', issues.length, issues.length ? 'warn' : 'ok');
       summaryCards.classList.add('show');
       resultActions.classList.add('show');
-      results.innerHTML = buildRefListSection(entries) + buildOrphanSection(report.orphanCites) + buildPotentialInvalidCitationsSection(potentialInvalidCitations) + buildUncitedSection(report.uncitedRefs) + buildFormatSection(issues, entries) + buildOfficialSkbWritingSection(officialWritingIssues) + buildForbiddenWordsSection(forbiddenMatches);
+      results.innerHTML = buildRefListSection(entries) + buildCitationOccurrencesSection(citations) + buildOrphanSection(report.orphanCites) + buildPotentialInvalidCitationsSection(potentialInvalidCitations) + buildUncitedSection(report.uncitedRefs) + buildFormatSection(issues, entries) + buildRuleFindingSummary(officialWritingIssues, potentialInvalidCitations, forbiddenMatches) + buildOfficialSkbWritingSection(officialWritingIssues) + buildForbiddenWordsSection(forbiddenMatches);
       resetBtn.classList.add('show');
     }
 
@@ -3573,12 +4363,14 @@ ${exportedResults.innerHTML}
         ? entries.map((entry, index) => {
             const sections = [...new Set(entry.cites.map(citation => citation.section).filter(Boolean))]
               .slice(0, 5).map(escHtml).join('<br>');
+            const sourceBadges = [...new Map(entry.cites.map(citation => [citation.citationSource, citation])).values()]
+              .map(citationSourceBadge).join(' ');
             return `
               <tr class="${entry.cites.length ? '' : 'warn-row'}">
                 <td><span class="ref-key">${escHtml(entry.key)}</span></td>
                 <td class="ref-text">${escHtml(entry.body)}</td>
                 <td class="cite-count">${entry.cites.length}</td>
-                <td class="cite-pages">${sections}</td>
+                <td class="cite-pages">${sections}${sourceBadges ? `<div style="margin-top:5px">${sourceBadges}</div>` : ''}</td>
                 <td class="zotero-cell">
                   <button class="zotero-row-btn" type="button" data-kind="reference" data-index="${index}" data-search-id="reference-${index}" data-result-id="zotero-reference-${index}" title="Search Zotero using authors, publication year, and title extracted from this reference">Check Zotero</button>
                   <div id="zotero-reference-${index}" class="zotero-inline-results"></div>
@@ -3594,11 +4386,32 @@ ${exportedResults.innerHTML}
       );
     }
 
+    function buildCitationOccurrencesSection(items) {
+      const zoteroCount = items.filter(item => item.citationSource === 'zotero').length;
+      const plainCount = items.filter(item => item.citationSource === 'plain').length;
+      const fieldCount = items.filter(item => item.citationSource === 'field').length;
+      const summary = `<div class="tag-list" style="margin-bottom:12px">
+        <span class="citation-source-badge zotero">Z Zotero field: ${zoteroCount}</span>
+        <span class="citation-source-badge plain">T Plain text: ${plainCount}</span>
+        ${fieldCount ? `<span class="citation-source-badge field">F Other Word field: ${fieldCount}</span>` : ''}
+      </div>`;
+      const rows = items.length ? items.map(citation => `
+        <tr>
+          <td><span class="ref-key">${escHtml(citation.key)}</span></td>
+          <td>${citationSourceBadge(citation)}<div class="citation-source-detail">${escHtml(citation.citationSourceDetail || '')}</div></td>
+          <td>${escHtml(citation.section || '—')}<div class="cite-pages">paragraph ${citation.paraIndex + 1}</div></td>
+          <td class="ref-text">${truncate(escHtml(citation.paraText || ''), 150)}</td>
+        </tr>`).join('') : '<tr><td colspan="4" class="empty-notice">No citation occurrences detected.</td></tr>';
+      return section('Citation occurrences and Word source', items.length,
+        `${summary}<table class="ref-table"><thead><tr><th>Citation key</th><th>Source</th><th>Location</th><th>Context</th></tr></thead><tbody>${rows}</tbody></table>`, false);
+    }
+
     function buildOrphanSection(items) {
       const body = items.length
-        ? `<table class="ref-table"><thead><tr><th>Citation</th><th>Context</th><th>Section</th><th>Type</th><th>Zotero</th></tr></thead><tbody>${items.map((citation, index) => `
+        ? `<table class="ref-table"><thead><tr><th>Citation</th><th>Source</th><th>Context</th><th>Section</th><th>Type</th><th>Zotero</th></tr></thead><tbody>${items.map((citation, index) => `
             <tr class="error-row">
               <td><span class="ref-key">${escHtml(citation.key)}</span></td>
+              <td>${citationSourceBadge(citation)}</td>
               <td>${truncate(escHtml(citation.paraText), 100)}</td>
               <td>${escHtml(citation.section || '—')}</td>
               <td>${escHtml(citation.type)}</td>
