@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Enhanced v6: configurable chart range, shading, and percentile reference line ending at the PDF in both views. -->
+<!-- Cumulative enhanced build 2026-08-26. -->
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -8,7 +8,7 @@
   <script src="https://unpkg.com/leaflet@1.9.2/dist/leaflet.js"></script>
   <link rel="stylesheet" href="./resources/css/kvot.css">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
-  <title>Lognormal Conversions</title>
+  <title>Lognormal Conversions - Enhanced</title>
   <style>
     /* Layout */
     header  { position:fixed;top:0;left:0;right:0;z-index:20;background:var(--footer-bg);box-shadow:0 2px 8px rgba(0,0,0,.12); }
@@ -97,8 +97,9 @@
     .result-settings summary{cursor:pointer;list-style:none;display:inline-flex;align-items:center;gap:5px;color:var(--text-muted);font-weight:500}.result-settings summary::-webkit-details-marker{display:none}.result-settings summary::before{content:'⚙';opacity:.65}
     .result-settings-body{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:end;margin-top:9px;padding:10px 12px;border:1px solid var(--border-color);border-radius:8px;background:color-mix(in srgb,var(--bg-secondary) 55%,transparent)}
     .setting-field{display:grid;gap:3px;min-width:105px}.setting-field span{font-size:.7rem;color:var(--text-muted)}.setting-field input,.setting-field select{width:120px;padding:5px 7px;border-radius:6px;border:1px solid var(--border-color);background:var(--input-bg);color:var(--input-text);font:inherit}
-    .setting-note{flex:1 1 100%;margin:0;color:var(--text-muted);font-size:.72rem}.setting-field input[aria-invalid="true"]{border-color:#b4473a!important;box-shadow:0 0 0 2px rgba(180,71,58,.12)!important}
-    .chart-settings-warning{display:none;flex:1 1 100%;padding:8px 10px;border:1px solid #b4473a;border-radius:7px;background:color-mix(in srgb,#b4473a 9%,var(--bg-secondary));color:#b4473a;font-size:.76rem;font-weight:600}.chart-settings-warning.show{display:block}
+    .setting-note{flex:1 1 100%;margin:0;color:var(--text-muted);font-size:.72rem;line-height:1.4}.setting-field input[aria-invalid="true"]{border-color:#b4473a!important;box-shadow:0 0 0 2px rgba(180,71,58,.12)!important}
+    .chart-settings-warning{display:none;flex:1 1 100%;padding:8px 10px;border:1px solid #b4473a;border-radius:7px;background:color-mix(in srgb,#b4473a 9%,var(--bg-secondary));color:#b4473a;font-size:.76rem;font-weight:600;line-height:1.4}.chart-settings-warning.show{display:block}
+    @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
     /* Stats grid */
     .stats-grid { display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--border-color);border:1px solid var(--border-color);border-radius:10px;overflow:hidden;margin-bottom:12px; }
     .sg-item { background:var(--bg-secondary);padding:10px 14px;display:flex;justify-content:space-between;align-items:baseline;gap:8px; }
@@ -220,7 +221,7 @@
               <div class="sg-item"><span class="sg-label">CV</span><span class="sg-value" id="res-cv">&#8212;</span></div>
               <div class="sg-item"><span class="sg-label">Error factor</span><span class="sg-value" id="res-ef">&#8212;</span></div>
               <div class="sg-item"><span class="sg-label">Skewness</span><span class="sg-value" id="res-skew">&#8212;</span></div>
-              <div class="sg-item"><span class="sg-label">Kurtosis</span><span class="sg-value" id="res-kurt">&#8212;</span></div>
+              <div class="sg-item"><span class="sg-label">Excess kurtosis</span><span class="sg-value" id="res-kurt">&#8212;</span></div>
               <div class="sg-item"><span class="sg-label">Entropy</span><span class="sg-value" id="res-entropy">&#8212;</span></div>
             </div>
             <div class="pct-band">
@@ -278,10 +279,10 @@
             <tr><td>\(\sigma_g =\)</td><td>\(e^\sigma\)</td></tr>
             <tr><td>\(\sigma_a =\)</td><td>\(\mu_a\sqrt{e^{\sigma^2}-1}\)</td></tr>
             <tr><td>\(\mathrm{CV} =\)</td><td>\(\sqrt{e^{\sigma^2}-1}\)</td></tr>
-            <tr><td>EF \(=\)</td><td>\(e^{1.645\,\sigma}\) (90 % confidence)</td></tr>
+            <tr><td>EF \(=\)</td><td>\(e^{1.645\,\sigma}\) (central 90% coverage)</td></tr>
             <tr class="eq-section"><td colspan="2">Higher moments</td></tr>
             <tr><td>skewness \(=\)</td><td>\(\mathrm{CV}^3+3\,\mathrm{CV}\)</td></tr>
-            <tr><td>kurtosis \(=\)</td><td>\(\mathrm{CV}^8+6\,\mathrm{CV}^6+15\,\mathrm{CV}^4+16\,\mathrm{CV}^2\)</td></tr>
+            <tr><td>excess kurtosis \(=\)</td><td>\(\mathrm{CV}^8+6\,\mathrm{CV}^6+15\,\mathrm{CV}^4+16\,\mathrm{CV}^2\)</td></tr>
             <tr><td>entropy \(=\)</td><td>\(\tfrac{1}{2}(1+\ln 2\pi\sigma^2)+\mu\)</td></tr>
             <tr class="eq-section"><td colspan="2">Percentile inversion</td></tr>
             <tr><td>\(x_p =\)</td><td>\(\exp\bigl(\mu + \sigma\,\Phi^{-1}(p)\bigr)\)</td></tr>
@@ -297,7 +298,7 @@
       <div id="tabs-percentile" style="display:none;">
         <p class="tab-desc">Enter a percentile (0&ndash;100) and its corresponding positive value.</p>
         <div class="tab-fields">
-          <label class="tab-field">Percentile (%)<br><input class="arg" data-field="p" type="number" min="0" max="100" step="any" inputmode="decimal" value="5" placeholder="e.g. 95"></label>
+          <label class="tab-field">Percentile (%)<br><input class="arg" data-field="p" type="number" min="0.000001" max="99.999999" step="any" inputmode="decimal" value="5" placeholder="e.g. 95"></label>
           <label class="tab-field">Value (&gt;0)<br><input class="arg" data-field="x" type="number" min="0" step="any" inputmode="decimal" value="1" placeholder="e.g. 10"></label>
         </div>
       </div>
@@ -306,7 +307,7 @@
         <div class="tab-fields">
           <label class="tab-field">Min (&gt;0)<br><input class="arg" data-field="min" type="number" min="0" step="any" inputmode="decimal" value="1"></label>
           <label class="tab-field">Max (&gt;0)<br><input class="arg" data-field="max" type="number" min="0" step="any" inputmode="decimal" value="2"></label>
-          <label class="tab-field">Probability (%)<br><input class="arg" data-field="p" type="number" min="0" max="100" step="any" inputmode="decimal" value="97.5"></label>
+          <label class="tab-field">Probability (%)<br><input class="arg" data-field="p" type="number" min="0.000001" max="99.999999" step="any" inputmode="decimal" value="97.5"></label>
         </div>
       </div>
       <div id="tabs-data" style="display:none;">
@@ -317,7 +318,7 @@
       <div id="tabs-SD" style="display:none;"><p class="tab-desc">Arithmetic standard deviation &gt; 0</p><input class="arg" data-field="SD" type="number" min="0" step="any" inputmode="decimal" value="1" title="Arithmetic standard deviation (positive)"></div>
       <div id="tabs-GSD" style="display:none;"><p class="tab-desc">Geometric standard deviation &#8805; 1</p><input class="arg" data-field="GSD" type="number" min="1" step="any" inputmode="decimal" value="1" title="Geometric standard deviation (>= 1)"></div>
       <div id="tabs-CV" style="display:none;"><p class="tab-desc">Coefficient of variation &gt; 0</p><input class="arg" data-field="CV" type="number" min="0" step="any" inputmode="decimal" value="1" title="Coefficient of variation (positive)"></div>
-      <div id="tabs-error" style="display:none;"><p class="tab-desc">Error factor &#8805; 1 (90 % confidence interval)</p><input class="arg" data-field="error_factor" type="number" min="1" step="any" inputmode="decimal" value="1" title="Error factor (>= 1)"></div>
+      <div id="tabs-error" style="display:none;"><p class="tab-desc">Error factor &#8805; 1 (central 90% coverage interval)</p><input class="arg" data-field="error_factor" type="number" min="1" step="any" inputmode="decimal" value="1" title="Error factor (>= 1)"></div>
 
     </div>
     <div id="map"></div>
@@ -547,6 +548,8 @@
         if (eff === 'percentile' && idx === 1 && !nonData[1]) {
           const pInp = clone.querySelector('[data-field="p"]');
           if (pInp && pInp.value === '5') pInp.value = 95;
+          const xInp2 = clone.querySelector('[data-field="x"]');
+          if (xInp2 && (xInp2.value === '' || xInp2.value === '1')) xInp2.value = 10;
         }
         if (eff === 'data') {
           if (window._lastDataRaw) { const ta = clone.querySelector('[data-field="data"]'); if (ta && !ta.value) ta.value = window._lastDataRaw; }
@@ -630,8 +633,11 @@
       function has(k){return Object.prototype.hasOwnProperty.call(args,k);}
       let mu, sigma;
       if ((has('p1')||has('x1'))&&(has('p2')||has('x2'))) {
-        const z1=norminv(0,1,args.p1/100), z2=norminv(0,1,args.p2/100);
-        sigma=Math.log(args.x1/args.x2)/(z1-z2); mu=Math.log(args.x1)-z1*sigma; return [mu,sigma];
+        if(validateTwoPercentilePairs(args.p1,args.x1,args.p2,args.x2))return [undefined,undefined];
+        const z1=norminv(0,1,args.p1/100),z2=norminv(0,1,args.p2/100);
+        sigma=Math.log(args.x1/args.x2)/(z1-z2);mu=Math.log(args.x1)-z1*sigma;
+        if(!(sigma>0)||!Number.isFinite(mu)||!Number.isFinite(sigma))return [undefined,undefined];
+        return [mu,sigma];
       }
       if (has('min')&&has('max')&&has('p')) {
         const p=(1-args.p/100)/2, z1=norminv(0,1,p), z2=norminv(0,1,1-p);
@@ -719,10 +725,7 @@
           if(typeof args.p1==='number'&&typeof args.x1==='number'){args.p=args.p1;args.x=args.x1;}
         }
         if(args.p2!==undefined){
-          if(!isFinite(args.p1)||!isFinite(args.x1)||!isFinite(args.p2)||!isFinite(args.x2)||args.x1<=0||args.x2<=0)
-            args._invalidPercentile='Please provide two valid percentile/value pairs (positive values).';
-          else if(Math.abs(args.p1-args.p2)<1e-9)
-            args._invalidPercentile='Percentile probabilities must be different.';
+          args._invalidPercentile=validateTwoPercentilePairs(args.p1,args.x1,args.p2,args.x2);
         }
       } else if (tab1==='data'&&nonData.length===0) {
         /* handled in computeAndRender */
@@ -739,6 +742,15 @@
       return {args,tab1,tab2,hasData,nonData};
     }
 
+    function validateTwoPercentilePairs(p1,x1,p2,x2){
+      if(![p1,x1,p2,x2].every(Number.isFinite))return 'Please provide two complete percentile/value pairs.';
+      if(p1<=0||p1>=100||p2<=0||p2>=100)return 'Percentiles must be greater than 0 and less than 100.';
+      if(x1<=0||x2<=0)return 'Percentile values must be positive.';
+      if(Math.abs(p1-p2)<1e-9)return 'The two percentile probabilities must be different.';
+      if(Math.abs(x1-x2)<=Math.max(1,Math.abs(x1),Math.abs(x2))*1e-12)return 'Different percentiles must have different values.';
+      if((p2-p1)*(x2-x1)<=0)return 'The value for the higher percentile must be greater than the value for the lower percentile.';
+      return '';
+    }
     /* ---- computeAndRender ---------------------------------------------- */
     function computeAndRender(state) {
       const args=state&&state.args?state.args:{};
@@ -782,10 +794,7 @@
           if(typeof args.p1==='number'&&typeof args.x1==='number'){args.p=args.p1;args.x=args.x1;}
         }
         if(args.p2!==undefined){
-          if(!isFinite(args.p1)||!isFinite(args.x1)||!isFinite(args.p2)||!isFinite(args.x2)||args.x1<=0||args.x2<=0)
-            args._invalidPercentile='Please provide two valid percentile/value pairs (positive values).';
-          else if(Math.abs(args.p1-args.p2)<1e-9)
-            args._invalidPercentile='Percentile probabilities must be different.';
+          args._invalidPercentile=validateTwoPercentilePairs(args.p1,args.x1,args.p2,args.x2);
         }
       } else if(tab1==='data'&&nonData.length===0){
         const raw=panelValue(1,'data')||'';
@@ -818,7 +827,7 @@
         if(['sigma','SD','GSD','CV','error_factor','mean','GM','mode','x','x1','x2','min','max'].includes(k)&&num<=0){showError(`${k} must be positive`);return;}
         if(k==='GSD'&&num<1){showError('GSD must be \u2265 1');return;}
         if(k==='error_factor'&&num<1){showError('Error factor must be \u2265 1');return;}
-        if(['p','p1','p2'].includes(k)&&(num<0||num>100)){showError('Percentile must be 0\u2013100');return;}
+        if(['p','p1','p2'].includes(k)&&(num<=0||num>=100)){showError('Percentile must be greater than 0 and less than 100');return;}
         args[k]=num;
       }
 
@@ -831,7 +840,7 @@
         {showError('Mean must exceed mode');return;}
       if(typeof args.min==='number'&&typeof args.max==='number'&&args.min>=args.max)
         {showError('Min must be smaller than max');return;}
-      if(tab1==='percentile'&&args._invalidPercentile){showError(args._invalidPercentile);return;}
+      if(args._invalidPercentile){showError(args._invalidPercentile);return;}
 
       if(tab1!=='data'||nonData.length>0) [mu,sigma]=getMuSigma(args);
 
@@ -946,8 +955,7 @@
         traces.push({x:xl.slice(0,shadeLoIndex+1),y:yl.slice(0,shadeLoIndex+1),fill:'tozeroy',fillcolor:'rgba(243,184,123,.12)',line:{color:accentClr,width:1},type:'scatter',hoverinfo:'skip',name:'Outer PDF'});
         traces.push({x:xl.slice(shadeLoIndex,shadeHiIndex+1),y:yl.slice(shadeLoIndex,shadeHiIndex+1),fill:'tozeroy',fillcolor:'rgba(243,184,123,.55)',line:{color:accentClr,width:2},type:'scatter',hoverinfo:'skip',name:'Shaded PDF'});
         traces.push({x:xl.slice(shadeHiIndex),y:yl.slice(shadeHiIndex),fill:'tozeroy',fillcolor:'rgba(243,184,123,.12)',line:{color:accentClr,width:1},type:'scatter',hoverinfo:'skip',name:'Outer PDF'});
-        const refLn=norminv(mu,sigmaPlot,referenceP);
-        const refLnHeight=normpdf(mu,sigmaPlot,refLn);
+        const refLn=norminv(mu,sigmaPlot,referenceP),refLnHeight=normpdf(mu,sigmaPlot,refLn);
         traces.push({x:[refLn,refLn],y:[0,refLnHeight],mode:'lines',line:{color:accentClr,dash:'dash',width:1.5},hovertext:`P${fmt(referencePct,5)}`,name:`P${fmt(referencePct,5)}`});
         cdfTraces.push({x:xl,y:pg.slice(),mode:'lines',line:{color:cdfClr},name:'CDF (theoretical)',yaxis:'y2'});
         if(args._dataValues){
