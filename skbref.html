@@ -1580,6 +1580,8 @@
       return failures;
     }
     runReviewRuleRegressionTests();
+    function runConsolidatedRegressionTests(){const failures=[],all=[...FORBIDDEN_WORD_RULES,...POTENTIAL_INVALID_CITATION_RULES,...OFFICIAL_SKB_TEXT_RULES],ids=new Set();for(const rule of all){if(!rule.id||ids.has(rule.id))failures.push(`Duplicate/missing rule ID: ${rule.id}`);ids.add(rule.id);if(!rule.label)failures.push(`Missing rule name: ${rule.id}`);if((rule.legacyIds||[]).includes(rule.id))failures.push(`Canonical ID repeated as legacy: ${rule.id}`);}const highlighted=renderRuleContext({fullContext:'Use peak safely <here>.',match:'peak',matchStart:4,matchEnd:8});if(!highlighted.includes('<strong class="rule-context-match">peak</strong>')||!highlighted.includes('&lt;here&gt;'))failures.push('Rule highlight/escaping failed');const fake={styles:new Map([['Base',{id:'Base',basedOn:'',type:'paragraph',name:'Base',language:'en',rawLanguage:'en-GB'}],['Derived',{id:'Derived',basedOn:'Base',type:'paragraph',name:'Derived',language:'unknown',rawLanguage:''}]]),defaultStyles:{paragraph:'Base',character:''},docDefault:{language:'unknown',raw:'',source:'none'}};if(resolveStyleLanguage('Derived',fake)?.language!=='en')failures.push('Style inheritance failed');const sparse=classifyParagraphLanguage('This is an English paragraph with Swedish template metadata and English words.',{counts:{sv:3,en:0,other:0,unknown:70}});if(sparse.language!=='en')failures.push('Sparse metadata language fallback failed');for(const [value,expected] of [['Swedish','(In Swedish.)'],['sv-SE','(In Swedish.)'],['English',''],['','']])if(zoteroLanguageNote(value)!==expected)failures.push(`Zotero language note failed: ${value}`);const repeated=[{key:'Smith 2020',raw:'Smith 2020',paraIndex:1,paraText:'Smith 2020 and Smith 2020'},{key:'Smith 2020',raw:'Smith 2020',paraIndex:1,paraText:'Smith 2020 and Smith 2020'}];assignCitationOccurrenceOffsets(repeated);if(repeated[0].matchStart===repeated[1].matchStart)failures.push('Repeated citation offsets failed');if(failures.length)console.error('Consolidated regression tests failed:',failures);else console.info(`Consolidated regression tests passed (${all.length} rules plus feature checks).`);return failures;}
+    runConsolidatedRegressionTests();
 
     function runLanguageRegressionTests() {
       const failures=[];
@@ -1681,18 +1683,25 @@
         showStatus('Unzipping .docx…');
         const docXml = await zip.file('word/document.xml')?.async('string');
         const stylesXml = await zip.file('word/styles.xml')?.async('string') || '';
+        const auxiliaryPartNames = Object.keys(zip.files).filter(name => /^word\/(?:footnotes|endnotes|comments|header\d+|footer\d+)\.xml$/i.test(name));
         if (!docXml) throw new Error('word/document.xml not found — is this a valid .docx?');
         setProgress(30);
         showStatus('Parsing document…');
         await yieldToBrowser();
-        const { paragraphs, isSwedish, languageProfile } = parseDocXml(docXml, stylesXml);
-        let forbiddenMatches = findForbiddenWordMatches(paragraphs);
-        let officialWritingIssues = findOfficialSkbTextIssues(paragraphs, languageProfile);
+        const mainParsed = parseDocXml(docXml, stylesXml);
+        const paragraphs = mainParsed.paragraphs;
+        paragraphs.forEach((paragraph,index)=>{paragraph.index=index;paragraph.localIndex=index;paragraph.sourcePart='word/document.xml';paragraph.sourceLabel='Main document';});
+        const auxiliaryParagraphs=[];
+        for(const partName of auxiliaryPartNames){const xml=await zip.file(partName).async('string'),parsed=parseDocXml(xml,stylesXml),base=paragraphs.length+auxiliaryParagraphs.length,label=/footnotes/i.test(partName)?'Footnotes':/endnotes/i.test(partName)?'Endnotes':/comments/i.test(partName)?'Comments':/header(\d+)/i.test(partName)?`Header ${partName.match(/header(\d+)/i)[1]}`:`Footer ${partName.match(/footer(\d+)/i)?.[1]||''}`;parsed.paragraphs.forEach((paragraph,index)=>{paragraph.localIndex=index;paragraph.index=base+index;paragraph.sourcePart=partName;paragraph.sourceLabel=label;paragraph.documentRegion='auxiliary';paragraph.regionLabel=label;});auxiliaryParagraphs.push(...parsed.paragraphs);}
+        const allParagraphs=[...paragraphs,...auxiliaryParagraphs];
+        const languageProfile=calculateDocumentLanguage(allParagraphs),isSwedish=languageProfile.language==='sv';
+        let forbiddenMatches = findForbiddenWordMatches(allParagraphs);
+        let officialWritingIssues = findOfficialSkbTextIssues(allParagraphs, languageProfile);
         setProgress(45);
         showStatus('Finding reference list…');
         await yieldToBrowser();
         const { refListParagraphs, bodyParagraphs, refListStart, refListEnd } = splitAtRefList(paragraphs);
-        let potentialInvalidCitations = findPotentialInvalidCitations(bodyParagraphs);
+        let potentialInvalidCitations = findPotentialInvalidCitations([...bodyParagraphs, ...auxiliaryParagraphs]);
         console.info('Reference-list detection', {
           totalParagraphCount: paragraphs.length,
           refListStart,
@@ -1726,7 +1735,7 @@
         setProgress(70);
         showStatus('Finding in-text citations…');
         await yieldToBrowser();
-        const inTextCites = findInTextCites(bodyParagraphs, refEntries);
+        const inTextCites = findInTextCites([...bodyParagraphs, ...auxiliaryParagraphs], refEntries);
         setProgress(82);
         showStatus('Cross-referencing…');
         await yieldToBrowser();
@@ -1749,7 +1758,7 @@
         setProgress(100);
         hideStatus();
         setTimeout(hideProgress, 450);
-        renderResults(file.name, refEntries, inTextCites, report, formatIssues, forbiddenMatches, potentialInvalidCitations, officialWritingIssues, paragraphs.length, refListStart, isSwedish, languageProfile);
+        renderResults(file.name, refEntries, inTextCites, report, formatIssues, forbiddenMatches, potentialInvalidCitations, officialWritingIssues, allParagraphs.length, refListStart, isSwedish, languageProfile);
       } catch (error) {
         hideStatus();
         hideProgress();
@@ -1788,31 +1797,27 @@
     function extractParagraphLanguageEvidence(node,NS,model){const counts={sv:0,en:0,other:0,unknown:0},ranges=[];let offset=0;for(const run of [...node.getElementsByTagNameNS(NS,'r')]){const text=extractRunVisibleText(run,NS);if(!text)continue;const resolved=resolveRunLanguage(run,node,model,NS),letters=countLetters(text);counts[resolved.language]=(counts[resolved.language]||0)+letters;const prev=ranges.at(-1);if(prev&&prev.end===offset&&prev.language===resolved.language&&prev.source===resolved.source){prev.end+=text.length;prev.letters+=letters;prev.text+=text;}else ranges.push({start:offset,end:offset+text.length,language:resolved.language,rawLanguage:resolved.raw,source:resolved.source,letters,text});offset+=text.length;}return{counts,ranges};}
 
     function classifyParagraphLanguage(text, metadata) {
-      const counts={...metadata.counts};
-      const markedTotal=(counts.sv||0)+(counts.en||0)+(counts.other||0);
-      if(markedTotal>0){
-        const ranked=[['sv',counts.sv||0],['en',counts.en||0],['other',counts.other||0]].sort((a,b)=>b[1]-a[1]);
-        const share=ranked[0][1]/markedTotal;
-        if(share>=.7)return{language:ranked[0][0],confidence:share,evidence:counts,source:'word-language'};
-        return{language:'mixed',confidence:1-share,evidence:counts,source:'word-language'};
-      }
+      const counts={sv:0,en:0,other:0,unknown:0,...metadata.counts};
+      const totalLetters=Math.max(1,countLetters(text));
+      const markedTotal=counts.sv+counts.en+counts.other;
+      const metadataCoverage=Math.min(1,markedTotal/totalLetters);
       const inferred=inferLanguageFromText(text);
-      return{...inferred,evidence:{...counts,inferredSv:inferred.evidence.sv,inferredEn:inferred.evidence.en},source:inferred.language==='unknown'?'unknown':'text-fallback'};
+      if(markedTotal>0&&metadataCoverage>=.5){
+        const ranked=[['sv',counts.sv],['en',counts.en],['other',counts.other]].sort((a,b)=>b[1]-a[1]);
+        const dominance=ranked[0][1]/markedTotal;
+        if(dominance>=.7)return{language:ranked[0][0],confidence:dominance*metadataCoverage,evidence:counts,source:'word-language',metadataCoverage};
+        return{language:'mixed',confidence:Math.max(.5,1-dominance),evidence:counts,source:'word-language',metadataCoverage};
+      }
+      if(inferred.language!=='unknown')return{language:inferred.language,confidence:Math.min(.75,Math.max(inferred.confidence,metadataCoverage*.6)),evidence:{...counts,inferredSv:inferred.evidence.sv,inferredEn:inferred.evidence.en},source:markedTotal?'word-language+text-fallback':'text-fallback',metadataCoverage};
+      if(markedTotal>0){const ranked=[['sv',counts.sv],['en',counts.en],['other',counts.other]].sort((a,b)=>b[1]-a[1]),dominance=ranked[0][1]/markedTotal;return{language:dominance>=.7?ranked[0][0]:'mixed',confidence:dominance*metadataCoverage,evidence:counts,source:'sparse-word-language',metadataCoverage};}
+      return{language:'unknown',confidence:0,evidence:counts,source:'unknown',metadataCoverage:0};
     }
 
     function calculateDocumentLanguage(paragraphs) {
-      const distribution={sv:0,en:0,other:0,unknown:0,mixed:0};
-      let mixedParagraphs=0;
-      for(const paragraph of paragraphs){
-        const letters=countLetters(paragraph.text);
-        const language=paragraph.language || 'unknown';
-        distribution[language]=(distribution[language]||0)+letters;
-        if(language==='mixed')mixedParagraphs++;
-      }
-      const known=(distribution.sv||0)+(distribution.en||0)+(distribution.other||0);
-      const ranked=[['sv',distribution.sv||0],['en',distribution.en||0],['other',distribution.other||0]].sort((a,b)=>b[1]-a[1]);
-      const share=known?ranked[0][1]/known:0;
-      return{language:share>=.7?ranked[0][0]:known?'mixed':'unknown',confidence:share,distribution,mixedParagraphs,totalLetters:Object.values(distribution).reduce((a,b)=>a+b,0)};
+      const distribution={sv:0,en:0,other:0,unknown:0,mixed:0};let mixedParagraphs=0;
+      for(const paragraph of paragraphs){const letters=countLetters(paragraph.text),evidence=paragraph.languageEvidence||{},marked=(evidence.sv||0)+(evidence.en||0)+(evidence.other||0);if(paragraph.language==='mixed'){mixedParagraphs++;if(marked){distribution.sv+=evidence.sv||0;distribution.en+=evidence.en||0;distribution.other+=evidence.other||0;distribution.unknown+=Math.max(0,letters-marked);}else distribution.mixed+=letters;}else if(['sv','en','other'].includes(paragraph.language))distribution[paragraph.language]+=letters;else distribution.unknown+=letters;}
+      const total=Object.values(distribution).reduce((a,b)=>a+b,0),known=distribution.sv+distribution.en+distribution.other,ranked=[['sv',distribution.sv],['en',distribution.en],['other',distribution.other]].sort((a,b)=>b[1]-a[1]),dominantShare=total?ranked[0][1]/total:0,knownCoverage=total?known/total:0;
+      return{language:dominantShare>=.7&&knownCoverage>=.7?ranked[0][0]:knownCoverage>=.5?'mixed':'unknown',confidence:dominantShare,knownCoverage,distribution,mixedParagraphs,totalLetters:total};
     }
 
     function languageAtRange(paragraph,start,end) {
@@ -1937,7 +1942,7 @@
     }
 
     function splitAtRefList(paragraphs) {
-      const explicitEndRe = /^\s*(?:\d[\d.]*\s+)?(?:appendix|appendices|bilaga|bilagor|annex|glossary|ordlista|index)\b/i;
+      const explicitEndRe = /^\s*(?:\d[\d.]*\s+)?(?:appendix|appendices|bilaga|bilagor|annex|glossary|ordlista|index|supplementary material|supporting information|distribution list|approval record|document history)\b/i;
 
       function findExplicitEnd(startIndex) {
         for (let index = startIndex + 1; index < paragraphs.length; index++) {
@@ -2205,12 +2210,18 @@
         }
         classifyCitationSources(paragraph, citations);
       }
+      assignCitationOccurrenceOffsets(citations);
       const seen = new Set();
       return citations.filter(citation => {
-        const id = `${normaliseKey(citation.key)}|${citation.paraIndex}`;
+        const id = `${normaliseKey(citation.key)}|${citation.paraIndex}|${citation.matchStart ?? -1}|${citation.matchEnd ?? -1}`;
         if (seen.has(id)) return false;
         seen.add(id); return true;
       });
+    }
+
+    function assignCitationOccurrenceOffsets(citations) {
+      const cursors=new Map();
+      for(const citation of citations){if(Number.isFinite(citation.matchStart)&&Number.isFinite(citation.matchEnd))continue;const text=String(citation.paraText||''),cursorKey=`${citation.paraIndex}|${normaliseKey(citation.key)}`,from=cursors.get(cursorKey)||0,candidates=[];if(citation.author&&citation.year)candidates.push(`${citation.author} (${citation.year})`,`${citation.author} ${citation.year}`);candidates.push(citation.raw,citation.key);let found=null;for(const value of candidates){const candidate=String(value||'').trim();if(!candidate)continue;let start=text.indexOf(candidate,from);if(start<0)start=text.indexOf(candidate);if(start>=0){found={start,end:start+candidate.length};break;}}if(found){citation.matchStart=found.start;citation.matchEnd=found.end;cursors.set(cursorKey,found.end);}}
     }
 
     function normaliseCitationEvidence(value) {
@@ -3205,6 +3216,7 @@
           </div>
           <div>${escHtml(candidate.authors.join(', ') || 'No creator recorded')} · ${escHtml(candidate.year || 'No year')}</div>
           ${candidate.reportKey ? `<div>Report Number: ${escHtml(candidate.reportKey)}</div>` : ''}
+          ${candidate.data?.language ? `<div>Language metadata: ${escHtml(candidate.data.language)}${formatted.languageNote ? ` → ${escHtml(formatted.languageNote)}` : ' → no language note required'}</div>` : '<div>Language metadata: not recorded</div>'}
           <div>Match basis: ${escHtml(candidate.reasons.join(', ') || 'metadata similarity')}</div>
           ${candidate.url ? `<a href="${escHtml(candidate.url)}" target="_blank" rel="noopener noreferrer">Open Zotero record ↗</a>` : ''}
           <div class="zotero-formatted-reference">${formatted.html}</div>
@@ -3530,7 +3542,7 @@
             occurrences: 0, examples: [], locations: []
           });
           const group = grouped.get(key); group.occurrences++;
-          const example = item.context || item.match || '';
+          const example = item.fullContext || item.context || item.match || '';
           if (example && group.examples.length < 5 && !group.examples.includes(example)) group.examples.push(example);
           const location = item.location || `${item.sourceLabel || 'Main document'} paragraph ${(item.localIndex ?? item.paragraphIndex ?? item.paraIndex ?? 0) + 1}`;
           if (!group.locations.includes(location)) group.locations.push(location);
@@ -3560,6 +3572,7 @@
         appear in the downloaded report. Completed Zotero matches remain.
       */
       const exportedResults = results.cloneNode(true);
+      exportedResults.querySelectorAll('.rule-summary-filters').forEach(node => node.remove());
       exportedResults.querySelectorAll('.zotero-row-btn').forEach(button => {
         button.remove();
       });
@@ -3574,7 +3587,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escHtml(reportTitle)}</title>
 <style>
-body{max-width:1000px;margin:0 auto;padding:32px;font:15px/1.5 system-ui,sans-serif;color:#222}h1{font-size:1.5rem}small{color:#666}.result-section{margin:16px 0;border:1px solid #ccc;border-radius:8px}.result-section summary{padding:10px 14px;font-weight:700}.section-body{padding:14px}.section-badge{float:right}.ref-table{width:100%;border-collapse:collapse}.ref-table th,.ref-table td{padding:7px;border-bottom:1px solid #ddd;text-align:left;vertical-align:top}.ref-key,code{font-family:monospace}.tag{display:inline-block;margin:3px;padding:3px 8px;border:1px solid #d6a54a;border-radius:12px}a{color:#075fa8}
+body{max-width:1000px;margin:0 auto;padding:32px;font:15px/1.5 system-ui,sans-serif;color:#222}h1{font-size:1.5rem}small{color:#666}.result-section{margin:16px 0;border:1px solid #ccc;border-radius:8px}.result-section summary{padding:10px 14px;font-weight:700}.section-body{padding:14px}.section-badge{float:right}.ref-table{width:100%;border-collapse:collapse}.ref-table th,.ref-table td{padding:7px;border-bottom:1px solid #ddd;text-align:left;vertical-align:top}.ref-key,code,.rule-id,.rule-legacy-id{font-family:monospace}.tag{display:inline-block;margin:3px;padding:3px 8px;border:1px solid #d6a54a;border-radius:12px}a{color:#075fa8}.rule-name{display:block;font-weight:800}.rule-id{display:block;font-size:.75rem;color:#666}.rule-legacy-id{display:block;font-size:.7rem;color:#777}.rule-full-context,.citation-context{white-space:pre-wrap;overflow-wrap:anywhere}.rule-context-match,.citation-context-match{font-weight:800;background:#fff1bd;padding:0 2px;border-radius:3px}.rule-document-group{margin:12px 0;border:1px solid #ddd;border-radius:7px}.rule-document-group>summary{padding:8px;font-weight:800}.rule-document-group-body{padding:8px}.rule-detail-item{padding:9px;margin:8px 0;border:1px solid #ddd;border-radius:6px}.language-intervals{margin-top:7px;padding:7px;border-left:3px solid #aaa}.citation-location-region{display:block;font-weight:700}.citation-location-paragraph{display:block;font-size:.75rem;color:#666}
 </style>
 </head>
 <body>
@@ -4233,7 +4246,7 @@ ${exportedResults.innerHTML}
       const distribution=languageProfile.distribution||{};
       const totalLanguageLetters=Math.max(1,(distribution.sv||0)+(distribution.en||0)+(distribution.other||0)+(distribution.unknown||0)+(distribution.mixed||0));
       const languageSummary=['sv','en','other','mixed','unknown'].filter(key=>distribution[key]).map(key=>languageBadge(key,(distribution[key]||0)/totalLanguageLetters)).join(' ');
-      docInfo.innerHTML = `<strong>${escHtml(filename)}</strong> ${total} paragraphs · ${entries.length} reference list entries · ${citations.length} citation occurrences (${zoteroCitationCount} Zotero fields, ${plainCitationCount} plain text) · ${start >= 0 ? `Reference list found at paragraph ${start + 1}.` : 'No reference list section detected.'}<div class="language-summary"><strong>Primary language: ${escHtml(languageName(languageProfile.language||'unknown'))} · ${Math.round((languageProfile.confidence||0)*100)}% confidence</strong>${languageSummary}<span class="language-badge mixed">Mixed paragraphs: ${languageProfile.mixedParagraphs||0}</span></div>`;
+      docInfo.innerHTML = `<strong>${escHtml(filename)}</strong> ${total} paragraphs · ${entries.length} reference list entries · ${citations.length} citation occurrences (${zoteroCitationCount} Zotero fields, ${plainCitationCount} plain text) · ${start >= 0 ? `Reference list found at paragraph ${start + 1}.` : 'No reference list section detected.'}<div class="language-summary"><strong>Primary language: ${escHtml(languageName(languageProfile.language||'unknown'))} · ${Math.round((languageProfile.confidence||0)*100)}% of analysed text</strong><span class="language-badge unknown">Known-language coverage: ${Math.round((languageProfile.knownCoverage||0)*100)}%</span>${languageSummary}<span class="language-badge mixed">Mixed paragraphs: ${languageProfile.mixedParagraphs||0}</span></div>`;
       docInfo.classList.add('show');
       const cited = entries.filter(entry => entry.cites.length).length;
       setSummary('total', entries.length, entries.length ? 'ok' : 'warn');
@@ -4303,7 +4316,7 @@ ${exportedResults.innerHTML}
       if(citation.documentRegion==='references')section='References';
       return{section,paragraphNumber};
     }
-    function renderCitationLocation(citation){const location=citationLocation(citation);return `<span class="citation-location-region">${escHtml(location.section)}</span><span class="citation-location-paragraph">Document paragraph ${location.paragraphNumber}</span>`;}
+    function renderCitationLocation(citation){const location=citationLocation(citation);return `<span class="citation-location-region">${escHtml(location.section)}</span><span class="citation-location-paragraph">DOCX paragraph ${location.paragraphNumber}</span>`;}
 
     function runCitationDisplayRegressionTests(){
       const failures=[];
