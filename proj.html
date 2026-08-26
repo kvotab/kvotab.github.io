@@ -37,6 +37,60 @@
       *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
     }
 
+
+    /* Phase 2: bulk workflow, notifications and responsive refinements */
+    .bulk-options {
+      display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap;
+      margin: -2px 0 12px;
+    }
+    .bulk-option { min-width: 135px; }
+    .bulk-option label {
+      display: block; font-size: 0.78rem; color: var(--text-muted);
+      margin-bottom: 3px; font-weight: 600;
+    }
+    .bulk-option select {
+      width: 100%; padding: 6px 9px; border: 1px solid var(--input-border);
+      border-radius: 6px; color: var(--input-text); background: var(--input-bg);
+    }
+    .bulk-drop-active { outline: 3px dashed var(--color-kvot-bright); outline-offset: 4px; }
+    .bulk-result-text:empty::before { content: 'Converted coordinates will appear here'; color: var(--text-muted); }
+    .toast-region {
+      position: fixed; right: 16px; bottom: 16px; z-index: 10000;
+      display: flex; flex-direction: column; gap: 8px; pointer-events: none;
+    }
+    .toast {
+      max-width: 340px; padding: 10px 14px; border-radius: 7px;
+      color: #fff; background: #333; box-shadow: 0 3px 14px rgba(0,0,0,.25);
+      animation: toast-in .18s ease-out;
+    }
+    .toast.error { background: #a32118; }
+    @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } }
+    @media (max-width: 600px) {
+      .bulk-options { align-items: stretch; }
+      .bulk-option { flex: 1 1 120px; }
+      .bulk-actions .btn-bulk { flex: 1 1 auto; }
+    }
+
+
+    /* Phase 3: shareable state, structured import/results and scalable conversion */
+    .import-panel,.results-panel,.test-panel{border:1px solid var(--border-color);border-radius:7px;padding:10px 12px;margin:10px 0;background:var(--bg-secondary)}
+    .import-panel[hidden],.results-panel[hidden]{display:none}
+    .import-toolbar,.result-toolbar,.progress-row{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
+    .import-toolbar label,.result-toolbar label{font-size:.78rem;color:var(--text-muted);font-weight:600;display:flex;flex-direction:column;gap:3px}
+    .import-toolbar select,.result-toolbar select,.result-toolbar input{padding:6px 8px;border:1px solid var(--input-border);border-radius:6px;color:var(--input-text);background:var(--input-bg)}
+    .preview-scroll,.results-scroll{overflow:auto;max-height:360px;margin-top:9px;border:1px solid var(--border-color);border-radius:6px}
+    .data-table{width:100%;border-collapse:collapse;font-size:.8rem;background:var(--bg-surface)}
+    .data-table th,.data-table td{padding:6px 8px;border-bottom:1px solid var(--border-color);text-align:left;white-space:nowrap}
+    .data-table th{position:sticky;top:0;background:var(--bg-secondary);z-index:1}
+    .data-table tr[data-status="error"]{background:rgba(204,51,51,.08)}
+    .data-table tr[data-status="outside"]{background:rgba(214,145,20,.10)}
+    .data-table tr.selected{outline:2px solid var(--color-kvot-bright);outline-offset:-2px}
+    .table-action{border:1px solid var(--border-color);border-radius:4px;background:var(--bg-surface);color:var(--text-secondary);cursor:pointer;padding:3px 7px}
+    .progress-row{margin-top:10px}.progress-row progress{flex:1;min-width:180px;height:16px}.progress-row[hidden]{display:none}
+    .test-summary{font-size:.82rem;color:var(--text-muted)}
+    .test-summary.pass{color:#18794e}.test-summary.fail{color:#b42318;font-weight:600}
+    @media(max-width:600px){.import-toolbar>*,.result-toolbar>*{flex:1 1 140px}.data-table{font-size:.75rem}}
+
     /* ── Proj page layout ───────────────────────────────────────── */
     .proj-container {
       max-width: 960px;
@@ -570,7 +624,8 @@
                 <button type="button" class="compact" onclick="map_zoom_in()" title="Zoom in" aria-label="Zoom map in">+</button>
                 <button type="button" class="compact" onclick="map_zoom_out()" title="Zoom out" aria-label="Zoom map out">&minus;</button>
                 <button type="button" id="map_layer_btn" onclick="map_toggle_layer()" aria-label="Switch map layer" aria-pressed="false"><svg class="btn-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="1.8"/><ellipse cx="12" cy="12" rx="4.5" ry="10" fill="none" stroke="currentColor" stroke-width="1.2"/><line x1="2" y1="12" x2="22" y2="12" stroke="currentColor" stroke-width="1.2"/><line x1="3.5" y1="7.5" x2="20.5" y2="7.5" stroke="currentColor" stroke-width="0.8"/><line x1="3.5" y1="16.5" x2="20.5" y2="16.5" stroke="currentColor" stroke-width="0.8"/></svg> Satellite</button>
-                <button type="button" onclick="use_my_position()"><svg style="width:12px;height:18px;vertical-align:-3px;margin-right:3px" viewBox="0 0 25 41"><path d="M12.5 0C5.6 0 0 5.6 0 12.5 0 22 12.5 41 12.5 41S25 22 25 12.5C25 5.6 19.4 0 12.5 0z" fill="#2A81CB"/><circle cx="12.5" cy="12.5" r="5" fill="#fff"/></svg>My Position</button>
+                <button type="button" id="my_position_btn"><svg style="width:12px;height:18px;vertical-align:-3px;margin-right:3px" viewBox="0 0 25 41"><path d="M12.5 0C5.6 0 0 5.6 0 12.5 0 22 12.5 41 12.5 41S25 22 25 12.5C25 5.6 19.4 0 12.5 0z" fill="#2A81CB"/><circle cx="12.5" cy="12.5" r="5" fill="#fff"/></svg>My Position</button>
+                <button type="button" id="copy_share_link" title="Copy a link to this position">Copy link</button>
                 <button type="button" onclick="addPositionToBulk()"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Add to Bulk</button>
                 <button type="button" class="btn-info" id="info_button" onclick="toggle_info();" title="Toggle help text" aria-label="Toggle help text" aria-expanded="false" aria-controls="wgs84_info rt90_info sweref99_info map_info about_info">
                   <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-6h2v6zm0-8h-2V7h2v4z"/></svg>
@@ -623,7 +678,7 @@
                 </optgroup>
               </select>
             </div>
-            <span class="bulk-arrow">&rarr;</span>
+            <button type="button" class="btn-bulk bulk-arrow" id="bulk_swap" title="Swap source and target projections" aria-label="Swap source and target projections">&#8644;</button>
             <div class="bulk-sel-group">
               <label for="bulk_to">To</label>
               <select id="bulk_to" onchange="bulkClearResults()">
@@ -655,7 +710,40 @@
             </div>
           </div>
 
-          <div class="bulk-io">
+          <div class="import-panel" id="import_panel" hidden>
+            <div class="import-toolbar">
+              <label>Delimiter<select id="import_delimiter"><option value="auto">Auto-detect</option><option value="tab">Tab</option><option value="semicolon">Semicolon</option><option value="comma">Comma</option></select></label>
+              <label><span>Header row</span><select id="import_header"><option value="auto">Auto-detect</option><option value="yes">Yes</option><option value="no">No</option></select></label>
+              <label>Coordinate 1<select id="import_col1"></select></label>
+              <label>Coordinate 2<select id="import_col2"></select></label>
+              <label>ID/name column<select id="import_id"><option value="">None</option></select></label>
+            </div>
+            <div class="preview-scroll"><table class="data-table" id="import_preview"><caption class="sr-only">Import preview</caption></table></div>
+            <span class="bulk-status" id="import_status" role="status" aria-live="polite"></span>
+          </div>
+          <div class="bulk-options" aria-label="Output formatting">
+            <div class="bulk-option">
+              <label for="bulk_separator">Output separator</label>
+              <select id="bulk_separator">
+                <option value="tab">Tab</option>
+                <option value="semicolon">Semicolon</option>
+                <option value="comma">Comma</option>
+              </select>
+            </div>
+            <div class="bulk-option">
+              <label for="bulk_geo_precision">Geographic decimals</label>
+              <select id="bulk_geo_precision">
+                <option>4</option><option>5</option><option selected>6</option><option>7</option><option>8</option>
+              </select>
+            </div>
+            <div class="bulk-option">
+              <label for="bulk_grid_precision">Grid decimals</label>
+              <select id="bulk_grid_precision">
+                <option selected>0</option><option>1</option><option>2</option><option>3</option>
+              </select>
+            </div>
+          </div>
+          <div class="bulk-io" id="bulk_drop_zone">
             <div class="bulk-io-col">
               <label class="bulk-label" for="bulk_input">Input (column 1, column 2, one row per point)</label>
               <textarea id="bulk_input" aria-describedby="bulk_format_help" spellcheck="false" oninput="bulkClearResults()" placeholder="6580000&#9;1628000&#10;6590000&#9;1630000&#10;..."></textarea>
@@ -671,12 +759,31 @@
           </div>
 
           <div class="bulk-actions">
-            <button type="button" class="btn-bulk primary" onclick="bulkConvert()">Convert</button>
+            <button type="button" class="btn-bulk primary" id="bulk_convert" onclick="bulkConvert()">Convert</button>
+            <button type="button" class="btn-bulk" id="bulk_example">Example</button>
             <button type="button" class="btn-bulk" onclick="document.getElementById('bulk_file').click()">Load CSV&hellip;</button>
             <input type="file" id="bulk_file" aria-label="Choose a CSV, TSV, or text file" accept=".csv,.txt,.tsv,text/csv,text/plain,text/tab-separated-values" onchange="bulkLoadFile(event)">
+            <button type="button" class="btn-bulk" id="bulk_copy">Copy result</button>
             <button type="button" class="btn-bulk" onclick="bulkDownload()">Download CSV</button>
             <button type="button" class="btn-bulk" onclick="bulkClear()">Clear</button>
             <span class="bulk-status" id="bulk_status" role="status" aria-live="polite"></span>
+          </div>
+          <div class="progress-row" id="bulk_progress_row" hidden>
+            <progress id="bulk_progress" value="0" max="100">0%</progress>
+            <span id="bulk_progress_text">Preparing…</span>
+            <button type="button" class="btn-bulk" id="bulk_cancel">Cancel</button>
+          </div>
+          <div class="results-panel" id="results_panel" hidden>
+            <div class="result-toolbar">
+              <label>Status filter<select id="result_filter"><option value="all">All rows</option><option value="valid">Valid only</option><option value="error">Errors only</option><option value="outside">Outside zone</option></select></label>
+              <label>Search<input id="result_search" type="search" placeholder="Point ID or row content"></label>
+              <button type="button" class="btn-bulk" id="export_valid">Download valid rows</button>
+            </div>
+            <div class="results-scroll"><table class="data-table" id="results_table"><caption class="sr-only">Bulk conversion results</caption></table></div>
+          </div>
+          <div class="test-panel">
+            <button type="button" class="btn-bulk" id="run_self_tests">Run conversion self-tests</button>
+            <span class="test-summary" id="test_summary" role="status" aria-live="polite">Tests have not been run.</span>
           </div>
         </fieldset>
       </div>
@@ -698,6 +805,7 @@
   </div>
 
   <footer></footer>
+  <div class="toast-region" id="toast_region" aria-live="polite" aria-atomic="true"></div>
 
   <script src="./resources/js/latlong.js"></script>
   <script src="./resources/js/sweref99-zones.js"></script>
@@ -743,7 +851,7 @@
       return geodetic_to_grid(lat, lon);
     }
 
-    function bulkConvert() {
+    function bulkConvertLegacy() {
       var fromProj = document.getElementById('bulk_from').value;
       var toProj = document.getElementById('bulk_to').value;
       var parsed = bulkParseRows(document.getElementById('bulk_input').value);
@@ -752,6 +860,10 @@
       var fromBounds = get_zone_bounds(fromProj);
       var toBounds = get_zone_bounds(toProj);
       var status = document.getElementById('bulk_status');
+      var separatorValues = { tab: '\t', semicolon: ';', comma: ',' };
+      var separator = separatorValues[document.getElementById('bulk_separator').value] || '\t';
+      var geoPrecision = Number(document.getElementById('bulk_geo_precision').value);
+      var gridPrecision = Number(document.getElementById('bulk_grid_precision').value);
 
       if (!parsed.length) {
         bulkClearResults();
@@ -781,11 +893,11 @@
 
           var resultLine, outStr;
           if (toProj === 'wgs84_dd') {
-            resultLine = out[0].toFixed(6) + '\t' + out[1].toFixed(6);
-            outStr = out[0].toFixed(6) + ', ' + out[1].toFixed(6);
+            resultLine = out[0].toFixed(geoPrecision) + separator + out[1].toFixed(geoPrecision);
+            outStr = out[0].toFixed(geoPrecision) + ', ' + out[1].toFixed(geoPrecision);
           } else {
-            resultLine = Math.round(out[0]) + '\t' + Math.round(out[1]);
-            outStr = Math.round(out[0]) + ', ' + Math.round(out[1]);
+            resultLine = out[0].toFixed(gridPrecision) + separator + out[1].toFixed(gridPrecision);
+            outStr = out[0].toFixed(gridPrecision) + ', ' + out[1].toFixed(gridPrecision);
           }
           results.push(resultLine);
           latLons.push(ll); outOfZone.push(bad);
@@ -826,12 +938,15 @@
     }
 
     function bulkDownload() {
+      if (phase3Results.length) { exportStructured(false); return; }
       var output = document.getElementById('bulk_output').textContent;
       if (!output.trim()) return;
       var fromLabel = document.getElementById('bulk_from').selectedOptions[0].text;
       var toLabel = document.getElementById('bulk_to').selectedOptions[0].text;
       var header = '# Converted from: ' + fromLabel + ' → ' + toLabel + '\n';
-      var columnHeader = '# Columns: coordinate_1\tcoordinate_2\n';
+      var separatorValues = { tab: '\t', semicolon: ';', comma: ',' };
+      var separator = separatorValues[document.getElementById('bulk_separator').value] || '\t';
+      var columnHeader = '# Columns: coordinate_1' + separator + 'coordinate_2\n';
       var blob = new Blob(['\uFEFF' + header + columnHeader + output + '\n'], { type: 'text/csv;charset=utf-8' });
       var a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
@@ -841,6 +956,8 @@
     }
 
     function bulkClearResults() {
+      phase3Results = [];
+      var rp = document.getElementById('results_panel'); if (rp) rp.hidden = true;
       document.getElementById('bulk_output').textContent = '';
       document.getElementById('bulk_gutter').textContent = '';
       document.getElementById('bulk_status').textContent = '';
@@ -848,6 +965,9 @@
     }
 
     function bulkClear() {
+      phase3Rows = []; phase3Results = [];
+      var ip = document.getElementById('import_panel'); if (ip) ip.hidden = true;
+      var rp = document.getElementById('results_panel'); if (rp) rp.hidden = true;
       document.getElementById('bulk_input').value = '';
       document.getElementById('bulk_output').textContent = '';
       document.getElementById('bulk_gutter').textContent = '';
@@ -874,9 +994,221 @@
       bulkConvert();
     }
 
+
+
+    /* Phase 3: structured records, URL state, worker processing and tests. */
+    var phase3Rows = [], phase3Results = [], phase3Worker = null, phase3Job = 0, phase3Debounce = 0;
+    function csvParseLine(line, delimiter) {
+      var out=[], field='', quoted=false;
+      for(var i=0;i<line.length;i++){
+        var ch=line[i];
+        if(ch==='"'){ if(quoted && line[i+1]==='"'){field+='"';i++;} else quoted=!quoted; }
+        else if(ch===delimiter && !quoted){out.push(field);field='';} else field+=ch;
+      }
+      out.push(field); return out;
+    }
+    function detectDelimiter(text){
+      var lines=text.split(/\r?\n/).filter(function(x){return x.trim()&&!x.trim().startsWith('#');}).slice(0,8);
+      var choices=['\t',';',','], best='\t', score=-1;
+      choices.forEach(function(d){var counts=lines.map(function(l){return csvParseLine(l,d).length;});var common=counts.filter(function(n){return n>1&&n===counts[0];}).length;if(common>score){score=common;best=d;}}); return best;
+    }
+    function likelyHeader(fields){return fields.some(function(v){return v.trim()!=='' && !Number.isFinite(Number(v.trim().replace(',','.')));});}
+    function buildImportModel(){
+      var text=document.getElementById('bulk_input').value, panel=document.getElementById('import_panel');
+      if(!text.trim()){panel.hidden=true;phase3Rows=[];return;}
+      panel.hidden=false;
+      var mode=document.getElementById('import_delimiter').value;
+      var delimiter=mode==='auto'?detectDelimiter(text):({tab:'\t',semicolon:';',comma:','}[mode]);
+      var raw=text.split(/\r?\n/).map(function(line,i){return {line:i+1,text:line,fields:csvParseLine(line,delimiter)};}).filter(function(r){return r.text.trim()&&!r.text.trim().startsWith('#');});
+      if(!raw.length){phase3Rows=[];return;}
+      var hm=document.getElementById('import_header').value, hasHeader=hm==='yes'||(hm==='auto'&&likelyHeader(raw[0].fields));
+      var headers=hasHeader?raw.shift().fields.map(function(v,i){return v.trim()||('Column '+(i+1));}):raw[0].fields.map(function(_,i){return 'Column '+(i+1);});
+      function populate(id,includeNone){var el=document.getElementById(id),old=el.value;el.innerHTML=includeNone?'<option value="">None</option>':'';headers.forEach(function(h,i){var o=document.createElement('option');o.value=i;o.textContent=h;el.appendChild(o);});if(Array.from(el.options).some(function(o){return o.value===old;}))el.value=old;}
+      populate('import_col1',false);populate('import_col2',false);populate('import_id',true);
+      if(headers.length>1&&document.getElementById('import_col1').value===document.getElementById('import_col2').value)document.getElementById('import_col2').value='1';
+      var c1=Number(document.getElementById('import_col1').value||0), c2=Number(document.getElementById('import_col2').value||1), idv=document.getElementById('import_id').value;
+      phase3Rows=raw.map(function(r){var a=r.fields[c1],b=r.fields[c2],n1=Number(String(a||'').trim().replace(',','.')),n2=Number(String(b||'').trim().replace(',','.'));return {sourceLine:r.line,fields:r.fields,headers:headers,input1:n1,input2:n2,id:idv===''?'':(r.fields[Number(idv)]||''),raw:r.text,parseError:(!Number.isFinite(n1)||!Number.isFinite(n2))?'Coordinates must be numeric':null};});
+      renderImportPreview(headers,raw.slice(0,20));
+      document.getElementById('import_status').textContent=phase3Rows.length+' data rows detected using '+(delimiter==='\t'?'tab':delimiter===';'?'semicolon':'comma')+(hasHeader?' with header.':'.');
+    }
+    function renderImportPreview(headers,rows){var t=document.getElementById('import_preview');t.textContent='';var thead=t.createTHead(),tr=thead.insertRow();headers.forEach(function(h){var th=document.createElement('th');th.textContent=h;tr.appendChild(th);});var tb=t.createTBody();rows.forEach(function(r){var row=tb.insertRow();r.fields.forEach(function(v){row.insertCell().textContent=v;});});}
+    function scheduleImportPreview(){clearTimeout(phase3Debounce);phase3Debounce=setTimeout(buildImportModel,180);}
+    function getOutputOptions(){var m={tab:'\t',semicolon:';',comma:','};return {separator:m[document.getElementById('bulk_separator').value]||'\t',geo:Number(document.getElementById('bulk_geo_precision').value),grid:Number(document.getElementById('bulk_grid_precision').value)};}
+    function workerSource(){
+      var names=['swedish_params','grid_to_geodetic','geodetic_to_grid','get_zone_bounds','point_in_zone_bounds'];
+      var defs=names.map(function(n){if(typeof window[n]!=='function')throw new Error(n+' is unavailable');return 'var '+n+'='+window[n].toString()+';';}).join('\n');
+      return defs+`\nself.onmessage=function(e){var d=e.data, rows=d.rows, results=[];function toLL(p,a,b){if(p==='wgs84_dd')return[a,b];swedish_params(p);return grid_to_geodetic(a,b)}function fromLL(p,a,b){if(p==='wgs84_dd')return[a,b];swedish_params(p);return geodetic_to_grid(a,b)}var fb=get_zone_bounds(d.from),tb=get_zone_bounds(d.to);for(var i=0;i<rows.length;i++){var r=rows[i],x={index:i,sourceLine:r.sourceLine,id:r.id,fields:r.fields,input1:r.input1,input2:r.input2,status:'valid',error:null,outside:false};try{if(r.parseError)throw Error(r.parseError);var ll=toLL(d.from,r.input1,r.input2);if(!ll||!isFinite(ll[0])||!isFinite(ll[1])||ll[0]<-90||ll[0]>90||ll[1]<-180||ll[1]>180)throw Error('Invalid geographic result');x.lat=ll[0];x.lon=ll[1];x.outside=!!((fb&&!point_in_zone_bounds(fb,ll[0],ll[1]))||(tb&&!point_in_zone_bounds(tb,ll[0],ll[1])));var o=fromLL(d.to,ll[0],ll[1]);if(!o||!isFinite(o[0])||!isFinite(o[1]))throw Error('Conversion failed');x.output1=o[0];x.output2=o[1];if(x.outside)x.status='outside';}catch(err){x.status='error';x.error=err.message||'Conversion failed';}results.push(x);if(i%250===0)postMessage({type:'progress',job:d.job,done:i,total:rows.length});}postMessage({type:'complete',job:d.job,results:results});}`;
+    }
+    function bulkConvert(){
+      buildImportModel(); if(!phase3Rows.length){showToast('Enter at least one coordinate row.',true);return;}
+      cancelPhase3Worker(false);phase3Job++;var job=phase3Job, from=document.getElementById('bulk_from').value,to=document.getElementById('bulk_to').value;
+      var pr=document.getElementById('bulk_progress_row');pr.hidden=false;document.getElementById('bulk_progress').value=0;document.getElementById('bulk_progress_text').textContent='Preparing '+phase3Rows.length+' rows…';
+      try{var blob=new Blob([workerSource()],{type:'text/javascript'});phase3Worker=new Worker(URL.createObjectURL(blob));phase3Worker.onmessage=function(e){if(e.data.job!==job)return;if(e.data.type==='progress'){var pct=e.data.total?Math.round(e.data.done/e.data.total*100):0;document.getElementById('bulk_progress').value=pct;document.getElementById('bulk_progress_text').textContent=e.data.done+' / '+e.data.total;}else if(e.data.type==='complete'){phase3Results=e.data.results;finishPhase3Conversion();cancelPhase3Worker(false);}};phase3Worker.onerror=function(){if(phase3Worker){phase3Worker.terminate();phase3Worker=null;}convertMainThread(job,from,to);};phase3Worker.postMessage({job:job,rows:phase3Rows,from:from,to:to});}
+      catch(err){convertMainThread(job,from,to);}
+    }
+    function convertMainThread(job,from,to){
+      var i=0,res=[],fb=get_zone_bounds(from),tb=get_zone_bounds(to);function step(){if(job!==phase3Job)return;var end=Math.min(i+200,phase3Rows.length);for(;i<end;i++){var r=phase3Rows[i],x={index:i,sourceLine:r.sourceLine,id:r.id,fields:r.fields,input1:r.input1,input2:r.input2,status:'valid',error:null,outside:false};try{if(r.parseError)throw Error(r.parseError);var ll=bulkToLatLon(from,r.input1,r.input2);if(!ll||!Number.isFinite(ll[0])||!Number.isFinite(ll[1]))throw Error('Invalid geographic result');x.lat=ll[0];x.lon=ll[1];x.outside=Boolean((fb&&!point_in_zone_bounds(fb,ll[0],ll[1]))||(tb&&!point_in_zone_bounds(tb,ll[0],ll[1])));var o=bulkFromLatLon(to,ll[0],ll[1]);x.output1=o[0];x.output2=o[1];if(x.outside)x.status='outside';}catch(err){x.status='error';x.error=err.message||'Conversion failed';}res.push(x);}document.getElementById('bulk_progress').value=Math.round(i/phase3Rows.length*100);document.getElementById('bulk_progress_text').textContent=i+' / '+phase3Rows.length;if(i<phase3Rows.length)setTimeout(step,0);else{phase3Results=res;finishPhase3Conversion();}}step();
+    }
+    function cancelPhase3Worker(notify){phase3Job++;if(phase3Worker){phase3Worker.terminate();phase3Worker=null;}document.getElementById('bulk_progress_row').hidden=true;if(notify)showToast('Conversion cancelled.');}
+    function finishPhase3Conversion(){
+      document.getElementById('bulk_progress_row').hidden=true;var opt=getOutputOptions(),to=document.getElementById('bulk_to').value;
+      var lines=[],ll=[],bad=[],ins=[],outs=[];phase3Results.forEach(function(r){if(r.status==='error'){lines.push('ERROR line '+r.sourceLine+': '+r.error);return;}var a=to==='wgs84_dd'?r.output1.toFixed(opt.geo):r.output1.toFixed(opt.grid),b=to==='wgs84_dd'?r.output2.toFixed(opt.geo):r.output2.toFixed(opt.grid);lines.push(a+opt.separator+b);ll.push([r.lat,r.lon]);bad.push(r.outside);ins.push(r.input1+', '+r.input2);outs.push(a+', '+b);});document.getElementById('bulk_output').textContent=lines.join('\n');document.getElementById('bulk_gutter').textContent=lines.map(function(_,i){return i+1;}).join('\n');renderResultsTable();show_bulk_markers(ll,bad,ins,outs);var errors=phase3Results.filter(function(r){return r.status==='error';}).length;document.getElementById('bulk_status').textContent=(phase3Results.length-errors)+' of '+phase3Results.length+' rows converted'+(errors?', '+errors+' errors':'');showToast('Bulk conversion complete.');
+    }
+    function filteredResults(){var f=document.getElementById('result_filter').value,q=document.getElementById('result_search').value.toLowerCase();return phase3Results.filter(function(r){return(f==='all'||r.status===f||(f==='valid'&&r.status==='valid'))&&(!q||String(r.id).toLowerCase().includes(q)||String(r.fields).toLowerCase().includes(q));});}
+    function renderResultsTable(){var panel=document.getElementById('results_panel');panel.hidden=false;var rows=filteredResults(),t=document.getElementById('results_table');t.textContent='';var tr=t.createTHead().insertRow();['Row','ID/name','Input 1','Input 2','Output 1','Output 2','Status','Map'].forEach(function(h){var th=document.createElement('th');th.textContent=h;tr.appendChild(th);});var tb=t.createTBody(),opt=getOutputOptions(),to=document.getElementById('bulk_to').value;rows.slice(0,2000).forEach(function(r){var row=tb.insertRow();row.dataset.status=r.status;var vals=[r.sourceLine,r.id,r.input1,r.input2,r.status==='error'?'':(to==='wgs84_dd'?r.output1.toFixed(opt.geo):r.output1.toFixed(opt.grid)),r.status==='error'?'':(to==='wgs84_dd'?r.output2.toFixed(opt.geo):r.output2.toFixed(opt.grid)),r.status==='error'?r.error:(r.outside?'Outside zone':'Valid')];vals.forEach(function(v){row.insertCell().textContent=v;});var c=row.insertCell();if(r.status!=='error'){var b=document.createElement('button');b.type='button';b.className='table-action';b.textContent='Show';b.onclick=function(){focusResultOnMap(r,row);};c.appendChild(b);}});if(rows.length>2000){var row=tb.insertRow();row.insertCell().textContent='Showing first 2,000 of '+rows.length+' matching rows.';}}
+    function focusResultOnMap(r,row){document.querySelectorAll('#results_table tr.selected').forEach(function(x){x.classList.remove('selected');});row.classList.add('selected');if(window.coord_map&&typeof coord_map.setView==='function')coord_map.setView([r.lat,r.lon],Math.max(coord_map.getZoom(),14));showToast('Map centred on row '+r.sourceLine+'.');}
+    function exportStructured(validOnly){var rows=validOnly?phase3Results.filter(function(r){return r.status!=='error';}):phase3Results,opt=getOutputOptions(),to=document.getElementById('bulk_to').value,sep=opt.separator;var headers=(phase3Rows[0]&&phase3Rows[0].headers||[]).concat(['converted_1','converted_2','conversion_status','conversion_error']);function quote(v){v=String(v==null?'':v);return /["\r\n,;\t]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;}var lines=[headers.map(quote).join(sep)];rows.forEach(function(r){var a=r.status==='error'?'':(to==='wgs84_dd'?r.output1.toFixed(opt.geo):r.output1.toFixed(opt.grid)),b=r.status==='error'?'':(to==='wgs84_dd'?r.output2.toFixed(opt.geo):r.output2.toFixed(opt.grid));lines.push(r.fields.concat([a,b,r.status,r.error||'']).map(quote).join(sep));});var blob=new Blob(['\uFEFF'+lines.join('\n')+'\n'],{type:'text/csv;charset=utf-8'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=validOnly?'converted_valid_rows.csv':'converted_coordinates.csv';a.click();setTimeout(function(){URL.revokeObjectURL(a.href);},1000);}
+    function urlState(){var u=new URL(location.href);if(Number.isFinite(window.latitude)&&Number.isFinite(window.longitude)){u.searchParams.set('lat',latitude.toFixed(6));u.searchParams.set('lon',longitude.toFixed(6));}u.searchParams.set('rt90',document.getElementById('proj_rt90').value);u.searchParams.set('sweref',document.getElementById('proj_sweref99').value);if(window.coord_map&&coord_map.getZoom)u.searchParams.set('zoom',coord_map.getZoom());return u;}
+    async function copyShareLink(){try{var u=urlState();history.replaceState(null,'',u);await navigator.clipboard.writeText(u.href);showToast('Shareable link copied.');}catch(err){showToast('Could not copy the link.',true);}}
+    function applyPagePosition(lat,lon,zoom){
+      if(!Number.isFinite(lat)||Math.abs(lat)>90||!Number.isFinite(lon)||Math.abs(lon)>180)return false;
+      var applied=false;
+      try{if(typeof latlong_event==='function'){latlong_event(lat,lon);applied=true;}}catch(err){}
+      if(!applied){try{if(typeof set_lat_long==='function'){set_lat_long(lat,lon);applied=true;}}catch(err){}}
+      if(!applied){
+        var latInput=document.getElementById('lat_dd'),lonInput=document.getElementById('long_dd');
+        if(latInput&&lonInput){
+          latInput.value=lat.toFixed(6);lonInput.value=lon.toFixed(6);
+          try{if(typeof keyup_lat_dd==='function')keyup_lat_dd({target:latInput,key:'Enter',keyCode:13});}catch(err){}
+          try{if(typeof keyup_long_dd==='function')keyup_long_dd({target:lonInput,key:'Enter',keyCode:13});}catch(err){}
+          applied=true;
+        }
+      }
+      if(window.coord_map&&typeof coord_map.setView==='function')coord_map.setView([lat,lon],Math.min(18,Math.max(3,Number.isFinite(zoom)?zoom:12)));
+      return applied;
+    }
+    function loadUrlState(){
+      var q=new URLSearchParams(location.search),defaultLat=59.329323,defaultLon=18.068581;
+      var lat=q.has('lat')?Number(q.get('lat')):defaultLat;
+      var lon=q.has('lon')?Number(q.get('lon')):defaultLon;
+      var zoom=q.has('zoom')?Number(q.get('zoom')):12;
+      function setSelect(id,val){var el=document.getElementById(id);if(val&&Array.from(el.options).some(function(o){return o.value===val;}))el.value=val;}
+      setSelect('proj_rt90',q.get('rt90'));setSelect('proj_sweref99',q.get('sweref'));
+      if(!Number.isFinite(lat)||Math.abs(lat)>90)lat=defaultLat;
+      if(!Number.isFinite(lon)||Math.abs(lon)>180)lon=defaultLon;
+      if(!Number.isFinite(zoom))zoom=12;
+      setTimeout(function(){applyPagePosition(lat,lon,zoom);},0);
+    }
+    function useMyPositionReliable(){
+      var button=document.getElementById('my_position_btn');
+      if(!window.isSecureContext){showToast('Location requires HTTPS or localhost.',true);return;}
+      if(!navigator.geolocation){showToast('Geolocation is not supported by this browser.',true);return;}
+      if(button){button.disabled=true;button.setAttribute('aria-busy','true');}
+      showToast('Requesting your position…');
+      navigator.geolocation.getCurrentPosition(function(position){
+        var lat=position.coords.latitude,lon=position.coords.longitude;
+        applyPagePosition(lat,lon,15);
+        try{var u=urlState();history.replaceState(null,'',u);}catch(err){}
+        showToast('Position updated'+(Number.isFinite(position.coords.accuracy)?' (accuracy about '+Math.round(position.coords.accuracy)+' m).':'.'));
+        if(button){button.disabled=false;button.removeAttribute('aria-busy');}
+      },function(error){
+        var messages={1:'Location permission was denied. Allow location access for this site and try again.',2:'Your position is currently unavailable.',3:'The location request timed out.'};
+        showToast(messages[error.code]||'Could not determine your position.',true);
+        if(button){button.disabled=false;button.removeAttribute('aria-busy');}
+      },{enableHighAccuracy:true,timeout:12000,maximumAge:30000});
+    }
+    function runSelfTests(){var tests=[];function test(name,fn){try{fn();tests.push([name,true]);}catch(e){tests.push([name,false,e.message]);}}function near(a,b,t){if(Math.abs(a-b)>t)throw Error(a+' differs from '+b);}
+      test('Quoted CSV parser',function(){var r=csvParseLine('"A,1";2;3',';');if(r.length!==3||r[0]!=='A,1')throw Error('quoted field failed');});
+      test('WGS passthrough',function(){var r=bulkToLatLon('wgs84_dd',59.329323,18.068581);near(r[0],59.329323,1e-12);near(r[1],18.068581,1e-12);});
+      test('SWEREF 99 TM Stockholm EPSG:3006 reference',function(){var r=bulkFromLatLon('sweref_99_tm',59.329323,18.068581);near(r[0],6580745.518,0.02);near(r[1],674570.668,0.02);});
+      test('SWEREF round trip',function(){var g=bulkFromLatLon('sweref_99_tm',59.329323,18.068581),ll=bulkToLatLon('sweref_99_tm',g[0],g[1]);near(ll[0],59.329323,1e-7);near(ll[1],18.068581,1e-7);});
+      test('RT90 round trip',function(){var g=bulkFromLatLon('rt90_2.5_gon_v',59.329323,18.068581),ll=bulkToLatLon('rt90_2.5_gon_v',g[0],g[1]);near(ll[0],59.329323,2e-6);near(ll[1],18.068581,2e-6);});
+      var pass=tests.filter(function(x){return x[1];}).length,el=document.getElementById('test_summary');el.className='test-summary '+(pass===tests.length?'pass':'fail');el.textContent=pass+' of '+tests.length+' tests passed'+(pass<tests.length?': '+tests.filter(function(x){return!x[1];}).map(function(x){return x[0]+' ('+x[2]+')';}).join('; '):'.');}
+    function initPhase3(){loadUrlState();document.getElementById('my_position_btn').addEventListener('click',useMyPositionReliable);document.getElementById('copy_share_link').addEventListener('click',copyShareLink);document.getElementById('bulk_cancel').addEventListener('click',function(){cancelPhase3Worker(true);});document.getElementById('run_self_tests').addEventListener('click',runSelfTests);document.getElementById('export_valid').addEventListener('click',function(){exportStructured(true);});document.getElementById('result_filter').addEventListener('change',renderResultsTable);document.getElementById('result_search').addEventListener('input',renderResultsTable);['import_delimiter','import_header','import_col1','import_col2','import_id'].forEach(function(id){document.getElementById(id).addEventListener('change',buildImportModel);});document.getElementById('bulk_input').addEventListener('input',scheduleImportPreview);window.addEventListener('beforeunload',function(){cancelPhase3Worker(false);});}
+
+    /* Phase 2: workflow helpers. Kept inline so deployment remains one page file. */
+    function showToast(message, isError) {
+      var region = document.getElementById('toast_region');
+      var toast = document.createElement('div');
+      toast.className = 'toast' + (isError ? ' error' : '');
+      toast.textContent = message;
+      region.appendChild(toast);
+      window.setTimeout(function() { toast.remove(); }, 3200);
+    }
+    function bulkSwapProjections() {
+      var from = document.getElementById('bulk_from');
+      var to = document.getElementById('bulk_to');
+      var value = from.value; from.value = to.value; to.value = value;
+      bulkClearResults(); savePhase2Preferences();
+      showToast('Source and target projections swapped.');
+    }
+    function bulkInsertExample() {
+      var from = document.getElementById('bulk_from').value;
+      var examples = {
+        wgs84_dd: '59.329323\t18.068581\n57.708870\t11.974560',
+        'rt90_2.5_gon_v': '6580994\t1628294\n6404663\t1271233',
+        'sweref_99_tm': '6580822\t674032\n6403688\t319798'
+      };
+      document.getElementById('bulk_input').value = examples[from] || '';
+      if (!examples[from]) {
+        document.getElementById('bulk_from').value = 'wgs84_dd';
+        document.getElementById('bulk_input').value = examples.wgs84_dd;
+      }
+      bulkConvert(); showToast('Example coordinates loaded.');
+    }
+    async function bulkCopyResult() {
+      var output = document.getElementById('bulk_output').textContent;
+      if (!output.trim()) { showToast('There is no result to copy.', true); return; }
+      try {
+        await navigator.clipboard.writeText(output);
+        showToast('Result copied to the clipboard.');
+      } catch (err) {
+        var range = document.createRange();
+        range.selectNodeContents(document.getElementById('bulk_output'));
+        var selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+        showToast('Result selected. Press Ctrl+C or Command+C to copy.');
+      }
+    }
+    function savePhase2Preferences() {
+      try {
+        var ids = ['bulk_from','bulk_to','bulk_separator','bulk_geo_precision','bulk_grid_precision','proj_rt90','proj_sweref99'];
+        var data = {}; ids.forEach(function(id) { var el = document.getElementById(id); if (el) data[id] = el.value; });
+        localStorage.setItem('kvot-proj-preferences-v2', JSON.stringify(data));
+      } catch (err) { /* Storage can be unavailable in private browsing. */ }
+    }
+    function loadPhase2Preferences() {
+      try {
+        var data = JSON.parse(localStorage.getItem('kvot-proj-preferences-v2') || '{}');
+        Object.keys(data).forEach(function(id) {
+          var el = document.getElementById(id);
+          if (el && Array.from(el.options || []).some(function(o) { return o.value === data[id]; })) el.value = data[id];
+        });
+      } catch (err) { /* Ignore invalid or unavailable storage. */ }
+    }
+    function phase2LoadDroppedFile(file) {
+      if (!file) return;
+      if (file.size > 5 * 1024 * 1024) { showToast('File is larger than 5 MB.', true); return; }
+      var reader = new FileReader();
+      reader.onload = function(e) {
+        document.getElementById('bulk_input').value = e.target.result;
+        bulkClearResults(); showToast(file.name + ' loaded.');
+      };
+      reader.onerror = function() { showToast('Could not read the dropped file.', true); };
+      reader.readAsText(file, 'UTF-8');
+    }
+    function initPhase2() {
+      document.getElementById('bulk_swap').addEventListener('click', bulkSwapProjections);
+      document.getElementById('bulk_example').addEventListener('click', bulkInsertExample);
+      document.getElementById('bulk_copy').addEventListener('click', bulkCopyResult);
+      ['bulk_from','bulk_to','bulk_separator','bulk_geo_precision','bulk_grid_precision','proj_rt90','proj_sweref99'].forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) el.addEventListener('change', savePhase2Preferences);
+      });
+      document.getElementById('bulk_input').addEventListener('keydown', function(event) {
+        if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); bulkConvert(); }
+      });
+      var drop = document.getElementById('bulk_drop_zone');
+      ['dragenter','dragover'].forEach(function(type) { drop.addEventListener(type, function(e) { e.preventDefault(); drop.classList.add('bulk-drop-active'); }); });
+      ['dragleave','drop'].forEach(function(type) { drop.addEventListener(type, function(e) { e.preventDefault(); drop.classList.remove('bulk-drop-active'); }); });
+      drop.addEventListener('drop', function(e) { phase2LoadDroppedFile(e.dataTransfer.files[0]); });
+    }
+
     // Phase 1 initialization: avoid an inline body load handler and synchronize ARIA state.
     window.addEventListener('load', function() {
+      loadPhase2Preferences();
       latlong_init();
+      initPhase2();
+      initPhase3();
       var infoButton = document.getElementById('info_button');
       if (infoButton) infoButton.setAttribute('aria-expanded', 'false');
     });
