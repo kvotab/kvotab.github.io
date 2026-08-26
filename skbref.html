@@ -1582,6 +1582,24 @@
     runReviewRuleRegressionTests();
     function runConsolidatedRegressionTests(){const failures=[],all=[...FORBIDDEN_WORD_RULES,...POTENTIAL_INVALID_CITATION_RULES,...OFFICIAL_SKB_TEXT_RULES],ids=new Set();for(const rule of all){if(!rule.id||ids.has(rule.id))failures.push(`Duplicate/missing rule ID: ${rule.id}`);ids.add(rule.id);if(!rule.label)failures.push(`Missing rule name: ${rule.id}`);if((rule.legacyIds||[]).includes(rule.id))failures.push(`Canonical ID repeated as legacy: ${rule.id}`);}const highlighted=renderRuleContext({fullContext:'Use peak safely <here>.',match:'peak',matchStart:4,matchEnd:8});if(!highlighted.includes('<strong class="rule-context-match">peak</strong>')||!highlighted.includes('&lt;here&gt;'))failures.push('Rule highlight/escaping failed');const fake={styles:new Map([['Base',{id:'Base',basedOn:'',type:'paragraph',name:'Base',language:'en',rawLanguage:'en-GB'}],['Derived',{id:'Derived',basedOn:'Base',type:'paragraph',name:'Derived',language:'unknown',rawLanguage:''}]]),defaultStyles:{paragraph:'Base',character:''},docDefault:{language:'unknown',raw:'',source:'none'}};if(resolveStyleLanguage('Derived',fake)?.language!=='en')failures.push('Style inheritance failed');const sparse=classifyParagraphLanguage('This is an English paragraph with Swedish template metadata and English words.',{counts:{sv:3,en:0,other:0,unknown:70}});if(sparse.language!=='en')failures.push('Sparse metadata language fallback failed');for(const [value,expected] of [['Swedish','(In Swedish.)'],['sv-SE','(In Swedish.)'],['English',''],['','']])if(zoteroLanguageNote(value)!==expected)failures.push(`Zotero language note failed: ${value}`);const repeated=[{key:'Smith 2020',raw:'Smith 2020',paraIndex:1,paraText:'Smith 2020 and Smith 2020'},{key:'Smith 2020',raw:'Smith 2020',paraIndex:1,paraText:'Smith 2020 and Smith 2020'}];assignCitationOccurrenceOffsets(repeated);if(repeated[0].matchStart===repeated[1].matchStart)failures.push('Repeated citation offsets failed');if(failures.length)console.error('Consolidated regression tests failed:',failures);else console.info(`Consolidated regression tests passed (${all.length} rules plus feature checks).`);return failures;}
     runConsolidatedRegressionTests();
+    function runReferenceHeadingSelectionRegressionTests() {
+      const failures = [];
+      const candidates = [
+        {start:12, plausibleCount:80, headingStyleLevel:0, isInTable:true, eligible:false},
+        {start:190, plausibleCount:24, headingStyleLevel:1, isInTable:false, eligible:true}
+      ];
+      candidates.sort((first, second) =>
+        Number(second.eligible) - Number(first.eligible) ||
+        Number(second.headingStyleLevel > 0) - Number(first.headingStyleLevel > 0) ||
+        Number(first.isInTable) - Number(second.isInTable) ||
+        second.plausibleCount - first.plausibleCount || second.start - first.start
+      );
+      if (candidates[0].start !== 190) failures.push('Ordinary table-cell “Reference” incorrectly outranked styled “Referenser” heading.');
+      if (failures.length) console.error('Reference-heading selection regression tests failed:', failures);
+      else console.info('Reference-heading selection regression tests passed.');
+      return failures;
+    }
+    runReferenceHeadingSelectionRegressionTests();
 
     function runLanguageRegressionTests() {
       const failures=[];
@@ -1836,6 +1854,16 @@
         const pPr = node.getElementsByTagNameNS(NS, 'pPr')[0];
         const styleNode = pPr?.getElementsByTagNameNS(NS, 'pStyle')[0];
         const numPr = pPr?.getElementsByTagNameNS(NS, 'numPr')[0];
+        let ancestor = node.parentNode;
+        let isInTable = false;
+        let tableDepth = 0;
+        while (ancestor && ancestor !== doc) {
+          if (ancestor.nodeType === 1 && ancestor.namespaceURI === NS && ancestor.localName === 'tbl') {
+            isInTable = true;
+            tableDepth++;
+          }
+          ancestor = ancestor.parentNode;
+        }
         const extracted = extractTextFromParagraph(node, NS);
         const rawText = extracted.text;
         const leadingTrim = rawText.length - rawText.trimStart().length;
@@ -1851,6 +1879,8 @@
           text: trimmedText, fields: extracted.fields,
           hasZoteroBibliography: extracted.fields.some(field => field.isZoteroBibliography),
           style: (styleNode?.getAttribute('w:val') || '').toLowerCase(),
+          isInTable,
+          tableDepth,
           numId: numPr?.getElementsByTagNameNS(NS, 'numId')[0]?.getAttribute('w:val') || '', index,
           language:language.language, languageConfidence:language.confidence, languageSource:language.source,
           languageEvidence:language.evidence, languageRanges:languageMetadata.ranges
@@ -1962,6 +1992,24 @@
         return count;
       }
 
+      function referenceHeadingCandidate(index, end, kind) {
+        const paragraph = paragraphs[index];
+        const headingStyleLevel = headingLevel(paragraph?.style || '');
+        return {
+          start: index,
+          end,
+          kind,
+          plausibleCount: countPlausibleReferences(index, end),
+          headingStyleLevel,
+          isInTable: Boolean(paragraph?.isInTable),
+          /* A matching word in an ordinary table cell is usually a label,
+             table content, or a table-of-contents entry, not the section
+             heading. A genuine heading-styled paragraph inside a table is
+             retained as a lower-priority exceptional candidate. */
+          eligible: !paragraph?.isInTable || headingStyleLevel > 0
+        };
+      }
+
       /*
         Build all useful anchors. In some DOCX files Word's XML order does
         not match the visual order, particularly when text boxes or custom
@@ -1975,34 +2023,25 @@
 
         if (REF_HEADING_RE.test(text)) {
           const end = findExplicitEnd(index);
-          candidates.push({
-            start: index,
-            end,
-            kind: 'main heading',
-            plausibleCount: countPlausibleReferences(index, end)
-          });
+          candidates.push(referenceHeadingCandidate(index, end, 'main heading'));
         }
 
         if (/^References with abbreviated names\s*[.:]?$/i.test(text)) {
           const start = index - 1;
           const end = findExplicitEnd(start);
-          candidates.push({
-            start,
-            end,
-            kind: 'abbreviated-references heading',
-            plausibleCount: countPlausibleReferences(start, end)
-          });
+          const candidate = referenceHeadingCandidate(index, end, 'abbreviated-references heading');
+          candidate.start = start;
+          candidate.plausibleCount = countPlausibleReferences(start, end);
+          candidates.push(candidate);
         }
 
         if (/^Other references\s*[.:]?$/i.test(text)) {
           const start = index - 1;
           const end = findExplicitEnd(start);
-          candidates.push({
-            start,
-            end,
-            kind: 'other-references heading',
-            plausibleCount: countPlausibleReferences(start, end)
-          });
+          const candidate = referenceHeadingCandidate(index, end, 'other-references heading');
+          candidate.start = start;
+          candidate.plausibleCount = countPlausibleReferences(start, end);
+          candidates.push(candidate);
         }
       }
 
@@ -2011,11 +2050,15 @@
         it. This avoids choosing a visually correct but XML-last heading.
       */
       candidates.sort((first, second) =>
+        Number(second.eligible) - Number(first.eligible) ||
+        Number(second.headingStyleLevel > 0) - Number(first.headingStyleLevel > 0) ||
+        Number(first.isInTable) - Number(second.isInTable) ||
         second.plausibleCount - first.plausibleCount ||
+        second.start - first.start ||
         (second.end - second.start) - (first.end - first.start)
       );
 
-      let selected = candidates.find(candidate => candidate.plausibleCount > 0) || null;
+      let selected = candidates.find(candidate => candidate.eligible && candidate.plausibleCount > 0) || null;
 
       /* Ordinary author-year fallback if none of the headings yielded data. */
       if (!selected) {
@@ -2084,7 +2127,10 @@
         ...selected,
         paragraphCount: paragraphs.length,
         extractedParagraphCount: refListParagraphs.length,
-        firstExtractedParagraphs: refListParagraphs.slice(0, 8).map(item => item.text)
+        firstExtractedParagraphs: refListParagraphs.slice(0, 8).map(item => item.text),
+        selectedHeadingStyleLevel: selected.headingStyleLevel || 0,
+        selectedHeadingWasInTable: Boolean(selected.isInTable),
+        rejectedTableHeadingCandidates: candidates.filter(candidate => candidate.isInTable && !candidate.eligible)
       });
 
       return {
