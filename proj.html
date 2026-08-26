@@ -2,7 +2,9 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Convert coordinates between WGS 84, SWEREF 99 and RT 90, including bulk CSV conversion.">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
   <link rel="stylesheet" href="https://code.jquery.com/ui/1.13.2/themes/base/jquery-ui.css">
   <script src="https://code.jquery.com/jquery-3.6.0.js"></script>
   <script src="https://code.jquery.com/ui/1.13.2/jquery-ui.js"></script>
@@ -11,6 +13,30 @@
   <link rel="stylesheet" href="./resources/css/kvot.css">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <style>
+    /* Phase 1: accessibility, focus visibility and status feedback */
+    .skip-link {
+      position: fixed; left: 12px; top: 12px; z-index: 10000;
+      padding: 8px 12px; border-radius: 6px;
+      background: #fff; color: #111; border: 2px solid #111;
+      transform: translateY(-160%);
+    }
+    .skip-link:focus { transform: translateY(0); }
+    .sr-only {
+      position: absolute !important; width: 1px; height: 1px;
+      padding: 0; margin: -1px; overflow: hidden;
+      clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+    }
+    button:focus-visible, select:focus-visible, textarea:focus-visible,
+    input:focus-visible, a:focus-visible {
+      outline: 3px solid #f3b87b; outline-offset: 2px;
+    }
+    .field-error { border-color: #c33 !important; }
+    .bulk-status.error { color: #b42318; font-weight: 600; }
+    .bulk-status.success { color: #18794e; }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
+    }
+
     /* ── Proj page layout ───────────────────────────────────────── */
     .proj-container {
       max-width: 960px;
@@ -407,9 +433,10 @@
   </style>
   <title>Swedish Coordinate Conversions</title>
 </head>
-<body onload="latlong_init();">
+<body>
+  <a class="skip-link" href="#main-content">Skip to coordinate converter</a>
   <header></header>
-  <div class="content">
+  <main class="content" id="main-content" tabindex="-1">
     <div class="proj-container">
 
       <div class="proj-columns">
@@ -420,22 +447,23 @@
           <!-- WGS84 / SWEREF 99 lat-long -->
           <div class="proj-card" id="wgs84">
             <fieldset><legend>SWEREF 99 (~WGS 84)</legend>
+              <p class="sr-only" id="wgs84_help">Enter latitude and longitude in one of the three supported formats.</p>
               <div class="coord-grid">
                 <span></span>
                 <span class="hdr">Latitude</span>
                 <span class="hdr">Longitude</span>
 
                 <label for="lat_dd">Degrees</label>
-                <input type="text" id="lat_dd" onkeyup="keyup_lat_dd(event)" onblur="blur_lat(event);">
-                <input type="text" id="long_dd" onkeyup="keyup_long_dd(event)" onblur="blur_long(event);">
+                <input type="text" id="lat_dd" inputmode="decimal" autocomplete="off" spellcheck="false" onkeyup="keyup_lat_dd(event)" onblur="blur_lat(event);">
+                <input type="text" id="long_dd" inputmode="decimal" autocomplete="off" spellcheck="false" onkeyup="keyup_long_dd(event)" onblur="blur_long(event);">
 
                 <label for="lat_dm">Deg/min</label>
-                <input type="text" id="lat_dm" onkeyup="keyup_lat_dm(event)" onblur="blur_lat(event);">
-                <input type="text" id="long_dm" onkeyup="keyup_long_dm(event)" onblur="blur_long(event);">
+                <input type="text" id="lat_dm" inputmode="decimal" autocomplete="off" spellcheck="false" onkeyup="keyup_lat_dm(event)" onblur="blur_lat(event);">
+                <input type="text" id="long_dm" inputmode="decimal" autocomplete="off" spellcheck="false" onkeyup="keyup_long_dm(event)" onblur="blur_long(event);">
 
                 <label for="lat_dms">Deg/min/sec</label>
-                <input type="text" id="lat_dms" onkeyup="keyup_lat_dms(event)" onblur="blur_lat(event);">
-                <input type="text" id="long_dms" onkeyup="keyup_long_dms(event)" onblur="blur_long(event);">
+                <input type="text" id="lat_dms" inputmode="decimal" autocomplete="off" spellcheck="false" onkeyup="keyup_lat_dms(event)" onblur="blur_lat(event);">
+                <input type="text" id="long_dms" inputmode="decimal" autocomplete="off" spellcheck="false" onkeyup="keyup_long_dms(event)" onblur="blur_long(event);">
               </div>
               <div class="info-text" id="wgs84_info">
                 <p>Type or paste a latitude and longitude in any row &mdash; decimal
@@ -468,9 +496,9 @@
               </div>
               <div class="grid-row">
                 <label for="x_rt90">X:</label>
-                <input type="text" id="x_rt90" onkeyup="keyup_rt90(event)" onblur="blur_rt90(event)">
+                <input type="text" id="x_rt90" inputmode="decimal" autocomplete="off" spellcheck="false" onkeyup="keyup_rt90(event)" onblur="blur_rt90(event)">
                 <label for="y_rt90">Y:</label>
-                <input type="text" id="y_rt90" onkeyup="keyup_rt90(event)" onblur="blur_rt90(event)">
+                <input type="text" id="y_rt90" inputmode="decimal" autocomplete="off" spellcheck="false" onkeyup="keyup_rt90(event)" onblur="blur_rt90(event)">
               </div>
               <div class="info-text" id="rt90_info">
                 <p>Choose a projection zone and enter X/Y (7-digit integers in
@@ -513,9 +541,9 @@
               </div>
               <div class="grid-row">
                 <label for="n_sweref99">N:</label>
-                <input type="text" id="n_sweref99" onkeyup="keyup_sweref99(event)" onblur="blur_sweref99(event)">
+                <input type="text" id="n_sweref99" inputmode="decimal" autocomplete="off" spellcheck="false" onkeyup="keyup_sweref99(event)" onblur="blur_sweref99(event)">
                 <label for="e_sweref99">E:</label>
-                <input type="text" id="e_sweref99" onkeyup="keyup_sweref99(event)" onblur="blur_sweref99(event)">
+                <input type="text" id="e_sweref99" inputmode="decimal" autocomplete="off" spellcheck="false" onkeyup="keyup_sweref99(event)" onblur="blur_sweref99(event)">
               </div>
               <div class="info-text" id="sweref99_info">
                 <p>Choose a projection and enter N/E (metres), or let the page
@@ -537,14 +565,14 @@
         <!-- ── Right: map ───────────────────────────────────────── -->
         <div class="proj-right">
           <div class="map-card">
-              <div id="coord-map"></div>
+              <div id="coord-map" role="application" aria-label="Interactive coordinate map. Click the map to choose a position."></div>
               <div class="map-hint">
-                <button type="button" class="compact" onclick="map_zoom_in()" title="Zoom in">+</button>
-                <button type="button" class="compact" onclick="map_zoom_out()" title="Zoom out">&minus;</button>
-                <button type="button" id="map_layer_btn" onclick="map_toggle_layer()"><svg class="btn-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="1.8"/><ellipse cx="12" cy="12" rx="4.5" ry="10" fill="none" stroke="currentColor" stroke-width="1.2"/><line x1="2" y1="12" x2="22" y2="12" stroke="currentColor" stroke-width="1.2"/><line x1="3.5" y1="7.5" x2="20.5" y2="7.5" stroke="currentColor" stroke-width="0.8"/><line x1="3.5" y1="16.5" x2="20.5" y2="16.5" stroke="currentColor" stroke-width="0.8"/></svg> Satellite</button>
+                <button type="button" class="compact" onclick="map_zoom_in()" title="Zoom in" aria-label="Zoom map in">+</button>
+                <button type="button" class="compact" onclick="map_zoom_out()" title="Zoom out" aria-label="Zoom map out">&minus;</button>
+                <button type="button" id="map_layer_btn" onclick="map_toggle_layer()" aria-label="Switch map layer" aria-pressed="false"><svg class="btn-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="1.8"/><ellipse cx="12" cy="12" rx="4.5" ry="10" fill="none" stroke="currentColor" stroke-width="1.2"/><line x1="2" y1="12" x2="22" y2="12" stroke="currentColor" stroke-width="1.2"/><line x1="3.5" y1="7.5" x2="20.5" y2="7.5" stroke="currentColor" stroke-width="0.8"/><line x1="3.5" y1="16.5" x2="20.5" y2="16.5" stroke="currentColor" stroke-width="0.8"/></svg> Satellite</button>
                 <button type="button" onclick="use_my_position()"><svg style="width:12px;height:18px;vertical-align:-3px;margin-right:3px" viewBox="0 0 25 41"><path d="M12.5 0C5.6 0 0 5.6 0 12.5 0 22 12.5 41 12.5 41S25 22 25 12.5C25 5.6 19.4 0 12.5 0z" fill="#2A81CB"/><circle cx="12.5" cy="12.5" r="5" fill="#fff"/></svg>My Position</button>
                 <button type="button" onclick="addPositionToBulk()"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Add to Bulk</button>
-                <button class="btn-info" id="info_button" onclick="toggle_info();" title="Toggle help text">
+                <button type="button" class="btn-info" id="info_button" onclick="toggle_info();" title="Toggle help text" aria-label="Toggle help text" aria-expanded="false" aria-controls="wgs84_info rt90_info sweref99_info map_info about_info">
                   <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-6h2v6zm0-8h-2V7h2v4z"/></svg>
                 </button>
               </div>
@@ -629,12 +657,13 @@
 
           <div class="bulk-io">
             <div class="bulk-io-col">
-              <span class="bulk-label">Input (col 1, col 2 &mdash; one row per point)</span>
-              <textarea id="bulk_input" oninput="bulkClearResults()" placeholder="6580000&#9;1628000&#10;6590000&#9;1630000&#10;..."></textarea>
+              <label class="bulk-label" for="bulk_input">Input (column 1, column 2, one row per point)</label>
+              <textarea id="bulk_input" aria-describedby="bulk_format_help" spellcheck="false" oninput="bulkClearResults()" placeholder="6580000&#9;1628000&#10;6590000&#9;1630000&#10;..."></textarea>
+              <span id="bulk_format_help" class="sr-only">Use tab, semicolon, comma, or whitespace between the two coordinates. One point per line.</span>
             </div>
             <div class="bulk-io-col">
-              <span class="bulk-label">Result</span>
-              <div class="bulk-result-wrap">
+              <span class="bulk-label" id="bulk_output_label">Result</span>
+              <div class="bulk-result-wrap" role="region" aria-labelledby="bulk_output_label" tabindex="0">
                 <div class="bulk-result-gutter" id="bulk_gutter"></div>
                 <pre class="bulk-result-text" id="bulk_output"></pre>
               </div>
@@ -642,12 +671,12 @@
           </div>
 
           <div class="bulk-actions">
-            <button class="btn-bulk primary" onclick="bulkConvert()">Convert</button>
-            <button class="btn-bulk" onclick="document.getElementById('bulk_file').click()">Load CSV&hellip;</button>
-            <input type="file" id="bulk_file" accept=".csv,.txt,.tsv" onchange="bulkLoadFile(event)">
-            <button class="btn-bulk" onclick="bulkDownload()">Download CSV</button>
-            <button class="btn-bulk" onclick="bulkClear()">Clear</button>
-            <span class="bulk-status" id="bulk_status"></span>
+            <button type="button" class="btn-bulk primary" onclick="bulkConvert()">Convert</button>
+            <button type="button" class="btn-bulk" onclick="document.getElementById('bulk_file').click()">Load CSV&hellip;</button>
+            <input type="file" id="bulk_file" aria-label="Choose a CSV, TSV, or text file" accept=".csv,.txt,.tsv,text/csv,text/plain,text/tab-separated-values" onchange="bulkLoadFile(event)">
+            <button type="button" class="btn-bulk" onclick="bulkDownload()">Download CSV</button>
+            <button type="button" class="btn-bulk" onclick="bulkClear()">Clear</button>
+            <span class="bulk-status" id="bulk_status" role="status" aria-live="polite"></span>
           </div>
         </fieldset>
       </div>
@@ -659,8 +688,8 @@
         to a server. Use the <b>Bulk conversion</b> panel below to convert
         many points at once (paste rows or load a CSV).</p>
         <p>Reference data:
-          <a href="https://www.lantmateriet.se/sv/geodata/gps-geodesi-och-swepos/Referenssystem/Tvadimensionella-system/SWEREF-99-projektioner/" target="_blank">SWEREF&nbsp;99 projections</a>,
-          <a href="https://www.lantmateriet.se/sv/geodata/gps-geodesi-och-swepos/Referenssystem/Tvadimensionella-system/RT-90/" target="_blank">RT&nbsp;90</a>
+          <a href="https://www.lantmateriet.se/sv/geodata/gps-geodesi-och-swepos/Referenssystem/Tvadimensionella-system/SWEREF-99-projektioner/" target="_blank" rel="noopener noreferrer">SWEREF&nbsp;99 projections</a>,
+          <a href="https://www.lantmateriet.se/sv/geodata/gps-geodesi-och-swepos/Referenssystem/Tvadimensionella-system/RT-90/" target="_blank" rel="noopener noreferrer">RT&nbsp;90</a>
           &ndash; Lantm&auml;teriet.
         </p>
       </div>
@@ -683,15 +712,23 @@
 
     /* ── Bulk conversion logic ──────────────────────────────── */
     function bulkParseRows(text) {
-      return text.trim().split(/\r?\n/).filter(function(r) { return r.trim(); }).map(function(row) {
-        // detect separator: tab, semicolon, comma, or whitespace
+      if (!text || !text.trim()) return [];
+      return text.split(/\r?\n/).map(function(raw, index) {
+        var row = raw.trim();
+        if (!row || row.charAt(0) === '#') return null;
         var parts;
         if (row.indexOf('\t') !== -1) parts = row.split('\t');
         else if (row.indexOf(';') !== -1) parts = row.split(';');
-        else if (row.indexOf(',') !== -1) parts = row.split(',');
-        else parts = row.trim().split(/\s+/);
-        return parts.map(function(v) { return parseFloat(v.trim().replace(',', '.')); });
-      });
+        else {
+          parts = row.split(/\s+/);
+          if (parts.length < 2) parts = row.split(',');
+        }
+        parts = parts.map(function(v) { return v.trim(); }).filter(Boolean);
+        if (parts.length !== 2) return { line: index + 1, error: 'Expected exactly two coordinates' };
+        var values = parts.map(function(v) { return Number(v.replace(',', '.')); });
+        if (!values.every(Number.isFinite)) return { line: index + 1, error: 'Coordinates must be numbers' };
+        return { line: index + 1, values: values };
+      }).filter(Boolean);
     }
 
     function bulkToLatLon(proj, c1, c2) {
@@ -709,60 +746,82 @@
     function bulkConvert() {
       var fromProj = document.getElementById('bulk_from').value;
       var toProj = document.getElementById('bulk_to').value;
-      var input = document.getElementById('bulk_input').value;
-      var rows = bulkParseRows(input);
-      var results = [];
-      var errors = 0;
-      var latLons = [];
-      var outOfZone = [];
-      var inputStrs = [];
-      var outputStrs = [];
+      var parsed = bulkParseRows(document.getElementById('bulk_input').value);
+      var results = [], errors = 0, outside = 0;
+      var latLons = [], outOfZone = [], inputStrs = [], outputStrs = [];
       var fromBounds = get_zone_bounds(fromProj);
       var toBounds = get_zone_bounds(toProj);
-      var outside = 0;
-      rows.forEach(function(r, i) {
-        if (r.length < 2 || isNaN(r[0]) || isNaN(r[1])) { results.push('ERROR row ' + (i+1)); errors++; return; }
-        var ll = bulkToLatLon(fromProj, r[0], r[1]);
-        if (ll[0] == null || ll[1] == null || isNaN(ll[0]) || isNaN(ll[1])) { results.push('ERROR row ' + (i+1)); errors++; return; }
-        var bad = false;
-        if (fromBounds && !point_in_zone_bounds(fromBounds, ll[0], ll[1])) bad = true;
-        if (toBounds && !point_in_zone_bounds(toBounds, ll[0], ll[1])) bad = true;
-        if (bad) outside++;
-        latLons.push(ll);
-        outOfZone.push(bad);
-        var out = bulkFromLatLon(toProj, ll[0], ll[1]);
-        var inStr = r[0] + ', ' + r[1];
-        var outStr;
-        if (toProj === 'wgs84_dd') {
-          outStr = out[0].toFixed(6) + ', ' + out[1].toFixed(6);
-          results.push(out[0].toFixed(6) + '\t' + out[1].toFixed(6));
-        } else {
-          outStr = Math.round(out[0]) + ', ' + Math.round(out[1]);
-          results.push(Math.round(out[0]) + '\t' + Math.round(out[1]));
+      var status = document.getElementById('bulk_status');
+
+      if (!parsed.length) {
+        bulkClearResults();
+        status.textContent = 'Enter at least one coordinate row.';
+        status.className = 'bulk-status error';
+        return;
+      }
+
+      parsed.forEach(function(item) {
+        if (item.error) {
+          results.push('ERROR line ' + item.line + ': ' + item.error);
+          errors++;
+          return;
         }
-        inputStrs.push(inStr);
-        outputStrs.push(outStr);
+        var r = item.values;
+        try {
+          var ll = bulkToLatLon(fromProj, r[0], r[1]);
+          if (!ll || !Number.isFinite(ll[0]) || !Number.isFinite(ll[1]) ||
+              ll[0] < -90 || ll[0] > 90 || ll[1] < -180 || ll[1] > 180) {
+            throw new Error('Coordinate is outside the valid geographic range');
+          }
+          var bad = Boolean((fromBounds && !point_in_zone_bounds(fromBounds, ll[0], ll[1])) ||
+                            (toBounds && !point_in_zone_bounds(toBounds, ll[0], ll[1])));
+          if (bad) outside++;
+          var out = bulkFromLatLon(toProj, ll[0], ll[1]);
+          if (!out || !Number.isFinite(out[0]) || !Number.isFinite(out[1])) throw new Error('Conversion failed');
+
+          var resultLine, outStr;
+          if (toProj === 'wgs84_dd') {
+            resultLine = out[0].toFixed(6) + '\t' + out[1].toFixed(6);
+            outStr = out[0].toFixed(6) + ', ' + out[1].toFixed(6);
+          } else {
+            resultLine = Math.round(out[0]) + '\t' + Math.round(out[1]);
+            outStr = Math.round(out[0]) + ', ' + Math.round(out[1]);
+          }
+          results.push(resultLine);
+          latLons.push(ll); outOfZone.push(bad);
+          inputStrs.push(r[0] + ', ' + r[1]); outputStrs.push(outStr);
+        } catch (err) {
+          results.push('ERROR line ' + item.line + ': ' + (err.message || 'Conversion failed'));
+          errors++;
+        }
       });
+
       document.getElementById('bulk_output').textContent = results.join('\n');
-      var gutter = '';
-      for (var g = 1; g <= results.length; g++) gutter += g + '\n';
-      document.getElementById('bulk_gutter').textContent = gutter;
-      var st = rows.length + ' rows converted';
-      if (errors > 0) st += ', ' + errors + ' errors';
-      if (outside > 0) st += ', ' + outside + ' outside zone';
-      document.getElementById('bulk_status').textContent = st;
+      document.getElementById('bulk_gutter').textContent = results.map(function(_, i) { return i + 1; }).join('\n');
+      var converted = parsed.length - errors;
+      var message = converted + ' of ' + parsed.length + ' rows converted';
+      if (errors) message += ', ' + errors + ' error' + (errors === 1 ? '' : 's');
+      if (outside) message += ', ' + outside + ' outside selected zone' + (outside === 1 ? '' : 's');
+      status.textContent = message;
+      status.className = 'bulk-status ' + (errors ? 'error' : 'success');
       show_bulk_markers(latLons, outOfZone, inputStrs, outputStrs);
     }
-
     function bulkLoadFile(ev) {
       var file = ev.target.files[0];
       if (!file) return;
+      var status = document.getElementById('bulk_status');
+      if (file.size > 5 * 1024 * 1024) { status.textContent = 'File is larger than 5 MB.'; status.className = 'bulk-status error'; ev.target.value = ''; return; }
       var reader = new FileReader();
       reader.onload = function(e) {
         document.getElementById('bulk_input').value = e.target.result;
-        document.getElementById('bulk_status').textContent = file.name + ' loaded';
+        status.textContent = file.name + ' loaded';
+        status.className = 'bulk-status success';
+        bulkClearResults();
+        status.textContent = file.name + ' loaded';
+        status.className = 'bulk-status success';
       };
-      reader.readAsText(file);
+      reader.onerror = function() { status.textContent = 'Could not read the selected file.'; status.className = 'bulk-status error'; };
+      reader.readAsText(file, 'UTF-8');
       ev.target.value = ''; // allow re-upload of same file
     }
 
@@ -772,12 +831,13 @@
       var fromLabel = document.getElementById('bulk_from').selectedOptions[0].text;
       var toLabel = document.getElementById('bulk_to').selectedOptions[0].text;
       var header = '# Converted from: ' + fromLabel + ' → ' + toLabel + '\n';
-      var blob = new Blob([header + output], { type: 'text/csv;charset=utf-8' });
+      var columnHeader = '# Columns: coordinate_1\tcoordinate_2\n';
+      var blob = new Blob(['\uFEFF' + header + columnHeader + output + '\n'], { type: 'text/csv;charset=utf-8' });
       var a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
       a.download = 'converted_coordinates.csv';
       a.click();
-      URL.revokeObjectURL(a.href);
+      setTimeout(function() { URL.revokeObjectURL(a.href); }, 1000);
     }
 
     function bulkClearResults() {
@@ -813,6 +873,13 @@
       ta.value = cur ? cur + '\n' + line : line;
       bulkConvert();
     }
+
+    // Phase 1 initialization: avoid an inline body load handler and synchronize ARIA state.
+    window.addEventListener('load', function() {
+      latlong_init();
+      var infoButton = document.getElementById('info_button');
+      if (infoButton) infoButton.setAttribute('aria-expanded', 'false');
+    });
   </script>
 </body>
 </html>
