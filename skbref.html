@@ -3,15 +3,32 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.2/dist/leaflet.css">
-  <script src="https://unpkg.com/leaflet@1.9.2/dist/leaflet.js"></script>
+  <script>
+    // Set the theme before first paint so dark-mode visitors get no white flash.
+    (function () {
+      try {
+        var t = localStorage.getItem('kvot-theme');
+        if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* storage unavailable — site.js will apply the default */ }
+    })();
+  </script>
   <link rel="stylesheet" href="./resources/css/kvot.css">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
-  <title>SKB Reference Checker</title>
+  <title>SKB Reference Checker — kvot ab</title>
+  <meta name="description" content="Check citations and reference lists in a Word document against the SKB reference guides.">
+  <link rel="canonical" href="https://kvotab.se/skbref.html">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="kvot ab">
+  <meta property="og:title" content="SKB Reference Checker — kvot ab">
+  <meta property="og:description" content="Check citations and reference lists in a Word document against the SKB reference guides.">
+  <meta property="og:url" content="https://kvotab.se/skbref.html">
+  <meta property="og:image" content="https://kvotab.se/resources/images/kvot-logotype.png">
+  <meta name="twitter:card" content="summary">
   <style>
     header { position: fixed; inset: 0 0 auto; z-index: 20; background: var(--footer-bg); box-shadow: 0 2px 8px rgba(0,0,0,.12); }
     body { overflow-x: hidden; }
-    .content { min-height: calc(100vh - 104px); padding: 56px 0 48px; }
+    .content { min-height: calc(100vh - var(--header-height) - 61px); padding: calc(var(--header-height) + 13px) 0 48px; }
     #app { box-sizing: border-box; width: 100%; max-width: 980px; margin: 0 auto; padding: 28px 28px 56px; }
 
     #dropzone { margin-bottom: 24px; padding: 48px 24px; border: 2px dashed var(--border-color); border-radius: 14px; background: var(--bg-secondary); text-align: center; cursor: pointer; transition: border-color .15s, background .15s; }
@@ -20,7 +37,7 @@
     #dropzone .dz-icon { margin-bottom: 10px; font-size: 2.4rem; opacity: .6; }
     #dropzone .dz-label { margin-bottom: 4px; color: var(--text-primary); font-size: 1rem; font-weight: 600; }
     #dropzone .dz-sub { color: var(--text-muted); font-size: .84rem; }
-    .primary-btn { display: inline-block; padding: 8px 20px; border: 0; border-radius: 20px; background: var(--color-kvot-bright); color: #fff; font-size: .88rem; font-weight: 600; cursor: pointer; transition: opacity .15s; }
+    .primary-btn { display: inline-block; padding: 8px 20px; border: 0; border-radius: 20px; background: var(--color-kvot-bright); color: var(--on-bright); font-size: .88rem; font-weight: 600; cursor: pointer; transition: opacity .15s; }
     #dropzone .primary-btn { margin-top: 14px; }
     .primary-btn:hover:not(:disabled) { opacity: .88; }
     .primary-btn:disabled { cursor: wait; opacity: .6; }
@@ -347,7 +364,7 @@
       </div>
       <div id="results"></div>
     </div>
-    <div id="map"></div>
+    <div id="kvotmap"></div>
   </div>
   <footer></footer>
 
@@ -356,9 +373,9 @@
     KVOT.renderHeader('SKB Reference Checker');
     KVOT.renderNav('skbref.html');
     KVOT.renderFooter();
-    KVOT.initMap('map');
+    KVOT.initMap('kvotmap');
   </script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" integrity="sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG" crossorigin="anonymous"></script>
   <script>
     'use strict';
 

@@ -39,12 +39,10 @@ var sweden_outline = [
 ];
 
 function map_init() {
-	const accessToken = 'ENe8N6YxrncW4x3EDSJgqDZUylzlnpOMk4WCgzYhdm0sAP6l0dr6BlQaijzEznsa';
-	const styleId = 'jawg-light';
+	// Tile URL and access token live in site.js so there is only one copy.
 	map = L.map('coord-map', { attributionControl: false, zoomControl: false }).setView([59.87072523185025, 17.63431259999659], 14);
-	var streetLayer = L.tileLayer(
-		`https://tile.jawg.io/${styleId}/{z}/{x}/{y}.png?access-token=${accessToken}`, {
-		maxZoom: 22
+	var streetLayer = L.tileLayer(KVOT.TILE_URL, {
+		maxZoom: KVOT.TILE_MAX_ZOOM
 	});
 	var satelliteLayer = L.tileLayer(
 		'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {

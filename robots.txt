@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+Disallow: /resources/data/
+
+Sitemap: https://kvotab.se/sitemap.xml

@@ -6,9 +6,19 @@
     <link href="./vendors/css/jquery-ui.css" rel="stylesheet"/>
     <link href="./vendors/css/jstree/style.min.css" rel="stylesheet" />
     <link href="./resources/css/rdc.css" rel="stylesheet" />
+  <script>
+    // Set the theme before first paint so dark-mode visitors get no white flash.
+    (function () {
+      try {
+        var t = localStorage.getItem('kvot-theme');
+        if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* storage unavailable — site.js will apply the default */ }
+    })();
+  </script>
     <link href="./resources/css/kvot.css" rel="stylesheet" />  
-    <script src="./vendors/js/jquery-1.8.3.js"></script>
-    <script src="./vendors/js/jquery-ui-1.9.2.custom.js"></script>
+    <script src="./vendors/js/jquery-1.8.3.min.js"></script>
+    <script src="./vendors/js/jquery-ui-1.9.2.custom.min.js"></script>
     <script src="./vendors/js/jstree.min.js"></script>
     <script src="./resources/js/rndecaydata.js"></script>
     <script src="./resources/js/rndatatree.js"></script>
@@ -18,9 +28,16 @@
     <script src="./vendors/js/math.min.js"></script>
     <script src="./vendors/js/FileSaver.min.js"></script>
     <script src="./vendors/js/cytoscape-cxtmenu2.js"></script>
-    <link href="https://unpkg.com/leaflet@1.9.2/dist/leaflet.css" rel="stylesheet" />
-    <script src="https://unpkg.com/leaflet@1.9.2/dist/leaflet.js"></script>
-    <title>Radionuclide Decay Chains (ICRP Publication 107)</title>
+    <title>Radionuclide Decay Chains (ICRP Publication 107) — kvot ab</title>
+    <meta name="description" content="Interactive radionuclide decay chains from ICRP Publication 107, with nuclide data and activity-over-time plots.">
+    <link rel="canonical" href="https://kvotab.se/rdc.html">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="kvot ab">
+    <meta property="og:title" content="Radionuclide Decay Chains (ICRP Publication 107) — kvot ab">
+    <meta property="og:description" content="Interactive radionuclide decay chains from ICRP Publication 107, with nuclide data and activity-over-time plots.">
+    <meta property="og:url" content="https://kvotab.se/rdc.html">
+    <meta property="og:image" content="https://kvotab.se/resources/images/kvot-logotype.png">
+    <meta name="twitter:card" content="summary">
     <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
 <style>
 .visually-hidden{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}

@@ -3,9 +3,28 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <script>
+    // Set the theme before first paint so dark-mode visitors get no white flash.
+    (function () {
+      try {
+        var t = localStorage.getItem('kvot-theme');
+        if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* storage unavailable — site.js will apply the default */ }
+    })();
+  </script>
   <link rel="stylesheet" href="./resources/css/kvot.css">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <title>karaoke – kvot ab</title>
+  <meta name="description" content="Karaokespelare som visar synkade sångtexter till en YouTube-video, med enkel redigering av tidkoder.">
+  <link rel="canonical" href="https://kvotab.se/karaoke.html">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="kvot ab">
+  <meta property="og:title" content="karaoke – kvot ab">
+  <meta property="og:description" content="Karaokespelare som visar synkade sångtexter till en YouTube-video, med enkel redigering av tidkoder.">
+  <meta property="og:url" content="https://kvotab.se/karaoke.html">
+  <meta property="og:image" content="https://kvotab.se/resources/images/kvot-logotype.png">
+  <meta name="twitter:card" content="summary">
   <style>
     .karaoke-wrap {
       position: absolute;

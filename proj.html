@@ -3,13 +3,22 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Convert coordinates between WGS 84, SWEREF 99 and RT 90, including bulk CSV conversion.">
   <meta name="referrer" content="strict-origin-when-cross-origin">
-  <link rel="stylesheet" href="https://code.jquery.com/ui/1.13.2/themes/base/jquery-ui.css">
-  <script src="https://code.jquery.com/jquery-3.6.0.js"></script>
-  <script src="https://code.jquery.com/ui/1.13.2/jquery-ui.js"></script>
-  <link href="https://unpkg.com/leaflet@1.9.2/dist/leaflet.css" rel="stylesheet">
-  <script src="https://unpkg.com/leaflet@1.9.2/dist/leaflet.js"></script>
+  <link rel="stylesheet" href="https://code.jquery.com/ui/1.13.2/themes/base/jquery-ui.css" integrity="sha384-vIQIPaHJRqkO8xhnLxSZ0rHF6LyiWXbLF3grsa9pv9yDFyOPGrE1teHOuRNMJoZs" crossorigin="anonymous">
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js" integrity="sha384-vtXRMe3mGCbOeY7l30aIg8H9p3GdeSe4IFlP6G8JMa7o7lXvnz3GFKzPxzJdPfGK" crossorigin="anonymous"></script>
+  <script src="https://code.jquery.com/ui/1.13.2/jquery-ui.min.js" integrity="sha384-4D3G3GikQs6hLlLZGdz5wLFzuqE9v4yVGAcOH86y23JqBDPzj9viv0EqyfIa6YUL" crossorigin="anonymous"></script>
+  <link href="https://unpkg.com/leaflet@1.9.2/dist/leaflet.css" rel="stylesheet" integrity="sha384-kxXhFDZB0L84bBV/apPOb8zGC+fsQ1dBPpKXPUXc1zRymi4BaueVyC27iDDPdssp" crossorigin="anonymous">
+  <script src="https://unpkg.com/leaflet@1.9.2/dist/leaflet.js" integrity="sha384-zrFQ4BIvCMUhUb6NKv9N6+lGhC7+M9l7lyLfVaa/dqQtK4PLTS6LZNvAyPJvls7U" crossorigin="anonymous"></script>
+  <script>
+    // Set the theme before first paint so dark-mode visitors get no white flash.
+    (function () {
+      try {
+        var t = localStorage.getItem('kvot-theme');
+        if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* storage unavailable — site.js will apply the default */ }
+    })();
+  </script>
   <link rel="stylesheet" href="./resources/css/kvot.css">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <style>
@@ -487,7 +496,16 @@
       .bulk-arrow { transform: rotate(90deg); text-align: center; }
     }
   </style>
-  <title>Swedish Coordinate Conversions</title>
+  <title>Swedish Coordinate Conversions — kvot ab</title>
+  <meta name="description" content="Convert coordinates between WGS 84, SWEREF 99 and RT 90, including bulk conversion from a pasted list.">
+  <link rel="canonical" href="https://kvotab.se/proj.html">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="kvot ab">
+  <meta property="og:title" content="Swedish Coordinate Conversions — kvot ab">
+  <meta property="og:description" content="Convert coordinates between WGS 84, SWEREF 99 and RT 90, including bulk conversion from a pasted list.">
+  <meta property="og:url" content="https://kvotab.se/proj.html">
+  <meta property="og:image" content="https://kvotab.se/resources/images/kvot-logotype.png">
+  <meta name="twitter:card" content="summary">
 </head>
 <body>
   <a class="skip-link" href="#main-content">Skip to coordinate converter</a>
@@ -806,15 +824,17 @@
     </div><!-- /proj-container -->
   </div>
 
+  <div id="kvotmap"></div>
+
   <footer></footer>
   <div class="toast-region" id="toast_region" aria-live="polite" aria-atomic="true"></div>
 
+  <script src="./resources/js/site.js"></script>
   <script src="./resources/js/latlong.js"></script>
   <script src="./resources/js/sweref99-zones.js"></script>
   <script src="./resources/js/map.js"></script>
   <script src="./resources/js/lat_lon_conv.js"></script>
   <script src="./resources/js/gausskruger.js"></script>
-  <script src="./resources/js/site.js"></script>
   <script>
     // Capture the Leaflet instance created for the coordinate map.
     (function captureLeafletMapFactory() {
@@ -833,6 +853,7 @@
     KVOT.renderHeader('Swedish Coordinate Conversions');
     KVOT.renderNav('proj.html');
     KVOT.renderFooter();
+    KVOT.initMap('kvotmap');
 
     /* ── Bulk conversion logic ──────────────────────────────── */
     function bulkParseRows(text) {

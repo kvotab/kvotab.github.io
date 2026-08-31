@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <base href="/">
+  <title>Page not found — kvot ab</title>
+  <meta name="robots" content="noindex">
+  <script>
+    // Set the theme before first paint so dark-mode visitors get no white flash.
+    (function () {
+      try {
+        var t = localStorage.getItem('kvot-theme');
+        if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* storage unavailable — site.js will apply the default */ }
+    })();
+  </script>
+  <link rel="stylesheet" href="/resources/css/kvot.css">
+  <link rel="icon" type="image/x-icon" href="/resources/images/favicon.ico">
+</head>
+<body>
+  <header></header>
+
+  <div class="content landing">
+    <div class="landing-inner">
+      <h1>Page not found</h1>
+      <p class="tagline">
+        That address does not exist on this site. It may have been renamed, or
+        the link that brought you here may be out of date.
+      </p>
+
+      <h2>Projects</h2>
+      <div class="project-grid" id="project-grid"></div>
+
+      <p style="margin-top:32px"><a href="/">← Back to the front page</a></p>
+    </div>
+  </div>
+
+  <footer></footer>
+
+  <script src="/resources/js/site.js"></script>
+  <script>
+    KVOT.renderHeader('');
+    KVOT.renderNav('404.html');
+    KVOT.renderFooter();
+    KVOT.renderProjectCards('project-grid');
+  </script>
+</body>
+</html>

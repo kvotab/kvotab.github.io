@@ -3,28 +3,37 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SKB QA Summary</title>
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <title>SKB QA Summary — kvot ab</title>
+  <meta name="description" content="Sammanställ QA-granskningsstatus från Excel-filer med filter, statistik och export till CSV. All bearbetning sker lokalt i webbläsaren.">
+  <link rel="canonical" href="https://kvotab.se/skb_qa_summary.html">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="kvot ab">
+  <meta property="og:title" content="SKB QA Summary — kvot ab">
+  <meta property="og:description" content="Sammanställ QA-granskningsstatus från Excel-filer med filter, statistik och export till CSV. All bearbetning sker lokalt i webbläsaren.">
+  <meta property="og:url" content="https://kvotab.se/skb_qa_summary.html">
+  <meta property="og:image" content="https://kvotab.se/resources/images/kvot-logotype.png">
+  <meta name="twitter:card" content="summary">
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" integrity="sha384-vtjasyidUo0kW94K5MXDXntzOJpQgBKXmE7e2Ga4LG0skTTLeBi97eFAXsqewJjw" crossorigin="anonymous"></script>
+  <script>
+    // Set the theme before first paint so dark-mode visitors get no white flash.
+    (function () {
+      try {
+        var t = localStorage.getItem('kvot-theme');
+        if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* storage unavailable — site.js will apply the default */ }
+    })();
+  </script>
   <link rel="stylesheet" href="./resources/css/kvot.css">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <style>
-    :root {
-      /*--color-kvot-bright:#1677b8; --color-kvot-accent:#c73b32;
-      --bg-primary:#f4f6f8; --bg-secondary:#fff; --bg-surface:#eef3f7;
-      --text-primary:#17232d; --text-secondary:#455564; --text-muted:#71808d;
-      --border-color:#d6dee5; --footer-bg:#152d3d; */--ok:#3f8b55; --warn:#c47c13;
-    }/*
-    *{box-sizing:border-box} html{scroll-behavior:smooth}
-    body{margin:0;overflow-x:hidden;background:var(--bg-primary);color:var(--text-primary);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
-    header{position:fixed;inset:0 0 auto;z-index:20;height:56px;background:var(--footer-bg);box-shadow:0 2px 8px rgba(0,0,0,.15);color:#fff}
-    .header-inner{max-width:1240px;height:56px;margin:auto;padding:0 24px;display:flex;align-items:center;gap:12px}
-    .logo{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;background:var(--color-kvot-bright);font-weight:800}
-    .title{font-size:1.05rem;font-weight:750;letter-spacing:.01em}.privacy{margin-left:auto;font-size:.78rem;opacity:.75}
-    */main{min-height:calc(100vh - 56px);padding:84px 0 44px}
+    :root{--ok:#3f8b55; --warn:#c47c13}
+    main{min-height:calc(100vh - var(--header-height) - var(--footer-height));padding:24px 0 44px}
+    .privacy{margin:0 0 18px;color:var(--text-muted);font-size:.8rem}
     #app{width:100%;max-width:1240px;margin:auto;padding:0 28px}
     #dropzone{margin-bottom:22px;padding:42px 24px;border:2px dashed var(--border-color);border-radius:14px;background:var(--bg-secondary);text-align:center;cursor:pointer;transition:.15s}
     #dropzone.drag-over{border-color:var(--color-kvot-bright);background:#edf7fd}.dz-icon{font-size:2.4rem;opacity:.7}.dz-label{font-size:1.05rem;font-weight:700}.dz-sub{color:var(--text-muted);font-size:.84rem}
-    input[type=file]{display:none}.btn{padding:8px 17px;border:1px solid var(--border-color);border-radius:20px;background:var(--bg-secondary);color:var(--text-primary);font-weight:650;cursor:pointer}.btn:hover{border-color:var(--color-kvot-bright)}.btn.primary{margin-top:14px;border:0;background:var(--color-kvot-bright);color:white}.btn.danger{color:var(--color-kvot-accent)}
+    input[type=file]{display:none}.btn{padding:8px 17px;border:1px solid var(--border-color);border-radius:20px;background:var(--bg-secondary);color:var(--text-primary);font-weight:650;cursor:pointer}.btn:hover{border-color:var(--color-kvot-bright)}.btn.primary{margin-top:14px;border:0;background:var(--color-kvot-bright);color:var(--on-bright)}.btn.danger{color:var(--color-kvot-accent)}
     #status{display:none;margin:0 0 18px;padding:12px 15px;border:1px solid var(--border-color);border-radius:9px;background:var(--bg-secondary);color:var(--text-secondary)}#status.show{display:block}.error{border-color:var(--color-kvot-accent)!important;color:var(--color-kvot-accent)!important}
     #workspace{display:none}#workspace.show{display:block}.toolbar{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:16px}.file-info{color:var(--text-secondary);font-size:.86rem}.actions{display:flex;gap:8px;flex-wrap:wrap}
     .filters{display:grid;grid-template-columns:repeat(5,minmax(150px,1fr));gap:12px;margin-bottom:18px;padding:16px;border:1px solid var(--border-color);border-radius:11px;background:var(--bg-secondary)}
@@ -37,9 +46,10 @@
   </style>
 </head>
 <body>
-<header><div class="header-inner"><div class="logo">SKB</div><div class="title">QA Summary</div><div class="privacy">Bearbetning sker lokalt i webbläsaren</div></div></header>
+<header></header>
 <div class="content">
 <main><div id="app">
+  <p class="privacy">Bearbetning sker lokalt i webbläsaren — inga filer laddas upp.</p>
   <section id="dropzone" role="button" tabindex="0" aria-label="Ladda upp Excel-filer">
     <input type="file" id="file-input" accept=".xlsx" multiple>
     <div class="dz-icon">📊</div><div class="dz-label">Släpp en eller flera Excel-filer här</div>
@@ -67,15 +77,18 @@
     <div class="table-wrap"><table><thead><tr><th>Fil</th><th>Ark</th><th>Excelrad</th><th>ID</th><th>QA reviewer</th><th>QA status</th><th>QA comment</th></tr></thead><tbody id="data-body"></tbody></table><div id="empty" class="empty" hidden>Inga datapunkter matchar filtren.</div></div>
   </section>
 </div></main></div>
+
+<div id="kvotmap"></div>
+
 <footer></footer>
 <script src="./resources/js/site.js"></script>
   <script>
     KVOT.renderHeader('SKB QA summary');
     KVOT.renderNav('skb_qa_summary.html');
     KVOT.renderFooter();
-    KVOT.initMap('map');
+    KVOT.initMap('kvotmap');
   </script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" integrity="sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG" crossorigin="anonymous"></script>
 <script>
 'use strict';
 const $=id=>document.getElementById(id);

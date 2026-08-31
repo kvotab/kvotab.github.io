@@ -4,17 +4,34 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <link href="https://unpkg.com/leaflet@1.9.2/dist/leaflet.css" rel="stylesheet">
-  <script src="https://unpkg.com/leaflet@1.9.2/dist/leaflet.js"></script>
+  <script>
+    // Set the theme before first paint so dark-mode visitors get no white flash.
+    (function () {
+      try {
+        var t = localStorage.getItem('kvot-theme');
+        if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* storage unavailable — site.js will apply the default */ }
+    })();
+  </script>
   <link rel="stylesheet" href="./resources/css/kvot.css">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
-  <title>Lognormal Conversions - Enhanced</title>
+  <title>Lognormal Conversions — kvot ab</title>
+  <meta name="description" content="Convert between lognormal parameterisations — mu and sigma, geometric mean and GSD, percentiles — with plots and the underlying equations.">
+  <link rel="canonical" href="https://kvotab.se/logn.html">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="kvot ab">
+  <meta property="og:title" content="Lognormal Conversions — kvot ab">
+  <meta property="og:description" content="Convert between lognormal parameterisations — mu and sigma, geometric mean and GSD, percentiles — with plots and the underlying equations.">
+  <meta property="og:url" content="https://kvotab.se/logn.html">
+  <meta property="og:image" content="https://kvotab.se/resources/images/kvot-logotype.png">
+  <meta name="twitter:card" content="summary">
   <style>
     /* Layout */
     header  { position:fixed;top:0;left:0;right:0;z-index:20;background:var(--footer-bg);box-shadow:0 2px 8px rgba(0,0,0,.12); }
     footer  { z-index:25; }
     body    { overflow-x:hidden; }
-    .content{ padding-top:56px;padding-bottom:48px;min-height:calc(100vh - 104px); }
+    .content{ padding-top:calc(var(--header-height) + 13px);padding-bottom:48px;min-height:calc(100vh - var(--header-height) - 61px); }
     #logn   { width:100%;max-width:980px;margin:0 auto;padding:28px 28px 56px;box-sizing:border-box; }
 
     /* Sticky tab bar */
@@ -31,7 +48,7 @@
       transition:all .15s ease;user-select:none;-webkit-user-select:none;
     }
     #tabs-header a:hover:not(.disabled):not(.selected) { background:var(--bg-surface);border-color:var(--color-kvot-bright);color:var(--text-primary);box-shadow:0 1px 6px rgba(0,0,0,.06); }
-    #tabs-header a.selected { background:var(--color-kvot-bright);color:#fff;border-color:var(--color-kvot-bright);box-shadow:0 2px 8px rgba(243,184,123,.3);font-weight:600; }
+    #tabs-header a.selected { background:var(--color-kvot-bright);color:var(--on-bright);border-color:var(--color-kvot-bright);box-shadow:0 2px 8px rgba(243,184,123,.3);font-weight:600; }
     #tabs-header a.disabled { opacity:.35;cursor:not-allowed; }
     #tabs-header a.disabled-flash { box-shadow:inset 0 0 0 2px rgba(255,0,0,.15); }
     #tabs-header a:focus-visible { outline:2px solid var(--color-kvot-bright);outline-offset:2px; }
@@ -140,8 +157,8 @@
     @media (max-width:700px) { #result-summary{grid-template-columns:1fr 1fr} .stats-grid{grid-template-columns:1fr 1fr} #metric-panels{flex-direction:column} .metric-panel{min-width:0} }
     @media (max-width:480px) { #logn{padding:14px 12px 32px} .metric-panel{padding:14px} #result-summary{grid-template-columns:1fr 1fr;gap:8px} .stat-card-value{font-size:1.1rem} #chart{height:260px} .pct-cell{padding:8px 4px} .pct-v{font-size:.8rem} #tabs-header a{padding:5px 10px;font-size:.8rem} details summary.eq-summary{padding:10px 12px;font-size:.85rem} }
   </style>
-  <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
-  <script src="https://cdn.plot.ly/plotly-2.14.0.min.js"></script>
+  <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js" integrity="sha384-Wuix6BuhrWbjDBs24bXrjf4ZQ5aFeFWBuKkFekO2t8xFU0iNaLQfp2K6/1Nxveei" crossorigin="anonymous"></script>
+  <script src="https://cdn.plot.ly/plotly-2.14.0.min.js" integrity="sha384-BTJil2JHn2SXWB8JH7Bq1bnFLO6b/O7LF5eS1yEgiKH4Ha0QoTxU1RIRqnUWnxnu" crossorigin="anonymous"></script>
   <script src="./resources/js/erf.js"></script>
 </head>
 <body>
@@ -321,7 +338,7 @@
       <div id="tabs-error" style="display:none;"><p class="tab-desc">Error factor &#8805; 1 (central 90% coverage interval)</p><input class="arg" data-field="error_factor" type="number" min="1" step="any" inputmode="decimal" value="1" title="Error factor (>= 1)"></div>
 
     </div>
-    <div id="map"></div>
+    <div id="kvotmap"></div>
   </div>
   <footer></footer>
 
@@ -330,7 +347,7 @@
     KVOT.renderHeader('Lognormal Conversions');
     KVOT.renderNav('logn.html');
     KVOT.renderFooter();
-    KVOT.initMap('map');
+    KVOT.initMap('kvotmap');
   </script>
   <script>
 
@@ -1019,7 +1036,7 @@
       const eqEl=document.querySelector('#equations-details .section-body');
       const eqHtml=eqEl?eqEl.innerHTML:'';
       const preview=window.open('','_blank');
-      preview.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Lognormal \u2014 Preview</title><link rel="stylesheet" href="./resources/css/kvot.css"><style>body{font-family:Arial,sans-serif;padding:18px}pre{white-space:pre-wrap;background:var(--bg-secondary);padding:12px;border-radius:4px;border:1px solid var(--border-color);font-family:Menlo,monospace;font-size:.95rem}table{width:100%;border-collapse:collapse}td{padding:6px 10px}@media print{body{margin:12mm}}</style><script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"><\/script></head><body><h2>Lognormal \u2014 Computed Results</h2><pre>${outText.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</pre><h3>Equations</h3>${eqHtml}<script>window.onload=()=>{if(window.MathJax&&MathJax.typesetPromise)MathJax.typesetPromise();}<\/script></body></html>`);
+      preview.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Lognormal \u2014 Preview</title><link rel="stylesheet" href="./resources/css/kvot.css"><style>body{font-family:Arial,sans-serif;padding:18px}pre{white-space:pre-wrap;background:var(--bg-secondary);padding:12px;border-radius:4px;border:1px solid var(--border-color);font-family:Menlo,monospace;font-size:.95rem}table{width:100%;border-collapse:collapse}td{padding:6px 10px}@media print{body{margin:12mm}}</style><script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js"><\/script></head><body><h2>Lognormal \u2014 Computed Results</h2><pre>${outText.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</pre><h3>Equations</h3>${eqHtml}<script>window.onload=()=>{if(window.MathJax&&MathJax.typesetPromise)MathJax.typesetPromise();}<\/script></body></html>`);
       preview.document.close();
     });
 
