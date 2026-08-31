@@ -41,6 +41,7 @@ const KVOT = (() => {
     { href: './logn.html', label: 'Lognormal Conversions' },
     { href: './proj.html', label: 'Swedish Coordinate Conversions' },
     { href: './skbref.html', label: 'SKB Reference Checker' },
+    { href: './skb_qa_summary.html', label: 'SKB QA Summary' },
   ];
 
   // ── Helper: create an SVG icon ─────────────────────────────────────────────

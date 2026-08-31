@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SKB QA Summary</title>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <link rel="stylesheet" href="./resources/css/kvot.css">
+  <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
+  <style>
+    :root {
+      /*--color-kvot-bright:#1677b8; --color-kvot-accent:#c73b32;
+      --bg-primary:#f4f6f8; --bg-secondary:#fff; --bg-surface:#eef3f7;
+      --text-primary:#17232d; --text-secondary:#455564; --text-muted:#71808d;
+      --border-color:#d6dee5; --footer-bg:#152d3d; */--ok:#3f8b55; --warn:#c47c13;
+    }/*
+    *{box-sizing:border-box} html{scroll-behavior:smooth}
+    body{margin:0;overflow-x:hidden;background:var(--bg-primary);color:var(--text-primary);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+    header{position:fixed;inset:0 0 auto;z-index:20;height:56px;background:var(--footer-bg);box-shadow:0 2px 8px rgba(0,0,0,.15);color:#fff}
+    .header-inner{max-width:1240px;height:56px;margin:auto;padding:0 24px;display:flex;align-items:center;gap:12px}
+    .logo{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;background:var(--color-kvot-bright);font-weight:800}
+    .title{font-size:1.05rem;font-weight:750;letter-spacing:.01em}.privacy{margin-left:auto;font-size:.78rem;opacity:.75}
+    */main{min-height:calc(100vh - 56px);padding:84px 0 44px}
+    #app{width:100%;max-width:1240px;margin:auto;padding:0 28px}
+    #dropzone{margin-bottom:22px;padding:42px 24px;border:2px dashed var(--border-color);border-radius:14px;background:var(--bg-secondary);text-align:center;cursor:pointer;transition:.15s}
+    #dropzone.drag-over{border-color:var(--color-kvot-bright);background:#edf7fd}.dz-icon{font-size:2.4rem;opacity:.7}.dz-label{font-size:1.05rem;font-weight:700}.dz-sub{color:var(--text-muted);font-size:.84rem}
+    input[type=file]{display:none}.btn{padding:8px 17px;border:1px solid var(--border-color);border-radius:20px;background:var(--bg-secondary);color:var(--text-primary);font-weight:650;cursor:pointer}.btn:hover{border-color:var(--color-kvot-bright)}.btn.primary{margin-top:14px;border:0;background:var(--color-kvot-bright);color:white}.btn.danger{color:var(--color-kvot-accent)}
+    #status{display:none;margin:0 0 18px;padding:12px 15px;border:1px solid var(--border-color);border-radius:9px;background:var(--bg-secondary);color:var(--text-secondary)}#status.show{display:block}.error{border-color:var(--color-kvot-accent)!important;color:var(--color-kvot-accent)!important}
+    #workspace{display:none}#workspace.show{display:block}.toolbar{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:16px}.file-info{color:var(--text-secondary);font-size:.86rem}.actions{display:flex;gap:8px;flex-wrap:wrap}
+    .filters{display:grid;grid-template-columns:repeat(5,minmax(150px,1fr));gap:12px;margin-bottom:18px;padding:16px;border:1px solid var(--border-color);border-radius:11px;background:var(--bg-secondary)}
+    .field{display:flex;flex-direction:column;gap:5px}.field label{font-size:.75rem;font-weight:750;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.04em}.field select,.field input{width:100%;min-height:39px;padding:8px 9px;border:1px solid var(--border-color);border-radius:7px;background:var(--bg-primary);color:var(--text-primary)}.field select[multiple]{height:105px}.filter-tools{display:flex;justify-content:flex-end;margin-top:1px}.clear-filter{padding:0;border:0;background:transparent;color:var(--color-kvot-bright);font-size:.72rem;font-weight:700;cursor:pointer}.clear-filter:hover{text-decoration:underline}.hint{font-size:.7rem;color:var(--text-muted)}
+    .summary{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:18px}.card{padding:14px;border:1px solid var(--border-color);border-radius:10px;background:var(--bg-secondary);text-align:center}.card.ok{border-color:var(--ok);background:#f3faf5}.card.warn{border-color:#e3b76e;background:#fff9ef}.card-label{font-size:.7rem;font-weight:750;letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted)}.card-value{font:750 1.55rem ui-monospace,SFMono-Regular,Menlo,monospace}
+    .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}.panel{border:1px solid var(--border-color);border-radius:10px;background:var(--bg-secondary);overflow:hidden}.panel h2{margin:0;padding:12px 15px;border-bottom:1px solid var(--border-color);font-size:.9rem}.panel-body{padding:12px 15px;overflow:auto}
+    .table-wrap{overflow:auto;max-height:620px;border:1px solid var(--border-color);border-radius:10px;background:var(--bg-secondary)}table{width:100%;border-collapse:collapse;font-size:.84rem}th{position:sticky;top:0;z-index:2;padding:9px 10px;border-bottom:1px solid var(--border-color);background:var(--bg-surface);color:var(--text-muted);font-size:.7rem;text-align:left;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}td{padding:9px 10px;border-bottom:1px solid var(--border-color);vertical-align:top}tr:hover td{background:#f7fafc}.comment{min-width:310px;max-width:520px;white-space:pre-wrap;overflow-wrap:anywhere}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.badge{display:inline-block;padding:2px 8px;border-radius:999px;background:var(--bg-surface);white-space:nowrap}.empty{padding:24px;color:var(--text-muted);text-align:center;font-style:italic}.bar-row{display:grid;grid-template-columns:minmax(110px,1fr) 3fr 52px;gap:8px;align-items:center;margin:7px 0}.bar-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.bar-track{height:9px;border-radius:99px;background:var(--bg-surface);overflow:hidden}.bar{height:100%;background:var(--color-kvot-bright);border-radius:inherit}.bar-count{text-align:right;font-family:ui-monospace,monospace}.status-overview{display:grid;grid-template-columns:150px 1fr;gap:20px;align-items:center}.donut{--ok-share:0;width:138px;aspect-ratio:1;border-radius:50%;background:conic-gradient(var(--ok) 0 calc(var(--ok-share)*1%),#d84a43 calc(var(--ok-share)*1%) 100%);position:relative;display:grid;place-items:center;margin:auto}.donut:after{content:'';position:absolute;inset:25px;border-radius:50%;background:var(--bg-secondary)}.donut-center{position:relative;z-index:1;text-align:center}.donut-value{display:block;font:800 1.35rem ui-monospace,monospace;color:var(--ok)}.donut-label{display:block;font-size:.7rem;color:var(--text-muted);font-weight:700}.legend{display:flex;gap:12px;flex-wrap:wrap;margin:9px 0 2px}.legend-item{display:flex;align-items:center;gap:6px}.swatch{width:10px;height:10px;border-radius:50%}.swatch.ok{background:var(--ok)}.swatch.preliminary{background:#d84a43}.status-note{font-size:.75rem;color:var(--text-muted)}
+    /*footer{padding:21px;text-align:center;background:var(--footer-bg);color:#cfdae1;font-size:.78rem}*/
+    @media(max-width:900px){.filters{grid-template-columns:1fr 1fr}.summary{grid-template-columns:1fr 1fr}.grid-2{grid-template-columns:1fr}.privacy{display:none}}@media(max-width:520px){#app{padding:0 12px}.filters{grid-template-columns:1fr}.summary{grid-template-columns:1fr 1fr}.toolbar{align-items:flex-start;flex-direction:column}}
+  </style>
+</head>
+<body>
+<header><div class="header-inner"><div class="logo">SKB</div><div class="title">QA Summary</div><div class="privacy">Bearbetning sker lokalt i webbläsaren</div></div></header>
+<div class="content">
+<main><div id="app">
+  <section id="dropzone" role="button" tabindex="0" aria-label="Ladda upp Excel-filer">
+    <input type="file" id="file-input" accept=".xlsx" multiple>
+    <div class="dz-icon">📊</div><div class="dz-label">Släpp en eller flera Excel-filer här</div>
+    <div class="dz-sub">eller klicka för att välja filer, endast .xlsx</div>
+    <button class="btn primary" id="choose-btn" type="button">Välj filer</button>
+  </section>
+  <div id="status" role="status"></div>
+  <section id="workspace">
+    <div class="toolbar"><div id="file-info" class="file-info"></div><div class="actions"><button class="btn" id="export-btn">Exportera filtrerat CSV</button><button class="btn danger" id="reset-btn">Rensa allt</button></div></div>
+    <div class="filters">
+      <div class="field"><label for="file-filter">Filer</label><select id="file-filter" multiple></select><div class="filter-tools"><button type="button" class="clear-filter" data-clear="file-filter">Avmarkera alla</button></div><span class="hint">Ctrl/Cmd-klick för flera. Inget val = alla.</span></div>
+      <div class="field"><label for="sheet-filter">Ark</label><select id="sheet-filter" multiple></select><div class="filter-tools"><button type="button" class="clear-filter" data-clear="sheet-filter">Avmarkera alla</button></div><span class="hint">Visar ark som innehåller alla fyra rubriker.</span></div>
+      <div class="field"><label for="reviewer-filter">QA reviewer</label><select id="reviewer-filter" multiple></select><div class="filter-tools"><button type="button" class="clear-filter" data-clear="reviewer-filter">Avmarkera alla</button></div><span class="hint">Flera val kan kombineras.</span></div>
+      <div class="field"><label for="status-filter">QA status</label><select id="status-filter" multiple></select><div class="filter-tools"><button type="button" class="clear-filter" data-clear="status-filter">Avmarkera alla</button></div><span class="hint">Tomma värden visas som “(Tomt)”.</span></div>
+      <div class="field"><label for="id-search">Sök i ID</label><input id="id-search" type="search" placeholder="Skriv hela eller del av ID"><span class="hint">Skiftlägesokänslig delsökning.</span></div>
+    </div>
+    <div class="summary">
+      <div class="card ok"><div class="card-label">Matchande datapunkter</div><div class="card-value" id="count-rows">0</div></div>
+      <div class="card"><div class="card-label">Unika ID</div><div class="card-value" id="count-ids">0</div></div>
+      <div class="card"><div class="card-label">Filer</div><div class="card-value" id="count-files">0</div></div>
+      <div class="card"><div class="card-label">Ark</div><div class="card-value" id="count-sheets">0</div></div>
+      <div class="card warn"><div class="card-label">Med QA comment</div><div class="card-value" id="count-comments">0</div></div>
+    </div>
+    <div class="grid-2"><section class="panel"><h2>Andel OK och Preliminary</h2><div class="panel-body"><div class="status-overview"><div id="status-donut" class="donut"><div class="donut-center"><span id="ok-percent" class="donut-value">0%</span><span class="donut-label">OK</span></div></div><div><div id="status-stats"></div><div class="legend"><span class="legend-item"><i class="swatch ok"></i>OK</span><span class="legend-item"><i class="swatch preliminary"></i>Preliminary</span></div><div id="status-note" class="status-note"></div></div></div></div></section><section class="panel"><h2>Fördelning per QA reviewer</h2><div class="panel-body" id="reviewer-stats"></div></section></div>
+    <div class="table-wrap"><table><thead><tr><th>Fil</th><th>Ark</th><th>Excelrad</th><th>ID</th><th>QA reviewer</th><th>QA status</th><th>QA comment</th></tr></thead><tbody id="data-body"></tbody></table><div id="empty" class="empty" hidden>Inga datapunkter matchar filtren.</div></div>
+  </section>
+</div></main></div>
+<footer></footer>
+<script src="./resources/js/site.js"></script>
+  <script>
+    KVOT.renderHeader('SKB QA summary');
+    KVOT.renderNav('skb_qa_summary.html');
+    KVOT.renderFooter();
+    KVOT.initMap('map');
+  </script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+const required=['id','qa reviewer','qa comment','qa status'];
+let rows=[], validSheets=[], loadedFiles=[];
+const normalize=v=>String(v??'').trim().toLowerCase().replace(/\s+/g,' ');
+const display=v=>String(v??'').trim() || '(Tomt)';
+const esc=v=>String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+function showStatus(msg,error=false){$('status').textContent=msg;$('status').className='show'+(error?' error':'')}
+function hideStatus(){$('status').className=''}
+function selected(id){return new Set([...$(id).selectedOptions].map(o=>o.value))}
+function addOptions(id,values){const old=selected(id);$(id).innerHTML=[...values].sort((a,b)=>a.localeCompare(b,'sv',{numeric:true})).map(v=>`<option value="${esc(v)}"${old.has(v)?' selected':''}>${esc(v)}</option>`).join('')}
+async function loadFiles(files){
+  const accepted=[...files].filter(f=>f.name.toLowerCase().endsWith('.xlsx'));
+  if(!accepted.length){showStatus('Välj minst en .xlsx-fil.',true);return}
+  showStatus(`Läser ${accepted.length} fil(er)…`);
+  const newRows=[], newSheets=[], warnings=[];
+  for(const file of accepted){
+    try{
+      const wb=XLSX.read(await file.arrayBuffer(),{type:'array',cellDates:true});
+      let found=0;
+      for(const sheetName of wb.SheetNames){
+        const ws=wb.Sheets[sheetName];
+        const matrix=XLSX.utils.sheet_to_json(ws,{header:1,defval:'',raw:false});
+        const header=(matrix[0]||[]).map(normalize);
+        const indexes=Object.fromEntries(required.map(key=>[key,header.indexOf(key)]));
+        if(required.some(key=>indexes[key]<0)) continue;
+        found++; newSheets.push(`${file.name}|||${sheetName}`);
+        for(let i=1;i<matrix.length;i++){
+          const r=matrix[i]||[];
+          const record={file:file.name,sheet:sheetName,row:i+1,id:r[indexes['id']]??'',reviewer:r[indexes['qa reviewer']]??'',comment:r[indexes['qa comment']]??'',status:r[indexes['qa status']]??''};
+          if([record.id,record.reviewer,record.comment,record.status].every(v=>String(v).trim()==='')) continue;
+          newRows.push(record);
+        }
+      }
+      if(!found) warnings.push(`${file.name}: inga giltiga ark`);
+    }catch(e){warnings.push(`${file.name}: ${e.message}`)}
+  }
+  rows.push(...newRows); validSheets.push(...newSheets); loadedFiles.push(...accepted.map(f=>f.name));
+  refreshOptions(); $('workspace').className='show'; render();
+  showStatus(`${accepted.length} fil(er) lästa. ${newRows.length} datapunkter tillagda.${warnings.length?' Varning: '+warnings.join(' | '):''}`,warnings.length>0);
+}
+function refreshOptions(){
+  addOptions('file-filter',new Set(rows.map(r=>r.file)));
+  addOptions('sheet-filter',new Set(validSheets.map(k=>{const [f,s]=k.split('|||');return `${f} › ${s}`})));
+  addOptions('reviewer-filter',new Set(rows.map(r=>display(r.reviewer))));
+  addOptions('status-filter',new Set(rows.map(r=>display(r.status))));
+  $('file-info').textContent=`${new Set(loadedFiles).size} fil(er), ${new Set(validSheets).size} giltiga ark, ${rows.length} datapunkter totalt`;
+}
+function filtered(){
+  const fs=selected('file-filter'), ss=selected('sheet-filter'), rs=selected('reviewer-filter'), qs=selected('status-filter'), q=normalize($('id-search').value);
+  return rows.filter(r=>(!fs.size||fs.has(r.file))&&(!ss.size||ss.has(`${r.file} › ${r.sheet}`))&&(!rs.size||rs.has(display(r.reviewer)))&&(!qs.size||qs.has(display(r.status)))&&(!q||normalize(r.id).includes(q)));
+}
+function distribution(data,key){const m=new Map();for(const r of data){const v=display(r[key]);m.set(v,(m.get(v)||0)+1)}return [...m].sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0],'sv'))}
+function bars(target,items,total){$(target).innerHTML=items.length?items.map(([label,n])=>`<div class="bar-row" title="${esc(label)}: ${n}"><div class="bar-label">${esc(label)}</div><div class="bar-track"><div class="bar" style="width:${total?100*n/total:0}%"></div></div><div class="bar-count">${n}</div></div>`).join(''):'<div class="empty">Ingen statistik att visa.</div>'}
+function render(){
+  const data=filtered();
+  $('count-rows').textContent=data.length;$('count-ids').textContent=new Set(data.map(r=>normalize(r.id)).filter(Boolean)).size;$('count-files').textContent=new Set(data.map(r=>r.file)).size;$('count-sheets').textContent=new Set(data.map(r=>`${r.file}|||${r.sheet}`)).size;$('count-comments').textContent=data.filter(r=>String(r.comment).trim()).length;
+  const okCount=data.filter(r=>normalize(r.status)==='ok').length, preliminaryCount=data.filter(r=>normalize(r.status)==='preliminary').length, statusTotal=okCount+preliminaryCount, okShare=statusTotal?100*okCount/statusTotal:0; $('ok-percent').textContent=`${okShare.toLocaleString('sv-SE',{maximumFractionDigits:1})}%`; $('status-donut').style.setProperty('--ok-share',okShare); $('status-note').textContent=statusTotal?`${okCount} OK av ${statusTotal} statusklassificerade datapunkter.`:'Inga OK eller Preliminary i urvalet.'; bars('status-stats',[['OK',okCount],['Preliminary',preliminaryCount]],statusTotal);bars('reviewer-stats',distribution(data,'reviewer'),data.length);
+  $('data-body').innerHTML=data.map(r=>`<tr><td>${esc(r.file)}</td><td>${esc(r.sheet)}</td><td class="mono">${r.row}</td><td class="mono">${esc(r.id)}</td><td>${esc(display(r.reviewer))}</td><td><span class="badge">${esc(display(r.status))}</span></td><td class="comment">${esc(r.comment)}</td></tr>`).join('');
+  $('empty').hidden=data.length>0;
+}
+function csvCell(v){return `"${String(v??'').replace(/"/g,'""')}"`}
+function exportCsv(){const data=filtered(),head=['Fil','Ark','Excelrad','ID','QA reviewer','QA status','QA comment'];const body=data.map(r=>[r.file,r.sheet,r.row,r.id,r.reviewer,r.status,r.comment]);const csv='\ufeff'+[head,...body].map(a=>a.map(csvCell).join(';')).join('\r\n');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='skb_qa_filtered.csv';a.click();URL.revokeObjectURL(url)}
+function reset(){rows=[];validSheets=[];loadedFiles=[];$('file-input').value='';$('workspace').className='';$('id-search').value='';hideStatus();['file-filter','sheet-filter','reviewer-filter','status-filter'].forEach(id=>$(id).innerHTML='')}
+const dz=$('dropzone'),fi=$('file-input');
+dz.addEventListener('click',e=>{if(!e.target.closest('button'))fi.click()});dz.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();fi.click()}});$('choose-btn').addEventListener('click',e=>{e.stopPropagation();fi.click()});fi.addEventListener('change',()=>loadFiles(fi.files));dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('drag-over')});dz.addEventListener('dragleave',()=>dz.classList.remove('drag-over'));dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('drag-over');loadFiles(e.dataTransfer.files)});
+['file-filter','sheet-filter','reviewer-filter','status-filter'].forEach(id=>$(id).addEventListener('change',render));document.querySelectorAll('.clear-filter').forEach(button=>button.addEventListener('click',()=>{[...$(button.dataset.clear).options].forEach(option=>option.selected=false);render()}));$('id-search').addEventListener('input',render);$('export-btn').addEventListener('click',exportCsv);$('reset-btn').addEventListener('click',reset);
+</script>
+</body>
+</html>
