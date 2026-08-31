@@ -198,7 +198,6 @@ const KVOT = (() => {
     menu.innerHTML = `
       <ul>
         <li><a href="./index.html">home</a></li>
-        <li><a href="./index.html#links">links</a></li>
         <li><div class="nav-divider"></div></li>
         <li><div class="nav-section-label">projects</div></li>
         ${projectLinks}
