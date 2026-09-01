@@ -165,9 +165,15 @@ function getProbabilisticTimeMatrix(file) {
  */
 function getProbTimeIterLength(timeRow) {
   if (!Array.isArray(timeRow) || timeRow.length === 0) return 0;
+  /*
+    Strictly increasing, matching the fallback scan in
+    getProbabilisticTimeMatrix. Accepting equal values here made padding that
+    repeats the final time value count as valid data in this function but not in
+    that one, so the same row got two different lengths.
+  */
   let len = 1;
   for (let i = 1; i < timeRow.length; i++) {
-    if (timeRow[i] >= timeRow[i - 1]) {
+    if (timeRow[i] > timeRow[i - 1]) {
       len = i + 1;
     } else {
       break;

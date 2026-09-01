@@ -20,7 +20,35 @@ function wildcardToRegex(pattern) {
  * @returns {boolean}
  */
 function isPathSearchTerm(term) {
-  return /[\/\.\s]/.test(String(term));
+  /*
+    A slash is unambiguous. A dot or a space is not: nuclide and dataset names
+    routinely contain dots (Am-241.total, Kd_Mo_2.5), and treating those as
+    separators rewrote the term to 'Am-241/total', which then matched neither
+    the label nor the full path. Only treat dots and spaces as separators when
+    the term does not already match a name as written.
+  */
+  const value = String(term);
+  if (value.includes('/')) return true;
+  if (!/[.\s]/.test(value)) return false;
+  return !labelMatchesSomeTreeItem(value);
+}
+
+/**
+ * True when the term, taken literally, already matches a visible tree label.
+ * Used to decide that a dot belongs to a name rather than separating a path.
+ *
+ * @param {string} term
+ * @returns {boolean}
+ */
+function labelMatchesSomeTreeItem(term) {
+  const tree = document.getElementById('tree');
+  if (!tree) return false;
+  let regex;
+  try { regex = wildcardToRegex(term); } catch (e) { return false; }
+  for (const label of tree.querySelectorAll('.tree-label')) {
+    if (regex.test(getLabelText(label))) return true;
+  }
+  return false;
 }
 
 /**
@@ -235,8 +263,12 @@ function filterTree(searchTerm) {
       const labelSearch = isPathSearch ? labelSegmentFromPathTerm(searchTerm) : searchTerm;
       setLabelHtml(label, highlightText(text, labelSearch));
     } else {
+      const wasMatch = item.classList.contains('search-match');
       item.classList.remove('search-match');
-      setLabelHtml(label, escapeHtml(text));
+      /* Only rewrite the label when it actually carries highlight markup. */
+      if (wasMatch || label.querySelector('.search-highlight')) {
+        setLabelHtml(label, escapeHtml(text));
+      }
     }
   });
   
@@ -339,8 +371,7 @@ async function expandAndLoadPath(fileKey, targetPath) {
 
   for (let i = 0; i < parts.length; i++) {
     cur += '/' + parts[i];
-    const groupItems = Array.from(tree.querySelectorAll('.tree-item.group'));
-    const groupItem = groupItems.find(el => el.getAttribute('data-path') === cur && (el.getAttribute('data-file') === fileKey || !el.getAttribute('data-file')));
+    const groupItem = findTreeItem(cur, { fileKey, allowMissingFile: true, extra: '.group', root: tree });
     if (!groupItem) break; // cannot proceed if ancestor DOM node missing
 
     const childrenDiv = groupItem.nextElementSibling;

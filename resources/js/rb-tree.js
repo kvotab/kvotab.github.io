@@ -11,11 +11,13 @@
  * @param {string} path - HDF5 path of the group
  * @returns {void}
  */
-function toggleGroupExpansion(event, path) {
+function toggleGroupExpansion(event, path, toggleArg) {
   event.stopPropagation();
-  
-  const toggle = event.currentTarget;
-  const groupItem = toggle.closest('.tree-item.group');
+
+  /* Delegation passes the arrow explicitly; currentTarget would be #tree. */
+  const toggle = toggleArg || event.currentTarget;
+  const groupItem = toggle && toggle.closest ? toggle.closest('.tree-item.group') : null;
+  if (!groupItem) return;
   const childrenDiv = groupItem.nextElementSibling;
   
   if (childrenDiv && childrenDiv.classList.contains('tree-group-children')) {
@@ -31,7 +33,8 @@ function toggleGroupExpansion(event, path) {
         // If intersect/union mode is active and this path has no allowed descendants,
         // mark it as loaded-empty and avoid the load to save work.
         const pathFilter = window._currentIntersectedPaths || null;
-        if (pathFilter && !Array.from(pathFilter).some(p => p === path || p.startsWith(path + '/'))) {
+        const filterIndex = pathFilter ? getPathChildIndex(pathFilter) : null;
+        if (filterIndex && !filterIndex.has(path)) {
           childrenDiv.innerHTML = '<div style="color:#999;padding:8px;font-size:12px;">(empty)</div>';
           childrenDiv.setAttribute('data-loaded', 'true');
         } else {
@@ -309,9 +312,10 @@ function selectDataset(path, evt) {
  * @param {Event} event - Click event on the group element
  * @returns {void}
  */
-function toggleGroup(event) {
+function toggleGroup(event, groupItemArg) {
   event.stopPropagation();
-  const groupItem = event.currentTarget;
+  /* Delegation passes the row explicitly; currentTarget would be #tree. */
+  const groupItem = groupItemArg || event.currentTarget;
 
   if (event.target.classList.contains('tree-toggle')) {
     return;
@@ -822,7 +826,7 @@ function ensureTreeWorkerReady(timeoutMs = 5000) {
  * @param {Set|null} intersectedPaths - optional filter set
  * @returns {Promise<number>} total items
  */
-async function countTreeItems(group, intersectedPaths = null) {
+async function countTreeItems(group, intersectedPaths = null, prefix = '') {
   let cnt = 0;
   try {
     const keys = (typeof group.keys === 'function') ? Array.from(group.keys()).sort() : [];
@@ -833,12 +837,18 @@ async function countTreeItems(group, intersectedPaths = null) {
       try {
         const obj = group.get(key);
         if (!obj) continue;
-        const path = group === loadedFiles[Object.keys(loadedFiles)[0]] ? `/${key}` : `${group.name || ''}/${key}`;
+        /*
+          The prefix is carried down explicitly, the same way buildTree does it.
+          Deriving it from `group.name` and comparing the group against the
+          first key of loadedFiles produced '//key' for every file except the
+          one loaded first, so those paths never matched the intersected set.
+        */
+        const path = prefix ? `${prefix}/${key}` : `/${key}`;
         if (intersectedPaths && !intersectedPaths.has(path)) continue;
         // count this node
         cnt += 1;
         if (String(obj.type).toLowerCase() === 'group') {
-          cnt += await countTreeItems(obj, intersectedPaths);
+          cnt += await countTreeItems(obj, intersectedPaths, path);
         }
       } catch (e) {
         // ignore individual errors while counting
@@ -1068,9 +1078,16 @@ async function refreshTreeStructure() {
     searchContainer.classList.remove('visible');
     try { tree && tree.removeAttribute('aria-busy'); } catch(e) {}
   } finally {
-    // Ensure active refresh token is cleared so UI (cancel button) is hidden
-    window._treeRefreshId = 0;
-    window._treeRefreshCancelled = false;
+    /*
+      Clear the token only when this invocation is still the current refresh.
+      Clearing unconditionally let a finishing refresh zero the token of a newer
+      one, which then saw `_treeRefreshId !== _myTreeRefreshId` and aborted
+      itself — losing the newest tree.
+    */
+    if (window._treeRefreshId === _myTreeRefreshId) {
+      window._treeRefreshId = 0;
+      window._treeRefreshCancelled = false;
+    }
   }
 }
 
@@ -1092,6 +1109,49 @@ refreshTreeStructure = async function() {
  * @param {boolean} [isNested=false] - Whether this is a nested call (not root)
  * @returns {Promise<DocumentFragment>} DocumentFragment containing tree nodes
  */
+/*
+  Intersect and union modes previously scanned the whole intersected-path set
+  once per group — twice, in fact: once to collect the allowed child names and
+  once to decide whether the group was expandable, the latter also allocating a
+  full array copy of the set. That is O(paths x groups); at 20 000 paths and
+  2 000 groups it measured about 143 ms for one of the two scans alone, on the
+  main thread. Indexing the set by parent path once makes both a single Map hit.
+*/
+const _pathChildIndexCache = new WeakMap();
+
+/**
+ * Build (or reuse) a parent -> child-names index for a set of full HDF5 paths.
+ * The root's parent key is '' so it matches buildTree's empty top-level prefix.
+ *
+ * @param {Set<string>} paths
+ * @returns {Map<string, Set<string>>|null}
+ */
+function getPathChildIndex(paths) {
+  if (!paths || typeof paths[Symbol.iterator] !== 'function') return null;
+  const cached = _pathChildIndexCache.get(paths);
+  if (cached) return cached;
+
+  const index = new Map();
+  for (const full of paths) {
+    if (typeof full !== 'string' || full.charCodeAt(0) !== 47 /* '/' */) continue;
+    let start = 1;
+    let parent = '';
+    for (;;) {
+      const slash = full.indexOf('/', start);
+      const name = slash === -1 ? full.slice(start) : full.slice(start, slash);
+      if (!name) break;
+      let bucket = index.get(parent);
+      if (!bucket) { bucket = new Set(); index.set(parent, bucket); }
+      bucket.add(name);
+      if (slash === -1) break;
+      parent = full.slice(0, slash);
+      start = slash + 1;
+    }
+  }
+  _pathChildIndexCache.set(paths, index);
+  return index;
+}
+
 async function buildTree(group, prefix = '', isNested = false, fileName = '', intersectedPaths = null, fileKey = null, progressCb = null, lazyLoad = false, maxDepth = Infinity, pathOwnership = null) {
   // Return a DocumentFragment containing tree node elements (not HTML string).
   const frag = document.createDocumentFragment();
@@ -1112,13 +1172,13 @@ async function buildTree(group, prefix = '', isNested = false, fileName = '', in
     const rootLabel = fileName ? fileName : 'root';
     let rootExpandable = true;
     if (intersectedPaths) {
-      rootExpandable = Array.from(intersectedPaths).some(p => p !== '/' && p.startsWith('/'));
+      const rootIndex = getPathChildIndex(intersectedPaths);
+      rootExpandable = !!(rootIndex && rootIndex.has(''));
     }
 
     const rootItem = makeTreeItem('group root-node' + (isRootSelected ? ' expanded' : ''));
     rootItem.setAttribute('data-path', '/');
     if (fileKey) rootItem.setAttribute('data-file', fileKey);
-    rootItem.addEventListener('click', toggleGroup);
 
     let rootInfoHtml = getNodeInformationHtml(group);
     if (!rootInfoHtml) {
@@ -1138,7 +1198,6 @@ async function buildTree(group, prefix = '', isNested = false, fileName = '', in
     if (rootExpandable) {
       toggleDiv.className = 'tree-toggle' + (isRootSelected ? '' : ' collapsed');
       toggleDiv.textContent = '▶';
-      toggleDiv.addEventListener('click', (e) => { e.stopPropagation(); toggleGroupExpansion(e, '/'); });
     } else {
       toggleDiv.className = 'tree-toggle no-toggle';
     }
@@ -1171,14 +1230,8 @@ async function buildTree(group, prefix = '', isNested = false, fileName = '', in
       keys.sort();
 
       if (intersectedPaths && intersectedPaths.size > 0) {
-        const allowed = new Set();
-        const prefixWithSlash = prefix === '' ? '/' : (prefix + '/');
-        for (const p of intersectedPaths) {
-          if (!p.startsWith(prefixWithSlash)) continue;
-          const rest = p.substring(prefixWithSlash.length);
-          const child = rest.split('/')[0];
-          if (child) allowed.add(child);
-        }
+        const childIndex = getPathChildIndex(intersectedPaths);
+        const allowed = (childIndex && childIndex.get(prefix)) || new Set();
         if (pathOwnership) {
           // Union mode: add keys from other files that this file doesn't have
           const keySet = new Set(keys);
@@ -1256,7 +1309,6 @@ async function buildTree(group, prefix = '', isNested = false, fileName = '', in
           const broken = makeTreeItem('broken-link' + (isSelected ? ' selected' : ''));
           broken.setAttribute('data-path', path);
           if (fileKey) broken.setAttribute('data-file', fileKey);
-          broken.addEventListener('click', (e) => selectDataset(path, e));
 
           const icon = document.createElement('div'); icon.className = 'tree-icon broken-link';
           const label = document.createElement('div'); label.className = 'tree-label';
@@ -1276,7 +1328,6 @@ async function buildTree(group, prefix = '', isNested = false, fileName = '', in
           const external = makeTreeItem('external-link' + (isSelected ? ' selected' : ''));
           external.setAttribute('data-path', path);
           if (fileKey) external.setAttribute('data-file', fileKey);
-          external.addEventListener('click', (e) => selectDataset(path, e));
 
           const icon = document.createElement('div'); icon.className = 'tree-icon external-link';
           const label = document.createElement('div'); label.className = 'tree-label';
@@ -1296,13 +1347,13 @@ async function buildTree(group, prefix = '', isNested = false, fileName = '', in
 
           let groupExpandable = true;
           if (intersectedPaths) {
-            groupExpandable = Array.from(intersectedPaths).some(p => p === path || p.startsWith(path + '/'));
+            const childIndex = getPathChildIndex(intersectedPaths);
+            groupExpandable = !!(childIndex && childIndex.has(path));
           }
 
           const groupItem = makeTreeItem('group' + (isSelected ? ' expanded' : ''));
           groupItem.setAttribute('data-path', path);
           if (fileKey) groupItem.setAttribute('data-file', fileKey);
-          groupItem.addEventListener('click', toggleGroup);
 
           const groupInfoHtml = getNodeInformationHtml(obj);
           if (groupInfoHtml) attachTreeInfoHover(groupItem, groupInfoHtml);
@@ -1311,7 +1362,6 @@ async function buildTree(group, prefix = '', isNested = false, fileName = '', in
           if (groupExpandable) {
             toggleDiv.className = 'tree-toggle' + (isSelected ? '' : ' collapsed');
             toggleDiv.textContent = '▶';
-            toggleDiv.addEventListener('click', (e) => { e.stopPropagation(); toggleGroupExpansion(e, path); });
           } else {
             toggleDiv.className = 'tree-toggle no-toggle';
           }
@@ -1373,7 +1423,6 @@ async function buildTree(group, prefix = '', isNested = false, fileName = '', in
           const ds = makeTreeItem('dataset' + (isSelected ? ' selected' : ''));
           ds.setAttribute('data-path', path);
           if (fileKey) ds.setAttribute('data-file', fileKey);
-          ds.addEventListener('click', (e) => selectDataset(path, e));
 
           const datasetInfoHtml = getNodeInformationHtml(obj);
           if (datasetInfoHtml) attachTreeInfoHover(ds, datasetInfoHtml);

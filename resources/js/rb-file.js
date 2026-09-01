@@ -164,7 +164,7 @@ function scheduleUpdateTabs(delay = UPDATE_TABS_DEBOUNCE_MS) {
 async function removeFile(fileName) {
   const wasEnabled = !!fileStates[fileName];
 
-  delete loadedFiles[fileName];
+  releaseLoadedFile(fileName);
   delete fileStates[fileName];
   delete loadedFileBuffers[fileName];
   fileOrder = fileOrder.filter(k => k !== fileName);

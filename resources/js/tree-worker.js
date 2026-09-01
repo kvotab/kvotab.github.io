@@ -11,13 +11,17 @@
 */
 
 self._cancelWorker = false;
+let fileCounter = 0;
 
 // indicate worker thread start (main thread can observe immediately)
 try { self.postMessage({ cmd: 'started' }); } catch (e) { /* ignore */ }
 
 // load h5wasm inside the worker (IIFE build)
 try {
-  importScripts('https://cdn.jsdelivr.net/npm/h5wasm@latest/dist/iife/h5wasm.min.js');
+  // Pinned to the same version the page loads. '@latest' let the worker and
+  // the main thread run different builds, and made an upstream release able to
+  // break intersect mode with no change here.
+  importScripts('https://cdn.jsdelivr.net/npm/h5wasm@0.9.0/dist/iife/h5wasm.min.js');
 } catch (e) {
   // importScripts may throw in restricted environments; we'll surface an error on compute requests
   console.warn('tree-worker: failed to import h5wasm via importScripts', e);
@@ -109,17 +113,23 @@ self.onmessage = async function (ev) {
             continue;
           }
 
-          const fname = `/worker_file_${Date.now()}_${i}.h5`;
+          // Date.now() alone collides when two requests land in the same
+          // millisecond, which would overwrite a file that is still open.
+          const fname = `/worker_file_${++fileCounter}_${Date.now()}_${i}.h5`;
+          let hf = null;
           try {
             FS.writeFile(fname, new Uint8Array(buf));
-            const hf = new File(fname, 'r');
+            hf = new File(fname, 'r');
             const pset = collectAllPathsSync(hf, '');
             pathSets.push(pset);
-            // cleanup file from worker FS
-            try { FS.unlink(fname); } catch (e) { /* ignore */ }
           } catch (fileErr) {
             // if one file fails, continue but include empty set
             pathSets.push(new Set());
+          } finally {
+            // Close before unlinking: an open HDF5 handle keeps the contents
+            // alive in the WASM heap even after the directory entry is gone.
+            if (hf) { try { hf.close(); } catch (e) { /* ignore */ } }
+            try { FS.unlink(fname); } catch (e) { /* ignore */ }
           }
 
           self.postMessage({ cmd: 'progress', id, fileIndex: i + 1, totalFiles: files.length });

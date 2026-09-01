@@ -199,16 +199,102 @@ function getAllAttrs(node) {
  * @param {string} fileKey - Filename key in loadedFiles
  * @returns {Object|null} The h5wasm File object, or null
  */
+/**
+ * Close an h5wasm file and delete its copy from the WASM in-memory filesystem.
+ *
+ * Dropping the JavaScript reference alone frees nothing: the file contents stay
+ * in the WASM heap and the HDF5 handle stays open, so loading and removing a
+ * large file repeatedly exhausts the tab's memory.
+ *
+ * @param {string} fileKey - Key in loadedFiles
+ */
+function releaseLoadedFile(fileKey) {
+  const file = loadedFiles[fileKey];
+  if (!file) return;
+  /* h5wasm stores the MEMFS path in `filename`; `path` is the HDF5 group
+     path ('/'), which must never be handed to unlink. */
+  const internalPath = (typeof file.filename === 'string' && file.filename.startsWith('/') && file.filename !== '/')
+    ? file.filename
+    : null;
+  try { file.close(); } catch (e) { console.warn('Could not close HDF5 file', fileKey, e); }
+  try {
+    if (internalPath && window.h5wasm && window.h5wasm.FS) window.h5wasm.FS.unlink(internalPath);
+  } catch (e) { /* already gone, or never written */ }
+  delete loadedFiles[fileKey];
+}
+
+/*
+  getEnabledFiles() calls this for every enabled file, and isIntersectMode() ->
+  getTreeMode() -> getEnabledFiles() runs on almost every interaction — in union
+  mode once per tree node. The root-key probe crosses into WASM each time, so a
+  boolean mode check used to cost N HDF5 enumerations. A file object only goes
+  stale when this code closes it, and releaseLoadedFile() removes it from
+  loadedFiles at the same moment, so probing each object once is enough.
+*/
+const _probedFiles = new WeakSet();
+
+/*
+  Locating a tree node used to mean materialising every .tree-item into an array
+  and filtering it. Done once that is merely wasteful; done inside a loop — over
+  multi-selected datasets, or over the path segments of each of up to 50 search
+  matches — it is quadratic in tree size. An attribute selector lets the browser
+  do the lookup natively.
+*/
+
+/**
+ * Escape a string for use inside a double-quoted CSS attribute value.
+ * @param {string} value
+ * @returns {string}
+ */
+function cssAttrValue(value) {
+  return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+/**
+ * Find one tree node by HDF5 path.
+ *
+ * @param {string} path - data-path value to match
+ * @param {Object} [opts]
+ * @param {string} [opts.fileKey] - Restrict to this data-file
+ * @param {boolean} [opts.allowMissingFile] - Also accept nodes with no data-file
+ * @param {string} [opts.extra] - Extra class selector, e.g. '.group'
+ * @param {Element} [opts.root] - Container to search (defaults to #tree)
+ * @returns {Element|null}
+ */
+function findTreeItem(path, opts = {}) {
+  const root = opts.root || document.getElementById('tree');
+  if (!root) return null;
+  const base = `.tree-item${opts.extra || ''}[data-path="${cssAttrValue(path)}"]`;
+  if (!opts.fileKey) return root.querySelector(base);
+  const scoped = root.querySelector(`${base}[data-file="${cssAttrValue(opts.fileKey)}"]`);
+  if (scoped || !opts.allowMissingFile) return scoped;
+  return root.querySelector(`${base}:not([data-file])`);
+}
+
+/**
+ * True when a tree node exists for this path, matching the file when given or
+ * when the node carries no file attribute at all.
+ *
+ * @param {string} path
+ * @param {string} fileKey
+ * @returns {boolean}
+ */
+function hasTreeItemForPath(path, fileKey) {
+  return !!findTreeItem(path, { fileKey, allowMissingFile: true });
+}
+
 function getFileOrNull(fileKey) {
   const file = loadedFiles[fileKey];
   if (!file) return null;
+  if (_probedFiles.has(file)) return file;
   try {
     // Quick sanity check — attempt to access root keys
     if (typeof file.keys === 'function') file.keys();
+    _probedFiles.add(file);
     return file;
   } catch (e) {
     console.warn(`Stale file reference for ${fileKey}, removing`);
-    delete loadedFiles[fileKey];
+    releaseLoadedFile(fileKey);
     delete fileStates[fileKey];
     delete loadedFileBuffers[fileKey];
     fileOrder = fileOrder.filter(k => k !== fileKey);
@@ -673,7 +759,74 @@ function getColumnStatisticsSeries(dataset, rawData, timeData) {
  * @param {number} percentile - Percentile level (0-100)
  * @returns {Array} Array of percentile values per timestep
  */
-function computeProbabilisticPercentile(yArray, timeData, percentile) {
+/**
+ * Number of realizations in a flattened probabilistic dataset, which is also
+ * the stride between consecutive time steps: flat[t * stride + r].
+ *
+ * HDF5 stores arrays row-major, so for shape [nTimeSteps, nRealizations] the
+ * last dimension is the stride. That is the authoritative value.
+ *
+ * Dividing the flat length by the time-axis length — which this code used to do
+ * in six places — agrees with the shape only when the data is unpadded and the
+ * time axis has exactly nTimeSteps entries. Probabilistic files in this format
+ * are padded (see getProbabilisticTimeMatrix: nIterPad >= nIter), so the
+ * division silently reads the wrong column. Where the two disagree the shape
+ * wins and a warning names the dataset, so such files are easy to find.
+ *
+ * @param {Object} dataset - h5wasm Dataset (may be null)
+ * @param {number} flatLength - Length of the flattened value array
+ * @param {number} timeLength - Number of time points being plotted
+ * @param {string} [label] - Path used in the mismatch warning
+ * @returns {number} Stride (>= 1)
+ */
+function getRealizationStride(dataset, flatLength, timeLength, label = '') {
+  const shape = (dataset && Array.isArray(dataset.shape)) ? dataset.shape : null;
+  const byLength = strideFromLength(flatLength, timeLength);
+
+  if (shape && shape.length >= 2) {
+    const stride = Number(shape[shape.length - 1]);
+    if (Number.isFinite(stride) && stride > 0) {
+      if (byLength !== null && byLength !== stride) {
+        console.warn(`Realization stride from shape (${stride}) differs from the length-derived value`
+          + ` (${byLength}) for ${label || 'dataset'}; using the shape. This dataset is padded.`);
+      }
+      return stride;
+    }
+  }
+  if (shape && shape.length === 1) return 1;
+  return byLength !== null ? byLength : 1;
+}
+
+/**
+ * Legacy fallback: infer the stride by dividing the flat length by the number
+ * of time points. Only correct for unpadded data; used when no shape is known.
+ *
+ * @param {number} flatLength
+ * @param {number} timeLength
+ * @returns {number|null} Stride, or null when the lengths do not divide
+ */
+function strideFromLength(flatLength, timeLength) {
+  if (timeLength > 0 && flatLength > timeLength && flatLength % timeLength === 0) {
+    return Math.floor(flatLength / timeLength);
+  }
+  return null;
+}
+
+/**
+ * Resolve the stride to use inside a statistics helper: the caller's
+ * shape-derived value when it has one, otherwise the length division.
+ *
+ * @param {number} flatLength
+ * @param {number} timeLength
+ * @param {number} [stride] - Shape-derived stride from getRealizationStride
+ * @returns {number|null}
+ */
+function resolveStride(flatLength, timeLength, stride) {
+  if (Number.isFinite(stride) && stride > 1 && flatLength >= timeLength * stride) return stride;
+  return strideFromLength(flatLength, timeLength);
+}
+
+function computeProbabilisticPercentile(yArray, timeData, percentile, stride) {
   if (Array.isArray(yArray[0])) {
     // Array of arrays: each timeSlice has multiple realizations
     return yArray.map(timeSlice => {
@@ -690,9 +843,11 @@ function computeProbabilisticPercentile(yArray, timeData, percentile) {
       }
       return PDFSampler.toNumber(timeSlice);
     });
-  } else if (yArray.length > timeData.length && yArray.length % timeData.length === 0) {
-    // Flat array: realizations interleaved or sequential
-    const numRealizations = Math.floor(yArray.length / timeData.length);
+  }
+  const flatStride = resolveStride(yArray.length, timeData.length, stride);
+  if (flatStride) {
+    /* Realizations are the fastest-varying index: flat[t * stride + r]. */
+    const numRealizations = flatStride;
     const percentiles = [];
     for (let t = 0; t < timeData.length; t++) {
       const values = [];
@@ -726,7 +881,7 @@ function computeProbabilisticPercentile(yArray, timeData, percentile) {
  * @param {Array} timeData - Time data for reference length
  * @returns {Array} Array of mean values per timestep
  */
-function computeProbabilisticMean(yArray, timeData) {
+function computeProbabilisticMean(yArray, timeData, stride) {
   if (Array.isArray(yArray[0])) {
     // Array of arrays: each timeSlice has multiple realizations
     return yArray.map(timeSlice => {
@@ -736,9 +891,11 @@ function computeProbabilisticMean(yArray, timeData) {
       }
       return PDFSampler.toNumber(timeSlice);
     });
-  } else if (yArray.length > timeData.length && yArray.length % timeData.length === 0) {
-    // Flat array: realizations interleaved or sequential
-    const numRealizations = Math.floor(yArray.length / timeData.length);
+  }
+  const flatStride = resolveStride(yArray.length, timeData.length, stride);
+  if (flatStride) {
+    /* Realizations are the fastest-varying index: flat[t * stride + r]. */
+    const numRealizations = flatStride;
     const means = [];
     for (let t = 0; t < timeData.length; t++) {
       let sum = 0;
@@ -821,7 +978,7 @@ function normalizeAttrSeries(value, timeLength) {
  * @param {number} nIter
  * @returns {{lower:Array<number|null>, upper:Array<number|null>}|null}
  */
-function computeProbabilisticSDOMBand(yArray, timeData, nIter) {
+function computeProbabilisticSDOMBand(yArray, timeData, nIter, stride) {
   if (!nIter || nIter <= 1 || !Array.isArray(timeData) || timeData.length === 0) return null;
   const sqrtN = Math.sqrt(nIter);
   const lower = [];
@@ -851,8 +1008,10 @@ function computeProbabilisticSDOMBand(yArray, timeData, nIter) {
     return { lower, upper };
   }
 
-  if (yArray.length > timeData.length && yArray.length % timeData.length === 0) {
-    const numRealizations = Math.floor(yArray.length / timeData.length);
+  const flatStride = resolveStride(yArray.length, timeData.length, stride);
+  if (flatStride) {
+    /* Realizations are the fastest-varying index: flat[t * stride + r]. */
+    const numRealizations = flatStride;
     for (let t = 0; t < timeData.length; t++) {
       const vals = [];
       for (let r = 0; r < numRealizations; r++) {
