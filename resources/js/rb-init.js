@@ -14,6 +14,40 @@
 // Initialize cached DOM element references
 initDOMReferences();
 
+/*
+  A single delegated listener for the whole tree. buildTree used to attach seven
+  closures per rendered node, so a large tree allocated thousands of listeners
+  that all had to be torn down on every refresh. Row identity comes from the
+  data-path attribute the nodes already carry.
+*/
+(function installTreeClickDelegation() {
+  const tree = document.getElementById('tree');
+  if (!tree) return;
+  tree.addEventListener('click', (event) => {
+    const toggle = event.target.closest('.tree-toggle');
+    if (toggle && !toggle.classList.contains('no-toggle')) {
+      const owner = toggle.closest('.tree-item');
+      if (owner) {
+        event.stopPropagation();
+        toggleGroupExpansion(event, owner.getAttribute('data-path'), toggle);
+        return;
+      }
+    }
+
+    const item = event.target.closest('.tree-item');
+    if (!item || !tree.contains(item)) return;
+
+    if (item.classList.contains('group')) {
+      toggleGroup(event, item);
+      return;
+    }
+
+    const path = item.getAttribute('data-path');
+    if (path) selectDataset(path, event);
+  });
+})();
+
+
 // EventBus listeners -------------------------------------------------
 // Centralized selection handler — updates DOM classes and info/chart display
 EventBus.on('selection:changed', (payload) => {
@@ -42,11 +76,9 @@ EventBus.on('selection:changed', (payload) => {
       document.querySelectorAll('.tree-item.group.expanded').forEach(el => el.classList.remove('expanded'));
 
       // mark the dataset element (if present)
-      const items = Array.from(tree.querySelectorAll('.tree-item')).filter(el => el.getAttribute('data-path') === payload.path && (!payload.fileKey || el.getAttribute('data-file') === payload.fileKey));
-      if (items.length > 0) {
-        const el = items.find(n => n.classList.contains('dataset')) || items[0];
-        if (el) el.classList.add('selected');
-      }
+      const el = findTreeItem(payload.path, { fileKey: payload.fileKey, extra: '.dataset', root: tree })
+        || findTreeItem(payload.path, { fileKey: payload.fileKey, root: tree });
+      if (el) el.classList.add('selected');
 
       // show attributes / chart for single selection
       try { showNodeAttributes(payload.path, false); } catch (e) { console.warn('selection:changed handler showNodeAttributes failed', e); }
@@ -58,7 +90,7 @@ EventBus.on('selection:changed', (payload) => {
       document.querySelectorAll('.tree-item.dataset.selected').forEach(el => el.classList.remove('selected'));
       document.querySelectorAll('.tree-item.group.expanded').forEach(el => el.classList.remove('expanded'));
 
-      const groupEl = Array.from(tree.querySelectorAll('.tree-item.group')).find(el => el.getAttribute('data-path') === payload.path && (!payload.fileKey || el.getAttribute('data-file') === payload.fileKey));
+      const groupEl = findTreeItem(payload.path, { fileKey: payload.fileKey, extra: '.group', root: tree });
       if (groupEl) groupEl.classList.add('expanded');
 
       try { showNodeAttributes(payload.path, true); } catch (e) { console.warn('selection:changed handler showNodeAttributes(group) failed', e); }
@@ -81,7 +113,7 @@ EventBus.on('selection:changed', (payload) => {
       }
 
       for (const it of items) {
-        const found = Array.from(tree.querySelectorAll('.tree-item.dataset')).find(el => el.getAttribute('data-path') === it.path && (!it.fileKey || el.getAttribute('data-file') === it.fileKey));
+        const found = findTreeItem(it.path, { fileKey: it.fileKey, extra: '.dataset', root: tree });
         if (found) found.classList.add('selected');
       }
 
@@ -149,7 +181,7 @@ EventBus.on('search:changed', ({ term }) => {
         if (!file) continue;
         const matches = await asyncFindMatchingPaths(file, regexLocal, 50);
         for (const p of matches) {
-          const exists = Array.from(document.querySelectorAll('.tree-item')).some(el => el.getAttribute('data-path') === p && (el.getAttribute('data-file') === fk || !el.getAttribute('data-file')));
+          const exists = hasTreeItemForPath(p, fk);
           if (!exists) {
             const parentPath = p.substring(0, p.lastIndexOf('/')) || '/';
             await expandAndLoadPath(fk, parentPath);

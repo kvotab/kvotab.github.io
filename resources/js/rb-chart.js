@@ -1489,8 +1489,8 @@ async function toggleShowCI() {
         const hasColumnCI = Array.isArray(trace._ciP5) && Array.isArray(trace._ciP95) && trace._timeData;
         const hasProbCI = trace._isProbabilistic && trace._rawData && trace._timeData;
         if (hasColumnCI || hasProbCI) {
-          const p5 = hasColumnCI ? trace._ciP5 : computeProbabilisticPercentile(trace._rawData, trace._timeData, 5);
-          const p95 = hasColumnCI ? trace._ciP95 : computeProbabilisticPercentile(trace._rawData, trace._timeData, 95);
+          const p5 = hasColumnCI ? trace._ciP5 : computeProbabilisticPercentile(trace._rawData, trace._timeData, 5, trace._numRealizations);
+          const p95 = hasColumnCI ? trace._ciP95 : computeProbabilisticPercentile(trace._rawData, trace._timeData, 95, trace._numRealizations);
           const minLength = Math.min(trace._timeData.length, p5.length, p95.length);
           const timeSlice = trace._timeData.slice(0, minLength);
           const p5Slice = p5.slice(0, minLength);
@@ -1578,8 +1578,12 @@ async function toggleShowSDOM() {
         const hasProbSDOM = !!trace._nIter && trace._nIter > 1 && trace._rawData && trace._timeData;
         if (!hasAttrSDOM && !hasProbSDOM) return;
 
-        const lower = hasAttrSDOM ? trace._sdomLower : (computeProbabilisticSDOMBand(trace._rawData, trace._timeData, trace._nIter)?.lower || []);
-        const upper = hasAttrSDOM ? trace._sdomUpper : (computeProbabilisticSDOMBand(trace._rawData, trace._timeData, trace._nIter)?.upper || []);
+        /* One computation for both edges; this used to run the whole
+           per-timestep pass twice, once for each side of the band. */
+        const sdomBand = hasAttrSDOM ? null
+          : computeProbabilisticSDOMBand(trace._rawData, trace._timeData, trace._nIter, trace._numRealizations);
+        const lower = hasAttrSDOM ? trace._sdomLower : (sdomBand?.lower || []);
+        const upper = hasAttrSDOM ? trace._sdomUpper : (sdomBand?.upper || []);
         const minLength = Math.min(trace._timeData.length, lower.length, upper.length);
         if (minLength <= 0) return;
 
@@ -1919,14 +1923,21 @@ function createPlotlyChart(path, savedAxisState) {
       }
 
       if (yData) {
-        const normalizedRawData = PDFSampler.normalizeDataArray(yData);
+        /*
+          The boxed copy is only needed by the statistics paths further down.
+          The probabilistic branch reads one strided column — a few hundred of
+          several hundred thousand values — so converting the whole array there
+          cost about 16 ms and 4 MB per dataset for nothing.
+        */
+        const isProbTimeFile = checkTimeProbabilistic(file);
+        const normalizedRawData = isProbTimeFile ? null : PDFSampler.normalizeDataArray(yData);
 
         // ── Probabilistic time matrix ────────────────────────────────────────
         // When /time carries a 'probabilistic' attribute the time axis is a
         // matrix [nIter × maxLen].  Each iteration has its own time series
         // that ends when values stop being strictly increasing.  Statistics
         // (mean, CI, SDOM) cannot be computed; only a single iteration is shown.
-        if (checkTimeProbabilistic(file)) {
+        if (isProbTimeFile) {
           const timeMatrix = getProbabilisticTimeMatrix(file);
           if (!timeMatrix) continue;  // Malformed – skip
 
@@ -1942,7 +1953,7 @@ function createPlotlyChart(path, savedAxisState) {
           // Y-data layout matches time matrix: flat[t_i * maxLen + k] = y at time step t_i for iter k.
           const iterYData = [];
           for (let t = 0; t < iterLen; t++) {
-            iterYData.push(PDFSampler.toNumber(normalizedRawData[t * timeMatrix.maxLen + iterIdx]));
+            iterYData.push(PDFSampler.toNumber(yData[t * timeMatrix.maxLen + iterIdx]));
           }
 
           const traceObj = ChartService.timeSeriesTrace({
@@ -1952,7 +1963,7 @@ function createPlotlyChart(path, savedAxisState) {
           });
           traceObj._isProbTime     = true;
           traceObj._probTimeMatrix = timeMatrix;
-          traceObj._probYFlat      = normalizedRawData;
+          traceObj._probYFlat      = yData;
           traceObj._probMaxLen     = timeMatrix.maxLen;
           traceObj._nIter          = timeMatrix.nIter;
           traces.push(traceObj);
@@ -1998,7 +2009,7 @@ function createPlotlyChart(path, savedAxisState) {
           hasProbabilistic = true;
           // Store raw data for CI band computation later
           probDataInfo.push({ yArray, timeData: timeData.slice() });
-          yArray = computeProbabilisticMean(yArray, timeData);
+          yArray = computeProbabilisticMean(yArray, timeData, getRealizationStride(dataset, normalizedRawData.length, timeData.length, path));
         }
 
         if (!isProbabilistic) {
@@ -2023,7 +2034,7 @@ function createPlotlyChart(path, savedAxisState) {
           // Store raw data and time data on the trace for CI computation
           traceObj._rawData = normalizedRawData;
           traceObj._timeData = timeData.slice(0, minLength);
-          traceObj._numRealizations = Math.floor(normalizedRawData.length / timeData.length);
+          traceObj._numRealizations = getRealizationStride(dataset, normalizedRawData.length, timeData.length, path);
           if (nIter && nIter > 1) {
             traceObj._nIter = nIter;
           }
@@ -2077,15 +2088,20 @@ function createPlotlyChart(path, savedAxisState) {
     if (indexBackgroundSegments.length) {
       let shapeSegments = indexBackgroundSegments.slice();
       if (xScale === 'log') {
-        const positiveX = [];
+        /*
+          Accumulate the minimum directly. Collecting every positive x into an
+          array and spreading it into Math.min throws RangeError once the trace
+          set exceeds roughly 125 000 points, which one radionuclide group with
+          a long time series already does.
+        */
+        let minPositiveX = null;
         for (const trace of traces) {
           const xVals = Array.isArray(trace.x) ? trace.x : [];
           for (const xv of xVals) {
             const n = Number(xv);
-            if (isFinite(n) && n > 0) positiveX.push(n);
+            if (isFinite(n) && n > 0 && (minPositiveX === null || n < minPositiveX)) minPositiveX = n;
           }
         }
-        const minPositiveX = positiveX.length ? Math.min(...positiveX) : null;
         if (minPositiveX !== null) {
           shapeSegments = shapeSegments
             .map(seg => {
@@ -2347,7 +2363,7 @@ function createMultiDatasetChart(items) {
           hasProbabilistic = true;
           // Store raw data for CI band computation later
           probDataInfo.push({ yArray, timeData: timeData.slice() });
-          yArray = computeProbabilisticMean(yArray, timeData);
+          yArray = computeProbabilisticMean(yArray, timeData, getRealizationStride(dataset, normalizedRawData.length, timeData.length, path));
         }
 
         if (!isProbabilistic) {
@@ -2380,7 +2396,7 @@ function createMultiDatasetChart(items) {
           // Store raw data and time data on the trace for CI computation
           traceObj._rawData = normalizedRawData;
           traceObj._timeData = trimmedTimeData;
-          traceObj._numRealizations = Math.floor(normalizedRawData.length / timeData.length);
+          traceObj._numRealizations = getRealizationStride(dataset, normalizedRawData.length, timeData.length, path);
           if (nIter && nIter > 1) {
             traceObj._nIter = nIter;
           }
@@ -2755,7 +2771,7 @@ async function createRadionuclidesChart(path, savedAxisState) {
    * @param {Array} timeData
    * @returns {Array<Array<number>>|null}
    */
-  function toProbabilisticTimeSlices(rawData, timeData) {
+  function toProbabilisticTimeSlices(rawData, timeData, stride) {
     if (!Array.isArray(rawData) || !timeData || timeData.length === 0) {
       return null;
     }
@@ -2765,8 +2781,9 @@ async function createRadionuclidesChart(path, savedAxisState) {
         return timeSlice.map(PDFSampler.toNumber);
       });
     }
-    if (rawData.length > timeData.length && rawData.length % timeData.length === 0) {
-      const numRealizations = Math.floor(rawData.length / timeData.length);
+    const flatStride = resolveStride(rawData.length, timeData.length, stride);
+    if (flatStride) {
+      const numRealizations = flatStride;
       const timeSlices = [];
       for (let t = 0; t < timeData.length; t++) {
         const values = [];
@@ -2887,7 +2904,8 @@ async function createRadionuclidesChart(path, savedAxisState) {
             yData = dataset.toArray();
           }
           if (yData) {
-            const normalizedRawData = PDFSampler.normalizeDataArray(yData);
+            /* Boxed copy only for the statistics paths; see createPlotlyChart. */
+            const normalizedRawData = probTimeForFile ? null : PDFSampler.normalizeDataArray(yData);
             let yArray = normalizedRawData;
             let isProbabilistic = false;
             let ciFromColumns = null;
@@ -2900,7 +2918,7 @@ async function createRadionuclidesChart(path, savedAxisState) {
               const iterLen = ptTimeData.length;
               yArray = [];
               for (let t = 0; t < iterLen; t++) {
-                yArray.push(PDFSampler.toNumber(normalizedRawData[t * maxLen + iterIdx]));
+                yArray.push(PDFSampler.toNumber(yData[t * maxLen + iterIdx]));
               }
             } else {
             // ── Regular (non prob-time) path ─────────────────────────────────
@@ -2935,7 +2953,7 @@ async function createRadionuclidesChart(path, savedAxisState) {
             if (!colStats && checkIsProbabilistic(dataset)) {
               isProbabilistic = true;
               hasProbabilistic = true;
-              yArray = computeProbabilisticMean(yArray, effectiveTimeData);
+              yArray = computeProbabilisticMean(yArray, effectiveTimeData, getRealizationStride(dataset, normalizedRawData.length, effectiveTimeData.length, `${path}/${datasetKey}`));
             }
             if (!isProbabilistic) {
               sdomInfo = sdomInfo || getDatasetAttributeSDOM(dataset, effectiveTimeData, nIter);
@@ -2961,7 +2979,8 @@ async function createRadionuclidesChart(path, savedAxisState) {
             }
             totalDataByFile[fileKey].dataArrays.push(trimmedYData);
             if (isProbabilistic) {
-              const datasetSlices = toProbabilisticTimeSlices(normalizedRawData, trimmedTimeData);
+              const datasetSlices = toProbabilisticTimeSlices(normalizedRawData, trimmedTimeData,
+                getRealizationStride(dataset, normalizedRawData.length, effectiveTimeData.length, `${path}/${datasetKey}`));
               if (datasetSlices) {
                 if (!totalDataByFile[fileKey].probabilisticSlices) {
                   totalDataByFile[fileKey].probabilisticSlices = datasetSlices.map((values, idx) => {
@@ -3009,7 +3028,7 @@ async function createRadionuclidesChart(path, savedAxisState) {
               // Store raw data and time data on the trace for CI computation
               traceObj._rawData = normalizedRawData;
               traceObj._timeData = trimmedTimeData;
-              traceObj._numRealizations = Math.floor(normalizedRawData.length / effectiveTimeData.length);
+              traceObj._numRealizations = getRealizationStride(dataset, normalizedRawData.length, effectiveTimeData.length, `${path}/${datasetKey}`);
               if (nIter && nIter > 1) {
                 traceObj._nIter = nIter;
               }
@@ -3254,15 +3273,20 @@ async function createRadionuclidesChart(path, savedAxisState) {
     if (indexBackgroundSegments.length) {
       let shapeSegments = indexBackgroundSegments.slice();
       if (xScale === 'log') {
-        const positiveX = [];
+        /*
+          Accumulate the minimum directly. Collecting every positive x into an
+          array and spreading it into Math.min throws RangeError once the trace
+          set exceeds roughly 125 000 points, which one radionuclide group with
+          a long time series already does.
+        */
+        let minPositiveX = null;
         for (const trace of traces) {
           const xVals = Array.isArray(trace.x) ? trace.x : [];
           for (const xv of xVals) {
             const n = Number(xv);
-            if (isFinite(n) && n > 0) positiveX.push(n);
+            if (isFinite(n) && n > 0 && (minPositiveX === null || n < minPositiveX)) minPositiveX = n;
           }
         }
-        const minPositiveX = positiveX.length ? Math.min(...positiveX) : null;
         if (minPositiveX !== null) {
           shapeSegments = shapeSegments
             .map(seg => {

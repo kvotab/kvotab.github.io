@@ -18,7 +18,7 @@
   <script src="https://cdn.plot.ly/plotly-2.27.0.min.js" integrity="sha384-Hl48Kq2HifOWdXEjMsKo6qxqvRLTYqIGbvlENBmkHAxZKIGCXv43H6W1jA671RzC" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js" integrity="sha384-eeLEhtwdMwD3X9y+8P3Cn7Idl/M+w8H4uZqkgD/2eJVkWIN1yKzEj6XegJ9dL3q0" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" integrity="sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG" crossorigin="anonymous"></script>
-  <script src="resources/js/xlsxwrite.js"></script>
+  <script src="./resources/js/xlsxwrite.js?v=20260901"></script>
   <script>
     // xlsxwrite.js is ready immediately after loading (no WASM initialization needed)
     window.xlsxReady = true;
@@ -35,7 +35,7 @@
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css">
-  <link rel="stylesheet" href="./resources/css/rb.css?v=20260326">
+  <link rel="stylesheet" href="./resources/css/rb.css?v=20260901">
 </head>
 <body>
   <div id="dropOverlay">
@@ -228,7 +228,7 @@
   <div id="kvotmap"></div>
   <footer></footer>
 
-  <script src="./resources/js/erf.js"></script>
+  <script src="./resources/js/erf.js?v=20260901"></script>
   <script src="./resources/js/site.js"></script>
   <script>
     KVOT.renderHeader('HDF5 Browser', '<div class="tabs-container"><div id="fileTabs"></div><div id="fileLoadTicker" class="file-load-ticker" aria-live="polite" hidden><span class="spinner" aria-hidden="true"></span><span class="ticker-text">Loading files…</span><button class="ticker-cancel" onclick="cancelTreeRefresh()" title="Cancel" style="display:none;">✕</button></div><button class="add-file-btn" onclick="document.getElementById(\'fileInput\').click()">+ Add Files</button><button class="add-file-btn url-file-btn" onclick="openUrlDialog()" title="Load HDF5 file from URL">🔗 URL</button><button class="add-file-btn" onclick="openSampleDataDialog()" title="Load sample HDF5 files">📂 Sample Data</button></div>');
@@ -237,14 +237,19 @@
     KVOT.initMap('kvotmap');
   </script>
 
-  <script src="https://cdn.jsdelivr.net/npm/h5wasm@0.9.0/dist/iife/h5wasm.min.js" integrity="sha384-0kPHehXdhwrXsjsY2cFREoF1T3bEwA7VXlpZGg3zE1DDnW294q/kakEEPAsA5JXW" crossorigin="anonymous"></script>
-  <script src="./resources/js/pdf-sampler.js"></script>
-  <script src="./resources/js/rb-state.js?v=20260326"></script>
-  <script src="./resources/js/rb-utils.js?v=20260326"></script>
-  <script src="./resources/js/rb-hdf5.js?v=20260326"></script>
-  <script src="./resources/js/rb-file.js"></script>
-  <script src="./resources/js/rb-tabs.js"></script>
-  <script src="./resources/js/rb-tree.js?v=20260326"></script>
+  <!--
+    h5wasm is 4.7 MB. Loading it synchronously blocked first paint even though
+    every caller already goes through waitForH5Wasm(), so it is deferred: the
+    page renders immediately and the gate handles the rest.
+  -->
+  <script defer src="https://cdn.jsdelivr.net/npm/h5wasm@0.9.0/dist/iife/h5wasm.min.js" integrity="sha384-0kPHehXdhwrXsjsY2cFREoF1T3bEwA7VXlpZGg3zE1DDnW294q/kakEEPAsA5JXW" crossorigin="anonymous"></script>
+  <script src="./resources/js/pdf-sampler.js?v=20260901"></script>
+  <script src="./resources/js/rb-state.js?v=20260901"></script>
+  <script src="./resources/js/rb-utils.js?v=20260901"></script>
+  <script src="./resources/js/rb-hdf5.js?v=20260901"></script>
+  <script src="./resources/js/rb-file.js?v=20260901"></script>
+  <script src="./resources/js/rb-tabs.js?v=20260901"></script>
+  <script src="./resources/js/rb-tree.js?v=20260901"></script>
   <!-- Preset Manager Dialog -->
   <div id="presetManagerOverlay" class="preset-overlay" style="display:none;">
     <div class="preset-dialog">
@@ -260,13 +265,13 @@
     </div>
   </div>
 
-  <script src="./resources/js/rb-chart.js?v=20260326"></script>
-  <script src="./resources/js/rb-legend.js?v=20260326"></script>
-  <script src="./resources/js/rb-info.js?v=20260326"></script>
-  <script src="./resources/js/rb-search.js?v=20260326"></script>
-  <script src="./resources/js/rb-dragdrop.js?v=20260326"></script>
-  <script src="./resources/js/rb-export.js?v=20260326"></script>
-  <script src="./resources/js/rb-init.js?v=20260326"></script>
-  <script src="./resources/js/rb-resize.js?v=20260326"></script>
+  <script src="./resources/js/rb-chart.js?v=20260901"></script>
+  <script src="./resources/js/rb-legend.js?v=20260901"></script>
+  <script src="./resources/js/rb-info.js?v=20260901"></script>
+  <script src="./resources/js/rb-search.js?v=20260901"></script>
+  <script src="./resources/js/rb-dragdrop.js?v=20260901"></script>
+  <script src="./resources/js/rb-export.js?v=20260901"></script>
+  <script src="./resources/js/rb-init.js?v=20260901"></script>
+  <script src="./resources/js/rb-resize.js?v=20260901"></script>
 </body>
 </html>
