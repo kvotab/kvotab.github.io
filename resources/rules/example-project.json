@@ -1,0 +1,35 @@
+{
+  "name": "Example project",
+  "description": "A short, commented example. Copy this file and replace the rules with the terminology agreed for your project.",
+  "rules": [
+    {
+      "pattern": "\\bflux(?:es)?\\b",
+      "description": "Use release when activity release is meant.",
+      "language": "en"
+    },
+    {
+      "pattern": "\\bnear[ -]field\\b",
+      "description": "Write near field as two words with no hyphen when used as a noun.",
+      "flags": "giu",
+      "language": "en"
+    },
+    {
+      "pattern": "\\bcanister positions?\\b",
+      "description": "This project uses deposition position.",
+      "flags": "giu",
+      "language": "en",
+      "severity": "warning"
+    },
+    {
+      "pattern": "\\bhögaktivt avfall\\b",
+      "description": "Använd använt kärnbränsle om det är bränsle som avses.",
+      "flags": "giu",
+      "language": "sv"
+    },
+    {
+      "pattern": "\\bTBD\\b",
+      "description": "Placeholder left in the text.",
+      "severity": "warning"
+    }
+  ]
+}

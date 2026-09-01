@@ -47,6 +47,51 @@
     .spinner { width: 16px; height: 16px; flex: 0 0 auto; border: 2px solid var(--border-color); border-top-color: var(--color-kvot-bright); border-radius: 50%; animation: spin .7s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
 
+    .settings-heading { margin: 0 0 8px; color: var(--text-secondary); font-size: .78rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+    .rule-pack-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+    .rule-pack-row {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 12px;
+      border: 1px solid var(--border-color);
+      border-radius: 9px;
+      background: var(--bg-surface);
+      font-size: .85rem;
+    }
+    .rule-pack-row.built-in { background: transparent; border-style: dashed; }
+    .rule-pack-row label { display: flex; align-items: center; gap: 8px; font-weight: 600; cursor: pointer; }
+    .rule-pack-row label:has(input:disabled) { cursor: default; color: var(--text-secondary); }
+    .rule-pack-row input[type=checkbox] { accent-color: var(--color-kvot-bright); }
+    .rule-pack-count {
+      padding: 2px 8px;
+      border-radius: 12px;
+      background: var(--bg-secondary);
+      color: var(--text-muted);
+      font-size: .74rem;
+      white-space: nowrap;
+    }
+    .rule-pack-note { grid-column: 1 / -1; margin: -2px 0 0; color: var(--text-muted); font-size: .78rem; line-height: 1.4; }
+    .rule-pack-remove {
+      padding: 3px 9px;
+      border: 1px solid transparent;
+      border-radius: 12px;
+      background: none;
+      color: var(--text-muted);
+      font: inherit;
+      font-size: .76rem;
+      cursor: pointer;
+    }
+    .rule-pack-remove:hover { border-color: var(--color-kvot-accent); color: var(--color-kvot-accent); }
+    #rule-pack-status { color: var(--text-secondary); font-size: .8rem; }
+    #rule-pack-status.error { color: var(--color-kvot-accent); font-weight: 600; }
+    .spacing-group { margin: 12px 0; padding: 10px 14px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-secondary); }
+    .spacing-group > summary { cursor: pointer; font-weight: 600; }
+    .spacing-group-row { padding: 6px 0; border-bottom: 1px solid var(--border-color); font-size: .86rem; }
+    .spacing-group-row:last-child { border-bottom: 0; }
+    .spacing-group-count { display: inline-block; min-width: 2.6em; color: var(--text-muted); font-family: ui-monospace, monospace; }
+
     #doc-info { display: none; margin-bottom: 20px; padding: 10px 16px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-secondary); color: var(--text-secondary); font-size: .84rem; line-height: 1.6; }
     #doc-info.show { display: block; }
     #doc-info strong { color: var(--text-primary); }
@@ -98,8 +143,11 @@
       margin: -4px 0 20px;
     }
     #result-actions.show { display: flex; }
-    #zotero-settings { margin-right: auto; position: relative; }
-    #zotero-settings > summary {
+    #zotero-settings, #rule-packs { position: relative; }
+    #zotero-settings { margin-right: 8px; }
+    #rule-packs { margin-right: auto; }
+    #zotero-settings > summary,
+    #rule-packs > summary {
       padding: 7px 14px;
       border: 1px solid var(--border-color);
       border-radius: 20px;
@@ -110,10 +158,18 @@
       cursor: pointer;
       list-style: none;
     }
-    #zotero-settings > summary::-webkit-details-marker { display: none; }
+    #zotero-settings > summary::-webkit-details-marker,
+    #rule-packs > summary::-webkit-details-marker { display: none; }
     #zotero-settings > summary::before { content: '⚙ '; }
-    #zotero-settings[open] > summary { border-color: var(--color-kvot-bright); }
-    .zotero-settings-panel {
+    #rule-packs > summary::before { content: '▤ '; }
+    #zotero-settings > summary:hover,
+    #rule-packs > summary:hover { border-color: var(--color-kvot-bright); }
+    #zotero-settings[open] > summary,
+    #rule-packs[open] > summary {
+      border-color: var(--color-kvot-bright);
+      background: var(--bg-surface);
+    }
+    .zotero-settings-panel, .settings-panel {
       position: absolute;
       z-index: 30;
       top: calc(100% + 8px);
@@ -140,8 +196,9 @@
     }
     .zotero-checkbox { display: flex; align-items: center; gap: 7px; color: var(--text-secondary); font-size: .84rem; }
     .zotero-checkbox input { accent-color: var(--color-kvot-bright); }
-    .zotero-settings-actions { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
-    .zotero-settings-note { margin-top: 10px; color: var(--text-muted); font-size: .76rem; line-height: 1.4; }
+    .zotero-settings-actions, .settings-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+    .zotero-settings-note, .settings-note { margin-top: 10px; color: var(--text-muted); font-size: .76rem; line-height: 1.4; }
+    .settings-note code { padding: 1px 4px; border-radius: 4px; background: var(--bg-surface); font-size: .95em; }
     #zotero-settings-status { color: var(--text-muted); font-size: .78rem; }
     @media (max-width: 650px) {
       .zotero-settings-grid { grid-template-columns: 1fr; }
@@ -239,6 +296,27 @@
     .citation-source-badge.field { background:color-mix(in srgb,#c87d0a 14%,var(--bg-secondary)); color:#9a6108; border:1px solid color-mix(in srgb,#c87d0a 45%,var(--border-color)); }
     .citation-source-detail { margin-top:3px; color:var(--text-muted); font-size:.72rem; line-height:1.35; }
     .citation-context { max-width:560px; color:var(--text-secondary); line-height:1.48; overflow-wrap:anywhere; }
+
+    /* The orphan table carries a lot of columns; fix their proportions so the
+       context keeps enough width to read as running text. */
+    .orphan-table { table-layout: fixed; }
+    .orphan-table th { white-space: normal; line-height: 1.3; }
+    .orphan-table th:nth-child(1), .orphan-table td:nth-child(1) { width: 17%; }
+    .orphan-table th:nth-child(2), .orphan-table td:nth-child(2) { width: 16%; }
+    .orphan-table th:nth-child(3), .orphan-table td:nth-child(3) { width: 41%; }
+    .orphan-table th:nth-child(4), .orphan-table td:nth-child(4) { width: 12%; }
+    .orphan-table th:nth-child(5), .orphan-table td:nth-child(5) { width: 14%; }
+    .orphan-table .ref-key { display: block; white-space: normal; overflow-wrap: anywhere; }
+    .orphan-table .citation-context { max-width: none; }
+    .orphan-table .zotero-cell { min-width: 0; }
+    .orphan-table .zotero-row-btn { width: 100%; }
+    .citation-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 4px; }
+    .citation-type { color: var(--text-muted); font-size: .72rem; }
+    .suggestion-score { margin-top: 3px; color: var(--text-muted); font-size: .74rem; cursor: help; }
+    @media (max-width: 820px) {
+      .orphan-table { table-layout: auto; }
+      .orphan-table th, .orphan-table td { width: auto !important; }
+    }
     .citation-context-match { color:var(--text-primary); font-weight:800; background:color-mix(in srgb,var(--color-kvot-bright) 17%,transparent); border-radius:3px; padding:0 2px; }
     .citation-location-region { display:block; color:var(--text-primary); font-weight:700; }
     .citation-location-paragraph { display:block; margin-top:2px; color:var(--text-muted); font-size:.76rem; }
@@ -356,6 +434,26 @@
             </div>
             <div class="zotero-settings-note">
               Credentials are kept only in this page's memory and are not included in downloaded reports. References are formatted by the built-in SKB reference formatter. For security, prefer an API key over a username and password. A local Zotero database requires Zotero's local API to be enabled. Edge must also grant this site Local Network Access; use “Request/test local access” after selecting the local source.
+            </div>
+          </div>
+        </details>
+        <details id="rule-packs">
+          <summary id="rule-pack-summary">Rule packs</summary>
+          <div class="settings-panel">
+            <p class="settings-heading">Active rule sets</p>
+            <ul id="rule-pack-list" class="rule-pack-list"></ul>
+            <div class="settings-actions">
+              <input type="file" id="rule-pack-input" accept=".json,application/json" multiple hidden>
+              <button id="rule-pack-load" class="zotero-row-btn" type="button">Load rule pack…</button>
+              <button id="rule-pack-export" class="zotero-row-btn" type="button">Export active rules</button>
+              <span id="rule-pack-status"></span>
+            </div>
+            <div class="settings-note">
+              The three official SKB guides are built in and always apply. A rule pack is a JSON file holding
+              project-specific terminology and preferences, either a bare array of rules or
+              <code>{ "name": …, "description": …, "rules": [ … ] }</code>, where each rule is
+              <code>{ "pattern": "\\bflux\\b", "description": "Use release", "enabled": true }</code>.
+              Packs are remembered in this browser and the document is re-analysed when one is added or removed.
             </div>
           </div>
         </details>
@@ -1278,7 +1376,7 @@
       },
       {
             "enabled": true,
-            "pattern": "\\b[Ss]ections?\\s+[0-9]+\\b",
+            "pattern": "\\b[Ss]ections?\\s+[0-9]+(?![0-9.])\\b",
             "description": "Section där det borde vara Chapter?"
       },
       {
@@ -1500,7 +1598,49 @@
       { pattern: String.raw`\b(?:Figur|Tabell)\s+\d`, flags: 'gu', description: 'In Swedish running text, write numbered references with lower-case “figur” and “tabell”.', source: 'handbook', language: 'sv' },
       { pattern: String.raw`\b(?:figur|tabell)\s+\d`, flags: 'gu', description: 'In English running text, write numbered references as “Figure” and “Table”.', source: 'handbook', language: 'en' },
       { pattern: String.raw`\b\d+\s*(?:kg|g|mg|µg|m|cm|mm|km|s|min|h|d|Hz|Pa|kPa|MPa|V|mV|A|mA|W|kW|MW|J|kJ|mol|Bq|Gy|Sv)\b`, description: 'Use a non-breaking space between a numerical value and a unit symbol.', source: 'technical', custom: 'unit-space' },
-      { pattern: String.raw`\b\d+\s*[xX]\s*10(?:\^?[-+]?\d+|[⁰¹²³⁴⁵⁶⁷⁸⁹]+)`, description: 'Use the multiplication sign ×, not the letter x, in scientific notation.', source: 'technical' }
+      { pattern: String.raw`\b\d+\s*[xX]\s*10(?:\^?[-+]?\d+|[⁰¹²³⁴⁵⁶⁷⁸⁹]+)`, description: 'Use the multiplication sign ×, not the letter x, in scientific notation.', source: 'technical' },
+      /* ── Appendix 4 of 1469987: rules that are mandatory in public reports ── */
+      { pattern: String.raw`(?<![\p{L}\d])\d+(?:\.\d+)*\s+[–—-]\s+\d+(?:\.\d+)*(?![\p{L}\d])`, description: 'Write a range with an en dash and no surrounding spaces, for example 2001–2004 and Sections 4.1–4.3.', source: 'technical' },
+      { pattern: String.raw`(?<![\p{L}\d])\d+(?:[.,]\d+)?\s*[xX]\s*(?!10[⁰¹²³⁴⁵⁶⁷⁸⁹^])\d+(?:[.,]\d+)?(?![\p{L}\d])`, description: 'Use the multiplication sign × between numbers, not the letter x.', source: 'technical' },
+      { pattern: String.raw`(?<![\p{L}])\d+(?:[.,]\d+)?\s*[∙·]\s*\d+(?:[.,]\d+)?(?![\p{L}\d])`, description: 'Multiply numbers with the multiplication sign ×, not a half-high dot.', source: 'technical' },
+      { pattern: String.raw`\b[A-Z][A-Za-z0-9]*\s*[×x*]\s*\d*H2O\b`, description: 'Write water of crystallisation with a half-high dot surrounded by spaces, for example CuSO4 ∙ 5H2O.', source: 'technical' },
+      { pattern: String.raw`\b[A-Z][A-Za-z0-9]*[∙·]\d*H2O\b`, description: 'Surround the half-high dot with spaces in water of crystallisation, for example CuSO4 ∙ 5H2O.', source: 'technical' },
+
+      /* ── Appendix 3 of 1469987: characters that are commonly wrong ── */
+      { pattern: String.raw`(?:^|\s)(?:<<|>>)(?=\s|\d|\p{L})`, description: 'Use ≪ or ≫, not two angle brackets.', source: 'technical' },
+      { pattern: String.raw`\d\s*•\s*\d`, description: 'Use the half-high dot ∙ or the multiplication sign ×, not a bullet •.', source: 'technical' },
+      { pattern: String.raw`\b\d+(?:[.,]\d+)?\s*[oO0]C\b`, description: 'Use the degree sign in °C, not the letter o or the digit 0.', source: 'technical' },
+      { pattern: String.raw`∅`, description: 'Use ⌀ for a diameter and φ for the Greek letter; ∅ is the empty set.', source: 'technical' },
+
+      /* ── Section 3.1 of 1469987: numbers ── */
+      { pattern: String.raw`(?<=[\s(])\.\d`, description: 'Write the integer zero in a decimal number between 0 and 1, for example 0.25.', source: 'technical' },
+      { pattern: String.raw`(?<![\p{L}\d])\d+(?:[.,]\d+)?\s*–\s*\d+(?:[.,]\d+)?\s*×\s*10`, description: 'Use “to”, not an en dash, for a range written with powers of ten, and write out both values.', source: 'technical' },
+      { pattern: String.raw`(?<![\p{L}\d])[−-]\d+(?:[.,]\d+)?\s*–\s*[+−-]?\d`, description: 'Use “to”, not an en dash, when a value in a range is negative or carries a modifying sign.', source: 'technical' },
+      { pattern: String.raw`(?<![\p{L}\d])\d+(?:[.,]\d+)?\s*–\s*\d+(?:[.,]\d+)?\s+(?:million|billion|thousand|miljoner|miljarder)\b`, description: 'Use “to”, not an en dash, when numbers combine digits and words, and write out both values.', source: 'technical' },
+
+      /* ── Sections 2.1–2.2 of 1469987: units ── */
+      { pattern: String.raw`\b(?:a few|several|many|some|ett fåtal|några)\s+(?:mm|cm|km|kg|mg|µg|ml|mL|nm|µm|kW|MW|kJ|MJ)\b`, flags: 'giu', description: 'Use the unit name, not the unit symbol, when the unit is not preceded by a number.', source: 'technical' },
+      { pattern: String.raw`\b\d+(?:[.,]\d+)?\s*([A-Za-zµΩ°]{1,4})\s*[–-]\s*\d+(?:[.,]\d+)?\s*\1\b`, description: 'Give the unit symbol only at the end of a range, for example 30–50 mA.', source: 'technical' },
+      { pattern: String.raw`(?<![\/:\w])[A-Za-zµΩ]{1,6}\/[A-Za-zµΩ]{1,6}\/[A-Za-zµΩ]{1,6}(?![\/\w])`, description: 'No unit expression may contain more than one solidus; use negative exponents or parentheses.', source: 'technical' },
+      { pattern: String.raw`\b\d+(?:[.,]\d+)?\s*(?:kgs|kms|cms|mms|mols|secs|hrs|Ls|mLs)\b`, description: 'Unit symbols take no plural ending.', source: 'technical' },
+
+      /* ── Section 5 of 1469987: IUPAC spellings that override British usage ── */
+      { pattern: String.raw`\b[Ss]ulph(?:ur|ate|ide|uric|urous|ite)\w*\b`, description: 'IUPAC spelling is used for this element: write sulfur, sulfate, sulfide, sulfuric. Section 5 of the guide overrides the British spelling listed in section 6.1.5.', source: 'technical' },
+      { pattern: String.raw`\b[Cc]esium\b`, description: 'IUPAC spelling is used for this element: write caesium.', source: 'technical' },
+      { pattern: String.raw`\b[Aa]luminum\b`, description: 'IUPAC spelling is used for this element: write aluminium.', source: 'technical' },
+      { pattern: String.raw`\b[Pp]hosphorous\s+(?:acid|content|concentration|release|transport|species|budget)\b`, description: 'The element is phosphorus; phosphorous is the adjective. Check which is intended.', source: 'technical', severity: 'review' },
+
+      /* ── Section 6.1 of 1469987: SKB writes British English ── */
+      { pattern: String.raw`\b(?:colors?|colored|coloring|labor|labors|behaviors?|flavors?|odors?|harbors?|honors?|humors?|neighbors?|rumors?|splendor)\b`, flags: 'gu', description: 'American spelling: British English writes -our (colour, labour, behaviour).', source: 'technical', severity: 'review', language: 'en' },
+      { pattern: String.raw`\b(?:meters?|liters?|centers?|centered|centering|calibers?|fibers?|maneuvers?|specters?|lusters?|somber|theaters?|saltpeter|meager|ocher)\b`, flags: 'gu', description: 'American spelling: British English writes -re (metre, litre, centre, fibre). Note that words ending in -meter, such as thermometer, keep -er.', source: 'technical', severity: 'review', language: 'en' },
+      { pattern: String.raw`\b(?:real|recogn|critic|emphas|util|summar|minim|standard|styl|character|local|organ|normal|optim|visual|final|initial)(?:ize|izes|ized|izing|ization|izations)\b`, flags: 'gu', description: 'American spelling: British English prefers -ise and -isation (realise, minimise, standardisation).', source: 'technical', severity: 'review', language: 'en' },
+      { pattern: String.raw`\b(?:analyz|catalyz|hydrolyz|paralyz)(?:e|es|ed|ing|er)?\b`, flags: 'gu', description: 'American spelling: British English writes -yse (analyse, catalyse, hydrolyse).', source: 'technical', severity: 'review', language: 'en' },
+      { pattern: String.raw`\b(?:analogs?|catalogs?|dialogs?)\b`, flags: 'gu', description: 'American spelling: British English writes -ogue (analogue, catalogue, dialogue).', source: 'technical', severity: 'review', language: 'en' },
+      { pattern: String.raw`\b(?:defense|offense|pretense)s?\b`, flags: 'gu', description: 'American spelling: British English writes -ence (defence, offence, pretence).', source: 'technical', severity: 'review', language: 'en' },
+      { pattern: String.raw`\b(?:archeolog|paleontolog|paleo|medieval|encyclopedia)\w*\b`, flags: 'gu', description: 'American spelling: British English keeps ae or oe (archaeology, palaeontology, mediaeval, encyclopaedia).', source: 'technical', severity: 'review', language: 'en' },
+      { pattern: String.raw`\b(?:modeling|modeled|labeled|labeling|traveled|traveler|traveling|canceled|canceling|counselor|equaling|signaled|signaling|totaled|fueled|fueling)\b`, flags: 'gu', description: 'American spelling: British English doubles the final l (modelling, labelled, traveller, cancelled).', source: 'technical', severity: 'review', language: 'en' },
+      { pattern: String.raw`\b(?:aging|sizable|salable)\b`, flags: 'gu', description: 'American spelling: British English keeps the silent e (ageing, sizeable, saleable).', source: 'technical', severity: 'review', language: 'en' },
+      { pattern: String.raw`\b(?:molds?|molded|molding|grays?|grayish|artifacts?|oriented|tires?|storeys?|storys?)\b`, flags: 'gu', description: 'American spelling: British English writes mould, grey, artefact, orientated, tyre, storey. Check which sense is intended.', source: 'technical', severity: 'review', language: 'en' }
     ];
 
     const RULE_ID_OVERRIDES = Object.freeze({
@@ -1516,7 +1656,7 @@
       '\\b[Cc]olors?\\b': 'language-us-color',
       '\\b[Oo]rganiz(?:e|es|ed|ing|ation)\\b': 'language-us-organize',
       '\\b[Bb]ehaviors?\\b': 'language-us-behavior',
-      '\\b[Ss]ections?\\s+[0-9]+\\b': 'reference-section-vs-chapter',
+      '\\b[Ss]ections?\\s+[0-9]+(?![0-9.])\\b': 'reference-section-vs-chapter',
       '\\b[Cc]hapters?\\s+[0-9]+\\.[0-9]+\\b': 'reference-chapter-vs-section',
       '\\d%(?![\\p{L}\\p{N}])': 'unit-missing-space-percent',
       '\\d°C(?!\\p{L})': 'unit-missing-space-celsius',
@@ -1599,6 +1739,105 @@
     runReviewRuleRegressionTests();
     function runConsolidatedRegressionTests(){const failures=[],all=[...FORBIDDEN_WORD_RULES,...POTENTIAL_INVALID_CITATION_RULES,...OFFICIAL_SKB_TEXT_RULES],ids=new Set();for(const rule of all){if(!rule.id||ids.has(rule.id))failures.push(`Duplicate/missing rule ID: ${rule.id}`);ids.add(rule.id);if(!rule.label)failures.push(`Missing rule name: ${rule.id}`);if((rule.legacyIds||[]).includes(rule.id))failures.push(`Canonical ID repeated as legacy: ${rule.id}`);}const highlighted=renderRuleContext({fullContext:'Use peak safely <here>.',match:'peak',matchStart:4,matchEnd:8});if(!highlighted.includes('<strong class="rule-context-match">peak</strong>')||!highlighted.includes('&lt;here&gt;'))failures.push('Rule highlight/escaping failed');const fake={styles:new Map([['Base',{id:'Base',basedOn:'',type:'paragraph',name:'Base',language:'en',rawLanguage:'en-GB'}],['Derived',{id:'Derived',basedOn:'Base',type:'paragraph',name:'Derived',language:'unknown',rawLanguage:''}]]),defaultStyles:{paragraph:'Base',character:''},docDefault:{language:'unknown',raw:'',source:'none'}};if(resolveStyleLanguage('Derived',fake)?.language!=='en')failures.push('Style inheritance failed');const sparse=classifyParagraphLanguage('This is an English paragraph with Swedish template metadata and English words.',{counts:{sv:3,en:0,other:0,unknown:70}});if(sparse.language!=='en')failures.push('Sparse metadata language fallback failed');for(const [value,expected] of [['Swedish','(In Swedish.)'],['sv-SE','(In Swedish.)'],['English',''],['','']])if(zoteroLanguageNote(value)!==expected)failures.push(`Zotero language note failed: ${value}`);const repeated=[{key:'Smith 2020',raw:'Smith 2020',paraIndex:1,paraText:'Smith 2020 and Smith 2020'},{key:'Smith 2020',raw:'Smith 2020',paraIndex:1,paraText:'Smith 2020 and Smith 2020'}];assignCitationOccurrenceOffsets(repeated);if(repeated[0].matchStart===repeated[1].matchStart)failures.push('Repeated citation offsets failed');if(failures.length)console.error('Consolidated regression tests failed:',failures);else console.info(`Consolidated regression tests passed (${all.length} rules plus feature checks).`);return failures;}
     runConsolidatedRegressionTests();
+    /*
+      Regression fixture built from the guides' own examples. Every "correct"
+      line is quoted from one of the three guides, so a finding on it is a
+      false positive; every "wrong" line is an error the guides name
+      explicitly. Runs on load and reports to the console.
+    */
+    const GUIDE_FIXTURE_CASES = [
+      /* 1215757, correct in-text citations */
+      { text: 'In previous studies (Lee and Wen 2001, O’Connor 2008), it was reported that the effect is small.', expect: null },
+      { text: 'This opinion has been on several occasions stated by Lindroos (1993a, b).', expect: null },
+      { text: '… as shown by several recent studies (Ludvigson et al. 2002, p 352, McKenzie 2000, pp 34–36).', expect: null },
+      { text: 'Vallery C (2001) has presented a deep insight into this controversy.', expect: null },
+
+      /* 1469987 appendix 4, correct */
+      { text: 'The interval 2001–2004 was studied and Sections 4.1–4.3 describe the method.', expect: null },
+      { text: 'A total of 100 000 samples were taken, and 20 % of them at 0.1 ‰ accuracy.', expect: null },
+      { text: 'The reaction 2HCl + 2Na → 2NaCl + H2 was complete, and CaSO4 ∙ H2O precipitated.', expect: null },
+      { text: 'Values of 2 + 3 = 5, T = 293 K and 50 ± 2 were recorded.', expect: null },
+      { text: 'Figures 1.1 and 1.2 show the result, see Chapter 5 and Appendix A.', expect: null },
+      { text: 'A program was developed (SOU 2010:6) to handle the waste.', expect: null },
+
+      /* 1469987 appendix 4, wrong */
+      { text: 'The period 2001-2004 was studied.', expect: /en dash/i },
+      { text: 'The result covers Sections 4.1 – 4.3 of the report.', expect: /no surrounding spaces/i },
+      { text: 'A total of 100,000 samples were collected.', expect: /thousands separator/i },
+      { text: 'The value was 20% of the total.', expect: /non-breaking space/i },
+      { text: 'The temperature was −5°C during the test.', expect: /non-breaking space/i },
+      { text: 'The grid measured 3 x 7 m in total.', expect: /multiplication sign/i },
+      { text: 'The flux reached 7 ∙ 10³ during the peak.', expect: /multiplication sign/i },
+      { text: 'The reaction 2 HCl + 2 Na → 2 NaCl + H2 was complete.', expect: /coefficient/i },
+      { text: 'The precipitate was CaSO4×H2O throughout.', expect: /water of crystallisation/i },
+      { text: 'Results were 2+3=5 in every case.', expect: /operators/i },
+      { text: 'The concentration was 2.4e5 in the sample.', expect: /E notation/i },
+
+      /* 1469987 appendix 3 and section 3.1 */
+      { text: 'The value was .25 in the first test.', expect: /integer zero/i },
+      { text: 'The ratio was much greater >> 100 in that case.', expect: /≪ or ≫/ },
+      { text: 'Figures 1.1–1.2 show the result.', expect: /adjacent numbered/i },
+      { text: 'The range 2.5–3.6 × 10³ was covered.', expect: /powers of ten/i },
+      { text: 'A total of 15–30 million tonnes were handled.', expect: /digits and words/i },
+      { text: 'Measurements at 30 mA – 50 mA were taken.', expect: /end of a range/i },
+      { text: 'A mass of 5 kgs was recorded.', expect: /plural ending/i },
+
+      /* 1469987 sections 5 and 6.1 */
+      { text: 'The sulphate concentration was measured in the groundwater.', expect: /IUPAC/i },
+      { text: 'We analyze the color of the fiber in the center of the sample.', expect: /American spelling/i },
+
+      /* Identifiers that must never be read as chemistry or arithmetic */
+      { text: 'The results for SFR1, CCP33 and KBS3 are reported in Chapter 4.', expect: null },
+      { text: 'See Nagra Technical Report 02-05 for the Swiss approach.', expect: null },
+      { text: 'The analysis follows SKB TR-10-53 and document id 1715629.', expect: null }
+    ];
+
+    function runGuideFixtureRegressionTests() {
+      const failures = [];
+      for (const [index, testCase] of GUIDE_FIXTURE_CASES.entries()) {
+        const paragraph = {
+          index, localIndex: index, text: testCase.text, style: '', section: 'Fixture',
+          sourcePart: 'fixture', sourceLabel: 'Fixture', language: 'en',
+          languageConfidence: 1, languageRanges: [], formatSpans: []
+        };
+        let found = [];
+        try {
+          found = findOfficialSkbTextIssues([paragraph], { language: 'en', confidence: 1 });
+        } catch (error) {
+          failures.push(`Rule crash on "${testCase.text.slice(0, 45)}…": ${error.message}`);
+          continue;
+        }
+        const descriptions = found.map(issue => issue.description);
+        if (testCase.expect === null) {
+          if (descriptions.length) failures.push(`False positive on a correct line: "${testCase.text.slice(0, 55)}…" → ${descriptions[0]}`);
+        } else if (!descriptions.some(description => testCase.expect.test(description))) {
+          failures.push(`Missed ${testCase.expect} in "${testCase.text.slice(0, 55)}…"${descriptions.length ? ` (found instead: ${descriptions[0]})` : ''}`);
+        }
+      }
+
+      /* Reference-list collation, from the examples in chapter 5 of 1215757. */
+      const ordered = ['Berg Adams C', 'Berggren B', 'Berg-Liljeblad A', 'Délaine J-M', 'de Maury E'];
+      for (let index = 1; index < ordered.length; index++) {
+        if (skbSortKey(ordered[index - 1]) > skbSortKey(ordered[index])) {
+          failures.push(`Collation failed: ${ordered[index - 1]} should sort before ${ordered[index]}`);
+        }
+      }
+      if (!(skbSortKey('Ünger') < skbSortKey('Zetterlund'))) failures.push('Collation failed: u-diaeresis should sort as y');
+      if (!(skbSortKey('Ärlig') < skbSortKey('Öberg'))) failures.push('Collation failed: a-diaeresis should sort before o-diaeresis');
+
+      /* Chemistry must not swallow project identifiers. */
+      for (const identifier of ['SFR1', 'CCP33', 'KBS3', 'R2', 'P14']) {
+        if (isChemicalFormula(identifier)) failures.push(`Identifier read as a chemical formula: ${identifier}`);
+      }
+      for (const formula of ['H2O', 'CO2', 'H2SO4', 'CaCO3', 'Fe2O3']) {
+        if (!isChemicalFormula(formula)) failures.push(`Chemical formula not recognised: ${formula}`);
+      }
+
+      if (failures.length) console.error(`Guide fixture: ${failures.length} failure(s)`, failures);
+      else console.info(`Guide fixture passed (${GUIDE_FIXTURE_CASES.length} lines from the SKB guides plus collation and chemistry checks).`);
+      return failures;
+    }
+
     function runReferenceHeadingSelectionRegressionTests() {
       const failures = [];
       const candidates = [
@@ -1703,11 +1942,20 @@
       currentFilename = '';
     }
 
+    let currentFile = null;
+
+    /* Reloading a rule pack changes the findings, so re-run the last document. */
+    async function reanalyseCurrentDocument() {
+      if (!currentFile) return;
+      await handleFile(currentFile);
+    }
+
     async function handleFile(file) {
       if (!file.name.toLowerCase().endsWith('.docx')) {
         alert('Please upload a .docx file.');
         return;
       }
+      currentFile = file;
       dropzone.style.display = 'none';
       currentFilename = file.name;
       setProgress(5);
@@ -1730,12 +1978,22 @@
         for(const partName of auxiliaryPartNames){const xml=await zip.file(partName).async('string'),parsed=parseDocXml(xml,stylesXml),base=paragraphs.length+auxiliaryParagraphs.length,label=/footnotes/i.test(partName)?'Footnotes':/endnotes/i.test(partName)?'Endnotes':/comments/i.test(partName)?'Comments':/header(\d+)/i.test(partName)?`Header ${partName.match(/header(\d+)/i)[1]}`:`Footer ${partName.match(/footer(\d+)/i)?.[1]||''}`;parsed.paragraphs.forEach((paragraph,index)=>{paragraph.localIndex=index;paragraph.index=base+index;paragraph.sourcePart=partName;paragraph.sourceLabel=label;paragraph.documentRegion='auxiliary';paragraph.regionLabel=label;});auxiliaryParagraphs.push(...parsed.paragraphs);}
         const allParagraphs=[...paragraphs,...auxiliaryParagraphs];
         const languageProfile=calculateDocumentLanguage(allParagraphs),isSwedish=languageProfile.language==='sv';
-        let forbiddenMatches = findForbiddenWordMatches(allParagraphs);
-        let officialWritingIssues = findOfficialSkbTextIssues(allParagraphs, languageProfile);
-        setProgress(45);
+        setProgress(42);
         showStatus('Finding reference list…');
         await yieldToBrowser();
         const { refListParagraphs, bodyParagraphs, refListStart, refListEnd } = splitAtRefList(paragraphs);
+        /*
+          Mark the reference list before any rule runs. Terminology preferences
+          apply to what SKB writes, not to the titles of the works being cited,
+          which must be reproduced exactly as published.
+        */
+        for (const paragraph of refListParagraphs) paragraph.isReferenceList = true;
+        setProgress(45);
+        showStatus('Applying rules…');
+        await yieldToBrowser();
+        let forbiddenMatches = findForbiddenWordMatches(allParagraphs);
+        let officialWritingIssues = findOfficialSkbTextIssues(allParagraphs, languageProfile);
+        officialWritingIssues.push(...findFormattingIssues(allParagraphs));
         let potentialInvalidCitations = findPotentialInvalidCitations([...bodyParagraphs, ...auxiliaryParagraphs]);
         console.info('Reference-list detection', {
           totalParagraphCount: paragraphs.length,
@@ -1756,7 +2014,9 @@
         await yieldToBrowser();
         const refEntries = extractRefEntries(refListParagraphs);
         officialWritingIssues.push(
-          ...findOfficialSkbReferenceIssues(refEntries, refListParagraphs, isSwedish)
+          ...findOfficialSkbReferenceIssues(refEntries, refListParagraphs, isSwedish),
+          ...findReferenceListOrderIssues(refEntries),
+          ...findYearSuffixIssues(refEntries)
         );
         const deduplicatedFindings = deduplicateRuleFindings(officialWritingIssues, potentialInvalidCitations, forbiddenMatches);
         officialWritingIssues = deduplicatedFindings.official;
@@ -1774,7 +2034,7 @@
         setProgress(82);
         showStatus('Cross-referencing…');
         await yieldToBrowser();
-        const report = crossReference(refEntries, inTextCites);
+        const report = attachOrphanSuggestions(crossReference(refEntries, inTextCites));
         currentReport = report;
         currentRefEntries = refEntries;
         setProgress(92);
@@ -1892,8 +2152,13 @@
           end: Math.max(0, Math.min(trimmedText.length, range.end - leadingTrim))
         })).filter(range => range.end > range.start);
         const language=classifyParagraphLanguage(trimmedText,languageMetadata);
+        const formatSpans = (extracted.formatSpans || []).map(span => ({
+          ...span,
+          start: Math.max(0, span.start - leadingTrim),
+          end: Math.max(0, Math.min(trimmedText.length, span.end - leadingTrim))
+        })).filter(span => span.end > span.start);
         return {
-          text: trimmedText, fields: extracted.fields,
+          text: trimmedText, fields: extracted.fields, formatSpans,
           hasZoteroBibliography: extracted.fields.some(field => field.isZoteroBibliography),
           style: (styleNode?.getAttribute('w:val') || '').toLowerCase(),
           isInTable,
@@ -1909,14 +2174,52 @@
       return { paragraphs, isSwedish: languageProfile.language==='sv', languageProfile };
     }
 
+    /*
+      Character formatting that the writing guides care about. Superscript,
+      subscript, italic and underline carry meaning in chapters 4 and 5 of
+      1469987 and cannot be seen in the plain text alone.
+    */
+    function readRunFormatting(run, NS) {
+      const rPr = run.getElementsByTagNameNS(NS, 'rPr')[0];
+      if (!rPr) return { sup: false, sub: false, italic: false, underline: false };
+      const own = child => {
+        const node = rPr.getElementsByTagNameNS(NS, child)[0];
+        if (!node) return null;
+        const value = node.getAttribute('w:val') ?? node.getAttributeNS(NS, 'val');
+        return value === null ? 'on' : String(value).toLowerCase();
+      };
+      const vertAlign = own('vertAlign');
+      const isOn = value => value !== null && !['0', 'false', 'none', 'off'].includes(value);
+      return {
+        sup: vertAlign === 'superscript',
+        sub: vertAlign === 'subscript',
+        italic: isOn(own('i')),
+        underline: isOn(own('u'))
+      };
+    }
+
     function extractTextFromParagraph(node, NS) {
       let text = '';
       const stack = [];
       const extractedFields = [];
+      const formatSpans = [];
+      let hyperlinkDepth = 0;
       (function walk(parent) {
         for (let child = parent.firstChild; child; child = child.nextSibling) {
           if (child.nodeType !== 1) continue;
           if (child.namespaceURI !== NS) { walk(child); continue; }
+          if (child.localName === 'hyperlink') {
+            hyperlinkDepth++; walk(child); hyperlinkDepth--; continue;
+          }
+          if (child.localName === 'r') {
+            const start = text.length;
+            const formatting = readRunFormatting(child, NS);
+            walk(child);
+            if (text.length > start) {
+              formatSpans.push({ start, end: text.length, inHyperlink: hyperlinkDepth > 0, ...formatting });
+            }
+            continue;
+          }
           if (child.localName === 'fldChar') {
             const type = child.getAttribute('w:fldCharType');
             if (type === 'begin') {
@@ -1952,7 +2255,7 @@
           } else walk(child);
         }
       })(node);
-      return { text, fields: extractedFields };
+      return { text, fields: extractedFields, formatSpans };
     }
 
     const REF_HEADING_RE = /^[\s\u00a0]*(?:\d[\d.]*[\s\u00a0]+)?(?:references?|referenser|referenslista|litteratur|bibliography)[\s\u00a0]*[.:]?[\s\u00a0]*$/i;
@@ -2601,7 +2904,7 @@
         "based on Crawford (2018)" without trying to interpret the preceding
         prose as part of the author name.
       */
-      const directNarrativeExpression = /(?:^|[^\p{L}'’\-])((?:(?:van|von|de|del|della|der|den|di|da|dos|du|la|le|af)\s+)*[\p{Lu}][\p{L}'’\-]{0,40}(?:\s*\(ed\))?)\s*\(((?:1[89]\d{2}|20\d{2})[a-z]?)\)/gu;
+      const directNarrativeExpression = /(?:^|[^\p{L}'’\-])((?:(?:van|von|de|del|della|der|den|di|da|dos|du|la|le|af)\s+)*[\p{Lu}][\p{L}'’\-]{1,40}(?:\s+[\p{Lu}](?:-[\p{Lu}])?){0,3}(?:\s*\(ed\))?)\s*\(((?:1[89]\d{2}|20\d{2})[a-z]?)\)/gu;
       let directNarrativeMatch;
       while ((directNarrativeMatch = directNarrativeExpression.exec(paragraph.text)) !== null) {
         addCitation(
@@ -2698,6 +3001,18 @@
     function escapeRegExp(text) { return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
     function normaliseKey(key) { return normaliseDashes(key).normalize('NFC').toLowerCase().replace(/et\s*al\.?/g, 'etal').replace(/\s*-\s*/g, '-').replace(/[\s.,;:!?\'"()\[\]{}]/g, ''); }
 
+    /*
+      Section 3.2.4 of the reference guide adds author initials to an in-text
+      citation when two authors share a surname: "Vallery C (2001)". The
+      reference-list key carries no initials, so drop them when matching.
+    */
+    function stripCitationInitials(key) {
+      return String(key)
+        .replace(/\s+[\p{Lu}](?:-[\p{Lu}])?(?=\s|$)/gu, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+
     function fuzzyMatch(first, second) {
       if (first.length < 4 || second.length < 4) return false;
       if (first.includes(second) || second.includes(first)) return true;
@@ -2725,6 +3040,10 @@
         else {
           const key = normaliseKey(citation.key);
           matches = byKey.get(key) || byAlias.get(key) || [];
+          if (!matches.length) {
+            const withoutInitials = normaliseKey(stripCitationInitials(citation.key));
+            if (withoutInitials !== key) matches = byKey.get(withoutInitials) || byAlias.get(withoutInitials) || [];
+          }
           if (!matches.length) for (const [candidate, list] of byKey) if (fuzzyMatch(key, candidate)) { matches = list; break; }
         }
         if (matches.length) matches.forEach(entry => entry.cites.push(citation));
@@ -2734,6 +3053,32 @@
     }
 
     const YEAR_RE = /\b(1[89]\d{2}|20\d{2})[a-z]?\b/;
+    /*
+      An orphan citation and an uncited reference are usually two views of the
+      same mistake: "Anderson et al. 1997" in the text against "Anderson 1997"
+      in the list. Pair them up so the author sees the likely fix instead of
+      two unrelated lists.
+    */
+    function attachOrphanSuggestions(report) {
+      const candidates = report.uncitedRefs.length ? report.uncitedRefs : [];
+      const pool = candidates.length ? candidates : [];
+      for (const citation of report.orphanCites) {
+        const citationKey = normaliseKey(stripCitationInitials(citation.key)).replace(/etal/g, '');
+        let best = null;
+        for (const entry of pool) {
+          const entryKey = normaliseKey(entry.key).replace(/etal/g, '');
+          const score = stringSimilarity(citationKey, entryKey);
+          if (!best || score > best.score) best = { entry, score };
+        }
+        if (best && best.score >= 0.62) {
+          citation.suggestion = best.entry;
+          citation.suggestionScore = best.score;
+          best.entry.suggestedFor = [...(best.entry.suggestedFor || []), citation.key];
+        }
+      }
+      return report;
+    }
+
     function checkSkbFormat(entries) {
       const issues = [];
       const numbered = entries.filter(entry => entry.num !== null).sort((a, b) => a.num - b.num);
@@ -2752,11 +3097,50 @@
         }
         if (text.length < 30) issues.push({ key: entry.key, issue: 'Entry seems too short — likely incomplete', severity: 'warn' });
         if (/^https?:\/\//.test(text)) issues.push({ key: entry.key, issue: 'URL-only reference; add author, title, and access date', severity: 'error' });
-        if (/https?:\/\//.test(text) && !/(?:accessed|hämtad|hämtat|visited|retrieved|besökt)\s/i.test(text)) issues.push({ key: entry.key, issue: 'URL present but no access date', severity: 'warn' });
+        /*
+          A doi is a persistent identifier, not a web page: section 4.4 of the
+          reference guide gives doi examples with no access date, and appendix 1
+          states that no period is written after a link.
+        */
+        const isDoi = /(?:doi\.org\/|\bdoi:\s*10\.|\b10\.\d{4,9}\/)/i.test(text);
+        const endsWithLink = /(?:https?:\/\/|www\.)\S+$/i.test(text.trim());
+        if (/https?:\/\//.test(text) && !isDoi && !/(?:accessed|hämtad|hämtat|visited|retrieved|besökt)\s/i.test(text)) issues.push({ key: entry.key, issue: 'URL present but no access date', severity: 'warn' });
         const last = text.trim().slice(-1);
-        if (text.length > 20 && !['.', ')'].includes(last)) issues.push({ key: entry.key, issue: `Reference does not end with a period (ends with "${last}")`, severity: 'info' });
+        if (text.length > 20 && !endsWithLink && !['.', ')'].includes(last)) issues.push({ key: entry.key, issue: `Reference does not end with a period (ends with "${last}")`, severity: 'info' });
+        if (endsWithLink && last === '.') issues.push({ key: entry.key, issue: 'Do not write a period after a link at the end of a reference', severity: 'info' });
       }
       return issues;
+    }
+
+    function initialiseRulePackControls() {
+      loadedRulePacks = readStoredRulePacks()
+        .map(pack => { try { return normaliseRulePack(pack, pack.name); } catch (error) { return null; } })
+        .filter(Boolean);
+      renderRulePackList();
+
+      const input = document.getElementById('rule-pack-input');
+      document.getElementById('rule-pack-load')?.addEventListener('click', () => input?.click());
+      input?.addEventListener('change', async () => {
+        await addRulePackFiles([...input.files]);
+        input.value = '';
+      });
+      document.getElementById('rule-pack-export')?.addEventListener('click', exportRulePacks);
+      document.getElementById('rule-pack-list')?.addEventListener('change', async event => {
+        const index = event.target?.dataset?.packIndex;
+        if (index === undefined) return;
+        loadedRulePacks[Number(index)].enabled = event.target.checked;
+        storeRulePacks();
+        renderRulePackList();
+        await reanalyseCurrentDocument();
+      });
+      document.getElementById('rule-pack-list')?.addEventListener('click', async event => {
+        const index = event.target?.dataset?.removePack;
+        if (index === undefined) return;
+        loadedRulePacks.splice(Number(index), 1);
+        storeRulePacks();
+        renderRulePackList();
+        await reanalyseCurrentDocument();
+      });
     }
 
     function updateZoteroSettingsVisibility() {
@@ -3809,6 +4193,37 @@ ${exportedResults.innerHTML}
         }
 
         /*
+          A coefficient in a chemical reaction is written directly against the
+          formula (2HCl, not 2 HCl). Only checked inside something that really
+          is a reaction, so ordinary sentences such as "2 samples" are safe.
+        */
+        if (/[→⇄⇌]/.test(text)) {
+          for (const match of text.matchAll(/(?<![\p{L}\d])(\d+)\s+(?=[A-Z][a-z]?\d*(?:[A-Z(]|\b))/gu)) {
+            issues.push(makeOfficialIssue({
+              match: match[0].trim(),
+              description: 'Write the coefficient directly against the formula in a chemical reaction, for example 2HCl.',
+              source: 'technical', paragraph, context: text
+            }));
+          }
+        }
+
+        /*
+          Two numbered elements that follow each other are joined with "and",
+          not with an en dash (Figures 1.1 and 1.2, Chapters 9 and 10).
+        */
+        for (const match of text.matchAll(/\b(Figures?|Tables?|Chapters?|Sections?|Appendices|Equations?|Figurer?|Tabeller?|Kapitel|Avsnitt|Bilagor?|Ekvationer?)\s+(\d+(?:[.-]\d+)*)\s*[–-]\s*(\d+(?:[.-]\d+)*)/giu)) {
+          const first = match[2].split(/[.-]/).pop();
+          const second = match[3].split(/[.-]/).pop();
+          if (Number(second) - Number(first) === 1) {
+            issues.push(makeOfficialIssue({
+              match: match[0],
+              description: 'Join two adjacent numbered elements with “and”, not with an en dash.',
+              source: 'technical', paragraph, context: text
+            }));
+          }
+        }
+
+        /*
           High-confidence mathematical spacing checks.
           Hyphenated identifiers and internal cross-references such as
           Figure 1-1, Table 2-3, Section 4-2, SKB TR-10-02, SFR1, and
@@ -3832,15 +4247,27 @@ ${exportedResults.innerHTML}
           const surrounding = `${before}${match[0]}${after}`;
 
           const isCrossReference = /(?:Figure|Figur|Table|Tabell|Section|Avsnitt|Chapter|Kapitel|Appendix|Bilaga|Equation|Ekvation)\s*$/i.test(before);
-          const isIdentifier = /(?:SKB|SFR|SFL|Clab|SSMFS|SFS|ISO|IEC|EN|TR|R|P|IPR|RD|SR|TM|U|F|SKBdoc|document(?:\s+id)?|dokument(?:\s+id)?)\s*-?\s*$/i.test(before);
-          const isRangeContext = /(?:range|interval|between|from|to|through|years?|pages?|samples?|temperatures?|sections?|figures?|tables?)\s*$/i.test(before) || /^\s*(?:years?|pages?|samples?|°C|K|kg|m|mm|cm|km|s|min|h|%|‰)\b/i.test(after);
+          const isIdentifier = /(?:SKB|SFR|SFL|Clab|SSMFS|SFS|ISO|IEC|EN|TR|R|P|IPR|RD|SR|TM|U|F|SKBdoc|document(?:\s+id)?|dokument(?:\s+id)?)\s*-?\s*$/i.test(before)
+            /* Any publisher's report/issue number, e.g. "Nagra Technical Report 02-05". */
+            || /(?:report|rapport|technical\s+report|no|nr|number|nummer|issue|utg[åa]va|version|ver|standard|serie|series|patent)\.?\s*$/i.test(before);
+          const isRangeContext = /(?:range|interval|period|epoch|span|between|from|to|through|years?|pages?|samples?|temperatures?|sections?|figures?|tables?)\s*$/i.test(before) || /^\s*(?:years?|pages?|samples?|°C|K|kg|m|mm|cm|km|s|min|h|%|‰)\b/i.test(after);
+          const isYearRange = /^(?:1[89]\d{2}|20\d{2})-(?:1[89]\d{2}|20\d{2})$/.test(match[0]);
 
           const tokenStart = Math.max(0, match.index - 14);
           const tokenEnd = Math.min(text.length, match.index + match[0].length + 2);
           const tokenContext = text.slice(tokenStart, tokenEnd);
           const isReportNumber = /(?:^|[^A-Za-z0-9])(?:SKB\s+)?(?:TR|R|P|IPR|RD|SR|TM|U|F)-\d{2,}-\d+(?=$|[^A-Za-z0-9])/i.test(tokenContext);
 
-          if (isCrossReference || isIdentifier || isRangeContext || isReportNumber) continue;
+          if (isCrossReference || isIdentifier || isReportNumber) continue;
+
+          if (isRangeContext || isYearRange) {
+            issues.push(makeOfficialIssue({
+              match: match[0],
+              description: 'Use an en dash (–), not a hyphen, in a range.',
+              source: 'technical', paragraph, context: surrounding
+            }));
+            continue;
+          }
 
           issues.push(makeOfficialIssue({
             match: match[0],
@@ -3857,6 +4284,248 @@ ${exportedResults.innerHTML}
         if (seen.has(key)) return false;
         seen.add(key); return true;
       });
+    }
+
+    /* ── Character-formatting checks (chapters 4, 5 and 9 of the guides) ────── */
+
+    const ELEMENT_SYMBOLS = new Set(('H He Li Be B C N O F Ne Na Mg Al Si P S Cl Ar K Ca Sc Ti V Cr Mn Fe Co Ni Cu Zn '
+      + 'Ga Ge As Se Br Kr Rb Sr Y Zr Nb Mo Tc Ru Rh Pd Ag Cd In Sn Sb Te I Xe Cs Ba La Ce Pr Nd Pm Sm Eu Gd Tb Dy Ho '
+      + 'Er Tm Yb Lu Hf Ta W Re Os Ir Pt Au Hg Tl Pb Bi Po At Rn Fr Ra Ac Th Pa U Np Pu Am Cm Bk Cf Es Fm Md No Lr').split(' '));
+
+    /*
+      Formulas made only of single capital letters are indistinguishable from
+      project abbreviations — CCP33 parses as C, C, P just as well as a real
+      formula does. A token therefore counts as chemistry only when it either
+      contains a two-letter element symbol (Na, Ca, Fe …) or is one of the
+      common formulas that SKB reports actually use.
+    */
+    const COMMON_FORMULAS = new Set(['H2O', 'D2O', 'CO2', 'CO3', 'HCO3', 'SO4', 'SO3', 'SO2', 'NO3', 'NO2',
+      'NH4', 'NH3', 'PO4', 'HPO4', 'H2PO4', 'CH4', 'O2', 'N2', 'H2', 'H2S', 'H2SO4', 'HNO3', 'H3PO4', 'H2CO3']);
+
+    function isChemicalFormula(token) {
+      let index = 0, elements = 0, hasTwoLetterElement = false;
+      while (index < token.length) {
+        const character = token[index];
+        if (/[()\[\]]/.test(character)) { index++; continue; }
+        if (/\d/.test(character)) { index++; continue; }
+        if (!/[A-Z]/.test(character)) return false;
+        const two = token.slice(index, index + 2);
+        if (two.length === 2 && /[a-z]/.test(two[1]) && ELEMENT_SYMBOLS.has(two)) {
+          elements++; hasTwoLetterElement = true; index += 2; continue;
+        }
+        if (ELEMENT_SYMBOLS.has(character)) { elements++; index += 1; continue; }
+        return false;
+      }
+      if (elements < 2) return false;
+      return hasTwoLetterElement || COMMON_FORMULAS.has(token);
+    }
+
+    function formattingAt(paragraph, start, end) {
+      const spans = (paragraph.formatSpans || []).filter(span => span.start < end && span.end > start);
+      if (!spans.length) return null;
+      return {
+        sup: spans.every(span => span.sup),
+        sub: spans.every(span => span.sub),
+        italic: spans.every(span => span.italic),
+        anySup: spans.some(span => span.sup),
+        anySub: spans.some(span => span.sub)
+      };
+    }
+
+    function findFormattingIssues(paragraphs) {
+      const issues = [];
+      for (const paragraph of paragraphs) {
+        const text = paragraph.text || '';
+        if (!text) continue;
+        const spans = paragraph.formatSpans || [];
+        if (!spans.length) continue;
+
+        /* Skrivhandboken, section 9: never underline. */
+        for (const span of spans) {
+          if (!span.underline || span.inHyperlink) continue;
+          issues.push(makeOfficialIssue({
+            match: text.slice(span.start, Math.min(span.end, span.start + 60)) || 'underlined text',
+            description: 'Do not underline text; use bold or italic when emphasis is needed.',
+            source: 'handbook', paragraph, context: text
+          }));
+        }
+
+        /*
+          1469987, chapter 5: the number of like atoms is written as a
+          subscript, and a mass number as a superscript before the symbol.
+          Both checks require real element symbols, so report and project
+          identifiers such as SFR1, CCP33 and TR-10-53 are never mistaken for
+          chemistry.
+        */
+        const isReaction = /[→⇄⇌]/.test(text);
+        for (const match of text.matchAll(/\b[A-Z][A-Za-z0-9]*\d[A-Za-z0-9]*\b/g)) {
+          if (!isChemicalFormula(match[0])) continue;
+          const digits = [...match[0].matchAll(/\d+/g)];
+          if (!digits.length) continue;
+          const unformatted = digits.filter(digit => {
+            const start = match.index + digit.index;
+            const state = formattingAt(paragraph, start, start + digit[0].length);
+            return state && !state.anySub;
+          });
+          if (unformatted.length === digits.length) {
+            issues.push(makeOfficialIssue({
+              match: match[0],
+              description: 'Write the number of atoms as a subscript in a chemical formula, for example H2SO4.',
+              source: 'technical', paragraph, context: text, severity: 'review'
+            }));
+          }
+        }
+
+        /*
+          A leading number is a mass number outside a reaction, but a
+          stoichiometric coefficient inside one, so reactions are skipped.
+        */
+        if (!isReaction) {
+          for (const match of text.matchAll(/(?<![\p{L}\d.\-−])(\d{1,3})([A-Z][a-z]?)(?![\p{L}\d])/gu)) {
+            if (!ELEMENT_SYMBOLS.has(match[2])) continue;
+            const state = formattingAt(paragraph, match.index, match.index + match[1].length);
+            if (state && !state.anySup) {
+              issues.push(makeOfficialIssue({
+                match: match[0],
+                description: 'Write the mass number as a superscript before the element symbol, for example 37Cl.',
+                source: 'technical', paragraph, context: text, severity: 'review'
+              }));
+            }
+          }
+        }
+
+        /*
+          1215757, section 5: the ordinal suffix of an edition is not
+          superscript.
+        */
+        if (paragraph.isReferenceList) {
+          for (const match of text.matchAll(/\b\d+(st|nd|rd|th)\s+ed\b/g)) {
+            const start = match.index + match[0].indexOf(match[1]);
+            const state = formattingAt(paragraph, start, start + match[1].length);
+            if (state && state.anySup) {
+              issues.push(makeOfficialIssue({
+                match: match[0],
+                description: 'Do not write the ordinal suffix of an edition in superscript; write 4th ed.',
+                source: 'references', paragraph, context: text
+              }));
+            }
+          }
+        }
+
+        /*
+          1469987, section 4.1: quantity symbols are italic. Checked only in
+          the guide's own "where X is …" construction, where the single letter
+          is unambiguously a quantity symbol.
+        */
+        for (const match of text.matchAll(/\b(?:where|där)\s+([A-Za-z])\s+(?:is|är)\b/g)) {
+          const start = match.index + match[0].indexOf(match[1], match[0].search(/\s/));
+          const state = formattingAt(paragraph, start, start + 1);
+          if (state && !state.italic) {
+            issues.push(makeOfficialIssue({
+              match: match[0],
+              description: 'Write quantity symbols in italics, for example “where V is the volume”.',
+              source: 'technical', paragraph, context: text, severity: 'review'
+            }));
+          }
+        }
+      }
+      return issues;
+    }
+
+    /*
+      Chapter 5 of 1215757: the reference list is sorted alphabetically with
+      u-diaeresis equal to y, the ae ligature to a-diaeresis and o-slash to
+      o-diaeresis. Every other diacritic is ignored, as are hyphens, spaces and
+      apostrophes, so a compound surname sorts as a single word.
+    */
+    const SKB_COLLATION_ALPHABET = 'abcdefghijklmnopqrstuvwxyzåäö';
+
+    function skbSortKey(key) {
+      const folded = String(key || '')
+        .normalize('NFC')
+        .toLowerCase()
+        .replace(/ü/g, 'y')
+        .replace(/æ/g, 'ä')
+        .replace(/ø/g, 'ö')
+        /* Park the three Swedish letters on characters that cannot occur in a
+           name, so that stripping diacritics does not turn them into a and o. */
+        .replace(/å/g, '{')
+        .replace(/ä/g, '|')
+        .replace(/ö/g, '}')
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '')
+        .replace(/\{/g, 'å')
+        .replace(/\|/g, 'ä')
+        .replace(/\}/g, 'ö')
+        .replace(/[\s\-'’.]/g, '');
+      return [...folded]
+        .map(character => {
+          const position = SKB_COLLATION_ALPHABET.indexOf(character);
+          return position < 0 ? character : String.fromCharCode(48 + position);
+        })
+        .join('');
+    }
+
+    function findReferenceListOrderIssues(entries) {
+      const issues = [];
+      /* Numbered lists keep their own order; only author-year lists are sorted. */
+      const sortable = entries.filter(entry => entry.key && entry.num === null);
+      for (let index = 1; index < sortable.length; index++) {
+        const previous = sortable[index - 1], current = sortable[index];
+        if (skbSortKey(previous.key) > skbSortKey(current.key)) {
+          issues.push(makeOfficialIssue({
+            match: current.key,
+            description: 'Reference list out of alphabetical order: "' + current.key + '" is listed after "' + previous.key + '".',
+            source: 'references',
+            paragraph: { index: current.paraIndex, section: 'References', text: current.body },
+            context: previous.key + ' / ' + current.key
+          }));
+        }
+      }
+      return issues;
+    }
+
+    /*
+      Chapter 5 of 1215757: works by the same author from the same year are
+      separated by a lower-case letter. A lone "1993a" therefore means the
+      matching "1993b" is missing, and a bare year beside lettered ones is
+      inconsistent.
+    */
+    function findYearSuffixIssues(entries) {
+      const issues = [];
+      const groups = new Map();
+      for (const entry of entries) {
+        const match = String(entry.key || '').match(/^(.*?)\s*((?:1[89]|20)\d{2})([a-z])?$/);
+        if (!match) continue;
+        const groupKey = match[1].toLowerCase() + ' ' + match[2];
+        if (!groups.has(groupKey)) groups.set(groupKey, { author: match[1], year: match[2], suffixes: [], entries: [] });
+        groups.get(groupKey).suffixes.push(match[3] || '');
+        groups.get(groupKey).entries.push(entry);
+      }
+      for (const group of groups.values()) {
+        const lettered = group.suffixes.filter(Boolean);
+        if (!lettered.length) continue;
+        const entry = group.entries[0];
+        const paragraph = { index: entry.paraIndex, section: 'References', text: entry.body };
+        if (lettered.length !== group.suffixes.length) {
+          issues.push(makeOfficialIssue({
+            match: group.author + ' ' + group.year,
+            description: 'Some entries for ' + group.author + ' ' + group.year + ' carry a letter suffix and some do not; letter every work by the same author from the same year.',
+            source: 'references', paragraph
+          }));
+          continue;
+        }
+        const expected = lettered.map((_, position) => String.fromCharCode(97 + position));
+        const actual = [...lettered].sort();
+        if (actual.join('') !== expected.join('')) {
+          issues.push(makeOfficialIssue({
+            match: group.author + ' ' + group.year + actual.join(', '),
+            description: 'Letter suffixes for ' + group.author + ' ' + group.year + ' should run ' + expected.join(', ') + ' without gaps; the list has ' + actual.join(', ') + '.',
+            source: 'references', paragraph
+          }));
+        }
+      }
+      return issues;
     }
 
     function findOfficialSkbReferenceIssues(entries, refParagraphs, isSwedish) {
@@ -3916,9 +4585,17 @@ ${exportedResults.innerHTML}
           }));
         }
 
-        if (/\b\d+\s*-\s*\d+\b/.test(text) && !/\b(?:TR|R|P|IPR|RD|SR|TM|U|F)-\d{2,}-\d+\b/i.test(text)) {
+        /*
+          Only page ranges, which the guide introduces with a comma and places
+          at the end of the reference. Report and standard numbers such as
+          "Nagra Technical Report 02-05" or "ISO 11005-1" also contain a
+          hyphen between digits but are identifiers, not ranges.
+        */
+        const pageRange = text.match(/,\s*(\d+\s*-\s*\d+)\s*\.?\s*$/)
+          || text.match(/\b(?:pp?)\s+(\d+\s*-\s*\d+)\b/i);
+        if (pageRange) {
           issues.push(makeOfficialIssue({
-            match: text.match(/\b\d+\s*-\s*\d+\b/)[0],
+            match: pageRange[1],
             description: 'Use an en dash (–), not a hyphen, in page and numerical ranges.',
             source: 'references', paragraph
           }));
@@ -3944,9 +4621,51 @@ ${exportedResults.innerHTML}
       return issues;
     }
 
-    function buildOfficialSkbWritingSection(issues) {
-      if (!issues.length) return section('Official SKB writing-rule issues', 0,
+    /*
+      Hard spaces and similar typography produce one finding per occurrence and
+      can easily outnumber every other finding in a report. They are collected
+      into a single collapsed block so that the substantive issues stay
+      readable, while the counts and the full list remain available.
+    */
+    const SPACING_RULE_PATTERN = /non-breaking space|hard space/i;
+
+    function isSpacingFinding(issue) {
+      return SPACING_RULE_PATTERN.test(issue.description || '');
+    }
+
+    function buildSpacingSummary(issues) {
+      if (!issues.length) return '';
+      const byRule = new Map();
+      for (const issue of issues) {
+        const key = issue.ruleId || issue.description;
+        if (!byRule.has(key)) byRule.set(key, { name: issue.ruleName || issue.description, id: issue.ruleId || '', items: [] });
+        byRule.get(key).items.push(issue);
+      }
+      const rows = [...byRule.values()]
+        .sort((first, second) => second.items.length - first.items.length)
+        .map(group => `<div class="spacing-group-row">
+            <span class="spacing-group-count">${group.items.length}</span>
+            <span class="rule-name">${escHtml(group.name)}</span>
+            <span class="rule-id">${escHtml(group.id)}</span>
+            <details><summary>Show all ${group.items.length}</summary>${group.items.map(issue => `
+              <div id="${findingAnchorId(issue, 'official')}" class="rule-detail-item">
+                <div class="rule-full-context">${renderRuleContext(issue)}</div>
+                <div>${findingLocationLink(issue, 'official')}</div>
+              </div>`).join('')}</details>
+          </div>`).join('');
+      return `<details class="spacing-group">
+          <summary>Typography and hard spaces — ${issues.length} finding(s) across ${byRule.size} rule(s)</summary>
+          ${rows}
+        </details>`;
+    }
+
+    function buildOfficialSkbWritingSection(allIssues) {
+      if (!allIssues.length) return section('Official SKB writing-rule issues', 0,
         '<p class="empty-notice">No automatically checkable violations of the three official SKB guides were detected.</p>');
+      const spacingIssues = allIssues.filter(isSpacingFinding);
+      const issues = allIssues.filter(issue => !isSpacingFinding(issue));
+      if (!issues.length) return section('Official SKB writing-rule issues', allIssues.length,
+        buildSpacingSummary(spacingIssues), false);
       const body = buildGroupedRuleDetails(issues, 'official', issue => `
         <article id="${findingAnchorId(issue, 'official')}" class="rule-detail-item rule-finding-row" data-part="${escHtml(ruleDocumentPartKey(issue))}" data-severity="${escHtml(issue.severity || 'warning')}" data-rule-id="${escHtml(issue.ruleId || 'unidentified-rule')}">
           <div class="rule-detail-head"><span class="official-rule-match">${escHtml(issue.match)}</span><span><span class="rule-name">${escHtml(issue.ruleName||issue.description)}</span><span class="rule-id">${escHtml(issue.ruleId||'')}</span>${issue.legacyRuleIds?.length?`<span class="rule-legacy-id">Legacy: ${escHtml(issue.legacyRuleIds.join(', '))}</span>`:''}</span><span class="tag">${escHtml(issue.severity || 'warning')}</span>${languageBadge(issue.language, issue.languageConfidence)}</div>
@@ -3954,8 +4673,8 @@ ${exportedResults.innerHTML}
           <div>${findingLocationLink(issue, 'official')}</div>
           <div class="rule-full-context">${renderRuleContext(issue)}</div>${languageIntervalsDetails(issue)}
         </article>`);
-      return section('Official SKB writing-rule issues', issues.length,
-        `<div class="rule-detail-container">${buildRuleDetailFilters(issues)}${body}</div>`, false);
+      return section('Official SKB writing-rule issues', allIssues.length,
+        `<div class="rule-detail-container">${buildRuleDetailFilters(issues)}${body}</div>${buildSpacingSummary(spacingIssues)}`, false);
     }
 
     function findingLocationKey(item) {
@@ -4065,10 +4784,158 @@ ${exportedResults.innerHTML}
         `<div class="rule-detail-container">${buildRuleDetailFilters(matches)}${body}</div>`, false);
     }
 
+
+    /* ── Rule packs ────────────────────────────────────────────────────────────
+
+      The three official SKB guides are built in and always apply. Everything
+      beyond them is project-specific: extra terminology and house preferences
+      that differ between, say, a PSAR and an FSAR. Those live in rule packs,
+      which are plain JSON files that can be kept in version control, reviewed
+      and swapped per project without touching this page.
+
+      A pack is either a bare array of rules or an object:
+        { "name": "PSAR PSU 2026", "description": "...", "rules": [ ... ] }
+      and each rule is
+        { "pattern": "\\bflux\\b", "description": "Use release",
+          "enabled": true, "flags": "gu", "language": "en", "severity": "review" }
+    */
+
+    const RULE_PACK_STORAGE_KEY = 'skbref-rule-packs';
+    const BUILT_IN_PACK_NAME = 'Project terminology (built in)';
+
+    let loadedRulePacks = [];
+
+    function readStoredRulePacks() {
+      try {
+        const raw = localStorage.getItem(RULE_PACK_STORAGE_KEY);
+        const parsed = raw ? JSON.parse(raw) : [];
+        return Array.isArray(parsed) ? parsed : [];
+      } catch (error) {
+        console.warn('Could not read stored rule packs:', error);
+        return [];
+      }
+    }
+
+    function storeRulePacks() {
+      try {
+        localStorage.setItem(RULE_PACK_STORAGE_KEY, JSON.stringify(loadedRulePacks.map(pack => ({
+          name: pack.name, description: pack.description, enabled: pack.enabled, rules: pack.rules
+        }))));
+      } catch (error) {
+        console.warn('Could not store rule packs:', error);
+      }
+    }
+
+    function normaliseRulePack(raw, fallbackName) {
+      const body = Array.isArray(raw) ? { rules: raw } : (raw && typeof raw === 'object' ? raw : null);
+      if (!body || !Array.isArray(body.rules)) {
+        throw new Error('A rule pack must be an array of rules, or an object with a "rules" array.');
+      }
+      const rules = body.rules
+        .filter(rule => rule && typeof rule.pattern === 'string' && rule.pattern.trim())
+        .map(rule => ({ enabled: rule.enabled !== false, ...rule }));
+      if (!rules.length) throw new Error('The rule pack contains no usable rules.');
+      for (const rule of rules) {
+        try {
+          new RegExp(rule.pattern, rule.flags || 'gu');
+        } catch (error) {
+          throw new Error(`Rule "${rule.pattern}" is not a valid regular expression: ${error.message}`);
+        }
+      }
+      const name = String(body.name || fallbackName || 'Rule pack').trim();
+      const pack = { name, description: String(body.description || ''), enabled: body.enabled !== false, rules };
+      ensureRuleMetadata(pack.rules, 'review', { category: 'terminology', severity: 'review', flags: 'gu' });
+      for (const rule of pack.rules) rule.packName = name;
+      return pack;
+    }
+
+    /* Built-in rules first, then every enabled pack in load order. */
+    function activeReviewRules() {
+      const rules = FORBIDDEN_WORD_RULES.map(rule => ({ ...rule, packName: rule.packName || BUILT_IN_PACK_NAME }));
+      for (const pack of loadedRulePacks) {
+        if (pack.enabled === false) continue;
+        rules.push(...pack.rules);
+      }
+      return rules;
+    }
+
+    function activeRulePackNames() {
+      return [BUILT_IN_PACK_NAME, ...loadedRulePacks.filter(pack => pack.enabled !== false).map(pack => pack.name)];
+    }
+
+    function renderRulePackList() {
+      const list = document.getElementById('rule-pack-list');
+      if (!list) return;
+      const builtIn = `<li class="rule-pack-row built-in">
+          <label><input type="checkbox" checked disabled> ${escHtml(BUILT_IN_PACK_NAME)}</label>
+          <span class="rule-pack-count">${FORBIDDEN_WORD_RULES.filter(rule => rule.enabled !== false).length} rules</span>
+          <span></span>
+          <p class="rule-pack-note">Always applied, together with the three official SKB guides.</p>
+        </li>`;
+      const packs = loadedRulePacks.map((pack, index) => `<li class="rule-pack-row">
+          <label><input type="checkbox" data-pack-index="${index}"${pack.enabled === false ? '' : ' checked'}> ${escHtml(pack.name)}</label>
+          <span class="rule-pack-count">${pack.rules.filter(rule => rule.enabled !== false).length} rules</span>
+          <button type="button" class="rule-pack-remove" data-remove-pack="${index}" title="Remove this rule pack">Remove</button>
+          ${pack.description ? `<p class="rule-pack-note">${escHtml(pack.description)}</p>` : ''}
+        </li>`).join('');
+      list.innerHTML = builtIn + packs;
+      const summary = document.getElementById('rule-pack-summary');
+      if (summary) summary.textContent = `Rule packs (${activeRulePackNames().length} active)`;
+    }
+
+    async function addRulePackFiles(files) {
+      if (!files.length) return;
+      const status = document.getElementById('rule-pack-status');
+      const added = [], failed = [];
+      for (const file of files) {
+        try {
+          const pack = normaliseRulePack(JSON.parse(await file.text()), file.name.replace(/\.json$/i, ''));
+          const existing = loadedRulePacks.findIndex(item => item.name === pack.name);
+          if (existing >= 0) loadedRulePacks[existing] = pack; else loadedRulePacks.push(pack);
+          added.push(`${pack.name} (${pack.rules.length} rule${pack.rules.length === 1 ? '' : 's'})`);
+        } catch (error) {
+          failed.push(`${file.name}: ${error.message}`);
+        }
+      }
+      storeRulePacks();
+      renderRulePackList();
+      if (status) {
+        status.textContent = [added.length ? `Loaded ${added.join(', ')}.` : '', failed.join(' ')].filter(Boolean).join(' ');
+        status.className = failed.length ? 'error' : '';
+      }
+      if (added.length) await reanalyseCurrentDocument();
+    }
+
+    function exportRulePacks() {
+      const payload = {
+        name: 'skbref active rules',
+        description: 'Built-in project terminology plus every loaded rule pack, exported from the SKB Reference Checker.',
+        exported: new Date().toISOString().slice(0, 10),
+        rules: activeReviewRules().map(rule => ({
+          pattern: rule.pattern,
+          description: rule.description || '',
+          enabled: rule.enabled !== false,
+          ...(rule.flags && rule.flags !== 'gu' ? { flags: rule.flags } : {}),
+          ...(rule.language ? { language: rule.language } : {}),
+          ...(rule.severity && rule.severity !== 'review' ? { severity: rule.severity } : {}),
+          ...(rule.custom ? { custom: rule.custom } : {}),
+          ...(rule.packName ? { pack: rule.packName } : {})
+        }))
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'skbref-rules.json';
+      link.click();
+      URL.revokeObjectURL(url);
+    }
+
     function findForbiddenWordMatches(paragraphs) {
       const matches = [];
-      for (let ruleIndex = 0; ruleIndex < FORBIDDEN_WORD_RULES.length; ruleIndex++) {
-        const rule = FORBIDDEN_WORD_RULES[ruleIndex];
+      const reviewRules = activeReviewRules();
+      for (let ruleIndex = 0; ruleIndex < reviewRules.length; ruleIndex++) {
+        const rule = reviewRules[ruleIndex];
         if (!rule.enabled) continue;
         let expression;
         try {
@@ -4078,6 +4945,12 @@ ${exportedResults.innerHTML}
           continue;
         }
         for (const paragraph of paragraphs) {
+          /*
+            Terminology preferences describe how SKB writes, so they do not
+            apply to the reference list, where the titles of cited works must
+            be reproduced exactly as published.
+          */
+          if (paragraph.isReferenceList) continue;
           const text = paragraph.text || '';
           expression.lastIndex = 0;
           let match;
@@ -4095,6 +4968,7 @@ ${exportedResults.innerHTML}
               ruleId: rule.id,
               ruleName: rule.label,
               legacyRuleIds: rule.legacyIds || [],
+              packName: rule.packName || BUILT_IN_PACK_NAME,
               category: rule.category,
               severity: rule.severity,
               pattern: rule.pattern,
@@ -4413,13 +5287,17 @@ ${exportedResults.innerHTML}
 
     function buildOrphanSection(items) {
       const body = items.length
-        ? `<table class="ref-table"><thead><tr><th>Citation</th><th>Source</th><th>Context</th><th>Section</th><th>Type</th><th>Zotero</th></tr></thead><tbody>${items.map((citation, index) => `
+        ? `<table class="ref-table orphan-table"><thead><tr><th>Citation</th><th>Closest entry</th><th>Context</th><th>Section</th><th>Zotero</th></tr></thead><tbody>${items.map((citation, index) => `
             <tr class="error-row">
-              <td><span class="ref-key">${escHtml(citation.key)}</span></td>
-              <td>${citationSourceBadge(citation)}</td>
+              <td>
+                <span class="ref-key">${escHtml(citation.key)}</span>
+                <div class="citation-meta">${citationSourceBadge(citation)}<span class="citation-type">${escHtml(citation.type)}</span></div>
+              </td>
+              <td>${citation.suggestion
+                ? `<span class="ref-key">${escHtml(citation.suggestion.key)}</span><div class="suggestion-score" title="${escHtml(citation.suggestion.body)}">${Math.round((citation.suggestionScore || 0) * 100)}% match</div>`
+                : '<span class="rule-legacy-id">no similar entry</span>'}</td>
               <td><div class="citation-context">${renderCitationContext(citation)}</div></td>
               <td>${renderCitationLocation(citation)}</td>
-              <td>${escHtml(citation.type)}</td>
               <td class="zotero-cell">
                 <button class="zotero-row-btn" type="button" data-kind="citation" data-index="${index}" data-search-id="citation-${index}" data-result-id="zotero-citation-${index}" title="Search Zotero using this citation key">Check Zotero</button>
                 <div id="zotero-citation-${index}" class="zotero-inline-results"></div>
@@ -4429,12 +5307,16 @@ ${exportedResults.innerHTML}
       return section('In-text citations with no matching reference list entry', items.length, body, items.length > 0);
     }
 
-    function buildUncitedSection(items){const body=items.length?`<div class="tag-list">${items.map(e=>`<div class="tag warn-tag">⚠ <code>${escHtml(e.key)}</code></div>`).join('')}</div>`:'<p class="empty-notice">Every reference in the list is cited at least once.</p>';return section('Reference list entries never cited in text',items.length,body);}
+    function buildUncitedSection(items){const body=items.length?`<div class="tag-list">${items.map(e=>`<div class="tag warn-tag">⚠ <code>${escHtml(e.key)}</code>${e.suggestedFor?.length?` <span class="rule-legacy-id">cited as ${escHtml(e.suggestedFor.join(', '))}?</span>`:''}</div>`).join('')}</div>`:'<p class="empty-notice">Every reference in the list is cited at least once.</p>';return section('Reference list entries never cited in text',items.length,body);}
     function buildFormatSection(issues,entries){const map=new Map(entries.map(e=>[e.key,e.body]));const groups=new Map();issues.forEach(i=>(groups.get(i.key)||groups.set(i.key,[]).get(i.key)).push(i));const body=issues.length?`<table class="ref-table"><thead><tr><th>Key</th><th>Reference text</th><th>Issues</th></tr></thead><tbody>${[...groups].map(([key,list])=>`<tr><td><span class="ref-key">${escHtml(key)}</span></td><td>${truncate(escHtml(map.get(key)||''),100)}</td><td><ul class="issue-list">${list.map(i=>`<li>[${i.severity.toUpperCase()}] ${escHtml(i.issue)}</li>`).join('')}</ul></td></tr>`).join('')}</tbody></table>`:'<p class="empty-notice">No SKB format rule violations detected.</p>';return section('SKB format rule issues',issues.length,body);}
     function section(title,count,body,open=false){const good=!count||count==='unavailable';return `<details class="result-section" ${open?'open':''}><summary>${title}<span class="section-badge ${good?'good':'warn'}">${count===0?'✓ none':count}</span></summary><div class="section-body">${body}</div></details>`;}
     function setSummary(name,value,state){$(`cnt-${name}`).textContent=value;const card=$(`card-${name}`);card.classList.remove('warn','ok');if(state)card.classList.add(state);}
     function escHtml(value){return String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
     function truncate(value,length){return value.length>length?`${value.slice(0,length)}…`:value;}
+
+    /* Bootstraps that depend on declarations further down this script. */
+    initialiseRulePackControls();
+    runGuideFixtureRegressionTests();
   </script>
 </body>
 </html>
