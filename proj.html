@@ -16,7 +16,8 @@
         var t = localStorage.getItem('kvot-theme');
         if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
         document.documentElement.setAttribute('data-theme', t);
-      } catch (e) { /* storage unavailable — site.js will apply the default */ }
+      } catch (e) { /* Storage unavailable. Runs before kvot-errors.js loads,
+                         so it cannot report; site.js applies the default. */ }
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css">
@@ -528,16 +529,16 @@
                 <span class="hdr">Longitude</span>
 
                 <label for="lat_dd">Degrees</label>
-                <input type="text" id="lat_dd" inputmode="decimal" autocomplete="off" spellcheck="false" onkeyup="keyup_lat_dd(event)" onblur="blur_lat(event);">
-                <input type="text" id="long_dd" inputmode="decimal" autocomplete="off" spellcheck="false" onkeyup="keyup_long_dd(event)" onblur="blur_long(event);">
+                <input type="text" id="lat_dd" inputmode="decimal" autocomplete="off" spellcheck="false" data-on-keyup="keyup_lat_dd" data-on-blur="blur_lat">
+                <input type="text" id="long_dd" inputmode="decimal" autocomplete="off" spellcheck="false" data-on-keyup="keyup_long_dd" data-on-blur="blur_long">
 
                 <label for="lat_dm">Deg/min</label>
-                <input type="text" id="lat_dm" inputmode="decimal" autocomplete="off" spellcheck="false" onkeyup="keyup_lat_dm(event)" onblur="blur_lat(event);">
-                <input type="text" id="long_dm" inputmode="decimal" autocomplete="off" spellcheck="false" onkeyup="keyup_long_dm(event)" onblur="blur_long(event);">
+                <input type="text" id="lat_dm" inputmode="decimal" autocomplete="off" spellcheck="false" data-on-keyup="keyup_lat_dm" data-on-blur="blur_lat">
+                <input type="text" id="long_dm" inputmode="decimal" autocomplete="off" spellcheck="false" data-on-keyup="keyup_long_dm" data-on-blur="blur_long">
 
                 <label for="lat_dms">Deg/min/sec</label>
-                <input type="text" id="lat_dms" inputmode="decimal" autocomplete="off" spellcheck="false" onkeyup="keyup_lat_dms(event)" onblur="blur_lat(event);">
-                <input type="text" id="long_dms" inputmode="decimal" autocomplete="off" spellcheck="false" onkeyup="keyup_long_dms(event)" onblur="blur_long(event);">
+                <input type="text" id="lat_dms" inputmode="decimal" autocomplete="off" spellcheck="false" data-on-keyup="keyup_lat_dms" data-on-blur="blur_lat">
+                <input type="text" id="long_dms" inputmode="decimal" autocomplete="off" spellcheck="false" data-on-keyup="keyup_long_dms" data-on-blur="blur_long">
               </div>
               <div class="info-text" id="wgs84_info">
                 <p>Type or paste a latitude and longitude in any row &mdash; decimal
@@ -558,7 +559,7 @@
             <fieldset><legend>RT 90</legend>
               <div class="proj-row">
                 <label for="proj_rt90">Projection:</label>
-                <select id="proj_rt90" onchange="select_proj_rt90(event)" onkeyup="select_proj_rt90(event)">
+                <select id="proj_rt90" data-on-change="select_proj_rt90" data-on-keyup="select_proj_rt90">
                   <option value="rt90_7.5_gon_v">RT90 7.5 gon V 0:-15</option>
                   <option value="rt90_5.0_gon_v">RT90 5 gon V 0:-15</option>
                   <option value="rt90_2.5_gon_v" selected>RT90 2.5 gon V 0:-15 (National)</option>
@@ -566,13 +567,13 @@
                   <option value="rt90_2.5_gon_o">RT90 2.5 gon O 0:-15</option>
                   <option value="rt90_5.0_gon_o">RT90 5 gon O 0:-15</option>
                 </select>
-                <label class="zone-toggle"><input type="checkbox" id="rt90_show_zone" checked onchange="toggle_rt90_zone()"> Show zone</label>
+                <label class="zone-toggle"><input type="checkbox" id="rt90_show_zone" checked data-on-change="toggle_rt90_zone"> Show zone</label>
               </div>
               <div class="grid-row">
                 <label for="x_rt90">X:</label>
-                <input type="text" id="x_rt90" inputmode="decimal" autocomplete="off" spellcheck="false" onkeyup="keyup_rt90(event)" onblur="blur_rt90(event)">
+                <input type="text" id="x_rt90" inputmode="decimal" autocomplete="off" spellcheck="false" data-on-keyup="keyup_rt90" data-on-blur="blur_rt90">
                 <label for="y_rt90">Y:</label>
-                <input type="text" id="y_rt90" inputmode="decimal" autocomplete="off" spellcheck="false" onkeyup="keyup_rt90(event)" onblur="blur_rt90(event)">
+                <input type="text" id="y_rt90" inputmode="decimal" autocomplete="off" spellcheck="false" data-on-keyup="keyup_rt90" data-on-blur="blur_rt90">
               </div>
               <div class="info-text" id="rt90_info">
                 <p>Choose a projection zone and enter X/Y (7-digit integers in
@@ -596,7 +597,7 @@
             <fieldset><legend>SWEREF 99 TM, SWEREF 99 dd mm</legend>
               <div class="proj-row">
                 <label for="proj_sweref99">Projection:</label>
-                <select id="proj_sweref99" onchange="select_proj_sweref99(event)" onkeyup="select_proj_sweref99(event)">
+                <select id="proj_sweref99" data-on-change="select_proj_sweref99" data-on-keyup="select_proj_sweref99">
                   <option value="sweref_99_tm" selected>SWEREF 99 TM</option>
                   <option value="sweref_99_1200">SWEREF 99 12 00</option>
                   <option value="sweref_99_1330">SWEREF 99 13 30</option>
@@ -611,13 +612,13 @@
                   <option value="sweref_99_2145">SWEREF 99 21 45</option>
                   <option value="sweref_99_2315">SWEREF 99 23 15</option>
                 </select>
-                <label class="zone-toggle"><input type="checkbox" id="sweref99_show_zone" checked onchange="toggle_sweref99_zone()"> Show zone</label>
+                <label class="zone-toggle"><input type="checkbox" id="sweref99_show_zone" checked data-on-change="toggle_sweref99_zone"> Show zone</label>
               </div>
               <div class="grid-row">
                 <label for="n_sweref99">N:</label>
-                <input type="text" id="n_sweref99" inputmode="decimal" autocomplete="off" spellcheck="false" onkeyup="keyup_sweref99(event)" onblur="blur_sweref99(event)">
+                <input type="text" id="n_sweref99" inputmode="decimal" autocomplete="off" spellcheck="false" data-on-keyup="keyup_sweref99" data-on-blur="blur_sweref99">
                 <label for="e_sweref99">E:</label>
-                <input type="text" id="e_sweref99" inputmode="decimal" autocomplete="off" spellcheck="false" onkeyup="keyup_sweref99(event)" onblur="blur_sweref99(event)">
+                <input type="text" id="e_sweref99" inputmode="decimal" autocomplete="off" spellcheck="false" data-on-keyup="keyup_sweref99" data-on-blur="blur_sweref99">
               </div>
               <div class="info-text" id="sweref99_info">
                 <p>Choose a projection and enter N/E (metres), or let the page
@@ -641,13 +642,13 @@
           <div class="map-card">
               <div id="coord-map" role="application" aria-label="Interactive coordinate map. Click the map to choose a position."></div>
               <div class="map-hint">
-                <button type="button" class="compact" onclick="map_zoom_in()" title="Zoom in" aria-label="Zoom map in">+</button>
-                <button type="button" class="compact" onclick="map_zoom_out()" title="Zoom out" aria-label="Zoom map out">&minus;</button>
-                <button type="button" id="map_layer_btn" onclick="map_toggle_layer()" aria-label="Switch map layer" aria-pressed="false"><svg class="btn-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="1.8"/><ellipse cx="12" cy="12" rx="4.5" ry="10" fill="none" stroke="currentColor" stroke-width="1.2"/><line x1="2" y1="12" x2="22" y2="12" stroke="currentColor" stroke-width="1.2"/><line x1="3.5" y1="7.5" x2="20.5" y2="7.5" stroke="currentColor" stroke-width="0.8"/><line x1="3.5" y1="16.5" x2="20.5" y2="16.5" stroke="currentColor" stroke-width="0.8"/></svg> Satellite</button>
+                <button type="button" class="compact" data-on-click="map_zoom_in" title="Zoom in" aria-label="Zoom map in">+</button>
+                <button type="button" class="compact" data-on-click="map_zoom_out" title="Zoom out" aria-label="Zoom map out">&minus;</button>
+                <button type="button" id="map_layer_btn" data-on-click="map_toggle_layer" aria-label="Switch map layer" aria-pressed="false"><svg class="btn-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="1.8"/><ellipse cx="12" cy="12" rx="4.5" ry="10" fill="none" stroke="currentColor" stroke-width="1.2"/><line x1="2" y1="12" x2="22" y2="12" stroke="currentColor" stroke-width="1.2"/><line x1="3.5" y1="7.5" x2="20.5" y2="7.5" stroke="currentColor" stroke-width="0.8"/><line x1="3.5" y1="16.5" x2="20.5" y2="16.5" stroke="currentColor" stroke-width="0.8"/></svg> Satellite</button>
                 <button type="button" id="my_position_btn"><svg style="width:12px;height:18px;vertical-align:-3px;margin-right:3px" viewBox="0 0 25 41"><path d="M12.5 0C5.6 0 0 5.6 0 12.5 0 22 12.5 41 12.5 41S25 22 25 12.5C25 5.6 19.4 0 12.5 0z" fill="#2A81CB"/><circle cx="12.5" cy="12.5" r="5" fill="#fff"/></svg>My Position</button>
                 <button type="button" id="copy_share_link" title="Copy a link to this position">Copy link</button>
-                <button type="button" onclick="addPositionToBulk()"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Add to Bulk</button>
-                <button type="button" class="btn-info" id="info_button" onclick="toggle_info();" title="Toggle help text" aria-label="Toggle help text" aria-expanded="false" aria-controls="wgs84_info rt90_info sweref99_info map_info about_info">
+                <button type="button" data-on-click="addPositionToBulk"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Add to Bulk</button>
+                <button type="button" class="btn-info" id="info_button" data-on-click="toggle_info" title="Toggle help text" aria-label="Toggle help text" aria-expanded="false" aria-controls="wgs84_info rt90_info sweref99_info map_info about_info">
                   <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-6h2v6zm0-8h-2V7h2v4z"/></svg>
                 </button>
               </div>
@@ -671,7 +672,7 @@
           <div class="bulk-selectors">
             <div class="bulk-sel-group">
               <label for="bulk_from">From</label>
-              <select id="bulk_from" onchange="bulkClearResults()">
+              <select id="bulk_from" data-on-change="bulkClearResults">
                 <option value="wgs84_dd">WGS 84 / SWEREF 99 (lat, lon degrees)</option>
                 <optgroup label="RT 90">
                   <option value="rt90_7.5_gon_v">RT90 7.5 gon V</option>
@@ -701,7 +702,7 @@
             <button type="button" class="btn-bulk bulk-arrow" id="bulk_swap" title="Swap source and target projections" aria-label="Swap source and target projections">&#8644;</button>
             <div class="bulk-sel-group">
               <label for="bulk_to">To</label>
-              <select id="bulk_to" onchange="bulkClearResults()">
+              <select id="bulk_to" data-on-change="bulkClearResults">
                 <option value="wgs84_dd">WGS 84 / SWEREF 99 (lat, lon degrees)</option>
                 <optgroup label="RT 90">
                   <option value="rt90_7.5_gon_v">RT90 7.5 gon V</option>
@@ -766,7 +767,7 @@
           <div class="bulk-io" id="bulk_drop_zone">
             <div class="bulk-io-col">
               <label class="bulk-label" for="bulk_input">Input (column 1, column 2, one row per point)</label>
-              <textarea id="bulk_input" aria-describedby="bulk_format_help" spellcheck="false" oninput="bulkClearResults()" placeholder="6580000&#9;1628000&#10;6590000&#9;1630000&#10;..."></textarea>
+              <textarea id="bulk_input" aria-describedby="bulk_format_help" spellcheck="false" data-on-input="bulkClearResults" placeholder="6580000&#9;1628000&#10;6590000&#9;1630000&#10;..."></textarea>
               <span id="bulk_format_help" class="sr-only">Use tab, semicolon, comma, or whitespace between the two coordinates. One point per line.</span>
             </div>
             <div class="bulk-io-col">
@@ -779,13 +780,13 @@
           </div>
 
           <div class="bulk-actions">
-            <button type="button" class="btn-bulk primary" id="bulk_convert" onclick="bulkConvert()">Convert</button>
+            <button type="button" class="btn-bulk primary" id="bulk_convert" data-on-click="bulkConvert">Convert</button>
             <button type="button" class="btn-bulk" id="bulk_example">Example</button>
-            <button type="button" class="btn-bulk" onclick="document.getElementById('bulk_file').click()">Load CSV&hellip;</button>
-            <input type="file" id="bulk_file" aria-label="Choose a CSV, TSV, or text file" accept=".csv,.txt,.tsv,text/csv,text/plain,text/tab-separated-values" onchange="bulkLoadFile(event)">
+            <button type="button" class="btn-bulk" data-on-click="bulkOpenFilePicker">Load CSV&hellip;</button>
+            <input type="file" id="bulk_file" aria-label="Choose a CSV, TSV, or text file" accept=".csv,.txt,.tsv,text/csv,text/plain,text/tab-separated-values" data-on-change="bulkLoadFile">
             <button type="button" class="btn-bulk" id="bulk_copy">Copy result</button>
-            <button type="button" class="btn-bulk" onclick="bulkDownload()">Download CSV</button>
-            <button type="button" class="btn-bulk" onclick="bulkClear()">Clear</button>
+            <button type="button" class="btn-bulk" data-on-click="bulkDownload">Download CSV</button>
+            <button type="button" class="btn-bulk" data-on-click="bulkClear">Clear</button>
             <span class="bulk-status" id="bulk_status" role="status" aria-live="polite"></span>
           </div>
           <div class="progress-row" id="bulk_progress_row" hidden>
@@ -829,13 +830,63 @@
   <footer></footer>
   <div class="toast-region" id="toast_region" aria-live="polite" aria-atomic="true"></div>
 
-  <script src="./resources/js/site.js"></script>
+  <script src="./resources/js/kvot-errors.js?v=20260902"></script>
+  <script src="./resources/js/kvot-actions.js?v=20260902"></script>
+  <script src="./resources/js/kvot-icons.js?v=20260902"></script>
+  <script src="./resources/js/site.js?v=20260902"></script>
   <script src="./resources/js/latlong.js"></script>
   <script src="./resources/js/sweref99-zones.js"></script>
   <script src="./resources/js/map.js"></script>
   <script src="./resources/js/lat_lon_conv.js"></script>
   <script src="./resources/js/gausskruger.js"></script>
   <script>
+    /*
+      The names this page's controls declare in their data-action attributes.
+      The functions themselves live in latlong.js, lat_lon_conv.js and map.js,
+      and in the bulk-conversion block further down this file.
+
+      Handlers receive (event, element); the ones that ignore the arguments are
+      unaffected. Blur does not bubble, so kvot-actions binds those directly
+      rather than rewriting them as focusout, which would hand the handler a
+      different event type.
+    */
+    registerActions({
+      /* Single-point conversion — WGS 84 */
+      keyup_lat_dd:  event => keyup_lat_dd(event),
+      keyup_lat_dm:  event => keyup_lat_dm(event),
+      keyup_lat_dms: event => keyup_lat_dms(event),
+      keyup_long_dd:  event => keyup_long_dd(event),
+      keyup_long_dm:  event => keyup_long_dm(event),
+      keyup_long_dms: event => keyup_long_dms(event),
+      blur_lat:  event => blur_lat(event),
+      blur_long: event => blur_long(event),
+
+      /* Single-point conversion — RT 90 and SWEREF 99 */
+      keyup_rt90:            event => keyup_rt90(event),
+      keyup_sweref99:        event => keyup_sweref99(event),
+      blur_rt90:             event => blur_rt90(event),
+      blur_sweref99:         event => blur_sweref99(event),
+      select_proj_rt90:      event => select_proj_rt90(event),
+      select_proj_sweref99:  event => select_proj_sweref99(event),
+      toggle_rt90_zone:      () => toggle_rt90_zone(),
+      toggle_sweref99_zone:  () => toggle_sweref99_zone(),
+
+      /* Map controls */
+      map_zoom_in:       () => map_zoom_in(),
+      map_zoom_out:      () => map_zoom_out(),
+      map_toggle_layer:  () => map_toggle_layer(),
+      toggle_info:       () => toggle_info(),
+
+      /* Bulk conversion */
+      bulkConvert:         () => bulkConvert(),
+      bulkClear:           () => bulkClear(),
+      bulkClearResults:    () => bulkClearResults(),
+      bulkDownload:        () => bulkDownload(),
+      bulkLoadFile:        event => bulkLoadFile(event),
+      addPositionToBulk:   () => addPositionToBulk(),
+      bulkOpenFilePicker:  () => document.getElementById('bulk_file').click(),
+    });
+
     // Capture the Leaflet instance created for the coordinate map.
     (function captureLeafletMapFactory() {
       if (!window.L || typeof L.map !== 'function' || L.map.__kvotCaptureInstalled) return;
@@ -1110,8 +1161,8 @@
     function applyPagePosition(lat,lon,zoom){
       if(!Number.isFinite(lat)||Math.abs(lat)>90||!Number.isFinite(lon)||Math.abs(lon)>180)return false;
       var applied=false;
-      try{if(typeof latlong_event==='function'){latlong_event(lat,lon);applied=true;}}catch(err){}
-      if(!applied){try{if(typeof set_lat_long==='function'){set_lat_long(lat,lon);applied=true;}}catch(err){}}
+      try{if(typeof latlong_event==='function'){latlong_event(lat,lon);applied=true;}}catch(err){ignoreFailure('applyPositionToFields:latlong_event',err);}
+      if(!applied){try{if(typeof set_lat_long==='function'){set_lat_long(lat,lon);applied=true;}}catch(err){ignoreFailure('applyPositionToFields:set_lat_long',err);}}
       var map=window.kvotCoordinateMap||window.coord_map;
       if(map&&typeof map.setView==='function')map.setView([lat,lon],Math.min(18,Math.max(3,Number.isFinite(zoom)?zoom:12)));
       return applied;
@@ -1201,7 +1252,7 @@
         var ids = ['bulk_from','bulk_to','bulk_separator','bulk_geo_precision','bulk_grid_precision','proj_rt90','proj_sweref99'];
         var data = {}; ids.forEach(function(id) { var el = document.getElementById(id); if (el) data[id] = el.value; });
         localStorage.setItem('kvot-proj-preferences-v2', JSON.stringify(data));
-      } catch (err) { /* Storage can be unavailable in private browsing. */ }
+      } catch (err) { ignoreFailure('proj:readStoredState', err); }
     }
     function loadPhase2Preferences() {
       try {
@@ -1210,7 +1261,7 @@
           var el = document.getElementById(id);
           if (el && Array.from(el.options || []).some(function(o) { return o.value === data[id]; })) el.value = data[id];
         });
-      } catch (err) { /* Ignore invalid or unavailable storage. */ }
+      } catch (err) { ignoreFailure('proj:writeStoredState', err); }
     }
     function phase2LoadDroppedFile(file) {
       if (!file) return;

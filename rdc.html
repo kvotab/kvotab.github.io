@@ -239,7 +239,10 @@ html[data-theme="dark"] .rdc-chart-window .ui-dialog-titlebar-close{border-color
 <div id="kvotmap"></div>
 <footer></footer>
 
-<script src="./resources/js/site.js"></script>
+<script src="./resources/js/kvot-errors.js?v=20260902"></script>
+<script src="./resources/js/kvot-actions.js?v=20260902"></script>
+<script src="./resources/js/kvot-icons.js?v=20260902"></script>
+<script src="./resources/js/site.js?v=20260902"></script>
 <script src="./resources/js/rdc.js"></script>
 <script>
 // ── Shared components ────────────────────────────────────────────────────────
@@ -684,7 +687,7 @@ if (typeof ResizeObserver === 'function') {
 function styleDecayChartDialog() {
     if (typeof CHARTDIALOG === 'undefined' || !CHARTDIALOG || !CHARTDIALOG.length) return;
     CHARTDIALOG.closest('.ui-dialog').addClass('rdc-chart-window');
-    try { CHARTDIALOG.dialog('option','title','Radionuclide decay evolution'); } catch (error) { }
+    try { CHARTDIALOG.dialog('option','title','Radionuclide decay evolution'); } catch (error) { ignoreFailure('rdc:dialogTitle', error); }
 }
 window.addEventListener('load', styleDecayChartDialog);
 $('#chartdialog').on('dialogopen', styleDecayChartDialog);

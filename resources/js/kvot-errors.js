@@ -1,9 +1,11 @@
 /* ==========================================================================
-   0. ERROR CONTRACT
+   ERROR CONTRACT  (site-wide)
 
-   Loaded before every other rb-* module, because they all report through it.
-   Keeping it first means a failure during another module's own load still has
-   somewhere to go.
+   Loaded first on every page, before site.js and before any page's own
+   scripts, so that a failure during another module's load still has somewhere
+   to go.
+
+   Used by: site.js, the rb-* modules, proj.html, rdc.js and the page scripts.
    ========================================================================== */
 
 /* ==========================================================================
