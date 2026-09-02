@@ -58,8 +58,8 @@
       <input type="text" id="urlInput" class="url-input" placeholder="https://example.com/data.h5" autocomplete="off" />
       <div id="urlError" class="url-error" style="display:none;"></div>
       <div class="url-dialog-buttons">
-        <button class="url-btn url-btn-cancel" data-action="closeUrlDialog">Cancel</button>
-        <button class="url-btn url-btn-load" id="urlLoadBtn" data-action="loadFromUrl">Load</button>
+        <button class="url-btn url-btn-cancel" data-on-click="closeUrlDialog">Cancel</button>
+        <button class="url-btn url-btn-load" id="urlLoadBtn" data-on-click="loadFromUrl">Load</button>
       </div>
     </div>
   </div>
@@ -71,8 +71,8 @@
       <div id="sampleDataError" class="url-error" style="display:none;"></div>
       <div id="sampleDataList" class="sample-data-list"></div>
       <div class="url-dialog-buttons">
-        <button class="url-btn url-btn-cancel" data-action="closeSampleDataDialog">Cancel</button>
-        <button class="url-btn url-btn-load" id="sampleDataLoadBtn" data-action="loadSelectedSampleData">Load Selected</button>
+        <button class="url-btn url-btn-cancel" data-on-click="closeSampleDataDialog">Cancel</button>
+        <button class="url-btn url-btn-load" id="sampleDataLoadBtn" data-on-click="loadSelectedSampleData">Load Selected</button>
       </div>
     </div>
   </div>
@@ -81,12 +81,12 @@
     <div class="preset-dialog">
       <div class="preset-dialog-header">
         <h4>Manage Presets</h4>
-        <button data-action="closePresetManager" class="preset-close-btn">&times;</button>
+        <button data-on-click="closePresetManager" class="preset-close-btn">&times;</button>
       </div>
       <div id="presetManagerList" class="preset-manager-list"></div>
       <div class="preset-dialog-footer">
-        <button data-action="importPresets">Import</button>
-        <button data-action="exportPresets">Export</button>
+        <button data-on-click="importPresets">Import</button>
+        <button data-on-click="exportPresets">Export</button>
       </div>
     </div>
   </div>
@@ -133,64 +133,64 @@
               </div>
             </label>
             <label >
-              <input type="checkbox" id="dynamicLegend" checked data-action="toggleDynamicLegend" data-action-on="change">
+              <input type="checkbox" id="dynamicLegend" checked data-on-change="toggleDynamicLegend">
               Dynamic Legend
             </label>
             <label id="showTotalLabel" style="display: none;">
-              <input type="checkbox" id="showTotal" checked data-action="toggleShowTotal" data-action-on="change">
+              <input type="checkbox" id="showTotal" checked data-on-change="toggleShowTotal">
               Show Total
             </label>
             <label id="showRatioLabel" style="display: none;">
-              <input type="checkbox" id="showRatio" data-action="toggleShowRatio" data-action-on="change">
+              <input type="checkbox" id="showRatio" data-on-change="toggleShowRatio">
               Show Ratio
             </label>
             <label id="showMaxLabel" style="display: none;">
-              <input type="checkbox" id="showMax" data-action="toggleShowMax" data-action-on="change">
+              <input type="checkbox" id="showMax" data-on-change="toggleShowMax">
               Show Max
             </label>
             <label id="showCILabel" style="display: none;">
-              <input type="checkbox" id="showCI" data-action="toggleShowCI" data-action-on="change">
+              <input type="checkbox" id="showCI" data-on-change="toggleShowCI">
               CI (5-95%)
             </label>
             <label id="showSDOMLabel" style="display: none;" title="Standard Error of the Mean (SEM)">
-              <input type="checkbox" id="showSDOM" data-action="toggleShowSDOM" data-action-on="change" title="Standard Error of the Mean (SEM)">
+              <input type="checkbox" id="showSDOM" data-on-change="toggleShowSDOM" title="Standard Error of the Mean (SEM)">
               SEM
             </label>
             <label id="showIterLabel" style="display: none;" title="Show a dotted line for this iteration (1-based)">
-              Show iteration: <input type="number" id="showIterNum" min="1" value="" data-action="toggleShowIteration" data-action-on="input" title="Show this realization as a dotted line on the chart (1-based)">
+              Show iteration: <input type="number" id="showIterNum" min="1" value="" data-on-input="toggleShowIteration" title="Show this realization as a dotted line on the chart (1-based)">
             </label>
             <label id="backgroundSourceLabel" style="display: none;">
               Background:
-              <select id="backgroundSourceSelect" data-action="toggleBackgroundOverlay" data-action-on="change" title="Background overlay source"></select>
+              <select id="backgroundSourceSelect" data-on-change="toggleBackgroundOverlay" title="Background overlay source"></select>
             </label>
             <span id="legendStatus" style="font-size: 12px; color: var(--color-text-muted);"></span>
             <span class="preset-bar" style="margin-left: auto; display: inline-flex; align-items: center; gap: 4px;">
-              <button id="lockAxesBtn" data-action="toggleAxesLock" title="Lock current axes settings" class="preset-icon-btn lock-axes-btn"><svg class="lock-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path class="lock-shackle" d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></button>
-              <select id="presetSelect" data-action="applySelectedPreset" data-action-on="change" title="Chart presets"></select>
-              <button data-action="saveCurrentAsPreset" title="Save current view as preset" class="preset-icon-btn">＋</button>
-              <button data-action="openPresetManager" title="Manage presets" class="preset-icon-btn">⚙</button>
+              <button id="lockAxesBtn" data-on-click="toggleAxesLock" title="Lock current axes settings" class="preset-icon-btn lock-axes-btn"><svg class="lock-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path class="lock-shackle" d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></button>
+              <select id="presetSelect" data-on-change="applySelectedPreset" title="Chart presets"></select>
+              <button data-on-click="saveCurrentAsPreset" title="Save current view as preset" class="preset-icon-btn">＋</button>
+              <button data-on-click="openPresetManager" title="Manage presets" class="preset-icon-btn">⚙</button>
             </span>
           </div>
           <div id="histControls" class="chart-controls" style="display: none;">
             <span style="font-weight: 600; font-size: 13px; display: inline-flex; align-items: center; gap: 4px;">📊 Data preview</span>
             <label id="histDetLabel" style="display: none;">
-              <input type="checkbox" id="histDet" checked data-action="redrawHistogram" data-action-on="change">
+              <input type="checkbox" id="histDet" checked data-on-change="redrawHistogram">
               Deterministic
             </label>
             <label id="histPdfLabel" style="display: none;">
-              <input type="checkbox" id="histPdf" checked data-action="redrawHistogram" data-action-on="change">
+              <input type="checkbox" id="histPdf" checked data-on-change="redrawHistogram">
               PDF
             </label>
             <label id="histStatsLabel">
-              <input type="checkbox" id="histStats" data-action="redrawHistogram" data-action-on="change">
+              <input type="checkbox" id="histStats" data-on-change="redrawHistogram">
               Statistics from sample
             </label>
             <label id="histLogLabel">
-              <input type="checkbox" id="histLogScale" data-action="redrawHistogram" data-action-on="change">
+              <input type="checkbox" id="histLogScale" data-on-change="redrawHistogram">
               Log₁₀ scale
             </label>
             <label id="histIterLabel" style="display: none;">
-              Iteration: <input type="number" id="histIterNum" min="1" value="" data-action="redrawHistogram" data-action-on="input" title="Show a vertical line for this iteration (1-based index)">
+              Iteration: <input type="number" id="histIterNum" min="1" value="" data-on-input="redrawHistogram" title="Show a vertical line for this iteration (1-based index)">
             </label>
           </div>
           <div id="plotlyChart"></div>
@@ -245,8 +245,11 @@
   <div id="kvotmap"></div>
   <footer></footer>
 
+  <script src="./resources/js/kvot-errors.js?v=20260902"></script>
+  <script src="./resources/js/kvot-actions.js?v=20260902"></script>
+  <script src="./resources/js/kvot-icons.js?v=20260902"></script>
   <script src="./resources/js/erf.js?v=20260902"></script>
-  <script src="./resources/js/site.js"></script>
+  <script src="./resources/js/site.js?v=20260902"></script>
   <script>
     /*
       The file toolbar that sits in the shared site header. Kept as a template
@@ -259,11 +262,11 @@
         <div id="fileLoadTicker" class="file-load-ticker" aria-live="polite" hidden>
           <span class="spinner" aria-hidden="true"></span>
           <span class="ticker-text">Loading files…</span>
-          <button class="ticker-cancel" data-action="cancelTreeRefresh" title="Cancel" style="display:none;">✕</button>
+          <button class="ticker-cancel" data-on-click="cancelTreeRefresh" title="Cancel" style="display:none;">✕</button>
         </div>
-        <button class="add-file-btn" data-action="openFilePicker">+ Add Files</button>
-        <button class="add-file-btn url-file-btn" data-action="openUrlDialog" title="Load HDF5 file from URL">🔗 URL</button>
-        <button class="add-file-btn" data-action="openSampleDataDialog" title="Load sample HDF5 files">📂 Sample Data</button>
+        <button class="add-file-btn" data-on-click="openFilePicker">+ Add Files</button>
+        <button class="add-file-btn url-file-btn" data-on-click="openUrlDialog" title="Load HDF5 file from URL">🔗 URL</button>
+        <button class="add-file-btn" data-on-click="openSampleDataDialog" title="Load sample HDF5 files">📂 Sample Data</button>
       </div>`;
 
     KVOT.renderHeader('HDF5 Browser', fileToolbar);
@@ -280,12 +283,13 @@
   <script defer src="https://cdn.jsdelivr.net/npm/h5wasm@0.9.0/dist/iife/h5wasm.min.js" integrity="sha384-0kPHehXdhwrXsjsY2cFREoF1T3bEwA7VXlpZGg3zE1DDnW294q/kakEEPAsA5JXW" crossorigin="anonymous"></script>
   <!--
     Module layers, loaded in dependency order. Each file owns one concern and
-    the ones below may use the ones above:
+    the ones below may use the ones above. The site-wide error contract
+    (kvot-errors.js) and action dispatcher (kvot-actions.js) load earlier,
+    with site.js.
 
-      rb-errors   the error contract: reportFailure / ignoreFailure
       rb-state    shared state and DOM element cache
       rb-utils    generic helpers, HDF5 access wrapper, statistics
-      rb-actions  the only mapping from data-action attributes to behaviour
+      rb-actions  which action names this page uses, and what they call
       rb-hdf5     reading /time, probabilistic matrices, dataset attributes
       rb-file     which files are loaded, enabled and in what order
       rb-tabs     the file tab strip
@@ -300,7 +304,6 @@
       rb-resize   panel and chart resize handles
   -->
   <script src="./resources/js/pdf-sampler.js?v=20260902"></script>
-  <script src="./resources/js/rb-errors.js?v=20260902"></script>
   <script src="./resources/js/rb-state.js?v=20260902"></script>
   <script src="./resources/js/rb-utils.js?v=20260902"></script>
   <script src="./resources/js/rb-actions.js?v=20260902"></script>
