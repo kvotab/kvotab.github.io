@@ -194,7 +194,7 @@ async function loadGroupChildren(groupItem, path) {
     // Try to find any enabled file that does.
     let node = null;
     if (file) {
-      try { node = FileService.get(file, path); } catch (e) { /* skip */ }
+      try { node = FileService.get(file, path); } catch (e) { ignoreFailure('loadGroupChildren', e); }
     }
     if (!node && isUnionMode()) {
       for (const fk of getEnabledFiles()) {
@@ -204,7 +204,7 @@ async function loadGroupChildren(groupItem, path) {
         try {
           node = FileService.get(altFile, path);
           if (node) { file = altFile; break; }
-        } catch (e) { /* skip */ }
+        } catch (e) { ignoreFailure('loadGroupChildren', e); }
       }
     }
 
@@ -362,7 +362,7 @@ async function toggleTreeMode() {
       document.getElementById('clearSearch')?.classList.remove('visible');
       filterTree('');
     }
-  } catch (e) { /* ignore */ }
+  } catch (e) { ignoreFailure('toggleTreeMode', e); }
 
   // mark a refresh token early so the header ticker cancel button can appear
   window._treeRefreshId = (window._treeRefreshId || 0) + 1;
@@ -374,7 +374,7 @@ async function toggleTreeMode() {
 
   // Show header ticker for long-running recalculations
   if (isMerged) {
-    try { showFileLoadTicker(0, 0, `Calculating ${modeLabel.toLowerCase()}...`); } catch (e) {}
+    try { showFileLoadTicker(0, 0, `Calculating ${modeLabel.toLowerCase()}...`); } catch (e) { ignoreFailure('toggleTreeMode', e); }
   }
 
   // Immediately show the root + inline spinner so the UI responds instantly
@@ -400,7 +400,7 @@ async function toggleTreeMode() {
       tree.classList.remove('loading');
       document.querySelector('.search-container')?.classList.remove('visible');
     }
-  } catch (e) { /* ignore UI update errors */ }
+  } catch (e) { ignoreFailure('toggleTreeMode', e); }
 
   // Let the browser paint the inline spinner before starting the expensive work.
   // Use setTimeout to yield to the event loop (more reliable on Safari).
@@ -443,9 +443,9 @@ function collectAllPaths(group, prefix = '') {
             paths.add(subPath);
           }
         }
-      } catch (e) { /* skip */ }
+      } catch (e) { ignoreFailure('collectAllPaths', e); }
     }
-  } catch (e) { /* skip */ }
+  } catch (e) { ignoreFailure('collectAllPaths', e); }
   return paths;
 }
 
@@ -476,7 +476,7 @@ async function collectAllPathsAsync(group, prefix = '', opts = {}) {
       paths.add(path);
 
       let obj = null;
-      try { obj = g.get(k); } catch (e) { /* unreadable — skip */ }
+      try { obj = g.get(k); } catch (e) { ignoreFailure('_traverse', e); }
 
       if (obj && String(obj.type).toLowerCase() === 'group') {
         await _traverse(obj, path);
@@ -579,12 +579,12 @@ async function getIntersectedPathsAsync() {
             try {
               const wid = workerP && workerP._workerId;
               if (wid && _treeWorkerPending[wid]) {
-                try { clearTimeout(_treeWorkerPending[wid]._timeout); } catch (e) {}
-                try { ensureTreeWorker().postMessage({ cmd: 'cancel', id: wid }); } catch (e) {}
+                try { clearTimeout(_treeWorkerPending[wid]._timeout); } catch (e) { ignoreFailure('getIntersectedPathsAsync', e); }
+                try { ensureTreeWorker().postMessage({ cmd: 'cancel', id: wid }); } catch (e) { ignoreFailure('getIntersectedPathsAsync', e); }
                 delete _treeWorkerPending[wid];
                 console.debug('[getIntersectedPathsAsync] cancelled in-flight worker id=', wid);
               }
-            } catch (e) { /* ignore */ }
+            } catch (e) { ignoreFailure('getIntersectedPathsAsync', e); }
 
             // If the worker finishes warming up shortly after the fallback,
             // refresh the merged tree in-place without routing through
@@ -598,13 +598,11 @@ async function getIntersectedPathsAsync() {
                   });
                 }
               }).catch(() => {});
-            } catch (e) { /* ignore */ }
+            } catch (e) { ignoreFailure('getIntersectedPathsAsync', e); }
           }
         }
     }
-  } catch (e) {
-    // ignore and fall back
-  }
+  } catch (e) { ignoreFailure('getIntersectedPathsAsync', e); }
 
   let intersection = null;
   for (const fileKey of enabledFiles) {
@@ -709,7 +707,7 @@ function ensureTreeWorker() {
         delete _treeWorkerPending[d.id];
       } else if (d.cmd === 'progress') {
         // forward progress to ticker if needed
-        try { updateFileLoadTicker(d.fileIndex, d.totalFiles, 'Calculating intersection...'); } catch (e) {}
+        try { updateFileLoadTicker(d.fileIndex, d.totalFiles, 'Calculating intersection...'); } catch (e) { ignoreFailure('ensureTreeWorker', e); }
         // extend/reset the worker timeout whenever we get progress so
         // long-running but active workers aren't prematurely rejected.
         try {
@@ -717,10 +715,10 @@ function ensureTreeWorker() {
           p._timeout = setTimeout(() => {
             clearTimeout(p._timeout);
             delete _treeWorkerPending[d.id];
-            try { treeWorker.postMessage({ cmd: 'cancel', id: d.id }); } catch (e) { /* ignore */ }
+            try { treeWorker.postMessage({ cmd: 'cancel', id: d.id }); } catch (e) { ignoreFailure('ensureTreeWorker', e); }
             p.reject(new Error('worker timeout'));
           }, 30000);
-        } catch (e) { /* ignore */ }
+        } catch (e) { ignoreFailure('ensureTreeWorker', e); }
       } else if (d.cmd === 'error') {
         console.warn('[ensureTreeWorker] worker error id=', d.id, d.message || '');
         clearTimeout(p._timeout);
@@ -771,8 +769,8 @@ function computeIntersectedPathsViaWorker(enabledFiles) {
       reject,
       _timeout: setTimeout(() => {
         // timeout expired — proactively cancel worker and reject
-        try { worker.postMessage({ cmd: 'cancel', id }); } catch (e) { /* ignore */ }
-        try { clearTimeout(_treeWorkerPending[id]._timeout); } catch (e) {}
+        try { worker.postMessage({ cmd: 'cancel', id }); } catch (e) { ignoreFailure('computeIntersectedPathsViaWorker', e); }
+        try { clearTimeout(_treeWorkerPending[id]._timeout); } catch (e) { ignoreFailure('computeIntersectedPathsViaWorker', e); }
         delete _treeWorkerPending[id];
         console.warn('[computeIntersectedPathsViaWorker] request timed out id=', id);
         reject(new Error('worker timeout'));
@@ -781,7 +779,7 @@ function computeIntersectedPathsViaWorker(enabledFiles) {
     try {
       worker.postMessage({ cmd: 'computeIntersect', id, files }, transfers);
     } catch (e) {
-      try { clearTimeout(_treeWorkerPending[id]._timeout); } catch (err) {}
+      try { clearTimeout(_treeWorkerPending[id]._timeout); } catch (err) { ignoreFailure('computeIntersectedPathsViaWorker', err); }
       delete _treeWorkerPending[id];
       return reject(e);
     }
@@ -850,9 +848,7 @@ async function countTreeItems(group, intersectedPaths = null, prefix = '') {
         if (String(obj.type).toLowerCase() === 'group') {
           cnt += await countTreeItems(obj, intersectedPaths, path);
         }
-      } catch (e) {
-        // ignore individual errors while counting
-      }
+      } catch (e) { ignoreFailure('countTreeItems', e); }
       if (++_yieldCounter % 200 === 0) await new Promise(r => setTimeout(r, 0));
     }
   } catch (e) {
@@ -875,7 +871,7 @@ async function refreshTreeStructure() {
   const enabledFiles = getEnabledFiles();
 
   // indicate busy for accessibility and automated tests
-  try { tree && tree.setAttribute('aria-busy', 'true'); } catch(e) {}
+  try { tree && tree.setAttribute('aria-busy', 'true'); } catch (e) { ignoreFailure('refreshTreeStructure', e); }
   // start cancellable refresh token (used by buildTree to abort)
   window._treeRefreshId = (window._treeRefreshId || 0) + 1;
   const _myTreeRefreshId = window._treeRefreshId;
@@ -887,7 +883,7 @@ async function refreshTreeStructure() {
     resetInfoPanel();
     hideChart();
     searchContainer.classList.remove('visible');
-    try { tree && tree.removeAttribute('aria-busy'); } catch(e) {}
+    try { tree && tree.removeAttribute('aria-busy'); } catch (e) { ignoreFailure('refreshTreeStructure', e); }
     // reset token if nothing to do
     window._treeRefreshId = 0;
     window._treeRefreshCancelled = false;
@@ -909,12 +905,12 @@ async function refreshTreeStructure() {
         if (String(err && err.message).toLowerCase().includes('cancel')) {
           tree.innerHTML = '<div class="loading">(cancelled)</div>';
           hideFileLoadTicker();
-          try { tree && tree.removeAttribute('aria-busy'); } catch (e) {}
+          try { tree && tree.removeAttribute('aria-busy'); } catch (e) { ignoreFailure('refreshTreeStructure', e); }
           return;
         }
         throw err;
       }
-      try { window._currentIntersectedPaths = intersectedPaths; console.debug('[refreshTreeStructure] intersectedPaths size=', intersectedPaths ? intersectedPaths.size : 'null', 'enabledFiles=', enabledFiles); } catch(e) {}
+      try { window._currentIntersectedPaths = intersectedPaths; console.debug('[refreshTreeStructure] intersectedPaths size=', intersectedPaths ? intersectedPaths.size : 'null', 'enabledFiles=', enabledFiles); } catch (e) { ignoreFailure('refreshTreeStructure', e); }
 
       // If intersect produced an empty set unexpectedly, allow one short retry
       if (intersectedPaths && intersectedPaths.size === 0 && enabledFiles.length > 1) {
@@ -923,7 +919,7 @@ async function refreshTreeStructure() {
           await new Promise(r => setTimeout(r, 150));
           const retry = await getIntersectedPathsAsync();
           intersectedPaths = retry || intersectedPaths;
-          try { window._currentIntersectedPaths = intersectedPaths; } catch(e) {}
+          try { window._currentIntersectedPaths = intersectedPaths; } catch (e) { ignoreFailure('refreshTreeStructure', e); }
           console.debug('[refreshTreeStructure] retry intersectedPaths size=', intersectedPaths ? intersectedPaths.size : 'null');
         } catch (e) {
           console.debug('[refreshTreeStructure] retry failed or cancelled', e && e.message);
@@ -936,7 +932,7 @@ async function refreshTreeStructure() {
         if (String(err && err.message).toLowerCase().includes('cancel')) {
           tree.innerHTML = '<div class="loading">(cancelled)</div>';
           hideFileLoadTicker();
-          try { tree && tree.removeAttribute('aria-busy'); } catch (e) {}
+          try { tree && tree.removeAttribute('aria-busy'); } catch (e) { ignoreFailure('refreshTreeStructure', e); }
           return;
         }
         throw err;
@@ -956,7 +952,7 @@ async function refreshTreeStructure() {
     // abort quickly if a cancellation was requested before we started
     if (window._treeRefreshCancelled || window._treeRefreshId !== _myTreeRefreshId) {
       hideFileLoadTicker();
-      try { tree && tree.removeAttribute('aria-busy'); } catch (e) {}
+      try { tree && tree.removeAttribute('aria-busy'); } catch (e) { ignoreFailure('refreshTreeStructure', e); }
       updateMultiSelectHint();
       updateHintToggleButton();
       return;
@@ -1029,7 +1025,7 @@ async function refreshTreeStructure() {
         const cancelled = document.createElement('div'); cancelled.className = 'loading'; cancelled.textContent = '(cancelled)';
         tree.appendChild(cancelled);
         hideFileLoadTicker();
-        try { tree && tree.removeAttribute('aria-busy'); } catch(e) {}
+        try { tree && tree.removeAttribute('aria-busy'); } catch (e) { ignoreFailure('progressCb', e); }
         return;
       }
     } else {
@@ -1052,7 +1048,7 @@ async function refreshTreeStructure() {
           const cancelled = document.createElement('div'); cancelled.className = 'loading'; cancelled.textContent = '(cancelled)';
           tree.appendChild(cancelled);
           hideFileLoadTicker();
-          try { tree && tree.removeAttribute('aria-busy'); } catch(e) {}
+          try { tree && tree.removeAttribute('aria-busy'); } catch (e) { ignoreFailure('progressCb', e); }
           return;
         }
       }
@@ -1067,7 +1063,7 @@ async function refreshTreeStructure() {
     }
     tree.classList.remove('loading');
     searchContainer.classList.add('visible');
-    try { tree && tree.removeAttribute('aria-busy'); } catch(e) {}
+    try { tree && tree.removeAttribute('aria-busy'); } catch (e) { ignoreFailure('progressCb', e); }
 
     // Post-refresh validation: ensure the right-panel selection/chart
     // reflect the newly-built tree / intersected set.
@@ -1076,7 +1072,7 @@ async function refreshTreeStructure() {
     tree.innerHTML = `<div class="error">Error loading tree: ${escapeHtml(err.message)}</div>`;
     console.error(err);
     searchContainer.classList.remove('visible');
-    try { tree && tree.removeAttribute('aria-busy'); } catch(e) {}
+    try { tree && tree.removeAttribute('aria-busy'); } catch (e) { ignoreFailure('progressCb', e); }
   } finally {
     /*
       Clear the token only when this invocation is still the current refresh.
@@ -1261,7 +1257,7 @@ async function buildTree(group, prefix = '', isNested = false, fileName = '', in
 
       try {
         let obj = null;
-        try { obj = group.get(key); } catch (e) { /* may not exist in this file */ }
+        try { obj = group.get(key); } catch (e) { ignoreFailure('makeTreeItem', e); }
         const path = prefix ? `${prefix}/${key}` : `/${key}`;
 
         // Union mode: if this file doesn't have the key, try an alternative file
@@ -1275,7 +1271,7 @@ async function buildTree(group, prefix = '', isNested = false, fileName = '', in
               try {
                 obj = FileService.get(altFile, path);
                 if (obj) { altFileUsed = true; break; }
-              } catch (e) { /* skip */ }
+              } catch (e) { ignoreFailure('makeTreeItem', e); }
             }
           }
         }

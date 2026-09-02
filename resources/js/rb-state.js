@@ -186,7 +186,7 @@ function initDOMReferences() {
     if (localStorage.getItem('rb_showMultiSelectHint') === '0') {
       _showMultiSelectHint = false;
     }
-  } catch(_) {}
+  } catch (_) { ignoreFailure('initDOMReferences', _); }
   updateMultiSelectHint();
 
   const closeBtn = document.getElementById('multiSelectHintClose');

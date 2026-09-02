@@ -206,21 +206,21 @@ EventBus.on('search:changed', ({ term }) => {
 // likelihood of the quick-fallback being triggered on first use.
 try {
   setTimeout(() => {
-    try { ensureTreeWorker(); computeIntersectedPathsViaWorker([]).catch(() => {}); } catch (e) { /* ignore */ }
+    try { ensureTreeWorker(); computeIntersectedPathsViaWorker([]).catch(() => {}); } catch (e) { ignoreFailure('init@209', e); }
   }, 1200);
-} catch (e) { /* ignore */ }
+} catch (e) { ignoreFailure('init@211', e); }
 
 // File load ticker helpers (show per-file progress and tree-refresh state)
 // search ticker state – reused file-load ticker element but separate control flag
 let _searchTickerActive = false;
 function showSearchTicker() {
   _searchTickerActive = true;
-  try { showFileLoadTicker(0, 0, 'Searching…'); } catch (e) { /* ignore */ }
+  try { showFileLoadTicker(0, 0, 'Searching…'); } catch (e) { ignoreFailure('showSearchTicker', e); }
 }
 function hideSearchTicker() {
   if (!_searchTickerActive) return;
   _searchTickerActive = false;
-  try { hideFileLoadTicker(); } catch (e) { /* ignore */ }
+  try { hideFileLoadTicker(); } catch (e) { ignoreFailure('hideSearchTicker', e); }
 }
 
 function showFileLoadTicker(current = 0, total = 0, text = '') {
@@ -276,7 +276,7 @@ function cancelTreeRefresh() {
     window._treeRefreshCancelled = true;
     window._treeRefreshId = 0;
     // notify worker if active
-    try { if (treeWorker) treeWorker.postMessage({ cmd: 'cancel' }); } catch (e) { /* ignore */ }
+    try { if (treeWorker) treeWorker.postMessage({ cmd: 'cancel' }); } catch (e) { ignoreFailure('cancelTreeRefresh', e); }
     const el = document.getElementById('fileLoadTicker');
     if (el) {
       el.querySelector('.ticker-text').textContent = 'Cancelling…';
@@ -439,7 +439,7 @@ async function loadFromUrl() {
 
     // Close previous handle if replacing
     if (loadedFiles[fileName]) {
-      try { loadedFiles[fileName].close(); } catch (_) {}
+      try { loadedFiles[fileName].close(); } catch (_) { ignoreFailure('loadFromUrl', _); }
     }
 
     loadedFiles[fileName] = hf;
@@ -449,7 +449,7 @@ async function loadFromUrl() {
     }
 
     // Pre-warm tree worker
-    try { await ensureTreeWorkerReady(5000); } catch (_) {}
+    try { await ensureTreeWorkerReady(5000); } catch (_) { ignoreFailure('loadFromUrl', _); }
 
     updateFileLoadTicker(1, 1, 'Refreshing tree…');
     await updateTabs(true);
@@ -565,14 +565,14 @@ async function loadSelectedSampleData() {
       const hf = new File('/' + internalName, 'r');
 
       if (loadedFiles[fileName]) {
-        try { loadedFiles[fileName].close(); } catch (_) {}
+        try { loadedFiles[fileName].close(); } catch (_) { ignoreFailure('loadSelectedSampleData', _); }
       }
       loadedFiles[fileName] = hf;
       fileStates[fileName] = true;
       if (!fileOrder.includes(fileName)) fileOrder.push(fileName);
     }
 
-    try { await ensureTreeWorkerReady(5000); } catch (_) {}
+    try { await ensureTreeWorkerReady(5000); } catch (_) { ignoreFailure('loadSelectedSampleData', _); }
 
     updateFileLoadTicker(checked.length, checked.length, 'Refreshing tree…');
     await updateTabs(true);
@@ -666,28 +666,31 @@ document.getElementById('fileInput').addEventListener('change', async (e) => {
         const hf = new File('/' + filename, 'r');
 
         if (loadedFiles[file.name]) {
-          try { loadedFiles[file.name].close(); } catch (_) {}
+          try { loadedFiles[file.name].close(); } catch (_) { ignoreFailure('init@669', _); }
         }
 
         loadedFiles[file.name] = hf;
         fileStates[file.name] = true;
         if (!fileOrder.includes(file.name)) fileOrder.push(file.name);
       } catch (err) {
-        console.error('[fileInput] Error loading', file.name, err);
-        alert(`Failed to load ${file.name}`);
+        /*
+          Report and carry on to the next file. This used to raise a modal,
+          which halted a multi-file drop until the user dismissed it — once per
+          bad file — and then continued regardless of what they clicked.
+        */
+        reportFailure('fileInput:load', err, { userMessage: `Could not load ${file.name}.` });
       }
     }
 
     // Pre-warm tree worker
-    try { await ensureTreeWorkerReady(5000); } catch (_) {}
+    try { await ensureTreeWorkerReady(5000); } catch (_) { ignoreFailure('init@682', _); }
 
     updateFileLoadTicker(files.length, files.length, 'Refreshing tree...');
     await updateTabs(true);
     hideFileLoadTicker();
   } catch (err) {
     hideFileLoadTicker();
-    console.error('[fileInput] handler error', err);
-    alert(`Error: ${err.message}`);
+    reportFailure('fileInput:handler', err, { userMessage: 'Adding files failed.' });
   }
 
   e.target.value = '';
