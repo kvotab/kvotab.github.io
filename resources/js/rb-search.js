@@ -352,7 +352,7 @@ async function asyncFindMatchingPaths(fileNode, regex, limit = 50) {
         if (child && String(child.type).toLowerCase() === 'group') {
           stack.push({ node: child, prefix: path });
         }
-      } catch (e) { /* ignore unreadable nodes */ }
+      } catch (e) { ignoreFailure('asyncFindMatchingPaths', e); }
 
       if (++processed % 200 === 0) await new Promise(r => setTimeout(r, 0));
     }

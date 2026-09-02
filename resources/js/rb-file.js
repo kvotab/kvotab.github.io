@@ -79,20 +79,20 @@ function resetTreeModeToSeparated() {
   multiSelectMode = false;
 
   // Reset right-hand panel
-  try { resetInfoPanel(); } catch (e) { /* ignore */ }
-  try { hideChart(); } catch (e) { /* ignore */ }
+  try { resetInfoPanel(); } catch (e) { ignoreFailure('resetTreeModeToSeparated', e); }
+  try { hideChart(); } catch (e) { ignoreFailure('resetTreeModeToSeparated', e); }
 
   // Remove visual selection in tree
   try {
     document.querySelectorAll('.tree-item.dataset.selected').forEach(el => el.classList.remove('selected'));
     document.querySelectorAll('.tree-item.group.expanded').forEach(el => el.classList.remove('expanded'));
-  } catch (e) { /* ignore */ }
+  } catch (e) { ignoreFailure('resetTreeModeToSeparated', e); }
 
   // Hide multi-select hint
   try {
     const hint = document.getElementById('multiSelectHint');
     if (hint) hint.style.display = 'none';
-  } catch (e) { /* ignore */ }
+  } catch (e) { ignoreFailure('resetTreeModeToSeparated', e); }
 
   console.debug('[resetTreeModeToSeparated] tree mode reset to separated, selections cleared');
 }
@@ -134,7 +134,7 @@ function toggleFileState(fileName) {
         break;
       }
     }
-  } catch (e) { /* ignore DOM update errors */ }
+  } catch (e) { ignoreFailure('toggleFileState', e); }
 
   // Always reset tree mode to separated and clear selections on any tab change.
   // updateTabs() will handle the full reset.
@@ -175,7 +175,7 @@ async function removeFile(fileName) {
     try {
       const tab = document.querySelector(`.file-tab[data-file="${CSS.escape(fileName)}"]`);
       if (tab) tab.remove();
-    } catch (e) { /* ignore */ }
+    } catch (e) { ignoreFailure('removeFile', e); }
     return;
   }
 

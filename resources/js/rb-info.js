@@ -170,9 +170,7 @@ async function showNodeAttributes(path, isGroup = false) {
                     const arr = Array.isArray(rawData) ? rawData : Array.from(rawData);
                     entries.push({ label: String(indexLabels[i] ?? i), samples: [arr[i]], spec: null });
                   }
-                } catch (_) {
-                  /* skip unreadable */
-                }
+                } catch (_) { ignoreFailure('createInfoSection', _); }
                 continue;
               }
 
@@ -192,9 +190,7 @@ async function showNodeAttributes(path, isGroup = false) {
                     for (let r = shift; r < nRows; r++) col.push(flat[r * nCols + i]);
                     entries.push({ label: String(indexLabels[i] ?? i), samples: col, spec: spec, deterministicValue: detVal });
                   }
-                } catch (_) {
-                  /* skip */
-                }
+                } catch (_) { ignoreFailure('createInfoSection', _); }
               } else {
                 // standard distribution spec for this index
                 let detVal = null;
@@ -238,7 +234,7 @@ async function showNodeAttributes(path, isGroup = false) {
                   const detVal = (pdfRaw.include_deterministic && flat.length > 0) ? flat[0] : null;
                   filePdfData = { type: 'single', samples: flat.slice(shift), spec: pdfRaw, path, deterministicValue: detVal };
                 }
-              } catch (_) { /* skip */ }
+              } catch (_) { ignoreFailure('createInfoSection', _); }
             } else {
               let detVal = null;
               try {
@@ -250,7 +246,7 @@ async function showNodeAttributes(path, isGroup = false) {
                   if (typeof rawData === 'number') detVal = rawData;
                   else if (rawData && rawData.length !== undefined && rawData.length > 0) detVal = Number(rawData[0]);
                 }
-              } catch (_) { /* ignore */ }
+              } catch (_) { ignoreFailure('createInfoSection', _); }
 
               const samples = generatePdfSamples(pdfRaw, 1000);
               if (samples) {
@@ -828,7 +824,7 @@ function buildAttributesTable(attrs, jsonReplacer) {
           pre.textContent = JSON.stringify(parsed, jsonReplacer, 2);
           valTd.appendChild(pre);
           rendered = true;
-        } catch (_) { /* not valid JSON, fall through */ }
+        } catch (_) { ignoreFailure('buildAttributesTable', _); }
       }
       // Detect HTML tags → render in a sandboxed container
       if (!rendered && /<[a-zA-Z][^>]*>/.test(trimmed)) {
@@ -948,7 +944,7 @@ function showMultipleDatasetAttributes(items) {
           if (val !== undefined) {
             fileSection.appendChild(makeLabelSection('Data Preview', String(PDFSampler.toNumber(val))));
           }
-        } catch (e) { /* ignore */ }
+        } catch (e) { ignoreFailure('makeLabelSection', e); }
       }
 
       const attrs = getAllAttrs(dataset);

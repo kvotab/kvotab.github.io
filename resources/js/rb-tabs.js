@@ -201,7 +201,7 @@ function updateTabs(forceRefresh) {
   // Hide search when no files
   if (enabledCount === 0) {
     document.querySelector('.search-container')?.classList.remove('visible');
-    try { EventBus.emit('selection:changed', { mode: 'none' }); } catch (e) {}
+    try { EventBus.emit('selection:changed', { mode: 'none' }); } catch (e) { ignoreFailure('onEnd', e); }
   }
   
   // Only refresh the tree when necessary (tree root changed or enabled set changed).
@@ -216,12 +216,12 @@ function updateTabs(forceRefresh) {
     // Cancel any in-flight worker intersection requests since enabled files changed.
     try {
       for (const wid of Object.keys(_treeWorkerPending)) {
-        try { ensureTreeWorker().postMessage({ cmd: 'cancel', id: wid }); } catch (e) {}
-        try { clearTimeout(_treeWorkerPending[wid]._timeout); } catch (e) {}
+        try { ensureTreeWorker().postMessage({ cmd: 'cancel', id: wid }); } catch (e) { ignoreFailure('onEnd', e); }
+        try { clearTimeout(_treeWorkerPending[wid]._timeout); } catch (e) { ignoreFailure('onEnd', e); }
         delete _treeWorkerPending[wid];
         console.debug('[updateTabs] cancelled in-flight worker id=', wid);
       }
-    } catch (e) { /* ignore */ }
+    } catch (e) { ignoreFailure('onEnd', e); }
 
     // Immediate visual feedback while tree rebuilds
     try {
@@ -231,7 +231,7 @@ function updateTabs(forceRefresh) {
         void tree.offsetHeight;
         document.querySelector('.search-container')?.classList.remove('visible');
       }
-    } catch (e) { /* ignore UI update errors */ }
+    } catch (e) { ignoreFailure('onEnd', e); }
 
     // Run the refresh asynchronously (yield so the spinner is visible first)
     refreshPromise = new Promise((resolve, reject) => {

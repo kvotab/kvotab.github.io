@@ -48,7 +48,7 @@ async function waitForH5Wasm() {
     origWarn(...args);
   };
 
-  try { console.debug('H5Wasm diagnostic filter enabled — SUPPRESS_H5WASM_DIAGNOSTICS = true'); } catch(e){}
+  try { console.debug('H5Wasm diagnostic filter enabled — SUPPRESS_H5WASM_DIAGNOSTICS = true'); } catch (e) { ignoreFailure('looksLikeH5Diag', e); }
 })();
 
 // Small FileService wrapper for h5wasm File objects. Use FileService.get(file, path),
@@ -67,7 +67,7 @@ window.FileService = {
       for (const name in node.attrs) {
         try { const a = node.attrs[name]; out[name] = (a && typeof a === 'object' && 'value' in a) ? a.value : a; } catch (err) { out[name] = `(unreadable: ${err.message})`; }
       }
-    } catch (e) {}
+    } catch (e) { ignoreFailure('attrs', e); }
     return out;
   }
 };
@@ -88,7 +88,7 @@ function getPanelBgColor() {
   try {
     const val = getComputedStyle(document.documentElement).getPropertyValue('--color-panel-bg').trim();
     if (val) return val;
-  } catch (_) {}
+  } catch (_) { ignoreFailure('getPanelBgColor', _); }
   return isDark ? '#2a221b' : '#faf8f6';
 }
 
@@ -184,7 +184,7 @@ function getAllAttrs(node) {
         out[attrName] = `(unreadable: ${err && err.message ? err.message : 'error'})`;
       }
     }
-  } catch (e) {}
+  } catch (e) { ignoreFailure('getAllAttrs', e); }
   return out;
 }
 
@@ -219,7 +219,7 @@ function releaseLoadedFile(fileKey) {
   try { file.close(); } catch (e) { console.warn('Could not close HDF5 file', fileKey, e); }
   try {
     if (internalPath && window.h5wasm && window.h5wasm.FS) window.h5wasm.FS.unlink(internalPath);
-  } catch (e) { /* already gone, or never written */ }
+  } catch (e) { ignoreFailure('releaseLoadedFile', e); }
   delete loadedFiles[fileKey];
 }
 
@@ -384,15 +384,13 @@ function getLinkInfo(group, path, obj) {
           if (softTarget && typeof softTarget === 'object') {
             if (typeof softTarget.target === 'string') return { type: 'soft', target: softTarget.target };
             if (softTarget instanceof Uint8Array) {
-              try { return { type: 'soft', target: new TextDecoder().decode(softTarget) }; } catch (e) {}
+              try { return { type: 'soft', target: new TextDecoder().decode(softTarget) }; } catch (e) { ignoreFailure('getLinkInfo', e); }
             }
           }
         }
-      } catch (e) {
-        // Swallow internal errors from get_link to avoid noisy console output
-      }
+      } catch (e) { ignoreFailure('getLinkInfo', e); }
     }
-  } catch (e) { /* not a link / ignore noisy return values */ }
+  } catch (e) { ignoreFailure('getLinkInfo', e); }
   return null;
 }
 
@@ -485,7 +483,7 @@ function collectPdfEntries(node, attrs, label) {
               const arr = Array.isArray(rawData) ? rawData : Array.from(rawData);
               entries.push({ label: label + ' – ' + String(indexLabels[i] ?? i), samples: [PDFSampler.toNumber(arr[i])], spec: null, deterministicValue: null });
             }
-          } catch (_) {}
+          } catch (_) { ignoreFailure('collectPdfEntries', _); }
           continue;
         }
 
@@ -501,7 +499,7 @@ function collectPdfEntries(node, attrs, label) {
               for (let r = shift; r < nRows; r++) col.push(PDFSampler.toNumber(flat[r * nCols + i]));
               entries.push({ label: label + ' – ' + String(indexLabels[i] ?? i), samples: col, spec, deterministicValue: detVal });
             }
-          } catch (_) {}
+          } catch (_) { ignoreFailure('collectPdfEntries', _); }
         } else {
           let detVal = null;
           try {
@@ -510,7 +508,7 @@ function collectPdfEntries(node, attrs, label) {
               const flat = Array.isArray(rawData) ? rawData : Array.from(rawData);
               if (flat.length >= pdfRaw.length) detVal = PDFSampler.toNumber(flat[i]);
             }
-          } catch (_) {}
+          } catch (_) { ignoreFailure('collectPdfEntries', _); }
           const samples = generatePdfSamples(spec, 1000);
           if (samples) {
             entries.push({ label: label + ' – ' + String(indexLabels[i] ?? i), samples: PDFSampler.normalizeDataArray(samples), spec, deterministicValue: isFinite(detVal) ? detVal : null });
@@ -528,7 +526,7 @@ function collectPdfEntries(node, attrs, label) {
             const detVal = pdfRaw.include_deterministic && flat.length > 0 ? PDFSampler.toNumber(flat[0]) : null;
             return [{ label, samples: flat.slice(shift).map(PDFSampler.toNumber), spec: pdfRaw, deterministicValue: detVal }];
           }
-        } catch (_) {}
+        } catch (_) { ignoreFailure('collectPdfEntries', _); }
       } else {
         let detVal = null;
         try {
@@ -537,7 +535,7 @@ function collectPdfEntries(node, attrs, label) {
             if (typeof rawData === 'number') detVal = rawData;
             else if (rawData && rawData.length !== undefined && rawData.length > 0) detVal = PDFSampler.toNumber(rawData[0]);
           }
-        } catch (_) {}
+        } catch (_) { ignoreFailure('collectPdfEntries', _); }
         const samples = generatePdfSamples(pdfRaw, 1000);
         if (samples) {
           return [{ label, samples: Array.from(samples).map(PDFSampler.toNumber), spec: pdfRaw, deterministicValue: isFinite(detVal) ? detVal : null }];
@@ -924,9 +922,7 @@ function getRootNIter(file) {
     }
     n = PDFSampler.toNumber(n);
     if (isFinite(n) && n > 1) return n;
-  } catch (e) {
-    // ignore
-  }
+  } catch (e) { ignoreFailure('getRootNIter', e); }
   return null;
 }
 
@@ -1402,7 +1398,7 @@ function updateMultiSelectHint() {
  */
 function dismissMultiSelectHint() {
   _showMultiSelectHint = false;
-  try { localStorage.setItem('rb_showMultiSelectHint','0'); } catch(_) {}
+  try { localStorage.setItem('rb_showMultiSelectHint','0'); } catch (_) { ignoreFailure('dismissMultiSelectHint', _); }
   updateMultiSelectHint();
   updateHintToggleButton();
 }
@@ -1424,7 +1420,7 @@ function updateHintToggleButton() {
  */
 function showMultiSelectHint() {
   _showMultiSelectHint = true;
-  try { localStorage.removeItem('rb_showMultiSelectHint'); } catch(_) {}
+  try { localStorage.removeItem('rb_showMultiSelectHint'); } catch (_) { ignoreFailure('showMultiSelectHint', _); }
   updateMultiSelectHint();
   updateHintToggleButton();
 }

@@ -399,7 +399,7 @@ function loadPresets() {
         return parsed;
       }
     }
-  } catch (_) { /* ignore corrupt data */ }
+  } catch (_) { ignoreFailure('loadPresets', _); }
   return JSON.parse(JSON.stringify(_BUILTIN_PRESETS));
 }
 
@@ -1347,9 +1347,7 @@ function setupBackgroundOverlayTooltip(plotDiv, segments) {
         const n = Number(lv);
         if (isFinite(n)) return n;
       }
-    } catch (_) {
-      // fallback below
-    }
+    } catch (_) { ignoreFailure('toAxisLinearValue', _); }
     return toComparableAxisValue(v);
   };
 
@@ -1821,9 +1819,7 @@ function createPlotlyChart(path, savedAxisState) {
     if (backgroundSelect && backgroundSelect.value) {
       backgroundSourceValue = backgroundSelect.value;
     }
-  } catch (e) {
-    // Ignore missing CI control during initial render.
-  }
+  } catch (e) { ignoreFailure('createPlotlyChart', e); }
 
   plotDiv.innerHTML = '';
 
@@ -1885,9 +1881,7 @@ function createPlotlyChart(path, savedAxisState) {
           indexBackgroundSegments = collectIndexBackgroundSegments(firstFile, backgroundSourceValue, timeData);
         }
       }
-    } catch (e) {
-      // Background collection is best-effort
-    }
+    } catch (e) { ignoreFailure('createPlotlyChart', e); }
   }
 
   // Build traces for each enabled file
@@ -2213,9 +2207,7 @@ function createMultiDatasetChart(items) {
       if (sdomCheckbox) {
         wasSDOMChecked = sdomCheckbox.checked || false;
       }
-    } catch (e) {
-      // If checkbox doesn't exist yet, that's fine
-    }
+    } catch (e) { ignoreFailure('createMultiDatasetChart', e); }
   
   if (plotDiv) plotDiv.innerHTML = '';
   
@@ -2531,7 +2523,7 @@ function parseIndexNames(indexAttr) {
   if (typeof indexAttr === 'object' && typeof indexAttr.length === 'number') {
     try {
       return Array.from(indexAttr).map(v => String(v).trim()).filter(Boolean);
-    } catch (_) {}
+    } catch (_) { ignoreFailure('parseIndexNames', _); }
   }
   if (typeof indexAttr === 'string') {
     const s = indexAttr.trim();
@@ -2541,7 +2533,7 @@ function parseIndexNames(indexAttr) {
       if (Array.isArray(parsed)) {
         return parsed.map(v => String(v).trim()).filter(Boolean);
       }
-    } catch (_) {}
+    } catch (_) { ignoreFailure('parseIndexNames', _); }
     return s.split(/[;,]/).map(v => v.trim()).filter(Boolean);
   }
   return [String(indexAttr).trim()].filter(Boolean);
@@ -2727,9 +2719,7 @@ async function createRadionuclidesChart(path, savedAxisState) {
     if (backgroundSelect && backgroundSelect.value) {
       backgroundSourceValue = backgroundSelect.value;
     }
-  } catch (e) {
-    // Ignore missing CI control during initial render.
-  }
+  } catch (e) { ignoreFailure('createRadionuclidesChart', e); }
   try {
   if (plotDiv) plotDiv.innerHTML = '';
   // Yield to browser for immediate UI update before heavy processing (cross-browser)
@@ -3084,7 +3074,7 @@ async function createRadionuclidesChart(path, savedAxisState) {
         if (typeof group.keys === 'function') {
           datasetKeys = Array.from(group.keys()).filter(isVisibleGroupEndpoint);
         }
-      } catch (e) { /* ignore */ }
+      } catch (e) { ignoreFailure('toProbabilisticTimeSlices', e); }
       // Match datasetKeys to dataArrays by index
       for (let i = 0; i < datasetKeys.length && i < fileData.dataArrays.length; i++) {
         const key = datasetKeys[i];
