@@ -1533,11 +1533,9 @@
         description: 'Possible unnecessary comma before “and” in a two-author narrative citation.'
       },
 
-      /* SKB report citations with the report number incorrectly parenthesized. */
-      {
-        pattern: String.raw`\bSKB\s*\(\s*(?:TR|R|P|IPR|RD|SR|TM|U|F)-\d{2,}-\d+\s*\)`,
-        description: 'Place the report number directly after SKB, for example “SKB TR-23-01”.'
-      },
+      /* Typographical damage to an SKB report number. The number itself may be
+         written either way round — "SKB (TR-14-09)" and "(SKB TR-14-09)" are
+         both correct — so only malformed numbers are reported here. */
       {
         pattern: String.raw`\bSKB\s+(?:TR|R|P|IPR|RD|SR|TM|U|F)\s+\d{2,}-\d+\b`,
         description: 'A hyphen appears to be missing between the report series and year, for example “SKB TR-23-01”.'
@@ -1548,6 +1546,13 @@
       },
 
       /* Kept for possible future use, but disabled because these are valid. */
+      {
+        enabled: false,
+        id: 'citation-citation-place-the-report-number-directly-after-skb-for-example-skb',
+        legacyIds: ['citation-u5r7dl'],
+        pattern: String.raw`\bSKB\s*\(\s*(?:TR|R|P|IPR|RD|SR|TM|U|F)-\d{2,}-\d+\s*\)`,
+        description: 'Disabled: an SKB report may be cited as “SKB (TR-14-09)” or as “(SKB TR-14-09)”; both are correct.'
+      },
       {
         enabled: false,
         pattern: String.raw`\b[\p{L}][\p{L}'’\-]{0,24}\s*\((?:1[89]|20)\d{2}\)`,
@@ -1735,6 +1740,33 @@
         for (const value of positives) { expression.lastIndex = 0; if (!expression.test(value)) failures.push(`${expression} should match: ${value}`); }
         for (const value of negatives) { expression.lastIndex = 0; if (expression.test(value)) failures.push(`${expression} should not match: ${value}`); }
       }
+      /*
+        An SKB report may be cited either as "SKB (TR-14-09)" or as
+        "(SKB TR-14-09)". Both are correct, so no enabled citation rule may
+        report either one, and both must still be extracted as the same report.
+      */
+      const acceptedReportCitations = [
+        'The results are given in SKB (TR-14-09).',
+        'The results are given elsewhere (SKB TR-14-09).',
+        'See SKB TR-14-09 for the full account.'
+      ];
+      for (const sentence of acceptedReportCitations) {
+        for (const rule of POTENTIAL_INVALID_CITATION_RULES) {
+          if (rule.enabled === false) continue;
+          const expression = new RegExp(rule.pattern, rule.flags || 'gu');
+          expression.lastIndex = 0;
+          if (expression.test(sentence)) {
+            failures.push(`Valid report citation flagged by ${rule.id}: ${sentence}`);
+          }
+        }
+        const extracted = [];
+        findSkbCitations({ index: 0, text: sentence, section: 'Fixture' }, extracted);
+        const hit = extracted.filter(citation => citation.key === 'SKB TR-14-09' && citation.type === 'skb-report');
+        if (hit.length !== 1) {
+          failures.push(`Report citation extracted ${hit.length} times, expected once: ${sentence}`);
+        }
+      }
+
       if (failures.length) console.error('Review-rule regression tests failed:', failures);
       else console.info(`Review-rule regression tests passed (${cases.length} rules).`);
       return failures;
@@ -3523,7 +3555,7 @@
     function extractFirstAuthorSurname(referenceText, authorYearKey = '') {
       const commaMatch = String(referenceText).match(/^\s*([^,]+),/);
       if (commaMatch) {
-        const words = commaMatch[1].trim().split(/\s+/);
+        const words = stripCreatorRoleSuffix(commaMatch[1]).split(/\s+/);
         while (words.length > 1 && isAuthorInitial(words.at(-1))) words.pop();
         if (words.length) return words.join(' ');
       }
@@ -3662,9 +3694,9 @@
         <div class="zotero-candidate" data-zotero-candidate-id="${escHtml(candidateId)}">
           <div class="zotero-candidate-head">
             <div class="zotero-candidate-title">${escHtml(candidate.title || '(untitled Zotero item)')}</div>
-            <span class="zotero-probability" title="Match confidence based on title, complete author list, year, and Report Number">${candidate.score}% confidence</span>
+            <span class="zotero-probability" title="Match confidence based on title, the complete creator list (author, or the editor when an item records no author), year, and Report Number">${candidate.score}% confidence</span>
           </div>
-          <div>${escHtml(candidate.authors.join(', ') || 'No creator recorded')} · ${escHtml(candidate.year || 'No year')}</div>
+          <div>${escHtml(candidate.authors.join(', ') || 'No creator recorded')}${candidate.creatorRole && candidate.creatorRole !== 'author' ? ` (${escHtml(candidate.creatorRole)})` : ''} · ${escHtml(candidate.year || 'No year')}</div>
           ${candidate.reportKey ? `<div>Report Number: ${escHtml(candidate.reportKey)}</div>` : ''}
           ${candidate.data?.language ? `<div>Language metadata: ${escHtml(candidate.data.language)}${formatted.languageNote ? ` → ${escHtml(formatted.languageNote)}` : ' → no language note required'}</div>` : '<div>Language metadata: not recorded</div>'}
           <div>Match basis: ${escHtml(candidate.reasons.join(', ') || 'metadata similarity')}</div>
@@ -3753,11 +3785,65 @@
     }
 
     function getZoteroYear(item){return String(item?.data?.date||'').match(/\b(?:1[89]\d{2}|20\d{2})[a-z]?\b/i)?.[0]||null;}
-    function getZoteroAuthors(item){return (item?.data?.creators||[]).filter(c=>['author','bookAuthor','reporter','inventor','programmer'].includes(c.creatorType)).map(c=>String(c.lastName||c.name||'').trim()).filter(Boolean);}
+    /*
+      The creator roles a reference can be cited under, in the order the SKB
+      reference guide falls through them: an item with no author is cited under
+      its editor, and one with neither under its translator. formatSkbReference
+      already does this when it writes the reference out; matching has to agree
+      with it, or an edited volume gets no author-year alias, scores nothing on
+      the name comparison, and shows as “No creator recorded” while the document
+      cites it as “Nyström (red) 2005”.
+    */
+    const ZOTERO_CREATOR_TIERS = Object.freeze([
+      { role: 'author',      types: ['author', 'bookAuthor', 'reporter', 'inventor', 'programmer'] },
+      { role: 'editor',      types: ['editor', 'bookEditor', 'seriesEditor'] },
+      { role: 'translator',  types: ['translator'] },
+      { role: 'contributor', types: ['contributor'] }
+    ]);
+
+    /* An institutional creator is stored single-field, arriving as `name`
+       rather than `lastName` — “Svensk Kärnbränslehantering AB” is one name. */
+    function zoteroCreatorNames(item, types) {
+      return (item?.data?.creators || [])
+        .filter(creator => types.includes(creator.creatorType))
+        .map(creator => String(creator.lastName || creator.name || '').trim())
+        .filter(Boolean);
+    }
+
+    /**
+     * The names an item would be cited under, plus the role that supplied them.
+     *
+     * @param {Object} item - A Zotero API item
+     * @returns {{names: string[], role: string}} Empty names if no creator at all
+     */
+    function getZoteroCreators(item) {
+      for (const tier of ZOTERO_CREATOR_TIERS) {
+        const names = zoteroCreatorNames(item, tier.types);
+        if (names.length) return { names, role: tier.role };
+      }
+      return { names: [], role: '' };
+    }
+
+    function getZoteroAuthors(item) { return getZoteroCreators(item).names; }
+
+    /** The word to use about a candidate's creators in a match explanation. */
+    function creatorNoun(candidate) {
+      const role = candidate && candidate.creatorRole;
+      return role && role !== 'author' ? role : 'author';
+    }
+
+    /* “(red)”, “(ed)”, “(eds)” mark the role, not part of the name: a Zotero
+       editor is recorded as “Nyström”, the reference list writes
+       “Nyström B (red)”, and the two have to compare equal. */
+    function stripCreatorRoleSuffix(value) {
+      return String(value || '')
+        .replace(/\s*\((?:red|ed|eds|editor|editors|utg)\.?\)\s*$/i, '')
+        .trim();
+    }
     function getZoteroReportNumber(item){return String(item?.data?.reportNumber||'').trim();}
     function getZoteroSkbReportKey(item){return extractSkbReportKey(getZoteroReportNumber(item));}
     function getZoteroAuthorYearKey(item){const a=getZoteroAuthors(item),y=getZoteroYear(item);return !a.length||!y?null:a.length===1?`${a[0]} ${y}`:a.length===2?`${a[0]} and ${a[1]} ${y}`:`${a[0]} et al. ${y}`;}
-    function prepareZoteroItems(items){return items.map(item=>{const aliases=[getZoteroAuthorYearKey(item),getZoteroSkbReportKey(item),item.data?.shortTitle].filter(Boolean);return{key:item.key,title:String(item.data?.title||''),year:getZoteroYear(item),authors:getZoteroAuthors(item),reportKey:getZoteroSkbReportKey(item),aliases,normalizedAliases:aliases.map(normaliseKey),url:item.links?.alternate?.href||'',data:item.data||{}};});}
+    function prepareZoteroItems(items){return items.map(item=>{const creators=getZoteroCreators(item),aliases=[getZoteroAuthorYearKey(item),getZoteroSkbReportKey(item),item.data?.shortTitle].filter(Boolean);return{key:item.key,title:String(item.data?.title||''),year:getZoteroYear(item),authors:creators.names,creatorRole:creators.role,reportKey:getZoteroSkbReportKey(item),aliases,normalizedAliases:aliases.map(normaliseKey),url:item.links?.alternate?.href||'',data:item.data||{}};});}
     function normaliseTitle(value) {
       return normaliseDashes(value || '')
         .normalize('NFC')
@@ -3833,10 +3919,13 @@
         reasons.push('same year');
       }
       if (citation.author && candidate.authors.length) {
-        const citedAuthor = citation.author.replace(/\s+(?:et\s+al\.?|m\.fl\.?).*$/i, '').split(/\s+(?:and|och|&)\s+/i)[0];
+        const citedAuthor = stripCreatorRoleSuffix(
+          citation.author.replace(/\s+(?:et\s+al\.?|m\.fl\.?).*$/i, '').split(/\s+(?:and|och|&)\s+/i)[0]
+        );
         const similarity = stringSimilarity(citedAuthor, candidate.authors[0]);
-        if (similarity >= .9) { score += 25; reasons.push('same first author'); }
-        else if (zoteroFuzzyMatch.checked && similarity >= .72) { score += 15; reasons.push('similar first author'); }
+        const noun = creatorNoun(candidate);
+        if (similarity >= .9) { score += 25; reasons.push(`same first ${noun}`); }
+        else if (zoteroFuzzyMatch.checked && similarity >= .72) { score += 15; reasons.push(`similar first ${noun}`); }
       }
       return { score: Math.min(score, 100), reasons };
     }
@@ -3852,7 +3941,7 @@
       return authorBlockMatch[1]
         .split(',')
         .map(author => {
-          const words = author.trim().split(/\s+/).filter(Boolean);
+          const words = stripCreatorRoleSuffix(author).split(/\s+/).filter(Boolean);
           while (words.length > 1 && isAuthorInitial(words.at(-1))) {
             words.pop();
           }
@@ -3939,10 +4028,11 @@
       else if (titleScore >= .35) reasons.push('partly similar title');
       else reasons.push('different title');
 
-      if (authorsScore >= .95) reasons.push('same author list');
-      else if (authorsScore >= .7) reasons.push('mostly same authors');
-      else if (authorsScore >= .4) reasons.push('some shared authors');
-      else if (documentAuthors.length && candidate.authors.length) reasons.push('different author list');
+      const noun = creatorNoun(candidate);
+      if (authorsScore >= .95) reasons.push(`same ${noun} list`);
+      else if (authorsScore >= .7) reasons.push(`mostly same ${noun}s`);
+      else if (authorsScore >= .4) reasons.push(`some shared ${noun}s`);
+      else if (documentAuthors.length && candidate.authors.length) reasons.push(`different ${noun} list`);
 
       if (sameYear) reasons.push('same year');
 
