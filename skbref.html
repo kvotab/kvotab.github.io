@@ -1648,7 +1648,44 @@
       { pattern: String.raw`\b(?:archeolog|paleontolog|paleo|medieval|encyclopedia)\w*\b`, flags: 'gu', description: 'American spelling: British English keeps ae or oe (archaeology, palaeontology, mediaeval, encyclopaedia).', source: 'technical', severity: 'review', language: 'en' },
       { pattern: String.raw`\b(?:modeling|modeled|labeled|labeling|traveled|traveler|traveling|canceled|canceling|counselor|equaling|signaled|signaling|totaled|fueled|fueling)\b`, flags: 'gu', description: 'American spelling: British English doubles the final l (modelling, labelled, traveller, cancelled).', source: 'technical', severity: 'review', language: 'en' },
       { pattern: String.raw`\b(?:aging|sizable|salable)\b`, flags: 'gu', description: 'American spelling: British English keeps the silent e (ageing, sizeable, saleable).', source: 'technical', severity: 'review', language: 'en' },
-      { pattern: String.raw`\b(?:molds?|molded|molding|grays?|grayish|artifacts?|oriented|tires?|storeys?|storys?)\b`, flags: 'gu', description: 'American spelling: British English writes mould, grey, artefact, orientated, tyre, storey. Check which sense is intended.', source: 'technical', severity: 'review', language: 'en' }
+      { pattern: String.raw`\b(?:molds?|molded|molding|grays?|grayish|artifacts?|oriented|tires?|storeys?|storys?)\b`, flags: 'gu', description: 'American spelling: British English writes mould, grey, artefact, orientated, tyre, storey. Check which sense is intended.', source: 'technical', severity: 'review', language: 'en' },
+      /* ── Appendix 2 of 1215757: the in-text citation errors the guide lists ── */
+      { pattern: String.raw`\b((?:1[89]|20)\d{2})[a-z]\s*,\s*\1[a-z]\b`, description: 'Do not repeat the year for works by the same author in the same year; write “(1993a, b)”.', source: 'references' },
+      { pattern: String.raw`\([^()]*\((?:1[89]|20)\d{2}[a-z]?\)[^()]*\)`, description: 'Do not put the year in a second pair of parentheses inside a citation; write “(see van der Wal et al. 2001)”.', source: 'references' },
+      { pattern: String.raw`\b(?:[Aa]ccording to|[Bb]ased on|[Ee]nligt)\s+\((?=[^()]{0,60}(?:1[89]|20)\d{2})`, description: 'When the author’s name is part of the sentence, only the year belongs in parentheses; write “According to Brydsten (2009)”.', source: 'references' },
+      { pattern: String.raw`\b(?:Chapters?|Sections?|Figures?|Tables?|Appendix|Appendices|Kapitel|Avsnitt|Bilaga)\s+\d+(?:[.\-]\d+)*(?:\s*[–-]\s*\d+(?:[.\-]\d+)*)?\s+(?:of|in|i)\s+[A-ZÅÄÖÀ-Þ][^()]{0,40}\((?:1[89]|20)\d{2}`, description: 'Put a precise location after the year inside the parentheses; write “Holmén (2005, Chapter 5)”.', source: 'references' },
+
+      /* ── Appendix 4 of 1469987: a sign used as a prefix, other than + or − ── */
+      { pattern: String.raw`(?<=[\s(\p{L}])[<>≤≥≈≠=±]\s?\d`, reject: String.raw`[<>≤≥≈≠=±]\s\d`, flags: 'gu', description: 'Only + and − are written against the number. Every other mathematical sign takes a space, for example “pH < 7” and “≈ 100 m”.', source: 'technical' },
+
+      /* ── Sections 3.1, 4.4 and 6 of 1469987 ── */
+      { pattern: String.raw`(?<![\d,.])\d{1,3},\d{1,2}(?![\d,]|-\p{L})`, flags: 'gu', description: 'Use a point as the decimal separator in English text; a comma is the Swedish decimal separator.', source: 'technical', severity: 'review', language: 'en' },
+      { pattern: String.raw`\b(?:where|Where|där|Där)\s+[\p{L}][\p{L}\d]{0,3}\s*=\s*[\p{L}]{3,}`, flags: 'gu', description: 'Write “is” rather than an equals sign when explaining a quantity symbol in running text.', source: 'technical' },
+      { pattern: String.raw`↔`, description: 'Use ⇄ for a reaction that runs in both directions, not ↔.', source: 'technical', severity: 'review' },
+      { pattern: String.raw`\d(?:BC|AD|BP)\b`, description: 'Leave a space between the year and BC, AD or BP.', source: 'technical' },
+      { pattern: String.raw`\b\d+(?:[.,]\d+)?\s*u(?:m|s|g|L|mol|F|A|V|W|Sv|Gy|S)\b`, flags: 'gu', description: 'The micro prefix is µ, not the letter u; write µm, µg, µs.', source: 'technical' },
+      { pattern: String.raw`[\p{L}\d]\s+/\s+[\p{L}\d]`, flags: 'gu', description: 'A solidus is never surrounded by spaces.', source: 'handbook', severity: 'review' },
+      { pattern: String.raw`,\s*e\.g\.(?=\s*$|\s+[A-ZÅÄÖ])`, description: 'Do not end a sentence with e.g.; the examples belong after it.', source: 'technical' },
+      { pattern: String.raw`\bcf\.,`, description: 'In British English, do not place a comma directly after cf.', source: 'technical' },
+      { pattern: String.raw`\b\d{1,2}\s+\p{L}{3,}–\d{1,2}\s+\p{L}{3,}|\b\d+\s+(?:BC|AD|BP)–\d`, flags: 'gu', description: 'Space the en dash when either side of the range contains a space, for example “29 September – 2 October”.', source: 'technical' },
+
+      /* ── Section 7.4 of 1715629: abbreviations are written without full stops ── */
+      { pattern: String.raw`\b(?:t\.ex\.|bl\.a\.|d\.v\.s\.|m\.fl\.|o\.s\.v\.|fr\.o\.m\.|t\.o\.m\.|m\.m\.)`, flags: 'giu', description: 'SKB writes abbreviations without full stops: t ex, bl a, dvs, m fl, osv.', source: 'handbook', language: 'sv' },
+
+      /* ── Section 7.3 of 1715629: typographic quotation marks ── */
+      { pattern: String.raw`"`, description: 'Use typographic quotation marks (” ” in Swedish), not the straight ASCII quotation mark.', source: 'handbook', severity: 'review' },
+
+      /* ── Sections 18.1 and 18.2 of 1715629: company names ── */
+      { pattern: String.raw`\bSKB\s+AB\b`, description: 'The company designation AB is used only with the full name Svensk Kärnbränslehantering AB; the abbreviation is SKB alone.', source: 'handbook' },
+      { pattern: String.raw`\bForsmark\s+Kraftgrupp\b`, description: 'The owner’s name is Forsmarks Kraftgrupp AB.', source: 'handbook' },
+      { pattern: String.raw`\bOKG\s+AB\b`, description: 'In legal contexts the owner’s name is OKG Aktiebolag, not OKG AB.', source: 'handbook' },
+
+      /* ── Sections 7.1 and 7.5 of 1715629: Swedish usage ── */
+      { pattern: String.raw`(?<!^)\b(?:Miljöbalken|Kärntekniklagen|Strålskyddslagen|Kärnteknikförordningen)\b`, flags: 'gu', description: 'Names of laws are written with a lower-case initial: miljöbalken, kärntekniklagen.', source: 'handbook', severity: 'review', language: 'sv' },
+      { pattern: String.raw`\b[Hh]uvudtidsplan(?:en|er|erna|s)?\b`, description: 'Use “huvudtidplan”, which is the dominant form.', source: 'handbook', language: 'sv' },
+      { pattern: String.raw`\b[Rr]adioaktiv\s+strålning\b`, description: 'The source is radioactive, not the radiation: write “joniserande strålning” or “strålning från radioaktiva ämnen”.', source: 'handbook', language: 'sv' },
+      { pattern: String.raw`\b[Bb]ränsleflask(?:a|an|or|orna)\b`, description: 'Use “transportbehållare för använt kärnbränsle”.', source: 'handbook', language: 'sv' },
+      { pattern: String.raw`\b[Uu]ttjänt\s+kärnbränsle\b`, description: 'Use “använt kärnbränsle”.', source: 'handbook', language: 'sv' }
     ];
 
     const RULE_ID_OVERRIDES = Object.freeze({
@@ -1824,20 +1861,70 @@
       /* Identifiers that must never be read as chemistry or arithmetic */
       { text: 'The results for SFR1, CCP33 and KBS3 are reported in Chapter 4.', expect: null },
       { text: 'See Nagra Technical Report 02-05 for the Swiss approach.', expect: null },
-      { text: 'The analysis follows SKB TR-10-53 and document id 1715629.', expect: null }
+      { text: 'The analysis follows SKB TR-10-53 and document id 1715629.', expect: null },
+      /* 1215757 appendix 2: in-text citation errors, with the guide's own fixes */
+      { text: 'This has been stated by Lindroos (1993a, 1993b) in two papers.', expect: /do not repeat the year/i },
+      { text: 'This has been stated by Lindroos (1993a, b) in two papers.', expect: null },
+      { text: 'The value has been calculated (see van der Wal et al. (2001)).', expect: /second pair of parentheses/i },
+      { text: 'The value has been calculated (see van der Wal et al. 2001).', expect: null },
+      { text: 'According to (Brydsten 2009), the shoreline moved.', expect: /part of the sentence/i },
+      { text: 'According to Brydsten (2009), the shoreline moved.', expect: null },
+      { text: 'There is a discussion in Chapter 5 of Holmén (2005) about this.', expect: /after the year/i },
+      { text: 'There is a discussion in Holmén (2005, Chapter 5) about this.', expect: null },
+
+      /* 1469987 appendix 4: signs used as a prefix */
+      { text: 'The samples had pH <7 throughout the test.', expect: /Only \+ and −/ },
+      { text: 'The samples had pH < 7 throughout the test.', expect: null },
+      { text: 'The distance was ≈100 m from the tunnel.', expect: /Only \+ and −/ },
+      { text: 'The distance was ≈ 100 m from the tunnel.', expect: null },
+      { text: 'The temperature fell to −5 °C during the night.', expect: null },
+      { text: 'The bias was +2 °C over the period.', expect: null },
+
+      /* 1469987 sections 2.2, 3.1, 5 and 6 */
+      { text: 'In the equation, where I = electric current is assumed.', expect: /rather than an equals sign/i },
+      { text: 'In the equation, where I is the electric current.', expect: null },
+      { text: 'The reaction CaCO3 ↔ Ca and CO3 was observed.', expect: /⇄/ },
+      { text: 'The layer formed 5000BC in the basin.', expect: /space between the year and BC/i },
+      { text: 'The layer formed 5000 BC in the basin.', expect: null },
+      { text: 'The grain size was 5 um across the sample.', expect: /micro prefix/i },
+      { text: 'The grain size was 5 µm across the sample.', expect: null },
+      { text: 'The ratio of sand / clay was measured.', expect: /solidus/i },
+      { text: 'The samples were rinsed, e.g. Then they were dried.', expect: /end a sentence with e\.g\./i },
+      { text: 'Carbon can be oxidised (cf., Hoefs 2004) by microorganisms.', expect: /comma directly after cf/i },
+      { text: 'Carbon can be oxidised (cf. Hoefs 2004) by microorganisms.', expect: null },
+      { text: 'The campaign ran 29 September–2 October last year.', expect: /Space the en dash/i },
+      { text: 'The campaign ran 29 September – 2 October last year.', expect: null },
+
+      /* 1715629 sections 7.1, 7.3, 7.4, 7.5, 18.1 and 18.2 */
+      { text: 'Vi mätte t.ex. temperaturen i borrhålet.', expect: /without full stops/i, lang: 'sv' },
+      { text: 'Vi mätte t ex temperaturen i borrhålet.', expect: null, lang: 'sv' },
+      { text: 'Arbetet utförs av SKB AB under året.', expect: /company designation AB/i, lang: 'sv' },
+      { text: 'Arbetet utförs av Svensk Kärnbränslehantering AB under året.', expect: null, lang: 'sv' },
+      { text: 'Ägaren Forsmark Kraftgrupp deltog i mötet.', expect: /Forsmarks Kraftgrupp/, lang: 'sv' },
+      { text: 'Ägaren Forsmarks Kraftgrupp AB deltog i mötet.', expect: null, lang: 'sv' },
+      { text: 'Kraven följer av Miljöbalken och andra regler.', expect: /lower-case initial/i, lang: 'sv' },
+      { text: 'Kraven följer av miljöbalken och andra regler.', expect: null, lang: 'sv' },
+      { text: 'Vi mäter radioaktiv strålning vid tunneln.', expect: /joniserande/i, lang: 'sv' },
+      { text: 'Bränslet lastas i en bränsleflaska före transport.', expect: /transportbehållare/i, lang: 'sv' },
+      { text: 'Rapporten beskriver uttjänt kärnbränsle i förvaret.', expect: /använt kärnbränsle/i, lang: 'sv' },
+      { text: 'Huvudtidsplanen reviderades under hösten.', expect: /huvudtidplan/i, lang: 'sv' },
+      { text: 'Han skrev "detta gäller" i rapporten.', expect: /typographic quotation marks/i, lang: 'sv' },
+      { text: 'Han skrev ”detta gäller” i rapporten.', expect: null, lang: 'sv' }
     ];
 
     function runGuideFixtureRegressionTests() {
       const failures = [];
       for (const [index, testCase] of GUIDE_FIXTURE_CASES.entries()) {
+        /* A case may declare its language; the SKB rules are language-gated. */
+        const language = testCase.lang || 'en';
         const paragraph = {
           index, localIndex: index, text: testCase.text, style: '', section: 'Fixture',
-          sourcePart: 'fixture', sourceLabel: 'Fixture', language: 'en',
+          sourcePart: 'fixture', sourceLabel: 'Fixture', language,
           languageConfidence: 1, languageRanges: [], formatSpans: []
         };
         let found = [];
         try {
-          found = findOfficialSkbTextIssues([paragraph], { language: 'en', confidence: 1 });
+          found = findOfficialSkbTextIssues([paragraph], { language, confidence: 1 });
         } catch (error) {
           failures.push(`Rule crash on "${testCase.text.slice(0, 45)}…": ${error.message}`);
           continue;
@@ -3139,7 +3226,15 @@
         */
         const isDoi = /(?:doi\.org\/|\bdoi:\s*10\.|\b10\.\d{4,9}\/)/i.test(text);
         const endsWithLink = /(?:https?:\/\/|www\.)\S+$/i.test(text.trim());
-        if (/https?:\/\//.test(text) && !isDoi && !/(?:accessed|hämtad|hämtat|visited|retrieved|besökt)\s/i.test(text)) issues.push({ key: entry.key, issue: 'URL present but no access date', severity: 'warn' });
+        /*
+          Section 4.13 of 1215757 writes the access date in square brackets
+          after the address: "Available at: http://… [24 September 2011]."
+          Only testing for the word "accessed" rejected every correctly
+          formatted reference in the guide.
+        */
+        const hasBracketedDate = /\[[^\]]*\b(?:1[89]\d{2}|20\d{2})\b[^\]]*\]/.test(text);
+        const hasAccessWord = /(?:accessed|hämtad|hämtat|visited|retrieved|besökt)\s/i.test(text);
+        if (/https?:\/\//.test(text) && !isDoi && !hasBracketedDate && !hasAccessWord) issues.push({ key: entry.key, issue: 'URL present but no access date', severity: 'warn' });
         const last = text.trim().slice(-1);
         if (text.length > 20 && !endsWithLink && !['.', ')'].includes(last)) issues.push({ key: entry.key, issue: `Reference does not end with a period (ends with "${last}")`, severity: 'info' });
         if (endsWithLink && last === '.') issues.push({ key: entry.key, issue: 'Do not write a period after a link at the end of a reference', severity: 'info' });
@@ -4559,13 +4654,50 @@ ${exportedResults.innerHTML}
         .join('');
     }
 
+    /*
+      Chapter 5 of 1215757 does not sort a reference list as one alphabetical
+      run. Works sharing a first author are grouped in three tiers:
+
+        – first the works by that author alone, chronologically
+        – then the works with one co-author, alphabetically by the co-author
+        – finally the works with two or more co-authors, chronologically
+
+      Comparing the whole key as a string puts "Bentz A, Conway M, 2001" before
+      "Bentz A, 2007", which reported the guide's own example as out of order.
+    */
+    function referenceSortFields(key) {
+      const text = String(key || '').trim();
+      const yearMatch = text.match(/((?:1[89]|20)\d{2})([a-z]?)\s*$/);
+      const year = yearMatch ? yearMatch[1] + (yearMatch[2] || '') : '';
+      const authors = (yearMatch ? text.slice(0, yearMatch.index) : text).trim();
+
+      /* Three or more authors: the key carries only the first name plus et al. */
+      const etAl = authors.match(/^(.*?)\s+(?:et\s+al\.?|m\.fl\.?)$/i);
+      if (etAl) return { first: skbSortKey(etAl[1]), tier: 2, within: year };
+
+      const pair = authors.split(/\s+(?:and|och)\s+/i);
+      if (pair.length === 2) {
+        return { first: skbSortKey(pair[0]), tier: 1, within: skbSortKey(pair[1]) + ' ' + year };
+      }
+      return { first: skbSortKey(authors), tier: 0, within: year };
+    }
+
+    /** Negative when `first` belongs before `second` in an SKB reference list. */
+    function compareReferenceKeys(first, second) {
+      const a = referenceSortFields(first), b = referenceSortFields(second);
+      if (a.first !== b.first) return a.first < b.first ? -1 : 1;
+      if (a.tier !== b.tier) return a.tier - b.tier;
+      if (a.within !== b.within) return a.within < b.within ? -1 : 1;
+      return 0;
+    }
+
     function findReferenceListOrderIssues(entries) {
       const issues = [];
       /* Numbered lists keep their own order; only author-year lists are sorted. */
       const sortable = entries.filter(entry => entry.key && entry.num === null);
       for (let index = 1; index < sortable.length; index++) {
         const previous = sortable[index - 1], current = sortable[index];
-        if (skbSortKey(previous.key) > skbSortKey(current.key)) {
+        if (compareReferenceKeys(previous.key, current.key) > 0) {
           issues.push(makeOfficialIssue({
             match: current.key,
             description: 'Reference list out of alphabetical order: "' + current.key + '" is listed after "' + previous.key + '".',
@@ -4620,6 +4752,21 @@ ${exportedResults.innerHTML}
       }
       return issues;
     }
+
+    /*
+      Chapter 6 of 1215757 tabulates the English forms against the Swedish ones
+      a Swedish publication uses instead. "In" is recognised only in front of an
+      editor name, because an English title inside a Swedish reference list may
+      legitimately begin with the word.
+    */
+    const SWEDISH_REFERENCE_ABBREVIATIONS = Object.freeze([
+      [/\(eds?\)/, '(red)'],
+      [/\bPhD thesis\b/, 'Doktorsavh'],
+      [/\bLic thesis\b/, 'Lic-avh'],
+      [/,\s*n\s+d\b/, 'u å'],
+      [/\bIn\s+[A-ZÅÄÖÀ-Þ][a-zåäöà-þ]+\s+[A-ZÅÄÖÀ-Þ]\b/, 'I'],
+      [/\b\d+(?:st|nd|rd|th)\s+ed\b/, '2. uppl']
+    ]);
 
     function findOfficialSkbReferenceIssues(entries, refParagraphs, isSwedish) {
       const issues = [];
@@ -4679,6 +4826,59 @@ ${exportedResults.innerHTML}
         }
 
         /*
+          Section 4.4: a journal is identified by title and volume only. The
+          issue number within a volume is not given, and the volume carries no
+          "vol". Both are recognised by the page range that follows them, which
+          a multivolume book ("Thermodynamics. Vol 2.") does not have.
+        */
+        const issueNumber = text.match(/\b\d+\s*\(\s*\d+\s*\)\s*,\s*\d+/);
+        if (issueNumber) {
+          issues.push(makeOfficialIssue({
+            match: issueNumber[0],
+            description: 'Do not give the issue number within a journal volume.',
+            source: 'references', paragraph
+          }));
+        }
+
+        const volumeWord = text.match(/\bvol\.?\s*\d+\s*,\s*\d+\s*[–-]\s*\d+/i);
+        if (volumeWord) {
+          issues.push(makeOfficialIssue({
+            match: volumeWord[0],
+            description: 'Write a journal volume number without the abbreviation “vol”.',
+            source: 'references', paragraph
+          }));
+        }
+
+        /*
+          Sections 3.2.1 and 5: interviews, letters, e-mail and conversations
+          are named in the text only and never appear in the reference list.
+        */
+        const spokenSource = text.match(/\b(?:personal communication|personligt meddelande)\b/i);
+        if (spokenSource) {
+          issues.push(makeOfficialIssue({
+            match: spokenSource[0],
+            description: 'A personal communication is cited in the text only and must not appear in the reference list.',
+            source: 'references', paragraph
+          }));
+        }
+
+        /*
+          Chapter 6: abbreviations and comments follow the language of the
+          report, so a Swedish reference list uses the Swedish forms.
+        */
+        if (isSwedish) {
+          for (const [expression, swedish] of SWEDISH_REFERENCE_ABBREVIATIONS) {
+            const found = text.match(expression);
+            if (!found) continue;
+            issues.push(makeOfficialIssue({
+              match: found[0],
+              description: `In a Swedish publication write “${swedish}” rather than “${found[0].trim()}”.`,
+              source: 'references', paragraph
+            }));
+          }
+        }
+
+        /*
           Only page ranges, which the guide introduces with a comma and places
           at the end of the reference. Report and standard numbers such as
           "Nagra Technical Report 02-05" or "ISO 11005-1" also contain a
@@ -4720,7 +4920,7 @@ ${exportedResults.innerHTML}
       into a single collapsed block so that the substantive issues stay
       readable, while the counts and the full list remain available.
     */
-    const SPACING_RULE_PATTERN = /non-breaking space|hard space/i;
+    const SPACING_RULE_PATTERN = /non-breaking space|hard space|quotation mark/i;
 
     function isSpacingFinding(issue) {
       return SPACING_RULE_PATTERN.test(issue.description || '');
@@ -4747,7 +4947,7 @@ ${exportedResults.innerHTML}
               </div>`).join('')}</details>
           </div>`).join('');
       return `<details class="spacing-group">
-          <summary>Typography and hard spaces — ${issues.length} finding(s) across ${byRule.size} rule(s)</summary>
+          <summary>Typography, hard spaces and quotation marks — ${issues.length} finding(s) across ${byRule.size} rule(s)</summary>
           ${rows}
         </details>`;
     }
@@ -5402,6 +5602,101 @@ ${exportedResults.innerHTML}
 
     function buildUncitedSection(items){const body=items.length?`<div class="tag-list">${items.map(e=>`<div class="tag warn-tag">⚠ <code>${escHtml(e.key)}</code>${e.suggestedFor?.length?` <span class="rule-legacy-id">cited as ${escHtml(e.suggestedFor.join(', '))}?</span>`:''}</div>`).join('')}</div>`:'<p class="empty-notice">Every reference in the list is cited at least once.</p>';return section('Reference list entries never cited in text',items.length,body);}
     function buildFormatSection(issues,entries){const map=new Map(entries.map(e=>[e.key,e.body]));const groups=new Map();issues.forEach(i=>(groups.get(i.key)||groups.set(i.key,[]).get(i.key)).push(i));const body=issues.length?`<table class="ref-table"><thead><tr><th>Key</th><th>Reference text</th><th>Issues</th></tr></thead><tbody>${[...groups].map(([key,list])=>`<tr><td><span class="ref-key">${escHtml(key)}</span></td><td>${truncate(escHtml(map.get(key)||''),100)}</td><td><ul class="issue-list">${list.map(i=>`<li>[${i.severity.toUpperCase()}] ${escHtml(i.issue)}</li>`).join('')}</ul></td></tr>`).join('')}</tbody></table>`:'<p class="empty-notice">No SKB format rule violations detected.</p>';return section('SKB format rule issues',issues.length,body);}
+    /*
+      Reference-list regression tests. Every reference below is copied from
+      1215757 — the correct ones from its example sections, the incorrect ones
+      from the "Fel" column of appendix 2 and from the rules in chapter 4. A
+      rule that fires on the guide's own correct example is a false positive,
+      which is the failure mode these tests exist to catch.
+    */
+    function runReferenceGuideRegressionTests() {
+      const failures = [];
+
+      /* The availability notice belongs to the list, not to a single entry. */
+      const availabilityNotice = { text: "SKB's (Svensk Kärnbränslehantering AB) publications can be found at "
+        + 'http://www.skb.com/publications. SKBdoc documents will be submitted upon request to document@skb.se.' };
+
+      function referenceIssues(body, swedish = false) {
+        const entry = { key: extractAuthorYearKey(body) || body.slice(0, 20), body, paraIndex: 0, num: null, cites: [] };
+        return findOfficialSkbReferenceIssues([entry], [availabilityNotice, { text: body }], swedish)
+          .map(issue => issue.description);
+      }
+
+      /* Chapter 4: references written exactly as the guide writes them. */
+      const CORRECT = [
+        'Akagawa F, Yoshida H, Yogo S, Yamomoto K, 2006. Redox front formation in fractured crystalline rock: an analogue of matrix diffusion in an oxidizing front along water-conducting fractures. Geochemistry: Exploration, Environment, Analysis 6, 49–56.',
+        'Sena C, Grandia F, Arcos D, Molinero J, Duro L, 2008. Complementary modelling of radionuclide retention in the near-surface system at Forsmark. SKB R-08-107, Svensk Kärnbränslehantering AB.',
+        'Brown C L, 2003. Thermodynamics. Vol 2. 2nd ed. New York: McGraw-Hill.',
+        'Jenne E A (ed), 1998. Adsorption of metals by geomedia: variables, mechanisms, and model applications. San Diego, CA: Academic Press.',
+        'Bugmann H K M, 1994. On the ecology of mountainous forest in a changing climate: a simulation study. PhD thesis. Swiss Federal Institute of Technology.',
+        'Leskinen N, Ronneteg U, 2011. Tillverkning av kapselkomponenter. SKBdoc 1175208 ver 5.0, Svensk Kärnbränslehantering AB.',
+        'Keller B, 2002. Nuclear nightmares. The New York Times, 26 May, 6.',
+        'Itasca, 2007. 3DEC – 3-dimensional distinct element code, version 4.1. Minneapolis, MN: Itasca Consulting Group, Inc.'
+      ];
+      for (const body of CORRECT) {
+        const found = referenceIssues(body);
+        if (found.length) failures.push(`False positive on a reference from the guide: "${body.slice(0, 50)}…" → ${found[0]}`);
+      }
+
+      /* The errors the guide names, each with the wording that must report it. */
+      const INCORRECT = [
+        ['Akagawa F, 2006. Redox front formation. Geochemistry 6(2), 49–56.', /issue number/i],
+        ['Akagawa F, 2006. Redox front formation. Geochemistry vol 6, 49–56.', /without the abbreviation/i],
+        ['Ponti C, 2000. Personal communication.', /personal communication/i],
+        ['Berger, A., Loutre, M. F., 2002. Title of the work. Journal of Climate 15, 1–20.', /comma after the surname/i],
+        ['Birgersson M, Karnland O and Nilsson U, 2010. Title of the work. SKB TR-10-01, Svensk Kärnbränslehantering AB.', /Separate all authors with commas/i],
+        ['Andersson J et al., 2012. Title of the work. SKB TR-12-01, Svensk Kärnbränslehantering AB.', /do not use et al/i],
+        ['Leskinen N, 2011. Tillverkning. SKBdoc 1175208, Svensk Kärnbränslehantering AB.', /must include its version/i]
+      ];
+      for (const [body, expected] of INCORRECT) {
+        const found = referenceIssues(body);
+        if (!found.some(description => expected.test(description))) {
+          failures.push(`Missed ${expected} in "${body.slice(0, 50)}…"${found.length ? ` (found instead: ${found[0]})` : ''}`);
+        }
+      }
+
+      /* Chapter 6: a Swedish publication uses the Swedish abbreviations. */
+      if (!referenceIssues('Moore J, Allard B (eds), 2001. Titel. Stockholm: Förlag.', true).some(d => /\(red\)/.test(d))) {
+        failures.push('Swedish reference list: (eds) should be reported in favour of (red)');
+      }
+      if (referenceIssues('Moore J, Allard B (eds), 2001. Title. Berlin: Springer.', false).some(d => /\(red\)/.test(d))) {
+        failures.push('English reference list: (eds) must not be reported');
+      }
+
+      /* Chapter 5: the three-tier order, using the guide's own example list. */
+      const ordered = [
+        'Bentz A, 1997. Title. SKB TR-97-01, Svensk Kärnbränslehantering AB.',
+        'Bentz A, 2007. Title. SKB TR-07-01, Svensk Kärnbränslehantering AB.',
+        'Bentz A, Conway M, 2001. Title. SKB TR-01-01, Svensk Kärnbränslehantering AB.',
+        'Bentz A, Haecker P, 2005. Title. SKB TR-05-01, Svensk Kärnbränslehantering AB.',
+        'Bentz A, Stutzman T, 1999. Title. SKB TR-99-01, Svensk Kärnbränslehantering AB.',
+        'Bentz A, Garboczi M, Haecker P, Jensen J, 1994. Title. SKB TR-94-01, Svensk Kärnbränslehantering AB.',
+        'Bentz A, Coveney A, Garboczi M, Kleyn E, Stutzman T, 1999a. Title. SKB TR-99-02, Svensk Kärnbränslehantering AB.',
+        'Bentz A, Jensen J, Hansen J, Olesen I, Stang E, Haecker P, 1999b. Title. SKB TR-99-03, Svensk Kärnbränslehantering AB.',
+        'Bentz A, Williams J, MacKenzie P, 2001. Title. SKB TR-01-02, Svensk Kärnbränslehantering AB.'
+      ].map(body => ({ key: extractAuthorYearKey(body), body, paraIndex: 0, num: null, cites: [] }));
+      const orderIssues = findReferenceListOrderIssues(ordered);
+      if (orderIssues.length) failures.push(`Reference order: ${orderIssues.length} false positive(s) on the list in chapter 5`);
+      if (findReferenceListOrderIssues([ordered[1], ordered[0]]).length !== 1) {
+        failures.push('Reference order: a genuinely reversed pair was not reported');
+      }
+
+      /* Section 4.13: the access date is written in square brackets. */
+      const webPage = { key: 'IUCN 2011', body: 'IUCN, 2011. The IUCN red list of threatened species. Version 2011.1. '
+        + 'Available at: http://www.iucnredlist.org/ [24 September 2011].', paraIndex: 0, num: null, cites: [] };
+      if (checkSkbFormat([webPage]).some(issue => /access date/i.test(issue.issue))) {
+        failures.push('Access date: the bracketed form used throughout the guide was reported as missing');
+      }
+      const undated = { ...webPage, body: 'IUCN, 2011. The IUCN red list. Available at: http://www.iucnredlist.org/' };
+      if (!checkSkbFormat([undated]).some(issue => /access date/i.test(issue.issue))) {
+        failures.push('Access date: a genuinely missing access date was not reported');
+      }
+
+      if (failures.length) console.error('Reference-guide regression tests failed:', failures);
+      else console.info(`Reference-guide regression tests passed (${CORRECT.length} correct and ${INCORRECT.length} incorrect references from 1215757, plus ordering and access-date checks).`);
+      return failures;
+    }
+
     function section(title,count,body,open=false){const good=!count||count==='unavailable';return `<details class="result-section" ${open?'open':''}><summary>${title}<span class="section-badge ${good?'good':'warn'}">${count===0?'✓ none':count}</span></summary><div class="section-body">${body}</div></details>`;}
     function setSummary(name,value,state){$(`cnt-${name}`).textContent=value;const card=$(`card-${name}`);card.classList.remove('warn','ok');if(state)card.classList.add(state);}
     function escHtml(value){return String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
@@ -5410,6 +5705,7 @@ ${exportedResults.innerHTML}
     /* Bootstraps that depend on declarations further down this script. */
     initialiseRulePackControls();
     runGuideFixtureRegressionTests();
+    runReferenceGuideRegressionTests();
   </script>
 </body>
 </html>
