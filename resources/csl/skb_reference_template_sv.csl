@@ -1,0 +1,627 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SKB referensstil (svenska) – implementerar SKBdoc 1215757,
+  "Angivande av referenser i publika rapporter inklusive engelsk guide",
+  kapitel 6 "Referenshantering i en publikation på svenska".
+
+  SÅ FYLLER DU I POSTERNA I ZOTERO
+  ================================
+  Titlar        Skrivs genomgående med gemener och med kolon före
+                undertiteln. Stilen ändrar medvetet inte versalisering,
+                eftersom automatisk omvandling förstör namn som
+                "Geochimica et Cosmochimica Acta" eller "PLOS ONE".
+  Språk         Fältet Språk fylls i med gemen språkKOD för källor som inte
+                är på svenska: en, da, no, fi, de, fr ... ("en-GB" fungerar
+                också, "engelska" och "EN" gör det INTE). Det ger
+                "(På engelska.)" sist i referensen. Svenska källor lämnas
+                tomma.
+  Avhandlingar  Skriv "Doktorsavh" eller "Lic-avh" i fältet Typ (genre).
+  SKB-rapport   Posttyp Rapport. Rapportnummer = "SKB R-08-107".
+                Utgivare = "Svensk Kärnbränslehantering AB". Lämna
+                utgivningsort tom – SKB-rapporter har ingen ort.
+  SKBdoc        Posttyp Rapport. Rapportnummer = "SKBdoc 1175208 ver 5.0",
+                Utgivare = "Svensk Kärnbränslehantering AB". Ange alltid
+                versionen.
+                För ett annat företags dokument som ligger i SKBdoc: lägg
+                företagets egen beteckning i Rapportnummer,
+                "original-publisher: <företaget>" i fältet Extra,
+                Arkiv = "SKBdoc", Plats i arkiv = "1265058 ver 3.0" och
+                Utgivare = "Svensk Kärnbränslehantering AB".
+  Flerbandsverk Lägg deltiteln i fältet Volym efter numret, t ex
+                Volym = "1. Fluid flow, heat transfer and mass transfer".
+  Serie         Serie = "Technical Guide", Serienummer = "5" ger
+                "(Technical Guide 5)" sist, utan punkt efter parentesen.
+  Lagar, SOU,   Posttyp Lag/författning (eller Standard). Lägg beteckningen
+  standarder    i nummerfältet ("SFS 1984:3", "SS-EN 1936:1999") och lämna
+                författaren tom för att få beteckningen som huvuduppslag.
+                Vill du i stället ha myndigheten som huvuduppslag: fyll i
+                författare och flytta beteckningen till Serie/Serienummer,
+                så skrivs den som "(SSMFS 2008:21)" sist.
+  Konferenstryck  Zotero saknar egna fält för konferensort och datum – lägg
+                dem sist i fältet Publikationstitel (Proceedings Title).
+  Sidintervall  Vanliga bindestreck görs om till tankstreck automatiskt.
+
+  SORTERING
+  =========
+  default-locale är satt till sv-SE, vilket ger svensk kollationering:
+  A–Z följt av Å, Ä/Æ och Ö/Ø sist, i enlighet med kapitel 5. Ändra inte
+  detta – då hamnar svenska namn på fel plats i referenslistan. Det är också
+  det som gör att svenska källor inte får någon språknotering.
+
+  KÄNDA BEGRÄNSNINGAR (kräver manuell redigering)
+  ===============================================
+  * Två författare med samma efternamn får bara initialer när båda
+    referenserna faktiskt är citerade i dokumentet; lägg annars till dem
+    för hand.
+  * Lokalisatoretiketter böjs bara för rent numeriska intervall, så
+    "avsnitt 3.4–3.8" måste skrivas med undertryckt etikett.
+  * Undantaget att hänvisa till en SKB-rapport med rapportnummer i stället
+    för årtal ("SKB TR-10-53") är inte automatiskt.
+  * Muntliga källor och databasposter ska inte stå i referenslistan; de
+    nämns bara i löptexten.
+-->
+<style xmlns="http://purl.org/net/xbiblio/csl" class="in-text" version="1.0"
+       default-locale="sv-SE"
+       initialize-with-hyphen="true"
+       demote-non-dropping-particle="never"
+       page-range-format="expanded">
+  <info>
+    <title>SKB referensstil (svenska)</title>
+    <title-short>SKB (svenska)</title-short>
+    <id>http://www.zotero.org/styles/skb-reference-template-swedish</id>
+    <link href="http://www.zotero.org/styles/skb-reference-template-swedish" rel="self"/>
+    <link href="http://www.zotero.org/styles/skb-reference-template" rel="template"/>
+    <link href="https://www.skb.com/publications/" rel="documentation"/>
+    <author>
+      <name>kvot ab</name>
+      <email>pa@kvotab.se</email>
+    </author>
+    <category citation-format="author-date"/>
+    <category field="science"/>
+    <issn>1402-3091</issn>
+    <issn>1404-0344</issn>
+    <issn>1651-4416</issn>
+    <summary>Harvardstil (författare–årtal) för SKB:s publika rapporter på svenska, enligt SKBdoc 1215757 "Angivande av referenser i publika rapporter", kapitel 6.</summary>
+    <updated>2026-09-01T00:00:00+00:00</updated>
+  </info>
+
+  <!-- ===================================================================
+       LOKALISERING
+       Svenska förkortningar enligt kapitel 6: s, red, uppl, u å, I.
+       "et al." är detsamma på båda språken.
+
+       OBS: detta cs:locale saknar medvetet xml:lang och gäller därför alla
+       språk. Bibliografin nedan använder språkvillkorade layouter för att
+       lägga till "(På engelska.)" m m, och de layouterna byter samtidigt
+       aktivt språk. Utan överskrivningarna nedan skulle en engelsk eller
+       tysk källa få engelska respektive tyska förkortningar och
+       månadsnamn, vilket instruktionen inte tillåter i en svensk rapport.
+       =================================================================== -->
+  <locale>
+    <terms>
+      <term name="editor" form="short"><single>red</single><multiple>red</multiple></term>
+      <term name="translator" form="short"><single>övers</single><multiple>övers</multiple></term>
+      <term name="et-al">et al.</term>
+      <term name="no date">u å</term>
+      <term name="in">i</term>
+      <term name="and">och</term>
+      <term name="edition" form="short">uppl</term>
+      <term name="volume" form="short"><single>Vol</single><multiple>Vol</multiple></term>
+      <term name="page" form="short"><single>s</single><multiple>s</multiple></term>
+      <term name="chapter" form="short"><single>kapitel</single><multiple>kapitel</multiple></term>
+      <term name="section" form="short"><single>avsnitt</single><multiple>avsnitt</multiple></term>
+      <term name="figure" form="short"><single>figur</single><multiple>figur</multiple></term>
+      <term name="table" form="short"><single>tabell</single><multiple>tabell</multiple></term>
+      <term name="paragraph" form="short"><single>stycke</single><multiple>stycken</multiple></term>
+      <term name="part" form="short"><single>del</single><multiple>delar</multiple></term>
+      <term name="appendix" form="short"><single>bilaga</single><multiple>bilagor</multiple></term>
+      <!-- Svenska månadsnamn för åtkomst- och publiceringsdatum -->
+      <term name="month-01">januari</term>
+      <term name="month-02">februari</term>
+      <term name="month-03">mars</term>
+      <term name="month-04">april</term>
+      <term name="month-05">maj</term>
+      <term name="month-06">juni</term>
+      <term name="month-07">juli</term>
+      <term name="month-08">augusti</term>
+      <term name="month-09">september</term>
+      <term name="month-10">oktober</term>
+      <term name="month-11">november</term>
+      <term name="month-12">december</term>
+    </terms>
+  </locale>
+
+  <!-- ===================================================================
+       NAMN
+       Referenslista: "Andersen K K" – inget komma efter efternamn, ingen
+       punkt efter initialer, namn avskilda med komma, inget "och"/"&".
+       =================================================================== -->
+  <macro name="name-form-bibliography">
+    <names variable="author">
+      <name name-as-sort-order="all" sort-separator=" " initialize-with=" " initialize="true"
+            delimiter=", " delimiter-precedes-last="always"/>
+      <substitute>
+        <names variable="editor">
+          <name name-as-sort-order="all" sort-separator=" " initialize-with=" " initialize="true"
+                delimiter=", " delimiter-precedes-last="always"/>
+          <label form="short" prefix=" (" suffix=")"/>
+        </names>
+        <names variable="translator">
+          <name name-as-sort-order="all" sort-separator=" " initialize-with=" " initialize="true"
+                delimiter=", " delimiter-precedes-last="always"/>
+          <label form="short" prefix=" (" suffix=")"/>
+        </names>
+        <text macro="heading-fallback"/>
+      </substitute>
+    </names>
+  </macro>
+
+  <!-- Verk utan författare/redaktör får titeln som huvuduppslag; lagar och
+       standarder får sin beteckning som huvuduppslag (SFS 1984:3). -->
+  <macro name="heading-fallback">
+    <choose>
+      <if type="legislation standard" match="any">
+        <choose>
+          <if variable="number">
+            <text variable="number"/>
+          </if>
+          <else>
+            <text variable="title"/>
+          </else>
+        </choose>
+      </if>
+      <else>
+        <text variable="title"/>
+      </else>
+    </choose>
+  </macro>
+
+  <!-- I texten: bara efternamn; "och" mellan två namn; et al. från tre. -->
+  <macro name="author-short">
+    <names variable="author">
+      <name form="short" and="text" delimiter=", "
+            name-as-sort-order="all" sort-separator=" "
+            initialize-with=" " initialize="true"/>
+      <substitute>
+        <names variable="editor"/>
+        <names variable="translator"/>
+        <text macro="heading-fallback"/>
+      </substitute>
+    </names>
+  </macro>
+
+  <macro name="author-count">
+    <names variable="author">
+      <name form="count"/>
+      <substitute>
+        <names variable="editor"/>
+        <names variable="translator"/>
+      </substitute>
+    </names>
+  </macro>
+
+  <!-- ===================================================================
+       DATUM
+       Lagar och standarder som har beteckningen som huvuduppslag bär årtalet
+       i själva beteckningen, därför skrivs inget separat årtal ut.
+       =================================================================== -->
+  <macro name="year">
+    <choose>
+      <if type="legislation regulation treaty standard" match="any">
+        <choose>
+          <if variable="author editor" match="any">
+            <date variable="issued">
+              <date-part name="year"/>
+            </date>
+          </if>
+        </choose>
+      </if>
+      <else-if variable="issued">
+        <date variable="issued">
+          <date-part name="year"/>
+        </date>
+      </else-if>
+      <else>
+        <text term="no date"/>
+      </else>
+    </choose>
+  </macro>
+
+  <macro name="day-month">
+    <date variable="issued" delimiter=" ">
+      <date-part name="day"/>
+      <date-part name="month" form="long"/>
+    </date>
+  </macro>
+
+  <!-- ===================================================================
+       TITLAR  (gemener, aldrig kursivt; skriv in dem rätt i Zotero –
+       stilen ändrar medvetet inte versalisering)
+       =================================================================== -->
+  <macro name="title">
+    <choose>
+      <!-- Standarder: "BS ISO 81782: Reciprocating internal combustion engines ..." -->
+      <if type="standard">
+        <group delimiter=": ">
+          <text variable="number"/>
+          <text variable="title"/>
+        </group>
+      </if>
+      <!-- Webbsidor får versionen som egen mening, se makrot "tail" -->
+      <else-if type="webpage post post-weblog dataset" match="any">
+        <text variable="title"/>
+      </else-if>
+      <!-- Dataprogram: "3DEC – 3-dimensional distinct element code, version 4.1" -->
+      <else-if variable="version">
+        <group delimiter=", ">
+          <text variable="title"/>
+          <text variable="version" prefix="version "/>
+        </group>
+      </else-if>
+      <else>
+        <text variable="title"/>
+      </else>
+    </choose>
+  </macro>
+
+  <!-- ===================================================================
+       UTGIVNINGSUPPGIFTER
+       =================================================================== -->
+  <!-- Upplaga skrivs "2. uppl", "3. uppl" - inte med ordningstalsändelse -->
+  <macro name="edition">
+    <choose>
+      <if is-numeric="edition">
+        <group delimiter=" ">
+          <number variable="edition" suffix="."/>
+          <text term="edition" form="short"/>
+        </group>
+      </if>
+      <else>
+        <text variable="edition"/>
+      </else>
+    </choose>
+  </macro>
+
+  <macro name="volume-part">
+    <group delimiter=" ">
+      <text term="volume" form="short"/>
+      <text variable="volume"/>
+    </group>
+  </macro>
+
+  <macro name="publisher">
+    <group delimiter=": ">
+      <text variable="publisher-place"/>
+      <text variable="publisher"/>
+    </group>
+  </macro>
+
+  <!-- "(Technical Guide 5)" – obs: ingen punkt efter parentesen -->
+  <macro name="collection">
+    <group prefix="(" suffix=")" delimiter=" ">
+      <text variable="collection-title"/>
+      <text variable="collection-number"/>
+    </group>
+  </macro>
+
+  <!-- "London: Academic Press, 543–557." / "Cambridge: QRA. (Technical Guide 5), 161–254." -->
+  <macro name="publisher-series-pages">
+    <choose>
+      <if variable="collection-title">
+        <group delimiter=" ">
+          <text macro="publisher" suffix="."/>
+          <choose>
+            <if variable="page">
+              <group delimiter=", " suffix=".">
+                <text macro="collection"/>
+                <text variable="page"/>
+              </group>
+            </if>
+            <else>
+              <text macro="collection"/>
+            </else>
+          </choose>
+        </group>
+      </if>
+      <else>
+        <group delimiter=", " suffix=".">
+          <text macro="publisher"/>
+          <text variable="page"/>
+        </group>
+      </else>
+    </choose>
+  </macro>
+
+  <!-- "Tillgänglig: URL [24 september 2011]." -->
+  <macro name="access">
+    <choose>
+      <!-- Ingen punkt sätts direkt efter en länk (Bilaga 1) -->
+      <if variable="accessed">
+        <group delimiter=" " suffix=".">
+          <text variable="URL" prefix="Tillgänglig: "/>
+          <date variable="accessed" prefix="[" suffix="]" delimiter=" ">
+            <date-part name="day"/>
+            <date-part name="month" form="long"/>
+            <date-part name="year"/>
+          </date>
+        </group>
+      </if>
+      <else>
+        <text variable="URL" prefix="Tillgänglig: "/>
+      </else>
+    </choose>
+  </macro>
+
+  <!-- "I Kirchman D L (red). Microbial ecology of the oceans." -->
+  <macro name="in-container">
+    <choose>
+      <if variable="editor">
+        <group delimiter=" ">
+          <group delimiter=" " suffix=".">
+            <text term="in" text-case="capitalize-first"/>
+            <names variable="editor">
+              <name name-as-sort-order="all" sort-separator=" " initialize-with=" " initialize="true"
+                    delimiter=", " delimiter-precedes-last="always"/>
+              <label form="short" prefix=" (" suffix=")"/>
+            </names>
+          </group>
+          <text variable="container-title" suffix="."/>
+        </group>
+      </if>
+      <else>
+        <group delimiter=" ">
+          <text term="in" text-case="capitalize-first"/>
+          <text variable="container-title" suffix="."/>
+        </group>
+      </else>
+    </choose>
+  </macro>
+
+  <!-- SKBdoc: "SKBdoc 1265058 ver 3.0, Svensk Kärnbränslehantering AB" -->
+  <macro name="skb-archive">
+    <group delimiter=", ">
+      <group delimiter=" ">
+        <text variable="archive"/>
+        <text variable="archive_location"/>
+      </group>
+      <text variable="publisher"/>
+    </group>
+  </macro>
+
+  <!-- "SKB R-08-107, Svensk Kärnbränslehantering AB." -->
+  <macro name="report">
+    <group delimiter=", " suffix=".">
+      <text variable="number"/>
+      <choose>
+        <if variable="original-publisher">
+          <group delimiter=". ">
+            <text variable="original-publisher"/>
+            <text macro="skb-archive"/>
+          </group>
+        </if>
+        <else-if variable="archive">
+          <text macro="skb-archive"/>
+        </else-if>
+        <else>
+          <group delimiter=", ">
+            <text variable="publisher"/>
+            <text variable="publisher-place"/>
+          </group>
+        </else>
+      </choose>
+    </group>
+  </macro>
+
+  <macro name="journal-locator">
+    <choose>
+      <if variable="page">
+        <text variable="page"/>
+      </if>
+      <else>
+        <text variable="number"/>
+      </else>
+    </choose>
+  </macro>
+
+  <!-- ===================================================================
+       TYPSPECIFIK AVSLUTNING
+       =================================================================== -->
+  <macro name="tail">
+    <choose>
+
+      <!-- Tidskriftsartiklar: "Geophysical Research Letters 34, L01501. https://doi.org/..." -->
+      <if type="article-journal article-magazine review review-book" match="any">
+        <group delimiter=" ">
+          <group delimiter=", " suffix=".">
+            <group delimiter=" ">
+              <text variable="container-title"/>
+              <text variable="volume"/>
+            </group>
+            <text macro="journal-locator"/>
+          </group>
+          <choose>
+            <if variable="DOI">
+              <text variable="DOI" prefix="https://doi.org/"/>
+            </if>
+            <else-if variable="URL">
+              <text macro="access"/>
+            </else-if>
+          </choose>
+        </group>
+      </if>
+
+      <!-- Tidningsartiklar: "The New York Times, 26 maj, 6." -->
+      <else-if type="article-newspaper" match="any">
+        <group delimiter=" ">
+          <group delimiter=", " suffix=".">
+            <text variable="container-title"/>
+            <text macro="day-month"/>
+            <text variable="page"/>
+          </group>
+          <text macro="access"/>
+        </group>
+      </else-if>
+
+      <!-- Avhandlingar: "Doktorsavh. Kungliga Tekniska högskolan, Sverige." -->
+      <else-if type="thesis">
+        <group delimiter=" ">
+          <text variable="genre" suffix="."/>
+          <group delimiter=", " suffix=".">
+            <text variable="publisher"/>
+            <text variable="publisher-place"/>
+          </group>
+          <text macro="access"/>
+        </group>
+      </else-if>
+
+      <!-- Bidrag i samlingsverk och konferenstryck -->
+      <else-if type="chapter paper-conference entry entry-dictionary entry-encyclopedia" match="any">
+        <group delimiter=" ">
+          <text macro="in-container"/>
+          <text macro="volume-part" suffix="."/>
+          <text macro="edition" suffix="."/>
+          <text macro="publisher-series-pages"/>
+          <text macro="access"/>
+        </group>
+      </else-if>
+
+      <!-- Webbsidor -->
+      <else-if type="webpage post post-weblog dataset" match="any">
+        <group delimiter=" ">
+          <text variable="version" prefix="Version " suffix="."/>
+          <text variable="container-title" suffix="."/>
+          <text macro="publisher" suffix="."/>
+          <text macro="access"/>
+        </group>
+      </else-if>
+
+      <!-- Böcker, flerbandsverk, serier, standarder, lagar, dataprogram -->
+      <else-if type="book graphic map manuscript motion_picture song legislation regulation treaty legal_case bill standard software" match="any">
+        <group delimiter=" ">
+          <text macro="volume-part" suffix="."/>
+          <text macro="edition" suffix="."/>
+          <text macro="publisher-series-pages"/>
+          <text macro="access"/>
+        </group>
+      </else-if>
+
+      <!-- Rapporter, SKBdoc-dokument och övrigt -->
+      <else>
+        <group delimiter=" ">
+          <text macro="report"/>
+          <text macro="access"/>
+        </group>
+      </else>
+    </choose>
+  </macro>
+
+  <!-- ===================================================================
+       TEXTHÄNVISNING
+       (Andersson 2010) / (Lark och Mill 2007) / (Lee et al. 2000)
+       (Fridman 2002, s 69) / (Lindroos 1993a, b) / (SMHI, u å)
+       =================================================================== -->
+  <citation et-al-min="3" et-al-use-first="1"
+            disambiguate-add-year-suffix="true"
+            disambiguate-add-givenname="true"
+            givenname-disambiguation-rule="primary-name-with-initials"
+            collapse="year-suffix"
+            year-suffix-delimiter=", "
+            cite-group-delimiter=", "
+            after-collapse-delimiter=", ">
+    <sort>
+      <key macro="author-short"/>
+      <key macro="year"/>
+      <key macro="title"/>
+    </sort>
+    <layout prefix="(" suffix=")" delimiter=", ">
+      <group delimiter=", ">
+        <choose>
+          <if variable="issued">
+            <group delimiter=" ">
+              <text macro="author-short"/>
+              <text macro="year"/>
+            </group>
+          </if>
+          <else>
+            <group delimiter=", ">
+              <text macro="author-short"/>
+              <text macro="year"/>
+            </group>
+          </else>
+        </choose>
+        <group delimiter=" ">
+          <label variable="locator" form="short"/>
+          <text variable="locator"/>
+        </group>
+      </group>
+    </layout>
+  </citation>
+
+  <!-- ===================================================================
+       REFERENSLISTA
+       Författarnamn, årtal och den efterföljande punkten skrivs med fet stil.
+       =================================================================== -->
+  <macro name="bibliography-entry">
+    <group delimiter=" ">
+      <group delimiter=", " suffix="." font-weight="bold">
+        <text macro="name-form-bibliography"/>
+        <text macro="year"/>
+      </group>
+      <text macro="title" suffix="."/>
+      <text macro="tail"/>
+    </group>
+  </macro>
+
+  <bibliography hanging-indent="false" entry-spacing="0" line-spacing="1">
+    <sort>
+      <!-- 1) alfabetiskt efter förste författaren -->
+      <key macro="name-form-bibliography" names-min="1" names-use-first="1"/>
+      <!-- 2) först en författare, sedan två, sedan tre eller fler -->
+      <key macro="author-count" names-min="3" names-use-first="3"/>
+      <!-- 3) verk med två författare alfabetiskt efter medförfattaren;
+              verk med tre eller fler går vidare till årtal -->
+      <key macro="name-form-bibliography" names-min="3" names-use-first="1"/>
+      <!-- 4) kronologiskt, därefter alfabetiskt efter titel (a, b, c) -->
+      <key macro="year"/>
+      <key macro="title"/>
+    </sort>
+    <!-- Källor på andra språk än rapportens får en språknotering sist.
+         Svenska källor faller på den avslutande layouten utan locale, som
+         inte lägger till någon notering, eftersom sv-SE är stilens
+         default-locale. -->
+    <layout locale="en"><text macro="bibliography-entry"/><text value="(På engelska.)" prefix=" "/></layout>
+    <layout locale="da"><text macro="bibliography-entry"/><text value="(På danska.)" prefix=" "/></layout>
+    <layout locale="no"><text macro="bibliography-entry"/><text value="(På norska.)" prefix=" "/></layout>
+    <layout locale="nb"><text macro="bibliography-entry"/><text value="(På norska.)" prefix=" "/></layout>
+    <layout locale="nn"><text macro="bibliography-entry"/><text value="(På norska.)" prefix=" "/></layout>
+    <layout locale="fi"><text macro="bibliography-entry"/><text value="(På finska.)" prefix=" "/></layout>
+    <layout locale="is"><text macro="bibliography-entry"/><text value="(På isländska.)" prefix=" "/></layout>
+    <layout locale="fo"><text macro="bibliography-entry"/><text value="(På färöiska.)" prefix=" "/></layout>
+    <layout locale="de"><text macro="bibliography-entry"/><text value="(På tyska.)" prefix=" "/></layout>
+    <layout locale="fr"><text macro="bibliography-entry"/><text value="(På franska.)" prefix=" "/></layout>
+    <layout locale="es"><text macro="bibliography-entry"/><text value="(På spanska.)" prefix=" "/></layout>
+    <layout locale="it"><text macro="bibliography-entry"/><text value="(På italienska.)" prefix=" "/></layout>
+    <layout locale="nl"><text macro="bibliography-entry"/><text value="(På nederländska.)" prefix=" "/></layout>
+    <layout locale="pt"><text macro="bibliography-entry"/><text value="(På portugisiska.)" prefix=" "/></layout>
+    <layout locale="pl"><text macro="bibliography-entry"/><text value="(På polska.)" prefix=" "/></layout>
+    <layout locale="ru"><text macro="bibliography-entry"/><text value="(På ryska.)" prefix=" "/></layout>
+    <layout locale="uk"><text macro="bibliography-entry"/><text value="(På ukrainska.)" prefix=" "/></layout>
+    <layout locale="et"><text macro="bibliography-entry"/><text value="(På estniska.)" prefix=" "/></layout>
+    <layout locale="lv"><text macro="bibliography-entry"/><text value="(På lettiska.)" prefix=" "/></layout>
+    <layout locale="lt"><text macro="bibliography-entry"/><text value="(På litauiska.)" prefix=" "/></layout>
+    <layout locale="cs"><text macro="bibliography-entry"/><text value="(På tjeckiska.)" prefix=" "/></layout>
+    <layout locale="sk"><text macro="bibliography-entry"/><text value="(På slovakiska.)" prefix=" "/></layout>
+    <layout locale="sl"><text macro="bibliography-entry"/><text value="(På slovenska.)" prefix=" "/></layout>
+    <layout locale="hr"><text macro="bibliography-entry"/><text value="(På kroatiska.)" prefix=" "/></layout>
+    <layout locale="sr"><text macro="bibliography-entry"/><text value="(På serbiska.)" prefix=" "/></layout>
+    <layout locale="bg"><text macro="bibliography-entry"/><text value="(På bulgariska.)" prefix=" "/></layout>
+    <layout locale="ro"><text macro="bibliography-entry"/><text value="(På rumänska.)" prefix=" "/></layout>
+    <layout locale="hu"><text macro="bibliography-entry"/><text value="(På ungerska.)" prefix=" "/></layout>
+    <layout locale="el"><text macro="bibliography-entry"/><text value="(På grekiska.)" prefix=" "/></layout>
+    <layout locale="tr"><text macro="bibliography-entry"/><text value="(På turkiska.)" prefix=" "/></layout>
+    <layout locale="ja"><text macro="bibliography-entry"/><text value="(På japanska.)" prefix=" "/></layout>
+    <layout locale="zh"><text macro="bibliography-entry"/><text value="(På kinesiska.)" prefix=" "/></layout>
+    <layout locale="ko"><text macro="bibliography-entry"/><text value="(På koreanska.)" prefix=" "/></layout>
+    <layout><text macro="bibliography-entry"/></layout>
+  </bibliography>
+</style>
