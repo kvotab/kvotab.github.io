@@ -137,16 +137,18 @@
       #progress-track.indeterminate #progress-fill { animation-duration: 2.5s; }
     }
 
+    #style-actions { display: flex; justify-content: flex-start; margin: 0 0 14px; }
     #result-actions {
       display: none;
       justify-content: flex-end;
       margin: -4px 0 20px;
     }
     #result-actions.show { display: flex; }
-    #zotero-settings, #rule-packs { position: relative; }
+    #zotero-settings, #citation-styles, #rule-packs { position: relative; }
     #zotero-settings { margin-right: 8px; }
     #rule-packs { margin-right: auto; }
     #zotero-settings > summary,
+    #citation-styles > summary,
     #rule-packs > summary {
       padding: 7px 14px;
       border: 1px solid var(--border-color);
@@ -159,12 +161,16 @@
       list-style: none;
     }
     #zotero-settings > summary::-webkit-details-marker,
+    #citation-styles > summary::-webkit-details-marker,
     #rule-packs > summary::-webkit-details-marker { display: none; }
     #zotero-settings > summary::before { content: '⚙ '; }
+    #citation-styles > summary::before { content: '↓ '; }
     #rule-packs > summary::before { content: '▤ '; }
     #zotero-settings > summary:hover,
+    #citation-styles > summary:hover,
     #rule-packs > summary:hover { border-color: var(--color-kvot-bright); }
     #zotero-settings[open] > summary,
+    #citation-styles[open] > summary,
     #rule-packs[open] > summary {
       border-color: var(--color-kvot-bright);
       background: var(--bg-surface);
@@ -261,7 +267,11 @@
       font-weight: 700;
       cursor: pointer;
     }
+    a.zotero-row-btn { display: inline-block; text-decoration: none; }
     .zotero-row-btn:hover:not(:disabled) { background: var(--bg-surface); }
+    .style-download-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; }
+    .style-download-row { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+    .style-download-row .style-download-what { color: var(--text-secondary); font-size: .8rem; }
     .zotero-row-btn.searching { border-color: var(--color-kvot-accent); color: var(--color-kvot-accent); }
     .zotero-inline-results { margin-top: 8px; }
     .zotero-inline-status { color: var(--text-muted); font-size: .78rem; }
@@ -352,6 +362,35 @@
   <div class="content">
     <div id="app">
       <button id="reset-btn" title="Analyse another document">↩ New document</button>
+      <div id="style-actions">
+        <details id="citation-styles">
+          <summary>Citation styles</summary>
+          <div class="settings-panel">
+            <p class="settings-heading">SKB Harvard styles for Zotero</p>
+            <ul class="style-download-list">
+              <li class="style-download-row">
+                <a class="zotero-row-btn" href="resources/csl/skb_reference_template_en.csl"
+                   download="skb_reference_template_en.csl"
+                   type="application/vnd.citationstyles.style+xml">Download English style</a>
+                <span class="style-download-what">For reports written in English: p, pp, (ed), In, n d, Available at:.</span>
+              </li>
+              <li class="style-download-row">
+                <a class="zotero-row-btn" href="resources/csl/skb_reference_template_sv.csl"
+                   download="skb_reference_template_sv.csl"
+                   type="application/vnd.citationstyles.style+xml">Download Swedish style</a>
+                <span class="style-download-what">For reports written in Swedish, per chapter 6: s, (red), I, u å, Tillgänglig:.</span>
+              </li>
+            </ul>
+            <div class="settings-note">
+              Both styles implement SKBdoc 1215757. To install one: save the file, then in Zotero open
+              <em>Settings → Cite → Styles</em>, press <em>+</em> and choose it. In Word, pick the style in the
+              Zotero tab under <em>Document Preferences</em>. Each file begins with a comment block explaining
+              how to fill in the Zotero fields for SKB reports, SKBdoc documents, standards and laws, and which
+              few cases still need a manual edit.
+            </div>
+          </div>
+        </details>
+      </div>
       <div id="dropzone" role="region" aria-label="Upload Word document">
         <input type="file" id="file-input" accept=".docx">
         <div class="dz-icon">📄</div>
