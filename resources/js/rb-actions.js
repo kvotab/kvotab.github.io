@@ -1,7 +1,7 @@
 /* ==========================================================================
    HDF5 BROWSER ACTIONS
 
-   The names the page's controls declare in their data-action attributes, and
+   The names the page's controls declare in their data-on-* attributes, and
    the functions they reach. The dispatch mechanism itself is shared with the
    rest of the site; see kvot-actions.js.
 

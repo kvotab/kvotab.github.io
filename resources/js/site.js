@@ -245,7 +245,7 @@ const KVOT = (() => {
     <div class="footer-content">
       <span class="footer-center">
         kvot ab |
-        <button type="button" class="icon-btn" data-action="kvot:toggleMap" aria-label="Show or hide the office map">
+        <button type="button" class="icon-btn" data-on-click="kvot:toggleMap" aria-label="Show or hide the office map">
           ${svgIcon('0 0 32 32', ICON_ADDRESS, { title: 'address' })}
         </button>
         valhallagatan 16 &bull; 753 34 &bull; uppsala |
@@ -256,7 +256,7 @@ const KVOT = (() => {
         <a href="https://github.com/kvotab" target="_blank" rel="noopener noreferrer">${svgIcon('0 0 98 96', ICON_GITHUB, { title: 'github' })}</a>
         ${extraIcons}
       </span>
-      <button class="theme-toggle" data-action="kvot:toggleTheme" title="${themeTitle}">${themeIcon}</button>
+      <button class="theme-toggle" data-on-click="kvot:toggleTheme" title="${themeTitle}">${themeIcon}</button>
     </div>`;
   }
 

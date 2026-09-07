@@ -62,3 +62,21 @@ there:
   the network happened to drop) varies run to run and is filtered out by
   origin. A failed request for one of *this site's own* files is not external
   and still shows up — that is how a mistyped script URL gets caught.
+
+## test-chrome-buttons.py
+
+Clicks the theme toggle and the office-map button on every page and checks
+that the theme attribute, the page background, the button icon and the map's
+visibility actually change.
+
+    python3 -m http.server 8765          # from the repository root
+    "$CHROME" --headless=new --remote-debugging-port=9222 --user-data-dir=/tmp/p
+    python3 resources/tests/site/test-chrome-buttons.py
+
+These two buttons exist only in markup that `site.js` generates at runtime, so
+they are invisible to `test-actions.py`: that test enumerates the elements
+carrying a `data-on-*` attribute and proves each reaches its handler, which
+cannot detect a button that carries the wrong attribute name and therefore
+never appears in the inventory. This test starts from the button instead, and
+also fails if any element anywhere still uses the superseded `data-action`
+name (karaoke.html's own row controls, which bind directly, are exempt).
