@@ -240,4 +240,22 @@ module.exports = [
     expected: 'Boverket, 2019. A report issued in a numbered series. Boverket Report 2019:01, Boverket. (BFS 2019:1)',
     citation: '(Boverket 2019)',
   },
+  {
+    /*
+      The form used in practice: the designation as main entry, with the
+      official English translation in parentheses after the Swedish title,
+      as section 4.12 allows. The year is part of the designation, so
+      "SSMFS 2008:21" and "SSMFS 2008:37" are different regulations.
+    */
+    section: '4.12 Designation as main entry, with an official translation',
+    item: {
+      id: 'ssmfs21', type: 'legislation',
+      number: 'SSMFS 2008:21',
+      title: 'Strålsäkerhetsmyndighetens föreskrifter och allmänna råd om säkerhet vid slutförvaring av kärnämne och kärnavfall (Regulations concerning safety in connection with the disposal of nuclear material and nuclear waste)',
+      'publisher-place': 'Stockholm', publisher: 'Swedish Radiation Safety Authority',
+      language: 'sv',
+    },
+    expected: 'SSMFS 2008:21. Strålsäkerhetsmyndighetens föreskrifter och allmänna råd om säkerhet vid slutförvaring av kärnämne och kärnavfall (Regulations concerning safety in connection with the disposal of nuclear material and nuclear waste). Stockholm: Swedish Radiation Safety Authority. (In Swedish.)',
+    citation: '(SSMFS 2008:21)',
+  },
 ];
