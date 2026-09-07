@@ -50,6 +50,16 @@
 
   KÄNDA BEGRÄNSNINGAR (kräver manuell redigering)
   ===============================================
+  * Ett verk som förs in under sin titel behåller kommat före årtalet, så en
+    titel som slutar med frågetecken blir
+    "Do we support sustainable development?, 2002." Instruktionen sätter
+    inget komma där (avsnitt 4.4). CSL kan inte pröva sista tecknet i en
+    sträng, så det enda kommat får tas bort för hand. Punkten efter en sådan
+    titel undertrycks däremot automatiskt.
+  * Ett efternamn som innehåller mellanslag sorteras inte som ett ord:
+    instruktionen placerar "Delaine J-M" före "de Maury E" (kapitel 5 säger
+    att mellanslaget ska bortses från), medan båda stilarna ger omvänd
+    ordning. Bindestrecksnamn som "Berg-Liljeblad" hanteras däremot rätt.
   * Två författare med samma efternamn får bara initialer när båda
     referenserna faktiskt är citerade i dokumentet; lägg annars till dem
     för hand.
@@ -390,25 +400,31 @@
 
   <!-- "SKB R-08-107, Svensk Kärnbränslehantering AB." -->
   <macro name="report">
-    <group delimiter=", " suffix=".">
-      <text variable="number"/>
-      <choose>
-        <if variable="original-publisher">
-          <group delimiter=". ">
-            <text variable="original-publisher"/>
+    <group delimiter=" ">
+      <group delimiter=", " suffix=".">
+        <text variable="number"/>
+        <choose>
+          <if variable="original-publisher">
+            <group delimiter=". ">
+              <text variable="original-publisher"/>
+              <text macro="skb-archive"/>
+            </group>
+          </if>
+          <else-if variable="archive">
             <text macro="skb-archive"/>
-          </group>
-        </if>
-        <else-if variable="archive">
-          <text macro="skb-archive"/>
-        </else-if>
-        <else>
-          <group delimiter=", ">
-            <text variable="publisher"/>
-            <text variable="publisher-place"/>
-          </group>
-        </else>
-      </choose>
+          </else-if>
+          <else>
+            <group delimiter=", ">
+              <text variable="publisher"/>
+              <text variable="publisher-place"/>
+            </group>
+          </else>
+        </choose>
+      </group>
+      <!-- Avsnitt 4.11: en rapport som ingår i en numrerad serie får
+           beteckningen inom parentes sist. Utan detta föll Serie-fälten bort
+           utan spår, så en ifylld beteckning syntes helt enkelt aldrig. -->
+      <text macro="collection"/>
     </group>
   </macro>
 

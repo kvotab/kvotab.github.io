@@ -53,6 +53,16 @@
     getting "(In Swedish.)" automatically, because a conditional layout is
     never applied to items in the style's own default locale. Pick
     whichever of the two you would rather fix by hand.
+  * A work entered under its title keeps the comma before the year, so a
+    title that ends in a question mark comes out as
+    "Do we support sustainable development?, 2002." The instruction prints
+    no comma there (section 4.4). CSL cannot test the last character of a
+    string, so delete that one comma by hand. Note that the full stop after
+    such a title IS suppressed automatically, so only the comma needs it.
+  * A surname containing a space is not collated as one word: the
+    instruction files "Delaine J-M" before "de Maury E" (chapter 5 says the
+    space is ignored), while both styles produce the opposite order.
+    Hyphenated names such as "Berg-Liljeblad" ARE handled correctly.
   * Two authors with the same surname only get initials added when both
     references are actually cited in the document; add them manually
     otherwise.
@@ -400,25 +410,32 @@
 
   <!-- "SKB R-08-107, Svensk Kärnbränslehantering AB." -->
   <macro name="report">
-    <group delimiter=", " suffix=".">
-      <text variable="number"/>
-      <choose>
-        <if variable="original-publisher">
-          <group delimiter=". ">
-            <text variable="original-publisher"/>
+    <group delimiter=" ">
+      <group delimiter=", " suffix=".">
+        <text variable="number"/>
+        <choose>
+          <if variable="original-publisher">
+            <group delimiter=". ">
+              <text variable="original-publisher"/>
+              <text macro="skb-archive"/>
+            </group>
+          </if>
+          <else-if variable="archive">
             <text macro="skb-archive"/>
-          </group>
-        </if>
-        <else-if variable="archive">
-          <text macro="skb-archive"/>
-        </else-if>
-        <else>
-          <group delimiter=", ">
-            <text variable="publisher"/>
-            <text variable="publisher-place"/>
-          </group>
-        </else>
-      </choose>
+          </else-if>
+          <else>
+            <group delimiter=", ">
+              <text variable="publisher"/>
+              <text variable="publisher-place"/>
+            </group>
+          </else>
+        </choose>
+      </group>
+      <!-- Section 4.11: a report issued in a numbered series carries the
+           designation in parentheses at the end. Without this the Series
+           fields were dropped silently, so a filled-in designation simply
+           never appeared in the reference. -->
+      <text macro="collection"/>
     </group>
   </macro>
 
