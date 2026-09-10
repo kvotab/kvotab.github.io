@@ -13,7 +13,7 @@
       } catch (e) { /* storage unavailable — site.js will apply the default */ }
     })();
   </script>
-  <link rel="stylesheet" href="./resources/css/kvot.css">
+  <link rel="stylesheet" href="./resources/css/kvot.css?v=20260910">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <title>SKB Reference Checker — kvot ab</title>
   <meta name="description" content="Check citations and reference lists in a Word or PDF report against the SKB reference guides.">
@@ -28,7 +28,10 @@
   <style>
     header { position: fixed; inset: 0 0 auto; z-index: 20; background: var(--footer-bg); box-shadow: 0 2px 8px rgba(0,0,0,.12); }
     body { overflow-x: hidden; }
-    .content { min-height: calc(100vh - var(--header-height) - 61px); padding: calc(var(--header-height) + 13px) 0 48px; }
+    /* kvot.css already positions .content below the header with
+       top: var(--header-height), so the top padding is breathing room only.
+       Adding the header height again left 43px of dead space. */
+    .content { min-height: calc(100vh - var(--header-height) - 61px); padding: 13px 0 48px; }
     #app { box-sizing: border-box; width: 100%; max-width: 980px; margin: 0 auto; padding: 28px 28px 56px; }
 
     #dropzone { margin-bottom: 24px; padding: 48px 24px; border: 2px dashed var(--border-color); border-radius: 14px; background: var(--bg-secondary); text-align: center; cursor: pointer; transition: border-color .15s, background .15s; }
@@ -250,6 +253,26 @@
     .ref-table tr:last-child td { border-bottom: 0; }
     .ref-table tr:hover td { background: var(--bg-surface); }
     .ref-key { color: var(--color-kvot-accent); font: .83rem 'SF Mono', Menlo, monospace; white-space: nowrap; }
+    /*
+      The reference list is the one table whose cell contents have no upper
+      bound: a key can be an author list of seven names and the reference text
+      a full paragraph. With the default automatic layout the widest key sets
+      the column width, so one long key took 700 of the 980 available pixels,
+      squeezed the reference text into a word-wide ribbon and pushed the Zotero
+      column off the right edge. Fixed proportions keep the table inside its
+      container whatever a document contains, and the key wraps instead of
+      forcing the table wider.
+    */
+    .ref-list-table { table-layout: fixed; }
+    .ref-list-table col.col-key { width: 20%; }
+    .ref-list-table col.col-text { width: 38%; }
+    .ref-list-table col.col-cited { width: 7%; }
+    .ref-list-table col.col-sections { width: 16%; }
+    .ref-list-table col.col-zotero { width: 19%; }
+    .ref-list-table .ref-key { display: block; white-space: normal; overflow-wrap: anywhere; }
+    .ref-list-table .ref-text { max-width: none; }
+    .ref-list-table td { overflow-wrap: anywhere; }
+    .ref-list-table .zotero-cell { min-width: 0; }
     .ref-text { max-width: 420px; color: var(--text-secondary); }
     /* The cell is set in the secondary colour, which a bold run would
        inherit and barely stand out in — the same reason #format-notice
@@ -2765,6 +2788,24 @@
         .trim();
     }
 
+    /*
+      An author list ends with a surname followed by initials — "Andolfsson T",
+      "Höglund L O", "Johannesson L-E". An abbreviated name is a descriptive
+      phrase and never does: "Post-closure safety report", "Climate report".
+
+      The distinction matters because both forms are written "<name>, <year>."
+      and are otherwise indistinguishable. Without it, every author-year
+      reference following a "References with abbreviated names" heading was
+      entered under its whole author list: an 85-character key with no year,
+      and two works by the same authors reported as duplicates of each other
+      because the year that told them apart had been dropped.
+    */
+    const AUTHOR_LIST_TAIL = /\p{L}{2,}\s+\p{Lu}(?:-\p{Lu})?(?:\s+\p{Lu}(?:-\p{Lu})?){0,3}$/u;
+
+    function looksLikeAuthorList(name) {
+      return AUTHOR_LIST_TAIL.test(String(name || '').trim());
+    }
+
     function extractAbbreviatedReferenceName(text) {
       const match = normaliseHeadingText(text).match(
         /^\s*(.+?)\s*,\s*((?:1[89]\d{2}|20\d{2})[a-z]?)\s*[.]/
@@ -2775,6 +2816,8 @@
       const abbreviatedName = match[1]
         .replace(/\s+/g, ' ')
         .trim();
+
+      if (looksLikeAuthorList(abbreviatedName)) return null;
 
       return abbreviatedName.length >= 2 && abbreviatedName.length <= 200
         ? abbreviatedName
@@ -6074,7 +6117,7 @@ ${exportedResults.innerHTML}
       return section(
         'Reference list entries',
         entries.length,
-        `<table class="ref-table"><thead><tr><th>Key</th><th>Reference text</th><th>Cited (#)</th><th>In section(s)</th><th>Zotero</th></tr></thead><tbody>${rows}</tbody></table>`,
+        `<table class="ref-table ref-list-table"><colgroup><col class="col-key"><col class="col-text"><col class="col-cited"><col class="col-sections"><col class="col-zotero"></colgroup><thead><tr><th>Key</th><th>Reference text</th><th>Cited (#)</th><th>In section(s)</th><th>Zotero</th></tr></thead><tbody>${rows}</tbody></table>`,
         true
       );
     }
@@ -6178,6 +6221,86 @@ ${exportedResults.innerHTML}
       which used to report a citation of one regulation as a correct match for
       the other, and two such references in one list as duplicates.
     */
+    /*
+      Abbreviated reference names, chapter 4.9 of 1215757, against author-year
+      references. Both are written "<name>, <year>." so nothing but the shape
+      of the name separates them, and getting it wrong is not a cosmetic
+      mistake: an author-year reference read as an abbreviated name is entered
+      under its whole author list with no year, so two works by the same
+      authors collide and are reported as duplicates of each other.
+
+      The abbreviated names below are the ones 1215757 lists; the author lists
+      are taken from the reference list of SKB TR-23-02.
+    */
+    function runAbbreviatedNameRegressionTests() {
+      const failures = [];
+
+      const ABBREVIATED = [
+        'Post-closure safety report', 'Barrier process report',
+        'Biosphere synthesis report', 'Climate report', 'Data report',
+        'FEP report', 'Radionuclide transport report', 'SFR site description',
+        'Initial state report', 'Buffer, backfill and closure process report'
+      ];
+      const AUTHOR_LISTS = [
+        'Mårtensson P, Luterkort D, Nyblad B, Wimelius H, Pettersson A, Aghili B, Andolfsson T',
+        'Sandén T, Nilsson U, Johannesson L-E, Hagman P, Nilsson G',
+        'Duro L, Grivé M, Domènech C, Roman-Ross G, Bruno J',
+        'Höglund L O', 'Mårtensson P, Vogt C', 'Pusch R', 'Back P-E',
+        'Wyllie D C, Mah C W'
+      ];
+
+      for (const name of ABBREVIATED) {
+        const extracted = extractAbbreviatedReferenceName(`${name}, 2023. A title. SKB TR-23-01, Svensk Kärnbränslehantering AB.`);
+        if (extracted !== name) {
+          failures.push(`Abbreviated name not recognised: "${name}" gave ${JSON.stringify(extracted)}`);
+        }
+      }
+
+      for (const authors of AUTHOR_LISTS) {
+        const body = `${authors}, 2022. A title. SKB TR-22-01, Svensk Kärnbränslehantering AB.`;
+        if (extractAbbreviatedReferenceName(body) !== null) {
+          failures.push(`Author list read as an abbreviated name: "${authors}"`);
+        }
+        /* And it must still yield an author-year key, with the year kept. */
+        const key = extractReferenceKey(body);
+        if (!key || !/\b2022\b/.test(key)) {
+          failures.push(`Author list did not yield a year-bearing key: "${authors}" gave ${JSON.stringify(key)}`);
+        }
+      }
+
+      /*
+        The case that produced the duplicates: two works by the same authors,
+        inside an abbreviated-names section, must stay apart.
+      */
+      let index = 0;
+      const paragraph = text => ({
+        index: index++, localIndex: 0, text, style: '', section: 'References',
+        sourcePart: 'fixture', sourceLabel: 'Fixture', documentRegion: 'references',
+        isReferenceList: true, language: 'en', languageConfidence: 1,
+        languageRanges: [], formatSpans: []
+      });
+      const entries = extractRefEntries([
+        paragraph('References with abbreviated names'),
+        paragraph('Post-closure safety report, 2023. Post-closure safety for SFR. SKB TR-23-01, Svensk Kärnbränslehantering AB.'),
+        paragraph('Höglund L O, 2001. Project SAFE. Modelling of long-term concrete degradation. SKB R-01-08, Svensk Kärnbränslehantering AB.'),
+        paragraph('Höglund L O, 2014. The impact of concrete degradation on the SFR barrier functions. SKB R-13-40, Svensk Kärnbränslehantering AB.')
+      ]);
+      const keys = entries.map(entry => entry.key);
+      if (keys[0] !== 'Post-closure safety report') {
+        failures.push(`The abbreviated name was lost: ${JSON.stringify(keys[0])}`);
+      }
+      if (keys[1] === keys[2]) {
+        failures.push(`Two works by the same author collided on one key: ${JSON.stringify(keys[1])}`);
+      }
+      for (const key of keys.slice(1)) {
+        if (!/\b(?:2001|2014)\b/.test(key)) failures.push(`Key lost its year: ${JSON.stringify(key)}`);
+      }
+
+      if (failures.length) console.error('Abbreviated-name regression tests failed:', failures);
+      else console.info(`Abbreviated-name regression tests passed (${ABBREVIATED.length} abbreviated names and ${AUTHOR_LISTS.length} author lists kept apart).`);
+      return failures;
+    }
+
     function runDesignationRegressionTests() {
       const failures = [];
       let index = 0;
@@ -6411,6 +6534,7 @@ ${exportedResults.innerHTML}
     runGuideFixtureRegressionTests();
     runReferenceGuideRegressionTests();
     runDesignationRegressionTests();
+    runAbbreviatedNameRegressionTests();
   </script>
 </body>
 </html>

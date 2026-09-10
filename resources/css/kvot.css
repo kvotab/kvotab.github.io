@@ -442,14 +442,10 @@ footer .theme-toggle {
   }
 }
 
-#logn {    
-    position: absolute;
-    top: 0px;
-    left: 0px;
-    width:100%;
-    visibility:visible;
-}
-input[data-field="p"] {  
+/* logn.html sets its own centred column, the way skbref.html does with #app.
+   An absolutely positioned box with left:0 resolves auto margins to zero, so
+   a rule here pinning #logn to the left silently defeated that centring. */
+input[data-field="p"] {
   width:40px;
 }
 .logolarge {
