@@ -75,6 +75,44 @@ BOLD_EXPECTED = {
 # Rules whose evidence a PDF does not carry; none may fire on the PDF run.
 UNAVAILABLE_ON_PDF = 'non-breaking-space'
 
+# The reference list is the one table whose cells have no upper bound: a key
+# can be a seven-name author list. With the default automatic table layout the
+# widest key set the column width, so one long key took 700 of 980 pixels,
+# squeezed the reference text into a word-wide ribbon and pushed the Zotero
+# column off the right edge. The probe measures the table, then puts an
+# oversized key in and measures again — a table that grows has the defect back.
+LAYOUT_PROBE = r"""(async () => {
+  const response = await fetch('/resources/tests/pdf/fixture-report.pdf?n=' + Date.now());
+  currentReport = null;
+  await handleFile(new File([await response.blob()], 'fixture-report.pdf'));
+  for (let i = 0; i < 200 && !currentReport; i++) await new Promise(r => setTimeout(r, 100));
+  const table = document.querySelector('.ref-list-table');
+  if (!table) return JSON.stringify({ error: 'no .ref-list-table found' });
+  const app = document.getElementById('app');
+  const inner = app.clientWidth
+    - parseFloat(getComputedStyle(app).paddingLeft) - parseFloat(getComputedStyle(app).paddingRight);
+  const width = () => Math.round(table.getBoundingClientRect().width);
+  const before = width();
+
+  const cell = table.querySelector('tbody .ref-key');
+  const saved = cell.textContent;
+  cell.textContent = 'Mårtensson P, Luterkort D, Nyblad B, Wimelius H, Pettersson A, Aghili B, Andolfsson T';
+  const withLongKey = width();
+  const grewTaller = table.getBoundingClientRect().height > 0;
+  cell.textContent = saved;
+
+  return JSON.stringify({
+    tableWidth: before, appInnerWidth: Math.round(inner),
+    widthWithLongKey: withLongKey,
+    tableLayout: getComputedStyle(table).tableLayout,
+    keyWhiteSpace: getComputedStyle(cell).whiteSpace,
+    columnWidths: [...table.querySelectorAll('thead th')].map(th => Math.round(th.getBoundingClientRect().width)),
+    bodyScrollWidth: document.body.scrollWidth,
+    layoutWidth: document.documentElement.clientWidth,
+    wrapped: grewTaller
+  });
+})()"""
+
 # A scanned PDF has no text layer. Analysing it would report a document with no
 # references and no citations, which reads as a clean bill of health rather than
 # as a file that cannot be checked.
@@ -186,6 +224,7 @@ async def main():
                 print('HARNESS ERROR for %s: %s' % (path, raw[:400]))
                 sys.exit(1)
         formatting = json.loads(await evaluate(bws, session, FORMAT_PROBE, 200))
+        layout = json.loads(await evaluate(bws, session, LAYOUT_PROBE, 202))
         scan = json.loads(await evaluate(bws, session, SCAN_PROBE, 201))
         await bws.send(json.dumps({'id': 9, 'method': 'Target.closeTarget',
                                    'params': {'targetId': target}}))
@@ -287,6 +326,29 @@ async def main():
           % (sum('<strong>' in c for c in (docx.get('refTextHtml') or [])),
              sum('<strong>' in c for c in (pdf.get('refTextHtml') or []))))
     print()
+
+    # The reference table must stay inside its container, whatever a key holds.
+    if layout.get('error'):
+        failures.append('layout probe: %s' % layout['error'])
+    else:
+        print('reference table %dpx in a %dpx container, columns %s'
+              % (layout['tableWidth'], layout['appInnerWidth'], layout['columnWidths']))
+        if layout['tableWidth'] > layout['appInnerWidth'] + 1:
+            failures.append('the reference table (%dpx) is wider than its container (%dpx)'
+                            % (layout['tableWidth'], layout['appInnerWidth']))
+        if layout['widthWithLongKey'] > layout['tableWidth'] + 1:
+            failures.append('an 85-character key widened the table from %dpx to %dpx: '
+                            'the key column is sizing to its content again'
+                            % (layout['tableWidth'], layout['widthWithLongKey']))
+        if layout['tableLayout'] != 'fixed':
+            failures.append('the reference table lost table-layout: fixed (got %r)'
+                            % layout['tableLayout'])
+        if layout['keyWhiteSpace'] == 'nowrap':
+            failures.append('the key cell is back to white-space: nowrap, so it cannot wrap')
+        if layout['bodyScrollWidth'] > layout['layoutWidth'] + 1:
+            failures.append('the page scrolls horizontally (%dpx > %dpx)'
+                            % (layout['bodyScrollWidth'], layout['layoutWidth']))
+        print()
 
     # A scan must be refused, not reported clean.
     print('scan refused with: %s' % (scan.get('results') or '')[:110])

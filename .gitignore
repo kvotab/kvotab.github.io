@@ -14,3 +14,10 @@ resources/tests/pdf/fixture-report.docx
 resources/tests/pdf/fixture-report.pdf
 resources/tests/pdf/fixture-items.json
 resources/tests/pdf/fixture-scan-no-text.pdf
+
+# Real reports dropped in for a one-off check are never committed
+resources/tests/pdf/local-*
+
+# Python bytecode, produced whenever a test imports a helper as a module
+__pycache__/
+*.pyc
