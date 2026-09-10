@@ -63,16 +63,22 @@ BLOCKS = [
     ('body', [('Particle tracking was performed with the same code as in the previous '
                'assessment (Follin et al. 2008). No changes were made to the boundary '
                'conditions.', '')]),
-    ('body', [('An earlier interpretation of the deformation zones (Nilsson 1998) was '
-               'not used, because the geometry has since been revised.', '')]),
+    # Bold in the body, which must not turn up in any reference's text.
+    ('body', [('An earlier interpretation of the deformation zones ', ''),
+              ('(Nilsson 1998)', 'b'),
+              (' was not used, because the geometry has since been revised.', '')]),
     ('pagebreak', []),
     ('h2', [('References', '')]),
-    ('ref', [('Andersson J, Berglund S, 2010. Groundwater flow modelling in fractured '
-              'rock at the Forsmark site. SKB R-10-11, Svensk Karnbranslehantering AB.', '')]),
+    # Bold by direct formatting, mid-entry.
+    ('ref', [('Andersson J, Berglund S, 2010. ', ''),
+             ('Groundwater flow modelling in fractured rock', 'b'),
+             (' at the Forsmark site. SKB R-10-11, Svensk Karnbranslehantering AB.', '')]),
     ('ref', [('Follin S, Levén J, Hartley L, Jackson P, Joyce S, Roberts D, Swift B, '
               '2008. Hydrogeological characterisation and modelling of deformation '
               'zones and fracture domains. SKB R-08-95, Svensk Karnbranslehantering AB.', '')]),
-    ('ref', [('Nilsson G, 1998. An earlier interpretation of the deformation zones. '
+    # Bold through a character style, at the very start of the entry.
+    ('ref', [('Nilsson G, 1998.', 'bstyle'),
+             (' An earlier interpretation of the deformation zones. '
               'SKB R-98-11, Svensk Karnbranslehantering AB.', '')]),
     ('ref', [('SKB, 2014. Safety analysis for SFR. Long-term safety. SKB TR-14-09, '
               'Svensk Karnbranslehantering AB.', '')]),
@@ -112,6 +118,12 @@ STYLES = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
           '<w:style w:type="paragraph" w:styleId="Normal" w:default="1"><w:name w:val="Normal"/></w:style>'
           '<w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/></w:style>'
           '<w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/></w:style>'
+          # A reference list is commonly set bold with a character style rather
+          # than with direct formatting. Reading only <w:b> on the run would
+          # leave such a document looking as though nothing were bold, so the
+          # fixture uses both forms.
+          '<w:style w:type="character" w:styleId="BoldRef"><w:name w:val="Bold Ref"/>'
+          '<w:rPr><w:b/></w:rPr></w:style>'
           '</w:styles>')
 
 
@@ -125,6 +137,8 @@ def docx_run(text, fmt):
         props += '<w:i/>'
     if fmt == 'b':
         props += '<w:b/>'
+    if fmt == 'bstyle':
+        props += '<w:rStyle w:val="BoldRef"/>'
     return ('<w:r><w:rPr>%s</w:rPr><w:t xml:space="preserve">%s</w:t></w:r>'
             % (props, html.escape(text)))
 
@@ -177,9 +191,23 @@ HELVETICA = {
 for _digit in '0123456789':
     HELVETICA[_digit] = 556
 
+# Helvetica-Bold sets wider than Helvetica, so a bold run has to be measured
+# with its own metrics or every line carrying one comes out the wrong length
+# and the paragraph reconstruction is tested against a layout that no
+# typesetter would produce. Helvetica-Oblique shares Helvetica's widths.
+HELVETICA_BOLD = dict(HELVETICA)
+HELVETICA_BOLD.update({
+    '!': 333, '"': 474, '&': 722, "'": 238, ':': 333, ';': 333, '?': 611, '@': 975,
+    'J': 556, 'L': 611, '[': 333, ']': 333, '^': 584, '`': 333,
+    'b': 611, 'c': 556, 'd': 611, 'f': 333, 'g': 611, 'k': 556, 'm': 889, 'n': 611,
+    'o': 611, 'p': 611, 'q': 611, 'r': 389, 's': 556, 't': 333, 'u': 611, 'v': 556,
+    'w': 778, 'x': 556, 'y': 556, 'z': 500, '{': 389, '|': 280, '}': 389,
+})
 
-def width_of(text, size):
-    return sum(HELVETICA.get(ch, 556) for ch in text) * size / 1000.0
+
+def width_of(text, size, fmt=''):
+    table = HELVETICA_BOLD if fmt in ('b', 'bstyle') else HELVETICA
+    return sum(table.get(ch, 556) for ch in text) * size / 1000.0
 
 
 PAGE_W, PAGE_H = 595.0, 842.0
@@ -187,7 +215,8 @@ LEFT, RIGHT = 70.0, 525.0
 TOP, BOTTOM = 780.0, 90.0
 BODY_SIZE, LEADING = 10.0, 13.0
 SIZE_FOR = {'h1': 18.0, 'h2': 14.0, 'body': BODY_SIZE, 'ref': BODY_SIZE}
-FONT_FOR = {'': 'F1', 'i': 'F2', 'b': 'F3', 'sup': 'F1', 'sub': 'F1'}
+FONT_FOR = {'': 'F1', 'i': 'F2', 'b': 'F3', 'bstyle': 'F3', 'sup': 'F1', 'sub': 'F1'}
+BOLD_FORMATS = ('b', 'bstyle')
 REF_HANG = 22.0          # continuation lines of a reference are indented
 
 
@@ -204,7 +233,7 @@ def wrap_runs(runs, size, first_width, rest_width):
     limit = first_width
     for word, fmt, glued in words:
         run_size = size * 0.62 if fmt in ('sup', 'sub') else size
-        advance = width_of(word, run_size)
+        advance = width_of(word, run_size, fmt)
         space = 0.0 if (not current or glued) else width_of(' ', size)
         if current and used + space + advance > limit:
             lines.append(current)
@@ -249,7 +278,7 @@ def layout():
                 run_size = size * 0.62 if fmt in ('sup', 'sub') else size
                 dy = size * 0.33 if fmt == 'sup' else (-size * 0.17 if fmt == 'sub' else 0.0)
                 placed.append((cursor, y + dy, word, fmt, run_size))
-                cursor += width_of(word, run_size)
+                cursor += width_of(word, run_size, fmt)
             lines.append(placed)
             y -= leading
     flush()
@@ -345,8 +374,8 @@ def dump_items(path):
             for x, baseline, word, fmt, size in placed:
                 items.append({
                     'str': word, 'x': x, 'y': baseline,
-                    'width': width_of(word, size), 'fontSize': size,
-                    'bold': fmt == 'b', 'italic': fmt == 'i'
+                    'width': width_of(word, size, fmt), 'fontSize': size,
+                    'bold': fmt in BOLD_FORMATS, 'italic': fmt == 'i'
                 })
         pages.append({'pageNumber': index + 1, 'width': PAGE_W, 'height': PAGE_H, 'items': items})
 
@@ -366,13 +395,14 @@ def dump_items(path):
                 if cursor is not None and x - cursor > 0.22 * size:
                     text += ' '
                 text += word
-                cursor = x + width_of(word, size)
+                cursor = x + width_of(word, size, fmt)
             first = body[0]
             last = words[-1]
             merged.append({
                 'str': text, 'x': words[0][0], 'y': first[1],
-                'width': last[0] + width_of(last[2], last[4]) - words[0][0],
-                'fontSize': first[4], 'bold': first[3] == 'b', 'italic': first[3] == 'i'
+                'width': last[0] + width_of(last[2], last[4], last[3]) - words[0][0],
+                'fontSize': first[4],
+                'bold': first[3] in BOLD_FORMATS, 'italic': first[3] == 'i'
             })
         line_pages.append({'pageNumber': index + 1, 'width': PAGE_W, 'height': PAGE_H, 'items': merged})
 
