@@ -57,10 +57,20 @@ PROBE = r"""(async (path) => {
     official: ruleIds(currentRuleFindings.official),
     citationRules: ruleIds(currentRuleFindings.citation),
     reviewRules: ruleIds(currentRuleFindings.review),
+    refTextHtml: [...document.querySelectorAll('td.ref-text')].map(cell => cell.innerHTML),
     noticeShown: notice ? notice.classList.contains('show') : null,
     docInfo: (document.getElementById('doc-info').textContent || '').slice(0, 200)
   });
 })(PATH_PLACEHOLDER)"""
+
+# The fixture bolds part of one reference with direct formatting and the whole
+# opening of another with a Word character style. Both have to survive into the
+# reference text on the page, and neither the body's own bold run nor any other
+# entry may pick it up.
+BOLD_EXPECTED = {
+    'Andersson': 'Groundwater flow modelling in fractured rock',
+    'Nilsson': 'Nilsson G, 1998.',
+}
 
 # Rules whose evidence a PDF does not carry; none may fire on the PDF run.
 UNAVAILABLE_ON_PDF = 'non-breaking-space'
@@ -252,6 +262,31 @@ async def main():
         if not formatting.get('superscript'):
             failures.append('the superscript 14 in "14C" was not recovered from the baseline offset')
         print()
+
+    # Bold in the reference text, in both formats.
+    for label, report in (('docx', docx), ('pdf', pdf)):
+        cells = report.get('refTextHtml') or []
+        if len(cells) != len(report.get('references') or []):
+            failures.append('%s: %d reference cells for %d entries'
+                            % (label, len(cells), len(report.get('references') or [])))
+        bolded = 0
+        for cell in cells:
+            wanted = next((text for key, text in BOLD_EXPECTED.items() if key in cell), None)
+            if wanted:
+                bolded += 1
+                if '<strong>%s</strong>' % wanted not in cell:
+                    failures.append('%s: bold not kept in the reference text.\n      wanted <strong>%s</strong>\n      got   %s'
+                                    % (label, wanted, cell[:220]))
+            elif '<strong>' in cell:
+                failures.append('%s: an entry with no bold source was rendered bold: %s'
+                                % (label, cell[:180]))
+        if bolded != len(BOLD_EXPECTED):
+            failures.append('%s: found %d of %d bolded entries'
+                            % (label, bolded, len(BOLD_EXPECTED)))
+    print('bold runs kept in reference text: docx %d, pdf %d'
+          % (sum('<strong>' in c for c in (docx.get('refTextHtml') or [])),
+             sum('<strong>' in c for c in (pdf.get('refTextHtml') or []))))
+    print()
 
     # A scan must be refused, not reported clean.
     print('scan refused with: %s' % (scan.get('results') or '')[:110])
