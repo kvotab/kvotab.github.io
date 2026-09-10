@@ -16,12 +16,12 @@
   <link rel="stylesheet" href="./resources/css/kvot.css">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <title>SKB Reference Checker — kvot ab</title>
-  <meta name="description" content="Check citations and reference lists in a Word document against the SKB reference guides.">
+  <meta name="description" content="Check citations and reference lists in a Word or PDF report against the SKB reference guides.">
   <link rel="canonical" href="https://kvotab.se/skbref.html">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="kvot ab">
   <meta property="og:title" content="SKB Reference Checker — kvot ab">
-  <meta property="og:description" content="Check citations and reference lists in a Word document against the SKB reference guides.">
+  <meta property="og:description" content="Check citations and reference lists in a Word or PDF report against the SKB reference guides.">
   <meta property="og:url" content="https://kvotab.se/skbref.html">
   <meta property="og:image" content="https://kvotab.se/resources/images/kvot-logotype.png">
   <meta name="twitter:card" content="summary">
@@ -94,6 +94,11 @@
 
     #doc-info { display: none; margin-bottom: 20px; padding: 10px 16px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-secondary); color: var(--text-secondary); font-size: .84rem; line-height: 1.6; }
     #doc-info.show { display: block; }
+    #format-notice { display: none; margin: -12px 0 20px; padding: 10px 16px; border: 1px solid var(--border-color); border-left: 3px solid var(--color-kvot-bright); border-radius: 8px; background: var(--bg-secondary); color: var(--text-secondary); font-size: .82rem; line-height: 1.6; }
+    #format-notice.show { display: block; }
+    #format-notice strong { color: var(--text-primary); }
+    #format-notice ul { margin: 6px 0 0; padding-left: 20px; }
+    #format-notice li { margin: 2px 0; }
     #doc-info strong { color: var(--text-primary); }
 
     #summary-cards { display: none; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 24px; }
@@ -391,11 +396,11 @@
           </div>
         </details>
       </div>
-      <div id="dropzone" role="region" aria-label="Upload Word document">
-        <input type="file" id="file-input" accept=".docx">
+      <div id="dropzone" role="region" aria-label="Upload Word or PDF document">
+        <input type="file" id="file-input" accept=".docx,.pdf">
         <div class="dz-icon">📄</div>
-        <div class="dz-label">Drop a Word file here</div>
-        <div class="dz-sub">or click to browse — .docx only</div>
+        <div class="dz-label">Drop a Word or PDF file here</div>
+        <div class="dz-sub">or click to browse — .docx or .pdf</div>
         <button class="primary-btn" id="choose-file-btn" type="button">Choose file</button>
       </div>
       <div id="status-bar"><div class="spinner"></div><span id="status-msg">Analysing…</span></div>
@@ -403,6 +408,7 @@
         <div id="progress-fill"></div>
       </div>
       <div id="doc-info"></div>
+      <div id="format-notice"></div>
       <div id="summary-cards">
         <div class="sum-card" id="card-total"><div class="sum-label">References in list</div><div class="sum-value" id="cnt-total">—</div></div>
         <div class="sum-card" id="card-cited"><div class="sum-label">Cited in text</div><div class="sum-value" id="cnt-cited">—</div></div>
@@ -509,6 +515,7 @@
   <script src="./resources/js/kvot-actions.js?v=20260902"></script>
   <script src="./resources/js/kvot-icons.js?v=20260902"></script>
   <script src="./resources/js/site.js?v=20260907"></script>
+  <script src="./resources/js/skb-pdf.js?v=20260910"></script>
   <script>
     KVOT.renderHeader('SKB Reference Checker');
     KVOT.renderNav('skbref.html');
@@ -1617,8 +1624,8 @@
 
     /* High-confidence text checks derived from the three official SKB guides. */
     const OFFICIAL_SKB_TEXT_RULES = [
-      { pattern: String.raw`\d(?:\u0020|\t)*(?:%|‰)`, reject: String.raw`\d\u00a0(?:%|‰)`, description: 'Use a non-breaking space between a number and % or ‰.', source: 'technical' },
-      { pattern: String.raw`\d(?:\u0020|\t)*°C`, reject: String.raw`\d\u00a0°C`, description: 'Use a non-breaking space between the number and °C.', source: 'technical' },
+      { pattern: String.raw`\d(?:\u0020|\t)*(?:%|‰)`, reject: String.raw`\d\u00a0(?:%|‰)`, description: 'Use a non-breaking space between a number and % or ‰.', source: 'technical', needs: 'space-characters' },
+      { pattern: String.raw`\d(?:\u0020|\t)*°C`, reject: String.raw`\d\u00a0°C`, description: 'Use a non-breaking space between the number and °C.', source: 'technical', needs: 'space-characters' },
       { pattern: String.raw`\b\d+(?:\.\d+)?[eE][+−-]?\d+\b`, description: 'Do not use E notation in running text; use × 10 with an exponent.', source: 'technical' },
       { pattern: String.raw`\b\d{1,3}(?:,\d{3})+\b`, description: 'Use spaces, not commas, as thousands separators.', source: 'technical' },
       { pattern: String.raw`\b(?:from\s+[-+−]?\d+(?:\.\d+)?|between\s+[-+−]?\d+(?:\.\d+)?)\s*[–-]\s*[-+−]?\d+(?:\.\d+)?\b`, description: 'Do not combine “from” or “between” with a dash range; use “from … to” or “between … and”.', source: 'technical' },
@@ -1644,7 +1651,7 @@
       { pattern: String.raw`\b(?:figure|table|chapter|section|appendix)\s+[A-Z]?\d`, flags: 'gu', description: 'A numbered Figure, Table, Chapter, Section or Appendix starts with a capital letter in English.', source: 'technical', language: 'en' },
       { pattern: String.raw`\b(?:Figur|Tabell)\s+\d`, flags: 'gu', description: 'In Swedish running text, write numbered references with lower-case “figur” and “tabell”.', source: 'handbook', language: 'sv' },
       { pattern: String.raw`\b(?:figur|tabell)\s+\d`, flags: 'gu', description: 'In English running text, write numbered references as “Figure” and “Table”.', source: 'handbook', language: 'en' },
-      { pattern: String.raw`\b\d+\s*(?:kg|g|mg|µg|m|cm|mm|km|s|min|h|d|Hz|Pa|kPa|MPa|V|mV|A|mA|W|kW|MW|J|kJ|mol|Bq|Gy|Sv)\b`, description: 'Use a non-breaking space between a numerical value and a unit symbol.', source: 'technical', custom: 'unit-space' },
+      { pattern: String.raw`\b\d+\s*(?:kg|g|mg|µg|m|cm|mm|km|s|min|h|d|Hz|Pa|kPa|MPa|V|mV|A|mA|W|kW|MW|J|kJ|mol|Bq|Gy|Sv)\b`, description: 'Use a non-breaking space between a numerical value and a unit symbol.', source: 'technical', custom: 'unit-space', needs: 'space-characters' },
       { pattern: String.raw`\b\d+\s*[xX]\s*10(?:\^?[-+]?\d+|[⁰¹²³⁴⁵⁶⁷⁸⁹]+)`, description: 'Use the multiplication sign ×, not the letter x, in scientific notation.', source: 'technical' },
       /* ── Appendix 4 of 1469987: rules that are mandatory in public reports ── */
       { pattern: String.raw`(?<![\p{L}\d])\d+(?:\.\d+)*\s+[–—-]\s+\d+(?:\.\d+)*(?![\p{L}\d])`, description: 'Write a range with an en dash and no surrounding spaces, for example 2001–2004 and Sections 4.1–4.3.', source: 'technical' },
@@ -2091,6 +2098,7 @@
       dropzone.style.display = '';
       statusBar.classList.remove('show');
       docInfo.classList.remove('show');
+      renderFormatNotice(null);
       summaryCards.classList.remove('show');
       results.innerHTML = '';
       hideProgress();
@@ -2104,6 +2112,257 @@
     }
 
     let currentFile = null;
+    let currentFormat = 'docx';
+
+    /* ─────────────────────────── PDF INPUT ─────────────────────────── */
+
+    /*
+      pdf.js is pinned to the last release that ships a UMD build, because this
+      page is a plain script with no bundler and cdnjs carries only ES modules
+      for 4.x and later. Text extraction is the part of the API that has stayed
+      the same throughout, and the alternative — a dynamic import() — cannot
+      carry an integrity hash, which the JSZip tag in the head sets the pattern
+      for. Both hashes below were checked against the served bytes.
+    */
+    const PDFJS_VERSION = '3.11.174';
+    const PDFJS_BASE = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}/`;
+    const PDFJS_INTEGRITY = {
+      'pdf.min.js': 'sha512-q+4liFwdPC/bNdhUpZx6aXDx/h77yEQtn4I1slHydcbZK34nLaR3cAeYSJshoxIOq3mjEf7xJE8YWIUHMn+oCQ==',
+      'pdf.worker.min.js': 'sha512-BbrZ76UNZq5BhH7LL7pn9A4TKQpQeNCHOo65/akfelcIBbcVvYWOFQKPXIrykE3qZxYjmDX573oa4Ywsc7rpTw=='
+    };
+    let pdfjsPromise = null;
+
+    function loadScriptWithIntegrity(url, integrity) {
+      return new Promise((resolve, reject) => {
+        const element = document.createElement('script');
+        element.src = url;
+        element.integrity = integrity;
+        element.crossOrigin = 'anonymous';
+        element.onload = () => resolve();
+        element.onerror = () => reject(new Error(`Could not load ${url}`));
+        document.head.appendChild(element);
+      });
+    }
+
+    /*
+      The worker cannot be started straight from the CDN, because a classic
+      Worker script must be same-origin. Fetching it, checking the same hash a
+      script tag would have enforced, and starting it from a blob keeps both
+      properties rather than trading integrity for a working worker.
+    */
+    async function pdfWorkerUrl() {
+      const name = 'pdf.worker.min.js';
+      const response = await fetch(PDFJS_BASE + name, { mode: 'cors' });
+      if (!response.ok) throw new Error(`Could not load ${name} (HTTP ${response.status})`);
+      const bytes = await response.arrayBuffer();
+      const digest = await crypto.subtle.digest('SHA-512', bytes);
+      const encoded = 'sha512-' + btoa(String.fromCharCode(...new Uint8Array(digest)));
+      if (encoded !== PDFJS_INTEGRITY[name]) {
+        throw new Error(`${name} did not match its expected integrity hash and was not run.`);
+      }
+      return URL.createObjectURL(new Blob([bytes], { type: 'text/javascript' }));
+    }
+
+    function loadPdfJs() {
+      if (!pdfjsPromise) {
+        pdfjsPromise = (async () => {
+          await loadScriptWithIntegrity(PDFJS_BASE + 'pdf.min.js', PDFJS_INTEGRITY['pdf.min.js']);
+          const library = window.pdfjsLib;
+          if (!library) throw new Error('pdf.js loaded but did not register itself.');
+          try {
+            library.GlobalWorkerOptions.workerSrc = await pdfWorkerUrl();
+          } catch (error) {
+            /* Without a worker pdf.js parses on the main thread: slower on a
+               long report, but the text it produces is the same. */
+            console.warn('PDF worker unavailable, parsing on the main thread.', error);
+            library.GlobalWorkerOptions.workerSrc = '';
+          }
+          return library;
+        })().catch(error => { pdfjsPromise = null; throw error; });
+      }
+      return pdfjsPromise;
+    }
+
+    /*
+      Bold and italic live in the embedded fonts, and pdf.js publishes those to
+      page.commonObjs — but only while building an operator list, not while
+      extracting text. So the operator list is requested first and thrown away;
+      without it every font lookup misses and every italic run reads as
+      upright, which would make the rule wanting quantity symbols italic report
+      each correct one as an error.
+    */
+    async function loadPdfPageFonts(page) {
+      try {
+        await page.getOperatorList();
+        return true;
+      } catch (error) {
+        /* Some PDFs have content streams pdf.js cannot walk. The text is still
+           extractable; only the character styles are lost. */
+        console.warn(`Could not read the fonts on page ${page.pageNumber}.`, error);
+        return false;
+      }
+    }
+
+    function pdfFontResolver(page, counters) {
+      const cache = new Map();
+      return name => {
+        if (cache.has(name)) return cache.get(name);
+        let style = { bold: false, italic: false };
+        try {
+          if (page.commonObjs.has(name)) {
+            style = SkbPdf.fontStyleFromFont(page.commonObjs.get(name), name);
+            counters.resolved++;
+          } else {
+            style = SkbPdf.fontStyleFromName(name);
+            counters.missing++;
+          }
+        } catch (error) {
+          style = SkbPdf.fontStyleFromName(name);
+          counters.missing++;
+        }
+        cache.set(name, style);
+        return style;
+      };
+    }
+
+    async function readPdfDocument(file) {
+      if (!window.SkbPdf) throw new Error('resources/js/skb-pdf.js did not load.');
+      showStatus('Loading the PDF reader…');
+      const pdfjs = await loadPdfJs();
+      setProgress(10);
+      showStatus('Opening the PDF…');
+      const pdf = await pdfjs.getDocument({
+        data: new Uint8Array(await file.arrayBuffer()),
+        isEvalSupported: false
+      }).promise;
+
+      const rawPages = [];
+      const fonts = { resolved: 0, missing: 0, pagesWithFonts: 0 };
+      let textItems = 0;
+      for (let number = 1; number <= pdf.numPages; number++) {
+        const page = await pdf.getPage(number);
+        if (await loadPdfPageFonts(page)) fonts.pagesWithFonts++;
+        const textContent = await page.getTextContent();
+        const normalised = SkbPdf.itemsFromPdfJs(
+          textContent, page.getViewport({ scale: 1 }), pdfFontResolver(page, fonts));
+        normalised.pageNumber = number;
+        textItems += normalised.items.length;
+        rawPages.push(normalised);
+        page.cleanup();
+        if (number % 5 === 0 || number === pdf.numPages) {
+          setProgress(10 + Math.round(22 * number / pdf.numPages));
+          showStatus(`Reading page ${number} of ${pdf.numPages}…`);
+          await yieldToBrowser();
+        }
+      }
+
+      /*
+        A scanned PDF carries images and no text layer. Analysing it would
+        report a document with no references and no citations, which reads as a
+        clean bill of health rather than as a file that cannot be checked.
+      */
+      if (!textItems) {
+        throw new Error('This PDF has no text layer — it is most likely a scan. '
+          + 'Run optical character recognition on it first, or upload the .docx.');
+      }
+
+      showStatus('Rebuilding paragraphs…');
+      await yieldToBrowser();
+      const { paragraphs: rebuilt, diagnostics } = SkbPdf.reconstructDocument(rawPages);
+      /*
+        If not one font could be read, italic and bold are not merely sparse —
+        they are absent, and the checks that read them have to be switched off
+        rather than reporting every correct occurrence.
+      */
+      diagnostics.fontsResolved = fonts.resolved;
+      diagnostics.fontLookupsMissed = fonts.missing;
+      diagnostics.characterStyles = fonts.resolved > 0;
+      console.info('PDF reconstruction', diagnostics);
+
+      const main = [];
+      const auxiliary = [];
+      for (const paragraph of rebuilt) {
+        const language = classifyParagraphLanguage(paragraph.text, { counts: {} });
+        const converted = {
+          text: paragraph.text,
+          fields: [],                 /* a PDF carries no field codes */
+          formatSpans: paragraph.formatSpans,
+          hasZoteroBibliography: false,
+          joins: paragraph.joins,
+          style: paragraph.style,
+          isInTable: false, tableDepth: 0, numId: '',
+          pageNumber: paragraph.pageNumber,
+          language: language.language, languageConfidence: language.confidence,
+          languageSource: language.source, languageEvidence: language.evidence,
+          languageRanges: []
+        };
+        (paragraph.region === 'footnote' ? auxiliary : main).push(converted);
+      }
+
+      /* Locations read as "Page 12 paragraph 3", which is what a reader of the
+         PDF itself can actually navigate to. */
+      const perPage = new Map();
+      const label = paragraph => {
+        const count = perPage.get(paragraph.pageNumber) || 0;
+        perPage.set(paragraph.pageNumber, count + 1);
+        paragraph.localIndex = count;
+        paragraph.sourcePart = `pdf/page-${paragraph.pageNumber}`;
+        paragraph.sourceLabel = `Page ${paragraph.pageNumber}`;
+      };
+      main.forEach((paragraph, index) => { paragraph.index = index; label(paragraph); });
+      auxiliary.forEach((paragraph, index) => {
+        paragraph.index = main.length + index;
+        label(paragraph);
+        paragraph.documentRegion = 'auxiliary';
+        paragraph.regionLabel = `Footnote, page ${paragraph.pageNumber}`;
+        paragraph.sourceLabel = paragraph.regionLabel;
+      });
+
+      let section = '';
+      for (const paragraph of main) {
+        if (headingLevel(paragraph.style) && paragraph.text) section = paragraph.text;
+        paragraph.section = section;
+      }
+
+      return { paragraphs: main, auxiliaryParagraphs: auxiliary, diagnostics };
+    }
+
+    /*
+      Everything the PDF path cannot check, stated on the page. A checker that
+      quietly skips a rule is worse than one that never had it: the reader has
+      no way of knowing the report was not checked for it.
+    */
+    function renderFormatNotice(diagnostics) {
+      const notice = $('format-notice');
+      if (!diagnostics) {
+        notice.classList.remove('show');
+        notice.innerHTML = '';
+        return;
+      }
+      const rebuilt = [
+        `${diagnostics.paragraphCount} paragraphs rebuilt from ${diagnostics.lineCount} lines on ${diagnostics.pageCount} page(s)`,
+        `${diagnostics.headingParagraphs} heading(s) inferred from type size`,
+        `${diagnostics.removedRunningLines} running header/footer line(s) removed`
+      ];
+      if (diagnostics.multiColumnPages) rebuilt.push(`${diagnostics.multiColumnPages} two-column page(s)`);
+      if (diagnostics.fontsResolved) rebuilt.push(`${diagnostics.fontsResolved} font(s) read for italic and bold`);
+      if (diagnostics.footnoteParagraphs) rebuilt.push(`${diagnostics.footnoteParagraphs} footnote paragraph(s)`);
+      notice.innerHTML = `<strong>Read as PDF.</strong> ${escHtml(rebuilt.join(' · '))}.
+        A PDF records positions rather than structure, so these checks are switched off
+        instead of being guessed at:
+        <ul>
+          <li><strong>Non-breaking spaces</strong> — a PDF cannot distinguish one from an
+              ordinary space, so the hard-space rules for %, °C and unit symbols are not applied.</li>
+          <li><strong>Underlining</strong> — drawn as a graphic, not recorded as a text attribute.</li>
+          <li><strong>Zotero field codes</strong> — citations are read as plain text, so one
+              inserted with Zotero cannot be told from one typed by hand.</li>
+          <li><strong>Table cells</strong> — text set in a table is analysed as running text.</li>
+          ${diagnostics.characterStyles ? '' : '<li><strong>Italic and bold</strong> — no font could be read from this PDF, so the check that quantity symbols are italic is not applied.</li>'}
+        </ul>
+        Headings, paragraph boundaries and the reference list are reconstructed from the
+        layout. For the complete check, upload the .docx.`;
+      notice.classList.add('show');
+    }
 
     /* Reloading a rule pack changes the findings, so re-run the last document. */
     async function reanalyseCurrentDocument() {
@@ -2112,31 +2371,52 @@
     }
 
     async function handleFile(file) {
-      if (!file.name.toLowerCase().endsWith('.docx')) {
-        alert('Please upload a .docx file.');
+      const lowered = file.name.toLowerCase();
+      const isPdf = lowered.endsWith('.pdf');
+      if (!isPdf && !lowered.endsWith('.docx')) {
+        alert('Please upload a .docx or .pdf file.');
         return;
       }
       currentFile = file;
+      currentFormat = isPdf ? 'pdf' : 'docx';
       dropzone.style.display = 'none';
       currentFilename = file.name;
       setProgress(5);
       showStatus('Reading file…');
+      /* The notice describes the document on screen. Clear it before reading a
+         new one, or a file that fails to open leaves the previous file's notice
+         standing over an error message. */
+      renderFormatNotice(null);
       try {
-        const zip = await JSZip.loadAsync(await file.arrayBuffer());
-        setProgress(15);
-        showStatus('Unzipping .docx…');
-        const docXml = await zip.file('word/document.xml')?.async('string');
-        const stylesXml = await zip.file('word/styles.xml')?.async('string') || '';
-        const auxiliaryPartNames = Object.keys(zip.files).filter(name => /^word\/(?:footnotes|endnotes|comments|header\d+|footer\d+)\.xml$/i.test(name));
-        if (!docXml) throw new Error('word/document.xml not found — is this a valid .docx?');
-        setProgress(30);
-        showStatus('Parsing document…');
-        await yieldToBrowser();
-        const mainParsed = parseDocXml(docXml, stylesXml);
-        const paragraphs = mainParsed.paragraphs;
-        paragraphs.forEach((paragraph,index)=>{paragraph.index=index;paragraph.localIndex=index;paragraph.sourcePart='word/document.xml';paragraph.sourceLabel='Main document';});
-        const auxiliaryParagraphs=[];
-        for(const partName of auxiliaryPartNames){const xml=await zip.file(partName).async('string'),parsed=parseDocXml(xml,stylesXml),base=paragraphs.length+auxiliaryParagraphs.length,label=/footnotes/i.test(partName)?'Footnotes':/endnotes/i.test(partName)?'Endnotes':/comments/i.test(partName)?'Comments':/header(\d+)/i.test(partName)?`Header ${partName.match(/header(\d+)/i)[1]}`:`Footer ${partName.match(/footer(\d+)/i)?.[1]||''}`;parsed.paragraphs.forEach((paragraph,index)=>{paragraph.localIndex=index;paragraph.index=base+index;paragraph.sourcePart=partName;paragraph.sourceLabel=label;paragraph.documentRegion='auxiliary';paragraph.regionLabel=label;});auxiliaryParagraphs.push(...parsed.paragraphs);}
+        let paragraphs;
+        let auxiliaryParagraphs;
+        let capabilities = FULL_CAPABILITIES;
+        let pdfDiagnostics = null;
+        if (isPdf) {
+          const read = await readPdfDocument(file);
+          paragraphs = read.paragraphs;
+          auxiliaryParagraphs = read.auxiliaryParagraphs;
+          pdfDiagnostics = read.diagnostics;
+          capabilities = { ...FULL_CAPABILITIES, ...SkbPdf.PDF_CAPABILITIES,
+            'character-styles': pdfDiagnostics.characterStyles };
+        } else {
+          const zip = await JSZip.loadAsync(await file.arrayBuffer());
+          setProgress(15);
+          showStatus('Unzipping .docx…');
+          const docXml = await zip.file('word/document.xml')?.async('string');
+          const stylesXml = await zip.file('word/styles.xml')?.async('string') || '';
+          const auxiliaryPartNames = Object.keys(zip.files).filter(name => /^word\/(?:footnotes|endnotes|comments|header\d+|footer\d+)\.xml$/i.test(name));
+          if (!docXml) throw new Error('word/document.xml not found — is this a valid .docx?');
+          setProgress(30);
+          showStatus('Parsing document…');
+          await yieldToBrowser();
+          const mainParsed = parseDocXml(docXml, stylesXml);
+          paragraphs = mainParsed.paragraphs;
+          paragraphs.forEach((paragraph,index)=>{paragraph.index=index;paragraph.localIndex=index;paragraph.sourcePart='word/document.xml';paragraph.sourceLabel='Main document';});
+          auxiliaryParagraphs=[];
+          for(const partName of auxiliaryPartNames){const xml=await zip.file(partName).async('string'),parsed=parseDocXml(xml,stylesXml),base=paragraphs.length+auxiliaryParagraphs.length,label=/footnotes/i.test(partName)?'Footnotes':/endnotes/i.test(partName)?'Endnotes':/comments/i.test(partName)?'Comments':/header(\d+)/i.test(partName)?`Header ${partName.match(/header(\d+)/i)[1]}`:`Footer ${partName.match(/footer(\d+)/i)?.[1]||''}`;parsed.paragraphs.forEach((paragraph,index)=>{paragraph.localIndex=index;paragraph.index=base+index;paragraph.sourcePart=partName;paragraph.sourceLabel=label;paragraph.documentRegion='auxiliary';paragraph.regionLabel=label;});auxiliaryParagraphs.push(...parsed.paragraphs);}
+        }
+        renderFormatNotice(pdfDiagnostics);
         const allParagraphs=[...paragraphs,...auxiliaryParagraphs];
         const languageProfile=calculateDocumentLanguage(allParagraphs),isSwedish=languageProfile.language==='sv';
         setProgress(42);
@@ -2153,8 +2433,8 @@
         showStatus('Applying rules…');
         await yieldToBrowser();
         let forbiddenMatches = findForbiddenWordMatches(allParagraphs);
-        let officialWritingIssues = findOfficialSkbTextIssues(allParagraphs, languageProfile);
-        officialWritingIssues.push(...findFormattingIssues(allParagraphs));
+        let officialWritingIssues = findOfficialSkbTextIssues(allParagraphs, languageProfile, capabilities);
+        officialWritingIssues.push(...findFormattingIssues(allParagraphs, capabilities));
         let potentialInvalidCitations = findPotentialInvalidCitations([...bodyParagraphs, ...auxiliaryParagraphs]);
         console.info('Reference-list detection', {
           totalParagraphCount: paragraphs.length,
@@ -4364,7 +4644,7 @@
       const csv = '\ufeff' + [header, ...rows].map(row => row.map(csvCell).join(',')).join('\r\n');
       const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
       const url = URL.createObjectURL(blob), link = document.createElement('a');
-      const baseName = (currentFilename || 'skb-reference-report').replace(/\.docx$/i, '').replace(/[^a-z0-9_-]+/gi, '-');
+      const baseName = (currentFilename || 'skb-reference-report').replace(/\.(?:docx|pdf)$/i, '').replace(/[^a-z0-9_-]+/gi, '-');
       link.href = url; link.download = `${baseName}-rule-summary.csv`; document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(url);
     }
 
@@ -4409,7 +4689,7 @@ ${exportedResults.innerHTML}
       const blob = new Blob([reportHtml], { type: 'text/html;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
-      const baseName = (currentFilename || 'skb-reference-report').replace(/\.docx$/i, '').replace(/[^a-z0-9_-]+/gi, '-');
+      const baseName = (currentFilename || 'skb-reference-report').replace(/\.(?:docx|pdf)$/i, '').replace(/[^a-z0-9_-]+/gi, '-');
       link.href = url;
       link.download = `${baseName}-analysis.html`;
       document.body.appendChild(link);
@@ -4438,7 +4718,35 @@ ${exportedResults.innerHTML}
       };
     }
 
-    function findOfficialSkbTextIssues(paragraphs, languageProfile) {
+    /*
+      What the source format lets a rule see. The .docx path records every
+      distinction the guides are written in terms of; the PDF path does not,
+      and says which — see PDF_CAPABILITIES in resources/js/skb-pdf.js.
+    */
+    const FULL_CAPABILITIES = Object.freeze({
+      'space-characters': true, 'underline': true, 'field-codes': true,
+      'table-context': true, 'paragraph-styles': true, 'character-styles': true
+    });
+
+    function ruleEvidenceAvailable(rule, capabilities) {
+      return !rule.needs || capabilities[rule.needs] !== false;
+    }
+
+    /*
+      A match that straddles a reconstructed line break is partly the
+      reconstruction's own work: reading a PDF, the line break was replaced
+      either by a space or by a joined-up word. Where the rule is about a dash,
+      that character is exactly what was decided there, so the finding would be
+      reporting the layout rather than the text.
+    */
+    function matchCrossesReconstructedBreak(paragraph, start, end, matched) {
+      const joins = paragraph.joins;
+      if (!joins || !joins.length) return false;
+      if (!/[-–—‐]/.test(matched)) return false;
+      return joins.some(offset => offset > start && offset < end);
+    }
+
+    function findOfficialSkbTextIssues(paragraphs, languageProfile, capabilities = FULL_CAPABILITIES) {
       const issues = [];
       /* Compatibility value for non-pattern checks that still choose Swedish
          or English wording at document level. Pattern rules use local run and
@@ -4449,7 +4757,8 @@ ${exportedResults.innerHTML}
       for (const paragraph of paragraphs) {
         const text = paragraph.text || '';
 
-        /* Heading checks use actual Word heading styles. */
+        /* Heading checks use the Word heading style, or, reading a PDF, the
+           level inferred from the type size. */
         if (headingLevel(paragraph.style) > 0 && text) {
           if (/[.!?]$/.test(text)) {
             issues.push(makeOfficialIssue({
@@ -4482,6 +4791,8 @@ ${exportedResults.innerHTML}
             const localLanguage = languageAtRange(paragraph, match.index, match.index + match[0].length);
             const effectiveLanguage = ['sv','en'].includes(localLanguage.language) && localLanguage.confidence >= .6 ? localLanguage.language : documentLanguage;
             if (rule.language && !['mixed','unknown'].includes(effectiveLanguage) && rule.language !== effectiveLanguage) continue;
+            if (!ruleEvidenceAvailable(rule, capabilities)) continue;
+            if (matchCrossesReconstructedBreak(paragraph, match.index, match.index + match[0].length, match[0])) continue;
             if (rule.custom === 'unit-space') {
               const between = match[0].match(/^\d+(.*?)[A-Za-zµ]/)?.[1] || '';
               if (between.includes('\u00a0')) continue;
@@ -4694,7 +5005,7 @@ ${exportedResults.innerHTML}
       };
     }
 
-    function findFormattingIssues(paragraphs) {
+    function findFormattingIssues(paragraphs, capabilities = FULL_CAPABILITIES) {
       const issues = [];
       for (const paragraph of paragraphs) {
         const text = paragraph.text || '';
@@ -4702,8 +5013,10 @@ ${exportedResults.innerHTML}
         const spans = paragraph.formatSpans || [];
         if (!spans.length) continue;
 
-        /* Skrivhandboken, section 9: never underline. */
-        for (const span of spans) {
+        /* Skrivhandboken, section 9: never underline. An underline is drawn as
+           a graphic in a PDF rather than recorded as a text attribute, so there
+           the check is unavailable and not simply passing. */
+        for (const span of capabilities.underline === false ? [] : spans) {
           if (!span.underline || span.inHyperlink) continue;
           issues.push(makeOfficialIssue({
             match: text.slice(span.start, Math.min(span.end, span.start + 60)) || 'underlined text',
@@ -4777,9 +5090,11 @@ ${exportedResults.innerHTML}
         /*
           1469987, section 4.1: quantity symbols are italic. Checked only in
           the guide's own "where X is …" construction, where the single letter
-          is unambiguously a quantity symbol.
+          is unambiguously a quantity symbol — and only where italic can be
+          seen at all, which in a PDF depends on the fonts being readable.
         */
-        for (const match of text.matchAll(/\b(?:where|där)\s+([A-Za-z])\s+(?:is|är)\b/g)) {
+        for (const match of capabilities['character-styles'] === false ? []
+             : text.matchAll(/\b(?:where|där)\s+([A-Za-z])\s+(?:is|är)\b/g)) {
           const start = match.index + match[0].indexOf(match[1], match[0].search(/\s/));
           const state = formattingAt(paragraph, start, start + 1);
           if (state && !state.italic) {
@@ -5720,7 +6035,7 @@ ${exportedResults.innerHTML}
       if(citation.documentRegion==='references')section='References';
       return{section,paragraphNumber};
     }
-    function renderCitationLocation(citation){const location=citationLocation(citation);return `<span class="citation-location-region">${escHtml(location.section)}</span><span class="citation-location-paragraph">DOCX paragraph ${location.paragraphNumber}</span>`;}
+    function renderCitationLocation(citation){const location=citationLocation(citation);return `<span class="citation-location-region">${escHtml(location.section)}</span><span class="citation-location-paragraph">${currentFormat === 'pdf' ? 'PDF' : 'DOCX'} paragraph ${location.paragraphNumber}</span>`;}
 
     function runCitationDisplayRegressionTests(){
       const failures=[];
@@ -5748,7 +6063,7 @@ ${exportedResults.innerHTML}
           <td>${renderCitationLocation(citation)}</td>
           <td><div class="citation-context">${renderCitationContext(citation)}</div></td>
         </tr>`).join('') : '<tr><td colspan="4" class="empty-notice">No citation occurrences detected.</td></tr>';
-      return section('Citation occurrences and Word source', items.length,
+      return section(currentFormat === 'pdf' ? 'Citation occurrences and page source' : 'Citation occurrences and Word source', items.length,
         `${summary}<table class="ref-table"><thead><tr><th>Citation key</th><th>Source</th><th>Location</th><th>Context</th></tr></thead><tbody>${rows}</tbody></table>`, false);
     }
 

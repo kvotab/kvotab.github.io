@@ -80,3 +80,28 @@ cannot detect a button that carries the wrong attribute name and therefore
 never appears in the inventory. This test starts from the button instead, and
 also fails if any element anywhere still uses the superseded `data-action`
 name (karaoke.html's own row controls, which bind directly, are exempt).
+
+## test-chrome-pdf.py
+
+Analyses the same report as `.docx` and as `.pdf` and requires the same answer.
+`../pdf/build-fixture-pair.py` writes one document in both formats; the `.docx`
+states its own structure, so the checker's report on it is by construction the
+right answer for that text, and any difference is a defect in the PDF
+reconstruction.
+
+    python3 resources/tests/pdf/build-fixture-pair.py resources/tests/pdf
+    python3 -m http.server 8765          # from the repository root
+    "$CHROME" --headless=new --remote-debugging-port=9222 --user-data-dir=/tmp/p
+    python3 resources/tests/site/test-chrome-pdf.py
+
+Beyond report equality it asserts that no rule fires on the PDF whose evidence
+a PDF does not carry, that the PDF run invents no rule the `.docx` run did not
+fire, and that italic and superscript survive — the one place `pdfFontResolver`
+runs against real pdf.js font objects. See `../pdf/README.md` for why each of
+those is a separate claim.
+
+The target opens on `about:blank` so the cache can be disabled before anything
+is fetched, and the loaded `skb-pdf.js` is identified before any measurement is
+taken. Navigating first and disabling the cache afterwards leaves the page's
+own scripts served from cache, which had this test reporting a stale
+`resources/js/skb-pdf.js` as a code defect.
