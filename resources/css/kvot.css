@@ -210,11 +210,14 @@ header {
      position: fixed;
      top: 0;
      left: 0;
+     /* Anchored both sides rather than width:100%: with content-box
+        sizing the padding is added to that width, which made the header
+        12px wider than the screen. */
+     right: 0;
      border-bottom: var(--color-kvot-accent) solid 1px;
      background: var(--header-bg);
      color: var(--header-text);
      height: 30px;
-     width:100%;
      padding:6px;
      z-index: 10000;
      transition: background-color 0.3s ease, color 0.3s ease;
@@ -267,11 +270,11 @@ footer {
    position: fixed;
    bottom: 0;
    left: 0;
+   right: 0;
    border-top: var(--color-kvot-accent) solid 1px;
    background: var(--footer-bg);
    color: var(--footer-text);
    height: 24px;
-   width:100%;
    padding:1px;
    text-align:center;
    font-size:15px;
@@ -301,6 +304,9 @@ footer .theme-toggle {
   left: 0;
   width:100%;
   height: calc(100vh - var(--header-height) - var(--footer-height));
+  /* dvh follows the browser's own chrome as it retracts; the vh line
+     above stays as the fallback. */
+  height: calc(100dvh - var(--header-height) - var(--footer-height));
   font-family:RawengulkSans;
   color: var(--text-primary);
  /* */
@@ -457,6 +463,40 @@ footer .theme-toggle {
     overflow: hidden;
     text-overflow: ellipsis;
   }
+
+  /* The landing page. Its grids collapse to one column on their own, so
+     what is left is the room around them and the size of what has to be
+     hit: the mail and phone links are a line of text, 18px tall, which is
+     well under what a fingertip can aim at. */
+  .landing-inner {
+    padding: 24px 16px 48px;
+  }
+  .landing h2 {
+    margin: 32px 0 14px;
+  }
+}
+
+/*
+  Touch, at any width. A tablet is a touch device at 768px, where a
+  width-keyed rule has already stopped applying, and a narrow desktop
+  window is still driven by a mouse.
+*/
+@media (pointer: coarse) {
+  .contact-table td {
+    padding: 3px 10px 3px 0;
+  }
+  .contact-table a {
+    display: inline-block;
+    padding: 10px 2px;
+  }
+  .copy-btn {
+    padding: 8px;
+  }
+  /* Inline, so this padding enlarges what the link catches without
+     moving the sentence it is part of. */
+  .link-list a {
+    padding: 5px 2px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -561,6 +601,9 @@ h1 {
   left: 0;
   width: 100%;
   height: calc(100vh - var(--header-height) - var(--footer-height));
+  /* dvh follows the browser's own chrome as it retracts; the vh line
+     above stays as the fallback. */
+  height: calc(100dvh - var(--header-height) - var(--footer-height));
   visibility: hidden;
   z-index: 200000;
 }
@@ -572,6 +615,9 @@ h1 {
   left: 0;
   width:100%;
   height: calc(100vh - var(--header-height) - var(--footer-height));
+  /* dvh follows the browser's own chrome as it retracts; the vh line
+     above stays as the fallback. */
+  height: calc(100dvh - var(--header-height) - var(--footer-height));
   }
   #infotext{
     height: 100%;
