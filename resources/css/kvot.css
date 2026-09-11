@@ -644,7 +644,7 @@ pre {
 
 /* ==========================================================================
    FAILURE BANNER
-   Created on demand by showFailureBanner(); see rb-utils.js.
+   Created on demand by showFailureBanner(); see resources/js/kvot-errors.js.
    ========================================================================== */
 .failure-banner {
   position: fixed;
@@ -667,6 +667,14 @@ pre {
   line-height: 1.45;
 }
 .failure-banner.show { display: flex; }
+/*
+  The banner carries information as well as failures now, so the accent says
+  which it is. Colour is the only difference — position, timing and the dismiss
+  control stay identical, so the thing does not move about depending on tone.
+*/
+.failure-banner.tone-info { border-color: var(--color-kvot-bright); }
+.failure-banner.tone-success { border-color: var(--color-kvot-primary); }
+.failure-banner.tone-error { border-color: var(--color-kvot-accent); }
 .failure-banner-text { flex: 1 1 auto; overflow-wrap: anywhere; }
 .failure-banner-close {
   flex: 0 0 auto;

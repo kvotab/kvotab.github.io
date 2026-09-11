@@ -652,6 +652,15 @@ document.getElementById('fileInput').addEventListener('change', async (e) => {
       const file = files[i];
       updateFileLoadTicker(i, files.length, file.name);
       try {
+        /*
+          Checked before the read, not after. An HDF5 result set is read into
+          memory whole and then copied into the h5wasm filesystem, so an
+          oversized file costs twice its own size and gave no signal at all
+          beyond a tab that stopped responding.
+        */
+        const size = kvotFileTooLarge(file, KVOT_FILE_SIZE_LIMITS.dataset);
+        if (size.tooLarge) throw new Error(size.reason);
+
         const buffer = await file.arrayBuffer();
         const h5Check = validateHdf5Buffer(buffer);
         if (!h5Check.ok) throw new Error(h5Check.reason);

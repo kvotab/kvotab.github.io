@@ -57,20 +57,28 @@ function latlong_init() {
 	show_rt90_meridian(proj_rt90.value); // In map.js.
 	show_sweref99_meridian(proj_sweref99.value); // In map.js.
 	
+	/*
+	  The flag has to be set before the URL is parsed, not after. Everything
+	  initialisation does is done by this point, and parse_url_arguments()
+	  refuses to run until the flag is true — so setting it afterwards meant
+	  the one call below always failed its own guard, applied the position
+	  anyway, and scheduled a retry that then applied it a second time.
+	*/
+	latlong_init_finished = true;
+
 	var url_args = location.search.substring(1);
 	if (url_args.length > 0) {
-		url_arguments = url_args 
+		url_arguments = url_args
 		parse_url_arguments();
 	} else {
 		// Initialize panels with the default map position
 		set_lat_long(59.87072523185025, 17.63431259999659);
 	}
-	latlong_init_finished = true;
 }
 
 function use_my_position() {
 	if (!navigator.geolocation) {
-		alert('Geolocation is not supported by your browser.');
+		notifyUser('This browser does not offer location access.');
 		return;
 	}
 	navigator.geolocation.getCurrentPosition(
@@ -79,7 +87,7 @@ function use_my_position() {
 			map.setView([pos.coords.latitude, pos.coords.longitude], 14);
 		},
 		function(err) {
-			alert('Could not get your position: ' + err.message);
+			reportFailure('use_my_position', err, { userMessage: 'Your position could not be read' });
 		},
 		{ enableHighAccuracy: true, timeout: 10000 }
 	);
@@ -324,12 +332,34 @@ function toggle_info() {
 }
 
 // Use position if url arguments are supplied.
+/*
+  Waiting for latlong_init() to finish before reading the URL.
+
+  Two things were wrong here. The wait rescheduled itself every three seconds
+  with no limit and no exit, and it fell through to parse anyway instead of
+  returning — so the position in the link was applied once immediately and
+  again on the retry. latlong_init() now sets its flag before calling this, so
+  the wait is not used on that path at all; it remains, bounded and with an
+  exit, for any later caller that runs before the page is ready.
+*/
+var _parse_url_attempts = 0;
+var PARSE_URL_MAX_ATTEMPTS = 10; // 10 x 3 s = 30 s
+
 function parse_url_arguments() {
 
 	if (latlong_init_finished == false) {
-		setTimeout(parse_url_arguments, 3000) // 3 sec.	
+		_parse_url_attempts++;
+		if (_parse_url_attempts > PARSE_URL_MAX_ATTEMPTS) {
+			reportFailure('parse_url_arguments',
+				new Error('latlong_init did not finish after '
+					+ (PARSE_URL_MAX_ATTEMPTS * 3) + ' s'),
+				{ userMessage: 'The map did not finish loading, so the position in the link was not applied' });
+			return;
+		}
+		setTimeout(parse_url_arguments, 3000); // 3 sec.
+		return;
 	}
-	
+
 	var url_args = url_arguments
 	var result = url_args.split(/[=,]/);
 	if ((result[0] != '') && (result[0] != null) &&

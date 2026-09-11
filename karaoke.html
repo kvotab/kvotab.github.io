@@ -13,7 +13,7 @@
       } catch (e) { /* storage unavailable — site.js will apply the default */ }
     })();
   </script>
-  <link rel="stylesheet" href="./resources/css/kvot.css?v=20260910">
+  <link rel="stylesheet" href="./resources/css/kvot.css?v=20260911">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <title>karaoke – kvot ab</title>
   <meta name="description" content="Karaokespelare som visar synkade sångtexter till en YouTube-video, med enkel redigering av tidkoder.">
@@ -334,7 +334,8 @@
 
   <footer></footer>
 
-  <script src="./resources/js/kvot-errors.js?v=20260902"></script>
+  <script src="./resources/js/kvot-errors.js?v=20260911"></script>
+  <script src="./resources/js/kvot-safe.js?v=20260911"></script>
   <script src="./resources/js/kvot-actions.js?v=20260902"></script>
   <script src="./resources/js/kvot-icons.js?v=20260902"></script>
   <script src="./resources/js/site.js?v=20260907"></script>
@@ -527,13 +528,9 @@
       renderEditRows();
     }
 
+    /* One implementation, in resources/js/kvot-safe.js. */
     function escapeHtml(str) {
-      return String(str || '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
+      return kvotEscapeHtml(str);
     }
 
     function onYouTubeIframeAPIReady() {

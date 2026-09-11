@@ -20,7 +20,11 @@ $(function () {
             $.each(items, function (index, item) {
                 var li;
                 if (item.category != currentCategory) {
-                    ul.append("<li class='ui-autocomplete-category'>" + item.category + "</li>");
+                    /* Built as a node with .text() rather than concatenated into
+                       an HTML string: the category comes from the nuclide data
+                       file, and string concatenation into .append() is the
+                       pattern the jQuery XSS advisories are about. */
+                    ul.append($("<li>").addClass("ui-autocomplete-category").text(item.category));
                     currentCategory = item.category;
                 }
                 li = that._renderItemData(ul, item);
@@ -69,7 +73,10 @@ $(function () {
             of: $('header')
         },
         autoOpen: false,
-        dialogClass: "no-close",
+        /* dialogClass was deprecated in jQuery UI 1.12 and removed in 1.13;
+           `classes` is its replacement. The rule it applies lives in
+           resources/css/rdc.css (.no-close .ui-dialog-titlebar-close). */
+        classes: { "ui-dialog": "no-close" },
         title: "Radionuclide decay chart",
         width: 510,
         height: 450,

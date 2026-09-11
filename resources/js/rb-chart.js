@@ -537,7 +537,7 @@ function _captureCurrentView() {
 
 /** Save the current chart view as a new preset (prompts for name). */
 function saveCurrentAsPreset() {
-  if (!currentChartData) { alert('No chart to capture.'); return; }
+  if (!currentChartData) { notifyUser('Draw a chart first — there is nothing to capture yet.'); return; }
   const name = prompt('Preset name:');
   if (!name || !name.trim()) return;
 
@@ -730,7 +730,7 @@ function _savePresetEdit(id) {
   if (!p) return;
 
   const nameVal = (document.getElementById('pe_name').value || '').trim();
-  if (!nameVal) { alert('Name cannot be empty.'); return; }
+  if (!nameVal) { notifyUser('Give the preset a name before saving.'); return; }
 
   p.name   = nameVal;
   p.xScale = document.getElementById('pe_xScale').value || null;
@@ -751,7 +751,7 @@ function _cancelPresetEdit() {
 }
 
 function _updatePresetFromView(id) {
-  if (!currentChartData) { alert('No chart to capture.'); return; }
+  if (!currentChartData) { notifyUser('Draw a chart first — there is nothing to capture yet.'); return; }
   const presets = loadPresets();
   const p = presets.find(x => x.id === id);
   if (!p) return;
@@ -893,21 +893,50 @@ function importPresets() {
   input.onchange = () => {
     const file = input.files[0];
     if (!file) return;
+    /* A preset file is a few kilobytes of JSON; anything large is a mistake. */
+    const size = kvotFileTooLarge(file, 4 * 1024 * 1024);
+    if (size.tooLarge) { notifyUser(size.reason); return; }
     const reader = new FileReader();
     reader.onload = () => {
       try {
         const imported = JSON.parse(reader.result);
-        if (!Array.isArray(imported)) { alert('Invalid preset file.'); return; }
-        // Validate each entry has at least id and name
-        for (const p of imported) {
-          if (!p.id || !p.name) { alert('Invalid preset entry found.'); return; }
+        if (!Array.isArray(imported)) {
+          notifyUser('That file does not contain a list of presets.');
+          return;
         }
-        savePresetsToStorage(imported);
+        for (const p of imported) {
+          if (!p.id || !p.name) {
+            notifyUser('That file has an entry with no id or name, so it was not imported.');
+            return;
+          }
+        }
+
+        /*
+          Merge rather than replace. This used to hand the parsed array straight
+          to savePresetsToStorage, which overwrites the key outright — so
+          importing a colleague's two presets silently destroyed every preset
+          the user had built up themselves, with a success message on top.
+
+          An imported preset replaces one of the same id in place, keeping its
+          position so the Default preset stays first; anything not in the file
+          is left alone.
+        */
+        const merged = new Map(loadPresets().map(preset => [preset.id, preset]));
+        let replaced = 0;
+        for (const preset of imported) {
+          if (merged.has(preset.id)) replaced++;
+          merged.set(preset.id, preset);
+        }
+        const addedCount = imported.length - replaced;
+        savePresetsToStorage([...merged.values()]);
         populatePresetDropdown();
         _renderPresetManagerList();
-        alert('Imported ' + imported.length + ' preset(s).');
+        notifyUser(
+          `Imported ${imported.length} preset(s): ${addedCount} added, ${replaced} replaced. `
+          + 'Presets not in the file were kept.',
+          { tone: 'success' });
       } catch (e) {
-        alert('Failed to parse preset file.');
+        reportFailure('importPresets', e, { userMessage: 'That preset file could not be read' });
       }
     };
     reader.readAsText(file);
@@ -924,7 +953,7 @@ function importPresets() {
  */
 function downloadChartData() {
   if (!currentChartData) {
-    alert('No chart data available');
+    notifyUser('There is no chart data to download yet.');
     return;
   }
   
@@ -966,13 +995,14 @@ function downloadChartData() {
  */
 async function downloadChartDataAsExcel() {
   if (!currentChartData) {
-    alert('No chart data available');
+    notifyUser('There is no chart data to export yet.');
     return;
   }
   
   // Check if xlsxwrite.js is ready
   if (!window.xlsxReady || !window.XlsxWriter) {
-    alert('Excel export library is not loaded. Please refresh the page.');
+    reportFailure('downloadChartDataAsExcel', new Error('xlsxwrite.js did not load'),
+      { userMessage: 'The Excel export library is not loaded. Reload the page and try again' });
     return;
   }
   
@@ -1030,7 +1060,7 @@ async function downloadChartDataAsExcel() {
     }
     
     if (traces.length === 0) {
-      alert('No visible traces to export. Please show at least one trace in the chart.');
+      notifyUser('Every trace is hidden. Show at least one before exporting.');
       return;
     }
     
@@ -1244,8 +1274,7 @@ async function downloadChartDataAsExcel() {
     await xlsx.saveAs(filename);
     
   } catch (err) {
-    console.error('Excel export failed:', err);
-    alert('Failed to export to Excel: ' + err.message);
+    reportFailure('downloadChartDataAsExcel', err, { userMessage: 'The Excel export failed' });
   }
 }
 

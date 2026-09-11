@@ -30,8 +30,20 @@
          probing. Recorded at debug level so it is visible when looking for it
          but silent otherwise.
 
+     notifyUser(message, { tone })
+         Nothing failed. The user asked for something that cannot be done yet,
+         or something finished and they should know. This exists because the
+         alternative was `alert()`, which blocks the page, cannot be styled and
+         says nothing about whether the program is broken or the request simply
+         did not apply.
+
    The distinction is the point: `ignoreFailure` says "considered and ignored",
    an empty catch block says nothing at all.
+
+   Two failure paths cannot be reached from a call site at all: an exception
+   that escapes an event handler, and a rejected promise nobody awaited. Both
+   are wired to reportFailure at the bottom of this file, so that a failure the
+   code did not anticipate still arrives somewhere a person can see it.
    ========================================================================== */
 
 /**
@@ -75,12 +87,13 @@ let _failureBannerEl = null;
 let _failureBannerTimer = null;
 
 /**
- * Show a dismissable failure message at the top of the viewport.
+ * Show a dismissable message at the top of the viewport.
  *
  * @param {string} message
+ * @param {'error'|'info'|'success'} [tone] - Chooses the accent colour only
  * @returns {void}
  */
-function showFailureBanner(message) {
+function showFailureBanner(message, tone = 'error') {
   try {
     if (!_failureBannerEl) {
       _failureBannerEl = document.createElement('div');
@@ -100,9 +113,13 @@ function showFailureBanner(message) {
       document.body.appendChild(_failureBannerEl);
     }
     _failureBannerEl.querySelector('.failure-banner-text').textContent = message;
+    _failureBannerEl.classList.remove('tone-info', 'tone-success', 'tone-error');
+    _failureBannerEl.classList.add(`tone-${['info', 'success', 'error'].includes(tone) ? tone : 'error'}`);
     _failureBannerEl.classList.add('show');
     if (_failureBannerTimer) clearTimeout(_failureBannerTimer);
-    _failureBannerTimer = setTimeout(hideFailureBanner, 12000);
+    /* A message about something that merely did not apply should not sit on
+       screen as long as one about something that broke. */
+    _failureBannerTimer = setTimeout(hideFailureBanner, tone === 'error' ? 12000 : 6000);
   } catch (e) {
     /* The reporter itself must never throw; the console message above stands. */
     console.error('[showFailureBanner] could not display message', e);
@@ -117,3 +134,85 @@ function hideFailureBanner() {
   if (_failureBannerTimer) { clearTimeout(_failureBannerTimer); _failureBannerTimer = null; }
   if (_failureBannerEl) _failureBannerEl.classList.remove('show');
 }
+
+/**
+ * Tell the user something that is not a failure.
+ *
+ * @param {string} message - Plain text; the banner sets it as textContent
+ * @param {Object} [options]
+ * @param {'info'|'success'} [options.tone] - Defaults to 'info'
+ * @returns {void}
+ */
+function notifyUser(message, options = {}) {
+  showFailureBanner(String(message ?? ''), options.tone === 'success' ? 'success' : 'info');
+}
+
+/* ==========================================================================
+   GLOBAL SAFETY NET
+
+   Everything above has to be called to do anything, which means it only covers
+   failures somebody predicted. These two hooks cover the rest: an exception
+   thrown out of an event handler, and a promise rejection with no catch. Both
+   used to reach the console and stop there, so a click that silently did
+   nothing looked identical to a click that worked.
+
+   Repeats are collapsed. A failure inside a handler that runs on every frame,
+   or a rejection in a retry loop, would otherwise replace the banner text
+   continuously and bury whatever the first and most useful message was.
+   ========================================================================== */
+
+const _seenGlobalFailures = new Set();
+
+/**
+ * Whether this exact failure has already been reported in this session.
+ *
+ * @param {string} signature
+ * @returns {boolean}
+ */
+function _alreadyReportedGlobally(signature) {
+  if (_seenGlobalFailures.has(signature)) return true;
+  /* Bounded so a page that fails in a loop cannot grow this without limit. */
+  if (_seenGlobalFailures.size > 50) _seenGlobalFailures.clear();
+  _seenGlobalFailures.add(signature);
+  return false;
+}
+
+window.addEventListener('error', event => {
+  /*
+     Resource load failures (a missing script or image) also fire 'error', but
+     on the element rather than the window, and carry no `message`. They are
+     reported without a banner: a stylesheet that 404s is a developer problem,
+     not something the reader can act on.
+  */
+  if (event.target && event.target !== window && event.target.tagName) {
+    const source = event.target.src || event.target.href || '(unknown)';
+    if (!_alreadyReportedGlobally(`resource:${source}`)) {
+      reportFailure('resource-load', new Error(`${event.target.tagName.toLowerCase()} failed to load: ${source}`));
+    }
+    return;
+  }
+  /*
+     `event.error` is absent for an exception raised inside a cross-origin
+     script, and for a few browser-internal cases. The filename and line from
+     the event itself are then the only thing identifying where it came from,
+     so they go into the context rather than being thrown away.
+  */
+  const error = event.error || new Error(event.message || 'Unknown error');
+  const origin = event.filename
+    ? `${event.filename.split('/').pop()}:${event.lineno || 0}:${event.colno || 0}`
+    : 'unknown-origin';
+  if (_alreadyReportedGlobally(`error:${origin}:${error.message}`)) return;
+  reportFailure(`uncaught-exception at ${origin}`, error, {
+    userMessage: 'Something on this page stopped working'
+  });
+}, true);
+
+window.addEventListener('unhandledrejection', event => {
+  const reason = event.reason instanceof Error
+    ? event.reason
+    : new Error(typeof event.reason === 'string' ? event.reason : JSON.stringify(event.reason ?? 'unknown'));
+  if (_alreadyReportedGlobally(`rejection:${reason.message}`)) return;
+  reportFailure('unhandled-rejection', reason, {
+    userMessage: 'A background task failed'
+  });
+});
