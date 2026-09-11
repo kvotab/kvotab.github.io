@@ -531,44 +531,30 @@ nav {
 	color: var(--text-primary);
 }
 
-/*
-  Put away means gone: the panel goes to zero width and the button that brings
-  it back lifts out of it and floats over the graph. Keeping a rail to hold
-  that one button cost a strip of background across the whole height.
-*/
+/* Put away means gone: the panel is not rendered at all, and the control
+   that brings it back is a separate one that floats over the graph. */
 body.tree-collapsed {
 	--rdc-tree-w: 0px;
 }
 body.tree-collapsed nav {
-	border: 0;
-	/* Above #cy, which shares z-index 2 and comes later in the document. */
-	z-index: 6;
-}
-body.tree-collapsed #tree,
-body.tree-collapsed #sortToggle {
 	display: none;
 }
-body.tree-collapsed .tree-toolbar {
-	padding: 0;
-	border: 0;
+
+/* The reopen control, shown only while the panel is away. */
+.tree-show {
+	display: none;
 }
-/*
-  Fixed, so it escapes the panel's overflow now that the panel has no width.
-  Nothing between here and the viewport sets a transform, which is the thing
-  that would make it fixed to an ancestor instead.
-*/
-body.tree-collapsed #treeToggle {
+body.tree-collapsed .tree-show {
+	display: inline-flex;
 	position: fixed;
 	top: calc(var(--header-height) + 8px);
 	left: 8px;
+	z-index: 6;
 	/* Over a drawing rather than a panel, so it needs an edge of its own to
 	   read as a control at all. */
 	border-color: var(--color-kvot-bright);
 	background: var(--bg-secondary);
 	box-shadow: 0 2px 10px rgba(0, 0, 0, .35);
-}
-body.tree-collapsed #treeToggle svg {
-	transform: scaleX(-1);
 }
 pre {
     color: var(--code-color);
@@ -1040,34 +1026,36 @@ th {
   instead: the picker above, the chain below at the full width of the screen.
 */
 @media (max-width: 600px) {
-  :root {
-    --rdc-tree-h: 38dvh;
-  }
+  /*
+    The list covers the whole area rather than taking a share of it. Nothing
+    needs both at once — you choose a nuclide, then you read its chain — and
+    38% of a phone was not enough for either of them.
+  */
   nav {
+    top: var(--header-height);
     right: 0;
-    bottom: auto;
+    bottom: var(--footer-height);
     width: auto;
-    height: var(--rdc-tree-h);
-    border-bottom: 1px solid var(--border-color);
-    transition: height .18s ease;
+    height: auto;
+    /* Over the graph, which stays where it is underneath. */
+    z-index: 5;
   }
   /* The chevron points the way the panel goes: up to put it away, down to
      bring it back. */
   #treeToggle svg {
     transform: rotate(90deg);
   }
-  body.tree-collapsed {
-    --rdc-tree-h: 0px;
+  body.tree-collapsed .tree-show svg {
+    transform: rotate(90deg);
   }
-  body.tree-collapsed #treeToggle svg {
-    transform: rotate(-90deg);
-  }
+  /* Always the full area: the list is laid over it, never beside it, so the
+     graph is never asked to redraw itself into a strip. */
   #cy {
-    top: calc(var(--header-height) + var(--rdc-tree-h));
+    top: var(--header-height);
     left: 0;
     right: 0;
     width: auto;
-    height: calc(100dvh - var(--header-height) - var(--footer-height) - var(--rdc-tree-h));
-    transition: top .18s ease, height .18s ease;
+    height: calc(100dvh - var(--header-height) - var(--footer-height));
+    transition: none;
   }
 }
