@@ -268,3 +268,49 @@ The test taps the real controls with touch events and hit-tests each one before
 using it, because a control that has been covered or moved still reports its
 old box. It also runs the same selections at desktop width, where the list is
 beside the graph and nothing should ever move it.
+
+## test-chrome-rdc-chart.py
+
+Who decides whether rdc.html's chart window is up.
+
+    python3 -m http.server 8765 --bind 127.0.0.1
+    "$CHROME" --headless=new --remote-debugging-port=9222 --user-data-dir=/tmp/p
+    python3 resources/tests/site/test-chrome-rdc-chart.py
+
+It used to follow the inventory with no way to say otherwise: it appeared the
+moment any nuclide had an initial inventory and vanished when the last one was
+cleared. There was no toggle, and the title bar's close button was hidden by
+the dialog's own `no-close` class, so a chart in the way could only be got rid
+of by emptying the model.
+
+It still follows the inventory until somebody says something — adding a first
+becquerel shows what it does, which is how the page is discovered. From the
+first use of the toggle or the ×, that choice holds, and the two states it has
+to survive are exactly the ones the old code could not express:
+
+- **dismissed, then the inventory changes.** The window stays down;
+- **asked for, then the inventory is cleared to nothing.** The window stays up,
+  and says why it is empty rather than showing bare axes with a modebar over
+  them.
+
+Closing because there is nothing left to show is not the user saying anything,
+so that path must not be recorded as their choice — otherwise the first
+automatic close would freeze the window down for the rest of the session. That
+is what the `null` state is for, and the test walks through it in both
+directions.
+
+The placeholder is drawn with `Plotly.react` and a config of its own, which is
+the part worth guarding: `react` applies a config, so the modebar disappears
+with the data and the full one — including the CSV and lin/log buttons added by
+hand — has to come back with it. The test counts the buttons on both sides.
+
+Two more things are checked because they are invisible until someone is holding
+a phone. The window fills the screen there rather than floating in a 374px box,
+and is neither draggable nor resizable, since either could only take it off the
+screen. And the × has to be the thing under the thumb: the site's menu button
+is fixed at z-index 1000000001 in the same top-right corner and took the taps
+meant for it until it was hidden for the duration.
+
+Finally, the window takes focus itself on opening. jQuery UI gives focus to the
+first tabbable element inside, which is the quantity menu — a menu nobody asked
+to open, in front of the chart they did.

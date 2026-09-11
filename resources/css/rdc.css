@@ -208,9 +208,6 @@
 	padding-top:50px;
 	padding-bottom:5px;
 }
-.no-close .ui-dialog-titlebar-close {
-  display: none;
-}
 	.ui-dialog { 
 	border-color: #eee; 
 	border-width: 1px;
@@ -552,6 +549,19 @@ body.tree-collapsed .tree-show {
 	z-index: 6;
 	/* Over a drawing rather than a panel, so it needs an edge of its own to
 	   read as a control at all. */
+	border-color: var(--color-kvot-bright);
+	background: var(--bg-secondary);
+	box-shadow: 0 2px 10px rgba(0, 0, 0, .35);
+}
+
+/* The chart window opens over the top-right of the graph, so the control that
+   asks for it sits in the opposite corner rather than under what it opens.
+   Below the list (z-index 5), which covers the graph whole on a phone. */
+.chart-toggle {
+	position: fixed;
+	right: 8px;
+	bottom: calc(var(--footer-height) + 8px);
+	z-index: 4;
 	border-color: var(--color-kvot-bright);
 	background: var(--bg-secondary);
 	box-shadow: 0 2px 10px rgba(0, 0, 0, .35);
@@ -1211,5 +1221,71 @@ th {
     width: auto;
     height: calc(100dvh - var(--header-height) - var(--footer-height));
     transition: none;
+  }
+
+  /*
+    The chart becomes a screen rather than a window. It covers the header and
+    the footer too: the × in its own bar is the way out, and the alternative
+    is a 390px-wide plot with a strip of site furniture round it.
+
+    jQuery UI writes the size and position it computed straight onto the
+    element, so every one of these has to be !important to get past it — an
+    important rule in a stylesheet outranks an inline one that is not. The
+    third class is there for the same reason: the page's own
+    .rdc-chart-window.ui-dialog rule is important too and comes later in the
+    cascade, and without outranking it the sheet keeps that rule's 14px
+    corners and shows the page through them. z-index clears the header, which
+    is fixed at 10000 and would otherwise paint over the title bar.
+  */
+  .rdc-chart-window.ui-dialog.ui-widget {
+    position: fixed !important;
+    inset: 0 !important;
+    z-index: 10001 !important;
+    width: 100% !important;
+    height: 100% !important;
+    max-width: 100% !important;
+    max-height: 100% !important;
+    min-width: 0 !important;
+    margin: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+  }
+  .rdc-chart-window .ui-dialog-titlebar {
+    border-radius: 0 !important;
+    /* Nothing to drag it to. */
+    cursor: default;
+  }
+  .rdc-chart-window .ui-resizable-handle {
+    display: none !important;
+  }
+  .rdc-chart-window .ui-dialog-content {
+    width: 100% !important;
+    height: calc(100% - 44px) !important;
+    max-height: none !important;
+  }
+  #chartdialog {
+    min-width: 0 !important;
+    min-height: 0 !important;
+  }
+
+  /* You are either in the list or on the graph, never both. While the list is
+     up it covers the whole area, so a control for the graph's chart would be
+     underneath it — reachable by Tab, invisible to everyone else. */
+  body:not(.tree-collapsed) .chart-toggle {
+    display: none;
+  }
+
+  /*
+    While the chart is a screen, the site's own chrome is not on it. The menu
+    button is fixed at z-index 1000000001 and its panel just below that —
+    deliberately above everything — and the button sits in the same top-right
+    corner as the ×, so it took the taps meant for it. Raising the sheet past
+    those numbers would only move the problem to the panel; the honest answer
+    is that the site nav is unreachable until the chart is closed, and a
+    control nobody can use should not be on screen.
+  */
+  body.chart-fullscreen .nav-toggle,
+  body.chart-fullscreen #menu {
+    display: none;
   }
 }

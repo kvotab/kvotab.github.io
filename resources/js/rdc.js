@@ -70,11 +70,35 @@ $(function () {
    so asking for more than there is puts the right-hand side out of reach. */
 const CHART_DIALOG_SIZE = { width: 510, height: 450 };
 
+/* Below this width the window is not a window: it fills the screen, and the
+   size and position jQuery UI writes onto it are overridden in rdc.css.
+   Matches the breakpoint the element list uses. */
+function chartFillsScreen() {
+    return window.matchMedia('(max-width: 600px)').matches;
+}
+
 function chartDialogSize() {
     return {
         width: Math.min(CHART_DIALOG_SIZE.width, window.innerWidth - 16),
         height: Math.min(CHART_DIALOG_SIZE.height, window.innerHeight - 100)
     };
+}
+
+/* Dragging and resizing a window that covers the screen can only move it off
+   the screen, so on a phone neither is offered. */
+function fitChartDialogToScreen() {
+    const full = chartFillsScreen();
+    CHARTDIALOG.dialog('option', 'draggable', !full);
+    CHARTDIALOG.dialog('option', 'resizable', !full);
+    if (full) return;
+    const fitted = chartDialogSize();
+    const current = CHARTDIALOG.dialog('option', 'width');
+    CHARTDIALOG.dialog('option', 'minWidth', Math.min(CHART_DIALOG_SIZE.width, fitted.width));
+    /* Only ever shrinks it: a window the user has dragged larger on a desktop
+       is left alone. */
+    if (typeof current === 'number' && current > fitted.width) {
+        CHARTDIALOG.dialog('option', 'width', fitted.width);
+    }
 }
 
 $(function () {
@@ -86,10 +110,6 @@ $(function () {
             of: $('header')
         },
         autoOpen: false,
-        /* dialogClass was deprecated in jQuery UI 1.12 and removed in 1.13;
-           `classes` is its replacement. The rule it applies lives in
-           resources/css/rdc.css (.no-close .ui-dialog-titlebar-close). */
-        classes: { "ui-dialog": "no-close" },
         title: "Radionuclide decay chart",
         width: size.width,
         height: size.height,
@@ -97,17 +117,11 @@ $(function () {
         minWidth: Math.min(CHART_DIALOG_SIZE.width, size.width),
     });
 
-    /* A rotation is a resize, and the dialog has to come back within the
-       screen it now has. Only ever shrinks it: a dialog the user has dragged
-       larger on a desktop is left alone. */
-    $(window).on('resize', function () {
-        const fitted = chartDialogSize();
-        const current = CHARTDIALOG.dialog('option', 'width');
-        CHARTDIALOG.dialog('option', 'minWidth', Math.min(CHART_DIALOG_SIZE.width, fitted.width));
-        if (typeof current === 'number' && current > fitted.width) {
-            CHARTDIALOG.dialog('option', 'width', fitted.width);
-        }
-    });
+    fitChartDialogToScreen();
+    /* A rotation is a resize, and the window has to come back within the
+       screen it now has — or stop being a window, if the screen it now has is
+       a phone held upright. */
+    $(window).on('resize', fitChartDialogToScreen);
 });
 
 

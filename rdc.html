@@ -246,6 +246,20 @@ html[data-theme="dark"] .rdc-chart-window .ui-dialog-titlebar-close{border-color
 
     <div id="cy"></div>	
 
+    <!-- Outside the chart window, because it has to stay when the window does
+         not. The chart is a thing you ask for now, not a thing that appears. -->
+    <button type="button" id="chartToggle" class="tree-tool chart-toggle"
+            aria-pressed="false" aria-expanded="false" aria-controls="chartdialog"
+            aria-label="Show the decay chart" title="Show the decay chart">
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M4 3.5v16.5h16.5" fill="none" stroke="currentColor" stroke-width="2.2"
+              stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M7.5 16 11.5 9.5l3.3 3.6L20 6.5" fill="none" stroke="currentColor"
+              stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <span class="tree-tool-label">Chart</span>
+    </button>
+
     <!-- Right-click (or long-press) menu for a nuclide. Built here rather than
          drawn on the canvas so it is ordinary HTML: focusable, keyboard
          navigable, and styled with the rest of the page. -->
@@ -943,6 +957,91 @@ function styleDecayChartDialog() {
 window.addEventListener('load', styleDecayChartDialog);
 $('#chartdialog').on('dialogopen', styleDecayChartDialog);
 
+/*
+  Whether the chart window is up used to follow the inventory in and out, with
+  no way to say otherwise: it appeared as soon as any nuclide had an initial
+  inventory and vanished when the last one was cleared.
+
+  It still does that until anybody says anything about it, so adding a first
+  becquerel shows what it does. From the moment the toggle or the window's own
+  × is used, that choice holds: closed stays closed through an inventory
+  change, and open stays open through one — including down to nothing, which
+  is what the placeholder is for.
+
+    null   nobody has said; follow the inventory
+    true   asked for; stays up
+    false  dismissed; stays down
+*/
+var chartChoice = null;
+var chartClosingItself = false;
+
+function chartIsOpen() {
+    try { return !!CHARTDIALOG.dialog('isOpen'); } catch (error) { return false; }
+}
+
+/* Only while it is actually covering the screen: on a desktop the chart is a
+   window beside the page, and the page keeps its own controls. */
+function renderChartFullscreen() {
+    var full = chartIsOpen() && typeof chartFillsScreen === 'function' && chartFillsScreen();
+    document.body.classList.toggle('chart-fullscreen', full);
+}
+window.addEventListener('resize', renderChartFullscreen);
+
+function renderChartToggle() {
+    renderChartFullscreen();
+    var button = document.getElementById('chartToggle');
+    if (!button) return;
+    var open = chartIsOpen();
+    button.setAttribute('aria-pressed', open ? 'true' : 'false');
+    button.setAttribute('aria-expanded', open ? 'true' : 'false');
+    var label = open ? 'Hide the decay chart' : 'Show the decay chart';
+    button.setAttribute('aria-label', label);
+    button.title = label;
+}
+
+/* Closing because there is nothing to show is not the user saying anything,
+   so it must not be recorded as their choice. */
+function closeChartItself() {
+    if (!chartIsOpen()) return;
+    chartClosingItself = true;
+    CHARTDIALOG.dialog('close');
+}
+
+function toggleChart() {
+    chartChoice = !chartIsOpen();
+    if (chartChoice) {
+        CHARTDIALOG.dialog('open');
+        runAndUpdateChart();
+    } else {
+        CHARTDIALOG.dialog('close');
+    }
+}
+
+$('#chartdialog').on('dialogclose', function () {
+    if (chartClosingItself) chartClosingItself = false;
+    else chartChoice = false;
+    renderChartToggle();
+});
+
+$('#chartdialog').on('dialogopen', function () {
+    renderChartToggle();
+    /*
+      jQuery UI hands focus to the first tabbable thing inside the window,
+      which here is the quantity menu — and a menu that takes focus the moment
+      the window appears is a menu nobody asked to open. The window itself
+      takes it instead; it carries tabIndex -1 for exactly this, and Escape and
+      Tab both still work from there.
+    */
+    var frame = CHARTDIALOG.closest('.ui-dialog');
+    if (frame.length) frame[0].focus({ preventScroll: true });
+});
+
+document.addEventListener('DOMContentLoaded', function () {
+    var button = document.getElementById('chartToggle');
+    if (button) button.addEventListener('click', toggleChart);
+    renderChartToggle();
+});
+
 function selectElement(Z) {
     $('#tree').jstree(true).show_all();
     $('#tree').jstree('select_node', datatree[Z].text);
@@ -1419,6 +1518,35 @@ function forceVisibleModebar() {
     });
 }
 
+/*
+  A window kept open through the inventory being cleared has nothing to plot,
+  and a bare pair of axes does not say why.
+*/
+function drawEmptyChart() {
+    Plotly.react(CHARTDIALOG[0], [], {
+        autosize: true,
+        paper_bgcolor: plotlyPaperBg(),
+        plot_bgcolor: plotlyPaperBg(),
+        margin: { t: getChartTopInset() + 12, r: 20, b: 20, l: 20 },
+        font: { color: plotlyFontColor() },
+        xaxis: { visible: false },
+        yaxis: { visible: false },
+        annotations: [{
+            text: 'No initial inventory.<br>Give a nuclide one to see how it decays.',
+            xref: 'paper', yref: 'paper', x: 0.5, y: 0.5,
+            showarrow: false, align: 'center',
+            font: { color: plotlyFontColor(), size: 14 }
+        }]
+    }, {
+        /* Zoom, pan and download over an empty panel are seven controls for
+           nothing. react() applies a config, so the real one comes back with
+           the data. */
+        displayModeBar: false,
+        responsive: true
+    });
+    resizeDecayChart();
+}
+
 function runAndUpdateChart() {
     clearUserError();
     var order = CY.nodes().filter(function (node) {
@@ -1445,11 +1573,14 @@ function runAndUpdateChart() {
         dydt_data[i] = new Array();
     }
     if (totact === 0) {
-        if (CHARTDIALOG.dialog("isOpen")) { CHARTDIALOG.dialog("close"); }
+        if (chartChoice === true) drawEmptyChart();
+        else closeChartItself();
         return;
-    } else if (!CHARTDIALOG.dialog("isOpen")) {
-        CHARTDIALOG.dialog("open");
     }
+    if (chartChoice !== false && !chartIsOpen()) CHARTDIALOG.dialog("open");
+    /* Nothing to draw into: a window that is down has no size, and Plotly
+       cannot lay a chart out against one. It is redrawn when it comes back. */
+    if (!chartIsOpen()) return;
     for (var i = 0; i < n; i++) {
         var progenies = currns[i].Progenies || [];
         var branchTotal = progenies.reduce(function (sum, progeny) {
