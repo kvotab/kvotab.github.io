@@ -85,12 +85,6 @@
 [data-theme="dark"] #chartdialog {
     background-color: var(--bg-surface);
 }
-[data-theme="dark"] .settings select,
-[data-theme="dark"] .settings input {
-    background-color: #2a221b;
-    color: var(--text-primary);
-    border-color: #5a4f42;
-}
 [data-theme="dark"] .js-plotly-plot .plotly .modebar-btn path {
     fill: #b8a898;
 }
@@ -192,9 +186,12 @@
 	background-color: rgba(111, 103, 79, 0.3);
 	border-color: rgb(111, 103, 79);
 }
-.js-plotly-plot .plotly .modebar {
-   transform: translate(-80px,8px);
-}
+/*
+  The chart toolbar used to be nudged 80px left and 8px down by hand. The bar
+  is positioned properly now — top from the settings bar's measured height,
+  right from the panel edge — and the nudge only pushed it off the left edge
+  once the window could be made narrow.
+*/
 #chartdialog { 
 	position: relative;
 	top:0;
@@ -253,68 +250,18 @@
 * html .ui-autocomplete {
     height: 200px;
 }
-.settings{
-    position: relative;
-    display: block;
-	margin: 0;
-	padding: 0px; 
-	padding-left: 0px; 
-    left: 0;
-	top:-35px;
-    /* background-color: #bcd5e6;*/
-    text-align: center;
-	width: 500px; 
-	z-index:2; 
-	color: var(--text-primary, black);
-}
+/*
+  The chart settings bar had two sets of rules: this one, from before it was
+  redesigned, and the current one in rdc.html. This one won — .settings
+  #timeinput outranks .chart-control — so the controls stayed 22px tall at
+  16px text, the number field kept no border at all while the selects had one,
+  and .settings' own text-align centred every label over a left-aligned
+  control. Removed; the styling that was meant to be in force now is.
 
-.settings select  {
-	margin:0;
-	padding:0;
-	height:22px;
-}
+  .inputdiv and #rnsettings went with it. No page has used either.
+*/
 input[type=number]::-webkit-inner-spin-button {
     opacity: 1
-}
-.inputdiv input {
-	margin:0;
-	padding:0;
-	width:4em;
-}
-.settings #timelabel {
-	display:inline-block;
-	height: 22px;
-	margin:0;
-	padding:0;
-	padding-left:2px;
-}
-.settings #timeinput {
-	width:4em;
-	height: 22px;
-	margin:0;
-	padding:0;
-	text-align: right; 
-	border:0;
-	background-color:rgba(0,0,0,0);
-}
-.settings #timeunit {
-	width:6em;
-	border:0;
-	background-color:rgba(0,0,0,0);
-}
-#rnsettings{
-    position: absolute;
-    display: block;
-	margin: 0;
-	margin-top: 55px;
-	padding: 0px; 	
-    top: 0;
-    right: 0;
-    /*  background-color: #bcd5e6;*/
-    text-align: right;
-	width: 500px; 
-	z-index:2; 
-	color: var(--text-primary, black);
 }
 #search-input{
 	background-color:rgba(255, 255, 255, 0.05);

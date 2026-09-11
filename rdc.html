@@ -63,12 +63,48 @@
 .rdc-chart-window .ui-dialog-titlebar-close{top:50%!important;right:11px!important;width:29px!important;height:29px!important;margin-top:-15px!important;border:1px solid rgba(255,255,255,.25)!important;border-radius:8px!important;background:rgba(255,255,255,.08)!important}
 .rdc-chart-window .ui-dialog-titlebar-close:hover{background:rgba(255,255,255,.2)!important}
 .rdc-chart-window .ui-dialog-content{padding:0!important;border:0!important;background:#fff!important}
-#chartdialog{box-sizing:border-box;container-type:inline-size;min-width:300px;min-height:310px;overflow:hidden!important;color:#30271f}
-#chartdialog .settings{position:relative;z-index:5;display:grid;grid-template-columns:minmax(220px,1.45fr) minmax(210px,1fr) auto;gap:13px;align-items:end;box-sizing:border-box;width:100%;padding:13px 15px 12px;border-bottom:1px solid #e8e1d8;background:linear-gradient(180deg,#fcfbf9,#f4f1ec)}
-.chart-field{min-width:0}.chart-label{display:block;margin:0 0 5px 2px;color:#6a594b;font-size:11px;font-weight:700;letter-spacing:.055em;line-height:1.2;text-transform:uppercase}
-.chart-control{box-sizing:border-box;width:100%;height:36px;padding:0 10px;border:1px solid #cdc1b5;border-radius:8px;background:#fff;color:#30271f;font:inherit;font-size:13px;box-shadow:0 1px 2px rgba(45,35,27,.06);transition:border-color .15s,box-shadow .15s}
-.chart-control:hover{border-color:#a98f78}.chart-control:focus{border-color:#af6c35;outline:0;box-shadow:0 0 0 3px rgba(184,105,43,.16)}
-.chart-time-row{display:grid;grid-template-columns:minmax(78px,.72fr) minmax(100px,1fr);gap:7px}.chart-badge{display:inline-flex;align-items:center;gap:6px;margin-bottom:8px;padding:5px 8px;border:1px solid #ddd4ca;border-radius:999px;background:rgba(255,255,255,.75);color:#766555;font-size:10px;font-weight:650;white-space:nowrap}.chart-badge span{width:7px;height:7px;border-radius:50%;background:#4e9a67;box-shadow:0 0 0 3px rgba(78,154,103,.14)}
+#chartdialog{box-sizing:border-box;container-type:inline-size;min-width:300px;min-height:310px;overflow:hidden!important;color:var(--text-primary)}
+/* ── Chart settings bar ──────────────────────────────────────────────────
+   Drawn from the site's own theme variables rather than a palette of its
+   own, so there is one set of rules instead of two and the bar belongs to
+   the same page as everything around it.
+
+   Every selector is scoped to #chartdialog because jQuery UI's base theme
+   carries `.ui-widget input, .ui-widget select { font-size: 1em }`, which
+   outranks a lone class and was holding every control at the document's
+   16px. */
+#chartdialog .settings{
+  position:absolute;top:0;left:0;right:0;z-index:20;
+  display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr) auto;
+  gap:14px;align-items:end;
+  box-sizing:border-box;width:100%;padding:12px 14px;
+  /* The panel's own centring used to land on every label. */
+  text-align:left;
+  border-bottom:1px solid var(--border-color);
+  background:var(--bg-surface);
+  box-shadow:0 3px 8px var(--shadow-color);
+}
+#chartdialog .chart-field{min-width:0}
+#chartdialog .chart-label{display:block;margin:0 0 5px 1px;color:var(--text-muted);font-size:11px;font-weight:700;letter-spacing:.06em;line-height:1.2;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#chartdialog .chart-control{box-sizing:border-box;width:100%;height:34px;margin:0;padding:0 9px;border:1px solid var(--input-border);border-radius:8px;background:var(--input-bg);color:var(--input-text);font:inherit;font-size:13px;line-height:normal;transition:border-color .15s,box-shadow .15s}
+#chartdialog .chart-control:hover{border-color:var(--text-muted)}
+#chartdialog .chart-control:focus{border-color:var(--color-kvot-bright);outline:0;box-shadow:0 0 0 3px color-mix(in srgb,var(--color-kvot-bright) 45%,transparent)}
+/* A number and its unit are one quantity, so they are drawn as one control:
+   the pair carries the outline and a hairline divides it. */
+#chartdialog .chart-time-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);box-sizing:border-box;height:34px;border:1px solid var(--input-border);border-radius:8px;background:var(--input-bg);transition:border-color .15s,box-shadow .15s}
+#chartdialog .chart-time-row:hover{border-color:var(--text-muted)}
+#chartdialog .chart-time-row:focus-within{border-color:var(--color-kvot-bright);box-shadow:0 0 0 3px color-mix(in srgb,var(--color-kvot-bright) 45%,transparent)}
+#chartdialog .chart-time-row .chart-control{height:100%;border:0;border-radius:0;background:none;box-shadow:none}
+#chartdialog .chart-time-row .chart-control:hover,#chartdialog .chart-time-row .chart-control:focus{box-shadow:none}
+#chartdialog .chart-time-row #timeunit{border-left:1px solid var(--border-color);border-radius:0 7px 7px 0}
+/* The page forces number spinners visible; inside a joined control this one
+   reads as a third element, and stepping a horizon of 1e11 by one is not
+   what anybody wants from it. The value is typed. */
+#chartdialog #timeinput::-webkit-inner-spin-button,
+#chartdialog #timeinput::-webkit-outer-spin-button{-webkit-appearance:none;appearance:none;margin:0}
+#chartdialog #timeinput{-moz-appearance:textfield;appearance:textfield}
+#chartdialog .chart-badge{display:inline-flex;align-items:center;gap:6px;box-sizing:border-box;height:34px;padding:0 11px;border:1px solid var(--border-color);border-radius:999px;background:var(--bg-secondary);color:var(--text-muted);font-size:10px;font-weight:650;letter-spacing:.02em;white-space:nowrap}
+#chartdialog .chart-badge span{width:7px;height:7px;border-radius:50%;background:var(--color-kvot-bright)}
 #chartdialog .modebar{top:8px!important;right:10px!important;padding:3px 4px!important;border:1px solid rgba(99,80,63,.18);border-radius:8px;background:rgba(255,255,255,.92)!important;box-shadow:0 3px 10px rgba(45,34,25,.1)}#chartdialog .modebar-btn{border-radius:5px}#chartdialog .modebar-btn:hover{background:rgba(177,103,45,.12)}#chartdialog .modebar-btn path{fill:#655347!important}
 /* Container queries, not viewport ones: the settings sit in a window that is
    510px wide on a 1400px desktop, so a viewport query never matched and three
@@ -76,9 +112,9 @@
    off. The widths below are the dialog's, measured against what the columns
    actually need: 220 + 210 + a badge + gaps and padding is about 620. */
 #chartdialog{container-name:chartpanel}
-@container chartpanel (max-width:620px){#chartdialog .settings{grid-template-columns:1fr 1fr}.chart-badge{display:none}}
-@container chartpanel (max-width:460px){#chartdialog .settings{grid-template-columns:1fr}}
-html[data-theme="dark"] .rdc-chart-window.ui-dialog{border-color:#59493b!important;background:#28211a!important;box-shadow:0 20px 55px rgba(0,0,0,.58)!important}html[data-theme="dark"] .rdc-chart-window .ui-dialog-titlebar{background:linear-gradient(135deg,#201914,#3b2e24)!important}html[data-theme="dark"] .rdc-chart-window .ui-dialog-content{background:#2a221b!important}html[data-theme="dark"] #chartdialog .settings{border-color:#514235;background:linear-gradient(180deg,#342a22,#2b231c)}html[data-theme="dark"] .chart-label{color:#c8b5a2}html[data-theme="dark"] .chart-control{border-color:#695748;background:#211b16;color:#eee3d8;box-shadow:none}html[data-theme="dark"] .chart-badge{border-color:#59493c;background:rgba(25,20,16,.65);color:#c8b5a2}html[data-theme="dark"] #chartdialog .modebar{border-color:rgba(220,195,171,.16);background:rgba(34,27,22,.9)!important}html[data-theme="dark"] #chartdialog .modebar-btn path{fill:#d5c2af!important}
+@container chartpanel (max-width:620px){#chartdialog .settings{grid-template-columns:minmax(0,1.25fr) minmax(0,1fr)}#chartdialog .chart-badge{display:none}}
+@container chartpanel (max-width:400px){#chartdialog .settings{grid-template-columns:minmax(0,1fr)}}
+html[data-theme="dark"] .rdc-chart-window.ui-dialog{border-color:#59493b!important;background:#28211a!important;box-shadow:0 20px 55px rgba(0,0,0,.58)!important}html[data-theme="dark"] .rdc-chart-window .ui-dialog-titlebar{background:linear-gradient(135deg,#201914,#3b2e24)!important}html[data-theme="dark"] .rdc-chart-window .ui-dialog-content{background:#2a221b!important}html[data-theme="dark"] #chartdialog .modebar{border-color:rgba(220,195,171,.16);background:rgba(34,27,22,.9)!important}html[data-theme="dark"] #chartdialog .modebar-btn path{fill:#d5c2af!important}
 
 /* Final integrated chart shell and plot clearance */
 .rdc-chart-window.ui-dialog{box-sizing:border-box!important;padding:0!important;overflow:hidden!important;border:1px solid #cfc5bb!important;border-radius:14px!important;background:#fff!important;background-clip:padding-box!important;box-shadow:0 16px 44px rgba(41,31,23,.20),0 2px 8px rgba(41,31,23,.10)!important}
@@ -89,8 +125,11 @@ html[data-theme="dark"] .rdc-chart-window.ui-dialog{border-color:#59493b!importa
 .rdc-chart-window .ui-dialog-titlebar-close:hover,.rdc-chart-window .ui-dialog-titlebar-close:focus-visible{border-color:#b7a696!important;background:#eee7df!important}
 .rdc-chart-window .ui-dialog-content{box-sizing:border-box!important;width:100%!important;margin:0!important;padding:0!important;border:0!important;border-radius:0 0 13px 13px!important;background:#fff!important}
 #chartdialog{position:relative!important;overflow:hidden!important}
-#chartdialog .settings{position:absolute!important;top:0;left:0;right:0;z-index:20;box-shadow:0 3px 8px rgba(49,37,27,.07)}
-#chartdialog .modebar{top:calc(var(--chart-toolbar-top,96px) - 36px)!important;right:6px!important;left:auto!important;z-index:50!important;opacity:1!important;visibility:visible!important}
+#chartdialog .modebar{top:calc(var(--chart-toolbar-top,96px) - 36px)!important;right:6px!important;left:auto!important;z-index:50!important;opacity:1!important;visibility:visible!important;max-width:calc(100% - 12px);flex-wrap:wrap;justify-content:flex-end}
+/* Plotly offsets the container by the plot's left margin, so the bar's own
+   right:6px is measured from there rather than from the panel. Anchored to
+   the panel, it can be told how much room it has. */
+#chartdialog .modebar-container{left:0!important;right:0!important;width:auto!important}
 html[data-theme="dark"] .rdc-chart-window.ui-dialog{border-color:#5b4b3e!important;background:#2a221b!important;box-shadow:0 18px 48px rgba(0,0,0,.52)!important}
 html[data-theme="dark"] .rdc-chart-window .ui-dialog-titlebar{border-bottom-color:#554638!important;background:linear-gradient(180deg,#393028 0%,#302820 100%)!important;color:#eadfd4!important}
 html[data-theme="dark"] .rdc-chart-window .ui-dialog-title{color:#eadfd4!important}
