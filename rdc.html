@@ -438,13 +438,25 @@ function setTreeCollapsed(collapsed, moveFocus) {
        nuclide would take it off what they were reading. */
     if (moveFocus && collapsed && show) show.focus({ preventScroll: true });
     window.setTimeout(function () {
-        if (typeof CY !== 'undefined' && CY && typeof CY.resize === 'function') CY.resize();
+        if (typeof CY !== 'undefined' && CY && typeof CY.resize === 'function') {
+            CY.resize();
+            relaxZoomFloor();
+        }
     }, 220);
 }
 
 function toggleTree() {
     setTreeCollapsed(!document.body.classList.contains('tree-collapsed'), true);
 }
+
+/*
+  Where the list is laid over the graph, it starts out of the way. The page
+  chooses U-238 for itself, and the chain it draws is the thing worth seeing;
+  opening on a list of every element with the answer hidden behind it made
+  choosing U-238 for you pointless. Set before jstree renders, so the list
+  never appears and then leaves.
+*/
+if (treeCoversGraph()) setTreeCollapsed(true, false);
 function findExactTreeNode(tree, value) {
     var query = String(value || '').trim();
     if (!query) return null;
@@ -679,6 +691,47 @@ var CY = cytoscape({
     maxZoom: 2,
     wheelSensitivity: 0.2,
 });
+
+/* The padding fit() leaves around the chain, on each side. */
+var GRAPH_FIT_PADDING = 20;
+var GRAPH_ZOOM_FLOOR = 0.5;
+
+/*
+  How far out you may zoom has to follow what is on screen. The floor was a
+  fixed 0.5, and the U-238 chain — 933 by 1279 — needs 0.375 to fit a phone:
+  fit() was clamped to 0.5 and quietly did nothing, so the bottom of the chain
+  sat off the screen with no way to reach it. A desktop needs 0.614, which is
+  why the floor looked fine for years.
+
+  Recomputed rather than simply lowered: a floor loose enough for the longest
+  chain on the smallest screen would let every other one be zoomed away to a
+  speck.
+*/
+function relaxZoomFloor() {
+    if (typeof CY === 'undefined' || !CY) return;
+    var floor = GRAPH_ZOOM_FLOOR;
+    var box = CY.elements().boundingBox();
+    var width = CY.width(), height = CY.height();
+    if (box && box.w > 0 && box.h > 0 && width > 0 && height > 0) {
+        var toFit = Math.min((width - 2 * GRAPH_FIT_PADDING) / box.w,
+                             (height - 2 * GRAPH_FIT_PADDING) / box.h);
+        /* A little past a perfect fit, so the chain can sit inside the screen
+           rather than exactly filling it. */
+        floor = Math.max(0.05, Math.min(GRAPH_ZOOM_FLOOR, toFit * 0.8));
+    }
+    CY.minZoom(floor);
+}
+
+/* Always together: fitting against a floor that has not been recomputed is
+   what the bug was. */
+function fitDecayGraph() {
+    relaxZoomFloor();
+    CY.fit([], GRAPH_FIT_PADDING);
+}
+
+/* A rotation changes what will fit; the chain has not moved, so it is not
+   refitted, only allowed to be pulled back far enough again. */
+window.addEventListener('resize', relaxZoomFloor);
 
 function styleBorder(rn, onoff) {
     var node = CY.getElementById(rn);
@@ -1490,7 +1543,7 @@ $('#tree').jstree({
         document.getElementById("timeinput").value = "1e" + expvalue;
         document.getElementById("timeunit").value = unit;
         decaygraph(ids, rnnode);
-        CY.ready(function () { CY.fit([], 20); });
+        CY.ready(fitDecayGraph);
     }
     else if (node) {
         const a = node.a_attr;

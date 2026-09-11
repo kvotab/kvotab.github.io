@@ -1,4 +1,20 @@
-"""On a phone the element list covers the graph, so choosing a nuclide puts it away.
+"""On a phone the element list covers the graph, so it is only up when it is wanted.
+
+It starts out of the way. The page chooses U-238 for itself and draws its
+chain, and opening on a list of every element with that chain behind it made
+choosing one for you pointless. The list is one tap away on the control that
+floats over the graph.
+
+The chain has to be reachable as well as drawn, which is a separate claim: how
+far out the graph may be zoomed used to be a fixed 0.5, and U-238's chain —
+933 by 1279 — needs 0.375 to fit a phone. fit() was clamped to the floor and
+quietly did nothing, so the bottom of the chain sat off the screen with no way
+to pull back to it. A desktop needs 0.614, which is why the floor looked right
+for years. The floor now follows what is on screen, so the test checks the
+viewport actually contains the graph's bounding box rather than trusting that
+fit() was obeyed.
+
+Choosing a nuclide puts the list away.
 
 Which selections count as "choosing" is the whole of it, and jstree reports all
 of them through one event:
@@ -87,13 +103,21 @@ async def main():
             return under
 
         async def state(session):
-            return json.loads(await ev("""JSON.stringify({
-                list: document.body.classList.contains('tree-collapsed') ? 'away' : 'open',
-                order: document.getElementById('sortLabel').textContent,
-                firstElement: (document.querySelector('#tree .jstree-anchor') || {}).textContent,
-                selected: (($('#tree').jstree(true).get_selected(true)[0]) || {}).text || '',
-                chartNodes: CY.nodes().length
-            })""", session))
+            return json.loads(await ev("""(() => {
+                const bb = CY.elements().boundingBox(), ext = CY.extent();
+                return JSON.stringify({
+                    list: document.body.classList.contains('tree-collapsed') ? 'away' : 'open',
+                    order: document.getElementById('sortLabel').textContent,
+                    firstElement: (document.querySelector('#tree .jstree-anchor') || {}).textContent,
+                    selected: (($('#tree').jstree(true).get_selected(true)[0]) || {}).text || '',
+                    chartNodes: CY.nodes().length,
+                    /* Not just drawn — reachable. A chain zoomed past the floor
+                       is on the canvas and off the screen. */
+                    wholeChainVisible: ext.x1 <= bb.x1 + 1 && ext.x2 >= bb.x2 - 1 &&
+                                       ext.y1 <= bb.y1 + 1 && ext.y2 >= bb.y2 - 1,
+                    zoom: +CY.zoom().toFixed(3),
+                    zoomFloor: +CY.minZoom().toFixed(3)
+                }); })()""", session))
 
         async def open_page(metrics):
             target = (await cmd('Target.createTarget', {'url': 'about:blank'}))['result']['targetId']
@@ -132,11 +156,24 @@ async def main():
         target, session = await open_page(PHONE)
 
         boot = await state(session)
-        check(boot['list'] == 'open',
-              'the list should still be there after the page picks U-238 for itself, got %r'
-              % (boot['list'],))
+        check(boot['list'] == 'away',
+              'a phone opens on the chain, not on a list of every element with the '
+              'chain behind it, got %r' % (boot['list'],))
         check(boot['selected'] == 'U-238',
               'the page should start on U-238, got %r' % (boot['selected'],))
+        check(boot['chartNodes'] > 20,
+              "U-238's whole chain should be drawn, got %d nodes" % (boot['chartNodes'],))
+        check(boot['wholeChainVisible'] is True,
+              'and all of it should be on the screen at zoom %s against a floor of %s — '
+              'a floor above what the chain needs clamps fit() and quietly does nothing'
+              % (boot['zoom'], boot['zoomFloor']))
+
+        # The list is one tap away, and nothing about it has changed.
+        under = await tap_selector('#treeShow', session, 1.4)
+        opened = await state(session)
+        check(opened['list'] == 'open',
+              'the list has to be reachable from the chain, got %r (tap landed on %r)'
+              % (opened['list'], under))
 
         # Re-sorting before anything has been chosen.
         under = await tap_selector('#sortToggle', session, 1.8)
@@ -147,7 +184,7 @@ async def main():
         check(after_sort['order'] == 'A–Z',
               'the sort button should report the order it put the list in, got %r'
               % (after_sort['order'],))
-        check(after_sort['firstElement'] != boot['firstElement'],
+        check(after_sort['firstElement'] != opened['firstElement'],
               'sorting should actually re-order the list, %r stayed first'
               % (after_sort['firstElement'],))
         check(after_sort['selected'] == boot['selected'],
@@ -212,6 +249,11 @@ async def main():
 
         # ── On a desktop, where the list sits beside the graph ───────────────
         target, session = await open_page(DESKTOP)
+        wide_boot = await state(session)
+        check(wide_boot['list'] == 'open',
+              'a wide screen shows both at once, so the list stays, got %r' % (wide_boot['list'],))
+        check(wide_boot['wholeChainVisible'] is True,
+              'and the chain still fits beside it at zoom %s' % (wide_boot['zoom'],))
         await ev("""document.getElementById('sortToggle').click()""", session)
         await asyncio.sleep(1.2)
         wide_sorted = await state(session)
@@ -228,7 +270,7 @@ async def main():
               % (wide_searched['list'],))
         await cmd('Target.closeTarget', {'targetId': target})
 
-        total = 17
+        total = 21
         for label, snapshot in zip(['on load', 'sorted', 'picked', 're-sorted', 'searched'], phone):
             print('%-11s list %-5s order %-8s selected %-7s chain %d'
                   % (label, snapshot['list'], snapshot['order'],
@@ -238,7 +280,8 @@ async def main():
             for failure in failures:
                 print('  - ' + failure)
             sys.exit(1)
-        print('%d checks passed: the list goes away when a nuclide is chosen, and only then.' % total)
+        print('%d checks passed: a phone opens on the chain with all of it on screen, and the '
+              'list goes away when a nuclide is chosen — and only then.' % total)
 
 
 asyncio.run(main())
