@@ -344,7 +344,9 @@
       color: var(--text-primary);
       padding: 0 6px;
     }
-    .bulk-panel fieldset { border: none; margin: 0; padding: 0; }
+    /* min-width: a fieldset's UA min-inline-size is min-content, so a long
+       option inside a select stops it fitting the panel it is in. */
+    .bulk-panel fieldset { border: none; margin: 0; padding: 0; min-width: 0; }
     .bulk-selectors {
       display: flex;
       gap: 16px;
@@ -491,10 +493,31 @@
     .bulk-pin-bad {
       background: #cc2222;
     }
+    /* Touch, at any width. */
+    @media (pointer: coarse) {
+      .bulk-option select,
+      .bulk-sel-group select,
+      .import-toolbar select,
+      .result-toolbar select,
+      .result-toolbar input { padding-top: 10px; padding-bottom: 10px; }
+      .map-hint button { padding-top: 12px; padding-bottom: 12px; }
+    }
+
     @media (max-width: 600px) {
       .bulk-io { flex-direction: column; }
-      .bulk-selectors { flex-direction: column; gap: 8px; }
-      .bulk-arrow { transform: rotate(90deg); text-align: center; }
+      /* align-items reset with the direction: as a column its axis is the
+         horizontal one, and flex-end had both dropdowns against the right
+         edge at whatever width their own text needed. */
+      .bulk-selectors { flex-direction: column; gap: 8px; align-items: stretch; }
+      .bulk-arrow { transform: rotate(90deg); text-align: center; align-self: center; }
+
+      /* Seven buttons whose labels do not fit one row of a phone. Wrapping
+         beats squeezing them below the width of their own text, which cut the
+         end of the row off entirely. */
+      .map-hint { flex-wrap: wrap; }
+      .map-hint button { flex: 1 0 auto; padding: 10px 12px; }
+      .map-hint button.compact,
+      .map-hint button.btn-info { flex: 0 0 46px; padding: 10px 0; }
     }
   </style>
   <title>Swedish Coordinate Conversions — kvot ab</title>
