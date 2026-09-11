@@ -338,11 +338,12 @@ input[type=number]::-webkit-inner-spin-button {
 #cy {
   position: fixed;
 	top: 43px;
-	left: 12em;
+	left: var(--rdc-tree-w);
 	height: calc(100vh - 74px);
-	width: calc(100vw - 12em);
+	width: calc(100vw - var(--rdc-tree-w));
 	z-index:2;
 	background-color: var(--bg-primary, #ffffff);
+	transition: left .18s ease, width .18s ease;
 }
         .custom-menu-item {
 	display: block;
@@ -454,17 +455,94 @@ header {
  
 */
 
+/*
+  The element list is a panel that can be put away. Its width lives in a custom
+  property so that the graph beside it follows from the same number, and
+  collapsing is then a matter of changing that one value.
+*/
+:root {
+	--rdc-tree-w: 12em;
+	--rdc-rail-w: 2.8em;
+}
 nav {
 	top:43px;
 	left:0px;
 	bottom: 32px;
 	position: fixed;
 	padding: 0px;
-	padding-top: 0px;
-	width: 12em;
-	overflow-x:	hidden;
+	display: flex;
+	flex-direction: column;
+	width: var(--rdc-tree-w);
+	/* The list inside scrolls; the toolbar above it stays put. */
+	overflow: hidden;
 	background-color: var(--bg-primary, #ffffff);	
 	z-index:2;
+	transition: width .18s ease;
+}
+#tree {
+	flex: 1 1 auto;
+	overflow-y: auto;
+	overflow-x: hidden;
+}
+
+.tree-toolbar {
+	display: flex;
+	flex: 0 0 auto;
+	gap: 6px;
+	align-items: center;
+	padding: 6px;
+	border-bottom: 1px solid var(--border-color);
+}
+.tree-tool {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 6px 9px;
+	border: 1px solid var(--border-color);
+	border-radius: 7px;
+	background: var(--bg-secondary);
+	color: var(--text-secondary);
+	font: inherit;
+	font-size: .78rem;
+	line-height: 1;
+	white-space: nowrap;
+	cursor: pointer;
+	transition: background .15s, border-color .15s, color .15s;
+}
+.tree-tool:hover {
+	border-color: var(--color-kvot-bright);
+	color: var(--text-primary);
+}
+.tree-tool:focus-visible {
+	outline: 2px solid var(--color-kvot-bright);
+	outline-offset: 2px;
+}
+.tree-tool svg {
+	width: 15px;
+	height: 15px;
+	flex: 0 0 15px;
+}
+.tree-tool-square {
+	padding: 6px;
+}
+/* Pressed is the state the list is in, not the thing the button does. */
+.tree-tool[aria-pressed="true"] {
+	border-color: var(--color-kvot-bright);
+	background: var(--bg-surface);
+	color: var(--text-primary);
+}
+
+/* Put away: the panel narrows to its toolbar, and the only control left is
+   the one that brings it back. */
+body.tree-collapsed {
+	--rdc-tree-w: var(--rdc-rail-w);
+}
+body.tree-collapsed #tree,
+body.tree-collapsed #sortToggle {
+	display: none;
+}
+body.tree-collapsed #treeToggle svg {
+	transform: scaleX(-1);
 }
 pre {
     color: var(--code-color);
@@ -760,65 +838,130 @@ th {
    background-repeat: no-repeat;
    background-position-y: center;
 }
-/* ── Sort toggle ─────────────────────────────────────────────────────────── */
-.sort {
+/* ── Node menu ───────────────────────────────────────────────────────────── */
+/*
+  An ordinary menu: a list at the pointer, not a ring around the node. Fixed
+  positioning because it is placed from viewport coordinates and must not move
+  with anything that scrolls underneath it.
+*/
+.node-menu {
 	position: fixed;
-	left: 10px;
-	bottom: 0;
-	width: 70px;
-	height: 26px;
-	z-index: 5;
-	display: flex;
-	align-items: center;
-	gap: 6px;
+	z-index: 300;
+	/* The max-height set when it opens is the room available in full, padding
+	   and border included. */
+	box-sizing: border-box;
+	min-width: 200px;
+	max-width: min(280px, calc(100vw - 16px));
+	padding: 6px;
+	border: 1px solid var(--border-color);
+	border-radius: 10px;
+	background: var(--bg-secondary);
+	box-shadow: 0 12px 34px rgba(0, 0, 0, .3), 0 2px 6px rgba(0, 0, 0, .18);
+	font-size: .82rem;
+	color: var(--text-primary);
+	/* A menu with nowhere left to grow scrolls rather than being cut off; the
+	   height itself is set when it opens, from the room there is. */
+	overflow-y: auto;
 }
-.sort-labels {
-	display: flex;
-	flex-direction: column;
-	align-items: flex-end;
-	line-height: 1;
-	font-size: 13px;
+.node-menu[hidden] {
+	display: none;
+}
+.node-menu-title {
+	margin: 2px 8px 6px;
+	font-weight: 700;
+	font-size: .84rem;
 	color: var(--color-kvot-bright);
 }
-.sort-arrow { font-size: 16px; line-height: 1; }
-.sort-z     { font-size: 11px; line-height: 1; }
-.sorttext   { font-size: 12px; min-height: 1em; }
-	
-.togglesort {
-	position: relative;
-    width: 40px;
-    height: 20px;	
-    border: 1px solid var(--color-kvot-accent);
-    border-radius: 20px;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    cursor: pointer;
-    transition: .3s;
+.node-menu-label {
+	margin: 8px 8px 4px;
+	font-size: .7rem;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: .06em;
+	color: var(--text-muted);
 }
-.circle {
-    position: absolute;
-    left: 1px;
-    bottom: 1px;
-    width: 18px;
-    height: 18px;
-    border-radius: 18px;
-    background-color: var(--color-kvot-bright);
-	opacity:.9;
-    transition: .3s;
+.node-menu-separator {
+	margin: 6px 0;
+	border: 0;
+	border-top: 1px solid var(--border-color);
 }
-.activesort {
-    border-color: var(--color-kvot-accent);
-    background-color: var(--color-kvot-primary);
+.node-menu-item {
+	display: block;
+	width: 100%;
+	padding: 8px 10px;
+	border: 0;
+	border-radius: 6px;
+	background: none;
+	color: inherit;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
 }
-.activesort .sorttext {
-    color: rgba(0, 0, 0, 0);
+.node-menu-item:hover,
+.node-menu-item:focus-visible {
+	background: var(--bg-surface);
+	outline: none;
 }
-.activesort .circle {
-    left: 21px;
-    
-    transition: .3s;
-   /* transform: translateX(-20px);background-color: var(--color-kvot-accent);*/
+.node-menu-item:focus-visible,
+.node-menu-swatch:focus-visible,
+.node-menu-style:focus-visible {
+	outline: 2px solid var(--color-kvot-bright);
+	outline-offset: 1px;
+}
+
+.node-menu-swatches {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 5px;
+	padding: 0 8px;
+}
+.node-menu-swatch {
+	width: 24px;
+	height: 24px;
+	padding: 0;
+	border: 2px solid transparent;
+	border-radius: 6px;
+	cursor: pointer;
+}
+/* A ring rather than a tick: the swatch is the colour, so nothing may be
+   drawn on top of it. */
+.node-menu-swatch.is-current {
+	border-color: var(--text-primary);
+	box-shadow: inset 0 0 0 2px var(--bg-secondary);
+}
+
+.node-menu-styles {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 5px;
+	padding: 0 8px;
+}
+.node-menu-style {
+	padding: 5px 9px;
+	border: 1px solid var(--border-color);
+	border-radius: 6px;
+	background: var(--bg-surface);
+	color: var(--text-secondary);
+	font: inherit;
+	font-size: .74rem;
+	cursor: pointer;
+}
+.node-menu-style:hover {
+	border-color: var(--color-kvot-bright);
+	color: var(--text-primary);
+}
+.node-menu-style.is-current {
+	border-color: var(--color-kvot-bright);
+	background: var(--bg-secondary);
+	color: var(--text-primary);
+	font-weight: 700;
+}
+
+/* Touch: the same menu with room to aim at. */
+@media (pointer: coarse) {
+	.node-menu-item { padding: 11px 10px; }
+	.node-menu-swatch { width: 30px; height: 30px; }
+	.node-menu-style { padding: 9px 11px; }
 }
 
 /* ==========================================================================
@@ -833,6 +976,7 @@ th {
 @media (max-width: 600px) {
   :root {
     --rdc-tree-h: 38dvh;
+    --rdc-rail-h: 2.9em;
   }
   nav {
     right: 0;
@@ -840,6 +984,18 @@ th {
     width: auto;
     height: var(--rdc-tree-h);
     border-bottom: 1px solid var(--border-color);
+    transition: height .18s ease;
+  }
+  /* The chevron points the way the panel goes: up to put it away, down to
+     bring it back. */
+  #treeToggle svg {
+    transform: rotate(90deg);
+  }
+  body.tree-collapsed {
+    --rdc-tree-h: var(--rdc-rail-h);
+  }
+  body.tree-collapsed #treeToggle svg {
+    transform: rotate(-90deg);
   }
   #cy {
     top: calc(var(--header-height) + var(--rdc-tree-h));
@@ -847,17 +1003,6 @@ th {
     right: 0;
     width: auto;
     height: calc(100dvh - var(--header-height) - var(--footer-height) - var(--rdc-tree-h));
-  }
-  /*
-    The sort control belongs to the tree, so it follows it. At the bottom left
-    of the window it overlapped the footer — unnoticeable on a desktop, where
-    the footer's text is centred far away, and squarely on top of that text
-    once the screen is narrow enough for it to reach the left edge.
-  */
-  .sort {
-    top: calc(var(--header-height) + var(--rdc-tree-h) - 32px);
-    right: 12px;
-    bottom: auto;
-    left: auto;
+    transition: top .18s ease, height .18s ease;
   }
 }

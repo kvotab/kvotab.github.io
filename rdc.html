@@ -36,7 +36,6 @@
     <script src="./vendors/js/plotly-2.27.0.min.js?v=20260911"></script>
     <script src="./vendors/js/math.min.js?v=20260911"></script>
     <script src="./vendors/js/FileSaver.min.js?v=20260911"></script>
-    <script src="./vendors/js/cytoscape-cxtmenu2.js?v=20260911"></script>
     <title>Radionuclide Decay Chains (ICRP Publication 107) — kvot ab</title>
     <meta name="description" content="Interactive radionuclide decay chains from ICRP Publication 107, with nuclide data and activity-over-time plots.">
     <link rel="canonical" href="https://kvotab.se/rdc.html">
@@ -177,20 +176,29 @@ html[data-theme="dark"] .rdc-chart-window .ui-dialog-titlebar-close{border-color
         </div>
     </dialog>
 
-    <div class="sort">
-      <button type="button" class="togglesort" id="sortToggle" title="Sort by z-number / alphabetical" aria-pressed="false">
-        <div class="circle"></div>
-      </button>
-      <span class="sort-labels">
-        <span class="sorttext"></span>
-        <span class="sort-arrow">↓</span>
-        <span class="sort-z">z</span>
-      </span>
-    </div>
-
     <div id="map" style="display:block"></div>
 
     <nav>
+        <div class="tree-toolbar">
+          <button type="button" id="treeToggle" class="tree-tool tree-tool-square"
+                  aria-expanded="true" aria-controls="tree"
+                  aria-label="Hide the element list" title="Hide the element list">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M15 5 8 12 15 19" fill="none" stroke="currentColor" stroke-width="2.2"
+                    stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+          <button type="button" id="sortToggle" class="tree-tool" aria-pressed="false"
+                  title="Sorted by atomic number — switch to alphabetical">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M6 4v16m0 0-3-3.2m3 3.2 3-3.2" fill="none" stroke="currentColor"
+                    stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M13 6.5h8M13 12h6M13 17.5h4" fill="none" stroke="currentColor"
+                    stroke-width="2.2" stroke-linecap="round"/>
+            </svg>
+            <span class="tree-tool-label" id="sortLabel">By number</span>
+          </button>
+        </div>
         <div id="tree" class="demo1"></div>
     </nav>
 
@@ -227,6 +235,30 @@ html[data-theme="dark"] .rdc-chart-window .ui-dialog-titlebar-close{border-color
     </div>
 
     <div id="cy"></div>	
+
+    <!-- Right-click (or long-press) menu for a nuclide. Built here rather than
+         drawn on the canvas so it is ordinary HTML: focusable, keyboard
+         navigable, and styled with the rest of the page. -->
+    <div id="node-menu" class="node-menu" role="menu" aria-labelledby="node-menu-title" hidden>
+      <p class="node-menu-title" id="node-menu-title"></p>
+
+      <button type="button" class="node-menu-item" role="menuitem" data-node-action="inventory-set">Initial inventory&#8230;</button>
+      <button type="button" class="node-menu-item" role="menuitem" data-node-action="inventory-add-bq">Add 1 Bq</button>
+      <button type="button" class="node-menu-item" role="menuitem" data-node-action="inventory-add-mol">Add 1 mol</button>
+      <button type="button" class="node-menu-item" role="menuitem" data-node-action="inventory-clear">Clear inventory</button>
+
+      <hr class="node-menu-separator">
+
+      <p class="node-menu-label" id="node-menu-colour-label">Chart line colour</p>
+      <div class="node-menu-swatches" id="node-menu-colours" role="group" aria-labelledby="node-menu-colour-label"></div>
+
+      <p class="node-menu-label" id="node-menu-style-label">Chart line style</p>
+      <div class="node-menu-styles" id="node-menu-styles" role="group" aria-labelledby="node-menu-style-label"></div>
+
+      <hr class="node-menu-separator">
+
+      <button type="button" class="node-menu-item" role="menuitem" data-node-action="select-initial">Find in the element list</button>
+    </div>
     <dialog id="icdialog" class="ic-dialog">
       <h3 id="icdialog-title" class="ic-dialog-title">Initial inventory</h3>
       <div class="ic-dialog-body">
@@ -271,20 +303,43 @@ function clearUserError(){var x=document.getElementById('rdc-status');x.textCont
 // ── Sort toggle ──────────────────────────────────────────────────────────────
 var Asort = false;
 var lastSearchResults = [];
-function togglesort() {
+/* The label reports the order the list is in, not the one the button would
+   switch to — a control that names its own effect reads as a statement about
+   the current state to half the people who see it. */
+function renderSortState() {
     const toggle = document.getElementById('sortToggle');
-    const text = document.querySelector('.sorttext');
+    const label = document.getElementById('sortLabel');
+    if (!toggle) return;
+    toggle.setAttribute('aria-pressed', Asort ? 'true' : 'false');
+    if (label) label.textContent = Asort ? 'A\u2013Z' : 'By number';
+    toggle.title = Asort
+        ? 'Sorted alphabetically \u2014 switch to atomic number'
+        : 'Sorted by atomic number \u2014 switch to alphabetical';
+}
+
+function togglesort() {
     Asort = !Asort;
-    if (Asort) {
-        toggle.classList.add('activesort');
-        toggle.setAttribute('aria-pressed', 'true');
-        text.textContent = 'a';
-    } else {
-        toggle.classList.remove('activesort');
-        toggle.setAttribute('aria-pressed', 'false');
-        text.textContent = '';
-    }
+    renderSortState();
     $('#tree').jstree(true).refresh();
+}
+
+/*
+  Put the element list away. The graph's container changes size without the
+  window changing, and cytoscape only listens to the window, so it is told
+  once the panel has finished moving.
+*/
+function toggleTree() {
+    const collapsed = document.body.classList.toggle('tree-collapsed');
+    const button = document.getElementById('treeToggle');
+    if (button) {
+        const action = collapsed ? 'Show the element list' : 'Hide the element list';
+        button.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+        button.setAttribute('aria-label', action);
+        button.title = action;
+    }
+    window.setTimeout(function () {
+        if (typeof CY !== 'undefined' && CY && typeof CY.resize === 'function') CY.resize();
+    }, 220);
 }
 function findExactTreeNode(tree, value) {
     var query = String(value || '').trim();
@@ -319,6 +374,9 @@ function selectExactTreeNode(value, options) {
 document.addEventListener('DOMContentLoaded', function() {
     const sortBtn = document.getElementById('sortToggle');
     if (sortBtn) sortBtn.addEventListener('click', togglesort);
+    renderSortState();
+    const treeBtn = document.getElementById('treeToggle');
+    if (treeBtn) treeBtn.addEventListener('click', toggleTree);
     const searchInput = document.getElementById('search-input');
     if (searchInput) {
         var searchTimer;
@@ -571,95 +629,194 @@ CY.on('zoom', function (event) {});
 CY.on('mouseover', 'node', function(e) { styleBorder(e.target.data().id, true); });
 CY.on('mouseout', 'node', function(e) { styleBorder(e.target.data().id, false); });
 
-function createSubmenuLineColorSelect() {
-    var submenu = [];
+/*
+  The node menu. Opened by a right-click or a long press on a nuclide, closed
+  by Escape, by a click elsewhere, or by moving the graph underneath it.
+*/
+var NODE_MENU = document.getElementById('node-menu');
+var nodeMenuTarget = null;
+var nodeMenuOpener = null;
+
+/** Every control in the menu, in the order the arrow keys should walk them. */
+function nodeMenuItems() {
+    return [].slice.call(NODE_MENU.querySelectorAll('.node-menu-item, .node-menu-swatch, .node-menu-style'));
+}
+
+function buildNodeMenuChoices() {
+    var colours = document.getElementById('node-menu-colours');
     for (var i = 0; i < COLORS.length; i++) {
-        submenu.push({
-            fillColor: 'rgba('+COLORS[i][0]+', '+COLORS[i][1]+', '+COLORS[i][2]+', 0.75)',
-            content: '',
-            select: (function(idx) { return function (ele) {
-                Plotly.restyle(CHARTDIALOG[0],{'line.color':'rgb('+COLORS[idx][0]+', '+COLORS[idx][1]+', '+COLORS[idx][2]+')'},ele.data().index);
-                ele.data().color = COLORS[idx];
-            }; })(i)
-        });
+        var swatch = document.createElement('button');
+        swatch.type = 'button';
+        swatch.className = 'node-menu-swatch';
+        swatch.setAttribute('role', 'menuitemradio');
+        swatch.dataset.colourIndex = String(i);
+        swatch.style.background = 'rgb(' + COLORS[i][0] + ',' + COLORS[i][1] + ',' + COLORS[i][2] + ')';
+        swatch.title = 'Line colour ' + (i + 1);
+        swatch.setAttribute('aria-label', 'Line colour ' + (i + 1));
+        colours.appendChild(swatch);
     }
-    return submenu;
+    var styles = document.getElementById('node-menu-styles');
+    for (var j = 0; j < LINES.length; j++) {
+        var style = document.createElement('button');
+        style.type = 'button';
+        style.className = 'node-menu-style';
+        style.setAttribute('role', 'menuitemradio');
+        style.dataset.lineStyle = LINES[j];
+        style.textContent = LINES[j];
+        styles.appendChild(style);
+    }
 }
 
-function createSubmenuLineStyleSelect() {
-    var submenu = [];
-    for (var i = 0; i < LINES.length; i++) {
-        submenu.push({
-            content: LINES[i],
-            select: (function(idx) { return function (ele) {
-                Plotly.restyle(CHARTDIALOG[0],{'line.dash':LINES[idx]},ele.data().index);
-                ele.data().dash = LINES[idx];
-            }; })(i)
-        });
-    }
-    return submenu;
+/** Show which colour and style the node currently uses. */
+function markNodeMenuState(node) {
+    var colour = node.data().color;
+    var dash = node.data().dash || LINES[0];
+    NODE_MENU.querySelectorAll('.node-menu-swatch').forEach(function (swatch) {
+        var rgb = COLORS[Number(swatch.dataset.colourIndex)];
+        var current = !!colour && colour[0] === rgb[0] && colour[1] === rgb[1] && colour[2] === rgb[2];
+        swatch.setAttribute('aria-checked', current ? 'true' : 'false');
+        swatch.classList.toggle('is-current', current);
+    });
+    NODE_MENU.querySelectorAll('.node-menu-style').forEach(function (style) {
+        var current = style.dataset.lineStyle === dash;
+        style.setAttribute('aria-checked', current ? 'true' : 'false');
+        style.classList.toggle('is-current', current);
+    });
 }
 
-CY.cxtmenu({
-    selector: 'node[type='+TYPE_NUCLIDE+']',
-    adaptativeNodeSpotlightRadius: true,
-    menuRadius: 200,
-    minSpotlightRadius: 1,
-    maxSpotlightRadius: 100,
-    itemTextShadowColor: 'black',
-    commands: [
-        {
-            content: 'line-color',
-            submenu: createSubmenuLineColorSelect(),
-        },
-        {
-            content: 'line-style',
-            submenu: createSubmenuLineStyleSelect(),
-        },
-        {
-            content: 'initial inventory',
-            submenu: [
-                {	
-                    content: 'clear inventory',
-                    select: function (node) {
-                        node.data().IC = 0;
-                        updateLevel("IC");
-                        runAndUpdateChart();
-                    }
-                },
-                {	
-                    content: '+1 Bq',
-                    select: function (node) {
-                        node.data().IC = node.data().IC + 1;
-                        updateLevel("IC");
-                        runAndUpdateChart();									
-                    }
-                },
-                {	
-                    content: '+1 mol',
-                    select: function (node) {
-                        node.data().IC = node.data().IC + Math.log(2)/getRn(node.data().id).Halflife_y*6.02214076E23/(60*60*24*365.242196);
-                        updateLevel("IC");
-                        runAndUpdateChart();									
-                    }
-                },
-                {	
-                    content: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="-1024 0 2536 512"><path fill="white" d="M495.9 166.6c3.2 8.7 .5 18.4-6.4 24.6l-43.3 39.4c1.1 8.3 1.7 16.8 1.7 25.4s-.6 17.1-1.7 25.4l43.3 39.4c6.9 6.2 9.6 15.9 6.4 24.6c-4.4 11.9-9.7 23.3-15.8 34.3l-4.7 8.1c-6.6 11-14 21.4-22.1 31.2c-5.9 7.2-15.7 9.6-24.5 6.8l-55.7-17.7c-13.4 10.3-28.2 18.9-44 25.4l-12.5 57.1c-2 9.1-9 16.3-18.2 17.8c-13.8 2.3-28 3.5-42.5 3.5s-28.7-1.2-42.5-3.5c-9.2-1.5-16.2-8.7-18.2-17.8l-12.5-57.1c-15.8-6.5-30.6-15.1-44-25.4L83.1 425.9c-8.8 2.8-18.6 .3-24.5-6.8c-8.1-9.8-15.5-20.2-22.1-31.2l-4.7-8.1c-6.1-11-11.4-22.4-15.8-34.3c-3.2-8.7-.5-18.4 6.4-24.6l43.3-39.4C64.6 273.1 64 264.6 64 256s.6-17.1 1.7-25.4L22.4 191.2c-6.9-6.2-9.6-15.9-6.4-24.6c4.4-11.9 9.7-23.3 15.8-34.3l4.7-8.1c6.6-11 14-21.4 22.1-31.2c5.9-7.2 15.7-9.6 24.5-6.8l55.7 17.7c13.4-10.3 28.2-18.9 44-25.4l12.5-57.1c2-9.1 9-16.3 18.2-17.8C227.3 1.2 241.5 0 256 0s28.7 1.2 42.5 3.5c9.2 1.5 16.2 8.7 18.2 17.8l12.5 57.1c15.8 6.5 30.6 15.1 44 25.4l55.7-17.7c8.8-2.8 18.6-.3 24.5 6.8c8.1 9.8 15.5 20.2 22.1 31.2l4.7 8.1c6.1 11 11.4 22.4 15.8 34.3zM256 336c44.2 0 80-35.8 80-80s-35.8-80-80-80s-80 35.8-80 80s35.8 80 80 80z"/></svg>',
-                    select: function (node) {
-                        updateIC(node);
-                    }
-                },
-            ]
-        },
-        {
-            content: 'select as initial\nradionuclide',
-            select: function (node) {
-                $('#tree').jstree(true).show_all();
-                $('#tree').jstree('search', node.id());
-            }
-        },
-    ]
+/*
+  Place the menu at the pointer, and keep it on the screen: near the right or
+  bottom edge it opens back towards the middle rather than off the page.
+*/
+function positionNodeMenu(x, y) {
+    NODE_MENU.hidden = false;
+    NODE_MENU.style.maxHeight = '';
+    var margin = 8;
+    /* The header and footer are fixed and sit above this, so the menu has to
+       stay in the band between them rather than merely inside the window. */
+    var header = document.querySelector('header');
+    var footer = document.querySelector('footer');
+    var topLimit = (header ? header.getBoundingClientRect().bottom : 0) + margin;
+    var bottomLimit = (footer ? footer.getBoundingClientRect().top : window.innerHeight) - margin;
+
+    NODE_MENU.style.maxHeight = Math.max(120, bottomLimit - topLimit) + 'px';
+    var menu = NODE_MENU.getBoundingClientRect();
+    var left = Math.min(x, window.innerWidth - menu.width - margin);
+    var top = Math.min(y, bottomLimit - menu.height);
+    NODE_MENU.style.left = Math.max(margin, left) + 'px';
+    NODE_MENU.style.top = Math.max(topLimit, top) + 'px';
+}
+
+function openNodeMenu(event) {
+    var node = event.target;
+    nodeMenuTarget = node;
+    document.getElementById('node-menu-title').textContent = node.id();
+    markNodeMenuState(node);
+    var point = event.renderedPosition || event.position;
+    var box = document.getElementById('cy').getBoundingClientRect();
+    positionNodeMenu(box.left + point.x, box.top + point.y);
+    var first = nodeMenuItems()[0];
+    if (first) first.focus();
+}
+
+function closeNodeMenu() {
+    if (NODE_MENU.hidden) return;
+    NODE_MENU.hidden = true;
+    nodeMenuTarget = null;
+    if (nodeMenuOpener && document.contains(nodeMenuOpener)) nodeMenuOpener.focus();
+    nodeMenuOpener = null;
+}
+
+/** Arrow keys walk the menu, Escape leaves it — as a menu is expected to. */
+NODE_MENU.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape') { event.preventDefault(); closeNodeMenu(); return; }
+    var items = nodeMenuItems();
+    var index = items.indexOf(document.activeElement);
+    var step = event.key === 'ArrowDown' || event.key === 'ArrowRight' ? 1
+             : event.key === 'ArrowUp' || event.key === 'ArrowLeft' ? -1 : 0;
+    if (step && index !== -1) {
+        event.preventDefault();
+        items[(index + step + items.length) % items.length].focus();
+    } else if (event.key === 'Home' && items.length) {
+        event.preventDefault(); items[0].focus();
+    } else if (event.key === 'End' && items.length) {
+        event.preventDefault(); items[items.length - 1].focus();
+    }
 });
+
+NODE_MENU.addEventListener('click', function (event) {
+    var control = event.target.closest('[data-node-action], .node-menu-swatch, .node-menu-style');
+    if (!control || !nodeMenuTarget) return;
+    var node = nodeMenuTarget;
+
+    if (control.dataset.colourIndex !== undefined) {
+        var index = Number(control.dataset.colourIndex);
+        Plotly.restyle(CHARTDIALOG[0], { 'line.color': 'rgb(' + COLORS[index].join(', ') + ')' }, node.data().index);
+        node.data().color = COLORS[index];
+        markNodeMenuState(node);
+        return;
+    }
+    if (control.dataset.lineStyle !== undefined) {
+        Plotly.restyle(CHARTDIALOG[0], { 'line.dash': control.dataset.lineStyle }, node.data().index);
+        node.data().dash = control.dataset.lineStyle;
+        markNodeMenuState(node);
+        return;
+    }
+
+    switch (control.dataset.nodeAction) {
+        case 'inventory-set':
+            closeNodeMenu();
+            updateIC(node);
+            return;
+        case 'inventory-add-bq':
+            node.data().IC = node.data().IC + 1;
+            break;
+        case 'inventory-add-mol':
+            node.data().IC = node.data().IC
+                + Math.log(2) / getRn(node.data().id).Halflife_y * 6.02214076E23 / (60 * 60 * 24 * 365.242196);
+            break;
+        case 'inventory-clear':
+            node.data().IC = 0;
+            break;
+        case 'select-initial':
+            closeNodeMenu();
+            $('#tree').jstree(true).show_all();
+            $('#tree').jstree('search', node.id());
+            return;
+        default:
+            return;
+    }
+    updateLevel('IC');
+    runAndUpdateChart();
+});
+
+buildNodeMenuChoices();
+
+CY.on('cxttap', 'node[type=' + TYPE_NUCLIDE + ']', function (event) {
+    nodeMenuOpener = document.activeElement;
+    openNodeMenu(event);
+});
+/* Long press is the same gesture on a touch screen. */
+CY.on('taphold', 'node[type=' + TYPE_NUCLIDE + ']', function (event) {
+    nodeMenuOpener = null;
+    openNodeMenu(event);
+});
+/* The menu is anchored to a point on the graph, so moving the graph leaves it
+   pointing at nothing. */
+CY.on('pan zoom', closeNodeMenu);
+CY.on('tap', function (event) { if (event.target === CY) closeNodeMenu(); });
+
+document.addEventListener('pointerdown', function (event) {
+    if (!NODE_MENU.hidden && !NODE_MENU.contains(event.target)) closeNodeMenu();
+});
+document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape') closeNodeMenu();
+});
+/* Without this the browser's own menu opens on top of this one. */
+document.getElementById('cy').addEventListener('contextmenu', function (event) {
+    event.preventDefault();
+});
+window.addEventListener('resize', closeNodeMenu);
 
 // ── Help dialog ───────────────────────────────────────────────────────────────
 var modal=document.getElementById('myModal'),btn=document.getElementById('myBtn'),closeHelpButton=modal.querySelector('.close');
