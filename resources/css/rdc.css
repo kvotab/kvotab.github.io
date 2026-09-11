@@ -762,7 +762,9 @@ th {
   opacity:0;
   pointer-events: none;
 	transition: opacity .3s ease-in-out;
-  z-index: 3;
+  /* Above the element list, which covers the whole area on a phone, and
+     below the node menu (300) and the page header (10000). */
+  z-index: 8;
   /* Clear of the footer as well as the top of the window. */
   max-height: calc(100dvh - 68px - var(--footer-height) - 10px);
 }
@@ -781,9 +783,20 @@ th {
   display: block;
   margin: -4px -4px 8px auto;
   z-index: 1;
+  box-sizing: border-box;
   width: 30px;
   height: 30px;
-  padding: 0;
+  /*
+    The × sits low in its own em box, so centring the box leaves the ink 1.7px
+    below the middle of the button. Padding at the foot of a border-box button
+    lifts the content without changing the button's size.
+
+    The landing positions turn out to be quantised to whole pixels — measured
+    across a range of paddings the ink lands at +1.7, +0.7, -0.3 or -1.3 and
+    nowhere between — so -0.3 is as close to centre as this can be put, and it
+    errs upwards rather than down.
+  */
+  padding: 0 0 3px;
   border: 1px solid currentColor;
   border-radius: 7px;
   background: var(--bg-primary);
@@ -1014,6 +1027,59 @@ th {
 	.node-menu-item { padding: 11px 10px; }
 	.node-menu-swatch { width: 30px; height: 30px; }
 	.node-menu-style { padding: 9px 11px; }
+}
+
+/* ==========================================================================
+   TOUCH TARGETS
+   ========================================================================== */
+/*
+  A 24px row with a 24px arrow against the left edge is a hard thing to hit
+  with a fingertip, and the cost of missing is not nothing: the tap lands on
+  the name instead, which selects the element and covers the screen with its
+  information. Opening an element is the common action and was the hard one.
+*/
+@media (pointer: coarse) {
+  #tree .jstree-node {
+    min-height: 40px;
+    line-height: 40px;
+  }
+  #tree .jstree-anchor {
+    height: 40px;
+    line-height: 40px;
+  }
+  #tree .jstree-icon {
+    width: 40px;
+    height: 40px;
+    line-height: 40px;
+  }
+  /*
+    The arrow is a cell of a sprite sheet placed by offset, so a taller box
+    leaves it sitting high rather than centred. Only the vertical offset
+    changes — the horizontal one chooses which arrow is shown.
+  */
+  #tree .jstree-ocl {
+    background-position-y: 4px !important;
+  }
+  /* The element icons are data-URI SVGs, so they simply scale. */
+  #tree .jstree-themeicon-custom {
+    background-size: 22px !important;
+  }
+  #tree .jstree-open > .jstree-anchor > .jstree-themeicon-custom {
+    background-size: 30px !important;
+  }
+  #tree .radioisotope,
+  #tree .isotope {
+    background-size: 22px;
+  }
+
+  /*
+    iOS zooms into any field whose text is smaller than 16px, and there is no
+    way to undo that afterwards — the page stays zoomed once the field is left.
+    Sixteen pixels is the whole fix.
+  */
+  header input {
+    font-size: 16px;
+  }
 }
 
 /* ==========================================================================
