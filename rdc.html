@@ -348,20 +348,21 @@ function treeCoversGraph() {
 }
 
 /*
-  The page chooses U-238 for itself once the tree has loaded, through the same
-  path as a tap, and the list must not be put away for that. What separates the
-  two is whether anybody has touched the page yet: the startup selection
-  happens before any input exists.
+  Only a selection a person made is a request to see the chain. Three of them
+  are not: the page choosing U-238 once the tree has loaded, the selection
+  jstree restores after re-sorting the list, and the element picked from the
+  periodic table. All three reach the same handler as a tap.
 
-  Arming it on the selection itself does not work — jstree reports the change
-  asynchronously, and the handler calls search('') on its own tree, which
-  brings it round again.
+  jstree passes on the event that caused a tap or a key press and passes
+  nothing for a selection it made by itself, which separates a tap from the
+  two it restores. The search field selects on the person's behalf, with no
+  event of its own to hand over, so it says so.
 */
 var treeSelectionIsUsers = false;
-['pointerdown', 'keydown'].forEach(function (type) {
-    document.addEventListener(type, function () { treeSelectionIsUsers = true; },
-                              { once: true, capture: true });
-});
+function userChoseFromTree(data) {
+    if (treeSelectionIsUsers) { treeSelectionIsUsers = false; return true; }
+    return !!(data && data.event);
+}
 
 function setTreeCollapsed(collapsed, moveFocus) {
     if (document.body.classList.contains('tree-collapsed') === collapsed) return;
@@ -408,6 +409,7 @@ function selectExactTreeNode(value, options) {
     target.parents.slice().reverse().forEach(function (parentId) {
         if (parentId !== '#') tree.open_node(parentId);
     });
+    treeSelectionIsUsers = options.userInitiated === true;
     tree.select_node(target.id);
     var input = document.getElementById('search-input');
     if (input && options.preserveInput !== true) input.value = '';
@@ -432,7 +434,7 @@ document.addEventListener('DOMContentLoaded', function() {
         function tryExactSearchSelection(preserveInput) {
             var value = searchInput.value;
             if (!value || value === lastSelectedValue) return false;
-            if (!selectExactTreeNode(value, { preserveInput: preserveInput })) return false;
+            if (!selectExactTreeNode(value, { preserveInput: preserveInput, userInitiated: true })) return false;
             lastSelectedValue = value;
             lastObservedValue = value;
             clearTimeout(searchTimer);
@@ -1297,6 +1299,10 @@ $('#tree').jstree({
         return (za-zb)||nodeA.text.localeCompare(nodeB.text);
     },
 }).on("changed.jstree", function (e, data) {
+    /* Read once per change, whatever the selection turns out to be: the flag
+       is spent here even when an element rather than a nuclide was picked, so
+       it cannot survive into the next change. */
+    var chosenByUser = userChoseFromTree(data);
     $('#tree').jstree(true).show_all();
     $('#tree').jstree('search', "");
     var node = data.instance.get_node(data.selected[0]);
@@ -1307,7 +1313,7 @@ $('#tree').jstree({
         infodiv.classList.remove("show");
         /* Choosing a nuclide is a request to see its chain, which on a phone
            is behind the list that was just used to choose it. */
-        if (treeSelectionIsUsers && treeCoversGraph()) setTreeCollapsed(true, false);
+        if (chosenByUser && treeCoversGraph()) setTreeCollapsed(true, false);
         var ids = [node.text];
         const rnnode = getRn(node.text);
         xrn = (rnnode.A - rnnode.Z) * 100;
