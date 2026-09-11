@@ -756,12 +756,18 @@ th {
 
   #info {
     position: fixed;
+    /* Border and padding counted in the width, so "as wide as the screen
+       allows" means exactly that. */
+    box-sizing: border-box;
     border: 5px solid;
     top: 68px;
-    left: calc(50% - 200px);
-    width:500px;
+    /* Anchor the middle to the middle: the old calc() centred a 400px box
+       while this one measures 530 with its border and padding. */
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(500px, calc(100vw - 20px));
   padding: 10px;
-	font-size: 0.6em;
+	font-size: 0.7em;
 	font-family: sans-serif;
 	box-shadow: 0 0 20px rgba(0, 0, 0, 0.15);
 	overflow-y: auto;
@@ -771,50 +777,51 @@ th {
   pointer-events: none;
 	transition: opacity .3s ease-in-out;
   z-index: 3;
-  max-height: calc(100vh - 100px);
+  /* Clear of the footer as well as the top of the window. */
+  max-height: calc(100dvh - 68px - var(--footer-height) - 10px);
 }
 #info.show {
   opacity:1;
   pointer-events: auto;
 }
 #info.Alkali_metal {
-  background-color: rgba(0, 128, 0, 0.3);
+  background-color: color-mix(in srgb, rgb(0, 128, 0) 30%, var(--bg-primary));
   border-color: rgb(0, 128, 0);
 }
 #info.Alkaline_earth_metal {
-  background-color: rgba(86, 0, 36, 0.3);
+  background-color: color-mix(in srgb, rgb(86, 0, 36) 30%, var(--bg-primary));
   border-color: rgb(86, 0, 36);
 }
 #info.Transition_metal {
-  background-color: rgba(98, 50, 236, 0.3);
+  background-color: color-mix(in srgb, rgb(98, 50, 236) 30%, var(--bg-primary));
   border-color: rgb(98, 50, 236);
 }
 #info.Post__transition_metal {
-  background-color: rgba(34, 119, 84, 0.3);
+  background-color: color-mix(in srgb, rgb(34, 119, 84) 30%, var(--bg-primary));
   border-color: rgb(34, 119, 84);
 }
 #info.Metalloid {
-  background-color: rgba(148, 87, 0, 0.3);
+  background-color: color-mix(in srgb, rgb(148, 87, 0) 30%, var(--bg-primary));
   border-color: rgb(148, 87, 0);
 }
 #info.Reactive_nonmetal {
-  background-color: rgba(0, 96, 240, 0.3);
+  background-color: color-mix(in srgb, rgb(0, 96, 240) 30%, var(--bg-primary));
   border-color: rgb(0, 96, 240);
 }
 #info.Noble_gas {
-  background-color: rgba(255, 231, 235, 0.3);
+  background-color: color-mix(in srgb, rgb(255, 231, 235) 30%, var(--bg-primary));
   border-color: rgb(255, 231, 235);
 }
 #info.Lanthanide {
-  background-color: rgba(0, 51, 85, 0.3);
+  background-color: color-mix(in srgb, rgb(0, 51, 85) 30%, var(--bg-primary));
   border-color: rgb(0, 51, 85);
 }
 #info.Actinide {
-  background-color: rgba(199, 50, 0, 0.3);
+  background-color: color-mix(in srgb, rgb(199, 50, 0) 30%, var(--bg-primary));
   border-color: rgb(199, 50, 0);
 }
 #info.Unknown_properties {
-  background-color: rgba(111, 103, 79, 0.3);
+  background-color: color-mix(in srgb, rgb(111, 103, 79) 30%, var(--bg-primary));
   border-color: rgb(111, 103, 79);
 }
 /*

@@ -1169,12 +1169,17 @@ function renderElementInformation(container, node, a) {
     var weight=cell('td',String(a.weight||'').replace('–',''),'elem-weight');
     var periodic=cell('td',undefined,'elem-pt');periodic.rowSpan=4;appendSanitizedMarkup(periodic,getPeriodicTable(a.Z));row([z,weight,periodic]);
     var symbol=cell('td',undefined,null,2), sb=document.createElement('b');sb.className='elem-symbol';sb.textContent=a.symbol;symbol.appendChild(sb);row([symbol]);
-    row([cell('td',node.text,'elem-name',2)]);row([cell('td',a.type,'elem-type',2)]);row([cell('td',a.info,'elem-info',3)]);
-    row([cell('td','Discovered '+a.year+' by '+a.discoverer+'. '+a.note,'elem-discovery',3)]);
+    row([cell('td',node.text,'elem-name',2)]);row([cell('td',a.type,'elem-type',2)]);
+    /* The prose and the electron configuration carry <sub> and <sup>; through
+       textContent those read as literal tags in the middle of a sentence. */
+    var info=cell('td',undefined,'elem-info',3);appendSanitizedMarkup(info,a.info);row([info]);
+    var discovery=cell('td',undefined,'elem-discovery',3);
+    appendSanitizedMarkup(discovery,'Discovered '+a.year+' by '+a.discoverer+'. '+a.note);row([discovery]);
     function labelled(label,value){row([cell('th',label,null,2),cell('td',value)]);}
+    function labelledMarkup(label,value){var v=cell('td');appendSanitizedMarkup(v,String(value==null?'':value));row([cell('th',label,null,2),v]);}
     labelled('Origin of name',a.origin_name);labelled('Atomic mass',a.weight+' g/mol');
     var phase=cell('td',a.phase);phase.className=String(a.phase||'').replace(' (expected)','');row([cell('th','Standard state',null,2),phase]);
-    labelled('Electron configuration',a.electron);labelled('Oxidation states',a.oxi);labelled('Electronegativity (Pauling)',a.electro);
+    labelledMarkup('Electron configuration',a.electron);labelled('Oxidation states',a.oxi);labelled('Electronegativity (Pauling)',a.electro);
     labelled('Atomic radius (van der Waals)',a.radius+' pm');labelled('Ionization energy',a.ion+' eV');labelled('Electron affinity',a.affin+' eV');
     labelled('Melting point',a.melting+'°C');labelled('Boiling point',a.boiling+'°C');labelled('Specific heat capacity',a.heat+' J/g·K');
     labelled('Density',a.density+' g/cm³');labelled("Abundance (Earth's crust)",a.abundance+' mg/kg');labelled('Block',a.block);labelled('Origin',a.origin);
