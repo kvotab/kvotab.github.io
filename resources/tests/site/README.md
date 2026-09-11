@@ -245,10 +245,26 @@ Which selections put rdc.html's element list away on a phone.
     "$CHROME" --headless=new --remote-debugging-port=9222 --user-data-dir=/tmp/p
     python3 resources/tests/site/test-chrome-rdc-mobile.py
 
-Below 600px the list is laid over the graph rather than beside it, so choosing
-a nuclide has to move it out of the way — the chain that was just asked for is
-behind it. Everything turns on which selections count as choosing, and jstree
-reports all of them through one `changed` event:
+Below 600px the list is laid over the graph rather than beside it, so it is
+only up when it is wanted.
+
+It starts out of the way: the page chooses U-238 for itself and draws its
+chain, and opening on a list of every element with that chain behind it made
+choosing one for you pointless. The list is one tap away on the control that
+floats over the graph, and the test taps it.
+
+Drawn is not the same as reachable, so the chain's bounding box is checked
+against the viewport. How far out the graph could be zoomed was a fixed 0.5,
+and U-238's chain — 933 by 1279 — needs **0.375** to fit a phone: `fit()` was
+clamped to the floor and quietly did nothing, leaving the bottom of the chain
+off the screen with no way to pull back to it. A desktop needs 0.614, which is
+why the floor looked right for years. The floor now follows what is on screen
+— recomputed rather than simply lowered, so a two-node chain still cannot be
+zoomed away to a speck.
+
+Choosing a nuclide moves the list out of the way, and everything turns on which
+selections count as choosing. jstree reports all of them through one `changed`
+event:
 
 - the page picks U-238 for itself once the list has loaded. Putting the list
   away for that would mean it is never seen;
