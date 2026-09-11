@@ -434,6 +434,31 @@ footer .theme-toggle {
   font-size: 0.78rem;
 }
 
+/* ==========================================================================
+   NARROW SCREENS
+   ========================================================================== */
+/*
+  The header is a grid of 60px + auto + 180px + 80px. On a phone the fixed
+  columns leave the title too little room and it wraps to a second line, which
+  a 43px fixed header cannot hold — it lands on the page instead. The middle
+  column is allowed to shrink, the third to collapse when it is empty, and the
+  last keeps clear of the nav toggle that floats over that corner.
+*/
+@media (max-width: 700px) {
+  header {
+    grid-template-columns: 52px minmax(0, 1fr) auto 46px;
+  }
+  header .title {
+    margin: 0 0 0 6px;
+    align-self: center;
+    font-size: 1.05rem;
+    /* Truncating a long title is honest; spilling it over the page is not. */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .project-card,
   .project-card:hover {
@@ -552,19 +577,6 @@ h1 {
     height: 100%;
     width: 100%;
 
-  }
-  #chart{
-    position:absolute;
-    right:100px;
-    bottom:100px;
-    height:250px;
-    width: 250px;
-    margin:0vh;
-    padding: 0.5em;
-    z-index:5;
-  }
-  #chart p { 
-    cursor: move; 
   }
   .ui-draggable, .ui-droppable {
     background-position: top;

@@ -151,7 +151,10 @@
     #result-error { display:none;padding:12px 16px;background:color-mix(in srgb,var(--color-kvot-accent) 10%,var(--bg-secondary));border:1px solid color-mix(in srgb,var(--color-kvot-accent) 30%,var(--border-color));border-radius:8px;color:var(--color-kvot-accent);font-size:.9rem;margin-bottom:14px; }
 
     /* Chart */
-    #chart { padding-top:100px;padding-left:100px;position:relative;width:100%;height:420px;background:var(--bg-primary);box-sizing:border-box; }
+    /* No padding: Plotly positions its plot against this element's padding
+       box, so the 100px that used to be here moved nothing and only made the
+       element wider than the column holding it. */
+    #chart { position:relative;width:100%;height:420px;background:var(--bg-primary);box-sizing:border-box; }
 
     /* Result details */
     #result-details { display:block; }
@@ -178,7 +181,7 @@
     .stats-grid { display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--border-color);border:1px solid var(--border-color);border-radius:10px;overflow:hidden;margin-bottom:12px; }
     .sg-item { background:var(--bg-secondary);padding:10px 14px;display:flex;justify-content:space-between;align-items:baseline;gap:8px; }
     .sg-label { font-size:.78rem;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);white-space:nowrap; }
-    .sg-value { font-size:.92rem;font-weight:600;color:var(--text-primary);font-family:'SF Mono',Menlo,Monaco,monospace;text-align:right;word-break:break-all; }
+    .sg-value { font-size:.92rem;font-weight:600;color:var(--text-primary);font-family:'SF Mono',Menlo,Monaco,monospace;text-align:right;overflow-wrap:anywhere; }
 
     /* Percentile band */
     .pct-band { border:1px solid var(--border-color);border-radius:10px;overflow:hidden;margin-bottom:12px; }
@@ -195,6 +198,7 @@
     #result-data-stats strong { color:var(--text-primary); }
 
     /* Equations table */
+    .eq-scroll { overflow-x:auto; }
     .eq-table { width:100%;border-collapse:collapse;font-size:.92rem; }
     .eq-table td { padding:5px 12px;vertical-align:middle;line-height:1.5; }
     .eq-table td:first-child { text-align:right;white-space:nowrap;width:120px;font-weight:600; }
@@ -211,8 +215,40 @@
 
     /* Responsive */
     @media (max-width:900px) { #logn{max-width:none;padding:20px 18px 40px} }
-    @media (max-width:700px) { #result-summary{grid-template-columns:1fr 1fr} .stats-grid{grid-template-columns:1fr 1fr} #metric-panels{flex-direction:column} .metric-panel{min-width:0} }
-    @media (max-width:480px) { #logn{padding:14px 12px 32px} .metric-panel{padding:14px} #result-summary{grid-template-columns:1fr 1fr;gap:8px} .stat-card-value{font-size:1.1rem} #chart{height:260px} .pct-cell{padding:8px 4px} .pct-v{font-size:.8rem} #tabs-header a{padding:5px 10px;font-size:.8rem} details summary.eq-summary{padding:10px 12px;font-size:.85rem} }
+    @media (max-width:700px) {
+      #result-summary{grid-template-columns:1fr 1fr}
+      .stats-grid{grid-template-columns:1fr 1fr}
+      #metric-panels{flex-direction:column}
+      .metric-panel{min-width:0}
+      /* One column well before the fields would collide: two columns of long
+         labels and short numbers wrap raggedly, and the wrap had been putting
+         "shade to percentile" on the line below the switch that governs it. */
+      .settings-body,.setting-group{flex-direction:column;align-items:stretch;gap:12px}
+      .setting-field input,.setting-field select{width:100%;min-width:0}
+      /* The switch reads beside its label rather than under it, and
+         align-self is reset: in a column its axis is the horizontal one. */
+      .setting-field.setting-check{align-self:stretch;grid-template-columns:auto 1fr;align-items:center;gap:9px}
+      .setting-field.setting-check span{order:2}
+      .setting-field.setting-check input[type="checkbox"]{order:1;width:auto;margin:0}
+    }
+    @media (max-width:480px) {
+      #logn{padding:14px 12px 32px}
+      .metric-panel{padding:14px}
+      #result-summary{grid-template-columns:1fr 1fr;gap:8px}
+      .stat-card-value{font-size:1.1rem}
+      #chart{height:300px}
+      .pct-cell{padding:8px 4px}
+      .pct-v{font-size:.8rem}
+      #tabs-header a{padding:5px 10px;font-size:.8rem}
+      details summary.eq-summary{padding:10px 12px;font-size:.85rem}
+      /* At two columns "excess kurtosis" leaves so little room that the number
+         beside it breaks between digits. */
+      .stats-grid{grid-template-columns:1fr}
+      .eq-table td{padding:5px 8px}
+      .eq-table td:first-child{width:auto}
+      .dist-bar-label{font-size:.68rem}
+      .cmp-table td{padding:6px 10px}
+    }
   </style>
   <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js" integrity="sha384-Wuix6BuhrWbjDBs24bXrjf4ZQ5aFeFWBuKkFekO2t8xFU0iNaLQfp2K6/1Nxveei" crossorigin="anonymous"></script>
   <script src="https://cdn.plot.ly/plotly-2.27.0.min.js" integrity="sha384-Hl48Kq2HifOWdXEjMsKo6qxqvRLTYqIGbvlENBmkHAxZKIGCXv43H6W1jA671RzC" crossorigin="anonymous"></script>
@@ -365,6 +401,7 @@
       <details id="equations-details">
         <summary class="eq-summary">Equations &amp; formulas</summary>
         <div class="section-body">
+          <div class="eq-scroll">
           <table class="eq-table">
             <tr class="eq-section"><td colspan="2">Log-space parameters</td></tr>
             <tr><td>\(\mu =\)</td><td>\(\ln\mu_g = \ln\bigl(\mu_a^2/\sqrt{\mu_a^2+\sigma_a^2}\bigr)\)</td></tr>
@@ -385,6 +422,7 @@
             <tr class="eq-section"><td colspan="2">Percentile inversion</td></tr>
             <tr><td>\(x_p =\)</td><td>\(\exp\bigl(\mu + \sigma\,\Phi^{-1}(p)\bigr)\)</td></tr>
           </table>
+          </div>
         </div>
       </details>
 
