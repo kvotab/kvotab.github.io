@@ -178,6 +178,16 @@ html[data-theme="dark"] .rdc-chart-window .ui-dialog-titlebar-close{border-color
 
     <div id="map" style="display:block"></div>
 
+    <!-- Outside the panel, because it has to stay when the panel does not. -->
+    <button type="button" id="treeShow" class="tree-tool tree-tool-square tree-show"
+            aria-expanded="false" aria-controls="tree"
+            aria-label="Show the element list" title="Show the element list">
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M9 5 16 12 9 19" fill="none" stroke="currentColor" stroke-width="2.2"
+              stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </button>
+
     <nav>
         <div class="tree-toolbar">
           <button type="button" id="treeToggle" class="tree-tool tree-tool-square"
@@ -330,13 +340,14 @@ function togglesort() {
 */
 function toggleTree() {
     const collapsed = document.body.classList.toggle('tree-collapsed');
-    const button = document.getElementById('treeToggle');
-    if (button) {
-        const action = collapsed ? 'Show the element list' : 'Hide the element list';
-        button.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-        button.setAttribute('aria-label', action);
-        button.title = action;
-    }
+    /* One button hides it from inside, the other brings it back from outside;
+       only one of the two is ever on screen. */
+    const hide = document.getElementById('treeToggle');
+    const show = document.getElementById('treeShow');
+    [hide, show].forEach(function (button) {
+        if (button) button.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    });
+    if (show) show.focus({ preventScroll: true });
     window.setTimeout(function () {
         if (typeof CY !== 'undefined' && CY && typeof CY.resize === 'function') CY.resize();
     }, 220);
@@ -377,6 +388,8 @@ document.addEventListener('DOMContentLoaded', function() {
     renderSortState();
     const treeBtn = document.getElementById('treeToggle');
     if (treeBtn) treeBtn.addEventListener('click', toggleTree);
+    const treeShowBtn = document.getElementById('treeShow');
+    if (treeShowBtn) treeShowBtn.addEventListener('click', toggleTree);
     const searchInput = document.getElementById('search-input');
     if (searchInput) {
         var searchTimer;
