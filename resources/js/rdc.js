@@ -65,7 +65,20 @@ $(function () {
     });
 
 });
+/* The size the chart dialog wants, and the most the window can give it. A
+   phone is narrower than 510, and jQuery UI writes the width onto the element,
+   so asking for more than there is puts the right-hand side out of reach. */
+const CHART_DIALOG_SIZE = { width: 510, height: 450 };
+
+function chartDialogSize() {
+    return {
+        width: Math.min(CHART_DIALOG_SIZE.width, window.innerWidth - 16),
+        height: Math.min(CHART_DIALOG_SIZE.height, window.innerHeight - 100)
+    };
+}
+
 $(function () {
+    const size = chartDialogSize();
     CHARTDIALOG.dialog({
         position: {
             my: "left top",
@@ -78,10 +91,22 @@ $(function () {
            resources/css/rdc.css (.no-close .ui-dialog-titlebar-close). */
         classes: { "ui-dialog": "no-close" },
         title: "Radionuclide decay chart",
-        width: 510,
-        height: 450,
+        width: size.width,
+        height: size.height,
         minHeight: 200,
-        minWidth: 510,
+        minWidth: Math.min(CHART_DIALOG_SIZE.width, size.width),
+    });
+
+    /* A rotation is a resize, and the dialog has to come back within the
+       screen it now has. Only ever shrinks it: a dialog the user has dragged
+       larger on a desktop is left alone. */
+    $(window).on('resize', function () {
+        const fitted = chartDialogSize();
+        const current = CHARTDIALOG.dialog('option', 'width');
+        CHARTDIALOG.dialog('option', 'minWidth', Math.min(CHART_DIALOG_SIZE.width, fitted.width));
+        if (typeof current === 'number' && current > fitted.width) {
+            CHARTDIALOG.dialog('option', 'width', fitted.width);
+        }
     });
 });
 
