@@ -338,8 +338,34 @@ function togglesort() {
   window changing, and cytoscape only listens to the window, so it is told
   once the panel has finished moving.
 */
-function toggleTree() {
-    const collapsed = document.body.classList.toggle('tree-collapsed');
+/*
+  Below this width the list is laid over the graph instead of beside it, so
+  having it open means the graph cannot be seen at all. Matches the breakpoint
+  in rdc.css.
+*/
+function treeCoversGraph() {
+    return window.matchMedia('(max-width: 600px)').matches;
+}
+
+/*
+  The page chooses U-238 for itself once the tree has loaded, through the same
+  path as a tap, and the list must not be put away for that. What separates the
+  two is whether anybody has touched the page yet: the startup selection
+  happens before any input exists.
+
+  Arming it on the selection itself does not work — jstree reports the change
+  asynchronously, and the handler calls search('') on its own tree, which
+  brings it round again.
+*/
+var treeSelectionIsUsers = false;
+['pointerdown', 'keydown'].forEach(function (type) {
+    document.addEventListener(type, function () { treeSelectionIsUsers = true; },
+                              { once: true, capture: true });
+});
+
+function setTreeCollapsed(collapsed, moveFocus) {
+    if (document.body.classList.contains('tree-collapsed') === collapsed) return;
+    document.body.classList.toggle('tree-collapsed', collapsed);
     /* One button hides it from inside, the other brings it back from outside;
        only one of the two is ever on screen. */
     const hide = document.getElementById('treeToggle');
@@ -347,10 +373,16 @@ function toggleTree() {
     [hide, show].forEach(function (button) {
         if (button) button.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
     });
-    if (show) show.focus({ preventScroll: true });
+    /* Only when the person asked for it: moving focus after they picked a
+       nuclide would take it off what they were reading. */
+    if (moveFocus && collapsed && show) show.focus({ preventScroll: true });
     window.setTimeout(function () {
         if (typeof CY !== 'undefined' && CY && typeof CY.resize === 'function') CY.resize();
     }, 220);
+}
+
+function toggleTree() {
+    setTreeCollapsed(!document.body.classList.contains('tree-collapsed'), true);
 }
 function findExactTreeNode(tree, value) {
     var query = String(value || '').trim();
@@ -800,6 +832,10 @@ NODE_MENU.addEventListener('click', function (event) {
         default:
             return;
     }
+    /* A one-shot command closes its menu; the swatches above return before
+       reaching here, because choosing a colour is something you do repeatedly
+       while watching the chart. */
+    closeNodeMenu();
     updateLevel('IC');
     runAndUpdateChart();
 });
@@ -1269,6 +1305,9 @@ $('#tree').jstree({
 
     if (node && node.type.endsWith('isotope')) {
         infodiv.classList.remove("show");
+        /* Choosing a nuclide is a request to see its chain, which on a phone
+           is behind the list that was just used to choose it. */
+        if (treeSelectionIsUsers && treeCoversGraph()) setTreeCollapsed(true, false);
         var ids = [node.text];
         const rnnode = getRn(node.text);
         xrn = (rnnode.A - rnnode.Z) * 100;
