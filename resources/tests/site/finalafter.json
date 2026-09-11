@@ -1,0 +1,651 @@
+{
+ "404.html::_console": [],
+ "404.html::chrome": {
+  "footerButtons": 2,
+  "footerIcons": 6,
+  "headerTag": "SECTION",
+  "headerTitle": null,
+  "kvotApi": [
+   "ICON_ADDRESS",
+   "ICON_MAIL",
+   "ICON_ORGNR",
+   "ICON_PHONE",
+   "ICON_VAT",
+   "PROJECTS",
+   "TILE_ATTRIBUTION",
+   "TILE_MAX_ZOOM",
+   "TILE_URL",
+   "initMap",
+   "renderFooter",
+   "renderHeader",
+   "renderNav",
+   "renderProjectCards",
+   "svgIcon",
+   "toggleMap",
+   "toggleTheme"
+  ],
+  "leafletLoadedEagerly": "undefined",
+  "mapContainer": false,
+  "mapVisibility": null,
+  "menuLinks": [
+   "./index.html",
+   "./rdc.html",
+   "./rb.html",
+   "./logn.html",
+   "./proj.html",
+   "./skbref.html",
+   "./skb_qa_summary.html"
+  ],
+  "navExpanded": "false",
+  "navToggleTag": "BUTTON",
+  "storedTheme": null,
+  "theme": "light",
+  "title": "Page not found \u2014 kvot ab"
+ },
+ "404.html::chrome.interactions": {
+  "ariaAfterOpen": "true",
+  "menuOpenAfterClick": true,
+  "menuOpenAfterEscape": false,
+  "themeFlipped": true,
+  "themePersisted": "dark",
+  "themeRestored": true
+ },
+ "404.html::notfound": {
+  "baseHref": "http://127.0.0.1:8765/",
+  "cards": 6,
+  "firstCardHref": "http://127.0.0.1:8765/rdc.html",
+  "h1": [
+   "Page not found"
+  ],
+  "robots": "noindex"
+ },
+ "index.html::_console": [],
+ "index.html::chrome": {
+  "footerButtons": 2,
+  "footerIcons": 6,
+  "headerTag": "SECTION",
+  "headerTitle": null,
+  "kvotApi": [
+   "ICON_ADDRESS",
+   "ICON_MAIL",
+   "ICON_ORGNR",
+   "ICON_PHONE",
+   "ICON_VAT",
+   "PROJECTS",
+   "TILE_ATTRIBUTION",
+   "TILE_MAX_ZOOM",
+   "TILE_URL",
+   "initMap",
+   "renderFooter",
+   "renderHeader",
+   "renderNav",
+   "renderProjectCards",
+   "svgIcon",
+   "toggleMap",
+   "toggleTheme"
+  ],
+  "leafletLoadedEagerly": "undefined",
+  "mapContainer": true,
+  "mapVisibility": "hidden",
+  "menuLinks": [
+   "./index.html",
+   "./rdc.html",
+   "./rb.html",
+   "./logn.html",
+   "./proj.html",
+   "./skbref.html",
+   "./skb_qa_summary.html"
+  ],
+  "navExpanded": "false",
+  "navToggleTag": "BUTTON",
+  "storedTheme": null,
+  "theme": "light",
+  "title": "kvot ab \u2014 modelling and software, Uppsala"
+ },
+ "index.html::chrome.interactions": {
+  "ariaAfterOpen": "true",
+  "leafletAfterToggle": "object",
+  "mapAfterSecondToggle": "hidden",
+  "mapAfterToggle": "visible",
+  "menuOpenAfterClick": true,
+  "menuOpenAfterEscape": false,
+  "themeFlipped": true,
+  "themePersisted": "dark",
+  "themeRestored": true,
+  "tiles": true
+ },
+ "index.html::landing": {
+  "cards": [
+   {
+    "descLength": 103,
+    "href": "./rdc.html",
+    "title": "Radionuclide Decay Chains"
+   },
+   {
+    "descLength": 104,
+    "href": "./rb.html",
+    "title": "HDF5 Browser"
+   },
+   {
+    "descLength": 118,
+    "href": "./logn.html",
+    "title": "Lognormal Conversions"
+   },
+   {
+    "descLength": 95,
+    "href": "./proj.html",
+    "title": "Swedish Coordinate Conversions"
+   },
+   {
+    "descLength": 88,
+    "href": "./skbref.html",
+    "title": "SKB Reference Checker"
+   },
+   {
+    "descLength": 91,
+    "href": "./skb_qa_summary.html",
+    "title": "SKB QA Summary"
+   }
+  ],
+  "contactIconTitles": [
+   "mail",
+   "phone",
+   "address",
+   "organisation number",
+   "VAT number"
+  ],
+  "contactIcons": 5,
+  "copyButtons": [
+   "559162-0306",
+   "SE559162030601"
+  ],
+  "h1": [
+   "kvot"
+  ],
+  "links": [
+   "https://skb.se",
+   "https://www.stralsakerhetsmyndigheten.se",
+   "https://www.icrp.org",
+   "https://se.mathworks.com/products/matlab.html",
+   "https://se.mathworks.com/products/simulink.html",
+   "https://se.mathworks.com/matlabcentral/fileexchange/"
+  ],
+  "metaDescription": "kvot ab is a modelling and software consultancy in Uppsala, Sweden. Free browser-based tools for radionuclide decay chains, HDF5 data, lognormal statistics and Swedish coordinate conversion."
+ },
+ "karaoke.html::_console": [],
+ "karaoke.html::chrome": {
+  "footerButtons": 2,
+  "footerIcons": 6,
+  "headerTag": "H1",
+  "headerTitle": "karaoke",
+  "kvotApi": [
+   "ICON_ADDRESS",
+   "ICON_MAIL",
+   "ICON_ORGNR",
+   "ICON_PHONE",
+   "ICON_VAT",
+   "PROJECTS",
+   "TILE_ATTRIBUTION",
+   "TILE_MAX_ZOOM",
+   "TILE_URL",
+   "initMap",
+   "renderFooter",
+   "renderHeader",
+   "renderNav",
+   "renderProjectCards",
+   "svgIcon",
+   "toggleMap",
+   "toggleTheme"
+  ],
+  "leafletLoadedEagerly": "undefined",
+  "mapContainer": false,
+  "mapVisibility": null,
+  "menuLinks": [
+   "./index.html",
+   "./rdc.html",
+   "./rb.html",
+   "./logn.html",
+   "./proj.html",
+   "./skbref.html",
+   "./skb_qa_summary.html"
+  ],
+  "navExpanded": "false",
+  "navToggleTag": "BUTTON",
+  "storedTheme": null,
+  "theme": "light",
+  "title": "karaoke \u2013 kvot ab"
+ },
+ "karaoke.html::chrome.interactions": {
+  "ariaAfterOpen": "true",
+  "menuOpenAfterClick": true,
+  "menuOpenAfterEscape": false,
+  "themeFlipped": true,
+  "themePersisted": "dark",
+  "themeRestored": true
+ },
+ "karaoke.html::karaoke.dom": {
+  "controls": [
+   "edit-toggle",
+   "edit-time-shift",
+   "edit-video-id",
+   "edit-add-row",
+   "edit-save",
+   "edit-export",
+   "edit-import",
+   "edit-reset",
+   "edit-import-file"
+  ],
+  "globals": [
+   "lyricRows=undefined",
+   "timeShift=undefined",
+   "videoId=undefined",
+   "player=undefined"
+  ],
+  "lang": "sv",
+  "lyricStage": true,
+  "playerWrap": true
+ },
+ "logn.html::_console": [],
+ "logn.html::chrome": {
+  "footerButtons": 2,
+  "footerIcons": 6,
+  "headerTag": "H1",
+  "headerTitle": "Lognormal Conversions",
+  "kvotApi": [
+   "ICON_ADDRESS",
+   "ICON_MAIL",
+   "ICON_ORGNR",
+   "ICON_PHONE",
+   "ICON_VAT",
+   "PROJECTS",
+   "TILE_ATTRIBUTION",
+   "TILE_MAX_ZOOM",
+   "TILE_URL",
+   "initMap",
+   "renderFooter",
+   "renderHeader",
+   "renderNav",
+   "renderProjectCards",
+   "svgIcon",
+   "toggleMap",
+   "toggleTheme"
+  ],
+  "leafletLoadedEagerly": "undefined",
+  "mapContainer": true,
+  "mapVisibility": "hidden",
+  "menuLinks": [
+   "./index.html",
+   "./rdc.html",
+   "./rb.html",
+   "./proj.html",
+   "./skbref.html",
+   "./skb_qa_summary.html"
+  ],
+  "navExpanded": "false",
+  "navToggleTag": "BUTTON",
+  "storedTheme": null,
+  "theme": "light",
+  "title": "Lognormal Conversions \u2014 kvot ab"
+ },
+ "logn.html::chrome.interactions": {
+  "ariaAfterOpen": "true",
+  "leafletAfterToggle": "object",
+  "mapAfterSecondToggle": "hidden",
+  "mapAfterToggle": "visible",
+  "menuOpenAfterClick": true,
+  "menuOpenAfterEscape": false,
+  "themeFlipped": true,
+  "themePersisted": "dark",
+  "themeRestored": true,
+  "tiles": true
+ },
+ "logn.html::lognormal.math": {
+  "initialOutputs": {},
+  "inputCount": 23,
+  "resultText": "DISTRIBUTIONS + add \u03bc mean gm mode percentile min/max \u03c3 sd gsd CV error factor data Select up to two metrics for the selected distribution, or data on its own \u2014 a data set is fitted to a distribution of its own. Click a selected metric to deselect it. \u039c \ud835\udf07 \u2208 (\u2212\u221e, +\u221e) \u2014 mean of the natural logarithm \u03a3 \ud835\udf0e > 0 \u2014 standard deviation of the natural logarithm Computed results \u039c 0 log-mean \u03a3 1 log-std dev",
+  "selectedTabs": [
+   "\u03bc",
+   "\u03c3"
+  ],
+  "tabs": [
+   "\u03bc",
+   "mean",
+   "gm",
+   "mode",
+   "percentile",
+   "min/max",
+   "\u03c3",
+   "sd",
+   "gsd",
+   "CV",
+   "error factor",
+   "data"
+  ]
+ },
+ "logn.html::lognormal.recompute": {
+  "afterMuSigma": "DISTRIBUTIONS + add \u03bc mean gm mode percentile min/max \u03c3 sd gsd CV error factor data Select up to two metrics for the selected distribution, or data on its own \u2014 a data set is fitted to a distribution of its own. Click a selected metric to deselect it. \u039c \ud835\udf07 \u2208 (\u2212\u221e, +\u221e) \u2014 mean of the natural logarithm \u03a3 \ud835\udf0e > 0 \u2014 standard deviation of the natural logarithm Computed results \u039c 1 log-mean \u03a3 2 log-std dev MEAN 20.086 arithmetic MEDIAN 2.7183 = geom. mean MODE 0.049787 STD DEV 147.05 VARIANCE 21623 GSD 7",
+  "visibleFields": [
+   {
+    "id": "mu",
+    "value": "0"
+   },
+   {
+    "id": "sigma",
+    "value": "1"
+   }
+  ]
+ },
+ "proj.html::_console": [],
+ "proj.html::chrome": {
+  "footerButtons": 2,
+  "footerIcons": 6,
+  "headerTag": "H1",
+  "headerTitle": "Swedish Coordinate Conversions",
+  "kvotApi": [
+   "ICON_ADDRESS",
+   "ICON_MAIL",
+   "ICON_ORGNR",
+   "ICON_PHONE",
+   "ICON_VAT",
+   "PROJECTS",
+   "TILE_ATTRIBUTION",
+   "TILE_MAX_ZOOM",
+   "TILE_URL",
+   "initMap",
+   "renderFooter",
+   "renderHeader",
+   "renderNav",
+   "renderProjectCards",
+   "svgIcon",
+   "toggleMap",
+   "toggleTheme"
+  ],
+  "leafletLoadedEagerly": "object",
+  "mapContainer": true,
+  "mapVisibility": "hidden",
+  "menuLinks": [
+   "./index.html",
+   "./rdc.html",
+   "./rb.html",
+   "./logn.html",
+   "./skbref.html",
+   "./skb_qa_summary.html"
+  ],
+  "navExpanded": "false",
+  "navToggleTag": "BUTTON",
+  "storedTheme": null,
+  "theme": "light",
+  "title": "Swedish Coordinate Conversions \u2014 kvot ab"
+ },
+ "proj.html::chrome.interactions": {
+  "ariaAfterOpen": "true",
+  "leafletAfterToggle": "object",
+  "mapAfterSecondToggle": "hidden",
+  "mapAfterToggle": "visible",
+  "menuOpenAfterClick": true,
+  "menuOpenAfterEscape": false,
+  "themeFlipped": true,
+  "themePersisted": "dark",
+  "themeRestored": true,
+  "tiles": true
+ },
+ "proj.html::coords.bulk": {
+  "buttonFound": true,
+  "result": null,
+  "status": "2 of 2 rows converted"
+ },
+ "proj.html::coords.convert": {
+  "coordMapReady": true,
+  "setLat": true,
+  "setLon": true,
+  "tiles": true,
+  "values": {
+   "e_sweref99": "674570.668",
+   "lat_dd": "59.329323",
+   "lat_dm": "N 59\u00b0 19.7594'",
+   "lat_dms": "N 59\u00b0 19' 45.56\"",
+   "long_dd": "18.068581",
+   "long_dm": "E 18\u00b0 4.1149'",
+   "long_dms": "E 18\u00b0 4' 6.89\"",
+   "n_sweref99": "6580745.518",
+   "proj_rt90": "rt90_2.5_gon_v",
+   "proj_sweref99": "sweref_99_tm",
+   "x_rt90": "6580911.174",
+   "y_rt90": "1628831.358"
+  }
+ },
+ "proj.html::coords.zones": {
+  "fmtDms": "15\u00b048\u203222.6\u2033",
+  "pointInZone": true,
+  "rt90Zones": 6,
+  "sweref99Zones": 13,
+  "zoneBounds": "{\"polygon\":true,\"key\":\"sweref_99_1200\"}"
+ },
+ "rdc.html::_console": [
+  "warning: You have set a custom wheel sensitivity.  This will make your app zoom unnaturally when using mainstream mice.  You should change this value"
+ ],
+ "rdc.html::chrome": {
+  "footerButtons": 4,
+  "footerIcons": 8,
+  "headerTag": "H1",
+  "headerTitle": "Radionuclide Decay Chains ICRP Publication 107",
+  "kvotApi": [
+   "ICON_ADDRESS",
+   "ICON_MAIL",
+   "ICON_ORGNR",
+   "ICON_PHONE",
+   "ICON_VAT",
+   "PROJECTS",
+   "TILE_ATTRIBUTION",
+   "TILE_MAX_ZOOM",
+   "TILE_URL",
+   "initMap",
+   "renderFooter",
+   "renderHeader",
+   "renderNav",
+   "renderProjectCards",
+   "svgIcon",
+   "toggleMap",
+   "toggleTheme"
+  ],
+  "leafletLoadedEagerly": "undefined",
+  "mapContainer": true,
+  "mapVisibility": "hidden",
+  "menuLinks": [
+   "./index.html",
+   "./rb.html",
+   "./logn.html",
+   "./proj.html",
+   "./skbref.html",
+   "./skb_qa_summary.html"
+  ],
+  "navExpanded": "false",
+  "navToggleTag": "BUTTON",
+  "storedTheme": null,
+  "theme": "light",
+  "title": "Radionuclide Decay Chains (ICRP Publication 107) \u2014 kvot ab"
+ },
+ "rdc.html::chrome.interactions": {
+  "ariaAfterOpen": "true",
+  "leafletAfterToggle": "object",
+  "mapAfterSecondToggle": "hidden",
+  "mapAfterToggle": "visible",
+  "menuOpenAfterClick": true,
+  "menuOpenAfterEscape": false,
+  "themeFlipped": true,
+  "themePersisted": "dark",
+  "themeRestored": true,
+  "tiles": true
+ },
+ "rdc.html::decay.select": {
+  "linkFound": true,
+  "nodesAfterSelect": 0,
+  "searchValue": ""
+ },
+ "rdc.html::decay.tree": {
+  "cytoscapeReady": "function",
+  "dataLoaded": true,
+  "elementsListed": [
+   "Hydrogen",
+   "Helium",
+   "Lithium",
+   "Beryllium",
+   "Boron",
+   "Carbon"
+  ],
+  "graphNodes": 0,
+  "jquery": "3.6.0",
+  "plotly": "object",
+  "treeItems": 133
+ },
+ "skb_qa_summary.html::_console": [],
+ "skb_qa_summary.html::chrome": {
+  "footerButtons": 2,
+  "footerIcons": 6,
+  "headerTag": "H1",
+  "headerTitle": "SKB QA summary",
+  "kvotApi": [
+   "ICON_ADDRESS",
+   "ICON_MAIL",
+   "ICON_ORGNR",
+   "ICON_PHONE",
+   "ICON_VAT",
+   "PROJECTS",
+   "TILE_ATTRIBUTION",
+   "TILE_MAX_ZOOM",
+   "TILE_URL",
+   "initMap",
+   "renderFooter",
+   "renderHeader",
+   "renderNav",
+   "renderProjectCards",
+   "svgIcon",
+   "toggleMap",
+   "toggleTheme"
+  ],
+  "leafletLoadedEagerly": "undefined",
+  "mapContainer": true,
+  "mapVisibility": "hidden",
+  "menuLinks": [
+   "./index.html",
+   "./rdc.html",
+   "./rb.html",
+   "./logn.html",
+   "./proj.html",
+   "./skbref.html"
+  ],
+  "navExpanded": "false",
+  "navToggleTag": "BUTTON",
+  "storedTheme": null,
+  "theme": "light",
+  "title": "SKB QA Summary \u2014 kvot ab"
+ },
+ "skb_qa_summary.html::chrome.interactions": {
+  "ariaAfterOpen": "true",
+  "leafletAfterToggle": "object",
+  "mapAfterSecondToggle": "hidden",
+  "mapAfterToggle": "visible",
+  "menuOpenAfterClick": true,
+  "menuOpenAfterEscape": false,
+  "themeFlipped": true,
+  "themePersisted": "dark",
+  "themeRestored": true,
+  "tiles": true
+ },
+ "skb_qa_summary.html::qa.helpers": {
+  "csvCell": "\"a\"\"b\"",
+  "dropzone": true,
+  "esc": "&lt;b&gt;&amp;x&lt;/b&gt;",
+  "filterIds": [
+   "file-filter",
+   "sheet-filter",
+   "reviewer-filter",
+   "status-filter",
+   "id-search"
+  ],
+  "headerTitle": "SKB QA summary",
+  "normalize": "ok",
+  "privacyNote": "Bearbetning sker lokalt i webbl\u00e4saren \u2014 inga filer laddas upp.",
+  "workspaceHidden": "",
+  "xlsx": "object"
+ },
+ "skbref.html::_console": [],
+ "skbref.html::chrome": {
+  "footerButtons": 2,
+  "footerIcons": 6,
+  "headerTag": "H1",
+  "headerTitle": "SKB Reference Checker",
+  "kvotApi": [
+   "ICON_ADDRESS",
+   "ICON_MAIL",
+   "ICON_ORGNR",
+   "ICON_PHONE",
+   "ICON_VAT",
+   "PROJECTS",
+   "TILE_ATTRIBUTION",
+   "TILE_MAX_ZOOM",
+   "TILE_URL",
+   "initMap",
+   "renderFooter",
+   "renderHeader",
+   "renderNav",
+   "renderProjectCards",
+   "svgIcon",
+   "toggleMap",
+   "toggleTheme"
+  ],
+  "leafletLoadedEagerly": "undefined",
+  "mapContainer": true,
+  "mapVisibility": "hidden",
+  "menuLinks": [
+   "./index.html",
+   "./rdc.html",
+   "./rb.html",
+   "./logn.html",
+   "./proj.html",
+   "./skb_qa_summary.html"
+  ],
+  "navExpanded": "false",
+  "navToggleTag": "BUTTON",
+  "storedTheme": null,
+  "theme": "light",
+  "title": "SKB Reference Checker \u2014 kvot ab"
+ },
+ "skbref.html::chrome.interactions": {
+  "ariaAfterOpen": "true",
+  "leafletAfterToggle": "object",
+  "mapAfterSecondToggle": "hidden",
+  "mapAfterToggle": "visible",
+  "menuOpenAfterClick": true,
+  "menuOpenAfterEscape": false,
+  "themeFlipped": true,
+  "themePersisted": "dark",
+  "themeRestored": true,
+  "tiles": true
+ },
+ "skbref.html::rules": {
+  "chemistry": [
+   "H2O=true",
+   "CO2=true",
+   "CaCO3=true",
+   "SFR1=false",
+   "CCP33=false"
+  ],
+  "citationRules": 12,
+  "collation": [
+   "Berg Adams C",
+   "Berggren B",
+   "Berg-Liljeblad A",
+   "\u00dcnger",
+   "\u00d6berg"
+  ],
+  "dropzone": true,
+  "fixtureCases": 74,
+  "fixtureFailures": 0,
+  "officialRules": 84,
+  "reviewRules": 192,
+  "rulePacks": [
+   "Project terminology (built in)"
+  ]
+ }
+}
