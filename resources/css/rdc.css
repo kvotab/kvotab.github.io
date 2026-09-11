@@ -1030,6 +1030,102 @@ th {
 }
 
 /* ==========================================================================
+   ELEMENT LIST
+   ========================================================================== */
+/*
+  jstree's own theme draws from a sprite sheet and uses none of the site's
+  colours. These rules replace the parts that show: the arrows, the row
+  treatment and the indent guides. Behaviour is jstree's throughout.
+*/
+
+/* No sprite: neither the connector dots on a row nor the arrow cell. */
+#tree .jstree-node,
+#tree .jstree-ocl {
+	background: none !important;
+}
+
+/* The arrow, drawn rather than sampled — two borders turned through 45°. */
+#tree .jstree-ocl {
+	position: relative;
+	cursor: pointer;
+}
+#tree .jstree-ocl::before {
+	content: '';
+	position: absolute;
+	inset: 0;
+	width: 6px;
+	height: 6px;
+	margin: auto;
+	border-right: 2px solid var(--text-muted);
+	border-bottom: 2px solid var(--text-muted);
+	border-radius: 1px;
+	/* Pointing right, and a quarter turn further when the node is open. */
+	transform: translateX(-2px) rotate(-45deg);
+	transition: transform .16s ease, border-color .16s ease;
+}
+#tree .jstree-open > .jstree-ocl::before {
+	transform: translateY(-2px) rotate(45deg);
+}
+#tree .jstree-ocl:hover::before {
+	border-color: var(--color-kvot-bright);
+}
+/* A leaf has an arrow element but nothing to open. */
+#tree .jstree-leaf > .jstree-ocl::before {
+	display: none;
+}
+
+/* The row itself: a rounded highlight rather than jstree's outline. */
+#tree .jstree-anchor {
+	padding-right: 12px;
+	border-radius: 8px;
+	transition: background-color .12s ease, color .12s ease, box-shadow .12s ease;
+}
+#tree .jstree-anchor:hover,
+#tree .jstree-hovered {
+	background: var(--bg-surface) !important;
+	box-shadow: none !important;
+	color: var(--text-primary);
+}
+#tree .jstree-clicked,
+#tree .jstree-anchor.jstree-clicked:hover {
+	background: color-mix(in srgb, var(--color-kvot-bright) 20%, transparent) !important;
+	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-kvot-bright) 50%, transparent) !important;
+	color: var(--text-primary);
+	font-weight: 600;
+}
+#tree .jstree-anchor:focus-visible {
+	outline: 2px solid var(--color-kvot-bright);
+	outline-offset: -2px;
+}
+
+/*
+  A guide down each level of nesting, in place of the dotted connectors. It is
+  drawn on the child list rather than on every row, so it is one line per
+  level instead of one fragment per item.
+*/
+#tree .jstree-children {
+	position: relative;
+}
+/* :not(.jstree-container-ul) — the root carries the same class as the child
+   lists, and there is no indent at that level to guide. */
+#tree .jstree-children:not(.jstree-container-ul)::before {
+	content: '';
+	position: absolute;
+	top: 2px;
+	bottom: 2px;
+	left: 11px;
+	border-left: 1px solid var(--border-color);
+	pointer-events: none;
+}
+
+/* The search match, which jstree marks but does not style visibly. */
+#tree .jstree-search {
+	font-style: normal;
+	color: var(--color-kvot-bright);
+	font-weight: 700;
+}
+
+/* ==========================================================================
    TOUCH TARGETS
    ========================================================================== */
 /*
@@ -1051,14 +1147,6 @@ th {
     width: 40px;
     height: 40px;
     line-height: 40px;
-  }
-  /*
-    The arrow is a cell of a sprite sheet placed by offset, so a taller box
-    leaves it sitting high rather than centred. Only the vertical offset
-    changes — the horizontal one chooses which arrow is shown.
-  */
-  #tree .jstree-ocl {
-    background-position-y: 4px !important;
   }
   /* The element icons are data-URI SVGs, so they simply scale. */
   #tree .jstree-themeicon-custom {
