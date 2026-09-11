@@ -118,7 +118,7 @@ html[data-theme="dark"] .rdc-chart-window .ui-dialog-titlebar-close{border-color
             <br>
             <h3 id="help-dialog-title">Radionuclide Decay Chains</h3>
             <p>
-                This webpage serves as a comprehensive tool for generating illustrations depicting radionuclide decay chains as defined in the <a href="https://www.icrp.org/publication.asp?id=ICRP%20Publication%20107" target="_blank" rel="noopener noreferrer" title="ICRP, 2008.">ICRP 2008</a>-database. Additionally, it offers the functionality to compute and visualize the temporal progression of radionuclide decay and ingrowth based on user-defined initial conditions. Users can access radionuclide-specific settings by right-clicking on a particular radionuclide within the chart.
+                This webpage serves as a comprehensive tool for generating illustrations depicting radionuclide decay chains as defined in the <a href="https://www.icrp.org/publication.asp?id=ICRP%20Publication%20107" target="_blank" rel="noopener noreferrer" title="ICRP, 2008.">ICRP 2008</a>-database. Additionally, it offers the functionality to compute and visualize the temporal progression of radionuclide decay and ingrowth based on user-defined initial conditions. Users can access radionuclide-specific settings by right-clicking a radionuclide in the chart, or by tapping one on a touch screen.
             </p><p>
                 The time evolution of radionuclide-specific characteristics can be displayed in a range of units including activity (measured in Becquerels, Bq), quantity (measured in moles), radiotoxicity upon ingestion (measured in Sieverts, Sv), external radiotoxicity (measured in Sv/(s m3)), and energy emission rate (measured in megaelectronvolts per second, MeV/s). Furthermore, users can view the total energy emission rate or analyze it separately according to alpha emissions, electron emissions (including beta emissions), or photon emissions.
             </p><p>
@@ -709,6 +709,7 @@ function positionNodeMenu(x, y) {
 
 function openNodeMenu(event) {
     var node = event.target;
+    if (!NODE_MENU.hidden && nodeMenuTarget === node) return;
     nodeMenuTarget = node;
     document.getElementById('node-menu-title').textContent = node.id();
     markNodeMenuState(node);
@@ -792,12 +793,36 @@ NODE_MENU.addEventListener('click', function (event) {
 
 buildNodeMenuChoices();
 
+/** Did this come from a finger rather than a mouse? */
+function isTouchGesture(event) {
+    var original = event.originalEvent;
+    if (!original) return false;
+    if (typeof original.pointerType === 'string') {
+        return original.pointerType === 'touch' || original.pointerType === 'pen';
+    }
+    return typeof TouchEvent !== 'undefined' && original instanceof TouchEvent;
+}
+
 CY.on('cxttap', 'node[type=' + TYPE_NUCLIDE + ']', function (event) {
     nodeMenuOpener = document.activeElement;
     openNodeMenu(event);
 });
-/* Long press is the same gesture on a touch screen. */
+
+/*
+  A tap opens it on a touch screen, where there is no right button and a long
+  press is a gesture nothing on screen advertises. A mouse click is left alone:
+  on a desktop the menu belongs to the right button.
+*/
+CY.on('tap', 'node[type=' + TYPE_NUCLIDE + ']', function (event) {
+    if (!isTouchGesture(event)) return;
+    nodeMenuOpener = null;
+    openNodeMenu(event);
+});
+
+/* Long press still works, and some browsers send a tap on release as well —
+   reopening for the node already showing would only move the menu. */
 CY.on('taphold', 'node[type=' + TYPE_NUCLIDE + ']', function (event) {
+    if (!NODE_MENU.hidden && nodeMenuTarget === event.target) return;
     nodeMenuOpener = null;
     openNodeMenu(event);
 });
