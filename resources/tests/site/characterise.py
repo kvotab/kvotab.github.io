@@ -145,7 +145,7 @@ PAGES = {
         })()"""),
         ('lognormal.recompute', """(async () => {
           const out = {};
-          const fields = [...document.querySelectorAll('#logn input')].filter(i => i.offsetParent !== null);
+          const fields = [...document.querySelectorAll('#metric-panels input')].filter(i => i.offsetParent !== null);
           out.visibleFields = fields.map(f => ({ id: f.id || f.dataset.field || f.name, value: f.value }));
           if (fields.length >= 2) {
             fields[0].value = '1'; fields[0].dispatchEvent(new Event('input', { bubbles: true }));

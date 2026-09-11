@@ -34,7 +34,7 @@ Per page, additionally:
 |---|---|
 | index | project cards, contact icons and their titles, copy buttons, links, meta description |
 | 404 | cards, `<base>` resolution, robots |
-| logn | tab set, input count, the computed result text before and after entering μ and σ |
+| logn | distribution tabs, metric tab set, input count, the computed result text before and after entering μ and σ |
 | proj | a WGS 84 → RT 90 → SWEREF 99 conversion field by field, bulk conversion, zone tables, `fmt_dms`, point-in-zone |
 | rdc | element tree, cytoscape/jQuery/Plotly readiness, decay data loaded, selecting an element |
 | skbref | rule counts, the in-page guide fixture, SKB collation, chemical-formula detection, rule packs |
@@ -169,3 +169,70 @@ was gained was an error telling the reader the page had stopped working.
 Three things are asserted, because the first passed even while the bug was
 present: that a report is produced, that no error reaches the page, and that the
 worker actually receives the parsing rather than pdf.js quietly falling back.
+
+## test-chrome-distributions.py
+
+logn.html holding several distributions at once.
+
+    python3 -m http.server 8765 --bind 127.0.0.1
+    "$CHROME" --headless=new --remote-debugging-port=9222 --user-data-dir=/tmp/p
+    python3 resources/tests/site/test-chrome-distributions.py
+
+Only the selected distribution has panels in the DOM. Every other one is
+computed from a store of what was typed into it, and the three ways that store
+can go wrong are all silent:
+
+**One distribution's values written into another's store.** The panels are
+cleared and rebuilt when the selection changes, so what is on screen is kept
+first. After a *distribution* switch the panels still hold the outgoing one's
+values while the incoming one is already active — and the fields line up
+exactly whenever the two were built from the same metrics. Selecting B after A
+copied A's numbers into B and destroyed B's own. The panels are now stamped
+with the distribution they were built for, and the store is written only while
+that stamp matches. The test builds A and B on μ and σ and C on mean and GSD,
+precisely so that A and B collide and C does not.
+
+**A typed value rebuilt from its own result.** Filling each panel from the
+distribution's μ and σ is what lets a metric swap carry the distribution
+across, and applying it to a value the user typed turns 50 into the 50 that
+comes back out of `exp(ln(50))`. A stored value now wins, and the derived value
+fills only what has none.
+
+**The distribution forgotten between two metrics.** Swapping σ for GSD passes
+through a moment where only one metric is selected and the distribution is
+undetermined. Treating that as "no result" threw away the μ and σ that GSD's
+starting value is derived from, so it offered the template default of 1 instead
+of e^σ. A half-filled form is no longer a reason to forget; a contradictory one
+still is.
+
+It also asserts that one distribution that does not resolve leaves the others
+on the chart, and that with a single distribution the chart draws the exact
+five traces it drew before there could be several — that being the case every
+existing user of the page is in.
+
+The chart opens on the log scale, so the linear branch is no longer reached by
+simply loading the page. Unticking `ln(x) view` has to give the same
+distribution over the same percentiles, which is the same axis range
+exponentiated, and that is checked rather than assumed.
+
+Data is fitted to a distribution of its own, so it shares one with nothing: it
+is disabled while a metric is selected and every metric is disabled while it
+is. Both directions are asserted, and so is the pair of clicks that should
+change nothing. What deselecting must not throw away is the pasted values — the
+store keeps what μ and σ cannot reconstruct, and losing a data set to a
+mis-click would be worse than offering it again. The raw-data switch is checked
+to take the histogram and the step CDF off the chart without taking the fit
+with them.
+
+The chart is open when the page loads, which is two claims rather than one:
+`drawChart()` refuses to run against a closed `<details>` because it has no
+dimensions to size to, so the test reads the trace list and the plot width
+before touching anything.
+
+Finally the two chart switches, because switching a thing off must also switch
+off what validates it. The shade percentiles describe the band and nothing
+else; leaving them validated meant a range left over from an earlier chart
+blocked every redraw while the band it described was not being drawn at all.
+The test puts a shade percentile outside the chart bounds, confirms it is
+reported while the band is on, and confirms it stops blocking — and that the
+fields grey out — once the band is off.
