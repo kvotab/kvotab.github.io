@@ -784,6 +784,39 @@ th {
   opacity:1;
   pointer-events: auto;
 }
+/* Sticky rather than absolute: the box scrolls its own content when the
+   screen is short, and the way out must not scroll away with it. */
+.info-close {
+  position: sticky;
+  top: 0;
+  /* A line of its own, not a float: the table below establishes its own
+     formatting context and would not flow around it, so a floated button
+     landed on top of the periodic-table locator. */
+  display: block;
+  margin: -4px -4px 8px auto;
+  z-index: 1;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid currentColor;
+  border-radius: 7px;
+  background: var(--bg-primary);
+  color: inherit;
+  font: inherit;
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+  opacity: .75;
+}
+.info-close:hover { opacity: 1; }
+.info-close:focus-visible {
+  outline: 2px solid var(--color-kvot-bright);
+  outline-offset: 2px;
+  opacity: 1;
+}
+@media (pointer: coarse) {
+  .info-close { width: 38px; height: 38px; }
+}
 #info.Alkali_metal {
   background-color: color-mix(in srgb, rgb(0, 128, 0) 30%, var(--bg-primary));
   border-color: rgb(0, 128, 0);

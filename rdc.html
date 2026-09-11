@@ -833,9 +833,17 @@ CY.on('tap', function (event) { if (event.target === CY) closeNodeMenu(); });
 
 document.addEventListener('pointerdown', function (event) {
     if (!NODE_MENU.hidden && !NODE_MENU.contains(event.target)) closeNodeMenu();
+    /* The press that selects an element in the tree lands before the box is
+       shown, so this cannot close the box it is about to open. */
+    var info = document.getElementById('info');
+    if (info && info.classList.contains('show') && !info.contains(event.target)) {
+        hideElementInformation();
+    }
 });
 document.addEventListener('keydown', function (event) {
-    if (event.key === 'Escape') closeNodeMenu();
+    if (event.key !== 'Escape') return;
+    closeNodeMenu();
+    hideElementInformation();
 });
 /* Without this the browser's own menu opens on top of this one. */
 document.getElementById('cy').addEventListener('contextmenu', function (event) {
@@ -1160,8 +1168,24 @@ function appendSanitizedMarkup(container, markup) {
     });
     Array.from(doc.body.childNodes).forEach(function (node) { container.appendChild(document.importNode(node, true)); });
 }
+/** Put the element information away. */
+function hideElementInformation() {
+    var info = document.getElementById('info');
+    if (info) info.classList.remove('show');
+}
+
 function renderElementInformation(container, node, a) {
     container.replaceChildren();
+    /* The box covers the list it was opened from, so it has to carry its own
+       way out rather than relying on selecting something else. */
+    var close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'info-close';
+    close.title = 'Close';
+    close.setAttribute('aria-label', 'Close element information');
+    close.textContent = '\u00d7';
+    close.addEventListener('click', hideElementInformation);
+    container.appendChild(close);
     var table = document.createElement('table'); table.className = 'element-info-table';
     function row(cells) { var tr=document.createElement('tr'); cells.forEach(function(c){tr.appendChild(c);});table.appendChild(tr);return tr; }
     function cell(tag,text,className,colspan){var e=document.createElement(tag);if(className)e.className=className;if(colspan)e.colSpan=colspan;if(text!==undefined)e.textContent=text;return e;}
