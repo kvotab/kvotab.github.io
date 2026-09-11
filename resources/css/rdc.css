@@ -554,6 +554,29 @@ body.tree-collapsed .tree-show {
 	box-shadow: 0 2px 10px rgba(0, 0, 0, .35);
 }
 
+/*
+  jQuery UI hangs its resize handles off the outside of the frame — right: -5px
+  and so on — and the frame is clipped so its rounded corners hold. The two met
+  at a 2px sliver of handle that no pointer could find, so the window could not
+  be made wider or narrower at all. Moved inside, where the clip cannot reach
+  them, and widened to something a hand can hit.
+
+  The top edge is left alone: that is the title bar, and a handle lying over it
+  would take the drags that move the window.
+*/
+.rdc-chart-window .ui-resizable-e { right: 0; width: 9px; }
+.rdc-chart-window .ui-resizable-w { left: 0; width: 9px; }
+.rdc-chart-window .ui-resizable-s { bottom: 0; height: 9px; }
+.rdc-chart-window .ui-resizable-se {
+	right: 1px;
+	bottom: 1px;
+	width: 16px;
+	height: 16px;
+	/* The theme's grip image is drawn for the old offset and lands outside. */
+	background: none;
+}
+.rdc-chart-window .ui-resizable-sw { left: 1px; bottom: 1px; width: 16px; height: 16px; }
+
 /* The chart window opens over the top-right of the graph, so the control that
    asks for it sits in the opposite corner rather than under what it opens.
    Below the list (z-index 5), which covers the graph whole on a phone. */
