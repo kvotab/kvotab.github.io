@@ -105,3 +105,67 @@ is fetched, and the loaded `skb-pdf.js` is identified before any measurement is
 taken. Navigating first and disabling the cache afterwards leaves the page's
 own scripts served from cache, which had this test reporting a stale
 `resources/js/skb-pdf.js` as a code defect.
+
+## test-chrome-presets.py
+
+Importing chart presets on rb.html must merge, not replace.
+
+    python3 resources/tests/site/test-chrome-presets.py
+
+`importPresets()` used to pass the parsed file straight to
+`savePresetsToStorage()`, which overwrites the storage key outright — so
+importing a colleague's two presets destroyed every preset the user had built
+up, silently, and then reported success. Nothing looked wrong: the imported
+presets were all present. What was missing was everything else.
+
+The test seeds a collection, drives the real `importPresets()` (stubbing the
+file-input click so a file can be delivered to it), and asserts all four
+properties that matter: a preset absent from the file survives, a colliding one
+is replaced, a new one is added, and Default stays first.
+
+## test-chrome-bulk-worker.py
+
+proj.html's bulk conversion must run in its worker, and agree with the main
+thread.
+
+    python3 resources/tests/site/test-chrome-bulk-worker.py
+
+The worker is assembled by serialising page functions into a blob, which drops
+everything they closed over — the gausskruger module state, the zone tables,
+and `point_in_ring`. It threw a `ReferenceError` on its first message every
+time, and `worker.onerror` fell back to `convertMainThread()` without a word.
+Every bulk conversion ran on the main thread, which is precisely what the
+worker exists to avoid.
+
+Both halves are asserted, because either alone would have passed while the bug
+was present: the fallback is spied on and must not be taken, *and* the worker's
+numbers must equal the main thread's. The `sweref_99_1200` pair is the
+important one — a local zone with polygon bounds, so it exercises
+`point_in_zone_bounds` → `point_in_ring` → `sweref99_zone_polygons`, the
+dependencies that were missing.
+
+## test-chrome-file-origin.py
+
+skbref.html opened from the filesystem rather than from a server.
+
+    python3 resources/tests/pdf/build-fixture-pair.py resources/tests/pdf
+    "$CHROME" --headless=new --remote-debugging-port=9222 --user-data-dir=/tmp/p
+    python3 resources/tests/site/test-chrome-file-origin.py
+
+No server: that is the point. Every other test here loads the page over http,
+so none of them could see this. A page opened with `file://` has a null origin,
+which makes every blob URL it creates `blob:null/...`. Given a worker URL it
+considers cross-origin, pdf.js wraps it in a second blob that calls
+`importScripts()` on the first — and a worker started from a blob cannot
+`importScripts` a null-origin blob, so the worker died on every PDF:
+
+    Failed to execute 'importScripts' on 'WorkerGlobalScope'
+    The script at 'blob:null/...' failed to load
+
+pdf.js then parsed on the main thread. The analysis was still correct, which is
+why this went unreported for so long — what was lost was the speed, and what
+was gained was an error telling the reader the page had stopped working.
+
+Three things are asserted, because the first passed even while the bug was
+present: that a report is produced, that no error reaches the page, and that the
+worker actually receives the parsing rather than pdf.js quietly falling back.

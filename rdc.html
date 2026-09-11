@@ -3,9 +3,9 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1"/>
-    <link href="./vendors/css/jquery-ui.css" rel="stylesheet"/>
-    <link href="./vendors/css/jstree/style.min.css" rel="stylesheet" />
-    <link href="./resources/css/rdc.css" rel="stylesheet" />
+    <link rel="stylesheet" href="https://code.jquery.com/ui/1.13.2/themes/base/jquery-ui.css" integrity="sha384-vIQIPaHJRqkO8xhnLxSZ0rHF6LyiWXbLF3grsa9pv9yDFyOPGrE1teHOuRNMJoZs" crossorigin="anonymous">
+    <link href="./vendors/css/jstree/style.min.css?v=20260911" rel="stylesheet" />
+    <link href="./resources/css/rdc.css?v=20260911" rel="stylesheet" />
   <script>
     // Set the theme before first paint so dark-mode visitors get no white flash.
     (function () {
@@ -16,18 +16,27 @@
       } catch (e) { /* storage unavailable — site.js will apply the default */ }
     })();
   </script>
-    <link href="./resources/css/kvot.css?v=20260910" rel="stylesheet" />  
-    <script src="./vendors/js/jquery-1.8.3.min.js"></script>
-    <script src="./vendors/js/jquery-ui-1.9.2.custom.min.js"></script>
-    <script src="./vendors/js/jstree.min.js"></script>
-    <script src="./resources/js/rndecaydata.js"></script>
-    <script src="./resources/js/rndatatree.js"></script>
-    <script src="./vendors/js/cytoscape.umd.js"></script>
-    <script src="./resources/js/ndf.min.js"></script>
-    <script src="./vendors/js/plotly-2.14.0.min.js"></script>
-    <script src="./vendors/js/math.min.js"></script>
-    <script src="./vendors/js/FileSaver.min.js"></script>
-    <script src="./vendors/js/cytoscape-cxtmenu2.js"></script>
+    <link href="./resources/css/kvot.css?v=20260911" rel="stylesheet" />  
+    <!--
+      jQuery 1.8.3 (2012) and jQuery UI 1.9.2 (2013) were vendored here. Both
+      carry published XSS advisories — jQuery below 3.5.0 in the DOM
+      manipulation methods, jQuery UI below 1.13.0 in the dialog widget this
+      page uses — and jstree 3.3.16 below requires jQuery 1.9.1 or newer, so
+      the pairing was unsupported as well as unpatched. These are the versions
+      proj.html already loads, pinned and integrity-checked, so the site now
+      runs one jQuery.
+    -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js" integrity="sha384-vtXRMe3mGCbOeY7l30aIg8H9p3GdeSe4IFlP6G8JMa7o7lXvnz3GFKzPxzJdPfGK" crossorigin="anonymous"></script>
+    <script src="https://code.jquery.com/ui/1.13.2/jquery-ui.min.js" integrity="sha384-4D3G3GikQs6hLlLZGdz5wLFzuqE9v4yVGAcOH86y23JqBDPzj9viv0EqyfIa6YUL" crossorigin="anonymous"></script>
+    <script src="./vendors/js/jstree.min.js?v=20260911"></script>
+    <script src="./resources/js/rndecaydata.js?v=20260911"></script>
+    <script src="./resources/js/rndatatree.js?v=20260911"></script>
+    <script src="./vendors/js/cytoscape.umd.js?v=20260911"></script>
+    <script src="./resources/js/ndf.min.js?v=20260911"></script>
+    <script src="./vendors/js/plotly-2.27.0.min.js?v=20260911"></script>
+    <script src="./vendors/js/math.min.js?v=20260911"></script>
+    <script src="./vendors/js/FileSaver.min.js?v=20260911"></script>
+    <script src="./vendors/js/cytoscape-cxtmenu2.js?v=20260911"></script>
     <title>Radionuclide Decay Chains (ICRP Publication 107) — kvot ab</title>
     <meta name="description" content="Interactive radionuclide decay chains from ICRP Publication 107, with nuclide data and activity-over-time plots.">
     <link rel="canonical" href="https://kvotab.se/rdc.html">
@@ -239,11 +248,12 @@ html[data-theme="dark"] .rdc-chart-window .ui-dialog-titlebar-close{border-color
 <div id="kvotmap"></div>
 <footer></footer>
 
-<script src="./resources/js/kvot-errors.js?v=20260902"></script>
+<script src="./resources/js/kvot-errors.js?v=20260911"></script>
+<script src="./resources/js/kvot-safe.js?v=20260911"></script>
 <script src="./resources/js/kvot-actions.js?v=20260902"></script>
 <script src="./resources/js/kvot-icons.js?v=20260902"></script>
 <script src="./resources/js/site.js?v=20260907"></script>
-<script src="./resources/js/rdc.js"></script>
+<script src="./resources/js/rdc.js?v=20260911"></script>
 <script>
 // ── Shared components ────────────────────────────────────────────────────────
 KVOT.renderHeader('Radionuclide Decay Chains <a href="https://www.icrp.org/publication.asp?id=ICRP%20Publication%20107" style="font-size: 0.5em;">ICRP Publication 107</a>',

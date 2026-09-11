@@ -449,13 +449,13 @@ async function downloadDatasetAsExcel(datasetPath, datasetFileKey) {
   // Use provided parameters or fall back to selected dataset
   const path = datasetPath || selectedDatasetPath;
   if (!path) {
-    alert('No dataset selected');
+    notifyUser('Select a dataset first.');
     return;
   }
   
   const enabledFiles = getEffectiveFiles();
   if (enabledFiles.length === 0) {
-    alert('No files enabled');
+    notifyUser('No files are enabled — enable at least one to export.');
     return;
   }
   
@@ -464,13 +464,15 @@ async function downloadDatasetAsExcel(datasetPath, datasetFileKey) {
     const fileKey = datasetFileKey || enabledFiles[0];
     const file = loadedFiles[fileKey];
     if (!file) {
-      alert('File not found: ' + fileKey);
+      reportFailure('exportDatasetToExcel', new Error(`file not loaded: ${fileKey}`),
+        { userMessage: `The file ${fileKey} is no longer loaded` });
       return;
     }
     const node = FileService.get(file, path);
     
     if (!node) {
-      alert('Could not access dataset');
+      reportFailure('exportDatasetToExcel', new Error(`dataset unreadable: ${path}`),
+        { userMessage: 'That dataset could not be read' });
       return;
     }
     
@@ -771,8 +773,7 @@ async function downloadDatasetAsExcel(datasetPath, datasetFileKey) {
     URL.revokeObjectURL(url);
     
   } catch (e) {
-    console.error('Error creating Excel file:', e);
-    alert('Error creating Excel file: ' + e.message);
+    reportFailure('exportDatasetToExcel', e, { userMessage: 'The Excel file could not be created' });
   }
 }
 

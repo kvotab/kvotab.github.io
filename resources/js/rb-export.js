@@ -14,7 +14,7 @@
  */
 async function copyChartToClipboard() {
   if (!currentChartData) {
-    alert('No chart available to copy');
+    notifyUser('There is no chart to copy yet.');
     return;
   }
 
@@ -67,11 +67,11 @@ async function copyChartToClipboard() {
       document.body.removeChild(link);
 
       if (err.message && (err.message.includes('denied') || err.message.includes('permission'))) {
-        alert('Clipboard access was denied. The chart has been downloaded instead.');
+        notifyUser('Clipboard access was denied, so the chart was downloaded instead.');
       }
     } catch (downloadErr) {
-      console.error('Download also failed:', downloadErr);
-      alert('Failed to copy or download chart: ' + downloadErr.message);
+      reportFailure('copyChartToClipboard', downloadErr,
+        { userMessage: 'The chart could not be copied or downloaded' });
     }
   }
 }

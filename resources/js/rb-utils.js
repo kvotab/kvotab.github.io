@@ -343,8 +343,8 @@ window.EventBus = (function() {
  * Escape HTML special characters for safe rendering
  */
 function escapeHtml(text) {
-  const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
-  return String(text).replace(/[&<>"']/g, m => map[m]);
+  /* One implementation, in resources/js/kvot-safe.js. */
+  return kvotEscapeHtml(text);
 }
 
 /**

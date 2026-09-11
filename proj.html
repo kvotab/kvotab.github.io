@@ -20,7 +20,7 @@
                          so it cannot report; site.js applies the default. */ }
     })();
   </script>
-  <link rel="stylesheet" href="./resources/css/kvot.css?v=20260910">
+  <link rel="stylesheet" href="./resources/css/kvot.css?v=20260911">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <style>
     /* Phase 1: accessibility, focus visibility and status feedback */
@@ -830,15 +830,16 @@
   <footer></footer>
   <div class="toast-region" id="toast_region" aria-live="polite" aria-atomic="true"></div>
 
-  <script src="./resources/js/kvot-errors.js?v=20260902"></script>
+  <script src="./resources/js/kvot-errors.js?v=20260911"></script>
+  <script src="./resources/js/kvot-safe.js?v=20260911"></script>
   <script src="./resources/js/kvot-actions.js?v=20260902"></script>
   <script src="./resources/js/kvot-icons.js?v=20260902"></script>
   <script src="./resources/js/site.js?v=20260907"></script>
-  <script src="./resources/js/latlong.js"></script>
-  <script src="./resources/js/sweref99-zones.js"></script>
-  <script src="./resources/js/map.js"></script>
-  <script src="./resources/js/lat_lon_conv.js"></script>
-  <script src="./resources/js/gausskruger.js"></script>
+  <script src="./resources/js/latlong.js?v=20260911"></script>
+  <script src="./resources/js/sweref99-zones.js?v=20260911"></script>
+  <script src="./resources/js/map.js?v=20260911"></script>
+  <script src="./resources/js/lat_lon_conv.js?v=20260911"></script>
+  <script src="./resources/js/gausskruger.js?v=20260911"></script>
   <script>
     /*
       The names this page's controls declare in their data-on-* attributes.
@@ -1065,7 +1066,7 @@
 
     function addPositionToBulk() {
       if (latitude == null || longitude == null || isNaN(latitude) || isNaN(longitude)) {
-        alert('No valid position set.');
+        showToast('Set a valid position first.', true);
         return;
       }
       var fromProj = document.getElementById('bulk_from').value;
@@ -1122,17 +1123,55 @@
     function renderImportPreview(headers,rows){var t=document.getElementById('import_preview');t.textContent='';var thead=t.createTHead(),tr=thead.insertRow();headers.forEach(function(h){var th=document.createElement('th');th.textContent=h;tr.appendChild(th);});var tb=t.createTBody();rows.forEach(function(r){var row=tb.insertRow();r.fields.forEach(function(v){row.insertCell().textContent=v;});});}
     function scheduleImportPreview(){clearTimeout(phase3Debounce);phase3Debounce=setTimeout(buildImportModel,180);}
     function getOutputOptions(){var m={tab:'\t',semicolon:';',comma:','};return {separator:m[document.getElementById('bulk_separator').value]||'\t',geo:Number(document.getElementById('bulk_geo_precision').value),grid:Number(document.getElementById('bulk_grid_precision').value)};}
+    /*
+      Source for the bulk-conversion worker.
+
+      This used to build the worker by calling .toString() on five page
+      functions and pasting the text in. That cannot work: a serialised
+      function loses everything it closed over, and all five depend on state
+      that lives beside them —
+
+        swedish_params, grid_to_geodetic, geodetic_to_grid
+            read the module variables in gausskruger.js (axis, flattening,
+            central_meridian and the rest), none of which came along
+        get_zone_bounds, point_in_zone_bounds
+            read rt90_zones, sweref99_zones and sweref99_zone_polygons, and
+            call point_in_ring, which was not in the list at all
+
+      So the worker threw a ReferenceError on its first message, every time,
+      and worker.onerror quietly fell back to convertMainThread(). The feature
+      worked and nobody noticed, but every bulk conversion has run on the main
+      thread — the one thing the worker exists to avoid — and the failure was
+      invisible because nothing reported it.
+
+      The two dependency-free modules are imported rather than pasted. The zone
+      tables live in map.js, which cannot be imported into a worker because it
+      touches Leaflet and the DOM, so they are serialised as data and the three
+      small functions that read them are serialised with them.
+    */
     function workerSource(){
-      var names=['swedish_params','grid_to_geodetic','geodetic_to_grid','get_zone_bounds','point_in_zone_bounds'];
+      /* Resolved from the page's own script tags, so the worker loads exactly
+         the files the page did — including their ?v= — rather than a copy the
+         browser may have cached under a different version. */
+      var moduleUrls=['gausskruger.js','sweref99-zones.js'].map(function(name){
+        var tag=document.querySelector('script[src*="resources/js/'+name+'"]');
+        var src=tag?tag.getAttribute('src'):'./resources/js/'+name;
+        return JSON.stringify(new URL(src,location.href).href);
+      });
+      var tables=['rt90_zones','sweref99_zones'].map(function(n){
+        if(typeof window[n]!=='object'||!window[n])throw new Error(n+' is unavailable');
+        return 'var '+n+'='+JSON.stringify(window[n])+';';
+      }).join('\n');
+      var names=['get_zone_bounds','point_in_zone_bounds','point_in_ring'];
       var defs=names.map(function(n){if(typeof window[n]!=='function')throw new Error(n+' is unavailable');return 'var '+n+'='+window[n].toString()+';';}).join('\n');
-      return defs+`\nself.onmessage=function(e){var d=e.data, rows=d.rows, results=[];function toLL(p,a,b){if(p==='wgs84_dd')return[a,b];swedish_params(p);return grid_to_geodetic(a,b)}function fromLL(p,a,b){if(p==='wgs84_dd')return[a,b];swedish_params(p);return geodetic_to_grid(a,b)}var fb=get_zone_bounds(d.from),tb=get_zone_bounds(d.to);for(var i=0;i<rows.length;i++){var r=rows[i],x={index:i,sourceLine:r.sourceLine,id:r.id,fields:r.fields,input1:r.input1,input2:r.input2,status:'valid',error:null,outside:false};try{if(r.parseError)throw Error(r.parseError);var ll=toLL(d.from,r.input1,r.input2);if(!ll||!isFinite(ll[0])||!isFinite(ll[1])||ll[0]<-90||ll[0]>90||ll[1]<-180||ll[1]>180)throw Error('Invalid geographic result');x.lat=ll[0];x.lon=ll[1];x.outside=!!((fb&&!point_in_zone_bounds(fb,ll[0],ll[1]))||(tb&&!point_in_zone_bounds(tb,ll[0],ll[1])));var o=fromLL(d.to,ll[0],ll[1]);if(!o||!isFinite(o[0])||!isFinite(o[1]))throw Error('Conversion failed');x.output1=o[0];x.output2=o[1];if(x.outside)x.status='outside';}catch(err){x.status='error';x.error=err.message||'Conversion failed';}results.push(x);if(i%250===0)postMessage({type:'progress',job:d.job,done:i,total:rows.length});}postMessage({type:'complete',job:d.job,results:results});}`;
+      return 'importScripts('+moduleUrls.join(',')+');\n'+tables+'\n'+defs+`\nself.onmessage=function(e){var d=e.data, rows=d.rows, results=[];function toLL(p,a,b){if(p==='wgs84_dd')return[a,b];swedish_params(p);return grid_to_geodetic(a,b)}function fromLL(p,a,b){if(p==='wgs84_dd')return[a,b];swedish_params(p);return geodetic_to_grid(a,b)}var fb=get_zone_bounds(d.from),tb=get_zone_bounds(d.to);for(var i=0;i<rows.length;i++){var r=rows[i],x={index:i,sourceLine:r.sourceLine,id:r.id,fields:r.fields,input1:r.input1,input2:r.input2,status:'valid',error:null,outside:false};try{if(r.parseError)throw Error(r.parseError);var ll=toLL(d.from,r.input1,r.input2);if(!ll||!isFinite(ll[0])||!isFinite(ll[1])||ll[0]<-90||ll[0]>90||ll[1]<-180||ll[1]>180)throw Error('Invalid geographic result');x.lat=ll[0];x.lon=ll[1];x.outside=!!((fb&&!point_in_zone_bounds(fb,ll[0],ll[1]))||(tb&&!point_in_zone_bounds(tb,ll[0],ll[1])));var o=fromLL(d.to,ll[0],ll[1]);if(!o||!isFinite(o[0])||!isFinite(o[1]))throw Error('Conversion failed');x.output1=o[0];x.output2=o[1];if(x.outside)x.status='outside';}catch(err){x.status='error';x.error=err.message||'Conversion failed';}results.push(x);if(i%250===0)postMessage({type:'progress',job:d.job,done:i,total:rows.length});}postMessage({type:'complete',job:d.job,results:results});}`;
     }
     function bulkConvert(){
       buildImportModel(); if(!phase3Rows.length){showToast('Enter at least one coordinate row.',true);return;}
       cancelPhase3Worker(false);phase3Job++;var job=phase3Job, from=document.getElementById('bulk_from').value,to=document.getElementById('bulk_to').value;
       var pr=document.getElementById('bulk_progress_row');pr.hidden=false;document.getElementById('bulk_progress').value=0;document.getElementById('bulk_progress_text').textContent='Preparing '+phase3Rows.length+' rows…';
-      try{var blob=new Blob([workerSource()],{type:'text/javascript'});phase3Worker=new Worker(URL.createObjectURL(blob));phase3Worker.onmessage=function(e){if(e.data.job!==job)return;if(e.data.type==='progress'){var pct=e.data.total?Math.round(e.data.done/e.data.total*100):0;document.getElementById('bulk_progress').value=pct;document.getElementById('bulk_progress_text').textContent=e.data.done+' / '+e.data.total;}else if(e.data.type==='complete'){phase3Results=e.data.results;finishPhase3Conversion();cancelPhase3Worker(false);}};phase3Worker.onerror=function(){if(phase3Worker){phase3Worker.terminate();phase3Worker=null;}convertMainThread(job,from,to);};phase3Worker.postMessage({job:job,rows:phase3Rows,from:from,to:to});}
-      catch(err){convertMainThread(job,from,to);}
+      try{var blob=new Blob([workerSource()],{type:'text/javascript'});phase3Worker=new Worker(URL.createObjectURL(blob));phase3Worker.onmessage=function(e){if(e.data.job!==job)return;if(e.data.type==='progress'){var pct=e.data.total?Math.round(e.data.done/e.data.total*100):0;document.getElementById('bulk_progress').value=pct;document.getElementById('bulk_progress_text').textContent=e.data.done+' / '+e.data.total;}else if(e.data.type==='complete'){phase3Results=e.data.results;finishPhase3Conversion();cancelPhase3Worker(false);}};phase3Worker.onerror=function(workerError){reportFailure('bulkConvert.worker',workerError&&workerError.message?workerError:new Error('worker failed to start'));if(phase3Worker){phase3Worker.terminate();phase3Worker=null;}convertMainThread(job,from,to);};phase3Worker.postMessage({job:job,rows:phase3Rows,from:from,to:to});}
+      catch(err){reportFailure('bulkConvert.workerSource',err);convertMainThread(job,from,to);}
     }
     function convertMainThread(job,from,to){
       var i=0,res=[],fb=get_zone_bounds(from),tb=get_zone_bounds(to);function step(){if(job!==phase3Job)return;var end=Math.min(i+200,phase3Rows.length);for(;i<end;i++){var r=phase3Rows[i],x={index:i,sourceLine:r.sourceLine,id:r.id,fields:r.fields,input1:r.input1,input2:r.input2,status:'valid',error:null,outside:false};try{if(r.parseError)throw Error(r.parseError);var ll=bulkToLatLon(from,r.input1,r.input2);if(!ll||!Number.isFinite(ll[0])||!Number.isFinite(ll[1]))throw Error('Invalid geographic result');x.lat=ll[0];x.lon=ll[1];x.outside=Boolean((fb&&!point_in_zone_bounds(fb,ll[0],ll[1]))||(tb&&!point_in_zone_bounds(tb,ll[0],ll[1])));var o=bulkFromLatLon(to,ll[0],ll[1]);x.output1=o[0];x.output2=o[1];if(x.outside)x.status='outside';}catch(err){x.status='error';x.error=err.message||'Conversion failed';}res.push(x);}document.getElementById('bulk_progress').value=Math.round(i/phase3Rows.length*100);document.getElementById('bulk_progress_text').textContent=i+' / '+phase3Rows.length;if(i<phase3Rows.length)setTimeout(step,0);else{phase3Results=res;finishPhase3Conversion();}}step();

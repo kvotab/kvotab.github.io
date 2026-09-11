@@ -24,7 +24,7 @@
       } catch (e) { /* storage unavailable — site.js will apply the default */ }
     })();
   </script>
-  <link rel="stylesheet" href="./resources/css/kvot.css?v=20260910">
+  <link rel="stylesheet" href="./resources/css/kvot.css?v=20260911">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <style>
     :root{--ok:#3f8b55; --warn:#c47c13}
@@ -81,7 +81,8 @@
 <div id="kvotmap"></div>
 
 <footer></footer>
-<script src="./resources/js/kvot-errors.js?v=20260902"></script>
+<script src="./resources/js/kvot-errors.js?v=20260911"></script>
+<script src="./resources/js/kvot-safe.js?v=20260911"></script>
 <script src="./resources/js/kvot-actions.js?v=20260902"></script>
 <script src="./resources/js/kvot-icons.js?v=20260902"></script>
 <script src="./resources/js/site.js?v=20260907"></script>
@@ -99,7 +100,9 @@ const required=['id','qa reviewer','qa comment','qa status'];
 let rows=[], validSheets=[], loadedFiles=[];
 const normalize=v=>String(v??'').trim().toLowerCase().replace(/\s+/g,' ');
 const display=v=>String(v??'').trim() || '(Tomt)';
-const esc=v=>String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+/* One implementation, in resources/js/kvot-safe.js. The local copy escaped
+   everything but the apostrophe. */
+const esc=v=>kvotEscapeHtml(v);
 function showStatus(msg,error=false){$('status').textContent=msg;$('status').className='show'+(error?' error':'')}
 function hideStatus(){$('status').className=''}
 function selected(id){return new Set([...$(id).selectedOptions].map(o=>o.value))}
@@ -154,7 +157,13 @@ function render(){
   $('data-body').innerHTML=data.map(r=>`<tr><td>${esc(r.file)}</td><td>${esc(r.sheet)}</td><td class="mono">${r.row}</td><td class="mono">${esc(r.id)}</td><td>${esc(display(r.reviewer))}</td><td><span class="badge">${esc(display(r.status))}</span></td><td class="comment">${esc(r.comment)}</td></tr>`).join('');
   $('empty').hidden=data.length>0;
 }
-function csvCell(v){return `"${String(v??'').replace(/"/g,'""')}"`}
+/*
+  Quoting alone was not enough. The reviewer and comment columns come out of an
+  uploaded workbook, and a cell someone had typed as "=HYPERLINK(...)" was
+  written through unchanged — so opening the export in Excel ran it as a
+  formula. kvotCsvCell forces such a value back to text.
+*/
+function csvCell(v){return kvotCsvCell(v)}
 function exportCsv(){const data=filtered(),head=['Fil','Ark','Excelrad','ID','QA reviewer','QA status','QA comment'];const body=data.map(r=>[r.file,r.sheet,r.row,r.id,r.reviewer,r.status,r.comment]);const csv='\ufeff'+[head,...body].map(a=>a.map(csvCell).join(';')).join('\r\n');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='skb_qa_filtered.csv';a.click();URL.revokeObjectURL(url)}
 function reset(){rows=[];validSheets=[];loadedFiles=[];$('file-input').value='';$('workspace').className='';$('id-search').value='';hideStatus();['file-filter','sheet-filter','reviewer-filter','status-filter'].forEach(id=>$(id).innerHTML='')}
 const dz=$('dropzone'),fi=$('file-input');
