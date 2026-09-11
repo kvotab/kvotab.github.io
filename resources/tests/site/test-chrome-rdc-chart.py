@@ -18,6 +18,23 @@ Closing it because there is nothing to show is not the user saying anything, so
 that path must not be recorded as their choice — otherwise the first automatic
 close would freeze the window down for the rest of the session.
 
+The window also has to be draggable to a different width, which it was not for
+three reasons at once. jQuery UI hangs its resize handles off the outside of
+the frame and the frame is clipped, leaving a 2px sliver no pointer could
+find. The narrowest it was allowed to be was the width it opened at, so even a
+caught handle could not narrow it. And jQuery's .trigger() walks a simulated
+bubble path that ends at window, so the "resize" jQuery UI fires on the dialog
+for every frame of a drag arrived at a $(window).on('resize') handler as though
+the screen had changed — that handler set an option, jQuery UI answered by
+re-applying options.width, and options.width is the old width until the drag
+stops. Every frame was undone as it was drawn. The test drags the real handles
+and reads the width back.
+
+The settings row is checked along with it, because a window that can be
+narrowed is only useful if what is in it follows: its columns answer to the
+window's own width through container queries, the viewport queries they
+replaced never having matched a 510px window on a 1400px screen.
+
 Two more things are checked because they are invisible until someone is holding
 a phone: that the window fills the screen there rather than floating in a
 374px box, and that the quantity menu no longer takes focus the moment the
@@ -219,6 +236,88 @@ async def main():
           check('ui-dialog' in focus,
                 'the window takes focus, not the quantity menu inside it, got %r' % (focus,))
 
+          # ── It can be dragged wider and narrower ────────────────────────────
+          async def drag_handle(edge, dx):
+              """Take hold of one resize handle by its middle and pull."""
+              spot = await ev("""(() => {
+                  const h = document.querySelector('.ui-dialog .ui-resizable-%s');
+                  if (!h) return null; const r = h.getBoundingClientRect();
+                  const x = Math.round(r.left + r.width / 2), y = Math.round(r.top + r.height / 2);
+                  const u = document.elementFromPoint(x, y);
+                  return JSON.stringify({ x: x, y: y, wide: Math.round(r.width),
+                      under: u ? (u.className || u.tagName).toString().slice(0, 30) : 'nothing' }); })()"""
+                             % edge, session)
+              if not spot:
+                  raise Missing('there is no %s resize handle on the window' % edge)
+              spot = json.loads(spot)
+              await cmd('Input.dispatchMouseEvent',
+                        {'type': 'mouseMoved', 'x': spot['x'], 'y': spot['y'], 'buttons': 0}, session)
+              await cmd('Input.dispatchMouseEvent',
+                        {'type': 'mousePressed', 'x': spot['x'], 'y': spot['y'],
+                         'button': 'left', 'buttons': 1, 'clickCount': 1}, session)
+              for step in range(1, 13):
+                  await cmd('Input.dispatchMouseEvent',
+                            {'type': 'mouseMoved', 'button': 'left', 'buttons': 1,
+                             'x': spot['x'] + dx * step // 12, 'y': spot['y']}, session)
+                  await asyncio.sleep(0.02)
+              await cmd('Input.dispatchMouseEvent',
+                        {'type': 'mouseReleased', 'x': spot['x'] + dx, 'y': spot['y'],
+                         'button': 'left', 'buttons': 0}, session)
+              await asyncio.sleep(0.8)
+              return spot
+
+          async def frame():
+              return json.loads(await ev("""(() => {
+                  const d = document.querySelector('.ui-dialog').getBoundingClientRect();
+                  const settings = document.querySelector('#chartdialog .settings');
+                  const plot = document.querySelector('#chartdialog .main-svg');
+                  return JSON.stringify({
+                      width: Math.round(d.width),
+                      columns: getComputedStyle(settings).gridTemplateColumns.split(' ').length,
+                      badge: getComputedStyle(document.querySelector('.chart-badge')).display,
+                      plot: plot ? Math.round(plot.getBoundingClientRect().width) : 0,
+                      spills: settings.scrollWidth > Math.ceil(settings.getBoundingClientRect().width),
+                      minWidth: $('#chartdialog').dialog('option', 'minWidth')
+                  }); })()""", session))
+
+          start = await frame()
+          check(start['minWidth'] < start['width'],
+                'the narrowest it may be dragged cannot be the width it opens at, both were %d'
+                % (start['width'],))
+
+          spot = await drag_handle('e', -160)
+          narrowed = await frame()
+          check(spot['wide'] >= 7,
+                'the handle is clipped to %dpx by the frame and cannot be grabbed' % (spot['wide'],))
+          check('resizable' in spot['under'],
+                'the east handle should be the thing under the pointer, found %r' % (spot['under'],))
+          check(narrowed['width'] < start['width'] - 100,
+                'dragging the east handle in by 160 should narrow the window, %d stayed %d'
+                % (start['width'], narrowed['width']))
+          check(narrowed['plot'] > 0 and abs(narrowed['plot'] - narrowed['width']) < 12,
+                'the plot has to follow the window, %d inside %d'
+                % (narrowed['plot'], narrowed['width']))
+
+          await drag_handle('e', -400)
+          floored = await frame()
+          check(floored['width'] == start['minWidth'],
+                'it should stop at its minimum of %d, got %d'
+                % (start['minWidth'], floored['width']))
+          check(floored['columns'] == 1,
+                'the settings answer to the window, not the screen: at %dpx they should be in '
+                'one column, got %d' % (floored['width'], floored['columns']))
+          check(floored['spills'] is False,
+                'and must not spill out of it at %dpx' % (floored['width'],))
+
+          await drag_handle('w', -420)
+          widened = await frame()
+          check(widened['width'] > floored['width'] + 300,
+                'the west handle should widen it, %d became %d' % (floored['width'], widened['width']))
+          check(widened['columns'] == 3 and widened['badge'] != 'none',
+                'with the room for three columns it should use them and show the badge, got %d '
+                'columns and badge %r' % (widened['columns'], widened['badge']))
+          check(widened['spills'] is False, 'and still not spill')
+
           await cmd('Target.closeTarget', {'targetId': target})
 
           # ── On a phone it is a screen, not a window ──────────────────────────
@@ -259,14 +358,14 @@ async def main():
         except Missing as absent:
             failures.append(str(absent))
 
-        total = 25
+        total = 36
         if failures:
             print('%d failure(s):' % len(failures))
             for failure in failures:
                 print('  - ' + failure)
             sys.exit(1)
         print('%d checks passed: the chart follows the inventory until you say otherwise, '
-              'and fills the screen on a phone.' % total)
+              'can be dragged to any width, and fills the screen on a phone.' % total)
 
 
 asyncio.run(main())

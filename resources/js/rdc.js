@@ -70,6 +70,11 @@ $(function () {
    so asking for more than there is puts the right-hand side out of reach. */
 const CHART_DIALOG_SIZE = { width: 510, height: 450 };
 
+/* The narrowest it may be dragged, which is not the same number as the width
+   it opens at — they were both 510, so the window could not be narrowed at
+   all. Below this the settings have nowhere left to go. */
+const CHART_DIALOG_MIN_WIDTH = 320;
+
 /* Below this width the window is not a window: it fills the screen, and the
    size and position jQuery UI writes onto it are overridden in rdc.css.
    Matches the breakpoint the element list uses. */
@@ -93,7 +98,7 @@ function fitChartDialogToScreen() {
     if (full) return;
     const fitted = chartDialogSize();
     const current = CHARTDIALOG.dialog('option', 'width');
-    CHARTDIALOG.dialog('option', 'minWidth', Math.min(CHART_DIALOG_SIZE.width, fitted.width));
+    CHARTDIALOG.dialog('option', 'minWidth', Math.min(CHART_DIALOG_MIN_WIDTH, fitted.width));
     /* Only ever shrinks it: a window the user has dragged larger on a desktop
        is left alone. */
     if (typeof current === 'number' && current > fitted.width) {
@@ -114,14 +119,24 @@ $(function () {
         width: size.width,
         height: size.height,
         minHeight: 200,
-        minWidth: Math.min(CHART_DIALOG_SIZE.width, size.width),
+        minWidth: Math.min(CHART_DIALOG_MIN_WIDTH, size.width),
     });
 
     fitChartDialogToScreen();
-    /* A rotation is a resize, and the window has to come back within the
-       screen it now has — or stop being a window, if the screen it now has is
-       a phone held upright. */
-    $(window).on('resize', fitChartDialogToScreen);
+    /*
+      A rotation is a resize, and the window has to come back within the screen
+      it now has — or stop being a window, if the screen it now has is a phone
+      held upright.
+
+      Listened for natively rather than through $(window).on('resize'):
+      jQuery's .trigger() walks a simulated bubble path that ends at window, so
+      the "resize" jQuery UI fires on the dialog for every frame of a drag
+      arrived here as though the screen had changed. Setting minWidth from it
+      sent jQuery UI back through _size(), which re-applies options.width — and
+      options.width is still the old one until the drag stops. The window was
+      put back to 510px on every frame, so it could not be resized at all.
+    */
+    window.addEventListener('resize', fitChartDialogToScreen);
 });
 
 

@@ -304,6 +304,28 @@ the part worth guarding: `react` applies a config, so the modebar disappears
 with the data and the full one — including the CSV and lin/log buttons added by
 hand — has to come back with it. The test counts the buttons on both sides.
 
+Dragging the window to a different width was impossible for three reasons at
+once, and the test drags the real handles and reads the width back:
+
+- jQuery UI hangs its resize handles off the **outside** of the frame
+  (`right: -5px`) and the frame is clipped so its rounded corners hold. The two
+  met at a 2px sliver no pointer could find.
+- `minWidth` was the same number as the width it opens at, so even a caught
+  handle could not narrow it.
+- jQuery's `.trigger()` walks a simulated bubble path that **ends at window**.
+  The `resize` jQuery UI fires on the dialog for every frame of a drag arrived
+  at the page's `$(window).on('resize')` handler as though the screen had
+  changed; that handler set a dialog option, jQuery UI answered by re-applying
+  `options.width`, and `options.width` stays the old width until the drag
+  stops. Every frame was undone as it was drawn. A native `addEventListener`
+  hears only real window resizes.
+
+The settings row is checked with it: a window that can be narrowed is only
+useful if what is in it follows. Its columns now answer to the window's own
+width through container queries — the viewport queries they replaced could
+never match a 510px window on a 1400px screen, which is also why the
+"Interactive model" badge was sliced in half at the default size.
+
 Two more things are checked because they are invisible until someone is holding
 a phone. The window fills the screen there rather than floating in a 374px box,
 and is neither draggable nor resizable, since either could only take it off the

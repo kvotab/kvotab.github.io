@@ -63,14 +63,21 @@
 .rdc-chart-window .ui-dialog-titlebar-close{top:50%!important;right:11px!important;width:29px!important;height:29px!important;margin-top:-15px!important;border:1px solid rgba(255,255,255,.25)!important;border-radius:8px!important;background:rgba(255,255,255,.08)!important}
 .rdc-chart-window .ui-dialog-titlebar-close:hover{background:rgba(255,255,255,.2)!important}
 .rdc-chart-window .ui-dialog-content{padding:0!important;border:0!important;background:#fff!important}
-#chartdialog{box-sizing:border-box;min-width:410px;min-height:310px;overflow:hidden!important;color:#30271f}
+#chartdialog{box-sizing:border-box;container-type:inline-size;min-width:300px;min-height:310px;overflow:hidden!important;color:#30271f}
 #chartdialog .settings{position:relative;z-index:5;display:grid;grid-template-columns:minmax(220px,1.45fr) minmax(210px,1fr) auto;gap:13px;align-items:end;box-sizing:border-box;width:100%;padding:13px 15px 12px;border-bottom:1px solid #e8e1d8;background:linear-gradient(180deg,#fcfbf9,#f4f1ec)}
 .chart-field{min-width:0}.chart-label{display:block;margin:0 0 5px 2px;color:#6a594b;font-size:11px;font-weight:700;letter-spacing:.055em;line-height:1.2;text-transform:uppercase}
 .chart-control{box-sizing:border-box;width:100%;height:36px;padding:0 10px;border:1px solid #cdc1b5;border-radius:8px;background:#fff;color:#30271f;font:inherit;font-size:13px;box-shadow:0 1px 2px rgba(45,35,27,.06);transition:border-color .15s,box-shadow .15s}
 .chart-control:hover{border-color:#a98f78}.chart-control:focus{border-color:#af6c35;outline:0;box-shadow:0 0 0 3px rgba(184,105,43,.16)}
 .chart-time-row{display:grid;grid-template-columns:minmax(78px,.72fr) minmax(100px,1fr);gap:7px}.chart-badge{display:inline-flex;align-items:center;gap:6px;margin-bottom:8px;padding:5px 8px;border:1px solid #ddd4ca;border-radius:999px;background:rgba(255,255,255,.75);color:#766555;font-size:10px;font-weight:650;white-space:nowrap}.chart-badge span{width:7px;height:7px;border-radius:50%;background:#4e9a67;box-shadow:0 0 0 3px rgba(78,154,103,.14)}
 #chartdialog .modebar{top:8px!important;right:10px!important;padding:3px 4px!important;border:1px solid rgba(99,80,63,.18);border-radius:8px;background:rgba(255,255,255,.92)!important;box-shadow:0 3px 10px rgba(45,34,25,.1)}#chartdialog .modebar-btn{border-radius:5px}#chartdialog .modebar-btn:hover{background:rgba(177,103,45,.12)}#chartdialog .modebar-btn path{fill:#655347!important}
-@media(max-width:720px){#chartdialog .settings{grid-template-columns:1fr 1fr}.chart-badge{display:none}}@media(max-width:520px){#chartdialog{min-width:300px}#chartdialog .settings{grid-template-columns:1fr}}
+/* Container queries, not viewport ones: the settings sit in a window that is
+   510px wide on a 1400px desktop, so a viewport query never matched and three
+   columns were laid out in the room for two — which is why the badge was cut
+   off. The widths below are the dialog's, measured against what the columns
+   actually need: 220 + 210 + a badge + gaps and padding is about 620. */
+#chartdialog{container-name:chartpanel}
+@container chartpanel (max-width:620px){#chartdialog .settings{grid-template-columns:1fr 1fr}.chart-badge{display:none}}
+@container chartpanel (max-width:460px){#chartdialog .settings{grid-template-columns:1fr}}
 html[data-theme="dark"] .rdc-chart-window.ui-dialog{border-color:#59493b!important;background:#28211a!important;box-shadow:0 20px 55px rgba(0,0,0,.58)!important}html[data-theme="dark"] .rdc-chart-window .ui-dialog-titlebar{background:linear-gradient(135deg,#201914,#3b2e24)!important}html[data-theme="dark"] .rdc-chart-window .ui-dialog-content{background:#2a221b!important}html[data-theme="dark"] #chartdialog .settings{border-color:#514235;background:linear-gradient(180deg,#342a22,#2b231c)}html[data-theme="dark"] .chart-label{color:#c8b5a2}html[data-theme="dark"] .chart-control{border-color:#695748;background:#211b16;color:#eee3d8;box-shadow:none}html[data-theme="dark"] .chart-badge{border-color:#59493c;background:rgba(25,20,16,.65);color:#c8b5a2}html[data-theme="dark"] #chartdialog .modebar{border-color:rgba(220,195,171,.16);background:rgba(34,27,22,.9)!important}html[data-theme="dark"] #chartdialog .modebar-btn path{fill:#d5c2af!important}
 
 /* Final integrated chart shell and plot clearance */
