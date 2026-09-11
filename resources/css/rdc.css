@@ -820,3 +820,44 @@ th {
     transition: .3s;
    /* transform: translateX(-20px);background-color: var(--color-kvot-accent);*/
 }
+
+/* ==========================================================================
+   NARROW SCREENS
+   ========================================================================== */
+/*
+  The tree and the graph divide the width between them, which on a phone leaves
+  each of them about 190px — too narrow for the tree's labels and far too
+  narrow for a decay chain, which branches sideways. They divide the height
+  instead: the picker above, the chain below at the full width of the screen.
+*/
+@media (max-width: 600px) {
+  :root {
+    --rdc-tree-h: 38dvh;
+  }
+  nav {
+    right: 0;
+    bottom: auto;
+    width: auto;
+    height: var(--rdc-tree-h);
+    border-bottom: 1px solid var(--border-color);
+  }
+  #cy {
+    top: calc(var(--header-height) + var(--rdc-tree-h));
+    left: 0;
+    right: 0;
+    width: auto;
+    height: calc(100dvh - var(--header-height) - var(--footer-height) - var(--rdc-tree-h));
+  }
+  /*
+    The sort control belongs to the tree, so it follows it. At the bottom left
+    of the window it overlapped the footer — unnoticeable on a desktop, where
+    the footer's text is centred far away, and squarely on top of that text
+    once the screen is narrow enough for it to reach the left edge.
+  */
+  .sort {
+    top: calc(var(--header-height) + var(--rdc-tree-h) - 32px);
+    right: 12px;
+    bottom: auto;
+    left: auto;
+  }
+}
