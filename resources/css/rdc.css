@@ -462,7 +462,6 @@ header {
 */
 :root {
 	--rdc-tree-w: 12em;
-	--rdc-rail-w: 2.8em;
 }
 nav {
 	top:43px;
@@ -532,14 +531,41 @@ nav {
 	color: var(--text-primary);
 }
 
-/* Put away: the panel narrows to its toolbar, and the only control left is
-   the one that brings it back. */
+/*
+  Put away means gone: the panel goes to zero width and the button that brings
+  it back lifts out of it and floats over the graph. Keeping a rail to hold
+  that one button cost a strip of background across the whole height.
+*/
 body.tree-collapsed {
-	--rdc-tree-w: var(--rdc-rail-w);
+	--rdc-tree-w: 0px;
+}
+body.tree-collapsed nav {
+	border: 0;
+	/* Above #cy, which shares z-index 2 and comes later in the document. */
+	z-index: 6;
 }
 body.tree-collapsed #tree,
 body.tree-collapsed #sortToggle {
 	display: none;
+}
+body.tree-collapsed .tree-toolbar {
+	padding: 0;
+	border: 0;
+}
+/*
+  Fixed, so it escapes the panel's overflow now that the panel has no width.
+  Nothing between here and the viewport sets a transform, which is the thing
+  that would make it fixed to an ancestor instead.
+*/
+body.tree-collapsed #treeToggle {
+	position: fixed;
+	top: calc(var(--header-height) + 8px);
+	left: 8px;
+	/* Over a drawing rather than a panel, so it needs an edge of its own to
+	   read as a control at all. */
+	border-color: var(--color-kvot-bright);
+	background: var(--bg-secondary);
+	box-shadow: 0 2px 10px rgba(0, 0, 0, .35);
 }
 body.tree-collapsed #treeToggle svg {
 	transform: scaleX(-1);
@@ -976,7 +1002,6 @@ th {
 @media (max-width: 600px) {
   :root {
     --rdc-tree-h: 38dvh;
-    --rdc-rail-h: 2.9em;
   }
   nav {
     right: 0;
@@ -992,7 +1017,7 @@ th {
     transform: rotate(90deg);
   }
   body.tree-collapsed {
-    --rdc-tree-h: var(--rdc-rail-h);
+    --rdc-tree-h: 0px;
   }
   body.tree-collapsed #treeToggle svg {
     transform: rotate(-90deg);
