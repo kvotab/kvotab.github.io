@@ -236,3 +236,35 @@ blocked every redraw while the band it described was not being drawn at all.
 The test puts a shade percentile outside the chart bounds, confirms it is
 reported while the band is on, and confirms it stops blocking — and that the
 fields grey out — once the band is off.
+
+## test-chrome-rdc-mobile.py
+
+Which selections put rdc.html's element list away on a phone.
+
+    python3 -m http.server 8765 --bind 127.0.0.1
+    "$CHROME" --headless=new --remote-debugging-port=9222 --user-data-dir=/tmp/p
+    python3 resources/tests/site/test-chrome-rdc-mobile.py
+
+Below 600px the list is laid over the graph rather than beside it, so choosing
+a nuclide has to move it out of the way — the chain that was just asked for is
+behind it. Everything turns on which selections count as choosing, and jstree
+reports all of them through one `changed` event:
+
+- the page picks U-238 for itself once the list has loaded. Putting the list
+  away for that would mean it is never seen;
+- re-sorting rebuilds the list, and jstree restores the selection afterwards.
+  Nothing was chosen;
+- a tap, a key press and a name typed into the search field are each a person
+  asking to see a chain.
+
+The first attempt asked whether anybody had touched the page yet, which
+separates the startup choice from a tap and nothing else: the touch that
+re-sorted the list also answered it, so sorting on a phone made the list
+vanish. What separates them properly is the DOM event jstree passes on — it has
+one for a tap or a key press and none for a selection it restored by itself.
+The search field selects on the person's behalf and says so explicitly.
+
+The test taps the real controls with touch events and hit-tests each one before
+using it, because a control that has been covered or moved still reports its
+old box. It also runs the same selections at desktop width, where the list is
+beside the graph and nothing should ever move it.
