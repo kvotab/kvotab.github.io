@@ -38,8 +38,51 @@
     .content{ padding-top:13px;padding-bottom:48px;min-height:calc(100vh - var(--header-height) - 61px); }
     #logn   { width:100%;max-width:980px;margin:0 auto;padding:28px 28px 56px;box-sizing:border-box; }
 
-    /* Sticky tab bar */
-    #tabs { position:sticky;top:3rem;z-index:15;background:var(--bg-primary);padding-bottom:2px;border-bottom:1px solid var(--border-color);margin-bottom:20px; }
+    /* Distribution bar */
+    #dist-bar { display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 0 2px; }
+    .dist-bar-label { font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text-muted); }
+    #dist-tabs { list-style:none;padding:0;margin:0;display:flex;gap:6px;flex-wrap:wrap; }
+    .dist-tab { display:inline-flex;align-items:center;gap:6px;padding:3px 6px 3px 8px;border-radius:20px;
+                border:1px solid var(--border-color);background:var(--bg-secondary);transition:border-color .15s,box-shadow .15s,background .15s; }
+    .dist-tab.selected { background:var(--bg-surface);border-color:var(--color-kvot-bright);box-shadow:0 2px 8px rgba(243,184,123,.28); }
+    .dist-tab.invalid { border-color:#b4473a; }
+    .dist-swatch { width:12px;height:12px;flex:0 0 12px;padding:0;border-radius:50%;cursor:pointer;
+                   border:2px solid var(--dist-colour,var(--color-kvot-bright));background:var(--dist-colour,var(--color-kvot-bright)); }
+    .dist-tab.chart-hidden .dist-swatch { background:transparent; }
+    .dist-tab.chart-hidden .dist-name { opacity:.5; }
+    .dist-name { font-size:.84rem;font-weight:600;font-family:inherit;color:var(--text-primary); }
+    button.dist-name { background:none;border:none;cursor:pointer;padding:2px;color:var(--text-secondary); }
+    button.dist-name:hover { color:var(--text-primary); }
+    input.dist-name { background:var(--input-bg);border:1px solid transparent;border-radius:5px;padding:2px 5px;min-width:3ch; }
+    input.dist-name:focus { outline:none;border-color:var(--color-kvot-bright); }
+    .dist-close { background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:1rem;line-height:1;padding:0 3px;border-radius:4px; }
+    .dist-close:hover { color:#b4473a;background:color-mix(in srgb,#b4473a 12%,transparent); }
+    #dist-add { padding:4px 12px;border-radius:20px;cursor:pointer;font-size:.8rem;font-weight:600;font-family:inherit;
+                color:var(--text-secondary);background:var(--bg-secondary);border:1px dashed var(--border-color);transition:all .15s ease; }
+    #dist-add:hover:not(:disabled) { border-style:solid;border-color:var(--color-kvot-bright);color:var(--text-primary);background:var(--bg-surface); }
+    #dist-add:disabled { opacity:.4;cursor:not-allowed; }
+    .dist-swatch:focus-visible,.dist-close:focus-visible,button.dist-name:focus-visible,#dist-add:focus-visible { outline:2px solid var(--color-kvot-bright);outline-offset:2px; }
+
+    /* Comparison table */
+    .cmp-scroll { overflow-x:auto; }
+    .cmp-table { border-collapse:collapse;font-size:.88rem;min-width:100%; }
+    .cmp-table td { padding:6px 14px;border-bottom:1px solid var(--border-color);white-space:nowrap; }
+    /* No text-transform: these are names the user typed, and their casing is
+       theirs. */
+    .cmp-table thead td { font-size:.78rem;font-weight:700;letter-spacing:.02em;color:var(--text-secondary); }
+    .cmp-table thead td.cmp-active { color:var(--text-primary);box-shadow:inset 0 -2px 0 var(--dist-colour,var(--color-kvot-bright)); }
+    .cmp-table tbody td { font-family:'SF Mono',Menlo,Monaco,monospace;color:var(--text-primary); }
+    .cmp-table thead td:first-child,.cmp-table tbody td:first-child { font-family:inherit;font-weight:600;color:var(--text-muted);position:sticky;left:0;background:var(--bg-secondary); }
+    .cmp-swatch { display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px; }
+    .cmp-state td { font-family:inherit;font-size:.76rem;color:var(--text-muted);border-bottom:none;padding-top:2px;padding-bottom:8px; }
+    .cmp-state td.cmp-error { color:#b4473a;white-space:normal;max-width:260px; }
+    .cmp-csv { margin-top:12px;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:.82rem;font-family:inherit;
+               color:var(--text-secondary);background:var(--bg-secondary);border:1px solid var(--border-color); }
+    .cmp-csv:hover { border-color:var(--color-kvot-bright);color:var(--text-primary); }
+
+    /* The controls scroll with everything else rather than pinning under the
+       header: pinned, they stayed put while the results slid up beneath them. */
+    #tabs { margin-bottom:20px; }
 
     /* Pill tabs */
     #combined-tabs-header { padding:12px 0 10px; }
@@ -65,7 +108,6 @@
     #metric-panels { display:flex;flex-wrap:wrap;gap:14px;margin-bottom:20px; }
     .metric-panel { flex:1;min-width:220px;border:1px solid var(--border-color);padding:16px 18px;border-radius:12px;background:var(--bg-secondary);box-shadow:0 1px 3px rgba(0,0,0,.03);transition:box-shadow .2s ease; }
     .metric-panel:hover { box-shadow:0 3px 12px rgba(0,0,0,.07); }
-    #metric3-panel { flex:1 1 100%; }
     .metric-panel h4 { font-size:.74rem;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:var(--text-muted);margin:0 0 12px;padding-bottom:8px;border-bottom:1px solid var(--border-color); }
     .metric-content { color:var(--text-muted);font-size:.92rem;line-height:1.55; }
 
@@ -114,10 +156,21 @@
     /* Result details */
     #result-details { display:block; }
 
-    .result-settings{margin-top:12px;border-top:1px solid var(--border-color);padding-top:9px;color:var(--text-muted);font-size:.78rem}
-    .result-settings summary{cursor:pointer;list-style:none;display:inline-flex;align-items:center;gap:5px;color:var(--text-muted);font-weight:500}.result-settings summary::-webkit-details-marker{display:none}.result-settings summary::before{content:'⚙';opacity:.65}
-    .result-settings-body{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:end;margin-top:9px;padding:10px 12px;border:1px solid var(--border-color);border-radius:8px;background:color-mix(in srgb,var(--bg-secondary) 55%,transparent)}
-    .setting-field{display:grid;gap:3px;min-width:105px}.setting-field span{font-size:.7rem;color:var(--text-muted)}.setting-field input,.setting-field select{width:120px;padding:5px 7px;border-radius:6px;border:1px solid var(--border-color);background:var(--input-bg);color:var(--input-text);font:inherit}
+    .settings-body{display:flex;flex-wrap:wrap;gap:12px 18px;align-items:end}
+
+    /* Which distribution Computed results is showing */
+    .computed-for{display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:20px;font-size:.76rem;font-weight:600;color:var(--text-secondary);background:var(--bg-primary);border:1px solid var(--dist-colour,var(--border-color))}
+    .computed-for[hidden]{display:none}
+    .computed-for-swatch{width:9px;height:9px;border-radius:50%;background:var(--dist-colour,var(--color-kvot-bright))}
+    #computed-details.has-active-dist>summary.eq-summary,
+    #computed-details.has-active-dist>.section-body{border-left:4px solid var(--active-dist-colour,var(--color-kvot-bright))}
+    .setting-field{display:grid;gap:3px;min-width:105px}.setting-field span{font-size:.7rem;color:var(--text-muted)}.setting-field input{width:120px;padding:5px 7px;border-radius:6px;border:1px solid var(--border-color);background:var(--input-bg);color:var(--input-text);font:inherit}
+    /* A select is sized by its widest option, not cropped to the width of an
+       input: "PDF and CDF" did not fit in 120px and read as "PDF and CDI". */
+    .setting-field select{width:auto;min-width:120px;padding:5px 7px;border-radius:6px;border:1px solid var(--border-color);background:var(--input-bg);color:var(--input-text);font:inherit}
+    .setting-group{display:flex;flex-wrap:wrap;gap:12px 18px;align-items:end}
+    .setting-field input:disabled{opacity:.4;cursor:not-allowed}.setting-field:has(input:disabled) span{opacity:.5}
+    .setting-field.setting-check{align-self:end}.setting-field.setting-check input[type="checkbox"]{width:auto;justify-self:start;margin:5px 0 6px;accent-color:var(--color-kvot-bright)}
     .setting-note{flex:1 1 100%;margin:0;color:var(--text-muted);font-size:.72rem;line-height:1.4}.setting-field input[aria-invalid="true"]{border-color:#b4473a!important;box-shadow:0 0 0 2px rgba(180,71,58,.12)!important}
     .chart-settings-warning{display:none;flex:1 1 100%;padding:8px 10px;border:1px solid #b4473a;border-radius:7px;background:color-mix(in srgb,#b4473a 9%,var(--bg-secondary));color:#b4473a;font-size:.76rem;font-weight:600;line-height:1.4}.chart-settings-warning.show{display:block}
     @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
@@ -171,6 +224,12 @@
     <div id="logn">
 
       <div id="tabs">
+        <div id="dist-bar">
+          <span class="dist-bar-label">Distributions</span>
+          <ul id="dist-tabs" aria-label="Distributions"></ul>
+          <button type="button" id="dist-add" data-on-click="addDistribution">+ add</button>
+        </div>
+
         <div id="combined-tabs-header">
           <ul id="tabs-header" role="tablist" aria-label="Metric selector">
             <li><a href="#" data-id="mu">&#956;</a></li>
@@ -186,7 +245,7 @@
             <li><a href="#" data-id="error">error factor</a></li>
             <li><a href="#" data-id="data">data</a></li>
           </ul>
-          <div id="metric-note">Select up to <strong>two</strong> metrics (add data as a third). Click a selected metric to deselect it.</div>
+          <div id="metric-note">Select up to <strong>two</strong> metrics for the selected distribution, or <strong>data</strong> on its own — a data set is fitted to a distribution of its own. Click a selected metric to deselect it.</div>
           <div id="metric-info" role="status" aria-live="polite"></div>
         </div>
 
@@ -199,16 +258,12 @@
             <h4 id="metric2-title">Secondary metric</h4>
             <div id="metric2-content" class="metric-content">No metric selected.</div>
           </div>
-          <div class="metric-panel" id="metric3-panel" role="region" aria-labelledby="metric3-title" style="display:none;">
-            <h4 id="metric3-title">Data</h4>
-            <div id="metric3-content" class="metric-content">No metric selected.</div>
-          </div>
         </div>
       </div>
 
       <!-- Computed results -->
       <details id="computed-details" open>
-        <summary class="eq-summary">Computed results</summary>
+        <summary class="eq-summary">Computed results<span class="computed-for" id="computed-for" hidden><span class="computed-for-swatch"></span><span id="computed-for-name"></span></span></summary>
         <div class="section-body" id="logn-output">
           <div id="result-summary">
             <div class="stat-card primary" title="Mean of the natural logarithm">
@@ -256,31 +311,53 @@
               </div>
             </div>
             <div id="result-data-stats" style="display:none;"></div>
-            <details class="result-settings" id="result-settings">
-              <summary>Display and chart settings</summary>
-              <div class="result-settings-body">
-                <label class="setting-field"><span>Significant digits</span><select id="precisionSelect"><option>3</option><option selected>5</option><option>7</option><option>10</option></select></label>
-                <label class="setting-field"><span>Optional unit</span><input id="unitInput" type="text" maxlength="20" placeholder="e.g. mg/L"></label>
-                <label class="setting-field"><span>Chart minimum percentile</span><input id="chartMinPct" type="number" min="0.001" max="99.997" step="any" value="0.1"></label>
-                <label class="setting-field"><span>Chart maximum percentile</span><input id="chartMaxPct" type="number" min="0.002" max="99.999" step="any" value="99.9"></label>
-                <label class="setting-field"><span>Shade from percentile</span><input id="shadeLower" type="number" min="0.001" max="99.998" step="any" value="5"></label>
-                <label class="setting-field"><span>Shade to percentile</span><input id="shadeUpper" type="number" min="0.002" max="99.999" step="any" value="95"></label>
-                <label class="setting-field"><span>Reference-line percentile</span><input id="referencePct" type="number" min="0.001" max="99.999" step="any" value="50"></label>
-                <p class="setting-note">Chart bounds set the x-axis range. The shaded interval and reference line must lie within that range.</p>
-                <div id="chartSettingsWarning" class="chart-settings-warning" role="alert" aria-live="assertive"></div>
-              </div>
-            </details>
           </div>
           <pre id="ln-output" style="display:none;"></pre>
-          <div id="result-controls" style="display:none;"><label><input id="lnViewToggle" type="checkbox"> ln(x) view</label></div>
         </div>
       </details>
 
       <!-- Chart -->
-      <details id="chart-details">
+      <details id="chart-details" open>
         <summary class="eq-summary">Distribution chart</summary>
         <div class="section-body" style="padding:0;overflow:hidden;">
           <div id="chart" aria-label="Lognormal distribution chart"></div>
+        </div>
+      </details>
+
+      <!-- Settings. A section of their own because they govern the results,
+           the chart and the comparison alike, not the results on their own. -->
+      <details id="settings-details">
+        <summary class="eq-summary">Display and chart settings</summary>
+        <div class="section-body">
+          <div class="settings-body">
+            <label class="setting-field"><span>Significant digits</span><select id="precisionSelect"><option>3</option><option selected>5</option><option>7</option><option>10</option></select></label>
+            <label class="setting-field"><span>Optional unit</span><input id="unitInput" type="text" maxlength="20" placeholder="e.g. mg/L"></label>
+            <label class="setting-field setting-check" title="Plot on the log scale, where every lognormal is a symmetric bell and distributions of different size can be read against each other"><span>ln(x) view</span><input id="lnViewToggle" type="checkbox" checked></label>
+            <label class="setting-field"><span>Curves</span><select id="curveMode"><option value="both">PDF and CDF</option><option value="pdf">PDF only</option><option value="cdf">CDF only</option></select></label>
+            <label class="setting-field setting-check" title="The histogram and step CDF of the values a distribution was fitted to"><span>Raw data</span><input id="showRawData" type="checkbox" checked></label>
+            <label class="setting-field"><span>Chart minimum percentile</span><input id="chartMinPct" type="number" min="0.001" max="99.997" step="any" value="0.1"></label>
+            <label class="setting-field"><span>Chart maximum percentile</span><input id="chartMaxPct" type="number" min="0.002" max="99.999" step="any" value="99.9"></label>
+            <div class="setting-group">
+              <label class="setting-field setting-check" title="Emphasise the area between the two percentiles beside it"><span>Shaded band</span><input id="shadeBand" type="checkbox" checked></label>
+              <label class="setting-field"><span>Shade from percentile</span><input id="shadeLower" type="number" min="0.001" max="99.998" step="any" value="5"></label>
+              <label class="setting-field"><span>Shade to percentile</span><input id="shadeUpper" type="number" min="0.002" max="99.999" step="any" value="95"></label>
+            </div>
+            <div class="setting-group">
+              <label class="setting-field setting-check" title="A dashed vertical line at the percentile beside it"><span>Reference line</span><input id="referenceLine" type="checkbox" checked></label>
+              <label class="setting-field"><span>Reference-line percentile</span><input id="referencePct" type="number" min="0.001" max="99.999" step="any" value="50"></label>
+            </div>
+            <p class="setting-note">Significant digits and the unit apply to the results and the comparison; the rest apply to the chart. Chart bounds set the x-axis range, which covers every distribution shown, and the shaded band and reference line must lie within it. The band, the reference line and the raw data can each be switched off, which is worth doing once several distributions overlap. The ln(x) view plots on the log scale, where a lognormal is a symmetric bell and distributions of different size can be read against each other — untick it for a linear x-axis.</p>
+            <div id="chartSettingsWarning" class="chart-settings-warning" role="alert" aria-live="assertive"></div>
+          </div>
+        </div>
+      </details>
+
+      <!-- Comparison across distributions; hidden while there is only one -->
+      <details id="compare-details" open style="display:none;">
+        <summary class="eq-summary">Comparison</summary>
+        <div class="section-body">
+          <div class="cmp-scroll"><table id="compare-table" class="cmp-table"></table></div>
+          <button type="button" class="cmp-csv" data-on-click="downloadComparison">Download as CSV</button>
         </div>
       </details>
 
@@ -361,10 +438,328 @@
 
     /* ====================================================================
        LOGNORMAL CALCULATOR
+
+       The page holds several distributions at once. Each one owns a metric
+       selection and the values typed into its panels; the chart draws them
+       together and the comparison table lists them side by side.
+
+       Only the active distribution has panels in the DOM, so a distribution
+       keeps its values in its own store and the panels are filled from that
+       store when it becomes active. Everything is therefore computed from the
+       store rather than from the DOM — the distributions you cannot currently
+       see have no inputs to read.
        ==================================================================== */
 
     let CHART;
-    const selectedTabs = [];
+
+    /* ---- Distributions -------------------------------------------------- */
+
+    /*
+      The first colour is the site accent, so a page holding one distribution
+      looks exactly as it did before there could be several. Colours and
+      letters are handed out by first-free rather than by count, so removing B
+      of A/B/C leaves C alone instead of renaming it.
+    */
+    const DIST_COLOURS = ['#f3b87b', '#6aa9d8', '#7fbf6a', '#d98fb0',
+                          '#a99bd4', '#e0c65a', '#5fc2b4', '#c98a6a'];
+    const DIST_LETTERS = 'ABCDEFGH';
+    const DIST_LIMIT   = DIST_COLOURS.length;
+
+    const DISTRIBUTIONS = [];
+    let activeDistId = null;
+
+    /**
+     * A new distribution, optionally starting as a copy of an existing one.
+     *
+     * @param {string[]} metrics - Metric ids it starts with
+     * @param {Object} [values] - Panel values to copy
+     * @returns {Object}
+     */
+    function createDistribution(metrics, values) {
+      const taken = new Set(DISTRIBUTIONS.map(dist => dist.letter));
+      const letter = [...DIST_LETTERS].find(candidate => !taken.has(candidate)) || '?';
+      const used = new Set(DISTRIBUTIONS.map(dist => dist.colour));
+      const colour = DIST_COLOURS.find(candidate => !used.has(candidate)) || DIST_COLOURS[0];
+      return {
+        id: 'dist-' + letter + '-' + Date.now().toString(36),
+        letter, name: letter, colour,
+        metrics: metrics.slice(),
+        values: JSON.parse(JSON.stringify(values || {})),
+        visible: true,
+        /* `result` is what the inputs say now; `lastGood` is the last time
+           they said anything at all, which is what a newly chosen metric
+           starts from. */
+        result: null, lastGood: null, error: '', args: {}
+      };
+    }
+
+    /** The distribution whose panels are on screen. @returns {Object|null} */
+    function activeDistribution() {
+      return DISTRIBUTIONS.find(dist => dist.id === activeDistId) || DISTRIBUTIONS[0] || null;
+    }
+
+    /** The name to show, falling back to the letter while the field is empty. */
+    function distLabel(dist) {
+      return (dist.name || '').trim() || dist.letter;
+    }
+
+    function distById(id) {
+      return DISTRIBUTIONS.find(dist => dist.id === id) || null;
+    }
+
+    /** How many panels a distribution can fill. */
+    const SLOT_COUNT = 2;
+
+    /*
+      Which metric each panel slot shows, for a given selection.
+
+      This is the one place that decides it. The panels, the value store and
+      the computation all read it, so a panel can no longer show an input that
+      the computation does not look at — which is what made "data + percentile"
+      offer five fields and then produce nothing.
+    */
+    function slotMetrics(metrics) {
+      /* A data set is fitted to a distribution of its own, so it fills the
+         first panel and admits nothing beside it. */
+      if (metrics.includes('data')) return ['data', null];
+      const slots = [metrics[0] || null, metrics[1] || null];
+      /* One percentile does not fix a distribution, so it claims both slots
+         and the pair of points is fitted. */
+      if (!slots[1] && metrics[0] === 'percentile') slots[1] = 'percentile';
+      return slots;
+    }
+
+    /*
+      Values are stored under "<metric>@<slot>". Keying by metric as well as by
+      slot keeps fields that share a name apart: `p` is a percentile under
+      "percentile@1" and a two-tailed probability under "minmax@1", and one
+      must not be restored into the other.
+    */
+    function storeKey(metric, slot) { return metric + '@' + slot; }
+
+    /*
+      Which distribution the panels currently in the DOM were built for. After
+      a switch the old distribution's panels are still on screen while the new
+      one is already active, and a capture then would write one's values into
+      the other's store.
+    */
+    let panelsRenderedFor = null;
+
+    /** Read the active panels into the active distribution's store. */
+    function captureActivePanels() {
+      const dist = activeDistribution();
+      if (!dist || panelsRenderedFor !== dist.id) return;
+      slotMetrics(dist.metrics).forEach((metric, index) => {
+        if (!metric) return;
+        const content = document.getElementById(`metric${index + 1}-content`);
+        if (!content) return;
+        const key = storeKey(metric, index + 1);
+        const store = dist.values[key] || (dist.values[key] = {});
+        for (const field of content.querySelectorAll('[data-field]')) {
+          store[field.dataset.field] = field.value;
+        }
+      });
+    }
+
+    /*
+      A stored value for one field, preferring the slot it is being restored
+      into. The fallback across slots is what carries the pasted data set over
+      when adding a metric moves the data panel from slot 1 to slot 3.
+    */
+    function storedField(dist, metric, slot, field) {
+      const own = dist.values[storeKey(metric, slot)];
+      if (own && own[field] !== undefined && own[field] !== '') return own[field];
+      for (let other = 1; other <= SLOT_COUNT; other++) {
+        const store = dist.values[storeKey(metric, other)];
+        if (store && store[field] !== undefined && store[field] !== '') return store[field];
+      }
+      return undefined;
+    }
+
+    /* ---- The distribution tab bar --------------------------------------- */
+
+    function renderDistTabs() {
+      const list = document.getElementById('dist-tabs');
+      if (!list) return;
+      list.textContent = '';
+
+      for (const dist of DISTRIBUTIONS) {
+        const item = document.createElement('li');
+        const tab = document.createElement('span');
+        tab.className = 'dist-tab'
+          + (dist.id === activeDistId ? ' selected' : '')
+          + (dist.error ? ' invalid' : '')
+          + (dist.visible ? '' : ' chart-hidden');
+        tab.dataset.distId = dist.id;
+
+        const swatch = document.createElement('button');
+        swatch.type = 'button';
+        swatch.className = 'dist-swatch';
+        swatch.style.setProperty('--dist-colour', dist.colour);
+        swatch.dataset.distId = dist.id;
+        swatch.dataset.onClick = 'toggleDistributionVisible';
+
+        /* The name is editable in place on the active tab, and a button that
+           activates the distribution on every other one. */
+        let label;
+        if (dist.id === activeDistId) {
+          label = document.createElement('input');
+          label.type = 'text';
+          label.className = 'dist-name';
+          label.value = dist.name;
+          label.maxLength = 24;
+          label.size = Math.max(3, dist.name.length);
+          label.setAttribute('aria-label', 'Name of this distribution');
+          label.dataset.distId = dist.id;
+          label.dataset.onInput = 'renameDistribution';
+        } else {
+          label = document.createElement('button');
+          label.type = 'button';
+          label.className = 'dist-name';
+          label.textContent = distLabel(dist);
+          label.dataset.distId = dist.id;
+          label.dataset.onClick = 'selectDistribution';
+        }
+        tab.append(swatch, label);
+
+        if (DISTRIBUTIONS.length > 1) {
+          const remove = document.createElement('button');
+          remove.type = 'button';
+          remove.className = 'dist-close';
+          remove.textContent = '×';
+          remove.dataset.distId = dist.id;
+          remove.dataset.onClick = 'removeDistribution';
+          tab.append(remove);
+        }
+        item.append(tab);
+        list.append(item);
+      }
+
+      const add = document.getElementById('dist-add');
+      if (add) add.disabled = DISTRIBUTIONS.length >= DIST_LIMIT;
+      refreshDistTabState();
+    }
+
+    /*
+      Everything about a tab that changes while typing — whether the
+      distribution resolves, whether it is drawn — without rebuilding the tab.
+      Rebuilding would replace the name field under the cursor.
+    */
+    function refreshDistTabState() {
+      for (const dist of DISTRIBUTIONS) {
+        const tab = document.querySelector(`#dist-tabs .dist-tab[data-dist-id="${dist.id}"]`);
+        if (!tab) continue;
+        const name = distLabel(dist);
+        tab.classList.toggle('invalid', !!dist.error);
+        tab.classList.toggle('chart-hidden', !dist.visible);
+        const swatch = tab.querySelector('.dist-swatch');
+        if (swatch) {
+          swatch.title = dist.visible ? `Hide ${name} in the chart` : `Show ${name} in the chart`;
+          swatch.setAttribute('aria-pressed', dist.visible ? 'true' : 'false');
+        }
+        const label = tab.querySelector('button.dist-name');
+        if (label) label.title = `Edit ${name}`;
+        const remove = tab.querySelector('.dist-close');
+        if (remove) {
+          remove.title = `Remove ${name}`;
+          remove.setAttribute('aria-label', `Remove distribution ${name}`);
+        }
+      }
+      const add = document.getElementById('dist-add');
+      if (add) {
+        add.title = add.disabled
+          ? `At most ${DIST_LIMIT} distributions can be compared at once`
+          : 'Add a distribution, starting as a copy of this one';
+      }
+    }
+
+    /** Make another distribution the one whose panels are shown. */
+    function activateDistribution(id) {
+      const dist = distById(id);
+      if (!dist || dist.id === activeDistId) return;
+      captureActivePanels();
+      activeDistId = dist.id;
+      selectedTabs = dist.metrics;
+      renderDistTabs();
+      renderSelectedTabs();
+      recomputeAll();
+    }
+
+    /*
+      A new distribution copies the active one. Starting from the μ = 0, σ = 1
+      defaults instead would drop a curve on the chart that is nowhere near the
+      one being worked on, and the shared x-axis would stretch to cover both.
+    */
+    function addDistribution() {
+      if (DISTRIBUTIONS.length >= DIST_LIMIT) {
+        showMetricInfo(`At most ${DIST_LIMIT} distributions can be compared at once.`);
+        return;
+      }
+      captureActivePanels();
+      const source = activeDistribution();
+      const dist = createDistribution(source ? source.metrics : ['mu', 'sigma'],
+                                      source ? source.values : {});
+      DISTRIBUTIONS.push(dist);
+      activeDistId = dist.id;
+      selectedTabs = dist.metrics;
+      renderDistTabs();
+      renderSelectedTabs();
+      recomputeAll();
+    }
+
+    registerActions({
+      selectDistribution: (event, element) => activateDistribution(element.dataset.distId),
+
+      addDistribution: () => addDistribution(),
+
+      removeDistribution: (event, element) => {
+        if (DISTRIBUTIONS.length <= 1) return;
+        const index = DISTRIBUTIONS.findIndex(dist => dist.id === element.dataset.distId);
+        if (index === -1) return;
+        const wasActive = DISTRIBUTIONS[index].id === activeDistId;
+        DISTRIBUTIONS.splice(index, 1);
+        if (wasActive) {
+          activeDistId = DISTRIBUTIONS[Math.min(index, DISTRIBUTIONS.length - 1)].id;
+          selectedTabs = activeDistribution().metrics;
+          renderDistTabs();
+          renderSelectedTabs();
+        } else {
+          renderDistTabs();
+        }
+        recomputeAll();
+      },
+
+      toggleDistributionVisible: (event, element) => {
+        const dist = distById(element.dataset.distId);
+        if (!dist) return;
+        if (dist.visible && DISTRIBUTIONS.filter(other => other.visible).length === 1) {
+          showMetricInfo('At least one distribution has to stay visible in the chart.');
+          return;
+        }
+        dist.visible = !dist.visible;
+        refreshDistTabState();
+        drawChart();
+      },
+
+      /* Renaming redraws the labels but not the tabs: rebuilding them would
+         replace the field being typed into. */
+      renameDistribution: (event, element) => {
+        const dist = distById(element.dataset.distId);
+        if (!dist) return;
+        dist.name = element.value;
+        element.size = Math.max(3, element.value.length);
+        refreshDistTabState();
+        markActiveDistribution(dist);
+        renderComparison();
+        drawChart();
+      },
+
+      downloadComparison: () => downloadComparisonCsv()
+    });
+
+    /* ---- Metric selection rules ----------------------------------------- */
+
+    let selectedTabs = [];
     const _labelToId = {}, _idToLabel = {};
 
     const metricRules = {
@@ -374,7 +769,10 @@
       mode:       { incompatibleWith: ['SD'] },
       percentile: { incompatibleWith: ['SD'], pairable: true },
       minmax:     { incompatibleWith: ['mu','mean','GM','mode','percentile','sigma','SD','GSD','CV','error'], pairable: true },
-      data:       {},
+      /* A data set is fitted to a distribution of its own, so it shares one
+         with nothing. Stated here, it disables the data pill while a metric is
+         selected and every metric pill while data is, both from one flag. */
+      data:       { exclusive: true },
       sigma:      { incompatibleWith: ['SD','GSD','CV','error'] },
       SD:         { incompatibleWith: ['sigma','GSD','CV','error','percentile','mode'] },
       GSD:        { incompatibleWith: ['sigma','SD','CV','error'] },
@@ -393,7 +791,7 @@
 
     function fmt(v, sig = null) {
       if(sig===null){const el=document.getElementById('precisionSelect');sig=el?Number(el.value):5;}
-      if (v === undefined || v === null || !isFinite(v)) return '\u2014';
+      if (v === undefined || v === null || !isFinite(v)) return '—';
       if (v === 0) return '0';
       const n = +v.toPrecision(sig);
       const abs = Math.abs(n);
@@ -403,6 +801,7 @@
 
     /* ---- renderSelectedTabs -------------------------------------------- */
     function renderSelectedTabs() {
+      const dist = activeDistribution();
       const anchors     = Array.from(document.querySelectorAll('#tabs-header a[data-id]'));
       const selectedIds = selectedTabs.filter(Boolean);
       const primaryId   = selectedIds[0] || null;
@@ -427,7 +826,7 @@
       const maxSel = panelCount();
       if (selectedTabs.length >= maxSel) {
         anchors.forEach(a => {
-          if (a.dataset.id === 'data' || selectedTabs.includes(a.dataset.id)) return;
+          if (selectedTabs.includes(a.dataset.id)) return;
           a.classList.add('disabled');
           a.setAttribute('aria-disabled','true');
           a.title = `Maximum of ${maxSel} metrics selected`;
@@ -441,33 +840,28 @@
         });
       }
 
-      // Persist panel values before clearing
-      const panels = Array.from(document.querySelectorAll('#metric-panels .metric-panel'));
-      panels.forEach(panel => {
-        const ta  = panel.querySelector('[data-field="data"]');
-        const sel = panel.querySelector('[data-field="data_method"]');
-        if (ta)  window._lastDataRaw    = ta.value  || '';
-        if (sel) window._lastDataMethod = sel.value;
-        const pInp = panel.querySelector('[data-field="p"]');
-        const xInp = panel.querySelector('[data-field="x"]');
-        if (pInp && xInp) {
-          window._lastPercentile = window._lastPercentile || {};
-          const s = panel.id === 'metric1-panel' ? '1' : '2';
-          window._lastPercentile['p'+s] = pInp.value;
-          window._lastPercentile['x'+s] = xInp.value;
-        }
-        const minI = panel.querySelector('[data-field="min"]');
-        const maxI = panel.querySelector('[data-field="max"]');
-        const p2I  = panel.querySelector('[data-field="p"]');
-        if (minI && maxI && p2I) {
-          window._lastMinmax = window._lastMinmax || {};
-          const s = panel.id === 'metric1-panel' ? '' : '2';
-          window._lastMinmax['min'+s] = minI.value;
-          window._lastMinmax['max'+s] = maxI.value;
-          window._lastMinmax['p'+s]   = p2I.value;
-        }
-      });
+      /* Keep what is on screen before it is taken off screen — which the
+         stamp makes a no-op when what is on screen belongs to the distribution
+         being switched away from, and has already been kept. */
+      captureActivePanels();
 
+      /*
+        A metric that has just left the selection would otherwise keep the
+        value it held when it left, and that value goes stale as soon as the
+        distribution moves. Those are exactly the values μ and σ can rebuild,
+        so they are dropped. Data, percentile pairs and min/max are kept:
+        nothing can reconstruct them, and losing a pasted data set to a
+        mis-click would be worse than showing it again.
+      */
+      if (dist) {
+        const live = new Set(slotMetrics(selectedTabs).filter(Boolean));
+        for (const key of Object.keys(dist.values)) {
+          const metric = key.slice(0, key.lastIndexOf('@'));
+          if (REBUILDABLE.has(metric) && !live.has(metric)) delete dist.values[key];
+        }
+      }
+
+      const panels = Array.from(document.querySelectorAll('#metric-panels .metric-panel'));
       panels.forEach(panel => {
         const content = panel.querySelector('.metric-content');
         while (content && content.firstChild) {
@@ -476,22 +870,20 @@
         }
       });
 
-      panels.forEach(p => p.style.display = '');
-      const hasMinmax = selectedTabs.includes('minmax');
-      if (hasMinmax) {
-        const p2 = document.getElementById('metric2-panel');
-        const p1 = document.getElementById('metric1-panel');
-        if (p2) p2.style.display = 'none';
-        if (p1) p1.style.flex    = '1 1 100%';
-      }
-
       if (selectedTabs.length > panelCount()) selectedTabs.splice(panelCount());
       if (selectedTabs.length === 2 && isPairDisallowed(selectedTabs[0], selectedTabs[1]))
         selectedTabs.splice(1, 1);
 
-      function populateFromLast(clone) {
-        if (!window._lastLognormal || typeof window._lastLognormal.mu !== 'number') return;
-        const { mu, sigma } = window._lastLognormal;
+      /* min/max needs all three of its fields on one line, so it takes the
+         whole row. The reset matters as much as the set: without it the panel
+         stayed full width after moving on to another metric. */
+      const hasMinmax = selectedTabs.includes('minmax');
+      const firstPanel = document.getElementById('metric1-panel');
+      if (firstPanel) firstPanel.style.flex = hasMinmax ? '1 1 100%' : '';
+
+      function populateFromLast(clone, metric, slot) {
+        if (!dist || !dist.lastGood || typeof dist.lastGood.mu !== 'number') return;
+        const { mu, sigma } = dist.lastGood;
         const vals = {
           mu, sigma,
           mean: Math.exp(mu + sigma*sigma/2), GM: Math.exp(mu),
@@ -500,25 +892,34 @@
           GSD:  Math.exp(sigma), CV: Math.sqrt(Math.exp(sigma*sigma)-1),
           error_factor: Math.exp(sigma*1.645)
         };
-        Object.entries(vals).forEach(([f,v]) => {
-          const el = clone.querySelector(`[data-field="${f}"]`);
-          if (el) el.value = v;
+        Object.entries(vals).forEach(([field, value]) => {
+          const el = clone.querySelector(`[data-field="${field}"]`);
+          /* Only where the distribution has nothing of its own. A stored value
+             is what the user typed, and rewriting 50 as the 50 that comes back
+             out of exp(ln(50)) is not an improvement. */
+          if (el && storedField(dist, metric, slot, field) === undefined) el.value = value;
         });
       }
 
-      function cloneTemplate(suf) {
-        const tpl = document.getElementById(`tabs-${suf}`);
+      /* What this distribution holds for this field, which after the prune
+         above is only ever a value it is still using. */
+      function restoreStored(clone, metric, slot) {
+        if (!dist) return;
+        for (const el of clone.querySelectorAll('[data-field]')) {
+          const stored = storedField(dist, metric, slot, el.dataset.field);
+          if (stored !== undefined) el.value = stored;
+        }
+      }
+
+      function cloneTemplate(metric, slot) {
+        const tpl = document.getElementById(`tabs-${metric}`);
         if (!tpl) return null;
         const clone = tpl.cloneNode(true);
         clone.removeAttribute('id'); clone.querySelectorAll('[id]').forEach(el => el.removeAttribute('id'));
-        clone.style.display = ''; clone.setAttribute('data-cloned-from', suf);
-        attachArgListeners(clone); populateFromLast(clone);
-        if (suf === 'percentile' && window._lastPercentile) {
-          const pInp = clone.querySelector('[data-field="p"]');
-          const xInp = clone.querySelector('[data-field="x"]');
-          if (pInp) pInp.value = window._lastPercentile.p1 || window._lastPercentile.p2 || pInp.value;
-          if (xInp) xInp.value = window._lastPercentile.x1 || window._lastPercentile.x2 || xInp.value;
-        }
+        clone.style.display = ''; clone.setAttribute('data-cloned-from', metric);
+        attachArgListeners(clone);
+        restoreStored(clone, metric, slot);
+        populateFromLast(clone, metric, slot);
         return clone;
       }
 
@@ -536,55 +937,41 @@
         });
       }
 
-      const hasData  = selectedTabs.includes('data');
-      const nonData  = selectedTabs.filter(id => id !== 'data');
-      const showP3   = hasData && nonData.length >= 1;
+      const slots = slotMetrics(selectedTabs);
 
-      panels.forEach((panel, idx) => {
+      panels.forEach((panel, index) => {
         const content = panel.querySelector('.metric-content');
         const titleEl = panel.querySelector('h4');
-        let eff = null;
-        if (idx < 2) {
-          if (hasData && nonData.length === 0) { if (idx === 0) eff = 'data'; }
-          else {
-            eff = nonData[idx] || null;
-            if (!eff && idx === 1 && nonData[0] === 'percentile') eff = 'percentile';
-          }
-        } else if (idx === 2) {
-          eff = showP3 ? 'data' : null;
-          if (!eff) panel.style.display = 'none';
-        }
+        const metric  = slots[index];
+
+        panel.style.display = metric ? '' : 'none';
 
         if (titleEl) {
-          titleEl.textContent = eff
-            ? (_idToLabel[eff] || (eff === 'data' ? 'Data' : eff))
-            : (idx===0 ? 'Primary metric' : idx===1 ? 'Secondary metric' : 'Data');
+          titleEl.textContent = metric
+            ? (_idToLabel[metric] || (metric === 'data' ? 'Data' : metric))
+            : (index === 0 ? 'Primary metric' : 'Secondary metric');
         }
 
-        if (!eff) {
-          if (idx===1 && hasData && nonData.length<=1) { panel.style.display='none'; return; }
-          if (idx===2 && !showP3)                      { panel.style.display='none'; return; }
-          content.textContent = 'No metric selected.'; return;
-        }
+        if (!metric) { if (content) content.textContent = 'No metric selected.'; return; }
 
-        const clone = cloneTemplate(eff);
+        const clone = cloneTemplate(metric, index + 1);
         if (!clone) return;
 
-        if (eff === 'percentile' && idx === 1 && !nonData[1]) {
+        /* The second half of a percentile pair starts at the other end of the
+           distribution, so the two points are not the same point. */
+        if (metric === 'percentile' && index === 1 && selectedTabs[1] !== 'percentile') {
           const pInp = clone.querySelector('[data-field="p"]');
           if (pInp && pInp.value === '5') pInp.value = 95;
-          const xInp2 = clone.querySelector('[data-field="x"]');
-          if (xInp2 && (xInp2.value === '' || xInp2.value === '1')) xInp2.value = 10;
-        }
-        if (eff === 'data') {
-          if (window._lastDataRaw) { const ta = clone.querySelector('[data-field="data"]'); if (ta && !ta.value) ta.value = window._lastDataRaw; }
-          if (window._lastDataMethod) { const s = clone.querySelector('[data-field="data_method"]'); if (s) s.value = window._lastDataMethod; }
-          if (nonData.length > 0) { const mEl = clone.querySelector('[data-field="data_method"]'); if (mEl) { const w = mEl.closest('p'); if (w) w.style.display='none'; } }
+          const xInp = clone.querySelector('[data-field="x"]');
+          if (xInp && (xInp.value === '' || xInp.value === '1')) xInp.value = 10;
         }
         content.appendChild(clone);
         clone.classList.add('attach-anim');
         setTimeout(() => clone.classList.remove('attach-anim'), 300);
       });
+
+      panelsRenderedFor = dist ? dist.id : null;
+      captureActivePanels();
     }
 
     function showMetricInfo(msg, timeout = 2600) {
@@ -622,13 +1009,6 @@
         e.preventDefault();
         const label = a.textContent.trim(), candidateId = a.dataset.id;
 
-        if (candidateId === 'data') {
-          const ix = selectedTabs.indexOf(candidateId);
-          if (ix>=0) selectedTabs.splice(ix,1);
-          else if (selectedTabs.length<3) selectedTabs.push(candidateId);
-          renderSelectedTabs(); updatedInput(); return;
-        }
-
         if (a.classList.contains('disabled') && !selectedTabs.includes(candidateId)) {
           a.classList.add('disabled-flash'); setTimeout(()=>a.classList.remove('disabled-flash'),260); return;
         }
@@ -640,17 +1020,16 @@
           const conflict = selectedTabs.find(s=>isPairDisallowed(s,candidateId));
           if (conflict) {
             a.classList.add('disabled-flash'); setTimeout(()=>a.classList.remove('disabled-flash'),260);
-            showMetricInfo(`"${label}" cannot be combined with "${_idToLabel[conflict]||conflict}".`); return;
+            showMetricInfo(conflict === 'data' || candidateId === 'data'
+              ? 'A data set is fitted to a distribution of its own. Deselect what is selected first, or add a distribution for it.'
+              : `"${label}" cannot be combined with "${_idToLabel[conflict]||conflict}".`);
+            return;
           }
           if (selectedTabs.length < panelCount()) selectedTabs.push(candidateId);
-          else { showMetricInfo('Only two non-data metrics can be selected. Deselect one first.'); return; }
+          else { showMetricInfo('Only two metrics can be selected. Deselect one first.'); return; }
         }
-        renderSelectedTabs(); computeAndRender(gatherArgsFromPanels());
+        renderSelectedTabs(); recomputeAll();
       });
-
-      selectedTabs.push('mu','sigma');
-      renderSelectedTabs();
-      computeAndRender(gatherArgsFromPanels());
     })();
 
     /* ---- Core math ----------------------------------------------------- */
@@ -714,58 +1093,7 @@
       return {mu:Math.log(mean)-sigma*sigma/2, sigma, n, values:arr};
     }
 
-    function panelValue(idx, key) {
-      const panel=document.getElementById(`metric${idx}-content`); if(!panel) return null;
-      const el=panel.querySelector(`[data-field="${key}"]`); return el?el.value:null;
-    }
-    function panelCount() { return selectedTabs.includes('data')?3:2; }
-
-    function gatherArgsFromPanels() {
-      const args={}, hasData=selectedTabs.includes('data'), nonData=selectedTabs.filter(id=>id!=='data');
-      const tab1=nonData[0]||(hasData?'data':'mu'), tab2=nonData[1]||null;
-      const mf=id=>({mu:'mu',GM:'GM',mean:'mean',mode:'mode',sigma:'sigma',SD:'SD',GSD:'GSD',CV:'CV',error:'error_factor'})[id]||null;
-
-      (function(){
-        const raw=panelValue(1,'data')||panelValue(2,'data')||panelValue(3,'data')||'';
-        if(!raw) return;
-        const arr=String(raw).split(/[\s,;]+/).map(Number).filter(n=>!Number.isNaN(n)&&n>0);
-        if(!arr.length) return;
-        const n=arr.length, logs=arr.map(v=>Math.log(v));
-        const mu_=logs.reduce((a,b)=>a+b,0)/n;
-        args._dataValues=arr;
-        args._dataStats={n, sampleMeanLog:mu_, sampleSdLog:Math.sqrt(logs.reduce((a,b)=>a+(b-mu_)**2,0)/n)};
-      })();
-
-      if (tab1==='percentile') {
-        const rp=panelValue(1,'p'), rx=panelValue(1,'x');
-        if(rp!=null&&rp!=='') args.p1=parseFloat(rp);
-        else if(window._lastPercentile) args.p1=parseFloat(window._lastPercentile.p1);
-        if(rx!=null&&rx!=='') args.x1=parseFloat(rx);
-        else if(window._lastPercentile) args.x1=parseFloat(window._lastPercentile.x1);
-        if(tab2==='percentile'||(selectedTabs[0]==='percentile'&&panelValue(2,'p')!=null)){
-          args.p2=parseFloat(panelValue(2,'p')); args.x2=parseFloat(panelValue(2,'x'));
-        }
-        if(tab2&&tab2!=='percentile'&&tab2!=='data'){
-          const k2=mf(tab2); if(k2){const v=panelValue(2,k2);if(v!=null&&v!=='')args[k2]=+v;}
-          if(typeof args.p1==='number'&&typeof args.x1==='number'){args.p=args.p1;args.x=args.x1;}
-        }
-        if(args.p2!==undefined){
-          args._invalidPercentile=validateTwoPercentilePairs(args.p1,args.x1,args.p2,args.x2);
-        }
-      } else if (tab1==='data'&&nonData.length===0) {
-        /* handled in computeAndRender */
-      } else {
-        const k1=mf(tab1); if(k1){const v=panelValue(1,k1);if(v!=null&&v!=='')args[k1]=+v;}
-        if(tab2==='percentile'){args.p=+panelValue(2,'p');args.x=+panelValue(2,'x');}
-        else if(tab2&&tab2!=='data'){const k2=mf(tab2);if(k2){const v=panelValue(2,k2);if(v!=null&&v!=='')args[k2]=+v;}}
-      }
-      if(tab1==='minmax'||tab2==='minmax'){
-        const i=(tab1==='minmax')?1:2;
-        const mn=panelValue(i,'min'),mx=panelValue(i,'max'),pv=panelValue(i,'p');
-        if(mn!=null&&mn!=='')args.min=+mn; if(mx!=null&&mx!=='')args.max=+mx; if(pv!=null&&pv!=='')args.p=+pv;
-      }
-      return {args,tab1,tab2,hasData,nonData};
-    }
+    function panelCount() { return SLOT_COUNT; }
 
     function validateTwoPercentilePairs(p1,x1,p2,x2){
       if(![p1,x1,p2,x2].every(Number.isFinite))return 'Please provide two complete percentile/value pairs.';
@@ -776,260 +1104,642 @@
       if((p2-p1)*(x2-x1)<=0)return 'The value for the higher percentile must be greater than the value for the lower percentile.';
       return '';
     }
-    /* ---- computeAndRender ---------------------------------------------- */
-    function computeAndRender(state) {
-      const args=state&&state.args?state.args:{};
-      const hasData=selectedTabs.includes('data'), nonData=selectedTabs.filter(id=>id!=='data');
-      let tab1=nonData[0]||(hasData?'data':'mu'), tab2=nonData[1]||null;
 
-      const errorEl  =document.getElementById('result-error');
-      const detailsEl=document.getElementById('result-details');
-      const chartEl  =document.getElementById('chart');
-      const mf=id=>({mu:'mu',GM:'GM',mean:'mean',mode:'mode',sigma:'sigma',SD:'SD',GSD:'GSD',CV:'CV',error:'error_factor'})[id]||null;
+    /* ---- Resolving one distribution ------------------------------------- */
 
-      function showError(msg){
-        errorEl.innerHTML=msg; errorEl.style.display='block';
-        detailsEl.style.display='none';
-        if(CHART)Plotly.purge(CHART);
-        window._lastLognormal=null;
+    const METRIC_FIELD = {mu:'mu',GM:'GM',mean:'mean',mode:'mode',sigma:'sigma',
+                          SD:'SD',GSD:'GSD',CV:'CV',error:'error_factor'};
+    const REBUILDABLE = new Set(Object.keys(METRIC_FIELD));
+    const MUST_BE_POSITIVE = ['sigma','SD','GSD','CV','error_factor','mean','GM','mode','x','x1','x2','min','max'];
+
+    /**
+     * The arguments a distribution's stored panel values amount to.
+     *
+     * Reads the store, never the DOM, so a distribution can be computed while
+     * another one's panels are on screen.
+     *
+     * @param {Object} dist
+     * @returns {{args: Object, tab1: ?string, tab2: ?string}}
+     */
+    function collectArgs(dist) {
+      const slots = slotMetrics(dist.metrics);
+      const tab1 = slots[0], tab2 = slots[1];
+      const args = {};
+      const read = (slot, field) => {
+        const metric = slots[slot - 1];
+        if (!metric) return null;
+        const store = dist.values[storeKey(metric, slot)];
+        const value = store ? store[field] : undefined;
+        return value === undefined ? null : value;
+      };
+
+      if (tab1 === 'data') {
+        const values = String(read(1, 'data') || '')
+          .split(/[\s,;]+/).map(Number).filter(n => !Number.isNaN(n) && n > 0);
+        if (values.length) {
+          const logs = values.map(v => Math.log(v));
+          const meanLog = logs.reduce((a, b) => a + b, 0) / values.length;
+          args._dataValues = values;
+          args._dataStats = {
+            n: values.length,
+            sampleMeanLog: meanLog,
+            sampleSdLog: Math.sqrt(logs.reduce((a, b) => a + (b - meanLog) ** 2, 0) / values.length)
+          };
+        }
       }
-      function clearError(){ errorEl.style.display='none'; }
 
-      if(Object.keys(args).length===0&&!window._lastLognormal){ clearError(); detailsEl.style.display='none'; return; }
+      if (tab1 === 'percentile') {
+        const p1 = read(1, 'p'), x1 = read(1, 'x');
+        if (p1 !== null && p1 !== '') args.p1 = parseFloat(p1);
+        if (x1 !== null && x1 !== '') args.x1 = parseFloat(x1);
+        if (tab2 === 'percentile') {
+          args.p2 = parseFloat(read(2, 'p'));
+          args.x2 = parseFloat(read(2, 'x'));
+        } else if (tab2) {
+          const field = METRIC_FIELD[tab2];
+          if (field) { const value = read(2, field); if (value !== null && value !== '') args[field] = +value; }
+          /* One percentile plus another metric: the pair is a single point. */
+          if (Number.isFinite(args.p1) && Number.isFinite(args.x1)) { args.p = args.p1; args.x = args.x1; }
+        }
+        if (args.p2 !== undefined) {
+          args._invalidPercentile = validateTwoPercentilePairs(args.p1, args.x1, args.p2, args.x2);
+        }
+      } else if (tab1 === 'data') {
+        args._fitFromData = true;
+        args._dataMethod = read(1, 'data_method') || 'MLE';
+      } else if (tab1) {
+        const field = METRIC_FIELD[tab1];
+        if (field) { const value = read(1, field); if (value !== null && value !== '') args[field] = +value; }
+        if (tab2 === 'percentile') {
+          args.p = +read(2, 'p');
+          args.x = +read(2, 'x');
+        } else if (tab2) {
+          const field2 = METRIC_FIELD[tab2];
+          if (field2) { const value = read(2, field2); if (value !== null && value !== '') args[field2] = +value; }
+        }
+      }
 
-      // Re-parse data
-      (function(){
-        const raw=panelValue(1,'data')||panelValue(2,'data')||panelValue(3,'data')||'';
-        if(!raw)return;
-        const arr=String(raw).split(/[\s,;]+/).map(Number).filter(n=>!Number.isNaN(n)&&n>0);
-        if(!arr.length)return;
-        const n=arr.length,logs=arr.map(v=>Math.log(v)),mu_=logs.reduce((a,b)=>a+b,0)/n;
-        args._dataValues=arr; args._dataStats={n,sampleMeanLog:mu_,sampleSdLog:Math.sqrt(logs.reduce((a,b)=>a+(b-mu_)**2,0)/n)};
-      })();
+      if (tab1 === 'minmax' || tab2 === 'minmax') {
+        const slot = tab1 === 'minmax' ? 1 : 2;
+        const min = read(slot, 'min'), max = read(slot, 'max'), probability = read(slot, 'p');
+        if (min !== null && min !== '') args.min = +min;
+        if (max !== null && max !== '') args.max = +max;
+        if (probability !== null && probability !== '') args.p = +probability;
+      }
+      return { args, tab1, tab2 };
+    }
 
+    /** Every statistic the page shows, from the two parameters. */
+    function statsFrom(mu, sigma) {
+      const cv = Math.sqrt(Math.exp(sigma**2) - 1);
+      const variance = (Math.exp(sigma**2) - 1) * Math.exp(2*mu + sigma**2);
+      return {
+        mu, sigma,
+        mean: Math.exp(mu + sigma**2/2),
+        median: Math.exp(mu),
+        mode: Math.exp(mu - sigma**2),
+        variance, sd: Math.sqrt(variance),
+        gsd: Math.exp(sigma), cv,
+        skewness: cv**3 + 3*cv,
+        kurtosis: cv**8 + 6*cv**6 + 15*cv**4 + 16*cv**2,
+        entropy: (1 + Math.log(2*Math.PI*sigma**2))/2 + mu,
+        error_factor: Math.exp(sigma*1.645),
+        p5:  logninv(mu,sigma,.05), p25: logninv(mu,sigma,.25),
+        p50: Math.exp(mu),
+        p75: logninv(mu,sigma,.75), p95: logninv(mu,sigma,.95)
+      };
+    }
+
+    /**
+     * Turn a distribution's inputs into statistics, a message, or neither.
+     *
+     * "Neither" is the ordinary state of a half-filled form, and is not an
+     * error: the results are simply not shown yet.
+     *
+     * @param {Object} dist
+     * @returns {{args: Object, stats: ?Object, error: ?string, incomplete: ?boolean}}
+     */
+    function resolveDistribution(dist) {
+      const { args } = collectArgs(dist);
       let mu, sigma;
 
-      if(tab1==='percentile'){
-        const rp=panelValue(1,'p'),rx=panelValue(1,'x');
-        if(rp!=null&&rp!=='')args.p1=parseFloat(rp); if(rx!=null&&rx!=='')args.x1=parseFloat(rx);
-        const p2v=panelValue(2,'p'),x2v=panelValue(2,'x');
-        if(tab2==='percentile'||(selectedTabs[0]==='percentile'&&p2v!=null)){args.p2=parseFloat(p2v);args.x2=parseFloat(x2v);}
-        if(tab2&&tab2!=='percentile'&&tab2!=='data'){
-          const k2=mf(tab2);if(k2){const v=panelValue(2,k2);if(v!=null&&v!=='')args[k2]=+v;}
-          if(typeof args.p1==='number'&&typeof args.x1==='number'){args.p=args.p1;args.x=args.x1;}
+      if (args._fitFromData) {
+        const fit = args._dataMethod === 'MOM'
+          ? fitLognormalMOM(args._dataValues || [])
+          : fitLognormalMLE(args._dataValues || []);
+        if (fit.error || fit.n < 2) {
+          return { args, error: fit.error || 'Please provide at least two positive values.' };
         }
-        if(args.p2!==undefined){
-          args._invalidPercentile=validateTwoPercentilePairs(args.p1,args.x1,args.p2,args.x2);
-        }
-      } else if(tab1==='data'&&nonData.length===0){
-        const raw=panelValue(1,'data')||'';
-        const arr=String(raw).split(/[\s,;]+/).map(Number).filter(n=>!Number.isNaN(n)&&n>0);
-        if(arr.length){
-          args._dataValues=arr; const n=arr.length,logs=arr.map(v=>Math.log(v)),mu_=logs.reduce((a,b)=>a+b,0)/n;
-          args._dataStats={n,sampleMeanLog:mu_,sampleSdLog:Math.sqrt(logs.reduce((a,b)=>a+(b-mu_)**2,0)/n)};
-        }
-        const method=panelValue(1,'data_method')||'MLE';
-        const fit=method==='MOM'?fitLognormalMOM(raw):fitLognormalMLE(raw);
-        if(fit.error||fit.n<2){showError(fit.error||'Please provide at least two positive values.');return;}
-        mu=args.mu=fit.mu; sigma=args.sigma=fit.sigma; args._dataMethod=method;
-      } else {
-        const k1=mf(tab1);if(k1){const v=panelValue(1,k1);if(v!=null&&v!=='')args[k1]=+v;}
-        if(tab2==='percentile'){args.p=+panelValue(2,'p');args.x=+panelValue(2,'x');}
-        else if(tab2&&tab2!=='data'){const k2=mf(tab2);if(k2){const v=panelValue(2,k2);if(v!=null&&v!=='')args[k2]=+v;}}
-      }
-      if(tab1==='minmax'||tab2==='minmax'){
-        const i=(tab1==='minmax')?1:2;
-        const mn=panelValue(i,'min'),mx=panelValue(i,'max'),pv=panelValue(i,'p');
-        if(mn!=null&&mn!=='')args.min=+mn;if(mx!=null&&mx!=='')args.max=+mx;if(pv!=null&&pv!=='')args.p=+pv;
+        mu = args.mu = fit.mu;
+        sigma = args.sigma = fit.sigma;
       }
 
-      // Numeric validation
-      for(const k of Object.keys(args)){
-        if(k.startsWith('_')||k==='data')continue;
-        const num=typeof args[k]==='string'?Number(args[k]):args[k];
-        if(num===''||num==null)continue;
-        if(!isFinite(num)){showError(`Invalid value for ${k}`);return;}
-        if(['sigma','SD','GSD','CV','error_factor','mean','GM','mode','x','x1','x2','min','max'].includes(k)&&num<=0){showError(`${k} must be positive`);return;}
-        if(k==='GSD'&&num<1){showError('GSD must be \u2265 1');return;}
-        if(k==='error_factor'&&num<1){showError('Error factor must be \u2265 1');return;}
-        if(['p','p1','p2'].includes(k)&&(num<=0||num>=100)){showError('Percentile must be greater than 0 and less than 100');return;}
-        args[k]=num;
+      for (const key of Object.keys(args)) {
+        if (key.startsWith('_') || key === 'data') continue;
+        const value = typeof args[key] === 'string' ? Number(args[key]) : args[key];
+        if (value === '' || value == null) continue;
+        if (!isFinite(value)) return { args, error: `Invalid value for ${key}` };
+        if (MUST_BE_POSITIVE.includes(key) && value <= 0) return { args, error: `${key} must be positive` };
+        if (key === 'GSD' && value < 1) return { args, error: 'GSD must be ≥ 1' };
+        if (key === 'error_factor' && value < 1) return { args, error: 'Error factor must be ≥ 1' };
+        if (['p','p1','p2'].includes(key) && (value <= 0 || value >= 100)) {
+          return { args, error: 'Percentile must be greater than 0 and less than 100' };
+        }
+        args[key] = value;
       }
 
-      // Cross-field checks
-      if(typeof args.mu==='number'&&typeof args.mean==='number'&&Math.log(args.mean)<=args.mu)
-        {showError(`Mean must exceed e<sup>\u03bc</sup> = ${fmt(Math.exp(args.mu))}`);return;}
-      if(typeof args.mu==='number'&&typeof args.mode==='number'&&args.mode>=Math.exp(args.mu))
-        {showError(`Mode must be less than e<sup>\u03bc</sup> = ${fmt(Math.exp(args.mu))}`);return;}
-      if(typeof args.mean==='number'&&typeof args.mode==='number'&&args.mean<=args.mode)
-        {showError('Mean must exceed mode');return;}
-      if(typeof args.min==='number'&&typeof args.max==='number'&&args.min>=args.max)
-        {showError('Min must be smaller than max');return;}
-      if(args._invalidPercentile){showError(args._invalidPercentile);return;}
+      if (typeof args.mu === 'number' && typeof args.mean === 'number' && Math.log(args.mean) <= args.mu)
+        return { args, error: `Mean must exceed e<sup>μ</sup> = ${fmt(Math.exp(args.mu))}` };
+      if (typeof args.mu === 'number' && typeof args.mode === 'number' && args.mode >= Math.exp(args.mu))
+        return { args, error: `Mode must be less than e<sup>μ</sup> = ${fmt(Math.exp(args.mu))}` };
+      if (typeof args.mean === 'number' && typeof args.mode === 'number' && args.mean <= args.mode)
+        return { args, error: 'Mean must exceed mode' };
+      if (typeof args.min === 'number' && typeof args.max === 'number' && args.min >= args.max)
+        return { args, error: 'Min must be smaller than max' };
+      if (args._invalidPercentile) return { args, error: args._invalidPercentile };
 
-      if(tab1!=='data'||nonData.length>0) [mu,sigma]=getMuSigma(args);
+      if (!args._fitFromData) [mu, sigma] = getMuSigma(args);
 
-      // Auto-fill percentile secondary slot
-      if(typeof mu==='number'&&typeof sigma==='number'&&tab2==='percentile'){
-        const pInp=document.querySelector('#metric2-content [data-field="p"]');
-        const xInp=document.querySelector('#metric2-content [data-field="x"]');
-        if(pInp&&xInp&&document.activeElement!==xInp&&!xInp._userEdited){
-          const pnum=parseFloat(pInp.value);
-          if(isFinite(pnum)){
-            const cur=xInp.value;
-            if(xInp._programmatic!==false&&(cur===''||cur==='1'||!isFinite(parseFloat(cur)))){
-              xInp.value=logninv(mu,sigma,pnum/100); xInp._programmatic=true;
-            }
+      if (args._dataValues && args._dataValues.length && typeof mu === 'number' && typeof sigma === 'number') {
+        const sorted = args._dataValues.slice().sort((a, b) => a - b);
+        let ks = 0;
+        for (let i = 0; i < sorted.length; i++) {
+          ks = Math.max(ks, Math.abs((i + 1)/sorted.length - logncdf(mu, sigma, sorted[i])));
+        }
+        args._ks = ks;
+      }
+
+      if (typeof mu !== 'number' || typeof sigma !== 'number' || !isFinite(mu) || !isFinite(sigma)) {
+        return { args, incomplete: true };
+      }
+      return { args, stats: statsFrom(mu, sigma) };
+    }
+
+    /* ---- Showing the active distribution -------------------------------- */
+
+    const RESULT_FIELDS = [
+      ['res-mu','mu'], ['res-sigma','sigma'], ['res-mean','mean'], ['res-median','median'],
+      ['res-mode','mode'], ['res-sd','sd'], ['res-variance','variance'], ['res-gsd','gsd'],
+      ['res-cv','cv'], ['res-ef','error_factor'], ['res-skew','skewness'],
+      ['res-kurt','kurtosis'], ['res-entropy','entropy'],
+      ['res-p5','p5'], ['res-p25','p25'], ['res-p50','p50'], ['res-p75','p75'], ['res-p95','p95']
+    ];
+
+    /*
+      Computed results shows one distribution at a time, and with several on
+      the page nothing said which. It takes that distribution's colour down its
+      left edge and names it in the heading — the same colour as its curve, its
+      tab and its column in the comparison.
+
+      Only when there are several: one distribution is unambiguous, and the
+      page looks as it did before there could be more.
+    */
+    function markActiveDistribution(dist) {
+      const section = document.getElementById('computed-details');
+      const chip = document.getElementById('computed-for');
+      const name = document.getElementById('computed-for-name');
+      if (!section || !chip || !name) return;
+      const several = DISTRIBUTIONS.length > 1 && !!dist;
+      section.classList.toggle('has-active-dist', several);
+      chip.hidden = !several;
+      if (!several) return;
+      section.style.setProperty('--active-dist-colour', dist.colour);
+      chip.style.setProperty('--dist-colour', dist.colour);
+      name.textContent = distLabel(dist);
+    }
+
+    function renderActiveResult(dist) {
+      const errorEl   = document.getElementById('result-error');
+      const detailsEl = document.getElementById('result-details');
+      const dataEl    = document.getElementById('result-data-stats');
+      const outEl     = document.getElementById('ln-output');
+
+      if (!dist || !dist.result) {
+        /* Clearing the four headline cards matters: they sit outside
+           #result-details, so hiding that left the previous distribution's
+           numbers on screen beside the message explaining this one. */
+        for (const [id] of RESULT_FIELDS) document.getElementById(id).textContent = '—';
+        if (dataEl) dataEl.style.display = 'none';
+        detailsEl.style.display = 'none';
+        if (dist && dist.error) { errorEl.innerHTML = dist.error; errorEl.style.display = 'block'; }
+        else errorEl.style.display = 'none';
+        if (outEl) outEl.textContent = '';
+        return;
+      }
+
+      errorEl.style.display = 'none';
+      const stats = dist.result;
+      for (const [id, key] of RESULT_FIELDS) document.getElementById(id).textContent = fmt(stats[key]);
+
+      if (dataEl) {
+        const dataStats = dist.args._dataStats;
+        if (dataStats) {
+          let html = `<strong>Data</strong>: n&nbsp;=&nbsp;${dataStats.n}`;
+          if (dist.args._fitFromData && dist.args._dataMethod) html += `, method&nbsp;=&nbsp;${dist.args._dataMethod}`;
+          if (dist.args._ks !== undefined) html += ` &nbsp;&middot;&nbsp; <strong>KS</strong>&nbsp;=&nbsp;${dist.args._ks.toFixed(4)}`;
+          dataEl.innerHTML = html;
+          dataEl.style.display = '';
+        } else {
+          dataEl.style.display = 'none';
+        }
+      }
+      detailsEl.style.display = 'block';
+
+      if (outEl) {
+        outEl.textContent = [
+          ['mu',stats.mu],['sigma',stats.sigma],['mean',stats.mean],['sd',stats.sd],
+          ['gm',stats.median],['gsd',stats.gsd],
+          ['5%',stats.p5],['25%',stats.p25],['50%',stats.p50],['75%',stats.p75],['95%',stats.p95],
+          ['mode',stats.mode],['variance',stats.variance],['CV',stats.cv],['skewness',stats.skewness],
+          ['kurtosis',stats.kurtosis],['entropy',stats.entropy],['error factor',stats.error_factor]
+        ].map(([label,value]) => label.padEnd(14) + fmt(value)).join('\n');
+      }
+    }
+
+    /*
+      The second point of a percentile pair is a good guess until the user
+      makes it their own, so it follows the distribution while it is untouched
+      and stops the moment it is edited.
+    */
+    function autofillPercentileSlot(dist) {
+      if (!dist || !dist.result) return;
+      if (dist.metrics[1] !== 'percentile') return;
+      const pInp = document.querySelector('#metric2-content [data-field="p"]');
+      const xInp = document.querySelector('#metric2-content [data-field="x"]');
+      if (!pInp || !xInp || document.activeElement === xInp || xInp._userEdited) return;
+      const percentile = parseFloat(pInp.value);
+      if (!isFinite(percentile)) return;
+      const current = xInp.value;
+      if (xInp._programmatic !== false && (current === '' || current === '1' || !isFinite(parseFloat(current)))) {
+        xInp.value = logninv(dist.result.mu, dist.result.sigma, percentile / 100);
+        xInp._programmatic = true;
+      }
+    }
+
+    /* ---- Comparing the distributions ------------------------------------ */
+
+    const COMPARE_ROWS = [
+      ['μ', 'mu'], ['σ', 'sigma'], ['Mean', 'mean'], ['Median', 'median'], ['Mode', 'mode'],
+      ['Std dev', 'sd'], ['GSD', 'gsd'], ['CV', 'cv'], ['Error factor', 'error_factor'],
+      ['P5', 'p5'], ['P50', 'p50'], ['P95', 'p95']
+    ];
+
+    function renderComparison() {
+      const section = document.getElementById('compare-details');
+      const table = document.getElementById('compare-table');
+      if (!section || !table) return;
+
+      /* One distribution is not a comparison. */
+      section.style.display = DISTRIBUTIONS.length > 1 ? '' : 'none';
+      if (DISTRIBUTIONS.length <= 1) return;
+
+      table.textContent = '';
+      const head = table.createTHead().insertRow();
+      head.insertCell().textContent = 'Statistic';
+      for (const dist of DISTRIBUTIONS) {
+        const cell = head.insertCell();
+        const swatch = document.createElement('span');
+        swatch.className = 'cmp-swatch';
+        swatch.style.background = dist.colour;
+        const name = document.createElement('span');
+        /* textContent, not innerHTML: the name is whatever the user typed. */
+        name.textContent = distLabel(dist);
+        cell.append(swatch, name);
+        cell.className = 'cmp-head' + (dist.id === activeDistId ? ' cmp-active' : '');
+        cell.style.setProperty('--dist-colour', dist.colour);
+      }
+
+      const body = table.createTBody();
+      const state = body.insertRow();
+      state.className = 'cmp-state';
+      state.insertCell().textContent = '';
+      for (const dist of DISTRIBUTIONS) {
+        const cell = state.insertCell();
+        if (dist.error) { cell.textContent = dist.error.replace(/<[^>]*>/g, ''); cell.className = 'cmp-error'; }
+        else if (!dist.result) { cell.textContent = 'incomplete'; cell.className = 'cmp-error'; }
+        else if (!dist.visible) cell.textContent = 'hidden in chart';
+      }
+
+      for (const [label, key] of COMPARE_ROWS) {
+        const row = body.insertRow();
+        row.insertCell().textContent = label;
+        for (const dist of DISTRIBUTIONS) {
+          row.insertCell().textContent = dist.result ? fmt(dist.result[key]) : '—';
+        }
+      }
+
+      /* Only worth a row when at least one distribution was given data. */
+      if (DISTRIBUTIONS.some(dist => dist.args && dist.args._dataStats)) {
+        const nRow = body.insertRow();
+        nRow.insertCell().textContent = 'Data n';
+        for (const dist of DISTRIBUTIONS) {
+          nRow.insertCell().textContent = dist.args && dist.args._dataStats ? String(dist.args._dataStats.n) : '—';
+        }
+        const ksRow = body.insertRow();
+        ksRow.insertCell().textContent = 'KS';
+        for (const dist of DISTRIBUTIONS) {
+          const ks = dist.args && dist.args._ks;
+          ksRow.insertCell().textContent = ks === undefined || ks === null ? '—' : ks.toFixed(4);
+        }
+      }
+    }
+
+    /*
+      The export carries full precision rather than what the display rounds to:
+      the numbers are going somewhere else to be worked with, and the display
+      precision is a reading aid.
+    */
+    function comparisonCsv() {
+      const header = ['Statistic', ...DISTRIBUTIONS.map(distLabel)];
+      const rows = COMPARE_ROWS.map(([label, key]) =>
+        [label, ...DISTRIBUTIONS.map(dist => dist.result ? String(dist.result[key]) : '')]);
+      rows.push(['Data n', ...DISTRIBUTIONS.map(dist =>
+        dist.args && dist.args._dataStats ? String(dist.args._dataStats.n) : '')]);
+      rows.push(['KS', ...DISTRIBUTIONS.map(dist =>
+        dist.args && dist.args._ks !== undefined ? String(dist.args._ks) : '')]);
+      return '﻿' + [header, ...rows].map(row => row.map(kvotCsvCell).join(',')).join('\r\n');
+    }
+
+    function downloadComparisonCsv() {
+      const blob = new Blob([comparisonCsv()], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'lognormal-comparison.csv';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    /* ---- Chart ----------------------------------------------------------- */
+
+    /** The three channels of a hex colour. @returns {number[]} */
+    function rgbOf(colour) {
+      const hex = String(colour).replace('#', '');
+      const value = parseInt(hex.length === 3 ? hex.replace(/./g, c => c + c) : hex, 16);
+      return [(value >> 16) & 255, (value >> 8) & 255, value & 255];
+    }
+
+    /** '#f3b87b' at some opacity, for a fill under its own line. */
+    function withAlpha(colour, alpha) {
+      const [red, green, blue] = rgbOf(colour);
+      return `rgba(${red},${green},${blue},${alpha})`;
+    }
+
+    /** Hue in degrees, for judging whether two colours will read as one. */
+    function hueOf(colour) {
+      const [red, green, blue] = rgbOf(colour).map(channel => channel / 255);
+      const high = Math.max(red, green, blue), low = Math.min(red, green, blue);
+      const span = high - low;
+      if (!span) return 0;
+      let hue;
+      if (high === red) hue = ((green - blue) / span) % 6;
+      else if (high === green) hue = (blue - red) / span + 2;
+      else hue = (red - green) / span + 4;
+      hue *= 60;
+      return hue < 0 ? hue + 360 : hue;
+    }
+
+    /** Degrees between two hues, the short way round. */
+    function hueGap(first, second) {
+      const gap = Math.abs(first - second) % 360;
+      return gap > 180 ? 360 - gap : gap;
+    }
+
+    /*
+      The CDF of a single distribution is drawn in a colour of its own, so the
+      two curves and the two y-axes can be told apart. Blue is the first
+      choice and has been the only one — which fails for the distribution that
+      is itself blue, and nearly fails for the teal one. The first candidate
+      clearly distinct from the curve's own colour wins; if none is, the
+      furthest does.
+    */
+    const CDF_COLOURS = ['#6baed6', '#9a7bd0', '#c2603f'];
+    const CDF_MIN_HUE_GAP = 40;
+
+    function cdfColourFor(pdfColour) {
+      const pdfHue = hueOf(pdfColour);
+      let furthest = CDF_COLOURS[0], widest = -1;
+      for (const candidate of CDF_COLOURS) {
+        const gap = hueGap(pdfHue, hueOf(candidate));
+        if (gap >= CDF_MIN_HUE_GAP) return candidate;
+        if (gap > widest) { widest = gap; furthest = candidate; }
+      }
+      return furthest;
+    }
+
+    function drawChart() {
+      const chartEl = document.getElementById('chart');
+      const details = document.getElementById('chart-details');
+      /* A closed <details> has no dimensions, and Plotly would size to them. */
+      if (!chartEl || !details || !details.open) return;
+
+      const drawn = DISTRIBUTIONS.filter(dist => dist.visible && dist.result);
+      if (!drawn.length) { if (CHART) { Plotly.purge(CHART); CHART = null; } return; }
+
+      const single    = drawn.length === 1;
+      const lnView    = !!(document.getElementById('lnViewToggle') || {}).checked;
+      const isDark    = document.documentElement.getAttribute('data-theme') === 'dark';
+      const themeBG   = getComputedStyle(document.documentElement).getPropertyValue('--bg-primary').trim() || '#ffffff';
+      const gridClr   = isDark ? '#4a3f35' : '#e5ddd5';
+      const axisClr   = isDark ? '#e8ddd0' : '#352921';
+      const nPts = 800;
+
+      /*
+        With one distribution the colours name the two curves, so the axis
+        titles carry them. With several they name the distributions, and
+        colouring the axis titles would claim one of them is the PDF axis.
+      */
+      const soloColour = single ? drawn[0].colour : null;
+      const soloCdfColour = single ? cdfColourFor(soloColour) : null;
+      CHART = chartEl;
+
+      const setting = (id, fallback) => {
+        const el = document.getElementById(id);
+        const value = el ? Number(el.value) : NaN;
+        return Number.isFinite(value) ? value : fallback;
+      };
+      const chartPMin = setting('chartMinPct', .1) / 100, chartPMax = setting('chartMaxPct', 99.9) / 100;
+      const shadePMin = setting('shadeLower', 5) / 100,   shadePMax = setting('shadeUpper', 95) / 100;
+      const referencePct = setting('referencePct', 50),   referenceP = referencePct / 100;
+      const curves = (document.getElementById('curveMode') || {}).value || 'both';
+      const showPdf = curves !== 'cdf', showCdf = curves !== 'pdf';
+      const checked = (id, fallback) => {
+        const el = document.getElementById(id);
+        return el ? el.checked : fallback;
+      };
+      const showBand = checked('shadeBand', true);
+      const showReference = checked('referenceLine', true);
+      const showRaw = checked('showRawData', true);
+
+      /* Faint enough to see one distribution through another. One on its own
+         keeps the weight it has always had. */
+      const bandAlpha = single ? .55 : .20;
+      const outerAlpha = single ? .12 : .05;
+
+      const grid = linspace(chartPMin, chartPMax, nPts);
+      const shadeLoIndex = Math.max(0, Math.min(nPts-2, Math.round((shadePMin-chartPMin)/(chartPMax-chartPMin)*(nPts-1))));
+      const shadeHiIndex = Math.max(shadeLoIndex+1, Math.min(nPts-1, Math.round((shadePMax-chartPMin)/(chartPMax-chartPMin)*(nPts-1))));
+
+      const traces = [], cdfTraces = [];
+      let axisMin = Infinity, axisMax = -Infinity;
+
+      for (const dist of drawn) {
+        const { mu, sigma } = dist.result;
+        const sigmaPlot = sigma > 0 ? sigma : 1e-6;
+        const colour = dist.colour, name = distLabel(dist), group = dist.id;
+        const values = dist.args._dataValues, dataStats = dist.args._dataStats;
+
+        const x = grid.map(p => lnView ? norminv(mu, sigmaPlot, p) : logninv(mu, sigmaPlot, p));
+        const y = x.map(v => lnView ? normpdf(mu, sigmaPlot, v) : lognpdf(mu, sigmaPlot, v));
+        axisMin = Math.min(axisMin, x[0]);
+        axisMax = Math.max(axisMax, x[nPts - 1]);
+
+        /* One legend entry per distribution, carried by its first curve and
+           shared by the rest, so clicking it hides that distribution whole. */
+        let legendTaken = false;
+        const claimLegend = () => {
+          if (single || legendTaken) return false;
+          legendTaken = true;
+          return true;
+        };
+
+        if (showPdf && showRaw && values && values.length) {
+          traces.push({
+            x: lnView ? values.map(v => Math.log(v)) : values,
+            type: 'histogram', histnorm: 'probability density',
+            opacity: single ? (lnView ? .45 : .4) : .28,
+            marker: { color: single ? (lnView ? 'rgba(96,96,96,.25)' : 'rgba(96,96,96,.22)') : colour },
+            nbinsx: Math.min(50, Math.max(5, Math.round(Math.sqrt(dataStats.n)))),
+            hovertemplate: (lnView ? '%{x:.4f}: %{y:.4f}' : '%{x}: %{y:.4f}')
+              + `<extra>${single ? (lnView ? 'ln(data)' : 'data') : name + ' data'}</extra>`,
+            name: single ? (lnView ? 'Empirical (ln)' : 'Empirical') : `${name} data`,
+            legendgroup: group, showlegend: false
+          });
+        }
+
+        if (showPdf) {
+          /* A fill under an area is not something to hover; the value at a
+             point is. With several distributions the hover is the only way to
+             tell which curve is under the pointer, so it is kept there. */
+          const shape = {
+            type: 'scatter', fill: 'tozeroy', legendgroup: group,
+            ...(single ? { hoverinfo: 'skip' }
+                       : { hovertemplate: `%{x}: %{y:.4g}<extra>${name}</extra>` })
+          };
+          if (showBand) {
+            traces.push({ ...shape, x: x.slice(0, shadeLoIndex+1), y: y.slice(0, shadeLoIndex+1),
+              fillcolor: withAlpha(colour, outerAlpha), line: { color: colour, width: 1 },
+              name: single ? 'Outer PDF' : name, showlegend: claimLegend() });
+            traces.push({ ...shape, x: x.slice(shadeLoIndex, shadeHiIndex+1), y: y.slice(shadeLoIndex, shadeHiIndex+1),
+              fillcolor: withAlpha(colour, bandAlpha), line: { color: colour, width: 2 },
+              name: single ? 'Shaded PDF' : name, showlegend: claimLegend() });
+            traces.push({ ...shape, x: x.slice(shadeHiIndex), y: y.slice(shadeHiIndex),
+              fillcolor: withAlpha(colour, outerAlpha), line: { color: colour, width: 1 },
+              name: single ? 'Outer PDF' : name, showlegend: claimLegend() });
+          } else {
+            traces.push({ ...shape, x, y, mode: 'lines',
+              fillcolor: withAlpha(colour, outerAlpha), line: { color: colour, width: 2 },
+              name: single ? 'PDF' : name, showlegend: claimLegend() });
+          }
+        }
+
+        if (showPdf && showReference) {
+          const refX = lnView ? norminv(mu, sigmaPlot, referenceP) : logninv(mu, sigmaPlot, referenceP);
+          const refY = lnView ? normpdf(mu, sigmaPlot, refX) : lognpdf(mu, sigmaPlot, refX);
+          const refName = `P${fmt(referencePct, 5)}`;
+          traces.push({
+            x: [refX, refX], y: [0, refY], mode: 'lines',
+            line: { color: colour, dash: 'dash', width: 1.5 },
+            hovertext: refName, name: single ? refName : `${name} ${refName}`,
+            legendgroup: group, showlegend: false
+          });
+        }
+
+        if (showCdf) {
+          cdfTraces.push({
+            x, y: grid.slice(), mode: 'lines',
+            line: single ? (lnView ? { color: soloCdfColour } : { color: soloCdfColour, width: 1.5 })
+                         : { color: colour, width: 1.5, dash: 'dot' },
+            name: single ? 'CDF (theoretical)' : `${name} CDF`,
+            yaxis: 'y2', legendgroup: group, showlegend: claimLegend()
+          });
+          if (showRaw && values && values.length) {
+            const sorted = (lnView ? values.map(v => Math.log(v)) : values.slice()).sort((a, b) => a - b);
+            cdfTraces.push({
+              x: sorted, y: sorted.map((_, index) => (index + 1) / sorted.length), mode: 'lines',
+              line: single ? (lnView ? { color: 'rgba(96,96,96,.7)', shape: 'hv' }
+                                     : { color: 'rgba(96,96,96,.65)', shape: 'hv', width: 1.5 })
+                           : { color: colour, shape: 'hv', width: 1.5 },
+              name: single ? 'CDF (empirical)' : `${name} CDF (data)`,
+              yaxis: 'y2', legendgroup: group, showlegend: false
+            });
           }
         }
       }
 
-      // KS statistic
-      if(args._dataValues&&args._dataValues.length>0&&typeof mu==='number'&&typeof sigma==='number'){
-        const sorted=args._dataValues.slice().sort((a,b)=>a-b);
-        let ks=0;
-        for(let i=0;i<sorted.length;i++) ks=Math.max(ks,Math.abs((i+1)/sorted.length-logncdf(mu,sigma,sorted[i])));
-        args._ks=ks;
-      }
+      /* Measure from the parent so a stale Plotly inline width cannot skew it. */
+      const parent = chartEl.parentElement;
+      const cw = (parent ? parent.clientWidth : 0) || chartEl.clientWidth || 640;
+      const ch = chartEl.clientHeight || 420;
+      const lM = cw < 480 ? 42 : 56, rM = 68, bM = cw < 480 ? 50 : 42, tM = 16;
+      const unit = ((document.getElementById('unitInput') || {}).value || '').trim();
+      const axisTitle = lnView ? (unit ? `ln(${unit})` : 'ln(x)') : (unit || 'x');
+      const axisStyle = { gridcolor: gridClr, zerolinecolor: gridClr, linecolor: gridClr, color: axisClr };
 
-      if(typeof mu!=='number'||typeof sigma!=='number'||!isFinite(mu)||!isFinite(sigma))
-        {clearError();detailsEl.style.display='none';return;}
-
-      // Compute stats
-      const mean_    =Math.exp(mu+sigma**2/2);
-      const median_  =Math.exp(mu);
-      const mode_    =Math.exp(mu-sigma**2);
-      const variance_=(Math.exp(sigma**2)-1)*Math.exp(2*mu+sigma**2);
-      const sd_      =Math.sqrt(variance_);
-      const gsd_     =Math.exp(sigma);
-      const cv_      =Math.sqrt(Math.exp(sigma**2)-1);
-      const skew_    =cv_**3+3*cv_;
-      const kurt_    =cv_**8+6*cv_**6+15*cv_**4+16*cv_**2;
-      const entropy_ =(1+Math.log(2*Math.PI*sigma**2))/2+mu;
-      const ef_      =Math.exp(sigma*1.645);
-      const p5_=logninv(mu,sigma,.05),p25_=logninv(mu,sigma,.25),p75_=logninv(mu,sigma,.75),p95_=logninv(mu,sigma,.95);
-
-      window._lastLognormal={mu,sigma,mean:mean_,median:median_,mode:mode_,sd:sd_,variance:variance_,gsd:gsd_,CV:cv_,skewness:skew_,kurtosis:kurt_,entropy:entropy_,error_factor:ef_,dataStats:args._dataStats||null,dataValues:args._dataValues||null,ks:args._ks||null};
-
-      clearError();
-
-      // Populate DOM
-      document.getElementById('res-mu').textContent      =fmt(mu);
-      document.getElementById('res-sigma').textContent   =fmt(sigma);
-      document.getElementById('res-mean').textContent    =fmt(mean_);
-      document.getElementById('res-median').textContent  =fmt(median_);
-      document.getElementById('res-mode').textContent    =fmt(mode_);
-      document.getElementById('res-sd').textContent      =fmt(sd_);
-      document.getElementById('res-variance').textContent=fmt(variance_);
-      document.getElementById('res-gsd').textContent     =fmt(gsd_);
-      document.getElementById('res-cv').textContent      =fmt(cv_);
-      document.getElementById('res-ef').textContent      =fmt(ef_);
-      document.getElementById('res-skew').textContent    =fmt(skew_);
-      document.getElementById('res-kurt').textContent    =fmt(kurt_);
-      document.getElementById('res-entropy').textContent =fmt(entropy_);
-      document.getElementById('res-p5').textContent      =fmt(p5_);
-      document.getElementById('res-p25').textContent     =fmt(p25_);
-      document.getElementById('res-p50').textContent     =fmt(median_);
-      document.getElementById('res-p75').textContent     =fmt(p75_);
-      document.getElementById('res-p95').textContent     =fmt(p95_);
-
-      const dsEl=document.getElementById('result-data-stats');
-      if(args._dataStats){
-        let html=`<strong>Data</strong>: n&nbsp;=&nbsp;${args._dataStats.n}`;
-        if(nonData.length===0&&args._dataMethod) html+=`, method&nbsp;=&nbsp;${args._dataMethod}`;
-        if(args._ks!==undefined) html+=` &nbsp;&middot;&nbsp; <strong>KS</strong>&nbsp;=&nbsp;${args._ks.toFixed(4)}`;
-        dsEl.innerHTML=html; dsEl.style.display='';
-      } else {
-        dsEl.style.display='none';
-      }
-      detailsEl.style.display='block';
-
-      // Populate hidden pre for print
-      const txt=[['mu',mu],['sigma',sigma],['mean',mean_],['sd',sd_],['gm',median_],['gsd',gsd_],
-                 ['5%',p5_],['25%',p25_],['50%',median_],['75%',p75_],['95%',p95_],
-                 ['mode',mode_],['variance',variance_],['CV',cv_],['skewness',skew_],
-                 ['kurtosis',kurt_],['entropy',entropy_],['error factor',ef_]]
-        .map(([k,v])=>k.padEnd(14)+fmt(v)).join('\n');
-      const outEl=document.getElementById('ln-output'); if(outEl) outEl.textContent=txt;
-
-      // Draw chart — skip if panel is closed (display:none gives Plotly wrong dimensions)
-      if(!document.getElementById('chart-details').open) return;
-      const lnView=!!(document.getElementById('lnViewToggle')&&document.getElementById('lnViewToggle').checked);
-      const isDark=document.documentElement.getAttribute('data-theme')==='dark';
-      const themeBG=getComputedStyle(document.documentElement).getPropertyValue('--bg-primary').trim()||'#ffffff';
-      const gridClr=isDark?'#4a3f35':'#e5ddd5';
-      const accentClr='#f3b87b', cdfClr='#6baed6';
-      const sigmaPlot=sigma>0?sigma:1e-6, nPts=800;
-      CHART=chartEl;
-
-      const traces=[], cdfTraces=[];
-      const chartMinPct=Number(document.getElementById('chartMinPct')?.value??.1),chartMaxPct=Number(document.getElementById('chartMaxPct')?.value??99.9);
-      const chartPMin=chartMinPct/100,chartPMax=chartMaxPct/100;
-      const shadeLowerPct=Number(document.getElementById('shadeLower')?.value??5),shadeUpperPct=Number(document.getElementById('shadeUpper')?.value??95);
-      const shadePMin=shadeLowerPct/100,shadePMax=shadeUpperPct/100;
-      const referencePct=Number(document.getElementById('referencePct')?.value??50),referenceP=referencePct/100;
-      const chartXMinLn=norminv(mu,sigmaPlot,chartPMin),chartXMaxLn=norminv(mu,sigmaPlot,chartPMax),chartXMin=logninv(mu,sigmaPlot,chartPMin),chartXMax=logninv(mu,sigmaPlot,chartPMax);
-      const shadeLoIndex=Math.max(0,Math.min(nPts-2,Math.round((shadePMin-chartPMin)/(chartPMax-chartPMin)*(nPts-1))));
-      const shadeHiIndex=Math.max(shadeLoIndex+1,Math.min(nPts-1,Math.round((shadePMax-chartPMin)/(chartPMax-chartPMin)*(nPts-1))));
-      if(lnView){
-        if(args._dataValues&&args._dataValues.length>0){
-          const logs=args._dataValues.map(v=>Math.log(v));
-          traces.push({x:logs,type:'histogram',histnorm:'probability density',opacity:.45,marker:{color:'rgba(96,96,96,.25)'},nbinsx:Math.min(50,Math.max(5,Math.round(Math.sqrt(args._dataStats.n)))),hovertemplate:'%{x:.4f}: %{y:.4f}<extra>ln(data)</extra>',name:'Empirical (ln)'});
-        }
-        const pg=linspace(chartPMin,chartPMax,nPts),xl=pg.map(p=>norminv(mu,sigmaPlot,p)),yl=xl.map(z=>normpdf(mu,sigmaPlot,z));
-        traces.push({x:xl.slice(0,shadeLoIndex+1),y:yl.slice(0,shadeLoIndex+1),fill:'tozeroy',fillcolor:'rgba(243,184,123,.12)',line:{color:accentClr,width:1},type:'scatter',hoverinfo:'skip',name:'Outer PDF'});
-        traces.push({x:xl.slice(shadeLoIndex,shadeHiIndex+1),y:yl.slice(shadeLoIndex,shadeHiIndex+1),fill:'tozeroy',fillcolor:'rgba(243,184,123,.55)',line:{color:accentClr,width:2},type:'scatter',hoverinfo:'skip',name:'Shaded PDF'});
-        traces.push({x:xl.slice(shadeHiIndex),y:yl.slice(shadeHiIndex),fill:'tozeroy',fillcolor:'rgba(243,184,123,.12)',line:{color:accentClr,width:1},type:'scatter',hoverinfo:'skip',name:'Outer PDF'});
-        const refLn=norminv(mu,sigmaPlot,referenceP),refLnHeight=normpdf(mu,sigmaPlot,refLn);
-        traces.push({x:[refLn,refLn],y:[0,refLnHeight],mode:'lines',line:{color:accentClr,dash:'dash',width:1.5},hovertext:`P${fmt(referencePct,5)}`,name:`P${fmt(referencePct,5)}`});
-        cdfTraces.push({x:xl,y:pg.slice(),mode:'lines',line:{color:cdfClr},name:'CDF (theoretical)',yaxis:'y2'});
-        if(args._dataValues){
-          const sl=args._dataValues.map(v=>Math.log(v)).sort((a,b)=>a-b);
-          cdfTraces.push({x:sl,y:sl.map((_,i)=>(i+1)/sl.length),mode:'lines',line:{color:'rgba(96,96,96,.7)',shape:'hv'},name:'CDF (empirical)',yaxis:'y2'});
-        }
-      } else {
-        if(args._dataValues&&args._dataValues.length>0){
-          traces.push({x:args._dataValues,type:'histogram',histnorm:'probability density',opacity:.4,marker:{color:'rgba(96,96,96,.22)'},nbinsx:Math.min(50,Math.max(5,Math.round(Math.sqrt(args._dataStats.n)))),hovertemplate:'%{x}: %{y:.4f}<extra>data</extra>',name:'Empirical'});
-        }
-        const pg=linspace(chartPMin,chartPMax,nPts),x=pg.map(q=>logninv(mu,sigmaPlot,q)),y=x.map(v=>lognpdf(mu,sigmaPlot,v));
-        traces.push({x:x.slice(0,shadeLoIndex+1),y:y.slice(0,shadeLoIndex+1),fill:'tozeroy',fillcolor:'rgba(243,184,123,.12)',line:{color:accentClr,width:1},hoverinfo:'skip',name:'Outer PDF'});
-        traces.push({x:x.slice(shadeLoIndex,shadeHiIndex+1),y:y.slice(shadeLoIndex,shadeHiIndex+1),fill:'tozeroy',fillcolor:'rgba(243,184,123,.55)',line:{color:accentClr,width:2},hoverinfo:'skip',name:'Shaded PDF'});
-        traces.push({x:x.slice(shadeHiIndex),y:y.slice(shadeHiIndex),fill:'tozeroy',fillcolor:'rgba(243,184,123,.12)',line:{color:accentClr,width:1},hoverinfo:'skip',name:'Outer PDF'});
-        const refX=logninv(mu,sigmaPlot,referenceP);
-        traces.push({x:[refX,refX],y:[0,lognpdf(mu,sigmaPlot,refX)],mode:'lines',line:{color:accentClr,dash:'dash',width:1.5},hovertext:`P${fmt(referencePct,5)}`,name:`P${fmt(referencePct,5)}`});
-        cdfTraces.push({x,y:pg.slice(),mode:'lines',line:{color:cdfClr,width:1.5},name:'CDF (theoretical)',yaxis:'y2'});
-        if(args._dataValues){
-          const sx=args._dataValues.slice().sort((a,b)=>a-b);
-          cdfTraces.push({x:sx,y:sx.map((_,i)=>(i+1)/sx.length),mode:'lines',line:{color:'rgba(96,96,96,.65)',shape:'hv',width:1.5},name:'CDF (empirical)',yaxis:'y2'});
-        }
-      }
-
-      const allTraces=traces.concat(cdfTraces);
-      // Measure from parent so a stale Plotly inline width on #chart can't skew the result
-      const _par=chartEl.parentElement;
-      const cw=(_par?_par.clientWidth:0)||chartEl.clientWidth||640;
-      const ch=chartEl.clientHeight||420;
-      const lM=cw<480?42:56, rM=68, bM=cw<480?50:42, tM=16;
-
-      Plotly.react(CHART,allTraces,{
-        width:cw,height:ch,showlegend:false,barmode:'overlay',
-        xaxis:{type:'lin',range:lnView?[chartXMinLn,chartXMaxLn]:[chartXMin,chartXMax],automargin:true,title:{text:lnView?((document.getElementById('unitInput')?.value||'').trim()?`ln(${document.getElementById('unitInput').value.trim()})`:'ln(x)'):((document.getElementById('unitInput')?.value||'').trim()||'x'),standoff:6},gridcolor:gridClr,zerolinecolor:gridClr,linecolor:gridClr,color:isDark?'#e8ddd0':'#352921'},
-        yaxis:{automargin:true,rangemode:'tozero',title:{text:'PDF',standoff:6,font:{color:accentClr}},gridcolor:gridClr,zerolinecolor:gridClr,linecolor:gridClr,color:isDark?'#e8ddd0':'#352921'},
-        yaxis2:{overlaying:'y',side:'right',range:[0,1],automargin:true,rangemode:'tozero',title:{text:'CDF',standoff:14,font:{color:cdfClr}},gridcolor:gridClr,zerolinecolor:gridClr,linecolor:gridClr,color:isDark?'#e8ddd0':'#352921'},
-        margin:{t:tM,r:rM,b:bM,l:lM,autoexpand:false},
-        paper_bgcolor:themeBG,plot_bgcolor:themeBG,
-        shapes:[{type:'rect',xref:'paper',yref:'paper',x0:0,y0:0,x1:1,y1:1,line:{color:gridClr,width:1},fillcolor:'rgba(0,0,0,0)'}]
-      },{
-        modeBarButtonsToAdd:[{
-          name:'Toggle ln(x) view',title:'Toggle normal / ln-x view',
-          icon:{width:448,height:512,path:'M246.6 41.4c-12.5-12.5-32.8-12.5-45.3 0l-160 160c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0L224 109.3 361.4 246.6c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3l-160-160zm160 352l-160-160c-12.5-12.5-32.8-12.5-45.3 0l-160 160c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0L224 301.3 361.4 438.6c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3z'},
-          click:()=>{ const chk=document.getElementById('lnViewToggle'); if(chk)chk.checked=!chk.checked; updatedInput(); }
+      Plotly.react(CHART, traces.concat(cdfTraces), {
+        width: cw, height: ch, showlegend: !single, barmode: 'overlay',
+        legend: { x: 1, y: 1, xanchor: 'right', yanchor: 'top', bgcolor: themeBG,
+                  bordercolor: gridClr, borderwidth: 1, font: { size: 11, color: axisClr } },
+        xaxis: { type: 'lin', range: [axisMin, axisMax], automargin: true,
+                 title: { text: axisTitle, standoff: 6 }, ...axisStyle },
+        yaxis: { automargin: true, rangemode: 'tozero',
+                 title: { text: 'PDF', standoff: 6, font: { color: single ? soloColour : axisClr } }, ...axisStyle },
+        yaxis2: { overlaying: 'y', side: 'right', range: [0, 1], automargin: true, rangemode: 'tozero',
+                  title: { text: 'CDF', standoff: 14, font: { color: single ? soloCdfColour : axisClr } }, ...axisStyle },
+        margin: { t: tM, r: rM, b: bM, l: lM, autoexpand: false },
+        paper_bgcolor: themeBG, plot_bgcolor: themeBG,
+        shapes: [{ type: 'rect', xref: 'paper', yref: 'paper', x0: 0, y0: 0, x1: 1, y1: 1,
+                   line: { color: gridClr, width: 1 }, fillcolor: 'rgba(0,0,0,0)' }]
+      }, {
+        modeBarButtonsToAdd: [{
+          name: 'Toggle ln(x) view', title: 'Toggle normal / ln-x view',
+          icon: { width: 448, height: 512, path: 'M246.6 41.4c-12.5-12.5-32.8-12.5-45.3 0l-160 160c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0L224 109.3 361.4 246.6c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3l-160-160zm160 352l-160-160c-12.5-12.5-32.8-12.5-45.3 0l-160 160c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0L224 301.3 361.4 438.6c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3z' },
+          click: () => { const box = document.getElementById('lnViewToggle'); if (box) box.checked = !box.checked; updatedInput(); }
         }],
-        responsive:false
+        responsive: false
       });
     }
 
-    function updatedInput() { computeAndRender(gatherArgsFromPanels()); }
+    /* ---- The run --------------------------------------------------------- */
+
+    function recomputeAll() {
+      captureActivePanels();
+      for (const dist of DISTRIBUTIONS) {
+        const outcome = resolveDistribution(dist);
+        dist.args   = outcome.args || {};
+        dist.error  = outcome.error || '';
+        dist.result = outcome.stats || null;
+        /* A half-filled form is not a reason to forget what the distribution
+           was; a contradictory one is. */
+        if (outcome.stats) dist.lastGood = outcome.stats;
+        else if (outcome.error) dist.lastGood = null;
+      }
+      const active = activeDistribution();
+      window._lastLognormal = active ? active.lastGood : null;
+      refreshDistTabState();
+      markActiveDistribution(active);
+      renderActiveResult(active);
+      renderComparison();
+      drawChart();
+      /* The guess for the second percentile depends on the result, so it is
+         written back after the run and picked up by the next one. */
+      if (active) { autofillPercentileSlot(active); captureActivePanels(); }
+    }
+
+    function updatedInput() { recomputeAll(); }
+
     document.querySelectorAll('.arg').forEach(i=>i.addEventListener('input',updatedInput));
     document.documentElement.addEventListener('kvot-theme-change',()=>{ if(typeof updatedInput==='function') updatedInput(); });
     const _lnT=document.getElementById('lnViewToggle'); if(_lnT)_lnT.addEventListener('change',updatedInput);
@@ -1044,18 +1754,67 @@
       const eqEl=document.querySelector('#equations-details .section-body');
       const eqHtml=eqEl?eqEl.innerHTML:'';
       const preview=window.open('','_blank');
-      preview.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Lognormal \u2014 Preview</title><link rel="stylesheet" href="./resources/css/kvot.css?v=20260911"><style>body{font-family:Arial,sans-serif;padding:18px}pre{white-space:pre-wrap;background:var(--bg-secondary);padding:12px;border-radius:4px;border:1px solid var(--border-color);font-family:Menlo,monospace;font-size:.95rem}table{width:100%;border-collapse:collapse}td{padding:6px 10px}@media print{body{margin:12mm}}</style><script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js"><\/script></head><body><h2>Lognormal \u2014 Computed Results</h2><pre>${outText.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</pre><h3>Equations</h3>${eqHtml}<script>window.onload=()=>{if(window.MathJax&&MathJax.typesetPromise)MathJax.typesetPromise();}<\/script></body></html>`);
+      preview.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Lognormal — Preview</title><link rel="stylesheet" href="./resources/css/kvot.css?v=20260911"><style>body{font-family:Arial,sans-serif;padding:18px}pre{white-space:pre-wrap;background:var(--bg-secondary);padding:12px;border-radius:4px;border:1px solid var(--border-color);font-family:Menlo,monospace;font-size:.95rem}table{width:100%;border-collapse:collapse}td{padding:6px 10px}@media print{body{margin:12mm}}</style><script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js"><\/script></head><body><h2>Lognormal — Computed Results</h2><pre>${outText.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</pre><h3>Equations</h3>${eqHtml}<script>window.onload=()=>{if(window.MathJax&&MathJax.typesetPromise)MathJax.typesetPromise();}<\/script></body></html>`);
       preview.document.close();
     });
 
-    function validateChartSettings(){
-      const c1=Number(document.getElementById('chartMinPct')?.value),c2=Number(document.getElementById('chartMaxPct')?.value),s1=Number(document.getElementById('shadeLower')?.value),s2=Number(document.getElementById('shadeUpper')?.value),r=Number(document.getElementById('referencePct')?.value);
-      const rangeOK=Number.isFinite(c1)&&Number.isFinite(c2)&&c1>0&&c2<100&&c1<c2,shadeOK=Number.isFinite(s1)&&Number.isFinite(s2)&&rangeOK&&s1>=c1&&s2<=c2&&s1<s2,refOK=Number.isFinite(r)&&rangeOK&&r>=c1&&r<=c2;
-      ['chartMinPct','chartMaxPct'].forEach(id=>document.getElementById(id)?.setAttribute('aria-invalid',rangeOK?'false':'true'));['shadeLower','shadeUpper'].forEach(id=>document.getElementById(id)?.setAttribute('aria-invalid',shadeOK?'false':'true'));document.getElementById('referencePct')?.setAttribute('aria-invalid',refOK?'false':'true');
-      let message='';if(!rangeOK)message='Chart percentiles must satisfy 0 < minimum < maximum < 100.';else if(!shadeOK)message=`The shaded interval must remain within P${c1} to P${c2}, with its lower value below its upper value.`;else if(!refOK)message=`The reference-line percentile must be between P${c1} and P${c2}.`;
-      const w=document.getElementById('chartSettingsWarning');if(w){w.textContent=message;w.classList.toggle('show',!!message);}return rangeOK&&shadeOK&&refOK;
+    /* A percentile that only describes a switched-off part of the chart is
+       greyed out, which says which number belongs to which switch. */
+    function syncChartSettingControls() {
+      const band = document.getElementById('shadeBand');
+      const reference = document.getElementById('referenceLine');
+      for (const id of ['shadeLower', 'shadeUpper']) {
+        const el = document.getElementById(id);
+        if (el) el.disabled = !!band && !band.checked;
+      }
+      const referencePct = document.getElementById('referencePct');
+      if (referencePct) referencePct.disabled = !!reference && !reference.checked;
     }
-    ['precisionSelect','unitInput','chartMinPct','chartMaxPct','shadeLower','shadeUpper','referencePct'].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener(id==='precisionSelect'?'change':'input',()=>{if(validateChartSettings())updatedInput();});});validateChartSettings();
+
+    function validateChartSettings() {
+      syncChartSettingControls();
+      const value = id => Number(document.getElementById(id)?.value);
+      const chartMin = value('chartMinPct'), chartMax = value('chartMaxPct');
+      const shadeFrom = value('shadeLower'), shadeTo = value('shadeUpper');
+      const reference = value('referencePct');
+      const bandDrawn = document.getElementById('shadeBand')?.checked !== false;
+      const referenceDrawn = document.getElementById('referenceLine')?.checked !== false;
+
+      const rangeOK = Number.isFinite(chartMin) && Number.isFinite(chartMax)
+        && chartMin > 0 && chartMax < 100 && chartMin < chartMax;
+      /* Nothing that is not being drawn can be wrong. */
+      const shadeOK = !bandDrawn || (Number.isFinite(shadeFrom) && Number.isFinite(shadeTo)
+        && rangeOK && shadeFrom >= chartMin && shadeTo <= chartMax && shadeFrom < shadeTo);
+      const referenceOK = !referenceDrawn || (Number.isFinite(reference)
+        && rangeOK && reference >= chartMin && reference <= chartMax);
+
+      const flag = (ids, ok) => ids.forEach(id =>
+        document.getElementById(id)?.setAttribute('aria-invalid', ok ? 'false' : 'true'));
+      flag(['chartMinPct', 'chartMaxPct'], rangeOK);
+      flag(['shadeLower', 'shadeUpper'], shadeOK);
+      flag(['referencePct'], referenceOK);
+
+      let message = '';
+      if (!rangeOK) message = 'Chart percentiles must satisfy 0 < minimum < maximum < 100.';
+      else if (!shadeOK) message = `The shaded band must remain within P${chartMin} to P${chartMax}, with its lower value below its upper value.`;
+      else if (!referenceOK) message = `The reference-line percentile must be between P${chartMin} and P${chartMax}.`;
+      const warning = document.getElementById('chartSettingsWarning');
+      if (warning) { warning.textContent = message; warning.classList.toggle('show', !!message); }
+      return rangeOK && shadeOK && referenceOK;
+    }
+
+    const CHART_SETTING_EVENT = {
+      precisionSelect: 'change', curveMode: 'change', showRawData: 'change',
+      shadeBand: 'change', referenceLine: 'change'
+    };
+    for (const id of ['precisionSelect', 'unitInput', 'curveMode', 'showRawData',
+                      'chartMinPct', 'chartMaxPct', 'shadeBand', 'shadeLower', 'shadeUpper',
+                      'referenceLine', 'referencePct']) {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener(CHART_SETTING_EVENT[id] || 'input',
+                                  () => { if (validateChartSettings()) updatedInput(); });
+    }
+    validateChartSettings();
     /* ---- Math helpers -------------------------------------------------- */
     function norminv(mu,sigma,p){return -Math.sqrt(2)*erfcinv(2*p)*sigma+mu;}
     function normcdf(mu,sigma,x){return .5*erfc(-(x-mu)/sigma/Math.sqrt(2));}
@@ -1064,6 +1823,18 @@
     function logncdf(mu,sigma,x){return .5*erfc(-(Math.log(x)-mu)/sigma/Math.sqrt(2));}
     function lognpdf(mu,sigma,x){return Math.exp(-.5*((Math.log(x)-mu)/sigma)**2)/(x*Math.sqrt(2*Math.PI)*sigma);}
     function linspace(start,stop,n){const step=(stop-start)/(n-1);return Array.from({length:n},(_,i)=>start+i*step);}
+
+    /* ---- Start ----------------------------------------------------------- */
+    /*
+      Last, because it computes: every table and default above it has to exist
+      before the first distribution is resolved.
+    */
+    DISTRIBUTIONS.push(createDistribution(['mu', 'sigma']));
+    activeDistId = DISTRIBUTIONS[0].id;
+    selectedTabs = DISTRIBUTIONS[0].metrics;
+    renderDistTabs();
+    renderSelectedTabs();
+    recomputeAll();
   </script>
 </body>
 </html>
