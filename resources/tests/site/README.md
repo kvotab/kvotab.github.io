@@ -144,6 +144,19 @@ important one — a local zone with polygon bounds, so it exercises
 `point_in_zone_bounds` → `point_in_ring` → `sweref99_zone_polygons`, the
 dependencies that were missing.
 
+The national pair, `wgs84_dd → sweref_99_tm`, is also checked for what it
+*says* about each row, not only for agreement — agreement alone passed with the
+old check. That check was a longitude band, 10.7–24.45°E: all of Norway east
+of Oslo and most of Finnish Lapland were "in zone", and Sandhamn was in only
+because a band knows nothing about the sea. "In zone" for a national system
+now means inside Swedish territory out to the maritime median lines with
+Denmark, Norway and Finland (`sweden_territory` in `sweref99-zones.js`, from
+the Marine Regions land+EEZ union, generalised to 100 m), which the worker
+reaches through `importScripts`. Six rows straddle the border on purpose:
+Stockholm, Sandhamn and Ven inside; Halden, Tornio and Helsingør outside.
+Sandhamn is an island Natural Earth does not draw, Ven sits in Öresund 4 km
+from Denmark, and Tornio is across the river from Haparanda.
+
 ## test-chrome-file-origin.py
 
 skbref.html opened from the filesystem rather than from a server.
