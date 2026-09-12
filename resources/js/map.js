@@ -91,8 +91,8 @@ function get_zone_bounds(proj) {
 	if (z) {
 		var half = 1.125;
 		if (proj === 'rt90_2.5_gon_v') return { territory: true };
-		if (proj === 'rt90_5.0_gon_o') return { west: z.cm_grs - half, east: 24.35 };
-		return { west: z.cm_grs - half, east: z.cm_grs + half };
+		if (proj === 'rt90_5.0_gon_o') return { west: z.cm_grs - half, east: 24.35, territory: true };
+		return { west: z.cm_grs - half, east: z.cm_grs + half, territory: true };
 	}
 	z = sweref99_zones[proj];
 	if (z) {
@@ -103,30 +103,34 @@ function get_zone_bounds(proj) {
 		var w = z.cm - 0.75, e = z.cm + 0.75;
 		if (proj === 'sweref_99_1200') w = z.cm - 1.10;
 		if (proj === 'sweref_99_2315') e = 24.25;
-		return { west: w, east: e };
+		return { west: w, east: e, territory: true };
 	}
 	return null;
 }
 
 /*
-  Is a point inside a zone. Three kinds of bounds:
+  Is a point inside a zone. A bounds object says what the zone requires, and a
+  zone may require more than one thing:
 
-    { territory: true }        a national zone: Sweden itself, meaning Swedish
-                               territory out to the maritime median lines
-                               (sweden_territory in sweref99-zones.js)
-    { polygon: true, key }     a SWEREF 99 local zone with municipality rings
-    { west, east }             an RT 90 local zone, a plain longitude strip
+    territory: true      inside Sweden - Swedish territory out to the maritime
+                         median lines (sweden_territory in sweref99-zones.js).
+                         On its own that is a national zone.
+    west, east           inside a longitude strip. Every RT 90 local zone, and
+                         it comes with territory: true, because a strip through
+                         Sweden also runs through Norway and Finland.
+    polygon: true, key   inside a SWEREF 99 local zone's municipality rings,
+                         which are Sweden-shaped already.
 
   The national case used to be a longitude band, 10.7-24.45E, so a position in
   Oslo's suburbs or in Rovaniemi was "in zone" and Sandhamn was too only by
-  luck. Missing data is treated the way the polygon case always has: nothing is
-  flagged, rather than everything.
+  luck; the local RT 90 zones were bands as well and let Skibotn and
+  Kilpisjarvi into 2.5 gon O. Missing data is treated the way the polygon case
+  always has: nothing is flagged, rather than everything.
 */
 function point_in_zone_bounds(bounds, lat, lon) {
 	if (!bounds) return true;
-	if (bounds.territory) {
-		if (typeof sweden_territory === 'undefined') return true;
-		return point_in_ring(sweden_territory, lat, lon);
+	if (bounds.territory && typeof sweden_territory !== 'undefined') {
+		if (!point_in_ring(sweden_territory, lat, lon)) return false;
 	}
 	if (bounds.polygon) {
 		var rings = sweref99_zone_polygons[bounds.key];
@@ -136,7 +140,8 @@ function point_in_zone_bounds(bounds, lat, lon) {
 		}
 		return false;
 	}
-	return lon >= bounds.west && lon <= bounds.east;
+	if (typeof bounds.west === 'number') return lon >= bounds.west && lon <= bounds.east;
+	return true;
 }
 
 // Ray-casting point-in-polygon for a single ring of [lat, lng] points
@@ -307,6 +312,15 @@ function show_rt90_meridian(projection) {
 				var ring = clipped.concat([clipped[0]]);
 				L.polyline(ring, {
 					color: '#b8860b', weight: 3, dashArray: '6,4'
+				}).bindPopup(popupContent).addTo(group);
+			}
+		}
+		// And the strip's share of the territory, since that is what decides.
+		if (typeof sweden_territory !== 'undefined') {
+			var sea = clip_zone_to_sweden_ring(sweden_territory, west, east);
+			if (sea) {
+				L.polyline(sea.concat([sea[0]]), {
+					color: '#b8860b', weight: 1.5, dashArray: '2,6', opacity: 0.75
 				}).bindPopup(popupContent).addTo(group);
 			}
 		}
