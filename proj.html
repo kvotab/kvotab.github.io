@@ -282,6 +282,7 @@
       z-index: 1;
     }
     .map-hint {
+    .map-source { margin-top: .6em; font-size: .78rem; color: var(--text-muted); line-height: 1.4; }
       display: flex;
       gap: 0;
       border-top: 1px solid var(--border-color);
@@ -651,8 +652,15 @@
                 <p><b>SWEREF&nbsp;99&nbsp;TM</b> covers all of Sweden in one zone
                 (central meridian 15°E, scale 0.9996). <b>Local zones</b> (12)
                 each have scale&nbsp;1.0 and are named by their central meridian.
-                The zone boundary shown on the map follows the actual
+                The local zone boundaries shown on the map follow the actual
                 municipality-based definition from Lantm&auml;teriet.</p>
+                <p>For the two national systems, SWEREF&nbsp;99&nbsp;TM and
+                RT&nbsp;90 2.5&nbsp;gon&nbsp;V, &ldquo;in zone&rdquo; means in
+                Sweden: Swedish territory including its territorial waters,
+                out to the agreed median lines with Denmark, Norway and Finland.
+                The solid outline is the coastline; the dotted one is that
+                maritime boundary, and it is the one that decides. Every island
+                and every stretch of archipelago water is inside it.</p>
                 <p>Projection: Transverse Mercator (Gauss&ndash;Kr&uuml;ger).
                 Click the zone outline on the map for full parameters.</p>
               </div>
@@ -683,7 +691,14 @@
             views with the layer control (top right).</p>
             <p>The outline shows the coverage of the currently selected RT&nbsp;90
             and SWEREF&nbsp;99 zones. Click an outline for projection parameters;
-            the dashed line marks the central meridian.</p>
+            the straight dashed line marks the central meridian, and for a
+            national zone the dotted line marks the maritime boundary.</p>
+            <p class="map-source">Coastline: Natural Earth 1:10m (public
+            domain). Maritime boundary: Flanders Marine Institute, Maritime
+            Boundaries Geodatabase &ndash; union of land and EEZ v12,
+            <a href="https://www.marineregions.org/" target="_blank"
+            rel="noopener noreferrer">marineregions.org</a>, CC&nbsp;BY&nbsp;4.0.
+            Both generalised to 100&nbsp;m.</p>
           </div>
         </div><!-- /proj-right -->
 
@@ -1158,8 +1173,9 @@
             read the module variables in gausskruger.js (axis, flattening,
             central_meridian and the rest), none of which came along
         get_zone_bounds, point_in_zone_bounds
-            read rt90_zones, sweref99_zones and sweref99_zone_polygons, and
-            call point_in_ring, which was not in the list at all
+            read rt90_zones, sweref99_zones, sweref99_zone_polygons and
+            sweden_territory, and call point_in_ring, which was not in the
+            list at all
 
       So the worker threw a ReferenceError on its first message, every time,
       and worker.onerror quietly fell back to convertMainThread(). The feature
@@ -1167,10 +1183,12 @@
       thread — the one thing the worker exists to avoid — and the failure was
       invisible because nothing reported it.
 
-      The two dependency-free modules are imported rather than pasted. The zone
-      tables live in map.js, which cannot be imported into a worker because it
-      touches Leaflet and the DOM, so they are serialised as data and the three
-      small functions that read them are serialised with them.
+      The two dependency-free modules are imported rather than pasted; that
+      import is also what brings sweref99_zone_polygons and sweden_territory
+      into the worker. The zone tables live in map.js, which cannot be
+      imported into a worker because it touches Leaflet and the DOM, so they
+      are serialised as data and the three small functions that read them are
+      serialised with them.
     */
     function workerSource(){
       /* Resolved from the page's own script tags, so the worker loads exactly

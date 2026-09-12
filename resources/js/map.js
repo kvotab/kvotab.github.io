@@ -23,21 +23,6 @@
 var map;
 var markers;
 
-// Simplified Sweden outline (~45 points, clockwise from southern tip)
-var sweden_outline = [
-	[55.34,12.95],[55.38,13.80],[55.72,14.20],[56.05,14.58],[56.16,15.62],
-	[56.27,16.40],[56.67,16.37],[57.10,16.82],[57.72,16.70],[58.35,16.83],
-	[58.75,17.95],[59.33,18.07],[59.85,18.93],[60.12,18.55],[60.63,17.92],
-	[61.20,17.15],[61.73,17.12],[62.30,17.38],[62.63,17.94],[63.27,18.72],
-	[63.60,19.85],[63.83,20.26],[64.40,21.00],[64.75,21.07],[65.30,21.55],
-	[65.58,22.15],[65.84,24.15],[66.38,23.64],[67.17,23.67],[67.87,20.90],
-	[68.42,21.46],[68.58,20.04],[69.06,18.51],[69.06,18.00],[68.45,16.00],
-	[68.35,15.30],[67.37,15.50],[66.60,14.46],[66.13,14.80],[65.00,13.70],
-	[64.00,13.40],[63.10,12.10],[62.07,12.30],[61.05,12.51],[60.15,12.44],
-	[59.08,11.85],[58.88,11.18],[58.33,11.38],[57.52,11.76],[57.05,12.35],
-	[56.52,12.56],[56.10,12.65],[55.34,12.95]
-];
-
 function map_init() {
 	// Tile URL and access token live in site.js so there is only one copy.
 	map = L.map('coord-map', { attributionControl: false, zoomControl: false }).setView([59.87072523185025, 17.63431259999659], 14);
@@ -105,13 +90,13 @@ function get_zone_bounds(proj) {
 	var z = rt90_zones[proj];
 	if (z) {
 		var half = 1.125;
-		if (proj === 'rt90_2.5_gon_v') return { west: 10.7, east: 24.45 };
+		if (proj === 'rt90_2.5_gon_v') return { territory: true };
 		if (proj === 'rt90_5.0_gon_o') return { west: z.cm_grs - half, east: 24.35 };
 		return { west: z.cm_grs - half, east: z.cm_grs + half };
 	}
 	z = sweref99_zones[proj];
 	if (z) {
-		if (z.national) return { west: 10.8, east: 24.35 };
+		if (z.national) return { territory: true };
 		// For local zones with polygon data, use polygon test
 		if (typeof sweref99_zone_polygons !== 'undefined' && sweref99_zone_polygons[proj])
 			return { polygon: true, key: proj };
@@ -123,9 +108,26 @@ function get_zone_bounds(proj) {
 	return null;
 }
 
-// Point-in-polygon test (ray casting) for SWEREF 99 zone polygons
+/*
+  Is a point inside a zone. Three kinds of bounds:
+
+    { territory: true }        a national zone: Sweden itself, meaning Swedish
+                               territory out to the maritime median lines
+                               (sweden_territory in sweref99-zones.js)
+    { polygon: true, key }     a SWEREF 99 local zone with municipality rings
+    { west, east }             an RT 90 local zone, a plain longitude strip
+
+  The national case used to be a longitude band, 10.7-24.45E, so a position in
+  Oslo's suburbs or in Rovaniemi was "in zone" and Sandhamn was too only by
+  luck. Missing data is treated the way the polygon case always has: nothing is
+  flagged, rather than everything.
+*/
 function point_in_zone_bounds(bounds, lat, lon) {
 	if (!bounds) return true;
+	if (bounds.territory) {
+		if (typeof sweden_territory === 'undefined') return true;
+		return point_in_ring(sweden_territory, lat, lon);
+	}
 	if (bounds.polygon) {
 		var rings = sweref99_zone_polygons[bounds.key];
 		if (!rings) return true;
@@ -210,34 +212,6 @@ var sweref99_zones = {
 	"sweref_99_2315": { cm: 23.25, scale: 1, fe: 150000, name: "SWEREF 99 23 15" }
 };
 
-// ── Build clipped zone polygon (Sutherland-Hodgman) ────────────────
-// Clips the Sweden outline to a vertical strip [west, east].
-// Preserves vertex order so concave shapes render correctly.
-function clip_zone_to_sweden(west, east) {
-	// Clip polygon against a single vertical line.
-	// keep = 'right' keeps points with lon >= x; 'left' keeps lon <= x.
-	function clip_edge(poly, x, keep) {
-		var out = [];
-		var n = poly.length;
-		for (var i = 0; i < n; i++) {
-			var cur = poly[i];
-			var nxt = poly[(i + 1) % n];
-			var cur_in = keep === 'right' ? cur[1] >= x : cur[1] <= x;
-			var nxt_in = keep === 'right' ? nxt[1] >= x : nxt[1] <= x;
-			if (cur_in) out.push(cur);
-			if (cur_in !== nxt_in) {
-				var t = (x - cur[1]) / (nxt[1] - cur[1]);
-				out.push([cur[0] + t * (nxt[0] - cur[0]), x]);
-			}
-		}
-		return out;
-	}
-	var poly = sweden_outline.slice(); // don't mutate original
-	poly = clip_edge(poly, west, 'right'); // keep lon >= west
-	poly = clip_edge(poly, east, 'left');  // keep lon <= east
-	return poly.length >= 3 ? poly : null;
-}
-
 // Clip a detailed sweden_border ring to a longitude strip [west, east]
 function clip_zone_to_sweden_ring(ring, west, east) {
 	function clip_edge(poly, x, keep) {
@@ -260,6 +234,26 @@ function clip_zone_to_sweden_ring(ring, west, east) {
 	poly = clip_edge(poly, west, 'right');
 	poly = clip_edge(poly, east, 'left');
 	return poly.length >= 3 ? poly : null;
+}
+
+/*
+  A national zone drawn twice over: the coastline solid, and the maritime
+  boundary - what actually decides in or out - dotted and lighter outside it.
+  Without the second line a position at sea would sit outside every drawn
+  outline and yet not be flagged, and the map would look wrong about it.
+*/
+function add_national_outline(group, color, popupContent) {
+	if (typeof sweden_border !== 'undefined') {
+		for (var r = 0; r < sweden_border.length; r++) {
+			var border = sweden_border[r].concat([sweden_border[r][0]]);
+			L.polyline(border, { color: color, weight: 3 }).bindPopup(popupContent).addTo(group);
+		}
+	}
+	if (typeof sweden_territory !== 'undefined') {
+		var sea = sweden_territory.concat([sweden_territory[0]]);
+		L.polyline(sea, { color: color, weight: 1.5, dashArray: '2,6', opacity: 0.75 })
+			.bindPopup(popupContent).addTo(group);
+	}
 }
 
 // Format decimal degrees as D°MM'SS.S"
@@ -303,14 +297,10 @@ function show_rt90_meridian(projection) {
 		'Central meridian: ' + fmt_dms(z.cm_grs) + 'E' +
 		'<br>Scale: ' + z.scale_grs + '</i>';
 
-	if (projection === "rt90_2.5_gon_v" && typeof sweden_border !== 'undefined') {
-		// National zone: use detailed Sweden border
-		for (var r = 0; r < sweden_border.length; r++) {
-			var border = sweden_border[r].concat([sweden_border[r][0]]);
-			L.polyline(border, { color: '#b8860b', weight: 3 }).bindPopup(popupContent).addTo(group);
-		}
+	if (projection === "rt90_2.5_gon_v") {
+		add_national_outline(group, '#b8860b', popupContent);
 	} else if (typeof sweden_border !== 'undefined') {
-		// Local zone: clip each sweden_border ring to the zone strip
+		// Local zone: clip each coastline ring to the zone strip
 		for (var r = 0; r < sweden_border.length; r++) {
 			var clipped = clip_zone_to_sweden_ring(sweden_border[r], west, east);
 			if (clipped) {
@@ -319,14 +309,6 @@ function show_rt90_meridian(projection) {
 					color: '#b8860b', weight: 3, dashArray: '6,4'
 				}).bindPopup(popupContent).addTo(group);
 			}
-		}
-	} else {
-		var poly = clip_zone_to_sweden(west, east);
-		if (poly) {
-			var ring = poly.concat([poly[0]]);
-			L.polyline(ring, {
-				color: '#b8860b', weight: 3, dashArray: '6,4'
-			}).bindPopup(popupContent).addTo(group);
 		}
 	}
 
@@ -359,12 +341,8 @@ function show_sweref99_meridian(projection) {
 		'<br>False northing: 0 m' +
 		'<br>False easting: ' + z.fe.toLocaleString('en') + ' m';
 
-	if (z.national && typeof sweden_border !== 'undefined') {
-		// National zone: use detailed Sweden border
-		for (var r = 0; r < sweden_border.length; r++) {
-			var border = sweden_border[r].concat([sweden_border[r][0]]);
-			L.polyline(border, { color: '#cc3333', weight: 3 }).bindPopup(popupContent).addTo(group);
-		}
+	if (z.national) {
+		add_national_outline(group, '#cc3333', popupContent);
 	} else if (typeof sweref99_zone_polygons !== 'undefined' && sweref99_zone_polygons[projection]) {
 		// Local zone: use actual municipality-based boundary polygons
 		var rings = sweref99_zone_polygons[projection];
@@ -372,18 +350,6 @@ function show_sweref99_meridian(projection) {
 		for (var r = 0; r < rings.length; r++) {
 			var border = rings[r].concat([rings[r][0]]);
 			L.polyline(border, {
-				color: '#cc3333', weight: 3, dashArray: '6,4'
-			}).bindPopup(popupContent).addTo(group);
-		}
-	} else {
-		// Fallback: simple longitude strip
-		var west = z.cm - 0.75, east = z.cm + 0.75;
-		if (projection === "sweref_99_1200") west = z.cm - 1.10;
-		if (projection === "sweref_99_2315") east = 24.25;
-		var poly = clip_zone_to_sweden(west, east);
-		if (poly) {
-			var ring = poly.concat([poly[0]]);
-			L.polyline(ring, {
 				color: '#cc3333', weight: 3, dashArray: '6,4'
 			}).bindPopup(popupContent).addTo(group);
 		}
