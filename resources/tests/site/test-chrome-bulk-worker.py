@@ -24,6 +24,11 @@ know about the sea. "In zone" for a national system now means inside Swedish
 territory out to the maritime median lines (sweden_territory), which the
 worker reaches through importScripts. Six rows straddle the border on purpose.
 
+The local pair, wgs84_dd -> rt90_2.5_gon_o, checks the other half of the rule:
+a local RT 90 zone is a longitude band AND Sweden. Skibotn and Kilpisjarvi are
+inside the 2.5 gon O band and in Norway and Finland; Lulea is in Sweden and
+east of the band. All three must be flagged, for different reasons.
+
 Needs a static server on 127.0.0.1:8765 and Chrome on 127.0.0.1:9222.
 """
 import asyncio, json, sys, time, urllib.request, websockets
@@ -34,7 +39,8 @@ PROBE = r"""(async () => {
     ['sweref_99_tm', 'wgs84_dd'],
     ['wgs84_dd', 'sweref_99_1200'],
     ['rt90_7.5_gon_v', 'sweref_99_tm'],
-    ['wgs84_dd', 'sweref_99_tm']          // national: the flags are checked too
+    ['wgs84_dd', 'sweref_99_tm'],         // national: the flags are checked too
+    ['wgs84_dd', 'rt90_2.5_gon_o']        // local: band AND territory
   ];
   /* The national case: three inside Sweden, three just outside it. Sandhamn
      is an island Natural Earth does not draw; Ven sits in Oresund 4 km from
@@ -53,7 +59,17 @@ PROBE = r"""(async () => {
     'wgs84_dd':       '59.32\t18.07\n59.40\t18.10\n59.50\t18.20',
     'rt90_7.5_gon_v': '6400000\t1500000\n6410000\t1502000\n6420000\t1504000'
   };
-  const NATIONAL_INPUT = BORDER.map(b => b[1] + '\t' + b[2]).join('\n');
+  /* The local case, 2.5 gon O (band 19.2-21.4E): two in, three out for
+     different reasons - two by country, one by band. */
+  const LOCAL = [
+    ['Kiruna',          67.8558, 20.2253, false],
+    ['Gallivare',       67.1333, 20.6667, false],
+    ['Skibotn NO',      69.3900, 20.2700, true],   // in the band, in Norway
+    ['Kilpisjarvi FI',  69.0470, 20.7900, true],   // in the band, in Finland
+    ['Lulea',           65.5848, 22.1547, true]    // in Sweden, east of the band
+  ];
+  const FLAGGED = { 'sweref_99_tm': BORDER, 'rt90_2.5_gon_o': LOCAL };
+  const flaggedInput = to => FLAGGED[to].map(b => b[1] + '\t' + b[2]).join('\n');
   const btn = [...document.querySelectorAll('button')]
     .find(b => /convert/i.test(b.textContent) && !/clear/i.test(b.textContent));
 
@@ -67,7 +83,7 @@ PROBE = r"""(async () => {
     if (!useWorker) window.Worker = function () { throw new Error('worker disabled for comparison'); };
     document.getElementById('bulk_from').value = from;
     document.getElementById('bulk_to').value = to;
-    document.getElementById('bulk_input').value = (from === 'wgs84_dd' && to === 'sweref_99_tm') ? NATIONAL_INPUT : INPUT[from];
+    document.getElementById('bulk_input').value = (from === 'wgs84_dd' && FLAGGED[to]) ? flaggedInput(to) : INPUT[from];
     btn.click();
     await new Promise(r => setTimeout(r, 2200));
     window.Worker = RealWorker;
@@ -84,9 +100,9 @@ PROBE = r"""(async () => {
     const m = await run(from, to, false);
     const entry = { pair: `${from} -> ${to}`, match: JSON.stringify(w) === JSON.stringify(m),
                     fellBack: workerFellBack, worker: w[0], main: m[0], rows: w.length };
-    if (from === 'wgs84_dd' && to === 'sweref_99_tm') {
+    if (from === 'wgs84_dd' && FLAGGED[to]) {
       /* The fourth field of each row string is r.outside. */
-      entry.flags = BORDER.map((b, i) => {
+      entry.flags = FLAGGED[to].map((b, i) => {
         const got = (w[i] || '').split('|')[3];
         return { name: b[0], want: b[3], got: got === 'true' ? true : got === 'false' ? false : got };
       });

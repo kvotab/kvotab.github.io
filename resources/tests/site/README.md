@@ -157,6 +157,13 @@ Stockholm, Sandhamn and Ven inside; Halden, Tornio and Helsingør outside.
 Sandhamn is an island Natural Earth does not draw, Ven sits in Öresund 4 km
 from Denmark, and Tornio is across the river from Haparanda.
 
+The local pair, `wgs84_dd → rt90_2.5_gon_o`, checks the other half of the
+rule. A local RT 90 zone is a longitude band *and* Sweden — a band through
+Sweden also runs through Norway and Finland, and these zones used to be bands
+alone. Skibotn and Kilpisjärvi are inside the 2.5 gon O band (19.2–21.4°E) in
+Norway and Finland; Luleå is in Sweden but east of the band. All three must be
+flagged, for different reasons, and Kiruna and Gällivare must not be.
+
 ## test-chrome-file-origin.py
 
 skbref.html opened from the filesystem rather than from a server.
