@@ -466,5 +466,29 @@ edge the dot is actually on.
 A second check asserts the left edge *does* move, across 8 distinct positions.
 Without it, a layout that froze everything by clipping the text to a fixed box
 would pass the first check while quietly truncating "Last update 23:45 -
-retrying". The section must run last, because it stops the board to keep the
-tick from overwriting the text.
+retrying".
+
+**Two things move next to that dot, and the first version of this section only
+tested one.** It stopped the board so the text would hold still - which stopped
+the clock as well, so the clock never varied and the section passed while the
+dot was visibly twitching once a second. The clock was the worse offender:
+RawengulkSans has no tabular figures, so `1` measures 2.22px where `3` and `8`
+measure 6.02px and `hh:mm:ss` swings **22.5px** between `11:11:11` and
+`23:33:33`. `font-variant-numeric: tabular-nums` is set and computes, but the
+font offers no `tnum` feature for it to switch on, so it does nothing.
+
+Every character of the clock now gets a cell of its own, the width of the
+widest digit - what tabular figures would have done, done in the layout. The
+section samples the dot for twelve seconds with the board **running** and the
+seconds really ticking, then checks the extremes a twelve-second sample cannot
+reach by laying out the widest and narrowest possible times. A failure prints
+which of `clockW`, `liveW`, `metaW` or `cells` also varied, so it says what
+moved instead of needing a rerun to find out.
+
+The section runs last, because the text part stops the board.
+
+One harness note: this file disables the HTTP cache. The page URL is
+cache-busted but its stylesheet and script are not, and Chrome will happily
+serve the previous run's `sl-board.js` against the current `sl-board.css` -
+which produced one genuinely confusing failure where the synthetic cell checks
+passed and the live clock still jittered. New CSS, old JS.

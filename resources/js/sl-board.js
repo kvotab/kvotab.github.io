@@ -535,9 +535,35 @@
       refreshTimer = setTimeout(refresh, backoffMs);
     }
 
+    /*
+      A clock of digits that each take the width they feel like is a clock that
+      twitches once a second - and it drags whatever sits beside it along. This
+      font has no tabular figures: "1" measures 2.22px where "3" and "8"
+      measure 6.02px, so hh:mm:ss swings 22.5px between 11:11:11 and 23:33:33.
+      `font-variant-numeric: tabular-nums` is set and computes, but the font
+      offers no `tnum` feature for it to switch on, so it does nothing at all.
+
+      Each character therefore gets a cell of its own, the width of the widest
+      digit: what tabular figures would have done, done in the layout instead.
+      Cells are reused across ticks so a clock running all day is a handful of
+      textContent writes rather than eight elements a second.
+    */
+    function paintClock(el, text) {
+      if (el.childElementCount !== text.length) {
+        el.textContent = '';
+        for (let i = 0; i < text.length; i++) el.appendChild(document.createElement('span'));
+      }
+      for (let i = 0; i < text.length; i++) {
+        const cell = el.children[i], ch = text[i];
+        if (cell.textContent !== ch) cell.textContent = ch;
+        const cls = ch === ':' ? 'sl-clock-sep' : 'sl-clock-digit';
+        if (cell.className !== cls) cell.className = cls;
+      }
+    }
+
     function render() {
       const now = new Date();
-      $('sl-clock').textContent = hhmmss(now);
+      paintClock($('sl-clock'), hhmmss(now));
       $('sl-body').setAttribute('aria-busy', inFlight ? 'true' : 'false');
 
       /* Liveness, in the corner: when we last heard, and whether we are

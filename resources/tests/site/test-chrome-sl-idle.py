@@ -104,6 +104,13 @@ async def main():
 
         await s.call('Page.enable')
         await s.call('Runtime.enable')
+        # The page URL is cache-busted but its stylesheet and script are not,
+        # so without this Chrome happily serves the previous run's sl-board.js
+        # against the current sl-board.css. That produced one baffling failure
+        # where the synthetic cell checks passed and the live clock still
+        # jittered: new CSS, old JS.
+        await s.call('Network.enable')
+        await s.call('Network.setCacheDisabled', {'cacheDisabled': True})
         await s.call('Emulation.setDeviceMetricsOverride',
                      {'width': 1000, 'height': 700, 'deviceScaleFactor': 1, 'mobile': False})
         await s.call('Page.addScriptToEvaluateOnNewDocument', {'source': STUB})
@@ -212,10 +219,45 @@ async def main():
               '%d calls in 8s' % (n2['veh'] - n1['veh']))
 
         print('\n8. The live dot holds its position')
-        # Last, because it stops the board: the tick would overwrite the text.
-        # The dot is #sl-live's ::after, so it sits at the element's RIGHT
-        # edge - that is the edge that has to hold still. The left edge is
-        # expected to move: it is where the text grows from.
+        # Two independent things move next to the dot, and the first version of
+        # this section only tested one of them: it stopped the board to hold
+        # the status text still, which stopped the clock as well. The clock is
+        # the worse offender - see below - so it is sampled first, with the
+        # board running and the seconds really ticking.
+        samples = []
+        for _ in range(12):
+            samples.append(json.loads(await s.js("""JSON.stringify((() => {
+              const live = document.querySelector('#sl-live');
+              const clock = document.querySelector('#sl-clock');
+              const meta = document.querySelector('.sl-meta');
+              const l = live.getBoundingClientRect();
+              /* Everything that could move the dot is recorded beside it, so a
+                 failure says which one did rather than needing a rerun. */
+              return { dotX: Math.round(l.right * 10) / 10,
+                       clock: clock.textContent,
+                       cells: clock.childElementCount,
+                       clockW: Math.round(clock.getBoundingClientRect().width * 100) / 100,
+                       liveW: Math.round(l.width * 100) / 100,
+                       metaW: Math.round(meta.getBoundingClientRect().width * 100) / 100 };
+            })())""")))
+            await asyncio.sleep(1.05)
+        ticked = len({x['clock'] for x in samples})
+        xs = sorted({x['dotX'] for x in samples})
+        check(results, 'clock actually ticked during the sample', ticked >= 8,
+              '%d distinct times in 12 reads' % ticked)
+        if len(xs) == 1:
+            detail = 'fixed at %.1f' % xs[0]
+        else:
+            moved = [k for k in ('clockW', 'liveW', 'metaW', 'cells')
+                     if len({x[k] for x in samples}) > 1]
+            detail = 'swings %.1fpx across %s; also varying: %s' % (
+                xs[-1] - xs[0], xs, ', '.join(moved) or 'nothing measured')
+        check(results, 'dot holds still while the clock runs', len(xs) == 1, detail)
+
+        # Now the status text, with the board stopped so the tick cannot
+        # overwrite what is set here. The dot is #sl-live's ::after, so it sits
+        # at the element's RIGHT edge - that is the edge that has to hold
+        # still. The left edge is expected to move: the text grows from it.
         dot = json.loads(await s.js("""JSON.stringify((() => {
           const live = document.querySelector('#sl-live');
           const clock = document.querySelector('#sl-clock');
@@ -238,11 +280,42 @@ async def main():
               ('fixed at %.1f' % xs[0]) if len(xs) == 1 else 'swings %.1fpx across %s' % (xs[-1] - xs[0], xs))
         check(results, 'clock does not move either', len(cs) == 1,
               ('fixed at %.1f' % cs[0]) if len(cs) == 1 else 'moves %s' % cs)
-        # The complement, so a layout that froze everything by clipping the
-        # text to a fixed box could not pass the check above by accident.
         ls = sorted({r['textLeft'] for r in dot})
         check(results, 'text still grows leftwards from the dot', len(ls) > 1,
               '%d distinct left edges, %.1fpx span' % (len(ls), ls[-1] - ls[0]))
+
+        # The extremes the 12-second sample cannot reach. This font has no
+        # tabular figures - "1" is 2.22px where "3" and "8" are 6.02px - so
+        # hh:mm:ss once swung 22.5px between 11:11:11 and 23:33:33. The cells
+        # are what make every time the same width; this asserts that contract
+        # between the class names the JS writes and the widths the CSS gives.
+        cells = json.loads(await s.js("""JSON.stringify((() => {
+          const clock = document.querySelector('#sl-clock');
+          const paint = (t) => {
+            clock.textContent = '';
+            for (const ch of t) {
+              const cell = document.createElement('span');
+              cell.className = ch === ':' ? 'sl-clock-sep' : 'sl-clock-digit';
+              cell.textContent = ch;
+              clock.appendChild(cell);
+            }
+            return Math.round(clock.getBoundingClientRect().width * 100) / 100;
+          };
+          const widths = {};
+          for (const t of ['11:11:11', '23:33:33', '00:00:00', '08:58:38', '19:30:00'])
+            widths[t] = paint(t);
+          paint('23:33:33');
+          const digitCells = [...clock.querySelectorAll('.sl-clock-digit')]
+            .map((c) => Math.round(c.getBoundingClientRect().width * 100) / 100);
+          return { widths, digitCells };
+        })())"""))
+        ws_ = sorted(set(cells['widths'].values()))
+        check(results, 'every possible time is the same width', len(ws_) == 1,
+              ('%.2fpx for all' % ws_[0]) if len(ws_) == 1
+              else 'spread %.2fpx %s' % (ws_[-1] - ws_[0], cells['widths']))
+        ds = sorted(set(cells['digitCells']))
+        check(results, 'digit cells are uniform', len(ds) == 1,
+              ('%.2fpx each' % ds[0]) if len(ds) == 1 else 'differ %s' % ds)
 
         await ws.send(json.dumps({'id': 999, 'method': 'Target.closeTarget', 'params': {'targetId': tid}}))
 
