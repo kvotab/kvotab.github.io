@@ -47,7 +47,7 @@ const KVOT = (() => {
     },
     {
       href: './skb_qa_summary.html',
-      label: 'SKB QA Summary',
+      label: 'SKB QC Summary',
       desc: 'Summarise QA review status across Excel workbooks, with filters, statistics and CSV export.',
     },
   ];

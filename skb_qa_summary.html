@@ -1,15 +1,15 @@
 <!DOCTYPE html>
-<html lang="sv">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SKB QA Summary — kvot ab</title>
-  <meta name="description" content="Sammanställ QA-granskningsstatus från Excel-filer med filter, statistik och export till CSV. All bearbetning sker lokalt i webbläsaren.">
+  <title>SKB QC Summary — kvot ab</title>
+  <meta name="description" content="Summarise QC review status across Excel workbooks with filters, statistics and CSV export. Everything is processed locally in the browser.">
   <link rel="canonical" href="https://kvotab.se/skb_qa_summary.html">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="kvot ab">
-  <meta property="og:title" content="SKB QA Summary — kvot ab">
-  <meta property="og:description" content="Sammanställ QA-granskningsstatus från Excel-filer med filter, statistik och export till CSV. All bearbetning sker lokalt i webbläsaren.">
+  <meta property="og:title" content="SKB QC Summary — kvot ab">
+  <meta property="og:description" content="Summarise QC review status across Excel workbooks with filters, statistics and CSV export. Everything is processed locally in the browser.">
   <meta property="og:url" content="https://kvotab.se/skb_qa_summary.html">
   <meta property="og:image" content="https://kvotab.se/resources/images/kvot-logotype.png">
   <meta name="twitter:card" content="summary">
@@ -49,32 +49,32 @@
 <header></header>
 <div class="content">
 <main><div id="app">
-  <p class="privacy">Bearbetning sker lokalt i webbläsaren — inga filer laddas upp.</p>
-  <section id="dropzone" role="button" tabindex="0" aria-label="Ladda upp Excel-filer">
+  <p class="privacy">Processed locally in your browser — no file is uploaded.</p>
+  <section id="dropzone" role="button" tabindex="0" aria-label="Upload Excel files">
     <input type="file" id="file-input" accept=".xlsx" multiple>
-    <div class="dz-icon">📊</div><div class="dz-label">Släpp en eller flera Excel-filer här</div>
-    <div class="dz-sub">eller klicka för att välja filer, endast .xlsx</div>
-    <button class="btn primary" id="choose-btn" type="button">Välj filer</button>
+    <div class="dz-icon">📊</div><div class="dz-label">Drop one or more Excel files here</div>
+    <div class="dz-sub">or click to choose files — .xlsx only</div>
+    <button class="btn primary" id="choose-btn" type="button">Choose files</button>
   </section>
   <div id="status" role="status"></div>
   <section id="workspace">
-    <div class="toolbar"><div id="file-info" class="file-info"></div><div class="actions"><button class="btn" id="export-btn">Exportera filtrerat CSV</button><button class="btn danger" id="reset-btn">Rensa allt</button></div></div>
+    <div class="toolbar"><div id="file-info" class="file-info"></div><div class="actions"><button class="btn" id="export-btn">Export filtered CSV</button><button class="btn danger" id="reset-btn">Clear all</button></div></div>
     <div class="filters">
-      <div class="field"><label for="file-filter">Filer</label><select id="file-filter" multiple></select><div class="filter-tools"><button type="button" class="clear-filter" data-clear="file-filter">Avmarkera alla</button></div><span class="hint">Ctrl/Cmd-klick för flera. Inget val = alla.</span></div>
-      <div class="field"><label for="sheet-filter">Ark</label><select id="sheet-filter" multiple></select><div class="filter-tools"><button type="button" class="clear-filter" data-clear="sheet-filter">Avmarkera alla</button></div><span class="hint">Visar ark som innehåller alla fyra rubriker.</span></div>
-      <div class="field"><label for="reviewer-filter">QA reviewer</label><select id="reviewer-filter" multiple></select><div class="filter-tools"><button type="button" class="clear-filter" data-clear="reviewer-filter">Avmarkera alla</button></div><span class="hint">Flera val kan kombineras.</span></div>
-      <div class="field"><label for="status-filter">QA status</label><select id="status-filter" multiple></select><div class="filter-tools"><button type="button" class="clear-filter" data-clear="status-filter">Avmarkera alla</button></div><span class="hint">Tomma värden visas som “(Tomt)”.</span></div>
-      <div class="field"><label for="id-search">Sök i ID</label><input id="id-search" type="search" placeholder="Skriv hela eller del av ID"><span class="hint">Skiftlägesokänslig delsökning.</span></div>
+      <div class="field"><label for="file-filter">Files</label><select id="file-filter" multiple></select><div class="filter-tools"><button type="button" class="clear-filter" data-clear="file-filter">Clear selection</button></div><span class="hint">Ctrl/Cmd-click for several. No selection means all.</span></div>
+      <div class="field"><label for="sheet-filter">Sheets</label><select id="sheet-filter" multiple></select><div class="filter-tools"><button type="button" class="clear-filter" data-clear="sheet-filter">Clear selection</button></div><span class="hint">Sheets carrying ID and the three QC columns.</span></div>
+      <div class="field"><label for="reviewer-filter">QC reviewer</label><select id="reviewer-filter" multiple></select><div class="filter-tools"><button type="button" class="clear-filter" data-clear="reviewer-filter">Clear selection</button></div><span class="hint">Selections combine.</span></div>
+      <div class="field"><label for="status-filter">QC status</label><select id="status-filter" multiple></select><div class="filter-tools"><button type="button" class="clear-filter" data-clear="status-filter">Clear selection</button></div><span class="hint">Empty cells are shown as “(Blank)”.</span></div>
+      <div class="field"><label for="id-search">Search ID</label><input id="id-search" type="search" placeholder="Whole ID or part of one"><span class="hint">Case-insensitive substring match.</span></div>
     </div>
     <div class="summary">
-      <div class="card ok"><div class="card-label">Matchande datapunkter</div><div class="card-value" id="count-rows">0</div></div>
-      <div class="card"><div class="card-label">Unika ID</div><div class="card-value" id="count-ids">0</div></div>
-      <div class="card"><div class="card-label">Filer</div><div class="card-value" id="count-files">0</div></div>
-      <div class="card"><div class="card-label">Ark</div><div class="card-value" id="count-sheets">0</div></div>
-      <div class="card warn"><div class="card-label">Med QA comment</div><div class="card-value" id="count-comments">0</div></div>
+      <div class="card ok"><div class="card-label">Matching data points</div><div class="card-value" id="count-rows">0</div></div>
+      <div class="card"><div class="card-label">Unique IDs</div><div class="card-value" id="count-ids">0</div></div>
+      <div class="card"><div class="card-label">Files</div><div class="card-value" id="count-files">0</div></div>
+      <div class="card"><div class="card-label">Sheets</div><div class="card-value" id="count-sheets">0</div></div>
+      <div class="card warn"><div class="card-label">With QC comment</div><div class="card-value" id="count-comments">0</div></div>
     </div>
-    <div class="grid-2"><section class="panel"><h2>Andel OK och Preliminary</h2><div class="panel-body"><div class="status-overview"><div id="status-donut" class="donut"><div class="donut-center"><span id="ok-percent" class="donut-value">0%</span><span class="donut-label">OK</span></div></div><div><div id="status-stats"></div><div class="legend"><span class="legend-item"><i class="swatch ok"></i>OK</span><span class="legend-item"><i class="swatch preliminary"></i>Preliminary</span></div><div id="status-note" class="status-note"></div></div></div></div></section><section class="panel"><h2>Fördelning per QA reviewer</h2><div class="panel-body" id="reviewer-stats"></div></section></div>
-    <div class="table-wrap"><table><thead><tr><th>Fil</th><th>Ark</th><th>Excelrad</th><th>ID</th><th>QA reviewer</th><th>QA status</th><th>QA comment</th></tr></thead><tbody id="data-body"></tbody></table><div id="empty" class="empty" hidden>Inga datapunkter matchar filtren.</div></div>
+    <div class="grid-2"><section class="panel"><h2>Share approved</h2><div class="panel-body"><div class="status-overview"><div id="status-donut" class="donut"><div class="donut-center"><span id="ok-percent" class="donut-value">0%</span><span class="donut-label">Approved</span></div></div><div><div id="status-stats"></div><div class="legend"><span class="legend-item"><i class="swatch ok"></i>Approved (OK-PSAR, OK-UPSAR, OK-FSAR)</span><span class="legend-item"><i class="swatch preliminary"></i>Not yet approved</span></div><div id="status-note" class="status-note"></div></div></div></div></section><section class="panel"><h2>By QC reviewer</h2><div class="panel-body" id="reviewer-stats"></div></section></div>
+    <div class="table-wrap"><table><thead><tr><th>File</th><th>Sheet</th><th>Excel row</th><th>ID</th><th>QC reviewer</th><th>QC status</th><th>QC comment</th></tr></thead><tbody id="data-body"></tbody></table><div id="empty" class="empty" hidden>No data point matches the filters.</div></div>
   </section>
 </div></main></div>
 
@@ -87,7 +87,7 @@
 <script src="./resources/js/kvot-icons.js?v=20260902"></script>
 <script src="./resources/js/site.js?v=20260907"></script>
   <script>
-    KVOT.renderHeader('SKB QA summary');
+    KVOT.renderHeader('SKB QC summary');
     KVOT.renderNav('skb_qa_summary.html');
     KVOT.renderFooter();
     KVOT.initMap('kvotmap');
@@ -96,21 +96,63 @@
 <script>
 'use strict';
 const $=id=>document.getElementById(id);
-const required=['id','qa reviewer','qa comment','qa status'];
+/*
+  The three review columns were headed QA and are now QC. Both spellings are
+  read, QC first: five of the workbooks this was built for still carry the QA
+  heading, and they hold real review data. Dropping a sheet over the letter in
+  its heading would lose it without saying so.
+*/
+const REVIEW_PREFIXES=['qc','qa'];
+const columnsFor=prefix=>['id',prefix+' reviewer',prefix+' comment',prefix+' status'];
+
+/*
+  The statuses a QC review moves through, in that order, which is the order
+  they are listed and filtered in rather than the alphabetical one.
+
+  A value outside this list is kept and shown after them, never dropped and
+  never silently counted as approved: a status the page does not recognise is
+  the thing most worth seeing.
+*/
+const STATUS_ORDER=['Preliminary','In review','OK-PSAR','OK-UPSAR','OK-FSAR'];
+const APPROVED=new Set(['ok-psar','ok-upsar','ok-fsar']);
+
+/*
+  The one spelling of a status, used for the bars, the filter, the table and
+  the export alike. Case is not part of the vocabulary, so a cell reading
+  "ok-fsar" is the OK-FSAR status - counted, filtered and shown as one thing.
+  Without this the bars folded the two together and the filter did not, so a
+  bar said 6 and choosing that status gave 5.
+
+  A value outside the vocabulary is passed through as typed, because there is
+  nothing to canonicalise it to and hiding it would be the wrong answer.
+*/
+function statusLabel(v){
+  const raw=String(v??'').trim();
+  if(!raw) return '(Blank)';
+  return STATUS_ORDER.find(label=>normalize(label)===normalize(raw)) ?? raw;
+}
+
 let rows=[], validSheets=[], loadedFiles=[];
 const normalize=v=>String(v??'').trim().toLowerCase().replace(/\s+/g,' ');
-const display=v=>String(v??'').trim() || '(Tomt)';
+const display=v=>String(v??'').trim() || '(Blank)';
 /* One implementation, in resources/js/kvot-safe.js. The local copy escaped
    everything but the apostrophe. */
 const esc=v=>kvotEscapeHtml(v);
 function showStatus(msg,error=false){$('status').textContent=msg;$('status').className='show'+(error?' error':'')}
 function hideStatus(){$('status').className=''}
 function selected(id){return new Set([...$(id).selectedOptions].map(o=>o.value))}
-function addOptions(id,values){const old=selected(id);$(id).innerHTML=[...values].sort((a,b)=>a.localeCompare(b,'sv',{numeric:true})).map(v=>`<option value="${esc(v)}"${old.has(v)?' selected':''}>${esc(v)}</option>`).join('')}
+/* `order` lists values that have a meaning in sequence - the QC statuses -
+   which go first, in that sequence; everything else follows alphabetically. */
+function addOptions(id,values,order){
+  const old=selected(id), list=[...values];
+  const rank=v=>{const i=(order||[]).findIndex(o=>normalize(o)===normalize(v));return i<0?(order||[]).length:i};
+  list.sort((a,b)=>rank(a)-rank(b)||a.localeCompare(b,'en',{numeric:true}));
+  $(id).innerHTML=list.map(v=>`<option value="${esc(v)}"${old.has(v)?' selected':''}>${esc(v)}</option>`).join('');
+}
 async function loadFiles(files){
   const accepted=[...files].filter(f=>f.name.toLowerCase().endsWith('.xlsx'));
-  if(!accepted.length){showStatus('Välj minst en .xlsx-fil.',true);return}
-  showStatus(`Läser ${accepted.length} fil(er)…`);
+  if(!accepted.length){showStatus('Choose at least one .xlsx file.',true);return}
+  showStatus(`Reading ${accepted.length} file(s)…`);
   const newRows=[], newSheets=[], warnings=[];
   for(const file of accepted){
     try{
@@ -120,41 +162,68 @@ async function loadFiles(files){
         const ws=wb.Sheets[sheetName];
         const matrix=XLSX.utils.sheet_to_json(ws,{header:1,defval:'',raw:false});
         const header=(matrix[0]||[]).map(normalize);
-        const indexes=Object.fromEntries(required.map(key=>[key,header.indexOf(key)]));
-        if(required.some(key=>indexes[key]<0)) continue;
+        const prefix=REVIEW_PREFIXES.find(p=>columnsFor(p).every(key=>header.indexOf(key)>=0));
+        if(!prefix) continue;
+        const [idCol,reviewerCol,commentCol,statusCol]=columnsFor(prefix).map(key=>header.indexOf(key));
         found++; newSheets.push(`${file.name}|||${sheetName}`);
         for(let i=1;i<matrix.length;i++){
           const r=matrix[i]||[];
-          const record={file:file.name,sheet:sheetName,row:i+1,id:r[indexes['id']]??'',reviewer:r[indexes['qa reviewer']]??'',comment:r[indexes['qa comment']]??'',status:r[indexes['qa status']]??''};
+          const record={file:file.name,sheet:sheetName,row:i+1,id:r[idCol]??'',reviewer:r[reviewerCol]??'',comment:r[commentCol]??'',status:r[statusCol]??''};
           if([record.id,record.reviewer,record.comment,record.status].every(v=>String(v).trim()==='')) continue;
           newRows.push(record);
         }
       }
-      if(!found) warnings.push(`${file.name}: inga giltiga ark`);
+      if(!found) warnings.push(`${file.name}: no sheet with ID and the three QC columns`);
     }catch(e){warnings.push(`${file.name}: ${e.message}`)}
   }
   rows.push(...newRows); validSheets.push(...newSheets); loadedFiles.push(...accepted.map(f=>f.name));
   refreshOptions(); $('workspace').className='show'; render();
-  showStatus(`${accepted.length} fil(er) lästa. ${newRows.length} datapunkter tillagda.${warnings.length?' Varning: '+warnings.join(' | '):''}`,warnings.length>0);
+  showStatus(`${accepted.length} file(s) read, ${newRows.length} data point(s) added.${warnings.length?' Warning: '+warnings.join(' | '):''}`,warnings.length>0);
 }
 function refreshOptions(){
   addOptions('file-filter',new Set(rows.map(r=>r.file)));
   addOptions('sheet-filter',new Set(validSheets.map(k=>{const [f,s]=k.split('|||');return `${f} › ${s}`})));
   addOptions('reviewer-filter',new Set(rows.map(r=>display(r.reviewer))));
-  addOptions('status-filter',new Set(rows.map(r=>display(r.status))));
-  $('file-info').textContent=`${new Set(loadedFiles).size} fil(er), ${new Set(validSheets).size} giltiga ark, ${rows.length} datapunkter totalt`;
+  addOptions('status-filter',new Set(rows.map(r=>statusLabel(r.status))),STATUS_ORDER);
+  $('file-info').textContent=`${new Set(loadedFiles).size} file(s), ${new Set(validSheets).size} matching sheet(s), ${rows.length} data point(s) in total`;
 }
 function filtered(){
   const fs=selected('file-filter'), ss=selected('sheet-filter'), rs=selected('reviewer-filter'), qs=selected('status-filter'), q=normalize($('id-search').value);
-  return rows.filter(r=>(!fs.size||fs.has(r.file))&&(!ss.size||ss.has(`${r.file} › ${r.sheet}`))&&(!rs.size||rs.has(display(r.reviewer)))&&(!qs.size||qs.has(display(r.status)))&&(!q||normalize(r.id).includes(q)));
+  return rows.filter(r=>(!fs.size||fs.has(r.file))&&(!ss.size||ss.has(`${r.file} › ${r.sheet}`))&&(!rs.size||rs.has(display(r.reviewer)))&&(!qs.size||qs.has(statusLabel(r.status)))&&(!q||normalize(r.id).includes(q)));
 }
-function distribution(data,key){const m=new Map();for(const r of data){const v=display(r[key]);m.set(v,(m.get(v)||0)+1)}return [...m].sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0],'sv'))}
-function bars(target,items,total){$(target).innerHTML=items.length?items.map(([label,n])=>`<div class="bar-row" title="${esc(label)}: ${n}"><div class="bar-label">${esc(label)}</div><div class="bar-track"><div class="bar" style="width:${total?100*n/total:0}%"></div></div><div class="bar-count">${n}</div></div>`).join(''):'<div class="empty">Ingen statistik att visa.</div>'}
+function distribution(data,key){const m=new Map();for(const r of data){const v=display(r[key]);m.set(v,(m.get(v)||0)+1)}return [...m].sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0],'en'))}
+
+/*
+  Every status in STATUS_ORDER is counted and listed even at zero, so the shape
+  of the pipeline is readable rather than inferred from what happens to be
+  present. Anything else a workbook holds is appended, in the order met. Rows
+  with no status at all are counted apart: they are not approved, but neither
+  are they a review outcome, so they belong in neither bar.
+*/
+function statusCounts(data){
+  const counts=new Map(STATUS_ORDER.map(label=>[label,0]));
+  let blank=0;
+  for(const r of data){
+    const key=statusLabel(r.status);
+    if(key==='(Blank)'){blank++;continue}
+    counts.set(key,(counts.get(key)||0)+1);
+  }
+  const approved=[...counts].reduce((n,[label,c])=>APPROVED.has(normalize(label))?n+c:n,0);
+  return {counts:[...counts],approved,classified:data.length-blank,blank};
+}
+function bars(target,items,total){$(target).innerHTML=items.length?items.map(([label,n])=>`<div class="bar-row" title="${esc(label)}: ${n}"><div class="bar-label">${esc(label)}</div><div class="bar-track"><div class="bar" style="width:${total?100*n/total:0}%"></div></div><div class="bar-count">${n}</div></div>`).join(''):'<div class="empty">Nothing to show.</div>'}
 function render(){
   const data=filtered();
   $('count-rows').textContent=data.length;$('count-ids').textContent=new Set(data.map(r=>normalize(r.id)).filter(Boolean)).size;$('count-files').textContent=new Set(data.map(r=>r.file)).size;$('count-sheets').textContent=new Set(data.map(r=>`${r.file}|||${r.sheet}`)).size;$('count-comments').textContent=data.filter(r=>String(r.comment).trim()).length;
-  const okCount=data.filter(r=>normalize(r.status)==='ok').length, preliminaryCount=data.filter(r=>normalize(r.status)==='preliminary').length, statusTotal=okCount+preliminaryCount, okShare=statusTotal?100*okCount/statusTotal:0; $('ok-percent').textContent=`${okShare.toLocaleString('sv-SE',{maximumFractionDigits:1})}%`; $('status-donut').style.setProperty('--ok-share',okShare); $('status-note').textContent=statusTotal?`${okCount} OK av ${statusTotal} statusklassificerade datapunkter.`:'Inga OK eller Preliminary i urvalet.'; bars('status-stats',[['OK',okCount],['Preliminary',preliminaryCount]],statusTotal);bars('reviewer-stats',distribution(data,'reviewer'),data.length);
-  $('data-body').innerHTML=data.map(r=>`<tr><td>${esc(r.file)}</td><td>${esc(r.sheet)}</td><td class="mono">${r.row}</td><td class="mono">${esc(r.id)}</td><td>${esc(display(r.reviewer))}</td><td><span class="badge">${esc(display(r.status))}</span></td><td class="comment">${esc(r.comment)}</td></tr>`).join('');
+  const st=statusCounts(data), share=st.classified?100*st.approved/st.classified:0;
+  $('ok-percent').textContent=`${share.toLocaleString('en-GB',{maximumFractionDigits:1})}%`;
+  $('status-donut').style.setProperty('--ok-share',share);
+  $('status-note').textContent=st.classified
+    ? `${st.approved} approved of ${st.classified} with a status.`+(st.blank?` ${st.blank} without one.`:'')
+    : 'No data point in the selection carries a status.';
+  bars('status-stats',st.counts,st.classified);
+  bars('reviewer-stats',distribution(data,'reviewer'),data.length);
+  $('data-body').innerHTML=data.map(r=>`<tr><td>${esc(r.file)}</td><td>${esc(r.sheet)}</td><td class="mono">${r.row}</td><td class="mono">${esc(r.id)}</td><td>${esc(display(r.reviewer))}</td><td><span class="badge">${esc(statusLabel(r.status))}</span></td><td class="comment">${esc(r.comment)}</td></tr>`).join('');
   $('empty').hidden=data.length>0;
 }
 /*
@@ -164,7 +233,7 @@ function render(){
   formula. kvotCsvCell forces such a value back to text.
 */
 function csvCell(v){return kvotCsvCell(v)}
-function exportCsv(){const data=filtered(),head=['Fil','Ark','Excelrad','ID','QA reviewer','QA status','QA comment'];const body=data.map(r=>[r.file,r.sheet,r.row,r.id,r.reviewer,r.status,r.comment]);const csv='\ufeff'+[head,...body].map(a=>a.map(csvCell).join(';')).join('\r\n');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='skb_qa_filtered.csv';a.click();URL.revokeObjectURL(url)}
+function exportCsv(){const data=filtered(),head=['File','Sheet','Excel row','ID','QC reviewer','QC status','QC comment'];const body=data.map(r=>[r.file,r.sheet,r.row,r.id,r.reviewer,statusLabel(r.status),r.comment]);const csv='\ufeff'+[head,...body].map(a=>a.map(csvCell).join(';')).join('\r\n');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='skb_qc_filtered.csv';a.click();URL.revokeObjectURL(url)}
 function reset(){rows=[];validSheets=[];loadedFiles=[];$('file-input').value='';$('workspace').className='';$('id-search').value='';hideStatus();['file-filter','sheet-filter','reviewer-filter','status-filter'].forEach(id=>$(id).innerHTML='')}
 const dz=$('dropzone'),fi=$('file-input');
 dz.addEventListener('click',e=>{if(!e.target.closest('button'))fi.click()});dz.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();fi.click()}});$('choose-btn').addEventListener('click',e=>{e.stopPropagation();fi.click()});fi.addEventListener('change',()=>loadFiles(fi.files));dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('drag-over')});dz.addEventListener('dragleave',()=>dz.classList.remove('drag-over'));dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('drag-over');loadFiles(e.dataTransfer.files)});
