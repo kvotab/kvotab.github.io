@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Uppsala → Solna — kvot ab</title>
+  <meta name="description" content="Live departures for SL commuter trains from Uppsala C towards Solna, updated every 30 seconds from Trafiklab's SL Transport API.">
+  <link rel="canonical" href="https://kvotab.se/uppsala.html">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="kvot ab">
+  <meta property="og:title" content="Uppsala → Solna — kvot ab">
+  <meta property="og:description" content="Live departures for SL commuter trains from Uppsala C towards Solna, updated every 30 seconds from Trafiklab's SL Transport API.">
+  <meta property="og:url" content="https://kvotab.se/uppsala.html">
+  <meta property="og:image" content="https://kvotab.se/resources/images/kvot-logotype.png">
+  <meta name="twitter:card" content="summary">
+  <script>
+    // Set the theme before first paint so dark-mode visitors get no white flash.
+    (function () {
+      try {
+        var t = localStorage.getItem('kvot-theme');
+        if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* storage unavailable — site.js will apply the default */ }
+    })();
+  </script>
+  <link rel="stylesheet" href="./resources/css/kvot.css?v=20260911">
+  <link rel="stylesheet" href="./resources/css/sl-board.css?v=20260913">
+  <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
+</head>
+<body class="sl-page">
+<header></header>
+<div class="content">
+<main><div class="sl-wrap">
+  <p class="sl-intro">
+    The next SL commuter trains (pendeltåg line 40) leaving <b>Uppsala C</b> southbound. Every
+    southbound line-40 train calls at Solna, about 45 minutes later. The board refreshes itself
+    and the minutes count down between refreshes. The line below shows every SL train between
+    Uppsala and Upplands Väsby: above the rail those heading south, below it those arriving at
+    Uppsala &ndash; the next train to leave is usually one of them.
+  </p>
+  <div id="board"></div>
+  <p class="sl-other">Going the other way? <a href="./solna.html">Solna → Uppsala</a></p>
+</div></main></div>
+
+<div id="kvotmap"></div>
+
+<footer></footer>
+<script src="./resources/js/kvot-errors.js?v=20260911"></script>
+<script src="./resources/js/kvot-safe.js?v=20260911"></script>
+<script src="./resources/js/kvot-actions.js?v=20260902"></script>
+<script src="./resources/js/kvot-icons.js?v=20260902"></script>
+<script src="./resources/js/site.js?v=20260907"></script>
+<script src="./resources/js/sl-board.js?v=20260913"></script>
+<script>
+  KVOT.renderHeader('Uppsala → Solna');
+  KVOT.renderNav('uppsala.html');
+  KVOT.renderFooter();
+  KVOT.initMap('kvotmap');
+
+  /*
+    Uppsala C is site 6086. Line 40 is the only train there, and every one of
+    its trains leaving Uppsala goes south through Solna, so "towards Solna" is
+    simply "line 40 and not bound for Uppsala" - the second half guards against
+    a terminating train the API might list at its own end.
+  */
+  /*
+    The corridor the trains are drawn along, in travel order. Uppsala C is the
+    terminus, so nothing approaches it in our direction: the stretch runs away
+    from the station and shows the trains that have just left, which is what a
+    person who has missed one wants to know. Coordinates are the API's own, so
+    the stations sit at their real spacing (16.5, 11.6 and 14.5 km).
+  */
+  KVOT_SL.mountBoard(document.getElementById('board'), {
+    siteId: 6086,
+    fromName: 'Uppsala C',
+    toName: 'Solna',
+    keep: (d) => d.line === '40' && d.destination !== 'Uppsala C',
+    directionCode: 1,
+    /* Live train positions. The endpoint is a Cloudflare Worker
+       (workers/sl-vehicles.js) that holds the Trafikverket key; this page is
+       static and public, so no key can live here. The URL itself is not a
+       secret - the Worker caches upstream for three seconds, so its cost does
+       not grow with the number of callers. Remove this line and the board
+       falls back to estimating positions from SL's forecasts. */
+    trainsUrl: 'https://solitary-union-c53d.pa-962.workers.dev/trains',
+    corridor: [
+      { siteId: 6086, name: 'Uppsala C',       lat: 59.8573, lon: 17.6485 },
+      { siteId: 6092, name: 'Knivsta',         lat: 59.7259, lon: 17.7869 },
+      { siteId: 9511, name: 'Arlanda C',       lat: 59.6509, lon: 17.9314 },
+      { siteId: 9502, name: 'Upplands Väsby',  lat: 59.5215, lon: 17.8997 },
+    ],
+  });
+</script>
+</body>
+</html>

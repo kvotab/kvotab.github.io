@@ -40,6 +40,7 @@ Per page, additionally:
 | skbref | rule counts, the in-page guide fixture, SKB collation, chemical-formula detection, rule packs |
 | skb_qa_summary | privacy note, filter ids (now including the two parameter switches), `normalize`/`esc`/`csvCell` |
 | karaoke | language, control ids, player and lyric stage, page globals |
+| uppsala, solna | the SL board module is present, its refresh interval and state table, the relation heading, the Trafiklab attribution link, the link to the other direction, the line diagram with its station count, its two direction lanes and legend, the stale-data threshold, and that nothing resembling an API key is in the page. The GPS layer is off unless `vehiclesUrl` (or the `kvot-sl-vehicles` storage key) points at the Worker in `workers/sl-vehicles.js`; without it the boards run on forecasts alone, which is what the fingerprint records |
 
 `test-actions.py <page>` covers the control wiring: every element declaring a
 `data-on-<event>` attribute is given that event, and its handler must fire
@@ -372,3 +373,98 @@ meant for it until it was hidden for the duration.
 Finally, the window takes focus itself on opening. jQuery UI gives focus to the
 first tabbable element inside, which is the quantity menu — a menu nobody asked
 to open, in front of the chart they did.
+
+## test-chrome-sl-idle.py
+
+Whether the SL boards stop calling the network when nobody is looking.
+
+    python3 -m http.server 8765 --bind 127.0.0.1
+    "$CHROME" --headless=new --remote-debugging-port=9222 --user-data-dir=/tmp/p
+    python3 resources/tests/site/test-chrome-sl-idle.py
+
+### Where the positions come from
+
+The boards first polled a Cloudflare Worker wrapping Trafiklab's GTFS-RT
+`VehiclePositions`. That feed turned out not to name its lines: of 554 vehicles
+carrying a position, **7** had a `route_id`, and one of those resolved. The
+`trip_id` it does carry is a GTFS *static* id, so naming a line through it
+needs the static dataset and somewhere to keep it.
+
+They now use Trafikverket's `TrainPosition`, joined on the train number. SL's
+`journey.id` is the date followed by the five-digit advertised train number -
+`2026091302272` is train 2272 on 13 September - and Trafikverket keys positions
+by exactly that number. Checked against both live APIs at once: **16 of 23**
+journeys on these corridors matched a position, the other seven being services
+that had not departed yet.
+
+That replaced a nearest-fix-on-the-same-line-going-the-same-way match, whose
+radius had to be sized against the corridor's median hop and could still pair a
+fix with the train behind it. Identity beats proximity - and it removes what
+made the old approach risky at all: the E4 runs beside the rail, so an unnamed
+road vehicle inside the corridor would have been drawn as a train. Trafikverket
+carries trains only, so an unmatched fix there is a real train - SJ, Malartag,
+freight - which is the honest answer to whether the track is busy. Those are
+labelled by train number and never given an invented destination.
+
+`characterise.py` also checks that no page contains a 32-hex-character string,
+which is the shape of a Trafikverket key. The key lives in the Worker's secret
+store; these pages are world-readable.
+
+### Gating
+
+uppsala.html and solna.html ask the positions endpoint every three seconds, and
+that endpoint is a Cloudflare Worker holding a paid-for key. A board nobody is
+watching is that allowance being spent on nothing.
+
+Three separate things are supposed to stop it, and because they are three
+different mechanisms each is exercised on its own:
+
+- **a backgrounded tab**, via `visibilitychange`;
+- **the board scrolled out of the viewport**, via `IntersectionObserver` —
+  a tab can be in front with the board a full page below the fold;
+- **a visitor who has gone quiet**, via a 15-minute idle timer that any
+  pointer, key, scroll or touch resets.
+
+The first two are certainties; the third is a guess, and a departure board is
+exactly the sort of page somebody watches without touching, which is why the
+window is long, why the faintest movement ends it, and why `idleMs: 0` turns
+it off for a screen meant to run unattended. The last section checks that
+escape hatch actually works, because a wall display silently pausing after a
+quarter of an hour would be the worst failure of the lot.
+
+The test counts the fetches the page really makes, through a `fetch` stub
+installed with `Page.addScriptToEvaluateOnNewDocument`. Installed after load it
+would race the board's own first fetch and undercount. Asserting on call counts
+rather than on internal state is what lets the same file run against an older
+sl-board.js and report failures instead of crashing: against the previous
+visibility-only code it reports 8/24, with **2 vehicle calls and 4 departure
+calls in the 4 seconds the board sat out of view**. The hidden-tab checks pass
+there too, which is right — that gate already worked.
+
+Resuming has to refetch immediately rather than wait for the next tick, so
+returning to a board does not present whatever it was showing when it stopped.
+A paused board is greyed and says which of the three reasons stopped it: a
+departure board quietly displaying minute counts it is no longer checking is
+the one failure it must never have.
+
+The last section measures something the rest of the file caused. `.sl-meta`
+sized itself to its contents at the right-hand end of the head, so every time
+the text beside the live dot changed - "Live" to "Updated 12s ago", and now
+also "Paused - not in view", which is longer than any of the old strings - the
+whole block grew leftwards and carried the dot with it. A status light that
+jitters once a second. Against the previous CSS the test reports a **127.4px
+swing**.
+
+`.sl-meta` is now a grid filling the width the relation leaves. The dot sits
+*after* the text (`#sl-live`'s `::after`), so what pins it is the text block
+being aligned to the **end** of its column: the right edge stays put, the text
+grows leftwards from it, and the clock holds the column beyond. Aligning to the
+start instead would hand the jitter straight back, the dot riding on the end of
+a string that changes every second - so the test measures `rect.right`, the
+edge the dot is actually on.
+
+A second check asserts the left edge *does* move, across 8 distinct positions.
+Without it, a layout that froze everything by clipping the text to a fixed box
+would pass the first check while quietly truncating "Last update 23:45 -
+retrying". The section must run last, because it stops the board to keep the
+tick from overwriting the text.

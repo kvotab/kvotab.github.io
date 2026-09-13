@@ -9,7 +9,8 @@ missing. This one starts from the button, not from the attribute.
 import asyncio, json, sys, time, urllib.request, websockets
 
 PAGES = ['index.html', 'proj.html', 'rb.html', 'rdc.html', 'logn.html',
-         'karaoke.html', 'skbref.html', 'skb_qa_summary.html', '404.html']
+         'karaoke.html', 'skbref.html', 'skb_qa_summary.html', 'uppsala.html',
+         'solna.html', '404.html']
 
 PROBE = r"""(async () => {
   const button = document.querySelector('button.theme-toggle');

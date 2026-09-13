@@ -1,0 +1,201 @@
+/*
+  Departure board, shared by uppsala.html and solna.html.
+
+  Everything is drawn from the site's theme variables so the board is at home
+  in both themes without a second rule set. The hard colours are the ones
+  that carry meaning of their own: the delay red, the on-time green, and the
+  line colours, which have to tell 40 from 41 in either theme.
+*/
+.sl-page main { min-height: calc(100vh - var(--header-height) - var(--footer-height)); padding: 24px 0 44px; }
+/* width:100% plus padding in content-box is wider than the screen; the same
+   mistake once made the site header 402px on a 390px phone. */
+.sl-wrap { box-sizing: border-box; width: 100%; max-width: 760px; margin: auto; padding: 0 20px; }
+.sl-intro { margin: 0 0 16px; color: var(--text-muted); font-size: .85rem; line-height: 1.5; }
+.sl-intro a { color: var(--link-color); }
+
+.sl-board { border: 1px solid var(--border-color); border-radius: 14px; background: var(--bg-secondary); overflow: hidden; }
+
+.sl-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap;
+  padding: 16px 20px 12px; border-bottom: 1px solid var(--border-color); background: var(--bg-surface); }
+.sl-relation { font-size: 1.25rem; font-weight: 750; color: var(--text-primary); letter-spacing: .01em; }
+.sl-arrow { margin: 0 8px; color: var(--color-kvot-bright); }
+/* The live dot must not move. This block used to size itself to its contents
+   at the right-hand end of the head, so every time the text went from "Live"
+   to "Updated 12s ago" the block grew leftwards and took the dot with it - a
+   status light that jitters once a second.
+
+   It now fills the width the relation leaves and places its parts itself. The
+   dot sits after the text, so what pins it is the text block being aligned to
+   the *end* of its column: the right edge stays put and the text grows
+   leftwards from it, into space where nothing is anchored. Aligning to the
+   start instead would hand the jitter straight back, the dot riding on the
+   end of a string that changes every second.
+
+   The 240px basis preserves the old wrapping: beside a relation on a phone
+   there is not that much room, so the block drops to its own line rather than
+   cramming. */
+.sl-meta { flex: 1 1 240px; min-width: 0; display: grid; grid-template-columns: 1fr auto; gap: 12px;
+  align-items: baseline; font-size: .78rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+/* justify-self is what fixes the dot in place - see the note above. No
+   clipping here: the "live" pulse is a box-shadow ring that spreads 7px beyond
+   the dot, and overflow:hidden would cut it off. */
+.sl-live { white-space: nowrap; justify-self: end; }
+.sl-live::after { content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-left: 6px; background: var(--text-muted); vertical-align: middle; }
+@keyframes sl-pulse { 0%, 100% { box-shadow: 0 0 0 3px rgba(63, 139, 85, .18); } 50% { box-shadow: 0 0 0 7px rgba(63, 139, 85, .05); } }
+.sl-live-ok::after { background: #3f8b55; box-shadow: 0 0 0 3px rgba(63, 139, 85, .18); animation: sl-pulse 2.4s ease-in-out infinite; }
+.sl-live-stale::after { background: #c47c13; }
+.sl-live-bad::after { background: #d84a43; }
+/* Stopped on purpose, which is not the same as broken: a hollow ring rather
+   than a colour, because nothing is wrong. */
+.sl-live-paused::after { background: transparent; box-shadow: inset 0 0 0 2px var(--text-muted); animation: none; }
+/* A paused board is greyed so its minute counts cannot be read as current.
+   Controls keep full contrast - the visitor has to be able to start it. */
+.sl-paused .sl-body, .sl-paused .sl-track, .sl-paused .sl-deviations { opacity: .45; transition: opacity .25s ease; }
+
+.sl-body { padding: 18px 20px 8px; }
+.sl-empty { padding: 30px 12px; text-align: center; color: var(--text-muted); font-style: italic; }
+.sl-error { color: var(--color-kvot-accent); font-style: normal; }
+
+/* The next train, large. A board is read from across a room. */
+.sl-hero { display: grid; grid-template-columns: minmax(140px, auto) 1fr; gap: 20px; align-items: center;
+  padding: 10px 6px 18px; border-bottom: 1px solid var(--border-color); }
+.sl-count { text-align: center; line-height: 1; }
+.sl-count-big { display: block; font-size: clamp(3.4rem, 12vw, 5.2rem); font-weight: 800; letter-spacing: -.03em;
+  color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.sl-count-small { display: block; margin-top: 6px; font-size: .78rem; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); }
+.sl-hero-cancel .sl-count-big { color: #d84a43; }
+
+.sl-details { min-width: 0; }
+.sl-line-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.sl-line { display: inline-flex; align-items: center; justify-content: center; min-width: 40px; height: 30px; padding: 0 9px;
+  border-radius: 7px; background: var(--color-kvot-bright); color: var(--on-bright); font-weight: 800; font-size: 1rem; }
+.sl-line-sm { min-width: 30px; height: 22px; font-size: .8rem; padding: 0 6px; border-radius: 5px; }
+.sl-dest { font-size: 1.1rem; font-weight: 650; color: var(--text-primary); }
+.sl-times { display: grid; grid-template-columns: auto auto; gap: 3px 12px; align-items: baseline; font-size: .9rem; }
+.sl-time-label { color: var(--text-muted); font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; }
+.sl-time { font-variant-numeric: tabular-nums; color: var(--text-primary); }
+.sl-time-struck { text-decoration: line-through; color: var(--text-muted); }
+.sl-time-strong { font-weight: 750; }
+.sl-platform { font-weight: 750; color: var(--text-primary); }
+.sl-row-dev { margin-top: 8px; font-size: .8rem; color: var(--text-secondary); }
+
+.sl-badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: .72rem; font-weight: 700; letter-spacing: .02em;
+  background: var(--bg-surface); color: var(--text-secondary); border: 1px solid var(--border-color); white-space: nowrap; }
+.sl-badge-ok { color: #3f8b55; border-color: rgba(63, 139, 85, .35); }
+.sl-badge-late, .sl-badge-cancel { color: #fff; background: #d84a43; border-color: #d84a43; }
+.sl-badge-early, .sl-badge-warn { color: #7a4e00; background: rgba(196, 124, 19, .16); border-color: rgba(196, 124, 19, .5); }
+
+/* The following trains, one line each. */
+.sl-rest { list-style: none; margin: 0; padding: 0; }
+.sl-row { display: grid; grid-template-columns: 64px 92px 1fr auto auto; gap: 12px; align-items: center;
+  padding: 11px 6px; border-bottom: 1px solid var(--border-color); font-size: .95rem; }
+.sl-row:last-child { border-bottom: 0; }
+.sl-row-count { font-size: 1.35rem; font-weight: 800; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.sl-row-count small { font-size: .7rem; font-weight: 600; color: var(--text-muted); margin-left: 2px; }
+.sl-row-time { font-variant-numeric: tabular-nums; color: var(--text-secondary); }
+.sl-row-exp { color: #d84a43; font-weight: 700; }
+.sl-row-dest { min-width: 0; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sl-row-plat { color: var(--text-muted); font-size: .82rem; white-space: nowrap; }
+.sl-row-cancel .sl-row-count, .sl-row-cancel .sl-row-dest { color: var(--text-muted); text-decoration: line-through; }
+/* A message on a following train sits under its row, across the full width. */
+.sl-row .sl-row-dev { grid-column: 1 / -1; margin-top: 2px; }
+
+/* ── Where the trains are ───────────────────────────────────────────────── */
+.sl-track { margin: 4px 20px 10px; padding: 10px 6px 4px; border-top: 1px solid var(--border-color); }
+.sl-track-svg { display: block; width: 100%; height: 196px; overflow: visible; font-family: inherit; }
+.sl-rail { stroke: var(--border-color); stroke-width: 6; stroke-linecap: round; }
+.sl-lane-label { fill: var(--text-muted); font-size: 13px; font-weight: 600; letter-spacing: .03em; }
+.sl-station circle { fill: var(--bg-secondary); stroke: var(--text-muted); stroke-width: 3; }
+.sl-station-home circle { fill: var(--color-kvot-bright); stroke: var(--on-bright); stroke-width: 3; }
+.sl-station text { fill: var(--text-muted); font-size: 15px; font-weight: 600; }
+.sl-station-home text { fill: var(--text-primary); font-weight: 750; }
+
+/* A train: its line's colour inside, its punctuality as the ring, a chevron
+   for the way it is going. The group slides over one second between ticks;
+   the data behind it moves in whole minutes, so no polling rate would
+   make it smoother than this. */
+.sl-train { transition: transform 1s linear; }
+.sl-train-body { stroke-width: 3; }
+.sl-train-line { font-size: 15px; font-weight: 800; }
+.sl-train-dir { fill: none; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.sl-train-speed { fill: var(--text-muted); font-size: 13px; font-weight: 600; }
+.sl-line-40 .sl-train-body { fill: var(--color-kvot-bright); } .sl-line-40 .sl-train-line { fill: var(--on-bright); } .sl-line-40 .sl-train-dir { stroke: var(--color-kvot-bright); }
+.sl-line-41 .sl-train-body { fill: #4f86c6; } .sl-line-41 .sl-train-line { fill: #fff; } .sl-line-41 .sl-train-dir { stroke: #4f86c6; }
+.sl-line-43 .sl-train-body { fill: #8a6bbf; } .sl-line-43 .sl-train-line { fill: #fff; } .sl-line-43 .sl-train-dir { stroke: #8a6bbf; }
+.sl-line-other .sl-train-body { fill: var(--text-muted); } .sl-line-other .sl-train-line { fill: var(--bg-primary); } .sl-line-other .sl-train-dir { stroke: var(--text-muted); }
+.sl-ontime .sl-train-body { stroke: #3f8b55; }
+.sl-late .sl-train-body { stroke: #d84a43; stroke-width: 4; }
+.sl-late .sl-train-speed { fill: #d84a43; font-weight: 750; }
+.sl-early .sl-train-body { stroke: #c47c13; }
+.sl-unknown .sl-train-body { stroke: var(--border-color); }
+.sl-cancel { opacity: .35; }
+.sl-cancel .sl-train-body { stroke: #d84a43; stroke-dasharray: 4 3; }
+.sl-train-standing .sl-train-body { stroke-dasharray: 3 3; }
+.sl-train-live .sl-train-body { stroke-width: 4; filter: drop-shadow(0 0 3px rgba(63,139,85,.55)); }
+.sl-key-ring.sl-key-live { border-color: #3f8b55; box-shadow: 0 0 3px rgba(63,139,85,.7); }
+/* Not on the stretch yet: hollow, parked just short of its first station. */
+.sl-train-approaching .sl-train-body { fill: var(--bg-secondary) !important; stroke: var(--text-muted); stroke-dasharray: 3 3; }
+.sl-train-approaching .sl-train-line { fill: var(--text-secondary) !important; }
+/* A train the board cannot name shows its number instead of a line, and a
+   four-digit number needs a smaller face than a two-digit line to fit. */
+.sl-train-unnamed .sl-train-line { font-size: 10.5px; font-weight: 700; letter-spacing: -.02em; }
+
+.sl-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 2px 0 0; font-size: .74rem; color: var(--text-muted); }
+.sl-key { display: inline-flex; align-items: center; gap: 6px; }
+.sl-key-line { display: inline-flex; align-items: center; justify-content: center; min-width: 26px; height: 18px; padding: 0 5px;
+  border-radius: 5px; font-size: .7rem; font-weight: 800; font-style: normal; }
+.sl-key-line.sl-line-40 { background: var(--color-kvot-bright); color: var(--on-bright); }
+.sl-key-line.sl-line-41 { background: #4f86c6; color: #fff; }
+.sl-key-line.sl-line-43 { background: #8a6bbf; color: #fff; }
+.sl-key-line.sl-line-other { background: var(--text-muted); color: var(--bg-primary); }
+.sl-key-ring { display: inline-block; width: 14px; height: 14px; border-radius: 5px; border: 3px solid; background: var(--bg-surface); }
+.sl-key-ring.sl-ontime { border-color: #3f8b55; }
+.sl-key-ring.sl-late { border-color: #d84a43; }
+.sl-key-ring.sl-cancel { border-color: #d84a43; border-style: dashed; opacity: .5; }
+.sl-track-note { margin: 6px 0 0; font-size: .74rem; color: var(--text-muted); line-height: 1.4; }
+
+.sl-deviations { margin: 0 20px; padding: 12px 14px; border: 1px solid rgba(196, 124, 19, .45); border-radius: 10px;
+  background: rgba(196, 124, 19, .08); }
+.sl-dev-title { margin: 0 0 6px; font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); }
+.sl-dev { margin: 4px 0; font-size: .85rem; line-height: 1.45; color: var(--text-primary); }
+.sl-dev-major { font-weight: 700; }
+
+.sl-foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 12px 20px; font-size: .78rem; color: var(--text-muted); }
+.sl-refresh { padding: 6px 14px; border: 1px solid var(--border-color); border-radius: 20px; background: var(--bg-primary);
+  color: var(--text-secondary); font: inherit; font-size: .78rem; cursor: pointer; }
+.sl-refresh:hover { border-color: var(--color-kvot-bright); color: var(--text-primary); }
+.sl-refresh:focus-visible { outline: 2px solid var(--color-kvot-bright); outline-offset: 2px; }
+
+.sl-attribution { margin: 0; padding: 10px 20px 14px; border-top: 1px solid var(--border-color);
+  font-size: .72rem; line-height: 1.5; color: var(--text-muted); }
+.sl-attribution a { color: var(--link-color); }
+
+.sl-other { margin: 18px 0 0; font-size: .85rem; color: var(--text-muted); text-align: center; }
+.sl-other a { color: var(--link-color); font-weight: 650; }
+
+/* Less motion: no pulse, and dots step rather than slide. */
+@media (prefers-reduced-motion: reduce) {
+  .sl-live-ok::after { animation: none; }
+  .sl-train { transition: none; }
+  .sl-paused .sl-body, .sl-paused .sl-track, .sl-paused .sl-deviations { transition: none; }
+}
+.sl-reduced .sl-live-ok::after { animation: none; }
+.sl-reduced .sl-train { transition: none; }
+.sl-reduced .sl-paused .sl-body, .sl-reduced .sl-paused .sl-track, .sl-reduced .sl-paused .sl-deviations { transition: none; }
+
+@media (max-width: 560px) {
+  .sl-wrap { padding: 0 12px; }
+  .sl-hero { grid-template-columns: 1fr; gap: 10px; text-align: center; }
+  .sl-line-row, .sl-times { justify-content: center; }
+  .sl-times { grid-template-columns: auto auto; justify-content: center; }
+  .sl-row { grid-template-columns: 56px 1fr auto; grid-template-areas: "count dest badge" "count time plat" "dev dev dev"; gap: 4px 10px; }
+  .sl-row-count { grid-area: count; } .sl-row-dest { grid-area: dest; } .sl-row-badge { grid-area: badge; }
+  .sl-row-time { grid-area: time; font-size: .82rem; } .sl-row-plat { grid-area: plat; }
+  .sl-row .sl-row-dev { grid-area: dev; }
+  .sl-track { margin: 4px 12px 8px; }
+  .sl-track-svg { height: 176px; }
+  .sl-station text { font-size: 17px; }
+  .sl-train-speed { font-size: 15px; }
+  .sl-lane-label { font-size: 15px; }
+}

@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Solna → Uppsala — kvot ab</title>
+  <meta name="description" content="Live departures for SL commuter trains from Solna towards Uppsala C, updated every 30 seconds from Trafiklab's SL Transport API.">
+  <link rel="canonical" href="https://kvotab.se/solna.html">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="kvot ab">
+  <meta property="og:title" content="Solna → Uppsala — kvot ab">
+  <meta property="og:description" content="Live departures for SL commuter trains from Solna towards Uppsala C, updated every 30 seconds from Trafiklab's SL Transport API.">
+  <meta property="og:url" content="https://kvotab.se/solna.html">
+  <meta property="og:image" content="https://kvotab.se/resources/images/kvot-logotype.png">
+  <meta name="twitter:card" content="summary">
+  <script>
+    // Set the theme before first paint so dark-mode visitors get no white flash.
+    (function () {
+      try {
+        var t = localStorage.getItem('kvot-theme');
+        if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* storage unavailable — site.js will apply the default */ }
+    })();
+  </script>
+  <link rel="stylesheet" href="./resources/css/kvot.css?v=20260911">
+  <link rel="stylesheet" href="./resources/css/sl-board.css?v=20260913">
+  <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
+</head>
+<body class="sl-page">
+<header></header>
+<div class="content">
+<main><div class="sl-wrap">
+  <p class="sl-intro">
+    The next SL commuter trains (pendeltåg line 40) leaving <b>Solna</b> for <b>Uppsala C</b>.
+    Line 41 also calls here but turns at Märsta, so only trains bound for Uppsala are shown. The
+    board refreshes itself and the minutes count down between refreshes. The line below shows
+    every SL train between Stockholm City and Helenelund, lines 40 and 41 in both directions, so
+    you can see how busy the stretch is; late trains are ringed red.
+  </p>
+  <div id="board"></div>
+  <p class="sl-other">Going the other way? <a href="./uppsala.html">Uppsala → Solna</a></p>
+</div></main></div>
+
+<div id="kvotmap"></div>
+
+<footer></footer>
+<script src="./resources/js/kvot-errors.js?v=20260911"></script>
+<script src="./resources/js/kvot-safe.js?v=20260911"></script>
+<script src="./resources/js/kvot-actions.js?v=20260902"></script>
+<script src="./resources/js/kvot-icons.js?v=20260902"></script>
+<script src="./resources/js/site.js?v=20260907"></script>
+<script src="./resources/js/sl-board.js?v=20260913"></script>
+<script>
+  KVOT.renderHeader('Solna → Uppsala');
+  KVOT.renderNav('solna.html');
+  KVOT.renderFooter();
+  KVOT.initMap('kvotmap');
+
+  /*
+    Solna is site 9509. Two lines call: 40 to Uppsala C and 41 to Märsta, both
+    northbound with the same direction code, so the destination is what tells
+    them apart. A Märsta train is no use to somebody going to Uppsala.
+  */
+  /*
+    The corridor, in travel order, with Solna in the middle: two stations of
+    approach from the south, two of departure to the north. Coordinates are the
+    API's own, so the stations sit at their real spacing (1.4, 3.2, 1.9 and
+    3.9 km) and a dot's pace across the screen means something.
+  */
+  KVOT_SL.mountBoard(document.getElementById('board'), {
+    siteId: 9509,
+    fromName: 'Solna',
+    toName: 'Uppsala C',
+    keep: (d) => d.destination === 'Uppsala C',
+    directionCode: 2,
+    /* Live train positions. The endpoint is a Cloudflare Worker
+       (workers/sl-vehicles.js) that holds the Trafikverket key; this page is
+       static and public, so no key can live here. The URL itself is not a
+       secret - the Worker caches upstream for three seconds, so its cost does
+       not grow with the number of callers. Remove this line and the board
+       falls back to estimating positions from SL's forecasts. */
+    trainsUrl: 'https://solitary-union-c53d.pa-962.workers.dev/trains',
+    corridor: [
+      { siteId: 1080, name: 'Stockholm City', lat: 59.3310, lon: 18.0593 },
+      { siteId: 9117, name: 'Odenplan',       lat: 59.3429, lon: 18.0491 },
+      { siteId: 9509, name: 'Solna',          lat: 59.3643, lon: 18.0119 },
+      { siteId: 9508, name: 'Ulriksdal',      lat: 59.3807, lon: 18.0007 },
+      { siteId: 9507, name: 'Helenelund',     lat: 59.4095, lon: 17.9623 },
+    ],
+  });
+</script>
+</body>
+</html>
