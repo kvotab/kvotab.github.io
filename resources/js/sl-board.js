@@ -51,8 +51,16 @@
   /* On an error the interval doubles, up to this, and resets on success. */
   const BACKOFF_MAX_MS = 60 * 1000;
   const TICK_MS = 1000;
-  /* Wide enough to always fill three slots at half-hourly service. */
-  const FORECAST_MIN = 180;
+  /*
+    The API returns at most three departures per line and direction whatever
+    window is asked for, so this only decides how far ahead it is willing to
+    look - and a board showing two trains because the third is beyond the
+    window is a board hiding what somebody came to find out. Twenty hours is
+    the API's own maximum: late in the evening the three next trains include
+    tomorrow morning's, and they are shown as clock times rather than a count
+    of minutes. Asking for a longer window costs no extra requests.
+  */
+  const FORECAST_MIN = 1200;
   /* Data older than this is refreshed at once, whatever the timers say. A
      laptop lid, a phone in a pocket, a throttled tab: the interval may not
      have fired, but the age of what is on screen is always known. */
@@ -79,13 +87,28 @@
   /* A fix older than this is a train that has stopped reporting, not a train
      standing still, and is dropped rather than left sitting on the diagram. */
   const GPS_STALE_MS = 90 * 1000;
-  /* How far off the drawn line a fix may be and still be this corridor's
-     train. The rail bends between stations while the diagram is straight, so
-     the allowance is generous; beyond it the vehicle is on another line.
-     Off the *ends* of the line it has to be tight, because there the distance
-     is along the track rather than across it: a train a kilometre past the
-     last station is a kilometre away from this stretch, not on it. */
-  const GPS_CORRIDOR_KM = 3;
+  /*
+    How far off the drawn line a fix may be and still be this corridor's train.
+
+    This was 3 km, inherited from the GTFS-RT days when a fix could not be
+    tied to a journey at all and the allowance had to cover the bend of a rail
+    the diagram draws straight. With positions now joined by train number, the
+    real spread is measurable: across ten rounds of live sampling on both
+    corridors, every train SL actually lists on the stretch projected within
+    **0.43 km** of the line, while trains on neighbouring tracks sat at 1.96,
+    2.17, 2.34 and 3.40 km. There is a clean gap between the two, and 3 km sat
+    on the wrong side of it - which is why trains that are not on this track
+    were being drawn as though they were.
+
+    1.2 km is in that gap: near three times the widest genuine offset, and
+    well under the nearest impostor.
+
+    Off the *ends* of the line the allowance has to be tighter still, because
+    there the distance is along the track rather than across it: a train a
+    kilometre past the last station is a kilometre away from this stretch, not
+    on it.
+  */
+  const GPS_CORRIDOR_KM = 1.2;
   const GPS_END_KM = 0.7;
   /*
     A fix and a forecast are the same train when they carry the same train
@@ -153,6 +176,25 @@
 
   /* Great-circle distance between two sites, in km. The corridor is spaced
      by it so that a dot's speed across the screen means something. */
+  /*
+    Which way along a drawn segment a train is running: true when its compass
+    bearing is within a right angle of the segment's own bearing, which is to
+    say it is heading for the far end of the line.
+
+    A function of its own, and exported, because the inline version read
+    `diff > 90` - the exact opposite of the comment above it - and so drew
+    every train it applied to backwards. It went unseen because a train
+    matched to a departure takes its direction from SL's direction_code
+    instead, so only trains the board could not name were reversed. Checked
+    against six live trains of known direction, `diff < 90` agreed six times
+    and `diff > 90` none.
+  */
+  function runsForward(bearing, segBearing) {
+    if (typeof bearing !== 'number' || typeof segBearing !== 'number') return true;
+    const diff = Math.abs(((bearing - segBearing + 540) % 360) - 180);
+    return diff < 90;
+  }
+
   function kmBetween(a, b) {
     const p = Math.PI / 180;
     const h = 0.5 - Math.cos((b.lat - a.lat) * p) / 2
@@ -492,11 +534,7 @@
           /* Which way along the drawn line: compare the train's own compass
              bearing with the bearing of the segment it is on. Within a right
              angle of it means it is running towards the far end. */
-          let forward = true;
-          if (typeof t.bearing === 'number') {
-            const diff = Math.abs(((t.bearing - on.segBearing + 540) % 360) - 180);
-            forward = diff > 90;
-          }
+          const forward = runsForward(t.bearing, on.segBearing);
           if (typeof t.ageSec === 'number' && t.ageSec * 1000 > GPS_STALE_MS) return null;
           const number = String(t.number == null ? '' : t.number);
           if (!number) return null;
@@ -608,7 +646,7 @@
         : new Set();
       const own = (d) => (shared.size ? Object.assign({}, d, { deviations: d.deviations.filter((x) => !shared.has(x.message)) }) : d);
       if (!upcoming.length) {
-        $('sl-body').innerHTML = `<div class="sl-empty">No ${esc(cfg.toName)}-bound trains in the next ${cfg.forecast / 60} hours.</div>`;
+        $('sl-body').innerHTML = `<div class="sl-empty">No ${esc(cfg.toName)}-bound trains found${cfg.forecast >= 600 ? '' : ` in the next ${Math.round(cfg.forecast / 60)} hours`}.</div>`;
       } else {
         const [next, ...rest] = upcoming;
         $('sl-body').innerHTML = renderHero(own(next), now) + (rest.length ? `<ol class="sl-rest">${rest.map((d) => renderRow(own(d), now)).join('')}</ol>` : '');
@@ -877,7 +915,13 @@
       if (sec < 120) return { big: `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`, small: 'min:sec' };
       const m = Math.round(sec / 60);
       if (m < 60) return { big: String(m), small: 'minutes' };
-      return { big: hhmm(d.expected), small: 'departure' };
+      /* Past an hour a count of minutes stops meaning anything, so the clock
+         time is shown instead. With a twenty-hour window that time is often
+         tomorrow's, and "04:26" seen at half past eleven at night reads as
+         four hours ago unless the day is said out loud. */
+      const midnight = (t) => { const x = new Date(t); x.setHours(0, 0, 0, 0); return x.getTime(); };
+      const days = Math.round((midnight(d.expected) - midnight(now)) / 86400000);
+      return { big: hhmm(d.expected), small: 'departure', day: days };
     }
 
     function renderHero(d, now) {
@@ -887,7 +931,7 @@
         <div class="sl-hero${cancelled ? ' sl-hero-cancel' : ''}">
           <div class="sl-count">
             <span class="sl-count-big">${esc(c.big)}</span>
-            <span class="sl-count-small">${esc(c.small)}</span>
+            <span class="sl-count-small">${esc(c.day ? (c.day === 1 ? 'tomorrow' : `in ${c.day} days`) : c.small)}</span>
           </div>
           <div class="sl-details">
             <div class="sl-line-row">
@@ -908,7 +952,8 @@
 
     function renderRow(d, now) {
       const c = countdown(d, now);
-      const unit = (c.big === 'Now' || CANCELLED.has(d.state) || c.small !== 'minutes') ? '' : ' min';
+      const unit = c.day ? (c.day === 1 ? ' tomorrow' : ` in ${c.day} days`)
+        : (c.big === 'Now' || CANCELLED.has(d.state) || c.small !== 'minutes') ? '' : ' min';
       return `
         <li class="sl-row${CANCELLED.has(d.state) ? ' sl-row-cancel' : ''}">
           <span class="sl-row-count">${esc(c.big)}<small>${unit}</small></span>
@@ -1065,6 +1110,6 @@
   }
 
   global.KVOT_SL = { mountBoard, shape, parseLocal, locate, kmBetween, STATE_LABEL,
-    trainNumberOf,
+    trainNumberOf, runsForward,
     REFRESH_MS, STALE_MS, FORECAST_MIN, GPS_MS, GPS_CORRIDOR_KM, IDLE_MS };
 })(window);
