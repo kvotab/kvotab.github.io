@@ -19,6 +19,35 @@ STUB = r"""
 (() => {
   window.__slCalls = { dep: 0, veh: 0 };
   try { localStorage.setItem('kvot-sl-trains', 'https://stub.invalid/trains'); } catch (e) {}
+  /* Three departures, built relative to the moment the page loads: two later
+     today and one at 04:26 tomorrow. The third is what the board used to hide,
+     because a three-hour forecast window could not see it - and being on a
+     different date it also exercises the day label. SL's times are zone-less
+     local strings. */
+  const pad = (n) => String(n).padStart(2, '0');
+  const local = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  /* The real API honours `forecast`, and a stub that does not would let a
+     three-hour window pass a test about showing a departure sixteen hours
+     out. It takes the window from the URL, like the real one. */
+  window.__slDepartures = (forecastMin) => {
+    const now = new Date();
+    const soon = new Date(now.getTime() + 12 * 60000);
+    const later = new Date(now.getTime() + 42 * 60000);
+    const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 4, 26, 0);
+    const horizon = now.getTime() + (forecastMin || 60) * 60000;
+    return [soon, later, tomorrow].filter((w) => w.getTime() <= horizon).map((when, i) => ({
+      destination: 'Stockholm City',
+      direction_code: 1,
+      state: 'EXPECTED',
+      scheduled: local(when),
+      expected: local(when),
+      line: { designation: '40' },
+      journey: { id: `${when.getFullYear()}${pad(when.getMonth() + 1)}${pad(when.getDate())}${String(2270 + i).padStart(5, '0')}` },
+      stop_point: { designation: '1' },
+      deviations: [],
+    }));
+  };
   const real = window.fetch;
   const json = (body) => Promise.resolve(new Response(JSON.stringify(body),
     { status: 200, headers: { 'Content-Type': 'application/json' } }));
@@ -30,7 +59,8 @@ STUB = r"""
     }
     if (url.indexOf('transport.integration.sl.se') >= 0) {
       window.__slCalls.dep++;
-      return json({ departures: [], stopDeviations: [] });
+      const forecast = Number((/[?&]forecast=(\d+)/.exec(url) || [])[1]) || 60;
+      return json({ departures: window.__slDepartures(forecast), stopDeviations: [] });
     }
     return real.apply(this, arguments);
   };
@@ -218,7 +248,43 @@ async def main():
         check(results, 'still fetching after quiet 8s', n2['veh'] - n1['veh'] >= 2,
               '%d calls in 8s' % (n2['veh'] - n1['veh']))
 
-        print('\n8. The live dot holds its position')
+        print('\n8. Direction, and the third departure')
+        board = json.loads(await s.js("""JSON.stringify((() => {
+          const hero = document.querySelector('.sl-hero');
+          const rows = [...document.querySelectorAll('.sl-row')];
+          const unit = (el) => (el.querySelector('small') || {}).textContent || '';
+          return {
+            /* A bearing within a right angle of the segment means the train is
+               heading for the far end. The inline version of this read
+               `diff > 90` and drew every unnamed train backwards. */
+            forward: [
+              [0, 0], [10, 350], [350, 10], [89, 0],
+              [91, 0], [180, 0], [270, 0], [200, 10]
+            ].map(([b, seg]) => KVOT_SL.runsForward(b, seg)),
+            noBearing: KVOT_SL.runsForward(null, 0),
+            forecast: document.querySelector('.sl-board').__slBoard.config.forecast,
+            corridorKm: KVOT_SL.GPS_CORRIDOR_KM,
+            count: (hero ? 1 : 0) + rows.length,
+            heroUnit: hero ? (hero.querySelector('.sl-count-small') || {}).textContent : null,
+            lastUnit: rows.length ? unit(rows[rows.length - 1].querySelector('.sl-row-count')) : null
+          };
+        })())"""))
+        # First four bearings agree with the segment, last four oppose it.
+        check(results, 'direction from bearing is not inverted',
+              board['forward'] == [True, True, True, True, False, False, False, False],
+              str(board['forward']))
+        check(results, 'a train with no bearing is not flipped', board['noBearing'] is True,
+              str(board['noBearing']))
+        check(results, 'forecast window reaches past a quiet night', board['forecast'] >= 600,
+              '%s minutes' % board['forecast'])
+        check(results, 'corridor is tight enough to exclude the next track',
+              board['corridorKm'] <= 1.5, '%s km' % board['corridorKm'])
+        check(results, 'all three departures are shown', board['count'] == 3,
+              '%s shown (1 hero + %s rows)' % (board['count'], board['count'] - 1))
+        check(results, "tomorrow's departure says so",
+              'tomorrow' in (board['lastUnit'] or ''), repr(board['lastUnit']))
+
+        print('\n9. The live dot holds its position')
         # Two independent things move next to the dot, and the first version of
         # this section only tested one of them: it stopped the board to hold
         # the status text still, which stopped the clock as well. The clock is

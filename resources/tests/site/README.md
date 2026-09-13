@@ -410,6 +410,45 @@ labelled by train number and never given an invented destination.
 which is the shape of a Trafikverket key. The key lives in the Worker's secret
 store; these pages are world-readable.
 
+### Direction, and the third departure
+
+Three faults the live boards showed and the tests did not, all fixed together:
+
+**Every unnamed train ran backwards.** `runsForward` decides which way along a
+segment a fix is going by comparing the train's compass bearing with the
+segment's. The inline version read `diff > 90` - the exact opposite of the
+comment directly above it. It stayed hidden because a train matched to a
+departure takes its direction from SL's `direction_code` instead, so only
+trains the board could not name were reversed. Caught by checking the rule
+against six live trains of known direction: `diff < 90` agreed six times,
+`diff > 90` none. The logic is now a named, exported function with a truth
+table in the test.
+
+**Trains on the next track were drawn on this one.** `GPS_CORRIDOR_KM` was 3,
+inherited from the GTFS-RT days when a fix could not be tied to a journey and
+the allowance had to cover the bend of a rail the diagram draws straight. Ten
+rounds of live sampling on both corridors: every train SL actually lists on the
+stretch projected within **0.43 km** of the line, while trains on neighbouring
+tracks sat at 1.96, 2.17, 2.34 and 3.40 km. A clean gap, with 3 km on the wrong
+side of it. Now 1.2 km.
+
+**The board showed two departures when there were three.** `FORECAST_MIN` was
+180, so late at night the third train - often tomorrow's first - fell outside
+the window. The API caps the answer at three per line and direction whatever
+window is asked for, so widening to its 1200-minute maximum costs no extra
+requests and simply stops hiding the third. Being on another date it is shown
+as a clock time with a `tomorrow` label, because "04:26" seen at half past
+eleven at night otherwise reads as four hours ago.
+
+The stub honours `forecast` exactly as the real API does. Without that a
+three-hour window would pass a test about showing a departure sixteen hours
+out; with it, the old constant fails the check with "2 shown (1 hero + 1 rows)"
+- the reported symptom, reproduced.
+
+One counting trap: the first departure renders as a `.sl-hero`, not an
+`.sl-row`. A probe that queries only rows reports one fewer departure than the
+board is showing, which cost a round of chasing a bug that was not there.
+
 ### Gating
 
 uppsala.html and solna.html ask the positions endpoint every three seconds, and
