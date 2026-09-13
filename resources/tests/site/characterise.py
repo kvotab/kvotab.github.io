@@ -260,6 +260,58 @@ PAGES = {
         }))()"""),
     ],
 
+    'uppsala.html': [
+        ('sl.board', """(() => ({
+          module: typeof KVOT_SL,
+          refreshMs: typeof KVOT_SL === 'object' ? KVOT_SL.REFRESH_MS : null,
+          relation: (document.querySelector('.sl-relation') || {}).textContent?.replace(/\\s+/g, ' ').trim(),
+          attribution: !!document.querySelector('.sl-attribution a[href*="trafiklab.se"]'),
+          otherWay: (document.querySelector('.sl-other a') || {}).getAttribute?.('href'),
+          /* The whole point of the keyless API: nothing that looks like a key
+             may ever be pasted into the page. */
+          keyInPage: /api[_-]?key/i.test(document.documentElement.outerHTML),
+          /* The Trafikverket key is 32 hex characters. It lives in the
+             Worker's secret store; if one ever appears in the page itself,
+             this is what catches it, because the page is world-readable. */
+          secretInPage: /\b[0-9a-f]{32}\b/.test(document.documentElement.outerHTML),
+          livePositions: !!(document.querySelector('.sl-board') || {}).__slBoard?.config?.trainsUrl,
+          boardMounted: !!document.querySelector('.sl-board .sl-body'),
+          states: Object.keys(typeof KVOT_SL === 'object' ? KVOT_SL.STATE_LABEL : {}).length,
+          track: !!document.querySelector('.sl-track-svg'),
+          stations: document.querySelectorAll('.sl-station').length,
+          lanes: document.querySelectorAll('.sl-lane-label').length,
+          legend: !!document.querySelector('.sl-legend'),
+          staleMs: typeof KVOT_SL === 'object' ? KVOT_SL.STALE_MS : null,
+          idleMs: typeof KVOT_SL === 'object' ? KVOT_SL.IDLE_MS : null
+        }))()"""),
+    ],
+
+    'solna.html': [
+        ('sl.board', """(() => ({
+          module: typeof KVOT_SL,
+          refreshMs: typeof KVOT_SL === 'object' ? KVOT_SL.REFRESH_MS : null,
+          relation: (document.querySelector('.sl-relation') || {}).textContent?.replace(/\\s+/g, ' ').trim(),
+          attribution: !!document.querySelector('.sl-attribution a[href*="trafiklab.se"]'),
+          otherWay: (document.querySelector('.sl-other a') || {}).getAttribute?.('href'),
+          /* The whole point of the keyless API: nothing that looks like a key
+             may ever be pasted into the page. */
+          keyInPage: /api[_-]?key/i.test(document.documentElement.outerHTML),
+          /* The Trafikverket key is 32 hex characters. It lives in the
+             Worker's secret store; if one ever appears in the page itself,
+             this is what catches it, because the page is world-readable. */
+          secretInPage: /\b[0-9a-f]{32}\b/.test(document.documentElement.outerHTML),
+          livePositions: !!(document.querySelector('.sl-board') || {}).__slBoard?.config?.trainsUrl,
+          boardMounted: !!document.querySelector('.sl-board .sl-body'),
+          states: Object.keys(typeof KVOT_SL === 'object' ? KVOT_SL.STATE_LABEL : {}).length,
+          track: !!document.querySelector('.sl-track-svg'),
+          stations: document.querySelectorAll('.sl-station').length,
+          lanes: document.querySelectorAll('.sl-lane-label').length,
+          legend: !!document.querySelector('.sl-legend'),
+          staleMs: typeof KVOT_SL === 'object' ? KVOT_SL.STALE_MS : null,
+          idleMs: typeof KVOT_SL === 'object' ? KVOT_SL.IDLE_MS : null
+        }))()"""),
+    ],
+
     'skb_qa_summary.html': [
         ('qa.helpers', """(() => ({
           privacyNote: (document.querySelector('.privacy') || {}).textContent,

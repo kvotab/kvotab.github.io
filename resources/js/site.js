@@ -50,6 +50,16 @@ const KVOT = (() => {
       label: 'SKB QC Summary',
       desc: 'Summarise QA review status across Excel workbooks, with filters, statistics and CSV export.',
     },
+    {
+      href: './uppsala.html',
+      label: 'Uppsala → Solna',
+      desc: 'Live departures for the next SL commuter trains from Uppsala C towards Solna, refreshed every 30 seconds.',
+    },
+    {
+      href: './solna.html',
+      label: 'Solna → Uppsala',
+      desc: 'Live departures for the next SL commuter trains from Solna to Uppsala C, refreshed every 30 seconds.',
+    },
   ];
 
   // ── Map tile configuration (single source of truth; also used by map.js) ────

@@ -1,0 +1,41 @@
+# Deploying sl-vehicles.js from the command line, which avoids the dashboard
+# and whatever its menus happen to be called this month.
+#
+#   cd workers
+#   npx wrangler@3 login                      # opens a browser once
+#   npx wrangler@3 secret put TRAFIKLAB_KEY   # paste the key; it is never written to disk
+#   npx wrangler@3 deploy
+#
+# The @3 pin is only about Node: wrangler 4 requires Node >= 22 and this
+# machine has 20. wrangler 3.114 wants >= 16.17 and reads this same file.
+# Drop the pin once Node is 22 or newer.
+#
+# The deploy prints the URL to use; the boards want that with /vehicles on
+# the end.
+#
+# No domain on Cloudflare is needed. kvotab.se stays where it is, on Loopia
+# DNS pointing at GitHub Pages; this Worker lives on its own workers.dev
+# subdomain and the pages call it from the browser.
+
+# This is the name Cloudflare generated when the Worker was first created in
+# the dashboard. Deploying under it updates that same Worker: the URL already
+# in use keeps working and the TRAFIKLAB_KEY secret set on it survives, since
+# secrets live with the Worker and a deploy does not clear them.
+#
+# Changing this name creates a *second*, empty Worker on a new URL, and the
+# secret would have to be set again. Only worth it for a tidier hostname.
+name = "solitary-union-c53d"
+main = "sl-vehicles.js"
+
+# The date whose runtime behaviour this Worker was written against. Leave it
+# alone unless you have read what changed: moving it forward can change how
+# the runtime behaves under you.
+compatibility_date = "2026-09-01"
+
+# Serve it on <name>.<subdomain>.workers.dev. Cloudflare asks you to choose
+# the subdomain the first time you deploy anything.
+workers_dev = true
+
+# TRAFIKLAB_KEY is deliberately not here. Secrets belong in `wrangler secret
+# put`, which stores them with Cloudflare rather than in a file that a repo
+# would happily commit.
