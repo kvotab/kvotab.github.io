@@ -38,7 +38,7 @@ Per page, additionally:
 | proj | a WGS 84 → RT 90 → SWEREF 99 conversion field by field, bulk conversion, zone tables, `fmt_dms`, point-in-zone |
 | rdc | element tree, cytoscape/jQuery/Plotly readiness, decay data loaded, selecting an element |
 | skbref | rule counts, the in-page guide fixture, SKB collation, chemical-formula detection, rule packs |
-| skb_qa_summary | privacy note, filter ids, `normalize`/`esc`/`csvCell` |
+| skb_qa_summary | privacy note, filter ids (now including the two parameter switches), `normalize`/`esc`/`csvCell` |
 | karaoke | language, control ids, player and lyric stage, page globals |
 
 `test-actions.py <page>` covers the control wiring: every element declaring a
