@@ -69,6 +69,15 @@ async def check(bws, page):
     while session is None:
         m = json.loads(await bws.recv())
         if m.get('id') == 2: session = m['result']['sessionId']
+    # A desktop viewport, explicitly: uppsala.html and solna.html hide the site
+    # header and footer below 560px, and the theme toggle lives in the footer.
+    # Left to the ambient window size, a narrow one would make .click() land on
+    # a display:none element and report the button dead when it is merely out
+    # of season.
+    await bws.send(json.dumps({'id': 19, 'method': 'Emulation.setDeviceMetricsOverride',
+                               'sessionId': session,
+                               'params': {'width': 1280, 'height': 900,
+                                          'deviceScaleFactor': 1, 'mobile': False}}))
     await bws.send(json.dumps({'id': 20, 'method': 'Network.enable', 'sessionId': session}))
     await bws.send(json.dumps({'id': 21, 'method': 'Network.setCacheDisabled',
                                'sessionId': session, 'params': {'cacheDisabled': True}}))

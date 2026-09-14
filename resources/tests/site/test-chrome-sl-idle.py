@@ -417,11 +417,19 @@ async def main():
                  stuck out. Measure elements against innerWidth instead. */
               const widest = [...document.querySelectorAll('.sl-wrap *')]
                 .reduce((m, el) => Math.max(m, Math.round(el.getBoundingClientRect().right)), 0);
-              return { vw: innerWidth,
+              const c = document.querySelector('.content').getBoundingClientRect();
+              /* renderNav puts the hamburger and its menu after <header>, not
+                 inside it, so hiding the header alone leaves a button over the
+                 board - every piece is listed here, not just the two tags. */
+              const shown = ['header', 'footer', '.nav-toggle', '#menu', '#kvotmap']
+                .filter((sel) => { const e = document.querySelector(sel);
+                                   return e && getComputedStyle(e).display !== 'none'; });
+              return { vw: innerWidth, vh: innerHeight,
                        left: Math.round(b.left), right: Math.round(b.right), top: Math.round(b.top),
                        introShown: intro ? getComputedStyle(intro).display !== 'none' : null,
                        radius: getComputedStyle(document.querySelector('.sl-board')).borderTopLeftRadius,
-                       widest };
+                       contentTop: Math.round(c.top), contentH: Math.round(c.height),
+                       chromeShown: shown, widest };
             })())"""))
 
         phone = await layout(390, 844)
@@ -435,6 +443,11 @@ async def main():
         check(results, 'corners squared off at the edge', phone['radius'] == '0px', phone['radius'])
         check(results, 'nothing sticks out sideways', phone['widest'] <= phone['vw'],
               'widest %d vs viewport %d' % (phone['widest'], phone['vw']))
+        check(results, 'site header, footer, nav and map are all gone',
+              phone['chromeShown'] == [], ', '.join(phone['chromeShown']) or 'none shown')
+        check(results, 'the page area is the whole screen',
+              phone['contentTop'] == 0 and phone['contentH'] == phone['vh'],
+              'content top %d height %d of %d' % (phone['contentTop'], phone['contentH'], phone['vh']))
 
         narrow = await layout(320, 568)
         check(results, 'still fits a 320px screen', narrow['widest'] <= narrow['vw'],
@@ -446,6 +459,9 @@ async def main():
         check(results, 'desktop panel stays inset and rounded',
               desk['left'] > 0 and desk['radius'] != '0px',
               'x %d..%d radius %s' % (desk['left'], desk['right'], desk['radius']))
+        check(results, 'desktop keeps the site chrome',
+              'header' in desk['chromeShown'] and 'footer' in desk['chromeShown'],
+              ', '.join(desk['chromeShown']) or 'NONE - navigation lost on desktop too')
 
         await ws.send(json.dumps({'id': 999, 'method': 'Target.closeTarget', 'params': {'targetId': tid}}))
 

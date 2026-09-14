@@ -205,6 +205,26 @@
     rather than scroll.
   */
   .sl-intro { display: none; }
+  /*
+    The site chrome goes too. On a phone this page is a departure board and
+    nothing else, and 43px of header plus 31px of footer is a tenth of the
+    screen spent on furniture.
+
+    renderNav inserts the hamburger and its menu *after* <header> rather than
+    inside it, so hiding the header alone would leave a button floating over
+    the board. The office map is opened from the footer, so with the footer
+    gone it can never be shown either.
+
+    What this costs: on a phone there is no way off these two pages except
+    the "other way" link at the bottom, and no theme toggle - the page follows
+    the phone's own light/dark setting instead. Asked for deliberately.
+  */
+  .sl-page header, .sl-page footer,
+  .sl-page .nav-toggle, .sl-page #menu, .sl-page #kvotmap { display: none; }
+  /* .content is positioned to sit between the two bars; with neither there,
+     it is the whole screen. dvh follows the browser's own chrome as it
+     retracts, with vh as the fallback - the same pair kvot.css uses. */
+  .sl-page .content { top: 0; height: 100vh; height: 100dvh; }
   /* The 24px above and 44px below are what keeps the panel off the edges on
      a desktop; on a phone they are the difference between filling the screen
      and nearly filling it. .content is already inset by the fixed header and

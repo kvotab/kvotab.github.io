@@ -457,10 +457,29 @@ moved the panel's top from **226px to 43px** and cut 281px off the document,
 which is the difference between the track diagram being below the fold and on
 the first screen.
 
-`kvot.css` already sizes `.content` to exactly the space between the fixed
-header and the fixed footer, so filling the screen is a matter of letting the
-board have what is left after the "other way" link - hence the flex column
-rather than a `100vh` guess that would have had to know both bar heights.
+The site chrome goes with it, on request: header, footer, the hamburger, its
+menu and the office map. `renderNav` inserts the toggle and the menu **after**
+`<header>` rather than inside it, so hiding the header alone leaves a button
+floating over the board - the rule names all five, and the test asserts none of
+them is displayed rather than trusting the two obvious tags. `.content` is
+positioned to sit between the two bars, so with neither there it is given
+`top: 0` and the full `100dvh`. Panel top: **226px -> 0**.
+
+What that costs, and it is deliberate: on a phone there is no way off these two
+pages but the "other way" link at the bottom, and no theme toggle - the page
+follows the phone's own light/dark setting. The desktop checks in the same
+section exist to make sure the chrome was hidden *by the media query* and not
+by accident everywhere.
+
+That also set a trap for `test-chrome-buttons.py`, which clicks the theme
+toggle on all eleven pages: the toggle lives in the footer, so at a narrow
+ambient window size `.click()` would land on a `display: none` element and the
+button would be reported dead when it is merely out of season. That test now
+pins an explicit 1280px viewport.
+
+Filling the screen is then a matter of letting the board have what is left
+after the "other way" link - hence the flex column rather than a `100vh` guess
+that would have had to know both bar heights.
 `flex-shrink` is 0 on purpose: `.sl-board` clips its own overflow to keep its
 corners, so a board allowed to shrink below its content would hide the bottom
 of it rather than scroll.
