@@ -191,7 +191,29 @@
 .sl-reduced .sl-paused .sl-body, .sl-reduced .sl-paused .sl-track, .sl-reduced .sl-paused .sl-deviations { transition: none; }
 
 @media (max-width: 560px) {
-  .sl-wrap { padding: 0 12px; }
+  /*
+    On a phone the panel is the page. The introduction is read once and is in
+    the way ever after, and a gutter down each side is width that could be
+    showing the timetable and the diagram - both of which are wider than they
+    are tall and were being squeezed for the sake of a rounded corner.
+
+    .content is already sized by kvot.css to exactly the space between the
+    fixed header and the fixed footer, so filling it is a matter of letting
+    the board have what is left after the "other way" link. flex-shrink is 0
+    deliberately: .sl-board clips its own overflow to keep its corners, so a
+    board allowed to shrink below its content would hide the bottom of it
+    rather than scroll.
+  */
+  .sl-intro { display: none; }
+  /* The 24px above and 44px below are what keeps the panel off the edges on
+     a desktop; on a phone they are the difference between filling the screen
+     and nearly filling it. .content is already inset by the fixed header and
+     footer, so there is nothing left to clear. */
+  .sl-page main { display: flex; min-height: 100%; box-sizing: border-box; padding: 0; }
+  .sl-wrap { padding: 0 0 10px; display: flex; flex-direction: column; flex: 1; }
+  .sl-board { flex: 1 0 auto; border-radius: 0; border-left: 0; border-right: 0; }
+  /* The gutter the wrapper no longer has, put back only where text needs it. */
+  .sl-other { padding: 0 12px; }
   .sl-hero { grid-template-columns: 1fr; gap: 10px; text-align: center; }
   .sl-line-row, .sl-times { justify-content: center; }
   .sl-times { grid-template-columns: auto auto; justify-content: center; }

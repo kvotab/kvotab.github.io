@@ -449,6 +449,33 @@ One counting trap: the first departure renders as a `.sl-hero`, not an
 `.sl-row`. A probe that queries only rows reports one fewer departure than the
 board is showing, which cost a round of chasing a bug that was not there.
 
+### On a phone the panel is the page
+
+Below 560px the introduction is hidden and the board runs edge to edge,
+starting directly under the fixed header. Measured on a 390x844 screen, that
+moved the panel's top from **226px to 43px** and cut 281px off the document,
+which is the difference between the track diagram being below the fold and on
+the first screen.
+
+`kvot.css` already sizes `.content` to exactly the space between the fixed
+header and the fixed footer, so filling the screen is a matter of letting the
+board have what is left after the "other way" link - hence the flex column
+rather than a `100vh` guess that would have had to know both bar heights.
+`flex-shrink` is 0 on purpose: `.sl-board` clips its own overflow to keep its
+corners, so a board allowed to shrink below its content would hide the bottom
+of it rather than scroll.
+
+The test resizes the viewport rather than reloading, since media queries
+re-evaluate on their own, and checks both directions - that the phone layout
+applies **and** that the desktop keeps its introduction, its inset and its
+rounded corners. Against the previous CSS the four phone checks fail with
+`still shown`, `x 12..378 of 390`, `top 226` and `14px`.
+
+Overflow is measured element-by-element against `innerWidth`, never with
+`scrollWidth`: a padded content-box widens the layout viewport itself, so
+`scrollWidth` agrees while the element sticks out. This site has shipped that
+bug twice.
+
 ### Gating
 
 uppsala.html and solna.html ask the positions endpoint every three seconds, and
