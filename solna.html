@@ -74,12 +74,26 @@
     toName: 'Uppsala C',
     keep: (d) => d.destination === 'Uppsala C',
     directionCode: 2,
+    /* Only the northbound carriageway: this board is about getting to
+       Uppsala, so the trains heading into town are not drawn and the
+       diagram is a single line rather than two. */
+    oneWay: true,
+    /* Line 43 runs with 40 and 41 as far as Odenplan and then turns away
+       towards Bålsta. Drawing the junction is why its trains vanish at
+       Odenplan rather than carrying on to Solna. */
+    branches: [{ after: 9117, line: '43', towards: 'Bålsta' }],
     /* Live train positions. The endpoint is a Cloudflare Worker
        (workers/sl-vehicles.js) that holds the Trafikverket key; this page is
        static and public, so no key can live here. The URL itself is not a
        secret - the Worker caches upstream for three seconds, so its cost does
        not grow with the number of callers. Remove this line and the board
        falls back to estimating positions from SL's forecasts. */
+    /* The pendeltåg lines this diagram is about. Trafikverket sees every
+       train on the rails, and the rest - SJ, Mälartåg, freight - are left
+       out rather than drawn as bare numbers nobody can place. Line 43 is
+       a pendeltåg too, but it branches off at Odenplan and never reaches
+       this stretch's far end; add '43' here to draw it anyway. */
+    lines: ['40', '41','43'],
     trainsUrl: 'https://solitary-union-c53d.pa-962.workers.dev/trains',
     corridor: [
       { siteId: 1080, name: 'Stockholm City', lat: 59.3310, lon: 18.0593 },

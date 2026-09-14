@@ -82,9 +82,20 @@
        secret - the Worker caches upstream for three seconds, so its cost does
        not grow with the number of callers. Remove this line and the board
        falls back to estimating positions from SL's forecasts. */
+    /* The pendeltåg lines this diagram is about. Trafikverket sees every
+       train on the rails, and the rest - SJ, Mälartåg, freight - are left
+       out rather than drawn as bare numbers nobody can place. Line 43 is
+       a pendeltåg too, but it branches off at Odenplan and never reaches
+       this stretch's far end; add '43' here to draw it anyway. */
+    lines: ['40', '41'],
+    /* Line 41 runs Märsta to Södertälje: it is not on this stretch until
+       it joins at Upplands Väsby, which is why its trains appear there
+       rather than coming down the line from Uppsala. */
+    branches: [{ before: 9502, line: '41', from: 'Märsta' }],
     trainsUrl: 'https://solitary-union-c53d.pa-962.workers.dev/trains',
     corridor: [
-      { siteId: 6086, name: 'Uppsala C',       lat: 59.8573, lon: 17.6485 },
+      /* terminus: line 40 ends here, so the drawn line ends here too. */
+      { siteId: 6086, name: 'Uppsala C',       lat: 59.8573, lon: 17.6485, terminus: true },
       { siteId: 6092, name: 'Knivsta',         lat: 59.7259, lon: 17.7869 },
       { siteId: 9511, name: 'Arlanda C',       lat: 59.6509, lon: 17.9314 },
       { siteId: 9502, name: 'Upplands Väsby',  lat: 59.5215, lon: 17.8997 },

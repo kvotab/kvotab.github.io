@@ -449,6 +449,203 @@ One counting trap: the first departure renders as a `.sl-hero`, not an
 `.sl-row`. A probe that queries only rows reports one fewer departure than the
 board is showing, which cost a round of chasing a bug that was not there.
 
+### Only the pendeltåg
+
+Trafikverket carries every train on the rails, so a fix matching no departure
+is a real train - SJ, Mälartåg, Upptåget, freight - and these used to be drawn,
+numbered rather than named. They are not any more. A chip reading `7856` beside
+one reading `40` invites the reader to work out what it is, and the board has
+no answer: the position feed carries no line and no headsign.
+
+Which lines count is now named outright, `lines: ['40', '41']`, rather than
+inferred from what calls at the home station. Both rules are needed for
+opposite reasons, which is why neither alone worked:
+
+- line **43** shares Stockholm City and Odenplan with 40 and then branches off,
+  so it must not be drawn heading for Solna where it never arrives - the
+  home-station rule handled that one;
+- line **41** runs the Arlanda-to-Upplands-Väsby part of the Uppsala corridor
+  without ever calling at Uppsala C, so the same rule threw it away. 41 is a
+  pendeltåg that genuinely shares that track.
+
+The stub feeds two positions between Uppsala C and Knivsta: `2269`, which the
+departures stub says is already running, and `9999`, which matches nothing. One
+must be drawn as line 40 and the other must not appear. Against the previous
+code the second check fails with `1 unnamed chips`.
+
+Line 41's chip is Trafiklab's `#862699` rather than the band lilac, because a
+chip rides on its own band and a 41 in the band's own colour disappeared into
+it.
+
+### The diagram, in Trafiklab's idiom
+
+The track diagram is drawn the way Trafiklab's own landing page draws a
+network, taken from their stylesheet rather than guessed at: bands `#F4BFFF`
+and `#FFF199` at stroke-width 20 in a 60-tall box, stops 48px white with a 12px
+`#232323` ring, a stop serving two lines drawn as one tall marker across both,
+flat colour chips for labels, and motion eased rather than linear. The single
+rail became two bands - the lane a train runs in is now the line it rides on.
+
+Their type is a *condensed* face, which this diagram gets for free: the SVG uses
+`preserveAspectRatio="none"`, so the viewBox is stretched to the element and the
+two axes end up scaled by very different amounts - about 0.37 across against
+0.85 down on a phone. Text comes out condensed, which suits it.
+
+Shapes do not get off so lightly. A circle comes out an egg and a chip comes
+out a sliver, so **every horizontal measurement of a shape is divided by that
+ratio before being drawn**. The test asserts the invariant this creates: a
+chip's rendered width-to-height ratio must be the same at 390px as at 1280px.
+It is 1.50 at both. Against the previous code it is **0.72 on a phone and 1.21
+on a desktop** - the chips really were vertical slivers on a phone and lozenges
+on a desktop, and nobody had noticed because both looked deliberate on their
+own.
+
+Two knock-on fixes, both from the same cause. Chips are now three times wider
+in viewBox units on a phone, so the constant that decides when two of them
+overprint had to become `42 * wide + 8` - a fixed 48 let them overlap exactly
+where there was least room. And the "approaching" marker, parked beside its
+station by a fixed 34 units, ran clean off the right-hand edge once the chip
+width followed the screen; it is now offset by the chip's own half-width and
+clamped to the drawing.
+
+The stub that feeds this had to grow up too. It answered every corridor station
+with identical times, so no journey could ever be placed *between* two stations
+and the diagram drew no chips at all - the shape check came back `None` rather
+than failing. It now advances each journey down the line and includes one
+service that has already departed, so there is a train on the track and not
+only trains yet to leave.
+
+### Junctions, and trains that take them
+
+A line that leaves this one, or joins it, is a straight stub running out from
+under the stop marker - the stops are drawn after it, so the circle covers the
+join and the branch reads as leaving the station rather than starting in
+mid-air beside it. It is drawn at the same weight as the band it leaves.
+
+The 45 degrees is not an equal rise and run: the two axes are stretched by
+different amounts, so the run is multiplied by that ratio or the "diagonal"
+comes out looking like nothing of the sort.
+
+**Trains ride it.** A line 43 train past Odenplan is drawn a little way up the
+Bålsta curve rather than ceasing to exist at the junction; a line 41 train due
+at Upplands Väsby comes down the Märsta curve rather than appearing beside the
+station out of nowhere. Both are the same sum - how far, in time, the train is
+from the junction - and the position comes from `getPointAtLength` on the path
+itself, so the chip follows whatever curve is drawn.
+
+Two consequences the tests had to learn:
+
+- a chip on a branch **changes height as it moves**, which is the feature. It
+  is excluded from the "no chip changes height" check, which is about the band;
+- it is off the band, so the sweep that spreads trains along the line must not
+  shuffle it.
+
+### A queue of trains that have not arrived
+
+Several trains can be waiting for the same station. They were each placed at
+that station's own position, so they all started on the same spot, and the
+sweep then spread them out in whatever order they came out of the map - which
+is why a train due in 8 minutes could sit further out than one due in 11. At
+the first station on the board, where there is no room to the left at all, the
+sweep spread them **rightwards across the platform**.
+
+The queue is now built in arrival order, next train nearest the platform,
+pinned so the sweep cannot shuffle it, and any train for which there is
+genuinely no room is left off rather than drawn somewhere untrue. The full
+order is in the departure list above the diagram.
+
+The queue is flush with the **edge of the drawing**, not with the platform: one
+waiting train sits at the far end of the space kept for it, and a second
+appears beside it on the way in, rather than the first shuffling outward to
+make room. The space then reads as a siding rather than a gap that opens and
+closes. Order within it is still the order they arrive.
+
+Room is only reserved at an end where a queue can actually form. Waiting trains
+are drawn short of the first station in their direction of travel and never at
+the board's own station - so at Uppsala C, which is both, nothing can ever park
+to its left and the reserved space was simply empty.
+
+How many fit is arithmetic, not taste: `clear + (n-1) * minGap + halfW + 2`.
+Chips are 34 viewBox units wide (28px on screen - they hold a two-digit line
+number and nothing else), and the end margin is that sum for three, capped at
+235. The cap matters: uncapped, the same sum on a phone is 280 units and would
+leave five stations 88 units apart with 72-unit chips between them. As it
+stands a desktop fits three and a phone two.
+
+### A train that has not arrived
+
+A "not here yet" marker is parked short of the station it is due at, on the
+side it is coming from, clear of the stop rather than drawn across the
+platform. Two things had to change for that to hold:
+
+- the sweep that spreads trains apart would push the marker over its own
+  station, so those chips carry a bound the sweep respects. The bound is
+  clamped to the drawing, not applied after it - the first version put a chip
+  45px off the right of the panel;
+- **the margin at each end of the drawing cannot be a constant.** Chips are
+  drawn in stretched units, so on a 390px screen a chip is 88 viewBox units
+  wide where on a desktop it is 52. A margin that was comfortable on one was
+  45 units short on the other, and there was simply nowhere to put the marker
+  beyond the last station. It now scales with the chip.
+
+Getting the test to see this took a detour: a southbound train approaching the
+*home* station is deliberately never drawn, so the stub's four southbound
+services produced no marker at all and the check passed on an empty list. The
+stub now runs one northbound service due at the far end.
+
+### Trains stand one after another
+
+Two trains too close together used to be stacked, one drawn further from the
+rail than the other. Rows are gone: a train is nudged *along* the line until
+the chips clear each other, which costs a little truth about where it is and
+buys back the order they are in. The sweep only ever pushes a train away from
+the one behind it, so they cannot swap places.
+
+What the test asserts is therefore what was asked for - no chip overlaps
+another, no chip changes height, and their order never changes - across a
+14-step scene that alternates one gap across the old margin.
+
+Two measurement traps, both of which produced failures that were not in the
+code:
+
+- a chip slides to its new place over a second, so a reading taken sooner
+  catches trains mid-move and finds overlaps that are never on screen;
+- `getBoundingClientRect` on a train's `<g>` includes its speed label and, at
+  the time, its direction chevron. The chip body is 34.6px; the group was 42px.
+  Measuring the group made neighbours look overlapped when only the arrow was
+  crossing. The test now measures `.sl-train-body`.
+
+### The rows that used to be here
+
+Two trains too close together are drawn in different rows within their lane.
+That row used to be `lift = (previous train's lift + 1) % 2` walked along the
+lane - a chain, so one gap crossing the threshold flipped that train and every
+train behind it, and the board redrawn every second had trains hopping with
+nothing on the track having changed.
+
+**The first replacement measured worse than the bug.** Placing each train in
+the lowest row it fits in is local rather than chained, but a train sitting
+near the margin still flips on the smallest drift: 5 row changes against the
+chain's 3. The margins now differ by what they are for - a train moves only
+when chips genuinely collide, and comes back down only when the lower row is
+clear by 1.6x that. Between the two it stays put.
+
+Getting a test that could tell the two apart took three tries, and the first
+two were worthless:
+
+- a steady drift sent the trains off the end of the corridor, so how many were
+  left depended on when the test started;
+- a wall-clock sine had every run sampling a different part of the cycle - the
+  same code scored 5 one run and 0 the next;
+- the phase is now stepped by the test itself, so every run walks the same
+  path.
+
+Even then, a scene that *sweeps* a gap through the threshold scores 3 against 3
+- those changes are real, one train genuinely un-crowding and displacing the
+two behind it. The symptom is a gap that **hovers**: alternating either side of
+the old margin while staying inside the new hysteresis band. There the chain
+rule scores **39 row changes in 14 samples** and the current one scores **0**.
+
 ### On a phone the panel is the page
 
 Below 560px the introduction is hidden and the board runs edge to edge,
