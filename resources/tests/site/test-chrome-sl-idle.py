@@ -19,11 +19,17 @@ STUB = r"""
 (() => {
   window.__slCalls = { dep: 0, veh: 0 };
   try { localStorage.setItem('kvot-sl-trains', 'https://stub.invalid/trains'); } catch (e) {}
-  /* Three departures, built relative to the moment the page loads: two later
-     today and one at 04:26 tomorrow. The third is what the board used to hide,
-     because a three-hour forecast window could not see it - and being on a
-     different date it also exercises the day label. SL's times are zone-less
-     local strings. */
+  /* Three departures, built relative to the moment the page loads: two within
+     the hour and one ten hours out. The third is what the board used to hide,
+     because a three-hour forecast window could not see it.
+
+     Ten hours, not "tomorrow at 04:26": a twenty-hour window cannot reach the
+     next calendar day at all when the clock has just passed midnight, so a
+     fixed wall-clock time made this test pass or fail by time of day. Ten
+     hours is always inside the window, and whether it lands on another date
+     depends on the hour - which is why the day label is checked against the
+     date the stub actually produced rather than against a guess. SL's times
+     are zone-less local strings. */
   const pad = (n) => String(n).padStart(2, '0');
   const local = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
     `T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
@@ -34,9 +40,12 @@ STUB = r"""
     const now = new Date();
     const soon = new Date(now.getTime() + 12 * 60000);
     const later = new Date(now.getTime() + 42 * 60000);
-    const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 4, 26, 0);
+    const distant = new Date(now.getTime() + 10 * 3600 * 1000);
+    /* What the page will have to say about that third one, decided here from
+       the same dates the board will see. */
+    window.__slCrossesMidnight = distant.getDate() !== now.getDate();
     const horizon = now.getTime() + (forecastMin || 60) * 60000;
-    return [soon, later, tomorrow].filter((w) => w.getTime() <= horizon).map((when, i) => ({
+    return [soon, later, distant].filter((w) => w.getTime() <= horizon).map((when, i) => ({
       destination: 'Stockholm City',
       direction_code: 1,
       state: 'EXPECTED',
@@ -266,7 +275,8 @@ async def main():
             corridorKm: KVOT_SL.GPS_CORRIDOR_KM,
             count: (hero ? 1 : 0) + rows.length,
             heroUnit: hero ? (hero.querySelector('.sl-count-small') || {}).textContent : null,
-            lastUnit: rows.length ? unit(rows[rows.length - 1].querySelector('.sl-row-count')) : null
+            lastUnit: rows.length ? unit(rows[rows.length - 1].querySelector('.sl-row-count')) : null,
+            crossesMidnight: window.__slCrossesMidnight
           };
         })())"""))
         # First four bearings agree with the segment, last four oppose it.
@@ -281,8 +291,17 @@ async def main():
               board['corridorKm'] <= 1.5, '%s km' % board['corridorKm'])
         check(results, 'all three departures are shown', board['count'] == 3,
               '%s shown (1 hero + %s rows)' % (board['count'], board['count'] - 1))
-        check(results, "tomorrow's departure says so",
-              'tomorrow' in (board['lastUnit'] or ''), repr(board['lastUnit']))
+        # A departure ten hours out is past the hour mark, so it shows a clock
+        # time; whether that carries a day label depends on whether it crossed
+        # midnight, which the stub recorded when it built it.
+        unit = board['lastUnit'] or ''
+        if board['crossesMidnight']:
+            check(results, "a departure on another date says tomorrow",
+                  'tomorrow' in unit, repr(unit))
+        else:
+            check(results, "a departure later today carries no day label",
+                  'tomorrow' not in unit and 'day' not in unit,
+                  '%r (stub stayed on today)' % unit)
 
         print('\n9. The live dot holds its position')
         # Two independent things move next to the dot, and the first version of
@@ -382,6 +401,51 @@ async def main():
         ds = sorted(set(cells['digitCells']))
         check(results, 'digit cells are uniform', len(ds) == 1,
               ('%.2fpx each' % ds[0]) if len(ds) == 1 else 'differ %s' % ds)
+
+        print('\n10. On a phone the panel is the page')
+        # Pure CSS, so the viewport can simply be resized - media queries
+        # re-evaluate without a reload, and the board is already stopped.
+        async def layout(w, h):
+            await s.call('Emulation.setDeviceMetricsOverride',
+                         {'width': w, 'height': h, 'deviceScaleFactor': 1, 'mobile': w < 600})
+            await asyncio.sleep(0.4)
+            return json.loads(await s.js("""JSON.stringify((() => {
+              const b = document.querySelector('.sl-board').getBoundingClientRect();
+              const intro = document.querySelector('.sl-intro');
+              /* This site has twice shipped a padded content-box that widened
+                 the layout viewport, so scrollWidth agreed while the element
+                 stuck out. Measure elements against innerWidth instead. */
+              const widest = [...document.querySelectorAll('.sl-wrap *')]
+                .reduce((m, el) => Math.max(m, Math.round(el.getBoundingClientRect().right)), 0);
+              return { vw: innerWidth,
+                       left: Math.round(b.left), right: Math.round(b.right), top: Math.round(b.top),
+                       introShown: intro ? getComputedStyle(intro).display !== 'none' : null,
+                       radius: getComputedStyle(document.querySelector('.sl-board')).borderTopLeftRadius,
+                       widest };
+            })())"""))
+
+        phone = await layout(390, 844)
+        check(results, 'intro is dropped on a phone', phone['introShown'] is False,
+              'display none' if phone['introShown'] is False else 'still shown')
+        check(results, 'panel spans the full width',
+              phone['left'] == 0 and phone['right'] == phone['vw'],
+              'x %d..%d of %d' % (phone['left'], phone['right'], phone['vw']))
+        check(results, 'panel starts under the header, no gap',
+              phone['top'] <= 44, 'top %d' % phone['top'])
+        check(results, 'corners squared off at the edge', phone['radius'] == '0px', phone['radius'])
+        check(results, 'nothing sticks out sideways', phone['widest'] <= phone['vw'],
+              'widest %d vs viewport %d' % (phone['widest'], phone['vw']))
+
+        narrow = await layout(320, 568)
+        check(results, 'still fits a 320px screen', narrow['widest'] <= narrow['vw'],
+              'widest %d vs viewport %d' % (narrow['widest'], narrow['vw']))
+
+        desk = await layout(1280, 900)
+        check(results, 'desktop keeps its introduction', desk['introShown'] is True,
+              'shown' if desk['introShown'] else 'MISSING')
+        check(results, 'desktop panel stays inset and rounded',
+              desk['left'] > 0 and desk['radius'] != '0px',
+              'x %d..%d radius %s' % (desk['left'], desk['right'], desk['radius']))
 
         await ws.send(json.dumps({'id': 999, 'method': 'Target.closeTarget', 'params': {'targetId': tid}}))
 
