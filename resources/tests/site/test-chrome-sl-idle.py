@@ -36,23 +36,54 @@ STUB = r"""
   /* The real API honours `forecast`, and a stub that does not would let a
      three-hour window pass a test about showing a departure sixteen hours
      out. It takes the window from the URL, like the real one. */
-  window.__slDepartures = (forecastMin) => {
+  /* Minutes from the first station of each corridor, so a journey's times
+     advance down the line the way real ones do. Without this every station
+     answered with the same clock time, no train could be placed *between* two
+     of them, and the diagram drew no chips at all. */
+  const ALONG = { 6086: 0, 6092: 10, 9511: 18, 9502: 28,
+                  1080: 0, 9117: 2, 9509: 7, 9508: 10, 9507: 13 };
+  window.__slDepartures = (forecastMin, siteId) => {
     const now = new Date();
-    const soon = new Date(now.getTime() + 12 * 60000);
-    const later = new Date(now.getTime() + 42 * 60000);
-    const distant = new Date(now.getTime() + 10 * 3600 * 1000);
+    const at = ALONG[siteId] || 0;
+    const from = (mins) => new Date(now.getTime() + (mins + at) * 60000);
+    /* One service already running, so there is a train on the line rather
+       than only trains yet to leave. It left before "now", so the departure
+       list drops it while the diagram still draws it. */
+    const running = from(-8);
+    const soon = from(12);
+    const later = from(42);
+    const distant = new Date(now.getTime() + (10 * 60 + at) * 60000);
     /* What the page will have to say about that third one, decided here from
        the same dates the board will see. */
     window.__slCrossesMidnight = distant.getDate() !== now.getDate();
+    /* One northbound service, due at the far end of the drawing in ten
+       minutes. A southbound train approaching the *home* station is never
+       drawn - the board's own list is about those - so without this there is
+       no "not here yet" marker anywhere to check. Its times run the other way
+       along the corridor, which is what makes it northbound. */
+    const north = new Date(now.getTime() + (10 + (28 - at)) * 60000);
     const horizon = now.getTime() + (forecastMin || 60) * 60000;
-    return [soon, later, distant].filter((w) => w.getTime() <= horizon).map((when, i) => ({
-      destination: 'Stockholm City',
-      direction_code: 1,
+    const rows = [
+      { when: running, dir: 1, dest: 'Stockholm City' },
+      { when: soon, dir: 1, dest: 'Stockholm City' },
+      { when: later, dir: 1, dest: 'Stockholm City' },
+      { when: distant, dir: 1, dest: 'Stockholm City' },
+      { when: north, dir: 2, dest: 'Uppsala C' },
+    ];
+    /* A line 41 service, calling only at Upplands Väsby - which is where 41
+       joins this corridor from Märsta. Due in a minute, so it should be drawn
+       a minute down the Märsta curve rather than on the main band. */
+    if (siteId === 9502) rows.push({ when: from(1 - at), dir: 1, dest: 'Södertälje centrum', line: '41' });
+    return rows.filter((r) => r.when.getTime() <= horizon).map(({ when, dir, dest, line }, i) => ({
+      destination: dest,
+      direction_code: dir,
       state: 'EXPECTED',
       scheduled: local(when),
       expected: local(when),
-      line: { designation: '40' },
-      journey: { id: `${when.getFullYear()}${pad(when.getMonth() + 1)}${pad(when.getDate())}${String(2270 + i).padStart(5, '0')}` },
+      line: { designation: line || '40' },
+      /* The journey id must be the *first* station's date, or the same train
+         would carry different ids along the corridor and never join up. */
+      journey: { id: `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}${String(2269 + i).padStart(5, '0')}` },
       stop_point: { designation: '1' },
       deviations: [],
     }));
@@ -64,12 +95,62 @@ STUB = r"""
     const url = String((input && input.url) || input || '');
     if (url.indexOf('/trains') >= 0) {
       window.__slCalls.veh++;
-      return json({ timestamp: Math.floor(Date.now() / 1000), count: 0, trains: [] });
+      /* Four trains running down the Uppsala C -> Knivsta leg close enough
+         together to crowd each other, each at its own speed so the gaps
+         between them open and close as time passes. That is the scene that
+         made rows flicker. 9999 matches no departure and must never be drawn.
+         Positions are interpolated along the real leg, so they land on the
+         corridor rather than beside it. */
+      const A = { lat: 59.8573, lon: 17.6485 }, B = { lat: 59.7259, lon: 17.7869 };
+      const at = (f) => ({ lat: A.lat + f * (B.lat - A.lat), lon: A.lon + f * (B.lon - A.lon),
+                           speed: 96, bearing: 150, ageSec: 4 });
+      /*
+        A queue of four trains on the leg. The first stands still; the gap to
+        the second is swept by the test from far too small to comfortably
+        large, while the third and fourth follow the second at a fixed spacing
+        that is always tight.
+
+        That sweep is the whole point. It takes one gap through the threshold
+        at which trains have to be drawn in separate rows, which is where a
+        rule that chains each train's row off its neighbour's flips the row of
+        every train behind it - the flicker this is here to catch. The third
+        and fourth trains never change their spacing at all, so any change in
+        *their* rows is the cascade and nothing else.
+
+        The phase comes from the test, not the clock. Two earlier versions
+        could not be compared between runs: a steady drift ran the trains off
+        the end of the corridor, and a wall-clock sine had every run sampling a
+        different part of the cycle - the same code scored 5 row changes one
+        run and 0 the next, which measures nothing.
+      */
+      const t = window.__slPhase || 0;
+      const fA = 0.08;
+      /* The gap to the second train alternates across the margin that a
+         "leave a comfortable space" rule treats as the moment to move, while
+         staying well inside the band that a "only move when they actually
+         collide" rule tolerates. In viewBox units that is roughly 55 against
+         70, around a margin near 60 and an overlap near 54.
+
+         This is the reported symptom, not a sweep: nothing on the track is
+         really changing, the gap merely breathes on the threshold. A rule
+         that chains each train's row off its neighbour's flips this train
+         every step and the two behind it with it. */
+      const fB = fA + 0.162 + 0.044 * (t % 2);
+      const fC = fB + 0.115, fD = fC + 0.115;
+      /* 2272 is deliberately absent: a departure with no position falls back
+         to the forecast, which parks it short of the first station it is due
+         at as a hollow "not here yet" marker. Without one of those the
+         approach-side checks have nothing to look at. */
+      const moving = [['2269', fA], ['2270', fB], ['2271', fC]]
+        .map(([number, f]) => Object.assign({ number }, at(f)));
+      return json({ timestamp: Math.floor(Date.now() / 1000), count: moving.length + 1,
+                    trains: moving.concat([Object.assign({ number: '9999' }, at(0.92))]) });
     }
     if (url.indexOf('transport.integration.sl.se') >= 0) {
       window.__slCalls.dep++;
       const forecast = Number((/[?&]forecast=(\d+)/.exec(url) || [])[1]) || 60;
-      return json({ departures: window.__slDepartures(forecast), stopDeviations: [] });
+      const site = Number((/\/sites\/(\d+)\//.exec(url) || [])[1]) || 0;
+      return json({ departures: window.__slDepartures(forecast, site), stopDeviations: [] });
     }
     return real.apply(this, arguments);
   };
@@ -273,6 +354,8 @@ async def main():
             noBearing: KVOT_SL.runsForward(null, 0),
             forecast: document.querySelector('.sl-board').__slBoard.config.forecast,
             corridorKm: KVOT_SL.GPS_CORRIDOR_KM,
+            keys: [...document.querySelectorAll('.sl-train')].map((g) => g.getAttribute('data-key')),
+            unnamed: document.querySelectorAll('.sl-train-unnamed').length,
             count: (hero ? 1 : 0) + rows.length,
             heroUnit: hero ? (hero.querySelector('.sl-count-small') || {}).textContent : null,
             lastUnit: rows.length ? unit(rows[rows.length - 1].querySelector('.sl-row-count')) : null,
@@ -289,6 +372,12 @@ async def main():
               '%s minutes' % board['forecast'])
         check(results, 'corridor is tight enough to exclude the next track',
               board['corridorKm'] <= 1.5, '%s km' % board['corridorKm'])
+        keys = board['keys']
+        check(results, 'a fix matching a departure is drawn', 'gps:tv:2269' in keys,
+              ', '.join(keys) or 'nothing drawn')
+        check(results, 'a fix matching nothing is left off',
+              not any('9999' in k for k in keys) and board['unnamed'] == 0,
+              '%d unnamed chips' % board['unnamed'])
         check(results, 'all three departures are shown', board['count'] == 3,
               '%s shown (1 hero + %s rows)' % (board['count'], board['count'] - 1))
         # A departure ten hours out is past the hour mark, so it shows a clock
@@ -408,15 +497,27 @@ async def main():
         async def layout(w, h):
             await s.call('Emulation.setDeviceMetricsOverride',
                          {'width': w, 'height': h, 'deviceScaleFactor': 1, 'mobile': w < 600})
-            await asyncio.sleep(0.4)
+            # The CSS reflows on its own, but the diagram's shapes are drawn in
+            # units computed from the element's width, so the board has to run
+            # a render before they mean anything at the new size.
+            await s.js("document.querySelector('.sl-board').__slBoard.start(); 'ok'")
+            await asyncio.sleep(1.3)
             return json.loads(await s.js("""JSON.stringify((() => {
               const b = document.querySelector('.sl-board').getBoundingClientRect();
               const intro = document.querySelector('.sl-intro');
               /* This site has twice shipped a padded content-box that widened
                  the layout viewport, so scrollWidth agreed while the element
                  stuck out. Measure elements against innerWidth instead. */
-              const widest = [...document.querySelectorAll('.sl-wrap *')]
-                .reduce((m, el) => Math.max(m, Math.round(el.getBoundingClientRect().right)), 0);
+              /* Both edges. Measuring only the right one let a label that hung
+                 off the left of the panel go unnoticed. */
+              let widest = 0, widestEl = '', leftmost = 0, leftEl = '';
+              for (const el of document.querySelectorAll('.sl-wrap *')) {
+                const b = el.getBoundingClientRect();
+                const name = el.tagName.toLowerCase() + '.' + (el.getAttribute('class') || '') +
+                  ' "' + (el.textContent || '').trim().slice(0, 20) + '"';
+                if (Math.round(b.right) > widest) { widest = Math.round(b.right); widestEl = name; }
+                if (Math.round(b.left) < leftmost) { leftmost = Math.round(b.left); leftEl = name; }
+              }
               const c = document.querySelector('.content').getBoundingClientRect();
               /* renderNav puts the hamburger and its menu after <header>, not
                  inside it, so hiding the header alone leaves a button over the
@@ -424,12 +525,25 @@ async def main():
               const shown = ['header', 'footer', '.nav-toggle', '#menu', '#kvotmap']
                 .filter((sel) => { const e = document.querySelector(sel);
                                    return e && getComputedStyle(e).display !== 'none'; });
+              /* preserveAspectRatio="none" stretches the two axes by very
+                 different amounts, so shapes are drawn in units pre-divided by
+                 that ratio. The proof is that a chip and a stop keep the same
+                 rendered proportions at any width of screen - without the
+                 correction a chip is a wide lozenge on a desktop and a narrow
+                 sliver on a phone. */
+              const ratio = (sel) => {
+                const e = document.querySelector(sel);
+                if (!e) return null;
+                const r = e.getBoundingClientRect();
+                return r.height > 0 ? Math.round((r.width / r.height) * 100) / 100 : null;
+              };
               return { vw: innerWidth, vh: innerHeight,
+                       chipRatio: ratio('.sl-train-body'), stopRatio: ratio('.sl-stop'),
                        left: Math.round(b.left), right: Math.round(b.right), top: Math.round(b.top),
                        introShown: intro ? getComputedStyle(intro).display !== 'none' : null,
                        radius: getComputedStyle(document.querySelector('.sl-board')).borderTopLeftRadius,
                        contentTop: Math.round(c.top), contentH: Math.round(c.height),
-                       chromeShown: shown, widest };
+                       chromeShown: shown, widest, widestEl, leftmost, leftEl };
             })())"""))
 
         phone = await layout(390, 844)
@@ -442,7 +556,7 @@ async def main():
               phone['top'] <= 44, 'top %d' % phone['top'])
         check(results, 'corners squared off at the edge', phone['radius'] == '0px', phone['radius'])
         check(results, 'nothing sticks out sideways', phone['widest'] <= phone['vw'],
-              'widest %d vs viewport %d' % (phone['widest'], phone['vw']))
+              'widest %d vs viewport %d - %s' % (phone['widest'], phone['vw'], phone['widestEl']))
         check(results, 'site header, footer, nav and map are all gone',
               phone['chromeShown'] == [], ', '.join(phone['chromeShown']) or 'none shown')
         check(results, 'the page area is the whole screen',
@@ -450,10 +564,23 @@ async def main():
               'content top %d height %d of %d' % (phone['contentTop'], phone['contentH'], phone['vh']))
 
         narrow = await layout(320, 568)
+        check(results, 'nothing hangs off the left either', phone['leftmost'] >= 0,
+              'leftmost %d - %s' % (phone['leftmost'], phone['leftEl']) if phone['leftmost'] < 0 else 'flush at 0')
         check(results, 'still fits a 320px screen', narrow['widest'] <= narrow['vw'],
-              'widest %d vs viewport %d' % (narrow['widest'], narrow['vw']))
+              'widest %d vs viewport %d - %s' % (narrow['widest'], narrow['vw'], narrow['widestEl']))
 
-        desk = await layout(1280, 900)
+        # Same shapes, screen four times wider: the proportions must not move.
+        wideV = await layout(1280, 900)
+        # The number that matters is that the two agree; the target just
+        # catches a shape collapsing. It follows the drawn proportions - a chip
+        # is 28 viewBox units wide by 24 tall - so it moves when those do.
+        for name, key, want in (('train chip', 'chipRatio', 28 / 24), ('stop marker', 'stopRatio', 0.35)):
+            a, b = phone[key], wideV[key]
+            ok = a is not None and b is not None and abs(a - b) <= 0.12 and abs(a - want) <= 0.25
+            check(results, '%s keeps its shape at any width' % name, ok,
+                  'phone %s vs desktop %s (want ~%s)' % (a, b, want))
+
+        desk = wideV
         check(results, 'desktop keeps its introduction', desk['introShown'] is True,
               'shown' if desk['introShown'] else 'MISSING')
         check(results, 'desktop panel stays inset and rounded',
@@ -462,6 +589,124 @@ async def main():
         check(results, 'desktop keeps the site chrome',
               'header' in desk['chromeShown'] and 'footer' in desk['chromeShown'],
               ', '.join(desk['chromeShown']) or 'NONE - navigation lost on desktop too')
+
+        print('\n11. Trains stand one after another, not on top of each other')
+        # The board is running and desktop-sized after section 10. The stub has
+        # four trains crowding each other, with the gap between the first two
+        # alternating across the margin - the scene that used to send chips
+        # hopping between rows. There are no rows now: chips are nudged along
+        # the line instead, so what has to hold is that they never overlap,
+        # never change height, and keep their order.
+        frames = []
+        for step in range(14):
+            await s.js("window.__slPhase = %s;"
+                       "document.querySelector('.sl-board').__slBoard.refreshTrains(); 'ok'" % step)
+            # A chip slides to its new place over a second, so a reading taken
+            # before that is of trains mid-move and finds overlaps that are
+            # never on screen when they come to rest.
+            await asyncio.sleep(1.2)
+            frames.append(json.loads(await s.js("""JSON.stringify(
+              /* The chip itself, not the group: a group's box includes the
+                 chevron and the speed label, which are meant to sit outside
+                 the body and are not what "on top of each other" means. */
+              [...document.querySelectorAll('.sl-train')].map((g) => {
+                const r = g.querySelector('.sl-train-body').getBoundingClientRect();
+                return { key: g.getAttribute('data-key'),
+                         left: Math.round(r.left), right: Math.round(r.right),
+                         y: Math.round(r.top) };
+              }))""")))
+
+        drawn = {c['key'] for f in frames for c in f}
+        check(results, 'the scene really crowds the trains', len(drawn) >= 3,
+              '%d chips over %d samples' % (len(drawn), len(frames)))
+
+        overlaps = []
+        for i, f in enumerate(frames):
+            for a, b in zip(sorted(f, key=lambda c: c['left']), sorted(f, key=lambda c: c['left'])[1:]):
+                if b['left'] < a['right'] and abs(a['y'] - b['y']) < 6:
+                    overlaps.append('sample %d %s[%d-%d] over %s[%d-%d] by %dpx' % (
+                        i, a['key'][-4:], a['left'], a['right'],
+                        b['key'][-4:], b['left'], b['right'], a['right'] - b['left']))
+        widths = sorted({c['right'] - c['left'] for f in frames for c in f})
+        check(results, 'no two chips overlap', not overlaps,
+              ('; '.join(overlaps[:2]) + ' | chip widths seen: %s' % widths) if overlaps
+              else 'clear in every sample')
+
+        # Chips on a branch curve are excluded: climbing the curve is exactly
+        # what they are supposed to do, so their height changing is the
+        # feature rather than the fault.
+        heights = {}
+        for f in frames:
+            for c in f:
+                if c['key'].startswith('br:'):
+                    continue
+                heights.setdefault(c['key'], set()).add(c['y'])
+        hopped = {k: sorted(v) for k, v in heights.items() if len(v) > 1}
+        check(results, 'no chip changes height', not hopped,
+              ', '.join('%s %s' % kv for kv in list(hopped.items())[:3]) or 'every chip held its line')
+
+        # A train that has not arrived must be drawn short of the station it
+        # is due at, on the side it is coming from - never on the platform and
+        # never past it. The sweep that spreads trains apart can push it
+        # across its own station, which is what the bounds are for.
+        appr = json.loads(await s.js("""JSON.stringify(
+          [...document.querySelectorAll('.sl-train-approaching')].map((g) => {
+            const body = g.querySelector('.sl-train-body').getBoundingClientRect();
+            const name = ((g.querySelector('title').textContent.match(/due at (.+?) in /) || [])[1] || '').trim();
+            const stop = [...document.querySelectorAll('.sl-station')]
+              .find((st) => st.querySelector('text').textContent.trim() === name);
+            const r = stop ? stop.querySelector('rect').getBoundingClientRect() : null;
+            return { name, laneA: /sl-lane-a/.test(g.getAttribute('class')),
+                     left: Math.round(body.left), right: Math.round(body.right),
+                     stopLeft: r ? Math.round(r.left) : null,
+                     stopRight: r ? Math.round(r.right) : null };
+          }))"""))
+        bad = []
+        for c in appr:
+            if c['stopLeft'] is None:
+                bad.append('%s: station not found' % c['name']); continue
+            if c['laneA'] and c['right'] > c['stopLeft']:
+                bad.append('%s: on or past the stop (chip ends %d, stop starts %d)'
+                           % (c['name'], c['right'], c['stopLeft']))
+            if not c['laneA'] and c['left'] < c['stopRight']:
+                bad.append('%s: on or past the stop (chip starts %d, stop ends %d)'
+                           % (c['name'], c['left'], c['stopRight']))
+        check(results, 'trains not here yet stop short of the platform',
+              bool(appr) and not bad,
+              '; '.join(bad[:2]) if bad else '%d checked, all clear of the stop' % len(appr))
+
+        # A line that joins or leaves this one rides the curve at its junction,
+        # not the main band: a 41 due at Upplands Väsby in a minute is a minute
+        # down the Märsta curve, and a 43 past Odenplan is on its way to
+        # Bålsta. Without this they either sit on the band they are not on, or
+        # vanish at the junction with nothing to say where they went.
+        onBranch = json.loads(await s.js("""JSON.stringify((() => {
+          const curve = document.querySelector('[data-branch="41"]');
+          const b = curve ? curve.getBBox() : null;
+          const chips = [...document.querySelectorAll('.sl-train')]
+            .filter((g) => (g.getAttribute('data-key') || '').startsWith('br:'))
+            .map((g) => {
+              const m = /translate\\(([-\\d.]+) ([-\\d.]+)\\)/.exec(g.getAttribute('transform') || '');
+              return { x: m ? +m[1] : null, y: m ? +m[2] : null,
+                       title: (g.querySelector('title') || {}).textContent };
+            });
+          return { box: b ? { x: b.x, y: b.y, w: b.width, h: b.height } : null, chips };
+        })())"""))
+        box, chips = onBranch['box'], onBranch['chips']
+        ok = bool(box) and len(chips) == 1 and (
+            box['x'] - 14 <= chips[0]['x'] <= box['x'] + box['w'] + 14 and
+            box['y'] - 14 <= chips[0]['y'] <= box['y'] + box['h'] + 14)
+        check(results, 'a joining line rides its own curve', ok,
+              ('at %.0f,%.0f on a curve spanning %.0f..%.0f' % (
+                  chips[0]['x'], chips[0]['y'], box['x'], box['x'] + box['w']))
+              if ok else 'curve=%s chips=%s' % (bool(box), chips))
+
+        # Nudging must never reorder them: a train behind another must stay
+        # behind it, or the diagram is telling a lie to save space.
+        order = [tuple(c['key'] for c in sorted(f, key=lambda c: c['left'])) for f in frames]
+        swaps = sum(1 for a, b in zip(order, order[1:])
+                    if [k for k in a if k in b] != [k for k in b if k in a])
+        check(results, 'their order never changes', swaps == 0, '%d reorderings' % swaps)
 
         await ws.send(json.dumps({'id': 999, 'method': 'Target.closeTarget', 'params': {'targetId': tid}}))
 

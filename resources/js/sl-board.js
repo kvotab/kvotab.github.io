@@ -315,7 +315,7 @@
        bar is a link somebody can send to somebody else, and a page that
        fetches whatever a link tells it to is a page doing as it is told by a
        stranger. */
-    const cfg = Object.assign({ refreshMs: REFRESH_MS, forecast: FORECAST_MIN, corridor: [], directionCode: null, trainsUrl: null, idleMs: IDLE_MS }, config);
+    const cfg = Object.assign({ refreshMs: REFRESH_MS, forecast: FORECAST_MIN, corridor: [], directionCode: null, trainsUrl: null, idleMs: IDLE_MS, lines: null, oneWay: false, branches: null }, config);
     if (!cfg.trainsUrl) {
       try { cfg.trainsUrl = localStorage.getItem('kvot-sl-trains') || null; } catch (e) { /* storage unavailable */ }
     }
@@ -334,6 +334,25 @@
     const REVERSE = FORWARD.slice().reverse();
     const farEnd = corridor[n - 1] ? corridor[n - 1].name : cfg.toName;
     const nearEnd = corridor[0] ? corridor[0].name : cfg.fromName;
+    /* What the lane labels say. The last station drawn is where the *diagram*
+       stops, not where the trains are going: a southbound train at Upplands
+       Väsby is going to Solna and beyond, and saying "towards Upplands Väsby"
+       tells the reader about the picture rather than about the journey. */
+    const towardsFar = cfg.toName || farEnd;
+    const towardsNear = cfg.fromName || nearEnd;
+    /* A board that only cares about one direction draws one line, not two. */
+    const oneWay = !!cfg.oneWay;
+    /* Which lines leave or join this one, and where. */
+    const branchOf = new Map();
+    for (const b of (cfg.branches || [])) {
+      const joins = b.before !== undefined;
+      const index = corridor.findIndex((st) => st.siteId === (joins ? b.before : b.after));
+      if (index >= 0) branchOf.set(String(b.line), { line: String(b.line), joins, index });
+    }
+    /* How long the drawn stub stands for. A train is on it for this long
+       after leaving the junction, or for this long before reaching it, and is
+       then off the edge of what this board is about. */
+    const BRANCH_S = 150;
 
     /*
       Projecting a fix onto the drawn line. The corridor is treated as a chain
@@ -413,7 +432,7 @@
       </div>
       ${n > 1 ? `
       <div class="sl-track" id="sl-track" aria-label="Where the trains are along the line">
-        <svg class="sl-track-svg" id="sl-track-svg" viewBox="0 0 1000 232" preserveAspectRatio="none" role="img"></svg>
+        <svg class="sl-track-svg" id="sl-track-svg" viewBox="0 0 1000 260" preserveAspectRatio="none" role="img"></svg>
         <div class="sl-legend" id="sl-legend"></div>
         <div class="sl-track-note" id="sl-track-note"></div>
       </div>` : ''}
@@ -469,12 +488,22 @@
               if (k === homeIndex) j.sample = d;
             }
           });
-          /* Only trains that run on this track. Line 43 shares Stockholm
-             City and Odenplan with line 40 and then branches off; it would
-             otherwise be drawn heading for Solna, where it never arrives. The
-             lines that call at the home station define the track. */
-          const homeLines = new Set(all.map((d) => d.line));
-          for (const [id, j] of next) if (!homeLines.has(j.line)) next.delete(id);
+          /*
+            Which lines belong on this diagram. `lines` names them outright;
+            without it the fallback is the lines that call at the home station.
+
+            Naming them is the better answer for two opposite reasons. Line 43
+            shares Stockholm City and Odenplan with 40 and then branches off,
+            so it must not be drawn heading for Solna where it never arrives -
+            the home-station rule did handle that. But line 41 runs the
+            Arlanda-to-Upplands-Väsby part of the Uppsala corridor without ever
+            calling at Uppsala C, so the same rule threw it away, and 41 is a
+            pendeltåg that genuinely shares the track.
+          */
+          const allowed = Array.isArray(cfg.lines) && cfg.lines.length
+            ? new Set(cfg.lines.map(String))
+            : new Set(all.map((d) => d.line));
+          for (const [id, j] of next) if (!allowed.has(j.line)) next.delete(id);
           journeys = next;
           const stamp = Date.now();
           for (const [id, j] of next) {
@@ -676,7 +705,15 @@
       const skew = first && first.state === 'EXPECTED' ? minutesUntil(first.expected, now) : 0;
       $('sl-note').textContent = skew < -2
         ? 'Your device clock seems to be ahead of Swedish time; countdowns may be off.'
-        : `Next ${upcoming.length} departure${upcoming.length === 1 ? '' : 's'} · line 40 · data every ${Math.round(backoffMs / 1000)} s`;
+        /* The line was hardcoded as 40, which is what `keep` happens to leave
+           on both boards today. Taking it from the departures actually shown
+           means a change to `keep` cannot turn this line into a lie. */
+        : (() => {
+            const ls = [...new Set(upcoming.map((d) => d.line).filter(Boolean))]
+              .sort((a, b) => a.localeCompare(b, 'sv', { numeric: true }));
+            const which = ls.length === 1 ? `line ${ls[0]}` : ls.length ? `lines ${ls.join(', ')}` : 'pendeltåg';
+            return `Next ${upcoming.length} departure${upcoming.length === 1 ? '' : 's'} · ${which} · data every ${Math.round(backoffMs / 1000)} s`;
+          })();
     }
 
     /*
@@ -689,29 +726,189 @@
       that, with a one-second linear transition on the transform, is the whole
       animation; the data behind it changes in whole minutes.
     */
-    const RAIL_Y = 100, X0 = 60, X1 = 940, LANE = 30, LIFT = 28;
+    /* 260 units tall rather than 232: the extra room went to the station
+       names, which a train's speed label was landing on. */
+    const VB_W = 1000, VB_H = 260;
+    /* LANE is half the gap between the two bands. At 30 the two carriageways
+       sat further apart than a double track ever looks; 24 leaves 28 units of
+       air between the bands and 24 between the chips riding them, which is
+       still clear of each other. */
+    const RAIL_Y = 100, LANE = 24;
+    /* Below the constants they read, not above: `const laneSpan = oneWay ? 0 :
+       LANE` a few hundred lines earlier ran before LANE existed and threw on
+       every mount - the board rendered nothing at all. */
+    const laneY = (forward) => (oneWay ? RAIL_Y : RAIL_Y - (forward ? 1 : -1) * LANE);
+    const laneSpan = oneWay ? 0 : LANE;
     function renderTrack(now) {
       const svg = $('sl-track-svg');
+
+      /*
+        preserveAspectRatio="none" stretches the viewBox to whatever width the
+        element has, and the two axes end up stretched by very different
+        amounts - about 0.37 across against 0.85 down on a phone. For text
+        that is a happy accident: it comes out condensed, which is exactly the
+        face a transit diagram wants and the one Trafiklab's own uses. For
+        anything round it is not: a circle comes out an egg and a chip comes
+        out a squashed lozenge.
+
+        So every horizontal measurement of a *shape* is divided by that ratio
+        before being drawn. A marker then lands circular, and a train chip
+        rectangular, at any width of screen.
+      */
+      const box = svg.getBoundingClientRect();
+      /* Nothing can be placed against a box with no size, and guessing a
+         stretch factor of 1 draws every chip at the wrong width - narrow
+         enough that the gaps meant to keep them apart let them overlap by a
+         couple of pixels. An unlaid-out diagram is simply not drawn; the next
+         tick, a few hundred milliseconds later, draws it properly. */
+      if (!(box.width > 0 && box.height > 0)) return;
+      const wide = (box.height / VB_H) / (box.width / VB_W);
+      /* Small chips: 28 units by 24, which is 23px by 20 on screen. They hold
+         a two-digit line number and nothing else, and every pixel of chip is
+         a pixel of margin that a train waiting outside a station cannot have.
+         Started at 42 units wide, then 34. */
+      const halfW = 14 * wide;
+
+      /*
+        How much of the drawing is margin at each end. It cannot be a constant.
+        A train not yet on the stretch is parked outside the station it is due
+        at, and at the first and last stations that has to fit between the stop
+        marker and the edge - but chips are drawn in stretched units, so on a
+        390px screen a chip is 88 units wide where on a desktop it is 52. A
+        fixed margin that was comfortable on one was 45 units short on the
+        other, and the marker ended up drawn across its own platform.
+      */
+      /*
+        Margin at each end - and only at the end that needs it.
+
+        Room is reserved for trains queued outside a station: `clear +
+        2 * minGap + halfW + 2` worked through for three of them, capped,
+        because the same sum on a phone comes to 280 units and would leave five
+        stations 88 units apart with 72-unit chips between them.
+
+        But a queue only ever forms at one end or the other, and sometimes at
+        neither. Waiting trains are drawn short of the *first* station in their
+        direction of travel, and never at the board's own station - so at
+        Uppsala C, which is both the first station and the home one, nothing
+        can ever park to its left and the reserved space was simply empty. Each
+        end is therefore asked separately, and an end with no queue keeps only
+        enough room for the stop marker itself.
+      */
+      const queuePad = Math.min(235, Math.max(70, 103 * wide + 25));
+      /* Not hard against the edge: an end with no queue still wants the stop
+         and its name to sit inside the drawing rather than on the boundary. */
+      const bare = Math.max(48, 34 * wide);
+      const first = corridor[0] || {}, last = corridor[n - 1] || {};
+      const needLeft = homeIndex !== 0 && !first.terminus;
+      const needRight = !oneWay && homeIndex !== n - 1 && !last.terminus;
+      const X0 = needLeft ? queuePad : bare;
+      const X1 = VB_W - (needRight ? queuePad : bare);
       const px = (u) => X0 + u * (X1 - X0);
-      if (!svg.querySelector('.sl-stations')) {
+      const builtFor = String(Math.round(box.width));
+      /* A terminus really is the end of the line; anywhere else the rail runs
+         on past the edge of the drawing. */
+      const railFrom = (corridor[0] && corridor[0].terminus) ? px(xOf(0)).toFixed(1) : '0';
+      const railTo = (corridor[n - 1] && corridor[n - 1].terminus) ? px(xOf(n - 1)).toFixed(1) : String(VB_W);
+
+      if (!svg.querySelector('.sl-stations') || svg.dataset.builtFor !== builtFor) {
+        svg.dataset.builtFor = builtFor;
+        const old = svg.querySelector('.sl-stations');
+        if (old) old.remove();
+        /*
+          Station names sit under their stations, centred, and drop to a second
+          row only when they would actually run into the name before them.
+
+          The old rule dropped a name whenever its station was within 150 units
+          of the one before, whatever the names were - so "Odenplan", which is
+          short and clears "Stockholm City" comfortably, was pushed down a row
+          for no reason. The width is estimated from the text at about 6.8
+          units a character, which is close enough to decide an overlap.
+        */
+        const halfName = (name) => String(name || '').length * 3.4;
         const rows = [];
-        corridor.forEach((s, i) => { rows[i] = i > 0 && px(xOf(i)) - px(xOf(i - 1)) < 150 && rows[i - 1] === 0 ? 1 : 0; });
+        corridor.forEach((st, i) => {
+          if (i === 0 || rows[i - 1] !== 0) { rows[i] = 0; return; }
+          const mine = px(xOf(i)) - halfName(st.name);
+          const theirs = px(xOf(i - 1)) + halfName(corridor[i - 1].name);
+          rows[i] = mine < theirs + 10 ? 1 : 0;
+        });
         const stations = document.createElementNS('http://www.w3.org/2000/svg', 'g');
         stations.setAttribute('class', 'sl-stations');
+        /* Two bands rather than one rail: the lane a train runs in is the
+           line it rides on, which is how Trafiklab draws a network. */
         stations.innerHTML =
-          `<line class="sl-rail" x1="${X0}" y1="${RAIL_Y}" x2="${X1}" y2="${RAIL_Y}"/>` +
-          `<text class="sl-lane-label" x="${X0}" y="${RAIL_Y - LANE - 34}" text-anchor="start">→ towards ${esc(farEnd)}</text>` +
-          `<text class="sl-lane-label" x="${X1}" y="${RAIL_Y + LANE + 87}" text-anchor="end">← towards ${esc(nearEnd)}</text>` +
+          /* Past the last station drawn, not stopping at it: the rail carries
+             on and a band ending at the final stop reads as the end of the
+             line. Where the line really does end - a terminus, marked in the
+             corridor - the band ends with it. */
+          `<line class="sl-band sl-band-a" x1="${railFrom}" y1="${laneY(true)}" x2="${railTo}" y2="${laneY(true)}"/>` +
+          (oneWay ? '' : `<line class="sl-band sl-band-b" x1="${railFrom}" y1="${laneY(false)}" x2="${railTo}" y2="${laneY(false)}"/>`) +
+          /* Where another line leaves this one. Line 43 shares the track as
+             far as Odenplan and then turns away; drawing the junction says
+             that, where simply stopping its trains at Odenplan would leave a
+             reader wondering where they went. */
+          (cfg.branches || []).map((b) => {
+            /* Two kinds of junction, drawn as mirror images: `after` is a line
+               leaving this one just past a station, `before` is one joining it
+               just short of a station. Either way the stub runs away from the
+               rail at an angle, in its own line's colour, and says where it
+               goes or where it comes from - a train that simply stops being
+               drawn at Odenplan, or appears out of nowhere at Upplands Väsby,
+               leaves the reader to guess. */
+            const joins = b.before !== undefined;
+            const k = corridor.findIndex((st) => st.siteId === (joins ? b.before : b.after));
+            if (k < 0) return '';
+            const away = joins ? -1 : 1;
+            /* Out from under the stop itself, not from a point beside it: the
+               stops are drawn after this, so the circle covers the join and
+               the branch reads as leaving the station rather than starting in
+               mid-air next to it. */
+            const bx = px(xOf(k));
+            const by = joins ? (oneWay ? RAIL_Y : laneY(false)) : laneY(true);
+            /* Straight, and at a true 45 degrees on screen. The two axes are
+               stretched by different amounts, so an equal rise and run in
+               viewBox units would not look like a diagonal at all - the run
+               has to be multiplied by that ratio. */
+            const drop = 66;
+            const ex = bx + away * drop * wide, ey = by + drop;
+            const d = `M${bx.toFixed(1)} ${by} L${ex.toFixed(1)} ${ey}`;
+            const label = `${esc(String(b.line))}` +
+              (joins ? (b.from ? ' ← ' + esc(b.from) : '') : (b.towards ? ' → ' + esc(b.towards) : ''));
+            return `<path class="sl-branch sl-branch-${esc(String(b.line))}" data-branch="${esc(String(b.line))}" d="${d}"/>` +
+              /* Anchored away from the line, not centred on the stub's end: a
+                 centred label sat under the station the branch leaves and ran
+                 into its name. */
+              `<text class="sl-branch-label" x="${(ex + away * 6 * wide).toFixed(1)}" y="${(ey + 20).toFixed(1)}" text-anchor="${joins ? 'end' : 'start'}">` +
+              `${label}</text>`;
+          }).join('') +
+          `<text class="sl-lane-label" x="${X0}" y="${laneY(true) - (oneWay ? 46 : 34)}" text-anchor="start">→ towards ${esc(towardsFar)}</text>` +
+          (oneWay ? '' : `<text class="sl-lane-label" x="${X1}" y="${laneY(false) + 112}" text-anchor="end">← towards ${esc(towardsNear)}</text>`) +
           corridor.map((s, i) => {
             const x = px(xOf(i)), home = i === homeIndex;
-            const anchor = i === 0 ? 'start' : i === n - 1 ? 'end' : 'middle';
+            /* Centred under the stop, which is where a reader looks for it;
+               pulled in at the ends only when a centred name would hang off
+               the edge of the drawing. */
+            const half = halfName(s.name);
+            const anchor = x - half < 6 ? 'start' : x + half > VB_W - 6 ? 'end' : 'middle';
+            /* One heavy ringed stop straddling both bands: it serves both
+               directions, which is what their interchange marker says. Drawn
+               Sized so it is about twice as tall as it is wide, which is
+               their double-stop proportion; the first attempt was four times
+               and came out spindly, and a circle floating in the gap between
+               the bands read as a hole rather than a node. */
+            const r = home ? 19 : 16;
             return `<g class="sl-station${home ? ' sl-station-home' : ''}">` +
-              `<circle cx="${x}" cy="${RAIL_Y}" r="${home ? 9 : 6}"/>` +
-              `<text x="${x}" y="${RAIL_Y + LANE + 49 + rows[i] * 19}" text-anchor="${anchor}">${esc(s.name)}</text></g>`;
+              `<rect class="sl-stop" x="${(x - r * wide).toFixed(1)}" y="${RAIL_Y - laneSpan - r}" ` +
+                `width="${(2 * r * wide).toFixed(1)}" height="${2 * (laneSpan + r)}" ` +
+                `rx="${(r * wide).toFixed(1)}" ry="${r}"/>` +
+              `<text x="${x}" y="${RAIL_Y + LANE + 78 + rows[i] * 19}" text-anchor="${anchor}">${esc(s.name)}</text></g>`;
           }).join('');
         svg.appendChild(stations);
-        const layer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-        layer.setAttribute('class', 'sl-trains');
+        let layer = svg.querySelector('.sl-trains');
+        if (!layer) {
+          layer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+          layer.setAttribute('class', 'sl-trains');
+        }
         svg.appendChild(layer);
       }
       const trains = svg.querySelector('.sl-trains');
@@ -730,7 +927,8 @@
         return any;
       };
 
-      const placed = [];
+      const nowMs = now.getTime();
+      let placed = [];
       /*
         A GPS fix beats an estimate, so a train that reports its position is
         drawn where it says it is, at the speed it says it is doing. The
@@ -752,13 +950,50 @@
         const j = journeys.get(id), m = memory.get(id);
         if (!m) continue;
         const forward = cfg.directionCode === null || m.directionCode === cfg.directionCode;
+        /* A one-way board is not interested in the other carriageway. */
+        if (oneWay && !forward) continue;
+
+        /*
+          A line that leaves this one, or joins it, is not on the main band
+          either side of its junction - it is on the curve that peels away.
+          Drawn there, a line 43 train visibly turns off at Odenplan instead
+          of simply ceasing to exist, and a line 41 train comes in off the
+          Märsta curve instead of appearing beside Upplands Väsby out of
+          nowhere. Both are the same sum: how far, in time, the train is from
+          the junction.
+        */
+        const br = branchOf.get(m.line);
+        const jt = br ? m.times[br.index] : null;
+        if (br && jt) {
+          const off = (br.joins ? jt - nowMs : nowMs - jt) / 1000;
+          if (off > 0) {
+            if (off > BRANCH_S) continue;         // past the end of the stub
+            const curve = svg.querySelector(`[data-branch="${br.line}"]`);
+            if (curve && curve.getTotalLength) {
+              const pt = curve.getPointAtLength((off / BRANCH_S) * curve.getTotalLength());
+              const smp = j ? j.sample : null;
+              const dly = smp ? smp.delayMin : 0;
+              placed.push({
+                id: 'br:' + id, x: pt.x, branchY: pt.y, forward, standing: false,
+                approaching: null, number: trainNumberOf(id), line: m.line,
+                label: br.joins ? `joining the line at ${corridor[br.index].name}`
+                                : `leaving the line at ${corridor[br.index].name}`,
+                kmh: null, delay: dly,
+                punctual: smp && CANCELLED.has(smp.state) ? 'cancel'
+                  : dly >= 2 ? 'late' : dly <= -2 ? 'early' : smp ? 'ontime' : 'unknown',
+                dest: m.destination || '', live: false,
+              });
+              continue;
+            }
+          }
+        }
         const states = (j ? j.stops : []).map((d) => (d ? d.state : ''));
         const where = locate(m.times, states, now, runBetween, forward ? FORWARD : REVERSE);
         /* Found by number, so this is this journey's own train or nothing. */
         const fix = byNumber.get(trainNumberOf(id)) || null;
         if (!where && !fix) continue;
         const sample = j ? j.sample : null;
-        let x, kmh = null, standing = false, approaching = null, label;
+        let x, kmh = null, standing = false, approaching = null, label, bound = null, approachAt = null;
         if (fix) {
           /* Identity, not proximity, so the fix is believed over the estimate
              even where the forecasts still have the train approaching: it is
@@ -773,7 +1008,14 @@
           label = fix.standing ? 'standing' : 'position reported by the train';
         } else if ('approaching' in where) {
           if (where.secs > 20 * 60 || where.approaching === homeIndex) continue;
-          x = px(xOf(where.approaching)) + (forward ? -34 : 34);
+          /* Short of the station it is approaching, on the side it is coming
+             from, and clear of the stop marker rather than sitting on top of
+             it - a train that has not arrived must not be drawn at the
+             platform, still less past it. */
+          /* Where exactly is settled below, once all the trains waiting for
+             this station are known and can be queued in arrival order. */
+          approachAt = where.approaching;
+          x = px(xOf(where.approaching));
           approaching = where.secs;
           label = `due at ${corridor[where.approaching].name} in ${Math.max(1, Math.round(where.secs / 60))} min`;
         } else if ('at' in where) {
@@ -794,35 +1036,140 @@
         const punctual = sample && CANCELLED.has(sample.state) ? 'cancel' : delay >= 2 ? 'late' : delay <= -2 ? 'early' : sample ? 'ontime' : 'unknown';
         placed.push({ id: fix ? 'gps:' + fix.id : 'fc:' + id, x, forward, standing, approaching,
           label, kmh, delay, punctual, number: trainNumberOf(id),
+          minX: bound && bound.min, maxX: bound && bound.max, approachAt,
           line: m.line, dest: m.destination || (forward ? farEnd : nearEnd), live: !!fix });
       }
 
       /* Fixes nothing on the board accounts for - a line the departure list
          does not cover, or a train between two of our journeys - are drawn on
          their own, with what the feed knows and nothing it does not. */
-      for (const v of live) {
-        if (claimed.has(v.id)) continue;
-        /* Trafikverket carries every train on the rails, so these are the
-           ones this board's departure lists do not cover: SJ, Mälartåg,
-           Upptåget, freight. That is the answer to whether the track is busy,
-           and it is why the position source matters - a road vehicle could
-           never appear here.
+      /*
+        Trafikverket carries every train on the rails, so a fix that matches no
+        departure is a real train - SJ, Mälartåg, Upptåget, freight - and these
+        used to be drawn, numbered rather than named, as an answer to whether
+        the track was busy.
 
-           Their line and destination are genuinely unknown; the train number
-           is not, so the label says that and which way it is running. Naming
-           the end of the drawn line as the destination would be inventing
-           one. */
-        placed.push({ id: 'gps:' + v.id, x: px(v.u), forward: v.forward, standing: v.standing,
-          approaching: null, label: v.standing ? 'standing' : 'position reported by the train',
-          kmh: v.kmh, delay: 0, punctual: 'unknown', line: null, number: v.number,
-          dest: null, heading: v.forward ? farEnd : nearEnd, live: true });
+        They are not drawn any more. A chip reading "7856" next to one reading
+        "40" invites the reader to work out what it is, and there is no answer
+        on the board: the position feed carries no line and no headsign. The
+        diagram is for the pendeltåg, and an unmatched fix is left out rather
+        than shown as a puzzle. `lines` decides which count.
+      */
+
+      /* The gap that counts as overprinting is the width of a chip plus a
+         little air, not a fixed number: the chips are drawn in stretched
+         units, so on a narrow screen they occupy more than twice the viewBox
+         width they do on a wide one, and a constant would let them overlap
+         exactly where there is least room. */
+      /*
+        Trains too close together used to be stacked - one drawn further from
+        the rail than its neighbour. That is gone. Two trains on a line are
+        one after the other, not one above the other, so instead of moving a
+        train off the rail its position is nudged along it until the chips
+        clear each other.
+
+        The nudge costs a little truth about where a train is, and buys back
+        the order they are actually in, which is the thing a reader is trying
+        to see. Order is never changed: the sweep only ever pushes a train
+        away from the one behind it, so two trains cannot swap places.
+
+        It replaces a stacking rule and then a second, steadier stacking rule,
+        both of which had trains hopping between rows as gaps opened and
+        closed. There are no rows left to hop between.
+      */
+      /* The chip, plus air. There is no longer a chevron hanging off its
+         leading edge to leave room for. */
+      const minGap = 28 * wide + 8;
+      /* A few units of air at each end, so a chip parked at the far edge of
+         the queue is beside the boundary rather than hard against it. */
+      const leftStop = halfW + 16, rightStop = VB_W - halfW - 16;
+
+      /*
+        Trains still to arrive queue up outside the station, in the order they
+        will get there - the next one nearest the platform - and never on it.
+
+        Laying them out here rather than one at a time is the point. Each was
+        placed at its station's own position, so they all started on the same
+        spot; the sweep then spread them out in whatever order they happened to
+        come out of the map, and at the first station on the board, where there
+        is no room to the left, it spread them *rightwards across the platform*.
+        Now the queue is built in arrival order and pinned, and any train for
+        which there is genuinely no room is left off - the departure list above
+        the diagram is where the full order lives.
+      */
+      const queues = new Map();
+      for (const p of placed) {
+        if (p.approaching === null || p.approachAt == null) continue;
+        const key = p.approachAt + ':' + p.forward;
+        if (!queues.has(key)) queues.set(key, []);
+        queues.get(key).push(p);
       }
+      for (const q of queues.values()) {
+        q.sort((a, b) => a.approaching - b.approaching);   // soonest first
+        const stationX = px(xOf(q[0].approachAt));
+        /* Out along the side they are coming from. */
+        const outward = q[0].forward ? -1 : 1;
+        const clear = halfW + 19 * wide + 7;
+        /*
+          The queue is flush with the edge of the drawing, not with the
+          platform: one train waiting sits at the far end of the space kept for
+          it, and a second appears beside it on the way in, rather than the
+          first shuffling outward to make room. The reserved space then reads
+          as a siding rather than as a gap that opens and closes.
 
-      /* Within a lane, two trains close together would overprint; the later
-         one is lifted a tier further from the rail. */
-      for (const lane of [true, false]) {
-        const group = placed.filter((p) => p.forward === lane).sort((a, b) => a.x - b.x);
-        for (let i = 1; i < group.length; i++) if (group[i].x - group[i - 1].x < 48) group[i].lift = ((group[i - 1].lift || 0) + 1) % 2;
+          Order within it is still the order they will arrive - the soonest
+          nearest the platform - so the queue grows away from the station as it
+          lengthens.
+        */
+        const outerX = outward < 0 ? leftStop : rightStop;
+        const room = Math.abs((stationX + outward * clear) - outerX);
+        const slots = Math.max(0, Math.floor(room / minGap) + 1);
+        const keep = Math.min(q.length, slots);
+        q.forEach((p, i) => {
+          if (i >= keep) { p.offDrawing = true; return; }
+          const at = outerX - outward * (keep - 1 - i) * minGap;
+          p.x = at;
+          p.minX = at; p.maxX = at;   // pinned: the sweep must not shuffle these
+        });
+      }
+      placed = placed.filter((p) => !p.offDrawing);
+      for (const lane of (oneWay ? [true] : [true, false])) {
+        /* Trains on a branch are not on this band and must not be shuffled
+           along it to make room. */
+        const group = placed.filter((p) => p.forward === lane && p.branchY == null).sort((a, b) => a.x - b.x);
+        /* Left to right, opening every gap that is too small and respecting
+           any train that must not be pushed further left. */
+        for (let i = 0; i < group.length; i++) {
+          if (group[i].minX != null && group[i].x < group[i].minX) group[i].x = group[i].minX;
+          if (i > 0 && group[i].x - group[i - 1].x < minGap) group[i].x = group[i - 1].x + minGap;
+        }
+        /* Then right to left, in case that pushed the last one off the end,
+           and respecting any train that must not be pushed further right. */
+        for (let i = group.length - 1; i >= 0; i--) {
+          if (group[i].maxX != null) group[i].x = Math.min(group[i].x, Math.max(group[i].maxX, leftStop));
+          if (group[i].x > rightStop) group[i].x = rightStop;
+          if (i > 0 && group[i].x - group[i - 1].x < minGap) group[i - 1].x = group[i].x - minGap;
+        }
+        /* And once more forwards, since that pass can push off the near end.
+           A lane crowded beyond what the drawing can hold will overlap again;
+           with three or four trains to a lane it never gets there. */
+        for (let i = 0; i < group.length; i++) {
+          /* Bounded by the approach side, but never outside the drawing: the
+             earlier version applied the bound after the edge clamp and put a
+             chip 45px off the right-hand side of the panel. */
+          if (group[i].minX != null) group[i].x = Math.max(group[i].x, Math.min(group[i].minX, rightStop));
+          if (group[i].x < leftStop) group[i].x = leftStop;
+          if (i + 1 < group.length && group[i + 1].x - group[i].x < minGap) group[i + 1].x = group[i].x + minGap;
+        }
+        /* How much room each one ended up with. The chips no longer overlap,
+           but the text under them is far wider than they are - "+7 min ·
+           ~92 km/h" is three chips long - so a train with a close neighbour
+           says less rather than printing over it. */
+        for (let i = 0; i < group.length; i++) {
+          const before = i > 0 ? group[i].x - group[i - 1].x : Infinity;
+          const after = i + 1 < group.length ? group[i + 1].x - group[i].x : Infinity;
+          group[i].tight = Math.min(before, after) < 110;
+        }
       }
 
       const seenIds = new Set();
@@ -833,14 +1180,12 @@
           g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
           g.setAttribute('data-key', p.id);
           g.innerHTML = `<title></title>` +
-            `<rect class="sl-train-body" x="-20" y="-13" width="40" height="26" rx="7"/>` +
-            `<text class="sl-train-line" y="5" text-anchor="middle"></text>` +
-            `<path class="sl-train-dir"/>` +
+            `<rect class="sl-train-body" y="-12" height="24"/>` +
+            `<text class="sl-train-line" y="4" text-anchor="middle"></text>` +
             `<text class="sl-train-speed" text-anchor="middle"></text>`;
           trains.appendChild(g);
         }
-        const dir = p.forward ? 1 : -1;
-        const y = RAIL_Y - dir * (LANE + (p.lift ? LIFT : 0));
+        const y = p.branchY != null ? p.branchY : laneY(p.forward);
         g.setAttribute('transform', `translate(${p.x.toFixed(1)} ${y})`);
         g.setAttribute('class', `sl-train sl-line-${/^\d+$/.test(p.line) ? p.line : 'other'} sl-${p.punctual}`
           + (p.standing ? ' sl-train-standing' : '') + (p.approaching !== null ? ' sl-train-approaching' : '')
@@ -850,13 +1195,30 @@
            digits need a smaller face than a two-digit line to fit the dot. */
         g.querySelector('.sl-train-line').textContent = p.line || p.number || '';
         /* A chevron on the leading edge, pointing the way the train goes. */
-        g.querySelector('.sl-train-dir').setAttribute('d', p.forward ? 'M22,-6 L29,0 L22,6' : 'M-22,-6 L-29,0 L-22,6');
+        /* Drawn in stretched units so the chip is a chip and the chevron is
+           not a sliver - see the note on `wide` above. */
+        const bodyEl = g.querySelector('.sl-train-body');
+        bodyEl.setAttribute('x', (-halfW).toFixed(1));
+        bodyEl.setAttribute('width', (2 * halfW).toFixed(1));
+        bodyEl.setAttribute('rx', (6 * wide).toFixed(1));
+        bodyEl.setAttribute('ry', '8');
+        /* No chevron: which way a train is going is the lane it is in, and on
+           a one-way board there is only one. */
         const speed = g.querySelector('.sl-train-speed');
         speed.setAttribute('y', p.forward ? -20 : 30);
-        speed.textContent = p.approaching !== null ? `in ${Math.max(1, Math.round(p.approaching / 60))} min`
-          : p.punctual === 'late' ? `+${p.delay} min${p.kmh !== null && !p.standing ? ` · ${p.live ? '' : '~'}${p.kmh} km/h` : ''}`
-          /* A reported speed is exact; only an inferred one gets a tilde. */
-          : (p.standing || p.kmh === null ? '' : `${p.live ? '' : '~'}${p.kmh} km/h`);
+        /* "8 min", not "in 8 min": the label is wider than the chip it sits
+           under, and at three trains queued outside a station the two extra
+           characters were enough to run the labels into each other and push
+           the outermost one off the left of the drawing. 29 viewBox units
+           against 47. */
+        speed.textContent = p.approaching !== null ? `${Math.max(1, Math.round(p.approaching / 60))} min`
+          : p.punctual === 'late' ? `+${p.delay} min${p.kmh !== null && !p.standing && !p.tight ? ` · ${p.live ? '' : '~'}${p.kmh} km/h` : ''}`
+          /* A reported speed is exact; only an inferred one gets a tilde. A
+             train that is not moving says so - a blank reads as "no data",
+             which is a different thing entirely. */
+          : p.standing ? '0 km/h'
+          : (p.kmh === null || p.tight) ? ''
+          : `${p.live ? '' : '~'}${p.kmh} km/h`;
         const who = !p.line ? `Train ${p.number}, towards ${p.heading}`
           : p.dest ? `Line ${p.line} to ${p.dest}` : `Line ${p.line}, towards ${p.heading}`;
         g.querySelector('title').textContent =
@@ -865,22 +1227,25 @@
       }
       for (const g of [...trains.children]) if (!seenIds.has(g.getAttribute('data-key'))) g.remove();
 
+
       /* A train with no line contributes no key of its own; null would throw
          out of the comparator, and there is no line to name. */
       const lines = [...new Set(placed.map((p) => p.line).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'sv', { numeric: true }));
       $('sl-legend').innerHTML =
         lines.map((l) => `<span class="sl-key"><i class="sl-key-line sl-line-${/^\d+$/.test(l) ? l : 'other'}">${esc(l)}</i> line ${esc(l)}</span>`).join('') +
-        (placed.some((p) => !p.line) ? `<span class="sl-key"><i class="sl-key-line sl-line-other">#</i> other train</span>` : '') +
         `<span class="sl-key"><i class="sl-key-ring sl-ontime"></i> on time</span>` +
         `<span class="sl-key"><i class="sl-key-ring sl-late"></i> late</span>` +
         `<span class="sl-key"><i class="sl-key-ring sl-cancel"></i> cancelled</span>`
+        /* Only when one is drawn: the hollow grey chip is the one state a
+           reader meets without warning, and it needs naming. */
+        + (placed.some((p) => p.approaching !== null) ? `<span class="sl-key"><i class="sl-key-ring sl-key-approaching"></i> not here yet</span>` : '')
         + (placed.some((p) => p.live) ? `<span class="sl-key"><i class="sl-key-ring sl-key-live"></i> live GPS</span>` : '');
       const a = placed.filter((p) => p.forward && p.approaching === null).length;
       const b = placed.filter((p) => !p.forward && p.approaching === null).length;
       const coming = placed.length - a - b;
       const parts = [];
-      if (a) parts.push(`${a} towards ${farEnd}`);
-      if (b) parts.push(`${b} towards ${nearEnd}`);
+      if (a) parts.push(`${a} towards ${towardsFar}`);
+      if (b) parts.push(`${b} towards ${towardsNear}`);
       if (coming) parts.push(`${coming} approaching`);
       const liveCount = placed.filter((p) => p.live).length;
       const source = !cfg.trainsUrl
