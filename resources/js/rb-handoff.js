@@ -52,14 +52,19 @@
 
 /**
  * Origins allowed to push files into this page.
- * Same origin only by default — add a producer's origin here to let it hand
- * files over. Never use '*': any page holding a reference to this tab could
- * then replace what the user is looking at.
+ *
+ * Add a producing page's origin here to let it hand files over; an origin that
+ * is not listed gets nothing but the content-free ready ping. Never use '*':
+ * any page holding a reference to this tab could then replace what the user is
+ * looking at. Origins are compared as scheme + host + port with no trailing
+ * slash, and localhost and 127.0.0.1 are different origins — list whichever
+ * one the producer is actually served from.
  *
  * @type {string[]}
  */
 const RB_HANDOFF_ALLOWED_ORIGINS = [
-  window.location.origin
+  window.location.origin,
+  'http://localhost:8080'
 ];
 
 /** Largest handoff accepted, matching the file picker's limit. */
