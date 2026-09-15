@@ -69,6 +69,17 @@ async def main():
                           && w.isHandoffOriginAllowed(location.origin) === true;
                     })()""",
                     True, results)
+        await check(page, 'the listed dev origin is allowed, near misses are not',
+                    """(() => {
+                      const w = document.querySelector('iframe').contentWindow;
+                      return JSON.stringify([
+                        w.isHandoffOriginAllowed('http://localhost:8080'),
+                        w.isHandoffOriginAllowed('http://localhost:8081'),
+                        w.isHandoffOriginAllowed('http://127.0.0.1:8080'),
+                        w.isHandoffOriginAllowed('https://localhost:8080')
+                      ]);
+                    })()""",
+                    json.dumps([True, False, False, False], separators=(',', ':')), results)
         await check(page, 'non-HDF5 bytes are refused',
                     """(async () => {
                       const w = document.querySelector('iframe').contentWindow;
