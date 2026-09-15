@@ -398,12 +398,7 @@ async function loadFromUrl() {
     return;
   }
 
-  // Derive a file name from the URL path
-  const pathParts = parsed.pathname.split('/').filter(Boolean);
-  let fileName = pathParts.length > 0 ? decodeURIComponent(pathParts[pathParts.length - 1]) : 'remote.h5';
-  if (!/\.(h5|hdf5|he5)$/i.test(fileName)) {
-    fileName += '.h5';
-  }
+  const fileName = hdf5FileNameFromUrl(parsed);
 
   loadBtn.disabled = true;
   loadBtn.textContent = 'Loading…';
@@ -411,42 +406,7 @@ async function loadFromUrl() {
   try {
     showFileLoadTicker(0, 1, fileName);
 
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status} ${response.statusText}`);
-    }
-
-    const buffer = await response.arrayBuffer();
-    if (buffer.byteLength === 0) {
-      throw new Error('Downloaded file is empty.');
-    }
-    const h5Check = validateHdf5Buffer(buffer);
-    if (!h5Check.ok) {
-      throw new Error(`${fileName}: ${h5Check.reason}`);
-    }
-
-    await waitForH5Wasm();
-
-    const { FS, File } = window.h5wasm;
-    if (!FS || !File) throw new Error('h5wasm not ready');
-
-    loadedFileBuffers[fileName] = buffer;
-
-    const internalName = `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.h5`;
-    const data = new Uint8Array(buffer);
-    FS.writeFile('/' + internalName, data);
-    const hf = new File('/' + internalName, 'r');
-
-    // Close previous handle if replacing
-    if (loadedFiles[fileName]) {
-      try { loadedFiles[fileName].close(); } catch (_) { ignoreFailure('loadFromUrl', _); }
-    }
-
-    loadedFiles[fileName] = hf;
-    fileStates[fileName] = true;
-    if (!fileOrder.includes(fileName)) {
-      fileOrder.push(fileName);
-    }
+    await ingestHdf5FromUrl(url, 'loadFromUrl');
 
     // Pre-warm tree worker
     try { await ensureTreeWorkerReady(5000); } catch (_) { ignoreFailure('loadFromUrl', _); }
@@ -544,8 +504,6 @@ async function loadSelectedSampleData() {
   try {
     showFileLoadTicker(0, checked.length, 'Starting…');
     await waitForH5Wasm();
-    const { FS, File } = window.h5wasm;
-    if (!FS || !File) throw new Error('h5wasm not ready');
 
     for (let i = 0; i < checked.length; i++) {
       const fileName = checked[i];
@@ -554,22 +512,8 @@ async function loadSelectedSampleData() {
       const resp = await fetch('./resources/data/' + encodeURIComponent(fileName));
       if (!resp.ok) throw new Error(`HTTP ${resp.status} for ${fileName}`);
       const buffer = await resp.arrayBuffer();
-      if (buffer.byteLength === 0) throw new Error(fileName + ' is empty');
-      const h5Check = validateHdf5Buffer(buffer);
-      if (!h5Check.ok) throw new Error(fileName + ': ' + h5Check.reason);
 
-      loadedFileBuffers[fileName] = buffer;
-
-      const internalName = `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.h5`;
-      FS.writeFile('/' + internalName, new Uint8Array(buffer));
-      const hf = new File('/' + internalName, 'r');
-
-      if (loadedFiles[fileName]) {
-        try { loadedFiles[fileName].close(); } catch (_) { ignoreFailure('loadSelectedSampleData', _); }
-      }
-      loadedFiles[fileName] = hf;
-      fileStates[fileName] = true;
-      if (!fileOrder.includes(fileName)) fileOrder.push(fileName);
+      await ingestHdf5Buffer(fileName, buffer, 'loadSelectedSampleData');
     }
 
     try { await ensureTreeWorkerReady(5000); } catch (_) { ignoreFailure('loadSelectedSampleData', _); }
@@ -662,25 +606,7 @@ document.getElementById('fileInput').addEventListener('change', async (e) => {
         if (size.tooLarge) throw new Error(size.reason);
 
         const buffer = await file.arrayBuffer();
-        const h5Check = validateHdf5Buffer(buffer);
-        if (!h5Check.ok) throw new Error(h5Check.reason);
-
-        loadedFileBuffers[file.name] = buffer;
-
-        const { FS, File } = window.h5wasm;
-        if (!FS || !File) throw new Error('h5wasm not ready');
-
-        const filename = `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.h5`;
-        FS.writeFile('/' + filename, new Uint8Array(buffer));
-        const hf = new File('/' + filename, 'r');
-
-        if (loadedFiles[file.name]) {
-          try { loadedFiles[file.name].close(); } catch (_) { ignoreFailure('init@669', _); }
-        }
-
-        loadedFiles[file.name] = hf;
-        fileStates[file.name] = true;
-        if (!fileOrder.includes(file.name)) fileOrder.push(file.name);
+        await ingestHdf5Buffer(file.name, buffer, 'fileInput:load');
       } catch (err) {
         /*
           Report and carry on to the next file. This used to raise a modal,
