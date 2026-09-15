@@ -105,8 +105,20 @@ const KVOT = (() => {
     try { localStorage.setItem(THEME_KEY, theme); } catch (e) { /* ignore */ }
   }
 
+  // A page may pin the theme it falls back to when the visitor has not chosen
+  // one, by putting data-theme-default on <html>. uppsala.html and solna.html
+  // do it on a phone: there the board fills the screen and the site chrome is
+  // hidden, toggle and all, so a dark system setting produced a dark board
+  // with no way to change it. A theme the visitor has actually chosen still
+  // wins over this — it is a default, not an override.
+  function pageDefaultTheme() {
+    const pinned = document.documentElement.getAttribute('data-theme-default');
+    return pinned === 'light' || pinned === 'dark' ? pinned : null;
+  }
+
   function systemTheme() {
-    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    return pageDefaultTheme()
+      || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
   }
 
   function getPreferredTheme() {
@@ -144,8 +156,10 @@ const KVOT = (() => {
   applyTheme(getPreferredTheme());
 
   // Follow the system while the visitor has not chosen for themselves.
-  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => {
-    if (!storedTheme()) applyTheme(e.matches ? 'dark' : 'light');
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    // Back through getPreferredTheme, so a page that has pinned a default is
+    // not dragged off it the moment the system flips.
+    if (!storedTheme()) applyTheme(getPreferredTheme());
   });
 
   // ── Header ─────────────────────────────────────────────────────────────────

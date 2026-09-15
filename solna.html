@@ -17,8 +17,17 @@
     // Set the theme before first paint so dark-mode visitors get no white flash.
     (function () {
       try {
+        /* On a phone this board is the whole screen and the site chrome is
+           hidden, theme toggle included - so a dark system setting gave a dark
+           board with no way to change it. Below the same breakpoint the layout
+           uses, light is the default. A theme the visitor has chosen for
+           themselves still wins. */
+        if (matchMedia('(max-width: 560px)').matches) {
+          document.documentElement.setAttribute('data-theme-default', 'light');
+        }
         var t = localStorage.getItem('kvot-theme');
-        if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        if (!t) t = document.documentElement.getAttribute('data-theme-default')
+          || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
         document.documentElement.setAttribute('data-theme', t);
       } catch (e) { /* storage unavailable — site.js will apply the default */ }
     })();
