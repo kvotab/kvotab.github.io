@@ -774,3 +774,37 @@ cache-busted but its stylesheet and script are not, and Chrome will happily
 serve the previous run's `sl-board.js` against the current `sl-board.css` -
 which produced one genuinely confusing failure where the synthetic cell checks
 passed and the live clock still jittered. New CSS, old JS.
+
+## test-chrome-theme-default.py
+
+Which theme a page starts in, given the system setting and what is stored.
+
+    python3 -m http.server 8765 --bind 127.0.0.1
+    "$CHROME" --headless=new --remote-debugging-port=9222 --user-data-dir=/tmp/p
+    python3 resources/tests/site/test-chrome-theme-default.py
+
+uppsala.html and solna.html fill the screen on a phone and hide the site
+chrome, theme toggle included - so a visitor whose phone is set to dark got a
+dark board and no way out of it. Below the layout's own 560px breakpoint those
+two pages pin light as the **default**, by putting `data-theme-default` on
+`<html>`; `site.js` falls back to that instead of the system when nothing is
+stored.
+
+A default is not an override, and that distinction is what the file is really
+testing. Nine rows: the phone case in both pages, a light system (unchanged), a
+desktop-width board (follows the system again), two other pages (untouched),
+and a stored choice beating the pinned default in both directions. A change
+that fixes the phone by breaking any of those cannot pass.
+
+Two things it does deliberately rather than conveniently:
+
+- the system setting is **emulated** with `Emulation.setEmulatedMedia`, not
+  taken from whatever the machine running the test happens to be set to;
+- `localStorage` is written with `Page.addScriptToEvaluateOnNewDocument`, since
+  each page decides its theme in a `<head>` snippet and a value written after
+  load would be read far too late to matter.
+
+The inline snippet and `site.js` both have to agree, because both run: the
+snippet sets the attribute before first paint to avoid a flash, and `site.js`
+re-applies `storedTheme() || systemTheme()` afterwards. Getting one right and
+not the other looks like it works until the page finishes loading.
