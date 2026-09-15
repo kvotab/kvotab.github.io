@@ -142,12 +142,19 @@
   --tl-band-b: #fff199;   /* yellow, the lane coming back */
   --tl-stop: #ffffff;
   --tl-chip: #cec6ba;   /* an unnamed train: clear of the stop's white */
-  /* A branch is a thick diagonal and carries far more ink than a chip of the
-     same colour does, so it takes a tint of its line rather than the line
-     itself - #862699 and #6f1a80 at full strength dominated a diagram whose
-     own lines are pastels. */
-  --tl-branch-41: #cb9ad9;
-  --tl-branch-43: #ac72c2;
+  /*
+    The other lines are context, not subject. They are on the diagram to show
+    how busy the track is and whether something ahead is running late enough to
+    matter to a line 40 train - so they are drawn in greys, and line 40 keeps
+    the only real colour on the board.
+
+    Their punctuality ring stays green or red: whether they are delayed is the
+    whole reason they are worth drawing.
+  */
+  --tl-quiet-41: #e7e2da;
+  --tl-quiet-43: #d3cbc0;
+  /* A line 40 not here yet: its own beige, watered down. */
+  --tl-wait-40: #fbe6d1;
 }
 [data-theme="dark"] {
   /* Those pastels are built for a white page; at full strength on a dark one
@@ -157,9 +164,9 @@
   --tl-band-b: #7d7040;
   --tl-stop: #1c1611;
   --tl-chip: #4d4339;
-  /* Lighter than the band they leave, rather than lighter than white. */
-  --tl-branch-41: #b98ecb;
-  --tl-branch-43: #a071b4;
+  --tl-quiet-41: #7c7266;
+  --tl-quiet-43: #635a50;
+  --tl-wait-40: #5d4631;
 }
 
 /* No side gutter: the drawing runs to the panel's own edge, so a line that
@@ -179,8 +186,8 @@
    than an annotation. Rounded only at the far end - the near end is under the
    stop marker. */
 .sl-branch { fill: none; stroke-width: 20; stroke-linecap: round; }
-.sl-branch-41 { stroke: var(--tl-branch-41); }
-.sl-branch-43 { stroke: var(--tl-branch-43); }
+.sl-branch-41 { stroke: var(--tl-quiet-41); }
+.sl-branch-43 { stroke: var(--tl-quiet-43); }
 .sl-branch-label { fill: var(--tl-ink); font-size: 13px; font-weight: 750; }
 /* One marker across both bands: the stop serves both directions. */
 .sl-stop { fill: var(--tl-stop); stroke: var(--tl-ink); stroke-width: 5.5; }
@@ -204,11 +211,11 @@
    no coloured type. Line 40 keeps the site's own beige so the board still
    reads as part of kvotab.se. */
 .sl-line-40 .sl-train-body { fill: var(--color-kvot-bright); } .sl-line-40 .sl-train-line { fill: var(--tl-ink); }
-/* Not the band colours: a chip rides on its own band, so a line 41 chip in
-   the band's own lilac disappeared into it. These are Trafiklab's purples,
-   the one part of their palette dark enough to need white lettering. */
-.sl-line-41 .sl-train-body { fill: #862699; } .sl-line-41 .sl-train-line { fill: #fff; }
-.sl-line-43 .sl-train-body { fill: #6f1a80; } .sl-line-43 .sl-train-line { fill: #fff; }
+/* Grey, and deliberately dull: these are the trains around the one the reader
+   came for. They still need to be told apart from the band they ride and from
+   each other, which two steps of the same warm grey do. */
+.sl-line-41 .sl-train-body { fill: var(--tl-quiet-41); } .sl-line-41 .sl-train-line { fill: var(--tl-ink); }
+.sl-line-43 .sl-train-body { fill: var(--tl-quiet-43); } .sl-line-43 .sl-train-line { fill: var(--tl-ink); }
 .sl-line-other .sl-train-body { fill: var(--tl-chip); } .sl-line-other .sl-train-line { fill: var(--tl-ink); }
 .sl-ontime .sl-train-body { stroke: #3f8b55; }
 .sl-late .sl-train-body { stroke: #d84a43; stroke-width: 4; }
@@ -227,6 +234,11 @@
 .sl-key-ring.sl-key-live { border-color: #3f8b55; box-shadow: 0 0 3px rgba(63,139,85,.7); }
 /* Not on the stretch yet: hollow, parked just short of its first station. */
 .sl-train-approaching .sl-train-body { fill: var(--bg-secondary) !important; stroke: var(--text-muted); stroke-dasharray: 3 3; }
+/* Except line 40, which keeps a hint of its own colour so the train the board
+   is actually about can be picked out of a queue of waiting trains. The dashed
+   grey outline still says it has not arrived. Two class names deep, so it wins
+   against the rule above without either of them needing to shout louder. */
+.sl-train-approaching.sl-line-40 .sl-train-body { fill: var(--tl-wait-40) !important; }
 .sl-train-approaching .sl-train-line { fill: var(--text-secondary) !important; }
 /* A train the board cannot name shows its number instead of a line, and a
    four-digit number needs a smaller face than a two-digit line to fit. */
@@ -237,8 +249,8 @@
 .sl-key-line { display: inline-flex; align-items: center; justify-content: center; min-width: 26px; height: 18px; padding: 0 5px;
   border-radius: 5px; font-size: .7rem; font-weight: 800; font-style: normal; }
 .sl-key-line.sl-line-40 { background: var(--color-kvot-bright); color: var(--tl-ink); }
-.sl-key-line.sl-line-41 { background: #862699; color: #fff; }
-.sl-key-line.sl-line-43 { background: #6f1a80; color: #fff; }
+.sl-key-line.sl-line-41 { background: var(--tl-quiet-41); color: var(--tl-ink); }
+.sl-key-line.sl-line-43 { background: var(--tl-quiet-43); color: var(--tl-ink); }
 .sl-key-line.sl-line-other { background: var(--tl-chip); color: var(--tl-ink); box-shadow: inset 0 0 0 2px var(--tl-ink); }
 .sl-key-ring { display: inline-block; width: 14px; height: 14px; border-radius: 5px; border: 3px solid; background: var(--bg-surface); }
 .sl-key-ring.sl-ontime { border-color: #3f8b55; }

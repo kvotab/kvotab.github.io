@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>HDF5 handoff — producer demo</title>
+<style>
+  body { font: 14px/1.5 system-ui, sans-serif; margin: 0; padding: 2rem; max-width: 60rem; }
+  h1 { font-size: 1.3rem; }
+  button { font: inherit; padding: .5rem .9rem; margin: 0 .4rem .6rem 0; cursor: pointer; }
+  #status { padding: .6rem .8rem; background: #f2f2f2; border-left: 3px solid #999; white-space: pre-wrap; }
+  iframe { width: 100%; height: 34rem; border: 1px solid #ccc; margin-top: 1rem; }
+  code { background: #f2f2f2; padding: 0 .2em; }
+</style>
+</head>
+<body>
+
+<h1>Handing an in-memory HDF5 file to the browser page</h1>
+
+<p>
+  This page stands in for a page that <em>produces</em> HDF5 data. It fetches a
+  sample file into an <code>ArrayBuffer</code> — pretend it built those bytes
+  itself — and hands them to <code>rb.html</code> without ever writing a file
+  to disk.
+</p>
+
+<p>
+  <button id="btnPost">Open in a new tab (postMessage)</button>
+  <button id="btnBlob">Open in a new tab (blob URL)</button>
+  <button id="btnFrame">Open in an iframe below (postMessage)</button>
+</p>
+
+<div id="status">Ready.</div>
+<div id="frameHost"></div>
+
+<script>
+/*
+  Where rb.html lives, relative to this page, and the origin the handoff is
+  expected to come from. Both pages are same-origin here; for a cross-origin
+  producer, RB_HANDOFF_ALLOWED_ORIGINS in rb-handoff.js must list this origin.
+*/
+const RB_URL = '../../../rb.html';
+const SAMPLE = '../../data/SFR_FSAR_CCP14.h5';
+const RB_ORIGIN = location.origin;
+
+const statusEl = document.getElementById('status');
+function say(msg) {
+  statusEl.textContent = msg;
+  console.log('[producer]', msg);
+}
+
+/** Fetch the sample file. Stands in for generating HDF5 bytes in the page. */
+async function buildHdf5Bytes() {
+  const resp = await fetch(SAMPLE);
+  if (!resp.ok) throw new Error(`HTTP ${resp.status} fetching the sample file`);
+  return await resp.arrayBuffer();
+}
+
+/**
+ * Hand a buffer to an rb.html window once it says it is ready.
+ * The handshake matters: the target is not listening when it is first opened.
+ *
+ * @param {Window} target - The rb.html window or iframe contentWindow
+ * @param {string} name - Display name for the file
+ * @param {ArrayBuffer} buffer - Transferred, so it is emptied here
+ * @returns {Promise<string[]>} Names rb.html reports having opened
+ */
+function handOver(target, name, buffer) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      window.removeEventListener('message', onMessage);
+      reject(new Error('rb.html never answered'));
+    }, 30000);
+
+    function onMessage(e) {
+      if (e.origin !== RB_ORIGIN || !e.data || typeof e.data !== 'object') return;
+
+      if (e.data.kvot === 'rb-ready') {
+        say('rb.html is ready — transferring ' + (buffer.byteLength / 1048576).toFixed(1) + ' MB…');
+        target.postMessage({ kvot: 'rb-open', name, buffer }, RB_ORIGIN, [buffer]);
+        return;
+      }
+      if (e.data.kvot === 'rb-opened') {
+        clearTimeout(timer);
+        window.removeEventListener('message', onMessage);
+        resolve(e.data.names || []);
+      }
+      if (e.data.kvot === 'rb-error') {
+        clearTimeout(timer);
+        window.removeEventListener('message', onMessage);
+        reject(new Error(e.data.message || 'handoff refused'));
+      }
+    }
+
+    window.addEventListener('message', onMessage);
+  });
+}
+
+/** Open rb.html in a new tab and push the bytes into it. */
+async function sendToNewTab() {
+  /*
+    window.open runs before the await so it stays inside the click gesture;
+    a popup opened after an await is blocked.
+  */
+  const target = window.open(
+    RB_URL + '#handoff=' + encodeURIComponent(location.origin), '_blank');
+  if (!target) { say('Popup blocked — allow popups for this origin.'); return; }
+
+  try {
+    const buffer = await buildHdf5Bytes();
+    const names = await handOver(target, 'produced-in-memory.h5', buffer);
+    say('Opened in the new tab: ' + names.join(', '));
+  } catch (err) {
+    say('Failed: ' + err.message);
+  }
+}
+
+/** Open rb.html in a new tab pointed at a blob: URL of the same bytes. */
+async function sendViaBlobUrl() {
+  const target = window.open('', '_blank');
+  if (!target) { say('Popup blocked — allow popups for this origin.'); return; }
+
+  try {
+    const buffer = await buildHdf5Bytes();
+    const blobUrl = URL.createObjectURL(new Blob([buffer], { type: 'application/x-hdf5' }));
+    target.location = RB_URL + '?url=' + encodeURIComponent(blobUrl);
+    say('Sent as a blob: URL. This tab must stay open — the URL dies with it.');
+    /*
+      Revoked late: rb.html fetches it on load, and revoking before that fetch
+      completes makes the URL unresolvable.
+    */
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 120000);
+  } catch (err) {
+    say('Failed: ' + err.message);
+  }
+}
+
+/**
+ * Same handshake, into an iframe instead of a tab — no popup involved.
+ * Exposed for the automated test as well as the button.
+ *
+ * @returns {Promise<string[]>} Names rb.html reports having opened
+ */
+async function sendToIframe() {
+  const host = document.getElementById('frameHost');
+  host.innerHTML = '';
+  const frame = document.createElement('iframe');
+  frame.src = RB_URL + '#handoff=' + encodeURIComponent(location.origin);
+  host.appendChild(frame);
+
+  const buffer = await buildHdf5Bytes();
+  const names = await handOver(frame.contentWindow, 'produced-in-memory.h5', buffer);
+  say('Opened in the iframe: ' + names.join(', '));
+  return names;
+}
+window.sendToIframe = sendToIframe;
+
+document.getElementById('btnPost').addEventListener('click', sendToNewTab);
+document.getElementById('btnBlob').addEventListener('click', sendViaBlobUrl);
+document.getElementById('btnFrame').addEventListener('click', () => {
+  sendToIframe().catch(err => say('Failed: ' + err.message));
+});
+</script>
+</body>
+</html>

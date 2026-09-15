@@ -35,6 +35,20 @@ enabling/disabling/removing a file, and the rejection of malformed input.
 fire exactly once. It also checks that an unknown action is reported, that a
 throwing handler is caught, and that the failure banner appears.
 
+`test-handoff.py` covers the in-memory handoff — another page opening a file
+here without it ever being saved to disk. It drives both transports (the
+postMessage handshake and a `?url=` blob link) and the guards that stop an
+unwanted file getting in: a disallowed origin, bytes that are not HDF5, an
+empty buffer, a name carrying path separators, and a page opened without the
+`#handoff` hash, which must not listen at all. Run it directly:
+
+    python3 test-handoff.py
+
+It drives `handoff-demo.html`, which stands in for a page that produces HDF5
+data. That page is also worth opening by hand — its three buttons show the
+handoff into a new tab, into a blob URL, and into an iframe — and its source is
+the copy-paste starting point for a real producer.
+
 ## Known noise
 
 Two fields vary by ±1 between runs on identical code:

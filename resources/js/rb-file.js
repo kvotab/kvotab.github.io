@@ -244,3 +244,109 @@ function refreshInfoAndChart() {
 }
 
 
+
+/* ==========================================================================
+   4b. BUFFER INGESTION
+
+   Every way of getting a file into this page — the picker, a drop, the URL
+   dialog, the sample-data list, a postMessage handoff — ends in the same four
+   steps: validate the bytes, write them into the h5wasm filesystem, open a
+   handle, and register the file. That sequence used to be copied at each call
+   site; it lives here now so a new transport is a fetch plus one call.
+   ========================================================================== */
+
+/**
+ * Mount an in-memory HDF5 file and register it under a display name.
+ *
+ * Does not refresh the tree — callers usually load several files and want a
+ * single updateTabs(true) at the end.
+ *
+ * @param {string} fileName - Display name; an existing file of this name is replaced
+ * @param {ArrayBuffer} buffer - Raw file bytes
+ * @param {string} [context] - Label for failure reporting
+ * @returns {Promise<string>} The display name the file was registered under
+ * @throws {Error} If the bytes are empty, oversized, not HDF5, or h5wasm is unavailable
+ */
+async function ingestHdf5Buffer(fileName, buffer, context = 'ingestHdf5Buffer') {
+  if (!buffer || typeof buffer.byteLength !== 'number' || buffer.byteLength === 0) {
+    throw new Error(`${fileName} is empty.`);
+  }
+
+  /*
+    The picker checks size before reading, which is better because it avoids
+    the read entirely. This is the backstop for the transports that hand over
+    bytes already in memory, where there is nothing to check beforehand.
+  */
+  if (buffer.byteLength > KVOT_FILE_SIZE_LIMITS.dataset) {
+    throw new Error(kvotFileTooLarge({ name: fileName, size: buffer.byteLength },
+                                     KVOT_FILE_SIZE_LIMITS.dataset).reason);
+  }
+
+  const h5Check = validateHdf5Buffer(buffer);
+  if (!h5Check.ok) throw new Error(`${fileName}: ${h5Check.reason}`);
+
+  await waitForH5Wasm();
+  const { FS, File } = window.h5wasm;
+  if (!FS || !File) throw new Error('h5wasm not ready');
+
+  loadedFileBuffers[fileName] = buffer;
+
+  const internalName = `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.h5`;
+  FS.writeFile('/' + internalName, new Uint8Array(buffer));
+  const hf = new File('/' + internalName, 'r');
+
+  if (loadedFiles[fileName]) {
+    try { loadedFiles[fileName].close(); } catch (_) { ignoreFailure(context, _); }
+  }
+
+  loadedFiles[fileName] = hf;
+  fileStates[fileName] = true;
+  if (!fileOrder.includes(fileName)) fileOrder.push(fileName);
+
+  return fileName;
+}
+
+/**
+ * Derive a display name from a URL's last path segment.
+ * blob: and data: URLs carry no meaningful name, so they get a generated one.
+ *
+ * @param {URL} parsed
+ * @returns {string} A name ending in .h5 / .hdf5 / .he5
+ */
+function hdf5FileNameFromUrl(parsed) {
+  const parts = (parsed.pathname || '').split('/').filter(Boolean);
+  let name = parts.length > 0 ? decodeURIComponent(parts[parts.length - 1]) : '';
+  if (parsed.protocol === 'blob:' || parsed.protocol === 'data:' || !name) {
+    name = 'handoff.h5';
+  }
+  if (!/\.(h5|hdf5|he5)$/i.test(name)) name += '.h5';
+  return name;
+}
+
+/**
+ * Fetch an HDF5 file over http(s) or from a blob: URL and mount it.
+ * Does not refresh the tree.
+ *
+ * @param {string} url
+ * @param {string} [context] - Label for failure reporting
+ * @returns {Promise<string>} The display name the file was registered under
+ */
+async function ingestHdf5FromUrl(url, context = 'ingestHdf5FromUrl') {
+  let parsed;
+  try {
+    parsed = new URL(url, window.location.href);
+  } catch (_) {
+    throw new Error('Invalid URL format.');
+  }
+
+  if (!['https:', 'http:', 'blob:'].includes(parsed.protocol)) {
+    throw new Error(`Unsupported URL scheme "${parsed.protocol}".`);
+  }
+
+  const fileName = hdf5FileNameFromUrl(parsed);
+  const response = await fetch(parsed.href);
+  if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}`);
+
+  const buffer = await response.arrayBuffer();
+  return ingestHdf5Buffer(fileName, buffer, context);
+}
