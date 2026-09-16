@@ -881,7 +881,7 @@
               `<text class="sl-branch-label" x="${(ex + away * 6 * wide).toFixed(1)}" y="${(ey + 20).toFixed(1)}" text-anchor="${joins ? 'end' : 'start'}">` +
               `${label}</text>`;
           }).join('') +
-          `<text class="sl-lane-label" x="${X0}" y="${laneY(true) - (oneWay ? 46 : 34)}" text-anchor="start">→ towards ${esc(towardsFar)}</text>` +
+          `<text class="sl-lane-label" x="${X0}" y="${laneY(true) - 46}" text-anchor="start">→ towards ${esc(towardsFar)}</text>` +
           (oneWay ? '' : `<text class="sl-lane-label" x="${X1}" y="${laneY(false) + 112}" text-anchor="end">← towards ${esc(towardsNear)}</text>`) +
           corridor.map((s, i) => {
             const x = px(xOf(i)), home = i === homeIndex;
@@ -993,7 +993,7 @@
         const fix = byNumber.get(trainNumberOf(id)) || null;
         if (!where && !fix) continue;
         const sample = j ? j.sample : null;
-        let x, kmh = null, standing = false, approaching = null, label, bound = null, approachAt = null;
+        let x, kmh = null, standing = false, approaching = null, label, bound = null, approachAt = null, departsIn = null;
         if (fix) {
           /* Identity, not proximity, so the fix is believed over the estimate
              even where the forecasts still have the train approaching: it is
@@ -1007,17 +1007,38 @@
           standing = fix.standing;
           label = fix.standing ? 'standing' : 'position reported by the train';
         } else if ('approaching' in where) {
-          if (where.secs > 20 * 60 || where.approaching === homeIndex) continue;
-          /* Short of the station it is approaching, on the side it is coming
-             from, and clear of the stop marker rather than sitting on top of
-             it - a train that has not arrived must not be drawn at the
-             platform, still less past it. */
-          /* Where exactly is settled below, once all the trains waiting for
-             this station are known and can be queued in arrival order. */
-          approachAt = where.approaching;
-          x = px(xOf(where.approaching));
-          approaching = where.secs;
-          label = `due at ${corridor[where.approaching].name} in ${Math.max(1, Math.round(where.secs / 60))} min`;
+          if (where.secs > 20 * 60) continue;
+          const idx = where.approaching;
+          /*
+            A train that has not reached the first station on its journey is
+            usually somewhere off the diagram, coming towards it. But where
+            that station is a terminus, it is not coming from anywhere - it
+            starts there, and in the minutes before it leaves it is standing at
+            the platform in plain sight.
+
+            Uppsala C is exactly that, and it is also this board's own station,
+            so the next departure - the one the big number at the top is
+            counting down - was being left off the diagram entirely. The list
+            said six minutes and the platform was drawn empty.
+          */
+          if (idx === (forward ? 0 : n - 1) && corridor[idx] && corridor[idx].terminus) {
+            x = px(xOf(idx));
+            standing = true;
+            departsIn = where.secs;
+            label = `at ${corridor[idx].name}, leaves in ${Math.max(1, Math.round(where.secs / 60))} min`;
+          } else {
+            /* Anywhere else, it really has not arrived. Not at the board's own
+               station, though: the list above the diagram is about those. */
+            if (idx === homeIndex) continue;
+            /* Short of the station it is approaching, on the side it is coming
+               from, and clear of the stop marker rather than sitting on top of
+               it. Where exactly is settled below, once all the trains waiting
+               for this station are known and can be queued in arrival order. */
+            approachAt = idx;
+            x = px(xOf(idx));
+            approaching = where.secs;
+            label = `due at ${corridor[idx].name} in ${Math.max(1, Math.round(where.secs / 60))} min`;
+          }
         } else if ('at' in where) {
           x = px(xOf(where.at)); standing = true; label = `at ${corridor[where.at].name}`;
         } else {
@@ -1036,7 +1057,7 @@
         const punctual = sample && CANCELLED.has(sample.state) ? 'cancel' : delay >= 2 ? 'late' : delay <= -2 ? 'early' : sample ? 'ontime' : 'unknown';
         placed.push({ id: fix ? 'gps:' + fix.id : 'fc:' + id, x, forward, standing, approaching,
           label, kmh, delay, punctual, number: trainNumberOf(id),
-          minX: bound && bound.min, maxX: bound && bound.max, approachAt,
+          minX: bound && bound.min, maxX: bound && bound.max, approachAt, departsIn,
           line: m.line, dest: m.destination || (forward ? farEnd : nearEnd), live: !!fix });
       }
 
@@ -1212,6 +1233,9 @@
            the outermost one off the left of the drawing. 29 viewBox units
            against 47. */
         speed.textContent = p.approaching !== null ? `${Math.max(1, Math.round(p.approaching / 60))} min`
+          /* Standing at its terminus with a departure time: what matters is
+             when it goes, not that it is doing nought. */
+          : p.departsIn != null ? `${Math.max(1, Math.round(p.departsIn / 60))} min`
           : p.punctual === 'late' ? `+${p.delay} min${p.kmh !== null && !p.standing && !p.tight ? ` · ${p.live ? '' : '~'}${p.kmh} km/h` : ''}`
           /* A reported speed is exact; only an inferred one gets a tilde. A
              train that is not moving says so - a blank reads as "no data",

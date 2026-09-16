@@ -69,6 +69,12 @@ STUB = r"""
       { when: later, dir: 1, dest: 'Stockholm City' },
       { when: distant, dir: 1, dest: 'Stockholm City' },
       { when: north, dir: 2, dest: 'Uppsala C' },
+      /* Southbound, leaving Uppsala C shortly, and deliberately given no
+         position: Uppsala C is a terminus, so this train is standing at the
+         platform rather than approaching from anywhere, and the diagram has to
+         show it. It used to be left off entirely - the list said six minutes
+         and the platform was drawn empty. */
+      { when: from(7), dir: 1, dest: 'Stockholm City' },
     ];
     /* A line 41 service, calling only at Upplands Väsby - which is where 41
        joins this corridor from Märsta. Due in a minute, so it should be drawn
@@ -355,6 +361,9 @@ async def main():
             forecast: document.querySelector('.sl-board').__slBoard.config.forecast,
             corridorKm: KVOT_SL.GPS_CORRIDOR_KM,
             keys: [...document.querySelectorAll('.sl-train')].map((g) => g.getAttribute('data-key')),
+            /* A train standing at its terminus waiting to leave. */
+            departing: [...document.querySelectorAll('.sl-train title')]
+              .map((t) => t.textContent).filter((t) => /leaves in \\d+ min/.test(t)),
             unnamed: document.querySelectorAll('.sl-train-unnamed').length,
             count: (hero ? 1 : 0) + rows.length,
             heroUnit: hero ? (hero.querySelector('.sl-count-small') || {}).textContent : null,
@@ -375,10 +384,17 @@ async def main():
         keys = board['keys']
         check(results, 'a fix matching a departure is drawn', 'gps:tv:2269' in keys,
               ', '.join(keys) or 'nothing drawn')
+        check(results, 'the train about to leave is drawn at its terminus',
+              len(board['departing']) >= 1,
+              '; '.join(t[:58] for t in board['departing'][:2]) or 'platform drawn empty')
         check(results, 'a fix matching nothing is left off',
               not any('9999' in k for k in keys) and board['unnamed'] == 0,
               '%d unnamed chips' % board['unnamed'])
-        check(results, 'all three departures are shown', board['count'] == 3,
+        # Four southbound services are offered within the window - in seven and
+        # twelve and forty-two minutes, and one ten hours out - and every one of
+        # them has to reach the list. At the old three-hour window the last was
+        # simply missing, which is the bug this guards.
+        check(results, 'every departure offered reaches the list', board['count'] == 4,
               '%s shown (1 hero + %s rows)' % (board['count'], board['count'] - 1))
         # A departure ten hours out is past the hour mark, so it shows a clock
         # time; whether that carries a day label depends on whether it crossed

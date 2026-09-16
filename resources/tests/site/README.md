@@ -574,6 +574,24 @@ number and nothing else), and the end margin is that sum for three, capped at
 leave five stations 88 units apart with 72-unit chips between them. As it
 stands a desktop fits three and a phone two.
 
+### The train standing at the platform
+
+A train that has not reached the first station of its journey is normally
+somewhere off the diagram, coming towards it - so it is drawn short of that
+station, or not at all if the station is the board's own. Uppsala C breaks
+both halves of that: it is a **terminus**, so a train has not come from
+anywhere, it starts there and stands at the platform for the last few minutes
+before it leaves; and it is also the board's own station, so the rule about not
+drawing what the list already covers applied too.
+
+Between them, the next departure - the very train the big countdown at the top
+is about - was left off the diagram entirely. The list said six minutes and the
+platform was drawn empty, which looks like the graphics have failed.
+
+It is now drawn standing at its terminus with the minutes to departure under
+it. The stub carries one such service with no position of its own; against the
+previous code the check reports `platform drawn empty`.
+
 ### A train that has not arrived
 
 A "not here yet" marker is parked short of the station it is due at, on the
