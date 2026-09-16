@@ -1,0 +1,828 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <script>
+    // Set the theme before first paint so dark-mode visitors get no white flash.
+    (function () {
+      try {
+        var t = localStorage.getItem('kvot-theme');
+        if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* storage unavailable — site.js will apply the default */ }
+    })();
+  </script>
+  <link rel="stylesheet" href="./resources/css/kvot.css?v=20260911">
+  <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
+  <title>Digital årsredovisning — kvot ab</title>
+  <meta name="description" content="Bygg en K2-årsredovisning ur en SIE-fil och kontrollera iXBRL-handlingen mot det Bolagsverket tittar på. Allt sker i webbläsaren — filerna lämnar aldrig datorn.">
+  <link rel="canonical" href="https://kvotab.se/arsredovisning.html">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="kvot ab">
+  <meta property="og:title" content="Digital årsredovisning — kvot ab">
+  <meta property="og:description" content="Bygg en K2-årsredovisning ur en SIE-fil och kontrollera iXBRL-handlingen mot det Bolagsverket tittar på.">
+  <meta property="og:url" content="https://kvotab.se/arsredovisning.html">
+  <meta property="og:image" content="https://kvotab.se/resources/images/kvot-logotype.png">
+  <meta name="twitter:card" content="summary">
+  <style>
+    /* Layout — same fixed-header arrangement the other tool pages use. */
+    header  { position:fixed;top:0;left:0;right:0;z-index:20;background:var(--footer-bg);box-shadow:0 2px 8px rgba(0,0,0,.12); }
+    footer  { z-index:25; }
+    body    { overflow-x:hidden; }
+    .content{ padding-top:13px;padding-bottom:48px;min-height:calc(100vh - var(--header-height) - 61px); }
+    #arsred { width:100%;max-width:1000px;margin:0 auto;padding:24px 28px 64px;box-sizing:border-box; }
+
+    #arsred h2 { font-size:1.05rem;margin:0 0 4px;color:var(--text-primary); }
+    #arsred h3 { font-size:.95rem;margin:22px 0 8px;color:var(--text-primary); }
+    #arsred h4 { font-size:.82rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;
+                 color:var(--text-muted);margin:0 0 10px; }
+    #arsred p  { color:var(--text-secondary);line-height:1.6;margin:0 0 12px; }
+    #arsred a  { color:var(--link-color); }
+    .ar-lead { font-size:1rem; }
+
+    /* Steps */
+    .ar-step { border:1px solid var(--border-color);border-radius:12px;background:var(--bg-secondary);
+               padding:20px 22px;margin:18px 0; }
+    .ar-step-head { display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:10px; }
+    .ar-step-no { font-size:.7rem;font-weight:700;letter-spacing:.09em;text-transform:uppercase;
+                  color:var(--on-bright);background:var(--color-kvot-bright);border-radius:20px;padding:3px 10px; }
+    .ar-step-note { font-size:.8rem;color:var(--text-muted);margin-left:auto; }
+
+    /* The scope banner. It says what the page cannot do, so it is the first
+       thing on the page and deliberately not styled as a decoration. */
+    .ar-scope { border:1px solid var(--color-kvot-bright);border-left-width:4px;border-radius:10px;
+                background:var(--bg-surface);padding:16px 20px;margin:18px 0 26px; }
+    .ar-scope h4 { color:var(--color-kvot-accent); }
+    .ar-scope ul { margin:0;padding-left:20px;color:var(--text-secondary);line-height:1.65;font-size:.92rem; }
+    .ar-scope li { margin-bottom:5px; }
+
+    /* Drop zone */
+    #drop-zone { border:2px dashed var(--border-color);border-radius:12px;padding:30px 20px;text-align:center;
+                 background:var(--bg-surface);transition:border-color .15s,background .15s;cursor:pointer; }
+    #drop-zone.dragging { border-color:var(--color-kvot-bright);background:var(--bg-secondary); }
+    #drop-zone p { margin:0 0 4px; }
+    #drop-zone .ar-hint { font-size:.84rem;color:var(--text-muted); }
+    #file-input { display:none; }
+
+    /* Buttons */
+    .ar-btn { padding:7px 16px;border-radius:8px;cursor:pointer;font-size:.85rem;font-weight:600;font-family:inherit;
+              color:var(--text-secondary);background:var(--bg-surface);border:1px solid var(--border-color);
+              transition:all .15s ease; }
+    .ar-btn:hover:not(:disabled) { border-color:var(--color-kvot-bright);color:var(--text-primary); }
+    .ar-btn:disabled { opacity:.4;cursor:not-allowed; }
+    .ar-btn.primary { background:var(--color-kvot-bright);color:var(--on-bright);border-color:var(--color-kvot-bright); }
+    .ar-btn:focus-visible { outline:2px solid var(--color-kvot-bright);outline-offset:2px; }
+    .ar-btn-row { display:flex;gap:8px;flex-wrap:wrap;margin-top:12px; }
+
+    /* Forms */
+    .ar-fields { display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px 20px; }
+    .ar-field label { display:block;font-size:.8rem;font-weight:600;color:var(--text-secondary);margin-bottom:5px; }
+    .ar-field input, .ar-field select, .ar-field textarea {
+      width:100%;padding:8px 11px;border:1px solid var(--border-color);border-radius:8px;font-size:.9rem;
+      color:var(--text-primary);background:var(--input-bg);box-sizing:border-box;font-family:inherit; }
+    .ar-field textarea { min-height:64px;resize:vertical; }
+    .ar-field input:focus, .ar-field select:focus, .ar-field textarea:focus {
+      outline:none;box-shadow:0 0 0 3px rgba(243,184,123,.15);border-color:var(--color-kvot-bright); }
+    .ar-field .ar-help { font-size:.76rem;color:var(--text-muted);margin-top:4px;line-height:1.45; }
+    .ar-field.wide { grid-column:1 / -1; }
+
+    /* Findings */
+    .ar-finding { display:flex;gap:10px;align-items:flex-start;padding:9px 12px;border-radius:9px;
+                  margin-bottom:6px;background:var(--bg-surface);border:1px solid var(--border-color);
+                  border-left-width:4px; }
+    .ar-finding.ar-error { border-left-color:#b4473a; }
+    .ar-finding.ar-warn  { border-left-color:#c9911f; }
+    .ar-finding.ar-info  { border-left-color:#5a7ea6; }
+    .ar-finding.ar-ok    { border-left-color:#4a8a5c; }
+    .ar-badge { flex:0 0 auto;font-size:.66rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;
+                padding:3px 8px;border-radius:20px;background:var(--bg-secondary);color:var(--text-muted);
+                margin-top:1px; }
+    .ar-error .ar-badge { color:#b4473a; }
+    .ar-warn  .ar-badge { color:#c9911f; }
+    .ar-ok    .ar-badge { color:#4a8a5c; }
+    .ar-finding-title { font-size:.9rem;color:var(--text-primary);font-weight:600;line-height:1.45; }
+    .ar-finding-detail { margin:5px 0 0;font-size:.78rem;color:var(--text-muted);white-space:pre-wrap;
+                         word-break:break-word;font-family:'SF Mono',Menlo,Monaco,monospace; }
+    .ar-empty { font-size:.88rem;color:var(--text-muted);font-style:italic; }
+    #findings-count { font-size:.8rem;color:var(--text-muted); }
+
+    /* Facts list */
+    .ar-facts { display:grid;grid-template-columns:max-content 1fr;gap:5px 16px;margin:0;font-size:.85rem; }
+    .ar-facts dt { font-weight:600;color:var(--text-muted); }
+    .ar-facts dd { margin:0;color:var(--text-primary);word-break:break-word; }
+    .ar-hash { font-size:.74rem;word-break:break-all; }
+    .ar-ok-mark  { color:#4a8a5c;font-size:.78rem;font-weight:600; }
+    .ar-bad-mark { color:#b4473a;font-size:.78rem;font-weight:600; }
+    .ar-note-inline { font-size:.78rem;color:var(--text-muted); }
+
+    code { background:var(--code-bg);color:var(--code-text);padding:1px 5px;border-radius:4px;font-size:.85em; }
+
+    .ar-optional { font-size:.66rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+                   color:var(--text-muted);background:var(--bg-secondary);border-radius:20px;
+                   padding:2px 8px;margin-left:6px; }
+    /* Del A */
+    h2.ar-part { font-size:1.25rem;margin:34px 0 2px;padding-bottom:8px;
+                 border-bottom:2px solid var(--color-kvot-bright);color:var(--text-primary); }
+    .ar-part-lead { font-size:.9rem;color:var(--text-muted);margin:0 0 4px; }
+    #bygg-drop { border:2px dashed var(--border-color);border-radius:12px;padding:30px 20px;
+                 text-align:center;background:var(--bg-surface);cursor:pointer;
+                 transition:border-color .15s,background .15s; }
+    #bygg-drop.dragging { border-color:var(--color-kvot-bright);background:var(--bg-secondary); }
+    #bygg-drop p { margin:0 0 4px; }
+    #bygg-file-input { display:none; }
+    #bygg-kalla, #bygg-resultat { border:1px solid var(--border-color);border-radius:9px;
+                                  padding:14px 16px;background:var(--bg-surface); }
+    #arsred ul.ar-problem { margin:10px 0;padding-left:20px;color:#b4473a;font-size:.84rem;
+                            line-height:1.6; }
+    #arsred ul.ar-info-list { color:var(--text-secondary); }
+    table.bygg-konton select { width:100%;max-width:300px;padding:3px 6px;font-size:.8rem;
+                               font-family:inherit;border:1px solid var(--border-color);
+                               border-radius:6px;background:var(--input-bg);color:var(--text-primary); }
+    table.bygg-konton tr.bygg-okopplad td { background:color-mix(in srgb,#b4473a 9%,transparent); }
+    table.bygg-konton td:first-child { font-weight:600; }
+    table.ar-table th.belopp, table.ar-table td.belopp { text-align:right;white-space:nowrap;
+                                                         font-variant-numeric:tabular-nums; }
+    table.bygg-uppst td:first-child, table.bygg-uppst th:first-child { font-family:inherit; }
+    table.bygg-uppst th { font-weight:700;color:var(--text-primary);text-transform:none;
+                          letter-spacing:0;font-size:.84rem; }
+    #bygg-uppstallning h4 { margin:22px 0 6px; }
+    .bygg-person { display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;align-items:center; }
+    .bygg-person input { flex:1;min-width:150px;padding:7px 10px;border:1px solid var(--border-color);
+                         border-radius:8px;font-size:.88rem;font-family:inherit;
+                         background:var(--input-bg);color:var(--text-primary); }
+    .bygg-person .ar-btn { padding:5px 11px;line-height:1; }
+    #utkast-file-input { display:none; }
+    #tidigare-file-input { display:none; }
+    #tidigare-drop { border:2px dashed var(--border-color);border-radius:12px;padding:22px 18px;
+                     text-align:center;background:var(--bg-surface);cursor:pointer;
+                     transition:border-color .15s,background .15s;margin-bottom:10px; }
+    #tidigare-drop.dragging { border-color:var(--color-kvot-bright);background:var(--bg-secondary); }
+    #tidigare-drop p { margin:0 0 4px; }
+    #tidigare-resultat { border:1px solid var(--border-color);border-radius:9px;padding:12px 14px;
+                         margin:10px 0;background:var(--bg-surface);font-size:.88rem; }
+    table.tidigare td:first-child { width:2em;text-align:center; }
+    table.tidigare input[type=checkbox] { width:15px;height:15px;accent-color:var(--color-kvot-bright); }
+    table.tidigare td { font-family:inherit; }
+    table.tidigare tr.tidigare-notering td { color:var(--text-muted);font-size:.82rem; }
+
+    /* Källmärkning. Färgen är en vink, texten är beskedet — märkningen får
+       inte bara vara en färg, eftersom den då försvinner för den som inte
+       skiljer dem åt. */
+    .ar-kalla { display:inline-block;font-size:.68rem;font-weight:600;letter-spacing:.03em;
+                padding:1px 7px;border-radius:20px;margin:0 0 5px;
+                border:1px solid var(--border-color);background:var(--bg-secondary);
+                color:var(--text-muted); }
+    .ar-field > .ar-kalla { margin-top:-2px; }
+    .ar-kalla[data-kalla="bokforing"] { border-color:#4a8a5c;color:#4a8a5c; }
+    .ar-kalla[data-kalla="harlett"],
+    .ar-kalla[data-kalla="beraknat"] { border-color:#5a7ea6;color:#5a7ea6; }
+    .ar-kalla[data-kalla="fjolaret-taggat"] { border-color:#7a6aa8;color:#7a6aa8; }
+    .ar-kalla[data-kalla="fjolaret-text"] { border-color:#c9911f;color:#c9911f; }
+    .ar-kalla[data-kalla="utkast"] { border-color:var(--text-muted); }
+    .ar-kalla[data-kalla="forval"] { border-style:dashed; }
+    .ar-kalla[data-kalla="manuellt"] { border-color:var(--color-kvot-bright);
+                                       color:var(--color-kvot-accent); }
+    .ar-kalla-legend { font-size:.8rem;color:var(--text-muted);line-height:2.1;
+                       margin:0 0 14px; }
+
+    /* Obligatoriskt. Markeringen sitter på etiketten och inte bara på fältet,
+       så att den syns också när fältet är ifyllt — den säger vad som krävs,
+       inte vad som fattas. Det som fattas får sin egen markering när man
+       försöker skriva ut handlingen. */
+    .ar-field:has([data-kravs]) > label::after { content:' *';color:#b4473a;font-weight:700; }
+    #arsred [data-kravs].saknas { border-color:#b4473a;
+                                  box-shadow:0 0 0 3px color-mix(in srgb,#b4473a 12%,transparent); }
+    .ar-kravs-not { font-size:.8rem;color:var(--text-muted);margin:0 0 14px; }
+    .ar-kravs-not b { color:#b4473a; }
+    .ar-lank { background:none;border:none;padding:0 0 0 4px;font:inherit;font-size:.8rem;
+               color:var(--link-color);text-decoration:underline;cursor:pointer; }
+    .ar-lank:hover { color:var(--color-kvot-accent); }
+    /* Fälten själva bär bara en smal markering, så att formuläret inte blir
+       randigt. Regeln gäller kontrollerna, inte förklaringsradens egna
+       etiketter — de har också data-kalla, men är inte fält. */
+    #arsred input[data-kalla], #arsred textarea[data-kalla],
+    #arsred select[data-kalla] { border-left-width:3px; }
+    #arsred input[data-kalla="bokforing"], #arsred textarea[data-kalla="bokforing"],
+    #arsred select[data-kalla="bokforing"] { border-left-color:#4a8a5c; }
+    #arsred [data-kalla="harlett"], #arsred [data-kalla="beraknat"] { border-left-color:#5a7ea6; }
+    #arsred [data-kalla="fjolaret-taggat"] { border-left-color:#7a6aa8; }
+    #arsred [data-kalla="fjolaret-text"] { border-left-color:#c9911f; }
+    #arsred [data-kalla="manuellt"] { border-left-color:var(--color-kvot-bright); }
+    table.bygg-flerar input { width:100%;padding:5px 7px;font-size:.82rem;font-family:inherit;
+                              border:1px solid var(--border-color);border-radius:6px;
+                              background:var(--input-bg);color:var(--text-primary);box-sizing:border-box; }
+    table.bygg-flerar td { padding:4px 6px; }
+    table.bygg-flerar td:first-child { font-family:inherit; }
+    .ar-utkast { display:flex;gap:16px;align-items:center;flex-wrap:wrap;justify-content:space-between;
+                 border:1px solid var(--color-kvot-bright);border-left-width:4px;border-radius:10px;
+                 background:var(--bg-surface);padding:12px 16px;margin:16px 0;font-size:.9rem;
+                 color:var(--text-secondary); }
+    .ar-utkast .ar-btn-row { margin-top:0; }
+    #utkast-status { align-self:center; }
+
+    /* Reference tables */
+    .ar-table-wrap { overflow-x:auto; }
+    table.ar-table { border-collapse:collapse;font-size:.84rem;width:100%;min-width:520px; }
+    table.ar-table th, table.ar-table td { padding:7px 12px;border-bottom:1px solid var(--table-border);
+                                           text-align:left;vertical-align:top;color:var(--text-secondary); }
+    table.ar-table th { font-size:.74rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);
+                        font-weight:700; }
+    table.ar-table td:first-child { font-family:'SF Mono',Menlo,monospace;color:var(--text-primary);white-space:nowrap; }
+    table.ar-table tbody tr:nth-child(even) { background:var(--table-stripe); }
+
+    #arsred ul.ar-links { list-style:none;padding:0;margin:0;line-height:1.85;font-size:.9rem; }
+    #arsred ul.ar-links li::before { content:'→ ';color:var(--text-muted); }
+
+    @media (max-width: 640px) {
+      #arsred { padding:16px 14px 48px; }
+      .ar-step { padding:16px 14px; }
+      .ar-facts { grid-template-columns:1fr;gap:2px 0; }
+      .ar-facts dd { margin-bottom:8px; }
+    }
+  </style>
+</head>
+<body>
+<header></header>
+
+<div class="content">
+<main id="arsred">
+
+  <p class="ar-lead">
+    Bygg en K2-årsredovisning ur bokföringen och kontrollera iXBRL-handlingen innan den lämnar
+    din dator. Allt läses i webbläsaren — den här sidan är statisk och har ingen server att
+    skicka något till. Själva inlämningen sker någon annanstans, och
+    <a href="#referens">varför står längst ned</a>.
+  </p>
+
+  <div class="ar-scope">
+    <h4>Vad sidan gör — och inte gör</h4>
+    <ul>
+      <li>Den <b>bygger</b> en komplett K2-årsredovisning ur bokföringen: läser en SIE-fil,
+          kopplar BAS-kontona till taxonomins poster, räknar fram uppställningen med
+          taxonomins egna summeringar och skriver ut handlingen som iXBRL.</li>
+      <li>Den <b>märker varje fält med sin källa</b> — bokföringen, en tidigare
+          årsredovisning, en uträkning, ett förval eller din egen hand — så att den som
+          skriver under ser vad som är läst och vad som är tolkat.</li>
+      <li>Den <b>läser en tidigare årsredovisning</b> — iXBRL, Word eller PDF — och föreslår
+          det som inte står i bokföringen: verksamhetsbeskrivning, säte, redovisningsprinciper,
+          underskrifter och flerårsöversiktens äldre år.</li>
+      <li>Den <b>sparar påbörjat arbete</b> i webbläsaren medan du fyller i, och till en
+          JSON-fil att flytta mellan datorer.</li>
+      <li>Den <b>exporterar</b> handlingen till Word och PDF — läskopior för styrelsen,
+          lästa ur iXBRL-filen själv så att de inte kan säga något annat än den.</li>
+      <li>Den <b>kontrollerar</b> handlingen lokalt mot det som <code>/kontrollera</code> tittar på:
+          teckenkodning, XHTML, taxonomiingång, organisationsnummer, räkenskapsår, balansomslutning,
+          fastställelseintyg och externa beroenden. Det gäller vilken iXBRL-fil som helst, också
+          en du fått från någon annan.</li>
+      <li>Den <b>lämnar inte in åt dig, och kommer inte att göra det.</b> Bolagsverket släpper
+          bara igenom anrop från en part med tecknat avtal, som presenterar ett godkänt
+          klientcertifikat över ömsesidig TLS och ringer från en brandväggsöppnad IP-adress. En
+          webbläsare gör inget av det. Sidan slutar därför vid kontrollen i stället för att bygga
+          anrop som ändå aldrig kan skickas — <a href="#referens">vad som krävs står längst
+          ned</a>.</li>
+    </ul>
+  </div>
+
+  <h2 class="ar-part" id="del-a">Del A — Skapa handlingen</h2>
+  <p class="ar-part-lead">
+    Har du redan en iXBRL-fil från ett bokslutsprogram? Hoppa till
+    <a href="#del-b">Del B</a>. Annars byggs den här, ur bokföringen.
+  </p>
+
+  <div id="utkast-banner" class="ar-utkast" hidden></div>
+
+  <!-- ── A1. Bokföringen ───────────────────────────────────────────────── -->
+  <section class="ar-step">
+    <div class="ar-step-head">
+      <span class="ar-step-no">A1</span>
+      <h2>Bokföringen</h2>
+      <span class="ar-step-note">läses lokalt</span>
+    </div>
+
+    <p>
+      En <b>SIE-fil</b> är den kortaste vägen: den bär organisationsnummer,
+      räkenskapsår, alla konton med namn och saldon för både innevarande och föregående år,
+      allt i en fil. I Spiris ligger den under export av bokföringen. Filändelsen är
+      <code>.se</code> eller <code>.si</code>, och teckenuppsättningen är oftast CP437, vilket
+      sidan hanterar.
+    </p>
+    <p>
+      <b>Spiris CSV-export</b> av balans- och resultaträkningen fungerar också — släpp båda
+      filerna i tur och ordning, så slås de ihop. Den vägen är känsligare, eftersom exporten är
+      en utskrift snarare än ett utbytesformat.
+    </p>
+
+    <div id="bygg-drop" data-on-click="bygg:pick" data-on-keydown="bygg:pick-key"
+         role="button" tabindex="0" aria-label="Välj eller släpp en SIE- eller CSV-fil">
+      <p><b>Släpp SIE-filen här</b>, eller klicka för att välja fil.</p>
+      <p class="ar-hint">Bokföringen lämnar aldrig datorn — den läses i webbläsaren, precis som
+        allt annat på den här sidan.</p>
+    </div>
+    <input type="file" id="bygg-file-input" accept=".se,.si,.sie,.csv,.txt"
+           data-on-change="bygg:file">
+
+    <div class="ar-btn-row">
+      <button type="button" class="ar-btn" data-on-click="bygg:rensa">Rensa</button>
+      <button type="button" class="ar-btn" data-on-click="utkast:spara">Spara utkast</button>
+      <button type="button" class="ar-btn" data-on-click="utkast:till-fil">Spara till fil</button>
+      <button type="button" class="ar-btn" data-on-click="utkast:oppna">Öppna utkast</button>
+      <span id="utkast-status" class="ar-note-inline"></span>
+    </div>
+    <input type="file" id="utkast-file-input" accept=".json,application/json"
+           data-on-change="utkast:fil">
+    <p class="ar-note-inline">
+      Det du fyller i sparas löpande i den här webbläsaren, så ett avbrutet arbete finns kvar
+      när du kommer tillbaka. Filen är vanlig JSON och kan flyttas mellan datorer. Sidan frågar
+      inte efter några personnummer, och sparar därmed inga.
+    </p>
+
+    <div id="bygg-kalla" hidden style="margin-top:16px"></div>
+  </section>
+
+  <!-- ── A2. Kontokoppling ─────────────────────────────────────────────── -->
+  <section class="ar-step">
+    <div class="ar-step-head">
+      <span class="ar-step-no">A2</span>
+      <h2>Kontokoppling och uppställning</h2>
+      <span class="ar-step-note">granska varje rad</span>
+    </div>
+
+    <p>
+      Varje BAS-konto måste hamna på en post i årsredovisningen. Taxonomins egen
+      BAS-länkbas innehåller en enda koppling, så förslagen nedan är skrivna utifrån
+      BAS-kontoplanens struktur — en kvalificerad gissning om var pengarna hör hemma, inte ett
+      facit. Därför visas alla konton, också de som redan ser rätt ut, och varje rad går att
+      ändra. Uppställningen under uppdateras direkt.
+    </p>
+
+    <div id="bygg-koppling"></div>
+    <div id="bygg-uppstallning"></div>
+  </section>
+
+  <!-- ── A3. Innehåll ──────────────────────────────────────────────────── -->
+  <section class="ar-step">
+    <div class="ar-step-head">
+      <span class="ar-step-no">A3</span>
+      <h2>Årsredovisningens innehåll</h2>
+      <span class="ar-step-note">det bokföringen inte vet</span>
+    </div>
+
+    <p class="ar-kravs-not">
+      Fält märkta med <b>*</b> måste fyllas i för att handlingen ska gå att skriva ut. Resten är
+      frivilligt — men det som står i K2 och saknas påpekas av kontrollen i steg B2.
+    </p>
+    <p class="ar-kalla-legend">
+      Varje fält är märkt med var värdet kommer ifrån:
+      <span class="ar-kalla" data-kalla="bokforing">bokföringen</span>
+      <span class="ar-kalla" data-kalla="harlett">härlett</span>
+      <span class="ar-kalla" data-kalla="beraknat">beräknat</span>
+      <span class="ar-kalla" data-kalla="fjolaret-taggat">fjolåret, taggat</span>
+      <span class="ar-kalla" data-kalla="fjolaret-text">fjolåret, tolkat</span>
+      <span class="ar-kalla" data-kalla="utkast">utkast</span>
+      <span class="ar-kalla" data-kalla="forval">förval</span>
+      <span class="ar-kalla" data-kalla="manuellt">ifyllt av dig</span>
+      — det som är tolkat ur prosa är värt en genomläsning; det som är taggat är
+      samma värde som lämnades in i fjol.
+    </p>
+
+    <div id="tidigare-drop" data-on-click="tidigare:pick" data-on-keydown="tidigare:pick-key"
+         role="button" tabindex="0" aria-label="Välj eller släpp en tidigare årsredovisning">
+      <p><b>Släpp en tidigare årsredovisning här</b> för att fylla i det bokföringen inte vet.</p>
+      <p class="ar-hint">En <code>.xhtml</code> från en tidigare digital inlämning läses ur
+        taggarna och är därmed exakt. <code>.docx</code> och <code>.pdf</code> tolkas ur texten.
+        Filen läses i webbläsaren.</p>
+    </div>
+    <input type="file" id="tidigare-file-input" accept=".xhtml,.html,.htm,.xml,.docx,.pdf"
+           data-on-change="tidigare:fil">
+    <div id="tidigare-resultat" hidden></div>
+    <p class="ar-note-inline">
+      Det som hittas visas som förslag med sin källa — ingenting fylls i förrän du kryssar för
+      det. Verksamhetsbeskrivning, säte, redovisningsprinciper, nyckeltalsdefinitioner,
+      styrelsens yttrande, ort, antal aktier, underskrifter och flerårsöversiktens äldre år
+      brukar gå att hämta.
+    </p>
+
+    <div class="ar-fields">
+      <div class="ar-field">
+        <label for="bygg-foretagsnamn">Företagets namn</label>
+        <input type="text" id="bygg-foretagsnamn" data-kravs="1" data-on-input="bygg:falt" autocomplete="off">
+      </div>
+      <div class="ar-field">
+        <label for="bygg-orgnr">Organisationsnummer</label>
+        <input type="text" id="bygg-orgnr" data-kravs="1" data-on-input="bygg:falt" autocomplete="off"
+               placeholder="NNNNNN-NNNN">
+      </div>
+      <div class="ar-field">
+        <label for="bygg-sate">Säte</label>
+        <input type="text" id="bygg-sate" data-on-input="bygg:falt" autocomplete="off"
+               placeholder="Kommun">
+      </div>
+      <div class="ar-field">
+        <label for="bygg-avgivande">Årsredovisningen avges av</label>
+        <select id="bygg-avgivande" data-on-change="bygg:falt">
+          <option value="styrelsen">Styrelsen</option>
+          <option value="vd">Styrelsen och verkställande direktören</option>
+          <option value="likvidator">Likvidatorn</option>
+        </select>
+        <div class="ar-help">Har företaget en registrerad VD ska den mittersta väljas.
+          Hämtar du grunduppgifter i steg B4 kontrolleras valet mot registret.</div>
+      </div>
+      <div class="ar-field">
+        <label for="bygg-ar-from">Räkenskapsåret från</label>
+        <input type="date" id="bygg-ar-from" data-kravs="1" data-on-input="bygg:falt">
+      </div>
+      <div class="ar-field">
+        <label for="bygg-ar-tom">Räkenskapsåret till och med</label>
+        <input type="date" id="bygg-ar-tom" data-kravs="1" data-on-input="bygg:falt">
+      </div>
+      <div class="ar-field">
+        <label for="bygg-fg-from">Föregående år från</label>
+        <input type="date" id="bygg-fg-from" data-on-input="bygg:falt">
+      </div>
+      <div class="ar-field">
+        <label for="bygg-fg-tom">Föregående år till och med</label>
+        <input type="date" id="bygg-fg-tom" data-on-input="bygg:falt">
+      </div>
+
+      <div class="ar-field wide">
+        <label for="bygg-kommentar-flerar">Kommentar till flerårsöversikten</label>
+        <input type="text" id="bygg-kommentar-flerar" data-on-input="bygg:falt"
+               placeholder="valfritt">
+      </div>
+
+      <div class="ar-field wide">
+        <label for="bygg-verksamhet">Allmänt om verksamheten</label>
+        <textarea id="bygg-verksamhet" data-kravs="1" data-on-input="bygg:falt"
+                  placeholder="Vad företaget gör, och var."></textarea>
+        <div class="ar-help">Obligatorisk i förvaltningsberättelsen enligt K2.</div>
+      </div>
+      <div class="ar-field wide">
+        <label for="bygg-handelser">Väsentliga händelser under räkenskapsåret</label>
+        <textarea id="bygg-handelser" data-on-input="bygg:falt"
+                  placeholder="Lämnas tomt om inget väsentligt inträffat."></textarea>
+      </div>
+      <div class="ar-field wide">
+        <label for="bygg-principer">Redovisningsprinciper</label>
+        <textarea id="bygg-principer" data-kravs="1" data-on-input="bygg:falt">Årsredovisningen är upprättad i enlighet med årsredovisningslagen och BFNAR 2016:10 Årsredovisning i mindre företag.</textarea>
+      </div>
+      <div class="ar-field">
+        <label for="bygg-anstallda">Medelantalet anställda</label>
+        <input type="text" id="bygg-anstallda" data-on-input="bygg:falt" placeholder="t.ex. 1">
+      </div>
+      <div class="ar-field">
+        <label for="bygg-anstallda-fg">Medelantalet anställda, föregående år</label>
+        <input type="text" id="bygg-anstallda-fg" data-on-input="bygg:falt" placeholder="t.ex. 1">
+      </div>
+      <div class="ar-field wide">
+        <label for="bygg-nyckeltal">Nyckeltalsdefinitioner</label>
+        <textarea id="bygg-nyckeltal" data-on-input="bygg:falt">Nettoomsättning: Rörelsens huvudintäkter, fakturerade kostnader, sidointäkter samt intäktskorrigeringar.
+Resultat efter finansiella poster: Resultat efter finansiella intäkter och kostnader men före bokslutsdispositioner och skatter.
+Soliditet (%): Justerat eget kapital (eget kapital och obeskattade reserver med avdrag för uppskjuten skatt) i procent av balansomslutning.</textarea>
+        <div class="ar-help">Behövs när flerårsöversikten innehåller nyckeltal.</div>
+      </div>
+    </div>
+
+    <h3>Flerårsöversikt</h3>
+    <p class="ar-note-inline">
+      K2 vill se fyra år. De två senaste kommer ur bokföringen; de äldre skrivs in här, i
+      tusental kronor precis som de står i förra årets årsredovisning. Datumen är härledda
+      genom att flytta perioden bakåt — rätta dem om räkenskapsåret har lagts om. Lämnas de
+      tomma tas året inte med.
+    </p>
+    <div class="ar-table-wrap">
+      <table class="ar-table bygg-flerar">
+        <thead><tr><th>Period från</th><th>till och med</th>
+          <th>Nettoomsättning (tkr)</th><th>Res. efter fin. poster (tkr)</th>
+          <th>Soliditet (%)</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><input type="date" id="bygg-ar2-from" data-on-input="bygg:falt"></td>
+            <td><input type="date" id="bygg-ar2-tom" data-on-input="bygg:falt"></td>
+            <td><input type="text" id="bygg-ar2-netto" data-on-input="bygg:falt"></td>
+            <td><input type="text" id="bygg-ar2-resultat" data-on-input="bygg:falt"></td>
+            <td><input type="text" id="bygg-ar2-soliditet" data-on-input="bygg:falt"></td>
+          </tr>
+          <tr>
+            <td><input type="date" id="bygg-ar3-from" data-on-input="bygg:falt"></td>
+            <td><input type="date" id="bygg-ar3-tom" data-on-input="bygg:falt"></td>
+            <td><input type="text" id="bygg-ar3-netto" data-on-input="bygg:falt"></td>
+            <td><input type="text" id="bygg-ar3-resultat" data-on-input="bygg:falt"></td>
+            <td><input type="text" id="bygg-ar3-soliditet" data-on-input="bygg:falt"></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Förändring av eget kapital</h3>
+    <p class="ar-note-inline">
+      Matrisen räknas fram ur böckerna. Det enda som inte står där är hur mycket årsstämman
+      beslutade att dela ut under året — den siffran är det som fattas för att fjolårets
+      balanserade resultat plus fjolårets vinst ska bli årets ingående balanserade resultat,
+      och är ifylld åt dig. Har något annat rört sig över eget kapital hamnar det i samma
+      differens, och då behöver den rättas.
+    </p>
+    <div class="ar-fields">
+      <div class="ar-field">
+        <label for="bygg-utdelning-under-aret">Utdelning beslutad under året</label>
+        <input type="text" id="bygg-utdelning-under-aret" data-on-input="bygg:falt"
+               data-on-keydown="bygg:manuellt">
+      </div>
+    </div>
+
+    <h3>Resultatdisposition</h3>
+    <p class="ar-note-inline">
+      De två första raderna kommer ur balansräkningen. Skriver du in en utdelning räknas
+      det som balanseras i ny räkning om.
+    </p>
+    <div class="ar-fields">
+      <div class="ar-field">
+        <label for="bygg-disp-balanserat">Balanserat resultat</label>
+        <input type="text" id="bygg-disp-balanserat" data-on-input="bygg:falt"
+               data-on-keydown="bygg:manuellt">
+      </div>
+      <div class="ar-field">
+        <label for="bygg-disp-arets">Årets resultat</label>
+        <input type="text" id="bygg-disp-arets" data-on-input="bygg:falt"
+               data-on-keydown="bygg:manuellt">
+      </div>
+      <div class="ar-field">
+        <label for="bygg-disp-utdelning">Föreslagen utdelning</label>
+        <input type="text" id="bygg-disp-utdelning" data-on-input="bygg:falt" placeholder="0">
+      </div>
+      <div class="ar-field">
+        <label for="bygg-disp-nyrakning">Balanseras i ny räkning</label>
+        <input type="text" id="bygg-disp-nyrakning" data-on-input="bygg:falt"
+               data-on-keydown="bygg:manuellt">
+        <div class="ar-help">Till förfogande: <span id="bygg-disp-summa">—</span></div>
+      </div>
+      <div class="ar-field">
+        <label for="bygg-antal-aktier">Antal aktier</label>
+        <input type="text" id="bygg-antal-aktier" data-on-input="bygg:falt" placeholder="valfritt">
+        <div class="ar-help">Anges det räknas utdelningen om till kronor per aktie och skrivs
+          ut inom parentes, som brukligt.</div>
+      </div>
+      <div class="ar-field wide">
+        <label for="bygg-yttrande">Styrelsens yttrande om vinstutdelning</label>
+        <textarea id="bygg-yttrande" data-on-input="bygg:falt">Styrelsen anser att förslaget är förenligt med försiktighetsregeln i 17 kap. 3 § aktiebolagslagen enligt följande redogörelse: Styrelsens uppfattning är att vinstutdelningen är försvarlig med hänsyn till de krav verksamhetens art, omfattning och risk ställer på storleken på det egna kapitalet, bolagets konsolideringsbehov, likviditet och ställning i övrigt.</textarea>
+        <div class="ar-help">Tas bara med när en utdelning föreslås.</div>
+      </div>
+    </div>
+
+    <h3>Underskrift</h3>
+    <div class="ar-fields">
+      <div class="ar-field">
+        <label for="bygg-ort">Ort</label>
+        <input type="text" id="bygg-ort" data-kravs="1" data-on-input="bygg:falt" autocomplete="off">
+      </div>
+      <div class="ar-field">
+        <label for="bygg-datum">Datum</label>
+        <input type="date" id="bygg-datum" data-kravs="1" data-on-input="bygg:falt">
+      </div>
+      <div class="ar-field">
+        <label for="bygg-klart-datum">Årsredovisningens innehåll blev klart den</label>
+        <input type="date" id="bygg-klart-datum" data-on-input="bygg:falt">
+        <div class="ar-help">Lämnas fältet tomt används årsstämmans datum, och saknas även det
+          underskriftsdatumet ovan.</div>
+      </div>
+    </div>
+    <div id="bygg-underskrifter" data-kravs-grupp="1"></div>
+    <div class="ar-btn-row">
+      <button type="button" class="ar-btn" data-on-click="bygg:lagg-till-person">
+        Lägg till underskrift</button>
+    </div>
+
+    <h3>Fastställelseintyg <span class="ar-optional">efter årsstämman</span></h3>
+    <p class="ar-note-inline">
+      Intyget om att stämman fastställde räkningarna, och att den elektroniska handlingen
+      motsvarar det underskrivna originalet. Det finns inte före stämman — lämna datumet tomt
+      så utelämnas hela avsnittet, och kontrollen i steg B2 påpekar då att det saknas. Det är
+      rätt påpekande om en handling som ännu inte ska lämnas in.
+    </p>
+    <div class="ar-fields">
+      <div class="ar-field">
+        <label for="bygg-intyg-arsstamma">Årsstämmans datum</label>
+        <input type="date" id="bygg-intyg-arsstamma" data-on-input="bygg:falt">
+      </div>
+      <div class="ar-field">
+        <label for="bygg-intyg-datum">Datum för intygandet</label>
+        <input type="date" id="bygg-intyg-datum" data-on-input="bygg:falt">
+      </div>
+      <div class="ar-field">
+        <label for="bygg-intyg-tilltalsnamn">Intygarens tilltalsnamn</label>
+        <input type="text" id="bygg-intyg-tilltalsnamn" data-on-input="bygg:falt" autocomplete="off">
+      </div>
+      <div class="ar-field">
+        <label for="bygg-intyg-efternamn">Intygarens efternamn</label>
+        <input type="text" id="bygg-intyg-efternamn" data-on-input="bygg:falt" autocomplete="off">
+      </div>
+      <div class="ar-field">
+        <label for="bygg-intyg-roll">Intygarens roll</label>
+        <input type="text" id="bygg-intyg-roll" data-on-input="bygg:falt"
+               placeholder="t.ex. Styrelseledamot" autocomplete="off">
+      </div>
+    </div>
+  </section>
+
+  <!-- ── A4. Skriv ut ──────────────────────────────────────────────────── -->
+  <section class="ar-step">
+    <div class="ar-step-head">
+      <span class="ar-step-no">A4</span>
+      <h2>Skriv ut handlingen</h2>
+      <span class="ar-step-note">iXBRL, K2 2021-10-31</span>
+    </div>
+
+    <ul id="bygg-brister" class="ar-problem" hidden></ul>
+
+    <div class="ar-btn-row">
+      <button type="button" class="ar-btn primary" data-on-click="bygg:generera">
+        Generera iXBRL</button>
+      <button type="button" class="ar-btn" id="bygg-hamta" data-on-click="bygg:hamta" disabled>
+        Hämta filen</button>
+      <button type="button" class="ar-btn" id="bygg-anvand" data-on-click="bygg:anvand" disabled>
+        Granska i steg B1</button>
+      <button type="button" class="ar-btn" id="bygg-docx" data-on-click="bygg:docx" disabled>
+        Hämta Word</button>
+      <button type="button" class="ar-btn" id="bygg-pdf" data-on-click="bygg:pdf" disabled>
+        Hämta PDF</button>
+    </div>
+    <p class="ar-note-inline">
+      Word- och PDF-filerna läses ur iXBRL-handlingen, inte ur någon egen modell vid sidan av,
+      så de kan inte glida isär från den. De är läskopior — det är <code>.xhtml</code>-filen som
+      är årsredovisningen, och den som till slut lämnas in.
+    </p>
+
+    <div id="bygg-resultat" hidden></div>
+  </section>
+
+  <h2 class="ar-part" id="del-b">Del B — Granska handlingen</h2>
+  <p class="ar-part-lead">
+    Läs en iXBRL-handling och kontrollera den innan den lämnar din dator. Filen kan komma från
+    Del A, från ett bokslutsprogram, eller från vem som helst — det är samma sorts fil.
+  </p>
+
+  <!-- ── B1. Handlingen ──────────────────────────────────────────────────── -->
+  <section class="ar-step">
+    <div class="ar-step-head">
+      <span class="ar-step-no">B1</span>
+      <h2>Handlingen</h2>
+      <span class="ar-step-note">läses lokalt</span>
+    </div>
+
+    <div id="drop-zone" data-on-click="ar:pick" data-on-keydown="ar:pick-key" role="button" tabindex="0"
+         aria-label="Välj eller släpp en iXBRL-fil">
+      <p><b>Släpp årsredovisningen här</b>, eller klicka för att välja fil.</p>
+      <p class="ar-hint">En <code>.xhtml</code>- eller <code>.html</code>-fil i Inline XBRL-format,
+         teckenkodad som UTF-8.</p>
+    </div>
+    <input type="file" id="file-input" accept=".xhtml,.html,.htm,application/xhtml+xml,text/html"
+           data-on-change="ar:file">
+
+    <div class="ar-btn-row">
+      <button type="button" class="ar-btn" id="export-docx" data-on-click="ar:docx" disabled>
+        Hämta som Word</button>
+      <button type="button" class="ar-btn" id="export-pdf" data-on-click="ar:pdf" disabled>
+        Hämta som PDF</button>
+      <button type="button" class="ar-btn" data-on-click="ar:clear">Rensa</button>
+    </div>
+    <p class="ar-note-inline">
+      Exporten fungerar på vilken iXBRL-handling som helst, också en du fått från någon annan —
+      en fil från ett bokslutsprogram blir läsbar på samma villkor.
+    </p>
+
+    <div id="file-summary" hidden style="margin-top:16px"></div>
+  </section>
+
+  <!-- ── B2. Lokal kontroll ─────────────────────────────────────────────── -->
+  <section class="ar-step">
+    <div class="ar-step-head">
+      <span class="ar-step-no">B2</span>
+      <h2>Lokal kontroll</h2>
+      <span class="ar-step-note" id="findings-count"></span>
+    </div>
+    <p>
+      Kontrollerna nedan speglar vad Bolagsverkets <code>/kontrollera</code> tittar på. De är
+      inte en ersättning för den: bara API:et känner till gällande taxonomiversioner och
+      affärsregler. Att allt är grönt här betyder att filen sannolikt inte faller på något
+      uppenbart, inte att den blir godkänd.
+    </p>
+
+    <div class="ar-fields">
+      <div class="ar-field">
+        <label for="orgnr">Organisationsnummer</label>
+        <input type="text" id="orgnr" inputmode="numeric" placeholder="5569999999"
+               autocomplete="off" data-on-input="ar:recheck">
+        <div class="ar-help">Tio siffror utan bindestreck. Jämförs med numret i filen — det är
+          så en handling som hör till fel företag fastnar.</div>
+      </div>
+
+      <div class="ar-field">
+        <label for="typ">Handlingstyp</label>
+        <select id="typ" data-on-change="ar:recheck">
+          <option value="arsredovisning_komplett">arsredovisning_komplett</option>
+          <option value="arsredovisning_kompletteras">arsredovisning_kompletteras</option>
+          <option value="revisionsberattelse">revisionsberattelse</option>
+        </select>
+        <div class="ar-help"><code>komplett</code> när revisionsberättelsen ligger i samma fil
+          eller inte krävs; <code>kompletteras</code> när den kommer som en egen fil. Avgör vad
+          kontrollen av fastställelseintyget kräver.</div>
+      </div>
+    </div>
+
+    <div id="findings"></div>
+  </section>
+
+  <!-- ── Referens ──────────────────────────────────────────────────────── -->
+  <h3 id="referens">Så lämnas handlingen in</h3>
+  <p>
+    Den här sidan slutar vid kontrollen, och det är ett medvetet val. Inlämningen kräver saker
+    en webbsida inte kan ha: ett tecknat avtal med Bolagsverket, ett klientcertifikat som
+    presenteras över ömsesidig TLS, och anrop från en brandväggsöppnad IP-adress. Att bygga
+    anropsobjekt som ändå aldrig kan skickas hade sett ut som en väg framåt utan att vara det.
+  </p>
+  <p>
+    <b>Bolagsverkets egen e-tjänst tar inte emot en fil du gjort själv.</b> Deras förutsättningar
+    säger att det krävs ett <em>program som är anslutet till Bolagsverket</em> för att ladda upp
+    iXBRL-filen. Det finns alltså ingen väg där handlingen härifrån laddas upp manuellt —
+    antingen går den genom ett anslutet program, eller så ansluter du själv.
+  </p>
+  <p>
+    Att ansluta själv går till så här: mejla <code>api@bolagsverket.se</code> och be om ett
+    startmöte; avtalet tecknas därefter med en juridisk person vars verksamhetsbeskrivning är
+    relevant för uppdraget; testbädden öppnas när avtalet är undertecknat; ett
+    organisationscertifikat beställs på bolagets tiosiffriga organisationsnummer; IP-adressen
+    anmäls för brandväggsöppning; och testfilerna ska godkännas mot ett testprotokoll innan
+    produktionssättning. Det är en rimlig insats för en programvaruleverantör och en
+    oproportionerlig för ett bolag som lämnar in en årsredovisning om året.
+  </p>
+  <p>
+    Underskriften sker aldrig via API:et. När handlingen väl kommit in ligger den i företagets
+    eget utrymme och skrivs under på webben med e-legitimation av behörig företrädare.
+  </p>
+
+  <h3>Vad kontrollen tittar på</h3>
+  <p>
+    Teckenkodning och XHTML, att taxonomiingången är en av de tillåtna, att organisationsnumret
+    i filen stämmer med företaget, att räkenskapsåret är rimligt och att de dolda
+    dokumentuppgifterna finns, att fastställelseintyget är med, att balansräkningen går ihop åt
+    båda håll, och att filen inte hänger på något utanför sig själv — en schemaRef mot en lokal
+    sökväg är den vanligaste anledningen till att en fil går igenom i ett skrivbordsverktyg och
+    faller hos Bolagsverket.
+  </p>
+
+  <h3>Källor</h3>
+  <ul class="ar-links">
+    <li><a href="https://bolagsverket.se/apierochoppnadata/lamnaforetagsinformation/apifordigitalinlamningavarsredovisningochrevisionsberattelse/tekniskdokumentationfordigitalinlamningavarsredovisning.5937.html"
+           target="_blank" rel="noopener noreferrer">Teknisk dokumentation för digital inlämning av årsredovisning</a>
+        — teknisk guide, anslutningsanvisningar, aviseringar, tillämpningsanvisning för iXBRL och
+        kombinationer av taxonomirapporter</li>
+    <li><a href="https://media.bolagsverket.se/diar/services/2.1/lamnaInArsredovisning-2.1.html"
+           target="_blank" rel="noopener noreferrer">Servicespecifikation 2.1</a>
+        (<a href="https://media.bolagsverket.se/diar/services/2.1/lamnaInArsredovisning-2.1.yaml"
+            target="_blank" rel="noopener noreferrer">OpenAPI 2.0-fil</a>) — vad
+        <code>/kontrollera</code> tittar på, och därmed vad kontrollen här speglar</li>
+    <li><a href="https://bolagsverket.se/apierochoppnadata/lamnaforetagsinformation/apifordigitalinlamningavarsredovisningochrevisionsberattelse/anslutningtilltjanstenlamnainarsredovisningendigitalt.5936.html"
+           target="_blank" rel="noopener noreferrer">Anslutning till tjänsten</a>
+        — avtal, klientcertifikat, testbädd och brandväggsöppning</li>
+    <li><a href="https://bolagsverket.se/sjalvservice/etjanster/lamnainarsredovisningendigitalt/programochtjansterforattkunnaskickainarsredovisningendigitalt.1669.html"
+           target="_blank" rel="noopener noreferrer">Program och tjänster som kan skicka in
+        årsredovisningen</a> — Bolagsverkets lista över anslutna program, vilket är vägen filen
+        härifrån behöver ta</li>
+    <li><a href="https://taxonomier.se/taxonomier-k2-exempel.html"
+           target="_blank" rel="noopener noreferrer">Exempelfiler i iXBRL på taxonomier.se</a>
+        — bra att läsa in här för att se hur kontrollerna beter sig</li>
+  </ul>
+
+</main>
+</div>
+
+<div id="kvotmap"></div>
+
+<footer></footer>
+
+<script src="./resources/js/kvot-errors.js?v=20260911"></script>
+<script src="./resources/js/kvot-safe.js?v=20260911"></script>
+<script src="./resources/js/kvot-actions.js?v=20260902"></script>
+<script src="./resources/js/kvot-icons.js?v=20260902"></script>
+<script src="./resources/js/site.js?v=20260907"></script>
+<script src="./resources/js/arsred-kalla.js?v=20260916"></script>
+<script src="./resources/js/arsred-taxonomi.js?v=20260916"></script>
+<script src="./resources/js/arsred-bygg.js?v=20260916"></script>
+<script src="./resources/js/arsred-export.js?v=20260916"></script>
+<script src="./resources/js/arsred-bygg-ui.js?v=20260916"></script>
+<script src="./resources/js/arsred.js?v=20260916"></script>
+<script src="./resources/js/arsred-tidigare.js?v=20260916"></script>
+<script src="./resources/js/arsred-utkast.js?v=20260916"></script>
+<script>
+  KVOT.renderHeader('Digital årsredovisning');
+  KVOT.renderNav('arsredovisning.html');
+  KVOT.renderFooter();
+  KVOT.initMap('kvotmap');
+  KVOT_ARSRED.init();
+  KVOT_ARSRED_BYGG_UI.init();
+  KVOT_ARSRED_KALLA.init();
+  KVOT_ARSRED_TIDIGARE.init();
+  KVOT_ARSRED_UTKAST.init();
+</script>
+</body>
+</html>

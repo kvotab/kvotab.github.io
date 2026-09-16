@@ -123,6 +123,102 @@ async def main():
                     })()""",
                     0, results)
 
+        # ── progress feedback, so a slow handoff does not look like a hang ──
+        print('progress feedback')
+        await check(page, 'the tab says it is waiting before anything arrives',
+                    """(async () => {
+                      const f = document.createElement('iframe');
+                      f.src = '../../../rb.html#handoff=' + encodeURIComponent(location.origin);
+                      document.body.appendChild(f);
+                      await new Promise(r => f.addEventListener('load', r));
+                      await new Promise(r => setTimeout(r, 800));
+                      const w = f.contentWindow;
+                      const el = w.document.getElementById('fileLoadTicker');
+                      const out = {
+                        tickerVisible: !el.hidden,
+                        says: el.querySelector('.ticker-text').textContent,
+                        treeSays: w.document.getElementById('tree').textContent.trim()
+                      };
+                      window._waitFrame = f;
+                      return JSON.stringify(out);
+                    })()""",
+                    json.dumps({'tickerVisible': True,
+                                'says': 'Waiting for the other page…',
+                                'treeSays': 'Waiting for the other page to send a file…'},
+                               separators=(',', ':'), ensure_ascii=False),
+                    results)
+        await check(page, 'a producer progress report reaches the ticker',
+                    """(async () => {
+                      const f = window._waitFrame;
+                      f.contentWindow.postMessage(
+                        {kvot: 'rb-progress', text: 'Running realisations', loaded: 30, total: 100},
+                        location.origin);
+                      await new Promise(r => setTimeout(r, 400));
+                      const el = f.contentWindow.document.getElementById('fileLoadTicker');
+                      return JSON.stringify({
+                        says: el.querySelector('.ticker-text').textContent,
+                        bar: el.querySelector('.ticker-progress-bar').style.width
+                      });
+                    })()""",
+                    json.dumps({'says': 'Running realisations — 30%', 'bar': '30%'},
+                               separators=(',', ':'), ensure_ascii=False),
+                    results)
+        await check(page, 'the ticker clears once the file is open',
+                    """(async () => {
+                      const f = window._waitFrame;
+                      const buf = await (await fetch('../../data/SFR_FSAR_CCP14.h5')).arrayBuffer();
+                      const done = new Promise(res => {
+                        window.addEventListener('message', function onMsg(e) {
+                          if (e.data && e.data.kvot === 'rb-opened') {
+                            window.removeEventListener('message', onMsg); res(true);
+                          }
+                        });
+                      });
+                      f.contentWindow.postMessage({kvot: 'rb-open', name: 'progress.h5', buffer: buf},
+                                                  location.origin, [buf]);
+                      await done;
+                      await new Promise(r => setTimeout(r, 600));
+                      const el = f.contentWindow.document.getElementById('fileLoadTicker');
+                      const hidden = el.hidden;
+                      f.remove();
+                      return hidden;
+                    })()""",
+                    True, results)
+
+        await check(page, 'a producer that starts listening late still gets the file',
+                    """(async () => {
+                      const f = document.createElement('iframe');
+                      f.src = '../../../rb.html#handoff=' + encodeURIComponent(location.origin);
+                      document.body.appendChild(f);
+
+                      // Deliberately miss the first announcement: attach the
+                      // listener only after a build far longer than one ping.
+                      await new Promise(r => setTimeout(r, 3500));
+
+                      const buf = await (await fetch('../../data/SFR_FSAR_CCP14.h5')).arrayBuffer();
+                      const got = await new Promise(resolve => {
+                        let sent = false;
+                        const timer = setTimeout(() => resolve('never announced again'), 15000);
+                        window.addEventListener('message', function onMsg(e) {
+                          if (!e.data || e.origin !== location.origin) return;
+                          if (e.data.kvot === 'rb-ready' && !sent) {
+                            sent = true;
+                            f.contentWindow.postMessage(
+                              {kvot: 'rb-open', name: 'late.h5', buffer: buf},
+                              location.origin, [buf]);
+                          }
+                          if (e.data.kvot === 'rb-opened') {
+                            clearTimeout(timer);
+                            window.removeEventListener('message', onMsg);
+                            resolve((e.data.names || []).join(','));
+                          }
+                        });
+                      });
+                      f.remove();
+                      return got;
+                    })()""",
+                    'late.h5', results)
+
         # ── ?url= with a blob: URL, the same bytes by the cheaper route ──
         print('?url= blob handoff')
         await check(page, 'a blob: URL made here opens in rb.html',

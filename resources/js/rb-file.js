@@ -291,6 +291,13 @@ async function ingestHdf5Buffer(fileName, buffer, context = 'ingestHdf5Buffer') 
 
   loadedFileBuffers[fileName] = buffer;
 
+  /*
+    Writing the buffer into the h5wasm filesystem blocks the main thread for
+    about a second per 100 MB. Yielding first lets whatever the caller put in
+    the ticker actually reach the screen before that happens.
+  */
+  await yieldForPaint();
+
   const internalName = `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.h5`;
   FS.writeFile('/' + internalName, new Uint8Array(buffer));
   const hf = new File('/' + internalName, 'r');
@@ -324,14 +331,59 @@ function hdf5FileNameFromUrl(parsed) {
 }
 
 /**
+ * Read a response body, reporting how much has arrived as it goes.
+ *
+ * Falls back to response.arrayBuffer() when the body cannot be streamed or the
+ * length is unknown — the caller still gets the bytes, just without a
+ * percentage to show.
+ *
+ * @param {Response} response
+ * @param {function(number, number|null): void} [onProgress] - (bytesRead, bytesTotal|null)
+ * @returns {Promise<ArrayBuffer>}
+ */
+async function readResponseWithProgress(response, onProgress) {
+  const declared = Number(response.headers.get('content-length'));
+  const total = Number.isFinite(declared) && declared > 0 ? declared : null;
+
+  if (typeof onProgress !== 'function' || !response.body || !response.body.getReader) {
+    return await response.arrayBuffer();
+  }
+
+  const reader = response.body.getReader();
+  const chunks = [];
+  let received = 0;
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    received += value.byteLength;
+    onProgress(received, total);
+  }
+
+  /*
+    Concatenated by hand rather than via new Blob(chunks).arrayBuffer(), which
+    would hold a second full copy of a large file while it resolves.
+  */
+  const out = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out.buffer;
+}
+
+/**
  * Fetch an HDF5 file over http(s) or from a blob: URL and mount it.
  * Does not refresh the tree.
  *
  * @param {string} url
  * @param {string} [context] - Label for failure reporting
+ * @param {function(number, number|null): void} [onProgress] - (bytesRead, bytesTotal|null)
  * @returns {Promise<string>} The display name the file was registered under
  */
-async function ingestHdf5FromUrl(url, context = 'ingestHdf5FromUrl') {
+async function ingestHdf5FromUrl(url, context = 'ingestHdf5FromUrl', onProgress) {
   let parsed;
   try {
     parsed = new URL(url, window.location.href);
@@ -347,6 +399,6 @@ async function ingestHdf5FromUrl(url, context = 'ingestHdf5FromUrl') {
   const response = await fetch(parsed.href);
   if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}`);
 
-  const buffer = await response.arrayBuffer();
+  const buffer = await readResponseWithProgress(response, onProgress);
   return ingestHdf5Buffer(fileName, buffer, context);
 }
