@@ -51,11 +51,20 @@ the copy-paste starting point for a real producer.
 
 ## Known noise
 
-Two fields vary by ±1 between runs on identical code:
+The search step is not reproducible run to run. On identical code, two runs
+differed in six fields:
 
-    /search/Am*1/hidden
-    /search/zzz-no-match/hidden
+    /search/Am*1/hidden              809 -> 758     (and matches 15 -> 14)
+    /search/Am-241/hidden            441 -> 391     (and matches  8 ->  7)
+    /search/biosphere/1BLA/hidden   1084 -> 1083
+    /search/zzz-no-match/hidden     1520 -> 1519
 
-Lazy tree loading races the search filter, so the count of hidden rows can be
-off by one. Treat a diff limited to those two fields, by one, as clean. Anything
-else is a real change.
+Lazy tree loading races the search filter: the background expansion that pulls
+matching paths into the DOM may or may not have finished when the counts are
+taken, so hidden rows swing by about fifty and match counts by one. The swing
+is not ±1, despite what this section used to claim.
+
+Treat a diff confined to `/search/**` as inconclusive rather than clean — if it
+matters, run the unchanged code twice and compare those two runs, which
+separates the noise from a real change. A diff touching any field outside
+`/search/**` is a real change.

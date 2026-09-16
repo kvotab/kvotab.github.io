@@ -31,8 +31,20 @@
    Several files at once: send { kvot: 'rb-open', files: [{name, buffer}, …] }
    and list every buffer in the transfer array.
 
+   While the producing page is still building its data it can say so, as often
+   as it likes, and the waiting tab will show it:
+
+     win.postMessage({ kvot: 'rb-progress', text: 'Running realisations',
+                       loaded: 40, total: 100 }, 'https://kvotab.se');
+
+   Both loaded and total are optional; with neither, the text alone is shown.
+
    The handshake exists because the new tab is not listening when window.open()
-   returns — rb.html announces itself with 'rb-ready' once it is.
+   returns — rb.html announces itself with 'rb-ready' once it is, and keeps
+   repeating that until something arrives. The repeat is what makes it safe to
+   take your time building the data, but attach the listener BEFORE starting
+   that work, and ignore every 'rb-ready' after the first: the buffer is
+   transferred by the first send and is empty afterwards.
 
    ── 2. ?url= (same origin, cheapest) ──
 
@@ -69,6 +81,98 @@ const RB_HANDOFF_ALLOWED_ORIGINS = [
 
 /** Largest handoff accepted, matching the file picker's limit. */
 const RB_HANDOFF_MAX_BYTES = KVOT_FILE_SIZE_LIMITS.dataset;
+
+/*
+  How long the tab sits quiet before it says more about the wait. The first
+  step reassures, the second admits nothing is coming — a spinner that never
+  resolves is worse than an answer.
+*/
+const HANDOFF_WAIT_HINT_MS = 20000;
+const HANDOFF_WAIT_GIVEUP_MS = 90000;
+
+/*
+  Readiness is announced repeatedly, not once.
+
+  A producer that spends time building its data before it starts listening
+  would miss a single announcement and then wait forever for a tab that was
+  ready all along — the slower the producer, the more certain the failure.
+  Repeating costs nothing and removes the race.
+*/
+const HANDOFF_READY_PING_MS = 1000;
+
+/** Timers for the waiting state, cleared as soon as anything arrives. */
+let _handoffWaitTimers = [];
+/** Interval announcing readiness, stopped when anything arrives. */
+let _handoffReadyPinger = null;
+/** The tree's own placeholder text, put back if nothing is ever sent. */
+let _handoffTreePlaceholder = null;
+
+/**
+ * Say that this tab is open and waiting, from the moment it loads.
+ *
+ * Without this the tab is silent for as long as the producing page needs to
+ * build its data — which is exactly the stretch where a person wonders
+ * whether anything is happening at all.
+ *
+ * @returns {void}
+ */
+function beginHandoffWait() {
+  setFileLoadProgress(0, 'Waiting for the other page…');
+
+  const tree = document.getElementById('tree');
+  if (tree && tree.classList.contains('loading')) {
+    _handoffTreePlaceholder = tree.textContent;
+    tree.textContent = 'Waiting for the other page to send a file…';
+  }
+
+  _handoffWaitTimers.push(setTimeout(() => {
+    setFileLoadProgress(null, 'Still waiting for the other page…');
+  }, HANDOFF_WAIT_HINT_MS));
+
+  _handoffWaitTimers.push(setTimeout(() => {
+    endHandoffWait();
+    hideFileLoadTicker();
+    const treeEl = document.getElementById('tree');
+    if (treeEl && _handoffTreePlaceholder && treeEl.classList.contains('loading')) {
+      treeEl.textContent = _handoffTreePlaceholder;
+    }
+    console.debug('[handoff] Nothing arrived — stopped waiting.');
+  }, HANDOFF_WAIT_GIVEUP_MS));
+}
+
+/**
+ * Stop the waiting timers. Leaves the ticker alone: by the time this runs the
+ * receiving flow is usually driving it.
+ *
+ * @returns {void}
+ */
+function endHandoffWait() {
+  _handoffWaitTimers.forEach(clearTimeout);
+  _handoffWaitTimers = [];
+  if (_handoffReadyPinger !== null) {
+    clearInterval(_handoffReadyPinger);
+    _handoffReadyPinger = null;
+  }
+}
+
+/**
+ * Show progress the producing page reported about its own work.
+ * Its message may carry text, or loaded/total counts, or both.
+ *
+ * @param {Object} data - An 'rb-progress' message
+ * @returns {void}
+ */
+function showProducerProgress(data) {
+  const loaded = Number(data.loaded);
+  const total = Number(data.total);
+  const measured = isFinite(loaded) && isFinite(total) && total > 0;
+  const text = typeof data.text === 'string' && data.text.trim()
+    ? data.text.trim().slice(0, 120)
+    : 'The other page is preparing the file…';
+
+  setFileLoadProgress(measured ? loaded / total : null,
+                      measured ? `${text} — ${Math.round((loaded / total) * 100)}%` : text);
+}
 
 /**
  * Read the #handoff hash.
@@ -173,11 +277,22 @@ async function receiveHandoffMessage(event) {
   const entries = handoffEntriesFromMessage(data);
   const loaded = [];
 
-  showFileLoadTicker(0, entries.length, 'Receiving…');
+  /*
+    Progress is reported per file and then per phase within a file. One big
+    file is the common case, and for it the phases are what move: reading the
+    payload, mounting it, then rebuilding the tree.
+  */
+  const phase = (index, text) => setFileLoadProgress(
+    entries.length > 1 ? index / entries.length : null,
+    entries.length > 1 ? `${index + 1}/${entries.length} — ${text}` : text);
+
+  setFileLoadProgress(0, 'Receiving…');
+  await yieldForPaint();
+
   try {
     for (let i = 0; i < entries.length; i++) {
       const fileName = sanitizeHandoffName(entries[i].name, i);
-      updateFileLoadTicker(i, entries.length, fileName);
+      phase(i, `Receiving ${fileName}…`);
 
       const buffer = await handoffPayloadToBuffer(entries[i].payload);
       if (!buffer) throw new Error(`${fileName}: no ArrayBuffer, typed array or Blob in the message.`);
@@ -186,12 +301,13 @@ async function receiveHandoffMessage(event) {
                         + `${kvotFormatBytes(RB_HANDOFF_MAX_BYTES)} handoff limit.`);
       }
 
+      phase(i, `Opening ${fileName} (${kvotFormatBytes(buffer.byteLength)})…`);
       await ingestHdf5Buffer(fileName, buffer, 'receiveHandoffMessage');
       loaded.push(fileName);
     }
 
     try { await ensureTreeWorkerReady(5000); } catch (_) { ignoreFailure('receiveHandoffMessage', _); }
-    updateFileLoadTicker(entries.length, entries.length, 'Refreshing tree…');
+    setFileLoadProgress(1, 'Refreshing tree…');
     await updateTabs(true);
     hideFileLoadTicker();
 
@@ -232,21 +348,36 @@ function initHandoffReceiver() {
 
   window.addEventListener('message', (event) => {
     if (!event.data || typeof event.data !== 'object') return;
-    if (event.data.kvot !== 'rb-open') return;
+    const kind = event.data.kvot;
+    if (kind !== 'rb-open' && kind !== 'rb-progress') return;
 
     if (!isHandoffOriginAllowed(event.origin)) {
-      console.warn('[handoff] Ignored a file from', event.origin,
+      console.warn('[handoff] Ignored a message from', event.origin,
                    '— add it to RB_HANDOFF_ALLOWED_ORIGINS to allow it.');
       return;
     }
     if (declaredOrigin && event.origin !== declaredOrigin) {
-      console.warn('[handoff] Ignored a file from', event.origin,
+      console.warn('[handoff] Ignored a message from', event.origin,
                    '— the link declared', declaredOrigin);
+      return;
+    }
+
+    /*
+      A progress report means the sender is alive and working, so the waiting
+      timers stop here too — otherwise a slow producer would be declared absent
+      while it was visibly still going.
+    */
+    endHandoffWait();
+
+    if (kind === 'rb-progress') {
+      showProducerProgress(event.data);
       return;
     }
 
     receiveHandoffMessage(event);
   });
+
+  beginHandoffWait();
 
   /*
     The opener's origin cannot be read from here, so an undeclared ping has to
@@ -257,11 +388,16 @@ function initHandoffReceiver() {
   if (!target) return;
 
   const pingOrigin = isHandoffOriginAllowed(declaredOrigin) ? declaredOrigin : '*';
-  try {
-    target.postMessage({ kvot: 'rb-ready' }, pingOrigin);
-  } catch (e) {
-    ignoreFailure('initHandoffReceiver', e);
-  }
+  const announce = () => {
+    try {
+      target.postMessage({ kvot: 'rb-ready' }, pingOrigin);
+    } catch (e) {
+      ignoreFailure('initHandoffReceiver', e);
+    }
+  };
+
+  announce();
+  _handoffReadyPinger = setInterval(announce, HANDOFF_READY_PING_MS);
 }
 
 /**
@@ -279,12 +415,17 @@ async function initUrlParamLoad() {
   }
   if (!url) return;
 
-  showFileLoadTicker(0, 1, 'Loading…');
+  setFileLoadProgress(0, 'Loading…');
   try {
-    const fileName = await ingestHdf5FromUrl(url, 'initUrlParamLoad');
+    const fileName = await ingestHdf5FromUrl(url, 'initUrlParamLoad', (read, total) => {
+      setFileLoadProgress(total ? read / total : null,
+                          total
+                            ? `Loading ${kvotFormatBytes(read)} of ${kvotFormatBytes(total)}…`
+                            : `Loading ${kvotFormatBytes(read)}…`);
+    });
 
     try { await ensureTreeWorkerReady(5000); } catch (_) { ignoreFailure('initUrlParamLoad', _); }
-    updateFileLoadTicker(1, 1, 'Refreshing tree…');
+    setFileLoadProgress(1, 'Refreshing tree…');
     await updateTabs(true);
     hideFileLoadTicker();
     console.debug('[handoff] Opened', fileName, 'from ?url=');

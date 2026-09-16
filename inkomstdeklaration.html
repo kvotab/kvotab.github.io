@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <script>
+    // Set the theme before first paint so dark-mode visitors get no white flash.
+    (function () {
+      try {
+        var t = localStorage.getItem('kvot-theme');
+        if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* storage unavailable — site.js will apply the default */ }
+    })();
+  </script>
+  <link rel="stylesheet" href="./resources/css/kvot.css?v=20260911">
+  <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
+  <title>Inkomstdeklaration — kvot ab</title>
+  <meta name="description" content="Skapa SRU-filerna INFO.SRU och BLANKETTER.SRU till Skatteverkets filöverföring ur en SIE-fil. Räkenskapsschemat fylls via BAS officiella kopplingstabell. Allt sker i webbläsaren.">
+  <link rel="canonical" href="https://kvotab.se/inkomstdeklaration.html">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="kvot ab">
+  <meta property="og:title" content="Inkomstdeklaration — kvot ab">
+  <meta property="og:description" content="Skapa SRU-filerna till Skatteverkets filöverföring ur en SIE-fil, med BAS officiella kopplingstabell.">
+  <meta property="og:url" content="https://kvotab.se/inkomstdeklaration.html">
+  <meta property="og:image" content="https://kvotab.se/resources/images/kvot-logotype.png">
+  <meta name="twitter:card" content="summary">
+  <style>
+    header  { position:fixed;top:0;left:0;right:0;z-index:20;background:var(--footer-bg);box-shadow:0 2px 8px rgba(0,0,0,.12); }
+    footer  { z-index:25; }
+    body    { overflow-x:hidden; }
+    .content{ padding-top:13px;padding-bottom:48px;min-height:calc(100vh - var(--header-height) - 61px); }
+    #sru    { width:100%;max-width:1040px;margin:0 auto;padding:24px 28px 64px;box-sizing:border-box; }
+
+    #sru h2 { font-size:1.05rem;margin:0 0 4px;color:var(--text-primary); }
+    #sru h3 { font-size:.95rem;margin:22px 0 8px;color:var(--text-primary); }
+    #sru h4 { font-size:.82rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;
+              color:var(--text-muted);margin:0 0 10px; }
+    #sru p  { color:var(--text-secondary);line-height:1.6;margin:0 0 12px; }
+    #sru a  { color:var(--link-color); }
+    .ar-lead { font-size:1rem; }
+
+    .ar-step { border:1px solid var(--border-color);border-radius:12px;background:var(--bg-secondary);
+               padding:20px 22px;margin:18px 0; }
+    .ar-step-head { display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:10px; }
+    .ar-step-no { font-size:.7rem;font-weight:700;letter-spacing:.09em;text-transform:uppercase;
+                  color:var(--on-bright);background:var(--color-kvot-bright);border-radius:20px;padding:3px 10px; }
+    .ar-step-note { font-size:.8rem;color:var(--text-muted);margin-left:auto; }
+
+    .ar-scope { border:1px solid var(--color-kvot-bright);border-left-width:4px;border-radius:10px;
+                background:var(--bg-surface);padding:16px 20px;margin:18px 0 26px; }
+    .ar-scope h4 { color:var(--color-kvot-accent); }
+    .ar-scope ul { margin:0;padding-left:20px;color:var(--text-secondary);line-height:1.65;font-size:.92rem; }
+    .ar-scope li { margin-bottom:5px; }
+
+    #sru-drop { border:2px dashed var(--border-color);border-radius:12px;padding:28px 20px;text-align:center;
+                background:var(--bg-surface);transition:border-color .15s,background .15s;cursor:pointer; }
+    #sru-drop.dragging { border-color:var(--color-kvot-bright);background:var(--bg-secondary); }
+    #sru-drop p { margin:0 0 4px; }
+    #sru-drop .ar-hint { font-size:.84rem;color:var(--text-muted); }
+    #sru-file-input, #sru-import-input { display:none; }
+    #sru-lagg-till { padding:7px 12px;border-radius:8px;font-size:.85rem;font-family:inherit;
+                     border:1px solid var(--border-color);background:var(--input-bg);
+                     color:var(--text-primary); }
+    .sru-nummer { font-size:.7rem;font-weight:600;letter-spacing:.04em;padding:1px 7px;
+                  border-radius:20px;border:1px solid var(--color-kvot-bright);
+                  color:var(--color-kvot-accent);margin-right:8px; }
+    .ar-btn.sru-ta-bort { float:right;padding:2px 10px;font-size:.75rem;font-weight:500; }
+
+    .ar-btn { padding:7px 16px;border-radius:8px;cursor:pointer;font-size:.85rem;font-weight:600;font-family:inherit;
+              color:var(--text-secondary);background:var(--bg-surface);border:1px solid var(--border-color);
+              transition:all .15s ease; }
+    .ar-btn:hover:not(:disabled) { border-color:var(--color-kvot-bright);color:var(--text-primary); }
+    .ar-btn:disabled { opacity:.4;cursor:not-allowed; }
+    .ar-btn.primary { background:var(--color-kvot-bright);color:var(--on-bright);border-color:var(--color-kvot-bright); }
+    .ar-btn:focus-visible { outline:2px solid var(--color-kvot-bright);outline-offset:2px; }
+    .ar-btn-row { display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;align-items:center; }
+
+    .ar-fields { display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px 20px; }
+    .ar-field label { display:block;font-size:.8rem;font-weight:600;color:var(--text-secondary);margin-bottom:5px; }
+    .ar-field input, .ar-field select {
+      width:100%;padding:8px 11px;border:1px solid var(--border-color);border-radius:8px;font-size:.9rem;
+      color:var(--text-primary);background:var(--input-bg);box-sizing:border-box;font-family:inherit; }
+    .ar-field input:focus, .ar-field select:focus {
+      outline:none;box-shadow:0 0 0 3px rgba(243,184,123,.15);border-color:var(--color-kvot-bright); }
+    .ar-field .ar-help { font-size:.76rem;color:var(--text-muted);margin-top:4px;line-height:1.45; }
+    .ar-field.wide { grid-column:1 / -1; }
+
+    .ar-facts { display:grid;grid-template-columns:max-content 1fr;gap:5px 16px;margin:0;font-size:.85rem; }
+    .ar-facts dt { font-weight:600;color:var(--text-muted); }
+    .ar-facts dd { margin:0;color:var(--text-primary);word-break:break-word; }
+    .ar-note-inline { font-size:.78rem;color:var(--text-muted); }
+    .ar-ok-mark { color:#4a8a5c;font-size:.86rem;font-weight:600; }
+    .ar-empty { font-size:.88rem;color:var(--text-muted);font-style:italic; }
+    #sru ul.ar-problem { margin:10px 0;padding-left:20px;color:#b4473a;font-size:.84rem;line-height:1.6; }
+
+    .ar-finding { display:flex;gap:10px;align-items:flex-start;padding:9px 12px;border-radius:9px;
+                  margin-bottom:6px;background:var(--bg-surface);border:1px solid var(--border-color);
+                  border-left-width:4px; }
+    .ar-finding.ar-error { border-left-color:#b4473a; }
+    .ar-finding.ar-warn  { border-left-color:#c9911f; }
+    .ar-finding.ar-info  { border-left-color:#5a7ea6; }
+    .ar-badge { flex:0 0 auto;font-size:.66rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;
+                padding:3px 8px;border-radius:20px;background:var(--bg-secondary);color:var(--text-muted);margin-top:1px; }
+    .ar-error .ar-badge { color:#b4473a; }
+    .ar-warn  .ar-badge { color:#c9911f; }
+    .ar-finding-title { font-size:.88rem;color:var(--text-primary);line-height:1.45; }
+
+    pre.ar-code { background:var(--code-bg);color:var(--code-text);border:1px solid var(--border-color);
+                  border-radius:9px;padding:12px 14px;overflow-x:auto;font-size:.78rem;line-height:1.5;
+                  font-family:'SF Mono',Menlo,Monaco,monospace;margin:0 0 14px;max-height:360px; }
+    .ar-code-head { display:flex;align-items:center;gap:10px;margin:16px 0 6px; }
+    .ar-code-head h4 { margin:0; }
+    code { background:var(--code-bg);color:var(--code-text);padding:1px 5px;border-radius:4px;font-size:.85em; }
+
+    .ar-table-wrap { overflow-x:auto; }
+    table.ar-table { border-collapse:collapse;font-size:.84rem;width:100%;min-width:600px; }
+    table.ar-table th, table.ar-table td { padding:5px 10px;border-bottom:1px solid var(--table-border);
+                                           text-align:left;vertical-align:middle;color:var(--text-secondary); }
+    table.ar-table th { font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);
+                        font-weight:700; }
+    table.ar-table td.belopp, table.ar-table th.belopp { text-align:right; }
+
+    .sru-blankett { border:1px solid var(--border-color);border-radius:10px;background:var(--bg-surface);
+                    margin-bottom:12px;padding:10px 14px; }
+    .sru-blankett summary { cursor:pointer;font-size:.9rem;color:var(--text-primary);padding:2px 0; }
+    .sru-blankett summary b { margin-right:8px; }
+    .sru-titel { font-size:.86rem;color:var(--text-secondary); }
+    /* Radas upp under blankettens namn, inte under triangeln. */
+    .sru-om { display:block;margin-top:3px;line-height:1.5;padding-left:17px; }
+    .sru-alla { display:inline-flex;align-items:center;gap:6px;font-size:.82rem;
+                color:var(--text-secondary);cursor:pointer; }
+    .sru-alla input { accent-color:var(--color-kvot-bright);cursor:pointer; }
+    table.sru-falt td.sru-kod { font-family:'SF Mono',Menlo,monospace;font-weight:600;
+                                color:var(--text-primary);white-space:nowrap; }
+    table.sru-falt td.sru-punkt { font-family:'SF Mono',Menlo,monospace;color:var(--text-muted);
+                                  white-space:nowrap; }
+    table.sru-falt input { width:11em;padding:4px 8px;text-align:right;font-family:'SF Mono',Menlo,monospace;
+                           font-size:.82rem;border:1px solid var(--border-color);border-radius:6px;
+                           background:var(--input-bg);color:var(--text-primary); }
+    table.sru-falt tr.sru-obl td { background:color-mix(in srgb,var(--color-kvot-bright) 7%,transparent); }
+    #sru-kalla, #sru-filer { border:1px solid var(--border-color);border-radius:9px;padding:14px 16px;
+                             background:var(--bg-surface); }
+    #sru ul.ar-links { list-style:none;padding:0;margin:0;line-height:1.85;font-size:.9rem; }
+    #sru ul.ar-links li::before { content:'→ ';color:var(--text-muted); }
+
+    @media (max-width: 640px) {
+      #sru { padding:16px 14px 48px; }
+      .ar-step { padding:16px 14px; }
+      .ar-facts { grid-template-columns:1fr;gap:2px 0; }
+    }
+  </style>
+</head>
+<body>
+<header></header>
+
+<div class="content">
+<main id="sru">
+
+  <p class="ar-lead">
+    Skapa de två filer Skatteverkets filöverföring vill ha — <code>INFO.SRU</code> och
+    <code>BLANKETTER.SRU</code> — ur bokföringen. Räkenskapsschemat fylls via BAS officiella
+    kopplingstabell; resten skrivs in. Filerna byggs i webbläsaren och lämnar aldrig din dator
+    förrän du själv laddar upp dem.
+  </p>
+
+  <div class="ar-scope">
+    <h4>Vad sidan gör — och inte gör</h4>
+    <ul>
+      <li>Den <b>läser bokföringen</b> ur en SIE-fil och summerar kontona till fältkoder enligt
+          <a href="https://www.bas.se/kontoplaner/sru/" target="_blank" rel="noopener noreferrer">BAS
+          kopplingstabeller</a> — samma tabell som bokföringsprogrammen använder.</li>
+      <li>Den <b>hjälper till med de skattemässiga justeringarna</b> så långt det går utan att
+          tolka något: årets resultat flyttas dit blanketten själv hänvisar, den bokförda
+          skatten återförs, och sista raden — överskott eller underskott — summeras ur
+          raderna ovanför med blankettens egna tecken.</li>
+      <li>Den <b>fyller huvudblanketten</b> med det som bara flyttas dit: överskottet eller
+          underskottet från justeringssidan, och räkenskapsårets datum på varje blankett som
+          har fältkoderna.</li>
+      <li>Den <b>visar varje fältkod</b> med blankettens punktnummer och benämning, hämtade ur
+          Skatteverkets egna fältnamnstabeller, så att filen går att stämma av mot pappret. Varje
+          blankett står under sitt namn — <code>INK2R</code> är räkenskapsschemat — och väljaren
+          visar de blanketter som hör till den inlämning du valt.</li>
+      <li>Den <b>kontrollerar</b> det som går att kontrollera utan att skicka: obligatoriska
+          fältkoder, datatyper ur värdeförrådet, och koder som inte finns på blanketten.</li>
+      <li>Den <b>skriver filerna</b> i föreskriven ordning och i ISO 8859-1, med
+          organisationsnumret på Skatteverkets form — tolv siffror med sekelsiffra, alltså
+          <code>16</code> först för ett aktiebolag.</li>
+      <li>Den <b>läser tillbaka en SRU-fil</b>, så att en påbörjad inlämning går att fortsätta
+          på och en fil från ett annat program går att titta in i.</li>
+      <li>Den <b>lämnar inte in åt dig.</b> Filöverföringen kräver e-legitimation och sker i
+          Skatteverkets e-tjänst. Sidan skapar filerna; du laddar upp dem.</li>
+      <li>Den <b>är inte en skatterådgivare.</b> Räkenskapsschemat kommer ur bokföringen, men de
+          skattemässiga justeringarna är ditt omdöme, inte en uträkning som går att automatisera.</li>
+    </ul>
+  </div>
+
+  <!-- ── 1. Vad ska lämnas ─────────────────────────────────────────────── -->
+  <section class="ar-step">
+    <div class="ar-step-head">
+      <span class="ar-step-no">Steg 1</span>
+      <h2>Vad ska lämnas?</h2>
+    </div>
+    <div class="ar-fields">
+      <div class="ar-field wide">
+        <label for="sru-deklaration">Deklaration</label>
+        <select id="sru-deklaration" data-on-change="sru:deklaration"></select>
+      </div>
+      <div class="ar-field">
+        <label for="sru-period">Beskattningsperiod</label>
+        <select id="sru-period" data-on-change="sru:period"></select>
+        <div class="ar-help">Står i <code>#BLANKETT</code> efter blankettens namn, som
+          <code>INK2R-2026P2</code>. Bestäms av räkenskapsårets <em>sista dag</em> enligt
+          skatteförfarandelagen — inte av årtalet — och sätts när bokföringen läses.</div>
+      </div>
+    </div>
+    <div id="sru-periodnot" hidden style="margin-top:12px"></div>
+    <p style="margin-top:14px">
+      <b>Hur mycket som får lämnas med fil skiljer sig åt.</b> Inkomstdeklaration 1 och 2 går att
+      lämna i sin helhet — huvudblankett och bilagor. Av Inkomstdeklaration 3 och 4 tar
+      filöverföringen <em>bara bilagorna</em>; förstasidan lämnas separat och skrivs under av
+      behörig firmatecknare. Det är därför INK2 har en huvudblankett bland blanketterna här medan
+      INK3 och INK4 bara har sina bilagor.
+    </p>
+
+    <div class="ar-table-wrap" style="margin-top:12px">
+      <table class="ar-table" style="min-width:420px">
+        <thead><tr><th>Period</th><th>Räkenskapsåret slutar</th></tr></thead>
+        <tbody>
+          <tr><td>P1</td><td>1 januari – 30 april</td></tr>
+          <tr><td>P2</td><td>1 maj – 30 juni</td></tr>
+          <tr><td>P3</td><td>1 juli – 31 augusti</td></tr>
+          <tr><td>P4</td><td>1 september – 31 december</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── 2. Bokföringen ────────────────────────────────────────────────── -->
+  <section class="ar-step">
+    <div class="ar-step-head">
+      <span class="ar-step-no">Steg 2</span>
+      <h2>Bokföringen</h2>
+      <span class="ar-step-note">läses lokalt</span>
+    </div>
+    <p>
+      Samma SIE-fil som årsredovisningen byggs av. Kontosaldona summeras till räkenskapsschemats
+      fältkoder; övriga blanketter fylls i för hand i steg 3.
+    </p>
+    <div id="sru-drop" data-on-click="sru:pick" data-on-keydown="sru:pick-key"
+         role="button" tabindex="0" aria-label="Välj eller släpp en SIE-fil">
+      <p><b>Släpp SIE-filen här</b>, eller klicka för att välja fil.</p>
+      <p class="ar-hint">Filändelsen är <code>.se</code> eller <code>.si</code>.
+        Går också att hoppa över om allt ska skrivas in för hand.</p>
+    </div>
+    <input type="file" id="sru-file-input" accept=".se,.si,.sie" data-on-change="sru:fil">
+    <div class="ar-btn-row">
+      <button type="button" class="ar-btn" data-on-click="sru:rensa">Rensa</button>
+    </div>
+    <div id="sru-kalla" hidden style="margin-top:16px"></div>
+    <div id="sru-okopplade" hidden></div>
+  </section>
+
+  <!-- ── 3. Blanketterna ───────────────────────────────────────────────── -->
+  <section class="ar-step">
+    <div class="ar-step-head">
+      <span class="ar-step-no">Steg 3</span>
+      <h2>Blanketterna</h2>
+      <span class="ar-step-note">fältkod för fältkod</span>
+    </div>
+    <p>
+      <b>Teckenkonventionen:</b> blankettens förtryckta tecken gäller och beloppet skrivs
+      positivt. Vill man avvika från det förtryckta tecknet skrivs beloppet negativt. Saknas
+      förtryckt tecken skrivs beloppet med sitt eget tecken. Sidan följer den regeln när den
+      räknar ur bokföringen, och skriver ut vilket tecken raden bär.
+    </p>
+    <p>
+      <b>Justeringssidan</b> fylls delvis. BAS kopplingstabell slutar vid räkenskapsschemat, och
+      det är riktigt — vilka kostnader som inte får dras av är en bedömning, inte ett saldo. Men
+      årets resultat och den bokförda skatten flyttas dit blanketten hänvisar, och sista raden
+      summeras ur de andra medan du skriver. Resten är ditt omdöme.
+    </p>
+    <p>
+      <b>Huvudblanketten</b> hämtar sina två första tal från justeringssidan — INK2S 4.15 säger
+      själv att överskottet flyttas till punkt 1.1, och 4.16 till punkt 1.2. Räkenskapsårets
+      början och slut fylls på varje blankett som har fältkoderna. Resten av förstasidan, som
+      underlaget för särskild löneskatt, är egna beräkningar och står tom.
+    </p>
+    <p>
+      En rad per fältkod, i blankettens egen ordning. Raden som fyllts ur bokföringen säger så i
+      källkolumnen; ändrar du den blir den din egen uppgift. Tomma rader kommer inte med i filen —
+      Skatteverket vill inte ha nollor för poster som inte finns. Fält märkta
+      <b>*</b> är obligatoriska enligt fältnamnstabellen.
+    </p>
+    <div class="ar-btn-row">
+      <select id="sru-lagg-till" data-on-change="sru:lagg-till" aria-label="Lägg till blankett"></select>
+      <label class="sru-alla"><input type="checkbox" id="sru-alla" data-on-change="sru:alla">
+        Visa alla blanketter</label>
+      <button type="button" class="ar-btn" data-on-click="sru:importera">Läs in en SRU-fil</button>
+      <input type="file" id="sru-import-input" accept=".sru,.SRU,text/plain"
+             data-on-change="sru:import-fil">
+    </div>
+    <p class="ar-note-inline">
+      <span id="sru-valj-not"></span> Urvalet följer valet i steg 1 och är en hjälp att hitta
+      rätt, inte en regel om vad som får lämnas — kryssa i <b>Visa alla blanketter</b> för hela
+      utgåvan. Flera block av samma blankett går att lägga till: delägaruppgifter på INK4DU ska
+      lämnas <b>ett block per delägare</b>, vilket Skatteverket är uttrycklig med. En befintlig
+      <code>BLANKETTER.SRU</code> går att läsa in för att fortsätta på den eller för att se vad
+      som står i en fil ett annat program skrivit.
+    </p>
+
+    <div id="sru-blanketter"></div>
+  </section>
+
+  <!-- ── 4. Uppgiftslämnaren ───────────────────────────────────────────── -->
+  <section class="ar-step">
+    <div class="ar-step-head">
+      <span class="ar-step-no">Steg 4</span>
+      <h2>Uppgiftslämnaren</h2>
+      <span class="ar-step-note">INFO.SRU</span>
+    </div>
+    <p>
+      Namn- och adressuppgifterna används i Skatteverkets kvittens. Saknas något av det
+      obligatoriska avvisas hela filen.
+    </p>
+    <div class="ar-fields">
+      <div class="ar-field">
+        <label for="sru-orgnr">Deklarationen avser</label>
+        <input type="text" id="sru-orgnr" placeholder="organisationsnummer" autocomplete="off">
+        <div class="ar-help">Skrivs om till tolv siffror med sekelsiffra automatiskt.</div>
+      </div>
+      <div class="ar-field">
+        <label for="sru-namn">Namn på den deklarationen avser</label>
+        <input type="text" id="sru-namn" autocomplete="off">
+      </div>
+      <div class="ar-field">
+        <label for="lev-orgnr">Uppgiftslämnarens org.nr</label>
+        <input type="text" id="lev-orgnr" autocomplete="off">
+        <div class="ar-help">Den som skickar filen — byrån, eller företaget självt.</div>
+      </div>
+      <div class="ar-field">
+        <label for="lev-namn">Uppgiftslämnarens namn</label>
+        <input type="text" id="lev-namn" autocomplete="off">
+      </div>
+      <div class="ar-field">
+        <label for="lev-adress">Adress</label>
+        <input type="text" id="lev-adress" autocomplete="off">
+      </div>
+      <div class="ar-field">
+        <label for="lev-postnr">Postnummer</label>
+        <input type="text" id="lev-postnr" autocomplete="off">
+      </div>
+      <div class="ar-field">
+        <label for="lev-postort">Postort</label>
+        <input type="text" id="lev-postort" autocomplete="off">
+      </div>
+      <div class="ar-field">
+        <label for="lev-kontakt">Kontaktperson</label>
+        <input type="text" id="lev-kontakt" autocomplete="off">
+      </div>
+      <div class="ar-field">
+        <label for="lev-email">E-post</label>
+        <input type="text" id="lev-email" autocomplete="off">
+      </div>
+      <div class="ar-field">
+        <label for="lev-telefon">Telefon</label>
+        <input type="text" id="lev-telefon" autocomplete="off">
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 5. Kontroll och filer ─────────────────────────────────────────── -->
+  <section class="ar-step">
+    <div class="ar-step-head">
+      <span class="ar-step-no">Steg 5</span>
+      <h2>Kontroll och filer</h2>
+    </div>
+    <div id="sru-kontroll"></div>
+
+    <div class="ar-btn-row">
+      <button type="button" class="ar-btn primary" data-on-click="sru:bygg">Bygg filerna</button>
+      <button type="button" class="ar-btn" id="sru-hamta-info" data-on-click="sru:hamta-info" disabled>
+        Hämta INFO.SRU</button>
+      <button type="button" class="ar-btn" id="sru-hamta-blanketter"
+              data-on-click="sru:hamta-blanketter" disabled>Hämta BLANKETTER.SRU</button>
+    </div>
+    <p class="ar-note-inline">
+      Döp inte om filerna — då fungerar inte överföringen. <code>BLANKETTER.SRU</code> får
+      inte vara större än 5 MB.
+    </p>
+
+    <div id="sru-filer" hidden></div>
+  </section>
+
+  <h3 id="testa">Testa filerna först</h3>
+  <p>
+    Skatteverket har en testingång dit samma filer kan lämnas utan att något registreras.
+    Kontrollerna är desamma som i produktion, så ett fel syns där innan det blir en riktig
+    inlämning. Testingången öppnar ungefär en månad före produktionsingången.
+  </p>
+  <ul class="ar-links">
+    <li><a href="https://www1.skatteverket.se/fv/fv_web/systemval.do" target="_blank"
+           rel="noopener noreferrer">Lämna in testfiler i Skatteverkets filöverföringstjänst</a>
+        — kräver e-legitimation</li>
+    <li><a href="https://www1.skatteverket.se/fv/fv_web/start.do" target="_blank"
+           rel="noopener noreferrer">Filöverföringstjänsten</a> — för skarp inlämning</li>
+    <li><a href="https://www.skatteverket.se/foretag/etjansterochblanketter/allaetjanster/tjanster/filoverforing/oppettiderforetjanstenfiloverforing.4.15532c7b1442f256bae167c.html"
+           target="_blank" rel="noopener noreferrer">Öppettider för filöverföringstjänsten</a>
+        — när varje beskattningsperiod öppnar för test och för inlämning</li>
+  </ul>
+
+  <h3 id="referens">Så lämnas filerna in</h3>
+  <p>
+    Båda filerna överförs i Skatteverkets e-tjänst Filöverföring, med e-legitimation. Tjänsten
+    kontrollerar filerna mot skattedatabasen direkt vid överföringen och skapar en
+    mottagningskvittens. En inkomstdeklaration räknas som inlämnad först när den är underskriven;
+    bilagor räknas som inlämnade även utan underskrift.
+  </p>
+  <p>
+    <b>Filen är alltså inte en underskrift.</b> Inkomstdeklaration 1 och 2 skrivs under efteråt på
+    Mina sidor av den som är behörig — ett ombud måste vara registrerat deklarationsombud. Av
+    Inkomstdeklaration 3 och 4 tar filöverföringen bara bilagorna; förstasidan lämnas separat och
+    skrivs under av behörig firmatecknare.
+  </p>
+
+  <h3>Källor</h3>
+  <ul class="ar-links">
+    <li><a href="https://www.skatteverket.se/foretag/inkomstdeklaration/forredovisningsbyraer/digitaladeklarationstjansterforredovisningsbyraer.4.4a4d586616058d860bc7a60.html"
+           target="_blank" rel="noopener noreferrer">Digitala deklarationstjänster</a> — vad som
+        går att lämna med fil för respektive deklaration, och hur underskriften går till efteråt.</li>
+    <li><a href="https://www.skatteverket.se/foretag/inkomstdeklaration/forredovisningsbyraer/tekniskinformationomfiloverforing.4.13948c0e18e810bfa0cca8.html"
+           target="_blank" rel="noopener noreferrer">Teknisk information om filöverföring</a>
+        — postordningen, värdeförrådet och fältnamnstabellerna per blankett. Ersätter broschyren
+        SKV 269.</li>
+    <li><a href="https://www.skatteverket.se/foretag/etjansterochblanketter/allaetjanster/tjanster/filoverforing/informationomsruuppgifter.4.3dfca4f410f4fc63c86800020896.html"
+           target="_blank" rel="noopener noreferrer">Information om filöverföringstjänsten för SRU-uppgifter</a></li>
+    <li><a href="https://www.bas.se/kontoplaner/sru/" target="_blank" rel="noopener noreferrer">BAS
+        SRU-kopplingar</a> — kopplingstabellerna mellan baskontoplanen och fältkoderna</li>
+    <li><a href="./arsredovisning.html">Digital årsredovisning</a> — samma SIE-fil, andra
+        mottagare</li>
+  </ul>
+
+</main>
+</div>
+
+<div id="kvotmap"></div>
+
+<footer></footer>
+
+<script src="./resources/js/kvot-errors.js?v=20260911"></script>
+<script src="./resources/js/kvot-safe.js?v=20260911"></script>
+<script src="./resources/js/kvot-actions.js?v=20260902"></script>
+<script src="./resources/js/kvot-icons.js?v=20260902"></script>
+<script src="./resources/js/site.js?v=20260907"></script>
+<script src="./resources/js/arsred-taxonomi.js?v=20260916"></script>
+<script src="./resources/js/arsred-bygg.js?v=20260916"></script>
+<script src="./resources/js/arsred-export.js?v=20260916"></script>
+<script src="./resources/js/sru-data.js?v=20260916"></script>
+<script src="./resources/js/sru.js?v=20260916"></script>
+<script src="./resources/js/sru-ui.js?v=20260916"></script>
+<script>
+  KVOT.renderHeader('Inkomstdeklaration');
+  KVOT.renderNav('inkomstdeklaration.html');
+  KVOT.renderFooter();
+  KVOT.initMap('kvotmap');
+  KVOT_SRU_UI.init();
+</script>
+</body>
+</html>

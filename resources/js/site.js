@@ -51,6 +51,16 @@ const KVOT = (() => {
       desc: 'Summarise QA review status across Excel workbooks, with filters, statistics and CSV export.',
     },
     {
+      href: './arsredovisning.html',
+      label: 'Digital årsredovisning',
+      desc: 'Build a K2 annual report from a SIE file and check the iXBRL against what Bolagsverket looks at.',
+    },
+    {
+      href: './inkomstdeklaration.html',
+      label: 'Inkomstdeklaration',
+      desc: 'Build the SRU files for Skatteverket from a SIE file, using BAS official account mapping.',
+    },
+    {
       href: './uppsala.html',
       label: 'Uppsala → Solna',
       desc: 'Live departures for the next SL commuter trains from Uppsala C towards Solna, refreshed every 30 seconds.',

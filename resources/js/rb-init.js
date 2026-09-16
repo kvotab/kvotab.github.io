@@ -258,6 +258,51 @@ function updateFileLoadTicker(current = 0, total = 0, text = '') {
   } catch (e) { console.warn('updateFileLoadTicker error', e); }
 }
 
+/**
+ * Drive the ticker from a fraction rather than a file count.
+ *
+ * The count form reads "2/5 — name.h5", which is wrong for one long transfer
+ * where the interesting number is how much of it has arrived. This sets the
+ * text verbatim and the bar from 0..1; pass null for an indeterminate step
+ * that has no measurable progress.
+ *
+ * @param {number|null} fraction - 0..1, or null to leave the bar alone
+ * @param {string} text - Ticker text, shown as written
+ * @returns {void}
+ */
+function setFileLoadProgress(fraction, text) {
+  try {
+    const el = document.getElementById('fileLoadTicker');
+    if (!el) return;
+    el.hidden = false;
+    const spinner = el.querySelector('.spinner');
+    if (spinner) spinner.style.display = 'inline-block';
+    const txt = el.querySelector('.ticker-text');
+    if (txt) txt.textContent = text || '';
+    const bar = el.querySelector('.ticker-progress-bar');
+    if (bar && typeof fraction === 'number' && isFinite(fraction)) {
+      bar.style.width = Math.max(0, Math.min(100, Math.round(fraction * 100))) + '%';
+    }
+    const cancelBtn = el.querySelector('.ticker-cancel');
+    if (cancelBtn) cancelBtn.style.display = (window._treeRefreshId ? 'inline-block' : 'none');
+  } catch (e) { console.warn('setFileLoadProgress error', e); }
+}
+
+/**
+ * Let the browser paint before a step that blocks the main thread.
+ *
+ * Writing a large buffer into the h5wasm filesystem holds the thread long
+ * enough that a ticker shown immediately beforehand never appeared — the DOM
+ * was updated but no frame was produced. Two yields: one for the frame, one
+ * for the task queue behind it.
+ *
+ * @returns {Promise<void>}
+ */
+async function yieldForPaint() {
+  await new Promise(requestAnimationFrame);
+  await new Promise(resolve => setTimeout(resolve, 0));
+}
+
 function hideFileLoadTicker() {
   try {
     const el = document.getElementById('fileLoadTicker');
@@ -406,12 +451,17 @@ async function loadFromUrl() {
   try {
     showFileLoadTicker(0, 1, fileName);
 
-    await ingestHdf5FromUrl(url, 'loadFromUrl');
+    await ingestHdf5FromUrl(url, 'loadFromUrl', (read, total) => {
+      setFileLoadProgress(total ? read / total : null,
+                          total
+                            ? `${fileName} — ${kvotFormatBytes(read)} of ${kvotFormatBytes(total)}`
+                            : `${fileName} — ${kvotFormatBytes(read)}`);
+    });
 
     // Pre-warm tree worker
     try { await ensureTreeWorkerReady(5000); } catch (_) { ignoreFailure('loadFromUrl', _); }
 
-    updateFileLoadTicker(1, 1, 'Refreshing tree…');
+    setFileLoadProgress(1, 'Refreshing tree…');
     await updateTabs(true);
     hideFileLoadTicker();
     closeUrlDialog();

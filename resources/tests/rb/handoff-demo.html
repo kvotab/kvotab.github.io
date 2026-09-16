@@ -49,11 +49,37 @@ function say(msg) {
   console.log('[producer]', msg);
 }
 
-/** Fetch the sample file. Stands in for generating HDF5 bytes in the page. */
-async function buildHdf5Bytes() {
+/**
+ * Fetch the sample file. Stands in for generating HDF5 bytes in the page.
+ *
+ * Reports progress to the waiting rb.html window if one is given, which is the
+ * point of the exercise: building the data is the slow part, and it happens
+ * here, before anything can be sent.
+ *
+ * @param {Window} [target] - The rb.html window to report progress to
+ * @returns {Promise<ArrayBuffer>}
+ */
+async function buildHdf5Bytes(target) {
+  const tell = (text, loaded, total) => {
+    if (!target) return;
+    try { target.postMessage({ kvot: 'rb-progress', text, loaded, total }, RB_ORIGIN); }
+    catch (_) { /* the window may have been closed */ }
+  };
+
+  tell('Preparing the model output', 0, 100);
   const resp = await fetch(SAMPLE);
   if (!resp.ok) throw new Error(`HTTP ${resp.status} fetching the sample file`);
-  return await resp.arrayBuffer();
+  const buffer = await resp.arrayBuffer();
+
+  /*
+    A real producer would be computing here. This just paces out a few steps so
+    the progress reporting is visible rather than instantaneous.
+  */
+  for (let step = 1; step <= 4; step++) {
+    await new Promise(r => setTimeout(r, 400));
+    tell('Writing datasets', step * 25, 100);
+  }
+  return buffer;
 }
 
 /**
@@ -65,19 +91,35 @@ async function buildHdf5Bytes() {
  * @param {ArrayBuffer} buffer - Transferred, so it is emptied here
  * @returns {Promise<string[]>} Names rb.html reports having opened
  */
-function handOver(target, name, buffer) {
+function handOver(target, buildBuffer, name) {
   return new Promise((resolve, reject) => {
+    let ready = false;
+    let sent = false;
+    let buffer = null;
+
     const timer = setTimeout(() => {
       window.removeEventListener('message', onMessage);
       reject(new Error('rb.html never answered'));
-    }, 30000);
+    }, 60000);
+
+    /*
+      Sent only when both halves are in place: the tab has announced itself and
+      the bytes exist. Either can happen first, and 'rb-ready' repeats, so the
+      guard also stops a second send of an already-transferred buffer.
+    */
+    function sendIfPossible() {
+      if (sent || !ready || !buffer) return;
+      sent = true;
+      say('Transferring ' + (buffer.byteLength / 1048576).toFixed(1) + ' MB…');
+      target.postMessage({ kvot: 'rb-open', name, buffer }, RB_ORIGIN, [buffer]);
+    }
 
     function onMessage(e) {
       if (e.origin !== RB_ORIGIN || !e.data || typeof e.data !== 'object') return;
 
       if (e.data.kvot === 'rb-ready') {
-        say('rb.html is ready — transferring ' + (buffer.byteLength / 1048576).toFixed(1) + ' MB…');
-        target.postMessage({ kvot: 'rb-open', name, buffer }, RB_ORIGIN, [buffer]);
+        ready = true;
+        sendIfPossible();
         return;
       }
       if (e.data.kvot === 'rb-opened') {
@@ -92,7 +134,21 @@ function handOver(target, name, buffer) {
       }
     }
 
+    /*
+      Listening starts before the data is built. A producer that builds first
+      and listens afterwards misses the announcement it was waiting for, and
+      the slower the build the more reliably it misses it.
+    */
     window.addEventListener('message', onMessage);
+
+    buildBuffer().then(buf => {
+      buffer = buf;
+      sendIfPossible();
+    }).catch(err => {
+      clearTimeout(timer);
+      window.removeEventListener('message', onMessage);
+      reject(err);
+    });
   });
 }
 
@@ -107,8 +163,7 @@ async function sendToNewTab() {
   if (!target) { say('Popup blocked — allow popups for this origin.'); return; }
 
   try {
-    const buffer = await buildHdf5Bytes();
-    const names = await handOver(target, 'produced-in-memory.h5', buffer);
+    const names = await handOver(target, () => buildHdf5Bytes(target), 'produced-in-memory.h5');
     say('Opened in the new tab: ' + names.join(', '));
   } catch (err) {
     say('Failed: ' + err.message);
@@ -148,8 +203,9 @@ async function sendToIframe() {
   frame.src = RB_URL + '#handoff=' + encodeURIComponent(location.origin);
   host.appendChild(frame);
 
-  const buffer = await buildHdf5Bytes();
-  const names = await handOver(frame.contentWindow, 'produced-in-memory.h5', buffer);
+  const names = await handOver(frame.contentWindow,
+                               () => buildHdf5Bytes(frame.contentWindow),
+                               'produced-in-memory.h5');
   say('Opened in the iframe: ' + names.join(', '));
   return names;
 }
