@@ -3,6 +3,18 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <!--
+    base-uri stops anything injected into the page from repointing every
+    relative URL on it, which is what an HDF5 "information" attribute
+    containing <base href="…"> used to do. object-src closes a sink nothing
+    here uses.
+
+    Deliberately not script-src: this page loads from four CDNs and has three
+    inline blocks, so a meta-tag script-src would need 'unsafe-inline' and buy
+    almost nothing. That belongs in a response header, together with
+    frame-ancestors, which a meta tag cannot express at all.
+  -->
+  <meta http-equiv="Content-Security-Policy" content="base-uri 'self'; object-src 'none'">
   <link rel="icon" type="image/png" sizes="16x16" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAABGdBTUEAALGPC/xhBQAAACBjSFJNAAB6JgAAgIQAAPoAAACA6AAAdTAAAOpgAAA6mAAAF3CculE8AAAB8lBMVEUARXYARXYARXYARXYARXYARXYARXYARXYARXYARXYARXYARXYARXYARXYARXYARXYARXYARXYARXYARXYARHUARHUARHUARHUCRncUVIETU4AIS3oTU4ABRXYARHYANGlBdJkhXYi/0NypwNE8cZbC095OfqAAM2kAK2Ohus1Ug6Pf6O6OrcI2bJPr8fSzx9YAOGyguswpY4zf5+5XhKQyaZHs8fWctsoANWoAMmg/c5gsZY62ythKe57p7/NMfZ8AMGcAPG86b5VZhqbj6/Bah6br8PStw9MAN2sAKmKatslVg6Pg6O7k6/CpwNEANGo0a5IeW4aqwdGswtJEd5uwxtUvaJAAN2wDRncBRXYJS3sJS3sESHgJTHsARXYARXYARHUARHUARXYARXYARHUARHUARXYARHUARHUARXYARXYARHYARHUNTn0VVIEGSHgRUX8LTHsWVYIQUX+8ztvW4emBo7ulvc6MqsHX4enF1eDw9Pe9ztvf6O7g6O7k6/DI1+Hi6u/y9vh8oLlGeJz////6+/y+z9zX4urJ1+Katsn6/Pz4+vve5+1tlbGmvs/r8fTP3OW0yNbz9vjN2+Tn7fLI1uHX4unp7/Otw9PE1N96nreXs8eOrcLG1eCov9AHSnkKTHsISnoHSnoLTXwHSXlgx+EhAAAAanRSTlMLYnd2Um5xUXUZ0/6w7vOv/NSx/e7z/dSx7vOw/dQZGdSx7vOw/dQZGdSx7vOw/dQZ1LHu87D91BkZ1LHzsP3UGRnUsfOw/dQZGdSx7vPUGdSx7vOw/dQZ/rDu87D8DGR6eXpUcHRTd3tlDK+lHQAAAAFiS0dEhRXXaucAAAAHdElNRQfmCB4IBCY0DSgTAAAA8klEQVQY02NgYGRiZmZhZWZmY+dgZmJkYODkyuLm5uHNyuLjF+DO4uJk4BTMysoSAgnwCGdlCRInkJ2TJSSSky3KI5aTAxIQz83Ll5AsKJSSlikqlpVjkFcoKS1TVCqvUFZRraxSU2fQ0KyuqdXSrqvX0dVraNQ3YNAwbGpuMTJubTMxNWvvMLdgsLTqrO6yNu7usbG1a+q1d2BwdOrrn+CsPbHKxdVtUqm7B4On1+QpU719ptX4utpNn+FnweAfMHPW7MCgOXODQ0LnzQ8LB7pjwcKIyKhFi6NjYpcsFedkiItPSExKTklMSE1LT8zIjAMAkOZIz65wIlsAAAAldEVYdGRhdGU6Y3JlYXRlADIwMjItMDgtMzBUMDg6MDQ6MzgrMDA6MDCWf9PgAAAAJXRFWHRkYXRlOm1vZGlmeQAyMDIyLTA4LTMwVDA4OjA0OjM4KzAwOjAw5yJrXAAAAFd6VFh0UmF3IHByb2ZpbGUgdHlwZSBpcHRjAAB4nOPyDAhxVigoyk/LzEnlUgADIwsuYwsTIxNLkxQDEyBEgDTDZAMjs1Qgy9jUyMTMxBzEB8uASKBKLgDqFxF08kI1lQAAAABJRU5ErkJggg=="/>
   <link rel="mask-icon" type="image/svg" href="data:image/svg;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBzdGFuZGFsb25lPSJubyI/Pgo8IURPQ1RZUEUgc3ZnIFBVQkxJQyAiLS8vVzNDLy9EVEQgU1ZHIDIwMDEwOTA0Ly9FTiIKICJodHRwOi8vd3d3LnczLm9yZy9UUi8yMDAxL1JFQy1TVkctMjAwMTA5MDQvRFREL3N2ZzEwLmR0ZCI+CjxzdmcgdmVyc2lvbj0iMS4wIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciCiB3aWR0aD0iNzg0LjAwMDAwMHB0IiBoZWlnaHQ9Ijc4NC4wMDAwMDBwdCIgdmlld0JveD0iMCAwIDc4NC4wMDAwMDAgNzg0LjAwMDAwMCIKIHByZXNlcnZlQXNwZWN0UmF0aW89InhNaWRZTWlkIG1lZXQiPgo8bWV0YWRhdGE+CkNyZWF0ZWQgYnkgcG90cmFjZSAxLjE0LCB3cml0dGVuIGJ5IFBldGVyIFNlbGluZ2VyIDIwMDEtMjAxNwo8L21ldGFkYXRhPgo8ZyB0cmFuc2Zvcm09InRyYW5zbGF0ZSgwLjAwMDAwMCw3ODQuMDAwMDAwKSBzY2FsZSgwLjEwMDAwMCwtMC4xMDAwMDApIgpmaWxsPSIjMDAwMDAwIiBzdHJva2U9Im5vbmUiPgo8cGF0aCBkPSJNNTMwIDM5MTUgbDAgLTM2MjUgMTA3NSAwIDEwNzUgMCAwIDM2MjUgMCAzNjI1IC0xMDc1IDAgLTEwNzUgMCAwCi0zNjI1eiBtMTczNCAyMDkgbDIzNiAtMjQ3IDAgLTI2OCAwIC0yNjkgLTM4MCAwIC0zODAgMCAtMiAyMTggLTMgMjE3IC0xMDcgMwotMTA4IDMgMCAtMzQ1IDAgLTM0NiAyMyAtNSBjMTIgLTMgMTIzIC0yNiAyNDcgLTUwIGwyMjUgLTQ1IDIzOCAtMjM4IDIzNwotMjM3IDAgLTUxMCAwIC01MTEgLTIwOCAtMjA3IC0yMDkgLTIwNyAtNDgwIDAgLTQ3OSAwIC0xOTcgMjI0IC0xOTcgMjI0IDAKMzAxIDAgMzAxIDM5OCAtMiAzOTcgLTMgMyAtMjI3IDIgLTIyOCAxMDUgMCAxMDUgMCAwIDMzNCBjMCAzMTAgLTEgMzM1IC0xNwozNDAgLTEwIDMgLTEyOCAyNiAtMjYzIDUxIC0xMzUgMjUgLTI1MiA0OSAtMjYxIDUzIC04IDQgLTExOCAxMTEgLTI0MiAyMzkKbC0yMjcgMjMyIDAgNTI0IDAgNTIzIDIzOCAyMDEgMjM3IDIwMiA0MTcgMCA0MTcgMSAyMzUgLTI0NnoiLz4KPHBhdGggZD0iTTYxODAgMzM5NSBsMCAtMzc1IDEyMCAwIDEyMCAwIC0yIDM3MyAtMyAzNzIgLTExNyAzIC0xMTggMyAwIC0zNzZ6Ii8+CjxwYXRoIGQ9Ik02MTgwIDIwODUgbDAgLTM3NiAxMTggMyAxMTcgMyAzIDM3MyAyIDM3MiAtMTIwIDAgLTEyMCAwIDAgLTM3NXoiLz4KPC9nPgo8L3N2Zz4K" color="#5bbad5">
   <title>HDF5 Browser — kvot ab</title>
@@ -20,9 +32,13 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" integrity="sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG" crossorigin="anonymous"></script>
   <script src="./resources/js/xlsxwrite.js?v=20260902"></script>
   <script>
-    // xlsxwrite.js is ready immediately after loading (no WASM initialization needed)
-    window.xlsxReady = true;
-    console.log('xlsxwrite.js loaded');
+    /*
+      This flag used to be set here unconditionally, which made it true even
+      when xlsxwrite.js had failed to load - a script that 404s does not stop
+      the next one running. It survived only because its one reader also tests
+      window.XlsxWriter. Now it says what it claims to say.
+    */
+    window.xlsxReady = typeof XlsxWriter !== 'undefined';
   </script>
   <script>
     // Set the theme before first paint so dark-mode visitors get no white flash.
@@ -52,8 +68,8 @@
        ====================================================================== -->
 
   <div id="urlDialog" class="url-dialog-overlay" style="display:none;">
-    <div class="url-dialog">
-      <h3>Load HDF5 from URL</h3>
+    <div class="url-dialog" role="dialog" aria-modal="true" aria-labelledby="urlDialogTitle">
+      <h3 id="urlDialogTitle">Load HDF5 from URL</h3>
       <p>Enter the direct URL to an <code>.h5</code> / <code>.hdf5</code> file.</p>
       <input type="text" id="urlInput" class="url-input" placeholder="https://example.com/data.h5" autocomplete="off" />
       <div id="urlError" class="url-error" style="display:none;"></div>
@@ -65,8 +81,8 @@
   </div>
 
   <div id="sampleDataDialog" class="url-dialog-overlay" style="display:none;">
-    <div class="url-dialog">
-      <h3>📂 Sample Data</h3>
+    <div class="url-dialog" role="dialog" aria-modal="true" aria-labelledby="sampleDataTitle">
+      <h3 id="sampleDataTitle">📂 Sample Data</h3>
       <p>Select HDF5 files to load from the server.</p>
       <div id="sampleDataError" class="url-error" style="display:none;"></div>
       <div id="sampleDataList" class="sample-data-list"></div>
@@ -78,9 +94,9 @@
   </div>
 
   <div id="presetManagerOverlay" class="preset-overlay" style="display:none;">
-    <div class="preset-dialog">
+    <div class="preset-dialog" role="dialog" aria-modal="true" aria-labelledby="presetDialogTitle">
       <div class="preset-dialog-header">
-        <h4>Manage Presets</h4>
+        <h4 id="presetDialogTitle">Manage Presets</h4>
         <button data-on-click="closePresetManager" class="preset-close-btn">&times;</button>
       </div>
       <div id="presetManagerList" class="preset-manager-list"></div>

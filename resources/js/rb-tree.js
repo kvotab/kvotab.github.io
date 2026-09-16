@@ -81,28 +81,6 @@ function positionTreeInfoTooltip(evt) {
   treeInfoTooltipEl.style.top = `${y}px`;
 }
 
-function sanitizeInfoHtml(html) {
-  const template = document.createElement('template');
-  template.innerHTML = String(html || '');
-
-  template.content.querySelectorAll('script, iframe, object, embed').forEach(el => el.remove());
-  template.content.querySelectorAll('*').forEach(el => {
-    Array.from(el.attributes || []).forEach(attr => {
-      const attrName = String(attr.name || '').toLowerCase();
-      const attrValue = String(attr.value || '');
-      if (attrName.startsWith('on')) {
-        el.removeAttribute(attr.name);
-        return;
-      }
-      if ((attrName === 'href' || attrName === 'src') && /^\s*javascript:/i.test(attrValue)) {
-        el.removeAttribute(attr.name);
-      }
-    });
-  });
-
-  return template.innerHTML;
-}
-
 function coerceInfoText(value) {
   if (value === undefined || value === null) return '';
   if (typeof value === 'string') return value;
@@ -126,16 +104,18 @@ function getNodeInformationHtml(node) {
       if (key) raw = getAttr(node, key);
     }
 
-    const info = coerceInfoText(raw).trim();
-    if (!info) return '';
-    return sanitizeInfoHtml(info);
+    /* Returned raw. It is sanitised where it enters the document, not here:
+       cleaning to a string that something else later parses is what lets
+       mutation-XSS through, and it is easy to lose track of which strings
+       have been through the cleaner and which have not. */
+    return coerceInfoText(raw).trim();
   } catch (_) {
     return '';
   }
 }
 
-function attachTreeInfoHover(element, infoHtml) {
-  if (!element || !infoHtml) return;
+function attachTreeInfoHover(element, infoText) {
+  if (!element || !infoText) return;
 
   element.addEventListener('mouseenter', (evt) => {
     if (getTreeMode() !== 'separated') {
@@ -152,7 +132,9 @@ function attachTreeInfoHover(element, infoHtml) {
         return;
       }
       const tip = ensureTreeInfoTooltip();
-      tip.innerHTML = infoHtml;
+      /* The one place this text becomes DOM, and so the one place it is
+         cleaned. A fragment, not a string: nothing re-parses it afterwards. */
+      tip.replaceChildren(kvotSanitizeHtml(infoText));
       tip.style.display = 'block';
       positionTreeInfoTooltip(evt);
       treeInfoTooltipTimer = null;
