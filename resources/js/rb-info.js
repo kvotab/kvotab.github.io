@@ -827,11 +827,17 @@ function buildAttributesTable(attrs, jsonReplacer) {
           rendered = true;
         } catch (_) { ignoreFailure('buildAttributesTable', _); }
       }
-      // Detect HTML tags → render in a sandboxed container
+      /*
+        Markup in an attribute is shown as markup - but through the allowlist
+        first. This used to assign the attribute straight to innerHTML, with a
+        comment calling the container sandboxed; .attrs-html is padding and a
+        border, and an <img onerror> in any string attribute of any opened file
+        ran on this origin.
+      */
       if (!rendered && /<[a-zA-Z][^>]*>/.test(trimmed)) {
         const htmlWrap = document.createElement('div');
         htmlWrap.className = 'attrs-html';
-        htmlWrap.innerHTML = trimmed;
+        htmlWrap.appendChild(kvotSanitizeHtml(trimmed));
         valTd.appendChild(htmlWrap);
         rendered = true;
       }

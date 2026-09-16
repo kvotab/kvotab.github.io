@@ -9,6 +9,7 @@
 
      kvotEscapeHtml   text  -> HTML
      kvotSafeHttpUrl  text  -> an href
+     kvotSanitizeHtml markup from a file -> a DOM fragment
      kvotCsvCell      text  -> a spreadsheet cell
      kvotFileTooLarge a file -> the whole thing in memory
 
@@ -66,6 +67,127 @@ function kvotSafeHttpUrl(value) {
   /* No scheme at all: a relative path or fragment, which is safe. */
   if (!/^[a-z][a-z0-9+.-]*:/i.test(bare)) return url;
   return '';
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Markup that came from a file
+
+   Escaping is the right answer whenever the text is meant to be read as text.
+   This is for the other case: a value that is *meant* to carry a little
+   formatting - an HDF5 "information" attribute written by whoever produced the
+   file - and therefore has to be parsed as markup and cannot simply be escaped.
+
+   Two rules, both learned the hard way:
+
+   1. An allowlist, never a denylist. A denylist has to be right about every
+      element and attribute that exists now or ever will; an attacker needs one
+      gap. The version this replaces stripped script, iframe, object, embed,
+      on* handlers and javascript: hrefs - and still let through <base>,
+      <meta http-equiv=refresh>, <style>, <link>, <form action=javascript:>,
+      <button formaction=javascript:> and <svg><a xlink:href=javascript:>. The
+      <base> alone repointed every relative URL on the page at another origin.
+
+   2. Return a fragment, never a string. Sanitising to a string that the caller
+      then assigns to innerHTML re-parses it, and a second parse of once-parsed
+      markup is exactly the shape mutation-XSS attacks take. A fragment cannot
+      be re-interpreted.
+
+   Elements are rebuilt rather than cleaned in place, so an attribute can only
+   appear on the output by being copied there deliberately.
+   ────────────────────────────────────────────────────────────────────────── */
+
+/*
+  Tags that may appear, and the attributes each may keep. Anything absent is
+  unwrapped - its text survives, the element does not.
+
+  Deliberately absent, beyond the obvious script/iframe/object/embed:
+    base, meta, link   can redirect the page or the URLs it resolves
+    style              can hide, move or impersonate the interface around it,
+                       and exfiltrate through selectors and background: url()
+    form, button       carry action= and formaction=, which take javascript:
+    svg, math          separate namespaces whose parsing rules differ from
+                       HTML's, which is where mutation-XSS lives
+  Also absent everywhere: class, id and name. Borrowing the site's own classes
+  is enough to impersonate its interface, and id/name on an injected element
+  can shadow a real one out from under the code that expects it.
+*/
+const KVOT_HTML_ALLOWED = Object.freeze({
+  a: ['href', 'title'], abbr: ['title'], b: [], blockquote: [], br: [],
+  caption: [], code: [], dd: [], div: [], dl: [], dt: [], em: [], h1: [],
+  h2: [], h3: [], h4: [], h5: [], h6: [], hr: [], i: [], kbd: [], li: [],
+  ol: [], p: [], pre: [], q: [], s: [], samp: [], small: [], span: [],
+  strong: [], sub: [], sup: [], table: [], tbody: [], td: ['colspan', 'rowspan'],
+  tfoot: [], th: ['colspan', 'rowspan'], thead: [], tr: [], u: [], ul: [], var: []
+});
+
+/*
+  Elements whose *content* is no more welcome than the element: a <style> body
+  is a stylesheet, a <script> body is a program. Everything else not on the
+  allowlist is unwrapped instead, so ordinary prose inside an unexpected tag is
+  still shown.
+*/
+const KVOT_HTML_DROP_WHOLE = Object.freeze(new Set([
+  'script', 'style', 'template', 'iframe', 'object', 'embed', 'base', 'meta',
+  'link', 'form', 'noscript', 'svg', 'math', 'title', 'head'
+]));
+
+/* A crafted value can nest thousands of elements deep; recursion that follows
+   it lands on the stack limit and takes the page down with it. */
+const KVOT_HTML_MAX_DEPTH = 40;
+
+/**
+ * Parse markup from an untrusted source into a DOM fragment, keeping only
+ * elements and attributes that cannot change what the page does.
+ *
+ * @param {*} html - Markup as a string; null and undefined give an empty fragment
+ * @returns {DocumentFragment} Safe to append. Never re-serialise and re-parse it.
+ */
+function kvotSanitizeHtml(html) {
+  /* A <template>'s content is inert: parsed, but not connected to the
+     document, so nothing in it loads, runs or is fetched while we look at it. */
+  const template = document.createElement('template');
+  template.innerHTML = String(html ?? '');
+  return kvotCleanNodes(template.content.childNodes, 0);
+}
+
+function kvotCleanNodes(nodes, depth) {
+  const out = document.createDocumentFragment();
+  for (const node of Array.from(nodes)) {
+    const cleaned = kvotCleanNode(node, depth);
+    if (cleaned) out.appendChild(cleaned);
+  }
+  return out;
+}
+
+function kvotCleanNode(node, depth) {
+  if (node.nodeType === Node.TEXT_NODE) return document.createTextNode(node.data);
+  if (node.nodeType !== Node.ELEMENT_NODE) return null;   // comments, and the rest
+
+  const tag = String(node.localName || '').toLowerCase();
+  if (KVOT_HTML_DROP_WHOLE.has(tag)) return null;
+
+  /* Past the depth limit everything collapses to its text, which keeps the
+     content without following the nesting any further. */
+  if (depth >= KVOT_HTML_MAX_DEPTH) return document.createTextNode(node.textContent || '');
+
+  const allowedAttrs = KVOT_HTML_ALLOWED[tag];
+  if (!allowedAttrs) return kvotCleanNodes(node.childNodes, depth + 1);   // unwrap
+
+  /* Built fresh rather than cloned: nothing carries over that is not copied
+     across on purpose below. */
+  const el = document.createElement(tag);
+  for (const name of allowedAttrs) {
+    if (!node.hasAttribute(name)) continue;
+    const value = node.getAttribute(name);
+    if (name === 'href') {
+      const safe = kvotSafeHttpUrl(value);
+      if (safe) el.setAttribute('href', safe);
+      continue;
+    }
+    el.setAttribute(name, value);
+  }
+  el.appendChild(kvotCleanNodes(node.childNodes, depth + 1));
+  return el;
 }
 
 /*

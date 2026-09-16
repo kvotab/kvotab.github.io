@@ -673,7 +673,14 @@ function _editPreset(id) {
   form.id = 'presetEditForm';
   form.className = 'preset-edit-form';
 
-  const fmtVal = (v) => (v == null ? '' : v);
+  /*
+    Escaped, not just stringified. These fields look numeric but nothing
+    enforces that: importPresets stores whatever JSON it is handed after
+    checking only that id and name exist, so xMin can be a string, and it is
+    interpolated straight into value="…" below. A preset file with
+    xMin: '" autofocus onfocus=… x="' broke out of the attribute.
+  */
+  const fmtVal = (v) => (v == null ? '' : kvotEscapeHtml(v));
 
   form.innerHTML =
     '<div class="preset-edit-row">' +
@@ -712,8 +719,13 @@ function _editPreset(id) {
   document.getElementById('pe_cancel').onclick = () => _cancelPresetEdit();
 }
 
+/*
+  Kept as a name the call sites already use, but delegating: this escaped &, "
+  and < and left ' and > alone, which is safe only for as long as every
+  attribute it feeds is written with double quotes. kvot-safe.js does all five.
+*/
 function _escAttr(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+  return kvotEscapeHtml(s);
 }
 
 function _parseNum(s) {
@@ -909,6 +921,26 @@ function importPresets() {
             notifyUser('That file has an entry with no id or name, so it was not imported.');
             return;
           }
+        }
+
+        /*
+          Coerce before storing. Escaping where these are drawn is what stops
+          them being markup, but a preset whose xMin is an object or a hostile
+          string is still wrong everywhere else it is used - and it would be
+          written back to localStorage to be met again on the next visit. A
+          field that is meant to be a number becomes a number or nothing.
+        */
+        for (const preset of imported) {
+          for (const key of ['xMin', 'xMax', 'yMin', 'yMax']) {
+            if (preset[key] == null || preset[key] === '') { preset[key] = null; continue; }
+            const asNumber = Number(preset[key]);
+            preset[key] = Number.isFinite(asNumber) ? asNumber : null;
+          }
+          for (const key of ['xScale', 'yScale']) {
+            if (preset[key] !== 'linear' && preset[key] !== 'log') preset[key] = null;
+          }
+          preset.id = String(preset.id).slice(0, 120);
+          preset.name = String(preset.name).slice(0, 120);
         }
 
         /*

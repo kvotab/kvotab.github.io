@@ -330,7 +330,7 @@ function cancelTreeRefresh() {
       const btn = el.querySelector('.ticker-cancel');
       if (btn) btn.style.display = 'none';
     }
-    console.log('Tree refresh cancellation requested');
+    console.debug('[tree] Refresh cancellation requested');
   } catch (e) { console.warn('cancelTreeRefresh failed', e); }
 }
 
@@ -616,11 +616,19 @@ document.addEventListener('DOMContentLoaded', () => {
   // Populate chart preset dropdown from localStorage / defaults
   populatePresetDropdown();
 
-  // Close preset manager on overlay click
+  /* Close preset manager on overlay click or Escape. The other two dialogs
+     have both; this one had only the click, so a keyboard user could open it
+     and not get out the same way they got out of the others. */
   const presetOverlay = document.getElementById('presetManagerOverlay');
   if (presetOverlay) {
     presetOverlay.addEventListener('click', (e) => {
       if (e.target === presetOverlay) closePresetManager();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && presetOverlay.style.display !== 'none') {
+        e.preventDefault();
+        closePresetManager();
+      }
     });
   }
 });
