@@ -310,16 +310,38 @@
     .map-hint button.btn-info { flex: 0 0 38px; }
     .map-hint button.compact { font-size: 1rem; font-weight: 600; }
     .btn-icon { width: 14px; height: 14px; vertical-align: -2px; margin-right: 2px; }
-    /* Leaflet popup styling */
+    /* Leaflet popup styling. The panel that carries it is themed in kvot.css;
+       only the type is this page's business. */
     .map-card .leaflet-popup-content {
       font-family: RawengulkSans, Verdana, sans-serif;
       font-size: 0.82rem;
       line-height: 1.5;
-      color: #333;
+      color: var(--text-primary);
     }
     .map-card .leaflet-popup-content b {
       font-size: 0.9rem;
     }
+
+    /* Zone outlines. map.js gives each polyline a class as well as a colour,
+       so the stroke can be set here and follow the light/dark switch with no
+       redraw. The dark values are lifted: the light-mode goldenrod and brick
+       red read well against pale tiles and sink into the dark ones. */
+    .map-card {
+      --zone-rt90: #b8860b;
+      --zone-rt90-cm: #8b6914;
+      --zone-sweref99: #cc3333;
+      --zone-sweref99-cm: #991111;
+    }
+    [data-theme="dark"] .map-card {
+      --zone-rt90: #e8b13c;
+      --zone-rt90-cm: #c9963a;
+      --zone-sweref99: #ff7a68;
+      --zone-sweref99-cm: #e05a4a;
+    }
+    .map-card .zone-rt90 { stroke: var(--zone-rt90); }
+    .map-card .zone-rt90-cm { stroke: var(--zone-rt90-cm); }
+    .map-card .zone-sweref99 { stroke: var(--zone-sweref99); }
+    .map-card .zone-sweref99-cm { stroke: var(--zone-sweref99-cm); }
 
     /* credits */
     .proj-credits {

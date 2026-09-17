@@ -1,0 +1,589 @@
+/* ==========================================================================
+   facsimile.html — layout and controls
+
+   A settings column on the left, a tabbed work area on the right (charts,
+   table, model text, Jacobian, generated code, help). Everything sits in the
+   site's .content box between the fixed header and footer; colours come from
+   the tokens in kvot.css so the page follows the theme toggle.
+   ========================================================================== */
+
+.fac {
+  display: grid;
+  /* The panel's width is a variable so the drag handle has one thing to set
+     and one thing to remember. */
+  grid-template-columns: var(--fac-side-width, 340px) 8px minmax(0, 1fr);
+  height: 100%;
+  overflow: hidden;
+  font-family: verdana, sans-serif;
+  font-size: 13px;
+}
+
+/* ---- left column: settings --------------------------------------------- */
+/*
+  Two parts, so that the buttons at the foot stay put however long the panel
+  gets: the middle scrolls, the foot does not.
+*/
+.fac-side {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+  border-right: 1px solid var(--border-color);
+  background: var(--bg-surface);
+}
+.fac-side-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 14px 16px;
+}
+.fac-side-foot {
+  flex: 0 0 auto;
+  padding: 8px 14px 10px;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+}
+.fac-side-foot .fac-actions { margin: 0 0 6px; }
+
+/* ---- the drag handle ---------------------------------------------------- */
+.fac-resize {
+  cursor: col-resize;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  background: transparent;
+}
+.fac-resize::after {
+  content: '';
+  width: 3px;
+  border-radius: 2px;
+  transition: background 0.15s;
+}
+.fac-resize:hover::after,
+.fac-resize.active::after { background: var(--color-kvot-accent); }
+
+/* ---- a collapsible section ---------------------------------------------- */
+.fac-sec { margin: 0 0 4px; }
+.fac-sec > summary {
+  margin: 10px 0 6px;
+  padding: 0 0 4px 16px;
+  border-bottom: 1px solid var(--border-color);
+  font: 700 0.95rem RawengulkSans, sans-serif;
+  color: var(--text-primary);
+  cursor: pointer;
+  list-style: none;
+  position: relative;
+  user-select: none;
+}
+/* Safari still draws the disclosure triangle without this. */
+.fac-sec > summary::-webkit-details-marker { display: none; }
+.fac-sec > summary::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 0.42em;
+  border: 4px solid transparent;
+  border-left-color: var(--text-muted);
+  transition: transform 0.15s ease;
+  transform-origin: 2px 4px;
+}
+.fac-sec[open] > summary::before { transform: rotate(90deg); }
+.fac-sec > summary:hover { color: var(--link-color); }
+.fac-sec > summary:focus-visible {
+  outline: 2px solid var(--color-kvot-bright);
+  outline-offset: 2px;
+}
+.fac-sec:first-child > summary { margin-top: 2px; }
+.fac-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 110px;
+  gap: 6px;
+  align-items: center;
+  margin: 3px 0;
+}
+.fac-row label {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+.fac-row label .fac-name {
+  display: block;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.fac-row input, .fac-row select, .fac-row textarea {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 3px 5px;
+  border: 1px solid var(--input-border);
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+}
+/*
+  The "Advanced settings" toggle: a link, not a button, because it reveals
+  rather than does. The container it controls carries its own [hidden] rule --
+  a div has no author `display` here, so the browser's own would be enough, but
+  this page has been caught by that three times and spells it out.
+*/
+.fac-more {
+  display: inline-block;
+  margin: 2px 0 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-kvot-accent, #b5651d);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.fac-more:hover { filter: brightness(1.15); }
+.fac-more:focus-visible { outline: 2px solid var(--color-kvot-accent); outline-offset: 2px; }
+#facSolverAdvanced[hidden] { display: none; }
+
+.fac-row input.changed { border-color: var(--color-kvot-bright); }
+.fac-row input:invalid, .fac-row input.bad,
+.fac-row textarea.bad { border-color: var(--color-kvot-accent); }
+/* A list, not prose: no wrapping, and resizable up when the list gets long. */
+.fac-row textarea {
+  display: block;
+  resize: vertical;
+  min-height: 46px;
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow-x: auto;
+}
+.fac-check {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin: 4px 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.fac-check input { margin: 0; }
+/* An author `display` beats the browser's own [hidden] { display: none }, so a
+   row hidden from script needs saying again here. Both of these carry one. */
+.fac-row[hidden], .fac-check[hidden] { display: none; }
+
+.fac-preset { margin: 4px 0 8px; }
+.fac-preset select { width: 100%; padding: 4px; font-size: 12px; }
+.fac-preset .fac-preset-desc {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+/* Where the case comes from, under the description of what it is. Quieter
+   than the description, and hidden when the settings match no preset. */
+.fac-preset-ref {
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+.fac-preset-ref[hidden] { display: none; }
+
+.fac-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 6px;
+}
+.fac-btn {
+  padding: 6px 12px;
+  border: 1px solid var(--color-kvot-accent);
+  border-radius: 6px;
+  background: var(--color-kvot-accent);
+  color: #fff;
+  font: 600 12px verdana, sans-serif;
+  cursor: pointer;
+}
+.fac-btn:hover { filter: brightness(1.08); }
+.fac-btn:disabled { opacity: 0.5; cursor: default; }
+.fac-btn.secondary {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border-color: var(--border-color);
+}
+.fac-btn.small { padding: 3px 8px; font-size: 11px; }
+
+.fac-status {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  min-height: 2.6em;
+  overflow-wrap: anywhere;
+}
+.fac-status.error { border-color: var(--color-kvot-accent); color: var(--text-primary); }
+.fac-status.ok { border-color: var(--color-kvot-primary); }
+.fac-progress {
+  height: 8px;
+  margin-top: 6px;
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  overflow: hidden;
+}
+.fac-progress > div {
+  height: 100%;
+  width: 0;
+  background: var(--color-kvot-bright);
+  transition: width 0.15s linear;
+}
+/*
+  The stripes move while the solver is working. The filled part is the run's
+  progress in simulated time, which for the first seconds of a stiff case is
+  honestly almost nothing -- and a bar sitting at zero with no other sign of
+  life is exactly what reads as a hung page.
+*/
+.fac-progress.working {
+  background-image: repeating-linear-gradient(135deg,
+    var(--border-color) 0 6px, transparent 6px 12px);
+  background-size: 17px 100%;
+  animation: fac-working 0.8s linear infinite;
+}
+@keyframes fac-working { to { background-position: 17px 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .fac-progress.working { animation: none; }
+}
+.fac-stats {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+.fac-stats b { color: var(--text-secondary); font-weight: 600; }
+
+/* ---- right column: tabs --------------------------------------------------- */
+.fac-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+}
+.fac-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 6px 10px 0;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  flex: 0 0 auto;
+}
+.fac-tabs button {
+  padding: 6px 12px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: 12px verdana, sans-serif;
+  cursor: pointer;
+}
+.fac-tabs button:hover { color: var(--text-primary); }
+.fac-tabs button.active {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border-color: var(--border-color);
+  font-weight: 600;
+  margin-bottom: -1px;
+}
+.fac-pane {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 14px;
+  background: var(--bg-primary);
+}
+.fac-pane[hidden] { display: none; }
+
+/* charts */
+.fac-chart-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(460px, 1fr));
+  gap: 12px;
+}
+.fac-chart {
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 4px;
+  background: var(--bg-surface);
+}
+.fac-chart .plot { width: 100%; height: 360px; }
+.fac-chart h3 {
+  margin: 4px 8px;
+  font: 600 13px RawengulkSans, sans-serif;
+  color: var(--text-secondary);
+}
+.fac-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  align-items: center;
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.fac-toolbar label { display: inline-flex; gap: 4px; align-items: center; }
+/* An author `display` beats the browser's own [hidden] { display: none }, so
+   anything hidden from script needs saying again here. */
+.fac-toolbar label[hidden] { display: none; }
+.fac-toolbar select, .fac-toolbar input[type="text"], .fac-toolbar input[type="number"] {
+  padding: 3px 5px;
+  border: 1px solid var(--input-border);
+  border-radius: 4px;
+  font-size: 12px;
+}
+/*
+  THE SERIES PICKER
+
+  A hundred and thirty names. As one wrapping row of checkbox-and-label pairs
+  it was a thicket: the boxes made a ragged left edge wherever a name wrapped,
+  nothing said which names were outputs and which were the state, and what was
+  ticked could only be found by scrolling and looking. So: three named groups,
+  a grid whose columns line up whatever the names are, the checkbox itself
+  taken out of the picture in favour of the cell lighting up, and the ticked
+  ones repeated as chips above, each of which removes itself.
+*/
+.fac-series {
+  margin: 6px 0 10px;
+  max-height: 260px;
+  min-height: 90px;
+  overflow-y: auto;
+  resize: vertical;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+.fac-group[hidden] { display: none; }
+.fac-group h4 {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
+  padding: 4px 8px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle, rgba(128, 128, 128, 0.25));
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+.fac-group h4 .fac-count { font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--text-muted); }
+/* auto-fill, so the columns line up and re-flow with the panel's width. */
+.fac-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 1px 2px;
+  padding: 4px 6px 7px;
+}
+.fac-item {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+  padding: 2px 5px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.fac-item[hidden] { display: none; }
+/*
+  The name gets the room first and the unit gives way. Without this a series
+  whose unit is long ("100 eV m-3 per mole") had its unit printed in full and
+  its name ellipsised down to nothing -- a cell showing only a unit.
+*/
+/* The name never shrinks: the longest here is a dozen characters and always
+   fits the cell, so it is the unit alone that has to give way. */
+.fac-item .fac-nm { flex: 0 0 auto; }
+/*
+  A far larger shrink factor, so the unit is what gives way when the cell is
+  too narrow and the name is not. Neither grows, so the two stay next to each
+  other instead of the unit being pushed to the far edge of the cell.
+*/
+.fac-item .fac-unit { flex: 0 100 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.fac-item:hover { background: var(--bg-surface); }
+/*
+  The checkbox stays, for the keyboard and for anything reading the page, and
+  stops taking part in the layout. The cell is what shows the state.
+*/
+.fac-item input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.fac-item.on {
+  background: var(--color-kvot-accent);
+  color: #fff;
+}
+.fac-item.on .fac-unit { color: rgba(255, 255, 255, 0.75); }
+.fac-item:focus-within { outline: 2px solid var(--color-kvot-accent); outline-offset: -2px; }
+
+/* The ticked ones, above the list. */
+.fac-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0 8px 6px;
+}
+.fac-chips[hidden] { display: none; }
+.fac-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 2px 6px;
+  border: 1px solid var(--color-kvot-accent);
+  border-radius: 10px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 11px;
+  cursor: pointer;
+}
+.fac-chip:hover { background: var(--color-kvot-accent); color: #fff; }
+.fac-chip:hover .fac-unit, .fac-chip:hover .fac-chip-x { color: rgba(255, 255, 255, 0.8); }
+.fac-chip-x { color: var(--text-muted); font-size: 12px; line-height: 1; }
+/* The unit, beside the name it belongs to and quieter than it. */
+.fac-unit { color: var(--text-muted); font-size: 10px; }
+.fac-chart .plot[hidden] { display: none; }
+.fac-empty {
+  margin: 0;
+  padding: 24px 12px 40px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.fac-empty[hidden] { display: none; }
+
+/* table */
+.fac-table-wrap { overflow: auto; max-height: calc(100% - 44px); }
+table.fac-table {
+  border-collapse: collapse;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 11px;
+  white-space: nowrap;
+}
+table.fac-table th, table.fac-table td {
+  padding: 2px 8px;
+  border: 1px solid var(--table-border);
+  text-align: right;
+}
+table.fac-table th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+table.fac-table tr:nth-child(even) td { background: var(--table-stripe); }
+
+/* model editor */
+.fac-editor {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.fac-editor textarea {
+  flex: 1 1 auto;
+  min-height: 300px;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--input-border);
+  border-radius: 6px;
+  font: 12px/1.45 ui-monospace, Menlo, Consolas, monospace;
+  resize: vertical;
+  tab-size: 4;
+  white-space: pre;
+}
+.fac-editor textarea.error { border-color: var(--color-kvot-accent); }
+.fac-editor-info {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+.fac-editor-info .err { color: var(--color-kvot-accent); font-weight: 600; }
+
+/* Jacobian */
+.fac-jac { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 16px; align-items: start; }
+.fac-jac canvas { border: 1px solid var(--border-color); background: var(--bg-surface); image-rendering: pixelated; }
+.fac-jac .legend { font-size: 12px; color: var(--text-secondary); line-height: 1.6; }
+.fac-jac .hover { font-family: ui-monospace, Menlo, Consolas, monospace; min-height: 1.4em; }
+
+/* code and help */
+.fac-pre {
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font: 11px/1.4 ui-monospace, Menlo, Consolas, monospace;
+  white-space: pre;
+  overflow: auto;
+  max-height: calc(100% - 50px);
+}
+.fac-help { max-width: 78ch; line-height: 1.55; font-size: 13px; color: var(--text-primary); }
+.fac-help h3 { margin: 18px 0 6px; font: 700 15px RawengulkSans, sans-serif; }
+.fac-help h4 { margin: 14px 0 4px; font: 700 13px verdana, sans-serif; }
+.fac-help code, .fac-help pre {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12px;
+  background: var(--code-bg);
+  color: var(--code-text);
+  border-radius: 4px;
+}
+.fac-help code { padding: 1px 4px; }
+.fac-help pre { padding: 8px 10px; overflow-x: auto; }
+.fac-help table { border-collapse: collapse; font-size: 12px; margin: 6px 0; }
+.fac-help td, .fac-help th { border: 1px solid var(--table-border); padding: 3px 8px; text-align: left; vertical-align: top; }
+.fac-help .muted { color: var(--text-muted); }
+
+/* misc */
+.fac-muted { color: var(--text-muted); font-size: 11px; }
+.fac-inline-err { color: var(--color-kvot-accent); }
+.fac-kbd { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; background: var(--code-bg); padding: 1px 4px; border-radius: 3px; }
+
+/* narrow screens: stack the columns */
+@media (max-width: 860px) {
+  .fac { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); overflow-y: auto; }
+  .fac-side { height: auto; max-height: 55vh; border-right: none; border-bottom: 1px solid var(--border-color); }
+  /* A column to drag makes no sense once the columns are stacked. */
+  .fac-resize { display: none; }
+  .fac-chart-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* A small table inside the Help prose, for a handful of measured numbers. */
+.fac-table-small {
+  border-collapse: collapse;
+  margin: 8px 0 14px;
+  font-size: 12px;
+}
+.fac-table-small th, .fac-table-small td {
+  padding: 3px 14px 3px 0;
+  text-align: right;
+  border-bottom: 1px solid var(--border-subtle, rgba(128, 128, 128, 0.25));
+}
+.fac-table-small th:first-child, .fac-table-small td:first-child { text-align: left; }
+.fac-table-small th { font-weight: 600; color: var(--text-secondary); }

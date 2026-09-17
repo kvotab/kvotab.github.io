@@ -24,9 +24,10 @@ var map;
 var markers;
 
 function map_init() {
-	// Tile URL and access token live in site.js so there is only one copy.
+	// Tile URL and access token live in site.js so there is only one copy, and
+	// the street layer from there follows the site's light/dark switch.
 	map = L.map('coord-map', { attributionControl: false, zoomControl: false }).setView([59.87072523185025, 17.63431259999659], 14);
-	var streetLayer = L.tileLayer(KVOT.TILE_URL, {
+	var streetLayer = KVOT.themedTileLayer({
 		maxZoom: KVOT.TILE_MAX_ZOOM
 	});
 	var satelliteLayer = L.tileLayer(
@@ -242,21 +243,43 @@ function clip_zone_to_sweden_ring(ring, west, east) {
 }
 
 /*
+  Zone overlays carry a class as well as a colour, so the stroke can be set
+  from CSS and follow the light/dark switch on its own. The colours below are
+  the light-mode ones and stay as the fallback; on the dark basemap the
+  stylesheet lifts them, since a dark goldenrod that reads well against pale
+  tiles all but disappears against dark ones.
+*/
+var ZONE_STYLE = {
+	rt90:         { color: '#b8860b', className: 'zone-line zone-rt90' },
+	rt90_cm:      { color: '#8B6914', className: 'zone-line zone-rt90-cm' },
+	sweref99:     { color: '#cc3333', className: 'zone-line zone-sweref99' },
+	sweref99_cm:  { color: '#991111', className: 'zone-line zone-sweref99-cm' }
+};
+
+// Merge a zone style into the rest of a Leaflet path's options.
+function zone_path(style, extra) {
+	var opts = { color: style.color, className: style.className };
+	for (var k in extra) opts[k] = extra[k];
+	return opts;
+}
+
+/*
   A national zone drawn twice over: the coastline solid, and the maritime
   boundary - what actually decides in or out - dotted and lighter outside it.
   Without the second line a position at sea would sit outside every drawn
   outline and yet not be flagged, and the map would look wrong about it.
 */
-function add_national_outline(group, color, popupContent) {
+function add_national_outline(group, style, popupContent) {
 	if (typeof sweden_border !== 'undefined') {
 		for (var r = 0; r < sweden_border.length; r++) {
 			var border = sweden_border[r].concat([sweden_border[r][0]]);
-			L.polyline(border, { color: color, weight: 3 }).bindPopup(popupContent).addTo(group);
+			L.polyline(border, zone_path(style, { weight: 3 }))
+				.bindPopup(popupContent).addTo(group);
 		}
 	}
 	if (typeof sweden_territory !== 'undefined') {
 		var sea = sweden_territory.concat([sweden_territory[0]]);
-		L.polyline(sea, { color: color, weight: 1.5, dashArray: '2,6', opacity: 0.75 })
+		L.polyline(sea, zone_path(style, { weight: 1.5, dashArray: '2,6', opacity: 0.75 }))
 			.bindPopup(popupContent).addTo(group);
 	}
 }
@@ -303,33 +326,31 @@ function show_rt90_meridian(projection) {
 		'<br>Scale: ' + z.scale_grs + '</i>';
 
 	if (projection === "rt90_2.5_gon_v") {
-		add_national_outline(group, '#b8860b', popupContent);
+		add_national_outline(group, ZONE_STYLE.rt90, popupContent);
 	} else if (typeof sweden_border !== 'undefined') {
 		// Local zone: clip each coastline ring to the zone strip
 		for (var r = 0; r < sweden_border.length; r++) {
 			var clipped = clip_zone_to_sweden_ring(sweden_border[r], west, east);
 			if (clipped) {
 				var ring = clipped.concat([clipped[0]]);
-				L.polyline(ring, {
-					color: '#b8860b', weight: 3, dashArray: '6,4'
-				}).bindPopup(popupContent).addTo(group);
+				L.polyline(ring, zone_path(ZONE_STYLE.rt90, { weight: 3, dashArray: '6,4' }))
+					.bindPopup(popupContent).addTo(group);
 			}
 		}
 		// And the strip's share of the territory, since that is what decides.
 		if (typeof sweden_territory !== 'undefined') {
 			var sea = clip_zone_to_sweden_ring(sweden_territory, west, east);
 			if (sea) {
-				L.polyline(sea.concat([sea[0]]), {
-					color: '#b8860b', weight: 1.5, dashArray: '2,6', opacity: 0.75
-				}).bindPopup(popupContent).addTo(group);
+				L.polyline(sea.concat([sea[0]]),
+					zone_path(ZONE_STYLE.rt90, { weight: 1.5, dashArray: '2,6', opacity: 0.75 }))
+					.bindPopup(popupContent).addTo(group);
 			}
 		}
 	}
 
 	// Central meridian line
-	L.polyline([[55.0, z.cm_grs], [69.1, z.cm_grs]], {
-		color: '#8B6914', weight: 1.5, dashArray: '4,6', opacity: 0.7
-	}).addTo(group);
+	L.polyline([[55.0, z.cm_grs], [69.1, z.cm_grs]],
+		zone_path(ZONE_STYLE.rt90_cm, { weight: 1.5, dashArray: '4,6', opacity: 0.7 })).addTo(group);
 
 	rt90_zone_layer = group;
 	group.addTo(map);
@@ -356,23 +377,21 @@ function show_sweref99_meridian(projection) {
 		'<br>False easting: ' + z.fe.toLocaleString('en') + ' m';
 
 	if (z.national) {
-		add_national_outline(group, '#cc3333', popupContent);
+		add_national_outline(group, ZONE_STYLE.sweref99, popupContent);
 	} else if (typeof sweref99_zone_polygons !== 'undefined' && sweref99_zone_polygons[projection]) {
 		// Local zone: use actual municipality-based boundary polygons
 		var rings = sweref99_zone_polygons[projection];
 		// Draw interactive borders for each ring
 		for (var r = 0; r < rings.length; r++) {
 			var border = rings[r].concat([rings[r][0]]);
-			L.polyline(border, {
-				color: '#cc3333', weight: 3, dashArray: '6,4'
-			}).bindPopup(popupContent).addTo(group);
+			L.polyline(border, zone_path(ZONE_STYLE.sweref99, { weight: 3, dashArray: '6,4' }))
+				.bindPopup(popupContent).addTo(group);
 		}
 	}
 
 	// Central meridian line
-	L.polyline([[55.0, z.cm], [69.1, z.cm]], {
-		color: '#991111', weight: 1.5, dashArray: '4,6', opacity: 0.7
-	}).addTo(group);
+	L.polyline([[55.0, z.cm], [69.1, z.cm]],
+		zone_path(ZONE_STYLE.sweref99_cm, { weight: 1.5, dashArray: '4,6', opacity: 0.7 })).addTo(group);
 
 	sweref99_zone_layer = group;
 	group.addTo(map);

@@ -828,3 +828,39 @@ The inline snippet and `site.js` both have to agree, because both run: the
 snippet sets the attribute before first paint to avoid a flash, and `site.js`
 re-applies `storedTheme() || systemTheme()` afterwards. Getting one right and
 not the other looks like it works until the page finishes loading.
+
+## test-chrome-map-theme.py
+
+Both maps on the site follow the light/dark switch.
+
+    python3 -m http.server 8765 --bind 127.0.0.1
+    "$CHROME" --headless=new --remote-debugging-port=9222 --user-data-dir=/tmp/p
+    python3 resources/tests/site/test-chrome-map-theme.py    # expect 12/12
+
+The coordinate map on proj.html and the office map in every page's footer were
+both nailed to Jawg's light cartography, so a visitor in dark mode got a white
+rectangle in the middle of a dark page. They now take their basemap from
+`KVOT.themedTileLayer`, which re-points the layer on `kvot-theme-change`; Jawg
+publishes the same cartography dark, so nothing on the map moves across the
+switch.
+
+Twelve checks, and each is something that was easy to get wrong:
+
+- the tiles change in **both** directions, checked at the layer's URL and at
+  the `img.leaflet-tile` elements that actually made it into the DOM — the
+  first alone would pass on a layer that never redrew;
+- the view does not move. Leaflet is asked for new images, not for a new map,
+  and a theme switch that recentred the map would be its own bug;
+- the street layer follows the theme **while it is off the map** — proj.html
+  can be showing satellite — so it comes back in the theme in force rather than
+  the one it was built in;
+- the zone outlines follow. They are drawn in a class and coloured from CSS for
+  exactly this reason: the light-mode goldenrod sinks into the dark basemap,
+  and the alternative was redrawing every overlay on each switch;
+- Leaflet's own furniture is tinted. The attribution strip is checked because
+  it is the one piece that is white in *both* of Leaflet's defaults.
+
+The theme is driven through `KVOT.toggleTheme`, not by setting the attribute:
+the toggle is what a visitor has, and it is what fires the event the layers
+listen for. Which theme a page opens in depends on the host's system setting,
+so the helper toggles only when it has to rather than assuming light.
