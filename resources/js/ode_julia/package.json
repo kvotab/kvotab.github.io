@@ -1,0 +1,16 @@
+{
+  "name": "ode_julia",
+  "version": "0.1.0",
+  "description": "Stiff ODE solvers ported from DifferentialEquations.jl: FBDF, QNDF, Rodas5P, KenCarp4, TRBDF2, RadauIIA5. Runs in the browser and in Node, with sparse or dense linear algebra and no dependencies.",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./core/*": "./core/*",
+    "./solvers/*": "./solvers/*"
+  },
+  "files": ["index.js", "core", "solvers", "README.md"],
+  "keywords": ["ode", "stiff", "bdf", "rosenbrock", "esdirk", "radau", "sciml", "differentialequations"],
+  "license": "MIT",
+  "sideEffects": false
+}

@@ -608,6 +608,67 @@ h1 {
   z-index: 200000;
 }
 
+/* ── Leaflet chrome in dark mode ───────────────────────────────────────────
+   The basemap itself switches to Jawg's dark cartography with the theme
+   (themedTileLayer in site.js); Leaflet's own furniture does not. Popups,
+   tooltips, the zoom buttons and the attribution strip are white by default
+   and glare against the dark tiles, so they are tinted here.
+
+   Every selector is anchored on html rather than on [data-theme] alone: the
+   footer map loads Leaflet's stylesheet on demand, which appends it after
+   this file, so a tie on specificity would go to Leaflet. */
+html[data-theme="dark"] .leaflet-container {
+  background: var(--bg-secondary);
+}
+html[data-theme="dark"] .leaflet-popup-content-wrapper,
+html[data-theme="dark"] .leaflet-popup-tip,
+html[data-theme="dark"] .leaflet-tooltip {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border-color: var(--border-color);
+}
+html[data-theme="dark"] .leaflet-popup-content-wrapper,
+html[data-theme="dark"] .leaflet-tooltip {
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.6);
+}
+/* A tooltip's arrow is a border on a pseudo-element, one rule per direction,
+   and it has to follow the body it points away from. */
+html[data-theme="dark"] .leaflet-tooltip-top::before { border-top-color: var(--bg-surface); }
+html[data-theme="dark"] .leaflet-tooltip-bottom::before { border-bottom-color: var(--bg-surface); }
+html[data-theme="dark"] .leaflet-tooltip-left::before { border-left-color: var(--bg-surface); }
+html[data-theme="dark"] .leaflet-tooltip-right::before { border-right-color: var(--bg-surface); }
+html[data-theme="dark"] .leaflet-container a.leaflet-popup-close-button {
+  color: var(--text-secondary);
+}
+html[data-theme="dark"] .leaflet-container a.leaflet-popup-close-button:hover {
+  color: var(--text-primary);
+}
+html[data-theme="dark"] .leaflet-control-attribution {
+  background: rgba(15, 11, 8, 0.8);
+  color: var(--text-secondary);
+}
+html[data-theme="dark"] .leaflet-control-attribution a,
+html[data-theme="dark"] .leaflet-popup-content a {
+  color: var(--link-color);
+}
+html[data-theme="dark"] .leaflet-bar,
+html[data-theme="dark"] .leaflet-bar a {
+  border-color: var(--border-color);
+}
+html[data-theme="dark"] .leaflet-bar a {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+html[data-theme="dark"] .leaflet-bar a:hover,
+html[data-theme="dark"] .leaflet-bar a:focus {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+html[data-theme="dark"] .leaflet-bar a.leaflet-disabled {
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+}
+
 /* rdc.html uses #map for its own full-area decay-chain canvas. */
 #map, .map {
   position: fixed;

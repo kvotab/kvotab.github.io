@@ -51,6 +51,11 @@ const KVOT = (() => {
       desc: 'Summarise QA review status across Excel workbooks, with filters, statistics and CSV export.',
     },
     {
+      href: './facsimile.html',
+      label: 'Canister Radiolysis',
+      desc: 'Solve the FACSIMILE radiolysis and corrosion model of the gas in an intact spent-fuel canister, with editable reactions and a sparse analytic Jacobian.',
+    },
+    {
       href: './arsredovisning.html',
       label: 'Digital årsredovisning',
       desc: 'Build a K2 annual report from a SIE file and check the iXBRL against what Bolagsverket looks at.',
@@ -75,7 +80,13 @@ const KVOT = (() => {
   // ── Map tile configuration (single source of truth; also used by map.js) ────
 
   const TILE_ACCESS_TOKEN = 'ENe8N6YxrncW4x3EDSJgqDZUylzlnpOMk4WCgzYhdm0sAP6l0dr6BlQaijzEznsa';
-  const TILE_URL = `https://tile.jawg.io/jawg-light/{z}/{x}/{y}.png?access-token=${TILE_ACCESS_TOKEN}`;
+  // Jawg publishes the same cartography light and dark, so the basemap can
+  // follow the site's theme without any label or line moving on the switch.
+  const TILE_STYLES = { light: 'jawg-light', dark: 'jawg-dark' };
+  function tileUrl(theme) {
+    const style = TILE_STYLES[theme] || TILE_STYLES.light;
+    return `https://tile.jawg.io/${style}/{z}/{x}/{y}.png?access-token=${TILE_ACCESS_TOKEN}`;
+  }
   const TILE_ATTRIBUTION =
     '<a href="https://www.jawg.io" title="Tiles Courtesy of Jawg Maps" target="_blank" rel="noopener noreferrer">&copy; <b>Jawg</b>Maps</a>' +
     ' | <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">&copy; OSM contributors</a>';
@@ -155,9 +166,12 @@ const KVOT = (() => {
     rememberTheme(theme);
   }
 
+  function currentTheme() {
+    return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+  }
+
   function toggleTheme() {
-    const current = document.documentElement.getAttribute('data-theme') || 'light';
-    setTheme(current === 'dark' ? 'light' : 'dark');
+    setTheme(currentTheme() === 'dark' ? 'light' : 'dark');
   }
 
   // Apply theme immediately on load (before render). The inline boot snippet in
@@ -341,6 +355,22 @@ const KVOT = (() => {
     return null;
   }
 
+  /*
+    A base tile layer that follows the light/dark switch. Leaflet keeps the
+    tile grid and only re-requests the images, so the view does not jump or
+    reset when the theme changes. The layer is returned detached: the caller
+    decides when it goes on the map, and one that is currently off the map
+    (proj.html while satellite is showing) still picks up the new style, so it
+    comes back in the right theme rather than in the one it was built in.
+  */
+  function themedTileLayer(options = {}) {
+    const layer = L.tileLayer(tileUrl(currentTheme()), options);
+    document.documentElement.addEventListener('kvot-theme-change', e => {
+      layer.setUrl(tileUrl(e.detail.theme));
+    });
+    return layer;
+  }
+
   function buildMap(el) {
     if (mapInstances[el.id]) return mapInstances[el.id];
 
@@ -352,7 +382,7 @@ const KVOT = (() => {
     });
 
     const map = L.map(el).setView(OFFICE_COORDS, 14);
-    L.tileLayer(TILE_URL, { attribution: TILE_ATTRIBUTION, maxZoom: TILE_MAX_ZOOM }).addTo(map);
+    themedTileLayer({ attribution: TILE_ATTRIBUTION, maxZoom: TILE_MAX_ZOOM }).addTo(map);
     L.marker(OFFICE_COORDS, { icon: svgMarker, title: 'kvot ab, valhallagatan 16, uppsala' }).addTo(map);
 
     mapInstances[el.id] = map;
@@ -417,7 +447,9 @@ const KVOT = (() => {
     ICON_ORGNR,
     ICON_VAT,
     PROJECTS: ALL_PROJECTS,
-    TILE_URL,
+    tileUrl,
+    themedTileLayer,
+    currentTheme,
     TILE_ATTRIBUTION,
     TILE_MAX_ZOOM,
   };

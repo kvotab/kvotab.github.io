@@ -47,9 +47,18 @@ async def open_page(bws, url='http://127.0.0.1:8765/rb.html', settle=6):
                 return r
             grab(r)
 
-    async def ev(expr, timeout=120):
+    async def ev(expr, timeout=120, user_gesture=False):
+        """Evaluate in the page.
+
+        `user_gesture` marks the evaluation as one, which is what a click
+        really is and what the browser requires before it will let a page open
+        a tab. Without it `window.open` returns null and any handoff that goes
+        through a second tab fails in a way that looks like the other tab
+        being broken.
+        """
         r = await asyncio.wait_for(
-            send('Runtime.evaluate', {'expression': expr, 'returnByValue': True, 'awaitPromise': True}),
+            send('Runtime.evaluate', {'expression': expr, 'returnByValue': True,
+                                      'awaitPromise': True, 'userGesture': user_gesture}),
             timeout)
         res = r.get('result', {})
         if 'exceptionDetails' in res:
