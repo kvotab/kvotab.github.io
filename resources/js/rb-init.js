@@ -397,30 +397,88 @@ function validateHdf5Buffer(buffer) {
    URL FILE LOADING
    ========================================================================== */
 
+/* ==========================================================================
+   GITHUB URLS, AND THE TOKEN FOR A REPOSITORY THAT IS NOT PUBLIC
+   ========================================================================== */
+
+/** Where the token lives: this tab, until it closes. Never localStorage. */
+const GITHUB_TOKEN_KEY = 'kvot-rb-github-token';
+
+/** The token for this tab, or '' if none has been given. */
+function githubToken() {
+  try {
+    return sessionStorage.getItem(GITHUB_TOKEN_KEY) || '';
+  } catch (_) {
+    return '';
+  }
+}
+
+/** Remember it for this tab, or forget it when given nothing. */
+function rememberGithubToken(token) {
+  try {
+    if (token) sessionStorage.setItem(GITHUB_TOKEN_KEY, token);
+    else sessionStorage.removeItem(GITHUB_TOKEN_KEY);
+  } catch (_) {
+    ignoreFailure('rememberGithubToken', new Error('session storage unavailable'));
+  }
+}
+
 /**
- * A URL that serves the file, from one that only shows a page about it.
+ * How to fetch a GitHub file: where from, and with what headers.
  *
  * Pasting what the address bar says while looking at a file on GitHub is the
- * obvious thing to do and cannot work twice over:
- * github.com/<owner>/<repo>/blob/<ref>/<path> is an HTML page about the file,
- * and github.com sends no `access-control-allow-origin`, so a browser would
- * refuse the read even if that address did return the bytes.
- * raw.githubusercontent.com serves the file itself and does send it.
+ * obvious thing to do and cannot work: github.com/<owner>/<repo>/blob/<ref>/
+ * <path> is an HTML page about the file, and github.com sends no
+ * `access-control-allow-origin`, so a browser would refuse the read even if
+ * that address did return the bytes.
+ *
+ * Two places serve the bytes instead, and which one depends on whether there
+ * is a token, because only one of them will take it:
+ *
+ *   no token   raw.githubusercontent.com, which is public-only but simple.
+ *   a token    the Contents API with the raw media type. It is the only route
+ *              a browser can authenticate: raw.githubusercontent.com answers a
+ *              CORS preflight carrying `Authorization` with 403 and no
+ *              `access-control-allow-headers`, so the header can never be sent
+ *              there. The API allows it from any origin, and returns the file
+ *              itself -- measured at 31 MB; its ceiling is 100 MB.
+ *
+ * THE TOKEN IS ATTACHED HERE AND NOWHERE ELSE, and only to a URL this function
+ * has built for api.github.com. A URL the reader pasted is never given it, so
+ * no pasted host can be handed a GitHub credential.
  *
  * @param {URL} parsed
- * @returns {string|null} the address to fetch instead, or null if this one is fine
+ * @returns {{url: string, headers: object|null, authenticated: boolean}|null}
+ *          null when this is not a GitHub page URL and should be left alone
  */
-function rawUrlFor(parsed) {
+function githubFetchPlan(parsed) {
   const host = parsed.hostname.toLowerCase();
-  if (host === 'github.com' || host === 'www.github.com') {
-    // /<owner>/<repo>/blob/<ref>/<path...>, and the /raw/ spelling of the same,
-    // which only redirects to raw.githubusercontent.com anyway.
-    const m = /^\/([^/]+)\/([^/]+)\/(?:blob|raw)\/(.+)$/.exec(parsed.pathname);
-    if (m) {
-      return `https://raw.githubusercontent.com/${m[1]}/${m[2]}/${m[3]}${parsed.search}`;
-    }
+  if (host !== 'github.com' && host !== 'www.github.com') return null;
+  // /<owner>/<repo>/blob/<rest...>, and the /raw/ spelling of the same.
+  const m = /^\/([^/]+)\/([^/]+)\/(?:blob|raw)\/(.+)$/.exec(parsed.pathname);
+  if (!m) return null;
+  const [, owner, repo, rest] = m;
+  const token = githubToken();
+  if (!token) {
+    return {
+      url: `https://raw.githubusercontent.com/${owner}/${repo}/${rest}${parsed.search}`,
+      headers: null,
+      authenticated: false
+    };
   }
-  return null;
+  // The API wants the ref and the path apart. The first segment is the ref,
+  // which is right for a branch, tag or SHA without a slash in it; a branch
+  // name containing one would need the ?ref= spelled out by hand.
+  const cut = rest.indexOf('/');
+  if (cut < 1) return null;
+  const ref = rest.slice(0, cut);
+  const path = rest.slice(cut + 1).split('/').map(encodeURIComponent).join('/');
+  return {
+    url: `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`
+       + `/contents/${path}?ref=${encodeURIComponent(ref)}`,
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github.raw' },
+    authenticated: true
+  };
 }
 
 /** Open the URL input dialog */
@@ -432,8 +490,39 @@ function openUrlDialog() {
   error.style.display = 'none';
   error.textContent = '';
   input.value = '';
+  // Put back whatever this tab was given, so a second file from the same
+  // private repository does not ask again.
+  const token = document.getElementById('urlToken');
+  const auth = document.getElementById('urlAuth');
+  if (token) token.value = githubToken();
+  if (auth) auth.open = !!githubToken();
   dialog.style.display = '';
   input.focus();
+}
+
+/**
+ * The message for a failed URL load, with the GitHub cases named.
+ *
+ * A private repository is a 404 to an unauthenticated reader, not a 403 --
+ * GitHub declines to admit it exists -- so "not found" is exactly the answer
+ * that needs a word about tokens rather than being taken at face value.
+ */
+function explainUrlFailure(err, plan) {
+  const message = err && err.message ? err.message : String(err);
+  if (!plan) return message;
+  if (!plan.authenticated && /\b404\b/.test(message)) {
+    return `${message} If that repository is private, open “Private GitHub repository” `
+      + 'below and give a token: GitHub answers 404 rather than 403 for a repository '
+      + 'you have not proved you can see.';
+  }
+  if (plan.authenticated && /\b401\b/.test(message)) {
+    return `${message} The token was refused. Check it has not expired.`;
+  }
+  if (plan.authenticated && /\b40[34]\b/.test(message)) {
+    return `${message} The token was accepted for the request but not for this file. `
+      + 'A fine-grained token needs Contents: Read-only on this repository in particular.';
+  }
+  return message;
 }
 
 /** Close the URL input dialog */
@@ -471,14 +560,21 @@ async function loadFromUrl() {
     return;
   }
 
-  // An address that shows the file rather than serving it is corrected here,
-  // and written back into the box so that the one that worked is the one the
-  // reader is left looking at.
-  const raw = rawUrlFor(parsed);
-  const target = raw || url;
-  if (raw) {
-    parsed = new URL(raw);
-    input.value = raw;
+  // Taken before the plan is made: the plan picks its route by whether there
+  // is one. Emptying the box forgets it.
+  const tokenEl = document.getElementById('urlToken');
+  rememberGithubToken(tokenEl ? tokenEl.value.trim() : '');
+
+  // An address that shows the file rather than serving it is corrected here.
+  // The corrected one goes back in the box when it is a plain address the
+  // reader could use again; an API address is not shown, since it is an
+  // implementation detail and is useless without the token.
+  const plan = githubFetchPlan(parsed);
+  const target = plan ? plan.url : url;
+  const headers = plan ? plan.headers : null;
+  if (plan) {
+    parsed = new URL(plan.authenticated ? url : plan.url);
+    if (!plan.authenticated) input.value = plan.url;
   }
 
   const fileName = hdf5FileNameFromUrl(parsed);
@@ -494,7 +590,7 @@ async function loadFromUrl() {
                           total
                             ? `${fileName} — ${kvotFormatBytes(read)} of ${kvotFormatBytes(total)}`
                             : `${fileName} — ${kvotFormatBytes(read)}`);
-    });
+    }, headers);
 
     // Pre-warm tree worker
     try { await ensureTreeWorkerReady(5000); } catch (_) { ignoreFailure('loadFromUrl', _); }
@@ -507,8 +603,13 @@ async function loadFromUrl() {
   } catch (err) {
     hideFileLoadTicker();
     console.error('[loadFromUrl] Error loading from URL', target, err);
-    errorEl.textContent = `Failed to load: ${err.message}`;
+    errorEl.textContent = `Failed to load: ${explainUrlFailure(err, plan)}`;
     errorEl.style.display = '';
+    // A rejected or missing token is the one failure worth pointing at the
+    // field that causes it.
+    if (/\b(401|403|404)\b/.test(err.message) && document.getElementById('urlAuth')) {
+      document.getElementById('urlAuth').open = true;
+    }
   } finally {
     loadBtn.disabled = false;
     loadBtn.textContent = 'Load';

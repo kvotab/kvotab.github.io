@@ -383,7 +383,7 @@ async function readResponseWithProgress(response, onProgress) {
  * @param {function(number, number|null): void} [onProgress] - (bytesRead, bytesTotal|null)
  * @returns {Promise<string>} The display name the file was registered under
  */
-async function ingestHdf5FromUrl(url, context = 'ingestHdf5FromUrl', onProgress) {
+async function ingestHdf5FromUrl(url, context = 'ingestHdf5FromUrl', onProgress, headers = null) {
   let parsed;
   try {
     parsed = new URL(url, window.location.href);
@@ -396,7 +396,9 @@ async function ingestHdf5FromUrl(url, context = 'ingestHdf5FromUrl', onProgress)
   }
 
   const fileName = hdf5FileNameFromUrl(parsed);
-  const response = await fetch(parsed.href);
+  // `headers` carries a credential when the caller built this URL itself --
+  // see githubFetchPlan. Nothing here adds one to a URL it was merely handed.
+  const response = await fetch(parsed.href, headers ? { headers } : undefined);
   if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}`);
 
   const buffer = await readResponseWithProgress(response, onProgress);
