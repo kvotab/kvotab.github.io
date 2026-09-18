@@ -66,6 +66,107 @@
 	--on-bright: #352921;
 }
 
+/*
+  WHICH WAY ROUND THE PAGE IS.
+
+  Scrollbars, checkboxes, radios, selects, the spin buttons on a number field
+  and the native pickers are painted by the browser, not from the variables
+  above, and the browser paints them for a light page unless told otherwise.
+  Telling it is `color-scheme`, and without it a dark page gets a white
+  scrollbar down the side of every panel that scrolls and a bright blue tick in
+  every checkbox. It belongs here because it is true of every page: rdc.css and
+  rb.css had each grown their own answer for scrollbars alone, and the pages
+  with no answer of their own (facsimile.html, proj.html) were left light.
+
+  `scrollbar-color` is inherited, so the one declaration reaches every scroll
+  container on the page, and it finally reads the two variables above -- which
+  have been defined for both themes all along with nothing using them. There
+  are deliberately no ::-webkit-scrollbar rules here: in Chrome their mere
+  presence switches the whole scrollbar to the custom path, which would
+  override what rdc.css and rb.css already do for themselves (rdc.html loads
+  its own stylesheet BEFORE this one, so these rules would win).
+*/
+:root {
+	color-scheme: light;
+	scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+	/*
+	  Progress bars and anything else still drawn by the browser. Checkboxes
+	  are drawn below instead, for the reason given there.
+	*/
+	accent-color: var(--color-kvot-accent);
+	/* The fill of a ticked box. A page may set its own. */
+	--check-fill: var(--color-kvot-accent);
+}
+
+/*
+  CHECKBOXES AND RADIOS, DRAWN HERE RATHER THAN BY THE BROWSER.
+
+  `accent-color` alone is not enough: a browser paints a native control in its
+  window-inactive state when the window is not the key one, and on macOS that
+  means the tint is dropped for grey. Click on another window and every ticked
+  box on the page goes colourless. No property stops that while the control is
+  the browser's to draw -- so `appearance: none` takes it away from the browser
+  and everything below is ours, in every state, focused window or not.
+
+  The size is the 13px the browser used, and the margins are left alone, so
+  nothing on any page moves. --check-fill is a variable so a page can still
+  have its own colour; the tick is white and baked into the image, so a fill
+  light enough to lose it wants a page rule of its own.
+*/
+input[type="checkbox"],
+input[type="radio"] {
+	appearance: none;
+	-webkit-appearance: none;
+	box-sizing: border-box;
+	width: 13px;
+	height: 13px;
+	flex: none;
+	border: 1px solid var(--input-border);
+	border-radius: 3px;
+	background-color: var(--input-bg);
+	background-repeat: no-repeat;
+	background-position: center;
+	background-size: 11px 11px;
+	cursor: pointer;
+}
+
+input[type="radio"] { border-radius: 50%; }
+
+input[type="checkbox"]:hover:not(:disabled),
+input[type="radio"]:hover:not(:disabled) { border-color: var(--check-fill); }
+
+input[type="checkbox"]:checked,
+input[type="checkbox"]:indeterminate,
+input[type="radio"]:checked {
+	background-color: var(--check-fill);
+	border-color: var(--check-fill);
+}
+
+input[type="checkbox"]:checked {
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='%23fff' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round' d='M3.5 8.5l3 3 6-7'/%3E%3C/svg%3E");
+}
+
+input[type="checkbox"]:indeterminate {
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='%23fff' stroke-width='2.6' stroke-linecap='round' d='M4 8h8'/%3E%3C/svg%3E");
+}
+
+input[type="radio"]:checked {
+	background-image: radial-gradient(circle at center, #fff 0 34%, transparent 36%);
+}
+
+input[type="checkbox"]:disabled,
+input[type="radio"]:disabled { opacity: 0.55; cursor: not-allowed; }
+
+input[type="checkbox"]:focus-visible,
+input[type="radio"]:focus-visible {
+	outline: 2px solid var(--check-fill);
+	outline-offset: 1px;
+}
+
+[data-theme="dark"] {
+	color-scheme: dark;
+}
+
 @font-face {
 	font-family: RawengulkSans;
 	src: url(../../vendors/font/RawengulkSans-094.otf);

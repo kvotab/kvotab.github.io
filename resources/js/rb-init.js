@@ -380,7 +380,9 @@ function validateHdf5Buffer(buffer) {
   if (/^\s*<!doctype html|^\s*<html/i.test(headText)) {
     return {
       ok: false,
-      reason: 'Downloaded content is HTML, not an HDF5 file.'
+      reason: 'Downloaded content is HTML, not an HDF5 file. The address of a page '
+        + 'that shows a file is not the address of the file: look for a "raw" or '
+        + '"download" link on that page and use the address it points at.'
     };
   }
 
@@ -394,6 +396,32 @@ function validateHdf5Buffer(buffer) {
 /* ==========================================================================
    URL FILE LOADING
    ========================================================================== */
+
+/**
+ * A URL that serves the file, from one that only shows a page about it.
+ *
+ * Pasting what the address bar says while looking at a file on GitHub is the
+ * obvious thing to do and cannot work twice over:
+ * github.com/<owner>/<repo>/blob/<ref>/<path> is an HTML page about the file,
+ * and github.com sends no `access-control-allow-origin`, so a browser would
+ * refuse the read even if that address did return the bytes.
+ * raw.githubusercontent.com serves the file itself and does send it.
+ *
+ * @param {URL} parsed
+ * @returns {string|null} the address to fetch instead, or null if this one is fine
+ */
+function rawUrlFor(parsed) {
+  const host = parsed.hostname.toLowerCase();
+  if (host === 'github.com' || host === 'www.github.com') {
+    // /<owner>/<repo>/blob/<ref>/<path...>, and the /raw/ spelling of the same,
+    // which only redirects to raw.githubusercontent.com anyway.
+    const m = /^\/([^/]+)\/([^/]+)\/(?:blob|raw)\/(.+)$/.exec(parsed.pathname);
+    if (m) {
+      return `https://raw.githubusercontent.com/${m[1]}/${m[2]}/${m[3]}${parsed.search}`;
+    }
+  }
+  return null;
+}
 
 /** Open the URL input dialog */
 function openUrlDialog() {
@@ -443,6 +471,16 @@ async function loadFromUrl() {
     return;
   }
 
+  // An address that shows the file rather than serving it is corrected here,
+  // and written back into the box so that the one that worked is the one the
+  // reader is left looking at.
+  const raw = rawUrlFor(parsed);
+  const target = raw || url;
+  if (raw) {
+    parsed = new URL(raw);
+    input.value = raw;
+  }
+
   const fileName = hdf5FileNameFromUrl(parsed);
 
   loadBtn.disabled = true;
@@ -451,7 +489,7 @@ async function loadFromUrl() {
   try {
     showFileLoadTicker(0, 1, fileName);
 
-    await ingestHdf5FromUrl(url, 'loadFromUrl', (read, total) => {
+    await ingestHdf5FromUrl(target, 'loadFromUrl', (read, total) => {
       setFileLoadProgress(total ? read / total : null,
                           total
                             ? `${fileName} — ${kvotFormatBytes(read)} of ${kvotFormatBytes(total)}`
@@ -465,10 +503,10 @@ async function loadFromUrl() {
     await updateTabs(true);
     hideFileLoadTicker();
     closeUrlDialog();
-    console.debug('[loadFromUrl] Loaded', fileName, 'from', url);
+    console.debug('[loadFromUrl] Loaded', fileName, 'from', target);
   } catch (err) {
     hideFileLoadTicker();
-    console.error('[loadFromUrl] Error loading from URL', url, err);
+    console.error('[loadFromUrl] Error loading from URL', target, err);
     errorEl.textContent = `Failed to load: ${err.message}`;
     errorEl.style.display = '';
   } finally {

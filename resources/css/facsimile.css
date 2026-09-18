@@ -54,6 +54,15 @@
   align-items: stretch;
   justify-content: center;
   background: transparent;
+  /*
+    Above the main column, which reaches under it: the tab strip's shading is
+    pulled left across this handle so that it meets the panel instead of
+    stopping 8px short. Being on top keeps the whole height of the handle
+    draggable and keeps the grabber below visible, while the handle's own
+    transparent background lets that shading through.
+  */
+  position: relative;
+  z-index: 1;
 }
 .fac-resize::after {
   content: '';
@@ -272,11 +281,25 @@
   min-width: 0;
   height: 100%;
   overflow: hidden;
+  /*
+    Reaches 8px to its left, under the drag handle, and pads the same 8px back
+    so its contents do not move: content-box sizing means the border box grows
+    by the padding, so the right edge stays where the grid put it. This is what
+    lets the tab strip below shade the handle -- `overflow: hidden` clips to
+    the padding box, and without the padding the strip's own overhang was
+    simply cut off at the column edge.
+  */
+  margin-left: -8px;
+  padding-left: 8px;
 }
 .fac-tabs {
   display: flex;
   gap: 2px;
-  padding: 6px 10px 0;
+  /* The -8px is the width of the drag handle's grid column; the padding adds
+     it back so the tabs themselves do not move. Both are undone below once the
+     columns stack and there is no handle. */
+  margin-left: -8px;
+  padding: 6px 10px 0 18px;
   border-bottom: 1px solid var(--border-color);
   background: var(--bg-secondary);
   flex: 0 0 auto;
@@ -571,6 +594,9 @@ table.fac-table tr:nth-child(even) td { background: var(--table-stripe); }
   .fac-side { height: auto; max-height: 55vh; border-right: none; border-bottom: 1px solid var(--border-color); }
   /* A column to drag makes no sense once the columns are stacked. */
   .fac-resize { display: none; }
+  /* ...and with no handle to reach under, nothing overhangs to its left. */
+  .fac-main { margin-left: 0; padding-left: 0; }
+  .fac-tabs { margin-left: 0; padding-left: 10px; }
   .fac-chart-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
