@@ -35,6 +35,10 @@ enabling/disabling/removing a file, and the rejection of malformed input.
 fire exactly once. It also checks that an unknown action is reported, that a
 throwing handler is caught, and that the failure banner appears.
 
+`test-url.py` covers loading by URL: which host a GitHub address is rewritten
+to, and -- the check that matters -- that the token is attached only to a URL
+the loader built itself for api.github.com, never to one the reader pasted.
+
 `test-handoff.py` covers the in-memory handoff — another page opening a file
 here without it ever being saved to disk. It drives both transports (the
 postMessage handshake and a `?url=` blob link) and the guards that stop an

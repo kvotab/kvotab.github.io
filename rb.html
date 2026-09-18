@@ -51,7 +51,7 @@
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20260918b">
-  <link rel="stylesheet" href="./resources/css/rb.css?v=20260902">
+  <link rel="stylesheet" href="./resources/css/rb.css?v=20260918a">
 </head>
 <body>
   <div id="dropOverlay">
@@ -72,6 +72,17 @@
       <h3 id="urlDialogTitle">Load HDF5 from URL</h3>
       <p>Enter the direct URL to an <code>.h5</code> / <code>.hdf5</code> file.</p>
       <input type="text" id="urlInput" class="url-input" placeholder="https://example.com/data.h5" autocomplete="off" />
+      <!--
+        A GitHub token, for a file in a repository that is not public. It is
+        sent to api.github.com and to nowhere else -- see githubFetchPlan in
+        rb-init.js, which is the only thing that attaches it, and only to a URL
+        it builds itself. Kept for the tab and forgotten when the tab closes.
+      -->
+      <details id="urlAuth" class="url-auth">
+        <summary>Private GitHub repository</summary>
+        <p>A <a href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noopener noreferrer">fine-grained token</a> with <em>Contents: Read-only</em> on that one repository. It is kept for this tab only and is never written to disk.</p>
+        <input type="password" id="urlToken" class="url-input" placeholder="github_pat_…" autocomplete="off" spellcheck="false" />
+      </details>
       <div id="urlError" class="url-error" style="display:none;"></div>
       <div class="url-dialog-buttons">
         <button class="url-btn url-btn-cancel" data-on-click="closeUrlDialog">Cancel</button>
@@ -327,7 +338,7 @@
   <script src="./resources/js/rb-utils.js?v=20260902"></script>
   <script src="./resources/js/rb-actions.js?v=20260907"></script>
   <script src="./resources/js/rb-hdf5.js?v=20260913"></script>
-  <script src="./resources/js/rb-file.js?v=20260916"></script>
+  <script src="./resources/js/rb-file.js?v=20260918a"></script>
   <script src="./resources/js/rb-tabs.js?v=20260902"></script>
   <script src="./resources/js/rb-tree.js?v=20260902"></script>
   <script src="./resources/js/rb-chart.js?v=20260902"></script>
@@ -336,7 +347,7 @@
   <script src="./resources/js/rb-search.js?v=20260902"></script>
   <script src="./resources/js/rb-dragdrop.js?v=20260902"></script>
   <script src="./resources/js/rb-export.js?v=20260902"></script>
-  <script src="./resources/js/rb-init.js?v=20260918"></script>
+  <script src="./resources/js/rb-init.js?v=20260918a"></script>
   <script src="./resources/js/rb-resize.js?v=20260902"></script>
   <script src="./resources/js/rb-handoff.js?v=20260916"></script>
 </body>
