@@ -14,7 +14,7 @@
       } catch (e) { /* storage unavailable — site.js will apply the default */ }
     })();
   </script>
-  <link rel="stylesheet" href="./resources/css/kvot.css?v=20260911">
+  <link rel="stylesheet" href="./resources/css/kvot.css?v=20260918b">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <title>Lognormal Conversions — kvot ab</title>
   <meta name="description" content="Convert between lognormal parameterisations — mu and sigma, geometric mean and GSD, percentiles — with plots and the underlying equations.">
@@ -1792,7 +1792,7 @@
       const eqEl=document.querySelector('#equations-details .section-body');
       const eqHtml=eqEl?eqEl.innerHTML:'';
       const preview=window.open('','_blank');
-      preview.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Lognormal — Preview</title><link rel="stylesheet" href="./resources/css/kvot.css?v=20260911"><style>body{font-family:Arial,sans-serif;padding:18px}pre{white-space:pre-wrap;background:var(--bg-secondary);padding:12px;border-radius:4px;border:1px solid var(--border-color);font-family:Menlo,monospace;font-size:.95rem}table{width:100%;border-collapse:collapse}td{padding:6px 10px}@media print{body{margin:12mm}}</style><script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js"><\/script></head><body><h2>Lognormal — Computed Results</h2><pre>${outText.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</pre><h3>Equations</h3>${eqHtml}<script>window.onload=()=>{if(window.MathJax&&MathJax.typesetPromise)MathJax.typesetPromise();}<\/script></body></html>`);
+      preview.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Lognormal — Preview</title><link rel="stylesheet" href="./resources/css/kvot.css?v=20260918b"><style>body{font-family:Arial,sans-serif;padding:18px}pre{white-space:pre-wrap;background:var(--bg-secondary);padding:12px;border-radius:4px;border:1px solid var(--border-color);font-family:Menlo,monospace;font-size:.95rem}table{width:100%;border-collapse:collapse}td{padding:6px 10px}@media print{body{margin:12mm}}</style><script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js"><\/script></head><body><h2>Lognormal — Computed Results</h2><pre>${outText.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</pre><h3>Equations</h3>${eqHtml}<script>window.onload=()=>{if(window.MathJax&&MathJax.typesetPromise)MathJax.typesetPromise();}<\/script></body></html>`);
       preview.document.close();
     });
 
