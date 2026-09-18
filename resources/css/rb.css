@@ -24,6 +24,14 @@
       --color-text-secondary: #6b5d4f;
       --color-text-muted: #9b8d7f;
       --color-selected-text: #2d2416;
+
+      /*
+        A folder is yellow. The emoji that used to stand in for one is drawn by
+        the system font and came out grey in both themes, which is neither the
+        page's colour nor a folder's; these are drawn from the stylesheet
+        instead (see .rb-ico) so they follow the theme like everything else.
+      */
+      --color-folder: #d9962f;
     }
 
     [data-theme="dark"] {
@@ -35,6 +43,8 @@
       --color-text-secondary: #b8a898;
       --color-text-muted: #8a7d6f;
       --color-selected-text: #e8ddd0;
+      /* Lighter, to carry against the dark brown. */
+      --color-folder: #f0b75f;
     }
 
     /* ==========================================================================
@@ -286,8 +296,14 @@
     
     .add-file-btn {
       padding: 4px 10px;
-      background: var(--color-kvot-primary);
-      color: var(--color-kvot-bright);
+      /*
+        The site's own accent rather than the brand dark green, which on this
+        warm brown palette read as the one thing that did not belong -- and on
+        the dark theme was a muddy pill on a near-black bar. White on the accent
+        is the same pairing the tick in a checkbox uses.
+      */
+      background: var(--color-kvot-accent);
+      color: #fff;
       border: none;
       border-radius: 4px 4px 0 0;
       cursor: pointer;
@@ -386,11 +402,11 @@
       background: var(--color-panel-border);
     }
     .url-btn-load {
-      background: var(--color-kvot-primary);
-      color: var(--color-kvot-bright);
+      background: var(--color-kvot-accent);
+      color: #fff;
     }
     .url-btn-load:hover {
-      background: #405533;
+      background: #a85d4f;
     }
     .url-btn-load:disabled {
       opacity: 0.6;
@@ -1406,10 +1422,19 @@
       line-height: 1.6;
     }
     .welcome-panel h2 {
+      display: flex;
+      align-items: center;
+      gap: 9px;
       margin: 0 0 8px;
       font-size: 20px;
       font-weight: 700;
-      color: var(--color-kvot-primary);
+      /*
+        The strongest text colour, not the brand green: that green on the dark
+        theme's brown was very nearly invisible, and the sub-headings below are
+        already the accent, so the title needs to outrank them rather than
+        compete. The colour in this line comes from the folder beside it.
+      */
+      color: var(--color-text-primary);
     }
     .welcome-panel > p {
       margin: 0 0 18px;
@@ -1636,6 +1661,38 @@
        ========================================================================== */
     #fileInput {
       display: none;
+    }
+
+    /*
+      Icons drawn from the stylesheet rather than typed as emoji.
+
+      An emoji is drawn by whichever font the system hands over: 📂 and 🔗 came
+      out flat grey here, in both themes, and no CSS could reach them. These are
+      masks, so `background-color` is the colour -- currentColor for the ones
+      that should match their label, and the folder's own yellow for the folder.
+    */
+    .rb-ico {
+      display: inline-block;
+      width: 1.05em;
+      height: 1.05em;
+      vertical-align: -0.16em;
+      flex: none;
+      background-color: currentColor;
+      -webkit-mask: center / contain no-repeat;
+      mask: center / contain no-repeat;
+    }
+    .rb-ico-folder {
+      background-color: var(--color-folder);
+      -webkit-mask-image: var(--ico-folder);
+      mask-image: var(--ico-folder);
+    }
+    .rb-ico-link {
+      -webkit-mask-image: var(--ico-link);
+      mask-image: var(--ico-link);
+    }
+    :root {
+      --ico-folder: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2z'/%3E%3C/svg%3E");
+      --ico-link: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M9.5 13.5a4 4 0 0 0 6 .5l2.5-2.5a4 4 0 0 0-5.7-5.7L11 7.1'/%3E%3Cpath d='M14.5 10.5a4 4 0 0 0-6-.5L6 12.5a4 4 0 0 0 5.7 5.7l1.3-1.3'/%3E%3C/svg%3E");
     }
 
     /* The token field in the URL dialog, folded away until it is wanted. */

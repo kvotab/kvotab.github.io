@@ -51,11 +51,11 @@
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20260918b">
-  <link rel="stylesheet" href="./resources/css/rb.css?v=20260918a">
+  <link rel="stylesheet" href="./resources/css/rb.css?v=20260918b">
 </head>
 <body>
   <div id="dropOverlay">
-    <div class="message">📁 Drop HDF5 files here</div>
+    <div class="message"><span class="rb-ico rb-ico-folder" aria-hidden="true"></span> Drop HDF5 files here</div>
   </div>
   
   <header></header>
@@ -93,7 +93,7 @@
 
   <div id="sampleDataDialog" class="url-dialog-overlay" style="display:none;">
     <div class="url-dialog" role="dialog" aria-modal="true" aria-labelledby="sampleDataTitle">
-      <h3 id="sampleDataTitle">📂 Sample Data</h3>
+      <h3 id="sampleDataTitle"><span class="rb-ico rb-ico-folder" aria-hidden="true"></span> Sample Data</h3>
       <p>Select HDF5 files to load from the server.</p>
       <div id="sampleDataError" class="url-error" style="display:none;"></div>
       <div id="sampleDataList" class="sample-data-list"></div>
@@ -135,7 +135,7 @@
         />
         <button id="clearSearch" class="clear-search-btn" title="Clear search">×</button>
       </div>
-      <div id="tree" class="loading">Drop HDF5 files or click "+ Add Files" to start...</div>
+      <div id="tree" class="loading">Drop HDF5 files or click "Add Files" to start...</div>
     </div>
 
     <div class="resize-handle" id="resizeHandle"></div>
@@ -232,12 +232,12 @@
             </div>
             <div id="info">
               <div class="welcome-panel">
-                <h2>📂 HDF5 Browser</h2>
+                <h2><span class="rb-ico rb-ico-folder" aria-hidden="true"></span> HDF5 Browser</h2>
                 <p>An interactive browser for exploring and visualising HDF5 data files.</p>
                 <div class="welcome-section">
                   <h4>Getting Started</h4>
                   <ol>
-                    <li><strong>Load files</strong> — drag &amp; drop <code>.h5</code> / <code>.hdf5</code> files onto the page, click <em>+ Add Files</em>, or use <em>🔗 URL</em> to fetch from a remote server.</li>
+                    <li><strong>Load files</strong> — drag &amp; drop <code>.h5</code> / <code>.hdf5</code> files onto the page, click <em>Add Files</em>, or use <em>URL</em> to fetch from a remote server.</li>
                     <li><strong>Browse</strong> — expand groups in the tree on the left to explore the file structure.</li>
                     <li><strong>Select</strong> — click a dataset to view its attributes and chart.</li>
                   </ol>
@@ -293,9 +293,9 @@
           <span class="ticker-progress" aria-hidden="true"><span class="ticker-progress-bar"></span></span>
           <button class="ticker-cancel" data-on-click="cancelTreeRefresh" title="Cancel" style="display:none;">✕</button>
         </div>
-        <button class="add-file-btn" data-on-click="openFilePicker">+ Add Files</button>
-        <button class="add-file-btn url-file-btn" data-on-click="openUrlDialog" title="Load HDF5 file from URL">🔗 URL</button>
-        <button class="add-file-btn" data-on-click="openSampleDataDialog" title="Load sample HDF5 files">📂 Sample Data</button>
+        <button class="add-file-btn" data-on-click="openFilePicker">Add Files</button>
+        <button class="add-file-btn url-file-btn" data-on-click="openUrlDialog" title="Load HDF5 file from URL"><span class="rb-ico rb-ico-link" aria-hidden="true"></span> URL</button>
+        <button class="add-file-btn" data-on-click="openSampleDataDialog" title="Load sample HDF5 files"><span class="rb-ico rb-ico-folder" aria-hidden="true"></span> Sample Data</button>
       </div>`;
 
     KVOT.renderHeader('HDF5 Browser', fileToolbar);
@@ -334,7 +334,7 @@
       rb-handoff  receiving files from another page, in memory
   -->
   <script src="./resources/js/pdf-sampler.js?v=20260902"></script>
-  <script src="./resources/js/rb-state.js?v=20260902"></script>
+  <script src="./resources/js/rb-state.js?v=20260918b"></script>
   <script src="./resources/js/rb-utils.js?v=20260902"></script>
   <script src="./resources/js/rb-actions.js?v=20260907"></script>
   <script src="./resources/js/rb-hdf5.js?v=20260913"></script>

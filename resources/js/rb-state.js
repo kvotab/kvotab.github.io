@@ -89,13 +89,13 @@ let dragCounter = 0;
  */
 const INFO_PANEL_DEFAULT_MESSAGE = `
 <div class="welcome-panel">
-  <h2>📂 HDF5 Browser</h2>
+  <h2><span class="rb-ico rb-ico-folder" aria-hidden="true"></span> HDF5 Browser</h2>
   <p>An interactive browser for exploring and visualising HDF5 data files.</p>
 
   <div class="welcome-section">
     <h4>Getting Started</h4>
     <ol>
-      <li><strong>Load files</strong> — drag &amp; drop <code>.h5</code> / <code>.hdf5</code> files onto the page, click <em>+ Add Files</em>, or use <em>🔗 URL</em> to fetch from a remote server.</li>
+      <li><strong>Load files</strong> — drag &amp; drop <code>.h5</code> / <code>.hdf5</code> files onto the page, click <em>Add Files</em>, or use <em>URL</em> to fetch from a remote server.</li>
       <li><strong>Browse</strong> — expand groups in the tree on the left to explore the file structure.</li>
       <li><strong>Select</strong> — click a dataset to view its attributes and chart.</li>
     </ol>
