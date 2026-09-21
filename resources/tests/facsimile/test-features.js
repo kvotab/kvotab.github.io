@@ -395,6 +395,241 @@ console.log('\n--- the built-in canister model ---');
   check('GHNO3 is positive while nitrogen is being fixed', at(model, early, 'GHNO3') > 0);
 }
 
+/* ======================================================================
+   6. Algebraic variables: the model is a differential-algebraic system
+   ====================================================================== */
+console.log('\n--- algebraic variables ---');
+{
+  // The circle of the FACSIMILE User Guide 18.1.2: y1' = y2, y1^2 + y2^2 = 1,
+  // started at its own documented y2 = -0.9 where the constraint wants
+  // -sqrt(3)/2. Exact: y1 = sin(pi/6 - t), y2 = -cos(pi/6 - t).
+  const circle = FacsimileModel.compile(`
+<SPECIES>
+Y1
+<ALGEBRAIC>
+Y2 : Y1*Y1 + Y2*Y2 - 1
+<INITIAL>
+Y1 = 0.5
+Y2 = -0.9
+<EQUATIONS>
+Z = 0
+<REACTIONS>
+= Y1, rf = Y2
+`, { clampNegative: false });
+  check('the algebraic variable is a state variable', circle.species.join(','), 'Y1,Y2');
+  check('and the mass matrix says which is which', Array.from(circle.mass).join(','), '1,0');
+  check('it is not reported as an unreacting species', circle.warnings.length, 0);
+
+  const c = Math.PI / 6;
+  const res = FacsimileODE.runModel(circle, { solver: 'ndf', tend: 1.5, rtol: 1e-10, atol: 1e-12 });
+  const start = res.stats.consistentStart;
+  check('the start is put on its constraint before the run', start.solved);
+  near('and the constraint is then satisfied', start.residual, 0, 1e-12);
+  near('having moved the variable from -0.9 to -sqrt(3)/2',
+    res.y[0][1], -Math.sqrt(3) / 2, 1e-12);
+
+  let worst = 0, worstG = 0;
+  for (let k = 0; k < res.t.length; k++) {
+    const t = res.t[k];
+    worst = Math.max(worst, Math.abs(res.y[k][0] - Math.sin(c - t)), Math.abs(res.y[k][1] + Math.cos(c - t)));
+    worstG = Math.max(worstG, Math.abs(res.y[k][0] ** 2 + res.y[k][1] ** 2 - 1));
+  }
+  console.log(`      ${res.stats.nsteps} steps; worst error ${worst.toExponential(2)}, `
+    + `worst constraint residual ${worstG.toExponential(2)}`);
+  check('the solution follows the exact one', worst < 1e-8);
+  check('and stays on the constraint throughout', worstG < 1e-9);
+
+  // Robertson's problem in its usual index-1 form. The values at the end are
+  // the ones every DAE code is checked against.
+  const rob = FacsimileModel.compile(`
+<SPECIES>
+Y1 Y2
+<ALGEBRAIC>
+Y3 : Y1 + Y2 + Y3 - 1
+<INITIAL>
+Y1 = 1
+<EQUATIONS>
+Z = 0
+<REACTIONS>
+Y1 = Y2, kf = 0.04
+Y2 + Y3 = Y1 + Y3, kf = 1.0E4
+Y2 = , rf = 3.0E7*Y2*Y2
+<TIMES>
+40 4000000000 40000000000
+`, { clampNegative: false });
+  check('a reaction may use an algebraic variable as a catalyst', rob.nalgebraic, 1);
+  const rr = FacsimileODE.runModel(rob, { solver: 'ndf', tend: 4e10, rtol: 1e-8, atol: 1e-12 });
+  const at40 = rr.grid.y[0], atEnd = rr.grid.y[rr.grid.y.length - 1];
+  console.log(`      Robertson in ${rr.stats.nsteps} steps; at t = 40 y = `
+    + Array.from(at40, (v) => v.toExponential(6)).join(', '));
+  near('Robertson y1 at t = 40', at40[0], 0.71582706, 1e-6);
+  near('Robertson y2 at t = 40', at40[1], 9.1855491e-6, 1e-5);
+  near('Robertson y3 at t = 40', at40[2], 0.28416375, 1e-6);
+  near('Robertson y1 at t = 4e10', atEnd[0], 5.2083e-8, 1e-3);
+  // y3 is 1 - y1 - y2 exactly, so it is 1 less about 5.2e-8 rather than 1.
+  near('Robertson y3 at t = 4e10', atEnd[2], 1 - atEnd[0] - atEnd[1], 1e-15);
+  near('and that is 1 to seven figures', atEnd[2], 0.99999995, 1e-7);
+  let gg = 0;
+  for (const y of rr.grid.y) gg = Math.max(gg, Math.abs(y[0] + y[1] + y[2] - 1));
+  // The output grid interpolates between accepted steps, and a point between
+  // two states that each satisfy the constraint does not satisfy it; every
+  // grid point is put back on it, so this is exact rather than merely small.
+  check('the reported grid satisfies the constraint exactly', gg, 0);
+
+  throws('a ported solver is refused rather than given a mass matrix it ignores',
+    () => FacsimileODE.runModel(rob, { solver: () => {}, tend: 1 }), 'differential-algebraic');
+  throws('a reaction may not change an algebraic variable',
+    () => FacsimileModel.compile(`
+<SPECIES>
+A
+<ALGEBRAIC>
+C : C - 2*A
+<EQUATIONS>
+Z = 0
+<REACTIONS>
+A = C, kf = 1.0
+`), 'has no rate of change');
+  throws('and it may not also be declared a species',
+    () => FacsimileModel.compile(`
+<SPECIES>
+A C
+<ALGEBRAIC>
+C : C - 2*A
+<EQUATIONS>
+Z = 0
+<REACTIONS>
+A = , kf = 1.0
+`), 'cannot be both');
+  throws('a constraint that does not determine its variable says so',
+    () => FacsimileODE.runModel(FacsimileModel.compile(`
+<SPECIES>
+A
+<ALGEBRAIC>
+C : A - 1
+<INITIAL>
+A = 2
+<EQUATIONS>
+Z = 0
+<REACTIONS>
+A = , kf = 1.0
+`), { solver: 'ndf', tend: 1, rtol: 1e-6, atol: 1e-9 }), 'could not be put on their constraints');
+
+  // A model with nothing algebraic must be handed a mass matrix of ones and
+  // integrated by the same arithmetic as before.
+  const plain = FacsimileModel.compile(`
+<SPECIES>
+A B
+<INITIAL>
+A = 1
+<EQUATIONS>
+Z = 0
+<REACTIONS>
+A = B, kf = 0.5
+`);
+  check('a model with no constraints has an identity mass matrix',
+    Array.from(plain.mass).every((v) => v === 1) && plain.nalgebraic === 0);
+}
+
+/* ======================================================================
+   7. WHEN and WHENEVER: value lists, and firing once
+   ====================================================================== */
+console.log('\n--- event value lists, and once ---');
+{
+  const build = (clause) => FacsimileModel.compile(`
+<SETTINGS>
+N = 0
+<SPECIES>
+A B
+<INITIAL>
+A = 1
+<EQUATIONS>
+S = sin(t)
+Z = 0
+<REACTIONS>
+A = B, kf = 0.0
+<EVENTS>
+${clause}
+<OUTPUTS>
+AA = A
+`);
+  const run = (m, o) => FacsimileODE.runModel(m, { solver: 'ndf', tend: 20, rtol: 1e-10, atol: 1e-14, ...o });
+
+  const list = build('t = 1 2 3 4 5, N = N + 1');
+  check('a value list becomes one event per value', list.nevents, 5);
+  check('and each says which value it is',
+    list.events.map((e) => e.shown).join(','), 't = 1,t = 2,t = 3,t = 4,t = 5');
+  let r = run(list);
+  check('all five fire', r.events.length, 5);
+  near('at the values themselves', r.events[3].t, 4, 1e-9);
+
+  check('the increment form of <TIMES> works here too',
+    build('t = 0 + 2 * 4, N = N + 1').nevents, 5);
+
+  // sin(t) crosses 0.5 upward at 0.5236 and every 2*pi after it.
+  r = run(build('S - 0.5, N = N + 1'));
+  check('an event fires at every crossing by default, as WHENEVER does', r.events.length, 4);
+  r = run(build('S - 0.5, once, N = N + 1'));
+  check('and once makes it fire one time only, as WHEN does', r.events.length, 1);
+  near('at the first crossing', r.events[0].t, Math.asin(0.5), 1e-8);
+  check('the log says it was a one-shot', r.events[0].once, true);
+
+  r = run(build('S = 0.5 0.9, both, once, N = N + 1'));
+  check('in a value list, once applies to each value separately', r.events.length, 2);
+
+  // A crossing pair inside one step is invisible to a sign test. This is not
+  // a defect of the search but of how often it is asked, and capping the
+  // step is the remedy -- worth a check because it is silent when it bites.
+  const fast = build('S = 0.9, both, N = N + 1');
+  const loose = run(fast);
+  const capped = run(fast, { hmax: 0.5 });
+  console.log(`      crossings of sin(t) = 0.9 found: ${loose.events.length} uncapped, `
+    + `${capped.events.length} with hmax 0.5`);
+  check('capping the step finds every crossing of a fast trigger', capped.events.length, 7);
+  near('and puts the second one where it belongs', capped.events[1].t, Math.PI - Math.asin(0.9), 1e-6);
+}
+
+/* ======================================================================
+   8. The worked example that ships with the page
+   ====================================================================== */
+console.log('\n--- the Langmuir example ---');
+{
+  const fs = require('fs');
+  const file = path.join(__dirname, '..', '..', 'data', 'facsimile-langmuir.fac');
+  const model = FacsimileModel.compile(fs.readFileSync(file, 'utf8'));
+  check('it has one algebraic variable', model.nalgebraic, 1);
+  check('and four events, three of them a value list', model.nevents, 4);
+  const res = FacsimileODE.runModel(model, { solver: 'ndf', tend: 20, rtol: 1e-9, atol: 1e-12 });
+
+  const K = 3, QMAX = 2, KLOSS = 0.25;
+  const start = res.stats.consistentStart;
+  check('the guessed coverage is moved onto the isotherm', start.solved && start.moved > 0.5);
+  near('to the value the isotherm gives', res.y[0][1], QMAX * K * 1 / (1 + K * 1), 1e-12);
+
+  // C = exp(-k t) exactly, and Q follows from it, at every reported time.
+  let worstC = 0, worstQ = 0;
+  for (let i = 0; i < res.grid.t.length; i++) {
+    const t = res.grid.t[i], C = res.grid.y[i][0], Q = res.grid.y[i][1];
+    const exactC = Math.exp(-KLOSS * t);
+    worstC = Math.max(worstC, Math.abs(C - exactC) / exactC);
+    worstQ = Math.max(worstQ, Math.abs(Q - QMAX * K * C / (1 + K * C)));
+  }
+  console.log(`      ${res.stats.nsteps} steps; worst error in C ${worstC.toExponential(2)}, `
+    + `worst departure from the isotherm ${worstQ.toExponential(2)}`);
+  // Loose against rtol because the run is restarted at each of the four
+  // events, and each restart drops the order back to one.
+  check('the gas follows exp(-kt)', worstC < 1e-7);
+  check('and the coverage is on its isotherm at every reported time', worstQ, 0);
+
+  const ln = (x) => Math.log(x) / KLOSS;
+  check('all four events fire', res.events.length, 4);
+  near('at C = 0.5', res.events[0].t, ln(2), 1e-7);
+  near('at C = 0.25', res.events[1].t, ln(4), 1e-7);
+  near('at C = 0.1', res.events[2].t, ln(10), 1e-7);
+  near('and the run stops at C = 0.05', res.events[3].t, ln(20), 1e-7);
+  check('which is what ended it', !!res.stats.stoppedBy);
+  near('and where the last point is', res.t[res.t.length - 1], ln(20), 1e-7);
+}
+
 console.log(`\n${checks - failures.length} of ${checks} checks passed`);
 if (failures.length) console.log('failed: ' + failures.join(', '));
 process.exit(failures.length ? 1 : 0);

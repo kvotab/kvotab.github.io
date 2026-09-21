@@ -334,6 +334,60 @@ Five features were missing against FACSIMILE's own documentation, and
   trap is at zero, where FACSIMILE's `stepf` is 1 and the `step` this page
   already had is 0; both are kept, and both are checked.
 
+Two more were added after the first five, and they go together because both
+are FACSIMILE features whose absence had been described as a limit of the
+method rather than of the code.
+
+* **Algebraic variables.** `<ALGEBRAIC>` makes the model a
+  differential-algebraic system, `M y' = f` with a zero on the mass diagonal
+  wherever a variable has a constraint instead of a derivative. Nothing about
+  the formula changes: backward differentiation is what DASSL and IDA are
+  built on, and the iteration matrix becomes `M - h*gamma*J`. What had to
+  change is the plumbing, and the checks are the two problems everyone checks
+  a new DAE code against. The circle of the FACSIMILE User Guide is solved
+  from its own documented starting guess and followed to 6e-10 against the
+  analytic answer, staying on its constraint to 3e-11. Robertson's problem is
+  reproduced at t = 40 and t = 4e10 to the published figures.
+
+  The one that took the longest to see is worth recording. Started from an
+  inconsistent value the circle problem **stalls at t = 0** rather than
+  failing: the first step moves the algebraic variable by 0.034 to satisfy the
+  constraint, the error test measures that jump and rejects the step, and
+  halving the step does not shrink the jump, because the constraint has to
+  hold at the new point whatever the step is. The step size collapses to the
+  denormal floor and 8000 steps later the clock reads 1e-319. Two other
+  instances of the same mistake were found the same way: the initial-step
+  heuristic read the constraint residual as a derivative, which through `J*y'`
+  poisoned the differential rows as well, and the output grid interpolated
+  between two states that each satisfy the constraint to give one that does
+  not, reporting Robertson's three species summing to 1.0003. All three are
+  fixed, the constraints are solved before the run rather than demanded of the
+  author, and every grid point is put back on them.
+
+* **Events at a list of values, and firing once.** `expression = v1 v2 v3`
+  fires wherever the expression passes each value, and `once` makes an event
+  fire one time only. Those two are the whole of FACSIMILE's WHEN against its
+  WHENEVER. The checks run `sin(t)` past 0.5 over twenty seconds and count
+  four firings without `once` and one with it.
+
+  A limitation is checked as well as documented, because it is silent: a
+  crossing is found from the sign at the two ends of a step, so a trigger
+  moving faster than the solution can have an excursion missed entirely or a
+  crossing located on an interpolant too coarse to place it. Against
+  `sin(t) = 0.9` the second crossing comes out at 3.01 where it belongs at
+  2.02, and capping the step fixes it.
+
+Both are then exercised together on `resources/data/facsimile-langmuir.fac`,
+a worked example that ships with the page: a gas consumed at a fixed rate
+against a surface whose coverage is in equilibrium with it at every instant.
+It uses an algebraic variable, a named rate, an output grid, an event value
+list fired once each, and an event that stops the run, and every one of those
+has an exact answer to check against — the gas is `exp(-kt)`, the coverage
+follows from the isotherm, and the five events fire at `ln(2)/k` and its
+relatives. It is also the check that the page draws a model that is not the
+canister one at all: the three fixed charts report quantities that model does
+not have, and they now say so rather than throwing inside the redraw.
+
 The last group of checks is on the model the page ships: that the two
 corrosion fluxes it reports are now multiples of the reactions' own named
 rates rather than a second copy of the rate laws, and that they still equal

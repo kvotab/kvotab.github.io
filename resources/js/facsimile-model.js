@@ -301,7 +301,7 @@
     const model = {
       settings: [], constants: [], species: [], tables: {}, thermo: [],
       initial: [], equations: [], reactions: [], events: [], outputs: [],
-      times: [], timeUnit: 's',
+      times: [], timeUnit: 's', algebraic: [],
     };
     let section = null;
     let tableName = null;
@@ -382,6 +382,19 @@
         case 'TIMES':
           model.times.push(...parseTimesLine(code, line));
           break;
+        case 'ALGEBRAIC': {
+          // NAME : expression -- vary NAME to hold expression at zero.
+          // ':' rather than '=' because this is not an assignment: the line
+          // says what must be true of NAME, not what NAME is.
+          const colon = code.indexOf(':');
+          if (colon < 0) throw new ModelError('An algebraic line is "NAME : expression" — the solver varies NAME to hold the expression at zero', line);
+          const name = code.slice(0, colon).trim();
+          const expr = code.slice(colon + 1).trim();
+          if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) throw new ModelError(`"${name}" is not a valid name`, line);
+          if (!expr) throw new ModelError(`"${name}" has no expression to hold at zero`, line);
+          model.algebraic.push({ name, expr, line, comment });
+          break;
+        }
         case 'REACTIONS':
           model.reactions.push(parseReactionLine(code, comment, line));
           break;
@@ -391,28 +404,67 @@
             throw new ModelError('An event is "expression, NAME = value" or "expression, stop" '
               + '(with up, down or both to choose the direction)', line);
           }
+          // Two ways of saying when. A bare expression fires where it crosses
+          // zero. "expression = v1 v2 v3" fires where the expression passes
+          // each of those values, which is FACSIMILE's WHEN/WHENEVER
+          // valuelist; it is the same thing said the way a reader thinks of
+          // it, and it takes the value forms of <TIMES> as well, so
+          // "TIMY = 0 + 50 * 10" is every fifty years for five hundred.
+          let trigger = parts[0].trim();
+          let values = null;
+          const eq = splitTop(trigger, '=');
+          if (eq.length > 2) throw new ModelError('An event trigger takes at most one "="', line);
+          if (eq.length === 2) {
+            trigger = eq[0].trim();
+            if (!trigger) throw new ModelError('An event trigger needs an expression before the "="', line);
+            values = parseTimesLine(eq[1].trim(), line);
+            if (!values.length) throw new ModelError('An event trigger needs at least one value after the "="', line);
+          }
           const assigns = [];
           let direction = null;
           let stop = false;
+          let once = false;
+          let mark = false;
           parts.slice(1).forEach((p) => {
             const word = p.trim().toLowerCase();
-            if (word === 'up' || word === 'down' || word === 'both') {
+            if (word === 'up' || word === 'down' || word === 'both' || word === 'each') {
               if (direction !== null) throw new ModelError('An event may only give one direction', line);
-              direction = word === 'up' ? 1 : word === 'down' ? -1 : 0;
+              direction = word === 'up' ? 1 : word === 'down' ? -1 : 0;   // 'both' and 'each' are the same thing
               return;
             }
             if (word === 'stop') { stop = true; return; }
+            if (word === 'once') { once = true; return; }
+            // Recording the crossing is doing something: the time goes in the
+            // run's event log and a line is drawn on the charts. It is what a
+            // FACSIMILE clause whose only action was a CALL to an output
+            // routine amounted to.
+            if (word === 'mark') { mark = true; return; }
             const eq = p.indexOf('=');
             if (eq < 0) {
-              throw new ModelError(`Expected NAME = value, up, down, both or stop in the event, got "${p.trim()}"`, line);
+              throw new ModelError(`Expected NAME = value, up, down, both, once, mark or stop in the event, got "${p.trim()}"`, line);
             }
             assigns.push({ name: p.slice(0, eq).trim(), expr: p.slice(eq + 1).trim() });
           });
-          if (!assigns.length && !stop) {
-            throw new ModelError('An event must do something: assign a setting, or stop the run', line);
+          if (!assigns.length && !stop && !mark) {
+            throw new ModelError('An event must do something: assign a setting, stop the run, '
+              + 'or say "mark" to record the crossing and draw it on the charts', line);
           }
-          model.events.push({
-            expr: parts[0].trim(), assigns, direction: direction === null ? 1 : direction, stop, line, comment,
+          // A value list is several events that do the same thing: the
+          // trigger for value v is the expression less v, which crosses zero
+          // exactly where the expression passes v. One entry per value keeps
+          // the solver's crossing machinery untouched.
+          const dir = direction === null ? 1 : direction;
+          const list = values === null ? [null] : values;
+          list.forEach((v, k) => {
+            model.events.push({
+              expr: v === null ? trigger : `(${trigger}) - (${v})`,
+              shown: v === null ? trigger : `${trigger} = ${v}`,
+              assigns, direction: dir, stop, once, mark, line, comment,
+              // Which of a list this is, so that "once" can mean "after the
+              // last of them" rather than "after any of them".
+              group: values === null ? null : `${line}`,
+              last: values === null || k === list.length - 1,
+            });
           });
           break;
         }
@@ -866,6 +918,26 @@
     m.reactions.forEach((r) => {
       [...r.reactants, ...r.products].forEach((s) => { if (!species.includes(s.name)) species.push(s.name); });
     });
+    // An algebraic variable is a state variable like a species -- it has a
+    // slot in y and the solver works it out -- but no differential equation:
+    // its value is whatever makes its own expression zero. They go at the end
+    // of the state so that a model without any is laid out exactly as before.
+    const algebraicNames = [];
+    m.algebraic.forEach((a) => {
+      // Declared as a species it would have both kinds of equation, which is
+      // a contradiction. Merely appearing in a reaction is not: a constrained
+      // quantity can be a catalyst or a third body, and Robertson's problem
+      // in its usual differential-algebraic form has exactly that. What it
+      // may not do is be changed by one, which is checked once the reactions
+      // have been analysed.
+      if (m.species.includes(a.name)) {
+        throw new ModelError(`"${a.name}" is declared in <SPECIES>; an algebraic variable has no differential equation and cannot be both`, a.line);
+      }
+      if (algebraicNames.includes(a.name)) throw new ModelError(`"${a.name}" is given twice in <ALGEBRAIC>`, a.line);
+      algebraicNames.push(a.name);
+      if (!species.includes(a.name)) species.push(a.name);
+    });
+    const algebraicNameSet = new Set(algebraicNames);
     if (!species.length) throw new ModelError('The model has no species: add reactions or a <SPECIES> section');
     const speciesIndex = new Map(species.map((s, i) => [s, i]));
     const nspecies = species.length;
@@ -1027,7 +1099,11 @@
     // A species that is never produced or consumed is inert; say so.
     const touched = new Set();
     reactions.forEach((r) => r.net.forEach((c, i) => touched.add(i)));
-    species.forEach((s, i) => { if (!touched.has(i)) warnings.push(`Species ${s} is not changed by any reaction`); });
+    species.forEach((s, i) => {
+      // An algebraic variable is not meant to be changed by a reaction: its
+      // constraint is what sets it, so saying so would be noise.
+      if (!touched.has(i) && !algebraicNameSet.has(s)) warnings.push(`Species ${s} is not changed by any reaction`);
+    });
 
     const cols = Array.from({ length: nspecies }, () => new Set());
     const speciesSelfDeps = (i) => (subst.has(i) ? [...eqDeps[subst.get(i)]] : [i]);
@@ -1059,6 +1135,29 @@
       if (nameKind(r.rate) !== null) throw new ModelError(`The reaction rate "${r.rate}" is already the name of something else`, r.line);
       rateDeps.set(r.rate, new Set(r.cols));
       rates.push({ name: r.rate, index: ri, text: r.text, comment: r.comment, line: r.line });
+    });
+
+    // --- algebraic constraints -------------------------------------------------
+    // Analysed after the reactions so that a residual may read anything the
+    // rate laws can, and its dependences go into the Jacobian pattern on its
+    // own row: that row is the constraint, not a rate of change.
+    const algebraic = m.algebraic.map((a) => {
+      const index = speciesIndex.get(a.name);
+      const ast = parseExpression(a.expr, a.line);
+      const deps = depsOf(ast, a.line);
+      for (const j of deps) cols[j].add(index);
+      cols[index].add(index);
+      return { ...a, index, ast, deps };
+    });
+    // Nothing may add to an algebraic row: it holds a residual, not a sum of
+    // fluxes, and a reaction writing into it would be silently overwritten.
+    const algebraicIndex = new Set(algebraic.map((a) => a.index));
+    reactions.forEach((r) => {
+      for (const i of r.net.keys()) {
+        if (algebraicIndex.has(i)) {
+          throw new ModelError(`Reaction changes "${species[i]}", which is an algebraic variable and has no rate of change`, r.line);
+        }
+      }
     });
 
     const pattern = toCSC(cols, nspecies);
@@ -1106,6 +1205,7 @@
     const generated = generateCode({
       species, speciesIndex, nspecies, P, Pindex, Pmeta, tableList, tableIndex, stringValues,
       equations, eqIndex, eqDeps, subst, reactions, pattern, pos, outputs, events, rates,
+      algebraic, algebraicIndex,
       initial: m.initial, initialConstNames, clamp, thermo: m.thermo,
     });
 
@@ -1129,12 +1229,23 @@
       outputs: outputs.map((o) => ({ name: o.name, expr: o.expr, comment: o.comment })),
       observeNames,
       events: events.map((e) => ({
-        expr: e.expr, comment: e.comment, assigns: e.assigns.map((a) => a.name),
-        direction: e.direction, stop: !!e.stop,
+        expr: e.expr, shown: e.shown || e.expr, comment: e.comment,
+        assigns: e.assigns.map((a) => a.name),
+        direction: e.direction, stop: !!e.stop, once: !!e.once, mark: !!e.mark, group: e.group || null,
       })),
       eventDirections: Int8Array.from(events.map((e) => (e.direction === undefined ? 1 : e.direction))),
       rates: rates.map((r) => ({ name: r.name, text: r.text, comment: r.comment, line: r.line })),
       rateNames: rates.map((r) => r.name),
+      /**
+       * The mass matrix, as its diagonal: 1 where the state variable has a
+       * differential equation and 0 where it has an algebraic one. The
+       * solvers read it as M in M y' = f, so a model with no <ALGEBRAIC>
+       * section hands over a vector of ones and is solved exactly as before.
+       */
+      mass: Float64Array.from({ length: nspecies }, (_, i) => (algebraicIndex.has(i) ? 0 : 1)),
+      algebraic: algebraic.map((a) => ({ name: a.name, expr: a.expr, comment: a.comment, index: a.index, line: a.line })),
+      algebraicNames: algebraic.map((a) => a.name),
+      nalgebraic: algebraic.length,
       outputTimes, outputTimeUnit: m.timeUnit,
       warnings, sources: generated.sources, clampNegative: clamp,
       settings: Pmeta.filter((p) => p.section === 'settings').map((p) => ({
@@ -1223,7 +1334,7 @@
      generateCode: the five functions as source text
      ------------------------------------------------------------------------ */
   function generateCode(c) {
-    const { species, speciesIndex, nspecies, Pindex, tableIndex, stringValues, equations, eqIndex, subst, reactions, pattern, pos, outputs, events, rates, initial, clamp } = c;
+    const { species, speciesIndex, nspecies, Pindex, tableIndex, stringValues, equations, eqIndex, subst, reactions, pattern, pos, outputs, events, rates, algebraic, algebraicIndex, initial, clamp } = c;
 
     /**
      * Builds an Emitter whose name resolution covers species (effective values),
@@ -1270,7 +1381,10 @@
         },
       });
       const baseSpecies = (emitter, i) => {
-        if (!clamp) return { v: `y[${i}]`, g: new Map([[i, '1']]) };
+        // An algebraic variable is never clamped. Reading it as max(0, y)
+        // would change the constraint the solver is trying to satisfy, and
+        // there is no reason to expect it to be a concentration at all.
+        if (!clamp || algebraicIndex.has(i)) return { v: `y[${i}]`, g: new Map([[i, '1']]) };
         // The value is clamped at zero; the derivative is the right-hand one,
         // 1 at zero itself. Most species start at exactly zero, and their
         // consumption terms belong on the diagonal from the first step. A
@@ -1396,6 +1510,22 @@
               if (p === undefined) throw new ModelError(`Internal error: Jacobian entry (${species[i]}, ${species[j]}) is outside the pattern`, r.line);
               body.push(coef === 1 ? `out[${p}] += ${gc};` : coef === -1 ? `out[${p}] -= ${gc};` : `out[${p}] += ${coef} * ${gc};`);
             }
+          }
+        }
+      });
+      // The algebraic rows, last and by assignment: they hold a residual to be
+      // driven to zero, not a sum of fluxes, so nothing may have added to them
+      // (the compiler refuses a reaction that would) and nothing may add after.
+      algebraic.forEach((a) => {
+        const r = em.emit(a.ast, a.line);
+        body.push(`// ${species[a.index]} : ${a.expr.replace(/\s+/g, ' ')}`);
+        if (which === 'rhs') {
+          body.push(`out[${a.index}] = ${r.v};`);
+        } else {
+          for (const [j, gc] of r.g) {
+            const p = pos.get(`${a.index},${j}`);
+            if (p === undefined) throw new ModelError(`Internal error: Jacobian entry (${species[a.index]}, ${species[j]}) is outside the pattern`, a.line);
+            body.push(`out[${p}] = ${gc};`);
           }
         }
       });

@@ -829,6 +829,7 @@
     if (!m) { el.textContent = ''; return; }
     const warn = m.warnings.length ? `<br>Notes: ${esc(m.warnings.join('; '))}` : '';
     const extra = `${(m.rateNames || []).length ? `, ${m.rateNames.length} named reaction rate${m.rateNames.length === 1 ? '' : 's'}` : ''}`
+      + `${m.nalgebraic ? `, ${m.nalgebraic} algebraic variable${m.nalgebraic === 1 ? '' : 's'}` : ''}`
       + `${(m.outputTimes || []).length ? `, ${m.outputTimes.length} output times` : ''}`;
     el.innerHTML = `${m.nspecies} species, ${m.nreactions} reactions, ${m.equations.length} equations, ${m.outputs.length} outputs, ${m.events.length} event${m.events.length === 1 ? '' : 's'}${extra}. `
       + `Jacobian: ${m.nnz} structurally non-zero entries of ${m.nspecies * m.nspecies} (${(100 * m.density).toFixed(1)} %), ${m.colours} column groups.${warn}`;
@@ -1039,6 +1040,17 @@
    * click. The built-in NDF is quick enough to run inline when there is no worker.
    */
   function methodRefusal(method) {
+    // A model with algebraic variables is a differential-algebraic system.
+    // Only the built-in pair takes a mass matrix; the ported solvers would
+    // integrate the constraint residuals as if they were rates of change,
+    // which is a wrong answer rather than a slow one. Said before the run
+    // rather than thrown part-way through it.
+    const m = state.compiled;
+    if (m && m.nalgebraic && method !== 'ndf' && method !== 'bdf') {
+      return `This model has ${m.nalgebraic} algebraic variable${m.nalgebraic === 1 ? '' : 's'} `
+        + `(${(m.algebraicNames || []).join(', ')}), which makes it a differential-algebraic `
+        + 'system. The ported solvers do not take a mass matrix. Use NDF or BDF.';
+    }
     ensureWorker();
     // Where the run would happen first, because that explains the refusal
     // usefully; the stale-copy message is the fallback for a worker that is
@@ -1151,6 +1163,10 @@
       + (st.negative ? `, ${st.negative} projections onto zero` : '')
       + `.<br>Iteration matrix I − hJ: <b>${st.sparse ? 'sparse LU' : 'dense LU'}</b>` + (st.fill != null ? ` (the sparse factor has ${st.fill} entries against ${st.n * st.n} dense, ${st.ordering} ordering)` : '')
       + `; Jacobian ${st.nnz} non-zeros of ${st.n}×${st.n}.`
+      + (st.consistentStart && st.consistentStart.moved > 1e-12
+        ? `<br>Algebraic start: the constraints were solved in ${st.consistentStart.iterations} iteration${
+          st.consistentStart.iterations === 1 ? '' : 's'}, moving the algebraic variables by up to ${
+          (100 * st.consistentStart.moved).toPrecision(3)} %.` : '')
       + (state.result && state.result.grid && state.result.grid.n
         ? `<br>Output grid: ${state.result.grid.n.toLocaleString()} of the ${
           (state.result.gridWanted || state.result.grid.n).toLocaleString()} times the model asks for.` : '')
@@ -1202,6 +1218,12 @@
       for (let i = 0; i < d.n; i++) out[i] = d.states[i * w + sp];
       return out;
     }
+    // The clock, for a model that does not report it itself. The canister
+    // model defines TIMH and TIMY as outputs and those are used; a model of
+    // one's own need not, and without this the time axis has no column and
+    // every chart comes out empty.
+    if (name === 'TIMH') return Float64Array.from(d.t, (v) => v / 3600);
+    if (name === 'TIMY') return Float64Array.from(d.t, (v) => v / YEAR_S);
     return null;
   }
 
@@ -1231,7 +1253,14 @@
    * uses for its `unit` attributes, so the two cannot drift apart.
    */
   function seriesUnit(name) {
-    if (name.startsWith('[state] ')) return 'mol/cm³';
+    if (name.startsWith('[state] ')) {
+      // An algebraic variable is whatever its constraint makes it, so its
+      // unit comes off that line's comment rather than being assumed.
+      const bare = name.slice(8);
+      const alg = ((state.compiled && state.compiled.algebraic) || []).find((a) => a.name === bare);
+      if (alg) return typeof FacsimileHDF5 !== 'undefined' ? FacsimileHDF5.unitFromComment(alg.comment) : '';
+      return 'mol/cm³';
+    }
     const model = state.compiled;
     if (!model || typeof FacsimileHDF5 === 'undefined') return '';
     const entry = (model.outputs || []).find((o) => o.name === name)
@@ -1344,7 +1373,16 @@
     });
     return { shapes, annotations };
   }
-  function scaled(col, f) { return Float64Array.from(col, (v) => v * f); }
+  /**
+   * A column times a constant, or null if there is no column.
+   *
+   * Null-safe because the callers pass `column(name)` straight in, and a name
+   * the model does not carry gives null: every other step of drawing a chart
+   * already tolerates that, and this one used to throw inside the redraw and
+   * leave the charts half-drawn. A model of one's own is unlikely to have
+   * PRESSP in it.
+   */
+  function scaled(col, f) { return col ? Float64Array.from(col, (v) => v * f) : null; }
 
   function drawCharts() {
     syncXControls();
@@ -1364,6 +1402,11 @@
         { name: 'pressure × 100 (atm)', ...xy(Xy, scaled(column('PRESSP'), 100), false), mode: 'lines' },
         { name: 'dose rate (Gy/h)', ...xy(Xy, column('DOSRP'), false), mode: 'lines' },
       ].filter((t) => t.y.length);
+      // Said rather than left blank: these three charts are the canister
+      // model's, and a model that reports none of their quantities is not
+      // broken, it is simply a different model. The fourth chart is where it
+      // draws itself.
+      $('chart1Empty').hidden = traces.length > 0;
       const layout = baseLayout();
       layout.xaxis.title = { text: 'time (years)' };
       Object.assign(layout, eventShapes('TIMY'));
@@ -1386,7 +1429,9 @@
       layout.yaxis.title = { text: 'water (g), RH (%)' };
       layout.yaxis2 = { title: { text: 'O₂ (mol), rates' }, overlaying: 'y', side: 'right', type: logY ? 'log' : 'linear', gridcolor: 'rgba(0,0,0,0)', exponentformat: 'power' };
       Object.assign(layout, eventShapes(x.name));
-      Plotly.react('chart2', traces.filter((t) => t.y.length), layout, PLOT_CONFIG);
+      const drawn = traces.filter((t) => t.y.length);
+      $('chart2Empty').hidden = drawn.length > 0;
+      Plotly.react('chart2', drawn, layout, PLOT_CONFIG);
     }
     // 3. species amounts
     {
@@ -1407,7 +1452,9 @@
       layout.yaxis.title = { text: 'amount (mol)' }; layout.yaxis.type = logY ? 'log' : 'linear'; layout.yaxis.exponentformat = 'power';
       layout.yaxis2 = { title: { text: 'water (mol)' }, overlaying: 'y', side: 'right', gridcolor: 'rgba(0,0,0,0)' };
       Object.assign(layout, eventShapes(x.name));
-      Plotly.react('chart3', traces.filter((t) => t.y.length), layout, PLOT_CONFIG);
+      const drawn3 = traces.filter((t) => t.y.length);
+      $('chart3Empty').hidden = drawn3.length > 0;
+      Plotly.react('chart3', drawn3, layout, PLOT_CONFIG);
     }
     drawCustom();
   }
@@ -1468,6 +1515,9 @@
    * itself all read alike, and nothing says which is which. They are three
    * different kinds of thing and the list says so.
    */
+  /** The observable names of a result or a freshly compiled model. */
+  function observed0(r) { return r.observeNames || []; }
+
   function seriesGroups() {
     const r = state.result || (state.compiled
       && { observeNames: state.compiled.observeNames, species: state.compiled.species });
@@ -1476,12 +1526,16 @@
     const isEquation = new Set(((model && model.equations) || [])
       .filter((e) => !e.substitution).map((e) => e.name));
     const isRate = new Set((model && model.rateNames) || []);
-    const observed = r.observeNames || [];
+    // An algebraic variable is a state variable, but it is not a species and
+    // is not integrated: what the solver does with it is solve for it.
+    const isAlgebraic = new Set((model && model.algebraicNames) || []);
+    const state0 = (r.species || []);
     return [
-      ['Outputs', observed.filter((n) => !isEquation.has(n) && !isRate.has(n))],
-      ['Equations', observed.filter((n) => isEquation.has(n))],
-      ['Reaction rates', observed.filter((n) => isRate.has(n))],
-      ['Species', (r.species || []).map((sp) => `[state] ${sp}`)],
+      ['Outputs', observed0(r).filter((n) => !isEquation.has(n) && !isRate.has(n))],
+      ['Equations', observed0(r).filter((n) => isEquation.has(n))],
+      ['Reaction rates', observed0(r).filter((n) => isRate.has(n))],
+      ['Species', state0.filter((sp) => !isAlgebraic.has(sp)).map((sp) => `[state] ${sp}`)],
+      ['Algebraic', state0.filter((sp) => isAlgebraic.has(sp)).map((sp) => `[state] ${sp}`)],
     ].filter(([, list]) => list.length);
   }
 

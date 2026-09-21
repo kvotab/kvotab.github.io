@@ -1,0 +1,56 @@
+# ============================================================================
+#  A worked differential-algebraic model, and a tour of the newer parts of
+#  the model language. Open it with "Open..." on the left.
+#
+#  A gas is consumed at a fixed rate while a solid surface in contact with it
+#  holds a coverage that is in equilibrium with the gas at every instant:
+#
+#      dC/dt = -k C                          the gas, a differential equation
+#      0     = Q - Qmax K C / (1 + K C)      the coverage, an algebraic one
+#
+#  The second is a constraint, not a rate of change, so Q goes in <ALGEBRAIC>
+#  and the model becomes a differential-algebraic system. The alternative,
+#  which is what a model without algebraic variables has to do, is to give Q
+#  a very fast rate towards its equilibrium and make the system stiff on
+#  purpose; the built-in canister model does exactly that for water when
+#  H2OPAIR is 1, and substitutes the expression at compile time when it is 0.
+#
+#  Everything here has an exact answer to check against: C = exp(-k t), so Q
+#  follows from the Langmuir isotherm and the events fire at ln(2)/k, ln(4)/k,
+#  ln(10)/k and ln(20)/k.
+# ============================================================================
+
+<SETTINGS>
+K      = 3.0        # adsorption constant (1/M)
+QMAX   = 2.0        # saturation coverage (mol/kg)
+KLOSS  = 0.25       # loss rate of the gas (1/s)
+
+<SPECIES>
+C
+
+<ALGEBRAIC>
+Q : Q - QMAX*K*C/(1 + K*C)      # Langmuir coverage in equilibrium with C (mol/kg)
+
+<INITIAL>
+C = 1.0
+Q = 0.1                          # only a first guess; the solver moves it
+
+<EQUATIONS>
+FREE = 1 - Q/QMAX                # fraction of the surface still free (-)
+
+<REACTIONS>
+C = , kf = KLOSS, rate = RLOSS   # gas lost (mol L-1 s-1)
+
+<TIMES>
+# Report at one-second intervals whatever steps the solver chooses.
+0 .. 20 lin 21
+
+<EVENTS>
+# A value list, fired once each on the way down, recorded and drawn on the
+# charts but changing nothing: FACSIMILE's WHEN with an output call.
+C = 0.5 0.25 0.1, down, once, mark
+# And one that ends the run, which is FACSIMILE's % on a WHEN clause.
+C - 0.05, down, stop
+
+<OUTPUTS>
+COVER = Q/QMAX*100               # surface coverage (%)
