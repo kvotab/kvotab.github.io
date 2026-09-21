@@ -56,6 +56,11 @@ const KVOT = (() => {
       desc: 'Solve the FACSIMILE radiolysis and corrosion model of the gas in an intact spent-fuel canister, with editable reactions and a sparse analytic Jacobian.',
     },
     {
+      href: './rtm.html',
+      label: 'Reactive Transport',
+      desc: 'Specify and solve reactive transport models: reactions written the usual way, a batch reactor or a column with diffusion and advection, and an analytic sparse Jacobian built from your own reaction set.',
+    },
+    {
       href: './arsredovisning.html',
       label: 'Digital årsredovisning',
       desc: 'Build a K2 annual report from a SIE file and check the iXBRL against what Bolagsverket looks at.',

@@ -1,0 +1,708 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <meta http-equiv="Content-Security-Policy" content="base-uri 'self'; object-src 'none'">
+  <title>Reactive Transport — kvot ab</title>
+  <meta name="description" content="Specify and solve reactive transport models in your browser: write the reactions in the usual way, choose a batch reactor or add diffusion and advection, and integrate with a stiff solver on an analytic sparse Jacobian built from your own reaction set.">
+  <link rel="canonical" href="https://kvotab.se/rtm.html">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="kvot ab">
+  <meta property="og:title" content="Reactive Transport — kvot ab">
+  <meta property="og:description" content="A browser solver for reactive transport: reactions written the usual way, batch or with diffusion and advection, and an analytic sparse Jacobian built from the model itself.">
+  <meta property="og:url" content="https://kvotab.se/rtm.html">
+  <meta property="og:image" content="https://kvotab.se/resources/images/kvot-logotype.png">
+  <meta name="twitter:card" content="summary">
+  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js" integrity="sha384-Hl48Kq2HifOWdXEjMsKo6qxqvRLTYqIGbvlENBmkHAxZKIGCXv43H6W1jA671RzC" crossorigin="anonymous"></script>
+  <script>
+    // Set the theme before first paint so dark-mode visitors get no white flash.
+    (function () {
+      try {
+        var t = localStorage.getItem('kvot-theme');
+        if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* storage unavailable — site.js will apply the default */ }
+    })();
+  </script>
+  <link rel="stylesheet" href="./resources/css/kvot.css?v=20260918b">
+  <link rel="stylesheet" href="./resources/css/rtm.css?v=20260921b">
+  <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
+</head>
+<body>
+  <header></header>
+
+  <div class="content">
+    <div class="rtm">
+      <!-- ===================== the settings column ===================== -->
+      <aside class="rtm-side" id="rtmSide">
+        <div class="rtm-side-scroll">
+
+          <details class="rtm-sec" id="sec-mode" open>
+            <summary>Model</summary>
+            <div class="rtm-row">
+              <label>What is being solved<span class="rtm-name">from the &lt;SETTINGS&gt; of the text</span></label>
+              <div class="rtm-facts" id="rtmFacts">Not compiled yet.</div>
+            </div>
+          </details>
+
+          <details class="rtm-sec" id="sec-solver" open>
+            <summary>Solver</summary>
+            <div class="rtm-row">
+              <label>Method</label>
+              <select id="rtmMethod" data-on-change="rtm:solverChanged">
+                <option value="ndf">NDF</option>
+                <option value="bdf">BDF</option>
+                <option value="julia_fbdf">FBDF (Julia port)</option>
+                <option value="julia_qndf">QNDF (Julia port)</option>
+                <option value="julia_kencarp4">KenCarp4 (Julia port)</option>
+                <option value="julia_radau5">RadauIIA5 (Julia port)</option>
+                <option value="julia_rodas5p">Rodas5P (Julia port)</option>
+                <option value="julia_trbdf2">TRBDF2 (Julia port)</option>
+              </select>
+            </div>
+            <div class="rtm-row">
+              <label>Simulated time<span class="rtm-name" id="rtmTendUnit">seconds; blank uses TEND from the text</span></label>
+              <input id="rtmTend" type="text" placeholder="from the model" data-on-change="rtm:solverChanged">
+            </div>
+            <div class="rtm-row">
+              <label>Relative tolerance<span class="rtm-name">rtol</span></label>
+              <input id="rtmRtol" type="text" value="1e-6" data-on-change="rtm:solverChanged">
+            </div>
+            <div class="rtm-row">
+              <label>Absolute tolerance<span class="rtm-name">atol</span></label>
+              <input id="rtmAtol" type="text" value="1e-20" data-on-change="rtm:solverChanged">
+            </div>
+            <button type="button" class="rtm-more" id="rtmMore" data-on-click="rtm:more"
+                    aria-expanded="false" aria-controls="rtmAdvanced">Advanced settings</button>
+            <div id="rtmAdvanced" hidden>
+              <div class="rtm-row">
+                <label>Iteration matrix<span class="rtm-name">auto: sparse unless the factor fills in</span></label>
+                <select id="rtmMatrix" data-on-change="rtm:solverChanged">
+                  <option value="auto">auto</option>
+                  <option value="sparse">sparse LU</option>
+                  <option value="dense">dense LU</option>
+                </select>
+              </div>
+              <div class="rtm-row">
+                <label>Error norm<span class="rtm-name">max: the worst species decides · rms: averaged</span></label>
+                <select id="rtmNorm" data-on-change="rtm:solverChanged">
+                  <option value="max">max</option>
+                  <option value="rms">rms</option>
+                </select>
+              </div>
+              <div class="rtm-row">
+                <label>Step budget<span class="rtm-name">the run gives up past this</span></label>
+                <input id="rtmMaxSteps" type="text" value="500000" data-on-change="rtm:solverChanged">
+              </div>
+              <div class="rtm-row">
+                <label>Points kept<span class="rtm-name">thinned as it goes to stay inside this</span></label>
+                <input id="rtmMaxPoints" type="text" value="4000" data-on-change="rtm:solverChanged">
+              </div>
+              <label class="rtm-check"><input type="checkbox" id="rtmNonNeg" checked data-on-change="rtm:solverChanged"> Keep every concentration non-negative</label>
+              <label class="rtm-check"><input type="checkbox" id="rtmAutoAtol" data-on-change="rtm:solverChanged"> Let the absolute tolerance follow the solution upwards</label>
+              <p class="rtm-muted" id="rtmSolverNote" hidden></p>
+            </div>
+          </details>
+        </div>
+
+        <div class="rtm-side-foot">
+          <div class="rtm-actions">
+            <button type="button" class="rtm-btn" id="rtmRun" data-on-click="rtm:run">Run</button>
+            <button type="button" class="rtm-btn secondary" id="rtmStop" data-on-click="rtm:stop" disabled>Stop</button>
+            <button type="button" class="rtm-btn secondary small" id="rtmVerify" data-on-click="rtm:verify">Check Jacobian</button>
+          </div>
+          <div class="rtm-progress" id="rtmProgress" hidden><div class="rtm-progress-fill" id="rtmProgressFill"></div></div>
+          <div class="rtm-status" id="rtmStatus">Loading…</div>
+        </div>
+      </aside>
+
+      <div class="rtm-resize" id="rtmResize" role="separator" aria-orientation="vertical"
+           aria-label="Drag to resize the panel" data-on-dblclick="rtm:resetWidth"></div>
+
+      <!-- ========================= the work area ======================== -->
+      <main class="rtm-main">
+        <div class="rtm-tabs" role="tablist">
+          <button type="button" class="active" data-tab="time" data-on-click="rtm:tab">Against time</button>
+          <button type="button" data-tab="profile" data-on-click="rtm:tab">Against distance</button>
+          <button type="button" data-tab="gradient" data-on-click="rtm:tab">Gradient</button>
+          <button type="button" data-tab="model" data-on-click="rtm:tab">Model</button>
+          <button type="button" data-tab="jacobian" data-on-click="rtm:tab">Jacobian</button>
+          <button type="button" data-tab="help" data-on-click="rtm:tab">Help</button>
+        </div>
+
+        <!-- ---- concentration against time ---- -->
+        <section class="rtm-pane" data-pane="time">
+          <div class="rtm-toolbar">
+            <label>Cell
+              <select id="rtmCell" data-on-change="rtm:redraw"></select>
+            </label>
+            <label id="rtmLayerWrap" hidden>Layer
+              <select id="rtmLayer" data-on-change="rtm:redraw"></select>
+            </label>
+            <label><input type="checkbox" id="rtmLogT" checked data-on-change="rtm:redraw"> log time</label>
+            <label><input type="checkbox" id="rtmLogY" checked data-on-change="rtm:redraw"> log concentration</label>
+            <label>from <input type="text" id="rtmTMin" value="1e-6" style="width:70px" data-on-change="rtm:redraw"> <span id="rtmTMinUnit">s</span></label>
+            <button type="button" class="rtm-btn secondary small" data-on-click="rtm:clearSeries">clear</button>
+            <button type="button" class="rtm-btn secondary small" data-on-click="rtm:downloadCsv">CSV</button>
+          </div>
+          <div class="rtm-series" id="rtmSeries"></div>
+          <div class="plot" id="rtmChartTime" hidden></div>
+          <p class="rtm-empty" id="rtmTimeEmpty">Run the model, then tick a species to draw it.</p>
+        </section>
+
+        <!-- ---- concentration against distance ---- -->
+        <section class="rtm-pane" data-pane="profile" hidden>
+          <div class="rtm-toolbar">
+            <label>Species
+              <select id="rtmProfileSpecies" data-on-change="rtm:redrawProfile"></select>
+            </label>
+            <label id="rtmProfileAxisWrap" hidden>Across
+              <select id="rtmProfileAxis" data-on-change="rtm:redrawProfile">
+                <option value="fracture">the fracture</option>
+                <option value="matrix">the rock, at one cell</option>
+              </select>
+            </label>
+            <label id="rtmProfileLayerWrap" hidden><span id="rtmProfileLayerLabel">Layer</span>
+              <select id="rtmProfileLayer" data-on-change="rtm:redrawProfile"></select>
+            </label>
+            <label>Times
+              <input type="text" id="rtmProfileTimes" class="rtm-times" placeholder="spread over the run"
+                title="Which times to draw: a list such as 0, 1 h, 30 d, 500 y. Empty spreads eight over the run."
+                data-on-change="rtm:redrawProfile">
+            </label>
+            <label><input type="checkbox" id="rtmProfileLog" checked data-on-change="rtm:redrawProfile"> log concentration</label>
+            <span class="rtm-muted" id="rtmProfileNote"></span>
+          </div>
+          <div class="plot" id="rtmChartProfile" hidden></div>
+          <p class="rtm-empty" id="rtmProfileEmpty">A profile needs a run in transport mode.</p>
+        </section>
+
+        <!-- ---- the model text ---- -->
+        <section class="rtm-pane" data-pane="model" hidden>
+          <div class="rtm-toolbar">
+            <label>Example
+              <select id="rtmExample" data-on-change="rtm:chooseExample"
+                title="Load one of the example models. The text below is replaced."></select>
+            </label>
+            <button type="button" class="rtm-btn secondary small" data-on-click="rtm:applyModel">Apply</button>
+            <button type="button" class="rtm-btn secondary small" data-on-click="rtm:resetModel">Reset to the built-in model</button>
+            <button type="button" class="rtm-btn secondary small" data-on-click="rtm:loadFile">Open…</button>
+            <button type="button" class="rtm-btn secondary small" data-on-click="rtm:saveFile">Save</button>
+            <input type="file" id="rtmFile" accept=".txt,.rtm,.in" hidden data-on-change="rtm:fileChosen">
+          </div>
+          <p class="rtm-muted rtm-example-about" id="rtmExampleAbout" hidden></p>
+          <textarea id="rtmText" class="rtm-text" spellcheck="false" data-on-input="rtm:textChanged"></textarea>
+          <p class="rtm-muted" id="rtmModelNote"></p>
+        </section>
+
+        <!-- ---- the Jacobian ---- -->
+        <section class="rtm-pane" data-pane="gradient" hidden>
+          <div class="rtm-toolbar">
+            <label>Species
+              <select id="rtmGradSpecies" data-on-change="rtm:redrawGradient"></select>
+            </label>
+            <label id="rtmGradLayerWrap" hidden>Layer
+              <select id="rtmGradLayer" data-on-change="rtm:redrawGradient"></select>
+            </label>
+            <label>Colours
+              <select id="rtmGradScale" data-on-change="rtm:redrawGradient">
+                <option value="YlOrRd">yellow to red</option>
+                <option value="Viridis">viridis</option>
+                <option value="Cividis">cividis</option>
+                <option value="Greys">grey</option>
+              </select>
+            </label>
+            <label><input type="checkbox" id="rtmGradLogT" checked data-on-change="rtm:redrawGradient"> log time</label>
+            <label><input type="checkbox" id="rtmGradLogC" data-on-change="rtm:redrawGradient"> log concentration</label>
+            <label>from <input type="text" id="rtmGradTMin" value="1e-6" style="width:70px" data-on-change="rtm:redrawGradient"> <span id="rtmGradTMinUnit">s</span></label>
+            <label><input type="checkbox" id="rtmGradSmooth" data-on-change="rtm:redrawGradient"> smooth</label>
+            <span class="rtm-muted" id="rtmGradNote"></span>
+          </div>
+          <div class="plot" id="rtmChartGradient" hidden></div>
+          <p class="rtm-empty" id="rtmGradEmpty">A gradient needs a run in transport mode.</p>
+        </section>
+
+        <section class="rtm-pane" data-pane="jacobian" hidden>
+          <div class="rtm-toolbar">
+            <span class="rtm-muted">The sparsity pattern of the matrix the solver factorises, and what
+              <em>Check Jacobian</em> found.</span>
+          </div>
+          <canvas id="rtmJacCanvas" class="rtm-jac"></canvas>
+          <p id="rtmJacNote" class="rtm-muted rtm-jac-note"></p>
+          <div id="rtmVerifyOut" class="rtm-verify"></div>
+        </section>
+
+        <!-- ---- help ---- -->
+        <section class="rtm-pane rtm-help" data-pane="help" hidden>
+          <h2>Reactive transport in the browser</h2>
+          <p>Write a reaction set the way you would write it down, say whether it sits in a stirred
+            batch or in a column with diffusion and advection, and this page builds the equations,
+            differentiates them into an analytic sparse Jacobian and integrates them with the same
+            stiff solvers as the <a href="./facsimile.html">canister radiolysis</a> page. Nothing is
+            uploaded: the whole thing runs here.</p>
+
+          <h3>The model text</h3>
+          <p>Six sections, of which two are needed: <code>&lt;SPECIES&gt;</code> and
+            <code>&lt;REACTIONS&gt;</code>. Everything after a <code>#</code> is a comment. A rock
+            matrix beside the column is a few more settings; see <em>A rock matrix</em>.</p>
+
+          <h4>&lt;SETTINGS&gt;</h4>
+          <table class="rtm-table">
+            <tbody>
+              <tr><td><code>MODE</code></td><td><em>batch</em> stirs everything together — one cell, no transport. <em>transport</em> builds a one-dimensional column.</td></tr>
+              <tr><td><code>CELLS</code></td><td>How many cells across the column.</td></tr>
+              <tr><td><code>LENGTH</code></td><td>How long the column is, in metres.</td></tr>
+              <tr><td><code>GRID</code></td><td><em>linear</em> spaces the cells evenly; <em>log</em> packs them against the left-hand boundary, which is where a dissolving surface puts the chemistry.</td></tr>
+              <tr><td><code>DIFFUSION</code>, <code>ADVECTION</code></td><td>1 or 0. Either, both or neither.</td></tr>
+              <tr><td><code>VELOCITY</code></td><td>m/s, positive left to right. Advection is upwind, so it is stable at any step but adds numerical dispersion of <code>v·Δx/2</code>.</td></tr>
+              <tr><td><code>POROSITY</code></td><td>Divides the velocity to give the pore-water speed.</td></tr>
+              <tr><td><code>LEFT</code>, <code>RIGHT</code></td><td>What each end of the column is: <em>dirichlet</em>, <em>neumann</em>, <em>robin</em> (<em>cauchy</em>) or <em>free</em> (<em>outflow</em>) — see below.</td></tr>
+              <tr><td><code>TEND</code></td><td>How long to integrate, in the unit below, unless the panel says otherwise.</td></tr>
+              <tr><td><code>TIME_UNIT</code></td><td><em>second</em> (the default), <em>minute</em>, <em>hour</em>, <em>day</em> or <em>year</em> — and the short forms s, min, h, d, a, yr. It <strong>converts nothing</strong>: see <em>The time unit</em> below.</td></tr>
+              <tr><td><code>EQUILIBRATE</code></td><td>1 puts the starting concentrations on the <code>&lt;EQUILIBRIUM&gt;</code> relations before the run begins.</td></tr>
+              <tr><td><code>PECLET</code></td><td>Gives every mobile species the same longitudinal dispersion <em>v·L</em>/Pe along the column, on top of its own <code>D</code>, less the <em>v</em>·Δ<em>x</em>/2 the upwind scheme already puts in — see <em>A rock matrix</em> below.</td></tr>
+              <tr><td><code>MATRIX_CELLS</code>, <code>MATRIX_DEPTH</code>, <code>MATRIX_FIRST</code>, <code>MATRIX_POROSITY</code>, <code>WETTED_SURFACE</code>, <code>APERTURE</code></td><td>A stagnant rock matrix beside the column; see <em>A rock matrix</em> below.</td></tr>
+            </tbody>
+          </table>
+
+          <h4>&lt;SPECIES&gt;</h4>
+          <pre>H2O    55.56   fixed
+H+     1.0E-7  D=9.3E-9  left=1.0E-7
+UO2                      # no number: starts at zero, does not move</pre>
+          <p>A name, the concentration it starts at, and then any of: <code>fixed</code> to hold it
+            there for ever, <code>D=</code> its diffusion coefficient in m²/s, and
+            <code>left=</code> / <code>right=</code> the concentration at a Dirichlet face. A
+            species with no <code>D</code> does not move, which is how a surface site or a mineral
+            is written.</p>
+          <p><code>fixed</code> is a statement about the equation, not a nudge: that species' row
+            in the right-hand side and in the Jacobian is set to exactly zero, so nothing —
+            reaction, diffusion, advection, a Dirichlet face, an equilibrium — can move it. It
+            still drives everything else, and is still consumed on paper by any reaction that
+            consumes it; it simply is not replenished from anywhere the model has to account for.
+            That is what a large water reservoir, a buffered pH or an imposed dose field is.
+            Because the row is zero, the answer for such a species is the number you wrote, and
+            that number is what the charts and the CSV show: a stiff step leaves round-off in it —
+            about one part in 10<sup>13</sup> on the built-in model over nine hundred steps — and
+            that is arithmetic rather than chemistry, so it is written back out. If it is ever
+            larger than round-off could explain, the run says so instead of hiding it.</p>
+          <p>A fixed species inside an <code>&lt;EQUILIBRIUM&gt;</code> is held there too, and the
+            bookkeeping follows: fix the <code>H+</code> of a water equilibrium and charge stops
+            being conserved, because the buffer supplies whatever the relation calls for. What is
+            left is one relation in one unknown, and <code>OH-</code> goes to
+            <em>K</em>/[H<sup>+</sup>]. Fixing every species of a relation is refused, since then
+            there is nothing left to satisfy it with.</p>
+          <p>A name may be a chemical formula: <code>e-</code>, <code>H+</code>, <code>OH-</code>,
+            <code>C2O4-2</code>, <code>UO2+2</code>, <code>U_site</code>.</p>
+          <p><code>R=</code> (or <code>mass=</code>, the same thing) is the coefficient on the left
+            of the equation rather than the right: <code>R dC/dt = &hellip;</code>. A retardation
+            factor for a sorbing species, a porosity, a water content — anything that divides
+            everything happening to that species, transport and reactions alike. <code>R=4</code>
+            turns diffusion at <em>D</em> into diffusion at <em>D</em>/4 and a decay at <em>k</em>
+            into one at <em>k</em>/4. It may be a plain number or the name of a parameter, in which
+            case it varies from cell to cell. It has to be greater than zero: a zero would make that
+            equation algebraic rather than differential, which is what
+            <code>&lt;EQUILIBRIUM&gt;</code> is for.</p>
+
+          <h4>&lt;REACTIONS&gt;</h4>
+          <pre>A + 2 B => C, k = 1.4E11                       # mass action: k[A][B]²
+A &lt;=&gt; B, kf = 1.0, kb = 0.5                     # both ways
+S => P, r = vmax*[S]/(km + [S]), vmax = 2, km = 0.1   # a rate law of your own
+=> H2O2, k = 1.0E-8                            # nothing on the left is a source
+OH- => , k = 0.1                               # nothing on the right is a sink</pre>
+          <p>The equation comes first, then the rate, then any constants the rate uses. With
+            <code>k =</code> you get mass action and the rate is that constant times each reactant
+            raised to its coefficient. With <code>r =</code> you write the rate yourself and a
+            concentration goes in brackets — <code>[S]</code> — so that a name like <code>H+</code>
+            is never read as arithmetic. A power needs a plain number as its exponent.</p>
+
+          <h4>The time unit</h4>
+          <p>A model has one time unit and everything in it is in that unit: the rate constants,
+            the diffusivities, <code>TEND</code>, a velocity. <code>TIME_UNIT</code> says which, and
+            it <strong>converts nothing</strong> — the solver integrates the numbers it is given.
+            What the setting does is let the page say so: label the time axis, read
+            <code>500 a</code> in the <em>Times</em> box, print a travel time, head a CSV column.
+            Without it everything is called seconds, which is what a model that says nothing
+            means.</p>
+          <p>So a geosphere model written in years has half-lives in years,
+            <em>D</em><sub>e</sub> in m²/a and a velocity in m/a, and writes
+            <code>TIME_UNIT = year</code>; the radiolysis models are in seconds throughout and say
+            nothing. Mixing the two inside one model is the one mistake this cannot catch, and
+            never could: a diffusivity in m²/s beside a half-life in years is simply a different
+            model from the one that was meant.</p>
+
+          <h4>The two ends of the column</h4>
+          <p>Four kinds of face, under the names the transport literature gives them. Which you
+            want depends on what is on the other side: a reservoir, a wall, water arriving, or
+            nothing at all.</p>
+          <table class="rtm-table">
+            <tbody>
+              <tr><td><code>dirichlet</code><br><span class="rtm-muted">first type</span></td>
+                <td>The face is held at the concentration on the species' <code>left=</code> or
+                  <code>right=</code>. Diffusion sees that concentration half a cell away, and the
+                  flow, if there is any, carries it in. Right for a face against a large
+                  well-mixed reservoir. It also starts the cell that touches it at the face value
+                  rather than at the one on the <code>&lt;SPECIES&gt;</code> line; say otherwise in
+                  <code>&lt;INITIAL&gt;</code> for a sharp front there at <em>t</em>&nbsp;=&nbsp;0.</td></tr>
+              <tr><td><code>neumann</code><br><span class="rtm-muted">second type</span></td>
+                <td>Nothing crosses. A wall.</td></tr>
+              <tr><td><code>robin</code>, <code>cauchy</code><br><span class="rtm-muted">third type</span></td>
+                <td>The flow carries <code>left=</code> in and <em>nothing else crosses</em>: the
+                  whole flux through the face is <em>u</em>·<em>c</em>. This is Danckwerts' inlet,
+                  and it is the one to use where the boundary is water arriving at a stated
+                  concentration rather than a reservoir held at one. It needs a
+                  <code>VELOCITY</code> pointing inwards; the page says so if there is none.</td></tr>
+              <tr><td><code>free</code>, <code>outflow</code></td>
+                <td>Zero gradient: no diffusion across the face, and the flow takes what it takes.
+                  Danckwerts' outlet, and the companion of <code>robin</code> at the other end. It
+                  asks for nothing to be known about what is beyond the face, which at an outlet
+                  is the point.</td></tr>
+            </tbody>
+          </table>
+          <p>The difference between the first and third types is worth knowing, because it is a
+            common way to get an inlet wrong. A Dirichlet face adds a diffusive flux
+            <em>D</em>(<em>c</em><sub>b</sub>&nbsp;−&nbsp;<em>C</em>)/<em>d</em> <em>on top of</em>
+            what the flow brings, so more enters than the water carries, and the column's mass
+            balance does not close: measured on the test column in
+            <code>resources/tests/rtm/</code>, 6.7&nbsp;% more goes in than
+            <em>u</em>(<em>c</em><sub>in</sub>&nbsp;−&nbsp;<em>c</em><sub>out</sub>) accounts for.
+            With <code>robin</code> and <code>free</code> the same column balances to one part in
+            10<sup>15</sup>, and its profile matches the flux-type closed solution of van Genuchten
+            and Alves, converging on it by a factor of four each time the cells are doubled.</p>
+          <p>As arithmetic, <code>free</code> and <code>neumann</code> are the same face — the
+            advective outflow applies at every cell whatever the far boundary says, so a Neumann
+            outlet already lets the flow leave. They are separate words because they say different
+            things and are wrong in different ways, and the page can only tell you which is wrong
+            if it knows which you meant.</p>
+
+          <h4>A rock matrix: dual porosity</h4>
+          <p>Water flows along a fracture; the rock beside it is stagnant, porous, and open to
+            diffusion. A species carried along the fracture leaks sideways into the rock's pore
+            water, sorbs there, and comes back out long after the water that brought it has gone —
+            which is what holds a radionuclide up in a geosphere by orders of magnitude more than the
+            water's own travel time. Set <code>MATRIX_CELLS</code> above zero and every cell of the
+            column gets a chain of that many stagnant cells behind it, reaching
+            <code>MATRIX_DEPTH</code> metres into the rock:</p>
+          <pre>&lt;SETTINGS&gt;
+MODE = transport
+CELLS = 20                # along the fracture
+LENGTH = 235              # m; with VELOCITY = 1 the length is the travel time in the time unit
+ADVECTION = 1
+VELOCITY = 1
+DIFFUSION = 1
+PECLET = 10
+LEFT = robin              # water arriving at the stated concentration
+RIGHT = free
+MATRIX_CELLS = 20         # layers of rock behind each cell
+MATRIX_DEPTH = 4.5        # m into the rock
+MATRIX_FIRST = 1E-4       # m, the layer at the wall; 0 has it worked out
+MATRIX_POROSITY = 0.0019
+WETTED_SURFACE = 340      # m² of rock wall per m³ of flowing water; = F / t_w
+
+&lt;SPECIES&gt;
+Cs  0  left=1  R=1  Dm=8.5E-7  Rm=2.7    # Dm = De in the rock; Rm = eps_m + rho*Kd
+</pre>
+          <p>Every species has its <code>Dm=</code>, the effective diffusivity in the rock in m²/s,
+            and its <code>Rm=</code>, the rock's capacity for it: pore water plus sorbed,
+            <em>ε</em><sub>m</sub>&nbsp;+&nbsp;<em>ρ</em><sub>m</sub><em>K</em><sub>d</sub>, the
+            quantity the SKB reports call the capacity factor. With no <code>Rm</code> the species
+            gets the porosity alone, which is a species that does not sorb; with no <code>Dm</code>
+            it never enters the rock. Like <code>R</code>, <code>Rm</code> may name a parameter and
+            so vary from cell to cell.</p>
+          <p>The layers grow geometrically with depth from <code>MATRIX_FIRST</code>, because the
+            gradient is steepest at the wall and all but flat far in. Left at zero the first layer is
+            worked out so that the ratio between layers is <em>e</em>, which is the FARFCOMP rule,
+            reproduced step for step so that the thicknesses come out bit for bit the same as that
+            code's. The far face of the last layer is closed: the depth is a depth, not a boundary.
+            <code>WETTED_SURFACE</code> is the area of fracture wall a cubic metre of flowing water
+            touches; <code>APERTURE</code> (2<em>b</em>) says the same thing as 2/aperture. Only one
+            of the two is needed.</p>
+          <p><strong>Concentrations are per unit pore water everywhere, and so are the rate
+            laws.</strong> A cubic metre of rock holds only <em>ε</em><sub>m</sub> of water, so a rate
+            <em>r</em> per unit water changes the rock's inventory by <em>ε</em><sub>m</sub><em>r</em>,
+            and it is the inventory, <em>R</em><sub>m</sub><em>C</em>, that the rock's equation is
+            written for: <em>R</em><sub>m</sub>&nbsp;d<em>C</em>/d<em>t</em> = <em>ε</em><sub>m</sub><em>r</em>
+            + diffusion. That is right for chemistry in the water and wrong for one thing:
+            radioactive decay, which does not ask where an atom sits, sorbed or dissolved. Write such
+            a rate with <code>on = inventory</code> and it removes the same share of everything in
+            the cell:</p>
+          <pre>Cs => , k = 7.3E-10, on = inventory     # decay: of everything, sorbed included
+Cs + X => Y, k = 1.2E-4                   # chemistry: in the water, on = water is the default</pre>
+          <p>Told it acts on the water alone, decay in a sorbing rock runs at
+            <em>ε</em><sub>m</sub>/<em>R</em><sub>m</sub> of its real rate; on the reference case
+            below that is the difference between a release fraction of 0.116 and 0.717.</p>
+          <p>A line in <code>&lt;INITIAL&gt;</code> or <code>&lt;PARAMETERS&gt;</code> names cells
+            of the column. Add <code>matrix</code> after it to mean the rock behind those cells
+            instead, or <code>fracture</code> to mean the flowing water alone. A parameter with
+            neither applies to both — right for a temperature, wrong for a source into the water,
+            which would otherwise also feed every layer of rock behind that cell. In a parameter's
+            expression <code>j</code> is the layer (0 in the fracture) and <code>xm</code> the depth
+            to its centre in metres.</p>
+          <p><em>From the SKB parameterisation.</em> A flow path there is a travel time
+            <em>t</em><sub>w</sub>, a transport resistance <em>F</em>, a Péclet number, a penetration
+            depth, and per species <em>D</em><sub>e</sub>, <em>K</em><sub>d</sub> and the rock's
+            porosity and density. Here that is <code>LENGTH = </code><em>t</em><sub>w</sub> with
+            <code>VELOCITY = 1</code> (so time is the model's unit, years if the rates are per year),
+            <code>WETTED_SURFACE = </code><em>F</em>/<em>t</em><sub>w</sub>,
+            <code>PECLET</code>, <code>MATRIX_DEPTH</code>, and per species
+            <code>Dm = </code><em>D</em><sub>e</sub>,
+            <code>Rm = </code><em>ε</em><sub>m</sub>&nbsp;+&nbsp;<em>ρ</em><sub>m</sub><em>K</em><sub>d,m</sub>,
+            and <code>R = 1 + </code><em>K</em><sub>d,f</sub>·<em>a</em><sub>w</sub> for sorption on
+            the fracture coating. A unit release into the first cell is a source
+            <code>=&gt; X, k = S</code> with <code>S 0 1/Δx fracture</code> in
+            <code>&lt;PARAMETERS&gt;</code>; the release out is <em>v</em> times the last cell's
+            concentration.</p>
+          <p><em>What was checked.</em> The layer thicknesses and every rate — advection, dispersion,
+            wall exchange, layer to layer — against SKB's own implementation of TR-19-06's
+            formulation, in five cases including twenty layers from 4×10⁻⁸ m, to one part in
+            10<sup>14</sup>; two of its release curves, one with sorption and decay, to
+            2×10<sup>-9</sup> and 2×10<sup>-10</sup> at a tolerance of 10<sup>-9</sup>; Neretnieks'
+            closed solution for a fracture beside a deep matrix, converging at the upwind scheme's
+            first order as the fracture is refined; and a closed box that conserves mass to
+            10<sup>-14</sup> and shares it between water and rock exactly by capacity.</p>
+          <p>On the charts, a <em>Layer</em> picker beside the cell chooses the fracture or a rock
+            layer for the time chart and the gradient, and <em>Against distance</em> can be drawn
+            across the fracture at one layer or into the rock at one cell, the fracture at depth
+            zero.</p>
+
+          <h4>What may go in an expression</h4>
+          <p>The same arithmetic in a rate law, a constant and a parameter:
+            <code>+ - * /</code>, brackets, and <code>^</code> or <code>**</code> for a power.
+            Numbers may be written <code>1.4E11</code> or <code>1.4e11</code>. The functions are:</p>
+          <table class="rtm-table">
+            <tbody>
+              <tr><td><code>exp(a)</code></td><td>e<sup>a</sup>.</td></tr>
+              <tr><td><code>log(a)</code>, <code>ln(a)</code></td><td>Natural logarithm — <code>log</code> means the natural one here, as it does in FACSIMILE.</td></tr>
+              <tr><td><code>log10(a)</code></td><td>Base ten.</td></tr>
+              <tr><td><code>sqrt(a)</code></td><td>Square root.</td></tr>
+              <tr><td><code>abs(a)</code>, <code>sign(a)</code></td><td>Magnitude and sign.</td></tr>
+              <tr><td><code>step(a)</code></td><td>1 where <em>a</em> is above zero, 0 elsewhere.</td></tr>
+              <tr><td><code>ramp(a)</code></td><td><em>a</em> where it is above zero, 0 elsewhere — <code>max(a, 0)</code> by another name.</td></tr>
+              <tr><td><code>min(a,b)</code>, <code>max(a,b)</code>, <code>pow(a,b)</code></td><td>In <code>&lt;PARAMETERS&gt;</code> only; see below.</td></tr>
+            </tbody>
+          </table>
+          <p>Three of those are barred from a rate law, and the reason is the Jacobian rather than
+            taste. <code>min</code> and <code>max</code> have a derivative that jumps where their
+            two arguments cross, so an analytic Jacobian would be wrong on one side of the crossing;
+            <code>pow(a,b)</code> differentiates to something containing log&nbsp;<em>a</em>, which
+            is undefined at a zero concentration — which is exactly where a rate law gets evaluated.
+            A power with a plain number as its exponent, <code>[A]^2</code>, has neither problem and
+            is what to write. <code>&lt;PARAMETERS&gt;</code> is worked out once when the model
+            compiles and never differentiated, so all three may be used there.</p>
+          <p><code>step</code> and <code>ramp</code> are allowed, with the derivative of the kink
+            taken as zero: they are flat everywhere they are differentiable, and a stiff solver
+            steps over the corner rather than through it. A rate that switches hard is still worth
+            avoiding where a smooth one will do.</p>
+          <p>Which names are in scope depends on where the expression is. A rate law may use the
+            concentrations it writes in brackets, the constants named on its own line, and any
+            parameter; a constant on the reaction line wins if a parameter has the same name. A
+            parameter may use <code>x</code>, the cell centre in metres, <code>i</code>, the cell
+            index, and any parameter named above it.</p>
+
+          <h4>&lt;INITIAL&gt;</h4>
+          <pre>X   0-9   1.0      # the first ten cells
+O2  all   2.1E-4
+Fe  20    0.5      # one cell</pre>
+          <p>Optional, and only useful with transport: it overrides the concentration in
+            <code>&lt;SPECIES&gt;</code> cell by cell, which is how you start a front, a plume or a
+            layer.</p>
+
+          <h4>&lt;PARAMETERS&gt;</h4>
+          <pre>DOSE  all  0.64                  # the same everywhere
+DOSE  all  0.64*exp(-x/3.0E-5)   # x is the cell centre, in metres
+POR   0-4  0.15                  # and a later line overrides an earlier one
+POR   5    0.3</pre>
+          <p>A named number that any rate law may use and that may differ from cell to cell. The
+            value is an expression in <code>x</code>, the distance to the cell centre in metres,
+            <code>i</code>, the cell's index, and any parameter named above it. It is worked out
+            once, when the model is compiled, so a parameter is constant in time — it varies in
+            space, not with the solution.</p>
+          <p>This is how a dose rate that dies away from a surface is written, or a porosity that
+            changes down a column, or a rate constant that follows a temperature profile. A rate law
+            may use a parameter by name, exactly as it uses a constant declared on its own line; a
+            constant on the reaction line wins if both have the same name.</p>
+
+          <h4>&lt;EQUILIBRIUM&gt;</h4>
+          <pre>      &lt;=&gt; H+ + OH-,    logK = -14
+CO2   &lt;=&gt; H+ + HCO3-,  logK = -6.35
+HCO3- &lt;=&gt; H+ + CO3-2,  logK = -10.33
+NpO2+ &lt;=&gt; NpO2_s,      K = 2.0E4, kf = 1.0E3   # also held during the run</pre>
+          <p>A relation that has to hold rather than a rate that has to be integrated:
+            <code>&prod;[C]<sup>&nu;</sup> = K</code>, with <code>logK</code> its base-ten
+            logarithm, which is the form a database gives. An empty left-hand side means the
+            reaction has no reactant, as it does for water dissociating.</p>
+          <p>With <code>EQUILIBRATE = 1</code> the starting concentrations are put on these
+            relations before the run: a damped Newton iteration in ln&nbsp;C, run separately in every
+            cell, over the species the relations mention and no others — anything they do not
+            touch is left exactly where it was put, zero included. What it may not change is worked
+            out from the relations themselves — the left null space of their stoichiometry, which
+            gives the conserved totals without the page needing a table of elements. So writing <code>H+</code> at 10<sup>-3</sup> and
+            <code>OH-</code> at 10<sup>-3</sup> gives 10<sup>-7</sup> of each, and the difference
+            between them, which is a charge, is exactly what it was.</p>
+          <p>Give <code>kf</code> as well and the equilibrium is held <em>during</em> the run too,
+            as a fast reversible pair with <code>kb = kf/K</code>. Without it, it applies to the
+            initial state and nothing else — these are solvers for <code>y' = f(y)</code>, and an
+            equilibrium held exactly throughout is an algebraic constraint, a different kind of
+            problem. A <code>kf</code> a few orders above the fastest rate in the model holds the
+            relation to within the solver's tolerance; making it enormous only costs steps.</p>
+
+          <h3>What it actually solves</h3>
+          <p>For every species <em>s</em> in every cell <em>i</em>:</p>
+          <pre>dC/dt = (what the reactions make and consume in cell i)
+      + (diffusion across the two faces of cell i)
+      + (advection in from upwind)</pre>
+          <p>Diffusion is a finite-volume difference: the flux between two cells over the distance
+            between their centres, divided by the width of the cell it lands in. On an even grid
+            that is the textbook <code>D/Δx²</code>; on an uneven one it stays conservative, which
+            the textbook form does not. Measured on a closed box, mass is held to about one part in
+            10<sup>15</sup>, and against the analytic <code>erfc</code> profile the error falls by
+            four each time the cells are doubled — second order, as it should be.</p>
+
+          <h3>Reading the charts</h3>
+          <p>The time chart draws the species ticked in the left-hand panel, at one cell.
+            <em>Against distance</em> draws one species across all the cells, at several times.
+            Which times is up to you: the <em>Times</em> field takes a list — <code>0, 1 h, 30 d,
+            500 y</code>, or bare numbers for seconds — and leaving it empty spreads eight over the
+            run.</p>
+          <p><em>Gradient</em> puts the whole run in one picture: time across, distance down,
+            concentration as colour. Where <em>Against distance</em> shows a handful of moments,
+            this shows every stored one, so a front's arrival and how far it gets are a shape
+            rather than a set of curves to compare. Distance runs up the axis from zero at the
+            origin, so the left-hand face — the surface the chemistry happens at — is along the
+            bottom.</p>
+          <p>The bands across it are the cells: with twenty of them the picture has twenty rows and
+            says so. <em>Smooth</em> interpolates between them, which looks better and claims a
+            resolution the run does not have. <em>log concentration</em> plots log<sub>10</sub>,
+            leaving anything at or below zero blank rather than dropping it to the bottom of the
+            scale, and the note says how many that was. The <em>from</em> time matters more here
+            than elsewhere: a stiff run's first steps are femtoseconds, and without it fifteen
+            decades of an empty axis push the interesting part into the last inch.</p>
+          <p>A time you ask for is not usually a time the solver stopped at, and nothing is
+            invented to fill the gap: the nearest profile that was actually computed is drawn, the
+            legend names the time it belongs to rather than the time you asked for, and the note
+            under the toolbar says which times moved. Late in a stiff run the steps are wide — tens
+            of thousands of seconds on the built-in model — so ask for 10 hours there and you may
+            well get 10.8.</p>
+
+          <h3>The Jacobian</h3>
+          <p>Every rate law is differentiated symbolically with respect to each species it mentions.
+            Nothing is differenced, so there is no step size to choose and no accuracy to lose. The
+            chemistry is the same in every cell, so the matrix is one block per cell plus the
+            transport terms, and those couple a species only to itself next door — which is why the
+            state is ordered cell by cell rather than species by species: the matrix comes out
+            banded instead of spread across its whole width.</p>
+          <p>The <em>Jacobian</em> tab draws the pattern of that matrix: the chemistry of each cell
+            in the accent colour, the transport couplings to its two neighbours in the text colour,
+            which is what puts the two thin diagonals either side of the blocks. In batch mode there
+            is one block and it fills the picture. Nothing about the drawing is a guess — the worker
+            folds the real pattern into a cell against itself and against each neighbour, which is
+            the whole of it, and the caption says how much of each block is actually there.</p>
+          <p><em>Check Jacobian</em> compares it against a central difference. Read the result with
+            one thing in mind: an entry far smaller than the largest in its column cannot be
+            measured that way at all — the change it makes is lost under the change the big ones
+            make — so those are counted separately rather than called wrong.</p>
+
+          <h3>Choosing a solver</h3>
+          <p><em>NDF</em> is the default and is the right first choice. <em>BDF</em> is the same
+            integrator with the κ terms switched off. The Julia ports are independent
+            implementations of other methods; <em>FBDF</em> is the one to try on a large transport
+            problem, and <em>RadauIIA5</em> when two others disagree. They are described on the
+            <a href="./facsimile.html">canister radiolysis</a> page, which shares them.</p>
+          <p>Every one of them is available wherever the page is: a run normally happens on a
+            background worker, and where there is no worker to be had — a page opened straight off
+            the disk cannot start one — it happens on the page's own thread instead. The answer is
+            the same; what you lose is the progress bar and the <em>Stop</em> button, because the
+            page cannot repaint until the run is over. Serving the folder rather than opening the
+            file gets both back: <code>python3 -m http.server</code> in it, then the address it
+            prints.</p>
+          <p>If NDF will not get through a model, try FBDF before anything else. The kind of
+            chemistry this page is for is hard on a corrector: with rate constants up to
+            10<sup>16</sup> against concentrations of 10<sup>-9</sup>, the terms of a rate balance
+            cancel over sixteen digits and the residual cannot be worked out to better than about a
+            part in 10<sup>7</sup>. A Newton correction that has reached that floor stops shrinking,
+            which an ordinary convergence test reads as divergence. This page tells the solver to
+            take such a correction when it is within half the tolerance and the Jacobian is the one
+            for that point; without it, the twenty published spent-fuel cases in
+            <code>resources/tests/rtm/verify-brum.py</code> took millions of steps to cover a few
+            seconds, and with it they run in a few thousand and agree with the reference code.</p>
+
+          <h3>The examples</h3>
+          <p>The <em>Example</em> picker on the <em>Model</em> tab loads any of them; the text is
+            replaced, and a line under the picker says what the model is and where it comes from.
+            They are grouped by what they are for:</p>
+          <table class="rtm-table">
+            <tbody>
+              <tr><td>Getting started</td><td>A&nbsp;→&nbsp;B&nbsp;→&nbsp;C, and Michaelis–Menten for a rate law of your own.</td></tr>
+              <tr><td>Standard test cases</td><td><em>Robertson</em> (1966), the problem stiff solvers are measured against — three rate constants over nine orders, <em>A</em>&nbsp;+&nbsp;<em>B</em>&nbsp;+&nbsp;<em>C</em> exactly 1, and the published triple at <em>t</em>&nbsp;=&nbsp;0.4 reproduced to seven figures. The <em>Brusselator</em>, which never settles.</td></tr>
+              <tr><td>Chemistry</td><td>Carbonate speciation: three coupled equilibria and the conserved totals found from the stoichiometry alone.</td></tr>
+              <tr><td>Transport</td><td>A tracer against Ogata–Banks; the Danckwerts inlet; a retarded front; and a source that varies down the column.</td></tr>
+              <tr><td>Dual porosity</td><td>Matrix diffusion against the <code>erfc</code> solution, and the <strong>U-238 chain</strong> along a real flow path — six nuclides decaying into one another while diffusing into the rock and sorbing there, from SKB TR-19-06 Appendix B. Deep in the rock the chain reaches secular equilibrium to a tenth of a per cent; in the fracture the flow keeps it from doing so.</td></tr>
+              <tr><td>Hydrosäk</td><td>All twenty <em>HS_case</em> databases of BRUM_for_Hydrosäk: spent-fuel dissolution in one stirred cell, 128 reactions over 35 species, 1890 days. Converted by the same reader that <code>resources/tests/rtm/verify-brum.py</code> checks against each case's own <code>results.h5</code>.</td></tr>
+            </tbody>
+          </table>
+          <p>One of them will not run as it stands. <em>HS_case20</em>'s own database names
+            <code>UVIO2s+</code> in a stoichiometry whose rate law reads <code>[UVIO2s+2]</code>;
+            they are different species, and the first appears nowhere else, so it is driven below
+            zero — BRUM's own answer for it is negative too. Turn off <em>keep concentrations
+            non-negative</em> under the solver's advanced settings and this page reproduces that
+            result, negative species and all. The note is at the top of the model text.</p>
+          <p>Every example is compiled and run by <code>resources/tests/rtm/test-model.js</code>,
+            so the picker cannot offer something broken, and the ones with a published answer are
+            checked against it there.</p>
+
+          <h3>Where the built-in model came from</h3>
+          <p>Water radiolysis and uranium dissolution at a spent-fuel surface: 127 reactions over 36
+            species, converted mechanically from the <code>skbrtm</code> example set. Radiolysis
+            enters as a source of <em>G</em> × dose rate, with <em>G</em> in mol/J and the dose rate
+            in Gy/s, so with a litre of water weighing a kilogram the product is mol/L/s and no
+            conversion factor is needed. The dose rate is written as a constant on each radiolysis
+            line, which holds it uniform across the film — the real one is not, it falls away over
+            the range of an alpha particle, about 30&nbsp;µm. To put that profile in, move it into a
+            parameter and let every radiolysis line use it:</p>
+          <pre>&lt;PARAMETERS&gt;
+DOSE  all  0.64*exp(-x/3.0E-5)</pre>
+          <p>then delete the <code>DOSE = 0.64</code> from the ends of those lines, so that the name
+            resolves to the parameter instead.</p>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <footer></footer>
+
+  <script src="./resources/js/kvot-errors.js?v=20260911"></script>
+  <script src="./resources/js/kvot-safe.js?v=20260911"></script>
+  <script src="./resources/js/kvot-actions.js?v=20260902"></script>
+  <script src="./resources/js/kvot-icons.js?v=20260902"></script>
+  <script src="./resources/js/site.js?v=20260907"></script>
+  <script>
+    KVOT.renderHeader('Reactive Transport');
+    KVOT.renderNav('rtm.html');
+    KVOT.renderFooter();
+  </script>
+  <!--
+    The engine is loaded in the page as well as in the worker: the page uses it
+    to run inline when Web Workers are unavailable (a file:// visit), and the
+    worker file exposes the same request handler either way.
+
+      facsimile-model    the expression parser the rate laws are read with
+      facsimile-ode      sparse LU and the NDF/BDF integrator
+      ode-julia          the ode_julia solver package
+      facsimile-ode-julia  those solvers, wired to the page's solver contract
+      rtm-model          the reactive-transport compiler
+      rtm-default        the built-in model text
+      rtm-examples       the models the Example picker offers
+      rtm-worker         the request handler (compile, run, verify)
+      rtm-ui             this page
+  -->
+  <script src="./resources/js/facsimile-model.js?v=20260920"></script>
+  <script src="./resources/js/facsimile-ode.js?v=20260920a"></script>
+  <script src="./resources/js/ode-julia.js?v=20260920"></script>
+  <script src="./resources/js/facsimile-ode-julia.js?v=20260920"></script>
+  <script src="./resources/js/rtm-model.js?v=20260920e"></script>
+  <script src="./resources/js/rtm-default.js?v=20260920"></script>
+  <script src="./resources/js/rtm-examples.js?v=20260921b"></script>
+  <script src="./resources/js/rtm-worker.js?v=20260920e"></script>
+  <script src="./resources/js/rtm-ui.js?v=20260921b"></script>
+</body>
+</html>

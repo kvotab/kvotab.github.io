@@ -1,0 +1,1282 @@
+/* ==========================================================================
+   RTM.HTML: THE PAGE
+
+   Wiring only: the compiler is rtm-model.js, the solvers are facsimile-ode.js
+   and the ode_julia ports, and the work happens in rtm-worker.js on a Worker
+   thread. This file keeps the state, draws the charts and says what happened.
+
+   One global: nothing. Everything is inside the IIFE; the page reaches it
+   through the data-on-* actions registered at the bottom.
+   ========================================================================== */
+(function () {
+  'use strict';
+
+  const $ = (id) => document.getElementById(id);
+  const STORAGE_KEY = 'kvot-rtm-v1';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20260920d';
+  const DEFAULT_WIDTH = 330;
+
+  /* ---------------------------------------------------------------------
+     State
+     --------------------------------------------------------------------- */
+  const state = {
+    text: typeof RTM_DEFAULT_MODEL === 'string' ? RTM_DEFAULT_MODEL : '',
+    solver: {
+      method: 'ndf', tend: '', rtol: '1e-6', atol: '1e-20', matrix: 'auto', norm: 'max',
+      maxSteps: '500000', maxPoints: '4000', nonNegative: true, autoAtol: false,
+    },
+    picked: [],            // species names drawn on the time chart
+    cell: 0,               // which cell the time chart is of
+    layer: 0,              // 0 the fracture, j the j-th matrix layer behind it
+    profileAxis: 'fracture',
+    profileLayer: 0,
+    gradLayer: 0,
+    profileSpecies: '',
+    profileTimes: '',      // empty for a spread over the run; else a list
+    gradSpecies: '',
+    gradScale: 'YlOrRd',
+    gradTMin: '1e-6',
+    tab: 'time',
+    sideWidth: null,
+    sections: {},
+    compiled: null,        // the summary from the worker
+    compileError: null,
+    result: null,          // { t, states, n, width, model, stats }
+    running: false,
+    verify: null,
+    storedStamp: null,
+    storedEdited: null,
+    textNote: null,
+  };
+
+  /** A cheap, stable fingerprint. Not a checksum: only equality. */
+  function stampOf(text) {
+    const s = String(text);
+    let h = 5381;
+    for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
+    return `${s.length.toString(36)}-${h.toString(36)}`;
+  }
+
+  function saveState() {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        text: state.text, solver: state.solver, picked: state.picked, cell: state.cell,
+        tab: state.tab, sideWidth: state.sideWidth, sections: state.sections,
+        layer: state.layer, profileAxis: state.profileAxis, profileLayer: state.profileLayer,
+        gradLayer: state.gradLayer,
+        profileSpecies: state.profileSpecies, profileTimes: state.profileTimes,
+        gradSpecies: state.gradSpecies, gradScale: state.gradScale,
+        gradTMin: state.gradTMin,
+        // Which built-in model this text was written against, and whether the
+        // reader had changed it. Without both, a stored text shadows a built-in
+        // model that has moved on and no amount of reloading shifts it -- it is
+        // in localStorage, not the cache. See migrateStoredText.
+        modelStamp: stampOf(RTM_DEFAULT_MODEL),
+        textEdited: state.text !== RTM_DEFAULT_MODEL,
+      }));
+    } catch (e) { /* storage unavailable: nothing to do */ }
+  }
+
+  function loadState() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
+      const s = JSON.parse(raw);
+      if (typeof s.text === 'string' && s.text.trim()) state.text = s.text;
+      if (s.solver && typeof s.solver === 'object') Object.assign(state.solver, s.solver);
+      if (Array.isArray(s.picked)) state.picked = s.picked.filter((x) => typeof x === 'string');
+      if (Number.isFinite(s.cell)) state.cell = s.cell;
+      if (Number.isFinite(s.layer)) state.layer = s.layer;
+      if (Number.isFinite(s.profileLayer)) state.profileLayer = s.profileLayer;
+      if (Number.isFinite(s.gradLayer)) state.gradLayer = s.gradLayer;
+      if (s.profileAxis === 'matrix' || s.profileAxis === 'fracture') state.profileAxis = s.profileAxis;
+      if (typeof s.tab === 'string') state.tab = s.tab;
+      if (typeof s.profileSpecies === 'string') state.profileSpecies = s.profileSpecies;
+      if (typeof s.profileTimes === 'string') state.profileTimes = s.profileTimes;
+      if (typeof s.gradSpecies === 'string') state.gradSpecies = s.gradSpecies;
+      if (typeof s.gradScale === 'string') state.gradScale = s.gradScale;
+      if (typeof s.gradTMin === 'string') state.gradTMin = s.gradTMin;
+      if (Number.isFinite(s.sideWidth)) state.sideWidth = s.sideWidth;
+      if (s.sections && typeof s.sections === 'object') state.sections = s.sections;
+      state.storedStamp = typeof s.modelStamp === 'string' ? s.modelStamp : null;
+      state.storedEdited = typeof s.textEdited === 'boolean' ? s.textEdited : null;
+    } catch (e) { /* a corrupt entry: start fresh */ }
+  }
+
+  /**
+   * Bring a stored text forward when the built-in model has changed.
+   *
+   * Whether the reader edited it cannot be worked out here -- a stored text
+   * that differs from today's built-in differs either because they changed it
+   * or because the built-in did, and afterwards the two look the same -- so it
+   * is recorded at save time. A state stored before that was recorded is asked
+   * the question anyway, which errs towards keeping the reader's text.
+   */
+  function migrateStoredText() {
+    if (state.storedStamp === stampOf(RTM_DEFAULT_MODEL)) return;
+    if (state.text === RTM_DEFAULT_MODEL) return;
+    const edited = state.storedEdited === null ? true : state.storedEdited;
+    if (edited) {
+      state.textNote = 'Note: the built-in model has been updated since the text on the Model tab '
+        + 'was saved, and that text is what you are looking at — it is kept in this browser and a '
+        + 'reload does not touch it. "Reset to the built-in model" takes the new one.';
+      return;
+    }
+    state.text = RTM_DEFAULT_MODEL;
+    state.textNote = 'The built-in model has been updated, and this is the new one.';
+  }
+
+  /* ---------------------------------------------------------------------
+     The worker, or the page itself
+     --------------------------------------------------------------------- */
+  let worker = null;
+  let workerKind = 'none';       // 'worker' | 'inline'
+  let workerSolvers = null;
+  let nextId = 1;
+  const pending = new Map();
+  /*
+    A page opened straight off the disk cannot start a Worker: the browser will
+    not let a file:// document load a file:// script as one. Everything then
+    runs on the page's own thread, which works -- the solvers are all here as
+    ordinary scripts, the ported ones included -- but the page cannot repaint
+    until the run is over, so Stop does nothing and the progress bar cannot
+    move. Serving the folder is the fix, and is worth saying rather than
+    leaving someone to wonder why the page went quiet.
+  */
+  const INLINE_NOTE = 'There is no background worker here, so a run holds the page until it '
+    + 'finishes: the progress bar cannot move and Stop cannot be heard.';
+  const SERVE_NOTE = location.protocol === 'file:'
+    ? ' A page opened from the disk cannot start one. Serving this folder — '
+      + '"python3 -m http.server" in it, then the address it prints — gives you a '
+      + 'background worker, a live progress bar and a Stop that works.'
+    : '';
+
+  function ensureWorker() {
+    if (worker || workerKind === 'inline') return;
+    if (typeof Worker === 'undefined') { workerKind = 'inline'; return; }
+    try {
+      worker = new Worker(WORKER_URL);
+      workerKind = 'worker';
+      worker.onmessage = (ev) => receive(ev.data);
+      worker.onerror = () => {
+        worker = null;
+        workerKind = 'inline';
+        setStatus(INLINE_NOTE, 'error');
+      };
+      askCapabilities();
+    } catch (e) {
+      worker = null;
+      workerKind = 'inline';
+    }
+  }
+
+  function askCapabilities() {
+    request({ type: 'capabilities' }).then((reply) => {
+      workerSolvers = reply.solvers || null;
+    }).catch(() => { workerSolvers = null; });
+  }
+
+  function receive(msg) {
+    const entry = pending.get(msg.id);
+    if (!entry) return;
+    if (msg.type === 'progress') { if (entry.onProgress) entry.onProgress(msg); return; }
+    pending.delete(msg.id);
+    if (msg.type === 'error') entry.reject(Object.assign(new Error(msg.error), msg));
+    else entry.resolve(msg);
+  }
+
+  function request(message, onProgress) {
+    ensureWorker();
+    const id = nextId++;
+    const full = { ...message, id };
+    return new Promise((resolve, reject) => {
+      pending.set(id, { resolve, reject, onProgress });
+      if (worker) { worker.postMessage(full); return; }
+      // Inline: the same handler, called directly. It replies synchronously,
+      // so the promise settles before this returns.
+      try {
+        self.handleRtmMessage(full, (reply) => receive(reply));
+      } catch (e) {
+        pending.delete(id);
+        reject(e);
+      }
+    });
+  }
+
+  /**
+   * Why this method cannot be run here, or null.
+   *
+   * The ported solvers used to be refused whenever there was no worker. They
+   * are loaded on the page as ordinary scripts and run perfectly well there,
+   * so what that refusal actually did was stop anyone who had opened the file
+   * from disk from using them at all. It is a warning now, not a refusal --
+   * see inlineWarning.
+   */
+  function methodRefusal(method) {
+    ensureWorker();
+    if (worker && workerSolvers && !workerSolvers.includes(method)) {
+      return `The background worker does not have ${method}. That usually means the browser is `
+        + 'holding an older copy of it; reload the page, with a hard reload if that does not do it.';
+    }
+    if (/^julia_/.test(method) && typeof FacsimileOdeJulia === 'undefined') {
+      return `${method} is not loaded on this page. Reload it, with a hard reload if that does `
+        + 'not do it.';
+    }
+    return null;
+  }
+
+  /** What to say before a run that will hold the page, or ''. */
+  function inlineWarning() {
+    if (workerKind !== 'inline') return '';
+    return ` ${INLINE_NOTE}${SERVE_NOTE}`;
+  }
+
+  /** Let the browser paint before something that will block it. */
+  function repaint() {
+    return new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+  }
+
+  /* ---------------------------------------------------------------------
+     Status and progress
+     --------------------------------------------------------------------- */
+  function setStatus(text, tone) {
+    const el = $('rtmStatus');
+    el.textContent = text;
+    // The box is a fixed height and scrolls; a new message starts at its
+    // beginning rather than wherever the last one had been scrolled to.
+    el.scrollTop = 0;
+    el.className = 'rtm-status'
+      + (tone === 'error' ? ' error' : tone === 'warn' ? ' warn' : tone === 'ok' ? ' ok' : '');
+  }
+
+  function setProgress(frac) {
+    const bar = $('rtmProgress');
+    if (frac === null) { bar.hidden = true; return; }
+    bar.hidden = false;
+    $('rtmProgressFill').style.width = `${Math.max(1.5, Math.min(100, frac * 100))}%`;
+  }
+
+  /*
+    The model's own time unit, and what one of them is in seconds. The text
+    says which; until something has compiled it is seconds, which is what a
+    model that says nothing means.
+  */
+  function timeUnit() {
+    return (state.compiled && state.compiled.timeUnit) || { name: 'second', symbol: 's', seconds: 1 };
+  }
+
+  /**
+   * A time in the model's own unit, written for a person.
+   *
+   * Scaled up the ladder when that reads better -- 5000 s is 1.39 h -- but
+   * never below the model's own unit: a model written in years has nothing to
+   * say about seconds, and "3.16e7 s" where the reader wrote 1 would answer a
+   * question nobody asked.
+   */
+  const fmtTime = (t) => {
+    const u = timeUnit();
+    const s = t * u.seconds;
+    const ladder = [[1, 's'], [60, 'min'], [3600, 'h'], [86400, 'd'], [365.25 * 86400, 'a']];
+    let pick = Math.max(0, ladder.findIndex(([sec]) => sec === u.seconds));
+    while (pick + 1 < ladder.length && Math.abs(s) >= ladder[pick + 1][0]) pick++;
+    return `${(s / ladder[pick][0]).toPrecision(3)} ${ladder[pick][1]}`;
+  };
+
+  /*
+    Times may be written with a unit, because a model whose TEND is in years is
+    painful to talk to in seconds. The units are the ones fmtTime prints back,
+    so what is typed and what appears in the legend agree.
+  */
+  const TIME_UNITS = { s: 1, min: 60, h: 3600, d: 86400, a: 365.25 * 86400, y: 365.25 * 86400 };
+
+  /**
+   * "0, 1 h, 30 d, 500 y" -> seconds, plus whatever could not be read.
+   *
+   * A unit is glued to its number first, so that a space between the two does
+   * not split them, and a bare list of numbers still separates on spaces.
+   */
+  function parseTimes(text) {
+    const glued = String(text).replace(/(\d)\s+(s|min|h|d|a|y)\b/gi, '$1$2');
+    const times = [];
+    const bad = [];
+    const own = timeUnit().seconds;
+    for (const tok of glued.split(/[\s,;]+/).filter(Boolean)) {
+      const m = /^([0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)(s|min|h|d|a|y)?$/i.exec(tok);
+      if (!m) { bad.push(tok); continue; }
+      // A bare number is in the model's own unit; a suffixed one is converted
+      // into it, so "500 a" means the same thing whatever the model counts in.
+      times.push((Number(m[1]) * (m[2] ? TIME_UNITS[m[2].toLowerCase()] : own)) / own);
+    }
+    return { times, bad };
+  }
+
+  /** The stored point nearest a wanted time; the run is stored thinned. */
+  function nearestIndex(t, want) {
+    let best = 0;
+    let gap = Infinity;
+    for (let i = 0; i < t.length; i++) {
+      const d = Math.abs(t[i] - want);
+      if (d < gap) { gap = d; best = i; }
+    }
+    return best;
+  }
+
+  /* ---------------------------------------------------------------------
+     Compiling
+     --------------------------------------------------------------------- */
+  let compileTimer = null;
+  function scheduleCompile(ms) {
+    clearTimeout(compileTimer);
+    compileTimer = setTimeout(() => compile(), ms);
+  }
+
+  async function compile() {
+    saveState();
+    const note = state.textNote ? ` ${state.textNote}` : '';
+    state.textNote = null;
+    try {
+      const reply = await request({ type: 'compile', text: state.text });
+      state.compiled = reply.model;
+      state.compileError = null;
+      renderFacts();
+      renderSeriesList();
+      renderCells();
+      drawJacobianPattern();
+      const m = reply.model;
+      const warn = m.warnings.length ? ` ${m.warnings.length} warning${m.warnings.length > 1 ? 's' : ''}: ${m.warnings[0]}` : '';
+      if (!state.running) {
+        setStatus(`Compiled: ${m.nspecies} species, ${m.nreactions} reactions, ${m.cells} cell`
+          + `${m.cells === 1 ? '' : 's'} — ${m.states} equations, Jacobian with ${m.nnz} non-zeros `
+          + `(${(100 * m.density).toFixed(2)} % of the matrix). Ready to run.${warn}${note}`, 'ok');
+      }
+      $('rtmModelNote').textContent = m.warnings.join('  ');
+      $('rtmModelNote').hidden = !m.warnings.length;
+      return true;
+    } catch (e) {
+      state.compiled = null;
+      state.compileError = e;
+      renderFacts();
+      if (!state.running) setStatus(`The model does not compile: ${e.message}${note}`, 'error');
+      return false;
+    }
+  }
+
+  function renderFacts() {
+    const el = $('rtmFacts');
+    const m = state.compiled;
+    if (!m) { el.textContent = state.compileError ? 'Does not compile; see the Model tab.' : 'Not compiled yet.'; return; }
+    const s = m.settings;
+    const bits = [
+      `${s.MODE === 'transport' ? 'transport' : 'batch'} · ${m.nspecies} species · ${m.nreactions} reactions`,
+    ];
+    if (m.transport) {
+      bits.push(`${m.fracture} cells over ${s.LENGTH} m, ${s.GRID} grid`);
+      if (m.matrix) {
+        bits.push(`dual porosity: ${m.matrix.n} matrix layer${m.matrix.n === 1 ? '' : 's'} to `
+          + `${m.matrix.total} m behind each cell, porosity ${m.matrix.porosity}, `
+          + `${m.matrix.aw} m² of wall per m³ of water`
+          + (m.matrix.enters.length ? ` · ${m.matrix.enters.join(', ')} enter${m.matrix.enters.length === 1 ? 's' : ''} the rock` : ' · nothing enters the rock'));
+      }
+      const moves = [];
+      if (s.DIFFUSION) moves.push('diffusion');
+      if (s.ADVECTION && s.VELOCITY) moves.push(`advection at ${s.VELOCITY} m/s`);
+      bits.push(moves.length ? moves.join(' + ') : 'nothing moves');
+      bits.push(`${s.LEFT} | ${s.RIGHT} boundaries`);
+    }
+    if (m.nequilibria) {
+      bits.push(`${m.nequilibria} equilibri${m.nequilibria === 1 ? 'um' : 'a'}`
+        + `, ${m.nconserved} conserved total${m.nconserved === 1 ? '' : 's'}`
+        + (m.speciated ? ` · initial state equilibrated (${m.speciated.iterations} iterations)` : ''));
+    }
+    // The unit labels follow the model: a run in years should not be asked
+    // for a "from" time in seconds.
+    const u = timeUnit();
+    $('rtmTendUnit').textContent = `${u.name}s; blank uses TEND from the text`;
+    $('rtmTMinUnit').textContent = u.symbol;
+    $('rtmGradTMinUnit').textContent = u.symbol;
+    if (m.nparameters) bits.push(`${m.nparameters} parameter${m.nparameters === 1 ? '' : 's'}: ${m.parameters.join(', ')}`);
+    if (m.anyMass) bits.push('a mass matrix is in force');
+    bits.push(`${m.states} equations, ${m.nnz} non-zeros`);
+    bits.push(`TEND ${fmtTime(s.TEND)}`);
+    el.textContent = bits.join('\n');
+    el.style.whiteSpace = 'pre-line';
+  }
+
+  /* ---------------------------------------------------------------------
+     Running
+     --------------------------------------------------------------------- */
+  function solverPayload() {
+    const s = state.solver;
+    const num = (v, what, test) => {
+      const x = Number(v);
+      if (!test(x)) throw new Error(what);
+      return x;
+    };
+    const out = {
+      method: s.method,
+      rtol: num(s.rtol, 'The relative tolerance must be between 0 and 1', (x) => x > 0 && x < 1),
+      atol: num(s.atol, 'The absolute tolerance must be a non-negative number', (x) => x >= 0),
+      matrix: s.matrix,
+      norm: s.norm,
+      maxSteps: num(s.maxSteps, 'The step budget must be at least 100', (x) => x >= 100),
+      maxPoints: num(s.maxPoints, 'Points kept must be at least 10', (x) => x >= 10),
+      nonNegative: s.nonNegative,
+      autoAtol: s.autoAtol,
+    };
+    if (String(s.tend).trim()) {
+      out.tend = num(s.tend, `The simulated time must be a positive number of ${timeUnit().name}s`, (x) => x > 0);
+    }
+    return out;
+  }
+
+  async function run() {
+    if (state.running) return;
+    /*
+      A compile is scheduled a moment after the last keystroke, and run()
+      compiles anyway. Leaving the scheduled one to fire meant it landed after
+      the run had finished and replaced "Done in 0.6 s ..." with "Compiled:
+      ...", which reads as though nothing had been run at all.
+    */
+    clearTimeout(compileTimer);
+    let solver;
+    try { solver = solverPayload(); } catch (e) { setStatus(e.message, 'error'); return; }
+    const refusal = methodRefusal(solver.method);
+    if (refusal) { setStatus(refusal, 'error'); return; }
+    if (!(await compile())) return;
+
+    state.running = true;
+    $('rtmRun').disabled = true;
+    $('rtmVerify').disabled = true;
+    $('rtmStop').disabled = false;
+    setProgress(0);
+    setStatus(`Running ${methodLabel()}…${inlineWarning()}`);
+    // Inline, the run blocks everything that follows, so the bar and the line
+    // above it have to reach the screen first or they never appear at all.
+    if (workerKind === 'inline') await repaint();
+    const started = Date.now();
+    try {
+      const reply = await request({ type: 'run', text: state.text, solver }, (p) => {
+        setProgress(p.frac);
+        setStatus(`Running ${methodLabel()}: ${fmtTime(p.t)} of ${fmtTime(p.tend)}, `
+          + `${p.nsteps.toLocaleString()} steps`);
+      });
+      state.result = reply;
+      afterRun(reply, Date.now() - started);
+    } catch (e) {
+      if (e.partial) { state.result = e.partial; afterRun(e.partial, Date.now() - started, true); }
+      setProgress(null);
+      setStatus(`The run failed: ${e.message}`, 'error');
+    } finally {
+      state.running = false;
+      $('rtmRun').disabled = false;
+      $('rtmVerify').disabled = false;
+      $('rtmStop').disabled = true;
+    }
+  }
+
+  function afterRun(reply, ms, partial) {
+    setProgress(null);
+    state.compiled = reply.model;
+    renderFacts();
+    renderSeriesList();
+    renderCells();
+    renderProfileSpecies();
+    renderGradSpecies();
+    drawTime();
+    drawProfile();
+    drawGradient();
+    if (partial) return;
+    const st = reply.stats || {};
+    /*
+      A fixed species is held at the value it was given, because its row in
+      both the right-hand side and the Jacobian is exactly zero and so its
+      answer is that value. The solver still leaves round-off in it -- about
+      1e-13 on the built-in model -- which the worker writes back out. That is
+      arithmetic, not chemistry, and worth a word only if it is ever big
+      enough to be something else.
+    */
+    const drift = reply.heldDrift > 1e-8
+      ? ` A fixed species moved by ${reply.heldDrift.toExponential(1)} before being held, `
+        + 'which is more than round-off: check the tolerances.'
+      : '';
+    setStatus(`Done in ${(ms / 1000).toFixed(2)} s — ${(st.nsteps || 0).toLocaleString()} steps `
+      + `(${(st.nfailed || 0).toLocaleString()} rejected), ${reply.n.toLocaleString()} points kept, `
+      + `${st.sparse ? 'sparse' : 'dense'} LU.${drift}`, drift ? 'warn' : 'ok');
+  }
+
+  function stop() {
+    if (!state.running) return;
+    if (worker) { worker.terminate(); worker = null; workerKind = 'none'; pending.clear(); }
+    state.running = false;
+    $('rtmRun').disabled = false;
+    $('rtmVerify').disabled = false;
+    $('rtmStop').disabled = true;
+    setProgress(null);
+    setStatus('Stopped.');
+  }
+
+  function methodLabel() {
+    const chosen = $('rtmMethod').selectedOptions[0];
+    return chosen ? chosen.textContent.replace(/\s*\(.*$/, '').trim() : state.solver.method;
+  }
+
+  /* ---------------------------------------------------------------------
+     Checking the Jacobian
+     --------------------------------------------------------------------- */
+  async function verify() {
+    if (state.running) return;
+    setStatus('Checking the Jacobian…');
+    try {
+      const reply = await request({ type: 'verify', text: state.text });
+      state.verify = reply;
+      showTab('jacobian');
+      renderVerify();
+      const bad = reply.checks.reduce((a, c) => a + c.ndiscrepancies, 0);
+      setStatus(bad
+        ? `${bad} entr${bad === 1 ? 'y' : 'ies'} disagree with a difference; see the Jacobian tab.`
+        : 'The Jacobian agrees with a central difference everywhere it can be measured.',
+      bad ? 'error' : 'ok');
+    } catch (e) {
+      setStatus(`The check failed: ${e.message}`, 'error');
+    }
+  }
+
+  function renderVerify() {
+    const el = $('rtmVerifyOut');
+    const v = state.verify;
+    if (!v) { el.innerHTML = ''; return; }
+    const rows = v.checks.map((c) => {
+      const head = `<p><strong>${esc(c.label)}</strong>: ${c.checked.toLocaleString()} entries `
+        + `compared, ${c.ndiscrepancies} disagreed`
+        + (c.unresolvable ? `, ${c.unresolvable.toLocaleString()} too small beside the largest in `
+          + 'their column for a difference to measure' : '') + '.</p>';
+      if (!c.ndiscrepancies) return head;
+      const body = c.discrepancies.map((d) => `<tr><td>${esc(d.row)}</td><td>${esc(d.col)}</td>`
+        + `<td>${d.analytic.toExponential(4)}</td><td>${d.numeric.toExponential(4)}</td></tr>`).join('');
+      return `${head}<table><thead><tr><th>d f[..]</th><th>/ d[..]</th><th>analytic</th>`
+        + `<th>differenced</th></tr></thead><tbody>${body}</tbody></table>`;
+    }).join('');
+    el.innerHTML = rows;
+  }
+
+  /* ---------------------------------------------------------------------
+     The Jacobian pattern
+     --------------------------------------------------------------------- */
+  /** The (row, column) pairs a block mask holds, worked out once per draw. */
+  function blockCoords(mask, ns) {
+    const out = [];
+    for (let r = 0; r < ns; r++) {
+      for (let c = 0; c < ns; c++) if (mask[r * ns + c]) out.push(r, c);
+    }
+    return out;
+  }
+
+  function drawJacobianPattern() {
+    const canvas = $('rtmJacCanvas');
+    const m = state.compiled;
+    if (!canvas || !m) return;
+    const n = m.states;
+    const size = Math.min(620, Math.max(200, n));
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    const css = getComputedStyle(document.documentElement);
+    ctx.fillStyle = css.getPropertyValue('--bg-surface').trim() || '#fff';
+    ctx.fillRect(0, 0, size, size);
+    const accent = css.getPropertyValue('--color-kvot-accent').trim() || '#b5651d';
+    const ink = css.getPropertyValue('--text-primary').trim() || '#222';
+    const ns = m.nspecies;
+    const scale = size / n;
+    const dot = Math.max(1, Math.floor(scale));
+    const note = $('rtmJacNote');
+
+    /*
+      The whole pattern is too big to post for a long column, but it has only
+      three distinct blocks -- a cell against itself, and against each of its
+      two neighbours -- and the worker sends those. Drawing from them is the
+      real pattern: an earlier version filled each cell's block solid, which
+      made a batch model one square and told a reader nothing.
+    */
+    if (!m.blocks) {
+      ctx.fillStyle = accent;
+      for (let i = 0; i < m.cells; i++) {
+        const b = i * ns * scale;
+        ctx.fillRect(b, b, Math.max(1, ns * scale), Math.max(1, ns * scale));
+      }
+      if (note) note.textContent = '';
+      return;
+    }
+    const b = m.blocks;
+    // One block per cell offset the pattern has: 0 is the chemistry of a cell
+    // against itself; the others are transport, to whichever cells this
+    // model couples -- neighbours along a column, the rock layers behind a
+    // fracture cell and the next fracture cell in a dual-porosity one.
+    const blocks = b.offsets.map((o) => ({ off: o.off, coords: blockCoords(o.mask, ns) }));
+    let couplings = 0;
+    for (let i = 0; i < m.cells; i++) {
+      const o = i * ns;
+      for (const blk of blocks) {
+        const target = i + blk.off;
+        if (target < 0 || target >= m.cells) continue;
+        ctx.fillStyle = blk.off === 0 ? accent : ink;
+        const c0 = target * ns;
+        for (let k = 0; k < blk.coords.length; k += 2) {
+          ctx.fillRect((c0 + blk.coords[k + 1]) * scale, (o + blk.coords[k]) * scale, dot, dot);
+        }
+        if (blk.off !== 0) couplings += blk.coords.length / 2;
+      }
+    }
+    if (!note) return;
+    const diag = blocks.find((blk) => blk.off === 0);
+    const chem = diag ? diag.coords.length / 2 : 0;
+    const bits = [`${n} × ${n}, ${m.nnz} non-zeros (${(100 * m.density).toFixed(2)} % of the matrix)`,
+      `the chemistry of one cell is ${chem} of the ${ns * ns} it could be`];
+    if (m.cells > 1) bits.push(`${couplings} transport couplings across ${blocks.length - 1} kinds of neighbour`);
+    note.textContent = `${bits.join('; ')}.`;
+  }
+
+  /* ---------------------------------------------------------------------
+     The species picker
+     --------------------------------------------------------------------- */
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  function speciesNames() {
+    return (state.compiled && state.compiled.species) || [];
+  }
+
+  function renderSeriesList() {
+    const box = $('rtmSeries');
+    const names = speciesNames();
+    const picked = new Set(state.picked);
+    box.innerHTML = names.map((nm) => {
+      const on = picked.has(nm);
+      const immobile = state.compiled && state.compiled.transport && !state.compiled.mobile[names.indexOf(nm)];
+      return `<label class="rtm-item${on ? ' on' : ''}" title="${esc(nm)}${immobile ? ' — does not move' : ''}">`
+        + `<input type="checkbox" value="${esc(nm)}"${on ? ' checked' : ''} data-on-change="rtm:pick">`
+        + `<span>${esc(nm)}</span></label>`;
+    }).join('');
+  }
+
+  function renderCells() {
+    const sel = $('rtmCell');
+    const m = state.compiled;
+    const cells = m ? m.fracture : 1;
+    if (state.cell >= cells) state.cell = 0;
+    sel.innerHTML = Array.from({ length: cells }, (_, i) => {
+      const x = m && m.centres ? ` (${m.centres[i].toExponential(2)} m)` : '';
+      return `<option value="${i}"${i === state.cell ? ' selected' : ''}>${i}${x}</option>`;
+    }).join('');
+    sel.parentElement.hidden = cells === 1;
+    renderLayerPickers();
+  }
+
+  /** The layer selects, one per chart: the fracture, then each matrix layer by depth. */
+  function layerOptions(chosen) {
+    const m = state.compiled;
+    const nm = m && m.matrix ? m.matrix.n : 0;
+    const opts = [`<option value="0"${chosen === 0 ? ' selected' : ''}>fracture</option>`];
+    for (let j = 1; j <= nm; j++) {
+      opts.push(`<option value="${j}"${chosen === j ? ' selected' : ''}>rock ${j} (${m.matrix.depth[j - 1].toExponential(2)} m in)</option>`);
+    }
+    return opts.join('');
+  }
+
+  function renderLayerPickers() {
+    const m = state.compiled;
+    const nm = m && m.matrix ? m.matrix.n : 0;
+    if (state.layer > nm) state.layer = 0;
+    if (state.profileLayer > nm) state.profileLayer = 0;
+    if (state.gradLayer > nm) state.gradLayer = 0;
+    $('rtmLayer').innerHTML = layerOptions(state.layer);
+    $('rtmProfileLayer').innerHTML = layerOptions(state.profileLayer);
+    $('rtmGradLayer').innerHTML = layerOptions(state.gradLayer);
+    $('rtmLayerWrap').hidden = nm === 0;
+    $('rtmGradLayerWrap').hidden = nm === 0;
+    $('rtmProfileAxisWrap').hidden = nm === 0;
+    $('rtmProfileAxis').value = state.profileAxis;
+    // Across the rock, the picker chooses the fracture cell instead of the layer.
+    const across = nm > 0 && state.profileAxis === 'matrix';
+    $('rtmProfileLayerWrap').hidden = nm === 0;
+    $('rtmProfileLayerLabel').textContent = across ? 'At cell' : 'Layer';
+    if (across) {
+      $('rtmProfileLayer').innerHTML = Array.from({ length: m.fracture }, (_, i) =>
+        `<option value="${i}"${i === state.profileLayer ? ' selected' : ''}>${i} (${m.centres[i].toExponential(2)} m)</option>`).join('');
+    }
+  }
+
+  function renderProfileSpecies() {
+    const sel = $('rtmProfileSpecies');
+    const names = speciesNames();
+    if (!names.includes(state.profileSpecies)) state.profileSpecies = names[0] || '';
+    sel.innerHTML = names.map((nm) => `<option value="${esc(nm)}"`
+      + `${nm === state.profileSpecies ? ' selected' : ''}>${esc(nm)}</option>`).join('');
+  }
+
+  function renderGradSpecies() {
+    const sel = $('rtmGradSpecies');
+    const names = speciesNames();
+    if (!names.includes(state.gradSpecies)) state.gradSpecies = names[0] || '';
+    sel.innerHTML = names.map((nm) => `<option value="${esc(nm)}"`
+      + `${nm === state.gradSpecies ? ' selected' : ''}>${esc(nm)}</option>`).join('');
+  }
+
+  /* ---------------------------------------------------------------------
+     Charts
+     --------------------------------------------------------------------- */
+  const PLOT_CONFIG = { displaylogo: false, responsive: true,
+    modeBarButtonsToRemove: ['select2d', 'lasso2d', 'autoScale2d'] };
+
+  function themeColors() {
+    const cs = getComputedStyle(document.documentElement);
+    return {
+      text: cs.getPropertyValue('--text-primary').trim() || '#333',
+      grid: cs.getPropertyValue('--border-color').trim() || '#ddd',
+      surface: cs.getPropertyValue('--bg-surface').trim() || '#fff',
+    };
+  }
+
+  function baseLayout() {
+    const c = themeColors();
+    return {
+      margin: { l: 70, r: 20, t: 14, b: 48 },
+      paper_bgcolor: 'rgba(0,0,0,0)',
+      plot_bgcolor: 'rgba(0,0,0,0)',
+      font: { color: c.text, size: 11 },
+      legend: { orientation: 'h', y: -0.18, font: { size: 10 } },
+      xaxis: { gridcolor: c.grid, zeroline: false, linecolor: c.grid },
+      yaxis: { gridcolor: c.grid, zeroline: false, linecolor: c.grid, exponentformat: 'power' },
+      hovermode: 'x unified',
+      // Said explicitly: Plotly's default hover box is near-white whatever the
+      // page is, which on the dark theme is light text on a light background.
+      hoverlabel: { bgcolor: c.surface, bordercolor: c.grid, font: { color: c.text, size: 11 } },
+    };
+  }
+
+  /** The value of one species in one cell at every stored time. */
+  function series(name, cell, layer = state.layer) {
+    const r = state.result;
+    const ns = r.model.nspecies;
+    const si = r.model.species.indexOf(name);
+    if (si < 0) return null;
+    const stride = r.model.stride || 1;
+    const col = (cell * stride + Math.min(layer, stride - 1)) * ns + si;
+    const out = new Float64Array(r.n);
+    for (let i = 0; i < r.n; i++) out[i] = r.states[i * r.width + col];
+    return out;
+  }
+
+  function drawTime() {
+    if (typeof Plotly === 'undefined') return;
+    const plot = $('rtmChartTime');
+    const empty = $('rtmTimeEmpty');
+    const r = state.result;
+    if (!r || !state.picked.length) {
+      Plotly.purge(plot);
+      plot.hidden = true;
+      empty.hidden = false;
+      empty.textContent = r ? 'Tick a species to draw it.' : 'Run the model, then tick a species to draw it.';
+      return;
+    }
+    empty.hidden = true;
+    plot.hidden = false;
+    const logT = $('rtmLogT').checked;
+    const logY = $('rtmLogY').checked;
+    const tmin = Number($('rtmTMin').value) || 0;
+    const traces = [];
+    for (const nm of state.picked) {
+      const y = series(nm, state.cell);
+      if (!y) continue;
+      const xs = [];
+      const ys = [];
+      for (let i = 0; i < r.n; i++) {
+        const t = r.t[i];
+        if (logT && !(t >= tmin && t > 0)) continue;
+        const v = y[i];
+        if (logY && !(v > 0)) continue;
+        xs.push(t);
+        ys.push(v);
+      }
+      if (xs.length) traces.push({ name: nm, x: xs, y: ys, mode: 'lines', type: 'scatter' });
+    }
+    const layout = baseLayout();
+    layout.xaxis.type = logT ? 'log' : 'linear';
+    layout.xaxis.title = { text: `time (${timeUnit().symbol})`, font: { size: 11 } };
+    layout.yaxis.type = logY ? 'log' : 'linear';
+    layout.yaxis.title = { text: 'concentration', font: { size: 11 } };
+    Plotly.react(plot, traces, layout, PLOT_CONFIG);
+  }
+
+  function drawProfile() {
+    if (typeof Plotly === 'undefined') return;
+    const plot = $('rtmChartProfile');
+    const empty = $('rtmProfileEmpty');
+    const r = state.result;
+    if (!r || !r.model.transport || r.model.fracture < 2) {
+      Plotly.purge(plot);
+      plot.hidden = true;
+      empty.hidden = false;
+      empty.textContent = r ? 'This run was a batch: there is no distance to plot against.'
+        : 'A profile needs a run in transport mode.';
+      $('rtmProfileNote').textContent = '';
+      return;
+    }
+    empty.hidden = true;
+    plot.hidden = false;
+    const name = state.profileSpecies || r.model.species[0];
+    const ns = r.model.nspecies;
+    const si = r.model.species.indexOf(name);
+    const stride = r.model.stride || 1;
+    const nm = r.model.matrix ? r.model.matrix.n : 0;
+    const across = nm > 0 && state.profileAxis === 'matrix';
+    // Along the fracture the points are the fracture cells at one layer; into
+    // the rock they are the layers behind one cell, the fracture first at
+    // depth zero.
+    const layer = across ? 0 : Math.min(state.profileLayer, nm);
+    const atCell = across ? Math.min(state.profileLayer, r.model.fracture - 1) : 0;
+    const x = across ? [0, ...r.model.matrix.depth] : r.model.centres;
+    const npts = across ? nm + 1 : r.model.fracture;
+    const stateIndex = (k) => (across ? (atCell * stride + k) : (k * stride + layer)) * ns + si;
+    // Either the times the reader asked for, or eight spread over the run: a
+    // profile is only readable with a handful of curves on it.
+    const asked = parseTimes(state.profileTimes);
+    const picks = [];
+    const past = [];
+    if (asked.times.length) {
+      for (const want of asked.times) {
+        if (want > r.t[r.n - 1] * 1.000001) { past.push(want); continue; }
+        const idx = nearestIndex(r.t, want);
+        if (!picks.includes(idx)) picks.push(idx);
+      }
+    } else {
+      const want = 8;
+      for (let k = 0; k < want; k++) {
+        const frac = (k + 1) / want;
+        const idx = Math.round(frac * (r.n - 1));
+        if (picks.includes(idx)) continue;
+        picks.push(idx);
+      }
+    }
+    const traces = picks.map((i) => {
+      const y = [];
+      for (let k = 0; k < npts; k++) y.push(r.states[i * r.width + stateIndex(k)]);
+      return { name: fmtTime(r.t[i]), x, y, mode: across ? 'lines+markers' : 'lines', type: 'scatter' };
+    });
+    const layout = baseLayout();
+    layout.xaxis.title = { text: across ? `depth into the rock behind cell ${atCell} (m)`
+      : 'distance from the left-hand face (m)', font: { size: 11 } };
+    layout.yaxis.type = $('rtmProfileLog').checked ? 'log' : 'linear';
+    layout.yaxis.title = { text: `${name} concentration`, font: { size: 11 } };
+    Plotly.react(plot, traces, layout, PLOT_CONFIG);
+    /*
+      The run is stored thinned, so a wanted time lands on the nearest point
+      that was kept. The legend shows the time drawn rather than the time
+      asked for, and this says so when the two are not the same.
+    */
+    const bits = [across ? `${nm} layers to ${r.model.matrix.total} m, the fracture at depth 0`
+      : `${r.model.fracture} cells over ${r.model.length} m${nm && layer ? `, rock layer ${layer}` : ''}`];
+    if (asked.bad.length) bits.push(`could not read ${asked.bad.join(', ')}`);
+    if (past.length) bits.push(`${past.map(fmtTime).join(', ')} past the end of the run`);
+    if (asked.times.length && picks.length) {
+      const off = asked.times.filter((w) => {
+        const got = r.t[nearestIndex(r.t, w)];
+        return Math.abs(got - w) > 0.01 * Math.max(w, 1e-300);
+      });
+      if (off.length) bits.push(`nearest stored time used for ${off.map(fmtTime).join(', ')}`);
+    }
+    $('rtmProfileNote').textContent = bits.join('; ');
+  }
+
+  /**
+   * The whole run as one picture: time across, distance down, concentration as
+   * colour. What a stack of profiles says one curve at a time, this says at
+   * once -- where a front is, when it arrives, how far it gets.
+   *
+   * Time runs along x and distance up y, which is the transpose of the way the
+   * skbrtm examples draw it.
+   */
+  function drawGradient() {
+    if (typeof Plotly === 'undefined') return;
+    const plot = $('rtmChartGradient');
+    const empty = $('rtmGradEmpty');
+    const r = state.result;
+    if (!r || !r.model.transport || r.model.fracture < 2) {
+      Plotly.purge(plot);
+      plot.hidden = true;
+      empty.hidden = false;
+      empty.textContent = r ? 'This run was a batch: there is no distance to plot against.'
+        : 'A gradient needs a run in transport mode.';
+      $('rtmGradNote').textContent = '';
+      return;
+    }
+    empty.hidden = true;
+    plot.hidden = false;
+    const name = state.gradSpecies || r.model.species[0];
+    const si = r.model.species.indexOf(name);
+    const ns = r.model.nspecies;
+    const cells = r.model.fracture;
+    const stride = r.model.stride || 1;
+    const gl = Math.min(state.gradLayer, stride - 1);
+    const logT = $('rtmGradLogT').checked;
+    const logC = $('rtmGradLogC').checked;
+
+    /*
+      A log time axis cannot show t = 0, and a stiff run's first steps are
+      femtoseconds -- fifteen decades in which nothing has happened yet. So the
+      same "from" the time chart has, and the note says what it left out.
+    */
+    const tmin = Number($('rtmGradTMin').value) || 0;
+    const cols = [];
+    for (let i = 0; i < r.n; i++) if (!logT || (r.t[i] > 0 && r.t[i] >= tmin)) cols.push(i);
+    if (!cols.length) {
+      Plotly.purge(plot);
+      plot.hidden = true;
+      empty.hidden = false;
+      empty.textContent = `Nothing is stored after ${fmtTime(tmin)}: lower the "from" time.`;
+      $('rtmGradNote').textContent = '';
+      return;
+    }
+
+    // z is row-major over y: one row per cell, one column per stored time.
+    const z = [];
+    let lo = Infinity;
+    let hi = -Infinity;
+    let nonPositive = 0;
+    for (let c = 0; c < cells; c++) {
+      const row = new Array(cols.length);
+      for (let k = 0; k < cols.length; k++) {
+        const v = r.states[cols[k] * r.width + (c * stride + gl) * ns + si];
+        if (logC) {
+          if (v > 0) { row[k] = Math.log10(v); } else { row[k] = null; nonPositive++; }
+        } else row[k] = v;
+        if (row[k] !== null) { lo = Math.min(lo, row[k]); hi = Math.max(hi, row[k]); }
+      }
+      z.push(row);
+    }
+    const layout = baseLayout();
+    layout.hovermode = 'closest';
+    // The distances run to 1e-4, so the ticks are wide: the default margin
+    // puts the axis title through them.
+    layout.margin.l = 92;
+    layout.xaxis.type = logT ? 'log' : 'linear';
+    layout.xaxis.title = { text: `time (${timeUnit().symbol})`, font: { size: 11 } };
+    layout.yaxis.title = { text: 'distance from the left-hand face (m)', font: { size: 11 } };
+    // Distance up the page from zero at the origin, the ordinary way round.
+    const trace = {
+      type: 'heatmap',
+      x: cols.map((i) => r.t[i]),
+      y: Array.from(r.model.centres),
+      z,
+      colorscale: state.gradScale,
+      reversescale: state.gradScale === 'YlOrRd',
+      connectgaps: false,
+      /*
+        Off by default: with twenty cells the bands ARE the cells, and a
+        smoothed picture shows a resolution the run does not have. On, it
+        matches the way the skbrtm examples are drawn.
+      */
+      zsmooth: $('rtmGradSmooth').checked ? 'best' : false,
+      hovertemplate: logC
+        ? 't = %{x:.3e} s<br>x = %{y:.3e} m<br>log₁₀ c = %{z:.3f}<extra></extra>'
+        : 't = %{x:.3e} s<br>x = %{y:.3e} m<br>c = %{z:.4e}<extra></extra>',
+      colorbar: {
+        title: { text: logC ? `log₁₀ ${name}` : name, side: 'right', font: { size: 11 } },
+        thickness: 14, outlinewidth: 0, tickfont: { size: 10 },
+        exponentformat: 'power',
+      },
+    };
+    Plotly.react(plot, [trace], layout, PLOT_CONFIG);
+    const bits = [`${cells} cells × ${cols.length} stored times${gl ? `, rock layer ${gl}` : ''}`];
+    if (Number.isFinite(lo)) {
+      bits.push(logC ? `10^${lo.toFixed(2)} to 10^${hi.toFixed(2)}`
+        : `${lo.toExponential(3)} to ${hi.toExponential(3)}`);
+    } else bits.push('nothing to show: every value is zero or below');
+    if (logT && cols.length < r.n) {
+      bits.push(`${r.n - cols.length} earlier points left off (t = 0 cannot go on a log axis)`);
+    }
+    if (nonPositive) bits.push(`${nonPositive} values at or below zero left blank`);
+    $('rtmGradNote').textContent = bits.join('; ');
+  }
+
+  /* ---------------------------------------------------------------------
+     CSV
+     --------------------------------------------------------------------- */
+  function downloadCsv() {
+    const r = state.result;
+    if (!r) { setStatus('Run the model first: there is nothing to save yet.', 'error'); return; }
+    const names = state.picked.length ? state.picked : r.model.species;
+    const head = [`t (${timeUnit().symbol})`, ...names.map((n) => `${n} @ cell ${state.cell}`)];
+    const lines = [head.join(',')];
+    const cols = names.map((n) => series(n, state.cell));
+    for (let i = 0; i < r.n; i++) {
+      lines.push([r.t[i], ...cols.map((c) => (c ? c[i] : ''))].join(','));
+    }
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `rtm_cell${state.cell}.csv`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+
+  /* ---------------------------------------------------------------------
+     The panel, the tabs and the drag handle
+     --------------------------------------------------------------------- */
+  function showTab(name) {
+    state.tab = name;
+    document.querySelectorAll('.rtm-tabs button').forEach((b) => {
+      b.classList.toggle('active', b.dataset.tab === name);
+    });
+    document.querySelectorAll('.rtm-pane').forEach((p) => { p.hidden = p.dataset.pane !== name; });
+    saveState();
+    // Plotly needs telling once its div stops being display:none.
+    if (name === 'time') { drawTime(); resize(); }
+    if (name === 'profile') { drawProfile(); resize(); }
+    if (name === 'gradient') { drawGradient(); resize(); }
+    if (name === 'jacobian') drawJacobianPattern();
+  }
+
+  function resize() {
+    if (typeof Plotly === 'undefined') return;
+    ['rtmChartTime', 'rtmChartProfile', 'rtmChartGradient'].forEach((id) => {
+      const el = $(id);
+      if (el && !el.hidden) Plotly.Plots.resize(el);
+    });
+  }
+
+  function initSideResize() {
+    const handle = $('rtmResize');
+    const root = document.querySelector('.rtm');
+    if (state.sideWidth) root.style.setProperty('--rtm-side-width', `${state.sideWidth}px`);
+    let dragging = false;
+    handle.addEventListener('pointerdown', (ev) => {
+      dragging = true;
+      handle.classList.add('active');
+      handle.setPointerCapture(ev.pointerId);
+    });
+    handle.addEventListener('pointermove', (ev) => {
+      if (!dragging) return;
+      const left = root.getBoundingClientRect().left;
+      const w = Math.max(260, Math.min(640, ev.clientX - left));
+      state.sideWidth = Math.round(w);
+      root.style.setProperty('--rtm-side-width', `${state.sideWidth}px`);
+      resize();
+    });
+    const end = () => {
+      if (!dragging) return;
+      dragging = false;
+      handle.classList.remove('active');
+      saveState();
+      resize();
+    };
+    handle.addEventListener('pointerup', end);
+    handle.addEventListener('pointercancel', end);
+  }
+
+  function initSections() {
+    document.querySelectorAll('details.rtm-sec').forEach((sec) => {
+      if (Object.prototype.hasOwnProperty.call(state.sections, sec.id)) sec.open = !!state.sections[sec.id];
+      sec.addEventListener('toggle', () => { state.sections[sec.id] = sec.open; saveState(); });
+    });
+  }
+
+  const ADVANCED_KEY = 'sec-solver-advanced';
+  function showAdvanced(open) {
+    $('rtmAdvanced').hidden = !open;
+    $('rtmMore').textContent = open ? 'Hide advanced settings' : 'Advanced settings';
+    $('rtmMore').setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+
+  /* ---------------------------------------------------------------------
+     Reading the controls
+     --------------------------------------------------------------------- */
+  function readSolverControls() {
+    const s = state.solver;
+    s.method = $('rtmMethod').value;
+    s.tend = $('rtmTend').value.trim();
+    s.rtol = $('rtmRtol').value.trim();
+    s.atol = $('rtmAtol').value.trim();
+    s.matrix = $('rtmMatrix').value;
+    s.norm = $('rtmNorm').value;
+    s.maxSteps = $('rtmMaxSteps').value.trim();
+    s.maxPoints = $('rtmMaxPoints').value.trim();
+    s.nonNegative = $('rtmNonNeg').checked;
+    s.autoAtol = $('rtmAutoAtol').checked;
+  }
+
+  function writeSolverControls() {
+    const s = state.solver;
+    const menu = $('rtmMethod');
+    if (!Array.prototype.some.call(menu.options, (o) => o.value === s.method)) s.method = 'ndf';
+    menu.value = s.method;
+    $('rtmTend').value = s.tend;
+    $('rtmRtol').value = s.rtol;
+    $('rtmAtol').value = s.atol;
+    $('rtmMatrix').value = s.matrix;
+    $('rtmNorm').value = s.norm;
+    $('rtmMaxSteps').value = s.maxSteps;
+    $('rtmMaxPoints').value = s.maxPoints;
+    $('rtmNonNeg').checked = !!s.nonNegative;
+    $('rtmAutoAtol').checked = !!s.autoAtol;
+  }
+
+  /* ---------------------------------------------------------------------
+     The examples
+     --------------------------------------------------------------------- */
+  const EXAMPLES = typeof RTM_EXAMPLES !== 'undefined' ? RTM_EXAMPLES : [];
+
+  /** The picker, grouped as the set is grouped. */
+  function renderExamples() {
+    const sel = $('rtmExample');
+    if (!sel) return;
+    const groups = [];
+    for (const e of EXAMPLES) {
+      let g = groups.find((x) => x.name === e.group);
+      if (!g) { g = { name: e.group, items: [] }; groups.push(g); }
+      g.items.push(e);
+    }
+    sel.innerHTML = '<option value="">— choose one —</option>'
+      + groups.map((g) => `<optgroup label="${esc(g.name)}">`
+        + g.items.map((e) => `<option value="${esc(e.id)}">${esc(e.label)}</option>`).join('')
+        + '</optgroup>').join('');
+  }
+
+  /**
+   * Load one, and say what it is.
+   *
+   * The text is replaced outright and nothing is asked first, which is what
+   * "Reset to the built-in model" beside it does too -- the picker says the
+   * text is replaced, and a blocking dialog in the middle of a page that has
+   * none anywhere else is worse than the warning already on the control.
+   */
+  function chooseExample(id) {
+    const e = EXAMPLES.find((x) => x.id === id);
+    const about = $('rtmExampleAbout');
+    if (!e) { about.hidden = true; $('rtmExample').value = ''; return; }
+    state.text = e.text;
+    $('rtmText').value = e.text;
+    about.textContent = e.about + (e.reference ? `  ${e.reference}` : '');
+    about.hidden = false;
+    state.result = null;
+    state.verify = null;
+    saveState();
+    compile();
+  }
+
+  /* ---------------------------------------------------------------------
+     Files
+     --------------------------------------------------------------------- */
+  function saveFile() {
+    const blob = new Blob([state.text], { type: 'text/plain' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'model.rtm';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+
+  async function fileChosen(ev) {
+    const file = ev.target.files && ev.target.files[0];
+    if (!file) return;
+    state.text = await file.text();
+    $('rtmText').value = state.text;
+    ev.target.value = '';
+    scheduleCompile(0);
+  }
+
+  /* ---------------------------------------------------------------------
+     Actions
+     --------------------------------------------------------------------- */
+  registerActions({
+    'rtm:run': () => { run(); },
+    'rtm:stop': () => stop(),
+    'rtm:verify': () => { verify(); },
+    'rtm:tab': (ev, el) => showTab(el.dataset.tab),
+    'rtm:redraw': () => {
+      state.cell = Number($('rtmCell').value) || 0;
+      state.layer = Number($('rtmLayer').value) || 0;
+      saveState();
+      drawTime();
+    },
+    'rtm:redrawGradient': () => {
+      state.gradSpecies = $('rtmGradSpecies').value;
+      state.gradLayer = Number($('rtmGradLayer').value) || 0;
+      state.gradScale = $('rtmGradScale').value;
+      state.gradTMin = $('rtmGradTMin').value;
+      saveState();
+      drawGradient();
+    },
+    'rtm:redrawProfile': () => {
+      state.profileSpecies = $('rtmProfileSpecies').value;
+      const axis = $('rtmProfileAxis').value;
+      // Switching what the picker means resets what it points at.
+      if (axis !== state.profileAxis) { state.profileAxis = axis; state.profileLayer = 0; renderLayerPickers(); }
+      else state.profileLayer = Number($('rtmProfileLayer').value) || 0;
+      state.profileTimes = $('rtmProfileTimes').value;
+      saveState();
+      drawProfile();
+    },
+    'rtm:pick': (ev, el) => {
+      const name = el.value;
+      if (el.checked) { if (!state.picked.includes(name)) state.picked.push(name); }
+      else state.picked = state.picked.filter((x) => x !== name);
+      el.closest('.rtm-item').classList.toggle('on', el.checked);
+      saveState();
+      drawTime();
+    },
+    'rtm:clearSeries': () => {
+      state.picked = [];
+      renderSeriesList();
+      saveState();
+      drawTime();
+    },
+    'rtm:downloadCsv': () => downloadCsv(),
+    'rtm:solverChanged': () => { readSolverControls(); saveState(); },
+    'rtm:more': () => {
+      const open = !state.sections[ADVANCED_KEY];
+      state.sections[ADVANCED_KEY] = open;
+      showAdvanced(open);
+      saveState();
+    },
+    'rtm:textChanged': () => {
+      state.text = $('rtmText').value;
+      scheduleCompile(400);
+    },
+    'rtm:applyModel': () => { state.text = $('rtmText').value; scheduleCompile(0); },
+    'rtm:resetModel': () => {
+      state.text = RTM_DEFAULT_MODEL;
+      $('rtmText').value = state.text;
+      state.picked = [];
+      scheduleCompile(0);
+    },
+    'rtm:chooseExample': (ev, el) => chooseExample(el.value),
+    'rtm:loadFile': () => $('rtmFile').click(),
+    'rtm:fileChosen': (ev) => { fileChosen(ev); },
+    'rtm:saveFile': () => saveFile(),
+    'rtm:resetWidth': () => {
+      state.sideWidth = DEFAULT_WIDTH;
+      document.querySelector('.rtm').style.setProperty('--rtm-side-width', `${DEFAULT_WIDTH}px`);
+      saveState();
+      resize();
+    },
+  });
+
+  /* ---------------------------------------------------------------------
+     Boot
+     --------------------------------------------------------------------- */
+  loadState();
+  migrateStoredText();
+  $('rtmText').value = state.text;
+  renderExamples();
+  $('rtmProfileTimes').value = state.profileTimes;
+  writeSolverControls();
+  initSideResize();
+  initSections();
+  showAdvanced(!!state.sections[ADVANCED_KEY]);
+  $('rtmGradScale').value = state.gradScale;
+  $('rtmGradTMin').value = state.gradTMin;
+  showTab(['profile', 'gradient', 'model', 'jacobian', 'help'].includes(state.tab)
+    ? state.tab : 'time');
+  window.addEventListener('resize', resize);
+  compile();
+}());
