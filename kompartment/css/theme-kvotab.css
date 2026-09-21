@@ -215,16 +215,31 @@
  * The site's header and footer are fixed and always there; this tool's own
  * `#app` is `height: 100vh`, so under them the top of the toolbar and the
  * bottom of the footer are behind the page's own. `?chrome=kvotab` sets
- * `data-chrome`, and the whole adjustment is one height and two margins --
- * which is the point of the tool being one grid that fills its box.
+ * `data-chrome`, and the whole adjustment is the two heights kept out of the
+ * body -- which is the point of the tool being one grid that fills its box.
+ *
+ * The insets are the body's padding rather than the grid's margins: a margin
+ * on the first child collapses out through the body, so the body's own
+ * `height: 100%` was still a whole window tall but started below the header
+ * and ended below the footer. That overflow was the scrollbar down the right
+ * of the frame, and the empty band it scrolled to above the page's footer.
+ * As padding on a `border-box` body the same two numbers come out of the
+ * height instead of being added to the top and the bottom of it, and `#app`
+ * simply fills what is left.
  *
  * The two heights are the site's own variables where the site defines them,
  * with its current values as the fallback for a page that does not.
  */
+:root[data-chrome="kvotab"] body {
+	padding-top: var(--header-height, 43px);
+	padding-bottom: var(--footer-height, 31px);
+}
+
+/* `100%` of that padded body, not `100dvh`: the frame is what it is told to
+   be, so following its height is both simpler and right when the window
+   changes under a mobile browser's own chrome. */
 :root[data-chrome="kvotab"] #app {
-	height: calc(100dvh - var(--header-height, 43px) - var(--footer-height, 31px));
-	margin-top: var(--header-height, 43px);
-	margin-bottom: var(--footer-height, 31px);
+	height: 100%;
 }
 
 /* Two things in this tool's own footer belong to the page once the page is
