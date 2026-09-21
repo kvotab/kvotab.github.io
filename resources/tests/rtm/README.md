@@ -237,11 +237,11 @@ Four things came out of writing it, all of them worth keeping:
   `newnrm > 0.9 * oldnrm` fired, the step was thrown out as diverging, and h was
   cut — which does nothing, because arithmetic noise does not scale with h.
 
-  The fix is `stagnationTol` in `facsimile-ode.js`: a correction that has
+  The fix is `stagnationTol` in `facsimile-solver.js`: a correction that has
   stopped shrinking is judged on its own size rather than on a rate, and taken
   if it is within half the tolerance with a Jacobian formed at this point. It is
   off by default and this page sets it to 0.5, because it is not free — see the
-  note in `facsimile-ode.js`. With it, all twenty cases run under our own NDF in
+  note in `facsimile-solver.js`. With it, all twenty cases run under our own NDF in
   3600 to 230000 steps and give the same fifteen agreements as the ports.
 
 ## What test-hdf5.py checks

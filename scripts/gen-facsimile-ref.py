@@ -40,7 +40,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT_DIR = os.path.join(ROOT, 'resources', 'tests', 'facsimile', 'ref')
-DEFAULT_SOURCE = '~/RS/Software/rnt/data/sfk/gas_intact_canister'
+DEFAULT_SOURCE = os.path.expanduser('~/RS/Software/rnt/data/sfk/gas_intact_canister')
 # Later folders win a tie, so the zero-argon redelivery in Transfer1 is
 # preferred over the first cut of the same cases in Transfer.
 SOURCE_DIRS = [

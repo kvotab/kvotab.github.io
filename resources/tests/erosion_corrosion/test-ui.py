@@ -208,20 +208,9 @@ async def main():
             check('and the run follows (NewKTH, 0.5 dilute, HSTest: 38 rows)',
                   await page.ev("ECPage.getState().result.results[0].key.nFailRows"), 38)
 
-            # --- the base case -----------------------------------------------
-            await page.ev("(() => { const s = document.getElementById('ecExample'); s.value = 'base';"
-                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
-            await asyncio.sleep(2.5)
-            check('the base case runs', await status_starts(page, 'Done'), True)
-            key = json.loads(await page.ev("JSON.stringify(ECPage.getState().result.results[0].key)"))
-            check('612 rejected', key['nReject'], 612)
-            check('41 advective positions', key['nAdvAtLim'], 41)
-            check('four failure rows', key['nFailRows'], 4)
-            check('corrected mean 0.0827632', round(key['meanFailedCorrected'], 7), 0.0827632)
-
             # --- a second realisation, and pooling -------------------------
             await page.ev("""(async () => {
-              const text = await (await fetch('./resources/data/erosion_corrosion/fs_Q1_2000_pline_merged.csv')).text();
+              const text = await (await fetch('./resources/data/erosion_corrosion/TestCaseHydro_2_0.csv')).text();
               const f = new File([text], 'copy.csv', { type: 'text/csv' });
               const dt = new DataTransfer(); dt.items.add(f);
               const root = document.querySelector('.ec');

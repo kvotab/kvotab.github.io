@@ -47,7 +47,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-DEFAULT_ROOT = Path('~/Downloads/Nuclear_fuel_dissolution/BRUM_for_Hydrosäk')
+DEFAULT_ROOT = Path.home() / 'Downloads' / 'Nuclear_fuel_dissolution' / 'BRUM_for_Hydrosäk'
 HERE = Path(__file__).resolve().parent
 DAY = 86400.0
 

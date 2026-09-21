@@ -32,7 +32,7 @@
    Nothing is downloaded: this is JavaScript, and it runs offline exactly as
    the page's own solver does.
 
-   THE CONTRACT. facsimile-ode.js calls a solver as
+   THE CONTRACT. facsimile-solver.js calls a solver as
 
        solver(f, t0, tfinal, y0, opts) -> { t, y, stopped, stats }
 

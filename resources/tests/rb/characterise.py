@@ -13,7 +13,7 @@ import websockets
 
 from driver import open_page, load_samples
 
-GROUP = '/biosphere/1BLA/drained_mire/total'
+GROUP = '/biosphere/vault_A/mire/total'
 
 # Every step returns a JSON-able value that goes into the fingerprint.
 STEPS = [
@@ -48,8 +48,8 @@ STEPS = [
     ('load.two.files', """(async () => {
       await waitForH5Wasm();
       const { FS, File } = window.h5wasm;
-      for (const name of ['SFR_FSAR_CCP14.h5', 'SFR_FSAR_CCP26.h5']) {
-        const buf = await (await fetch('./resources/data/' + name)).arrayBuffer();
+      for (const name of ['sample-a.h5', 'sample-b.h5']) {
+        const buf = await (await fetch('./resources/tests/rb/fixtures/' + name)).arrayBuffer();
         loadedFileBuffers[name] = buf;
         const internal = '/b_' + name.replace(/[^a-z0-9]/gi,'') + '.h5';
         try { FS.unlink(internal); } catch (e) {}
@@ -70,7 +70,7 @@ STEPS = [
     })()"""),
 
     ('tree.expand', """(async () => {
-      await expandAndLoadPath('SFR_FSAR_CCP14.h5', %s);
+      await expandAndLoadPath('sample-a.h5', %s);
       await new Promise(r => setTimeout(r, 900));
       const rows = [...document.querySelectorAll('#tree .tree-item')];
       return {
@@ -164,7 +164,7 @@ STEPS = [
     ('search', """(async () => {
       const out = {};
       const inp = document.getElementById('treeSearch');
-      for (const term of ['Am', 'Am-241', 'Am*1', 'biosphere/1BLA', 'zzz-no-match']) {
+      for (const term of ['Am', 'Am-241', 'Am*1', 'biosphere/vault_A', 'zzz-no-match']) {
         inp.value = term;
         filterTree(term);
         await new Promise(r => setTimeout(r, 250));
@@ -213,7 +213,7 @@ STEPS = [
 
     ('exports', """(async () => {
       const out = {};
-      await expandAndLoadPath('SFR_FSAR_CCP14.h5', %s);
+      await expandAndLoadPath('sample-a.h5', %s);
       await new Promise(r => setTimeout(r, 900));
       findTreeItem(%s, { extra: '.dataset' }).click();
       await new Promise(r => setTimeout(r, 2500));
@@ -224,14 +224,14 @@ STEPS = [
 
     ('file.toggle.remove', """(async () => {
       const out = {};
-      toggleFileState('SFR_FSAR_CCP26.h5');
+      toggleFileState('sample-b.h5');
       await new Promise(r => setTimeout(r, 4000));
       out.afterDisable = { enabled: getEnabledFiles(), rows: document.querySelectorAll('#tree .tree-item').length };
-      toggleFileState('SFR_FSAR_CCP26.h5');
+      toggleFileState('sample-b.h5');
       await new Promise(r => setTimeout(r, 4000));
       out.afterEnable = { enabled: getEnabledFiles(), rows: document.querySelectorAll('#tree .tree-item').length };
       const memBefore = window.h5wasm.FS.readdir('/').filter(n => n.endsWith('.h5')).length;
-      await removeFile('SFR_FSAR_CCP26.h5');
+      await removeFile('sample-b.h5');
       await new Promise(r => setTimeout(r, 3000));
       out.afterRemove = {
         enabled: getEnabledFiles(),
@@ -272,7 +272,7 @@ STEPS = [
       // path this step wants is not on screen. Put it back and re-expand.
       document.querySelector('#treeModeContainer button[data-value="intersect"]').click();
       await new Promise(r => setTimeout(r, 6000));
-      await expandAndLoadPath('SFR_FSAR_CCP14.h5', %s);
+      await expandAndLoadPath('sample-a.h5', %s);
       await new Promise(r => setTimeout(r, 1200));
 
       const out = {};
@@ -310,7 +310,7 @@ STEPS = [
       URL.createObjectURL = (b) => { blobs.push(b); return 'blob:captured'; };
       URL.revokeObjectURL = () => {};
       try {
-        await downloadDatasetAsExcel(%s, 'SFR_FSAR_CCP14.h5');
+        await downloadDatasetAsExcel(%s, 'sample-a.h5');
         out.call = 'ok';
       } catch (e) {
         out.call = 'threw: ' + e.message;
@@ -352,7 +352,7 @@ STEPS = [
       const lfs = new TextEncoder().encode('version https://git-lfs.github.com/spec/v1\\noid sha256:x').buffer;
       out.validatorRejectsLfs = validateHdf5Buffer(lfs);
       // A missing path must return null rather than throw.
-      out.missingPath = checkIfPathExistsInFile('SFR_FSAR_CCP14.h5', '/does/not/exist');
+      out.missingPath = checkIfPathExistsInFile('sample-a.h5', '/does/not/exist');
       out.missingFile = checkIfPathExistsInFile('nope.h5', '/time');
       return out;
     })()"""),

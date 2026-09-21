@@ -25,7 +25,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 OUT = ROOT / 'resources/js/rtm-examples.js'
-DEFAULT_BRUM = Path('~/Downloads/Nuclear_fuel_dissolution/BRUM_for_Hydrosäk')
+DEFAULT_BRUM = Path.home() / 'Downloads' / 'Nuclear_fuel_dissolution' / 'BRUM_for_Hydrosäk'
 
 # The reader for the BRUM .in files lives with the test that checks against
 # them; importing it rather than copying it keeps one definition of what those

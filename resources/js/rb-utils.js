@@ -1071,7 +1071,7 @@ function getDatasetAttributeSDOM(dataset, timeData, nIter) {
  * Compute a compact diff label showing only the parts of secondName
  * that differ from firstName, with '...' replacing matching segments
  * longer than 3 characters. Short matching runs (1-3 chars) are kept.
- * Example: firstName='SFR_FSAR_CCP1.h5', secondName='SFR_PSAR_CCP33.h5'
+ * Example: firstName='results_case1.h5', secondName='results_case2.h5'
  *          returns '...P...33...'
  *
  * @param {string} firstName - The primary/reference filename

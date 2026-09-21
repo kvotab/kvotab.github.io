@@ -1,9 +1,10 @@
+import os
 """Emit resources/js/arsred-taxonomi.js from the official K2 linkbases."""
 import json, re
 
 SRC = __import__('os').environ.get('LINKBASES', './')
 
-OUT = '~/Library/CloudStorage/Dropbox/KVOT/kvotab/resources/js/arsred-taxonomi.js'
+OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'resources', 'js', 'arsred-taxonomi.js')
 # ── Läs länkbaserna ───────────────────────────────────────────────────────────
 import collections
 

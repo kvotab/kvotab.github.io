@@ -3,7 +3,7 @@
 
    Turns a model text (settings, constants, tables, thermodynamic data,
    initial values, equations, reactions, events, outputs) into JavaScript
-   functions the solvers in facsimile-ode.js can integrate:
+   functions the solvers in facsimile-solver.js can integrate:
 
      rhs(t, y, P, H, out)    dy/dt
      jac(t, y, P, H, V)      df/dy, the values of a sparse pattern built

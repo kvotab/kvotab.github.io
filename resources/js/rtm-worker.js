@@ -244,7 +244,7 @@ function handleRtmMessage(msg, post) {
         arithmetic noise does not scale with h: the twenty BRUM cases in
         resources/tests/rtm/verify-brum.py took millions of steps to cover a
         few seconds. facsimile.html leaves it off; see the note in
-        facsimile-ode.js for what it costs a model that does not need it.
+        facsimile-solver.js for what it costs a model that does not need it.
       */
       stagnationTol: 0.5,
       belowTolRun: s.belowTolRun,

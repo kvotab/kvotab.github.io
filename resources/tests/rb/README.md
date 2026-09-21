@@ -123,7 +123,7 @@ differed in six fields:
 
     /search/Am*1/hidden              809 -> 758     (and matches 15 -> 14)
     /search/Am-241/hidden            441 -> 391     (and matches  8 ->  7)
-    /search/biosphere/1BLA/hidden   1084 -> 1083
+    /search/biosphere/vault_A/hidden   1084 -> 1083
     /search/zzz-no-match/hidden     1520 -> 1519
 
 Lazy tree loading races the search filter: the background expansion that pulls

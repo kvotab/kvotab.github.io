@@ -19,7 +19,7 @@ const path = require('path');
 
 const jsDir = path.join(__dirname, '..', '..', 'js');
 global.FacsimileModel = require(path.join(jsDir, 'facsimile-model.js'));
-global.FacsimileODE = require(path.join(jsDir, 'facsimile-ode.js'));
+global.FacsimileODE = require(path.join(jsDir, 'facsimile-solver.js'));
 global.RtmModel = require(path.join(jsDir, 'rtm-model.js'));
 global.FacsimileOdeJulia = require(path.join(jsDir, 'facsimile-ode-julia.js'));
 const { RTM_DEFAULT_MODEL } = require(path.join(jsDir, 'rtm-default.js'));

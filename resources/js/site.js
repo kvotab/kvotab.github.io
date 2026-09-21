@@ -313,6 +313,7 @@ const KVOT = (() => {
         <a href="https://www.mathworks.com/matlabcentral/profile/authors/718179" target="_blank" rel="noopener noreferrer">${svgIcon('0 0 24 24', ICON_MATLAB, { title: 'matlab' })}</a>
         <a href="https://github.com/kvotab" target="_blank" rel="noopener noreferrer">${svgIcon('0 0 98 96', ICON_GITHUB, { title: 'github' })}</a>
         ${extraIcons}
+        | <a class="footer-notices" href="THIRD-PARTY-NOTICES.md" title="Licences of the libraries, fonts and data used here">notices</a>
       </span>
       <button class="theme-toggle" data-on-click="kvot:toggleTheme" title="${themeTitle}">${themeIcon}</button>
     </div>`;

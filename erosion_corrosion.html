@@ -51,7 +51,6 @@
               <select id="ecExample" data-on-change="ec:chooseExample">
                 <option value="">— choose —</option>
                 <option value="test">Code test case (TestCaseHydro_2_0, SKBdoc 1895160)</option>
-                <option value="base">PSAR base case (fs_Q1_2000_pline_merged, semi-correlated DFN)</option>
               </select>
             </div>
             <p class="ec-muted" id="ecExampleAbout" hidden></p>
@@ -319,7 +318,7 @@
           <p>Four shapes are read, detected from the content rather than the extension:</p>
           <table class="ec-ref">
             <tbody>
-              <tr><th>ConnectFlow CSV</th><td>A header row and one row per hole, as the SR-Site and PSAR deliveries (<code>fs_Q1_2000_pline_merged.csv</code> and the like) and as Excel writes the workbook’s hydro sheets. Needed: <code>POINT</code> or <code>NPOINT</code>, <code>OKFLAG</code>, <code>U0</code>, <code>QEQ</code>, <code>TW</code>, <code>F</code>, <code>TRAPP</code>, <code>FPC</code>, <code>EFPC</code>, <code>FLEN</code>; the other columns are ignored. Comma, semicolon or tab separated; a decimal comma is understood when the file has no decimal points.</td></tr>
+              <tr><th>ConnectFlow CSV</th><td>A header row and one row per hole, as the SR-Site and PSAR deliveries (<code>*_pline_merged.csv</code> and the like) and as Excel writes the workbook’s hydro sheets. Needed: <code>POINT</code> or <code>NPOINT</code>, <code>OKFLAG</code>, <code>U0</code>, <code>QEQ</code>, <code>TW</code>, <code>F</code>, <code>TRAPP</code>, <code>FPC</code>, <code>EFPC</code>, <code>FLEN</code>; the other columns are ignored. Comma, semicolon or tab separated; a decimal comma is understood when the file has no decimal points.</td></tr>
               <tr><th>ConnectFlow PTB</th><td>The parameter-table file the CSVs were made from: <code>#</code> comment lines, a <code># POINT XS YS …</code> header and space-separated rows.</td></tr>
               <tr><th>Excel</th><td>An <code>.xlsx</code> whose first fitting sheet is such a table — <code>TestCaseHydro_2_0.xlsx</code>, or the Corr/Uncorr workbooks.</td></tr>
               <tr><th>DarcyTools</th><td>The performance-measure tables of the Hydro-SÄK work: a <code>Name</code> column with several particle rows per hole (the first is taken), <code>U [m/year]</code>, <code>Qeq (ECPM) [m3/year]</code>, <code>tw [year]</code>, <code>F [year/m]</code>, and either <code>Aperture [m]</code>, <code>Utot [m/year]</code> and T/F flags <code>Collected</code>, <code>ZFMC</code>, <code>FPC</code>, <code>EFPC-5</code> (the <code>.dtpm</code> form, with a <code>Total DHs:</code> line above the header) or <code>iFPC</code>, <code>iEFPC</code>, <code>Porosity (ECPM)</code> and <code>Number of fractures in contact</code>, from which the aperture is 8·porosity/fractures and <i>U</i><sub>0</sub> is scaled by 8/<i>w</i> — exactly as the 2.0 and 2.4 Python ports read them. These tables have no fracture length, so the length and T/L criteria reject nothing, and they list only the holes with particles: give the layout size so the normalisation counts the rest.</td></tr>

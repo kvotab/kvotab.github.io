@@ -10,7 +10,7 @@
    -- 4.7 MB of WebAssembly from a CDN, which is a great deal to fetch in order
    to *write* a few hundred kilobytes.
 
-   Taken from the Ecolego web port (ecolego-js, src/io/hdf5.js), where every
+   Shared with kvot ab's compartment-modelling application, where every
    structure in it was decoded out of files libhdf5 had written, and where the
    files it produces are read back by h5py, h5ls, h5dump and h5wasm. The only
    changes here are the module wrapper and the indentation; see

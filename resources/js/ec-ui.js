@@ -36,13 +36,6 @@
       settings: { buffModel: 'OldKTH', fTDilute: 0.25 },
       about: 'The 6017-row test file of the code documentation. With the SR-Site settings (OldKTH, 25 % dilute, HSTest) it must give 35 failure times: 10 each for holes 1–3 and 5 for hole 4, and 17 rejected holes. Those settings were applied.',
     },
-    base: {
-      file: 'fs_Q1_2000_pline_merged.csv',
-      label: 'PSAR base case (fs_Q1_2000_pline_merged, semi-correlated DFN)',
-      hs: 'HSForsmark',
-      settings: {},
-      about: 'The semi-correlated hydro-DFN base case for Forsmark, 6916 positions, as held in the workbook. With the PSAR defaults and HSForsmark: 612 rejected, 41 advective positions at 1,000,000 years, 4 failure times, corrected mean 0.0828.',
-    },
   };
 
   /* ---------------------------------------------------------------------

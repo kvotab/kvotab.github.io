@@ -14,13 +14,15 @@
    "PROJECTS",
    "TILE_ATTRIBUTION",
    "TILE_MAX_ZOOM",
-   "TILE_URL",
+   "currentTheme",
    "initMap",
    "renderFooter",
    "renderHeader",
    "renderNav",
    "renderProjectCards",
    "svgIcon",
+   "themedTileLayer",
+   "tileUrl",
    "toggleMap",
    "toggleTheme"
   ],
@@ -34,12 +36,19 @@
    "./logn.html",
    "./proj.html",
    "./skbref.html",
-   "./skb_qa_summary.html"
+   "./skb_qa_summary.html",
+   "./facsimile.html",
+   "./rtm.html",
+   "./erosion_corrosion.html",
+   "./arsredovisning.html",
+   "./inkomstdeklaration.html",
+   "./uppsala.html",
+   "./solna.html"
   ],
   "navExpanded": "false",
   "navToggleTag": "BUTTON",
   "storedTheme": null,
-  "theme": "light",
+  "theme": "dark",
   "title": "Page not found \u2014 kvot ab"
  },
  "404.html::chrome.interactions": {
@@ -47,17 +56,408 @@
   "menuOpenAfterClick": true,
   "menuOpenAfterEscape": false,
   "themeFlipped": true,
-  "themePersisted": "dark",
+  "themePersisted": "light",
   "themeRestored": true
  },
  "404.html::notfound": {
   "baseHref": "http://127.0.0.1:8765/",
-  "cards": 6,
+  "cards": 13,
   "firstCardHref": "http://127.0.0.1:8765/rdc.html",
   "h1": [
    "Page not found"
   ],
   "robots": "noindex"
+ },
+ "arsredovisning.html::_console": [],
+ "arsredovisning.html::arsred.bygg": {
+  "anmarkningar": [
+   {
+    "level": "warn",
+    "title": "Fastst\u00e4llelseintyget ser ofullst\u00e4ndigt ut"
+   },
+   {
+    "level": "info",
+    "title": "Ingen revisionsber\u00e4ttelse i filen"
+   }
+  ],
+  "brister": [],
+  "disposition": {
+   "arets": "120000",
+   "balanserat": "300000",
+   "nyrakning": "420000",
+   "summa": "420\u00a0000 kr"
+  },
+  "egenGranskning": "0 fel \u00b7 1 varningar \u00b7 1 noteringar \u00b7 11 godk\u00e4nda",
+  "kalla": "K\u00e4llaSIE \u2014 Testbok 1.0 (UTF-8) F\u00f6retagKvot AB 559162-0306 R\u00e4kenskaps\u00e5r2025-07-01 \u2013 2026-06-30 F\u00f6reg\u00e5ende2024-07-01 \u2013 2025-06-30 Konton med saldo10",
+  "kallor": [
+   "bygg-ar-from=bokforing",
+   "bygg-ar-tom=bokforing",
+   "bygg-ar2-from=harlett",
+   "bygg-ar2-tom=harlett",
+   "bygg-ar3-from=harlett",
+   "bygg-ar3-tom=harlett",
+   "bygg-avgivande=forval",
+   "bygg-disp-arets=beraknat",
+   "bygg-disp-balanserat=beraknat",
+   "bygg-disp-nyrakning=beraknat",
+   "bygg-fg-from=bokforing",
+   "bygg-fg-tom=bokforing",
+   "bygg-foretagsnamn=bokforing",
+   "bygg-nyckeltal=forval",
+   "bygg-orgnr=bokforing",
+   "bygg-principer=forval",
+   "bygg-utdelning-under-aret=beraknat",
+   "bygg-yttrande=forval"
+  ],
+  "kontorader": 10,
+  "okopplade": 1,
+  "skriven": "Handlingen \u00e4r skriven: arsredovisning-5591620306-2026-06-30.xhtml, 31151 byte. L\u00e4s in den i steg B1 s\u00e5 granskas den mot samma kontroller som vilken annan fil som helst \u2014 den f\u00e5r ingen gr\u00e4ddfil f\u00f6r att sidan skrev den.",
+  "uppstallning": "Uppst\u00e4llningen g\u00e5r ihop: balansr\u00e4kningen balanserar och \u00e5rets resultat \u00e4r detsamma i b\u00e5da r\u00e4kningarna."
+ },
+ "arsredovisning.html::arsred.check": {
+  "count": "0 fel \u00b7 0 varningar \u00b7 1 noteringar \u00b7 11 godk\u00e4nda",
+  "errors": [],
+  "findings": [
+   {
+    "level": "info",
+    "title": "Ingen revisionsber\u00e4ttelse i filen"
+   },
+   {
+    "level": "ok",
+    "title": "Filen \u00e4r giltig UTF-8"
+   },
+   {
+    "level": "ok",
+    "title": "V\u00e4lformat XHTML-dokument"
+   },
+   {
+    "level": "ok",
+    "title": "Inline XBRL 1.1"
+   },
+   {
+    "level": "ok",
+    "title": "1 taxonomiing\u00e5ng"
+   },
+   {
+    "level": "ok",
+    "title": "Organisationsnummer i filen"
+   },
+   {
+    "level": "ok",
+    "title": "R\u00e4kenskaps\u00e5r 2024-01-01 \u2013 2024-12-31"
+   },
+   {
+    "level": "ok",
+    "title": "Dokumentuppgifter taggade"
+   },
+   {
+    "level": "ok",
+    "title": "Fastst\u00e4llelseintyg taggat"
+   },
+   {
+    "level": "ok",
+    "title": "Balansr\u00e4kningen balanserar i context \"balans0\""
+   },
+   {
+    "level": "ok",
+    "title": "Alla referenser l\u00f6ser upp"
+   },
+   {
+    "level": "ok",
+    "title": "Handlingen \u00e4r frist\u00e5ende"
+   }
+  ],
+  "mismatchReported": true,
+  "summary": "Filarsredovisning.xhtml Storlek3.6 kB (3708 byte) SHA-25667c407552be2eb68f567519a8d335cb96fcbc884c81d9f4f2fce4cb286c840a8"
+ },
+ "arsredovisning.html::arsred.export": {
+  "blocks": 29,
+  "breddNettoomsattning": 70,
+  "docxRimlig": true,
+  "docxType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "pdfRimlig": true,
+  "pdfType": "application/pdf",
+  "radbrytning": 3,
+  "titel": "559162-0306 Kvot AB - \u00c5rsredovisning",
+  "typer": {
+   "heading": 10,
+   "para": 10,
+   "signature": 1,
+   "table": 7,
+   "title": 1
+  }
+ },
+ "arsredovisning.html::arsred.static": {
+  "apiExporterat": [
+   "init"
+  ],
+  "controls": [
+   "ar:clear",
+   "bygg-anstallda",
+   "bygg-anstallda-fg",
+   "bygg-antal-aktier",
+   "bygg-anvand",
+   "bygg-ar-from",
+   "bygg-ar-tom",
+   "bygg-ar2-from",
+   "bygg-ar2-netto",
+   "bygg-ar2-resultat",
+   "bygg-ar2-soliditet",
+   "bygg-ar2-tom",
+   "bygg-ar3-from",
+   "bygg-ar3-netto",
+   "bygg-ar3-resultat",
+   "bygg-ar3-soliditet",
+   "bygg-ar3-tom",
+   "bygg-avgivande",
+   "bygg-datum",
+   "bygg-disp-arets",
+   "bygg-disp-balanserat",
+   "bygg-disp-nyrakning",
+   "bygg-disp-utdelning",
+   "bygg-docx",
+   "bygg-drop",
+   "bygg-fg-from",
+   "bygg-fg-tom",
+   "bygg-file-input",
+   "bygg-foretagsnamn",
+   "bygg-hamta",
+   "bygg-handelser",
+   "bygg-intyg-arsstamma",
+   "bygg-intyg-datum",
+   "bygg-intyg-efternamn",
+   "bygg-intyg-roll",
+   "bygg-intyg-tilltalsnamn",
+   "bygg-klart-datum",
+   "bygg-kommentar-flerar",
+   "bygg-nyckeltal",
+   "bygg-orgnr",
+   "bygg-ort",
+   "bygg-pdf",
+   "bygg-principer",
+   "bygg-sate",
+   "bygg-utdelning-under-aret",
+   "bygg-verksamhet",
+   "bygg-yttrande",
+   "bygg:generera",
+   "bygg:lagg-till-person",
+   "bygg:rensa",
+   "bygg:ta-bort-person",
+   "bygg:till-falt",
+   "bygg:till-falt",
+   "bygg:till-falt",
+   "bygg:till-falt",
+   "bygg:till-falt",
+   "bygg:till-falt",
+   "bygg:till-falt",
+   "bygg:till-falt",
+   "bygg:till-falt",
+   "drop-zone",
+   "export-docx",
+   "export-pdf",
+   "file-input",
+   "kvot:toggleMap",
+   "kvot:toggleTheme",
+   null,
+   null,
+   null,
+   "orgnr",
+   "tidigare-drop",
+   "tidigare-file-input",
+   "typ",
+   "utkast-file-input",
+   "utkast:oppna",
+   "utkast:spara",
+   "utkast:till-fil"
+  ],
+  "handlingstyper": [
+   "arsredovisning_komplett",
+   "arsredovisning_kompletteras",
+   "revisionsberattelse"
+  ],
+  "inlamningBorta": [],
+  "lang": "sv",
+  "module": "object",
+  "referensRubriker": [
+   "Fler\u00e5rs\u00f6versikt",
+   "F\u00f6r\u00e4ndring av eget kapital",
+   "Resultatdisposition",
+   "Underskrift",
+   "Fastst\u00e4llelseintyg efter \u00e5rsst\u00e4mman",
+   "S\u00e5 l\u00e4mnas handlingen in",
+   "Vad kontrollen tittar p\u00e5",
+   "K\u00e4llor"
+  ],
+  "scopeItems": 7,
+  "steps": [
+   "A1",
+   "A2",
+   "A3",
+   "A4",
+   "B1",
+   "B2"
+  ]
+ },
+ "arsredovisning.html::arsred.tidigare": {
+  "efter": {
+   "aktier": "500",
+   "ar2": "1 849",
+   "ar3": "1 769",
+   "ort": "Uppsala",
+   "person": [
+    "Anna/Andersson/Styrelseledamot"
+   ],
+   "sate": "Uppsala"
+  },
+  "forslag": [
+   {
+    "kalla": "ur texten",
+    "uppgift": "Allm\u00e4nt om verksamheten",
+    "varde": "Bolaget bedriver konsultverksamhet inom riskanalys."
+   },
+   {
+    "kalla": "ur texten",
+    "uppgift": "S\u00e4te",
+    "varde": "Uppsala"
+   },
+   {
+    "kalla": "ur texten",
+    "uppgift": "Redovisningsprinciper",
+    "varde": "\u00c5rsredovisningen \u00e4r uppr\u00e4ttad i enlighet med \u00e5rsredovisningslagen."
+   },
+   {
+    "kalla": "ur texten",
+    "uppgift": "Styrelsens yttrande om vinstutdelning",
+    "varde": "Styrelsen anser att f\u00f6rslaget \u00e4r f\u00f6renligt med f\u00f6rsiktighetsregeln i 1"
+   },
+   {
+    "kalla": "r\u00e4knat ur kronor per aktie",
+    "uppgift": "Antal aktier",
+    "varde": "500"
+   },
+   {
+    "kalla": "ur texten",
+    "uppgift": "Ort f\u00f6r underskrift",
+    "varde": "Uppsala"
+   },
+   {
+    "kalla": "fler\u00e5rs\u00f6versikten",
+    "uppgift": "2023/24: Nettooms\u00e4ttning",
+    "varde": "1 849"
+   },
+   {
+    "kalla": "fler\u00e5rs\u00f6versikten",
+    "uppgift": "2023/24: Resultat efter finansiella poster",
+    "varde": "774"
+   },
+   {
+    "kalla": "fler\u00e5rs\u00f6versikten",
+    "uppgift": "2023/24: Soliditet (%)",
+    "varde": "92,9"
+   },
+   {
+    "kalla": "fler\u00e5rs\u00f6versikten",
+    "uppgift": "2022/23: Nettooms\u00e4ttning",
+    "varde": "1 769"
+   },
+   {
+    "kalla": "fler\u00e5rs\u00f6versikten",
+    "uppgift": "2022/23: Resultat efter finansiella poster",
+    "varde": "869"
+   },
+   {
+    "kalla": "fler\u00e5rs\u00f6versikten",
+    "uppgift": "2022/23: Soliditet (%)",
+    "varde": "92,3"
+   },
+   {
+    "kalla": "not 2",
+    "uppgift": "Medelantalet anst\u00e4llda, f\u00f6reg\u00e5ende \u00e5r",
+    "varde": "1"
+   },
+   {
+    "kalla": "ur texten",
+    "uppgift": "Underskrifter",
+    "varde": "Anna Andersson (Styrelseledamot)"
+   }
+  ],
+  "tomtInnanAnvand": true
+ },
+ "arsredovisning.html::arsred.utkast": {
+  "aterstallt": {
+   "brister": [],
+   "konton": 10,
+   "ort": "Uppsala",
+   "verksamhet": "Bolaget bedriver konsultverksa"
+  },
+  "faltSparade": 42,
+  "kontonISnapshot": 10,
+  "personer": 1,
+  "pnrFalt": [],
+  "pnrLackt": false,
+  "tomtEmellan": true
+ },
+ "arsredovisning.html::chrome": {
+  "footerButtons": 2,
+  "footerIcons": 6,
+  "headerTag": "H1",
+  "headerTitle": "Digital \u00e5rsredovisning",
+  "kvotApi": [
+   "ICON_ADDRESS",
+   "ICON_MAIL",
+   "ICON_ORGNR",
+   "ICON_PHONE",
+   "ICON_VAT",
+   "PROJECTS",
+   "TILE_ATTRIBUTION",
+   "TILE_MAX_ZOOM",
+   "currentTheme",
+   "initMap",
+   "renderFooter",
+   "renderHeader",
+   "renderNav",
+   "renderProjectCards",
+   "svgIcon",
+   "themedTileLayer",
+   "tileUrl",
+   "toggleMap",
+   "toggleTheme"
+  ],
+  "leafletLoadedEagerly": "undefined",
+  "mapContainer": true,
+  "mapVisibility": "hidden",
+  "menuLinks": [
+   "./index.html",
+   "./rdc.html",
+   "./rb.html",
+   "./logn.html",
+   "./proj.html",
+   "./skbref.html",
+   "./skb_qa_summary.html",
+   "./facsimile.html",
+   "./rtm.html",
+   "./erosion_corrosion.html",
+   "./inkomstdeklaration.html",
+   "./uppsala.html",
+   "./solna.html"
+  ],
+  "navExpanded": "false",
+  "navToggleTag": "BUTTON",
+  "storedTheme": null,
+  "theme": "dark",
+  "title": "Digital \u00e5rsredovisning \u2014 kvot ab"
+ },
+ "arsredovisning.html::chrome.interactions": {
+  "ariaAfterOpen": "true",
+  "leafletAfterToggle": "object",
+  "mapAfterSecondToggle": "hidden",
+  "mapAfterToggle": "visible",
+  "menuOpenAfterClick": true,
+  "menuOpenAfterEscape": false,
+  "themeFlipped": true,
+  "themePersisted": "light",
+  "themeRestored": true,
+  "tiles": true
  },
  "index.html::_console": [],
  "index.html::chrome": {
@@ -74,13 +474,15 @@
    "PROJECTS",
    "TILE_ATTRIBUTION",
    "TILE_MAX_ZOOM",
-   "TILE_URL",
+   "currentTheme",
    "initMap",
    "renderFooter",
    "renderHeader",
    "renderNav",
    "renderProjectCards",
    "svgIcon",
+   "themedTileLayer",
+   "tileUrl",
    "toggleMap",
    "toggleTheme"
   ],
@@ -94,12 +496,19 @@
    "./logn.html",
    "./proj.html",
    "./skbref.html",
-   "./skb_qa_summary.html"
+   "./skb_qa_summary.html",
+   "./facsimile.html",
+   "./rtm.html",
+   "./erosion_corrosion.html",
+   "./arsredovisning.html",
+   "./inkomstdeklaration.html",
+   "./uppsala.html",
+   "./solna.html"
   ],
   "navExpanded": "false",
   "navToggleTag": "BUTTON",
   "storedTheme": null,
-  "theme": "light",
+  "theme": "dark",
   "title": "kvot ab \u2014 modelling and software, Uppsala"
  },
  "index.html::chrome.interactions": {
@@ -110,7 +519,7 @@
   "menuOpenAfterClick": true,
   "menuOpenAfterEscape": false,
   "themeFlipped": true,
-  "themePersisted": "dark",
+  "themePersisted": "light",
   "themeRestored": true,
   "tiles": true
  },
@@ -144,7 +553,42 @@
    {
     "descLength": 91,
     "href": "./skb_qa_summary.html",
-    "title": "SKB QA Summary"
+    "title": "SKB QC Summary"
+   },
+   {
+    "descLength": 151,
+    "href": "./facsimile.html",
+    "title": "Canister Radiolysis"
+   },
+   {
+    "descLength": 201,
+    "href": "./rtm.html",
+    "title": "Reactive Transport"
+   },
+   {
+    "descLength": 240,
+    "href": "./erosion_corrosion.html",
+    "title": "Erosion and Corrosion"
+   },
+   {
+    "descLength": 96,
+    "href": "./arsredovisning.html",
+    "title": "Digital \u00e5rsredovisning"
+   },
+   {
+    "descLength": 89,
+    "href": "./inkomstdeklaration.html",
+    "title": "Inkomstdeklaration"
+   },
+   {
+    "descLength": 105,
+    "href": "./uppsala.html",
+    "title": "Uppsala \u2192 Solna"
+   },
+   {
+    "descLength": 100,
+    "href": "./solna.html",
+    "title": "Solna \u2192 Uppsala"
    }
   ],
   "contactIconTitles": [
@@ -172,6 +616,167 @@
   ],
   "metaDescription": "kvot ab is a modelling and software consultancy in Uppsala, Sweden. Free browser-based tools for radionuclide decay chains, HDF5 data, lognormal statistics and Swedish coordinate conversion."
  },
+ "inkomstdeklaration.html::_console": [],
+ "inkomstdeklaration.html::chrome": {
+  "footerButtons": 2,
+  "footerIcons": 6,
+  "headerTag": "H1",
+  "headerTitle": "Inkomstdeklaration",
+  "kvotApi": [
+   "ICON_ADDRESS",
+   "ICON_MAIL",
+   "ICON_ORGNR",
+   "ICON_PHONE",
+   "ICON_VAT",
+   "PROJECTS",
+   "TILE_ATTRIBUTION",
+   "TILE_MAX_ZOOM",
+   "currentTheme",
+   "initMap",
+   "renderFooter",
+   "renderHeader",
+   "renderNav",
+   "renderProjectCards",
+   "svgIcon",
+   "themedTileLayer",
+   "tileUrl",
+   "toggleMap",
+   "toggleTheme"
+  ],
+  "leafletLoadedEagerly": "undefined",
+  "mapContainer": true,
+  "mapVisibility": "hidden",
+  "menuLinks": [
+   "./index.html",
+   "./rdc.html",
+   "./rb.html",
+   "./logn.html",
+   "./proj.html",
+   "./skbref.html",
+   "./skb_qa_summary.html",
+   "./facsimile.html",
+   "./rtm.html",
+   "./erosion_corrosion.html",
+   "./arsredovisning.html",
+   "./uppsala.html",
+   "./solna.html"
+  ],
+  "navExpanded": "false",
+  "navToggleTag": "BUTTON",
+  "storedTheme": null,
+  "theme": "dark",
+  "title": "Inkomstdeklaration \u2014 kvot ab"
+ },
+ "inkomstdeklaration.html::chrome.interactions": {
+  "ariaAfterOpen": "true",
+  "leafletAfterToggle": "object",
+  "mapAfterSecondToggle": "hidden",
+  "mapAfterToggle": "visible",
+  "menuOpenAfterClick": true,
+  "menuOpenAfterEscape": false,
+  "themeFlipped": true,
+  "themePersisted": "light",
+  "themeRestored": true,
+  "tiles": true
+ },
+ "inkomstdeklaration.html::sru.bygg": {
+  "blanketter": "#BLANKETT INK2-2026P2\n#IDENTITET 165591620306 20260921 182549\n#NAMN Kvot AB\n#UPPGIFT 7011 20250701\n#UPPGIFT 7012 20260630\n#UPPGIFT 7104 150000\n#BLANKETTSLUT\n#BLANKETT INK2R-2026P2\n#IDENTITET 165591620306 20260921 182549\n#NAMN Kvot AB\n#UPPGIFT 7011 20250701\n#UPPGIFT 7012 20260630\n#UPPGIFT 7251 100000\n#UPPGIFT 7281 400000\n#UPPGIFT 7301 50000\n#UPPGIFT 7302 420000\n#UPPGIFT 7365 30000\n#UPPGIFT 7410 200000\n#UPPGIFT 7513 50000\n#UPPGIFT 7528 30000\n#UPPGIFT 7450 120000\n#BLANKETTSLUT\n#BLANKETT INK2S-2026P2\n#IDENTITET 165591620306 20260921 182549\n#NAMN Kvot AB\n#UPPGIFT 7011 20250701\n#UPPGIFT 7012 20260630\n#UPPGIFT 7650 120000\n#UPPGIFT 7651 30000\n#UPPGIFT 7670 150000\n#BLANKETTSLUT\n#FIL_SLUT\n",
+  "delagarblock": 2,
+  "duIFilen": 2,
+  "efterJustering": "155000",
+  "felPeriod": "Info 2026P4 \u00e4r f\u00f6r r\u00e4kenskaps\u00e5r som slutar 1 september \u2013 31 december. Perioden best\u00e4ms av r\u00e4kenskaps\u00e5rets sista dag, inte av vilket \u00e5r det \u00e4r. Varning Bokslutet per 2026-06-30 h\u00f6r till 2026P2, inte 2026P4. Fel 2026P4 \u00f6ppnar f\u00f6r test 2026-12-15 och f\u00f6r inl\u00e4mning 2027-01-07. L\u00e4mnas filen f\u00f6re dess svarar Skatteverket att blankettypen \u00e4r ogiltig.",
+  "forlust": "7550=45000",
+  "hamtaAvstangd": false,
+  "huvud": [
+   "7011=20250701 (bokf\u00f6ringen)",
+   "7012=20260630 (bokf\u00f6ringen)",
+   "7104=155000 (justeringarna)"
+  ],
+  "info": "#DATABESKRIVNING_START\n#PRODUKT SRU\n#SKAPAD 20260921 182549\n#PROGRAM kvot ab inkomstdeklaration.html\n#FILNAMN BLANKETTER.SRU\n#DATABESKRIVNING_SLUT\n#MEDIELEV_START\n#ORGNR 165591620306\n#NAMN Kvot AB\n#ADRESS Valhallagatan 16\n#POSTNR 75334\n#POSTORT Uppsala\n#KONTAKT Anna Andersson\n#MEDIELEV_SLUT\n",
+  "inlast": [
+   "INK2S-2025P4:7650=12000"
+  ],
+  "inlastFel": [],
+  "justering": [
+   "7011=20250701 (bokf\u00f6ringen)",
+   "7012=20260630 (bokf\u00f6ringen)",
+   "7650=120000 (r\u00e4kenskapsschemat)",
+   "7651=30000 (r\u00e4kenskapsschemat)",
+   "7670=150000 (summa)"
+  ],
+  "kontroll": "2 fel \u00b7 0 varningar \u00b7 0 noteringar Fel INK4DU 8100 \u00e4r obligatorisk och saknas: Person-/organisationsnr Fel INK4DU 8100 \u00e4r obligatorisk och saknas: Person-/organisationsnr",
+  "latin1": "69,107,115,116,114,246,109,13,10",
+  "okopplade": "inga",
+  "period": "2026P2",
+  "rader": [
+   "7011=20250701 (bokf\u00f6ringen)",
+   "7012=20260630 (bokf\u00f6ringen)",
+   "7251=100000 (bokf\u00f6ringen)",
+   "7281=400000 (bokf\u00f6ringen)",
+   "7301=50000 (bokf\u00f6ringen)",
+   "7302=420000 (bokf\u00f6ringen)",
+   "7365=30000 (bokf\u00f6ringen)",
+   "7410=200000 (bokf\u00f6ringen)",
+   "7513=50000 (bokf\u00f6ringen)",
+   "7528=30000 (bokf\u00f6ringen)",
+   "7450=120000 (bokf\u00f6ringen)"
+  ],
+  "utanAlla": false,
+  "vinst": "7450=120000"
+ },
+ "inkomstdeklaration.html::sru.static": {
+  "beskrivningar": 36,
+  "blanketter": [
+   "INK2Inkomstdeklaration 2 Huvudblankett f\u00f6r aktiebolag och ekonomiska f\u00f6reningar \u2014 SKV2002-33-01-24-04 \u00b7 12 f\u00e4ltkoder \u00b7 0 ifyllda \u00b7 kommer inte med i filen",
+   "INK2RR\u00e4kenskapsschema Balans- och resultatr\u00e4kning f\u00f6r aktiebolag (bilaga till INK2) \u2014 SKV2002-33-01-24-04 \u00b7 86 f\u00e4ltkoder \u00b7 0 ifyllda \u00b7 kommer inte med i filen \u00b7 fylls ur bokf\u00f6ringen",
+   "INK2SSkattem\u00e4ssiga justeringar Fr\u00e5n bokf\u00f6rt till skattem\u00e4ssigt resultat (bilaga till INK2) \u2014 SKV2002-33-01-24-04 \u00b7 50 f\u00e4ltkoder \u00b7 0 ifyllda \u00b7 kommer inte med i filen"
+  ],
+  "deklarationer": [
+   "INK2",
+   "INK3",
+   "INK4",
+   "NE"
+  ],
+  "hamtaAvstangd": true,
+  "identitet": {
+   "bolag": "165591620306",
+   "person": "198001019812",
+   "redan": "165591620306"
+  },
+  "ink2r": {
+   "om": "Balans- och resultatr\u00e4kning f\u00f6r aktiebolag (bilaga till INK2)",
+   "titel": "R\u00e4kenskapsschema",
+   "vem": "juridisk"
+  },
+  "modul": "object",
+  "oppning": {
+   "produktion": "2026-04-24",
+   "test": "2026-03-10"
+  },
+  "perioder": [
+   "2026-04-30=2026P1",
+   "2026-06-30=2026P2",
+   "2026-08-31=2026P3",
+   "2026-09-01=2026P4",
+   "2025-12-31=2025P4"
+  ],
+  "resultatkontot": [
+   {
+    "kod": "7450",
+    "villkor": "+"
+   },
+   {
+    "kod": "7550",
+    "villkor": "-"
+   }
+  ],
+  "scopeItems": 9,
+  "valjNot": "7 av 36 blankettblock visas \u2014 de som h\u00f6r till Inkomstdeklaration 2.",
+  "valjare": [
+   "Inkomstdeklaration 2: INK2,INK2R,INK2S",
+   "Bilagor som kan h\u00f6ra till: N3B,N4,N8,N9"
+  ]
+ },
  "karaoke.html::_console": [],
  "karaoke.html::chrome": {
   "footerButtons": 2,
@@ -187,13 +792,15 @@
    "PROJECTS",
    "TILE_ATTRIBUTION",
    "TILE_MAX_ZOOM",
-   "TILE_URL",
+   "currentTheme",
    "initMap",
    "renderFooter",
    "renderHeader",
    "renderNav",
    "renderProjectCards",
    "svgIcon",
+   "themedTileLayer",
+   "tileUrl",
    "toggleMap",
    "toggleTheme"
   ],
@@ -207,12 +814,19 @@
    "./logn.html",
    "./proj.html",
    "./skbref.html",
-   "./skb_qa_summary.html"
+   "./skb_qa_summary.html",
+   "./facsimile.html",
+   "./rtm.html",
+   "./erosion_corrosion.html",
+   "./arsredovisning.html",
+   "./inkomstdeklaration.html",
+   "./uppsala.html",
+   "./solna.html"
   ],
   "navExpanded": "false",
   "navToggleTag": "BUTTON",
   "storedTheme": null,
-  "theme": "light",
+  "theme": "dark",
   "title": "karaoke \u2013 kvot ab"
  },
  "karaoke.html::chrome.interactions": {
@@ -220,7 +834,7 @@
   "menuOpenAfterClick": true,
   "menuOpenAfterEscape": false,
   "themeFlipped": true,
-  "themePersisted": "dark",
+  "themePersisted": "light",
   "themeRestored": true
  },
  "karaoke.html::karaoke.dom": {
@@ -260,13 +874,15 @@
    "PROJECTS",
    "TILE_ATTRIBUTION",
    "TILE_MAX_ZOOM",
-   "TILE_URL",
+   "currentTheme",
    "initMap",
    "renderFooter",
    "renderHeader",
    "renderNav",
    "renderProjectCards",
    "svgIcon",
+   "themedTileLayer",
+   "tileUrl",
    "toggleMap",
    "toggleTheme"
   ],
@@ -279,12 +895,19 @@
    "./rb.html",
    "./proj.html",
    "./skbref.html",
-   "./skb_qa_summary.html"
+   "./skb_qa_summary.html",
+   "./facsimile.html",
+   "./rtm.html",
+   "./erosion_corrosion.html",
+   "./arsredovisning.html",
+   "./inkomstdeklaration.html",
+   "./uppsala.html",
+   "./solna.html"
   ],
   "navExpanded": "false",
   "navToggleTag": "BUTTON",
   "storedTheme": null,
-  "theme": "light",
+  "theme": "dark",
   "title": "Lognormal Conversions \u2014 kvot ab"
  },
  "logn.html::chrome.interactions": {
@@ -295,7 +918,7 @@
   "menuOpenAfterClick": true,
   "menuOpenAfterEscape": false,
   "themeFlipped": true,
-  "themePersisted": "dark",
+  "themePersisted": "light",
   "themeRestored": true,
   "tiles": true
  },
@@ -350,13 +973,15 @@
    "PROJECTS",
    "TILE_ATTRIBUTION",
    "TILE_MAX_ZOOM",
-   "TILE_URL",
+   "currentTheme",
    "initMap",
    "renderFooter",
    "renderHeader",
    "renderNav",
    "renderProjectCards",
    "svgIcon",
+   "themedTileLayer",
+   "tileUrl",
    "toggleMap",
    "toggleTheme"
   ],
@@ -369,12 +994,19 @@
    "./rb.html",
    "./logn.html",
    "./skbref.html",
-   "./skb_qa_summary.html"
+   "./skb_qa_summary.html",
+   "./facsimile.html",
+   "./rtm.html",
+   "./erosion_corrosion.html",
+   "./arsredovisning.html",
+   "./inkomstdeklaration.html",
+   "./uppsala.html",
+   "./solna.html"
   ],
   "navExpanded": "false",
   "navToggleTag": "BUTTON",
   "storedTheme": null,
-  "theme": "light",
+  "theme": "dark",
   "title": "Swedish Coordinate Conversions \u2014 kvot ab"
  },
  "proj.html::chrome.interactions": {
@@ -385,7 +1017,7 @@
   "menuOpenAfterClick": true,
   "menuOpenAfterEscape": false,
   "themeFlipped": true,
-  "themePersisted": "dark",
+  "themePersisted": "light",
   "themeRestored": true,
   "tiles": true
  },
@@ -438,13 +1070,15 @@
    "PROJECTS",
    "TILE_ATTRIBUTION",
    "TILE_MAX_ZOOM",
-   "TILE_URL",
+   "currentTheme",
    "initMap",
    "renderFooter",
    "renderHeader",
    "renderNav",
    "renderProjectCards",
    "svgIcon",
+   "themedTileLayer",
+   "tileUrl",
    "toggleMap",
    "toggleTheme"
   ],
@@ -457,12 +1091,19 @@
    "./logn.html",
    "./proj.html",
    "./skbref.html",
-   "./skb_qa_summary.html"
+   "./skb_qa_summary.html",
+   "./facsimile.html",
+   "./rtm.html",
+   "./erosion_corrosion.html",
+   "./arsredovisning.html",
+   "./inkomstdeklaration.html",
+   "./uppsala.html",
+   "./solna.html"
   ],
   "navExpanded": "false",
   "navToggleTag": "BUTTON",
   "storedTheme": null,
-  "theme": "light",
+  "theme": "dark",
   "title": "Radionuclide Decay Chains (ICRP Publication 107) \u2014 kvot ab"
  },
  "rdc.html::chrome.interactions": {
@@ -473,7 +1114,7 @@
   "menuOpenAfterClick": true,
   "menuOpenAfterEscape": false,
   "themeFlipped": true,
-  "themePersisted": "dark",
+  "themePersisted": "light",
   "themeRestored": true,
   "tiles": true
  },
@@ -503,7 +1144,7 @@
   "footerButtons": 2,
   "footerIcons": 6,
   "headerTag": "H1",
-  "headerTitle": "SKB QA summary",
+  "headerTitle": "SKB QC summary",
   "kvotApi": [
    "ICON_ADDRESS",
    "ICON_MAIL",
@@ -513,13 +1154,15 @@
    "PROJECTS",
    "TILE_ATTRIBUTION",
    "TILE_MAX_ZOOM",
-   "TILE_URL",
+   "currentTheme",
    "initMap",
    "renderFooter",
    "renderHeader",
    "renderNav",
    "renderProjectCards",
    "svgIcon",
+   "themedTileLayer",
+   "tileUrl",
    "toggleMap",
    "toggleTheme"
   ],
@@ -532,13 +1175,20 @@
    "./rb.html",
    "./logn.html",
    "./proj.html",
-   "./skbref.html"
+   "./skbref.html",
+   "./facsimile.html",
+   "./rtm.html",
+   "./erosion_corrosion.html",
+   "./arsredovisning.html",
+   "./inkomstdeklaration.html",
+   "./uppsala.html",
+   "./solna.html"
   ],
   "navExpanded": "false",
   "navToggleTag": "BUTTON",
   "storedTheme": null,
-  "theme": "light",
-  "title": "SKB QA Summary \u2014 kvot ab"
+  "theme": "dark",
+  "title": "SKB QC Summary \u2014 kvot ab"
  },
  "skb_qa_summary.html::chrome.interactions": {
   "ariaAfterOpen": "true",
@@ -548,7 +1198,7 @@
   "menuOpenAfterClick": true,
   "menuOpenAfterEscape": false,
   "themeFlipped": true,
-  "themePersisted": "dark",
+  "themePersisted": "light",
   "themeRestored": true,
   "tiles": true
  },
@@ -561,11 +1211,13 @@
    "sheet-filter",
    "reviewer-filter",
    "status-filter",
-   "id-search"
+   "id-search",
+   "flagged-only",
+   "changed-only"
   ],
-  "headerTitle": "SKB QA summary",
+  "headerTitle": "SKB QC summary",
   "normalize": "ok",
-  "privacyNote": "Bearbetning sker lokalt i webbl\u00e4saren \u2014 inga filer laddas upp.",
+  "privacyNote": "Processed locally in your browser \u2014 no file is uploaded.",
   "workspaceHidden": "",
   "xlsx": "object"
  },
@@ -584,13 +1236,15 @@
    "PROJECTS",
    "TILE_ATTRIBUTION",
    "TILE_MAX_ZOOM",
-   "TILE_URL",
+   "currentTheme",
    "initMap",
    "renderFooter",
    "renderHeader",
    "renderNav",
    "renderProjectCards",
    "svgIcon",
+   "themedTileLayer",
+   "tileUrl",
    "toggleMap",
    "toggleTheme"
   ],
@@ -603,12 +1257,19 @@
    "./rb.html",
    "./logn.html",
    "./proj.html",
-   "./skb_qa_summary.html"
+   "./skb_qa_summary.html",
+   "./facsimile.html",
+   "./rtm.html",
+   "./erosion_corrosion.html",
+   "./arsredovisning.html",
+   "./inkomstdeklaration.html",
+   "./uppsala.html",
+   "./solna.html"
   ],
   "navExpanded": "false",
   "navToggleTag": "BUTTON",
   "storedTheme": null,
-  "theme": "light",
+  "theme": "dark",
   "title": "SKB Reference Checker \u2014 kvot ab"
  },
  "skbref.html::chrome.interactions": {
@@ -619,7 +1280,7 @@
   "menuOpenAfterClick": true,
   "menuOpenAfterEscape": false,
   "themeFlipped": true,
-  "themePersisted": "dark",
+  "themePersisted": "light",
   "themeRestored": true,
   "tiles": true
  },
@@ -647,5 +1308,167 @@
   "rulePacks": [
    "Project terminology (built in)"
   ]
+ },
+ "solna.html::_console": [],
+ "solna.html::chrome": {
+  "footerButtons": 2,
+  "footerIcons": 6,
+  "headerTag": "H1",
+  "headerTitle": "Solna \u2192 Uppsala",
+  "kvotApi": [
+   "ICON_ADDRESS",
+   "ICON_MAIL",
+   "ICON_ORGNR",
+   "ICON_PHONE",
+   "ICON_VAT",
+   "PROJECTS",
+   "TILE_ATTRIBUTION",
+   "TILE_MAX_ZOOM",
+   "currentTheme",
+   "initMap",
+   "renderFooter",
+   "renderHeader",
+   "renderNav",
+   "renderProjectCards",
+   "svgIcon",
+   "themedTileLayer",
+   "tileUrl",
+   "toggleMap",
+   "toggleTheme"
+  ],
+  "leafletLoadedEagerly": "undefined",
+  "mapContainer": true,
+  "mapVisibility": "hidden",
+  "menuLinks": [
+   "./index.html",
+   "./rdc.html",
+   "./rb.html",
+   "./logn.html",
+   "./proj.html",
+   "./skbref.html",
+   "./skb_qa_summary.html",
+   "./facsimile.html",
+   "./rtm.html",
+   "./erosion_corrosion.html",
+   "./arsredovisning.html",
+   "./inkomstdeklaration.html",
+   "./uppsala.html"
+  ],
+  "navExpanded": "false",
+  "navToggleTag": "BUTTON",
+  "storedTheme": null,
+  "theme": "dark",
+  "title": "Solna \u2192 Uppsala \u2014 kvot ab"
+ },
+ "solna.html::chrome.interactions": {
+  "ariaAfterOpen": "true",
+  "leafletAfterToggle": "object",
+  "mapAfterSecondToggle": "hidden",
+  "mapAfterToggle": "visible",
+  "menuOpenAfterClick": true,
+  "menuOpenAfterEscape": false,
+  "themeFlipped": true,
+  "themePersisted": "light",
+  "themeRestored": true,
+  "tiles": true
+ },
+ "solna.html::sl.board": {
+  "attribution": true,
+  "boardMounted": true,
+  "idleMs": 900000,
+  "keyInPage": false,
+  "lanes": 1,
+  "legend": true,
+  "livePositions": true,
+  "module": "object",
+  "otherWay": "./uppsala.html",
+  "refreshMs": 10000,
+  "relation": "Solna \u2192 Uppsala C",
+  "secretInPage": false,
+  "staleMs": 30000,
+  "states": 13,
+  "stations": 5,
+  "track": true
+ },
+ "uppsala.html::_console": [],
+ "uppsala.html::chrome": {
+  "footerButtons": 2,
+  "footerIcons": 6,
+  "headerTag": "H1",
+  "headerTitle": "Uppsala \u2192 Solna",
+  "kvotApi": [
+   "ICON_ADDRESS",
+   "ICON_MAIL",
+   "ICON_ORGNR",
+   "ICON_PHONE",
+   "ICON_VAT",
+   "PROJECTS",
+   "TILE_ATTRIBUTION",
+   "TILE_MAX_ZOOM",
+   "currentTheme",
+   "initMap",
+   "renderFooter",
+   "renderHeader",
+   "renderNav",
+   "renderProjectCards",
+   "svgIcon",
+   "themedTileLayer",
+   "tileUrl",
+   "toggleMap",
+   "toggleTheme"
+  ],
+  "leafletLoadedEagerly": "undefined",
+  "mapContainer": true,
+  "mapVisibility": "hidden",
+  "menuLinks": [
+   "./index.html",
+   "./rdc.html",
+   "./rb.html",
+   "./logn.html",
+   "./proj.html",
+   "./skbref.html",
+   "./skb_qa_summary.html",
+   "./facsimile.html",
+   "./rtm.html",
+   "./erosion_corrosion.html",
+   "./arsredovisning.html",
+   "./inkomstdeklaration.html",
+   "./solna.html"
+  ],
+  "navExpanded": "false",
+  "navToggleTag": "BUTTON",
+  "storedTheme": null,
+  "theme": "dark",
+  "title": "Uppsala \u2192 Solna \u2014 kvot ab"
+ },
+ "uppsala.html::chrome.interactions": {
+  "ariaAfterOpen": "true",
+  "leafletAfterToggle": "object",
+  "mapAfterSecondToggle": "hidden",
+  "mapAfterToggle": "visible",
+  "menuOpenAfterClick": true,
+  "menuOpenAfterEscape": false,
+  "themeFlipped": true,
+  "themePersisted": "light",
+  "themeRestored": true,
+  "tiles": true
+ },
+ "uppsala.html::sl.board": {
+  "attribution": true,
+  "boardMounted": true,
+  "idleMs": 900000,
+  "keyInPage": false,
+  "lanes": 2,
+  "legend": true,
+  "livePositions": true,
+  "module": "object",
+  "otherWay": "./solna.html",
+  "refreshMs": 10000,
+  "relation": "Uppsala C \u2192 Solna",
+  "secretInPage": false,
+  "staleMs": 30000,
+  "states": 13,
+  "stations": 4,
+  "track": true
  }
 }

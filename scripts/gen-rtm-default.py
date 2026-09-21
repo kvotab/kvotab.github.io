@@ -28,7 +28,7 @@ import re
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, 'resources', 'js', 'rtm-default.js')
 STAMPED = [os.path.join(ROOT, 'rtm.html')]
-SOURCE = '~/Downloads/skbrtm/examples/transport/PA_BRUM_test/databases'
+SOURCE = os.path.expanduser('~/Downloads/skbrtm/examples/transport/PA_BRUM_test/databases')
 
 # Species bound to the fuel surface: they take part in the chemistry but do not
 # move, so they get no diffusion coefficient however the run is set up.

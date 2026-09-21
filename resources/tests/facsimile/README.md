@@ -15,7 +15,7 @@ menu and that one of them runs the model in the page.
 ## The engine
 
 `run.js` drives the browser engine of facsimile.html (the model compiler in
-`resources/js/facsimile-model.js` and the solvers in `facsimile-ode.js`)
+`resources/js/facsimile-model.js` and the solvers in `facsimile-solver.js`)
 under Node and compares it with the reference results kept in `ref/`.
 
 ```

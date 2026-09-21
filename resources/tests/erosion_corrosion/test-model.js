@@ -10,14 +10,7 @@
       holes for stated reasons, the key outputs of sheet "Info", and the
       erosion and sedimentation rates of TR-16-11 read off its figures.
 
-   2. The Python port erosion_corrosion_model_2_0.py run on the PSAR base
-      case (fs_Q1_2000_pline_merged) in six configurations; its failure
-      tables and key outputs are in ref/python-2_0.json. The workbook's own
-      cached key outputs for the base case (n_reject 612, 41 advective
-      positions, corrected mean 0.0827632, earliest advection 49,027 years)
-      are the same numbers.
-
-   3. Closed forms for the special functions and for single holes.
+   2. Closed forms for the special functions and for single holes.
 
        node resources/tests/erosion_corrosion/test-model.js [--verbose]
 
@@ -228,83 +221,6 @@ console.log('\n--- TR-16-11 erosion and sedimentation on the test file ---');
 }
 
 /* ======================================================================
-   6. Against the Python port on the PSAR base case
-   ====================================================================== */
-console.log('\n--- against erosion_corrosion_model_2_0.py on fs_Q1_2000_pline_merged ---');
-{
-  const ref = JSON.parse(fs.readFileSync(path.join(__dirname, 'ref', 'python-2_0.json'), 'utf8'));
-  const hydro = readHydro('fs_Q1_2000_pline_merged.csv');
-  check('6916 positions in the base case', hydro.n === 6916, String(hydro.n));
-  const pyToJs = {
-    hs_tab_name: null, buff_model: 'buffModel', force_rrss: 'forceRrss', effective_d_r_c_ion: 'effectiveDR',
-    c_ion: 'cIon', f_tdilute: 'fTDilute', j_exp: 'jExp', initial_advection: 'initialAdvection',
-    pess_aperture: 'pessAperture', pess_corr_geo: 'pessCorrGeo',
-  };
-  // The 2.0 port's own defaults differ from the workbook's where noted.
-  const pyDefaults = { fTDilute: 0.25, buffModel: 'OldKTH', forceRrss: false, cIon: 2, jExp: 1000 };
-  for (const [name, c] of Object.entries(ref)) {
-    const p = { ...ECModel.defaults(), ...pyDefaults };
-    let hs = ECHS.HS_FORSMARK;
-    for (const [pk, v] of Object.entries(c.config)) {
-      if (pk === 'hs_tab_name') { hs = ECHS.TABLES[v].values; continue; }
-      p[pyToJs[pk]] = v;
-    }
-    const r = ECModel.evaluate(hydro, hs, p);
-    const k = r.key;
-    const tag = `[${name}]`;
-    check(`${tag} n_reject`, k.nReject === c.n_reject, `${k.nReject} vs ${c.n_reject}`);
-    check(`${tag} failure rows`, r.failures.length === c.n_fail_rows, `${r.failures.length} vs ${c.n_fail_rows}`);
-    close(`${tag} corrected mean number of failed canisters`, k.meanFailedCorrected, c.mean_failed_corrected, 1e-12);
-    close(`${tag} corrected at 1e5`, k.meanFailed1e5Corrected, c.mean_failed_1e5_corrected, 1e-12);
-    // The Python port holds its HSForsmark and HSLaxemar tables to six
-    // significant digits (0.000120065 for the workbook's 1.20064866e-4), so
-    // every corrosion time differs from the workbook's by up to 2e-6. This
-    // page carries the workbook's digits and reproduces its cached failure
-    // time to 1e-12, so the looser bar here is the reference's, not ours.
-    if (c.earliest_failure !== null) close(`${tag} earliest failure`, k.earliestFailure, c.earliest_failure, 5e-6);
-    check(`${tag} advective positions at 1e6`, k.nAdvAtLim === c.n_adv_1e6, `${k.nAdvAtLim} vs ${c.n_adv_1e6}`);
-    check(`${tag} advective positions at 1e5`, k.nAdv1e5 === c.n_adv_1e5, `${k.nAdv1e5} vs ${c.n_adv_1e5}`);
-    close(`${tag} earliest advection`, k.earliestAdvection, c.earliest_adv, 1e-9, 1e-9);
-    close(`${tag} qLim`, k.qLim, c.q_lim, 1e-12);
-    close(`${tag} CorrHoleFact`, k.corrHoleFact, c.corr_hole_fact, 1e-12);
-    // Row by row.
-    let worst = 0;
-    let idsOk = true;
-    c.failures.forEach((f, i) => {
-      const g = r.failures[i];
-      if (!g) { idsOk = false; return; }
-      if (g.id !== f.id) idsOk = false;
-      for (const [a, b] of [[g.tFail, f.tFail], [g.f, f.F], [g.tw, f.tw], [g.q, f.q]]) {
-        worst = Math.max(worst, Math.abs(a - b) / Math.max(Math.abs(b), 1e-300));
-      }
-    });
-    check(`${tag} the failure table matches row for row`, idsOk && worst < 5e-6, `worst relative difference ${worst.toExponential(2)}`);
-    // Per-hole columns, the first sixty holes.
-    const cols = { t_adv: 'tAdv', v: 'v', q_eb: 'qEb', qeq_eb: 'qeqEb', n_erosion: 'nErosion', n_sed: 'nSed', r_erosion: 'rErosion', gradient: 'gradient', qeq_dz: 'qeqDz' };
-    for (const [pyCol, jsCol] of Object.entries(cols)) {
-      let w = 0;
-      c.holes[pyCol].forEach((x, i) => {
-        const y = r.columns[jsCol][i];
-        if (x >= 1e98 && y >= 1e98) return;
-        w = Math.max(w, Math.abs(x - y) / Math.max(Math.abs(x), 1e-300));
-      });
-      check(`${tag} column ${jsCol} agrees over the first 60 holes`, w < 1e-9, `worst ${w.toExponential(2)}`);
-    }
-    check(`${tag} reject mask agrees`, c.holes.reject.every((x, i) => (r.columns.reject[i] === 1) === x));
-  }
-  // The workbook's cached key outputs for the same file and the PSAR settings.
-  const r = ECModel.evaluate(hydro, ECHS.HS_FORSMARK, ECModel.defaults());
-  check('workbook: 612 rejected positions', r.key.nReject === 612);
-  check('workbook: 41 advective positions at 1e6', r.key.nAdvAtLim === 41);
-  check('workbook: 3 advective positions at 1e5', r.key.nAdv1e5 === 3);
-  close('workbook: corrected mean 0.08276318693445156', r.key.meanFailedCorrected, 0.08276318693445156, 1e-12);
-  close('workbook: earliest advection 49,027.27 yr', r.key.earliestAdvection, 49027.26684974055, 1e-9);
-  // The workbook's cached earliest failure time, to the last digit: the
-  // hydro CSV carries the same four significant digits as the sheet.
-  close('workbook: earliest failure 189,441.71025607834 yr', r.key.earliestFailure, 189441.71025607834, 1e-12);
-}
-
-/* ======================================================================
    7. Single-hole closed forms, and the options that change a formula
    ====================================================================== */
 console.log('\n--- single holes ---');
@@ -405,10 +321,10 @@ console.log('\n--- single holes ---');
    ====================================================================== */
 console.log('\n--- realisations and series ---');
 {
-  const hydro = readHydro('fs_Q1_2000_pline_merged.csv');
-  const p = ECModel.defaults();
-  const many = ECModel.evaluateMany([hydro, hydro], ECHS.HS_FORSMARK, p);
-  const one = ECModel.evaluate(hydro, ECHS.HS_FORSMARK, p);
+  const hydro = readHydro('TestCaseHydro_2_0.csv');
+  const p = { ...ECModel.defaults(), buffModel: 'OldKTH', fTDilute: 0.25 };
+  const many = ECModel.evaluateMany([hydro, hydro], ECHS.HS_TEST, p);
+  const one = ECModel.evaluate(hydro, ECHS.HS_TEST, p);
   check('two identical realisations give twice the rows', many.table.length === 2 * one.failures.length);
   check('with the realisation number on each row', many.table.slice(0, one.failures.length).every((r) => r.dfn === 1) && many.table.slice(one.failures.length).every((r) => r.dfn === 2));
   check('and running index', many.table.every((r, i) => r.index === i + 1));

@@ -1,7 +1,7 @@
 /* ==========================================================================
    RTM.HTML: THE PAGE
 
-   Wiring only: the compiler is rtm-model.js, the solvers are facsimile-ode.js
+   Wiring only: the compiler is rtm-model.js, the solvers are facsimile-solver.js
    and the ode_julia ports, and the work happens in rtm-worker.js on a Worker
    thread. This file keeps the state, draws the charts and says what happened.
 

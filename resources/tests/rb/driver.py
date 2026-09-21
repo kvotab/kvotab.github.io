@@ -83,7 +83,7 @@ async def load_samples(page, names):
       const { FS, File } = window.h5wasm;
       const names = %s;
       for (const name of names) {
-        const resp = await fetch('./resources/data/' + encodeURIComponent(name));
+        const resp = await fetch('./resources/tests/rb/fixtures/' + encodeURIComponent(name));
         const buffer = await resp.arrayBuffer();
         loadedFileBuffers[name] = buffer;
         const internalName = `file_${Date.now()}_${Math.random().toString(36).substr(2,9)}.h5`;

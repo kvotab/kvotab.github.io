@@ -13,7 +13,7 @@ const path = require('path');
 
 const jsDir = path.join(__dirname, '..', '..', 'js');
 require(path.join(jsDir, 'facsimile-model.js'));
-const FacsimileODE = require(path.join(jsDir, 'facsimile-ode.js'));
+const FacsimileODE = require(path.join(jsDir, 'facsimile-solver.js'));
 const RtmModel = require(path.join(jsDir, 'rtm-model.js'));
 const OdeJulia = require(path.join(jsDir, 'facsimile-ode-julia.js'));
 

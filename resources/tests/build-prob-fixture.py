@@ -76,7 +76,7 @@ async def main():
             print('logs:', page.logs[:6])
             return
         data = base64.b64decode(out)
-        dest = '~/Library/CloudStorage/Dropbox/KVOT/kvotab/resources/tests/prob-fixture.h5'
+        dest = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'prob-fixture.h5')
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         open(dest, 'wb').write(data)
         print('wrote %s (%d bytes)' % (dest, len(data)))

@@ -14,7 +14,7 @@
    Those numbers arrive in four shapes, and this file turns each of them into
    one plain table:
 
-     ConnectFlow CSV    fs_Q1_2000_pline_merged.csv and the like: a header
+     ConnectFlow CSV    *_pline_merged.csv and the like: a header
                         row (NPOINT or POINT, ..., U0, QEQ, TW, F, ..., TRAPP,
                         ..., FPC, EFPC, FLEN) and one row per hole. Also what
                         Excel writes from the workbook's hydro sheets.

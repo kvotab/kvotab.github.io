@@ -502,8 +502,8 @@ Y2 = , rf = 3.0E7*Y2*Y2</pre>
             <tr><td><code>/Model</code></td><td>the model text and the reactions, so the file says what produced it</td></tr>
             <tr><td><code>/Events</code></td><td>when an event fired and what it changed, where the case has one</td></tr>
           </table>
-          <p>Selecting one of the three groups draws all of its series together, which is what the <code>IndexLists</code> attribute on it is for. The writer is a small one (<code>resources/js/kvot-hdf5-write.js</code>, from the Ecolego web port), so the page does not have to fetch 4.7 MB of WebAssembly in order to write a few hundred kilobytes; what it writes is read back by h5py in the tests.</p>
-          <p class="muted">Sources: the FACSIMILE model files skbcanister11b/13g/16x.fac and the Python port skbcanister.py of the SKB TR-22-15 study; the built-in solver follows the numerical differentiation formulas of Shampine and Reichelt, as ported for ecolego-js; thermodynamic data from the CHEMKIN data base (SAND87-8215B).</p>
+          <p>Selecting one of the three groups draws all of its series together, which is what the <code>IndexLists</code> attribute on it is for. The writer is a small one (<code>resources/js/kvot-hdf5-write.js</code>), so the page does not have to fetch 4.7 MB of WebAssembly in order to write a few hundred kilobytes; what it writes is read back by h5py in the tests.</p>
+          <p class="muted">Sources: the FACSIMILE model files skbcanister11b/13g/16x.fac and the Python port skbcanister.py of the SKB TR-22-15 study; the built-in solver implements the numerical differentiation formulas of Shampine and Reichelt; thermodynamic data from the CHEMKIN data base (SAND87-8215B).</p>
         </section>
       </main>
     </div>
@@ -546,7 +546,7 @@ Y2 = , rf = 3.0E7*Y2*Y2</pre>
       facsimile-ui       this page
   -->
   <script src="./resources/js/facsimile-model.js?v=20260917zd"></script>
-  <script src="./resources/js/facsimile-ode.js?v=20260920a"></script>
+  <script src="./resources/js/facsimile-solver.js?v=20260921"></script>
   <script src="./resources/js/facsimile-default.js?v=20260921a"></script>
   <script src="./resources/js/ode-julia.js?v=20260917zd"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20260917zd"></script>

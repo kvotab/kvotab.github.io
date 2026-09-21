@@ -23,7 +23,7 @@ const path = require('path');
 
 const jsDir = path.join(__dirname, '..', '..', 'js');
 const FacsimileModel = require(path.join(jsDir, 'facsimile-model.js'));
-const FacsimileODE = require(path.join(jsDir, 'facsimile-ode.js'));
+const FacsimileODE = require(path.join(jsDir, 'facsimile-solver.js'));
 const { FACSIMILE_DEFAULT_MODEL, FACSIMILE_PRESETS } = require(path.join(jsDir, 'facsimile-default.js'));
 
 let checks = 0;

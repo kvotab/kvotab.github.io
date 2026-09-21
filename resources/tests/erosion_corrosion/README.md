@@ -33,19 +33,9 @@ those are held to 4 % and 2 %, which is what reading a log plot allows.
 The file is here as `resources/data/erosion_corrosion/TestCaseHydro_2_0.csv`,
 the ten columns the model reads, converted from the xlsx.
 
-**The Python port on the PSAR base case.** `ref/python-2_0.json` holds what
-`erosion_corrosion_model_2_0.py` returns for `fs_Q1_2000_pline_merged` in six
-configurations (PSAR defaults, SR-Site defaults, sedimentation, erosion plus
-sedimentation with HSLaxemar and cIon 2 mM, initial advection, and the two
-pessimistic options together): the rejection count, the failure table row by
-row, the key outputs and nine per-hole columns for the first sixty holes. The
-rejection mask, the counts and the per-hole columns agree to 1e-9. The failure
-times agree to 2e-6 and no better, and the reason is on the reference's side:
-the port holds its HSForsmark table to six significant digits (0.000120065
-where the workbook has 1.20064866e-4). The workbook's own cached key outputs
-for the same file are also checked, and there the earliest failure time,
-189,441.71025607834 years, comes out to 1e-12 -- so the page carries the
-workbook's digits, not the port's.
+**Several realisations.** The test file is read twice over to check the pooling
+of realisations: the rows carry the realisation number, the summary is the
+mean over realisations, and identical realisations give identical bounds.
 
 **Closed forms.** The Lambert W function against known values and against
 w·e^w = x; Acklam's inverse normal against tabulated quantiles; every derived

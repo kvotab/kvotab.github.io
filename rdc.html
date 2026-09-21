@@ -32,7 +32,7 @@
     <script src="./resources/js/rndecaydata.js?v=20260911"></script>
     <script src="./resources/js/rndatatree.js?v=20260911"></script>
     <script src="./vendors/js/cytoscape.umd.js?v=20260911"></script>
-    <script src="./resources/js/ndf.min.js?v=20260911"></script>
+    <script src="./resources/js/facsimile-solver.js?v=20260921"></script>
     <script src="./vendors/js/plotly-2.27.0.min.js?v=20260911"></script>
     <script src="./vendors/js/math.min.js?v=20260911"></script>
     <script src="./vendors/js/FileSaver.min.js?v=20260911"></script>
@@ -173,6 +173,7 @@ html[data-theme="dark"] .rdc-chart-window .ui-dialog-titlebar-close{border-color
                 The <a href="https://www.icrp.org/publication.asp?id=ICRP%20Publication%20107" target="_blank" rel="noopener noreferrer" title="ICRP, 2008.">ICRP 2008</a>-database comprises comprehensive data on 1252 radionuclides across 97 elements, encompassing details such as half-lives, decay chains, and the yields and energies of emitted radiations resulting from nuclear transformations. The selection of nuclides for inclusion in the database was contingent on their half-life exceeding 1 minute or if they were formed as a byproduct in the nuclear transformation of a designated radionuclide. Notably, N-16, with a half-life of 7.13 seconds, was included primarily for historical significance. It is imperative that the underlying nuclear physics data be sufficiently robust to enable meaningful computations of radiation yields and energies.
             </p><p>
                 The database contains compiled information for 922 radionuclides with half-lives surpassing 10 minutes, as well as 330 radionuclides with half-lives less than 10 minutes. Data pertaining to the 118 chemical elements within the periodic table are predominantly sourced from the <a href="https://pubchem.ncbi.nlm.nih.gov/periodic-table/" target="_blank" rel="noopener noreferrer" title="PubChem, 2023.">National Center for Biotechnology Information</a> as of 2023.
+            <p>The descriptive data on the chemical elements (origin of the name, atomic weight, density, melting and boiling points) are adapted from Wikipedia\'s <em>List of chemical elements</em> and the element articles, available under the <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener noreferrer">CC BY-SA 4.0</a> licence.</p>
             </p>
             <h3>Glossary</h3>
             <p><b>Activity</b><br>
@@ -1395,9 +1396,9 @@ function runRdcScientificTests() {
     equal('30-second scale', chooseDefaultTimeScale(30 / (365.25 * 24 * 60 * 60)).unit, 'second');
     var logData = prepareDataForXAxis([{x:[0,1,2],y:[4,5,6]}], 'log');
     equal('log axis removes zero', logData[0].x.length, 2); equal('log axis preserves y alignment', logData[0].y[0], 5);
-    if (typeof ndf === 'function') {
-        var result = ndf(function(time,y){return[-lambda*y[0]];},[0,10],[100],{Refine:4,AbsTol:1e-12,RelTol:1e-8,Jacobian:[[-lambda]]});
-        close('numerical solver',result.yout[0][result.yout[0].length-1],50,1e-5);
+    if (typeof solveDecayChain === 'function') {
+        var result = solveDecayChain([[-lambda]], [100], 10, { rtol: 1e-8, atol: 1e-12 });
+        close('numerical solver', result.yout[0][result.yout[0].length - 1], 50, 1e-5);
     }
     if (failures.length) throw new Error('Scientific self-tests failed: ' + failures.join('; '));
     console.info('RDC scientific self-tests passed.'); return true;
@@ -1405,6 +1406,43 @@ function runRdcScientificTests() {
 window.runRdcScientificTests = runRdcScientificTests;
 if (new URLSearchParams(window.location.search).get('selftest') === '1') {
     try { runRdcScientificTests(); } catch (error) { showUserError(error.message, error); }
+}
+
+/**
+ * Integrates the linear decay chain dy/dt = A*y from 0 to tEnd with the
+ * variable-order stiff solver of facsimile-solver.js, and hands back the
+ * solution on a geometric grid of times (plus the start) in the shape the
+ * chart code reads: tout as an array, yout as one array per nuclide.
+ */
+function solveDecayChain(A, y0, tEnd, opts) {
+    var n = y0.length;
+    var colPtr = new Int32Array(n + 1), rowIdx = new Int32Array(n * n), values = new Float64Array(n * n);
+    for (var j = 0; j < n; j++) {
+        colPtr[j] = j * n;
+        for (var i = 0; i < n; i++) { rowIdx[j * n + i] = i; values[j * n + i] = A[i][j]; }
+    }
+    colPtr[n] = n * n;
+    var pattern = { n: n, nnz: n * n, colPtr: colPtr, rowIdx: rowIdx };
+    var f = function (t, y, out) {
+        for (var i = 0; i < n; i++) {
+            var s = 0, row = A[i];
+            for (var k = 0; k < n; k++) s += row[k] * y[k];
+            out[i] = s;
+        }
+        return out;
+    };
+    var points = 600, grid = new Float64Array(points + 1);
+    var lo = tEnd * 1e-6;
+    grid[0] = 0;
+    for (var p = 0; p < points; p++) grid[p + 1] = lo * Math.pow(tEnd / lo, p / (points - 1));
+    grid[points] = tEnd;
+    var res = FacsimileODE.ndf(f, 0, tEnd, Float64Array.from(y0), {
+        rtol: opts.rtol, atol: opts.atol, matrix: 'dense', saveAt: grid,
+        jacobian: { pattern: pattern, evaluate: function () { return values; } }
+    });
+    var yout = [];
+    for (var q = 0; q < n; q++) yout.push(res.series.y.map(function (row) { return row[q]; }));
+    return { tout: Array.from(res.series.t), yout: yout };
 }
 
 function appendSanitizedMarkup(container, markup) {
@@ -1730,22 +1768,9 @@ function runAndUpdateChart() {
             }
         }
         var result;
-        try { result = ndf(function(t, y) {
-            var dydt = new Array(n);
-            for (var i = 0; i < n; i++) {
-                dydt[i] = -y[i];
-                for (var j = 0; j < dydt_data[i].length; j++) {
-                    dydt[i] += dydt_data[i][j].br * y[dydt_data[i][j].index];
-                }
-                dydt[i] *= lambda[i];
-            }
-            return dydt;
-        }, tspan, y0, {
-            Refine: 4,
-            AbsTol: 1e-20,
-            RelTol: 1e-6,
-            Jacobian: Jacobian
-        });
+        // The chain is linear with a constant matrix, so the Jacobian built
+        // above is the whole right-hand side: dy/dt = Jacobian * y.
+        try { result = solveDecayChain(Jacobian, y0, tspan[1], { rtol: 1e-6, atol: 1e-20 });
         } catch(error){showUserError('The decay calculation could not be completed. Try a shorter time range or review the inventory values.',error);return;}
         if(!result||!Array.isArray(result.tout)||!Array.isArray(result.yout)){showUserError('The decay solver returned an invalid result.');return;}
 

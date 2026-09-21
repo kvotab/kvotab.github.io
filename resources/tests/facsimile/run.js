@@ -19,7 +19,7 @@ const path = require('path');
 const here = __dirname;
 const jsDir = path.join(here, '..', '..', 'js');
 const FacsimileModel = require(path.join(jsDir, 'facsimile-model.js'));
-const FacsimileODE = require(path.join(jsDir, 'facsimile-ode.js'));
+const FacsimileODE = require(path.join(jsDir, 'facsimile-solver.js'));
 const FacsimileHDF5 = require(path.join(jsDir, 'facsimile-hdf5.js'));
 const { FACSIMILE_DEFAULT_MODEL, FACSIMILE_PRESETS } = require(path.join(jsDir, 'facsimile-default.js'));
 
@@ -145,7 +145,7 @@ for (const id of scenarios) {
         if (d.t < opt.debugFrom) return;
         const names = (top) => top.map(([i, v]) => `${model.species[i]}:${v.toExponential(2)} y=${d.y[i].toExponential(2)} ynew=${d.ynew[i].toExponential(2)}`).join(' | ');
         if (d.errTest !== undefined) console.log(`  ERR  t=${d.t.toExponential(8)} h=${d.h.toExponential(3)} k=${d.k} err/rtol=${(d.errTest / rtol).toExponential(2)} :: ${names(d.top)}`);
-        else console.log(`  NEWT t=${d.t.toExponential(8)} h=${d.h.toExponential(3)} k=${d.k} its=${d.newtonIts} norms=[${d.newtonNorms.map((v) => v.toExponential(2)).join(',')}] Jcur=${d.Jcurrent} nonfinite=${d.nonfinite} :: ${names(d.top)}`);
+        else console.log(`  NEWT t=${d.t.toExponential(8)} h=${d.h.toExponential(3)} k=${d.k} its=${d.newtonIts} norms=[${d.newtonNorms.map((v) => v.toExponential(2)).join(',')}] jacFresh=${d.jacobianFresh} nonfinite=${d.nonfinite} :: ${names(d.top)}`);
       } : undefined,
     });
   } catch (e) {
