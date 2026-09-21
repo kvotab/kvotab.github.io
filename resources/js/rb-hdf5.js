@@ -2,6 +2,7 @@
    3. HDF5 DATA ACCESS
    ========================================================================== */
 
+'use strict';   // see the script manifest in rb.html for why
 /**
  * Check if a dataset or group exists at the given path in an HDF5 file.
  * Safely handles exceptions from invalid paths.
@@ -56,7 +57,7 @@ function getTimeData(file) {
       return [timeData];
     }
   } catch (e) {
-    console.warn('Could not read /time dataset:', e.message);
+    kvotWarn('Could not read /time dataset:', e.message);
   }
   return null;
 }
@@ -149,7 +150,7 @@ function getProbabilisticTimeMatrix(file) {
 
     return { matrix, nIter, maxLen: nIterPad, iterLengths };
   } catch (e) {
-    console.warn('Could not read probabilistic time matrix:', e);
+    kvotWarn('Could not read probabilistic time matrix:', e);
     return null;
   }
 }
@@ -195,7 +196,7 @@ function getTimeUnit(file) {
     const unit = getAttr(timeDataset, 'unit');
     return unit !== undefined && unit !== null ? unit : '';
   } catch (e) {
-    console.warn('Could not read time unit:', e);
+    kvotWarn('Could not read time unit:', e);
   }
   return '';
 }
@@ -212,7 +213,7 @@ function isTimeDependent(dataset) {
     const val = getAttr(dataset, 'time_dependent');
     return isTruthyAttribute(val);
   } catch (e) {
-    console.warn('Error checking time_dependent attribute:', e);
+    kvotWarn('Error checking time_dependent attribute:', e);
   }
   return false;
 }
@@ -267,7 +268,7 @@ function checkGroupForRadionuclides(file, path) {
     
     return hasRadionuclidesIndex && isTimeDependentGroup;
   } catch (e) {
-    console.warn('Error checking group for radionuclides:', e);
+    kvotWarn('Error checking group for radionuclides:', e);
     return false;
   }
 }

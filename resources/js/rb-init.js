@@ -2,6 +2,7 @@
    15. EVENT LISTENERS & INITIALIZATION
    ========================================================================== */
 
+'use strict';   // see the script manifest in rb.html for why
 /*
  * Application Initialization
  * 
@@ -81,7 +82,7 @@ EventBus.on('selection:changed', (payload) => {
       if (el) el.classList.add('selected');
 
       // show attributes / chart for single selection
-      try { showNodeAttributes(payload.path, false); } catch (e) { console.warn('selection:changed handler showNodeAttributes failed', e); }
+      try { showNodeAttributes(payload.path, false); } catch (e) { kvotWarn('selection:changed handler showNodeAttributes failed', e); }
       return;
     }
 
@@ -93,7 +94,7 @@ EventBus.on('selection:changed', (payload) => {
       const groupEl = findTreeItem(payload.path, { fileKey: payload.fileKey, extra: '.group', root: tree });
       if (groupEl) groupEl.classList.add('expanded');
 
-      try { showNodeAttributes(payload.path, true); } catch (e) { console.warn('selection:changed handler showNodeAttributes(group) failed', e); }
+      try { showNodeAttributes(payload.path, true); } catch (e) { kvotWarn('selection:changed handler showNodeAttributes(group) failed', e); }
       return;
     }
 
@@ -117,7 +118,7 @@ EventBus.on('selection:changed', (payload) => {
         if (found) found.classList.add('selected');
       }
 
-      try { showMultipleDatasetAttributes(items); } catch (e) { console.warn('selection:changed handler showMultipleDatasetAttributes failed', e); }
+      try { showMultipleDatasetAttributes(items); } catch (e) { kvotWarn('selection:changed handler showMultipleDatasetAttributes failed', e); }
       return;
     }
   } catch (e) {
@@ -142,19 +143,19 @@ EventBus.on('theme:changed', ({ isDark }) => {
     Plotly.relayout(el, ChartService.relayoutForTheme(isDark));
     setTimeout(() => { _suppressPresetSync = false; }, 0);
   } catch (e) {
-    console.warn('theme:changed handler failed', e);
+    kvotWarn('theme:changed handler failed', e);
   }
 });
 
 // Toolbar actions (decoupled via EventBus)
 EventBus.on('toolbar:copy-chart', () => {
-  try { copyChartToClipboard(); } catch (e) { console.warn('toolbar:copy-chart handler failed', e); }
+  try { copyChartToClipboard(); } catch (e) { kvotWarn('toolbar:copy-chart handler failed', e); }
 });
 EventBus.on('toolbar:download-csv', () => {
-  try { downloadChartData(); } catch (e) { console.warn('toolbar:download-csv handler failed', e); }
+  try { downloadChartData(); } catch (e) { kvotWarn('toolbar:download-csv handler failed', e); }
 });
 EventBus.on('toolbar:download-excel', () => {
-  try { downloadChartDataAsExcel(); } catch (e) { console.warn('toolbar:download-excel handler failed', e); }
+  try { downloadChartDataAsExcel(); } catch (e) { kvotWarn('toolbar:download-excel handler failed', e); }
 });
 
 // Background search-aware expansion (runs when `filterTree` emits `search:changed`)
@@ -241,7 +242,7 @@ function showFileLoadTicker(current = 0, total = 0, text = '') {
     }
     // show cancel button only when a tree refresh is active
     if (cancelBtn) cancelBtn.style.display = (window._treeRefreshId ? 'inline-block' : 'none');
-  } catch (e) { console.warn('showFileLoadTicker error', e); }
+  } catch (e) { kvotWarn('showFileLoadTicker error', e); }
 }
 
 function updateFileLoadTicker(current = 0, total = 0, text = '') {
@@ -255,7 +256,7 @@ function updateFileLoadTicker(current = 0, total = 0, text = '') {
     if (bar && total > 0) bar.style.width = Math.min(100, Math.floor((current / total) * 100)) + '%';
     const cancelBtn = el.querySelector('.ticker-cancel');
     if (cancelBtn) cancelBtn.style.display = (window._treeRefreshId ? 'inline-block' : 'none');
-  } catch (e) { console.warn('updateFileLoadTicker error', e); }
+  } catch (e) { kvotWarn('updateFileLoadTicker error', e); }
 }
 
 /**
@@ -285,7 +286,7 @@ function setFileLoadProgress(fraction, text) {
     }
     const cancelBtn = el.querySelector('.ticker-cancel');
     if (cancelBtn) cancelBtn.style.display = (window._treeRefreshId ? 'inline-block' : 'none');
-  } catch (e) { console.warn('setFileLoadProgress error', e); }
+  } catch (e) { kvotWarn('setFileLoadProgress error', e); }
 }
 
 /**
@@ -312,7 +313,7 @@ function hideFileLoadTicker() {
     if (bar) bar.style.width = '0%';
     const cancelBtn = el.querySelector('.ticker-cancel');
     if (cancelBtn) cancelBtn.style.display = 'none';
-  } catch (e) { console.warn(e); }
+  } catch (e) { kvotWarn(e); }
 }
 
 function cancelTreeRefresh() {
@@ -330,8 +331,8 @@ function cancelTreeRefresh() {
       const btn = el.querySelector('.ticker-cancel');
       if (btn) btn.style.display = 'none';
     }
-    console.debug('[tree] Refresh cancellation requested');
-  } catch (e) { console.warn('cancelTreeRefresh failed', e); }
+    kvotTrace('[tree] Refresh cancellation requested');
+  } catch (e) { kvotWarn('cancelTreeRefresh failed', e); }
 }
 
 
@@ -599,7 +600,7 @@ async function loadFromUrl() {
     await updateTabs(true);
     hideFileLoadTicker();
     closeUrlDialog();
-    console.debug('[loadFromUrl] Loaded', fileName, 'from', target);
+    kvotTrace('[loadFromUrl] Loaded', fileName, 'from', target);
   } catch (err) {
     hideFileLoadTicker();
     console.error('[loadFromUrl] Error loading from URL', target, err);

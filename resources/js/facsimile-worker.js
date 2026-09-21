@@ -29,6 +29,10 @@ function summary(model) {
     equations: model.equations,
     outputs: model.outputs,
     observeNames: model.observeNames,
+    rates: model.rates,
+    rateNames: model.rateNames,
+    outputTimes: model.outputTimes,
+    outputTimeUnit: model.outputTimeUnit,
     events: model.events,
     warnings: model.warnings,
     settings: model.settings,
@@ -151,39 +155,55 @@ function handleFacsimileMessage(msg, post) {
         maxPoints: s.maxPoints,
       });
       // Observables at every stored point, computed here so the page only draws.
-      const n = res.t.length;
       const names = model.observeNames;
-      const obs = new Float64Array(names.length);
-      const observed = new Float64Array(n * names.length);
-      const states = new Float64Array(n * model.nspecies);
-      for (let k = 0; k < n; k++) {
-        model.observe(res.t[k], res.y[k], obs);
-        observed.set(obs, k * names.length);
-        states.set(res.y[k], k * model.nspecies);
-      }
+      const observeAll = (T, Ys) => {
+        const n = T.length;
+        const obs = new Float64Array(names.length);
+        const observed = new Float64Array(n * names.length);
+        const states = new Float64Array(n * model.nspecies);
+        for (let k = 0; k < n; k++) {
+          try { model.observe(T[k], Ys[k], obs); } catch (_) { obs.fill(NaN); }
+          observed.set(obs, k * names.length);
+          states.set(Ys[k], k * model.nspecies);
+        }
+        return { t: T, states, observed, n };
+      };
+      const main = observeAll(res.t, res.y);
+      const grid = res.grid && res.grid.t.length ? observeAll(res.grid.t, res.grid.y) : null;
       const payload = {
         type: 'result', id,
-        t: res.t, states, observed, n, nspecies: model.nspecies, observeNames: names, species: model.species,
+        ...main, nspecies: model.nspecies, observeNames: names, species: model.species,
+        grid, gridWanted: res.grid ? res.grid.wanted : 0,
         events: res.events, stats: res.stats, constants: model.constantValues(),
         seconds: (Date.now() - started) / 1000,
       };
-      post(payload, [res.t.buffer, states.buffer, observed.buffer]);
+      const transfer = [main.t.buffer, main.states.buffer, main.observed.buffer];
+      if (grid) transfer.push(grid.t.buffer, grid.states.buffer, grid.observed.buffer);
+      post(payload, transfer);
     } catch (e) {
       const err = errorMessage(e);
       const out = { type: 'error', id, stage: 'run', error: err, trace: e.trace || null };
       if (e.partial && e.partial.t && e.partial.t.length > 1) {
         // Hand the page what was integrated before the failure.
-        const n = e.partial.t.length;
         const names = model.observeNames;
-        const obs = new Float64Array(names.length);
-        const observed = new Float64Array(n * names.length);
-        const states = new Float64Array(n * model.nspecies);
-        for (let k = 0; k < n; k++) {
-          try { model.observe(e.partial.t[k], e.partial.y[k], obs); } catch (_) { obs.fill(NaN); }
-          observed.set(obs, k * names.length);
-          states.set(e.partial.y[k], k * model.nspecies);
-        }
-        out.partial = { t: e.partial.t, states, observed, n, nspecies: model.nspecies, observeNames: names, species: model.species, events: e.partial.events, constants: model.constantValues() };
+        const observeAll = (T, Ys) => {
+          const n = T.length;
+          const obs = new Float64Array(names.length);
+          const observed = new Float64Array(n * names.length);
+          const states = new Float64Array(n * model.nspecies);
+          for (let k = 0; k < n; k++) {
+            try { model.observe(T[k], Ys[k], obs); } catch (_) { obs.fill(NaN); }
+            observed.set(obs, k * names.length);
+            states.set(Ys[k], k * model.nspecies);
+          }
+          return { t: T, states, observed, n };
+        };
+        const g = e.partial.grid && e.partial.grid.t.length ? observeAll(e.partial.grid.t, e.partial.grid.y) : null;
+        out.partial = {
+          ...observeAll(e.partial.t, e.partial.y),
+          nspecies: model.nspecies, observeNames: names, species: model.species,
+          grid: g, events: e.partial.events, constants: model.constantValues(),
+        };
       }
       post(out);
     }

@@ -24,11 +24,32 @@ Then, from this directory:
 
 ## What is covered
 
-`characterise.py` walks fifteen steps: the initial DOM inventory, the expected
+`characterise.py` walks seventeen steps: the initial DOM inventory, the expected
 set of globals, loading two files, tree expansion, selecting a dataset and a
 radionuclide group, the chart toggles, log/linear axes, ctrl-multi-select,
 five search terms, all three tree modes, the dialogs, CSV and Excel export,
-enabling/disabling/removing a file, and the rejection of malformed input.
+enabling/disabling/removing a file, the information panel for a dataset and for
+a group, a dataset exported to Excel, and the rejection of malformed input.
+
+The last two were added to cover `rb-info.js` before it was refactored. The
+panel step reads back the section labels, the attribute rows and whether any
+value arrived as markup, plus a count of `script`/`iframe`/`object`/`embed`
+nodes that must stay at zero. The export step captures the workbook itself: it
+stubs `URL.createObjectURL` to catch the blob, opens it with the JSZip already
+on the page, and records the sheet list, the rows per sheet and the shared
+strings, with the export timestamp normalised so two runs can be compared.
+
+`test-strict.py` asserts that every page script is really running in strict
+mode. Having `'use strict'` in the source is not the same as it taking effect —
+the directive counts only as the first statement, so a stray statement above it
+silently turns the file back into sloppy mode with no error anywhere. The test
+probes the function objects instead of the text: a sloppy function carries own
+`arguments` and `caller` properties and a strict one does not. It includes a
+control that must read as *sloppy*, or the probe is measuring nothing.
+
+`test-debug-gate.py` covers the console gate in `kvot-errors.js`: `kvotTrace`
+silent by default, `kvotWarn` still printing but once per message, and both
+fully restored by `?debug=1` or `localStorage.kvotDebug`.
 
 `test-actions.py` covers the control wiring specifically: every element with a
 `data-action` attribute is given the event it declares, and its handler must

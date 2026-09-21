@@ -327,24 +327,77 @@
 */
 .rtm-pane[data-pane="model"] { display: flex; flex-direction: column; }
 .rtm-pane[data-pane="model"][hidden] { display: none; }
-.rtm-text {
-  box-sizing: border-box;
-  width: 100%;
+
+/*
+  The colouring, as facsimile.html does it: a <pre> holding a coloured copy
+  of the text, and the textarea itself over it with transparent text. Every
+  metric that decides where a character lands has to be identical in both,
+  so they are declared together rather than separately.
+*/
+.rtm-code-box {
+  position: relative;
   flex: 1 1 auto;
   min-height: 160px;
+  display: flex;
+}
+.rtm-code-box textarea,
+.rtm-code-box .rtm-code-hl {
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0;
   padding: 8px 10px;
-  border: 1px solid var(--input-border);
+  border: 1px solid transparent;
   border-radius: 6px;
+  font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace;
+  letter-spacing: normal;
+  tab-size: 4;
+  white-space: pre;
+  overflow: auto;
+}
+.rtm-text {
+  flex: 1 1 auto;
+  position: relative;
+  z-index: 1;
+  border-color: var(--input-border);
   background: var(--input-bg);
   color: var(--text-primary);
-  font-family: ui-monospace, Menlo, Consolas, monospace;
-  font-size: 12px;
-  line-height: 1.5;
-  white-space: pre;
-  overflow-wrap: normal;
-  overflow-x: auto;
   resize: none;
 }
+.rtm-code-box.hl .rtm-text {
+  /* The coloured copy underneath is what is read; the caret stays visible. */
+  color: transparent;
+  background: transparent;
+  caret-color: var(--text-primary);
+}
+.rtm-code-box .rtm-code-hl {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: none;
+  color: var(--text-primary);
+  background: var(--input-bg);
+  pointer-events: none;
+}
+.rtm-code-box.hl .rtm-code-hl { display: block; }
+.rtm-code-box ::selection { background: var(--color-kvot-accent); color: #fff; }
+
+/* The colours themselves: comments recede, everything else is a hue apart.
+   The same six as facsimile.html, so a reader who knows one knows the other. */
+.hl-com { color: var(--text-secondary); font-style: italic; }
+.hl-sec { color: var(--color-kvot-accent); font-weight: 600; }
+.hl-num { color: #b06f00; }
+.hl-fn  { color: #7048c0; }
+.hl-key { color: #0a7d7d; }
+.hl-op  { color: var(--text-secondary); }
+:root[data-theme="dark"] .hl-num { color: #e0a13c; }
+:root[data-theme="dark"] .hl-fn  { color: #c0a0ff; }
+:root[data-theme="dark"] .hl-key { color: #58c8c8; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .hl-num { color: #e0a13c; }
+  :root:not([data-theme="light"]) .hl-fn  { color: #c0a0ff; }
+  :root:not([data-theme="light"]) .hl-key { color: #58c8c8; }
+}
+.rtm-check.inline { display: inline-flex; align-items: center; gap: 6px; margin: 0; white-space: nowrap; }
 
 .rtm-times { width: 15rem; min-width: 8rem; }
 

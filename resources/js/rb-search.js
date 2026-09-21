@@ -2,6 +2,7 @@
    12. SEARCH FUNCTIONALITY
    ========================================================================== */
 
+'use strict';   // see the script manifest in rb.html for why
 /**
  * Convert wildcard pattern to regular expression
  * @param {string} pattern - Wildcard pattern (supports *)
@@ -319,7 +320,7 @@ function filterTree(searchTerm) {
   });
 
   // notify subscribers (background expansion, telemetry, etc.)
-  try { EventBus.emit('search:changed', { term: searchTerm }); } catch (e) { console.warn('filterTree emit failed', e); }
+  try { EventBus.emit('search:changed', { term: searchTerm }); } catch (e) { kvotWarn('filterTree emit failed', e); }
 }
 
 // ---- Search-aware lazy expansion helpers --------------------------------

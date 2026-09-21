@@ -2,6 +2,7 @@
    13. DRAG & DROP FILE LOADING
    ========================================================================== */
 
+'use strict';   // see the script manifest in rb.html for why
 /**
  * Prevent default browser behavior for drag events.
  * Required to enable custom drop handling for HDF5 files.

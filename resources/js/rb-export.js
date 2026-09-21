@@ -2,6 +2,7 @@
    14. CLIPBOARD & EXPORT
    ========================================================================== */
 
+'use strict';   // see the script manifest in rb.html for why
 /**
  * Copy the current chart to clipboard as a PNG image.
  * Uses the Clipboard API with ClipboardItem for image data.

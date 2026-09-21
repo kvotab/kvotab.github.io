@@ -522,13 +522,19 @@ async def main():
                   f'{first} ({unit})' if unit else first)
 
             # --- the picker's shape ---------------------------------------------
-            # Three named groups rather than one wall of a hundred and thirty
-            # names, and what is ticked repeated as chips above, each of which
-            # removes its own.
+            # Named groups rather than one wall of a hundred and thirty names,
+            # and what is ticked repeated as chips above, each of which
+            # removes its own. A reaction that named its net rate is a fourth
+            # kind of thing and gets a group to itself.
             check('the names are grouped by what they are', await page.ev(
                 "[...document.querySelectorAll('#facSeries .fac-group h4')]"
                 ".map(h => h.firstChild.textContent.trim()).join(',')"),
-                'Outputs,Equations,Species')
+                'Outputs,Equations,Reaction rates,Species')
+            check('the named corrosion rates are in that group', await page.ev(
+                "(() => { const g = [...document.querySelectorAll('#facSeries .fac-group')]"
+                ".find(e => e.querySelector('h4').firstChild.textContent.trim() === 'Reaction rates');"
+                " return g ? [...g.querySelectorAll('input')].map(i => i.value).join(',') : ''; })()"),
+                'RH2OIN,ROXID,ROXIDW,RANOX')
             check('what is ticked is shown as a chip', await page.ev(
                 "[...document.querySelectorAll('.fac-chip')].map(c => c.dataset.series).join(',')"),
                 first)
@@ -577,6 +583,48 @@ async def main():
             await asyncio.sleep(0.6)
             check('the table fills', await page.ev(
                 "document.querySelectorAll('#facTable tbody tr').length") > 0, True)
+
+            # --- the model's own output times -----------------------------------
+            # A <TIMES> section asks for values at times of its own, between
+            # the solver's steps. The option appears only when the model has
+            # one, the table switches to it, and the CSV button stops saying
+            # "all steps" -- which it would otherwise be doing while writing
+            # something else.
+            check('the output-times option is offered', await page.ev(
+                "!document.querySelector('#facTableRows option[value=times]').hidden"), True)
+            check('and says how many there are', await page.ev(
+                r"/\(\d+\)/.test(document.querySelector('#facTableRows option[value=times]').textContent)"), True)
+            steps_rows = await page.ev("document.querySelectorAll('#facTable tbody tr').length")
+            await set_control(page, '#facTableRows', 'times')
+            await asyncio.sleep(0.5)
+            grid_rows = await page.ev("document.querySelectorAll('#facTable tbody tr').length")
+            check('choosing it changes the rows', grid_rows not in (0, steps_rows), True)
+            check('and the note says where they came from', await page.ev(
+                "document.getElementById('facTableNote').textContent.includes('the model asks for')"), True)
+            check('and the CSV button says what it will write', await page.ev(
+                "document.getElementById('facCsvBtn').textContent"), 'Download CSV (output times)')
+            # The run is a hundredth of a year, so most of the grid is past its
+            # end; the times that are there have to be the ones asked for, in
+            # order. The clock is TIMH, which is not the first column -- the
+            # equations are reported before the outputs -- so it is found by
+            # its heading rather than by position.
+            check('the times are the ones the model asked for, in order', await page.ev(
+                "(() => { const heads = [...document.querySelectorAll('#facTable thead th')]"
+                ".map(h => h.textContent);"
+                " const k = heads.indexOf('TIMH');"
+                " if (k < 0) return 'no TIMH column';"
+                " const r = [...document.querySelectorAll('#facTable tbody tr')]"
+                ".map(x => parseFloat(x.cells[k].textContent));"
+                " if (!(r.length > 1)) return 'too few rows';"
+                " if (!r.every((v, i) => i === 0 || v > r[i - 1])) return 'not increasing';"
+                " const want = [1, 2, 3, 4, 4.2, 4.5, 4.8, 5];"
+                " const missing = want.filter(w => !r.some(v => Math.abs(v - w) < 1e-6));"
+                " return missing.length ? 'missing ' + missing.join(',') : 'ok'; })()"), 'ok')
+            await set_control(page, '#facTableRows', '200')
+            await asyncio.sleep(0.4)
+            check('and going back restores the label', await page.ev(
+                "document.getElementById('facCsvBtn').textContent"), 'Download CSV (all steps)')
+
             await click(page, '[data-tab="jacobian"]')
             await asyncio.sleep(0.5)
             check('the Jacobian is drawn', await page.ev(
@@ -926,9 +974,14 @@ async def main():
             await set_control(page, '#facPreset', '13g')
             await settle(page, "document.getElementById('facPresetDesc')"
                                ".textContent.slice(0, 4)", '13g:', tries=60)
-            check('a variant says it is not in the report', await page.ev(
-                "document.getElementById('facPresetRef').textContent"
-                ".startsWith('Not in SKB TR-22-15 Table 3-1.')"), True)
+            # A zero-argon variant is not in TR-22-15, but it is not
+            # undocumented: it is one of the seven cases of the delivery note
+            # on removing the argon, and the line says so and names the
+            # FACSIMILE file it was run as.
+            check('a variant cites the note it comes from instead of the report', await page.ev(
+                "(() => { const t = document.getElementById('facPresetRef').textContent;"
+                " return t.startsWith('Case 13g of the note') && t.includes('Zero Argon')"
+                " && t.includes('skbcanister13g.fac'); })()"), True)
 
             # --- a stored text written against an older built-in model ----------
             # The page restores what was in the editor last time, which is right
@@ -1081,6 +1134,108 @@ async def main():
             check('the window itself does not scroll', await page.ev(
                 "(() => { const de = document.documentElement;"
                 " return de.scrollHeight - de.clientHeight; })()"), 0)
+
+            # --- colouring the model text ---------------------------------------
+            # Last, and from a fresh load of the page, for two reasons: the
+            # colouring is remembered between visits, so a check that changed
+            # it would be read by everything after it and by the next run of
+            # this file; and the default can only be seen when nothing is
+            # stored, which means clearing the entry and navigating back.
+            #
+            # The coloured copy is a second element underneath the textarea, so
+            # the two have to agree on every metric that decides where a
+            # character lands. A mismatch is invisible in an empty file and
+            # glaring in a full one, which is why it is measured here rather
+            # than eyeballed.
+            await page.send('Page.navigate', {'url': 'http://127.0.0.1:8765/'})
+            await asyncio.sleep(1.2)
+            check('the stored colouring choice can be cleared', await page.ev(r"""(() => {
+              const kept = JSON.parse(localStorage.getItem('kvot-facsimile-v1') || 'null');
+              if (!kept) return 'nothing stored';
+              delete kept.syntax;
+              localStorage.setItem('kvot-facsimile-v1', JSON.stringify(kept));
+              return 'syntax' in JSON.parse(localStorage.getItem('kvot-facsimile-v1')) ? 'still there' : 'cleared';
+            })()"""), 'cleared')
+            await page.send('Page.navigate', {'url': URL})
+            await asyncio.sleep(2.5)
+            await settle(page, "document.getElementById('facStatus').textContent !== 'Loading…'", True)
+            await click(page, '[data-tab="model"]')
+            await asyncio.sleep(0.5)
+
+            check('a visit that has never said otherwise gets the colouring', await page.ev(
+                "document.getElementById('facCodeBox').classList.contains('hl')"
+                " && document.getElementById('facSyntax').checked"), True)
+            check('and the coloured copy holds the same text as the box', await page.ev(
+                "(() => { const ta = document.getElementById('facModelText');"
+                " const pre = document.querySelector('#facHighlight code');"
+                " return pre.textContent.replace(/\\n$/, '') === ta.value; })()"), True)
+            check('with the sections, comments, numbers, functions and keywords marked up', await page.ev(
+                "(() => { const q = (c) => document.querySelectorAll('#facHighlight .' + c).length;"
+                " return [q('hl-sec') > 5, q('hl-com') > 20, q('hl-num') > 50, q('hl-fn') > 5, q('hl-key') > 5]"
+                ".join(','); })()"), 'true,true,true,true,true')
+            check('a keyword is only one where it means something', await page.ev(
+                "[...document.querySelectorAll('#facHighlight .hl-key')]"
+                ".every(e => ['kf', 'kb', 'keq', 'rf', 'rb', 'rate', 'up', 'down', 'both', 'stop',"
+                " 'log', 'lin'].includes(e.textContent))"), True)
+            check('and the two boxes are laid out identically', await page.ev(
+                "(() => { const ta = document.getElementById('facModelText');"
+                " const pre = document.getElementById('facHighlight');"
+                " const a = getComputedStyle(ta), b = getComputedStyle(pre);"
+                " return ['fontFamily', 'fontSize', 'lineHeight', 'letterSpacing', 'paddingLeft',"
+                " 'paddingTop', 'borderLeftWidth', 'tabSize', 'whiteSpace'].every(k => a[k] === b[k]); })()"), True)
+            check('and the same size in the same place, to the pixel', await page.ev(
+                "(() => { const ta = document.getElementById('facModelText').getBoundingClientRect();"
+                " const pre = document.getElementById('facHighlight').getBoundingClientRect();"
+                " return Math.abs(ta.width - pre.width) < 0.5 && Math.abs(ta.height - pre.height) < 0.5"
+                " && Math.abs(ta.top - pre.top) < 0.5 && Math.abs(ta.left - pre.left) < 0.5; })()"), True)
+            # Scrolling the box has to take the copy with it, or the colours
+            # stop lining up with the characters they belong to.
+            await page.ev("(() => { const ta = document.getElementById('facModelText');"
+                          " ta.scrollTop = 900; ta.dispatchEvent(new Event('scroll')); })()")
+            await asyncio.sleep(0.3)
+            check('scrolling the box scrolls the copy with it', await page.ev(
+                "(() => { const ta = document.getElementById('facModelText');"
+                " const pre = document.getElementById('facHighlight');"
+                " return ta.scrollTop > 0 && pre.scrollTop === ta.scrollTop; })()"), True)
+            # Typing has to repaint at once: the textarea's own text is
+            # transparent, so a copy left behind would show the reader nothing.
+            await page.ev("(() => { const ta = document.getElementById('facModelText');"
+                          " ta.value = ta.value + '# a new comment line\\n';"
+                          " ta.dispatchEvent(new Event('input', { bubbles: true })); })()")
+            check('typing repaints the copy at once', await page.ev(
+                "document.querySelector('#facHighlight code').textContent.includes('a new comment line')"), True)
+            check('and colours what was typed', await page.ev(
+                "[...document.querySelectorAll('#facHighlight .hl-com')]"
+                ".some(e => e.textContent.includes('a new comment line'))"), True)
+
+            await page.ev("(() => { const c = document.getElementById('facSyntax');"
+                          " c.checked = false; c.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.3)
+            check('turning it off hides the copy', await page.ev(
+                "(() => { const box = document.getElementById('facCodeBox');"
+                " const pre = document.getElementById('facHighlight');"
+                " return !box.classList.contains('hl') && getComputedStyle(pre).display === 'none'; })()"), True)
+            # Reported as the colour itself rather than as a yes or no: when
+            # this goes wrong the value is the whole diagnosis.
+            check('and gives the box its own text back', await page.ev(
+                "(() => { const c = getComputedStyle(document.getElementById('facModelText')).color;"
+                " return /^rgba?\\([^)]*,\\s*0\\)$/.test(c) ? 'transparent: ' + c : 'opaque'; })()"), 'opaque')
+            check('the choice is written to storage at once', await page.ev(
+                "JSON.parse(localStorage.getItem('kvot-facsimile-v1') || '{}').syntax"), False)
+
+            await page.send('Page.navigate', {'url': URL})
+            await asyncio.sleep(2.5)
+            await settle(page, "document.getElementById('facStatus').textContent !== 'Loading…'", True)
+            check('and survives a reload', await page.ev(
+                "!document.getElementById('facSyntax').checked"
+                " && !document.getElementById('facCodeBox').classList.contains('hl')"), True)
+            # Left on, which is the default, so the next run of this file
+            # starts where this one found the page.
+            await page.ev("(() => { const c = document.getElementById('facSyntax');"
+                          " c.checked = true; c.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.3)
+            check('and can be turned back on', await page.ev(
+                "document.getElementById('facCodeBox').classList.contains('hl')"), True)
 
             errors = [f'{kind}: {text}' for kind, text in page.logs if kind in ('error', 'exception')]
             check('no console errors', errors, [])

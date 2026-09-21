@@ -1,9 +1,10 @@
 # facsimile.html — tests
 
-Five of them: `run.js` checks the numbers against the reference results,
-`test-limits.js` checks that a long run stays bounded, `test-hdf5.py` checks
-the HDF5 file the page writes with the real library, `test-ui.py` checks the
-page in a real browser, and `test-worker.py` checks where the work is put.
+Six of them: `run.js` checks the numbers against the reference results,
+`test-features.js` checks what the model language gained from the FACSIMILE
+manuals, `test-limits.js` checks that a long run stays bounded, `test-hdf5.py`
+checks the HDF5 file the page writes with the real library, `test-ui.py` checks
+the page in a real browser, and `test-worker.py` checks where the work is put.
 None of them needs the network.
 
 The page also offers seven solvers ported from DifferentialEquations.jl. They
@@ -25,7 +26,8 @@ node resources/tests/facsimile/run.js --norm rms --matrix sparse --jacobian nume
 node resources/tests/facsimile/run.js --debug 3.8e8 13g   # Newton and error-test failures after t = 3.8e8 s
 ```
 
-Options: `--solver` (`ndf` or `bdf`), `--rtol`, `--atol` (default 1e-30),
+Options: `--times <file>` (write the model's own output grid to CSV),
+`--no-times` (do not build it), `--solver` (`ndf` or `bdf`), `--rtol`, `--atol` (default 1e-30),
 `--belowtol` (steps at the floor that may be accepted after failing the error
 test), `--autoatol` (let the absolute tolerance follow the solution upwards),
 `--norm max|rms`, `--maxorder 1..5`, `--hmax` (seconds), `--matrix
@@ -37,8 +39,98 @@ auto|sparse|dense`, `--jacobian analytic|numeric`, `--no-nonneg` (the projection
 * `ref/py_<case>.csv` — the Python port (`skbcanister.py`, SciPy BDF with
   the tolerances of `test_skbcanister.py`), subsampled from
   `Scenario_<case>_python.xlsx` at 28 times between 1e-3 h and 500 years.
+* `ref/fac_<case>.csv` — **SKB's own delivered FACSIMILE result** for the same
+  case, 48 log-spaced rows of the study's result workbooks. There are 38 of
+  them, one for nearly every preset. `scripts/gen-facsimile-ref.py` writes
+  them from the delivery folders, which are not in this repository; run it
+  with `--source` pointing at them, or `--list` to see the matching without
+  writing anything.
 * `ref/fac_13g_pcair003.csv` — the FACSIMILE output in `Transfer/out*COR13g.prn`
   (case 13g as run there: 3 % air, no argon), used by the preset `13g-fac`.
+
+Both references are used where both exist, and `--ref python` or `--ref
+facsimile` picks one. The Python port is what this engine was written against
+and agrees with it to about 1e-6; the FACSIMILE result is the model's own
+answer and is the one that settles a disagreement between them.
+
+WHICH WORKBOOK IS WHICH CASE is worked out from the numbers rather than read
+off the file name: the generator asks the page what each preset starts from
+and requires the workbook's own first row to agree. The names invite a wrong
+guess — `Scenario7crev1` for a preset called 7, `scenario16prime` for one
+called 16p, two different `scenario18` files in two different folders — and
+three files match nothing and are reported rather than forced. A second trap
+is that the sheets carry blank separator columns, so a header has to be
+mapped to its own column index; filtering the blanks out shifts every column
+after the first gap and reads one species' numbers under another's name,
+which is silent and plausible.
+
+### What the FACSIMILE reference says
+
+Against the delivered results the engine agrees on the quantities the study
+reports to between 2e-4 and 6e-3 for most cases: pressure, total water,
+nitrogen, ammonia and hydrogen. For case 13g the end of the 500-year run is
+
+| quantity | FACSIMILE | this engine |
+|---|---|---|
+| water (g) | 65.955 | 65.933 |
+| H2 (mol) | 29.069 | 29.071 |
+| NH3 (mol) | 0.29914 | 0.29902 |
+| N2 (mol) | 0.76402 | 0.76367 |
+| pressure (atm) | 0.7531 | 0.7535 |
+
+which also settles a question the page's own Help raises: the 500-year water
+figure is 65.96 g, and the engine's 65.93 at its default tolerance is right
+to four parts in ten thousand rather than merely self-consistent.
+
+**Nitric acid is the exception, and it is a real difference.** Up to about
+15 hours all three agree to under 1 %. After that FACSIMILE keeps HNO3 alive
+for two more years while this engine and the Python port destroy it within
+about a month: at 1200 h FACSIMILE has 1.7e-6 mol and both of the others have
+about 3e-18. The amounts are tiny beside the 0.91 mol of nitrogen, so the
+mass balance and every other species are unaffected, but HNO3 is one of the
+aggressive species the study reports, and how long it persists is not a
+detail. This engine follows the Python port here; whether the port or
+FACSIMILE is right is a question about the chemistry, not about the solver,
+and nothing in this repository answers it. HNO2 and H2O2 disagree the same
+way in cases 13a, 13b, 14, 15 and 16.
+
+The same comparison against the note's own **Table 2**, which prints the
+amounts at 500 years for the seven zero-argon cases, separates the two halves
+of this cleanly. Where corrosion consumes the water and the products are
+hydrogen and ammonia, the engine reproduces the published numbers:
+
+| case | H2 | N2 | NH3 |
+|---|---|---|---|
+| 16′ | 1.8e-6 | 2.2e-4 | 1.2e-4 |
+| 16a | 1.1e-3 | 1.6e-3 | 1.5e-4 |
+| 16b | 1.0e-3 | 4.6e-4 | 1.9e-4 |
+| 13g | 1.0e-3 | 4.3e-4 | 5.2e-5 |
+
+(relative difference from Table 2.) Where there is no corrosion — 16c and 16d
+by construction, 11b because the humidity never reaches 60 % — the acids and
+the peroxide are the main products rather than a trace, and the same
+difference that is invisible above becomes the headline number:
+
+| case | O2 | H2 | HNO3 | HNO2 | H2O2 | N2 |
+|---|---|---|---|---|---|---|
+| 16c | 0.76 | 0.60 | 0.27 | 0.97 | 0.36 | 0.14 |
+| 16d | 0.67 | 0.76 | 0.32 | 0.97 | 0.47 | 0.07 |
+| 11b | 0.13 | 0.39 | 0.16 | 1.00 | 0.80 | 0.006 |
+
+The engine is low on every oxidised-nitrogen product and high on N2, which is
+the same story as the HNO3 curve above seen at the end of the run instead of
+in the middle. So the agreement on the corroding cases is not evidence that
+the whole mechanism matches: it is evidence that hydrogen and ammonia match,
+and those cases have little else left at 500 years.
+
+Two smaller differences the matching turned up, both reported by
+`gen-facsimile-ref.py --list` for every case:
+
+* The delivered 1-atm PWR runs (12, 13a, 14–21) start from 0.6 % more O2 and
+  N2 than the presets built from the report's Table 3-1, and 13d and 13e
+  start at 70.5 °C where the page's low-temperature profile starts at 70.
+* `scenario22_fixed.xlsx` starts with 0.1 g of water where the page's preset
+  22 has 1 g, so it matches no preset and case 22 has no FACSIMILE reference.
 
 For each quantity the report gives the largest relative difference over the
 reference rows where the reference exceeds a floor, with linear interpolation
@@ -77,7 +169,12 @@ It resets the page, solves a short case, and then works the fourth chart --
 another, changing the time axis, toggling the log scale, unticking, clearing,
 filtering the list, leaving the tab and coming back, and solving again. It
 also checks the other three charts, the table, the Jacobian view and the
-console.
+console. Where the model has a `<TIMES>` section, the table's row control
+offers those times: the checks are that the option appears only then, that
+choosing it changes the rows, that the times in the table are the ones the
+model asked for and in order, and that the CSV button stops saying "all
+steps" while it is selected -- a button that named one thing and wrote
+another would be the kind of quiet wrongness nothing else here would catch.
 
 The lower end of a log time axis is checked there too. Left to the data it
 starts at the first stored point, a fraction of a second on this model, so
@@ -89,6 +186,22 @@ box gives the data its say again, and that the box goes away on a linear axis.
 That last one is read from the computed style, not from the attribute: an
 author `display` beats the browser's own `[hidden] { display: none }`, which
 is a trap this page has fallen into once already.
+
+The model text's colouring is checked last, and from a fresh load. It is a
+second copy of the text in a `<pre>` under the textarea, with the textarea's
+own text made transparent over it, which is the only way to colour a text area
+without giving up its undo, its selection and its caret. Everything that
+decides where a character lands therefore has to be identical in the two
+boxes, and that is what is measured: the computed font, size, line height,
+letter spacing, padding, border and tab size, and then the two rectangles to
+within half a pixel. A mismatch there is invisible in an empty file and
+glaring in a full one. The rest is that the copy holds the same text, that
+scrolling the box scrolls the copy with it, that typing repaints the copy at
+once (it must be synchronous: the reader is watching the copy, not the text
+they are typing), that a word is only coloured as a keyword where it means
+something, and that the toggle reaches storage and comes back after a reload.
+It runs last and leaves the page as it found it, because that state is
+remembered between visits and would otherwise be read by the next run.
 
 The panel on the left is checked too: that the buttons at its foot do not move
 when it is scrolled, that a heading folds its section away (measured as the
@@ -187,6 +300,44 @@ downloaded. What `test-ui.py` and `test-worker.py` still assert from all this
 is that a solver giving up arrives as an answer and not as a hang: a message
 saying how many steps it took and how far it got, the part it did integrate
 left on the charts and in the table, and a footer that stops saying "Running…".
+
+## What the model language gained
+
+    node resources/tests/facsimile/test-features.js
+
+Five features were missing against FACSIMILE's own documentation, and
+`test-features.js` checks each of them against what the manuals say it means.
+
+* **A reaction may name its net rate.** `RANOX%K : A = B`, or `rate = RANOX`
+  in this page's own form, reports that reaction's net rate as a quantity of
+  its own — forward less backward, or the absolute rate where one was given.
+  It is FACSIMILE's Technical Reference 1.6, and it is what the 170 `FXn`
+  parameters of the original canister model are. The check is that the value
+  is the flux the derivative is built from, that it can be used in an output,
+  and that emitting it leaves the Jacobian alone.
+* **`deriv(X)` in `<OUTPUTS>`** is a species' time derivative. The original
+  carried five dummy variables to report its apparent G-value for fixed
+  nitrogen; that is now one line, and the check is that it equals what the
+  solver integrates and that its sign turns over where the chemistry does.
+* **Events have a direction and may stop the run.** `down`, `both` and `stop`
+  beside the assignments. A decay crossing a threshold downwards is timed
+  against the analytic answer, and the default — upward only — is checked by
+  showing that the same fall does not fire it.
+* **`<TIMES>`** asks for values at times of the model's own choosing, which is
+  what a WHEN/WHENEVER list did. They are interpolated between accepted steps
+  by the cubic through both ends and both derivatives, so every solver on the
+  menu gives the same grid rather than each its own interpolant; against
+  `exp(-kt)` at rtol 1e-10 the grid is right to about 6e-9 relative.
+* **The functions FACSIMILE has and this did not**: `sin cos tan atan artan
+  tanh amod sign stepf`. Their values are checked against the library and
+  their derivatives against finite differences through the Jacobian. The one
+  trap is at zero, where FACSIMILE's `stepf` is 1 and the `step` this page
+  already had is 0; both are kept, and both are checked.
+
+The last group of checks is on the model the page ships: that the two
+corrosion fluxes it reports are now multiples of the reactions' own named
+rates rather than a second copy of the rate laws, and that they still equal
+what those rate laws gave.
 
 ## What keeps a run bounded
 

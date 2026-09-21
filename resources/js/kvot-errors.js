@@ -46,6 +46,76 @@
    code did not anticipate still arrives somewhere a person can see it.
    ========================================================================== */
 
+/* ==========================================================================
+   DEBUG OUTPUT
+
+   Tracing and repeated warnings are off unless asked for. Before this the
+   rb-* modules printed around ninety console lines on an ordinary load - a
+   running commentary from the tree worker, plus one warning per dataset for
+   every optional attribute that happened to be missing. That is noise a user
+   cannot act on, and it buries the console.errors that matter.
+
+   Turn it on with ?debug=1 in the URL, or, to keep it on across reloads:
+
+       localStorage.setItem('kvotDebug', '1')
+
+   ========================================================================== */
+
+/*
+  Read once, at load. A sandboxed frame throws on both reads, and tracing off
+  is the right answer when we cannot tell.
+*/
+const KVOT_DEBUG = (() => {
+  try {
+    if (new URLSearchParams(location.search).get('debug') === '1') return true;
+  } catch (e) { /* no location to parse */ }
+  try {
+    return localStorage.getItem('kvotDebug') === '1';
+  } catch (e) {
+    return false;
+  }
+})();
+
+/**
+ * Developer tracing. Silent unless debug output is on.
+ *
+ * For the running commentary a subsystem keeps about itself - worker started,
+ * request id, result returned. Nothing a user needs to see.
+ *
+ * @param {...*} args - passed straight to console.debug
+ * @returns {void}
+ */
+function kvotTrace(...args) {
+  if (KVOT_DEBUG) console.debug(...args);
+}
+
+/*
+  Warnings are deduplicated by their first argument, which at every call site
+  is a constant message and not the varying detail. One unreadable attribute in
+  a group of two hundred datasets is worth one line, not two hundred.
+*/
+const _kvotWarnedOnce = new Set();
+
+/**
+ * Warn that something optional could not be read, at most once per message.
+ *
+ * Unlike kvotTrace this still prints with debug off, because it reports real
+ * degradation - a missing unit, a time series that did not parse - that
+ * explains what the user is looking at. With debug on, every occurrence
+ * prints, so a count is recoverable when one is needed.
+ *
+ * @param {string} message - Constant text; also the deduplication key
+ * @param {...*} rest - Varying detail, e.g. the caught error
+ * @returns {void}
+ */
+function kvotWarn(message, ...rest) {
+  if (!KVOT_DEBUG) {
+    if (_kvotWarnedOnce.has(message)) return;
+    _kvotWarnedOnce.add(message);
+  }
+  console.warn(message, ...rest);
+}
+
 /**
  * Report a failure that should not have happened.
  *
@@ -73,10 +143,10 @@ function reportFailure(context, error, options = {}) {
  */
 function ignoreFailure(context, error) {
   if (error === undefined) {
-    console.debug(`[${context}] ignored`);
+    kvotTrace(`[${context}] ignored`);
     return;
   }
-  console.debug(`[${context}] ignored: ${(error && error.message) || error}`);
+  kvotTrace(`[${context}] ignored: ${(error && error.message) || error}`);
 }
 
 /*

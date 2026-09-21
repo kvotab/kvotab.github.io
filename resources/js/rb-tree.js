@@ -2,6 +2,7 @@
    6. TREE VIEW
    ========================================================================== */
 
+'use strict';   // see the script manifest in rb.html for why
 /**
  * Toggle the expand/collapse state of a group node in the tree.
  * Called when clicking the triangle toggle icon.
@@ -531,14 +532,14 @@ async function getIntersectedPathsAsync() {
           ensureTreeWorker();
           if (!treeWorkerH5Ready) {
             tryWorker = await ensureTreeWorkerReady(WORKER_STARTUP_WAIT_MS);
-            console.debug('[getIntersectedPathsAsync] worker readiness after wait=', tryWorker);
+            kvotTrace('[getIntersectedPathsAsync] worker readiness after wait=', tryWorker);
           }
         } catch (e) {
           tryWorker = false;
         }
 
         if (!tryWorker) {
-          console.debug('[getIntersectedPathsAsync] skipping worker path (worker not ready)');
+          kvotTrace('[getIntersectedPathsAsync] skipping worker path (worker not ready)');
         } else {
           // Keep worker as the preferred path but eventually fall back to the
           // main-thread collector if the worker stalls. Use a longer timeout
@@ -552,19 +553,19 @@ async function getIntersectedPathsAsync() {
               workerP,
               new Promise((_, rej) => setTimeout(() => rej(new Error('worker quick-fallback')), WORKER_QUICK_FALLBACK_MS))
             ]);
-            console.debug('[getIntersectedPathsAsync] worker returned', (paths && paths.length) || 0);
+            kvotTrace('[getIntersectedPathsAsync] worker returned', (paths && paths.length) || 0);
             return new Set(paths || []);
           } catch (workerErr) {
             // quick fallback — try to cancel the in-flight worker request so
             // it doesn't remain pending and interfere with later runs.
-            console.warn('[getIntersectedPathsAsync] worker slow/failed, falling back to main-thread:', workerErr);
+            kvotWarn('[getIntersectedPathsAsync] worker slow/failed, falling back to main-thread:', workerErr);
             try {
               const wid = workerP && workerP._workerId;
               if (wid && _treeWorkerPending[wid]) {
                 try { clearTimeout(_treeWorkerPending[wid]._timeout); } catch (e) { ignoreFailure('getIntersectedPathsAsync', e); }
                 try { ensureTreeWorker().postMessage({ cmd: 'cancel', id: wid }); } catch (e) { ignoreFailure('getIntersectedPathsAsync', e); }
                 delete _treeWorkerPending[wid];
-                console.debug('[getIntersectedPathsAsync] cancelled in-flight worker id=', wid);
+                kvotTrace('[getIntersectedPathsAsync] cancelled in-flight worker id=', wid);
               }
             } catch (e) { ignoreFailure('getIntersectedPathsAsync', e); }
 
@@ -574,9 +575,9 @@ async function getIntersectedPathsAsync() {
             try {
               ensureTreeWorkerReady(10000).then((ok) => {
                 if (ok && isIntersectMode() && !window._treeRefreshId) {
-                  console.debug('[getIntersectedPathsAsync] worker became ready after fallback — refreshing intersection tree');
+                  kvotTrace('[getIntersectedPathsAsync] worker became ready after fallback — refreshing intersection tree');
                   refreshTreeStructure().catch((refreshErr) => {
-                    console.warn('[getIntersectedPathsAsync] follow-up intersection refresh failed', refreshErr);
+                    kvotWarn('[getIntersectedPathsAsync] follow-up intersection refresh failed', refreshErr);
                   });
                 }
               }).catch(() => {});
@@ -591,13 +592,13 @@ async function getIntersectedPathsAsync() {
     if (window._treeRefreshCancelled) throw new Error('cancelled');
     const file = loadedFiles[fileKey];
     if (!file) {
-      console.debug('[getIntersectedPathsAsync] skipping not-yet-loaded file=', fileKey);
+      kvotTrace('[getIntersectedPathsAsync] skipping not-yet-loaded file=', fileKey);
       continue;
     }
     // use async collector so we don't block the UI
-    console.debug('[getIntersectedPathsAsync] collecting paths for', fileKey);
+    kvotTrace('[getIntersectedPathsAsync] collecting paths for', fileKey);
     const filePaths = await collectAllPathsAsync(file, '');
-    console.debug('[getIntersectedPathsAsync] collected', filePaths.size, 'paths for', fileKey);
+    kvotTrace('[getIntersectedPathsAsync] collected', filePaths.size, 'paths for', fileKey);
     if (window._treeRefreshCancelled) throw new Error('cancelled');
     if (intersection === null) {
       intersection = filePaths;
@@ -634,9 +635,9 @@ async function getUnionPathsAsync() {
     const file = loadedFiles[fileKey];
     if (!file) continue;
 
-    console.debug('[getUnionPathsAsync] collecting paths for', fileKey);
+    kvotTrace('[getUnionPathsAsync] collecting paths for', fileKey);
     const filePaths = await collectAllPathsAsync(file, '');
-    console.debug('[getUnionPathsAsync] collected', filePaths.size, 'paths for', fileKey);
+    kvotTrace('[getUnionPathsAsync] collected', filePaths.size, 'paths for', fileKey);
     if (window._treeRefreshCancelled) throw new Error('cancelled');
 
     for (const p of filePaths) {
@@ -663,11 +664,11 @@ function ensureTreeWorker() {
       if (!d || !d.id) {
         if (d && d.cmd === 'h5ready') {
           treeWorkerH5Ready = true;
-          console.debug('[ensureTreeWorker] worker reported h5ready');
+          kvotTrace('[ensureTreeWorker] worker reported h5ready');
           return;
         }
         if (d && d.cmd === 'started') {
-          console.debug('[ensureTreeWorker] worker thread started');
+          kvotTrace('[ensureTreeWorker] worker thread started');
           return;
         }
         // route other generic notifications (ignore by default)
@@ -679,11 +680,11 @@ function ensureTreeWorker() {
 
       const p = _treeWorkerPending[d.id];
       if (!p) {
-        console.debug('[ensureTreeWorker] message for unknown id=', d.id, d.cmd);
+        kvotTrace('[ensureTreeWorker] message for unknown id=', d.id, d.cmd);
         return;
       }
       if (d.cmd === 'result') {
-        console.debug('[ensureTreeWorker] worker result id=', d.id, 'paths=', (d.intersectedPaths || []).length);
+        kvotTrace('[ensureTreeWorker] worker result id=', d.id, 'paths=', (d.intersectedPaths || []).length);
         clearTimeout(p._timeout);
         p.resolve(d.intersectedPaths || []);
         delete _treeWorkerPending[d.id];
@@ -702,21 +703,21 @@ function ensureTreeWorker() {
           }, 30000);
         } catch (e) { ignoreFailure('ensureTreeWorker', e); }
       } else if (d.cmd === 'error') {
-        console.warn('[ensureTreeWorker] worker error id=', d.id, d.message || '');
+        kvotWarn('[ensureTreeWorker] worker error id=', d.id, d.message || '');
         clearTimeout(p._timeout);
         p.reject(new Error(d.message || 'worker error'));
         delete _treeWorkerPending[d.id];
       } else if (d.cmd === 'cancelled') {
-        console.debug('[ensureTreeWorker] worker cancelled id=', d.id);
+        kvotTrace('[ensureTreeWorker] worker cancelled id=', d.id);
         clearTimeout(p._timeout);
         p.reject(new Error('cancelled'));
         delete _treeWorkerPending[d.id];
       }
     };
-    treeWorker.onerror = (err) => { console.warn('treeWorker error', err); };
+    treeWorker.onerror = (err) => { kvotWarn('treeWorker error', err); };
     return treeWorker;
   } catch (e) {
-    console.warn('could not create tree worker', e);
+    kvotWarn('could not create tree worker', e);
     treeWorker = null;
     return null;
   }
@@ -731,14 +732,14 @@ function computeIntersectedPathsViaWorker(enabledFiles) {
     _workerId = `${Date.now()}-${Math.random().toString(36).slice(2,9)}`;
     const id = _workerId;
 
-    console.debug('[computeIntersectedPathsViaWorker] starting id=', id, 'files=', enabledFiles.length);
+    kvotTrace('[computeIntersectedPathsViaWorker] starting id=', id, 'files=', enabledFiles.length);
     const files = [];
     const transfers = [];
     for (const k of enabledFiles) {
       const buf = loadedFileBuffers[k];
       if (!(buf instanceof ArrayBuffer)) {
         // fallback — abort
-        console.warn('[computeIntersectedPathsViaWorker] missing buffer for', k);
+        kvotWarn('[computeIntersectedPathsViaWorker] missing buffer for', k);
         return reject(new Error('missing file buffer for ' + k));
       }
       const copy = buf.slice(0);
@@ -754,7 +755,7 @@ function computeIntersectedPathsViaWorker(enabledFiles) {
         try { worker.postMessage({ cmd: 'cancel', id }); } catch (e) { ignoreFailure('computeIntersectedPathsViaWorker', e); }
         try { clearTimeout(_treeWorkerPending[id]._timeout); } catch (e) { ignoreFailure('computeIntersectedPathsViaWorker', e); }
         delete _treeWorkerPending[id];
-        console.warn('[computeIntersectedPathsViaWorker] request timed out id=', id);
+        kvotWarn('[computeIntersectedPathsViaWorker] request timed out id=', id);
         reject(new Error('worker timeout'));
       }, 30000)
     };
@@ -786,13 +787,13 @@ function ensureTreeWorkerReady(timeoutMs = 5000) {
     // against a timeout so we don't block file loading indefinitely.
     return Promise.race([
       computeIntersectedPathsViaWorker([]).then(() => true).catch((e) => {
-        console.debug('[ensureTreeWorkerReady] pre-warm failed', e && e.message ? e.message : e);
+        kvotTrace('[ensureTreeWorkerReady] pre-warm failed', e && e.message ? e.message : e);
         return false;
       }),
       new Promise(resolve => setTimeout(() => resolve(false), timeoutMs))
     ]);
   } catch (e) {
-    console.warn('[ensureTreeWorkerReady] error', e && e.message ? e.message : e);
+    kvotWarn('[ensureTreeWorkerReady] error', e && e.message ? e.message : e);
     return Promise.resolve(false);
   }
 }
@@ -892,19 +893,19 @@ async function refreshTreeStructure() {
         }
         throw err;
       }
-      try { window._currentIntersectedPaths = intersectedPaths; console.debug('[refreshTreeStructure] intersectedPaths size=', intersectedPaths ? intersectedPaths.size : 'null', 'enabledFiles=', enabledFiles); } catch (e) { ignoreFailure('refreshTreeStructure', e); }
+      try { window._currentIntersectedPaths = intersectedPaths; kvotTrace('[refreshTreeStructure] intersectedPaths size=', intersectedPaths ? intersectedPaths.size : 'null', 'enabledFiles=', enabledFiles); } catch (e) { ignoreFailure('refreshTreeStructure', e); }
 
       // If intersect produced an empty set unexpectedly, allow one short retry
       if (intersectedPaths && intersectedPaths.size === 0 && enabledFiles.length > 1) {
         try {
-          console.debug('[refreshTreeStructure] intersectedPaths empty — retrying once after 150ms');
+          kvotTrace('[refreshTreeStructure] intersectedPaths empty — retrying once after 150ms');
           await new Promise(r => setTimeout(r, 150));
           const retry = await getIntersectedPathsAsync();
           intersectedPaths = retry || intersectedPaths;
           try { window._currentIntersectedPaths = intersectedPaths; } catch (e) { ignoreFailure('refreshTreeStructure', e); }
-          console.debug('[refreshTreeStructure] retry intersectedPaths size=', intersectedPaths ? intersectedPaths.size : 'null');
+          kvotTrace('[refreshTreeStructure] retry intersectedPaths size=', intersectedPaths ? intersectedPaths.size : 'null');
         } catch (e) {
-          console.debug('[refreshTreeStructure] retry failed or cancelled', e && e.message);
+          kvotTrace('[refreshTreeStructure] retry failed or cancelled', e && e.message);
         }
       }
     } else if (treeMode === 'union') {
@@ -924,7 +925,7 @@ async function refreshTreeStructure() {
         intersectedPaths = unionResult.paths;
         window._currentIntersectedPaths = intersectedPaths;
         window._unionPathOwnership = unionResult.ownership;
-        console.debug('[refreshTreeStructure] unionPaths size=', intersectedPaths.size);
+        kvotTrace('[refreshTreeStructure] unionPaths size=', intersectedPaths.size);
       }
     } else {
       // Separated mode
@@ -1049,7 +1050,7 @@ async function refreshTreeStructure() {
 
     // Post-refresh validation: ensure the right-panel selection/chart
     // reflect the newly-built tree / intersected set.
-    try { refreshInfoAndChart(); } catch (e) { console.warn('refreshInfoAndChart after refreshTreeStructure failed', e); }
+    try { refreshInfoAndChart(); } catch (e) { kvotWarn('refreshInfoAndChart after refreshTreeStructure failed', e); }
   } catch (err) {
     tree.innerHTML = `<div class="error">Error loading tree: ${escapeHtml(err.message)}</div>`;
     console.error(err);
@@ -1130,18 +1131,121 @@ function getPathChildIndex(paths) {
   return index;
 }
 
+/**
+ * A bare .tree-item div with the given extra classes.
+ *
+ * Was a closure inside buildTree; it captures nothing, so nesting it only kept
+ * it out of reach of the branch builder split out of the same function.
+ *
+ * @param {string} [classes] - extra class names
+ * @returns {HTMLDivElement}
+ */
+function makeTreeItem(classes = '') {
+  const el = document.createElement('div');
+  el.className = `tree-item ${classes}`.trim();
+  return el;
+}
+
+/**
+ * Append one group row to the tree, with its children beneath it.
+ *
+ * Split out of buildTree, where this was 72 of that function's 303 lines. The
+ * children come from recursing into buildTree, except at the top level under
+ * lazy loading, where an empty placeholder is appended instead and filled when
+ * the group is first expanded.
+ *
+ * A group whose recursion returns nothing is not necessarily empty - it may
+ * have been depth-limited - so the wrapper is marked lazy when the group does
+ * have keys, and labelled "(empty)" only when it genuinely has none.
+ *
+ * @param {Object} ctx - see the destructuring below
+ * @returns {Promise<void>}
+ */
+async function appendGroupTreeRow(ctx) {
+  const {
+    obj, key, path, container, fileKey, intersectedPaths, pathOwnership,
+    progressCb, topLevelLazy, prefix, maxDepth, linkBadgeEl, availBadgeEl
+  } = ctx;
+  const isSelected = selectedDatasetPath === path && selectedIsRadionuclidesGroup;
+
+  let groupExpandable = true;
+  if (intersectedPaths) {
+    const childIndex = getPathChildIndex(intersectedPaths);
+    groupExpandable = !!(childIndex && childIndex.has(path));
+  }
+
+  const groupItem = makeTreeItem('group' + (isSelected ? ' expanded' : ''));
+  groupItem.setAttribute('data-path', path);
+  if (fileKey) groupItem.setAttribute('data-file', fileKey);
+
+  const groupInfoHtml = getNodeInformationHtml(obj);
+  if (groupInfoHtml) attachTreeInfoHover(groupItem, groupInfoHtml);
+
+  const toggleDiv = document.createElement('div');
+  if (groupExpandable) {
+    toggleDiv.className = 'tree-toggle' + (isSelected ? '' : ' collapsed');
+    toggleDiv.textContent = '▶';
+  } else {
+    toggleDiv.className = 'tree-toggle no-toggle';
+  }
+
+  const icon = document.createElement('div'); icon.className = 'tree-icon folder';
+  const label = document.createElement('div'); label.className = 'tree-label';
+  label.appendChild(document.createTextNode(key));
+  if (linkBadgeEl) label.appendChild(linkBadgeEl);
+  if (availBadgeEl) label.appendChild(availBadgeEl);
+
+  groupItem.appendChild(toggleDiv); groupItem.appendChild(icon); groupItem.appendChild(label);
+  container.appendChild(groupItem);
+  if (typeof progressCb === 'function') progressCb(1, path);
+
+  try {
+    if (topLevelLazy && prefix === '') {
+      const placeholder = document.createElement('div');
+      placeholder.className = 'tree-group-children' + (isSelected ? ' expanded' : '');
+      placeholder.setAttribute('data-lazy', 'true');
+      placeholder.setAttribute('data-loaded', 'false');
+      container.appendChild(placeholder);
+    } else {
+      const subFrag = await buildTree(obj, path, true, '', intersectedPaths, fileKey, progressCb, false, (typeof maxDepth === 'number' ? maxDepth - 1 : Infinity), pathOwnership);
+      const childrenWrapper = document.createElement('div');
+      childrenWrapper.className = 'tree-group-children' + (isSelected ? ' expanded' : '');
+
+      if (subFrag && subFrag.childNodes.length > 0) {
+        childrenWrapper.appendChild(subFrag);
+      } else {
+        const hasChildren = (FileService.keys(obj) || []).length > 0;
+        if (hasChildren) {
+          childrenWrapper.setAttribute('data-lazy', 'true');
+          childrenWrapper.setAttribute('data-loaded', 'false');
+        } else {
+          const empty = document.createElement('div');
+          empty.style.color = '#999'; empty.style.padding = '8px'; empty.style.fontSize = '12px';
+          empty.textContent = '(empty)';
+          childrenWrapper.appendChild(empty);
+        }
+      }
+      container.appendChild(childrenWrapper);
+    }
+  } catch (subErr) {
+    console.error('Error getting sub-items for', key, subErr);
+    const errorWrapper = document.createElement('div');
+    errorWrapper.className = 'tree-group-children';
+    const msg = document.createElement('div');
+    msg.style.color = 'red'; msg.style.padding = '8px'; msg.style.fontSize = '12px';
+    msg.textContent = `(error: ${subErr?.message || subErr})`;
+    errorWrapper.appendChild(msg);
+    container.appendChild(errorWrapper);
+    if (typeof progressCb === 'function') progressCb(1, path);
+  }
+}
+
 async function buildTree(group, prefix = '', isNested = false, fileName = '', intersectedPaths = null, fileKey = null, progressCb = null, lazyLoad = false, maxDepth = Infinity, pathOwnership = null) {
   // Return a DocumentFragment containing tree node elements (not HTML string).
   const frag = document.createDocumentFragment();
   // depth guard for incremental rendering (maxDepth=0 => render nothing)
   if (typeof maxDepth === 'number' && maxDepth <= 0) return frag;
 
-  // Helper to attach common attributes and listeners to a .tree-item
-  const makeTreeItem = (classes = '') => {
-    const el = document.createElement('div');
-    el.className = `tree-item ${classes}`.trim();
-    return el;
-  };
 
   // Add root group item only at top level
   let rootChildren = null;
@@ -1233,7 +1337,7 @@ async function buildTree(group, prefix = '', isNested = false, fileName = '', in
     let _yieldCounter = 0;
     for (const key of keys) {
       if (window._treeRefreshCancelled) {
-        console.debug('buildTree: aborting early due to cancellation');
+        kvotTrace('buildTree: aborting early due to cancellation');
         break;
       }
 
@@ -1321,78 +1425,10 @@ async function buildTree(group, prefix = '', isNested = false, fileName = '', in
         }
 
         if (objType === 'group') {
-          const isSelected = selectedDatasetPath === path && selectedIsRadionuclidesGroup;
-
-          let groupExpandable = true;
-          if (intersectedPaths) {
-            const childIndex = getPathChildIndex(intersectedPaths);
-            groupExpandable = !!(childIndex && childIndex.has(path));
-          }
-
-          const groupItem = makeTreeItem('group' + (isSelected ? ' expanded' : ''));
-          groupItem.setAttribute('data-path', path);
-          if (fileKey) groupItem.setAttribute('data-file', fileKey);
-
-          const groupInfoHtml = getNodeInformationHtml(obj);
-          if (groupInfoHtml) attachTreeInfoHover(groupItem, groupInfoHtml);
-
-          const toggleDiv = document.createElement('div');
-          if (groupExpandable) {
-            toggleDiv.className = 'tree-toggle' + (isSelected ? '' : ' collapsed');
-            toggleDiv.textContent = '▶';
-          } else {
-            toggleDiv.className = 'tree-toggle no-toggle';
-          }
-
-          const icon = document.createElement('div'); icon.className = 'tree-icon folder';
-          const label = document.createElement('div'); label.className = 'tree-label';
-          label.appendChild(document.createTextNode(key));
-          if (linkBadgeEl) label.appendChild(linkBadgeEl);
-          if (availBadgeEl) label.appendChild(availBadgeEl);
-
-          groupItem.appendChild(toggleDiv); groupItem.appendChild(icon); groupItem.appendChild(label);
-          container.appendChild(groupItem);
-          if (typeof progressCb === 'function') progressCb(1, path);
-
-          try {
-            if (topLevelLazy && prefix === '') {
-              const placeholder = document.createElement('div');
-              placeholder.className = 'tree-group-children' + (isSelected ? ' expanded' : '');
-              placeholder.setAttribute('data-lazy', 'true');
-              placeholder.setAttribute('data-loaded', 'false');
-              container.appendChild(placeholder);
-            } else {
-              const subFrag = await buildTree(obj, path, true, '', intersectedPaths, fileKey, progressCb, false, (typeof maxDepth === 'number' ? maxDepth - 1 : Infinity), pathOwnership);
-              const childrenWrapper = document.createElement('div');
-              childrenWrapper.className = 'tree-group-children' + (isSelected ? ' expanded' : '');
-
-              if (subFrag && subFrag.childNodes.length > 0) {
-                childrenWrapper.appendChild(subFrag);
-              } else {
-                const hasChildren = (FileService.keys(obj) || []).length > 0;
-                if (hasChildren) {
-                  childrenWrapper.setAttribute('data-lazy', 'true');
-                  childrenWrapper.setAttribute('data-loaded', 'false');
-                } else {
-                  const empty = document.createElement('div');
-                  empty.style.color = '#999'; empty.style.padding = '8px'; empty.style.fontSize = '12px';
-                  empty.textContent = '(empty)';
-                  childrenWrapper.appendChild(empty);
-                }
-              }
-              container.appendChild(childrenWrapper);
-            }
-          } catch (subErr) {
-            console.error('Error getting sub-items for', key, subErr);
-            const errorWrapper = document.createElement('div');
-            errorWrapper.className = 'tree-group-children';
-            const msg = document.createElement('div');
-            msg.style.color = 'red'; msg.style.padding = '8px'; msg.style.fontSize = '12px';
-            msg.textContent = `(error: ${subErr?.message || subErr})`;
-            errorWrapper.appendChild(msg);
-            container.appendChild(errorWrapper);
-            if (typeof progressCb === 'function') progressCb(1, path);
-          }
+          await appendGroupTreeRow({
+            obj, key, path, container, fileKey, intersectedPaths, pathOwnership,
+            progressCb, topLevelLazy, prefix, maxDepth, linkBadgeEl, availBadgeEl
+          });
         } else if (objType === 'dataset') {
           const shape = obj.shape?.length ? `${obj.shape.join('×')}` : 'scalar';
           const formattedDtype = formatDataType(obj.dtype);

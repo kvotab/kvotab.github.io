@@ -175,9 +175,28 @@
     pow: { n: 2, js: 'Math.pow' },
     ramp: { n: 1 },     // max(x, 0), FACSIMILE's RAMP
     step: { n: 1 },     // 1 for x > 0, else 0 (derivative 0)
+    // FACSIMILE's own trigonometric and miscellaneous functions (User Guide
+    // 9.3). STEPF differs from step at zero, where FACSIMILE gives 1.
+    sin: { n: 1 },
+    cos: { n: 1 },
+    tan: { n: 1 },
+    atan: { n: 1 },
+    artan: { n: 1 },    // FACSIMILE's spelling
+    tanh: { n: 1 },
+    stepf: { n: 1 },    // 1 for x >= 0, else 0 (FACSIMILE's STEPF)
+    sign: { n: 1 },     // -1, 0, 1
+    amod: { n: 2 },     // a - trunc(a/b)*b
     interp: { n: 2 },   // interp(TABLE, x): piecewise linear, clamped at the ends
     state: { n: 1 },    // state(X): the raw state variable of species X
+    deriv: { n: 1 },    // deriv(X): dX/dt, in <OUTPUTS> only
   };
+
+  /** Whether an expression calls a given function anywhere. */
+  function hasCall(ast, name) {
+    const calls = new Set();
+    collectRefs(ast, new Set(), calls);
+    return calls.has(name);
+  }
 
   /* Names referenced by an expression, and whether it reads t. */
   function collectRefs(ast, refs, calls) {
@@ -185,14 +204,19 @@
       case 'id': refs.add(ast.name); break;
       case 'neg': collectRefs(ast.a, refs, calls); break;
       case 'bin': collectRefs(ast.l, refs, calls); collectRefs(ast.r, refs, calls); break;
-      case 'call':
-        if (calls) calls.add(ast.name.toLowerCase());
-        // The first argument of interp is a table name, not a value.
+      case 'call': {
+        const fname = ast.name.toLowerCase();
+        if (calls) calls.add(fname);
+        // The first argument of interp is a table name, not a value; the
+        // argument of deriv is a species read through its derivative, which
+        // depsOf() handles rather than treating it as an ordinary reference.
         ast.args.forEach((a, i) => {
-          if (ast.name.toLowerCase() === 'interp' && i === 0 && a.type === 'id') return;
+          if (fname === 'interp' && i === 0 && a.type === 'id') return;
+          if (fname === 'deriv' && i === 0 && a.type === 'id') return;
           collectRefs(a, refs, calls);
         });
         break;
+      }
       default: break;
     }
     return refs;
@@ -201,6 +225,58 @@
   /* ------------------------------------------------------------------------
      Model text parser
      ------------------------------------------------------------------------ */
+  /** What <TIMES unit> may say, and how many seconds one of them is. */
+  const TIME_UNITS = { s: 1, min: 60, h: 3600, d: 86400, y: 365.25 * 86400 };
+
+  /**
+   * One <TIMES> line, in the section's unit, as an array of numbers.
+   *
+   * Three forms, the first two of them FACSIMILE's (Technical Reference 4.1.1,
+   * where an output list is a valuelist optionally followed by an increment):
+   *
+   *   1 2 3 4 4.5 5        values, in any order
+   *   0 + 240 * 100        a first value and 100 further steps of 240
+   *   1 .. 1e7 log 50      50 values from 1 to 1e7, logarithmically spaced
+   *   0 .. 500 lin 21      21 values from 0 to 500, evenly spaced
+   *
+   * Numbers only: an output grid that moved with the settings would be a
+   * second thing to keep in step with the scenario list, and the grid is a
+   * property of the report, not of the case.
+   */
+  function parseTimesLine(code, line) {
+    const num = (s) => {
+      const v = Number(String(s).replace(/[dD]/, 'e'));
+      if (!Number.isFinite(v)) throw new ModelError(`"${s}" is not a number`, line);
+      return v;
+    };
+    let m = /^(\S+)\s*\.\.\s*(\S+)\s+(log|lin)\s+(\S+)$/i.exec(code);
+    if (m) {
+      const a = num(m[1]), b = num(m[2]), n = num(m[4]);
+      if (!(Number.isInteger(n) && n >= 2)) throw new ModelError('The count must be a whole number of 2 or more', line);
+      const log = m[3].toLowerCase() === 'log';
+      if (log && !(a > 0 && b > 0)) throw new ModelError('A logarithmic range needs positive ends', line);
+      const out = [];
+      for (let k = 0; k < n; k++) {
+        const f = k / (n - 1);
+        out.push(log ? Math.pow(10, Math.log10(a) + f * (Math.log10(b) - Math.log10(a))) : a + f * (b - a));
+      }
+      return out;
+    }
+    m = /^(\S+)\s*\+\s*(\S+)\s*\*\s*(\S+)$/.exec(code);
+    if (m) {
+      const a = num(m[1]), step = num(m[2]), n = num(m[3]);
+      if (!(Number.isInteger(n) && n >= 1)) throw new ModelError('The number of increments must be a whole number of 1 or more', line);
+      if (!(step > 0)) throw new ModelError('The increment must be positive', line);
+      const out = [a];
+      for (let k = 1; k <= n; k++) out.push(a + k * step);
+      return out;
+    }
+    if (/[+*]|\.\./.test(code)) {
+      throw new ModelError(`A <TIMES> line is values, "first + step * count" or "from .. to log|lin count", got "${code}"`, line);
+    }
+    return code.split(/[\s,]+/).filter(Boolean).map(num);
+  }
+
   const SECTION_RE = /^<\s*([A-Za-z][A-Za-z ]*?)(?:\s+([A-Za-z_][A-Za-z0-9_]*))?\s*>$/;
 
   /** Strips comments: '#', FACSIMILE's ';' terminator with trailing text, '!!' markers. */
@@ -225,6 +301,7 @@
     const model = {
       settings: [], constants: [], species: [], tables: {}, thermo: [],
       initial: [], equations: [], reactions: [], events: [], outputs: [],
+      times: [], timeUnit: 's',
     };
     let section = null;
     let tableName = null;
@@ -242,6 +319,12 @@
           tableName = sec[2];
           if (model.tables[tableName]) throw new ModelError(`Table "${tableName}" is defined twice`, line);
           model.tables[tableName] = { name: tableName, x: [], y: [], line };
+        } else if (section === 'TIMES') {
+          const unit = (sec[2] || 's').toLowerCase();
+          if (!TIME_UNITS[unit]) {
+            throw new ModelError(`<TIMES ${sec[2]}>: the unit must be one of ${Object.keys(TIME_UNITS).join(', ')}`, line);
+          }
+          model.timeUnit = unit;
         } else if (sec[2]) {
           throw new ModelError(`Section <${section}> does not take a name`, line);
         }
@@ -296,18 +379,41 @@
           model.thermo.push({ name: parts[0], coef, line });
           break;
         }
+        case 'TIMES':
+          model.times.push(...parseTimesLine(code, line));
+          break;
         case 'REACTIONS':
           model.reactions.push(parseReactionLine(code, comment, line));
           break;
         case 'EVENTS': {
           const parts = splitTop(code, ',');
-          if (parts.length < 2) throw new ModelError('An event is "expression, NAME = value [, NAME = value]"', line);
-          const assigns = parts.slice(1).map((p) => {
+          if (parts.length < 2) {
+            throw new ModelError('An event is "expression, NAME = value" or "expression, stop" '
+              + '(with up, down or both to choose the direction)', line);
+          }
+          const assigns = [];
+          let direction = null;
+          let stop = false;
+          parts.slice(1).forEach((p) => {
+            const word = p.trim().toLowerCase();
+            if (word === 'up' || word === 'down' || word === 'both') {
+              if (direction !== null) throw new ModelError('An event may only give one direction', line);
+              direction = word === 'up' ? 1 : word === 'down' ? -1 : 0;
+              return;
+            }
+            if (word === 'stop') { stop = true; return; }
             const eq = p.indexOf('=');
-            if (eq < 0) throw new ModelError(`Expected NAME = value in event, got "${p.trim()}"`, line);
-            return { name: p.slice(0, eq).trim(), expr: p.slice(eq + 1).trim() };
+            if (eq < 0) {
+              throw new ModelError(`Expected NAME = value, up, down, both or stop in the event, got "${p.trim()}"`, line);
+            }
+            assigns.push({ name: p.slice(0, eq).trim(), expr: p.slice(eq + 1).trim() });
           });
-          model.events.push({ expr: parts[0].trim(), assigns, line, comment });
+          if (!assigns.length && !stop) {
+            throw new ModelError('An event must do something: assign a setting, or stop the run', line);
+          }
+          model.events.push({
+            expr: parts[0].trim(), assigns, direction: direction === null ? 1 : direction, stop, line, comment,
+          });
           break;
         }
         default:
@@ -333,49 +439,72 @@
   /**
    * One reaction line. Two forms:
    *   A + 2 B = C, kf = expr [, kb = expr | keq = expr]      or rf = / rb =
-   *   [FXn]%kf[%kb] : A + 2 B = C           FACSIMILE, kf and kb rate constants
-   *   = expr : A = B                        FACSIMILE, an absolute rate
+   *                          [, rate = NAME]  names the net rate
+   *   [NAME]%kf[%kb] : A + 2 B = C          FACSIMILE, kf and kb rate constants
+   *   [NAME] = expr : A = B                 FACSIMILE, an absolute rate
+   *
+   * A name before the first % (or before the = of an absolute rate) is
+   * FACSIMILE's own way of asking for the net reaction rate as a quantity of
+   * its own (Technical Reference 1.6); it is what the 170 FXn parameters of
+   * the canister model are. Here it becomes an observable, reportable beside
+   * the outputs and usable in them.
    */
   function parseReactionLine(code, comment, line) {
     let sides, spec = {};
     const colon = code.indexOf(':');
-    if (colon >= 0 && (code.startsWith('%') || code.startsWith('=') || /^FX\d+\s*%/i.test(code))) {
-      const head = code.slice(0, colon).replace(/^FX\d+\s*/i, '').trim();
+    const head = colon >= 0 ? code.slice(0, colon).trim() : '';
+    const facsimile = colon >= 0 && /^(?:[A-Za-z_][A-Za-z0-9_]*\s*)?[%=]/.test(head);
+    if (facsimile) {
+      const named = /^([A-Za-z_][A-Za-z0-9_]*)\s*(?=[%=])/.exec(head);
+      if (named) spec.rate = named[1];
+      const rest = head.slice(named ? named[0].length : 0).trim();
       sides = code.slice(colon + 1).trim();
-      if (head.startsWith('=')) {
-        spec.rf = head.slice(1).trim();
+      if (rest.startsWith('=')) {
+        spec.rf = rest.slice(1).trim();
+        if (!spec.rf) throw new ModelError('An absolute rate needs an expression: "= expr : A = B"', line);
       } else {
-        const rates = head.split('%').map((s) => s.trim()).filter(Boolean);
+        const rates = rest.split('%').map((s) => s.trim()).filter(Boolean);
         if (!rates.length || rates.length > 2) throw new ModelError('FACSIMILE reaction needs %kf or %kf%kb before the colon', line);
         spec.kf = rates[0];
         if (rates[1]) spec.kb = rates[1];
       }
     } else {
+      if (colon >= 0) {
+        // A colon means FACSIMILE's form was intended, and the head did not
+        // parse as one. Saying so beats the error the page's own form gives,
+        // which is about the species term the colon landed in.
+        throw new ModelError(`A colon makes this FACSIMILE's reaction form, which needs a rate `
+          + `before it: "%kf : A = B", "%kf%kb : A = B" or "= rate : A = B", with an optional `
+          + `name for the net rate in front. Got "${head}" before the colon`, line);
+      }
       const parts = splitTop(code, ',');
       sides = parts[0].trim();
       parts.slice(1).forEach((p) => {
         const eq = p.indexOf('=');
         if (eq < 0) throw new ModelError(`Expected kf = ..., kb = ..., keq = ..., rf = ... or rb = ..., got "${p.trim()}"`, line);
         const key = p.slice(0, eq).trim().toLowerCase();
-        if (!['kf', 'kb', 'keq', 'rf', 'rb'].includes(key)) throw new ModelError(`Unknown rate key "${key}" (use kf, kb, keq, rf or rb)`, line);
+        if (!['kf', 'kb', 'keq', 'rf', 'rb', 'rate'].includes(key)) throw new ModelError(`Unknown rate key "${key}" (use kf, kb, keq, rf, rb or rate)`, line);
         if (spec[key]) throw new ModelError(`"${key}" given twice`, line);
         spec[key] = p.slice(eq + 1).trim();
+        if (key === 'rate' && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(spec.rate)) {
+          throw new ModelError(`"rate = ${spec.rate}" needs a name for the net rate, not an expression`, line);
+        }
       });
     }
     const eq = sides.indexOf('=');
     if (eq < 0) throw new ModelError(`A reaction needs "=" between reactants and products: "${code}"`, line);
     const reactants = parseSide(sides.slice(0, eq), line);
     const products = parseSide(sides.slice(eq + 1), line);
-    if (!Object.keys(spec).length) throw new ModelError('A reaction needs a rate: kf, rf (or FACSIMILE %k)', line);
+    if (!(spec.kf || spec.kb || spec.keq || spec.rf || spec.rb)) throw new ModelError('A reaction needs a rate: kf, rf (or FACSIMILE %k)', line);
     if (spec.keq && !spec.kf) throw new ModelError('keq needs kf', line);
     if (spec.kb && spec.keq) throw new ModelError('Give kb or keq, not both', line);
     if (spec.kf && spec.rf) throw new ModelError('Give kf or rf, not both', line);
     if (spec.rb && (spec.kb || spec.keq)) throw new ModelError('Give rb or kb/keq, not both', line);
-    if ((spec.kf || spec.kb || spec.keq) && !reactants.length && spec.kf) {
+    if (!reactants.length && spec.kf) {
       throw new ModelError('A reaction with no reactants needs an absolute rate rf, not kf', line);
     }
     if (spec.kb && !products.length) throw new ModelError('kb needs products', line);
-    return { reactants, products, spec, line, comment, text: code };
+    return { reactants, products, spec, rate: spec.rate || null, line, comment, text: code };
   }
 
   function parseSide(text, line) {
@@ -463,6 +592,14 @@
           case 'pow': return Math.pow(a[0], a[1]);
           case 'ramp': return a[0] > 0 ? a[0] : 0;
           case 'step': return a[0] > 0 ? 1 : 0;
+          case 'stepf': return a[0] >= 0 ? 1 : 0;
+          case 'sin': return Math.sin(a[0]);
+          case 'cos': return Math.cos(a[0]);
+          case 'tan': return Math.tan(a[0]);
+          case 'atan': case 'artan': return Math.atan(a[0]);
+          case 'tanh': return Math.tanh(a[0]);
+          case 'sign': return Math.sign(a[0]);
+          case 'amod': return a[0] - Math.trunc(a[0] / a[1]) * a[1];
           default: throw new ModelError(`Unknown function "${ast.name}"`, line);
         }
       }
@@ -621,6 +758,13 @@
         if (ast.args.length !== 1 || ast.args[0].type !== 'id') throw new ModelError('state() takes a species name', line);
         return this.ctx.rawState(ast.args[0].name, line, this);
       }
+      if (fn === 'deriv') {
+        if (ast.args.length !== 1 || ast.args[0].type !== 'id') throw new ModelError('deriv() takes a species name', line);
+        if (!this.ctx.derivative) {
+          throw new ModelError('deriv() may only be used in <OUTPUTS>', line);
+        }
+        return this.ctx.derivative(ast.args[0].name, line, this);
+      }
       if (ast.args.length !== def.n) throw new ModelError(`${ast.name} takes ${def.n} argument(s)`, line);
       const a = ast.args.map((x) => this.emit(x, line));
       if (a.every((x) => x.num !== undefined)) {
@@ -653,6 +797,36 @@
           return { v, g: this.isZero(a[0].g) ? new Map() : this.scale(a[0].g, this.temp(`(${a[0].v} > 0 ? 1 : 0)`)) };
         }
         case 'step': return { v: this.temp(`(${a[0].v} > 0 ? 1 : 0)`), g: new Map() };
+        case 'stepf': return { v: this.temp(`(${a[0].v} >= 0 ? 1 : 0)`), g: new Map() };
+        case 'sign': return { v: this.temp(`Math.sign(${a[0].v})`), g: new Map() };
+        case 'sin': {
+          const v = this.temp(`Math.sin(${a[0].v})`);
+          return { v, g: this.isZero(a[0].g) ? new Map() : this.scale(a[0].g, this.temp(`Math.cos(${a[0].v})`)) };
+        }
+        case 'cos': {
+          const v = this.temp(`Math.cos(${a[0].v})`);
+          return { v, g: this.isZero(a[0].g) ? new Map() : this.scale(a[0].g, this.temp(`-Math.sin(${a[0].v})`)) };
+        }
+        case 'tan': {
+          const v = this.temp(`Math.tan(${a[0].v})`);
+          return { v, g: this.isZero(a[0].g) ? new Map() : this.scale(a[0].g, this.temp(`(1 + ${v} * ${v})`)) };
+        }
+        case 'atan': case 'artan': {
+          const v = this.temp(`Math.atan(${a[0].v})`);
+          return { v, g: this.isZero(a[0].g) ? new Map() : mapMap(a[0].g, (c) => this.temp(`${c} / (1 + ${a[0].v} * ${a[0].v})`)) };
+        }
+        case 'tanh': {
+          const v = this.temp(`Math.tanh(${a[0].v})`);
+          return { v, g: this.isZero(a[0].g) ? new Map() : this.scale(a[0].g, this.temp(`(1 - ${v} * ${v})`)) };
+        }
+        case 'amod': {
+          // a - trunc(a/b)*b: piecewise linear in a with slope 1, and in b
+          // with slope -trunc(a/b), away from the jumps.
+          const q = this.temp(`Math.trunc(${a[0].v} / ${a[1].v})`);
+          const v = this.temp(`${a[0].v} - ${q} * ${a[1].v}`);
+          if (this.isZero(a[0].g) && this.isZero(a[1].g)) return { v, g: new Map() };
+          return { v, g: this.add(a[0].g, this.scale(a[1].g, q), '-') };
+        }
         case 'min': case 'max': {
           const cmp = fn === 'min' ? '<=' : '>=';
           const v = this.temp(`(${a[0].v} ${cmp} ${a[1].v} ? ${a[0].v} : ${a[1].v})`);
@@ -769,6 +943,7 @@
     const eqDeps = [];                    // Set of species indices per equation
     const subst = new Map();              // species index -> equation entry index (the @X = ... line)
     let outputDepsRef = null;             // set once the outputs are analysed
+    let rateDepsRef = null;               // set once the reactions are analysed
     const nameKind = (name) => {
       if (name === 't') return 'time';
       if (speciesIndex.has(name)) return 'species';
@@ -776,6 +951,7 @@
       if (stringValues.has(name)) return 'table-alias';
       if (tableIndex.has(name)) return 'table';
       if (eqIndex.has(name)) return 'equation';
+      if (rateDepsRef && rateDepsRef.has(name)) return 'rate';
       if (outputDepsRef && outputDepsRef.has(name)) return 'output';
       return null;
     };
@@ -796,13 +972,20 @@
           eqDeps[eqIndex.get(name)].forEach((d) => deps.add(d));
         } else if (kind === 'output') {
           outputDepsRef.get(name).forEach((d) => deps.add(d));
+        } else if (kind === 'rate') {
+          rateDepsRef.get(name).forEach((d) => deps.add(d));
         } else if (kind === 'table') {
           // interp(TABLE, x) is the only place a table may appear
         }
       }
-      // state(X) reads the raw state of X
-      collectStateRefs(ast).forEach((name) => {
+      // state(X) reads the raw state of X; deriv(X) reads its time derivative.
+      collectStateRefs(ast, [], 'state').forEach((name) => {
         if (!speciesIndex.has(name)) throw new ModelError(`state(${name}): "${name}" is not a species`, line);
+        deps.add(speciesIndex.get(name));
+      });
+      collectStateRefs(ast, [], 'deriv').forEach((name) => {
+        if (!speciesIndex.has(name)) throw new ModelError(`deriv(${name}): "${name}" is not a species`, line);
+        if (!allowSpecies) throw new ModelError(`deriv(${name}) may not be used here`, line);
         deps.add(speciesIndex.get(name));
       });
       return deps;
@@ -858,11 +1041,39 @@
       for (const i of r.net.keys()) for (const j of colSet) cols[j].add(i);
     });
     for (let i = 0; i < nspecies; i++) cols[i].add(i);      // the diagonal, for I - h*J
+
+    // A reaction may name its net rate (FACSIMILE's own feature, the FXn
+    // parameters of the canister model). The name becomes an observable, so
+    // it is registered here -- after the rate expressions have been analysed,
+    // so that a rate law cannot refer to a rate, and before the outputs, which
+    // may. What it depends on is what its own reaction depends on.
+    const rateDeps = new Map();
+    rateDepsRef = rateDeps;
+    const rates = [];
+    reactions.forEach((r, ri) => {
+      if (!r.rate) return;
+      // The duplicate is tested first: the earlier reaction has already
+      // registered the name, so the general "already in use" message would
+      // otherwise hide the more useful one.
+      if (rateDeps.has(r.rate)) throw new ModelError(`Two reactions are both called "${r.rate}"`, r.line);
+      if (nameKind(r.rate) !== null) throw new ModelError(`The reaction rate "${r.rate}" is already the name of something else`, r.line);
+      rateDeps.set(r.rate, new Set(r.cols));
+      rates.push({ name: r.rate, index: ri, text: r.text, comment: r.comment, line: r.line });
+    });
+
     const pattern = toCSC(cols, nspecies);
     const pos = new Map();                                    // "i,j" -> position in values
     for (let j = 0; j < nspecies; j++) {
       for (let k = pattern.colPtr[j]; k < pattern.colPtr[j + 1]; k++) pos.set(`${pattern.rowIdx[k]},${j}`, k);
     }
+
+    // --- output times ---------------------------------------------------------
+    // Sorted, de-duplicated and in seconds, whatever unit the section was
+    // written in. Kept on the model rather than in the solver settings for the
+    // reason every other setting is: one copy, and it is the line in the text.
+    const timeScale = TIME_UNITS[m.timeUnit] || 1;
+    const outputTimes = Float64Array.from(
+      [...new Set(m.times.map((v) => v * timeScale))].filter((v) => v >= 0).sort((a, b) => a - b));
 
     // --- outputs and events -------------------------------------------------
     // An output may use the outputs above it, so they are registered as they
@@ -894,7 +1105,7 @@
     // --- code generation ---------------------------------------------------
     const generated = generateCode({
       species, speciesIndex, nspecies, P, Pindex, Pmeta, tableList, tableIndex, stringValues,
-      equations, eqIndex, eqDeps, subst, reactions, pattern, pos, outputs, events,
+      equations, eqIndex, eqDeps, subst, reactions, pattern, pos, outputs, events, rates,
       initial: m.initial, initialConstNames, clamp, thermo: m.thermo,
     });
 
@@ -917,7 +1128,14 @@
       equations: equations.map((e) => ({ name: e.name, expr: e.expr, comment: e.comment, substitution: e.substitution, timeOnly: e.thermo ? eqDeps[eqIndex.get('T')].size === 0 : eqDeps[equations.indexOf(e)].size === 0 })),
       outputs: outputs.map((o) => ({ name: o.name, expr: o.expr, comment: o.comment })),
       observeNames,
-      events: events.map((e) => ({ expr: e.expr, comment: e.comment, assigns: e.assigns.map((a) => a.name) })),
+      events: events.map((e) => ({
+        expr: e.expr, comment: e.comment, assigns: e.assigns.map((a) => a.name),
+        direction: e.direction, stop: !!e.stop,
+      })),
+      eventDirections: Int8Array.from(events.map((e) => (e.direction === undefined ? 1 : e.direction))),
+      rates: rates.map((r) => ({ name: r.name, text: r.text, comment: r.comment, line: r.line })),
+      rateNames: rates.map((r) => r.name),
+      outputTimes, outputTimeUnit: m.timeUnit,
       warnings, sources: generated.sources, clampNegative: clamp,
       settings: Pmeta.filter((p) => p.section === 'settings').map((p) => ({
         name: p.name, expr: p.expr, comment: p.comment, isTable: p.isTable,
@@ -974,14 +1192,14 @@
     return model;
   }
 
-  function collectStateRefs(ast, out = []) {
+  function collectStateRefs(ast, out = [], fname = 'state') {
     switch (ast.type) {
       case 'call':
-        if (ast.name.toLowerCase() === 'state' && ast.args[0] && ast.args[0].type === 'id') out.push(ast.args[0].name);
-        else ast.args.forEach((a) => collectStateRefs(a, out));
+        if (ast.name.toLowerCase() === fname && ast.args[0] && ast.args[0].type === 'id') out.push(ast.args[0].name);
+        else ast.args.forEach((a) => collectStateRefs(a, out, fname));
         break;
-      case 'neg': collectStateRefs(ast.a, out); break;
-      case 'bin': collectStateRefs(ast.l, out); collectStateRefs(ast.r, out); break;
+      case 'neg': collectStateRefs(ast.a, out, fname); break;
+      case 'bin': collectStateRefs(ast.l, out, fname); collectStateRefs(ast.r, out, fname); break;
       default: break;
     }
     return out;
@@ -1005,7 +1223,7 @@
      generateCode: the five functions as source text
      ------------------------------------------------------------------------ */
   function generateCode(c) {
-    const { species, speciesIndex, nspecies, Pindex, tableIndex, stringValues, equations, eqIndex, subst, reactions, pattern, pos, outputs, events, initial, clamp } = c;
+    const { species, speciesIndex, nspecies, Pindex, tableIndex, stringValues, equations, eqIndex, subst, reactions, pattern, pos, outputs, events, rates, initial, clamp } = c;
 
     /**
      * Builds an Emitter whose name resolution covers species (effective values),
@@ -1014,7 +1232,14 @@
     function makeEmitter(mode) {
       const eqValues = new Map();          // equation name -> {v, g}
       const speciesValues = new Map();     // species index -> {v, g} (effective)
+      let derivArray = null;               // set by the observe block when deriv() is used
       const em = new Emitter({
+        derivative: (name, line) => {
+          const i = speciesIndex.get(name);
+          if (i === undefined) throw new ModelError(`deriv(${name}): "${name}" is not a species`, line);
+          if (!derivArray) throw new ModelError('deriv() may only be used in <OUTPUTS>', line);
+          return { v: `${derivArray}[${i}]`, g: new Map() };
+        },
         tableIndex(name, line) {
           if (tableIndex.has(name)) return tableIndex.get(name);
           if (stringValues.has(name) && tableIndex.has(stringValues.get(name))) return tableIndex.get(stringValues.get(name));
@@ -1057,7 +1282,7 @@
         const d = emitter.temp(`(y[${i}] >= 0 ? 1 : 0)`);
         return { v, g: new Map([[i, d]]) };
       };
-      return { em, eqValues, speciesValues };
+      return { em, eqValues, speciesValues, useDerivArray: (nm) => { derivArray = nm; } };
     }
 
     /** Emits the equations in order (with @-substitutions) into an emitter. */
@@ -1110,47 +1335,57 @@
 
     const sources = {};
 
+    /**
+     * The net rate of one reaction, and its gradient: forward less backward,
+     * mass action unless an absolute rate was given. The same three callers
+     * want it -- the derivative, the Jacobian, and the observables when the
+     * reaction is named -- so it is written once.
+     */
+    function netRate(em, ctx, r) {
+      const parts = [];             // { sign: +1|-1, v, g }
+      const addRate = (kAst, side, sign, absolute) => {
+        const k = em.emit(kAst, r.line);
+        let v, g;
+        if (absolute) { v = k.v; g = k.g; } else {
+          const ma = massAction(em, ctx, side);
+          v = em.mulCode(k.v, ma.v);
+          g = em.add(em.scale(k.g, ma.v), em.scale(ma.g, k.v));
+        }
+        parts.push({ sign, v, g });
+      };
+      if (r.ast.rf) addRate(r.ast.rf, r.reactants, 1, true);
+      if (r.ast.kf) addRate(r.ast.kf, r.reactants, 1, false);
+      if (r.ast.rb) addRate(r.ast.rb, r.products, -1, true);
+      if (r.ast.kb) addRate(r.ast.kb, r.products, -1, false);
+      if (r.ast.keq) {
+        // kb = kf / keq
+        const kf = em.emit(r.ast.kf, r.line);
+        const keq = em.emit(r.ast.keq, r.line);
+        const kb = em.emit({ type: 'bin', op: '/', l: { type: '_pre', pre: kf }, r: { type: '_pre', pre: keq } }, r.line);
+        const ma = massAction(em, ctx, r.products);
+        const v = em.mulCode(kb.v, ma.v);
+        const g = em.add(em.scale(kb.g, ma.v), em.scale(ma.g, kb.v));
+        parts.push({ sign: -1, v, g });
+      }
+      let R = null, gR = new Map();
+      parts.forEach((p) => {
+        if (R === null) { R = p.sign > 0 ? p.v : em.temp(`-${p.v}`); gR = p.sign > 0 ? p.g : mapMap(p.g, (cd) => em.temp(`-${cd}`)); }
+        else { R = em.temp(`${R} ${p.sign > 0 ? '+' : '-'} ${p.v}`); gR = em.add(gR, p.g, p.sign > 0 ? '+' : '-'); }
+      });
+      return R === null ? null : { v: R, g: gR };
+    }
+
     // ---- rhs and jac share the prefix: species, equations, then reactions ----
     for (const which of ['rhs', 'jac']) {
       const ctx = makeEmitter(which);
       const { em } = ctx;
       emitEquations(ctx, which);
       const body = [];
-      const contributions = [];     // jac: { p, code }
-      body.push(which === 'rhs' ? 'out.fill(0);' : 'out.fill(0);');
+      body.push('out.fill(0);');
       reactions.forEach((r, ri) => {
-        const parts = [];           // { sign: +1|-1, v, g }
-        const addRate = (kAst, side, sign, absolute) => {
-          const k = em.emit(kAst, r.line);
-          let v, g;
-          if (absolute) { v = k.v; g = k.g; } else {
-            const ma = massAction(em, ctx, side);
-            v = em.mulCode(k.v, ma.v);
-            g = em.add(em.scale(k.g, ma.v), em.scale(ma.g, k.v));
-          }
-          parts.push({ sign, v, g });
-        };
-        if (r.ast.rf) addRate(r.ast.rf, r.reactants, 1, true);
-        if (r.ast.kf) addRate(r.ast.kf, r.reactants, 1, false);
-        if (r.ast.rb) addRate(r.ast.rb, r.products, -1, true);
-        if (r.ast.kb) addRate(r.ast.kb, r.products, -1, false);
-        if (r.ast.keq) {
-          // kb = kf / keq
-          const kf = em.emit(r.ast.kf, r.line);
-          const keq = em.emit(r.ast.keq, r.line);
-          const kb = em.emit({ type: 'bin', op: '/', l: { type: '_pre', pre: kf }, r: { type: '_pre', pre: keq } }, r.line);
-          const ma = massAction(em, ctx, r.products);
-          const v = em.mulCode(kb.v, ma.v);
-          const g = em.add(em.scale(kb.g, ma.v), em.scale(ma.g, kb.v));
-          parts.push({ sign: -1, v, g });
-        }
-        // Net rate R = sum(sign * part)
-        let R = null, gR = new Map();
-        parts.forEach((p) => {
-          if (R === null) { R = p.sign > 0 ? p.v : em.temp(`-${p.v}`); gR = p.sign > 0 ? p.g : mapMap(p.g, (cd) => em.temp(`-${cd}`)); }
-          else { R = em.temp(`${R} ${p.sign > 0 ? '+' : '-'} ${p.v}`); gR = em.add(gR, p.g, p.sign > 0 ? '+' : '-'); }
-        });
-        if (R === null) return;
+        const net = netRate(em, ctx, r);
+        if (net === null) return;
+        const R = net.v, gR = net.g;
         body.push(`// R${ri}: ${r.text.replace(/\s+/g, ' ')}`);
         for (const [i, coef] of r.net) {
           if (which === 'rhs') {
@@ -1167,7 +1402,12 @@
       sources[which] = `"use strict";\n${em.lines.join('\n')}\n${body.join('\n')}\nreturn out;`;
     }
 
-    // ---- observe: equations then outputs -------------------------------------
+    // ---- observe: equations, named reaction rates, then outputs --------------
+    //
+    // The accumulation into D and the rate assignments go into the emitter's
+    // own line list rather than into `body`, because the generated function is
+    // every temporary followed by every body line: an output reading D[i] has
+    // its temporary hoisted above the body, so D has to be filled up there too.
     {
       const ctx = makeEmitter('observe');
       const { em, eqValues } = ctx;
@@ -1180,6 +1420,39 @@
         names.push(e.name);
         body.push(`out[${k++}] = ${eqValues.get(e.name).v};`);
       });
+
+      // A named rate needs its own reaction evaluated; deriv(X) needs every
+      // reaction that touches X. Which species those are is known from the
+      // deriv() calls themselves, so a model that asks for one derivative
+      // does not pay for the whole system: on the canister model five named
+      // species bring in a third of the reactions rather than all 264.
+      const wantDeriv = new Set();
+      outputs.forEach((o) => collectStateRefs(o.ast, [], 'deriv').forEach((nm) => {
+        const i = speciesIndex.get(nm);
+        if (i !== undefined) wantDeriv.add(i);
+      }));
+      if (wantDeriv.size) {
+        em.lines.push(`const D = new Float64Array(${nspecies});`);
+        ctx.useDerivArray('D');
+      }
+      reactions.forEach((r) => {
+        const touches = wantDeriv.size && [...r.net.keys()].some((i) => wantDeriv.has(i));
+        if (!r.rate && !touches) return;
+        const net = netRate(em, ctx, r);
+        if (net === null) return;
+        if (r.rate) eqValues.set(r.rate, { v: net.v, g: new Map() });
+        if (!touches) return;
+        for (const [i, coef] of r.net) {
+          if (!wantDeriv.has(i)) continue;
+          em.lines.push(coef === 1 ? `D[${i}] += ${net.v};` : coef === -1 ? `D[${i}] -= ${net.v};` : `D[${i}] += ${coef} * ${net.v};`);
+        }
+      });
+      rates.forEach((r) => {
+        const val = eqValues.get(r.name);
+        names.push(r.name);
+        body.push(`out[${k++}] = ${val ? val.v : 0};`);
+      });
+
       outputs.forEach((o) => {
         const r = em.emit(o.ast, o.line);
         eqValues.set(o.name, r);     // later outputs may use earlier ones

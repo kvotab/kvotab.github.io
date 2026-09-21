@@ -1,0 +1,354 @@
+/* ==========================================================================
+   EROSION_CORROSION.HTML
+
+   The same shape as rtm.html and facsimile.html: a settings panel on the
+   left, a drag handle, and a work area of tabs. Colours are the tokens in
+   kvot.css, so the page follows the theme toggle. Class prefix: ec-.
+   ========================================================================== */
+
+.ec {
+  display: grid;
+  grid-template-columns: var(--ec-side-width, 340px) 8px minmax(0, 1fr);
+  height: 100%;
+  overflow: hidden;
+  font-family: verdana, sans-serif;
+  font-size: 13px;
+}
+
+/* ---- the settings column ------------------------------------------------ */
+.ec-side {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+  border-right: 1px solid var(--border-color);
+  background: var(--bg-surface);
+}
+.ec-side-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0 14px 10px; }
+.ec-side-foot {
+  flex: 0 0 auto;
+  padding: 8px 14px 10px;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+}
+
+.ec-resize {
+  cursor: col-resize;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  background: transparent;
+  position: relative;
+  z-index: 1;
+}
+.ec-resize::after { content: ''; width: 3px; border-radius: 2px; transition: background 0.15s; }
+.ec-resize:hover::after, .ec-resize.active::after { background: var(--color-kvot-accent); }
+
+/* ---- a folding section -------------------------------------------------- */
+.ec-sec { margin: 0 0 4px; }
+.ec-sec > summary {
+  margin: 10px 0 6px;
+  padding: 0 0 4px 16px;
+  border-bottom: 1px solid var(--border-color);
+  font: 700 0.95rem RawengulkSans, sans-serif;
+  color: var(--text-primary);
+  cursor: pointer;
+  list-style: none;
+  position: relative;
+}
+.ec-sec > summary::-webkit-details-marker { display: none; }
+.ec-sec > summary::before {
+  content: '▸';
+  position: absolute;
+  left: 0;
+  transition: transform 0.15s;
+  color: var(--text-muted);
+}
+.ec-sec[open] > summary::before { transform: rotate(90deg); }
+.ec-sec > summary .ec-count {
+  float: right;
+  font: 11px verdana, sans-serif;
+  color: var(--text-muted);
+}
+.ec-about { margin: 0 0 8px; font-size: 11px; line-height: 1.5; color: var(--text-muted); }
+
+/* ---- a labelled control ------------------------------------------------- */
+.ec-row { display: block; margin: 0 0 8px; }
+.ec-row[hidden] { display: none; }
+.ec-row label { display: block; margin: 0 0 2px; color: var(--text-primary); }
+.ec-row .ec-name, .ec-check .ec-name {
+  display: block;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.ec-row input, .ec-row select, .ec-row textarea {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 3px 5px;
+  border: 1px solid var(--input-border);
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+}
+.ec-row textarea { min-height: 80px; resize: vertical; }
+.ec-row input.changed, .ec-row select.changed { border-color: var(--color-kvot-bright); }
+.ec-row input:invalid { border-color: var(--color-kvot-accent); }
+.ec-unit { color: var(--text-muted); font-size: 11px; margin-left: 4px; }
+.ec-check { display: flex; gap: 6px; align-items: flex-start; margin: 0 0 6px; cursor: pointer; line-height: 1.35; }
+.ec-check[hidden] { display: none; }
+.ec-check input { margin-top: 2px; }
+.ec-check.changed > span { text-decoration: underline; text-decoration-color: var(--color-kvot-bright); text-underline-offset: 3px; }
+.ec-desc { display: block; font-size: 11px; color: var(--text-muted); line-height: 1.4; }
+.ec-inline { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.ec-muted { color: var(--text-muted); font-size: 11px; line-height: 1.5; }
+.ec-muted[hidden] { display: none; }
+.ec-warn { color: var(--text-primary); font-size: 11px; line-height: 1.5; border-left: 3px solid var(--color-kvot-bright); padding-left: 6px; margin: 4px 0; }
+
+/* ---- the hydro file list ------------------------------------------------ */
+.ec-drop {
+  border: 1px dashed var(--input-border);
+  border-radius: 6px;
+  padding: 8px;
+  margin: 0 0 8px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.5;
+  transition: border-color 0.15s, background 0.15s;
+}
+.ec-drop.over { border-color: var(--color-kvot-accent); background: var(--bg-secondary); color: var(--text-primary); }
+.ec-files { list-style: none; margin: 0 0 8px; padding: 0; }
+.ec-files li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 8px;
+  align-items: center;
+  padding: 5px 6px;
+  margin: 0 0 4px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  font-size: 11px;
+}
+.ec-files .ec-file-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ec-files .ec-file-meta { grid-column: 1 / -1; color: var(--text-muted); }
+.ec-files .ec-file-warn { grid-column: 1 / -1; color: var(--text-primary); border-left: 3px solid var(--color-kvot-bright); padding-left: 6px; }
+.ec-files button { padding: 0 6px; border: 0; background: none; color: var(--text-muted); font-size: 14px; cursor: pointer; line-height: 1; }
+.ec-files button:hover { color: var(--color-kvot-accent); }
+.ec-files:empty::after { content: 'No hydro data yet.'; display: block; color: var(--text-muted); font-size: 11px; padding: 2px 0 6px; }
+
+/* ---- buttons ------------------------------------------------------------ */
+.ec-actions { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 6px; }
+.ec-btn {
+  padding: 5px 14px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: var(--color-kvot-accent);
+  color: #fff;
+  font: 600 12px verdana, sans-serif;
+  cursor: pointer;
+}
+.ec-btn.secondary { background: var(--bg-primary); color: var(--text-primary); border-color: var(--border-color); }
+.ec-btn.small { padding: 3px 8px; font-size: 11px; font-weight: 400; }
+.ec-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.ec-btn:focus-visible { outline: 2px solid var(--color-kvot-bright); outline-offset: 1px; }
+
+/* The status well under the buttons: fixed height, scrolls, so the buttons
+   above it do not move when the message changes length. */
+.ec-status {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  height: 4.35em;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  overflow-wrap: anywhere;
+}
+.ec-status.ok { border-color: var(--color-kvot-primary); }
+.ec-status.error { border-color: var(--color-kvot-accent); color: var(--text-primary); }
+.ec-status.warn { border-color: var(--color-kvot-bright); color: var(--text-primary); }
+
+/* ---- the work area ------------------------------------------------------ */
+.ec-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+  margin-left: -8px;
+  padding-left: 8px;
+}
+.ec-tabs {
+  display: flex;
+  gap: 2px;
+  margin-left: -8px;
+  padding: 6px 10px 0 18px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  flex: 0 0 auto;
+  overflow-x: auto;
+}
+.ec-tabs button {
+  padding: 6px 12px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: 12px verdana, sans-serif;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ec-tabs button:hover { color: var(--text-primary); }
+.ec-tabs button.active {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border-color: var(--border-color);
+  font-weight: 600;
+  margin-bottom: -1px;
+}
+.ec-pane {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 14px;
+  background: var(--bg-primary);
+}
+.ec-pane[hidden] { display: none; }
+
+.ec-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin: 0 0 8px;
+  font-size: 12px;
+}
+.ec-toolbar label { display: flex; gap: 5px; align-items: center; }
+.ec-toolbar label[hidden] { display: none; }
+.ec-toolbar input[type="text"], .ec-toolbar select {
+  padding: 2px 5px;
+  border: 1px solid var(--input-border);
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+}
+.ec-toolbar .ec-spacer { flex: 1 1 auto; }
+
+/* ---- charts and the empty state ----------------------------------------- */
+.plot { width: 100%; height: 460px; }
+.plot[hidden] { display: none; }
+.ec-empty { margin: 0; padding: 24px 12px 40px; color: var(--text-muted); font-size: 12px; }
+.ec-empty[hidden] { display: none; }
+
+/* ---- tables ------------------------------------------------------------- */
+.ec-table-wrap { overflow: auto; max-width: 100%; }
+.ec-table {
+  border-collapse: collapse;
+  font-size: 12px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  white-space: nowrap;
+}
+.ec-table th, .ec-table td {
+  padding: 3px 10px 3px 6px;
+  text-align: right;
+  border-bottom: 1px solid var(--table-border);
+}
+.ec-table th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-weight: 600;
+  text-align: right;
+  cursor: pointer;
+  user-select: none;
+  z-index: 1;
+}
+.ec-table th.sorted::after { content: ' ▾'; color: var(--color-kvot-accent); }
+.ec-table th.sorted.asc::after { content: ' ▴'; }
+.ec-table th:first-child, .ec-table td:first-child { text-align: left; }
+.ec-table td.text, .ec-table th.text { text-align: left; }
+.ec-table tbody tr:nth-child(even) { background: var(--table-stripe); }
+.ec-table tbody tr:hover { background: var(--bg-surface); }
+.ec-table td.flag { color: var(--color-kvot-accent); }
+.ec-table td.dim { color: var(--text-muted); }
+
+/* The key-output table on the summary tab. */
+.ec-key { border-collapse: collapse; font-size: 12px; margin: 0 0 14px; }
+.ec-key th, .ec-key td { padding: 4px 14px 4px 0; border-bottom: 1px solid var(--table-border); vertical-align: top; }
+.ec-key th { text-align: left; font-weight: 600; color: var(--text-primary); }
+.ec-key td { text-align: right; font-family: ui-monospace, Menlo, Consolas, monospace; white-space: nowrap; }
+.ec-key td.text { text-align: left; font-family: verdana, sans-serif; }
+.ec-key thead th { text-align: right; color: var(--text-secondary); font-weight: 400; font-size: 11px; }
+.ec-key thead th:first-child { text-align: left; }
+.ec-key tr.total td, .ec-key tr.total th { font-weight: 700; }
+.ec-key .ec-desc { font-weight: 400; max-width: 34em; white-space: normal; }
+.ec-summary h3 { margin: 14px 0 6px; font: 700 1rem RawengulkSans, sans-serif; color: var(--text-primary); }
+.ec-summary h3:first-child { margin-top: 2px; }
+.ec-summary .ec-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; margin: 0 0 14px; }
+.ec-card {
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-surface);
+}
+.ec-card .ec-card-value { font: 700 1.35rem ui-monospace, Menlo, Consolas, monospace; color: var(--text-primary); }
+.ec-card .ec-card-label { font-size: 11px; color: var(--text-secondary); line-height: 1.4; margin-top: 2px; }
+.ec-settings-list { font-size: 12px; line-height: 1.6; columns: 2; column-gap: 28px; margin: 0; padding: 0; list-style: none; }
+.ec-settings-list li { break-inside: avoid; }
+.ec-settings-list code { font-size: 11px; color: var(--text-secondary); }
+@media (max-width: 900px) { .ec-settings-list { columns: 1; } }
+
+/* ---- help --------------------------------------------------------------- */
+.ec-help { max-width: 64rem; line-height: 1.65; }
+.ec-help h2 { margin: 4px 0 10px; font: 700 1.3rem RawengulkSans, sans-serif; color: var(--text-primary); }
+.ec-help h3 { margin: 22px 0 6px; font: 700 1.05rem RawengulkSans, sans-serif; color: var(--text-primary); }
+.ec-help h4 { margin: 16px 0 4px; font: 700 0.95rem verdana, sans-serif; color: var(--color-kvot-accent); }
+.ec-help p { margin: 0 0 10px; }
+.ec-help pre {
+  margin: 0 0 12px;
+  padding: 9px 12px;
+  border-radius: 6px;
+  background: var(--code-bg);
+  color: var(--code-text);
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-x: auto;
+}
+.ec-help code { padding: 1px 4px; border-radius: 3px; background: var(--code-bg); font-size: 0.92em; }
+.ec-help pre code { padding: 0; background: none; }
+.ec-help .ec-eq {
+  margin: 4px 0 12px 1.5em;
+  font-family: 'Times New Roman', Times, serif;
+  font-size: 1.05em;
+  line-height: 1.8;
+}
+.ec-help .ec-eq i { font-style: italic; }
+.ec-help table.ec-ref { border-collapse: collapse; margin: 4px 0 14px; font-size: 12px; }
+.ec-help table.ec-ref td, .ec-help table.ec-ref th {
+  padding: 4px 16px 4px 0;
+  vertical-align: top;
+  text-align: left;
+  border-bottom: 1px solid var(--border-subtle, rgba(128, 128, 128, 0.25));
+}
+.ec-help table.ec-ref th { font-weight: 600; }
+.ec-help table.ec-ref code { white-space: nowrap; }
+
+/* ---- narrow screens ----------------------------------------------------- */
+@media (max-width: 760px) {
+  .ec { grid-template-columns: 1fr; grid-template-rows: auto 1fr; overflow: auto; }
+  .ec-side { height: auto; max-height: 50vh; border-right: 0; border-bottom: 1px solid var(--border-color); }
+  .ec-resize { display: none; }
+  .ec-main { margin-left: 0; padding-left: 0; }
+  .ec-tabs { margin-left: 0; padding-left: 10px; }
+  .plot { height: 360px; }
+}

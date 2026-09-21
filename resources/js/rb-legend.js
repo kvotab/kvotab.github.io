@@ -2,6 +2,7 @@
    10. DYNAMIC LEGEND
    ========================================================================== */
 
+'use strict';   // see the script manifest in rb.html for why
 /**
  * Toggle dynamic legend filtering on/off.
  * When enabled, only traces with data points visible in the current

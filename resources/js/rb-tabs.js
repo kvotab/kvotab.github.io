@@ -2,6 +2,7 @@
    5. TAB MANAGEMENT
    ========================================================================== */
 
+'use strict';   // see the script manifest in rb.html for why
 let _fileTabTooltipEl = null;
 // Where the pointer was when a tooltip was last dismissed by a click, or null.
 // While this is set the tooltip stays away; see hideFileTabTooltip.
@@ -280,7 +281,7 @@ function updateTabs(forceRefresh) {
         try { ensureTreeWorker().postMessage({ cmd: 'cancel', id: wid }); } catch (e) { ignoreFailure('onEnd', e); }
         try { clearTimeout(_treeWorkerPending[wid]._timeout); } catch (e) { ignoreFailure('onEnd', e); }
         delete _treeWorkerPending[wid];
-        console.debug('[updateTabs] cancelled in-flight worker id=', wid);
+        kvotTrace('[updateTabs] cancelled in-flight worker id=', wid);
       }
     } catch (e) { ignoreFailure('onEnd', e); }
 

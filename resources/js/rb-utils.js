@@ -2,6 +2,7 @@
    2. UTILITY FUNCTIONS
    ========================================================================== */
 
+'use strict';   // see the script manifest in rb.html for why
 /**
  * Wait for h5wasm library to be loaded and ready
  */
@@ -48,14 +49,14 @@ async function waitForH5Wasm() {
     origWarn(...args);
   };
 
-  try { console.debug('H5Wasm diagnostic filter enabled — SUPPRESS_H5WASM_DIAGNOSTICS = true'); } catch (e) { ignoreFailure('looksLikeH5Diag', e); }
+  try { kvotTrace('H5Wasm diagnostic filter enabled — SUPPRESS_H5WASM_DIAGNOSTICS = true'); } catch (e) { ignoreFailure('looksLikeH5Diag', e); }
 })();
 
 // Small FileService wrapper for h5wasm File objects. Use FileService.get(file, path),
 // FileService.keys(file) and FileService.attrs(node) to access HDF5 content safely.
 window.FileService = {
   get(file, path) {
-    try { if (!file) return null; return file.get(path); } catch (e) { if (window.SUPPRESS_H5WASM_DIAGNOSTICS) return null; console.warn('FileService.get error:', e && e.message ? e.message : e, path); return null; }
+    try { if (!file) return null; return file.get(path); } catch (e) { if (window.SUPPRESS_H5WASM_DIAGNOSTICS) return null; kvotWarn('FileService.get error:', e && e.message ? e.message : e, path); return null; }
   },
   keys(file) {
     try { if (!file || typeof file.keys !== 'function') return []; return Array.from(file.keys()).sort(); } catch (e) { return []; }
@@ -216,7 +217,7 @@ function releaseLoadedFile(fileKey) {
   const internalPath = (typeof file.filename === 'string' && file.filename.startsWith('/') && file.filename !== '/')
     ? file.filename
     : null;
-  try { file.close(); } catch (e) { console.warn('Could not close HDF5 file', fileKey, e); }
+  try { file.close(); } catch (e) { kvotWarn('Could not close HDF5 file', fileKey, e); }
   try {
     if (internalPath && window.h5wasm && window.h5wasm.FS) window.h5wasm.FS.unlink(internalPath);
   } catch (e) { ignoreFailure('releaseLoadedFile', e); }
@@ -293,7 +294,7 @@ function getFileOrNull(fileKey) {
     _probedFiles.add(file);
     return file;
   } catch (e) {
-    console.warn(`Stale file reference for ${fileKey}, removing`);
+    kvotWarn(`Stale file reference for ${fileKey}, removing`);
     releaseLoadedFile(fileKey);
     delete fileStates[fileKey];
     delete loadedFileBuffers[fileKey];
@@ -543,7 +544,7 @@ function collectPdfEntries(node, attrs, label) {
       }
     }
   } catch (e) {
-    console.warn('collectPdfEntries error:', e.message);
+    kvotWarn('collectPdfEntries error:', e.message);
   }
   return null;
 }
@@ -785,7 +786,7 @@ function getRealizationStride(dataset, flatLength, timeLength, label = '') {
     const stride = Number(shape[shape.length - 1]);
     if (Number.isFinite(stride) && stride > 0) {
       if (byLength !== null && byLength !== stride) {
-        console.warn(`Realization stride from shape (${stride}) differs from the length-derived value`
+        kvotWarn(`Realization stride from shape (${stride}) differs from the length-derived value`
           + ` (${byLength}) for ${label || 'dataset'}; using the shape. This dataset is padded.`);
       }
       return stride;

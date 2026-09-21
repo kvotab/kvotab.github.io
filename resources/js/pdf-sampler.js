@@ -229,7 +229,7 @@
   function toNumber(v) {
     if (typeof v === 'bigint') {
       const n = Number(v);
-      if (!Number.isSafeInteger(n)) console.warn('BigInt -> Number conversion (precision loss possible):', v);
+      if (!Number.isSafeInteger(n)) kvotWarn('BigInt -> Number conversion (precision loss possible):', v);
       return n;
     }
     return v;

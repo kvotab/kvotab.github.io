@@ -15,6 +15,7 @@ Exit status is 0 when every check passes.
 import asyncio
 import json
 import math
+import re
 import sys
 import urllib.request
 
@@ -718,6 +719,69 @@ async def main():
                 "(() => { const ta = document.getElementById('rtmText').getBoundingClientRect();"
                 " const st = document.getElementById('rtmStatus').getBoundingClientRect();"
                 " return Math.abs(ta.bottom - st.bottom) <= 2; })()"), True)
+
+            # --- the syntax colouring -----------------------------------------
+            # The coloured copy is a second rendering of the same characters
+            # under a transparent textarea, so the one thing that must never
+            # drift is the text itself: a span too many or an escape too few
+            # and the caret sits over the wrong letter.
+            check('the coloured copy is the text, character for character', await page.ev(
+                "(() => { const ta = document.getElementById('rtmText');"
+                " const pre = document.getElementById('rtmHighlight');"
+                " return pre.textContent === ta.value + '\\n'; })()"), True)
+            check('and lies exactly over the box being typed in', await page.ev(
+                "(() => { const a = document.getElementById('rtmText').getBoundingClientRect();"
+                " const b = document.getElementById('rtmHighlight').getBoundingClientRect();"
+                " const ta = document.getElementById('rtmText');"
+                " const pre = document.getElementById('rtmHighlight');"
+                " return Math.round(a.top - b.top) === 0 && Math.round(a.left - b.left) === 0"
+                " && ta.scrollWidth === pre.scrollWidth && ta.scrollHeight === pre.scrollHeight; })()"), True)
+            check('a section heading, a comment and a setting are coloured', await page.ev(
+                "(() => { const pre = document.getElementById('rtmHighlight');"
+                " const kinds = new Set([...pre.querySelectorAll('span')].map((s) => s.className));"
+                " return ['hl-sec', 'hl-com', 'hl-key', 'hl-num'].every((k) => kinds.has(k)); })()"), True)
+            # Every example, not just the built-in one: the tokeniser has a
+            # rule for charges and one for arrows, and either can eat a
+            # character it should have passed through.
+            check('every example survives the tokeniser unchanged', await page.ev(
+                "(() => { const ta = document.getElementById('rtmText');"
+                " const pre = document.getElementById('rtmHighlight'); const bad = [];"
+                " const was = ta.value;"
+                " for (const e of RTM_EXAMPLES) { ta.value = e.text;"
+                "   ta.dispatchEvent(new Event('input', { bubbles: true }));"
+                "   if (pre.textContent !== e.text + '\\n') bad.push(e.id); }"
+                " ta.value = was; ta.dispatchEvent(new Event('input', { bubbles: true }));"
+                " return bad; })()"), [])
+            await page.ev("(() => { const c = document.getElementById('rtmSyntax');"
+                          " c.checked = false; c.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.3)
+            check('turning it off puts the copy away', await page.ev(
+                "document.getElementById('rtmHighlight').textContent === ''"
+                " && !document.getElementById('rtmCodeBox').classList.contains('hl')"), True)
+            check('and the choice is remembered', await page.ev(
+                "JSON.parse(localStorage.getItem('kvot-rtm-v1')).syntax"), False)
+            await page.ev("(() => { const c = document.getElementById('rtmSyntax');"
+                          " c.checked = true; c.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.3)
+            check('and turning it back on paints it again', await page.ev(
+                "document.getElementById('rtmHighlight').textContent.length > 100"), True)
+
+            # --- the run as an HDF5 file --------------------------------------
+            # The bytes are checked against the real library in test-hdf5.py;
+            # what is checked here is that the page can build them at all --
+            # the writer and the tree are loaded, and the result is a file of
+            # a plausible size -- and that it says so where the reader looks.
+            await page.ev("document.querySelector('[data-tab=\"time\"]').click()")
+            await asyncio.sleep(0.4)
+            check('the page carries the HDF5 writer', await page.ev(
+                "typeof RtmHDF5 === 'object' && typeof KvotHDF5 === 'object'"), True)
+            await page.ev("[...document.querySelectorAll('[data-on-click=\"rtm:downloadHdf5\"]')][0].click()")
+            await asyncio.sleep(3)
+            written = await page.ev("document.getElementById('rtmStatus').textContent")
+            check(f'writing the file says what it wrote ({written!r})',
+                  bool(re.match(r'^rtm[\w.-]*\.h5 written \(\d+\.\d MB\)\.$', str(written))), True)
+            check('and says it went well', await page.ev(
+                "document.getElementById('rtmStatus').className"), 'rtm-status ok')
 
             check('no console errors throughout', page.errors[:3], [])
         finally:

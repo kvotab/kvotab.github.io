@@ -2,6 +2,7 @@
    4. FILE MANAGEMENT
    ========================================================================== */
 
+'use strict';   // see the script manifest in rb.html for why
 /**
  * Get list of filenames for currently enabled (visible) files.
  * Maintains the order from fileOrder array.
@@ -94,7 +95,7 @@ function resetTreeModeToSeparated() {
     if (hint) hint.style.display = 'none';
   } catch (e) { ignoreFailure('resetTreeModeToSeparated', e); }
 
-  console.debug('[resetTreeModeToSeparated] tree mode reset to separated, selections cleared');
+  kvotTrace('[resetTreeModeToSeparated] tree mode reset to separated, selections cleared');
 }
 
 /**
@@ -121,7 +122,7 @@ function getEffectiveFiles() {
  */
 function toggleFileState(fileName) {
   fileStates[fileName] = !fileStates[fileName];
-  console.debug('[toggleFileState]', fileName, 'newState=', fileStates[fileName]);
+  kvotTrace('[toggleFileState]', fileName, 'newState=', fileStates[fileName]);
 
   // Immediate visual update: change the tab element class so colour/state
   // responds instantly without waiting for the expensive tree recalculation.
@@ -238,7 +239,7 @@ function refreshInfoAndChart() {
         createPlotlyChart(selectedDatasetPath);
       }
     } catch (e) {
-      console.warn('Error checking if dataset is time-dependent:', e);
+      kvotWarn('Error checking if dataset is time-dependent:', e);
     }
   }
 }

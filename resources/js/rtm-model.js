@@ -2022,5 +2022,8 @@
   }
 
   return { compile, verifyJacobian, speciate, conservationBasis, RtmError, parseReaction,
-    readSections, derivative };
+    readSections, derivative,
+    // The vocabulary, for the editor's syntax colouring: what is coloured as
+    // meaning something is exactly what means something here.
+    SECTIONS, SETTINGS };
 }));

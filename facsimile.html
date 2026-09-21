@@ -59,6 +59,16 @@
             </div>
           </details>
 
+          <details class="fac-sec" id="sec-file">
+            <summary>Model file</summary>
+            <div class="fac-actions">
+              <button type="button" class="fac-btn secondary small" data-on-click="fac:loadFile">Open…</button>
+              <button type="button" class="fac-btn secondary small" data-on-click="fac:saveFile">Save as .fac</button>
+              <button type="button" class="fac-btn secondary small" data-on-click="fac:resetModel" title="Back to the built-in model text and the 13g settings">Reset</button>
+            </div>
+            <p class="fac-muted">The model text, the settings and the solver options are kept in this browser between visits. Nothing leaves your machine.</p>
+          </details>
+
           <details class="fac-sec" id="sec-case" open>
             <summary>Case settings</summary>
             <div id="facSettings"></div>
@@ -179,15 +189,6 @@
             <div class="fac-stats" id="facStats">Nothing has been solved yet.</div>
           </details>
 
-          <details class="fac-sec" id="sec-file">
-            <summary>Model file</summary>
-            <div class="fac-actions">
-              <button type="button" class="fac-btn secondary small" data-on-click="fac:loadFile">Open…</button>
-              <button type="button" class="fac-btn secondary small" data-on-click="fac:saveFile">Save as .fac</button>
-              <button type="button" class="fac-btn secondary small" data-on-click="fac:resetModel" title="Back to the built-in model text and the 13g settings">Reset</button>
-            </div>
-            <p class="fac-muted">The model text, the settings and the solver options are kept in this browser between visits. Nothing leaves your machine.</p>
-          </details>
         </div>
 
         <div class="fac-side-foot">
@@ -291,9 +292,10 @@
                 <option value="200">about 200, log-spaced in time</option>
                 <option value="1000">about 1000, log-spaced in time</option>
                 <option value="all">every solver step</option>
+                <option value="times" hidden>at the model&rsquo;s output times</option>
               </select>
             </label>
-            <button type="button" class="fac-btn secondary small" data-on-click="fac:downloadCsv">Download CSV (all steps)</button>
+            <button type="button" class="fac-btn secondary small" id="facCsvBtn" data-on-click="fac:downloadCsv">Download CSV (all steps)</button>
             <button type="button" class="fac-btn secondary small" data-on-click="fac:downloadXlsx">Download Excel</button>
             <button type="button" class="fac-btn secondary small" data-on-click="fac:downloadHdf5" title="The same file the HDF5 Browser is handed">Download HDF5</button>
             <span class="fac-muted" id="facTableNote"></span>
@@ -306,10 +308,14 @@
           <div class="fac-editor">
             <div class="fac-toolbar">
               <button type="button" class="fac-btn small" data-on-click="fac:applyModel">Apply changes</button>
+              <label class="fac-check inline"><input type="checkbox" id="facSyntax" checked data-on-change="fac:syntaxToggle"> colour the syntax</label>
               <span class="fac-muted">Edit the settings, equations and reactions here; <em>Apply</em> compiles the text (it is also compiled before a run). The text is checked as you type, and a line you are still writing is reported quietly and never selected. Syntax is described under <em>Help</em>.</span>
             </div>
-            <textarea id="facModelText" spellcheck="false" wrap="off" data-on-input="fac:modelEdited"
-              data-on-keyup="fac:modelCaret" data-on-click="fac:modelCaret" data-on-blur="fac:modelCaret"></textarea>
+            <div class="fac-code-box" id="facCodeBox">
+              <pre class="fac-code-hl" id="facHighlight" aria-hidden="true"><code></code></pre>
+              <textarea id="facModelText" spellcheck="false" wrap="off" data-on-input="fac:modelEdited"
+                data-on-keyup="fac:modelCaret" data-on-click="fac:modelCaret" data-on-blur="fac:modelCaret"></textarea>
+            </div>
             <div class="fac-editor-info" id="facModelInfo"></div>
           </div>
         </section>
@@ -402,6 +408,9 @@
           <h3>How much of a run is kept</h3>
           <p>The charts, the table and the exported files hold the solver's own steps, up to twenty thousand of them. Past that the run is thinned as it goes — every second point, then every fourth — so that a solver taking hundreds of thousands of steps cannot fill the machine's memory. The two ends of the run are always kept, and the footer says when it happened: <em>one in 32</em> beside the step count.</p>
 
+          <h3>The model tab</h3>
+          <p><em>Colour the syntax</em> paints comments, section headings, numbers, function names and the words that mean something where they stand — <code>kf</code> and <code>rate</code> in a reaction, <code>down</code> and <code>stop</code> in an event, <code>log</code> and <code>lin</code> in a time list. It is a second copy of the text drawn underneath the box you are typing in, which is the only way a plain text area can be coloured while keeping its own undo, selection and caret; turn it off for a very large model, or if the colours are in the way. The choice is remembered between visits.</p>
+
           <h3>The panel on the left</h3>
           <p>Drag the edge between the panel and this area to give either more of the page; double-click it to put it back. Each heading folds away what is under it. The width and what is folded are remembered between visits. <em>Run</em>, <em>Stop</em> and <em>Check Jacobian</em> sit at the foot of the panel and stay there whatever is scrolled past them, with the status line beside them.</p>
 
@@ -416,15 +425,22 @@
             <tr><td><code>&lt;THERMO&gt;</code></td><td><code>NAME a1 … a7</code>, CHEMKIN coefficients; defines <code>DGNAME</code>, the Gibbs energy in cal/mol at the temperature <code>T</code>.</td></tr>
             <tr><td><code>&lt;INITIAL&gt;</code></td><td>Evaluated at t = 0 in order. A species name sets its initial concentration (mol/cm³); another name becomes a constant of the run. Equations that depend on time only (<code>T</code>, <code>H2OEQ</code>, …) may be used.</td></tr>
             <tr><td><code>&lt;EQUATIONS&gt;</code></td><td><code>NAME = expression</code>, evaluated at every derivative evaluation in order; may use <code>t</code> (seconds), the species, the constants and earlier equations. <code>@X = expression</code> replaces the species <code>X</code> in everything below it (the effective concentration), while the state keeps the total.</td></tr>
-            <tr><td><code>&lt;REACTIONS&gt;</code></td><td><code>A + 2 B = C, kf = k</code> (mass action) with optionally <code>kb = k</code> or <code>keq = K</code> (then kb = kf/keq); <code>rf = r</code> and <code>rb = r</code> give absolute rates instead. FACSIMILE's <code>%kf%kb : A + B = C ;</code> and <code>= r : A = ;</code> are accepted too. Reactants or products may be empty.</td></tr>
-            <tr><td><code>&lt;EVENTS&gt;</code></td><td><code>expression, NAME = value, …</code>: when the expression crosses zero from below, the named settings or constants are changed, the run constants are recomputed and the integration restarts there.</td></tr>
-            <tr><td><code>&lt;OUTPUTS&gt;</code></td><td><code>NAME = expression</code>, for the table and the charts; may use earlier outputs. <code>state(X)</code> is the raw state of a species (all water, for <code>H2O</code>).</td></tr>
+            <tr><td><code>&lt;REACTIONS&gt;</code></td><td><code>A + 2 B = C, kf = k</code> (mass action) with optionally <code>kb = k</code> or <code>keq = K</code> (then kb = kf/keq); <code>rf = r</code> and <code>rb = r</code> give absolute rates instead. FACSIMILE's <code>%kf%kb : A + B = C ;</code> and <code>= r : A = ;</code> are accepted too. Reactants or products may be empty. Adding <code>rate = NAME</code>, or writing the name before the first <code>%</code> in FACSIMILE's own form, reports the net rate of that reaction as a quantity of its own.</td></tr>
+            <tr><td><code>&lt;EVENTS&gt;</code></td><td><code>expression, NAME = value, …</code>: when the expression crosses zero from below, the named settings or constants are changed, the run constants are recomputed and the integration restarts there. <code>down</code> or <code>both</code> beside the assignments chooses which way the crossing is to be taken, and <code>stop</code> ends the run there instead of carrying on — FACSIMILE's <code>%</code> on a WHEN clause. An event must do one or the other.</td></tr>
+            <tr><td><code>&lt;TIMES [unit]&gt;</code></td><td>Times at which the run is also to be reported, in <code>s</code> (the default), <code>min</code>, <code>h</code>, <code>d</code> or <code>y</code>. A line is a list of values, <code>first + step * count</code>, or <code>from .. to log|lin count</code>. The Table tab then offers <em>at the model's output times</em>, and the CSV and the Excel file follow it; the values there are the cubic through the two accepted steps on either side and their derivatives, not the solver's own interpolant, so that every method on the menu gives the same grid.</td></tr>
+            <tr><td><code>&lt;OUTPUTS&gt;</code></td><td><code>NAME = expression</code>, for the table and the charts; may use earlier outputs. <code>state(X)</code> is the raw state of a species (all water, for <code>H2O</code>), and <code>deriv(X)</code> is its time derivative — what the FACSIMILE model carried in five dummy variables to report its apparent G-value. <code>deriv()</code> belongs here and nowhere else: a derivative inside a rate law would not be a differential equation.</td></tr>
           </table>
-          <p>Expressions use <code>+ - * / **</code> (also <code>^</code> and FACSIMILE's <code>@</code> for powers), parentheses, numbers such as <code>1.5E-12</code> or <code>2.0D+14</code>, and the functions <code>exp log ln log10 sqrt abs min max pow ramp step interp state</code>. <code>ramp(x)</code> is <code>max(x, 0)</code> (FACSIMILE's RAMP) and <code>step(x)</code> is 1 for positive <code>x</code>.</p>
-          <pre># the anoxic corrosion of the model
-4 H2O = 4 H2, rf = c2/3*(1 - f1)*f2      # 3Fe + 4H2O = Fe3O4 + 4H2
+          <p>Expressions use <code>+ - * / **</code> (also <code>^</code> and FACSIMILE's <code>@</code> for powers), parentheses, numbers such as <code>1.5E-12</code> or <code>2.0D+14</code>, and the functions <code>exp log ln log10 sqrt abs min max pow ramp step stepf sign sin cos tan atan tanh amod interp state deriv</code>. <code>ramp(x)</code> is <code>max(x, 0)</code> (FACSIMILE's RAMP) and <code>step(x)</code> is 1 for positive <code>x</code>. <code>stepf</code>, <code>sign</code>, <code>amod</code> and the trigonometric functions are FACSIMILE's, spelled as it spells them (<code>artan</code> is accepted for <code>atan</code>); the one difference to watch is at zero, where FACSIMILE's <code>stepf</code> is 1 and the <code>step</code> this page already had is 0. There is no random-number function: a derivative that changed from one evaluation to the next would not define a differential equation for any solver to integrate.</p>
+          <pre># the anoxic corrosion of the model, with its net rate named
+4 H2O = 4 H2, rf = c2/3*(1 - f1)*f2, rate = RANOX    # 3Fe + 4H2O = Fe3O4 + 4H2 (mol cm-3 s-1)
 # a reversible reaction with an equilibrium constant from Gibbs energies
-2 OH = H2O + O, kf = 1.5E+09*T**1.14*exp(-50/T), keq = exp(-(-2*DGOH+DGH2O+DGO)/RT)</pre>
+2 OH = H2O + O, kf = 1.5E+09*T**1.14*exp(-50/T), keq = exp(-(-2*DGOH+DGH2O+DGO)/RT)
+# FACSIMILE's own form, where the name goes before the first %
+RAB%K1%K2 : A + B = C</pre>
+          <p>A named rate is reported beside the outputs, on the fourth chart, in the table, in the CSV, in the Excel file and in <code>/Rates</code> of the HDF5 file. It is the net rate of that one reaction — forward less backward, or the absolute rate where one was given — so a species' derivative is the sum of the rates that reach it, each times its stoichiometric coefficient. That is what the built-in model's two corrosion fluxes now are:</p>
+          <pre>3 O2 = , rf = c1/4*f1*f2, rate = ROXID     # three O2 consumed per turn
+dDUMO2 = 3*ROXID                           # in &lt;OUTPUTS&gt;
+GHNO3  = (deriv(HNO3) + deriv(HNO2) + deriv(NO2) + deriv(NO3) + deriv(NO))/DOSER</pre>
 
           <h3>Units</h3>
           <p>Time in seconds, concentrations in mol/cm³, temperature in K, energies in cal/mol; bimolecular rate constants in cm³ mol<sup>−1</sup> s<sup>−1</sup> (the literature values in cm³ molecule<sup>−1</sup> s<sup>−1</sup> are multiplied by <code>NA</code>). Dose rates are given in Gy/h and converted to the 100 eV cm<sup>−3</sup> s<sup>−1</sup> unit the G-values need.</p>
@@ -443,7 +459,7 @@
           </ul>
 
           <h3>Files</h3>
-          <p><em>Save as .fac</em> writes the model text; <em>Open…</em> reads one back. <em>Download Excel</em> writes SETTINGS, DATA (the outputs) and STATES (the species) sheets in the layout of the Python port; CSV writes the table's columns at every solver step.</p>
+          <p><em>Save as .fac</em> writes the model text; <em>Open…</em> reads one back. <em>Download Excel</em> writes SETTINGS, DATA (the outputs) and STATES (the species) sheets in the layout of the Python port; CSV writes the table's columns at every solver step. Where the model has a <code>&lt;TIMES&gt;</code> section and the Table tab is set to those times, all three write that grid instead, and the buttons say so.</p>
 
           <h3>Sending a run to the HDF5 Browser</h3>
           <p><em>View in HDF5 Browser</em> on the Charts tab writes the run as an HDF5 file and opens it in the <a href="./rb.html">HDF5 Browser</a> in a second tab. The bytes are handed straight across between the two tabs, so nothing is written to disk and nothing is uploaded. <em>Download HDF5</em> on the Table tab writes the same file, for h5py or anything else that reads HDF5.</p>
@@ -503,7 +519,7 @@
   -->
   <script src="./resources/js/facsimile-model.js?v=20260917zd"></script>
   <script src="./resources/js/facsimile-ode.js?v=20260920a"></script>
-  <script src="./resources/js/facsimile-default.js?v=20260917zb"></script>
+  <script src="./resources/js/facsimile-default.js?v=20260921a"></script>
   <script src="./resources/js/ode-julia.js?v=20260917zd"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20260917zd"></script>
   <script src="./resources/js/facsimile-worker.js?v=20260917zd"></script>

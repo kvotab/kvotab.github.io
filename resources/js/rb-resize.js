@@ -1,3 +1,5 @@
+'use strict';   // see the script manifest in rb.html for why
+
 // Panel resize handle
 (function() {
   const handle = document.getElementById('resizeHandle');

@@ -1,1851 +1,19 @@
 /* ==========================================================================
-   7. RADIONUCLIDE LINE STYLES
+   RB CHART - the three chart builders
+   --------------------------------------------------------------------------
+   Split out of rb-chart.js, which had grown past 3 600 lines. These are plain
+   scripts sharing globals, not ES modules, so the load order in rb.html is the
+   order this code was in before the split, and has to stay that way:
+
+     rb-chart-axes.js  ->  rb-chart-presets.js  ->  rb-chart-export.js
+     ->  rb-chart-toggles.js  ->  rb-chart.js
+
+   Nothing here runs at load time; the files hold declarations only. Functions
+   call across files freely, since every call happens after all five have
+   loaded.
    ========================================================================== */
 
-/**
- * Get the line style (color, dash pattern) for a radionuclide isotope.
- * 
- * Predefined styles are provided for common isotopes in categories:
- * - Actinides (Ac, Am, Cm, Np, Pa, Pu, Th, U)
- * - Fission products (Ag, Cs, I, Pd, Se, Sm, Sn, Sr, Tc, Zr)
- * - Activation products (Be, C, Cl, Co, H, Ni, Nb, Mo)
- * - Other radionuclides (various)
- * 
- * Colors are chosen for visual distinction on both light backgrounds
- * and when multiple isotopes are plotted together.
- * 
- * @param {string} name - Isotope name (e.g., 'U-238', 'Cs-137', 'C-14-org')
- * @returns {{color: string|null, dash: string, width: number}} Line style object
- * 
- * @example
- * getLineStyle('U-238')  // { color: 'rgb(255,0,0)', dash: 'solid', width: 2 }
- * getLineStyle('unknown') // { color: null, dash: 'solid', width: 2 }
- */
-const NAMED_LINE_STYLES = {
-  // Actinides
-  'Ac-227': { color: 'rgb(128,0,0)', dash: 'solid' },
-  'Am-241': { color: 'rgb(72,209,204)', dash: 'dashdot' },
-  'Am-242m': { color: 'rgb(72,209,204)', dash: 'dash' },
-  'Am-243': { color: 'rgb(72,209,204)', dash: 'solid' },
-  'Cm-242': { color: 'rgb(175,238,238)', dash: 'dash' },
-  'Cm-243': { color: 'rgb(175,238,238)', dash: 'solid' },
-  'Cm-244': { color: 'rgb(175,238,238)', dash: 'dot' },
-  'Cm-245': { color: 'rgb(175,238,238)', dash: 'dash' },
-  'Cm-246': { color: 'rgb(175,238,238)', dash: 'dashdot' },
-  'Np-237': { color: 'rgb(218,165,32)', dash: 'solid' },
-  'Pa-231': { color: 'rgb(85,107,47)', dash: 'solid' },
-  'Pu-238': { color: 'rgb(0,255,255)', dash: 'dot' },
-  'Pu-239': { color: 'rgb(0,255,255)', dash: 'solid' },
-  'Pu-240': { color: 'rgb(0,255,255)', dash: 'dash' },
-  'Pu-241': { color: 'rgb(0,255,255)', dash: 'dashdot' },
-  'Pu-242': { color: 'rgb(0,255,255)', dash: 'dash' },
-  'Th-228': { color: 'rgb(75,0,130)', dash: 'dash' },
-  'Th-229': { color: 'rgb(75,0,130)', dash: 'dot' },
-  'Th-230': { color: 'rgb(75,0,130)', dash: 'solid' },
-  'Th-232': { color: 'rgb(75,0,130)', dash: 'dash' },
-  'U-232': { color: 'rgb(255,0,0)', dash: 'longdash' },
-  'U-233': { color: 'rgb(255,0,0)', dash: 'dash' },
-  'U-234': { color: 'rgb(255,0,0)', dash: 'dot' },
-  'U-235': { color: 'rgb(255,0,0)', dash: 'dash' },
-  'U-236': { color: 'rgb(255,0,0)', dash: 'dashdot' },
-  'U-238': { color: 'rgb(255,0,0)', dash: 'solid' },
-
-  // Fission products
-  'Ag-108m': { color: 'rgb(128,128,0)', dash: 'solid' },
-  'Cs-135': { color: 'rgb(0,128,0)', dash: 'solid' },
-  'Cs-137': { color: 'rgb(0,128,0)', dash: 'dash' },
-  'I-129': { color: 'rgb(30,144,255)', dash: 'solid' },
-  'Pd-107': { color: 'rgb(216,191,216)', dash: 'solid' },
-  'Se-79': { color: 'rgb(112,128,144)', dash: 'solid' },
-  'Sm-151': { color: 'rgb(138,43,226)', dash: 'solid' },
-  'Sn-126': { color: 'rgb(0,0,0)', dash: 'solid' },
-  'Sr-90': { color: 'rgb(255,215,0)', dash: 'solid' },
-  'Tc-99': { color: 'rgb(0,0,128)', dash: 'solid' },
-  'Zr-93': { color: 'rgb(144,238,144)', dash: 'solid' },
-
-  // Activation products
-  'Be-10': { color: 'rgb(65,105,225)', dash: 'solid' },
-  'C-14': { color: 'rgb(0,0,255)', dash: 'solid' },
-  'C-14-org': { color: 'rgb(0,0,255)', dash: 'solid' },
-  'C-14-ind': { color: 'rgb(0,0,255)', dash: 'dash' },
-  'C-14-inorg': { color: 'rgb(0,0,255)', dash: 'dot' },
-  'Cl-36': { color: 'rgb(210,105,30)', dash: 'solid' },
-  'Co-60': { color: 'rgb(0,255,127)', dash: 'solid' },
-  'H-3': { color: 'rgb(0,0,205)', dash: 'solid' },
-  'Ni-59': { color: 'rgb(255,0,255)', dash: 'solid' },
-  'Ni-63': { color: 'rgb(255,0,255)', dash: 'dash' },
-  'Nb-93m': { color: 'rgb(210,180,140)', dash: 'solid' },
-  'Nb-94': { color: 'rgb(210,180,140)', dash: 'dash' },
-  'Mo-93': { color: 'rgb(0,255,0)', dash: 'solid' },
-
-  // Other radionuclides
-  'Ar-39': { color: 'rgb(152,251,152)', dash: 'solid' },
-  'Ba-133': { color: 'rgb(70,130,180)', dash: 'solid' },
-  'Ca-41': { color: 'rgb(128,0,128)', dash: 'solid' },
-  'Cd-113m': { color: 'rgb(124,252,0)', dash: 'solid' },
-  'Eu-150': { color: 'rgb(205,133,63)', dash: 'dash' },
-  'Eu-152': { color: 'rgb(205,133,63)', dash: 'solid' },
-  'Gd-148': { color: 'rgb(255,255,0)', dash: 'solid' },
-  'Ho-166m': { color: 'rgb(100,149,237)', dash: 'solid' },
-  'K-40': { color: 'rgb(139,69,19)', dash: 'solid' },
-  'La-137': { color: 'rgb(255,248,220)', dash: 'solid' },
-  'Pb-210': { color: 'rgb(148,0,211)', dash: 'dash' },
-  'Po-210': { color: 'rgb(148,0,211)', dash: 'dot' },
-  'Rn-222': { color: 'rgb(148,0,211)', dash: 'dashdot' },
-  'Ra-226': { color: 'rgb(148,0,211)', dash: 'solid' },
-  'Ra-228': { color: 'rgb(148,0,211)', dash: 'dash' },
-  'Re-186m': { color: 'rgb(255,160,122)', dash: 'solid' },
-  'Si-32': { color: 'rgb(255,228,181)', dash: 'solid' },
-  'Tb-157': { color: 'rgb(221,160,221)', dash: 'solid' },
-  'Tb-158': { color: 'rgb(221,160,221)', dash: 'dash' },
-  'Ti-44': { color: 'rgb(218,112,214)', dash: 'solid' },
-
-  // Repositories
-  'Silo': { color: 'rgb(255,204,0)', dash: 'solid' },
-  'BMA': { color: 'rgb(153,204,51)', dash: 'solid' },
-  '1BMA': { color: 'rgb(153,204,51)', dash: 'solid' },
-  '2BMA': { color: 'rgb(153,204,51)', dash: 'dash' },
-  'BLA': { color: 'rgb(204,102,255)', dash: 'solid' },
-  '1BLA': { color: 'rgb(204,102,255)', dash: 'solid' },
-  '2-5BLA': { color: 'rgb(204,102,255)', dash: 'dash' },
-  '2BLA': { color: 'rgb(204,102,255)', dash: 'dash' },
-  '3BLA': { color: 'rgb(204,102,255)', dash: 'dot' },
-  '4BLA': { color: 'rgb(204,102,255)', dash: 'dashdot' },
-  '5BLA': { color: 'rgb(204,102,255)', dash: 'longdash' },
-  'BTF': { color: 'rgb(102,153,204)', dash: 'solid' },
-  '1BTF': { color: 'rgb(102,153,204)', dash: 'solid' },
-  '2BTF': { color: 'rgb(102,153,204)', dash: 'dash' },
-  'BRT': { color: 'rgb(192,80,77)', dash: 'solid' },
-
-  // Exposed groups
-  'drained_mire':{color: 'rgb(165,42,42)', dash: 'solid'},
-  'forager':{color: 'rgb(147,197,114)', dash: 'solid'},
-  'garden_plot':{color: 'rgb(0,191,255)', dash: 'solid'},
-  'infield_outland':{color: 'rgb(255,204,0)', dash: 'solid'},
-  'drilled_well':{color: 'rgb(0,0,255)', dash: 'solid'},
-  'drained_mire_irrig':{color: 'rgb(165,42,42)', dash: 'dash'},
-
-  // No color
-  'none': { color: 'rgba(255,255,255,0)', dash: 'solid' },
-
-  // Climate domains
-  'submerged': { color: 'rgb(0,191,255)', dash: 'solid' },
-  'temperate': { color: 'rgb(34,139,34)', dash: 'solid' },
-  'permafrost': { color: 'rgb(70,130,180)', dash: 'solid' },
-  'periglacial': { color: 'rgb(70,130,180)', dash: 'solid' },
-  'glacial': { color: 'rgb(255,250,250)', dash: 'solid' },
-  'glacial thawed': { color: 'rgb(224, 234, 239)', dash: 'solid' },
-
-  // Chemical degradation states
-  'State I': { color: 'rgb(79,99,39)', dash: 'solid' },
-  'State II': { color: 'rgb(119,147,60)', dash: 'solid' },
-  'State IIIa': { color: 'rgb(154,187,89)', dash: 'solid' },
-  'State IIIb': { color: 'rgb(195,215,156)', dash: 'solid' },
-  'State IV': { color: 'rgb(255,255,255)', dash: 'solid' },
-  // physical degradation states
-  'Intact': { color: 'rgb(54,95,146)', dash: 'solid' },
-  'Moderately degraded': { color: 'rgb(149,179,216)', dash: 'solid' },
-  'Severely degraded': { color: 'rgb(185,205,229)', dash: 'solid' },
-  'Completely degraded': { color: 'rgb(220,230,242)', dash: 'solid' },
-  'No barrier': { color: 'rgb(255,255,255)', dash: 'solid' },
-  
-  // Total line has black color
-  'Total': { color: 'rgb(0,0,0)', dash: 'solid' },
-};
-
-function getNamedColor(name) {
-  if (!name) return null;
-  const style = NAMED_LINE_STYLES[name] || NAMED_LINE_STYLES[name.toLowerCase()];
-  return style && style.color ? style.color : null;
-}
-
-function getLineStyle(name) {
-  const defaultStyle = { color: null, dash: 'solid', width: 2 };
-  if (name in NAMED_LINE_STYLES) {
-    return { ...defaultStyle, ...NAMED_LINE_STYLES[name] };
-  }
-  const lower = name && name.toLowerCase();
-  if (lower && lower in NAMED_LINE_STYLES) {
-    return { ...defaultStyle, ...NAMED_LINE_STYLES[lower] };
-  }
-  return defaultStyle;
-}
-
-
-/* ==========================================================================
-   8. CHART CONTROLS
-   ========================================================================== */
-
-/**
- * Update the chart axis scales based on dropdown selections.
- * Applies new scale types (linear/log) without rebuilding the entire chart.
- * 
- * @returns {void}
- */
-function updateChartScales() {
-  if (!currentChartData) return;
-
-  const plotDiv = document.getElementById('plotlyChart');
-  const curX = (plotDiv && plotDiv.layout && plotDiv.layout.xaxis && plotDiv.layout.xaxis.type) || 'linear';
-  const curY = (plotDiv && plotDiv.layout && plotDiv.layout.yaxis && plotDiv.layout.yaxis.type) || 'linear';
-
-  const xScale = getScaleValue('x');
-  const yScale = getScaleValue('y');
-
-  const update = {};
-  if (xScale !== curX) {
-    update['xaxis.type'] = xScale;
-    if (xScale === 'log') {
-      update['xaxis.dtick'] = 1;
-      update['xaxis.minor.ticks'] = 'outside';
-      update['xaxis.minor.ticklen'] = 3;
-      update['xaxis.minor.showgrid'] = true;
-    } else {
-      update['xaxis.tickmode'] = 'auto';
-      update['xaxis.dtick'] = null;
-      update['xaxis.minor.ticks'] = 'outside';
-      update['xaxis.minor.showgrid'] = false;
-    }
-  }
-  if (yScale !== curY) {
-    update['yaxis.type'] = yScale;
-    if (yScale === 'log') {
-      update['yaxis.dtick'] = 1;
-      update['yaxis.minor.ticks'] = 'outside';
-      update['yaxis.minor.ticklen'] = 3;
-      update['yaxis.minor.showgrid'] = true;
-    } else {
-      update['yaxis.tickmode'] = 'auto';
-      update['yaxis.dtick'] = null;
-      update['yaxis.minor.ticks'] = 'outside';
-      update['yaxis.minor.showgrid'] = false;
-    }
-  }
-
-  if (Object.keys(update).length === 0) return;
-
-  // Background overlays in special group charts are baked into layout.shapes.
-  // Rebuild the chart when x-scale changes so segment bounds are recalculated
-  // consistently (especially for log scale with non-positive times).
-  if (xScale !== curX
-      && selectedIsRadionuclidesGroup
-      && selectedDatasetPath
-      && selectedBackgroundOverlaySource
-      && selectedBackgroundOverlaySource !== '__none__') {
-    const savedAxis = captureAxisState();
-    Promise.resolve().then(() => createRadionuclidesChart(selectedDatasetPath, savedAxis));
-    return;
-  }
-
-  Plotly.relayout('plotlyChart', update).then(() => {
-    refreshDynamicLegend();
-    snapLogRangeToDecades(document.getElementById('plotlyChart'));
-  });
-}
-
-/**
- * Return current scale selection for given axis ('x' or 'y').
- */
-function getScaleValue(axis) {
-  const container = document.getElementById(axis + 'ScaleToggle');
-  if (!container) return 'linear';
-  const active = container.querySelector('button.active');
-  return active ? active.dataset.value : 'linear';
-}
-
-/**
- * Set the scale button state for specified axis and value.
- */
-function setScaleValue(axis, value) {
-  const container = document.getElementById(axis + 'ScaleToggle');
-  if (!container) return;
-  const buttons = container.querySelectorAll('button');
-  buttons.forEach(btn => {
-    if (btn.dataset.value === value) btn.classList.add('active');
-    else btn.classList.remove('active');
-  });
-}
-
-/* ==========================================================================
-   AXES LOCK — pin current axes settings for newly selected data
-   ========================================================================== */
-
-let _axesLocked = false;
-let _lockedAxesState = null;
-
-/** Toggle the axes lock on/off. When locking, capture the current view. */
-function toggleAxesLock() {
-  // Prevent locking when on Auto range (default preset)
-  if (!_axesLocked) {
-    const sel = document.getElementById('presetSelect');
-    if (sel && sel.value === 'default') return;
-  }
-
-  _axesLocked = !_axesLocked;
-  const btn = document.getElementById('lockAxesBtn');
-  if (btn) {
-    btn.classList.toggle('active', _axesLocked);
-    btn.title = _axesLocked ? 'Axes locked — click to unlock' : 'Lock current axes settings';
-    const shackle = btn.querySelector('.lock-shackle');
-    if (shackle) {
-      shackle.setAttribute('d', _axesLocked
-        ? 'M7 11V7a5 5 0 0 1 10 0v4'   // closed
-        : 'M7 11V7a5 5 0 0 1 9.9-.5');  // open
-    }
-  }
-  if (_axesLocked) {
-    _lockedAxesState = _captureCurrentView();
-  } else {
-    _lockedAxesState = null;
-  }
-  _setAxesControlsDisabled(_axesLocked);
-}
-
-/** Enable or disable scale toggles and preset controls based on lock state. */
-function _setAxesControlsDisabled(disabled) {
-  // Scale toggle buttons
-  document.querySelectorAll('#xScaleToggle button, #yScaleToggle button').forEach(b => {
-    b.disabled = disabled;
-  });
-  // Preset select and action buttons
-  const ids = ['presetSelect'];
-  ids.forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.disabled = disabled;
-  });
-  // Preset bar buttons (save +, manage ⚙) — all preset-icon-btn except the lock itself
-  document.querySelectorAll('.preset-bar .preset-icon-btn:not(.lock-axes-btn)').forEach(b => {
-    b.disabled = disabled;
-  });
-}
-
-/**
- * Apply the locked axes state to a layout object.
- * Sets scale types, ranges and disables autorange when locked.
- */
-function _applyLockedAxes(layout) {
-  if (!_axesLocked || !_lockedAxesState) return;
-  const s = _lockedAxesState;
-
-  // Apply scale types and update UI toggles
-  if (s.xScale) {
-    layout.xaxis.type = s.xScale;
-    setScaleValue('x', s.xScale);
-  }
-  if (s.yScale) {
-    layout.yaxis.type = s.yScale;
-    setScaleValue('y', s.yScale);
-  }
-
-  // Apply X range
-  if (s.xMin != null && s.xMax != null) {
-    layout.xaxis.range = s.xScale === 'log'
-      ? [Math.log10(s.xMin), Math.log10(s.xMax)]
-      : [s.xMin, s.xMax];
-    layout.xaxis.autorange = false;
-  }
-
-  // Apply Y range
-  if (s.yMin != null && s.yMax != null) {
-    layout.yaxis.range = s.yScale === 'log'
-      ? [Math.log10(s.yMin), Math.log10(s.yMax)]
-      : [s.yMin, s.yMax];
-    layout.yaxis.autorange = false;
-  }
-}
-
-/* ==========================================================================
-   CHART PRESETS — customizable, persistent axis presets
-   ========================================================================== */
-
-const _PRESETS_STORAGE_KEY = 'chartPresets';
-let _suppressPresetSync = false;
-
-const _BUILTIN_PRESETS = [
-  {
-    id: 'default',
-    name: 'Auto range',
-    builtIn: true,
-    xScale: null, yScale: null,
-    xMin: null, xMax: null, yMin: null, yMax: null
-  },
-  {
-    id: 'release',
-    name: 'SFR Release',
-    builtIn: false,
-    xScale: 'log', yScale: 'log',
-    xMin: 100, xMax: 100000, yMin: 10000, yMax: 1e9
-  },
-  {
-    id: 'dose',
-    name: 'SFR Dose',
-    builtIn: false,
-    xScale: 'log', yScale: 'log',
-    xMin: 1000, xMax: 1e5, yMin: 1e-7, yMax: 2e-5
-  }
-];
-
-/** Load presets from localStorage (falls back to built-in defaults). */
-function loadPresets() {
-  try {
-    const raw = localStorage.getItem(_PRESETS_STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length) {
-        // Ensure the Default preset is always first
-        if (!parsed.find(p => p.id === 'default')) {
-          parsed.unshift(_BUILTIN_PRESETS[0]);
-        }
-        return parsed;
-      }
-    }
-  } catch (_) { ignoreFailure('loadPresets', _); }
-  return JSON.parse(JSON.stringify(_BUILTIN_PRESETS));
-}
-
-/** Save presets array to localStorage. */
-function savePresetsToStorage(presets) {
-  localStorage.setItem(_PRESETS_STORAGE_KEY, JSON.stringify(presets));
-}
-
-/** Populate the preset <select> dropdown. */
-function populatePresetDropdown() {
-  const sel = document.getElementById('presetSelect');
-  if (!sel) return;
-  const presets = loadPresets();
-  sel.innerHTML = '';
-  presets.forEach(p => {
-    const opt = document.createElement('option');
-    opt.value = p.id;
-    opt.textContent = p.name;
-    sel.appendChild(opt);
-  });
-}
-
-/** Apply the selected preset to the chart. */
-function applySelectedPreset() {
-  const sel = document.getElementById('presetSelect');
-  if (!sel) return;
-  if (sel.value === '__custom__') return;
-  _removeCustomOption();
-  applyPresetById(sel.value);
-}
-
-/** Apply a preset by its id string. */
-function applyPresetById(id) {
-  if (!currentChartData) return;
-  const presets = loadPresets();
-  const preset = presets.find(p => p.id === id);
-  if (!preset) return;
-
-  // Default preset → reset to autorange with current scale toggles
-  if (preset.id === 'default') {
-    const xScale = getScaleValue('x');
-    const yScale = getScaleValue('y');
-    _suppressPresetSync = true;
-    Plotly.relayout('plotlyChart', {
-      'xaxis.autorange': true,
-      'yaxis.autorange': true,
-      'xaxis.dtick': xScale === 'log' ? 1 : null,
-      'xaxis.tickmode': xScale === 'log' ? null : 'auto',
-      'xaxis.minor.ticks': 'outside',
-      'xaxis.minor.ticklen': 3,
-      'xaxis.minor.showgrid': xScale === 'log',
-      'yaxis.dtick': yScale === 'log' ? 1 : null,
-      'yaxis.tickmode': yScale === 'log' ? null : 'auto',
-      'yaxis.minor.ticks': 'outside',
-      'yaxis.minor.ticklen': 3,
-      'yaxis.minor.showgrid': yScale === 'log'
-    }).then(() => { _suppressPresetSync = false; refreshDynamicLegend(); snapLogRangeToDecades(document.getElementById('plotlyChart')); });
-    return;
-  }
-
-  const update = {};
-  if (preset.xScale) {
-    setScaleValue('x', preset.xScale);
-    update['xaxis.type'] = preset.xScale;
-    if (preset.xScale === 'log') {
-      update['xaxis.dtick'] = 1;
-      update['xaxis.minor.ticks'] = 'outside';
-      update['xaxis.minor.ticklen'] = 3;
-      update['xaxis.minor.showgrid'] = true;
-    } else {
-      update['xaxis.tickmode'] = 'auto';
-      update['xaxis.dtick'] = null;
-      update['xaxis.minor.ticks'] = 'outside';
-      update['xaxis.minor.showgrid'] = false;
-    }
-  }
-  if (preset.yScale) {
-    setScaleValue('y', preset.yScale);
-    update['yaxis.type'] = preset.yScale;
-    if (preset.yScale === 'log') {
-      update['yaxis.dtick'] = 1;
-      update['yaxis.minor.ticks'] = 'outside';
-      update['yaxis.minor.ticklen'] = 3;
-      update['yaxis.minor.showgrid'] = true;
-    } else {
-      update['yaxis.tickmode'] = 'auto';
-      update['yaxis.dtick'] = null;
-      update['yaxis.minor.ticks'] = 'outside';
-      update['yaxis.minor.showgrid'] = false;
-    }
-  }
-
-  if (preset.xMin != null && preset.xMax != null) {
-    update['xaxis.range'] = preset.xScale === 'log'
-      ? [Math.log10(preset.xMin), Math.log10(preset.xMax)]
-      : [preset.xMin, preset.xMax];
-    update['xaxis.autorange'] = false;
-  } else {
-    update['xaxis.autorange'] = true;
-  }
-
-  if (preset.yMin != null && preset.yMax != null) {
-    update['yaxis.range'] = preset.yScale === 'log'
-      ? [Math.log10(preset.yMin), Math.log10(preset.yMax)]
-      : [preset.yMin, preset.yMax];
-    update['yaxis.autorange'] = false;
-  } else {
-    update['yaxis.autorange'] = true;
-  }
-
-  _suppressPresetSync = true;
-  Plotly.relayout('plotlyChart', update).then(() => { _suppressPresetSync = false; refreshDynamicLegend(); snapLogRangeToDecades(document.getElementById('plotlyChart')); });
-}
-
-/** Capture the current chart view state as a preset object (without id/name). */
-function _captureCurrentView() {
-  const plotDiv = document.getElementById('plotlyChart');
-  if (!plotDiv || !plotDiv.layout) return null;
-  const xaxis = plotDiv.layout.xaxis || {};
-  const yaxis = plotDiv.layout.yaxis || {};
-  const xScale = getScaleValue('x');
-  const yScale = getScaleValue('y');
-
-  let xMin = null, xMax = null, yMin = null, yMax = null;
-  if (xaxis.range && xaxis.autorange !== true) {
-    xMin = xScale === 'log' ? Math.pow(10, xaxis.range[0]) : xaxis.range[0];
-    xMax = xScale === 'log' ? Math.pow(10, xaxis.range[1]) : xaxis.range[1];
-  }
-  if (yaxis.range && yaxis.autorange !== true) {
-    yMin = yScale === 'log' ? Math.pow(10, yaxis.range[0]) : yaxis.range[0];
-    yMax = yScale === 'log' ? Math.pow(10, yaxis.range[1]) : yaxis.range[1];
-  }
-  return { xScale, yScale, xMin, xMax, yMin, yMax };
-}
-
-/** Save the current chart view as a new preset (prompts for name). */
-function saveCurrentAsPreset() {
-  if (!currentChartData) { notifyUser('Draw a chart first — there is nothing to capture yet.'); return; }
-  const name = prompt('Preset name:');
-  if (!name || !name.trim()) return;
-
-  const view = _captureCurrentView();
-  if (!view) return;
-
-  const presets = loadPresets();
-  const id = 'user_' + Date.now();
-  presets.push(Object.assign({ id, name: name.trim(), builtIn: false }, view));
-  savePresetsToStorage(presets);
-  populatePresetDropdown();
-
-  // Select the newly created preset
-  const sel = document.getElementById('presetSelect');
-  if (sel) sel.value = id;
-}
-
-/* ---------- Preset Manager Dialog ---------- */
-
-function openPresetManager() {
-  const overlay = document.getElementById('presetManagerOverlay');
-  if (!overlay) return;
-  _renderPresetManagerList();
-  overlay.style.display = 'flex';
-}
-
-function closePresetManager() {
-  const overlay = document.getElementById('presetManagerOverlay');
-  if (overlay) overlay.style.display = 'none';
-
-  // Re-sync dropdown: keep current selection if it still exists, else fall back to default
-  const sel = document.getElementById('presetSelect');
-  if (sel) {
-    const prev = sel.value;
-    populatePresetDropdown();
-    const presets = loadPresets();
-    if (presets.find(p => p.id === prev)) {
-      sel.value = prev;
-    } else {
-      sel.value = 'default';
-    }
-    // Apply the (possibly updated) selected preset to the chart
-    applyPresetById(sel.value);
-  }
-}
-
-function _renderPresetManagerList() {
-  const list = document.getElementById('presetManagerList');
-  if (!list) return;
-  const presets = loadPresets();
-  list.innerHTML = '';
-
-  presets.forEach((p, idx) => {
-    const row = document.createElement('div');
-    row.className = 'preset-manager-row';
-    row.dataset.presetId = p.id;
-
-    const nameSpan = document.createElement('span');
-    nameSpan.className = 'preset-manager-name';
-    nameSpan.textContent = p.name;
-    if (p.id === 'default') nameSpan.style.fontStyle = 'italic';
-
-    // Summary line showing current axis settings
-    const summary = document.createElement('span');
-    summary.className = 'preset-manager-summary';
-    if (p.id === 'default') {
-      summary.textContent = 'auto';
-    } else {
-      const parts = [];
-      const xS = p.xScale || 'auto';
-      const yS = p.yScale || 'auto';
-      const fmtR = (lo, hi) => (lo != null && hi != null) ? lo + ' – ' + hi : 'auto';
-      parts.push('X: ' + xS + ' [' + fmtR(p.xMin, p.xMax) + ']');
-      parts.push('Y: ' + yS + ' [' + fmtR(p.yMin, p.yMax) + ']');
-      summary.textContent = parts.join('   ');
-    }
-
-    const nameBlock = document.createElement('div');
-    nameBlock.className = 'preset-manager-name-block';
-    nameBlock.appendChild(nameSpan);
-    nameBlock.appendChild(summary);
-    row.appendChild(nameBlock);
-
-    if (p.id !== 'default') {
-      const btnGroup = document.createElement('span');
-      btnGroup.className = 'preset-manager-actions';
-
-      const editBtn = document.createElement('button');
-      editBtn.textContent = 'Edit';
-      editBtn.title = 'Edit preset settings';
-      editBtn.onclick = () => _editPreset(p.id);
-      btnGroup.appendChild(editBtn);
-
-      const captureBtn = document.createElement('button');
-      captureBtn.textContent = 'Capture';
-      captureBtn.title = 'Overwrite with current chart view';
-      captureBtn.onclick = () => _updatePresetFromView(p.id);
-      btnGroup.appendChild(captureBtn);
-
-      const deleteBtn = document.createElement('button');
-      deleteBtn.textContent = 'Delete';
-      deleteBtn.title = 'Delete preset';
-      deleteBtn.className = 'preset-delete-btn';
-      deleteBtn.onclick = () => _deletePreset(p.id);
-      btnGroup.appendChild(deleteBtn);
-
-      row.appendChild(btnGroup);
-    }
-    list.appendChild(row);
-  });
-}
-
-/** Show inline edit form for a preset. */
-function _editPreset(id) {
-  const presets = loadPresets();
-  const p = presets.find(x => x.id === id);
-  if (!p) return;
-
-  // Remove any existing edit form first
-  const prev = document.getElementById('presetEditForm');
-  if (prev) prev.remove();
-
-  const list = document.getElementById('presetManagerList');
-  if (!list) return;
-
-  // Find the row for this preset
-  const rows = list.querySelectorAll('.preset-manager-row');
-  let targetRow = null;
-  rows.forEach(r => { if (r.dataset.presetId === id) targetRow = r; });
-  if (!targetRow) return;
-
-  const form = document.createElement('div');
-  form.id = 'presetEditForm';
-  form.className = 'preset-edit-form';
-
-  /*
-    Escaped, not just stringified. These fields look numeric but nothing
-    enforces that: importPresets stores whatever JSON it is handed after
-    checking only that id and name exist, so xMin can be a string, and it is
-    interpolated straight into value="…" below. A preset file with
-    xMin: '" autofocus onfocus=… x="' broke out of the attribute.
-  */
-  const fmtVal = (v) => (v == null ? '' : kvotEscapeHtml(v));
-
-  form.innerHTML =
-    '<div class="preset-edit-row">' +
-      '<label>Name <input type="text" id="pe_name" class="preset-name-input" value="' + _escAttr(p.name) + '"></label>' +
-    '</div>' +
-    '<div class="preset-edit-row">' +
-      '<label>X scale ' +
-        '<select id="pe_xScale">' +
-          '<option value=""' + (p.xScale == null ? ' selected' : '') + '>auto</option>' +
-          '<option value="linear"' + (p.xScale === 'linear' ? ' selected' : '') + '>linear</option>' +
-          '<option value="log"' + (p.xScale === 'log' ? ' selected' : '') + '>log</option>' +
-        '</select>' +
-      '</label>' +
-      '<label>X min <input type="text" id="pe_xMin" value="' + fmtVal(p.xMin) + '" placeholder="auto"></label>' +
-      '<label>X max <input type="text" id="pe_xMax" value="' + fmtVal(p.xMax) + '" placeholder="auto"></label>' +
-    '</div>' +
-    '<div class="preset-edit-row">' +
-      '<label>Y scale ' +
-        '<select id="pe_yScale">' +
-          '<option value=""' + (p.yScale == null ? ' selected' : '') + '>auto</option>' +
-          '<option value="linear"' + (p.yScale === 'linear' ? ' selected' : '') + '>linear</option>' +
-          '<option value="log"' + (p.yScale === 'log' ? ' selected' : '') + '>log</option>' +
-        '</select>' +
-      '</label>' +
-      '<label>Y min <input type="text" id="pe_yMin" value="' + fmtVal(p.yMin) + '" placeholder="auto"></label>' +
-      '<label>Y max <input type="text" id="pe_yMax" value="' + fmtVal(p.yMax) + '" placeholder="auto"></label>' +
-    '</div>' +
-    '<div class="preset-edit-btns">' +
-      '<button id="pe_save" class="preset-edit-save">Save</button>' +
-      '<button id="pe_cancel">Cancel</button>' +
-    '</div>';
-
-  targetRow.insertAdjacentElement('afterend', form);
-
-  document.getElementById('pe_save').onclick = () => _savePresetEdit(id);
-  document.getElementById('pe_cancel').onclick = () => _cancelPresetEdit();
-}
-
-/*
-  Kept as a name the call sites already use, but delegating: this escaped &, "
-  and < and left ' and > alone, which is safe only for as long as every
-  attribute it feeds is written with double quotes. kvot-safe.js does all five.
-*/
-function _escAttr(s) {
-  return kvotEscapeHtml(s);
-}
-
-function _parseNum(s) {
-  if (s == null) return null;
-  const t = String(s).trim();
-  if (t === '') return null;
-  const n = Number(t);
-  return isNaN(n) ? null : n;
-}
-
-function _savePresetEdit(id) {
-  const presets = loadPresets();
-  const p = presets.find(x => x.id === id);
-  if (!p) return;
-
-  const nameVal = (document.getElementById('pe_name').value || '').trim();
-  if (!nameVal) { notifyUser('Give the preset a name before saving.'); return; }
-
-  p.name   = nameVal;
-  p.xScale = document.getElementById('pe_xScale').value || null;
-  p.yScale = document.getElementById('pe_yScale').value || null;
-  p.xMin   = _parseNum(document.getElementById('pe_xMin').value);
-  p.xMax   = _parseNum(document.getElementById('pe_xMax').value);
-  p.yMin   = _parseNum(document.getElementById('pe_yMin').value);
-  p.yMax   = _parseNum(document.getElementById('pe_yMax').value);
-
-  savePresetsToStorage(presets);
-  populatePresetDropdown();
-  _renderPresetManagerList();
-}
-
-function _cancelPresetEdit() {
-  const f = document.getElementById('presetEditForm');
-  if (f) f.remove();
-}
-
-function _updatePresetFromView(id) {
-  if (!currentChartData) { notifyUser('Draw a chart first — there is nothing to capture yet.'); return; }
-  const presets = loadPresets();
-  const p = presets.find(x => x.id === id);
-  if (!p) return;
-  const view = _captureCurrentView();
-  if (!view) return;
-  Object.assign(p, view);
-  savePresetsToStorage(presets);
-  populatePresetDropdown();
-  _renderPresetManagerList();
-}
-
-function _deletePreset(id) {
-  if (!confirm('Delete this preset?')) return;
-  let presets = loadPresets();
-  presets = presets.filter(x => x.id !== id);
-  savePresetsToStorage(presets);
-  populatePresetDropdown();
-  _renderPresetManagerList();
-}
-
-/** Export all presets as a JSON file download. */
-function exportPresets() {
-  const presets = loadPresets();
-  const blob = new Blob([JSON.stringify(presets, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'chart-presets.json';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}
-
-/** Reset the preset dropdown back to Default (e.g. when a new chart is drawn). */
-function resetPresetDropdown() {
-  const sel = document.getElementById('presetSelect');
-  if (!sel) return;
-  const customOpt = sel.querySelector('option[value="__custom__"]');
-  if (customOpt) customOpt.remove();
-  sel.value = 'default';
-}
-
-/** Add/select a temporary "Custom *" option in the preset dropdown. */
-function _markCustomPreset() {
-  const sel = document.getElementById('presetSelect');
-  if (!sel) return;
-  let opt = sel.querySelector('option[value="__custom__"]');
-  if (!opt) {
-    opt = document.createElement('option');
-    opt.value = '__custom__';
-    opt.textContent = 'Custom \u2731';
-    sel.appendChild(opt);
-  }
-  sel.value = '__custom__';
-}
-
-/** Remove the temporary "Custom *" option from the preset dropdown. */
-function _removeCustomOption() {
-  const sel = document.getElementById('presetSelect');
-  if (!sel) return;
-  const opt = sel.querySelector('option[value="__custom__"]');
-  if (opt) opt.remove();
-}
-
-/**
- * Snap log-scale axes to full-decade boundaries so the last major
- * gridline and its tick label are always visible.
- */
-let _snappingLog = false;
-function snapLogRangeToDecades(plotDiv) {
-  if (!plotDiv || _snappingLog) return Promise.resolve();
-  var fl = plotDiv._fullLayout;
-  if (!fl) return Promise.resolve();
-  var update = {};
-  ['xaxis', 'yaxis'].forEach(function(axis) {
-    var ax = fl[axis];
-    if (!ax || ax.type !== 'log') return;
-    // Only snap auto-ranged axes; preserve explicit user/preset limits
-    if (!ax.autorange) return;
-    var r = ax.range;
-    if (!r || r.length < 2) return;
-    var r0 = r[0], r1 = r[1];
-    var target0 = Math.floor(r0);
-    var target1 = Math.ceil(r1);
-    if (Math.abs(r0 - target0) > 0.001 || Math.abs(r1 - target1) > 0.001) {
-      update[axis + '.range'] = [target0, target1];
-      update[axis + '.autorange'] = false;
-    }
-  });
-  if (Object.keys(update).length > 0) {
-    _suppressPresetSync = true;
-    _snappingLog = true;
-    return Plotly.relayout(plotDiv, update).then(function() {
-      _suppressPresetSync = false;
-      _snappingLog = false;
-    });
-  }
-  return Promise.resolve();
-}
-
-/**
- * Listen for user-initiated axis changes and sync the preset dropdown.
- * - Manual zoom/pan → switch to "Custom *"
- * - Autoscale (double-click or button) → switch to "Auto range"
- * Programmatic relayouts are ignored via _suppressPresetSync flag.
- */
-function setupPresetRelayoutSync(plotDiv) {
-  plotDiv.on('plotly_relayout', function(eventData) {
-    if (_suppressPresetSync) return;
-    if (!eventData) return;
-
-    // Autoscale → select Auto range, then snap log decades
-    if (eventData['xaxis.autorange'] || eventData['yaxis.autorange']) {
-      _removeCustomOption();
-      const sel = document.getElementById('presetSelect');
-      if (sel) sel.value = 'default';
-      snapLogRangeToDecades(plotDiv);
-      return;
-    }
-
-    // Any user-initiated range or type change → Custom
-    const axisKeys = ['xaxis.range[0]', 'xaxis.range[1]', 'xaxis.range',
-                      'yaxis.range[0]', 'yaxis.range[1]', 'yaxis.range',
-                      'xaxis.type', 'yaxis.type'];
-    const isAxisChange = axisKeys.some(k => k in eventData);
-    if (isAxisChange) {
-      const sel = document.getElementById('presetSelect');
-      if (sel && sel.value !== '__custom__') _markCustomPreset();
-    }
-  });
-}
-
-/** Import presets from a JSON file. */
-function importPresets() {
-  const input = document.createElement('input');
-  input.type = 'file';
-  input.accept = '.json,application/json';
-  input.onchange = () => {
-    const file = input.files[0];
-    if (!file) return;
-    /* A preset file is a few kilobytes of JSON; anything large is a mistake. */
-    const size = kvotFileTooLarge(file, 4 * 1024 * 1024);
-    if (size.tooLarge) { notifyUser(size.reason); return; }
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const imported = JSON.parse(reader.result);
-        if (!Array.isArray(imported)) {
-          notifyUser('That file does not contain a list of presets.');
-          return;
-        }
-        for (const p of imported) {
-          if (!p.id || !p.name) {
-            notifyUser('That file has an entry with no id or name, so it was not imported.');
-            return;
-          }
-        }
-
-        /*
-          Coerce before storing. Escaping where these are drawn is what stops
-          them being markup, but a preset whose xMin is an object or a hostile
-          string is still wrong everywhere else it is used - and it would be
-          written back to localStorage to be met again on the next visit. A
-          field that is meant to be a number becomes a number or nothing.
-        */
-        for (const preset of imported) {
-          for (const key of ['xMin', 'xMax', 'yMin', 'yMax']) {
-            if (preset[key] == null || preset[key] === '') { preset[key] = null; continue; }
-            const asNumber = Number(preset[key]);
-            preset[key] = Number.isFinite(asNumber) ? asNumber : null;
-          }
-          for (const key of ['xScale', 'yScale']) {
-            if (preset[key] !== 'linear' && preset[key] !== 'log') preset[key] = null;
-          }
-          preset.id = String(preset.id).slice(0, 120);
-          preset.name = String(preset.name).slice(0, 120);
-        }
-
-        /*
-          Merge rather than replace. This used to hand the parsed array straight
-          to savePresetsToStorage, which overwrites the key outright — so
-          importing a colleague's two presets silently destroyed every preset
-          the user had built up themselves, with a success message on top.
-
-          An imported preset replaces one of the same id in place, keeping its
-          position so the Default preset stays first; anything not in the file
-          is left alone.
-        */
-        const merged = new Map(loadPresets().map(preset => [preset.id, preset]));
-        let replaced = 0;
-        for (const preset of imported) {
-          if (merged.has(preset.id)) replaced++;
-          merged.set(preset.id, preset);
-        }
-        const addedCount = imported.length - replaced;
-        savePresetsToStorage([...merged.values()]);
-        populatePresetDropdown();
-        _renderPresetManagerList();
-        notifyUser(
-          `Imported ${imported.length} preset(s): ${addedCount} added, ${replaced} replaced. `
-          + 'Presets not in the file were kept.',
-          { tone: 'success' });
-      } catch (e) {
-        reportFailure('importPresets', e, { userMessage: 'That preset file could not be read' });
-      }
-    };
-    reader.readAsText(file);
-  };
-  input.click();
-}
-
-/**
- * Export current chart data to a CSV file.
- * Creates a downloadable file with columns: Series, X, Y.
- * Each trace in the chart becomes a series in the CSV.
- * 
- * @returns {void}
- */
-function downloadChartData() {
-  if (!currentChartData) {
-    notifyUser('There is no chart data to download yet.');
-    return;
-  }
-  
-  let csv = 'Series,X,Y\n';
-  
-  for (const trace of currentChartData.traces) {
-    const name = trace.name;
-    for (let i = 0; i < trace.x.length; i++) {
-      csv += `"${name}",${trace.x[i]},${trace.y[i]}\n`;
-    }
-  }
-  
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `chart_data_${Date.now()}.csv`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}
-
-/**
- * Export current chart data to an Excel file (.xlsx).
- * Creates a workbook with two sheets:
- * - "Chart": Contains a native Excel scatter chart with the same look as Plotly
- * - "Data": Contains the chart data with time column and one column per trace
- * 
- * Uses xlsxwrite.js for native Excel chart creation with full feature support.
- * Creates a chart that matches the Plotly chart styling:
- * - Same axis type (log/linear) with proper logarithmic scale support
- * - Same line colors from traces
- * - Same dash patterns (solid, dash, dot, dashdot, longdash)
- * - Gridlines matching the Plotly style
- * - Lines without markers
- * 
- * @returns {Promise<void>}
- */
-async function downloadChartDataAsExcel() {
-  if (!currentChartData) {
-    notifyUser('There is no chart data to export yet.');
-    return;
-  }
-  
-  // Check if xlsxwrite.js is ready
-  if (!window.xlsxReady || !window.XlsxWriter) {
-    reportFailure('downloadChartDataAsExcel', new Error('xlsxwrite.js did not load'),
-      { userMessage: 'The Excel export library is not loaded. Reload the page and try again' });
-    return;
-  }
-  
-  try {
-    const allTraces = currentChartData.traces;
-    const layout = currentChartData.layout;
-    
-    // Get current state from the actual Plotly chart element
-    const chartDiv = document.getElementById('plotlyChart');
-    const plotlyTraces = chartDiv && chartDiv.data ? chartDiv.data : allTraces;
-    const plotlyLayout = chartDiv && chartDiv.layout ? chartDiv.layout : layout;
-    
-    // Check if Dynamic Legend is enabled and we should filter by viewport
-    const dynamicLegendCheckbox = document.getElementById('dynamicLegend');
-    const isDynamicLegendEnabled = dynamicLegendCheckbox && dynamicLegendCheckbox.checked;
-    
-    let traces;
-    
-    if (isDynamicLegendEnabled && plotlyLayout.xaxis && plotlyLayout.yaxis) {
-      // Filter traces based on whether they have data points in the current viewport
-      const xRange = plotlyLayout.xaxis.range;
-      const yRange = plotlyLayout.yaxis.range;
-      
-      if (xRange && yRange) {
-        const xIsLog = plotlyLayout.xaxis.type === 'log';
-        const yIsLog = plotlyLayout.yaxis.type === 'log';
-        
-        const xMin = xIsLog ? Math.pow(10, xRange[0]) : xRange[0];
-        const xMax = xIsLog ? Math.pow(10, xRange[1]) : xRange[1];
-        const yMin = yIsLog ? Math.pow(10, yRange[0]) : yRange[0];
-        const yMax = yIsLog ? Math.pow(10, yRange[1]) : yRange[1];
-        
-        traces = plotlyTraces.filter(trace => {
-          // Check if trace has any data points in the current viewport
-          for (let j = 0; j < trace.x.length; j++) {
-            const x = trace.x[j];
-            const y = trace.y[j];
-            if (x !== null && x !== undefined && y !== null && y !== undefined) {
-              if (x >= xMin && x <= xMax && y >= yMin && y <= yMax) {
-                return true;
-              }
-            }
-          }
-          return false;
-        });
-      } else {
-        traces = plotlyTraces;
-      }
-    } else {
-      // Dynamic Legend off - export all traces (or filter by visible property)
-      traces = plotlyTraces.filter(trace => {
-        const visible = trace.visible;
-        return visible === undefined || visible === true;
-      });
-    }
-    
-    if (traces.length === 0) {
-      notifyUser('Every trace is hidden. Show at least one before exporting.');
-      return;
-    }
-    
-    // Find the longest x array to determine row count
-    const maxLength = Math.max(...traces.map(t => t.x ? t.x.length : 0));
-    
-    // Extract chart metadata
-    const chartTitle = layout && layout.title && layout.title.text 
-      ? layout.title.text 
-      : 'Chart Data';
-    const xAxisTitle = layout && layout.xaxis && layout.xaxis.title && layout.xaxis.title.text
-      ? layout.xaxis.title.text
-      : 'Time';
-    const yAxisTitle = layout && layout.yaxis && layout.yaxis.title && layout.yaxis.title.text
-      ? layout.yaxis.title.text
-      : 'Value';
-    
-    // Detect axis types from Plotly layout
-    const xAxisType = plotlyLayout && plotlyLayout.xaxis && plotlyLayout.xaxis.type ? plotlyLayout.xaxis.type : 'linear';
-    const yAxisType = plotlyLayout && plotlyLayout.yaxis && plotlyLayout.yaxis.type ? plotlyLayout.yaxis.type : 'linear';
-    
-    // Helper function to parse rgb color string to [R, G, B] array
-    const parseRgbColor = (colorStr) => {
-      if (!colorStr) return null;
-      // Handle rgb(r,g,b) format
-      const rgbMatch = colorStr.match(/rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i);
-      if (rgbMatch) {
-        return [parseInt(rgbMatch[1]), parseInt(rgbMatch[2]), parseInt(rgbMatch[3])];
-      }
-      // Handle hex format #RRGGBB or RRGGBB
-      const hexMatch = colorStr.match(/#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i);
-      if (hexMatch) {
-        return [parseInt(hexMatch[1], 16), parseInt(hexMatch[2], 16), parseInt(hexMatch[3], 16)];
-      }
-      // Handle short hex format #RGB
-      const shortHexMatch = colorStr.match(/^#?([a-f\d])([a-f\d])([a-f\d])$/i);
-      if (shortHexMatch) {
-        return [
-          parseInt(shortHexMatch[1] + shortHexMatch[1], 16),
-          parseInt(shortHexMatch[2] + shortHexMatch[2], 16),
-          parseInt(shortHexMatch[3] + shortHexMatch[3], 16)
-        ];
-      }
-      return null;
-    };
-    
-    // Map Plotly dash type to Excel dash type (using sys variants for standard Excel look)
-    const mapDashType = (plotlyDash) => {
-      if (!plotlyDash || plotlyDash === 'solid') return 'solid';
-      switch (plotlyDash) {
-        case 'dash': return 'sysDash';
-        case 'dot': return 'sysDot';
-        case 'dashdot': return 'sysDashDot';
-        case 'longdash': return 'lgDash';
-        case 'longdashdot': return 'lgDashDot';
-        default: return 'solid';
-      }
-    };
-    
-    // Fallback Plotly-like color palette (brighter colors)
-    const plotlyColors = [
-      [0x1F, 0x77, 0xB4], // blue
-      [0xFF, 0x7F, 0x0E], // orange
-      [0x2C, 0xA0, 0x2C], // green
-      [0xD6, 0x27, 0x28], // red
-      [0x94, 0x67, 0xBD], // purple
-      [0x8C, 0x56, 0x4B], // brown
-      [0xE3, 0x77, 0xC2], // pink
-      [0x7F, 0x7F, 0x7F], // gray
-      [0xBC, 0xBD, 0x22], // olive
-      [0x17, 0xBE, 0xCF]  // cyan
-    ];
-    
-    // Create workbook using xlsxwrite.js
-    const xlsx = new XlsxWriter();
-    
-    // Plotly-like gridline color (light gray)
-    const gridColor = 'E5ECF6';
-    const minorGridColor = 'EEF2F8';
-    
-    // ============ CREATE CHART ============
-    // Configure chart with axis settings
-    const chartConfig = {
-      width: 800,
-      height: 500,
-      scatterStyle: 'line',  // Line without markers
-      showBorder: false,     // Remove chart border
-      xAxis: {
-        title: { text: xAxisTitle },
-        numberFormat: '[>1000]### ### ### ##0;General',
-        fontSize: 9,
-        majorGridlines: { color: gridColor, width: 0.75 }
-      },
-      yAxis: {
-        title: { text: yAxisTitle, customAngle: -90 },
-        numberFormat: '0E+0',
-        fontSize: 9,
-        majorGridlines: { color: gridColor, width: 0.75 }
-      },
-      legend: { position: 'r', fontSize: 8 }
-    };
-    
-    // Set logarithmic scale if Plotly uses it, and add minor gridlines/ticks
-    if (xAxisType === 'log') {
-      chartConfig.xAxis.logBase = 10;
-      chartConfig.xAxis.minorGridlines = { color: minorGridColor, width: 0.5 };
-      chartConfig.xAxis.minorTickMark = 'out';
-    }
-    if (yAxisType === 'log') {
-      chartConfig.yAxis.logBase = 10;
-      chartConfig.yAxis.minorGridlines = { color: minorGridColor, width: 0.5 };
-      chartConfig.yAxis.minorTickMark = 'out';
-    }
-    
-    // Set axis min/max to match current Plotly view
-    // For log scale: always set limits (needed for proper scaling)
-    // For linear scale: only set limits if user has zoomed (autorange is false)
-    if (plotlyLayout.xaxis && plotlyLayout.xaxis.range) {
-      const xRange = plotlyLayout.xaxis.range;
-      const xIsLog = xAxisType === 'log';
-      const xIsZoomed = plotlyLayout.xaxis.autorange === false;
-      if (xIsLog || xIsZoomed) {
-        chartConfig.xAxis.minimum = xIsLog ? Math.pow(10, xRange[0]) : xRange[0];
-        chartConfig.xAxis.maximum = xIsLog ? Math.pow(10, xRange[1]) : xRange[1];
-      }
-    }
-    if (plotlyLayout.yaxis && plotlyLayout.yaxis.range) {
-      const yRange = plotlyLayout.yaxis.range;
-      const yIsLog = yAxisType === 'log';
-      const yIsZoomed = plotlyLayout.yaxis.autorange === false;
-      if (yIsLog || yIsZoomed) {
-        chartConfig.yAxis.minimum = yIsLog ? Math.pow(10, yRange[0]) : yRange[0];
-        chartConfig.yAxis.maximum = yIsLog ? Math.pow(10, yRange[1]) : yRange[1];
-      }
-    }
-    
-    const chart = xlsx.newChart(chartConfig);
-    
-    // Get x values from the first trace
-    const xValues = traces.length > 0 && traces[0].x ? traces[0].x : [];
-    
-    // Add series to chart
-    traces.forEach((trace, idx) => {
-      // Get color from trace or use fallback
-      let color = plotlyColors[idx % plotlyColors.length];
-      const traceColor = trace.line?.color || trace.marker?.color || null;
-      if (traceColor) {
-        const parsedColor = parseRgbColor(traceColor);
-        if (parsedColor) {
-          color = parsedColor;
-        }
-      }
-      
-      // Get dash type from trace
-      const dashType = mapDashType(trace.line?.dash);
-      
-      // Get line width from trace (default to 2 if not specified)
-      const lineWidth = trace.line?.width || 2;
-      
-      // Filter out null/undefined values
-      const yVals = trace.y || [];
-      const xVals = trace.x || xValues;
-      
-      // Create series with xlsxwrite.js
-      const series = xlsx.newSeries({
-        name: { text: trace.name || `Series ${idx + 1}` },
-        x: { values: xVals.map(v => v === null || v === undefined ? NaN : v) },
-        y: { values: yVals.map(v => v === null || v === undefined ? NaN : v) },
-        length: Math.max(xVals.length, yVals.length),
-        line: {
-          color: { option: 'Solid', value: color },
-          width: lineWidth,
-          dashType: dashType,
-          capType: 'rnd',
-          compoundType: 'sng',
-          joinType: 'round',
-          beginType: 'none',
-          endType: 'none'
-        },
-        marker: { option: 'NoMarker' }
-      });
-      
-      chart.series.push(series);
-    });
-    
-    // ============ PREPARE DATA ============
-    // Build data array with headers
-    const headers = ['Time', ...traces.map((t, i) => t.name || `Series ${i + 1}`)];
-    const dataRows = [];
-    
-    for (let i = 0; i < maxLength; i++) {
-      const row = [xValues[i] !== undefined ? xValues[i] : null];
-      traces.forEach(trace => {
-        row.push(trace.y && trace.y[i] !== undefined ? trace.y[i] : null);
-      });
-      dataRows.push(row);
-    }
-    
-    // Position chart to the right of the data (after all data columns)
-    chart.x = (traces.length + 2) * 64;  // Offset by number of columns + margin
-    chart.y = 0;
-    
-    // Write Data sheet with both data AND chart
-    xlsx.writeData([headers, ...dataRows], 'Data', { chart: chart });
-    
-    // Generate filename
-    const safeTitle = chartTitle.replace(/[^a-z0-9]/gi, '_').substring(0, 50);
-    const filename = `${safeTitle}_${Date.now()}.xlsx`;
-    
-    // Save and download the file
-    await xlsx.saveAs(filename);
-    
-  } catch (err) {
-    reportFailure('downloadChartDataAsExcel', err, { userMessage: 'The Excel export failed' });
-  }
-}
-
-/**
- * Handle "Show Total" checkbox toggle for radionuclides charts.
- * When checked, adds a trace showing the sum of all radionuclide activities.
- * Only applicable when viewing a radionuclides group.
- * 
- * @returns {void}
- */
-function toggleShowTotal() {
-  if (selectedIsRadionuclidesGroup && selectedDatasetPath) {
-    const savedAxis = captureAxisState();
-    Promise.resolve().then(() => createRadionuclidesChart(selectedDatasetPath, savedAxis));
-  }
-}
-
-/**
- * Handle "Show Ratio" checkbox toggle for radionuclides charts.
- * When checked, appends the ratio of max values (thick/thin) to the legend
- * name of thick-line traces.
- * 
- * @returns {void}
- */
-function toggleShowRatio() {
-  const ratioChecked = getElement('showRatio')?.checked;
-  setShowMaxVisible(!ratioChecked);
-  if (selectedIsRadionuclidesGroup && selectedDatasetPath) {
-    const savedAxis = captureAxisState();
-    Promise.resolve().then(() => createRadionuclidesChart(selectedDatasetPath, savedAxis));
-  }
-}
-
-/**
- * Handle background overlay source change for special group charts.
- * @returns {void}
- */
-function toggleBackgroundOverlay() {
-  const select = getElement('backgroundSourceSelect');
-  selectedBackgroundOverlaySource = select && select.value ? select.value : '__none__';
-  if (selectedIsRadionuclidesGroup && selectedDatasetPath) {
-    const savedAxis = captureAxisState();
-    Promise.resolve().then(() => createRadionuclidesChart(selectedDatasetPath, savedAxis));
-  } else if (!selectedIsRadionuclidesGroup && selectedDatasetPath) {
-    const savedAxis = captureAxisState();
-    Promise.resolve().then(() => createPlotlyChart(selectedDatasetPath, savedAxis));
-  }
-}
-
-function ensureBackgroundOverlayTooltip() {
-  let tip = document.getElementById('backgroundOverlayTooltip');
-  if (!tip) {
-    tip = document.createElement('div');
-    tip.id = 'backgroundOverlayTooltip';
-    tip.className = 'chart-bg-tooltip';
-    tip.style.display = 'none';
-    document.body.appendChild(tip);
-  }
-  return tip;
-}
-
-function toComparableAxisValue(v) {
-  const n = Number(v);
-  if (isFinite(n)) return n;
-  const t = Date.parse(v);
-  if (isFinite(t)) return t;
-  return null;
-}
-
-function removeBackgroundOverlayTooltipHandlers(plotDiv) {
-  if (!plotDiv || !plotDiv.__bgTooltipHandlers) return;
-  const h = plotDiv.__bgTooltipHandlers;
-  plotDiv.removeEventListener('mousemove', h.mousemove);
-  plotDiv.removeEventListener('mouseleave', h.mouseleave);
-  delete plotDiv.__bgTooltipHandlers;
-}
-
-function setupBackgroundOverlayTooltip(plotDiv, segments) {
-  if (!plotDiv) return;
-  removeBackgroundOverlayTooltipHandlers(plotDiv);
-
-  const tip = ensureBackgroundOverlayTooltip();
-  tip.style.display = 'none';
-
-  if (!Array.isArray(segments) || segments.length === 0) {
-    return;
-  }
-
-  const fullLayout = plotDiv._fullLayout;
-  const xAxis = fullLayout && fullLayout.xaxis;
-  if (!xAxis) {
-    return;
-  }
-
-  const toAxisLinearValue = (v) => {
-    try {
-      if (xAxis && typeof xAxis.d2l === 'function') {
-        const lv = xAxis.d2l(v);
-        const n = Number(lv);
-        if (isFinite(n)) return n;
-      }
-    } catch (_) { ignoreFailure('toAxisLinearValue', _); }
-    return toComparableAxisValue(v);
-  };
-
-  const normalizedSegments = segments
-    .map(seg => {
-      const x0 = toAxisLinearValue(seg.x0);
-      const x1 = toAxisLinearValue(seg.x1);
-      if (x0 === null || x1 === null) return null;
-      return {
-        ...seg,
-        _x0: Math.min(x0, x1),
-        _x1: Math.max(x0, x1)
-      };
-    })
-    .filter(Boolean);
-
-  if (!normalizedSegments.length) {
-    return;
-  }
-
-  const mousemove = (evt) => {
-    const fullLayout = plotDiv._fullLayout;
-    const xAxis = fullLayout && fullLayout.xaxis;
-    const yAxis = fullLayout && fullLayout.yaxis;
-    if (!xAxis || !yAxis) {
-      tip.style.display = 'none';
-      return;
-    }
-
-    const rect = plotDiv.getBoundingClientRect();
-    const px = evt.clientX - rect.left;
-    const py = evt.clientY - rect.top;
-
-    const inX = px >= xAxis._offset && px <= (xAxis._offset + xAxis._length);
-    const inY = py >= yAxis._offset && py <= (yAxis._offset + yAxis._length);
-    if (!inX || !inY) {
-      tip.style.display = 'none';
-      return;
-    }
-
-    const axisX = xAxis.p2l(px - xAxis._offset);
-    const xVal = Number(axisX);
-    if (!isFinite(xVal)) {
-      tip.style.display = 'none';
-      return;
-    }
-
-    const match = normalizedSegments.find(seg => xVal >= seg._x0 && xVal <= seg._x1);
-    if (!match) {
-      tip.style.display = 'none';
-      return;
-    }
-
-    tip.textContent = match.category || 'Section';
-    tip.style.display = 'block';
-    tip.style.left = `${evt.clientX + 12}px`;
-    tip.style.top = `${evt.clientY + 12}px`;
-  };
-
-  const mouseleave = () => {
-    tip.style.display = 'none';
-  };
-
-  plotDiv.addEventListener('mousemove', mousemove);
-  plotDiv.addEventListener('mouseleave', mouseleave);
-  plotDiv.__bgTooltipHandlers = { mousemove, mouseleave };
-}
-
-/**
- * Handle "Show Max" checkbox toggle.
- * When checked, appends the maximum value to each trace's legend name.
- * Re-renders the current chart (single, multi-select, or radionuclides).
- * 
- * @returns {void}
- */
-function toggleShowMax() {
-  const plotDiv = getElement('plotlyChart');
-  if (!plotDiv || !plotDiv.data) {
-    return;
-  }
-  const showMax = getElement('showMax')?.checked;
-  const newNames = plotDiv.data.map(trace => {
-    if (trace._hiddenFromLegend) return trace.name;
-    // Strip any existing " (…)" max suffix added by us.
-    // Keep suffixes added by other features (ratio, file-diff) by only
-    // removing a trailing parenthesised numeric value we appended.
-    let baseName = trace._baseName || trace.name;
-    if (showMax && trace.y && trace.y.length > 0) {
-      const maxVal = trace.y.reduce((m, v) => v > m ? v : m, -Infinity);
-      const formatted = maxVal === 0 || !isFinite(maxVal) ? String(maxVal) : maxVal.toPrecision(3);
-      trace._baseName = baseName;
-      return `${baseName} (${formatted})`;
-    }
-    // Unchecked — restore base name
-    trace._baseName = baseName;
-    return baseName;
-  });
-  Plotly.restyle(plotDiv, { name: newNames });
-}
-
-/**
- * Toggle the confidence interval band display.
- * Adds or removes CI band traces from the current chart.
- * CI band colors match the corresponding mean trace line colors.
- */
-async function toggleShowCI() {
-  const plotDiv = getElement('plotlyChart');
-  if (!plotDiv || !plotDiv.data) {
-    return;
-  }
-  const chartContainer = getElement('plotlyChartContainer');
-  
-  const showCI = getElement('showCI')?.checked;
-  const shouldShowLoader = !!showCI;
-  if (shouldShowLoader) {
-    showChartLoading(chartContainer, 'Calculating confidence interval...');
-    await new Promise(requestAnimationFrame);
-    await new Promise(resolve => setTimeout(resolve, 0));
-  }
-  try {
-    // Find existing CI band traces and remove them
-    const existingCIIndices = [];
-    plotDiv.data.forEach((trace, idx) => {
-      if (trace._isCIBand) {
-        existingCIIndices.push(idx);
-      }
-    });
-    
-    if (existingCIIndices.length > 0) {
-      await Plotly.deleteTraces(plotDiv, existingCIIndices);
-    }
-    
-    // If checkbox is now checked, add CI bands for all probabilistic traces
-    if (showCI) {
-      const ciTraces = [];
-      plotDiv.data.forEach((trace) => {
-        const hasColumnCI = Array.isArray(trace._ciP5) && Array.isArray(trace._ciP95) && trace._timeData;
-        const hasProbCI = trace._isProbabilistic && trace._rawData && trace._timeData;
-        if (hasColumnCI || hasProbCI) {
-          const p5 = hasColumnCI ? trace._ciP5 : computeProbabilisticPercentile(trace._rawData, trace._timeData, 5, trace._numRealizations);
-          const p95 = hasColumnCI ? trace._ciP95 : computeProbabilisticPercentile(trace._rawData, trace._timeData, 95, trace._numRealizations);
-          const minLength = Math.min(trace._timeData.length, p5.length, p95.length);
-          const timeSlice = trace._timeData.slice(0, minLength);
-          const p5Slice = p5.slice(0, minLength);
-          const p95Slice = p95.slice(0, minLength);
-          
-          // Get the trace's line color and convert to semi-transparent fill
-          let traceColor = 'rgba(100, 150, 200, 0.2)';
-          if (trace.line && trace.line.color) {
-            const color = trace.line.color;
-            if (color.startsWith('rgba')) {
-              traceColor = color.replace(/,[\s]*[\d.]+\s*\)$/, ', 0.2)');
-            } else if (color.startsWith('rgb')) {
-              traceColor = color.replace(/^rgb\(/, 'rgba(').replace(/\)$/, ', 0.2)');
-            } else if (color.startsWith('#')) {
-              const hex = color.slice(1);
-              const r = parseInt(hex.substr(0, 2), 16);
-              const g = parseInt(hex.substr(2, 2), 16);
-              const b = parseInt(hex.substr(4, 2), 16);
-              traceColor = `rgba(${r}, ${g}, ${b}, 0.2)`;
-            }
-          }
-          
-          const ciBandTrace = {
-            x: [...timeSlice, ...timeSlice.slice().reverse()],
-            y: [...p95Slice, ...p5Slice.slice().reverse()],
-            fill: 'tozeroy',
-            fillcolor: traceColor,
-            line: { color: 'rgba(255, 255, 255, 0)' },
-            showlegend: false,
-            hoverinfo: 'skip',
-            _hiddenFromLegend: true,
-            _isCIBand: true,
-            mode: 'lines',
-            name: 'CI Band'
-          };
-          ciTraces.push(ciBandTrace);
-        }
-      });
-      
-      if (ciTraces.length > 0) {
-        await Plotly.addTraces(plotDiv, ciTraces);
-      }
-    }
-  } finally {
-    if (shouldShowLoader) {
-      hideChartLoading(chartContainer);
-    }
-  }
-}
-
-/**
- * Toggle SDOM band display.
- * SDOM band is mean +/- (sigma / sqrt(n_iter)).
- */
-async function toggleShowSDOM() {
-  const plotDiv = getElement('plotlyChart');
-  if (!plotDiv || !plotDiv.data) {
-    return;
-  }
-  const chartContainer = getElement('plotlyChartContainer');
-
-  const showSDOM = getElement('showSDOM')?.checked;
-  const shouldShowLoader = !!showSDOM;
-  if (shouldShowLoader) {
-    showChartLoading(chartContainer, 'Calculating SEM band...');
-    await new Promise(requestAnimationFrame);
-    await new Promise(resolve => setTimeout(resolve, 0));
-  }
-
-  try {
-    const existingIndices = [];
-    plotDiv.data.forEach((trace, idx) => {
-      if (trace._isSDOMBand) {
-        existingIndices.push(idx);
-      }
-    });
-    if (existingIndices.length > 0) {
-      await Plotly.deleteTraces(plotDiv, existingIndices);
-    }
-
-    if (showSDOM) {
-      const sdomTraces = [];
-      plotDiv.data.forEach((trace) => {
-        const hasAttrSDOM = Array.isArray(trace._sdomLower) && Array.isArray(trace._sdomUpper) && trace._timeData;
-        const hasProbSDOM = !!trace._nIter && trace._nIter > 1 && trace._rawData && trace._timeData;
-        if (!hasAttrSDOM && !hasProbSDOM) return;
-
-        /* One computation for both edges; this used to run the whole
-           per-timestep pass twice, once for each side of the band. */
-        const sdomBand = hasAttrSDOM ? null
-          : computeProbabilisticSDOMBand(trace._rawData, trace._timeData, trace._nIter, trace._numRealizations);
-        const lower = hasAttrSDOM ? trace._sdomLower : (sdomBand?.lower || []);
-        const upper = hasAttrSDOM ? trace._sdomUpper : (sdomBand?.upper || []);
-        const minLength = Math.min(trace._timeData.length, lower.length, upper.length);
-        if (minLength <= 0) return;
-
-        const timeSlice = trace._timeData.slice(0, minLength);
-        const lowerSlice = lower.slice(0, minLength);
-        const upperSlice = upper.slice(0, minLength);
-
-        let traceColor = 'rgba(120, 120, 120, 0.18)';
-        let hatchColor = 'rgba(90, 90, 90, 0.22)';
-        if (trace.line && trace.line.color) {
-          const color = trace.line.color;
-          if (color.startsWith('rgba')) {
-            traceColor = color.replace(/,[\s]*[\d.]+\s*\)$/, ', 0.18)');
-            hatchColor = color.replace(/,[\s]*[\d.]+\s*\)$/, ', 0.28)');
-          } else if (color.startsWith('rgb')) {
-            traceColor = color.replace(/^rgb\(/, 'rgba(').replace(/\)$/, ', 0.18)');
-            hatchColor = color.replace(/^rgb\(/, 'rgba(').replace(/\)$/, ', 0.28)');
-          } else if (color.startsWith('#')) {
-            const hex = color.slice(1);
-            const r = parseInt(hex.substr(0, 2), 16);
-            const g = parseInt(hex.substr(2, 2), 16);
-            const b = parseInt(hex.substr(4, 2), 16);
-            traceColor = `rgba(${r}, ${g}, ${b}, 0.18)`;
-            hatchColor = `rgba(${r}, ${g}, ${b}, 0.28)`;
-          }
-        }
-
-        sdomTraces.push({
-          x: [...timeSlice, ...timeSlice.slice().reverse()],
-          y: [...upperSlice, ...lowerSlice.slice().reverse()],
-          fill: 'tozeroy',
-          fillcolor: traceColor,
-          line: { color: 'rgba(255, 255, 255, 0)' },
-          showlegend: false,
-          hoverinfo: 'skip',
-          _hiddenFromLegend: true,
-          _isSDOMBand: true,
-          mode: 'lines',
-          name: 'SDOM Band'
-        });
-
-        // Add a hatch-like overlay using sparse vertical stripe segments.
-        // Use null separators so Plotly renders disjoint line pieces.
-        const stripeX = [];
-        const stripeY = [];
-        const stripeStep = Math.max(1, Math.floor(minLength / 36));
-        for (let i = 0; i < minLength; i += stripeStep) {
-          const low = lowerSlice[i];
-          const up = upperSlice[i];
-          if (low === null || up === null || !isFinite(low) || !isFinite(up)) continue;
-          stripeX.push(timeSlice[i], timeSlice[i], null);
-          stripeY.push(up, low, null);
-        }
-        if (stripeX.length > 0) {
-          sdomTraces.push({
-            x: stripeX,
-            y: stripeY,
-            mode: 'lines',
-            line: { color: hatchColor, width: 1, dash: 'dot' },
-            showlegend: false,
-            hoverinfo: 'skip',
-            _hiddenFromLegend: true,
-            _isSDOMBand: true,
-            _isSDOMHatch: true,
-            name: 'SDOM Hatch'
-          });
-        }
-      });
-
-      if (sdomTraces.length > 0) {
-        await Plotly.addTraces(plotDiv, sdomTraces);
-      }
-    }
-  } finally {
-    if (shouldShowLoader) {
-      hideChartLoading(chartContainer);
-    }
-  }
-}
-
-/**
- * Toggle a specific iteration's time-series as a dotted line on the current chart.
- * Reads the iteration number (1-based) from #showIterNum and adds one dotted trace
- * per probabilistic base trace, using the same line color.
- */
-function toggleShowIteration() {
-  const plotDiv = getElement('plotlyChart');
-  if (!plotDiv || !plotDiv.data) return;
-
-  // Read and validate the requested iteration number
-  const iterInput = getElement('showIterNum');
-  const iterNumRaw = iterInput ? parseInt(iterInput.value, 10) : NaN;
-  if (!isFinite(iterNumRaw) || iterNumRaw < 1) return;
-
-  // ── Probabilistic-time mode ──────────────────────────────────────────────
-  // The /time dataset is a matrix; each iteration has its own time axis.
-  // Instead of adding a dotted overlay we replace the base trace data.
-  if (currentChartData && currentChartData._isProbTimeChart) {
-    const sourceTraces = Array.isArray(currentChartData.traces) ? currentChartData.traces : [];
-    const hasSingleDatasetProbTimeTraces = sourceTraces.some(t => t._isProbTime);
-
-    if (hasSingleDatasetProbTimeTraces) {
-      // ── createPlotlyChart variant: restyle x/y on individual traces ──
-      const xUpdates = [];
-      const yUpdates = [];
-      const indices  = [];
-
-      // Find the index of each prob-time trace in the plotDiv (excluding any
-      // legacy overlay traces that may be present).
-      const plotTraces = plotDiv.data || [];
-      sourceTraces.forEach(trace => {
-        if (!trace._isProbTime) return;
-        const plotIdx = plotTraces.findIndex(pt => pt === trace || (pt.name === trace.name && !pt._isIterTrace));
-        if (plotIdx < 0) return;
-
-        const iterIdx = Math.min(iterNumRaw - 1, trace._nIter - 1);
-        const timeRow = trace._probTimeMatrix.matrix[iterIdx];
-        const iterLen = trace._probTimeMatrix.iterLengths[iterIdx];
-
-        const x = timeRow.slice(0, iterLen);
-        const y = [];
-        for (let t = 0; t < iterLen; t++) {
-          y.push(PDFSampler.toNumber(trace._probYFlat[t * trace._probMaxLen + iterIdx]));
-        }
-
-        // Keep the trace object in sync so subsequent calls stay correct
-        trace.x = x;
-        trace.y = y;
-
-        xUpdates.push(x);
-        yUpdates.push(y);
-        indices.push(plotIdx);
-      });
-
-      if (indices.length > 0) {
-        Plotly.restyle(plotDiv, { x: xUpdates, y: yUpdates }, indices);
-      }
-    } else {
-      // ── createRadionuclidesChart variant: full redraw with new iteration ──
-      const savedAxis = captureAxisState();
-      Promise.resolve().then(() => createRadionuclidesChart(selectedDatasetPath, savedAxis));
-    }
-    return;
-  }
-  // ─────────────────────────────────────────────────────────────────────────
-
-  // Remove any existing iteration overlay traces first
-  const existingIndices = plotDiv.data
-    .map((trace, idx) => trace._isIterTrace ? idx : -1)
-    .filter(idx => idx >= 0);
-  if (existingIndices.length > 0) {
-    Plotly.deleteTraces(plotDiv, existingIndices);
-  }
-
-  const iterTraces = [];
-  // Use currentChartData.traces for reliable _rawData access (Plotly may not preserve custom props)
-  const sourceTraces = (currentChartData && Array.isArray(currentChartData.traces))
-    ? currentChartData.traces : (plotDiv.data || []);
-  sourceTraces.forEach(trace => {
-    if (!trace._rawData || !trace._timeData) return;
-    const numRealizations = trace._numRealizations;
-    if (!numRealizations || iterNumRaw > numRealizations) return;
-    const r = iterNumRaw - 1;
-    const y = [];
-    for (let t = 0; t < trace._timeData.length; t++) {
-      y.push(PDFSampler.toNumber(trace._rawData[t * numRealizations + r]));
-    }
-    const color = (trace.line && trace.line.color) ? trace.line.color : '#888888';
-    iterTraces.push({
-      x: trace._timeData.slice(),
-      y,
-      type: 'scatter',
-      mode: 'lines',
-      name: `Iter.\u00a0${iterNumRaw} \u2013 ${trace.name}`,
-      line: { color, width: 1, dash: 'dot' },
-      showlegend: true,
-      _isIterTrace: true,
-    });
-  });
-
-  if (iterTraces.length > 0) {
-    Plotly.addTraces(plotDiv, iterTraces);
-  }
-}
-
-/**
- * Append the maximum y-value to each trace's legend name.
- * Formats as "name (max)" using 3 significant digits.
- * Skips traces that are hidden from the legend.
- * @param {Object[]} traces - Plotly trace objects (modified in-place)
- */
-function annotateTracesWithMax(traces) {
-  for (const trace of traces) {
-    if (trace._hiddenFromLegend) continue;
-    if (!trace.y || trace.y.length === 0) continue;
-    trace._baseName = trace.name;
-    const maxVal = trace.y.reduce((m, v) => v > m ? v : m, -Infinity);
-    const formatted = maxVal === 0 || !isFinite(maxVal) ? String(maxVal) : maxVal.toPrecision(3);
-    trace.name = `${trace.name} (${formatted})`;
-  }
-}
-
-
+'use strict';   // see the script manifest in rb.html for why
 /* ==========================================================================
    9. CHART CREATION
    ========================================================================== */
@@ -1858,6 +26,63 @@ function annotateTracesWithMax(traces) {
  * @param {string} path - HDF5 path to the dataset
  * @returns {void}
  */
+/**
+ * Background overlay rectangles for a Plotly layout.
+ *
+ * On a log x-axis a segment starting at or below zero cannot be drawn, so it
+ * is clamped to the smallest positive x in the data and dropped if that leaves
+ * it empty.
+ *
+ * The minimum is accumulated directly rather than collected into an array and
+ * spread into Math.min, which throws RangeError once the trace set exceeds
+ * roughly 125 000 points - one radionuclide group with a long time series
+ * already does.
+ *
+ * This was the same forty lines in createPlotlyChart and in the radionuclides
+ * renderer, differing only in line breaks.
+ *
+ * @param {Array} segments - {x0, x1, color} in data coordinates
+ * @param {Array} traces - the traces being plotted, for the log-axis minimum
+ * @param {string} xScale - 'log' or 'linear'
+ * @returns {Array} Plotly shape objects, ready to concat onto layout.shapes
+ */
+function backgroundRectShapes(segments, traces, xScale) {
+  let shapeSegments = segments.slice();
+  if (xScale === 'log') {
+    let minPositiveX = null;
+    for (const trace of traces) {
+      const xVals = Array.isArray(trace.x) ? trace.x : [];
+      for (const xv of xVals) {
+        const n = Number(xv);
+        if (isFinite(n) && n > 0 && (minPositiveX === null || n < minPositiveX)) minPositiveX = n;
+      }
+    }
+    if (minPositiveX !== null) {
+      shapeSegments = shapeSegments
+        .map(seg => {
+          const rawX0 = Number(seg.x0);
+          const rawX1 = Number(seg.x1);
+          if (!isFinite(rawX0) || !isFinite(rawX1)) return null;
+          let x0 = rawX0;
+          let x1 = rawX1;
+          if (x0 <= 0 && x1 <= 0) return null;
+          if (x0 <= 0) x0 = minPositiveX;
+          if (x1 <= 0) x1 = minPositiveX;
+          if (x1 < x0) { const tmp = x0; x0 = x1; x1 = tmp; }
+          if (x1 === x0) return null;
+          return { ...seg, x0, x1 };
+        })
+        .filter(Boolean);
+    }
+  }
+  return shapeSegments.map(seg => ({
+    type: 'rect', xref: 'x', yref: 'paper',
+    x0: seg.x0, x1: seg.x1, y0: 0, y1: 1,
+    line: { width: 0 }, fillcolor: seg.color, layer: 'below'
+  }));
+}
+
+
 function createPlotlyChart(path, savedAxisState) {
   if (!_axesLocked) resetPresetDropdown();
   const chartContainer = getElement('plotlyChartContainer');
@@ -1923,7 +148,7 @@ function createPlotlyChart(path, savedAxisState) {
       const unit = getAttr(dataset, 'unit');
       if (unit !== undefined && unit !== null) yAxisUnit = unit;
     } catch (e) {
-      console.warn('Could not read unit from dataset:', e);
+      kvotWarn('Could not read unit from dataset:', e);
     }
 
     // Collect background source options from parent group or root IndexLists
@@ -1966,7 +191,7 @@ function createPlotlyChart(path, savedAxisState) {
 
       const timeData = getTimeData(file);
       if (!timeData) {
-        console.warn(`No /time dataset found in ${fileKey}`);
+        kvotWarn(`No /time dataset found in ${fileKey}`);
         continue;
       }
 
@@ -2080,7 +305,7 @@ function createPlotlyChart(path, savedAxisState) {
         // Handle length mismatch
         const minLength = Math.min(timeData.length, yArray.length);
         if (timeData.length !== yArray.length) {
-          console.warn(`Time data length (${timeData.length}) doesn't match data length (${yArray.length}) for ${fileKey}`);
+          kvotWarn(`Time data length (${timeData.length}) doesn't match data length (${yArray.length}) for ${fileKey}`);
         }
 
         const traceObj = ChartService.timeSeriesTrace({ x: timeData.slice(0, minLength), y: yArray.slice(0, minLength), name: buildTraceName(yAxisName, path, fileKey, [path], enabledFiles) });
@@ -2109,6 +334,33 @@ function createPlotlyChart(path, savedAxisState) {
       console.error(`Error creating trace for ${fileKey}:`, e);
     }
   }
+
+  renderPlotlyChart({
+    traces, path, chartContainer, savedAxisState, hasProbabilistic, hasProbTime,
+    hasSDOM, probTimeIterMax, indexBackgroundSegments, timeUnit, yAxisUnit,
+    backgroundSourceOptions, backgroundSourceValue, wasCIChecked, wasSDOMChecked
+  });
+}
+
+/**
+ * Draw the single-dataset chart once its traces exist.
+ *
+ * Split out of createPlotlyChart. Everything here is presentation: which
+ * controls the data warrants, the axis titles, the Plotly call and the state
+ * restored once it resolves. Nothing in it decides what the traces are.
+ *
+ * It takes a context object rather than fifteen arguments, which is what the
+ * split costs - the block reads that many values from the function it used to
+ * sit inside.
+ *
+ * @param {Object} ctx - see the destructuring below for the fields used
+ */
+function renderPlotlyChart(ctx) {
+  const {
+    traces, path, chartContainer, savedAxisState, hasProbabilistic, hasProbTime,
+    hasSDOM, probTimeIterMax, indexBackgroundSegments, timeUnit, yAxisUnit,
+    backgroundSourceOptions, backgroundSourceValue, wasCIChecked, wasSDOMChecked
+  } = ctx;
 
   // Render chart if we have data
   if (traces.length > 0) {
@@ -2141,44 +393,8 @@ function createPlotlyChart(path, savedAxisState) {
     layout.margin.r = 200; // Extra room for longer legend names
 
     if (indexBackgroundSegments.length) {
-      let shapeSegments = indexBackgroundSegments.slice();
-      if (xScale === 'log') {
-        /*
-          Accumulate the minimum directly. Collecting every positive x into an
-          array and spreading it into Math.min throws RangeError once the trace
-          set exceeds roughly 125 000 points, which one radionuclide group with
-          a long time series already does.
-        */
-        let minPositiveX = null;
-        for (const trace of traces) {
-          const xVals = Array.isArray(trace.x) ? trace.x : [];
-          for (const xv of xVals) {
-            const n = Number(xv);
-            if (isFinite(n) && n > 0 && (minPositiveX === null || n < minPositiveX)) minPositiveX = n;
-          }
-        }
-        if (minPositiveX !== null) {
-          shapeSegments = shapeSegments
-            .map(seg => {
-              const rawX0 = Number(seg.x0);
-              const rawX1 = Number(seg.x1);
-              if (!isFinite(rawX0) || !isFinite(rawX1)) return null;
-              let x0 = rawX0; let x1 = rawX1;
-              if (x0 <= 0 && x1 <= 0) return null;
-              if (x0 <= 0) x0 = minPositiveX;
-              if (x1 <= 0) x1 = minPositiveX;
-              if (x1 < x0) { const tmp = x0; x0 = x1; x1 = tmp; }
-              if (x1 === x0) return null;
-              return { ...seg, x0, x1 };
-            })
-            .filter(Boolean);
-        }
-      }
-      layout.shapes = (layout.shapes || []).concat(shapeSegments.map(seg => ({
-        type: 'rect', xref: 'x', yref: 'paper',
-        x0: seg.x0, x1: seg.x1, y0: 0, y1: 1,
-        line: { width: 0 }, fillcolor: seg.color, layer: 'below'
-      })));
+      layout.shapes = (layout.shapes || [])
+        .concat(backgroundRectShapes(indexBackgroundSegments, traces, xScale));
     }
 
     applyAxisState(layout, savedAxisState);
@@ -2240,6 +456,7 @@ function createPlotlyChart(path, savedAxisState) {
     hideChart();
   }
 }
+
 
 /**
  * Create a Plotly chart comparing multiple selected datasets.
@@ -2364,7 +581,7 @@ function createMultiDatasetChart(items) {
       
       const timeData = getTimeData(file);
       if (!timeData) {
-        console.warn(`No /time dataset found in ${fileKey}`);
+        kvotWarn(`No /time dataset found in ${fileKey}`);
         continue;
       }
       
@@ -2759,6 +976,353 @@ function collectIndexBackgroundSegments(file, sourcePath, timeData) {
   return segments;
 }
 
+/**
+ * Convert probabilistic raw data into per-timestep realization arrays.
+ * Returns null when the shape is not probabilistic.
+ *
+ * Hoisted out of createRadionuclidesChart, where it was a nested function. It
+ * closes over nothing, so nesting it only kept it out of reach.
+ *
+ * @param {Array} rawData
+ * @param {Array} timeData
+ * @param {number} stride
+ * @returns {Array<Array<number>>|null}
+ */
+function toProbabilisticTimeSlices(rawData, timeData, stride) {
+  if (!Array.isArray(rawData) || !timeData || timeData.length === 0) {
+    return null;
+  }
+  if (Array.isArray(rawData[0])) {
+    return rawData.slice(0, timeData.length).map(timeSlice => {
+      if (!Array.isArray(timeSlice)) return [PDFSampler.toNumber(timeSlice)];
+      return timeSlice.map(PDFSampler.toNumber);
+    });
+  }
+  const flatStride = resolveStride(rawData.length, timeData.length, stride);
+  if (flatStride) {
+    const numRealizations = flatStride;
+    const timeSlices = [];
+    for (let t = 0; t < timeData.length; t++) {
+      const values = [];
+      for (let r = 0; r < numRealizations; r++) {
+        values.push(PDFSampler.toNumber(rawData[t * numRealizations + r]));
+      }
+      timeSlices.push(values);
+    }
+    return timeSlices;
+  }
+  return null;
+}
+
+/**
+ * Build one radionuclide's y-series for one file.
+ *
+ * Split out of createRadionuclidesChart's per-dataset loop. This is the half
+ * that decides what the numbers are: which of the probabilistic-time, column-
+ * statistics, probabilistic and SDOM paths applies, and what the series looks
+ * like once trimmed to the shorter of time and value.
+ *
+ * sawProbabilistic and sawSDOM report what this dataset turned out to be, for
+ * the caller to fold into the flags that decide which controls to show.
+ *
+ * @returns {Object|null} null when the dataset holds no readable values
+ */
+function computeRadionuclideSeries({ dataset, datasetKey, path, probTimeForFile, effectiveTimeData, nIter }) {
+  let yData;
+  if (typeof dataset.value !== 'undefined') {
+    yData = dataset.value;
+  } else if (typeof dataset.toArray === 'function') {
+    yData = dataset.toArray();
+  }
+  if (!yData) return null;
+
+  /* Boxed copy only for the statistics paths; see createPlotlyChart. */
+  const normalizedRawData = probTimeForFile ? null : PDFSampler.normalizeDataArray(yData);
+  let yArray = normalizedRawData;
+  let isProbabilistic = false;
+  let ciFromColumns = null;
+  let sdomInfo = null;
+  let sawProbabilistic = false;
+  let sawSDOM = false;
+
+  // ── Probabilistic time: extract the selected iteration's y values ──
+  // Y-data layout: flat[t_i * maxLen + k] = y at time step t_i for iteration k.
+  if (probTimeForFile) {
+    const { iterIdx, maxLen, effectiveTimeData: ptTimeData } = probTimeForFile;
+    const iterLen = ptTimeData.length;
+    yArray = [];
+    for (let t = 0; t < iterLen; t++) {
+      yArray.push(PDFSampler.toNumber(yData[t * maxLen + iterIdx]));
+    }
+  } else {
+    // ── Regular (non prob-time) path ─────────────────────────────────
+    const colStats = getColumnStatisticsSeries(dataset, normalizedRawData, effectiveTimeData);
+    if (colStats && Array.isArray(colStats.meanSeries)) {
+      yArray = colStats.meanSeries;
+      if (Array.isArray(colStats.p5Series) && Array.isArray(colStats.p95Series)) {
+        sawProbabilistic = true;
+        ciFromColumns = { p5: colStats.p5Series, p95: colStats.p95Series };
+      }
+      if (nIter && nIter > 1 && Array.isArray(colStats.sigmaSeries)) {
+        const sqrtN = Math.sqrt(nIter);
+        sdomInfo = {
+          meanSeries: colStats.meanSeries,
+          lower: colStats.meanSeries.map((mean, idx) => {
+            const sigma = colStats.sigmaSeries[idx];
+            if (mean === null || sigma === null) return null;
+            const sdom = PDFSampler.toNumber(sigma) / sqrtN;
+            return isFinite(sdom) ? mean - sdom : null;
+          }),
+          upper: colStats.meanSeries.map((mean, idx) => {
+            const sigma = colStats.sigmaSeries[idx];
+            if (mean === null || sigma === null) return null;
+            const sdom = PDFSampler.toNumber(sigma) / sqrtN;
+            return isFinite(sdom) ? mean + sdom : null;
+          })
+        };
+        sawSDOM = true;
+      }
+    }
+    // Handle probabilistic data
+    if (!colStats && checkIsProbabilistic(dataset)) {
+      isProbabilistic = true;
+      sawProbabilistic = true;
+      yArray = computeProbabilisticMean(yArray, effectiveTimeData, getRealizationStride(dataset, normalizedRawData.length, effectiveTimeData.length, `${path}/${datasetKey}`));
+    }
+    if (!isProbabilistic) {
+      sdomInfo = sdomInfo || getDatasetAttributeSDOM(dataset, effectiveTimeData, nIter);
+      if (sdomInfo && Array.isArray(sdomInfo.meanSeries)) {
+        yArray = sdomInfo.meanSeries;
+        sawSDOM = true;
+      }
+    } else if (nIter && nIter > 1) {
+      sawSDOM = true;
+    }
+  }
+
+  const minLength = Math.min(effectiveTimeData.length, yArray.length);
+  return {
+    normalizedRawData,
+    minLength,
+    trimmedTimeData: effectiveTimeData.slice(0, minLength),
+    trimmedYData: yArray.slice(0, minLength),
+    isProbabilistic,
+    ciFromColumns,
+    sdomInfo,
+    sawProbabilistic,
+    sawSDOM
+  };
+}
+
+/**
+ * Fold one dataset's series into the running per-file total.
+ *
+ * Mutates totalDataByFile, which is how the original loop worked: the total is
+ * accumulated dataset by dataset rather than summed at the end, and the
+ * probabilistic branch depends on this dataset's array already having been
+ * pushed. Call it before building the trace, as the loop always did.
+ */
+function accumulateRadionuclideTotal({ totalDataByFile, fileKey, nIter, series, dataset, datasetKey, path, effectiveTimeData }) {
+  const { trimmedTimeData, trimmedYData, normalizedRawData, isProbabilistic } = series;
+  if (!totalDataByFile[fileKey]) {
+    totalDataByFile[fileKey] = {
+      timeData: trimmedTimeData,
+      dataArrays: [],
+      probabilisticSlices: null,
+      nIter
+    };
+  }
+  totalDataByFile[fileKey].dataArrays.push(trimmedYData);
+  if (isProbabilistic) {
+    const datasetSlices = toProbabilisticTimeSlices(normalizedRawData, trimmedTimeData,
+      getRealizationStride(dataset, normalizedRawData.length, effectiveTimeData.length, `${path}/${datasetKey}`));
+    if (datasetSlices) {
+      if (!totalDataByFile[fileKey].probabilisticSlices) {
+        totalDataByFile[fileKey].probabilisticSlices = datasetSlices.map((values, idx) => {
+          const deterministicBase = totalDataByFile[fileKey].dataArrays.length > 1
+            ? totalDataByFile[fileKey].dataArrays
+                .slice(0, totalDataByFile[fileKey].dataArrays.length - 1)
+                .reduce((sum, arr) => sum + (arr[idx] || 0), 0)
+            : 0;
+          return values.map(v => v + deterministicBase);
+        });
+      } else {
+        const totalSlices = totalDataByFile[fileKey].probabilisticSlices;
+        const compatible = totalSlices.length === datasetSlices.length
+          && totalSlices.every((values, idx) => values.length === datasetSlices[idx].length);
+        if (compatible) {
+          for (let t = 0; t < totalSlices.length; t++) {
+            for (let r = 0; r < totalSlices[t].length; r++) {
+              totalSlices[t][r] += datasetSlices[t][r];
+            }
+          }
+        } else {
+          totalDataByFile[fileKey].probabilisticSlices = null;
+        }
+      }
+    }
+  } else if (totalDataByFile[fileKey].probabilisticSlices) {
+    const totalSlices = totalDataByFile[fileKey].probabilisticSlices;
+    for (let t = 0; t < Math.min(totalSlices.length, trimmedYData.length); t++) {
+      for (let r = 0; r < totalSlices[t].length; r++) {
+        totalSlices[t][r] += trimmedYData[t];
+      }
+    }
+  }
+}
+
+/**
+ * Turn a computed series into the Plotly trace.
+ *
+ * The underscore-prefixed fields are read back later by the CI, SDOM and
+ * iteration toggles, which recompute bands from the raw data rather than
+ * asking the file again.
+ */
+function buildRadionuclideTrace({ series, dataset, datasetKey, path, fileKey, enabledFiles, nIter, effectiveTimeData }) {
+  const { trimmedTimeData, trimmedYData, normalizedRawData, minLength,
+          isProbabilistic, ciFromColumns, sdomInfo } = series;
+
+  // Get line style for this radionuclide
+  const lineStyle = getLineStyle(datasetKey);
+  let traceName = datasetKey;
+  let lineWidth = lineStyle.width;
+  if (enabledFiles.length > 1 && enabledFiles.indexOf(fileKey) > 0) {
+    traceName = `${datasetKey} (${filenameDiff(enabledFiles[0], fileKey)})`;
+    lineWidth = lineWidth / 2;
+  }
+  const traceObj = ChartService.timeSeriesTrace({ x: trimmedTimeData, y: trimmedYData, name: traceName, line: { color: lineStyle.color, dash: lineStyle.dash, width: lineWidth }, _datasetKey: datasetKey });
+  traceObj._isProbabilistic = isProbabilistic || !!ciFromColumns;
+  if (isProbabilistic) {
+    // Store raw data and time data on the trace for CI computation
+    traceObj._rawData = normalizedRawData;
+    traceObj._timeData = trimmedTimeData;
+    traceObj._numRealizations = getRealizationStride(dataset, normalizedRawData.length, effectiveTimeData.length, `${path}/${datasetKey}`);
+    if (nIter && nIter > 1) {
+      traceObj._nIter = nIter;
+    }
+  } else if (ciFromColumns) {
+    traceObj._ciP5 = ciFromColumns.p5.slice(0, minLength);
+    traceObj._ciP95 = ciFromColumns.p95.slice(0, minLength);
+    traceObj._timeData = trimmedTimeData;
+  }
+  if (sdomInfo) {
+    traceObj._sdomLower = sdomInfo.lower.slice(0, minLength);
+    traceObj._sdomUpper = sdomInfo.upper.slice(0, minLength);
+    traceObj._timeData = trimmedTimeData;
+  }
+  return traceObj;
+}
+
+/**
+ * Format a ratio value to a display string (3 significant digits).
+ * @param {number} ratio
+ * @returns {string}
+ */
+function formatRatio(ratio) {
+  if (ratio === 0 || !isFinite(ratio)) return ratio.toString();
+  return ratio.toPrecision(3);
+}
+
+
+/**
+ * Add one "Total" trace per file, at the top of that file's legend group.
+ *
+ * Split out of createRadionuclidesChart. The total is the sum of every
+ * radionuclide already collected for the file, and it is spliced in rather
+ * than appended so it sits above the traces it sums. The splices run in
+ * reverse file order, so the recorded start index of each earlier group is
+ * still valid when its turn comes.
+ *
+ * Mutates ctx.traces, as the original block did.
+ *
+ * @param {Object} ctx - see the destructuring below
+ * @returns {boolean} whether any total carried enough realizations for SDOM,
+ *   for the caller to fold into its own flag
+ */
+function insertTotalTraces(ctx) {
+  const { traces, totalDataByFile, enabledFiles, fileTraceStartIndex, hasTotalSubNode,
+          showRatioChecked, primaryFile, secondaryFile } = ctx;
+  let sawSDOM = false;
+  const showTotalCheckbox = getElement('showTotal');
+  if (!hasTotalSubNode && showTotalCheckbox && showTotalCheckbox.checked) {
+    // Compute total per file and collect total max values for ratio
+    const totalMaxByFile = {}; // { fileKey: maxTotalValue }
+    const totalTracesByFile = {}; // { fileKey: traceObject }
+    for (const fileKey of Object.keys(totalDataByFile)) {
+      const fileData = totalDataByFile[fileKey];
+      if (fileData.dataArrays.length > 0) {
+        const timeData = fileData.timeData;
+        const totalY = new Array(timeData.length).fill(0);
+        
+        // Sum all data arrays
+        for (const dataArray of fileData.dataArrays) {
+          for (let i = 0; i < Math.min(dataArray.length, totalY.length); i++) {
+            totalY[i] += dataArray[i];
+          }
+        }
+        
+        totalMaxByFile[fileKey] = totalY.reduce((m, v) => v > m ? v : m, -Infinity);
+
+        let traceName = 'Total';
+        let lineWidth = 2;
+        
+        if (enabledFiles.length > 1 && enabledFiles.indexOf(fileKey) > 0) {
+          traceName = `Total (${filenameDiff(enabledFiles[0], fileKey)})`;
+          lineWidth = 1;
+        }
+        
+        totalTracesByFile[fileKey] = {
+          x: timeData,
+          y: totalY,
+          mode: 'lines',
+          name: traceName,
+          line: {
+            color: '#000000',
+            dash: 'solid',
+            width: lineWidth
+          },
+          type: 'scatter',
+          _datasetKey: '__total__'
+        };
+
+        if (fileData.probabilisticSlices) {
+          totalTracesByFile[fileKey]._isProbabilistic = true;
+          totalTracesByFile[fileKey]._rawData = fileData.probabilisticSlices;
+          totalTracesByFile[fileKey]._timeData = timeData;
+          if (fileData.nIter && fileData.nIter > 1) {
+            totalTracesByFile[fileKey]._nIter = fileData.nIter;
+            sawSDOM = true;
+          }
+        }
+      }
+    }
+
+    // If Show Ratio is checked, append ratio to the primary Total trace name
+    if (showRatioChecked && secondaryFile) {
+      const t = totalTracesByFile[primaryFile];
+      if (t && t.name === 'Total') {
+        const maxPrimary = totalMaxByFile[primaryFile];
+        const maxSecondary = totalMaxByFile[secondaryFile];
+        if (maxSecondary != null && maxSecondary !== 0) {
+          t.name = `Total (${formatRatio(maxPrimary / maxSecondary)})`;
+        } else if (maxSecondary === 0 && maxPrimary > 0) {
+          t.name = `Total (∞)`;
+        }
+      }
+    }
+
+    // Insert each total trace at the beginning of its file's group.
+    // Process files in reverse order so earlier splice positions stay valid.
+    const filesWithTotals = enabledFiles.filter(fk => totalTracesByFile[fk]);
+    for (let i = filesWithTotals.length - 1; i >= 0; i--) {
+      const fk = filesWithTotals[i];
+      const insertIdx = fileTraceStartIndex[fk] != null ? fileTraceStartIndex[fk] : traces.length;
+      traces.splice(insertIdx, 0, totalTracesByFile[fk]);
+    }
+  }
+  return sawSDOM;
+}
+
 async function createRadionuclidesChart(path, savedAxisState) {
   if (!_axesLocked) resetPresetDropdown();
   const plotDiv = getElement('plotlyChart');
@@ -2815,39 +1379,6 @@ async function createRadionuclidesChart(path, savedAxisState) {
   let hasProbTime = false;          // any file has probabilistic /time
   let probTimeIterMax = 0;
 
-  /**
-   * Convert probabilistic raw data into per-timestep realization arrays.
-   * Returns null when the shape is not probabilistic.
-   * @param {Array} rawData
-   * @param {Array} timeData
-   * @returns {Array<Array<number>>|null}
-   */
-  function toProbabilisticTimeSlices(rawData, timeData, stride) {
-    if (!Array.isArray(rawData) || !timeData || timeData.length === 0) {
-      return null;
-    }
-    if (Array.isArray(rawData[0])) {
-      return rawData.slice(0, timeData.length).map(timeSlice => {
-        if (!Array.isArray(timeSlice)) return [PDFSampler.toNumber(timeSlice)];
-        return timeSlice.map(PDFSampler.toNumber);
-      });
-    }
-    const flatStride = resolveStride(rawData.length, timeData.length, stride);
-    if (flatStride) {
-      const numRealizations = flatStride;
-      const timeSlices = [];
-      for (let t = 0; t < timeData.length; t++) {
-        const values = [];
-        for (let r = 0; r < numRealizations; r++) {
-          values.push(PDFSampler.toNumber(rawData[t * numRealizations + r]));
-        }
-        timeSlices.push(values);
-      }
-      return timeSlices;
-    }
-    return null;
-  }
-
   // Track the starting index of each file's traces in the traces array
   const fileTraceStartIndex = {};
   
@@ -2856,7 +1387,6 @@ async function createRadionuclidesChart(path, savedAxisState) {
   let hasSDOM = false;
 
   let timeUnit = '';
-  let yAxisUnit = '';
   let yAxisName = path.split('/').pop();
   let indexBackgroundSegments = [];
   let backgroundSourceOptions = [{ value: '__none__', label: 'No background' }];
@@ -2889,7 +1419,7 @@ async function createRadionuclidesChart(path, savedAxisState) {
       
       const timeData = getTimeData(file);
       if (!timeData) {
-        console.warn(`No /time dataset found in ${fileKey}`);
+        kvotWarn(`No /time dataset found in ${fileKey}`);
         continue;
       }
 
@@ -2900,7 +1430,7 @@ async function createRadionuclidesChart(path, savedAxisState) {
       if (checkTimeProbabilistic(file)) {
         const timeMatrix = getProbabilisticTimeMatrix(file);
         if (!timeMatrix) {
-          console.warn(`Could not read probabilistic time matrix in ${fileKey}`);
+          kvotWarn(`Could not read probabilistic time matrix in ${fileKey}`);
           continue;
         }
         hasProbTime = true;
@@ -2948,152 +1478,21 @@ async function createRadionuclidesChart(path, savedAxisState) {
           if (!dataset || dataset.type.toLowerCase() !== 'dataset') {
             continue;
           }
-          let yData;
-          if (typeof dataset.value !== 'undefined') {
-            yData = dataset.value;
-          } else if (typeof dataset.toArray === 'function') {
-            yData = dataset.toArray();
-          }
-          if (yData) {
-            /* Boxed copy only for the statistics paths; see createPlotlyChart. */
-            const normalizedRawData = probTimeForFile ? null : PDFSampler.normalizeDataArray(yData);
-            let yArray = normalizedRawData;
-            let isProbabilistic = false;
-            let ciFromColumns = null;
-            let sdomInfo = null;
-
-            // ── Probabilistic time: extract the selected iteration's y values ──
-            // Y-data layout: flat[t_i * maxLen + k] = y at time step t_i for iteration k.
-            if (probTimeForFile) {
-              const { iterIdx, maxLen, effectiveTimeData: ptTimeData } = probTimeForFile;
-              const iterLen = ptTimeData.length;
-              yArray = [];
-              for (let t = 0; t < iterLen; t++) {
-                yArray.push(PDFSampler.toNumber(yData[t * maxLen + iterIdx]));
-              }
-            } else {
-            // ── Regular (non prob-time) path ─────────────────────────────────
-            const colStats = getColumnStatisticsSeries(dataset, normalizedRawData, effectiveTimeData);
-            if (colStats && Array.isArray(colStats.meanSeries)) {
-              yArray = colStats.meanSeries;
-              if (Array.isArray(colStats.p5Series) && Array.isArray(colStats.p95Series)) {
-                hasProbabilistic = true;
-                ciFromColumns = { p5: colStats.p5Series, p95: colStats.p95Series };
-              }
-              if (nIter && nIter > 1 && Array.isArray(colStats.sigmaSeries)) {
-                const sqrtN = Math.sqrt(nIter);
-                sdomInfo = {
-                  meanSeries: colStats.meanSeries,
-                  lower: colStats.meanSeries.map((mean, idx) => {
-                    const sigma = colStats.sigmaSeries[idx];
-                    if (mean === null || sigma === null) return null;
-                    const sdom = PDFSampler.toNumber(sigma) / sqrtN;
-                    return isFinite(sdom) ? mean - sdom : null;
-                  }),
-                  upper: colStats.meanSeries.map((mean, idx) => {
-                    const sigma = colStats.sigmaSeries[idx];
-                    if (mean === null || sigma === null) return null;
-                    const sdom = PDFSampler.toNumber(sigma) / sqrtN;
-                    return isFinite(sdom) ? mean + sdom : null;
-                  })
-                };
-                hasSDOM = true;
-              }
-            }
-            // Handle probabilistic data
-            if (!colStats && checkIsProbabilistic(dataset)) {
-              isProbabilistic = true;
-              hasProbabilistic = true;
-              yArray = computeProbabilisticMean(yArray, effectiveTimeData, getRealizationStride(dataset, normalizedRawData.length, effectiveTimeData.length, `${path}/${datasetKey}`));
-            }
-            if (!isProbabilistic) {
-              sdomInfo = sdomInfo || getDatasetAttributeSDOM(dataset, effectiveTimeData, nIter);
-              if (sdomInfo && Array.isArray(sdomInfo.meanSeries)) {
-                yArray = sdomInfo.meanSeries;
-                hasSDOM = true;
-              }
-            } else if (nIter && nIter > 1) {
-              hasSDOM = true;
-            }
-            } // end regular path
-            const minLength = Math.min(effectiveTimeData.length, yArray.length);
-            const trimmedTimeData = effectiveTimeData.slice(0, minLength);
-            const trimmedYData = yArray.slice(0, minLength);
-            // Store data for computing total
-            if (!totalDataByFile[fileKey]) {
-              totalDataByFile[fileKey] = {
-                timeData: trimmedTimeData,
-                dataArrays: [],
-                probabilisticSlices: null,
-                nIter
-              };
-            }
-            totalDataByFile[fileKey].dataArrays.push(trimmedYData);
-            if (isProbabilistic) {
-              const datasetSlices = toProbabilisticTimeSlices(normalizedRawData, trimmedTimeData,
-                getRealizationStride(dataset, normalizedRawData.length, effectiveTimeData.length, `${path}/${datasetKey}`));
-              if (datasetSlices) {
-                if (!totalDataByFile[fileKey].probabilisticSlices) {
-                  totalDataByFile[fileKey].probabilisticSlices = datasetSlices.map((values, idx) => {
-                    const deterministicBase = totalDataByFile[fileKey].dataArrays.length > 1
-                      ? totalDataByFile[fileKey].dataArrays
-                          .slice(0, totalDataByFile[fileKey].dataArrays.length - 1)
-                          .reduce((sum, arr) => sum + (arr[idx] || 0), 0)
-                      : 0;
-                    return values.map(v => v + deterministicBase);
-                  });
-                } else {
-                  const totalSlices = totalDataByFile[fileKey].probabilisticSlices;
-                  const compatible = totalSlices.length === datasetSlices.length
-                    && totalSlices.every((values, idx) => values.length === datasetSlices[idx].length);
-                  if (compatible) {
-                    for (let t = 0; t < totalSlices.length; t++) {
-                      for (let r = 0; r < totalSlices[t].length; r++) {
-                        totalSlices[t][r] += datasetSlices[t][r];
-                      }
-                    }
-                  } else {
-                    totalDataByFile[fileKey].probabilisticSlices = null;
-                  }
-                }
-              }
-            } else if (totalDataByFile[fileKey].probabilisticSlices) {
-              const totalSlices = totalDataByFile[fileKey].probabilisticSlices;
-              for (let t = 0; t < Math.min(totalSlices.length, trimmedYData.length); t++) {
-                for (let r = 0; r < totalSlices[t].length; r++) {
-                  totalSlices[t][r] += trimmedYData[t];
-                }
-              }
-            }
-            // Get line style for this radionuclide
-            const lineStyle = getLineStyle(datasetKey);
-            let traceName = datasetKey;
-            let lineWidth = lineStyle.width;
-            if (enabledFiles.length > 1 && enabledFiles.indexOf(fileKey) > 0) {
-              traceName = `${datasetKey} (${filenameDiff(enabledFiles[0], fileKey)})`;
-              lineWidth = lineWidth / 2;
-            }
-            const traceObj = ChartService.timeSeriesTrace({ x: trimmedTimeData, y: trimmedYData, name: traceName, line: { color: lineStyle.color, dash: lineStyle.dash, width: lineWidth }, _datasetKey: datasetKey });
-            traceObj._isProbabilistic = isProbabilistic || !!ciFromColumns;
-            if (isProbabilistic) {
-              // Store raw data and time data on the trace for CI computation
-              traceObj._rawData = normalizedRawData;
-              traceObj._timeData = trimmedTimeData;
-              traceObj._numRealizations = getRealizationStride(dataset, normalizedRawData.length, effectiveTimeData.length, `${path}/${datasetKey}`);
-              if (nIter && nIter > 1) {
-                traceObj._nIter = nIter;
-              }
-            } else if (ciFromColumns) {
-              traceObj._ciP5 = ciFromColumns.p5.slice(0, minLength);
-              traceObj._ciP95 = ciFromColumns.p95.slice(0, minLength);
-              traceObj._timeData = trimmedTimeData;
-            }
-            if (sdomInfo) {
-              traceObj._sdomLower = sdomInfo.lower.slice(0, minLength);
-              traceObj._sdomUpper = sdomInfo.upper.slice(0, minLength);
-              traceObj._timeData = trimmedTimeData;
-            }
-            traces.push(traceObj);
+          const series = computeRadionuclideSeries({
+            dataset, datasetKey, path, probTimeForFile, effectiveTimeData, nIter
+          });
+          if (series) {
+            // Both flags are only ever raised, never cleared, so folding the
+            // per-dataset answer in with || matches the original assignments.
+            hasProbabilistic = hasProbabilistic || series.sawProbabilistic;
+            hasSDOM = hasSDOM || series.sawSDOM;
+            accumulateRadionuclideTotal({
+              totalDataByFile, fileKey, nIter, series,
+              dataset, datasetKey, path, effectiveTimeData
+            });
+            traces.push(buildRadionuclideTrace({
+              series, dataset, datasetKey, path, fileKey, enabledFiles, nIter, effectiveTimeData
+            }));
           }
           // Yield to browser for UI update after each dataset
           await Promise.resolve();
@@ -3150,94 +1549,12 @@ async function createRadionuclidesChart(path, savedAxisState) {
   const primaryFile = enabledFiles[0];
   const secondaryFile = hasTwoFiles ? enabledFiles[1] : null;
 
-  /**
-   * Format a ratio value to a display string (3 significant digits).
-   * @param {number} ratio
-   * @returns {string}
-   */
-  function formatRatio(ratio) {
-    if (ratio === 0 || !isFinite(ratio)) return ratio.toString();
-    return ratio.toPrecision(3);
-  }
 
   // Add total traces, each at the top of its corresponding file's group in the legend
-  const showTotalCheckbox = getElement('showTotal');
-  if (!hasTotalSubNode && showTotalCheckbox && showTotalCheckbox.checked) {
-    // Compute total per file and collect total max values for ratio
-    const totalMaxByFile = {}; // { fileKey: maxTotalValue }
-    const totalTracesByFile = {}; // { fileKey: traceObject }
-    for (const fileKey of Object.keys(totalDataByFile)) {
-      const fileData = totalDataByFile[fileKey];
-      if (fileData.dataArrays.length > 0) {
-        const timeData = fileData.timeData;
-        const totalY = new Array(timeData.length).fill(0);
-        
-        // Sum all data arrays
-        for (const dataArray of fileData.dataArrays) {
-          for (let i = 0; i < Math.min(dataArray.length, totalY.length); i++) {
-            totalY[i] += dataArray[i];
-          }
-        }
-        
-        totalMaxByFile[fileKey] = totalY.reduce((m, v) => v > m ? v : m, -Infinity);
-
-        let traceName = 'Total';
-        let lineWidth = 2;
-        
-        if (enabledFiles.length > 1 && enabledFiles.indexOf(fileKey) > 0) {
-          traceName = `Total (${filenameDiff(enabledFiles[0], fileKey)})`;
-          lineWidth = 1;
-        }
-        
-        totalTracesByFile[fileKey] = {
-          x: timeData,
-          y: totalY,
-          mode: 'lines',
-          name: traceName,
-          line: {
-            color: '#000000',
-            dash: 'solid',
-            width: lineWidth
-          },
-          type: 'scatter',
-          _datasetKey: '__total__'
-        };
-
-        if (fileData.probabilisticSlices) {
-          totalTracesByFile[fileKey]._isProbabilistic = true;
-          totalTracesByFile[fileKey]._rawData = fileData.probabilisticSlices;
-          totalTracesByFile[fileKey]._timeData = timeData;
-          if (fileData.nIter && fileData.nIter > 1) {
-            totalTracesByFile[fileKey]._nIter = fileData.nIter;
-            hasSDOM = true;
-          }
-        }
-      }
-    }
-
-    // If Show Ratio is checked, append ratio to the primary Total trace name
-    if (showRatioChecked && secondaryFile) {
-      const t = totalTracesByFile[primaryFile];
-      if (t && t.name === 'Total') {
-        const maxPrimary = totalMaxByFile[primaryFile];
-        const maxSecondary = totalMaxByFile[secondaryFile];
-        if (maxSecondary != null && maxSecondary !== 0) {
-          t.name = `Total (${formatRatio(maxPrimary / maxSecondary)})`;
-        } else if (maxSecondary === 0 && maxPrimary > 0) {
-          t.name = `Total (∞)`;
-        }
-      }
-    }
-
-    // Insert each total trace at the beginning of its file's group.
-    // Process files in reverse order so earlier splice positions stay valid.
-    const filesWithTotals = enabledFiles.filter(fk => totalTracesByFile[fk]);
-    for (let i = filesWithTotals.length - 1; i >= 0; i--) {
-      const fk = filesWithTotals[i];
-      const insertIdx = fileTraceStartIndex[fk] != null ? fileTraceStartIndex[fk] : traces.length;
-      traces.splice(insertIdx, 0, totalTracesByFile[fk]);
-    }
-  }
+  if (insertTotalTraces({
+    traces, totalDataByFile, enabledFiles, fileTraceStartIndex, hasTotalSubNode,
+    showRatioChecked, primaryFile, secondaryFile
+  })) hasSDOM = true;
 
   // Update thick-line trace names with ratio of max values if "Show Ratio" is checked
   if (showRatioChecked) {
@@ -3274,8 +1591,8 @@ async function createRadionuclidesChart(path, savedAxisState) {
   renderRadionuclidesChart({
     traces, path, enabledFiles, chartContainer, savedAxisState, hasProbabilistic,
     hasProbTime, hasSDOM, probTimeIterMax, showRatioChecked, backgroundSourceOptions,
-    backgroundSourceValue, indexBackgroundSegments, timeUnit, yAxisUnit, yAxisName,
-    wasCIChecked, wasSDOMChecked, ciCheckbox, sdomCheckbox
+    backgroundSourceValue, indexBackgroundSegments, timeUnit, yAxisName,
+    wasCIChecked, wasSDOMChecked
   });
   } catch (err) {
     console.error('createRadionuclidesChart failed:', err);
@@ -3303,9 +1620,13 @@ function renderRadionuclidesChart(ctx) {
   const {
     traces, path, enabledFiles, chartContainer, savedAxisState, hasProbabilistic,
     hasProbTime, hasSDOM, probTimeIterMax, showRatioChecked, backgroundSourceOptions,
-    backgroundSourceValue, indexBackgroundSegments, timeUnit, yAxisUnit, yAxisName,
-    wasCIChecked, wasSDOMChecked, ciCheckbox, sdomCheckbox
+    backgroundSourceValue, indexBackgroundSegments, timeUnit, yAxisName,
+    wasCIChecked, wasSDOMChecked
   } = ctx;
+
+  // Written and read only below, from the group's 'unit' attribute. It was a
+  // let in the calling function, which never reads it back.
+  let yAxisUnit = '';
 
   // Render chart if we have traces
   if (traces.length > 0) {
@@ -3343,7 +1664,7 @@ function renderRadionuclidesChart(ctx) {
         }
       }
     } catch (e) {
-      console.warn('Could not read unit from group:', e);
+      kvotWarn('Could not read unit from group:', e);
     }
     
     const { xScale, yScale } = getChartScales();
@@ -3358,56 +1679,8 @@ function renderRadionuclidesChart(ctx) {
     });
 
     if (indexBackgroundSegments.length) {
-      let shapeSegments = indexBackgroundSegments.slice();
-      if (xScale === 'log') {
-        /*
-          Accumulate the minimum directly. Collecting every positive x into an
-          array and spreading it into Math.min throws RangeError once the trace
-          set exceeds roughly 125 000 points, which one radionuclide group with
-          a long time series already does.
-        */
-        let minPositiveX = null;
-        for (const trace of traces) {
-          const xVals = Array.isArray(trace.x) ? trace.x : [];
-          for (const xv of xVals) {
-            const n = Number(xv);
-            if (isFinite(n) && n > 0 && (minPositiveX === null || n < minPositiveX)) minPositiveX = n;
-          }
-        }
-        if (minPositiveX !== null) {
-          shapeSegments = shapeSegments
-            .map(seg => {
-              const rawX0 = Number(seg.x0);
-              const rawX1 = Number(seg.x1);
-              if (!isFinite(rawX0) || !isFinite(rawX1)) return null;
-              let x0 = rawX0;
-              let x1 = rawX1;
-              if (x0 <= 0 && x1 <= 0) return null;
-              if (x0 <= 0) x0 = minPositiveX;
-              if (x1 <= 0) x1 = minPositiveX;
-              if (x1 < x0) {
-                const tmp = x0;
-                x0 = x1;
-                x1 = tmp;
-              }
-              if (x1 === x0) return null;
-              return { ...seg, x0, x1 };
-            })
-            .filter(Boolean);
-        }
-      }
-      layout.shapes = (layout.shapes || []).concat(shapeSegments.map(seg => ({
-        type: 'rect',
-        xref: 'x',
-        yref: 'paper',
-        x0: seg.x0,
-        x1: seg.x1,
-        y0: 0,
-        y1: 1,
-        line: { width: 0 },
-        fillcolor: seg.color,
-        layer: 'below'
-      })));
+      layout.shapes = (layout.shapes || [])
+        .concat(backgroundRectShapes(indexBackgroundSegments, traces, xScale));
     }
     
     // Preserve axis ranges when toggling controls (Show Total, Show Ratio)
@@ -3530,5 +1803,3 @@ function getPlotlyConfig(filename) {
     responsive: true
   };
 }
-
-

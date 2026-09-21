@@ -272,7 +272,7 @@
   <div id="kvotmap"></div>
   <footer></footer>
 
-  <script src="./resources/js/kvot-errors.js?v=20260911"></script>
+  <script src="./resources/js/kvot-errors.js?v=20260921"></script>
   <script src="./resources/js/kvot-safe.js?v=20260911"></script>
   <script src="./resources/js/kvot-actions.js?v=20260902"></script>
   <script src="./resources/js/kvot-icons.js?v=20260902"></script>
@@ -323,7 +323,11 @@
       rb-file     which files are loaded, enabled and in what order
       rb-tabs     the file tab strip
       rb-tree     tree building, lazy expansion, intersect and union
-      rb-chart    the three chart builders, presets, CSV and Excel export
+      rb-chart-*  charting, split across five files that must load in this
+                  order: -axes (line styles, scales, axes lock), -presets,
+                  -export (CSV and Excel), -toggles (the checkboxes and the
+                  background overlay), then rb-chart itself (the three
+                  chart builders)
       rb-legend   dynamic legend
       rb-info     the dataset information panel
       rb-search   tree filtering
@@ -332,23 +336,46 @@
       rb-init     event wiring and page bootstrap
       rb-resize   panel and chart resize handles
       rb-handoff  receiving files from another page, in memory
+
+    These are classic scripts sharing globals, not ES modules, and every one of
+    them is strict ('use strict' at the top; asserted at runtime by
+    resources/tests/rb/test-strict.py, because a directive that is not the
+    first statement is silently ignored). Strict mode is the part of module
+    semantics worth having here: it stops a missing const from quietly creating
+    a global, which is this page's likeliest failure mode with 300 top-level
+    declarations across twenty files.
+
+    Modules themselves were measured and declined. The page has 242 top-level
+    function declarations; converting would mean 327 cross-file references each
+    becoming an explicit import, and would take every one of those names off
+    window. The test suite in resources/tests/rb/ drives this page entirely
+    through bare global names - 66 of them, 58 in characterise.py alone - so the
+    conversion would break the whole safety net at the moment it was most
+    needed, and keeping it working would mean re-exporting most of the surface
+    onto window anyway. The split of rb-chart.js into five files below gets the
+    navigability without that trade; those five must load in the order shown,
+    since they were one file and nothing runs at load time.
   -->
-  <script src="./resources/js/pdf-sampler.js?v=20260902"></script>
-  <script src="./resources/js/rb-state.js?v=20260918b"></script>
-  <script src="./resources/js/rb-utils.js?v=20260902"></script>
-  <script src="./resources/js/rb-actions.js?v=20260907"></script>
-  <script src="./resources/js/rb-hdf5.js?v=20260913"></script>
-  <script src="./resources/js/rb-file.js?v=20260918a"></script>
+  <script src="./resources/js/pdf-sampler.js?v=20260921"></script>
+  <script src="./resources/js/rb-state.js?v=20260921"></script>
+  <script src="./resources/js/rb-utils.js?v=20260921"></script>
+  <script src="./resources/js/rb-actions.js?v=20260921"></script>
+  <script src="./resources/js/rb-hdf5.js?v=20260921"></script>
+  <script src="./resources/js/rb-file.js?v=20260921"></script>
   <script src="./resources/js/rb-tabs.js?v=20260921"></script>
-  <script src="./resources/js/rb-tree.js?v=20260902"></script>
-  <script src="./resources/js/rb-chart.js?v=20260902"></script>
-  <script src="./resources/js/rb-legend.js?v=20260902"></script>
-  <script src="./resources/js/rb-info.js?v=20260902"></script>
-  <script src="./resources/js/rb-search.js?v=20260902"></script>
-  <script src="./resources/js/rb-dragdrop.js?v=20260902"></script>
-  <script src="./resources/js/rb-export.js?v=20260902"></script>
+  <script src="./resources/js/rb-tree.js?v=20260921"></script>
+  <script src="./resources/js/rb-chart-axes.js?v=20260921"></script>
+  <script src="./resources/js/rb-chart-presets.js?v=20260921"></script>
+  <script src="./resources/js/rb-chart-export.js?v=20260921"></script>
+  <script src="./resources/js/rb-chart-toggles.js?v=20260921"></script>
+  <script src="./resources/js/rb-chart.js?v=20260921"></script>
+  <script src="./resources/js/rb-legend.js?v=20260921"></script>
+  <script src="./resources/js/rb-info.js?v=20260921"></script>
+  <script src="./resources/js/rb-search.js?v=20260921"></script>
+  <script src="./resources/js/rb-dragdrop.js?v=20260921"></script>
+  <script src="./resources/js/rb-export.js?v=20260921"></script>
   <script src="./resources/js/rb-init.js?v=20260921"></script>
-  <script src="./resources/js/rb-resize.js?v=20260902"></script>
-  <script src="./resources/js/rb-handoff.js?v=20260916"></script>
+  <script src="./resources/js/rb-resize.js?v=20260921"></script>
+  <script src="./resources/js/rb-handoff.js?v=20260921"></script>
 </body>
 </html>

@@ -34,6 +34,7 @@
       kappa: '1e-3', maxJacAge: '20', maxSteps: '2000000', belowTolRun: '5',
       autoAtol: false, smoothEst: true, clamp: true, nonNegative: true,
     },
+    syntax: true,            // colour the model text in the editor
     compiled: null,          // summary from the worker
     compileError: null,
     result: null,            // last run payload (or partial)
@@ -134,7 +135,7 @@
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
         text: state.text, presetId: state.presetId, solver: state.solver,
-        sideWidth: state.sideWidth, sections: state.sections,
+        sideWidth: state.sideWidth, sections: state.sections, syntax: state.syntax,
         // Which built-in model this text was written against. Without it a
         // stored text shadows the built-in one for ever: the page restores it
         // on every visit, so a hard reload with an empty cache changes
@@ -170,6 +171,7 @@
       if (s.solver && typeof s.solver === 'object') Object.assign(state.solver, s.solver);
       if (Number.isFinite(s.sideWidth)) state.sideWidth = s.sideWidth;
       if (s.sections && typeof s.sections === 'object') state.sections = s.sections;
+      if (typeof s.syntax === 'boolean') state.syntax = s.syntax;
     } catch (e) { /* a corrupt entry: start fresh */ }
   }
 
@@ -343,6 +345,7 @@
     ta.value = text;
     try { ta.setSelectionRange(selectionStart, selectionEnd); } catch (e) { /* not focused */ }
     ta.scrollTop = scrollTop;
+    renderHighlight();
   }
 
   /**
@@ -766,6 +769,10 @@
       presetOptions();
       renderSettings();
       renderModelInfo();
+      // Whether the model asks for output times is a property of the text,
+      // so the row control answers for the text as it now stands rather than
+      // waiting for the next run to redraw the table.
+      syncRowsControls();
       // The Jacobian canvas and the generated code are worth a few hundred
       // kilobytes of work each; while the reader is typing in the editor both
       // panes are hidden, and switching to one redraws it anyway.
@@ -821,8 +828,103 @@
     const m = state.compiled;
     if (!m) { el.textContent = ''; return; }
     const warn = m.warnings.length ? `<br>Notes: ${esc(m.warnings.join('; '))}` : '';
-    el.innerHTML = `${m.nspecies} species, ${m.nreactions} reactions, ${m.equations.length} equations, ${m.outputs.length} outputs, ${m.events.length} event${m.events.length === 1 ? '' : 's'}. `
+    const extra = `${(m.rateNames || []).length ? `, ${m.rateNames.length} named reaction rate${m.rateNames.length === 1 ? '' : 's'}` : ''}`
+      + `${(m.outputTimes || []).length ? `, ${m.outputTimes.length} output times` : ''}`;
+    el.innerHTML = `${m.nspecies} species, ${m.nreactions} reactions, ${m.equations.length} equations, ${m.outputs.length} outputs, ${m.events.length} event${m.events.length === 1 ? '' : 's'}${extra}. `
       + `Jacobian: ${m.nnz} structurally non-zero entries of ${m.nspecies * m.nspecies} (${(100 * m.density).toFixed(1)} %), ${m.colours} column groups.${warn}`;
+  }
+
+  /* ---------------------------------------------------------------------
+     Syntax colouring for the model editor
+
+     A textarea cannot colour its own text, so the coloured copy is a <pre>
+     underneath it and the textarea's own text is made transparent over it.
+     That keeps native editing whole -- undo, spell-check off, selection,
+     the caret, middle-click paste -- which a contenteditable div would not,
+     and it is why the two boxes must agree on every metric that decides
+     where a character lands: font, size, line height, padding, border and
+     tab size are set together in facsimile.css.
+     --------------------------------------------------------------------- */
+
+  /** Words that mean something in a particular section. */
+  const HL_KEYWORDS = {
+    REACTIONS: new Set(['kf', 'kb', 'keq', 'rf', 'rb', 'rate']),
+    EVENTS: new Set(['up', 'down', 'both', 'stop']),
+    TIMES: new Set(['log', 'lin']),
+  };
+  const HL_TOKEN = /(\s+)|((?:\d+\.?\d*|\.\d+)(?:[eEdD][+-]?\d+)?)|([A-Za-z_][A-Za-z0-9_]*)|([=%:@])|([\s\S])/g;
+  const hlSpan = (cls, text) => `<span class="hl-${cls}">${esc(text)}</span>`;
+
+  /** One line of the model text as HTML, given the section it is in. */
+  function highlightLine(raw, section) {
+    if (!raw) return '';
+    const trimmed = raw.trim();
+    if (trimmed.startsWith('*')) return hlSpan('com', raw);          // FACSIMILE comment line
+    if (/^\s*<[^<>]*>\s*$/.test(raw)) return hlSpan('sec', raw);
+    // The comment is whatever follows the first of #, !! and ; -- the same
+    // three the compiler strips, so what is greyed out is what is ignored.
+    let cut = -1;
+    for (const mark of ['#', '!!', ';']) {
+      const at = raw.indexOf(mark);
+      if (at >= 0 && (cut < 0 || at < cut)) cut = at;
+    }
+    const code = cut < 0 ? raw : raw.slice(0, cut);
+    const comment = cut < 0 ? '' : raw.slice(cut);
+    const keywords = HL_KEYWORDS[section] || null;
+    const fns = typeof FacsimileModel !== 'undefined' ? FacsimileModel.FUNCTIONS : {};
+    let html = '';
+    HL_TOKEN.lastIndex = 0;
+    let m;
+    while ((m = HL_TOKEN.exec(code)) !== null) {
+      if (m[1] !== undefined) { html += esc(m[1]); continue; }
+      if (m[2] !== undefined) { html += hlSpan('num', m[2]); continue; }
+      if (m[3] !== undefined) {
+        const word = m[3];
+        const lower = word.toLowerCase();
+        const rest = code.slice(HL_TOKEN.lastIndex);
+        if (/^\s*\(/.test(rest) && fns[lower]) html += hlSpan('fn', word);
+        else if (keywords && keywords.has(lower)) html += hlSpan('key', word);
+        else html += esc(word);
+        continue;
+      }
+      if (m[4] !== undefined) { html += hlSpan('op', m[4]); continue; }
+      html += esc(m[5]);
+    }
+    return html + (comment ? hlSpan('com', comment) : '');
+  }
+
+  /** The whole model text as coloured HTML. */
+  function highlightModel(text) {
+    let section = '';
+    const out = [];
+    for (const line of String(text).split('\n')) {
+      const sec = /^\s*<\s*([A-Za-z][A-Za-z ]*?)(?:\s+[A-Za-z_][A-Za-z0-9_]*)?\s*>\s*$/.exec(line);
+      if (sec) section = sec[1].trim().toUpperCase().replace(/\s+/g, ' ');
+      out.push(highlightLine(line, section));
+    }
+    // A <pre> swallows one trailing newline; the textarea does not, so
+    // without this the two scroll out of step at the end of the file.
+    return `${out.join('\n')}\n`;
+  }
+
+  /** Repaints the coloured copy and keeps it under the same part of the text. */
+  function renderHighlight() {
+    const pre = $('facHighlight');
+    const ta = $('facModelText');
+    if (!pre || !ta) return;
+    if (!state.syntax) { pre.firstElementChild.textContent = ''; return; }
+    pre.firstElementChild.innerHTML = highlightModel(ta.value);
+    pre.scrollTop = ta.scrollTop;
+    pre.scrollLeft = ta.scrollLeft;
+  }
+
+  /** Turns the colouring on or off, and remembers which. */
+  function applySyntaxMode() {
+    const box = $('facCodeBox');
+    const check = $('facSyntax');
+    if (check) check.checked = !!state.syntax;
+    if (box) box.classList.toggle('hl', !!state.syntax);
+    renderHighlight();
   }
 
   /**
@@ -990,7 +1092,9 @@
       // describe the run that happened rather than the page as it now stands.
       state.ran = { model: state.compiled, solver, text: state.text, scenario: state.presetId || 'custom' };
       const st = reply.stats;
-      setStatus(`Done in ${reply.seconds.toFixed(2)} s.`, 'ok');
+      setStatus(st.stoppedBy
+        ? `Done in ${reply.seconds.toFixed(2)} s: the event “${st.stoppedBy.expr}” stopped the run at ${fmtTime(st.stoppedBy.t)}.`
+        : `Done in ${reply.seconds.toFixed(2)} s.`, 'ok');
       $('facStats').innerHTML = statsHtml(st, reply.events);
       afterResult();
     } catch (e) {
@@ -1032,7 +1136,9 @@
   }
 
   function statsHtml(st, events) {
-    const evs = (events || []).map((ev) => `event at t = ${fmtTime(ev.t)}: ${esc(ev.changed.join(', '))}`).join('<br>');
+    const evs = (events || []).map((ev) => `event at t = ${fmtTime(ev.t)}: ${
+      ev.stop ? `<b>the run stopped here</b>${ev.changed.length ? ` (${esc(ev.changed.join(', '))})` : ''}`
+        : esc(ev.changed.join(', '))}`).join('<br>');
     // Said when it happened, because the table and the file then hold fewer
     // rows than the solver took steps, and that should not be a surprise.
     const kept = st.stride > 1
@@ -1044,7 +1150,11 @@
       + (st.restarts ? `, <b>rebuilt ${st.restarts} time${st.restarts === 1 ? '' : 's'}</b> where the step size stalled` : '')
       + (st.negative ? `, ${st.negative} projections onto zero` : '')
       + `.<br>Iteration matrix I − hJ: <b>${st.sparse ? 'sparse LU' : 'dense LU'}</b>` + (st.fill != null ? ` (the sparse factor has ${st.fill} entries against ${st.n * st.n} dense, ${st.ordering} ordering)` : '')
-      + `; Jacobian ${st.nnz} non-zeros of ${st.n}×${st.n}.` + (evs ? `<br>${evs}` : '');
+      + `; Jacobian ${st.nnz} non-zeros of ${st.n}×${st.n}.`
+      + (state.result && state.result.grid && state.result.grid.n
+        ? `<br>Output grid: ${state.result.grid.n.toLocaleString()} of the ${
+          (state.result.gridWanted || state.result.grid.n).toLocaleString()} times the model asks for.` : '')
+      + (evs ? `<br>${evs}` : '');
   }
 
   function stop() {
@@ -1067,24 +1177,44 @@
   /* ---------------------------------------------------------------------
      Results: accessors
      --------------------------------------------------------------------- */
-  function column(name) {
+  /**
+   * One named series, from the solver's own steps or from the output grid.
+   *
+   * The names -- which observable is in which column -- belong to the run and
+   * are the same for both; only the rows differ, so `src` carries the numbers
+   * and `state.result` carries the headings.
+   */
+  function column(name, src) {
     const r = state.result;
     if (!r) return null;
+    const d = src || r;
     const k = r.observeNames.indexOf(name);
     if (k >= 0) {
-      const out = new Float64Array(r.n);
+      const out = new Float64Array(d.n);
       const w = r.observeNames.length;
-      for (let i = 0; i < r.n; i++) out[i] = r.observed[i * w + k];
+      for (let i = 0; i < d.n; i++) out[i] = d.observed[i * w + k];
       return out;
     }
-    const s = r.species.indexOf(name.replace(/^\[state\] /, ''));
-    if (s >= 0) {
-      const out = new Float64Array(r.n);
+    const sp = r.species.indexOf(name.replace(/^\[state\] /, ''));
+    if (sp >= 0) {
+      const out = new Float64Array(d.n);
       const w = r.nspecies;
-      for (let i = 0; i < r.n; i++) out[i] = r.states[i * w + s];
+      for (let i = 0; i < d.n; i++) out[i] = d.states[i * w + sp];
       return out;
     }
     return null;
+  }
+
+  /** Whether the reader has asked for the model's own output times. */
+  function wantsGrid() {
+    const r = state.result;
+    return !!(r && r.grid && r.grid.n && $('facTableRows').value === 'times');
+  }
+  /** The rows the table and the exports are working from. */
+  function tableSource() {
+    const r = state.result;
+    if (!r) return null;
+    return wantsGrid() ? r.grid : r;
   }
   function seriesNames() {
     const r = state.result || (state.compiled && { observeNames: state.compiled.observeNames, species: state.compiled.species });
@@ -1105,7 +1235,8 @@
     const model = state.compiled;
     if (!model || typeof FacsimileHDF5 === 'undefined') return '';
     const entry = (model.outputs || []).find((o) => o.name === name)
-      || (model.equations || []).find((e) => e.name === name);
+      || (model.equations || []).find((e) => e.name === name)
+      || (model.rates || []).find((x) => x.name === name);
     return entry ? FacsimileHDF5.unitFromComment(entry.comment) : '';
   }
 
@@ -1344,10 +1475,12 @@
     const model = state.compiled;
     const isEquation = new Set(((model && model.equations) || [])
       .filter((e) => !e.substitution).map((e) => e.name));
+    const isRate = new Set((model && model.rateNames) || []);
     const observed = r.observeNames || [];
     return [
-      ['Outputs', observed.filter((n) => !isEquation.has(n))],
+      ['Outputs', observed.filter((n) => !isEquation.has(n) && !isRate.has(n))],
       ['Equations', observed.filter((n) => isEquation.has(n))],
+      ['Reaction rates', observed.filter((n) => isRate.has(n))],
       ['Species', (r.species || []).map((sp) => `[state] ${sp}`)],
     ].filter(([, list]) => list.length);
   }
@@ -1418,8 +1551,9 @@
     if (mode === 'all') return [...outputs, ...species];
     return outputs;
   }
-  function rowIndices(mode) {
-    const r = state.result;
+  function rowIndices(mode, src) {
+    const r = src || state.result;
+    if (mode === 'times') return Array.from({ length: r.n }, (_, i) => i);
     if (mode === 'all' || r.n <= Number(mode)) return Array.from({ length: r.n }, (_, i) => i);
     const want = Number(mode);
     const t = r.t;
@@ -1442,15 +1576,19 @@
     const r = state.result;
     const table = $('facTable');
     if (!r) { table.innerHTML = ''; $('facTableNote').textContent = 'Run the model to fill the table.'; return; }
+    const src = tableSource();
     const cols = tableColumns();
-    const rows = rowIndices($('facTableRows').value);
-    const data = cols.map((c) => column(c));
+    const rows = rowIndices($('facTableRows').value, src);
+    const data = cols.map((c) => column(c, src));
     let html = '<thead><tr>' + cols.map((c) => `<th>${esc(c)}</th>`).join('') + '</tr></thead><tbody>';
     for (const i of rows) {
       html += '<tr>' + data.map((col) => `<td>${fmtNum(col[i])}</td>`).join('') + '</tr>';
     }
     table.innerHTML = html + '</tbody>';
-    $('facTableNote').textContent = `${rows.length} of ${r.n} rows shown.`;
+    $('facTableNote').textContent = wantsGrid()
+      ? `${rows.length} of the ${r.gridWanted || src.n} times the model asks for, interpolated between solver steps.`
+      : `${rows.length} of ${src.n} rows shown.`;
+    syncRowsControls();
   }
   function fmtNum(v) {
     if (!Number.isFinite(v)) return String(v);
@@ -1471,11 +1609,33 @@
   function downloadCsv() {
     const r = state.result;
     if (!r) { notifyUser('Run the model first.'); return; }
+    const src = tableSource();
     const cols = tableColumns();
-    const data = cols.map((c) => column(c));
+    const data = cols.map((c) => column(c, src));
     const lines = [['TIMS', ...cols].map(kvotCsvCell).join(',')];
-    for (let i = 0; i < r.n; i++) lines.push([r.t[i], ...data.map((col) => col[i])].map((v) => kvotCsvCell(String(v))).join(','));
+    for (let i = 0; i < src.n; i++) lines.push([src.t[i], ...data.map((col) => col[i])].map((v) => kvotCsvCell(String(v))).join(','));
     downloadBlob(new Blob([lines.join('\n')], { type: 'text/csv' }), `${fileStem()}.csv`);
+  }
+
+  /**
+   * The row controls say what the buttons beside them will write.
+   *
+   * The CSV and Excel files hold every solver step unless the model has a
+   * <TIMES> section and the reader has asked for it, and a button that says
+   * "all steps" while writing a hundred interpolated rows would be lying.
+   */
+  function syncRowsControls() {
+    const r = state.result;
+    const opt = $('facTableRows').querySelector('option[value="times"]');
+    const times = (state.compiled && state.compiled.outputTimes && state.compiled.outputTimes.length) || 0;
+    if (opt) {
+      opt.hidden = !times;
+      opt.disabled = !(r && r.grid && r.grid.n);
+      opt.textContent = times ? `at the model's output times (${times})` : 'at the model\u2019s output times';
+      if (opt.hidden && $('facTableRows').value === 'times') $('facTableRows').value = '200';
+    }
+    const csv = $('facCsvBtn');
+    if (csv) csv.textContent = wantsGrid() ? 'Download CSV (output times)' : 'Download CSV (all steps)';
   }
 
   async function downloadXlsx() {
@@ -1491,16 +1651,18 @@
         ['NORM', s.norm, 'Error norm'],
         ['SCENARIO', state.presetId || 'custom', 'Scenario'],
         ['REFERENCE', (FACSIMILE_PRESETS.find((x) => x.id === state.presetId) || {}).reference || '', 'Where the case is defined'],
-        ['DATE', new Date().toISOString(), 'Time of simulation'], ['SIMULATIONTIME', r.seconds ?? '', 'Seconds']);
+        ['DATE', new Date().toISOString(), 'Time of simulation'], ['SIMULATIONTIME', r.seconds ?? '', 'Seconds'],
+        ['ROWS', wantsGrid() ? 'output times' : 'solver steps', 'What the DATA and STATES sheets hold']);
       if (r.stats) settings.push(['STEPS', r.stats.nsteps, 'Accepted steps'], ['MATRIX', r.stats.sparse ? 'sparse' : 'dense', 'Iteration matrix']);
       xlsx.writeData(settings, 'SETTINGS', { header: ['SETTING', 'VALUE', 'DESCRIPTION'] });
-      const outCols = r.observeNames.map((c) => column(c));
+      const src = tableSource();
+      const outCols = r.observeNames.map((c) => column(c, src));
       const dataRows = [];
-      for (let i = 0; i < r.n; i++) dataRows.push([r.t[i], ...outCols.map((col) => col[i])]);
+      for (let i = 0; i < src.n; i++) dataRows.push([src.t[i], ...outCols.map((col) => col[i])]);
       xlsx.writeData(dataRows, 'DATA', { header: ['TIMS', ...r.observeNames] });
-      const spCols = r.species.map((sp) => column(`[state] ${sp}`));
+      const spCols = r.species.map((sp) => column(`[state] ${sp}`, src));
       const stateRows = [];
-      for (let i = 0; i < r.n; i++) stateRows.push([r.t[i], ...spCols.map((col) => col[i])]);
+      for (let i = 0; i < src.n; i++) stateRows.push([src.t[i], ...spCols.map((col) => col[i])]);
       xlsx.writeData(stateRows, 'STATES', { header: ['TIME', ...r.species] });
       await xlsx.save();
     } catch (e) {
@@ -1793,7 +1955,15 @@
     'fac:toHdf5': () => { viewInHdf5Browser(); },
     'fac:downloadHdf5': () => downloadHdf5(),
     'fac:applyModel': () => applyModelText(),
-    'fac:modelEdited': () => { state.textDirty = true; state.text = $('facModelText').value; scheduleCompile(800); },
+    'fac:modelEdited': () => {
+      state.textDirty = true; state.text = $('facModelText').value;
+      // Synchronously, not on the compile's timer: the textarea's own text is
+      // transparent while the colouring is on, so the coloured copy is what
+      // the reader is watching themselves type.
+      renderHighlight();
+      scheduleCompile(800);
+    },
+    'fac:syntaxToggle': (ev, el) => { state.syntax = !!el.checked; applySyntaxMode(); saveState(); },
     // Moving the caret changes nothing about the text, but it does change
     // whether the line the compiler objected to is the one being written.
     'fac:modelCaret': () => { if (state.compileError) renderModelInfo(); },
@@ -1811,6 +1981,12 @@
   loadState();
   migrateStoredText();
   $('facModelText').value = state.text;
+  // scroll does not bubble, so it cannot be delegated like the rest.
+  $('facModelText').addEventListener('scroll', () => {
+    const pre = $('facHighlight');
+    if (pre && state.syntax) { pre.scrollTop = $('facModelText').scrollTop; pre.scrollLeft = $('facModelText').scrollLeft; }
+  }, { passive: true });
+  applySyntaxMode();
   writeSolverControls();
   presetOptions();
   initSideResize();

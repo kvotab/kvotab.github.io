@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20260920d';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20260921a';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -37,12 +37,14 @@
     gradScale: 'YlOrRd',
     gradTMin: '1e-6',
     tab: 'time',
+    syntax: true,          // colour the model text in the editor
     sideWidth: null,
     sections: {},
     compiled: null,        // the summary from the worker
     compileError: null,
     result: null,          // { t, states, n, width, model, stats }
     running: false,
+    ran: null,             // the solver options and text the last run was given
     verify: null,
     storedStamp: null,
     storedEdited: null,
@@ -61,7 +63,7 @@
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
         text: state.text, solver: state.solver, picked: state.picked, cell: state.cell,
-        tab: state.tab, sideWidth: state.sideWidth, sections: state.sections,
+        tab: state.tab, syntax: state.syntax, sideWidth: state.sideWidth, sections: state.sections,
         layer: state.layer, profileAxis: state.profileAxis, profileLayer: state.profileLayer,
         gradLayer: state.gradLayer,
         profileSpecies: state.profileSpecies, profileTimes: state.profileTimes,
@@ -91,6 +93,7 @@
       if (Number.isFinite(s.gradLayer)) state.gradLayer = s.gradLayer;
       if (s.profileAxis === 'matrix' || s.profileAxis === 'fracture') state.profileAxis = s.profileAxis;
       if (typeof s.tab === 'string') state.tab = s.tab;
+      if (typeof s.syntax === 'boolean') state.syntax = s.syntax;
       if (typeof s.profileSpecies === 'string') state.profileSpecies = s.profileSpecies;
       if (typeof s.profileTimes === 'string') state.profileTimes = s.profileTimes;
       if (typeof s.gradSpecies === 'string') state.gradSpecies = s.gradSpecies;
@@ -443,6 +446,10 @@
     const refusal = methodRefusal(solver.method);
     if (refusal) { setStatus(refusal, 'error'); return; }
     if (!(await compile())) return;
+
+    // What this run was given, kept for the HDF5 file: the panel can be
+    // changed while a run is going, and the file must say what was solved.
+    state.ran = { solver, text: state.text };
 
     state.running = true;
     $('rtmRun').disabled = true;
@@ -1011,12 +1018,125 @@
     for (let i = 0; i < r.n; i++) {
       lines.push([r.t[i], ...cols.map((c) => (c ? c[i] : ''))].join(','));
     }
-    const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+    downloadBlob(new Blob([lines.join('\n')], { type: 'text/csv' }), `rtm_cell${state.cell}.csv`);
+  }
+
+  function downloadBlob(blob, name) {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `rtm_cell${state.cell}.csv`;
+    a.download = name;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+
+  /* ---------------------------------------------------------------------
+     The run as an HDF5 file
+
+     The same two things facsimile.html offers: the file handed straight to
+     the HDF5 Browser in another tab, and the same file as a download. The
+     tree itself is rtm-hdf5.js.
+     --------------------------------------------------------------------- */
+
+  /** Where the browser is: a sibling page, so the handoff is same-origin. */
+  const HDF5_BROWSER = 'rb.html';
+  /** How long to wait for the tab to say it is listening, and then to answer. */
+  const HANDOFF_READY_MS = 45000;
+  const HANDOFF_OPEN_MS = 60000;
+
+  /** What to call the file: the example it came from, or just the page. */
+  function fileStem() {
+    const picked = $('rtmExample') && $('rtmExample').value;
+    return (picked ? `rtm_${picked}` : 'rtm').replace(/[^\w.-]+/g, '_');
+  }
+
+  /** The run as HDF5 bytes, described by the model that produced it. */
+  function buildHdf5() {
+    const ran = state.ran || { solver: solverPayload(), text: state.text };
+    const picked = $('rtmExample') && $('rtmExample').value;
+    const example = picked ? EXAMPLES.find((x) => x.id === picked) : null;
+    return RtmHDF5.resultFile(state.result, {
+      solver: ran.solver, text: ran.text, cell: state.cell, layer: state.layer,
+      title: example ? example.label : 'Reactive transport',
+    });
+  }
+
+  /**
+   * Opens the HDF5 Browser and hands it this run, without a file ever reaching
+   * the disk. The other half of the protocol is resources/js/rb-handoff.js.
+   *
+   * The tab is opened first, before the file exists, and that is not an
+   * accident: a pop-up is only allowed out of a user gesture, and building the
+   * file takes longer than the click. So the window goes first, and the bytes
+   * follow once the far side has said it is listening -- which it repeats every
+   * second, so taking a while over the building is safe.
+   */
+  async function viewInHdf5Browser() {
+    if (!state.result) { setStatus('Run the model first: there is nothing to send yet.', 'error'); return; }
+    const origin = window.location.origin;
+    const win = window.open(`${HDF5_BROWSER}#handoff=${encodeURIComponent(origin)}`, '_blank');
+    if (!win) {
+      setStatus('The browser blocked the new tab. Allow pop-ups for this page, or use '
+        + '“HDF5” beside it and open the file in the HDF5 Browser yourself.', 'error');
+      return;
+    }
+
+    let ready = false;
+    let onReady = null;
+    let settle = null;
+    const onMessage = (ev) => {
+      if (ev.origin !== origin || !ev.data || typeof ev.data !== 'object') return;
+      const kind = ev.data.kvot;
+      if (kind === 'rb-ready') { ready = true; if (onReady) onReady(); }
+      else if (kind === 'rb-opened' && settle) settle({ ok: true, names: ev.data.names || [] });
+      else if (kind === 'rb-error' && settle) settle({ ok: false, message: ev.data.message || '' });
+    };
+    // Listening before the work starts, not after it: a ready ping that arrives
+    // while the file is being built has to have somewhere to land.
+    window.addEventListener('message', onMessage);
+
+    const name = `${fileStem()}.h5`;
+    try {
+      setStatus(`Writing ${name}…`);
+      await new Promise((r) => setTimeout(r, 0));     // let that reach the screen
+      const bytes = buildHdf5();
+      setStatus(`Sending ${name} (${(bytes.length / 1048576).toFixed(1)} MB) to the HDF5 Browser…`);
+      if (!ready) {
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(
+            () => reject(new Error('the tab did not answer; it may still be loading')), HANDOFF_READY_MS);
+          onReady = () => { clearTimeout(timer); resolve(); };
+        });
+      }
+      // Transferred rather than copied: the file is megabytes, and a structured
+      // clone of it would be a second copy on a page already holding the first.
+      const buffer = bytes.buffer;
+      const answered = new Promise((resolve) => {
+        const timer = setTimeout(
+          () => resolve({ ok: false, message: 'it did not say whether the file opened' }), HANDOFF_OPEN_MS);
+        settle = (r) => { clearTimeout(timer); settle = null; resolve(r); };
+      });
+      win.postMessage({ kvot: 'rb-open', name, buffer }, origin, [buffer]);
+      const answer = await answered;
+      if (!answer.ok) throw new Error(answer.message || 'the HDF5 Browser refused the file');
+      setStatus(`${name} is open in the HDF5 Browser.`, 'ok');
+    } catch (e) {
+      setStatus(`The handoff failed: ${e.message}. “HDF5” beside it writes the same file.`, 'error');
+    } finally {
+      window.removeEventListener('message', onMessage);
+    }
+  }
+
+  /** The same file, as a download. */
+  function downloadHdf5() {
+    if (!state.result) { setStatus('Run the model first: there is nothing to save yet.', 'error'); return; }
+    const name = `${fileStem()}.h5`;
+    try {
+      const bytes = buildHdf5();
+      downloadBlob(new Blob([bytes], { type: 'application/x-hdf5' }), name);
+      setStatus(`${name} written (${(bytes.length / 1048576).toFixed(1)} MB).`, 'ok');
+    } catch (e) {
+      setStatus(`The HDF5 file could not be written: ${e.message}`, 'error');
+    }
   }
 
   /* ---------------------------------------------------------------------
@@ -1155,6 +1275,7 @@
     if (!e) { about.hidden = true; $('rtmExample').value = ''; return; }
     state.text = e.text;
     $('rtmText').value = e.text;
+    renderHighlight();
     about.textContent = e.about + (e.reference ? `  ${e.reference}` : '');
     about.hidden = false;
     state.result = null;
@@ -1164,15 +1285,140 @@
   }
 
   /* ---------------------------------------------------------------------
+     Syntax colouring for the model editor
+
+     A textarea cannot colour its own text, so the coloured copy is a <pre>
+     underneath it and the textarea's own text is made transparent over it.
+     That keeps native editing whole -- undo, selection, the caret, the
+     spell-checker being off -- which a contenteditable div would not, and it
+     is why the two boxes must agree on every metric that decides where a
+     character lands: font, size, line height, padding, border and tab size
+     are set together in rtm.css.
+
+     What is coloured is what the compiler reads: the sections, the settings
+     and the words their values may take come from rtm-model.js's own tables,
+     so the colouring cannot drift from the meaning.
+     --------------------------------------------------------------------- */
+
+  /** Words that mean something on their own, by section. */
+  const HL_WORDS = {
+    SPECIES: new Set(['fixed']),
+    INITIAL: new Set(['all', 'matrix']),
+    PARAMETERS: new Set(['all', 'matrix', 'fracture']),
+    REACTIONS: new Set(['water', 'inventory']),
+  };
+  /** Names that mean something where they take a value: `NAME = ...`. */
+  const HL_ASSIGN = {
+    SPECIES: new Set(['d', 'dm', 'left', 'right', 'mass', 'r', 'rm']),
+    REACTIONS: new Set(['k', 'kf', 'kb', 'r', 'rb', 'on']),
+    EQUILIBRIUM: new Set(['k', 'logk', 'kf', 'kb']),
+  };
+  /*
+    A species name ends in a charge -- H+, OH-, C2O4-2 -- and the charge is
+    part of the name only when it is written against it, which is the same
+    rule the compiler splits a stoichiometry by. Read the other way, the 2 of
+    UO2+2 would be coloured as a number of its own.
+  */
+  const HL_TOKEN = /(\s+)|(<=>|=>|<=)|((?:\d+\.?\d*|\.\d+)(?:[eEdD][+-]?\d+)?)|([A-Za-z_][A-Za-z0-9_]*(?:[+-][0-9]+)?)|([=])|([\s\S])/g;
+  const hlSpan = (cls, text) => `<span class="hl-${cls}">${esc(text)}</span>`;
+
+  /** The settings and their word values, read from the compiler's table. */
+  let hlSettings = null;
+  function settingWords() {
+    if (hlSettings) return hlSettings;
+    const table = (typeof RtmModel !== 'undefined' && RtmModel.SETTINGS) || {};
+    const names = new Set();
+    const values = new Set(['yes', 'no', 'true', 'false', 'on', 'off']);
+    for (const [name, spec] of Object.entries(table)) {
+      names.add(name.toLowerCase());
+      for (const word of spec.of || []) values.add(String(word).toLowerCase());
+    }
+    hlSettings = { names, values };
+    return hlSettings;
+  }
+
+  /** One line of the model text as HTML, given the section it is in. */
+  function highlightLine(raw, section) {
+    if (!raw) return '';
+    if (/^\s*<[^<>]*>\s*$/.test(raw)) return hlSpan('sec', raw);
+    /*
+      The comment is whatever follows a # at the start of the line or after a
+      space -- the same rule readSections strips by, so what is greyed out is
+      exactly what the compiler never sees.
+    */
+    const at = /(^|\s)#/.exec(raw);
+    const cut = at ? at.index + at[1].length : -1;
+    const code = cut < 0 ? raw : raw.slice(0, cut);
+    const comment = cut < 0 ? '' : raw.slice(cut);
+    const words = HL_WORDS[section] || null;
+    const assign = HL_ASSIGN[section] || null;
+    const fns = typeof FacsimileModel !== 'undefined' ? FacsimileModel.FUNCTIONS : {};
+    const settings = settingWords();
+    let html = '';
+    HL_TOKEN.lastIndex = 0;
+    let m;
+    while ((m = HL_TOKEN.exec(code)) !== null) {
+      if (m[1] !== undefined) { html += esc(m[1]); continue; }
+      if (m[2] !== undefined) { html += hlSpan('op', m[2]); continue; }
+      if (m[3] !== undefined) { html += hlSpan('num', m[3]); continue; }
+      if (m[4] !== undefined) {
+        const word = m[4];
+        const lower = word.toLowerCase();
+        const rest = code.slice(HL_TOKEN.lastIndex);
+        const takesValue = /^\s*=[^=>]/.test(rest) || /^\s*=$/.test(rest);
+        if (/^\s*\(/.test(rest) && fns[lower]) html += hlSpan('fn', word);
+        else if (takesValue && section === 'SETTINGS' && settings.names.has(lower)) html += hlSpan('key', word);
+        else if (takesValue && assign && assign.has(lower)) html += hlSpan('key', word);
+        else if (section === 'SETTINGS' && settings.values.has(lower)) html += hlSpan('key', word);
+        else if (words && words.has(lower)) html += hlSpan('key', word);
+        else html += esc(word);
+        continue;
+      }
+      if (m[5] !== undefined) { html += hlSpan('op', m[5]); continue; }
+      html += esc(m[6]);
+    }
+    return html + (comment ? hlSpan('com', comment) : '');
+  }
+
+  /** The whole model text as coloured HTML. */
+  function highlightModel(text) {
+    let section = '';
+    const out = [];
+    for (const line of String(text).split('\n')) {
+      const sec = /^\s*<\s*([A-Za-z]+)\s*>\s*$/.exec(line);
+      if (sec) section = sec[1].toUpperCase();
+      out.push(highlightLine(line, section));
+    }
+    // A <pre> swallows one trailing newline; the textarea does not, so
+    // without this the two scroll out of step at the end of the file.
+    return `${out.join('\n')}\n`;
+  }
+
+  /** Repaints the coloured copy and keeps it under the same part of the text. */
+  function renderHighlight() {
+    const pre = $('rtmHighlight');
+    const ta = $('rtmText');
+    if (!pre || !ta) return;
+    if (!state.syntax) { pre.firstElementChild.textContent = ''; return; }
+    pre.firstElementChild.innerHTML = highlightModel(ta.value);
+    pre.scrollTop = ta.scrollTop;
+    pre.scrollLeft = ta.scrollLeft;
+  }
+
+  /** Turns the colouring on or off. */
+  function applySyntaxMode() {
+    const box = $('rtmCodeBox');
+    const check = $('rtmSyntax');
+    if (check) check.checked = !!state.syntax;
+    if (box) box.classList.toggle('hl', !!state.syntax);
+    renderHighlight();
+  }
+
+  /* ---------------------------------------------------------------------
      Files
      --------------------------------------------------------------------- */
   function saveFile() {
-    const blob = new Blob([state.text], { type: 'text/plain' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'model.rtm';
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    downloadBlob(new Blob([state.text], { type: 'text/plain' }), 'model.rtm');
   }
 
   async function fileChosen(ev) {
@@ -1180,6 +1426,7 @@
     if (!file) return;
     state.text = await file.text();
     $('rtmText').value = state.text;
+    renderHighlight();
     ev.target.value = '';
     scheduleCompile(0);
   }
@@ -1231,6 +1478,8 @@
       drawTime();
     },
     'rtm:downloadCsv': () => downloadCsv(),
+    'rtm:toHdf5': () => { viewInHdf5Browser(); },
+    'rtm:downloadHdf5': () => downloadHdf5(),
     'rtm:solverChanged': () => { readSolverControls(); saveState(); },
     'rtm:more': () => {
       const open = !state.sections[ADVANCED_KEY];
@@ -1240,12 +1489,18 @@
     },
     'rtm:textChanged': () => {
       state.text = $('rtmText').value;
+      // Synchronously, not on the compile's timer: the textarea's own text is
+      // transparent while the colouring is on, so the coloured copy is what
+      // the reader is watching themselves type.
+      renderHighlight();
       scheduleCompile(400);
     },
+    'rtm:syntaxToggle': (ev, el) => { state.syntax = !!el.checked; applySyntaxMode(); saveState(); },
     'rtm:applyModel': () => { state.text = $('rtmText').value; scheduleCompile(0); },
     'rtm:resetModel': () => {
       state.text = RTM_DEFAULT_MODEL;
       $('rtmText').value = state.text;
+      renderHighlight();
       state.picked = [];
       scheduleCompile(0);
     },
@@ -1267,6 +1522,12 @@
   loadState();
   migrateStoredText();
   $('rtmText').value = state.text;
+  // scroll does not bubble, so it cannot be delegated like the rest.
+  $('rtmText').addEventListener('scroll', () => {
+    const pre = $('rtmHighlight');
+    if (pre && state.syntax) { pre.scrollTop = $('rtmText').scrollTop; pre.scrollLeft = $('rtmText').scrollLeft; }
+  }, { passive: true });
+  applySyntaxMode();
   renderExamples();
   $('rtmProfileTimes').value = state.profileTimes;
   writeSolverControls();

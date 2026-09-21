@@ -376,12 +376,12 @@ H2O = H2OLIQ, rf = H2OPAIR*1.0E6*H2O
 H2OLIQ = H2O, rf = H2OPAIR*1.0E6*H2OEQ*exp(-1.0E-14/(ramp(H2OLIQ) + 1.0E-17))
 #
 # ***** Water release from failed rods *****
-= H2O + H2OTOT, rf = H2OINPUT_CM3                                      # switched off by the event below
+= H2O + H2OTOT, rf = H2OINPUT_CM3, rate = RH2OIN                       # switched off by the event below (mol cm-3 s-1)
 #
 # ***** Steel corrosion *****
-3 O2 = , rf = c1/4*f1*f2                                               # 4Fe + 2H2O + 3O2 = 4FeOOH: oxygen consumed
-2 H2O = , rf = c1/4*f1*f2                                              # 4Fe + 2H2O + 3O2 = 4FeOOH: water consumed
-4 H2O = 4 H2, rf = c2/3*(1 - f1)*f2                                    # 3Fe + 4H2O = Fe3O4 + 4H2 once the oxygen is gone
+3 O2 = , rf = c1/4*f1*f2, rate = ROXID                                 # 4Fe + 2H2O + 3O2 = 4FeOOH: oxygen consumed (mol cm-3 s-1)
+2 H2O = , rf = c1/4*f1*f2, rate = ROXIDW                               # 4Fe + 2H2O + 3O2 = 4FeOOH: water consumed (mol cm-3 s-1)
+4 H2O = 4 H2, rf = c2/3*(1 - f1)*f2, rate = RANOX                      # 3Fe + 4H2O = Fe3O4 + 4H2 once the oxygen is gone (mol cm-3 s-1)
 #
 # *******PRIMARY REACTIONS*************************
 N2 = N2P + E, kf = GN2P*DOSR*0.9
@@ -737,6 +737,15 @@ NP2 = N, kf = 2.0E-18*NA*M                                             # K165 = 
 # constants are recomputed and the integration continues.
 H2OTOT*VOLUME_CM3*18 - H2OFINAL, H2OINPUTR = 0    # stop the release when H2OFINAL grams have been added
 
+<TIMES h>
+# Times, in hours, at which the run is also reported -- the Table tab, the CSV
+# and the Excel file will give them when "at the model's output times" is
+# chosen, interpolated between the solver's own steps. This is what
+# FACSIMILE's WHENEVER lists did; the first line is the one the original
+# printed at, and the second covers the whole run.
+1 2 3 4 4.2 4.5 4.8 5 6 7 8 9 10 11 15
+1.0E-4 .. 4.383E6 log 200
+
 <OUTPUTS>
 # Derived quantities for the table and the charts (the equations are available too).
 TIMH     = t/3600                                 # time (h)
@@ -782,8 +791,15 @@ H2O2MOL  = H2O2*VOLUME_CM3                        # amounts in the canister (mol
 H2OMOL   = H2O*VOLUME_CM3                         # water vapour (mol)
 CORRAT1  = c1                                     # oxic iron loss in force (mol cm-3 s-1)
 CORRAT2  = c2                                     # anoxic iron loss in force (mol cm-3 s-1)
-dDUMO2   = c1*3/4*f1*f2                           # oxygen consumption by corrosion (mol cm-3 s-1)
-dDUMH2   = c2*4/3*(1 - f1)*f2                     # hydrogen production by corrosion (mol cm-3 s-1)
+# The two corrosion fluxes, as multiples of the reactions' own net rates
+# rather than as a second copy of the rate laws: 3 O2 are consumed and 4 H2
+# produced per turn of the respective reaction.
+dDUMO2   = 3*ROXID                                # oxygen consumption by corrosion (mol cm-3 s-1)
+dDUMH2   = 4*RANOX                                # hydrogen production by corrosion (mol cm-3 s-1)
+# The apparent G-value for fixed nitrogen, which the FACSIMILE model computed
+# from five dummy variables carrying the derivatives ('HNO3DUM and the rest).
+# deriv() reads a species' derivative directly.
+GHNO3    = (deriv(HNO3) + deriv(HNO2) + deriv(NO2) + deriv(NO3) + deriv(NO))/DOSER   # apparent G-value for fixed nitrogen (/100 eV)
 `;
 
 const FACSIMILE_PRESETS = [
@@ -1225,7 +1241,7 @@ const FACSIMILE_PRESETS = [
   {
     "id": "11b",
     "label": "11b: BWR, 166 Gy/h, 54.1 m2, 1.02 m3, 0.03 atm, 100% air, 1 g water + 1.8 g/day to 30 g, corrosion only above 60% RH",
-    "reference": "Not in SKB TR-22-15 Table 3-1. From the FACSIMILE model file skbcanister11b.fac: Case 11 with the area and volume of Case 2b (54.1 m2, 1.02 m3) and the gas at 0.03 atm of air, corrosion only above 60 % RH.",
+    "reference": "Case 11b of the note \"Results from Recent Calculations with the KBS-3 Canister Radiolysis Model: Impact of Zero Argon\" (Table 1 for the case, Table 2 for the results), run as the FACSIMILE model file skbcanister11b.fac: Case 11 with the area and volume of Case 2b (54.1 m2, 1.02 m3) and the gas at 0.03 atm of air, corrosion only above 60 % RH.",
     "settings": {
       "DOSERI": 166,
       "STEELAREA": 54.1,
@@ -1457,7 +1473,7 @@ const FACSIMILE_PRESETS = [
   {
     "id": "13g",
     "label": "13g: PWR, 238 Gy/h, 27.8 m2, 1.2 m3, 0.03 atm, 100% air, 600 g water, corrosion only above 60% RH",
-    "reference": "Not in SKB TR-22-15 Table 3-1. From the FACSIMILE model file skbcanister13g.fac: Case 13b with the gas at 0.03 atm of air, corrosion only above 60 % RH.",
+    "reference": "Case 13g of the note \"Results from Recent Calculations with the KBS-3 Canister Radiolysis Model: Impact of Zero Argon\" (Table 1 for the case, Table 2 for the results), run as the FACSIMILE model file skbcanister13g.fac: Case 13b with the gas at 0.03 atm of air, corrosion only above 60 % RH.",
     "settings": {
       "DOSERI": 238,
       "STEELAREA": 27.8,
@@ -1573,7 +1589,7 @@ const FACSIMILE_PRESETS = [
   {
     "id": "16p",
     "label": "16p: PWR, 238 Gy/h, 27.8 m2, 1.2 m3, 1 atm, 3% air, 600 g water, corrosion",
-    "reference": "Not in SKB TR-22-15 Table 3-1. From the FACSIMILE model file skbcanister16p.fac: Case 16 with the area and volume of Case 13b (27.8 m2, 1.2 m3) and 3 % air at 1 atm.",
+    "reference": "Case 16' of the note \"Results from Recent Calculations with the KBS-3 Canister Radiolysis Model: Impact of Zero Argon\" (Table 1 for the case, Table 2 for the results), run as the FACSIMILE model file skbcanister16p.fac: Case 16 with the area and volume of Case 13b (27.8 m2, 1.2 m3) and 3 % air at 1 atm.",
     "settings": {
       "DOSERI": 238,
       "STEELAREA": 27.8,
@@ -1602,7 +1618,7 @@ const FACSIMILE_PRESETS = [
   {
     "id": "16a",
     "label": "16a: PWR, 238 Gy/h, 27.8 m2, 1.2 m3, 0.01 atm, 100% air, 600 g water, corrosion",
-    "reference": "Not in SKB TR-22-15 Table 3-1. From the FACSIMILE model file skbcanister16a.fac: Case 16 with the area and volume of Case 13b and the gas at 0.01 atm of air.",
+    "reference": "Case 16a of the note \"Results from Recent Calculations with the KBS-3 Canister Radiolysis Model: Impact of Zero Argon\" (Table 1 for the case, Table 2 for the results), run as the FACSIMILE model file skbcanister16a.fac: Case 16 with the area and volume of Case 13b and the gas at 0.01 atm of air.",
     "settings": {
       "DOSERI": 238,
       "STEELAREA": 27.8,
@@ -1631,7 +1647,7 @@ const FACSIMILE_PRESETS = [
   {
     "id": "16b",
     "label": "16b: PWR, 238 Gy/h, 27.8 m2, 1.2 m3, 0.03 atm, 100% air, 600 g water, corrosion",
-    "reference": "Not in SKB TR-22-15 Table 3-1. From the FACSIMILE model file skbcanister16b.fac: Case 16 with the area and volume of Case 13b and the gas at 0.03 atm of air.",
+    "reference": "Case 16b of the note \"Results from Recent Calculations with the KBS-3 Canister Radiolysis Model: Impact of Zero Argon\" (Table 1 for the case, Table 2 for the results), run as the FACSIMILE model file skbcanister16b.fac: Case 16 with the area and volume of Case 13b and the gas at 0.03 atm of air.",
     "settings": {
       "DOSERI": 238,
       "STEELAREA": 27.8,
@@ -1660,7 +1676,7 @@ const FACSIMILE_PRESETS = [
   {
     "id": "16c",
     "label": "16c: PWR, 238 Gy/h, 27.8 m2, 1.2 m3, 1 atm, 3% air, 600 g water, no corrosion",
-    "reference": "Not in SKB TR-22-15 Table 3-1. From the FACSIMILE model file skbcanister16c.fac: Case 16 with the area and volume of Case 13b, 3 % air at 1 atm, and no corrosion.",
+    "reference": "Case 16c of the note \"Results from Recent Calculations with the KBS-3 Canister Radiolysis Model: Impact of Zero Argon\" (Table 1 for the case, Table 2 for the results), run as the FACSIMILE model file skbcanister16c.fac: Case 16 with the area and volume of Case 13b, 3 % air at 1 atm, and no corrosion.",
     "settings": {
       "DOSERI": 238,
       "STEELAREA": 27.8,
@@ -1689,7 +1705,7 @@ const FACSIMILE_PRESETS = [
   {
     "id": "16d",
     "label": "16d: PWR, 238 Gy/h, 27.8 m2, 1.2 m3, 0.03 atm, 100% air, 600 g water, no corrosion",
-    "reference": "Not in SKB TR-22-15 Table 3-1. From the FACSIMILE model file skbcanister16d.fac: Case 16 with the area and volume of Case 13b, the gas at 0.03 atm of air, and no corrosion.",
+    "reference": "Case 16d of the note \"Results from Recent Calculations with the KBS-3 Canister Radiolysis Model: Impact of Zero Argon\" (Table 1 for the case, Table 2 for the results), run as the FACSIMILE model file skbcanister16d.fac: Case 16 with the area and volume of Case 13b, the gas at 0.03 atm of air, and no corrosion.",
     "settings": {
       "DOSERI": 238,
       "STEELAREA": 27.8,

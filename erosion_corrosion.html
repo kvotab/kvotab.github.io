@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <meta http-equiv="Content-Security-Policy" content="base-uri 'self'; object-src 'none'">
+  <title>Erosion and Corrosion — kvot ab</title>
+  <meta name="description" content="SKB’s buffer erosion and canister corrosion calculation for every deposition hole of a KBS-3 repository layout, in your browser: drop in hydrogeological data, choose the rejection criteria, buffer model and sulphide distribution, and get the failure times, key outputs and distribution plots of the PSAR workbook.">
+  <link rel="canonical" href="https://kvotab.se/erosion_corrosion.html">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="kvot ab">
+  <meta property="og:title" content="Erosion and Corrosion — kvot ab">
+  <meta property="og:description" content="Buffer erosion and copper corrosion for every deposition hole of a KBS-3 layout, from hydro data you drop in: the SR-Site and PSAR calculation of SKB, reproduced in the browser and checked against its test case.">
+  <meta property="og:url" content="https://kvotab.se/erosion_corrosion.html">
+  <meta property="og:image" content="https://kvotab.se/resources/images/kvot-logotype.png">
+  <meta name="twitter:card" content="summary">
+  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js" integrity="sha384-Hl48Kq2HifOWdXEjMsKo6qxqvRLTYqIGbvlENBmkHAxZKIGCXv43H6W1jA671RzC" crossorigin="anonymous"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" integrity="sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG" crossorigin="anonymous"></script>
+  <script>
+    // Set the theme before first paint so dark-mode visitors get no white flash.
+    (function () {
+      try {
+        var t = localStorage.getItem('kvot-theme');
+        if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* storage unavailable — site.js will apply the default */ }
+    })();
+  </script>
+  <link rel="stylesheet" href="./resources/css/kvot.css?v=20260918b">
+  <link rel="stylesheet" href="./resources/css/erosion_corrosion.css?v=20260921">
+  <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
+</head>
+<body>
+  <header></header>
+
+  <div class="content">
+    <div class="ec">
+      <!-- ===================== the settings column ===================== -->
+      <aside class="ec-side" id="ecSide">
+        <div class="ec-side-scroll">
+
+          <details class="ec-sec" id="sec-hydro" open>
+            <summary>Hydro data<span class="ec-count" id="ecHydroCount"></span></summary>
+            <p class="ec-about">One file per DFN realisation: the deposition-hole table from the hydrogeological modelling (ConnectFlow CSV or PTB, an Excel sheet of it, or a DarcyTools performance-measure table). Several files are several realisations.</p>
+            <div class="ec-drop" id="ecDrop">Drop hydro files here, or
+              <button type="button" class="ec-btn secondary small" data-on-click="ec:openFiles">Open…</button>
+            </div>
+            <input type="file" id="ecFile" multiple accept=".csv,.txt,.ptb,.dtpm,.dat,.xlsx,.xlsm,.json" hidden data-on-change="ec:filesChosen">
+            <div class="ec-row">
+              <label>Built-in example<span class="ec-name">fetched from resources/data/erosion_corrosion/</span></label>
+              <select id="ecExample" data-on-change="ec:chooseExample">
+                <option value="">— choose —</option>
+                <option value="test">Code test case (TestCaseHydro_2_0, SKBdoc 1895160)</option>
+                <option value="base">PSAR base case (fs_Q1_2000_pline_merged, semi-correlated DFN)</option>
+              </select>
+            </div>
+            <p class="ec-muted" id="ecExampleAbout" hidden></p>
+            <ul class="ec-files" id="ecFiles"></ul>
+            <div class="ec-actions">
+              <button type="button" class="ec-btn secondary small" data-on-click="ec:clearHydro">Remove all</button>
+              <button type="button" class="ec-btn secondary small" data-on-click="ec:hydroCsv" title="Save what was read from each file as a ten-column CSV">Save as CSV</button>
+            </div>
+            <div class="ec-row">
+              <label>Layout size for DarcyTools tables<span class="ec-name">total deposition holes; blank takes it from the file, or its row count</span></label>
+              <input id="ecTotalHoles" type="text" inputmode="numeric" placeholder="e.g. 8969" data-on-change="ec:hydroOptionChanged">
+            </div>
+            <div class="ec-row">
+              <label>Inflow-rejection list<span class="ec-name">hole IDs; used by “High inflow filtering”</span></label>
+              <div class="ec-actions">
+                <button type="button" class="ec-btn secondary small" data-on-click="ec:openInflow">Open list…</button>
+                <button type="button" class="ec-btn secondary small" data-on-click="ec:clearInflow">Clear</button>
+              </div>
+              <p class="ec-muted" id="ecInflowNote">none</p>
+              <input type="file" id="ecInflowFile" accept=".txt,.csv" hidden data-on-change="ec:inflowChosen">
+            </div>
+          </details>
+
+          <details class="ec-sec" id="sec-hs" open>
+            <summary>Sulphide</summary>
+            <p class="ec-about">The distribution of sulphide concentration in the fracture water. Every hole meets every value: the fraction of values that fail a hole in time is that hole’s contribution to the mean number of failed canisters.</p>
+            <div class="ec-row">
+              <label>Distribution [HS⁻]<span class="ec-name">Excel HSTabName · py hs_tab_name</span></label>
+              <select id="ecHsTable" data-on-change="ec:hsChanged">
+                <option value="HSForsmark">HSForsmark: Forsmark groundwater, 46 values (PSAR)</option>
+                <option value="HSLaxemar">HSLaxemar: Laxemar groundwater, 51 values</option>
+                <option value="HSTest">HSTest: 10 values for the code test</option>
+                <option value="generic">Generated: a lognormal distribution (HSGeneric)</option>
+                <option value="custom">Custom: paste a list of concentrations</option>
+              </select>
+            </div>
+            <div id="ecHsGeneric" hidden>
+              <div class="ec-row">
+                <label>Form</label>
+                <select id="ecHsKind" data-on-change="ec:hsChanged">
+                  <option value="shifted-lognormal">shifted lognormal by mean, s.d. and shift (2.4 port)</option>
+                  <option value="log10-normal">log10-normal by μ and σ (@Risk workbook)</option>
+                </select>
+              </div>
+              <div id="ecHsShifted" class="ec-inline">
+                <div class="ec-row"><label>Mean<span class="ec-unit">M</span></label><input id="ecHsMean" type="text" inputmode="decimal" data-on-change="ec:hsChanged"></div>
+                <div class="ec-row"><label>Std. dev.<span class="ec-unit">M</span></label><input id="ecHsStd" type="text" inputmode="decimal" data-on-change="ec:hsChanged"></div>
+                <div class="ec-row"><label>Shift<span class="ec-unit">M</span></label><input id="ecHsShift" type="text" inputmode="decimal" data-on-change="ec:hsChanged"></div>
+              </div>
+              <div id="ecHsLog10" class="ec-inline" hidden>
+                <div class="ec-row"><label>μ<span class="ec-unit">log10 M</span></label><input id="ecHsMu" type="text" inputmode="decimal" data-on-change="ec:hsChanged"></div>
+                <div class="ec-row"><label>σ<span class="ec-unit">log10 units</span></label><input id="ecHsSigma" type="text" inputmode="decimal" data-on-change="ec:hsChanged"></div>
+              </div>
+              <div class="ec-row"><label>Number of values<span class="ec-name">midpoint quantiles (k − ½)/n</span></label><input id="ecHsN" type="text" inputmode="numeric" data-on-change="ec:hsChanged"></div>
+            </div>
+            <div id="ecHsCustom" hidden>
+              <div class="ec-row">
+                <label>Concentrations, mol/L<span class="ec-name">any separators; sorted for you</span></label>
+                <textarea id="ecHsText" spellcheck="false" placeholder="1.2e-4 1.22e-5 1.15e-5 …" data-on-change="ec:hsChanged"></textarea>
+              </div>
+            </div>
+            <p class="ec-muted" id="ecHsNote"></p>
+          </details>
+
+          <div id="ecParamSections"></div>
+        </div>
+
+        <div class="ec-side-foot">
+          <div class="ec-actions">
+            <button type="button" class="ec-btn" id="ecRun" data-on-click="ec:run">Run</button>
+            <button type="button" class="ec-btn secondary small" data-on-click="ec:resetParams" title="Every parameter back to the PSAR workbook’s default">Reset parameters</button>
+            <button type="button" class="ec-btn secondary small" data-on-click="ec:saveCase" title="The settings and the sulphide choice as a JSON file">Save case</button>
+            <button type="button" class="ec-btn secondary small" data-on-click="ec:openCase">Open case…</button>
+            <input type="file" id="ecCaseFile" accept=".json" hidden data-on-change="ec:caseChosen">
+          </div>
+          <label class="ec-check"><input type="checkbox" id="ecAutoRun" checked data-on-change="ec:autoRunChanged"><span>Run on every change</span></label>
+          <div class="ec-status" id="ecStatus">Loading…</div>
+        </div>
+      </aside>
+
+      <div class="ec-resize" id="ecResize" role="separator" aria-orientation="vertical" aria-label="Drag to resize the panel; double-click to reset"></div>
+
+      <!-- ========================= the work area ======================== -->
+      <main class="ec-main">
+        <div class="ec-tabs" role="tablist">
+          <button type="button" class="active" data-tab="summary" data-on-click="ec:tab">Summary</button>
+          <button type="button" data-tab="failures" data-on-click="ec:tab">Failure times</button>
+          <button type="button" data-tab="time" data-on-click="ec:tab">Against time</button>
+          <button type="button" data-tab="distributions" data-on-click="ec:tab">Distributions</button>
+          <button type="button" data-tab="holes" data-on-click="ec:tab">Deposition holes</button>
+          <button type="button" data-tab="help" data-on-click="ec:tab">Help</button>
+        </div>
+
+        <!-- ---- summary ---- -->
+        <section class="ec-pane ec-summary" data-pane="summary">
+          <div id="ecSummary"></div>
+        </section>
+
+        <!-- ---- the failure table ---- -->
+        <section class="ec-pane" data-pane="failures" hidden>
+          <div class="ec-toolbar">
+            <span class="ec-muted">One row per hole and sulphide value that fails inside the assessment time: the workbook’s sheet “InputTrptCalcs”, the input to the radionuclide transport calculations. Click a heading to sort.</span>
+            <span class="ec-spacer"></span>
+            <button type="button" class="ec-btn secondary small" data-on-click="ec:failuresCsv">CSV</button>
+            <button type="button" class="ec-btn secondary small" data-on-click="ec:excel" title="Settings, key outputs, failure table and the per-hole sheets as one workbook">Excel</button>
+          </div>
+          <div class="ec-table-wrap" id="ecFailTable"></div>
+          <p class="ec-empty" id="ecFailEmpty">Run the model to get the table of failure times.</p>
+        </section>
+
+        <!-- ---- against time ---- -->
+        <section class="ec-pane" data-pane="time" hidden>
+          <div class="ec-toolbar">
+            <span class="ec-muted">How the counts build up: advective positions, and the mean number of failed canisters (corrected) — the quantity plotted against time in the PSAR sensitivity figures.</span>
+          </div>
+          <div class="plot" id="ecChartTime" hidden></div>
+          <p class="ec-empty" id="ecTimeEmpty">Run the model to see the counts against time.</p>
+        </section>
+
+        <!-- ---- distributions ---- -->
+        <section class="ec-pane" data-pane="distributions" hidden>
+          <div class="ec-toolbar">
+            <label>Quantity
+              <select id="ecDistWhich" data-on-change="ec:distChanged">
+                <option value="qeq">Qeq from the hydro model (QeqPlt)</option>
+                <option value="corrDiff">Corrosion rate, intact buffer (CorrDiffPlt)</option>
+                <option value="erosion">Buffer loss rate (EroPlt)</option>
+                <option value="corrAdv">Corrosion rate, eroded buffer (CorrAdvPlt)</option>
+                <option value="gradient">Hydraulic gradient (iPlt)</option>
+                <option value="aperture">Transport aperture</option>
+                <option value="velocity">Water velocity in the fracture</option>
+                <option value="tAdv">Time to advective conditions</option>
+              </select>
+            </label>
+            <label id="ecDistReal" hidden>Realisation
+              <select id="ecDistRealSelect" data-on-change="ec:distChanged"></select>
+            </label>
+          </div>
+          <div class="plot" id="ecChartDist" hidden></div>
+          <p class="ec-empty" id="ecDistEmpty">Run the model to see the distributions over the deposition holes.</p>
+          <p class="ec-muted" id="ecDistNote"></p>
+        </section>
+
+        <!-- ---- the per-hole table ---- -->
+        <section class="ec-pane" data-pane="holes" hidden>
+          <div class="ec-toolbar">
+            <label>Show
+              <select id="ecHoleFilter" data-on-change="ec:holesChanged">
+                <option value="all">all holes</option>
+                <option value="flowing">holes with a flowing fracture</option>
+                <option value="accepted">accepted holes</option>
+                <option value="rejected">rejected holes</option>
+                <option value="advective">advective before the assessment time</option>
+                <option value="failing">holes with failures</option>
+                <option value="skipped">holes left out of the failure table</option>
+                <option value="edge">EFPC edge positions</option>
+              </select>
+            </label>
+            <label>ID <input type="text" id="ecHoleSearch" placeholder="contains…" style="width:90px" data-on-input="ec:holesChanged"></label>
+            <label id="ecHoleReal" hidden>Realisation
+              <select id="ecHoleRealSelect" data-on-change="ec:holesChanged"></select>
+            </label>
+            <span class="ec-muted" id="ecHoleNote"></span>
+            <span class="ec-spacer"></span>
+            <button type="button" class="ec-btn secondary small" id="ecHoleMore" data-on-click="ec:holesMore" hidden>Show more</button>
+            <button type="button" class="ec-btn secondary small" data-on-click="ec:holesCsv">CSV</button>
+          </div>
+          <div class="ec-table-wrap" id="ecHoleTable"></div>
+          <p class="ec-empty" id="ecHoleEmpty">Run the model to see every deposition hole: the workbook’s sheet “Calc”.</p>
+        </section>
+
+        <!-- ---- help ---- -->
+        <section class="ec-pane ec-help" data-pane="help" hidden>
+          <h2>Buffer erosion and canister corrosion, hole by hole</h2>
+          <p>For a KBS-3 repository the question is: in how many deposition holes does flowing, dilute
+            groundwater erode the bentonite buffer far enough that sulphide in the water reaches the copper
+            canister by advection, and how many canisters does that sulphide corrode through within the
+            assessment time? SKB answered it in SR-Site and again in the PSAR with an Excel workbook,
+            <em>ErosionCorrosionModel_2_0</em> (SKBdoc 1895159, documented in SKBdoc 1895157), later ported
+            to Python. This page is that calculation, restructured: the arithmetic in one module, the file
+            readers in another, and every parameter carrying the name it has in the workbook and in the
+            Python port. Nothing is uploaded; the files you open stay in the browser.</p>
+          <p>The answer takes three inputs: a table of every deposition hole from the hydrogeological
+            modelling (flow, aperture, travel time, transport resistance, and which holes are cut by large
+            fractures), a distribution of sulphide concentrations, and the parameter set on the left. What
+            comes back is the table of failure times that feeds the radionuclide transport calculations,
+            the key outputs of the workbook’s <em>Info</em> sheet, and the distribution plots of its five
+            plot sheets.</p>
+
+          <h3>What happens to each hole</h3>
+          <h4>1. Rejection</h4>
+          <p>Holes that would not be used are rejected by criteria on what could be observed during
+            construction. A hole is rejected if any selected criterion holds: FPC ≠ 0 (a fracture that
+            intersects the full tunnel perimeter also cuts the hole); EFPC ≥ the number of consecutive holes
+            (a fracture cuts this and four more neighbouring holes); FLEN above the fracture-length limit;
+            transmissivity above 10<sup>−6</sup> m²/s <em>and</em> FLEN above 443 m (the T/L criterion);
+            optionally a Darcy flux above a limit, or membership of an inflow-rejection list. Rejected holes
+            take no part in what follows but stay in the total: the corrected outputs are scaled by
+            <i>N</i><sub>canisters</sub> / (<i>N</i><sub>tot</sub> − <i>N</i><sub>rejected</sub>), 6000
+            canisters by default.</p>
+          <p>Transmissivity is not in the hydro file; it is back-calculated from the transport aperture
+            <i>δ</i> with Doe’s relation <i>T</i> = (<i>δ</i>/0.5)² (TR-09-20, equation 3-2), or with the
+            cubic law <i>T</i> = (<i>δ</i>/<i>a</i>)³ if you choose it.</p>
+
+          <h4>2. Flow at the hole</h4>
+          <p>The hydro model gives the Darcy flux <i>U</i><sub>0</sub> in the fracture crossing the hole. The
+            water velocity in that fracture is</p>
+          <p class="ec-eq"><i>v</i> = <i>U</i><sub>0</sub>·<i>w</i>/<i>δ</i></p>
+          <p>with <i>w</i> = 5 m, the height Serco used to turn a fracture flow into a Darcy flux, so that
+            using it again recovers the flow (R-09-20, equation 3-8 and D-7). A DarcyTools table carries the
+            velocity itself and is used as it is. The flow through the hole once the buffer has gone is</p>
+          <p class="ec-eq"><i>q</i><sub>eb</sub> = <i>f</i><sub>conc</sub>·<i>U</i><sub>0</sub>·<i>w</i>·2<i>r</i><sub>h</sub></p>
+          <p>and the equivalent flow rate that carries sulphide to the copper (TR-06-33, chapter 6; TR-10-42,
+            appendix) is the smaller of <i>q</i><sub>eb</sub> and
+            1.13·√(<i>q</i><sub>eb</sub>·<i>D</i><sub>w</sub>·<i>V</i><sub>zone</sub>)/<i>d</i><sub>buffer</sub>,
+            where <i>V</i><sub>zone</sub> = <i>d</i><sub>buffer</sub>·π(<i>r</i><sub>h</sub>² − <i>r</i><sub>can</sub>²)/2 is the
+            volume of the eroded half of the buffer. The two cross at <i>q</i><sub>lim</sub>, 0.0885 m³/yr with the
+            default geometry.</p>
+
+          <h4>3. Time to advective conditions</h4>
+          <p>The buffer is advective once <i>m</i><sub>buffadv</sub> = 1200 kg has been lost. The loss rate depends on
+            the model chosen:</p>
+          <table class="ec-ref">
+            <tbody>
+              <tr><td><code>OldKTH</code></td><td>SR-Site: <i>R</i> = <i>A</i><sub>ero</sub>·<i>δ</i>·<i>v</i><sup>0.41</sup>, <i>A</i><sub>ero</sub> = 27.2 kg/(m·yr) with <i>v</i> in m/yr (TR-10-66, 4.3.1; TR-09-35).</td></tr>
+              <tr><td><code>NewKTH</code></td><td>PSAR: <i>N</i> = 4<i>ρ</i><sub>s</sub><i>δ</i><i>φ</i><sub>R</sub>·√(<i>D</i><sub>R</sub>·<i>r</i><sub>RSS</sub>·<i>v</i>) (TR-16-11, chapter 4). <i>D</i><sub>R</sub>(<i>c</i><sub>ion</sub>) is a cubic fit in log <i>c</i>; with “effective DR” it is (<i>f</i><sub>temp</sub>√<i>D</i><sub>R</sub>(<i>c</i><sub>temp</sub>) + <i>f</i><sub>glac</sub>√<i>D</i><sub>R</sub>(<i>c</i><sub>glac</sub>))². <i>r</i><sub>RSS</sub>, where the smectite is lost to the water, is <i>r</i><sub>h</sub>·(<i>G</i>/2 / W(<i>G</i>/2))² with <i>G</i>/2 = ½·<i>D</i><sub>i</sub>π(<i>φ</i><sub>i</sub> − <i>φ</i><sub>R</sub>) / (2<i>φ</i><sub>R</sub>√(<i>D</i><sub>R</sub><i>r</i><sub>h</sub><i>v</i>)) and W the Lambert function — or simply <i>r</i><sub>h</sub> + 5 cm when forced (TR-21-03), which is the PSAR setting.</td></tr>
+              <tr><td><code>Sediment</code></td><td>TR-16-11: the smaller of the loss rate at the rim, <i>J</i><sub>exp</sub>·<i>δ</i>·2π<i>r</i><sub>RSS,sed</sub>·sin <i>α</i>, and the rate at which the lost material can settle in the fracture, <i>δ</i>³/(12<i>μ</i>)·(<i>ρ</i><sub>agg</sub> − <i>ρ</i><sub>w</sub>)<i>g</i>·<i>φ</i><sub>R</sub><i>ρ</i><sub>s</sub>·2<i>r</i><sub>RSS,sed</sub>.</td></tr>
+              <tr><td><code>Ero+Sed</code></td><td>The two TR-16-11 rates added.</td></tr>
+              <tr><td><code>Amphos2023</code>, <code>Amphos2025</code></td><td>Power-law fits from Amphos21 (P-23-03 equation 5-1; P-25-05 equation 7, weighted over temperate and glacial cation concentrations), as carried in the Python ports.</td></tr>
+            </tbody>
+          </table>
+          <p class="ec-eq"><i>t</i><sub>adv</sub> = <i>m</i><sub>buffadv</sub> / (rate · <i>f</i><sub>tdilute</sub>)</p>
+          <p>where <i>f</i><sub>tdilute</sub> is the fraction of the time the water is dilute enough to erode:
+            0.25 in SR-Site, 0.5 in the PSAR. A hole with no flowing fracture, or a rejected one, never becomes
+            advective (1E+99 in the tables). “Initial advection” sets <i>t</i><sub>adv</sub> = 0 everywhere,
+            the case of no buffer from the start.</p>
+
+          <h4>4. Corrosion and the failure table</h4>
+          <p>With the buffer advective, sulphide at concentration [HS⁻] corrodes the copper at the rate
+            <i>Q</i><sub>eq</sub>·[HS⁻]·<i>M</i><sub>Cu</sub>/(<i>f</i><sub>HS</sub>·<i>ρ</i><sub>Cu</sub>·<i>A</i><sub>corr</sub>)
+            over the area <i>A</i><sub>corr</sub> = π<i>r</i><sub>can</sub>·<i>h</i><sub>corr</sub> (TR-10-66, 4.3.2–4.3.3), so
+            the time to corrode through <i>d</i><sub>can</sub> = 47 mm is</p>
+          <p class="ec-eq"><i>t</i><sub>corr</sub> = CorrHoleFact / (<i>Q</i><sub>eq</sub>·[HS⁻]),
+            &nbsp; CorrHoleFact = <i>d</i><sub>can</sub>·<i>A</i><sub>corr</sub>·<i>ρ</i><sub>Cu</sub> / (<i>f</i><sub>HS</sub>·<i>M</i><sub>Cu</sub>)</p>
+          <p>the copper in the corroded height, in kmol of sulphide. The sulphide distribution is a table of
+            values; for each accepted hole the model finds the smallest value that fails the canister before
+            the assessment time (HSmin), counts how many table values exceed it, and writes one row per such
+            value: <i>t</i><sub>fail</sub> = <i>t</i><sub>adv</sub> + <i>t</i><sub>corr</sub>, with the hole’s
+            <i>F</i>, <i>t</i><sub>w</sub> and <i>q</i> beside it. Holes whose particle did not reach the surface
+            (OKFLAG ≠ 0) are left out of the table but not rejected. The mean number of failed canisters is the
+            number of rows divided by the number of sulphide values, and the corrected figure scales that to
+            the normalising number of canisters over the accepted holes.</p>
+
+          <h4>5. The distribution plots</h4>
+          <p>Cumulative distributions over the ensemble of holes of: the hydro model’s own <i>Q</i><sub>eq</sub>, with and
+            without the addition for a thermally spalled zone (TR-10-66, equations 4-9 to 4-12); the corrosion
+            rate through an <em>intact</em> buffer at a fixed sulphide concentration, with and without spalling
+            (TR-10-66, equation 4-19a); the buffer loss rate of the chosen model; the corrosion rate through an
+            <em>eroded</em> buffer at the fixed concentration; the hydraulic gradient; the aperture; the velocity;
+            and the time to advection. Each is drawn for all holes and again after rejection, with the reference
+            lines the workbook draws (5 cm of copper in 10<sup>6</sup> and 10<sup>5</sup> years; 1200 kg in the
+            assessment time and in the dilute fraction of it).</p>
+
+          <h3>Hydro files</h3>
+          <p>Four shapes are read, detected from the content rather than the extension:</p>
+          <table class="ec-ref">
+            <tbody>
+              <tr><th>ConnectFlow CSV</th><td>A header row and one row per hole, as the SR-Site and PSAR deliveries (<code>fs_Q1_2000_pline_merged.csv</code> and the like) and as Excel writes the workbook’s hydro sheets. Needed: <code>POINT</code> or <code>NPOINT</code>, <code>OKFLAG</code>, <code>U0</code>, <code>QEQ</code>, <code>TW</code>, <code>F</code>, <code>TRAPP</code>, <code>FPC</code>, <code>EFPC</code>, <code>FLEN</code>; the other columns are ignored. Comma, semicolon or tab separated; a decimal comma is understood when the file has no decimal points.</td></tr>
+              <tr><th>ConnectFlow PTB</th><td>The parameter-table file the CSVs were made from: <code>#</code> comment lines, a <code># POINT XS YS …</code> header and space-separated rows.</td></tr>
+              <tr><th>Excel</th><td>An <code>.xlsx</code> whose first fitting sheet is such a table — <code>TestCaseHydro_2_0.xlsx</code>, or the Corr/Uncorr workbooks.</td></tr>
+              <tr><th>DarcyTools</th><td>The performance-measure tables of the Hydro-SÄK work: a <code>Name</code> column with several particle rows per hole (the first is taken), <code>U [m/year]</code>, <code>Qeq (ECPM) [m3/year]</code>, <code>tw [year]</code>, <code>F [year/m]</code>, and either <code>Aperture [m]</code>, <code>Utot [m/year]</code> and T/F flags <code>Collected</code>, <code>ZFMC</code>, <code>FPC</code>, <code>EFPC-5</code> (the <code>.dtpm</code> form, with a <code>Total DHs:</code> line above the header) or <code>iFPC</code>, <code>iEFPC</code>, <code>Porosity (ECPM)</code> and <code>Number of fractures in contact</code>, from which the aperture is 8·porosity/fractures and <i>U</i><sub>0</sub> is scaled by 8/<i>w</i> — exactly as the 2.0 and 2.4 Python ports read them. These tables have no fracture length, so the length and T/L criteria reject nothing, and they list only the holes with particles: give the layout size so the normalisation counts the rest.</td></tr>
+            </tbody>
+          </table>
+          <p>Every file becomes one realisation. Load ten and you have the ten-realisation semi-correlated
+            case of the PSAR: the summary shows min, mean and max over realisations, the failure table carries
+            the realisation number, and the distributions can be pooled. The page never keeps your files
+            beyond the visit; settings are kept in the browser.</p>
+
+          <h3>Sulphide</h3>
+          <p>HSForsmark and HSLaxemar are the workbook’s tables to the digit; HSTest is the ten-value table of
+            the code test. The generated distribution replaces the workbook’s one-point HSGeneric: a shifted
+            lognormal by mean, standard deviation and shift (the 2.4 port’s <code>_gen_hs_generic</code>), or
+            a log10-normal by μ and σ (the @Risk workbook’s <code>10^RiskNormal(−5.79757, 0.63849)</code>),
+            drawn as midpoint quantiles so that the same parameters always give the same table. A custom list
+            is any text with numbers in it.</p>
+
+          <h3>Checking it</h3>
+          <p>The code documentation ships a hydro test file built to be checked by hand. Choose the built-in
+            <em>Code test case</em>: with the SR-Site settings it applies (OldKTH, 25 % dilute, HSTest), the
+            failure table must hold 35 rows — ten for hole 1 at 850,000 to 940,000 years, ten for hole 2 at
+            85,000 to 94,000, ten for hole 3 at 900,000 to 990,000 and five for hole 4 at 950,000 to 990,000 —
+            with 17 holes rejected (11 by FPC, 12–16 and 25–33 by EFPC, 17 by fracture length, 18 by T/L), a
+            corrected mean of 3.5, one failure by 100,000 years and four advective positions. The
+            <em>PSAR base case</em> with the PSAR defaults must give 612 rejected holes, 41 advective positions
+            at one million years, three at 100,000, four failure times, a corrected mean of 0.0827632 and an
+            earliest failure at 189,441.71 years — the numbers cached in the workbook itself. All of that, the
+            TR-16-11 rates read off that report’s figures 4-5 and 4-7, the Python port’s failure tables in six
+            configurations, and the readers for every file format are exercised by
+            <code>resources/tests/erosion_corrosion/test-model.js</code>.</p>
+          <p>Two places where the sources differ from each other, and what this page does: the workbook’s VBA
+            Lambert W stops at a residual of 10<sup>−3</sup> while the Python port uses SciPy’s — this page
+            solves to machine precision, which matters only with “force rRSS” off; and the Python port’s
+            HSForsmark table is rounded to six digits, so its failure times sit about 10<sup>−6</sup> from the
+            workbook’s — this page carries the workbook’s digits. The count “failed canisters at the highest
+            sulphide concentration” follows the workbook (holes with at least one failing value), which the
+            Python port matches with the default filters on.</p>
+
+          <h3>Parameters</h3>
+          <p>Every setting and parameter, with its default (the PSAR workbook’s), its name in the workbook and
+            its attribute in the Python port. A changed value is marked in the panel and listed on the Summary
+            tab; <em>Save case</em> writes them all to a JSON file that <em>Open case…</em> reads back, and the
+            Excel export puts them on its first sheet.</p>
+          <div id="ecParamRef"></div>
+
+          <h3>References</h3>
+          <table class="ec-ref">
+            <tbody>
+              <tr><td>SKBdoc 1895157</td><td>Hedin A, 2020. Documentation of the code for erosion, sedimentation and corrosion calculations in the PSAR. The model, the workbook’s structure and the test case.</td></tr>
+              <tr><td>SKBdoc 1895159, 1895160</td><td>ErosionCorrosionModel_2_0.xlsm and TestCaseHydro_2_0.xlsx.</td></tr>
+              <tr><td>SKBdoc 1927770, 1939004</td><td>Models, input data and results for the analytical erosion, sedimentation and corrosion calculations of the PSAR; the case files.</td></tr>
+              <tr><td>TR-21-01</td><td>Post-closure safety for the final repository for spent nuclear fuel at Forsmark — PSAR version. Sections 10.3.11, 10.4.9, 12.2.2, 12.6.2 and 14.3.2 use these results.</td></tr>
+              <tr><td>TR-10-66</td><td>Corrosion calculations report for the safety assessment SR-Site. The corrosion models and the SR-Site erosion model.</td></tr>
+              <tr><td>TR-16-11</td><td>Neretnieks I, Moreno L, Liu L, 2017. Clay erosion — impact of flocculation and gravitation. The PSAR erosion and sedimentation models.</td></tr>
+              <tr><td>TR-09-35, TR-10-64</td><td>The buffer erosion rate expression of SR-Site and its fit.</td></tr>
+              <tr><td>TR-06-33, TR-10-42</td><td>Qeq for an eroded buffer, and which expression to use where.</td></tr>
+              <tr><td>TR-11-01</td><td>Long-term safety for the final repository at Forsmark (SR-Site). Rejection criteria (5.2.3), buffer loss for advection (10.3.9), dilute time (10.3.11), pessimistic aperture (12.2.2).</td></tr>
+              <tr><td>R-09-20, R-09-19</td><td>Groundwater flow modelling of periods with temperate climate conditions — Forsmark; the hydro data columns (appendix B) and the inflow criteria.</td></tr>
+              <tr><td>P-23-03, P-25-05</td><td>Amphos21 buffer erosion expressions carried by the Python ports.</td></tr>
+            </tbody>
+          </table>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <footer></footer>
+
+  <script src="./resources/js/kvot-errors.js?v=20260921"></script>
+  <script src="./resources/js/kvot-safe.js?v=20260911"></script>
+  <script src="./resources/js/kvot-actions.js?v=20260902"></script>
+  <script src="./resources/js/kvot-icons.js?v=20260902"></script>
+  <script src="./resources/js/site.js?v=20260921"></script>
+  <script>
+    KVOT.renderHeader('Erosion and Corrosion');
+    KVOT.renderNav('erosion_corrosion.html');
+    KVOT.renderFooter();
+  </script>
+  <!--
+      ec-model     the calculation: parameters, per-hole columns, failure table, key outputs, plot series
+      ec-hsdata    the sulphide tables and the generated distributions
+      ec-hydro     the hydro-file readers (ConnectFlow CSV/PTB, Excel, DarcyTools)
+      xlsxwrite    the Excel writer (needs JSZip, loaded above)
+      ec-ui        this page
+  -->
+  <script src="./resources/js/ec-model.js?v=20260921"></script>
+  <script src="./resources/js/ec-hsdata.js?v=20260921"></script>
+  <script src="./resources/js/ec-hydro.js?v=20260921"></script>
+  <script src="./resources/js/xlsxwrite.js?v=20260902"></script>
+  <script src="./resources/js/ec-ui.js?v=20260921"></script>
+</body>
+</html>

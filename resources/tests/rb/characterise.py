@@ -242,6 +242,105 @@ STEPS = [
       return out;
     })()"""),
 
+    # The information panel renders on every tree selection but only its
+    # visibility was captured, so the 650 lines that build it were effectively
+    # untested. This reads the structure back: section labels, the attribute
+    # rows, and whether any value arrived as markup rather than text.
+    ('info.panel', """(async () => {
+      const read = () => {
+        const info = document.getElementById('info');
+        const sections = [...info.querySelectorAll('.info-section')].map(s => ({
+          label: (s.querySelector('.info-label') || {}).textContent || '',
+          value: ((s.querySelector('.info-content') || {}).textContent || '')
+                   .replace(/\\s+/g, ' ').trim().slice(0, 120)
+        }));
+        const rows = [...info.querySelectorAll('table tr')].map(tr =>
+          [...tr.children].map(td => (td.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 60)));
+        return {
+          headingShown: document.getElementById('datasetInfoHeading').style.display,
+          sectionLabels: sections.map(s => s.label),
+          sectionValues: sections.map(s => s.value),
+          tableRowCount: rows.length,
+          firstRows: rows.slice(0, 6),
+          htmlValueNodes: info.querySelectorAll('.attrs-html').length,
+          // No sanitiser bypass may leave one of these behind.
+          scriptNodes: info.querySelectorAll('script, iframe, object, embed').length,
+          buttons: [...info.querySelectorAll('button')].map(b => (b.textContent || '').trim()).sort()
+        };
+      };
+      // Earlier steps leave the tree in separated mode with one file, so the
+      // path this step wants is not on screen. Put it back and re-expand.
+      document.querySelector('#treeModeContainer button[data-value="intersect"]').click();
+      await new Promise(r => setTimeout(r, 6000));
+      await expandAndLoadPath('SFR_FSAR_CCP14.h5', %s);
+      await new Promise(r => setTimeout(r, 1200));
+
+      const out = {};
+      const pick = (sel, path, extra) =>
+        (path && findTreeItem(path, extra ? { extra } : undefined))
+        || document.querySelector('#tree .tree-item' + sel);
+
+      const dsEl = pick('.dataset', %s, '.dataset');
+      out.datasetPath = dsEl ? dsEl.getAttribute('data-path') : null;
+      if (dsEl) { dsEl.click(); await new Promise(r => setTimeout(r, 2500)); }
+      out.dataset = read();
+
+      const grpEl = pick('.group', %s, '.group');
+      out.groupPath = grpEl ? grpEl.getAttribute('data-path') : null;
+      if (grpEl) { grpEl.click(); await new Promise(r => setTimeout(r, 3500)); }
+      out.group = read();
+      return out;
+    })()""" % (json.dumps(GROUP), json.dumps(GROUP + '/Ac-227'), json.dumps(GROUP))),
+
+    # downloadDatasetAsExcel builds three sheets and was 331 lines with nothing
+    # exercising it. The workbook is a zip, so this opens it with the JSZip
+    # already on the page and reads back the strings the sheet writers wrote.
+    # The export stamps the current time into the Information sheet, so dates
+    # are normalised before comparing or every run would differ.
+    ('export.dataset.excel', """(async () => {
+      const out = {};
+      const el = findTreeItem(%s, { extra: '.dataset' });
+      if (!el) return { error: 'dataset row not found' };
+      el.click();
+      await new Promise(r => setTimeout(r, 2500));
+
+      const blobs = [];
+      const realCOU = URL.createObjectURL;
+      const realRevoke = URL.revokeObjectURL;
+      URL.createObjectURL = (b) => { blobs.push(b); return 'blob:captured'; };
+      URL.revokeObjectURL = () => {};
+      try {
+        await downloadDatasetAsExcel(%s, 'SFR_FSAR_CCP14.h5');
+        out.call = 'ok';
+      } catch (e) {
+        out.call = 'threw: ' + e.message;
+      } finally {
+        URL.createObjectURL = realCOU;
+        URL.revokeObjectURL = realRevoke;
+      }
+      if (!blobs.length) { out.blob = 'none produced'; return out; }
+
+      const buf = await blobs[blobs.length - 1].arrayBuffer();
+      out.blobBytes = buf.byteLength > 0;
+      const zip = await JSZip.loadAsync(buf);
+      out.entries = Object.keys(zip.files).sort();
+
+      const strings = await zip.file('xl/sharedStrings.xml').async('string');
+      const texts = [...strings.matchAll(/<t[^>]*>([\\s\\S]*?)<\\/t>/g)]
+        .map(m => m[1])
+        .map(t => t.replace(/\\d{4}-\\d{2}-\\d{2}T[\\d:.]+Z/, '<date>'));
+      out.stringCount = texts.length;
+      out.strings = texts.slice(0, 40);
+
+      const sheetRows = {};
+      for (const name of out.entries.filter(n => /^xl\\/worksheets\\/.*\\.xml$/.test(n))) {
+        const xml = await zip.file(name).async('string');
+        sheetRows[name] = (xml.match(/<row[ >]/g) || []).length;
+      }
+      out.rowsPerSheet = sheetRows;
+      return out;
+    })()""" % (json.dumps(GROUP + '/Ac-227'), json.dumps(GROUP + '/Ac-227'))),
+
     ('bad.input', """(async () => {
       const out = {};
       // A non-HDF5 payload must be rejected by the validator, not crash.

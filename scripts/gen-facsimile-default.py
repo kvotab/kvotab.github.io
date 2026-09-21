@@ -161,14 +161,29 @@ VARIANT = {
 }
 
 
+# The zero-argon variants are not in TR-22-15, but they are not undocumented:
+# they are the seven cases of the delivery note "Results from Recent
+# Calculations with the KBS-3 Canister Radiolysis Model: Impact of Zero
+# Argon", whose Table 1 lists their initial conditions and whose Table 2 gives
+# the final and peak amounts of the major species for each. That note is the
+# authority for these presets; the .fac files are how they were run.
+ZERO_ARGON_NOTE = ('the note "Results from Recent Calculations with the KBS-3 Canister '
+                   'Radiolysis Model: Impact of Zero Argon" (Table 1 for the case, '
+                   'Table 2 for the results)')
+# Which of that note's cases each preset is. 16' is written 16p here.
+ZERO_ARGON_CASE = {'11b': '11b', '13g': '13g', '16p': "16'",
+                   '16a': '16a', '16b': '16b', '16c': '16c', '16d': '16d'}
+
+
 def reference(sid):
     """Where this case is defined, in one line."""
     if sid in SECTION:
         return f'SKB TR-22-15, Table 3-1 (p 17), Case {sid}. Results: section {SECTION[sid]}.'
     if sid in VARIANT:
         f, what = VARIANT[sid]
-        return (f'Not in SKB TR-22-15 Table 3-1. From the FACSIMILE model file {f}: '
-                f'{what}.')
+        where = (f'Case {ZERO_ARGON_CASE[sid]} of {ZERO_ARGON_NOTE}'
+                 if sid in ZERO_ARGON_CASE else 'Not in SKB TR-22-15 Table 3-1')
+        return f'{where}, run as the FACSIMILE model file {f}: {what}.'
     return ''
 
 

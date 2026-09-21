@@ -61,6 +61,11 @@ const KVOT = (() => {
       desc: 'Specify and solve reactive transport models: reactions written the usual way, a batch reactor or a column with diffusion and advection, and an analytic sparse Jacobian built from your own reaction set.',
     },
     {
+      href: './erosion_corrosion.html',
+      label: 'Erosion and Corrosion',
+      desc: 'SKB’s buffer erosion and canister corrosion calculation for every deposition hole of a KBS-3 layout, from hydro data you drop in: rejection criteria, time to advection, sulphide-driven failure times and the key outputs of the PSAR workbook.',
+    },
+    {
       href: './arsredovisning.html',
       label: 'Digital årsredovisning',
       desc: 'Build a K2 annual report from a SIE file and check the iXBRL against what Bolagsverket looks at.',

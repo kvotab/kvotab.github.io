@@ -10,6 +10,7 @@
    Resolving them when the action fires removes any load-order dependency.
    ========================================================================== */
 
+'use strict';   // see the script manifest in rb.html for why
 registerActions({
   /* ── Loading files ────────────────────────────────────────────────────── */
   openFilePicker:         () => document.getElementById('fileInput').click(),

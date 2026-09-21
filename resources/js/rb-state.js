@@ -2,6 +2,7 @@
    1. GLOBAL STATE & CONFIGURATION
    ========================================================================== */
 
+'use strict';   // see the script manifest in rb.html for why
 /**
  * @typedef {Object} FileState
  * @property {boolean} enabled - Whether the file is currently enabled for display

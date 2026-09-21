@@ -553,20 +553,81 @@ table.fac-table tr:nth-child(even) td { background: var(--table-stripe); }
   height: 100%;
   min-height: 0;
 }
-.fac-editor textarea {
+/*
+  The editor is two boxes on top of each other: a <pre> holding a coloured
+  copy of the text, and the textarea itself over it with transparent text.
+  Every metric that decides where a character lands has to be identical in
+  both, so they are declared together rather than separately.
+*/
+.fac-code-box {
+  position: relative;
   flex: 1 1 auto;
   min-height: 300px;
+  display: flex;
+  /* The box is what the reader drags, not the textarea inside it: resizing
+     the textarea alone would leave the coloured copy behind at the old
+     height. Both fill the box, so resizing the box moves both. */
+  resize: vertical;
+  overflow: hidden;
+}
+.fac-code-box textarea,
+.fac-code-box .fac-code-hl {
   box-sizing: border-box;
   width: 100%;
+  margin: 0;
   padding: 8px 10px;
-  border: 1px solid var(--input-border);
+  border: 1px solid transparent;
   border-radius: 6px;
   font: 12px/1.45 ui-monospace, Menlo, Consolas, monospace;
-  resize: vertical;
+  letter-spacing: normal;
   tab-size: 4;
   white-space: pre;
+  overflow: auto;
 }
-.fac-editor textarea.error { border-color: var(--color-kvot-accent); }
+.fac-code-box textarea {
+  flex: 1 1 auto;
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  border-color: var(--input-border);
+  resize: none;
+  background: var(--input-bg, var(--bg-surface));
+}
+.fac-code-box.hl textarea {
+  /* The coloured copy underneath is what is read; the caret stays visible. */
+  color: transparent;
+  background: transparent;
+  caret-color: var(--text-primary);
+}
+.fac-code-box .fac-code-hl {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: none;
+  color: var(--text-primary);
+  background: var(--input-bg, var(--bg-surface));
+  pointer-events: none;
+}
+.fac-code-box.hl .fac-code-hl { display: block; }
+.fac-code-box textarea.error { border-color: var(--color-kvot-accent); }
+.fac-code-box ::selection { background: var(--color-kvot-accent); color: #fff; }
+
+/* The colours themselves: comments recede, everything else is a hue apart. */
+.hl-com { color: var(--text-secondary); font-style: italic; }
+.hl-sec { color: var(--color-kvot-accent); font-weight: 600; }
+.hl-num { color: #b06f00; }
+.hl-fn  { color: #7048c0; }
+.hl-key { color: #0a7d7d; }
+.hl-op  { color: var(--text-secondary); }
+:root[data-theme="dark"] .hl-num { color: #e0a13c; }
+:root[data-theme="dark"] .hl-fn  { color: #c0a0ff; }
+:root[data-theme="dark"] .hl-key { color: #58c8c8; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .hl-num { color: #e0a13c; }
+  :root:not([data-theme="light"]) .hl-fn  { color: #c0a0ff; }
+  :root:not([data-theme="light"]) .hl-key { color: #58c8c8; }
+}
+.fac-check.inline { display: inline-flex; align-items: center; gap: 6px; margin: 0; white-space: nowrap; }
 .fac-editor-info {
   margin: 6px 0 0;
   font-size: 12px;

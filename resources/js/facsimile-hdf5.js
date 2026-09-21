@@ -178,6 +178,10 @@
     // observe function reports the equations first, in order, then the
     // outputs, so the model's own lists say where the boundary is.
     const equationNames = new Set((model.equations || []).filter((e) => !e.substitution).map((e) => e.name));
+    // A reaction that named its net rate is reported beside them, in a group
+    // of its own: it is neither an equation nor a derived output but a flux,
+    // and a reader looking for one wants the three kept apart.
+    const rateNames = new Set(model.rateNames || []);
     const describe = (entry) => ({
       unit: unitFromComment(entry && entry.comment),
       description: String((entry && entry.comment) || ''),
@@ -186,11 +190,15 @@
     const byName = new Map();
     (model.equations || []).forEach((e) => byName.set(e.name, e));
     (model.outputs || []).forEach((o) => byName.set(o.name, o));
+    // A rate's expression is the reaction it belongs to, which is what a
+    // reader opening the dataset needs to see.
+    (model.rates || []).forEach((r) => byName.set(r.name, { comment: r.comment, expr: r.text }));
 
     const inResults = [];
     const inEquations = [];
+    const inRates = [];
     run.observeNames.forEach((name, k) => {
-      const where = equationNames.has(name) ? 'Equations' : 'Results';
+      const where = equationNames.has(name) ? 'Equations' : rateNames.has(name) ? 'Rates' : 'Results';
       const info = describe(byName.get(name));
       put(root, [where, linkName(name)], dataset(column(run.observed, n, width, k), F64, {
         ...info,
@@ -199,7 +207,7 @@
         index: [name],
         created_time: created,
       }));
-      (where === 'Results' ? inResults : inEquations).push(name);
+      (where === 'Results' ? inResults : where === 'Equations' ? inEquations : inRates).push(name);
     });
 
     // The state itself: every species, in the unit the model works in.
@@ -215,12 +223,12 @@
     });
 
     // What makes the browser offer each of those groups as one chart.
-    const lists = [['Outputs', inResults], ['Equations', inEquations], ['Species', Array.from(run.species)]];
+    const lists = [['Outputs', inResults], ['Equations', inEquations], ['Rates', inRates], ['Species', Array.from(run.species)]];
     for (const [name, members] of lists) {
       if (!members.length) continue;
       put(root, ['IndexLists', name], dataset(members, STR, { name, members: members.length }));
     }
-    for (const [path, list] of [['Results', 'Outputs'], ['Equations', 'Equations'], ['Species', 'Species']]) {
+    for (const [path, list] of [['Results', 'Outputs'], ['Equations', 'Equations'], ['Rates', 'Rates'], ['Species', 'Species']]) {
       const node = root.children.get(path);
       if (node) Object.assign(node.attrs, { IndexLists: [list], time_dependent: true });
     }

@@ -62,6 +62,7 @@
    only up to the same size limit the file picker enforces.
    ========================================================================== */
 
+'use strict';   // see the script manifest in rb.html for why
 /**
  * Origins allowed to push files into this page.
  *
@@ -136,7 +137,7 @@ function beginHandoffWait() {
     if (treeEl && _handoffTreePlaceholder && treeEl.classList.contains('loading')) {
       treeEl.textContent = _handoffTreePlaceholder;
     }
-    console.debug('[handoff] Nothing arrived — stopped waiting.');
+    kvotTrace('[handoff] Nothing arrived — stopped waiting.');
   }, HANDOFF_WAIT_GIVEUP_MS));
 }
 
@@ -312,7 +313,7 @@ async function receiveHandoffMessage(event) {
     hideFileLoadTicker();
 
     replyToHandoff(event, { kvot: 'rb-opened', names: loaded });
-    console.debug('[handoff] Opened', loaded.join(', '), 'from', event.origin);
+    kvotTrace('[handoff] Opened', loaded.join(', '), 'from', event.origin);
   } catch (err) {
     hideFileLoadTicker();
     replyToHandoff(event, { kvot: 'rb-error', message: err.message || String(err) });
@@ -352,12 +353,12 @@ function initHandoffReceiver() {
     if (kind !== 'rb-open' && kind !== 'rb-progress') return;
 
     if (!isHandoffOriginAllowed(event.origin)) {
-      console.warn('[handoff] Ignored a message from', event.origin,
+      kvotWarn('[handoff] Ignored a message from', event.origin,
                    '— add it to RB_HANDOFF_ALLOWED_ORIGINS to allow it.');
       return;
     }
     if (declaredOrigin && event.origin !== declaredOrigin) {
-      console.warn('[handoff] Ignored a message from', event.origin,
+      kvotWarn('[handoff] Ignored a message from', event.origin,
                    '— the link declared', declaredOrigin);
       return;
     }
@@ -428,7 +429,7 @@ async function initUrlParamLoad() {
     setFileLoadProgress(1, 'Refreshing tree…');
     await updateTabs(true);
     hideFileLoadTicker();
-    console.debug('[handoff] Opened', fileName, 'from ?url=');
+    kvotTrace('[handoff] Opened', fileName, 'from ?url=');
   } catch (err) {
     hideFileLoadTicker();
     reportFailure('handoff:urlParam', err, {

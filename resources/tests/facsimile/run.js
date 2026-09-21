@@ -52,6 +52,11 @@ for (let i = 0; i < args.length; i++) {
   else if (a === '--debug') opt.debugFrom = parseFloat(args[++i]);
   else if (a === '--quiet') opt.quiet = true;
   else if (a === '--h5') opt.h5 = args[++i];
+  // The model's own <TIMES> grid: written to CSV, or left unbuilt.
+  else if (a === '--times') opt.times = args[++i];
+  // Which reference to compare against: python, facsimile, or both (default).
+  else if (a === '--ref') opt.ref = String(args[++i]).toLowerCase();
+  else if (a === '--no-times') opt.noTimes = true;
   else scenarios.push(a);
 }
 if (opt.atolSpecies) {
@@ -108,8 +113,24 @@ let failures = 0;
 for (const id of scenarios) {
   const preset = FACSIMILE_PRESETS.find((p) => p.id === id);
   if (!preset) { console.log(`\n${id}: no preset`); failures++; continue; }
-  const refFile = path.join(here, 'ref', id === '13g-fac' ? 'fac_13g_pcair003.csv' : `py_${id}.csv`);
-  const ref = fs.existsSync(refFile) ? readCsv(refFile) : null;
+  // Two references where both exist: the Python port, which this engine was
+  // written against, and SKB's own delivered FACSIMILE result for the same
+  // case, which is the model's own answer and the one that settles a
+  // disagreement. scripts/gen-facsimile-ref.py writes the second from the
+  // study's workbooks.
+  const refs = [];
+  for (const [label, file] of [
+    ['Python port', `py_${id}.csv`],
+    ['FACSIMILE', `fac_${id}.csv`],
+    // The .prn run that came with the model, kept under its own name.
+    ...(id === '13g-fac' ? [['FACSIMILE .prn', 'fac_13g_pcair003.csv']] : []),
+  ]) {
+    const full = path.join(here, 'ref', file);
+    if (fs.existsSync(full) && !(opt.ref && opt.ref !== label.split(' ')[0].toLowerCase())) {
+      refs.push({ label, file, data: readCsv(full) });
+    }
+  }
+  const ref = refs.length ? refs[0].data : null;
   model = FacsimileModel.compile(FACSIMILE_DEFAULT_MODEL, { settings: { ...preset.settings, ...(opt.set || {}) } });
   const rtol = opt.rtol || preset.solver.rtol || 1e-5;
   const t0 = Date.now();
@@ -119,6 +140,7 @@ for (const id of scenarios) {
       solver: opt.solver, tend: preset.settings.TEND * 365.25 * 86400, rtol, atol: opt.atol,
       matrix: opt.matrix, jacobianMode: opt.jacobian, nonNegative: opt.nonneg, norm: opt.norm, maxOrder: opt.maxOrder, scaling: opt.scaling, hmax: opt.hmax, minNewton: opt.minNewton,
       belowTolRun: opt.belowTolRun, autoAtol: opt.autoAtol, atolSpecies: speciesAtol,
+      outputTimes: opt.noTimes ? new Float64Array(0) : undefined,
       debug: opt.debugFrom !== undefined ? (d) => {
         if (d.t < opt.debugFrom) return;
         const names = (top) => top.map(([i, v]) => `${model.species[i]}:${v.toExponential(2)} y=${d.y[i].toExponential(2)} ynew=${d.ynew[i].toExponential(2)}`).join(' | ');
@@ -145,7 +167,9 @@ for (const id of scenarios) {
   const s = res.stats;
   console.log(`\n${id}: ${preset.label}`);
   console.log(`  ${s.solver} rtol ${rtol} atol ${opt.atol}: ${s.nsteps} steps, ${s.nfailed} failed, ${s.nfevals} f-evals, ${s.npds} Jacobians, ${s.ndecomps} LU, ${s.nsolves} solves, ${s.segments} segment(s), ${(Date.now() - t0) / 1000} s; iteration matrix ${s.sparse ? 'sparse' : 'dense'} (fill ${s.fill}, ${s.ordering})`);
-  res.events.forEach((ev) => console.log(`  event at t = ${(ev.t / 3600).toFixed(4)} h: ${ev.changed.join(', ')}`));
+  res.events.forEach((ev) => console.log(`  event at t = ${(ev.t / 3600).toFixed(4)} h: ${
+    ev.stop ? `the run stopped here${ev.changed.length ? ` (${ev.changed.join(', ')})` : ''}` : ev.changed.join(', ')}`));
+  if (res.grid) console.log(`  output grid: ${res.grid.t.length} of the ${res.grid.wanted} times the model asks for`);
   // Observables at every stored step
   const names = model.observeNames;
   const idx = {};
@@ -186,27 +210,50 @@ for (const id of scenarios) {
     fs.writeFileSync(out, bytes);
     console.log(`  wrote ${out}: ${(bytes.length / 1024).toFixed(0)} kB of HDF5`);
   }
-  console.log(`  at ${TIMH[last].toExponential(3)} h: O2 ${series.O2MOL[last].toExponential(3)} mol, H2 ${series.H2MOL[last].toExponential(4)} mol, NH3 ${series.NH3MOL[last].toExponential(4)} mol, HNO3 ${series.HNO3MOL[last].toExponential(3)} mol, water ${series.H2OTOTAL[last].toFixed(2)} g, RH ${series.H2ORH[last].toFixed(4)}, P ${series.PRESSP[last].toFixed(4)} atm`);
-  if (!ref) { console.log('  (no reference file)'); continue; }
-  const rows = [];
-  for (const c of compareCols) {
-    if (!ref.col[c]) continue;
-    let worst = 0, worstT = 0, worstRef = 0, worstMine = 0, count = 0;
-    for (let r = 0; r < ref.n; r++) {
-      const tq = ref.col.TIMH[r];
-      const rv = ref.col[c][r];
-      if (!(Math.abs(rv) > floors[c])) continue;
-      const mv = interpAt(TIMH, series[c], tq);
-      const rel = Math.abs(mv - rv) / Math.abs(rv);
-      count++;
-      if (rel > worst) { worst = rel; worstT = tq; worstRef = rv; worstMine = mv; }
+  if (opt.times && res.grid && res.grid.t.length) {
+    const row = new Float64Array(names.length);
+    const lines = [['TIMS', 'TIMH', ...names].join(',')];
+    for (let k = 0; k < res.grid.t.length; k++) {
+      model.observe(res.grid.t[k], res.grid.y[k], row);
+      lines.push([res.grid.t[k], res.grid.t[k] / 3600, ...row].join(','));
     }
-    rows.push({ c, worst, worstT, worstRef, worstMine, count });
+    const out = scenarios.length > 1 ? opt.times.replace(/(\.csv)?$/i, `_${id}.csv`) : opt.times;
+    fs.writeFileSync(out, lines.join('\n'));
+    console.log(`  wrote ${out}: ${res.grid.t.length} rows at the model's output times`);
   }
+  console.log(`  at ${TIMH[last].toExponential(3)} h: O2 ${series.O2MOL[last].toExponential(3)} mol, H2 ${series.H2MOL[last].toExponential(4)} mol, NH3 ${series.NH3MOL[last].toExponential(4)} mol, HNO3 ${series.HNO3MOL[last].toExponential(3)} mol, water ${series.H2OTOTAL[last].toFixed(2)} g, RH ${series.H2ORH[last].toFixed(4)}, P ${series.PRESSP[last].toFixed(4)} atm`);
+  if (!refs.length) { console.log('  (no reference file)'); continue; }
   const pad = (s, n) => String(s).padStart(n);
-  console.log('  quantity   rows  worst rel.diff   at t (h)      reference        this engine');
-  for (const r of rows) {
-    console.log(`  ${r.c.padEnd(10)} ${pad(r.count, 4)}  ${pad(r.worst.toExponential(2), 12)}   ${pad(r.worstT.toExponential(3), 10)}  ${pad(r.worstRef.toExponential(4), 12)}  ${pad(r.worstMine.toExponential(4), 12)}`);
+  for (const { label, file, data } of refs) {
+    const rows = [];
+    for (const c of compareCols) {
+      if (!data.col[c]) continue;
+      let worst = 0, worstT = 0, worstRef = 0, worstMine = 0, count = 0;
+      // The median as well as the worst: one reference point in a sharp
+      // transient can be out by a lot while the curve as a whole agrees, and
+      // a single worst case cannot tell those apart.
+      const all = [];
+      for (let r = 0; r < data.n; r++) {
+        const tq = data.col.TIMH[r];
+        const rv = data.col[c][r];
+        if (!(Math.abs(rv) > floors[c])) continue;
+        // A reference that runs past where this engine got to is not a
+        // disagreement about the answer.
+        if (tq > TIMH[last] * (1 + 1e-9)) continue;
+        const mv = interpAt(TIMH, series[c], tq);
+        const rel = Math.abs(mv - rv) / Math.abs(rv);
+        count++;
+        all.push(rel);
+        if (rel > worst) { worst = rel; worstT = tq; worstRef = rv; worstMine = mv; }
+      }
+      all.sort((a, b) => a - b);
+      rows.push({ c, worst, worstT, worstRef, worstMine, count, median: all.length ? all[all.length >> 1] : 0 });
+    }
+    console.log(`  against the ${label} (${file}, ${data.n} rows)`);
+    console.log('  quantity   rows   median  worst rel.diff   at t (h)      reference        this engine');
+    for (const r of rows) {
+      console.log(`  ${r.c.padEnd(10)} ${pad(r.count, 4)} ${pad(r.median.toExponential(1), 8)}  ${pad(r.worst.toExponential(2), 12)}   ${pad(r.worstT.toExponential(3), 10)}  ${pad(r.worstRef.toExponential(4), 12)}  ${pad(r.worstMine.toExponential(4), 12)}`);
+    }
   }
   if (!opt.quiet) {
     console.log('  time (h)      O2 ref      O2 here      H2 ref      H2 here     NH3 ref     NH3 here   water ref  water here');

@@ -26,7 +26,7 @@
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20260918b">
-  <link rel="stylesheet" href="./resources/css/rtm.css?v=20260921d">
+  <link rel="stylesheet" href="./resources/css/rtm.css?v=20260921e">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
 </head>
 <body>
@@ -144,7 +144,12 @@
             <label><input type="checkbox" id="rtmLogY" checked data-on-change="rtm:redraw"> log concentration</label>
             <label>from <input type="text" id="rtmTMin" value="1e-6" style="width:70px" data-on-change="rtm:redraw"> <span id="rtmTMinUnit">s</span></label>
             <button type="button" class="rtm-btn secondary small" data-on-click="rtm:clearSeries">clear</button>
-            <button type="button" class="rtm-btn secondary small" data-on-click="rtm:downloadCsv">CSV</button>
+            <button type="button" class="rtm-btn secondary small" data-on-click="rtm:downloadCsv"
+              title="The species ticked below, at the cell above, as a CSV of every stored step">CSV</button>
+            <button type="button" class="rtm-btn secondary small" data-on-click="rtm:toHdf5"
+              title="Write the whole run as an HDF5 file and open it in the HDF5 Browser, without it touching the disk">View in HDF5 Browser</button>
+            <button type="button" class="rtm-btn secondary small" data-on-click="rtm:downloadHdf5"
+              title="The same file, as a download">HDF5</button>
           </div>
           <div class="rtm-series" id="rtmSeries"></div>
           <div class="plot" id="rtmChartTime" hidden></div>
@@ -189,10 +194,23 @@
             <button type="button" class="rtm-btn secondary small" data-on-click="rtm:resetModel">Reset to the built-in model</button>
             <button type="button" class="rtm-btn secondary small" data-on-click="rtm:loadFile">Open…</button>
             <button type="button" class="rtm-btn secondary small" data-on-click="rtm:saveFile">Save</button>
+            <label class="rtm-check inline"><input type="checkbox" id="rtmSyntax" checked
+              data-on-change="rtm:syntaxToggle"> colour the syntax</label>
             <input type="file" id="rtmFile" accept=".txt,.rtm,.in" hidden data-on-change="rtm:fileChosen">
           </div>
           <p class="rtm-muted rtm-example-about" id="rtmExampleAbout" hidden></p>
-          <textarea id="rtmText" class="rtm-text" spellcheck="false" data-on-input="rtm:textChanged"></textarea>
+          <!--
+            The coloured copy of the text and the box being typed in, one on
+            top of the other: a textarea cannot colour its own contents, and
+            this is the way to have colour without giving up what a textarea
+            brings with it. rtm-ui.js draws the copy; rtm.css keeps the two
+            in step to the pixel.
+          -->
+          <div class="rtm-code-box" id="rtmCodeBox">
+            <pre class="rtm-code-hl" id="rtmHighlight" aria-hidden="true"><code></code></pre>
+            <textarea id="rtmText" class="rtm-text" spellcheck="false" wrap="off"
+              data-on-input="rtm:textChanged"></textarea>
+          </div>
           <p class="rtm-muted" id="rtmModelNote"></p>
         </section>
 
@@ -246,6 +264,14 @@
           <p>Six sections, of which two are needed: <code>&lt;SPECIES&gt;</code> and
             <code>&lt;REACTIONS&gt;</code>. Everything after a <code>#</code> is a comment. A rock
             matrix beside the column is a few more settings; see <em>A rock matrix</em>.</p>
+          <p><em>Colour the syntax</em>, on the Model tab, paints comments, section headings,
+            numbers, function names and the words that mean something where they stand — a setting
+            and the words its value may take, <code>fixed</code> and <code>D</code> on a species
+            line, <code>k</code> and <code>r</code> in a reaction, <code>all</code> and
+            <code>matrix</code> in a parameter. It is a second copy of the text drawn underneath
+            the box you are typing in, which is the only way a plain text area can be coloured
+            while keeping its own undo, selection and caret; turn it off for a very large model,
+            or if the colours are in the way. The choice is remembered between visits.</p>
 
           <h4>&lt;SETTINGS&gt;</h4>
           <table class="rtm-table">
@@ -584,6 +610,25 @@ NpO2+ &lt;=&gt; NpO2_s,      K = 2.0E4, kf = 1.0E3   # also held during the run<
             of thousands of seconds on the built-in model — so ask for 10 hours there and you may
             well get 10.8.</p>
 
+          <h3>Taking the run away with you</h3>
+          <p><em>CSV</em> writes the species ticked in the panel, at the cell the chart is showing,
+            a row per stored step. <em>View in HDF5 Browser</em> writes the whole run as an HDF5
+            file and opens it in the <a href="./rb.html">HDF5 Browser</a> in another tab, without
+            the file ever reaching the disk; <em>HDF5</em> is the same file as a download. Both
+            need a run behind them, and neither sends anything anywhere: the file is built in this
+            browser and handed to a page of the same origin.</p>
+          <p>Inside it, <code>/time</code> is the clock in the model's own unit — it converts
+            nothing, any more than the page does — and <code>/Species</code> holds every species
+            where the chart was looking: the batch, or the cell and rock layer the panel had
+            chosen. A column run also has <code>/Cells/cell_007/…</code> for every cell and
+            <code>/Cells/cell_007_rock_03/…</code> for the rock behind it, so a species searched
+            for by name in the browser comes back as one curve per cell. <code>/Grid</code> says
+            where each of those cells is, <code>/Settings</code> what the model was compiled with,
+            and <code>/Model/source</code> keeps the model text itself, a line per value. A
+            dual-porosity model can have more cells than a file should hold datasets, and past
+            four thousand of them the rock layers are left out — the root attribute
+            <code>matrix_written</code> says so when that happens, and the water is always there.</p>
+
           <h3>The Jacobian</h3>
           <p>Every rate law is differentiated symbolically with respect to each species it mentions.
             Nothing is differenced, so there is no step size to choose and no accuracy to lose. The
@@ -693,16 +738,20 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
       rtm-default        the built-in model text
       rtm-examples       the models the Example picker offers
       rtm-worker         the request handler (compile, run, verify)
+      kvot-hdf5-write    an HDF5 writer, for handing a run to the browser
+      rtm-hdf5           a run as an HDF5 tree
       rtm-ui             this page
   -->
   <script src="./resources/js/facsimile-model.js?v=20260920"></script>
   <script src="./resources/js/facsimile-ode.js?v=20260920a"></script>
   <script src="./resources/js/ode-julia.js?v=20260920"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20260920"></script>
-  <script src="./resources/js/rtm-model.js?v=20260920e"></script>
+  <script src="./resources/js/rtm-model.js?v=20260921a"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
   <script src="./resources/js/rtm-examples.js?v=20260921b"></script>
   <script src="./resources/js/rtm-worker.js?v=20260920e"></script>
-  <script src="./resources/js/rtm-ui.js?v=20260921b"></script>
+  <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
+  <script src="./resources/js/rtm-hdf5.js?v=20260921a"></script>
+  <script src="./resources/js/rtm-ui.js?v=20260921d"></script>
 </body>
 </html>

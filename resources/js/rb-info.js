@@ -2,12 +2,157 @@
    11. DATASET INFORMATION DISPLAY
    ========================================================================== */
 
+'use strict';   // see the script manifest in rb.html for why
 /**
  * Display node attributes and information for a selected path
  * Shows data preview, attributes table, and triggers chart if time-dependent
  * @param {string} path - HDF5 path to the node
  * @param {boolean} isGroup - Whether the node is a group (vs dataset)
  */
+
+/**
+ * Read a dataset's `pdf` attribute into histogram data for one file.
+ *
+ * Split out of showNodeAttributes, where it was 118 of that function's 327
+ * lines and the only part of the per-file loop that touches no DOM. It is a
+ * pure read: attributes and node values in, histogram data or null out.
+ *
+ * Three shapes are recognised, in this order:
+ *
+ *   a lookup table   `pdf` is an array and `index` names its columns, so each
+ *                    column becomes one labelled entry
+ *   a raw spec       the samples are already in the dataset, optionally with a
+ *                    deterministic value in the first row
+ *   a distribution   the spec describes a distribution and the samples are
+ *                    generated from it
+ *
+ * Every read of the node's values is wrapped where it stands, because a
+ * dataset that will not produce one entry should still produce the others.
+ *
+ * @param {Object} attrs - the node's attributes, already read
+ * @param {Object} node - the HDF5 dataset
+ * @param {string} path - the dataset's path, carried into the returned data
+ * @returns {Object|null} histogram data, or null when nothing was readable
+ */
+function collectPdfSpecData(attrs, node, path) {
+  let filePdfData = null;
+  try {
+    let pdfRaw = attrs.pdf;
+    if (typeof pdfRaw === 'string') pdfRaw = JSON.parse(pdfRaw);
+
+    const isLookupTable = Array.isArray(pdfRaw);
+    const indexAttr = attrs.index;
+
+    if (isLookupTable && indexAttr) {
+      const indexLabels = Array.isArray(indexAttr) ? indexAttr : Array.from(indexAttr);
+      const entries = [];
+
+      for (let i = 0; i < pdfRaw.length; i++) {
+        const spec = pdfRaw[i];
+
+        if (!spec) {
+          try {
+            let rawData;
+            if (typeof node.value !== 'undefined') rawData = node.value;
+            else if (typeof node.toArray === 'function') rawData = node.toArray();
+
+            if (rawData !== undefined) {
+              const arr = Array.isArray(rawData) ? rawData : Array.from(rawData);
+              entries.push({ label: String(indexLabels[i] ?? i), samples: [arr[i]], spec: null });
+            }
+          } catch (_) { ignoreFailure('createInfoSection', _); }
+          continue;
+        }
+
+        if (spec.type && spec.type.toLowerCase() === 'raw') {
+          try {
+            let rawData;
+            if (typeof node.value !== 'undefined') rawData = node.value;
+            else if (typeof node.toArray === 'function') rawData = node.toArray();
+
+            if (rawData !== undefined) {
+              const flat = Array.isArray(rawData) ? rawData : Array.from(rawData);
+              const nCols = pdfRaw.length;
+              const nRows = Math.floor(flat.length / nCols);
+              const shift = spec.include_deterministic ? 1 : 0;
+              const detVal = (spec.include_deterministic && nRows > 0) ? flat[0 * nCols + i] : null;
+              const col = [];
+              for (let r = shift; r < nRows; r++) col.push(flat[r * nCols + i]);
+              entries.push({ label: String(indexLabels[i] ?? i), samples: col, spec: spec, deterministicValue: detVal });
+            }
+          } catch (_) { ignoreFailure('createInfoSection', _); }
+        } else {
+          // standard distribution spec for this index
+          let detVal = null;
+          try {
+            let rawData;
+            if (typeof node.value !== 'undefined') rawData = node.value;
+            else if (typeof node.toArray === 'function') rawData = node.toArray();
+
+            if (rawData !== undefined) {
+              const flat = Array.isArray(rawData) ? rawData : Array.from(rawData);
+              const nCols = pdfRaw.length;
+              if (flat.length >= nCols) detVal = Number(flat[i]);
+            }
+          } catch (_) {
+            detVal = null;
+          }
+
+          const samples = generatePdfSamples(spec, 1000);
+          if (samples) {
+            const norm = PDFSampler.normalizeDataArray(samples);
+            entries.push({ label: String(indexLabels[i] ?? i), samples: Array.from(norm), spec: spec, deterministicValue: isFinite(detVal) ? detVal : null });
+          } else {
+            kvotWarn('generatePdfSamples returned null for spec (lookup index)', spec);
+          }
+        }
+      }
+
+      if (entries.length > 0) filePdfData = { type: 'lookup', entries, path };
+
+    } else if (!isLookupTable && pdfRaw.type) {
+      // single PDF spec
+      if (pdfRaw.type.toLowerCase() === 'raw') {
+        try {
+          let rawData;
+          if (typeof node.value !== 'undefined') rawData = node.value;
+          else if (typeof node.toArray === 'function') rawData = node.toArray();
+
+          if (rawData !== undefined) {
+            const flat = PDFSampler.normalizeDataArray(rawData);
+            const shift = pdfRaw.include_deterministic ? 1 : 0;
+            const detVal = (pdfRaw.include_deterministic && flat.length > 0) ? flat[0] : null;
+            filePdfData = { type: 'single', samples: flat.slice(shift), spec: pdfRaw, path, deterministicValue: detVal };
+          }
+        } catch (_) { ignoreFailure('createInfoSection', _); }
+      } else {
+        let detVal = null;
+        try {
+          let rawData;
+          if (typeof node.value !== 'undefined') rawData = node.value;
+          else if (typeof node.toArray === 'function') rawData = node.toArray();
+
+          if (rawData !== undefined) {
+            if (typeof rawData === 'number') detVal = rawData;
+            else if (rawData && rawData.length !== undefined && rawData.length > 0) detVal = Number(rawData[0]);
+          }
+        } catch (_) { ignoreFailure('createInfoSection', _); }
+
+        const samples = generatePdfSamples(pdfRaw, 1000);
+        if (samples) {
+          const norm = PDFSampler.normalizeDataArray(samples);
+          filePdfData = { type: 'single', samples: Array.from(norm), spec: pdfRaw, path, deterministicValue: isFinite(detVal) ? detVal : null };
+        } else {
+          kvotWarn('generatePdfSamples returned null for pdf spec', pdfRaw, 'at', path);
+        }
+      }
+    }
+  } catch (err) {
+    kvotWarn('PDF collect error:', err);
+  }
+  return filePdfData;
+}
+
 async function showNodeAttributes(path, isGroup = false) {
   const infoDiv = document.getElementById('info');
   // Make panel visible and show loading immediately
@@ -127,7 +272,7 @@ async function showNodeAttributes(path, isGroup = false) {
             fileSection.appendChild(previewSection);
           }
         } catch (e) {
-          console.warn('Could not read data:', e && e.message ? e.message : e);
+          kvotWarn('Could not read data:', e && e.message ? e.message : e);
         }
       }
 
@@ -137,7 +282,7 @@ async function showNodeAttributes(path, isGroup = false) {
         for (const [k, v] of Object.entries(allA)) {
           attrs[k] = v; hasAttributes = true;
         }
-      } catch (e) { console.warn('Error reading attributes:', e && e.message ? e.message : e); }
+      } catch (e) { kvotWarn('Error reading attributes:', e && e.message ? e.message : e); }
 
       if (hasAttributes && Object.keys(attrs).length > 0) {
         const attrEl = buildAttributesTable(attrs, jsonReplacer);
@@ -145,121 +290,7 @@ async function showNodeAttributes(path, isGroup = false) {
       }
 
       if (!isGroup && attrs.pdf) {
-        let filePdfData = null;
-        try {
-          let pdfRaw = attrs.pdf;
-          if (typeof pdfRaw === 'string') pdfRaw = JSON.parse(pdfRaw);
-
-          const isLookupTable = Array.isArray(pdfRaw);
-          const indexAttr = attrs.index;
-
-          if (isLookupTable && indexAttr) {
-            const indexLabels = Array.isArray(indexAttr) ? indexAttr : Array.from(indexAttr);
-            const entries = [];
-
-            for (let i = 0; i < pdfRaw.length; i++) {
-              const spec = pdfRaw[i];
-
-              if (!spec) {
-                try {
-                  let rawData;
-                  if (typeof node.value !== 'undefined') rawData = node.value;
-                  else if (typeof node.toArray === 'function') rawData = node.toArray();
-
-                  if (rawData !== undefined) {
-                    const arr = Array.isArray(rawData) ? rawData : Array.from(rawData);
-                    entries.push({ label: String(indexLabels[i] ?? i), samples: [arr[i]], spec: null });
-                  }
-                } catch (_) { ignoreFailure('createInfoSection', _); }
-                continue;
-              }
-
-              if (spec.type && spec.type.toLowerCase() === 'raw') {
-                try {
-                  let rawData;
-                  if (typeof node.value !== 'undefined') rawData = node.value;
-                  else if (typeof node.toArray === 'function') rawData = node.toArray();
-
-                  if (rawData !== undefined) {
-                    const flat = Array.isArray(rawData) ? rawData : Array.from(rawData);
-                    const nCols = pdfRaw.length;
-                    const nRows = Math.floor(flat.length / nCols);
-                    const shift = spec.include_deterministic ? 1 : 0;
-                    const detVal = (spec.include_deterministic && nRows > 0) ? flat[0 * nCols + i] : null;
-                    const col = [];
-                    for (let r = shift; r < nRows; r++) col.push(flat[r * nCols + i]);
-                    entries.push({ label: String(indexLabels[i] ?? i), samples: col, spec: spec, deterministicValue: detVal });
-                  }
-                } catch (_) { ignoreFailure('createInfoSection', _); }
-              } else {
-                // standard distribution spec for this index
-                let detVal = null;
-                try {
-                  let rawData;
-                  if (typeof node.value !== 'undefined') rawData = node.value;
-                  else if (typeof node.toArray === 'function') rawData = node.toArray();
-
-                  if (rawData !== undefined) {
-                    const flat = Array.isArray(rawData) ? rawData : Array.from(rawData);
-                    const nCols = pdfRaw.length;
-                    if (flat.length >= nCols) detVal = Number(flat[i]);
-                  }
-                } catch (_) {
-                  detVal = null;
-                }
-
-                const samples = generatePdfSamples(spec, 1000);
-                if (samples) {
-                  const norm = PDFSampler.normalizeDataArray(samples);
-                  entries.push({ label: String(indexLabels[i] ?? i), samples: Array.from(norm), spec: spec, deterministicValue: isFinite(detVal) ? detVal : null });
-                } else {
-                  console.warn('generatePdfSamples returned null for spec (lookup index)', spec);
-                }
-              }
-            }
-
-            if (entries.length > 0) filePdfData = { type: 'lookup', entries, path };
-
-          } else if (!isLookupTable && pdfRaw.type) {
-            // single PDF spec
-            if (pdfRaw.type.toLowerCase() === 'raw') {
-              try {
-                let rawData;
-                if (typeof node.value !== 'undefined') rawData = node.value;
-                else if (typeof node.toArray === 'function') rawData = node.toArray();
-
-                if (rawData !== undefined) {
-                  const flat = PDFSampler.normalizeDataArray(rawData);
-                  const shift = pdfRaw.include_deterministic ? 1 : 0;
-                  const detVal = (pdfRaw.include_deterministic && flat.length > 0) ? flat[0] : null;
-                  filePdfData = { type: 'single', samples: flat.slice(shift), spec: pdfRaw, path, deterministicValue: detVal };
-                }
-              } catch (_) { ignoreFailure('createInfoSection', _); }
-            } else {
-              let detVal = null;
-              try {
-                let rawData;
-                if (typeof node.value !== 'undefined') rawData = node.value;
-                else if (typeof node.toArray === 'function') rawData = node.toArray();
-
-                if (rawData !== undefined) {
-                  if (typeof rawData === 'number') detVal = rawData;
-                  else if (rawData && rawData.length !== undefined && rawData.length > 0) detVal = Number(rawData[0]);
-                }
-              } catch (_) { ignoreFailure('createInfoSection', _); }
-
-              const samples = generatePdfSamples(pdfRaw, 1000);
-              if (samples) {
-                const norm = PDFSampler.normalizeDataArray(samples);
-                filePdfData = { type: 'single', samples: Array.from(norm), spec: pdfRaw, path, deterministicValue: isFinite(detVal) ? detVal : null };
-              } else {
-                console.warn('generatePdfSamples returned null for pdf spec', pdfRaw, 'at', path);
-              }
-            }
-          }
-        } catch (err) {
-          console.warn('PDF collect error:', err);
-        }
+        const filePdfData = collectPdfSpecData(attrs, node, path);
         if (filePdfData) pdfHistogramByFile.push({ fileKey, data: filePdfData });
       }
 
@@ -275,7 +306,7 @@ async function showNodeAttributes(path, isGroup = false) {
             pdfHistogramByFile.push({ fileKey, data: { type: 'single', samples: Array.from(flat), spec: null, path } });
           }
         } catch (err) {
-          console.warn('Probabilistic histogram error:', err);
+          kvotWarn('Probabilistic histogram error:', err);
         }
       }
 
@@ -356,7 +387,7 @@ function downloadDatasetAsCSV(node, fullData, path, fileKey) {
       }
     }
   } catch (e) {
-    console.warn('Could not read index attribute:', e);
+    kvotWarn('Could not read index attribute:', e);
   }
   
   // Determine data shape and build CSV
@@ -410,7 +441,7 @@ function downloadDatasetAsCSV(node, fullData, path, fileKey) {
     }
   } else {
     // Higher dimensional - flatten to 2D
-    console.warn('Multi-dimensional array, flattening to 2D');
+    kvotWarn('Multi-dimensional array, flattening to 2D');
     if (headerRow) {
       csvContent += headerRow.map(h => escapeCSV(h)).join(',') + '\n';
     }
@@ -445,6 +476,334 @@ function downloadDatasetAsCSV(node, fullData, path, fileKey) {
  * Download selected dataset information, attributes, and data as Excel file
  * Uses xlsxwrite.js library
  */
+
+/**
+ * The four cell formats every sheet of a dataset export uses.
+ *
+ * Returned as an object so the sheet writers can destructure it back into the
+ * names their bodies already use.
+ *
+ * @param {Object} xlsx - the XlsxWriter workbook
+ * @returns {{headerFormat: *, labelFormat: *, valueFormat: *, titleFormat: *}}
+ */
+function makeDatasetExcelFormats(xlsx) {
+  const headerFormat = xlsx.addFormat({
+    bold: true,
+    bg_color: '217346',
+    font_color: 'FFFFFF',
+    align: 'center',
+    valign: 'vcenter',
+    border: 1
+  });
+  
+  const labelFormat = xlsx.addFormat({
+    bold: true,
+    bg_color: 'E2EFDA',
+    border: 1
+  });
+  
+  const valueFormat = xlsx.addFormat({
+    border: 1
+  });
+  
+  const titleFormat = xlsx.addFormat({
+    bold: true,
+    font_size: 14,
+    font_color: '217346'
+  });
+  return { headerFormat, labelFormat, valueFormat, titleFormat };
+}
+
+
+/**
+ * The Information sheet: where the dataset came from and what shape it is.
+ *
+ * @param {Object} xlsx - the workbook
+ * @param {Object} fmt - from makeDatasetExcelFormats
+ * @param {Object} ctx - fileKey, path, node, isGroup
+ * @returns {void}
+ */
+function writeDatasetInformationSheet(xlsx, fmt, { fileKey, path, node, isGroup }) {
+  const { headerFormat, labelFormat, valueFormat, titleFormat } = fmt;
+  xlsx.write(0, 0, 'Dataset Information', titleFormat, 'Information');
+  xlsx.write(2, 0, 'Property', headerFormat, 'Information');
+  xlsx.write(2, 1, 'Value', headerFormat, 'Information');
+  xlsx.setColumn(0, 0, 20, null, {}, 'Information');
+  xlsx.setColumn(1, 1, 50, null, {}, 'Information');
+  
+  let row = 3;
+  xlsx.write(row, 0, 'File', labelFormat, 'Information');
+  xlsx.write(row, 1, fileKey, valueFormat, 'Information');
+  row++;
+  
+  xlsx.write(row, 0, 'Path', labelFormat, 'Information');
+  xlsx.write(row, 1, path, valueFormat, 'Information');
+  row++;
+  
+  xlsx.write(row, 0, 'Type', labelFormat, 'Information');
+  xlsx.write(row, 1, String(node.type), valueFormat, 'Information');
+  row++;
+  
+  if (!isGroup && node.dtype) {
+    xlsx.write(row, 0, 'Data Type', labelFormat, 'Information');
+    xlsx.write(row, 1, formatDataType(node.dtype), valueFormat, 'Information');
+    row++;
+  }
+  
+  if (node.shape && Array.isArray(node.shape)) {
+    xlsx.write(row, 0, 'Shape', labelFormat, 'Information');
+    xlsx.write(row, 1, node.shape.join(' × '), valueFormat, 'Information');
+    row++;
+  }
+  
+  xlsx.write(row, 0, 'Export Date', labelFormat, 'Information');
+  xlsx.write(row, 1, new Date().toISOString(), valueFormat, 'Information');
+}
+
+
+/**
+ * The Attributes sheet: every attribute on the node, rendered for a cell.
+ *
+ * Arrays are joined, typed arrays truncated at ten values, objects stringified
+ * and bigints narrowed - a spreadsheet cell holds text, not a structure.
+ *
+ * @param {Object} xlsx - the workbook
+ * @param {Object} fmt - from makeDatasetExcelFormats
+ * @param {Object} node - the HDF5 node
+ * @returns {void}
+ */
+function writeDatasetAttributesSheet(xlsx, fmt, node) {
+  const { headerFormat, labelFormat, valueFormat, titleFormat } = fmt;
+  const attrs = getAllAttrs(node);
+  
+  xlsx.write(0, 0, 'Attributes', titleFormat, 'Attributes');
+  xlsx.write(2, 0, 'Name', headerFormat, 'Attributes');
+  xlsx.write(2, 1, 'Value', headerFormat, 'Attributes');
+  xlsx.setColumn(0, 0, 25, null, {}, 'Attributes');
+  xlsx.setColumn(1, 1, 60, null, {}, 'Attributes');
+  
+  let row = 3;
+  for (const [key, value] of Object.entries(attrs)) {
+    let displayValue;
+    if (typeof value === 'string') {
+      displayValue = value;
+    } else if (Array.isArray(value)) {
+      displayValue = `[${value.join(', ')}]`;
+    } else if (value === null) {
+      displayValue = 'null';
+    } else if (value === undefined) {
+      displayValue = 'undefined';
+    } else if (typeof value === 'object') {
+      if (value.length !== undefined) {
+        displayValue = `[${Array.from(value).slice(0, 10).join(', ')}${value.length > 10 ? '...' : ''}]`;
+      } else {
+        displayValue = JSON.stringify(value);
+      }
+    } else if (typeof value === 'bigint') {
+      displayValue = String(PDFSampler.toNumber(value));
+    } else {
+      displayValue = String(value);
+    }
+    
+    xlsx.write(row, 0, key, labelFormat, 'Attributes');
+    xlsx.write(row, 1, displayValue, valueFormat, 'Attributes');
+    row++;
+  }
+  
+  if (Object.keys(attrs).length === 0) {
+    xlsx.write(3, 0, '(No attributes)', valueFormat, 'Attributes');
+  }
+}
+
+
+/**
+ * The Data sheet: the dataset's values, with a time column where one applies.
+ *
+ * Groups have no values, so this writes nothing for them. One-dimensional data
+ * becomes a single column; anything wider is written as a grid, using the
+ * `index` attribute for column headings when it is there.
+ *
+ * @param {Object} xlsx - the workbook
+ * @param {Object} fmt - from makeDatasetExcelFormats
+ * @param {Object} ctx - node, isGroup, file
+ * @returns {void}
+ */
+function writeDatasetDataSheet(xlsx, fmt, { node, isGroup, file }) {
+  const { headerFormat, labelFormat, valueFormat, titleFormat } = fmt;
+  if (!isGroup) {
+    let data;
+    try {
+      if (typeof node.value !== 'undefined') {
+        data = node.value;
+      } else if (typeof node.toArray === 'function') {
+        data = node.toArray();
+      }
+    } catch (e) {
+      kvotWarn('Could not read data:', e);
+    }
+    
+    if (data !== undefined) {
+      let fullData;
+      if (Array.isArray(data)) {
+        fullData = data;
+      } else if (data && typeof data === 'object' && data.length !== undefined) {
+        fullData = Array.from(data);
+      } else {
+        fullData = [data];
+      }
+      
+      xlsx.write(0, 0, 'Data', titleFormat, 'Data');
+      
+      // Check for index attribute (column headers)
+      let headerRow = null;
+      try {
+        const indexValue = getAttr(node, 'index');
+        if (indexValue !== undefined && indexValue !== null) {
+          if (Array.isArray(indexValue)) {
+            headerRow = indexValue;
+          } else if (indexValue && indexValue.length !== undefined) {
+            headerRow = Array.from(indexValue);
+          }
+        }
+      } catch (e) {
+        kvotWarn('Could not read index attribute:', e);
+      }
+      
+      // Try to get time data for time-series datasets
+      let timeData = null;
+      let timeUnit = '';
+      try {
+        timeData = getTimeData(file);
+        timeUnit = getTimeUnit(file);
+      } catch (e) {
+        kvotWarn('Could not read time data:', e);
+      }
+      
+      const shape = node.shape || [];
+      
+      if (shape.length <= 1) {
+        // 1D array - single column (possibly with time column)
+        const hasTimeColumn = timeData && timeData.length === fullData.length;
+        const colOffset = hasTimeColumn ? 1 : 0;
+        
+        // Write time header if available
+        if (hasTimeColumn) {
+          const timeHeader = timeUnit ? `Time (${timeUnit})` : 'Time';
+          xlsx.write(2, 0, timeHeader, headerFormat, 'Data');
+          xlsx.setColumn(0, 0, 15, null, {}, 'Data');
+        }
+        
+        // Write data header
+        if (headerRow && headerRow.length === 1) {
+          xlsx.write(2, colOffset, headerRow[0], headerFormat, 'Data');
+        } else {
+          xlsx.write(2, colOffset, 'Value', headerFormat, 'Data');
+        }
+        
+        // Write data (with time if available)
+        for (let i = 0; i < fullData.length; i++) {
+          if (hasTimeColumn) {
+            xlsx.write(3 + i, 0, timeData[i], null, 'Data');
+          }
+          const val = fullData[i];
+          xlsx.write(3 + i, colOffset, typeof val === 'number' ? val : String(val), null, 'Data');
+        }
+        
+        xlsx.setColumn(colOffset, colOffset, 15, null, {}, 'Data');
+        
+      } else if (shape.length === 2) {
+        // 2D array (possibly with time column)
+        const numRows = shape[0];
+        const numCols = shape[1];
+        const hasTimeColumn = timeData && timeData.length === numRows;
+        const colOffset = hasTimeColumn ? 1 : 0;
+        
+        // Write time header if available
+        if (hasTimeColumn) {
+          const timeHeader = timeUnit ? `Time (${timeUnit})` : 'Time';
+          xlsx.write(2, 0, timeHeader, headerFormat, 'Data');
+        }
+        
+        // Write headers
+        if (headerRow && headerRow.length === numCols) {
+          for (let j = 0; j < numCols; j++) {
+            xlsx.write(2, j + colOffset, String(headerRow[j]), headerFormat, 'Data');
+          }
+        } else {
+          for (let j = 0; j < numCols; j++) {
+            xlsx.write(2, j + colOffset, `Col ${j + 1}`, headerFormat, 'Data');
+          }
+        }
+        
+        // Write data (with time if available)
+        for (let i = 0; i < numRows; i++) {
+          if (hasTimeColumn) {
+            xlsx.write(3 + i, 0, timeData[i], null, 'Data');
+          }
+          for (let j = 0; j < numCols; j++) {
+            const val = fullData[i * numCols + j];
+            xlsx.write(3 + i, j + colOffset, typeof val === 'number' ? val : String(val), null, 'Data');
+          }
+        }
+        
+        // Set column widths
+        if (hasTimeColumn) {
+          xlsx.setColumn(0, 0, 15, null, {}, 'Data');
+        }
+        for (let j = 0; j < numCols; j++) {
+          xlsx.setColumn(j + colOffset, j + colOffset, 12, null, {}, 'Data');
+        }
+        
+      } else {
+        // Higher dimensional - flatten with index attribute hints (possibly with time column)
+        const numCols = headerRow ? headerRow.length : (shape[shape.length - 1] || 1);
+        const numRows = Math.floor(fullData.length / numCols);
+        const hasTimeColumn = timeData && timeData.length === numRows;
+        const colOffset = hasTimeColumn ? 1 : 0;
+        
+        // Write time header if available
+        if (hasTimeColumn) {
+          const timeHeader = timeUnit ? `Time (${timeUnit})` : 'Time';
+          xlsx.write(2, 0, timeHeader, headerFormat, 'Data');
+        }
+        
+        // Write headers
+        if (headerRow) {
+          for (let j = 0; j < headerRow.length; j++) {
+            xlsx.write(2, j + colOffset, String(headerRow[j]), headerFormat, 'Data');
+          }
+        } else {
+          for (let j = 0; j < numCols; j++) {
+            xlsx.write(2, j + colOffset, `Col ${j + 1}`, headerFormat, 'Data');
+          }
+        }
+        
+        // Write data (with time if available)
+        for (let i = 0; i < numRows; i++) {
+          if (hasTimeColumn) {
+            xlsx.write(3 + i, 0, timeData[i], null, 'Data');
+          }
+          for (let j = 0; j < numCols; j++) {
+            const idx = i * numCols + j;
+            if (idx < fullData.length) {
+              const val = fullData[idx];
+              xlsx.write(3 + i, j + colOffset, typeof val === 'number' ? val : String(val), null, 'Data');
+            }
+          }
+        }
+        
+        // Set column widths
+        if (hasTimeColumn) {
+          xlsx.setColumn(0, 0, 15, null, {}, 'Data');
+        }
+        for (let j = 0; j < numCols; j++) {
+          xlsx.setColumn(j + colOffset, j + colOffset, 12, null, {}, 'Data');
+        }
+      }
+    }
+  }
+}
+
 async function downloadDatasetAsExcel(datasetPath, datasetFileKey) {
   // Use provided parameters or fall back to selected dataset
   const path = datasetPath || selectedDatasetPath;
@@ -483,281 +842,10 @@ async function downloadDatasetAsExcel(datasetPath, datasetFileKey) {
     // Create workbook
     const xlsx = new XlsxWriter(`${safeFileName}${safePath}.xlsx`);
     
-    // Create formats
-    const headerFormat = xlsx.addFormat({
-      bold: true,
-      bg_color: '217346',
-      font_color: 'FFFFFF',
-      align: 'center',
-      valign: 'vcenter',
-      border: 1
-    });
-    
-    const labelFormat = xlsx.addFormat({
-      bold: true,
-      bg_color: 'E2EFDA',
-      border: 1
-    });
-    
-    const valueFormat = xlsx.addFormat({
-      border: 1
-    });
-    
-    const titleFormat = xlsx.addFormat({
-      bold: true,
-      font_size: 14,
-      font_color: '217346'
-    });
-    
-    // ========== SHEET 1: Information ==========
-    xlsx.write(0, 0, 'Dataset Information', titleFormat, 'Information');
-    xlsx.write(2, 0, 'Property', headerFormat, 'Information');
-    xlsx.write(2, 1, 'Value', headerFormat, 'Information');
-    xlsx.setColumn(0, 0, 20, null, {}, 'Information');
-    xlsx.setColumn(1, 1, 50, null, {}, 'Information');
-    
-    let row = 3;
-    xlsx.write(row, 0, 'File', labelFormat, 'Information');
-    xlsx.write(row, 1, fileKey, valueFormat, 'Information');
-    row++;
-    
-    xlsx.write(row, 0, 'Path', labelFormat, 'Information');
-    xlsx.write(row, 1, path, valueFormat, 'Information');
-    row++;
-    
-    xlsx.write(row, 0, 'Type', labelFormat, 'Information');
-    xlsx.write(row, 1, String(node.type), valueFormat, 'Information');
-    row++;
-    
-    if (!isGroup && node.dtype) {
-      xlsx.write(row, 0, 'Data Type', labelFormat, 'Information');
-      xlsx.write(row, 1, formatDataType(node.dtype), valueFormat, 'Information');
-      row++;
-    }
-    
-    if (node.shape && Array.isArray(node.shape)) {
-      xlsx.write(row, 0, 'Shape', labelFormat, 'Information');
-      xlsx.write(row, 1, node.shape.join(' × '), valueFormat, 'Information');
-      row++;
-    }
-    
-    xlsx.write(row, 0, 'Export Date', labelFormat, 'Information');
-    xlsx.write(row, 1, new Date().toISOString(), valueFormat, 'Information');
-    
-    // ========== SHEET 2: Attributes ==========
-    const attrs = getAllAttrs(node);
-    
-    xlsx.write(0, 0, 'Attributes', titleFormat, 'Attributes');
-    xlsx.write(2, 0, 'Name', headerFormat, 'Attributes');
-    xlsx.write(2, 1, 'Value', headerFormat, 'Attributes');
-    xlsx.setColumn(0, 0, 25, null, {}, 'Attributes');
-    xlsx.setColumn(1, 1, 60, null, {}, 'Attributes');
-    
-    row = 3;
-    for (const [key, value] of Object.entries(attrs)) {
-      let displayValue;
-      if (typeof value === 'string') {
-        displayValue = value;
-      } else if (Array.isArray(value)) {
-        displayValue = `[${value.join(', ')}]`;
-      } else if (value === null) {
-        displayValue = 'null';
-      } else if (value === undefined) {
-        displayValue = 'undefined';
-      } else if (typeof value === 'object') {
-        if (value.length !== undefined) {
-          displayValue = `[${Array.from(value).slice(0, 10).join(', ')}${value.length > 10 ? '...' : ''}]`;
-        } else {
-          displayValue = JSON.stringify(value);
-        }
-      } else if (typeof value === 'bigint') {
-        displayValue = String(PDFSampler.toNumber(value));
-      } else {
-        displayValue = String(value);
-      }
-      
-      xlsx.write(row, 0, key, labelFormat, 'Attributes');
-      xlsx.write(row, 1, displayValue, valueFormat, 'Attributes');
-      row++;
-    }
-    
-    if (Object.keys(attrs).length === 0) {
-      xlsx.write(3, 0, '(No attributes)', valueFormat, 'Attributes');
-    }
-    
-    // ========== SHEET 3: Data ==========
-    if (!isGroup) {
-      let data;
-      try {
-        if (typeof node.value !== 'undefined') {
-          data = node.value;
-        } else if (typeof node.toArray === 'function') {
-          data = node.toArray();
-        }
-      } catch (e) {
-        console.warn('Could not read data:', e);
-      }
-      
-      if (data !== undefined) {
-        let fullData;
-        if (Array.isArray(data)) {
-          fullData = data;
-        } else if (data && typeof data === 'object' && data.length !== undefined) {
-          fullData = Array.from(data);
-        } else {
-          fullData = [data];
-        }
-        
-        xlsx.write(0, 0, 'Data', titleFormat, 'Data');
-        
-        // Check for index attribute (column headers)
-        let headerRow = null;
-        try {
-          const indexValue = getAttr(node, 'index');
-          if (indexValue !== undefined && indexValue !== null) {
-            if (Array.isArray(indexValue)) {
-              headerRow = indexValue;
-            } else if (indexValue && indexValue.length !== undefined) {
-              headerRow = Array.from(indexValue);
-            }
-          }
-        } catch (e) {
-          console.warn('Could not read index attribute:', e);
-        }
-        
-        // Try to get time data for time-series datasets
-        let timeData = null;
-        let timeUnit = '';
-        try {
-          timeData = getTimeData(file);
-          timeUnit = getTimeUnit(file);
-        } catch (e) {
-          console.warn('Could not read time data:', e);
-        }
-        
-        const shape = node.shape || [];
-        
-        if (shape.length <= 1) {
-          // 1D array - single column (possibly with time column)
-          const hasTimeColumn = timeData && timeData.length === fullData.length;
-          const colOffset = hasTimeColumn ? 1 : 0;
-          
-          // Write time header if available
-          if (hasTimeColumn) {
-            const timeHeader = timeUnit ? `Time (${timeUnit})` : 'Time';
-            xlsx.write(2, 0, timeHeader, headerFormat, 'Data');
-            xlsx.setColumn(0, 0, 15, null, {}, 'Data');
-          }
-          
-          // Write data header
-          if (headerRow && headerRow.length === 1) {
-            xlsx.write(2, colOffset, headerRow[0], headerFormat, 'Data');
-          } else {
-            xlsx.write(2, colOffset, 'Value', headerFormat, 'Data');
-          }
-          
-          // Write data (with time if available)
-          for (let i = 0; i < fullData.length; i++) {
-            if (hasTimeColumn) {
-              xlsx.write(3 + i, 0, timeData[i], null, 'Data');
-            }
-            const val = fullData[i];
-            xlsx.write(3 + i, colOffset, typeof val === 'number' ? val : String(val), null, 'Data');
-          }
-          
-          xlsx.setColumn(colOffset, colOffset, 15, null, {}, 'Data');
-          
-        } else if (shape.length === 2) {
-          // 2D array (possibly with time column)
-          const numRows = shape[0];
-          const numCols = shape[1];
-          const hasTimeColumn = timeData && timeData.length === numRows;
-          const colOffset = hasTimeColumn ? 1 : 0;
-          
-          // Write time header if available
-          if (hasTimeColumn) {
-            const timeHeader = timeUnit ? `Time (${timeUnit})` : 'Time';
-            xlsx.write(2, 0, timeHeader, headerFormat, 'Data');
-          }
-          
-          // Write headers
-          if (headerRow && headerRow.length === numCols) {
-            for (let j = 0; j < numCols; j++) {
-              xlsx.write(2, j + colOffset, String(headerRow[j]), headerFormat, 'Data');
-            }
-          } else {
-            for (let j = 0; j < numCols; j++) {
-              xlsx.write(2, j + colOffset, `Col ${j + 1}`, headerFormat, 'Data');
-            }
-          }
-          
-          // Write data (with time if available)
-          for (let i = 0; i < numRows; i++) {
-            if (hasTimeColumn) {
-              xlsx.write(3 + i, 0, timeData[i], null, 'Data');
-            }
-            for (let j = 0; j < numCols; j++) {
-              const val = fullData[i * numCols + j];
-              xlsx.write(3 + i, j + colOffset, typeof val === 'number' ? val : String(val), null, 'Data');
-            }
-          }
-          
-          // Set column widths
-          if (hasTimeColumn) {
-            xlsx.setColumn(0, 0, 15, null, {}, 'Data');
-          }
-          for (let j = 0; j < numCols; j++) {
-            xlsx.setColumn(j + colOffset, j + colOffset, 12, null, {}, 'Data');
-          }
-          
-        } else {
-          // Higher dimensional - flatten with index attribute hints (possibly with time column)
-          const numCols = headerRow ? headerRow.length : (shape[shape.length - 1] || 1);
-          const numRows = Math.floor(fullData.length / numCols);
-          const hasTimeColumn = timeData && timeData.length === numRows;
-          const colOffset = hasTimeColumn ? 1 : 0;
-          
-          // Write time header if available
-          if (hasTimeColumn) {
-            const timeHeader = timeUnit ? `Time (${timeUnit})` : 'Time';
-            xlsx.write(2, 0, timeHeader, headerFormat, 'Data');
-          }
-          
-          // Write headers
-          if (headerRow) {
-            for (let j = 0; j < headerRow.length; j++) {
-              xlsx.write(2, j + colOffset, String(headerRow[j]), headerFormat, 'Data');
-            }
-          } else {
-            for (let j = 0; j < numCols; j++) {
-              xlsx.write(2, j + colOffset, `Col ${j + 1}`, headerFormat, 'Data');
-            }
-          }
-          
-          // Write data (with time if available)
-          for (let i = 0; i < numRows; i++) {
-            if (hasTimeColumn) {
-              xlsx.write(3 + i, 0, timeData[i], null, 'Data');
-            }
-            for (let j = 0; j < numCols; j++) {
-              const idx = i * numCols + j;
-              if (idx < fullData.length) {
-                const val = fullData[idx];
-                xlsx.write(3 + i, j + colOffset, typeof val === 'number' ? val : String(val), null, 'Data');
-              }
-            }
-          }
-          
-          // Set column widths
-          if (hasTimeColumn) {
-            xlsx.setColumn(0, 0, 15, null, {}, 'Data');
-          }
-          for (let j = 0; j < numCols; j++) {
-            xlsx.setColumn(j + colOffset, j + colOffset, 12, null, {}, 'Data');
-          }
-        }
-      }
-    }
+    const fmt = makeDatasetExcelFormats(xlsx);
+    writeDatasetInformationSheet(xlsx, fmt, { fileKey, path, node, isGroup });
+    writeDatasetAttributesSheet(xlsx, fmt, node);
+    writeDatasetDataSheet(xlsx, fmt, { node, isGroup, file });
     
     // Save and download
     const content = await xlsx.save();
@@ -992,10 +1080,10 @@ function showMultipleDatasetAttributes(items) {
               combinedHistogramEntries.push({ label: entryLabel, samples: flat.map(PDFSampler.toNumber), spec: null, deterministicValue: null });
             }
           } catch (err) {
-            console.warn('probabilistic collect error:', err);
+            kvotWarn('probabilistic collect error:', err);
           }
         }
-      } catch (err) { console.warn('PDF collect error:', err); }
+      } catch (err) { kvotWarn('PDF collect error:', err); }
 
       const excelWrap = document.createElement('div'); excelWrap.className = 'info-excel-footer';
       const excelBtn = document.createElement('button');

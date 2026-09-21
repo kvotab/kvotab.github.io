@@ -1,12 +1,14 @@
 # Tests for rtm.html
 
-Two of them. `test-model.js` is the mathematics and needs only Node;
+Three of them. `test-model.js` is the mathematics and needs only Node;
+`test-hdf5.py` is the file the page writes and needs Node and `h5py`;
 `test-ui.py` is the page and needs the server and browser of `../rb/README.md`.
 
     node resources/tests/rtm/test-model.js [--verbose]
+    python3 resources/tests/rtm/test-hdf5.py
     python3 resources/tests/rtm/test-ui.py
 
-Both exit 0 when every check passes.
+All three exit 0 when every check passes.
 
 ## What test-model.js checks, and why those things
 
@@ -242,6 +244,30 @@ Four things came out of writing it, all of them worth keeping:
   note in `facsimile-ode.js`. With it, all twenty cases run under our own NDF in
   3600 to 230000 steps and give the same fifteen agreements as the ports.
 
+## What test-hdf5.py checks
+
+`resources/js/kvot-hdf5-write.js` writes HDF5 by hand rather than through a
+library, so the question is whether libhdf5 agrees that the result is a file.
+`write-h5.js` runs a model through the page's own worker handler and hands the
+reply to `rtm-hdf5.js`, which is exactly what rtm.html sends the HDF5 Browser;
+`test-hdf5.py` opens the result with h5py.
+
+Three models, for the three shapes the tree can take: a batch, which is one
+cell and so has `/Species` and no `/Cells`; a column, where every cell is a
+group of series and `/Grid` says where each of them is; and a dual-porosity
+column with more cells than one file should hold datasets for, which is the
+case where the rock is deliberately left out and `matrix_written` says so.
+
+The numbers are checked, not only the structure: A → B → C ends with the A
+spent and nearly all of it in C, and the dose-profile column ends with more in
+its first cell than in its last, which is what catches a cell group holding
+some other cell's series.
+
+Every series is one-dimensional on purpose. A field of one matrix per species
+would be a tidier file and unreadable in the browser it is written for: a
+2-D dataset there is a set of realisations, and one that is not probabilistic
+is drawn against a clock as long as its first column alone.
+
 ## What test-ui.py checks
 
 The wiring rather than the mathematics: that the text compiles through the
@@ -273,6 +299,12 @@ with units, as bare seconds, back to the automatic spread when emptied, and
 reporting a token it could not read or a time past the end of the run rather
 than dropping it silently — that a model typed from scratch runs and puts the
 right number on the chart, and
+that the syntax colouring lays a second copy of the text exactly over the box
+being typed in — the same characters, the same metrics, every one of the 31
+examples through the tokeniser unchanged, since a span too many or an escape
+too few puts the caret over the wrong letter — and that turning it off puts
+the copy away and is remembered; that the page can build the HDF5 file it
+offers and says what it wrote;
 that a model using a parameter, an `R=` and an equilibrium at once compiles with
 all three reported in the panel, runs, verifies, starts its chart from the
 speciated state rather than what was typed, and draws a profile whose mean is

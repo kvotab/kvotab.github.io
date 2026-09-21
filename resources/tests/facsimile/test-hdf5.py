@@ -101,8 +101,8 @@ def run_case(scenario):
             check('and how many steps it took', isinstance(steps, (int, float)) and steps > 0)
 
             # --- the groups ----------------------------------------------------
-            for name in ('time', 'Results', 'Equations', 'Species', 'Settings', 'Constants',
-                         'Model', 'IndexLists'):
+            for name in ('time', 'Results', 'Equations', 'Rates', 'Species', 'Settings',
+                         'Constants', 'Model', 'IndexLists'):
                 check(f'/{name} is there', name in f)
 
             t = f['/time'][:]
@@ -148,11 +148,30 @@ def run_case(scenario):
 
             # --- the lists and what they index ---------------------------------
             for group, listname in (('Species', 'Species'), ('Results', 'Outputs'),
-                                    ('Equations', 'Equations')):
+                                    ('Equations', 'Equations'), ('Rates', 'Rates')):
                 members = strings(f[f'/IndexLists/{listname}'])
                 check(f'/IndexLists/{listname} lists exactly what is in /{group}',
                       sorted(members), sorted(f[f'/{group}'].keys()))
                 check(f'/{group} points at its list', attr(f[f'/{group}'], 'IndexLists'), listname)
+
+            # --- the named reaction rates --------------------------------------
+            # A reaction that names its net rate reports it here, in a group
+            # of its own: a flux is neither a derived output nor an equation.
+            # The two corrosion fluxes in /Results are multiples of these, so
+            # the file has to be consistent about them the same way it is
+            # about O2MOL and the free volume.
+            check('the corrosion rates are in /Rates',
+                  sorted(k for k in f['/Rates'].keys() if k.startswith('R')),
+                  ['RANOX', 'RH2OIN', 'ROXID', 'ROXIDW'])
+            check('a rate carries the reaction it came from',
+                  '=' in str(f['/Rates/ROXID'].attrs['expression']))
+            oxid = f['/Rates/ROXID'][:]
+            anox = f['/Rates/RANOX'][:]
+            check('/Results/dDUMO2 is three times /Rates/ROXID',
+                  bool(np.allclose(f['/Results/dDUMO2'][:], 3 * oxid, rtol=1e-12, atol=0)))
+            check('/Results/dDUMH2 is four times /Rates/RANOX',
+                  bool(np.allclose(f['/Results/dDUMH2'][:], 4 * anox, rtol=1e-12, atol=0)))
+            check('a corrosion rate is never negative', bool(np.all(oxid >= 0) and np.all(anox >= 0)))
 
             # --- the case ------------------------------------------------------
             # Both shapes: attributes for one click, datasets so the group is
@@ -171,8 +190,13 @@ def run_case(scenario):
                   str(f['/Settings/DOSERI'].attrs['description']), 'Initial dose rate (Gy/h)')
             check('the temperature profile is named',
                   str(f['/Settings/TPROF'][()][0].decode()).startswith('TEMP_'))
+            # Where the case is defined. A Table 3-1 case cites the report;
+            # a zero-argon variant cites the delivery note that is its own
+            # source instead, so the check is that the attribute names a
+            # source rather than that it names one particular one.
+            where = str(attr(f, 'scenario_reference'))
             check('and where the case is defined',
-                  'TR-22-15' in str(attr(f, 'scenario_reference')))
+                  'TR-22-15' in where or 'Zero Argon' in where, True)
             # The file-level Information is about the file, not the case: the
             # settings are datasets in /Settings and repeating them there was
             # two places to read the same numbers.
