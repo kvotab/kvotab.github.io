@@ -1,0 +1,99 @@
+{
+  "name": "Four-compartment test model",
+  "description": "A four-compartment test model. C1 drains to C2 and C3, C2 feeds C3, and C3 discharges to C4. The Outflow expression is the discharge rate times C3, so the release curve can be read directly.",
+  "nuclides": [
+    "Fo-42"
+  ],
+  "half_lives": {
+    "Fo-42": 100000
+  },
+  "simulation": {
+    "start_time": 0,
+    "end_time": 1000000,
+    "output_points": 300,
+    "spacing": "log",
+    "solver": "ros23",
+    "rtol": 1e-06,
+    "abstol": 1e-09,
+    "time_unit": "year"
+  },
+  "parameters": [
+    {
+      "name": "p12",
+      "value": 1e-05,
+      "unit": "1/year"
+    },
+    {
+      "name": "p23",
+      "value": 1e-05,
+      "unit": "1/year"
+    },
+    {
+      "name": "p13",
+      "value": 1e-05,
+      "unit": "1/year"
+    },
+    {
+      "name": "p34",
+      "value": 1e-05,
+      "unit": "1/year"
+    }
+  ],
+  "compartments": [
+    {
+      "name": "C1",
+      "initial": "1.0e10",
+      "unit": "Bq",
+      "color": "#e34948"
+    },
+    {
+      "name": "C2",
+      "initial": "0",
+      "unit": "Bq"
+    },
+    {
+      "name": "C3",
+      "initial": "0",
+      "unit": "Bq"
+    },
+    {
+      "name": "C4",
+      "initial": "0",
+      "unit": "Bq",
+      "color": "#8a8880"
+    }
+  ],
+  "transfers": [
+    {
+      "name": "T1",
+      "from": "C1",
+      "to": "C2",
+      "rate": "p12"
+    },
+    {
+      "name": "T2",
+      "from": "C2",
+      "to": "C3",
+      "rate": "p23"
+    },
+    {
+      "name": "T3",
+      "from": "C1",
+      "to": "C3",
+      "rate": "p13"
+    },
+    {
+      "name": "TCOut",
+      "from": "C3",
+      "to": "C4",
+      "rate": "p34"
+    }
+  ],
+  "expressions": [
+    {
+      "name": "Outflow",
+      "equation": "TCOut*C3",
+      "unit": "Bq/year"
+    }
+  ]
+}

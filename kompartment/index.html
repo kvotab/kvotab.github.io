@@ -1,0 +1,398 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- What this page is allowed to load, and where it may send anything.
+
+     Defence in depth rather than a fix for a known hole: there is no
+     `innerHTML` anywhere in src/, and the equation compiler emits only array
+     indices and calls into a fixed table, so a model file has no way to
+     become markup or code. This is the second wall, for the day one of those
+     two facts stops being true.
+
+     Two of the entries are not optional and are worth saying out loud:
+       * `'unsafe-eval'` — the compiler turns an equation into a real
+         JavaScript function (`new Function` in parser/compile.js), which is
+         the whole reason this port is fast enough to be worth having. It also
+         covers the WebAssembly a SciPy run compiles; `'wasm-unsafe-eval'` is
+         beside it for browsers that split the two.
+       * `cdn.jsdelivr.net` — where Pyodide comes from, and only for a SciPy
+         solver, which is the one thing here that is not served from this
+         directory. `script-src` for the module, `connect-src` for the wasm
+         and data files it then fetches.
+     `blob:` is for the SVG a picture export previews and the worker Pyodide
+     starts; `'unsafe-inline'` under style-src is for the positions the chart
+     tooltip and the panel dividers write onto elements.
+
+     `frame-ancestors` is deliberately absent: a <meta> CSP cannot carry it.
+     It goes in the response header instead — see serve.py, and send the same
+     one from whatever serves this in earnest. -->
+<meta http-equiv="Content-Security-Policy" content="
+  default-src 'self';
+  script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval' https://cdn.jsdelivr.net;
+  worker-src 'self' blob:;
+  style-src 'self' 'unsafe-inline';
+  img-src 'self' data: blob:;
+  font-src 'self';
+  connect-src 'self' https://cdn.jsdelivr.net;
+  object-src 'none';
+  base-uri 'none';
+  form-action 'none'">
+<title>Kompartment</title>
+<!-- Two compartments and the flux between them. SVG first, since it is the
+     one that stays sharp on a high-density screen and in the bookmark bar; the
+     PNG is for anything that will not take one. See icon.svg. -->
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="icon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="stylesheet" href="css/app.css">
+<!-- A second skin, matching the site this tool is embedded in. Every rule in it
+     is under [data-brand], which nothing sets unless ?brand= asks, so a plain
+     page pays only for the bytes. See css/theme-kvotab.css. -->
+<link rel="stylesheet" href="css/theme-kvotab.css">
+</head>
+<body>
+<div id="app">
+
+	<header>
+		<span class="brand">
+			<!-- The mark, at the size the title is. It carries the model's name
+			     rather than the application's, so the icon is the only thing in
+			     the corner that says which program this is. -->
+			<img class="brand-mark" src="icon.svg" alt="" width="26" height="26">
+			<b id="title">Kompartment</b>
+			<span id="subtitle"></span>
+		</span>
+		<span class="spacer"></span>
+		<!-- Names the model that is loaded, and offers the bundled examples;
+		     see noteModelSource in app.js. -->
+		<select id="example" aria-label="Model"
+			title="The model that is loaded — pick an example to load one"></select>
+		<button id="new" class="ghost" type="button" title="Start a blank model">New</button>
+		<button id="open" class="ghost" type="button" title="Open a .json model, an Ecolego .eco project or .eas assessment, or a bare model.xml">Open…</button>
+		<!-- Open replaces the model; Import brings blocks out of another file
+		     into the one that is open. See importFromFile in app.js. -->
+		<button id="import" class="ghost" type="button" title="Bring blocks from another model file into this one — this model stays open">Import…</button>
+		<!-- Save, and the format beside it. The formats were offered only inside
+		     the operating system's own save dialog, in a file-type dropdown
+		     nobody finds, and on a browser with no such dialog they could not be
+		     reached at all. The caret is the visible way to them. -->
+		<span class="tool-pair">
+			<!-- The label and the title are rewritten by `renderSaveButton`: the
+			     ellipsis is a promise that it will ask, and once it has been
+			     asked and answered there is nothing left to ask. -->
+			<button id="save" class="ghost" type="button"
+				title="Save this model as JSON — asks where to put it (⌘S)">Save…</button>
+		</span>
+		<!-- Undo and redo. Disabled until there is something to take back, so
+		     the pair says how far the model can be walked back as well as
+		     offering it; see renderHistoryButtons in app.js. -->
+		<span class="tool-pair">
+			<button id="undo" class="ghost icon" type="button" disabled
+				aria-label="Undo" title="Nothing to undo (Cmd/Ctrl+Z)">↶</button>
+			<button id="redo" class="ghost icon" type="button" disabled
+				aria-label="Redo" title="Nothing to redo (Cmd/Ctrl+Shift+Z)">↷</button>
+		</span>
+		<!-- Only when the model has warnings and their list has been put away:
+		     the marks stay on the diagram and in the tree, but the summary is
+		     gone, and this is the way back to it. See renderWarningButton in
+		     app.js. -->
+		<button id="warnings" class="ghost warn-badge" type="button" hidden></button>
+		<label class="inline-check" title="Re-run automatically after each edit">
+			<input type="checkbox" id="autorun"> auto-run
+		</label>
+		<button id="cancel" type="button" hidden>Stop</button>
+		<button id="run" class="primary" type="button" title="Run the simulation (Cmd/Ctrl+Enter)">
+			Run<span id="dirty" class="dot-dirty" aria-hidden="true"></span>
+		</button>
+		<button id="theme" class="ghost" type="button" title="Cycle light / dark / system">◐</button>
+	</header>
+
+	<main>
+		<!-- The left panel, and the only one. Two parts: what `renderSidebar`
+		     rebuilds on every edit -- the model's name and the simulation
+		     settings -- and below it the tree of the model with the reading view
+		     of what is selected, which were a panel of their own on the right
+		     until the two were put in one column. They are kept out of the part
+		     that is rebuilt: `renderSidebar` replaces the children of `#sb-top`,
+		     and rebuilding a tree of three thousand rows on every keystroke is
+		     what that division exists to avoid. -->
+		<aside id="sidebar">
+			<div id="sb-top"></div>
+			<div id="search" class="rail-section rail-search"></div>
+			<div id="blocklist" class="rail-section rail-blocks"></div>
+			<div id="rail-split" class="rail-split" role="separator"
+				aria-orientation="horizontal" tabindex="0"
+				aria-label="Divide the panel between the tree and Information"
+				title="Drag to divide the panel; double-click to even it up"></div>
+			<div id="info" class="rail-section rail-info"></div>
+			<!-- What is selected, under everything that shows it. It sat above
+			     the tree, between the simulation settings and the search, where
+			     it pushed both down the moment a second block was picked and
+			     read as a heading for the search rather than as a note about a
+			     selection. At the foot of the panel it is a status line, which
+			     is what it is. -->
+			<div id="picked" class="rail-picked" hidden></div>
+		</aside>
+
+		<!-- How wide the left panel is, and whether it is there at all. The
+		     grip resizes it; the chevron folds it away and is also the way
+		     back, since the grip stays where it is when the panel goes. -->
+		<div class="pane-split" data-pane="left">
+			<div class="pane-grip" role="separator" tabindex="0" aria-orientation="vertical"
+				aria-label="Width of the left panel"
+				title="Drag to resize the left panel; double-click for its usual width"></div>
+			<button class="pane-toggle" type="button" data-pane="left"
+				aria-controls="sidebar" aria-expanded="true"
+				title="Hide the left panel">&lsaquo;</button>
+		</div>
+
+		<section id="workspace">
+			<nav class="tabs" role="tablist">
+				<button class="tab" role="tab" data-tab="build" aria-selected="true">Build</button>
+				<button class="tab" role="tab" data-tab="matrix" aria-selected="false">Matrix</button>
+				<button class="tab" role="tab" data-tab="indexlists" aria-selected="false"
+					title="The model’s dimensions: indices, sub-sets, mappings, and the half-lives and decay chains of the radionuclide list">Index lists</button>
+				<button class="tab" role="tab" data-tab="chart" aria-selected="false">Chart</button>
+				<button class="tab" role="tab" data-tab="table" aria-selected="false">Table</button>
+				<button class="tab" role="tab" data-tab="model" aria-selected="false">JSON</button>
+				<button class="tab" role="tab" data-tab="code" aria-selected="false">Generated code</button>
+				<span class="spacer"></span>
+				<!-- Not a view of the model, so it sits apart from the rest. -->
+				<button class="tab tab-help" role="tab" data-tab="help" aria-selected="false"
+					title="The guide and how it works, read here">Help</button>
+			</nav>
+
+			<!-- What is wrong with the model, above every tab, for as long as
+			     it is wrong. It used to live inside the Build and Chart
+			     panels, which meant a solver error was invisible on Matrix;
+			     and a broken equation used to get a notice at the foot of the
+			     window that faded after seven seconds, so a model could sit
+			     there unrunnable with nothing on screen saying why. -->
+			<div class="error" id="error" hidden></div>
+
+			<!-- What this tab was working on when it was last open, offered
+			     back. Above the tabs for the same reason the error strip is:
+			     it is about the whole window, and it has to be seen before
+			     anything is typed over it. See autosave.js; the offer appears
+			     only when there is a draft, and goes the moment it is
+			     answered either way. -->
+			<div class="draft-offer" id="draft-offer" role="status" hidden></div>
+
+			<div class="work-body">
+				<div class="panels">
+
+					<div class="panel" id="panel-build" data-active="true" role="tabpanel">
+						<div class="import-report" id="import-report" hidden></div>
+						<nav id="breadcrumb" class="breadcrumb" aria-label="Sub-system" hidden></nav>
+						<div id="graph" class="graph-host"></div>
+						<p class="hint graph-help">
+							<b>Right-click</b> the background to add blocks and choose what the
+							diagram shows, or a block to connect and delete it · drag the
+							<span class="hint-port"></span> handle on a compartment’s right edge
+							onto another to connect them · select a connection to drag its
+							midpoint (bend) or either end (re-attach), and right-click it for
+							<b>Straighten</b> · double-click anything for all its settings ·
+							drop a block on a sub-system to move it inside ·
+							shift-click, or shift-drag a box, to select several and move,
+							line up, drop or delete them together · drag the background to pan,
+							scroll to zoom · Del removes the selection
+						</p>
+					</div>
+
+					<div class="panel" id="panel-matrix" role="tabpanel"></div>
+
+					<div class="panel" id="panel-indexlists" role="tabpanel"></div>
+
+					<div class="panel" id="panel-chart" role="tabpanel">
+						<div>
+							<!-- The scales and the picture are on the chart's own
+							     right-click menu, where the diagram keeps its
+							     settings too: see chartMenu in app.js. -->
+							<div class="toolbar">
+								<!-- What produced what is on screen. Written by
+								     `renderRunKind` in app.js: a chart of bands
+								     and a chart of one curve look alike from
+								     across a desk, and which of them this is
+								     changes what every line on it means. -->
+								<span class="run-kind" id="chart-what"></span>
+								<!-- Done with the realisations. The one expensive
+								     thing this tool holds, and until this there was
+								     no way to say so short of editing the model. -->
+								<button type="button" class="ghost discard-prob" id="chart-discard" hidden>Discard sample</button>
+								<span class="spacer"></span>
+								<!-- Over time, or the spread at one instant.
+								     Shown only where there are realisations to
+								     take a distribution of. -->
+								<span class="chart-mode" id="chart-mode-row" hidden>
+									<label for="chart-mode">Show</label>
+									<select id="chart-mode">
+										<option value="time">over time</option>
+										<option value="dist">distribution</option>
+										<option value="scatter">scatter</option>
+									</select>
+									<!-- Which series is the horizontal axis. Only a
+									     scatter has one; the picker's own selection
+									     is what goes up it. -->
+									<select id="chart-x" aria-label="Against which series" hidden></select>
+									<!-- Which lines go through the bands, and what
+									     is drawn behind them. Only where there are
+									     realisations to summarise. Any combination:
+									     the median and the mean are far apart for a
+									     skewed output, and the model's own run
+									     belongs beside either. -->
+									<span class="chart-lines" id="chart-lines" role="group"
+									      aria-label="Which lines are drawn" hidden>
+										<label><input type="checkbox" data-line="median" checked> median</label>
+										<label><input type="checkbox" data-line="mean"> mean</label>
+										<label><input type="checkbox" data-line="single"> own run</label>
+									</span>
+									<select id="chart-spread" aria-label="What is drawn behind it" hidden>
+										<option value="bands">percentile bands</option>
+										<option value="sem">± standard error</option>
+										<option value="sd">± standard deviation</option>
+										<option value="none">no spread</option>
+									</select>
+									<!-- How a distribution is binned. Only in the
+									     distribution picture, which is the only one
+									     with bins. -->
+									<span class="chart-bins" id="chart-bins-row" hidden>
+										<label for="chart-bins">Bins</label>
+										<input type="number" id="chart-bins" min="2" max="200" step="1"
+										       placeholder="auto" aria-label="How many bins">
+										<select id="chart-binscale" aria-label="How the bins are spaced">
+											<option value="auto">auto</option>
+											<option value="linear">linear</option>
+											<option value="log">logarithmic</option>
+										</select>
+									</span>
+									<select id="chart-at" aria-label="At which time" hidden></select>
+								</span>
+								<span class="hint" id="pickinfo"></span>
+							</div>
+							<div class="pick-filter" id="pick-filter"></div>
+							<div class="picker" id="picker"></div>
+							<p class="hint" id="unitwarn" hidden></p>
+						</div>
+						<div class="chart-shell" id="chart-shell"
+							title="Drag over the chart to zoom and shift-drag to pan (the middle button pans too), scroll to zoom about the pointer, double-click to show everything — right-click for the scales, the drag mode, and to save a picture">
+							<div id="chart" class="chart-root"></div>
+							<div class="legend" id="legend" hidden></div>
+						</div>
+					</div>
+
+					<div class="panel" id="panel-table" role="tabpanel">
+						<div class="toolbar">
+							<span class="run-kind" id="table-what"></span>
+							<button type="button" class="ghost discard-prob" id="table-discard" hidden>Discard sample</button>
+							<span class="spacer"></span>
+							<!-- A table of a run over time, or of the realisations at
+							     one instant. Only where there are realisations. -->
+							<span class="chart-mode" id="table-mode-row" hidden>
+								<label for="table-mode">Show</label>
+								<select id="table-mode">
+									<option value="time">over time</option>
+									<option value="at">the realisations at one time</option>
+								</select>
+								<!-- Which run over time. After a sample the table's
+								     rows could be any of several things, and a table
+								     of numbers cannot say which it is by looking. -->
+								<select id="table-series" aria-label="Which run over time" hidden></select>
+								<input type="number" id="table-real" min="1" step="1" hidden
+								       aria-label="Which realisation">
+								<select id="table-at" aria-label="At which time" hidden></select>
+							</span>
+						</div>
+						<div id="table-body"></div>
+					</div>
+
+					<div class="panel" id="panel-model" role="tabpanel">
+						<div class="toolbar">
+							<p class="hint">
+								The project file. Blocks are <code>compartments</code>,
+								<code>transfers</code>, <code>parameters</code>,
+								<code>expressions</code> and <code>sources</code>; a transfer rate
+								is multiplied by its donor compartment unless
+								<code>"multiply_by_donor": false</code>. A transfer or source
+								<code>unit</code> is derived from its donor and the time unit,
+								so it is rewritten rather than read.
+							</p>
+							<span class="spacer"></span>
+							<button id="apply" class="primary" type="button">Apply &amp; run</button>
+						</div>
+						<!-- Offered rather than laid out, past a size. A textarea of
+						     nine hundred thousand lines costs the browser five
+						     seconds of layout before anything can be typed in it,
+						     and a model that large is read here rather than
+						     edited. See renderModelEditor. -->
+						<p class="hint json-huge" id="json-huge" hidden></p>
+						<textarea id="json" spellcheck="false" aria-label="Project JSON"></textarea>
+					</div>
+
+					<div class="panel" id="panel-help" role="tabpanel"></div>
+
+					<!-- Two views of the same thing: what the builder generated from
+					     the model's equations. The derivative function, and the
+					     matrix of its partial derivatives that the stiff solvers
+					     are handed. Neither is a view of the model, which is why
+					     they share a tab rather than taking one each. -->
+					<div class="panel" id="panel-code" role="tabpanel">
+						<div class="toolbar code-views" role="group" aria-label="Generated">
+							<button class="search-chip is-on" type="button" data-codeview="code"
+								aria-pressed="true">Derivative code</button>
+							<button class="search-chip" type="button" data-codeview="jacobian"
+								aria-pressed="false">Jacobian</button>
+							<span class="spacer"></span>
+							<span class="hint" id="codehint">
+								The derivative function generated from this model’s equations,
+								compiled by the JavaScript engine before the solve.
+							</span>
+						</div>
+						<pre class="code" id="codeview"></pre>
+						<div class="jacview" id="jacview" hidden></div>
+					</div>
+
+				</div>
+
+			</div>
+		</section>
+	</main>
+
+	<footer>
+		<!-- Notices float above the footer rather than sitting in the header.
+		     In the header a long one wrapped the row, which pushed every panel
+		     in the window down a line the moment something was clicked. -->
+		<span id="flash" role="status" aria-live="polite" hidden></span>
+		<span id="status"></span>
+		<span id="run-progress" class="foot-progress">
+			<progress id="progress" max="1" value="0"></progress>
+			<span id="progress-pct" class="mono"></span>
+		</span>
+		<!-- Whose this is. In a new tab on purpose: a model in progress lives
+		     in this page and nowhere else until it is saved, so a link that
+		     navigated away would throw it out. -->
+		<a class="foot-link" href="https://kvotab.se" target="_blank" rel="noopener noreferrer"
+			title="Kvot AB — kvotab.se (opens in a new tab)">kvotab.se</a>
+	</footer>
+
+	<div id="drop-zone" hidden>
+		<div class="drop-card">
+			<b>Drop to open</b>
+			<span>a <code>.json</code> project, an Ecolego <code>.eco</code> or
+				<code>.eas</code> archive, or a bare <code>model.xml</code></span>
+		</div>
+	</div>
+
+</div>
+<div id="boot-problem" hidden></div>
+
+<!-- A classic script, not a module: it has to run even when module loading is
+     the thing that failed. In a file rather than inline, because the policy in
+     the head of this page refuses inline scripts — see src/ui/boot-problem.js. -->
+<script src="src/ui/boot-problem.js"></script>
+
+<!-- And the editor itself. -->
+<script type="module" src="src/ui/start.js"></script>
+</body>
+</html>

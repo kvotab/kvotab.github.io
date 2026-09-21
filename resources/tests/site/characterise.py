@@ -885,6 +885,71 @@ ${p('Styrelseledamot')}
         }))()"""),
     ],
 
+    # The tool itself has its own suite; what is recorded here is the frame
+    # this page puts around it -- the address it is given, whether it insets
+    # itself into the gap between the site's header and footer, and the two
+    # controls it hands over to the page.
+    'kompartment.html': [
+        ('kompartment.frame', """(async () => {
+          const f = document.getElementById('komp-frame');
+          let loaded = false;
+          for (let i = 0; i < 80 && !loaded; i++) {
+            const d = f.contentDocument;
+            loaded = !!(d && d.querySelector('#app .tab'));
+            if (!loaded) await new Promise(r => setTimeout(r, 250));
+          }
+          const d = f.contentDocument, w = f.contentWindow;
+          const url = new URL(f.getAttribute('src'), location.href);
+          const app = d.getElementById('app').getBoundingClientRect();
+          const head = document.querySelector('header').getBoundingClientRect();
+          const foot = document.querySelector('footer').getBoundingClientRect();
+          const out = document.querySelector('.komp-open');
+          return {
+            loaded,
+            framePath: url.pathname,
+            // The theme's *value* is whatever the run happens to start on --
+            // the stored choice carries over between runs -- so what is
+            // recorded is that the parameter is there and agrees with the page,
+            // not which of the two words it holds.
+            frameParams: [...url.searchParams].map(([k, v]) => k + '=' + (k === 'theme' ? '<page>' : v)).sort(),
+            frameFillsWindow: Math.abs(f.getBoundingClientRect().height - window.innerHeight) < 2,
+            appStartsAtHeaderBottom: Math.abs(app.top - head.bottom) < 2,
+            appEndsAtFooterTop: Math.abs(app.bottom - foot.top) < 2,
+            pageScrolls: document.documentElement.scrollHeight > window.innerHeight,
+            brand: d.documentElement.getAttribute('data-brand'),
+            chrome: d.documentElement.getAttribute('data-chrome'),
+            themeMatchesPage: d.documentElement.getAttribute('data-theme')
+              === document.documentElement.getAttribute('data-theme'),
+            ownThemeButton: w.getComputedStyle(d.getElementById('theme')).display,
+            ownSiteLink: w.getComputedStyle(d.querySelector('.foot-link')).display,
+            fullWindowLink: out ? (() => {
+              const u = new URL(out.getAttribute('href'), location.href);
+              u.searchParams.set('theme', '<page>');
+              return u.pathname + u.search;
+            })() : null,
+            tabs: [...d.querySelectorAll('#app .tab')].map(t => t.dataset.tab)
+          };
+        })()"""),
+
+        # The page's toggle is the only one on it: the tool's own is hidden
+        # while it wears this chrome, so the choice has to cross into the frame.
+        ('kompartment.themeReachesTheFrame', """(async () => {
+          const d = document.getElementById('komp-frame').contentDocument;
+          const before = d.documentElement.getAttribute('data-theme');
+          KVOT.toggleTheme();
+          await new Promise(r => setTimeout(r, 400));
+          const page = document.documentElement.getAttribute('data-theme');
+          const inFrame = d.documentElement.getAttribute('data-theme');
+          KVOT.toggleTheme();
+          await new Promise(r => setTimeout(r, 400));
+          return {
+            changed: inFrame !== before,
+            matchedThePage: inFrame === page,
+            restored: d.documentElement.getAttribute('data-theme') === before
+          };
+        })()"""),
+    ],
+
     'karaoke.html': [
         ('karaoke.dom', """(() => ({
           lang: document.documentElement.lang,

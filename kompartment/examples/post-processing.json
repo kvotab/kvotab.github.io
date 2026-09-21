@@ -1,0 +1,248 @@
+{
+  "name": "Dose from a released inventory",
+  "description": "A model with no compartments. Nothing is integrated: the release to the biosphere is a measured series, and the concentration, the dose per nuclide and the total dose follow from it directly. Models of this shape are common — 15 of the 71 real projects this was measured against — and they are what the results of a transport calculation are turned into. The blocks are evaluated over the time span in dependency order, with the same clock a solved model would see.",
+  "simulation": {
+    "start_time": 0,
+    "end_time": 12000,
+    "output_points": 300,
+    "spacing": "linear",
+    "solver": "ndf",
+    "rtol": 1e-06,
+    "abstol": 1e-09,
+    "time_unit": "year"
+  },
+  "nuclides": [
+    "I-129",
+    "Ra-226",
+    "Ni-59"
+  ],
+  "parameters": [
+    {
+      "name": "DC",
+      "unit": "Sv/year per Bq/m3",
+      "value": 1.1e-07,
+      "comment": "Dose coefficient for drinking water.",
+      "entries": [
+        {
+          "index": {
+            "Radionuclides": "Ra-226"
+          },
+          "value": 2.8e-06
+        },
+        {
+          "index": {
+            "Radionuclides": "Ni-59"
+          },
+          "value": 6.4e-09
+        }
+      ]
+    },
+    {
+      "name": "Dilution",
+      "value": 500000,
+      "unit": "m3/year",
+      "per_nuclide": false,
+      "index_lists": [],
+      "comment": "Flow through the recipient lake."
+    },
+    {
+      "name": "Fraction",
+      "unit": "",
+      "value": 1,
+      "comment": "Share of the release that reaches this recipient.",
+      "entries": [
+        {
+          "index": {
+            "Radionuclides": "Ni-59"
+          },
+          "value": 0.35
+        }
+      ]
+    }
+  ],
+  "lookups": [
+    {
+      "name": "Release",
+      "unit": "Bq/year",
+      "interpolation": "linear",
+      "points": [
+        [
+          0,
+          31900
+        ],
+        [
+          500,
+          103800
+        ],
+        [
+          1000,
+          246000
+        ],
+        [
+          1500,
+          400000
+        ],
+        [
+          2000,
+          522000
+        ],
+        [
+          2500,
+          711400
+        ],
+        [
+          3000,
+          1069000
+        ],
+        [
+          3500,
+          1588000
+        ],
+        [
+          4000,
+          2214000
+        ],
+        [
+          4500,
+          2868000
+        ],
+        [
+          5000,
+          3450000
+        ],
+        [
+          5500,
+          3855000
+        ],
+        [
+          6000,
+          4000000
+        ],
+        [
+          6500,
+          3855000
+        ],
+        [
+          7000,
+          3450000
+        ],
+        [
+          7500,
+          2868000
+        ],
+        [
+          8000,
+          2214000
+        ],
+        [
+          8500,
+          1587000
+        ],
+        [
+          9000,
+          1056000
+        ],
+        [
+          9500,
+          653200
+        ],
+        [
+          10000,
+          375100
+        ],
+        [
+          10500,
+          200000
+        ],
+        [
+          11000,
+          99070
+        ],
+        [
+          11500,
+          45570
+        ],
+        [
+          12000,
+          19460
+        ]
+      ],
+      "comment": "Release to the biosphere, from a transport calculation. Every nuclide shares the shape here; a real model gives each its own."
+    }
+  ],
+  "expressions": [
+    {
+      "name": "Conc",
+      "equation": "Release * Fraction / Dilution",
+      "unit": "Bq/m3"
+    },
+    {
+      "name": "Dose",
+      "equation": "Conc * DC",
+      "unit": "Sv/year"
+    }
+  ],
+  "index_reductions": [
+    {
+      "name": "Dose_total",
+      "target": "Dose",
+      "operation": "sum",
+      "per_nuclide": false,
+      "index_lists": [],
+      "unit": "Sv/year",
+      "comment": "Every nuclide together — the number an assessment reports."
+    },
+    {
+      "name": "Dose_worst",
+      "target": "Dose",
+      "operation": "max",
+      "per_nuclide": false,
+      "index_lists": [],
+      "unit": "Sv/year",
+      "comment": "The nuclide contributing most at each moment."
+    }
+  ],
+  "layout": {
+    "Release": {
+      "x": 80,
+      "y": 100,
+      "w": 210,
+      "h": 78
+    },
+    "Conc": {
+      "x": 360,
+      "y": 100
+    },
+    "Dose": {
+      "x": 590,
+      "y": 100
+    },
+    "Dose_total": {
+      "x": 820,
+      "y": 60
+    },
+    "Dose_worst": {
+      "x": 820,
+      "y": 160
+    },
+    "Dilution": {
+      "x": 360,
+      "y": 250
+    },
+    "Fraction": {
+      "x": 150,
+      "y": 250
+    },
+    "DC": {
+      "x": 590,
+      "y": 250
+    }
+  },
+  "view": {
+    "show_lookups": true,
+    "show_parameters": true,
+    "show_expressions": true,
+    "show_reductions": true,
+    "show_influences": true
+  }
+}

@@ -51,6 +51,11 @@ const KVOT = (() => {
       desc: 'Summarise QA review status across Excel workbooks, with filters, statistics and CSV export.',
     },
     {
+      href: './kompartment.html',
+      label: 'Kompartment',
+      desc: 'Build compartment models in the browser — blocks and fluxes drawn on a canvas, expressions, uncertainty and calibration — and solve them with a choice of stiff and non-stiff solvers.',
+    },
+    {
       href: './facsimile.html',
       label: 'Canister Radiolysis',
       desc: 'Solve the FACSIMILE radiolysis and corrosion model of the gas in an intact spent-fuel canister, with editable reactions and a sparse analytic Jacobian.',

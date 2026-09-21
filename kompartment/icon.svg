@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img">
+	<title>Kompartment</title>
+	<!--
+		Two compartments and the flux between them: what this application draws,
+		and about the only thing an icon of it can say at sixteen pixels.
+
+		DRAWN IN THE KVOTAB MARK'S LANGUAGE, so the two read as a family. That
+		language is four rules and nothing else:
+
+		  - true 30-degree isometric. Every edge is horizontal, or at
+		    +/-30 degrees, or vertical; nothing else appears.
+		  - three flat tones, one per face: #f3b87b lit from above,
+		    #bb6c5d on the right, #344126 on the left. No gradients.
+		  - no strokes. The faces meet, and the tone change is the edge —
+		    which is what keeps it clean at sixteen pixels, where a hairline
+		    outline would be half the mark.
+		  - no background plate. The mark is transparent, so it takes the tone
+		    of whatever it sits on; on black the olive face recedes and the
+		    other two carry it, exactly as the parent mark does.
+
+		The beam runs out of the far box and under the near one, which is the
+		whole of the composition: the near box is drawn last so the flux
+		disappears into it rather than stopping short. Box and beam are the
+		same three faces, so there is one object here rather than three.
+
+		Geometry generated rather than typed: a cube is its top rhombus plus
+		two extrusions, and the numbers below are that arithmetic rounded to
+		two places. Editing them by hand will bend the projection; change the
+		side length and regenerate instead.
+	-->
+
+	<!-- the far compartment -->
+	<polygon fill="#344126" points="2,12.08 17,20.74 17,38.06 2,29.4"/>
+	<polygon fill="#bb6c5d" points="32,12.08 17,20.74 17,38.06 32,29.4"/>
+	<polygon fill="#f3b87b" points="17,3.42 32,12.08 17,20.74 2,12.08"/>
+
+	<!-- the flux, leaving it -->
+	<polygon fill="#344126" points="6.78,31.48 39.94,50.62 39.94,56.51 6.78,37.37"/>
+	<polygon fill="#f3b87b" points="15.18,26.63 48.33,45.77 39.94,50.62 6.78,31.48"/>
+
+	<!-- the near compartment, over the end of it -->
+	<polygon fill="#344126" points="32,34.6 47,43.26 47,60.58 32,51.92"/>
+	<polygon fill="#bb6c5d" points="62,34.6 47,43.26 47,60.58 62,51.92"/>
+	<polygon fill="#f3b87b" points="47,25.94 62,34.6 47,43.26 32,34.6"/>
+</svg>

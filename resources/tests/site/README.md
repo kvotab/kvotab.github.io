@@ -7,6 +7,7 @@ refactor can be shown not to have moved it.
 ## Running
 
     python3 -m http.server 8765 --bind 127.0.0.1
+    rm -rf /tmp/kvottest        # a fresh profile — see Determinism below
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
       --headless=new --remote-debugging-port=9222 --no-first-run \
       --user-data-dir=/tmp/kvottest --disable-gpu about:blank
@@ -19,7 +20,7 @@ Then, from this directory:
     python3 compare.py before.json after.json
 
 `compare.py` prints `IDENTICAL` or lists every field that moved. One full run
-takes roughly 100 seconds and compares 267 fields.
+takes roughly three minutes and compares 536 fields.
 
 ## What is covered
 
@@ -56,8 +57,21 @@ the failure banner appears.
 
 ## Determinism
 
-A full run is byte-identical between runs. Two things had to be handled to get
-there:
+A full run is byte-identical between runs **from the same starting state**, and
+the starting state includes the browser profile. Start from a fresh
+`--user-data-dir`, which is what `finalafter.json` was recorded against. A warm
+profile carries two things across runs and moves about thirty fields without a
+line of the site having changed:
+
+- the theme a run's own toggle stored, which flips every page's `chrome/theme`
+  and `chrome.interactions/themePersisted` to the other word;
+- an årsredovisning draft left in storage, which adds `utkast:aterta` and
+  `utkast:slang` to `arsred.static/controls`.
+
+Two fields are timestamps and always differ: `inkomstdeklaration`'s
+`sru.bygg/info` and `sru.bygg/blanketter` carry the minute the file was built.
+
+Two things had to be handled inside the run itself:
 
 - the theme-toggle step persists a choice, so the stored theme is cleared at
   the start of each page;

@@ -56,6 +56,11 @@
     <priority>0.8</priority>
   </url>
   <url>
+    <loc>https://kvotab.se/kompartment.html</loc>
+    <lastmod>2026-09-21</lastmod>
+    <priority>0.8</priority>
+  </url>
+  <url>
     <loc>https://kvotab.se/erosion_corrosion.html</loc>
     <lastmod>2026-09-21</lastmod>
     <priority>0.8</priority>

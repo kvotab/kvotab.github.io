@@ -15,7 +15,7 @@ others. Each item keeps its own licence.
 | [jsTree](https://www.jstree.com/) | MIT | header in `vendors/js/jstree.min.js`; theme in `vendors/css/jstree/` |
 | [math.js](https://mathjs.org/) | Apache-2.0 | `vendors/js/LICENSE-math.js.txt` |
 | [FileSaver.js](https://github.com/eligrey/FileSaver.js) | MIT | `vendors/js/FileSaver.min.js` |
-| [OrdinaryDiffEq.jl](https://github.com/SciML/OrdinaryDiffEq.jl) (ported to JavaScript) | MIT | `resources/js/ode_julia/LICENSE` |
+| [OrdinaryDiffEq.jl](https://github.com/SciML/OrdinaryDiffEq.jl) (ported to JavaScript) | MIT | `resources/js/ode_julia/LICENSE`, `kompartment/src/ode/julia/LICENSE` |
 | Coordinate conversions by Arnold Andreasson (`gausskruger.js`, `lat_lon_conv.js`, `latlong.js`, `map.js`) | MIT | headers in the files |
 | Error-function coefficients in `resources/js/erf.js` | Boost Software License 1.0 (John Maddock) | header in the file |
 | CALERF (`resources/js/erf.f`, `erf.js`) | public domain (W. J. Cody, Netlib SPECFUN) | header in the file |
@@ -25,12 +25,15 @@ others. Each item keeps its own licence.
 
 jQuery and jQuery UI (MIT), MathJax (Apache-2.0), Leaflet (BSD-2-Clause),
 SheetJS `xlsx` (Apache-2.0), SortableJS (MIT), h5wasm (BSD-3-Clause), JSZip
-(MIT/GPLv3 dual), pdf.js (Apache-2.0). They are fetched by the visitor's
+(MIT/GPLv3 dual), pdf.js (Apache-2.0), and — only when a model in Kompartment
+asks for a SciPy solver — Pyodide (MPL-2.0) with the CPython (PSF), NumPy and
+SciPy (BSD-3-Clause) builds it carries. They are fetched by the visitor's
 browser from their publishers and are not redistributed here.
 
 ## Data
 
-- **Radionuclide decay data** (`resources/js/rndecaydata.js`) are from ICRP
+- **Radionuclide decay data** (`resources/js/rndecaydata.js`,
+  `kompartment/src/domain/icrp107.js`) are from ICRP
   Publication 107, *Nuclear Decay Data for Dosimetric Calculations*, Annals of
   the ICRP 38(3), 2008, © ICRP. Dose coefficients are from ICRP Publications
   72 and 119 as cited on the page.

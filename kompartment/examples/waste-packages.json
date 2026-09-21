@@ -1,0 +1,303 @@
+{
+  "name": "Canisters failing: a source term with barriers, and two disruptive events",
+  "description": "4,500 spent-fuel canisters in a repository. None fails before year 1,000; after that the failures follow a Weibull with a characteristic life of 50,000 years and a shape of 2, the corrosion form. When a canister fails, 3% of its caesium and 0.5% of the rest is in the water at once (the instant release fraction) and the remainder waits for the fuel matrix, which dissolves at one part in ten million a year. The release goes into the near-field water, which is flushed to the geosphere; switch the mass-balance audit on under SIMULATION to watch the bookkeeping close. Two disruptive events act on it: an earthquake, a Poisson process at 2e-5 a year that fails 5% of the still-intact canisters at each occurrence, and a glaciation at 100,000 years that strips 80% of the biosphere out of the model. A deterministic run takes the earthquake in its expected-value form; a probabilistic run draws its occurrences — compare the staircase of Quake with its expected line.",
+  "simulation": {
+    "start_time": 0,
+    "end_time": 1000000,
+    "output_points": 200,
+    "spacing": "log",
+    "solver": "ndf",
+    "rtol": 1e-06,
+    "abstol": 0.001,
+    "time_unit": "year",
+    "mass_balance": false
+  },
+  "nuclides": [
+    "Cs-137",
+    "Ni-59",
+    "Cl-36",
+    "Se-79"
+  ],
+  "decay_unit": "Bq",
+  "index_lists": [
+    {
+      "name": "Radionuclides",
+      "indices": [
+        {
+          "name": "Cs-137"
+        },
+        {
+          "name": "Ni-59"
+        },
+        {
+          "name": "Cl-36"
+        },
+        {
+          "name": "Se-79"
+        }
+      ],
+      "for_contaminants": true
+    }
+  ],
+  "parameters": [
+    {
+      "name": "t_first_failure",
+      "value": 1000,
+      "unit": "year",
+      "index_lists": [],
+      "comment": "No canister fails before this: the time the earliest corrosion process could breach one."
+    },
+    {
+      "name": "canister_life",
+      "value": 50000,
+      "unit": "year",
+      "index_lists": [],
+      "comment": "The Weibull scale: 63% of the canisters have failed one life after the first failure."
+    },
+    {
+      "name": "matrix_rate",
+      "value": 1e-07,
+      "unit": "1/year",
+      "index_lists": [],
+      "comment": "The fraction of the exposed fuel matrix dissolving per year. Everything bound in it leaves congruently."
+    },
+    {
+      "name": "flush_rate",
+      "value": 0.001,
+      "unit": "1/year",
+      "index_lists": [],
+      "comment": "Turnover of the near-field water: the fraction leaving for the geosphere per year."
+    },
+    {
+      "name": "geo_rate",
+      "value": 0.0002,
+      "unit": "1/year",
+      "index_lists": [],
+      "comment": "Transit through the geosphere to the biosphere, as a first-order rate."
+    },
+    {
+      "name": "quake_rate",
+      "value": 2e-05,
+      "unit": "1/year",
+      "index_lists": [],
+      "comment": "Earthquakes breaching canisters: one in fifty thousand years."
+    },
+    {
+      "name": "t_glacial",
+      "value": 100000,
+      "unit": "year",
+      "index_lists": [],
+      "comment": "When the next ice sheet reaches the site."
+    }
+  ],
+  "waste_packages": [
+    {
+      "name": "Canisters",
+      "index_lists": [
+        "Radionuclides"
+      ],
+      "packages": 4500,
+      "inventory": "1e14",
+      "irf": "0.005",
+      "degradation_rate": "matrix_rate",
+      "failure": "weibull",
+      "fail_start": "t_first_failure",
+      "fail_scale": "canister_life",
+      "fail_shape": "2",
+      "handle_decay": true,
+      "unit": "Bq/year",
+      "entries": [
+        {
+          "index": {
+            "Radionuclides": "Cs-137"
+          },
+          "inventory": "5e16",
+          "irf": "0.03"
+        },
+        {
+          "index": {
+            "Radionuclides": "Ni-59"
+          },
+          "inventory": "2e13"
+        },
+        {
+          "index": {
+            "Radionuclides": "Cl-36"
+          },
+          "inventory": "4e12",
+          "irf": "0.08"
+        }
+      ],
+      "comment": "The source term: the inventory starts inside the canisters and reaches the water only as they fail and the fuel dissolves. What leaves is the line drawn out of the block."
+    }
+  ],
+  "compartments": [
+    {
+      "name": "NearField",
+      "index_lists": [
+        "Radionuclides"
+      ],
+      "initial": "0",
+      "unit": "Bq",
+      "comment": "The water in and around the failed canisters. A solubility limit would go on the transfer out of here, as an availability."
+    },
+    {
+      "name": "Geosphere",
+      "index_lists": [
+        "Radionuclides"
+      ],
+      "initial": "0",
+      "unit": "Bq"
+    },
+    {
+      "name": "Biosphere",
+      "index_lists": [
+        "Radionuclides"
+      ],
+      "initial": "0",
+      "unit": "Bq"
+    }
+  ],
+  "transfers": [
+    {
+      "name": "Release",
+      "from": "Canisters",
+      "to": "NearField",
+      "rate": "Canisters",
+      "multiply_by_donor": false,
+      "unit": "Bq/year",
+      "index_lists": [
+        "Radionuclides"
+      ],
+      "comment": "What leaves the canisters. Its rate is the block itself, so there is nothing to set."
+    },
+    {
+      "name": "Flush",
+      "from": "NearField",
+      "to": "Geosphere",
+      "rate": "flush_rate",
+      "unit": "1/year",
+      "index_lists": [
+        "Radionuclides"
+      ]
+    },
+    {
+      "name": "Transit",
+      "from": "Geosphere",
+      "to": "Biosphere",
+      "rate": "geo_rate",
+      "unit": "1/year",
+      "index_lists": [
+        "Radionuclides"
+      ]
+    },
+    {
+      "name": "Loss",
+      "from": "Biosphere",
+      "to": null,
+      "rate": "1e-2",
+      "unit": "1/year",
+      "index_lists": [
+        "Radionuclides"
+      ],
+      "comment": "Dilution and dispersal out of the modelled biosphere."
+    }
+  ],
+  "expressions": [],
+  "inflows": [],
+  "layout": {
+    "Canisters": {
+      "x": 60,
+      "y": 160
+    },
+    "NearField": {
+      "x": 300,
+      "y": 160
+    },
+    "Geosphere": {
+      "x": 520,
+      "y": 160
+    },
+    "Biosphere": {
+      "x": 740,
+      "y": 160
+    },
+    "t_first_failure": {
+      "x": 60,
+      "y": 40
+    },
+    "canister_life": {
+      "x": 60,
+      "y": 290
+    },
+    "matrix_rate": {
+      "x": 300,
+      "y": 40
+    },
+    "flush_rate": {
+      "x": 410,
+      "y": 290
+    },
+    "geo_rate": {
+      "x": 630,
+      "y": 290
+    },
+    "Quake": {
+      "x": 60,
+      "y": 400
+    },
+    "Glaciation": {
+      "x": 740,
+      "y": 400
+    },
+    "quake_rate": {
+      "x": 300,
+      "y": 400
+    },
+    "t_glacial": {
+      "x": 520,
+      "y": 400
+    }
+  },
+  "view": {
+    "show_parameters": true,
+    "show_expressions": false
+  },
+  "events": [
+    {
+      "name": "Quake",
+      "timing": "poisson",
+      "rate": "quake_rate",
+      "from": "",
+      "until": "",
+      "sampled": true,
+      "unit": "",
+      "actions": [
+        {
+          "kind": "fail",
+          "block": "Canisters",
+          "fraction": "0.05"
+        }
+      ],
+      "comment": "An earthquake: at each occurrence 5% of the canisters still intact fail. Deterministically a hazard of 1e-6 a year on the intact inventory; in a probabilistic run, drawn occurrences.",
+      "index_lists": []
+    },
+    {
+      "name": "Glaciation",
+      "timing": "at",
+      "at": "t_glacial",
+      "sampled": true,
+      "unit": "",
+      "actions": [
+        {
+          "kind": "move",
+          "from": "Biosphere",
+          "to": null,
+          "fraction": "0.8"
+        }
+      ],
+      "comment": "The ice sheet arrives: 80% of what the biosphere holds is scraped away, out of the model.",
+      "index_lists": []
+    }
+  ]
+}

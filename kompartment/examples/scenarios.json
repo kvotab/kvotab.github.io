@@ -1,0 +1,192 @@
+{
+  "name": "Three climate scenarios",
+  "description": "The same model under three futures. `Climate` is a scenario index list: one of its indices is live at a time, chosen under Simulation on the left, and every block indexed by it is read at that one. So `Runoff` and `LakeVolume` hold a value per scenario while `Conc` — which reads the volume but is not itself scenario-indexed — is a single quantity. Switch the scenario and the whole model answers differently, where the usual arrangement is one simulation per scenario.",
+  "scenario": "Present",
+  "index_lists": [
+    {
+      "name": "Climate",
+      "for_scenarios": true,
+      "comment": "Alternative futures, not an axis of the model: one runs at a time.",
+      "indices": [
+        "Present",
+        "Warmer and wetter",
+        "Drier"
+      ]
+    }
+  ],
+  "simulation": {
+    "start_time": 0,
+    "end_time": 300,
+    "output_points": 300,
+    "spacing": "linear",
+    "solver": "ros23",
+    "rtol": 1e-08,
+    "abstol": 1e-10,
+    "time_unit": "year"
+  },
+  "parameters": [
+    {
+      "name": "Runoff",
+      "unit": "1/year",
+      "index_lists": [
+        "Climate"
+      ],
+      "value": 0.02,
+      "comment": "How fast the soil drains into the lake.",
+      "entries": [
+        {
+          "index": {
+            "Climate": "Present"
+          },
+          "value": 0.02
+        },
+        {
+          "index": {
+            "Climate": "Warmer and wetter"
+          },
+          "value": 0.05
+        },
+        {
+          "index": {
+            "Climate": "Drier"
+          },
+          "value": 0.005
+        }
+      ]
+    },
+    {
+      "name": "LakeVolume",
+      "unit": "m3",
+      "index_lists": [
+        "Climate"
+      ],
+      "value": 2000000,
+      "entries": [
+        {
+          "index": {
+            "Climate": "Present"
+          },
+          "value": 2000000
+        },
+        {
+          "index": {
+            "Climate": "Warmer and wetter"
+          },
+          "value": 3000000
+        },
+        {
+          "index": {
+            "Climate": "Drier"
+          },
+          "value": 800000
+        }
+      ]
+    },
+    {
+      "name": "Flush",
+      "value": 0.1,
+      "unit": "1/year"
+    },
+    {
+      "name": "DoseCoeff",
+      "value": 1.3e-08,
+      "unit": "Sv/year/(Bq/m3)"
+    }
+  ],
+  "compartments": [
+    {
+      "name": "Soil",
+      "initial": "1e12",
+      "unit": "Bq",
+      "color": "#8a6d3b"
+    },
+    {
+      "name": "Lake",
+      "initial": "0",
+      "unit": "Bq",
+      "color": "#4b83c7"
+    }
+  ],
+  "transfers": [
+    {
+      "name": "Leaching",
+      "from": "Soil",
+      "to": "Lake",
+      "rate": "Runoff"
+    },
+    {
+      "name": "Outflow",
+      "from": "Lake",
+      "to": null,
+      "rate": "Flush"
+    }
+  ],
+  "expressions": [
+    {
+      "name": "Conc",
+      "equation": "Lake / LakeVolume",
+      "unit": "Bq/m3"
+    },
+    {
+      "name": "Dose",
+      "equation": "Conc * DoseCoeff",
+      "unit": "Sv/year"
+    }
+  ],
+  "min_maxes": [
+    {
+      "name": "Peak_dose",
+      "target": "Dose",
+      "operation": "max",
+      "unit": "Sv/year"
+    }
+  ],
+  "layout": {
+    "Soil": {
+      "x": 110,
+      "y": 90
+    },
+    "Lake": {
+      "x": 400,
+      "y": 90
+    },
+    "Runoff": {
+      "x": 240,
+      "y": 230
+    },
+    "Flush": {
+      "x": 560,
+      "y": 230
+    },
+    "Conc": {
+      "x": 400,
+      "y": 340
+    },
+    "LakeVolume": {
+      "x": 620,
+      "y": 340
+    },
+    "Dose": {
+      "x": 400,
+      "y": 450
+    },
+    "DoseCoeff": {
+      "x": 620,
+      "y": 450
+    },
+    "Peak_dose": {
+      "x": 140,
+      "y": 450
+    }
+  },
+  "view": {
+    "show_expressions": true,
+    "show_parameters": true,
+    "show_lookups": false,
+    "show_reductions": true,
+    "show_recorders": true,
+    "show_influences": true,
+    "show_sinks": true,
+    "connection_label": "name"
+  }
+}

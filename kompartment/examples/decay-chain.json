@@ -1,0 +1,39 @@
+{
+  "name": "Neptunium series ingrowth",
+  "description": "A single compartment holding pure Pu-241, showing ingrowth down the 4n+1 chain: Pu-241 to Am-241 to Np-237 to U-233 to Th-229. Nothing moves between compartments here; every feature on the chart comes from the decay and ingrowth terms. The inventories are activities, so a daughter grows in at its own decay constant: Am-241 lives 30 times longer than the Pu-241 feeding it and its activity peaks 34 times lower. Set decay_unit to mol to count atoms instead, and the same run conserves the chain down it.",
+  "nuclides": [
+    "Pu-241",
+    "Am-241",
+    "Np-237",
+    "U-233",
+    "Th-229"
+  ],
+  "decay_unit": "Bq",
+  "simulation": {
+    "start_time": 0,
+    "end_time": 1000000,
+    "output_points": 400,
+    "spacing": "log",
+    "solver": "ros23",
+    "rtol": 1e-08,
+    "abstol": 1e-14,
+    "time_unit": "year"
+  },
+  "parameters": [],
+  "compartments": [
+    {
+      "name": "Waste",
+      "initial": {
+        "Pu-241": "1.0e12",
+        "Am-241": "0",
+        "Np-237": "0",
+        "U-233": "0",
+        "Th-229": "0"
+      },
+      "unit": "Bq",
+      "handle_decay": true
+    }
+  ],
+  "transfers": [],
+  "expressions": []
+}

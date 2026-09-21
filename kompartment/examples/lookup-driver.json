@@ -1,0 +1,501 @@
+{
+  "name": "A time-dependent driver",
+  "description": "Two lookup tables drive the model: the groundwater flow through a biosphere object over a glacial cycle, and the lake area as the basin silts up. Both are read at the simulation clock, which is what makes a lookup table a time-dependent parameter rather than a constant. The advective transfer follows Q_gw / V, so its rate -- and the Jacobian -- move with time; the dose expression divides by the lake area, which is what the table is there to say.",
+  "simulation": {
+    "start_time": 0,
+    "end_time": 20000,
+    "output_points": 300,
+    "spacing": "linear",
+    "solver": "ndf",
+    "rtol": 1e-06,
+    "abstol": 1e-09,
+    "time_unit": "year"
+  },
+  "nuclides": [
+    "I-129"
+  ],
+  "parameters": [
+    {
+      "name": "V_rego",
+      "value": 50000,
+      "unit": "m3",
+      "per_nuclide": false
+    },
+    {
+      "name": "k_sed",
+      "value": 0.0002,
+      "unit": "1/year",
+      "per_nuclide": false
+    },
+    {
+      "name": "DC",
+      "value": 1.1e-07,
+      "unit": "Sv/year per Bq/m3",
+      "per_nuclide": false
+    },
+    {
+      "name": "depth",
+      "value": 2.0,
+      "unit": "m",
+      "comment": "Mean depth of the lake: area times this is its volume."
+    },
+    {
+      "name": "V_lake",
+      "value": 10000.0,
+      "unit": "m3",
+      "comment": "Lake volume, so the groundwater flow becomes a turnover rate."
+    }
+  ],
+  "compartments": [
+    {
+      "name": "Regolith",
+      "initial": "1e11",
+      "unit": "Bq"
+    },
+    {
+      "name": "Lake",
+      "initial": "0",
+      "unit": "Bq"
+    },
+    {
+      "name": "Sediment",
+      "initial": "0",
+      "unit": "Bq"
+    }
+  ],
+  "lookups": [
+    {
+      "name": "Q_gw",
+      "unit": "m3/year",
+      "interpolation": "linear",
+      "points": [
+        [
+          0,
+          1.2
+        ],
+        [
+          500,
+          1.306
+        ],
+        [
+          1000,
+          1.41
+        ],
+        [
+          1500,
+          1.512
+        ],
+        [
+          2000,
+          1.609
+        ],
+        [
+          2500,
+          1.7
+        ],
+        [
+          3000,
+          1.785
+        ],
+        [
+          3500,
+          1.861
+        ],
+        [
+          4000,
+          1.928
+        ],
+        [
+          4500,
+          1.985
+        ],
+        [
+          5000,
+          2.031
+        ],
+        [
+          5500,
+          2.066
+        ],
+        [
+          6000,
+          2.089
+        ],
+        [
+          6500,
+          2.099
+        ],
+        [
+          7000,
+          2.097
+        ],
+        [
+          7500,
+          2.083
+        ],
+        [
+          8000,
+          2.056
+        ],
+        [
+          8500,
+          2.017
+        ],
+        [
+          9000,
+          1.967
+        ],
+        [
+          9500,
+          0.09534
+        ],
+        [
+          10000,
+          0.09182
+        ],
+        [
+          10500,
+          0.08786
+        ],
+        [
+          11000,
+          0.08351
+        ],
+        [
+          11500,
+          0.07884
+        ],
+        [
+          12000,
+          1.478
+        ],
+        [
+          12500,
+          1.376
+        ],
+        [
+          13000,
+          1.271
+        ],
+        [
+          13500,
+          1.165
+        ],
+        [
+          14000,
+          1.059
+        ],
+        [
+          14500,
+          0.9557
+        ],
+        [
+          15000,
+          0.8556
+        ],
+        [
+          15500,
+          0.7602
+        ],
+        [
+          16000,
+          0.671
+        ],
+        [
+          16500,
+          0.5891
+        ],
+        [
+          17000,
+          0.5156
+        ],
+        [
+          17500,
+          0.4517
+        ],
+        [
+          18000,
+          0.3981
+        ],
+        [
+          18500,
+          0.3556
+        ],
+        [
+          19000,
+          0.3249
+        ],
+        [
+          19500,
+          0.3062
+        ],
+        [
+          20000,
+          0.3
+        ]
+      ],
+      "comment": "Groundwater flow through the object. Nearly stops under permafrost, between 9000 and 12000 years.",
+      "per_nuclide": false
+    },
+    {
+      "name": "Area_lake",
+      "unit": "m2",
+      "interpolation": "linear",
+      "points": [
+        [
+          0,
+          240000
+        ],
+        [
+          500,
+          232500
+        ],
+        [
+          1000,
+          225000
+        ],
+        [
+          1500,
+          217500
+        ],
+        [
+          2000,
+          210000
+        ],
+        [
+          2500,
+          202500
+        ],
+        [
+          3000,
+          195000
+        ],
+        [
+          3500,
+          187500
+        ],
+        [
+          4000,
+          180000
+        ],
+        [
+          4500,
+          172500
+        ],
+        [
+          5000,
+          165000
+        ],
+        [
+          5500,
+          157500
+        ],
+        [
+          6000,
+          150000
+        ],
+        [
+          6500,
+          142500
+        ],
+        [
+          7000,
+          135000
+        ],
+        [
+          7500,
+          127500
+        ],
+        [
+          8000,
+          120000
+        ],
+        [
+          8500,
+          112500
+        ],
+        [
+          9000,
+          105000
+        ],
+        [
+          9500,
+          97500
+        ],
+        [
+          10000,
+          90000
+        ],
+        [
+          10500,
+          82500
+        ],
+        [
+          11000,
+          75000
+        ],
+        [
+          11500,
+          67500
+        ],
+        [
+          12000,
+          60000
+        ],
+        [
+          12500,
+          52500
+        ],
+        [
+          13000,
+          45000
+        ],
+        [
+          13500,
+          37500
+        ],
+        [
+          14000,
+          30000
+        ],
+        [
+          14500,
+          22500
+        ],
+        [
+          15000,
+          20000
+        ],
+        [
+          15500,
+          20000
+        ],
+        [
+          16000,
+          20000
+        ],
+        [
+          16500,
+          20000
+        ],
+        [
+          17000,
+          20000
+        ],
+        [
+          17500,
+          20000
+        ],
+        [
+          18000,
+          20000
+        ],
+        [
+          18500,
+          20000
+        ],
+        [
+          19000,
+          20000
+        ],
+        [
+          19500,
+          20000
+        ],
+        [
+          20000,
+          20000
+        ]
+      ],
+      "comment": "Lake surface area. The basin silts up: by 16000 years only a small pond is left.",
+      "per_nuclide": false
+    }
+  ],
+  "expressions": [
+    {
+      "name": "Conc_lake",
+      "equation": "Lake / (Area_lake * depth)",
+      "unit": "Bq/m3"
+    },
+    {
+      "name": "Dose",
+      "equation": "Conc_lake * DC",
+      "unit": "Sv/year"
+    }
+  ],
+  "transfers": [
+    {
+      "name": "Advection",
+      "from": "Regolith",
+      "to": "Lake",
+      "rate": "Q_gw / V_rego",
+      "multiply_by_donor": true
+    },
+    {
+      "name": "Sedimentation",
+      "from": "Lake",
+      "to": "Sediment",
+      "rate": "k_sed",
+      "multiply_by_donor": true
+    },
+    {
+      "name": "Outflow",
+      "from": "Lake",
+      "to": null,
+      "rate": "Q_gw / V_lake",
+      "multiply_by_donor": true
+    }
+  ],
+  "layout": {
+    "Regolith": {
+      "x": 80,
+      "y": 90
+    },
+    "Lake": {
+      "x": 360,
+      "y": 90
+    },
+    "Sediment": {
+      "x": 640,
+      "y": 90
+    },
+    "Q_gw": {
+      "x": 80,
+      "y": 300,
+      "w": 200,
+      "h": 80
+    },
+    "Area_lake": {
+      "x": 320,
+      "y": 300,
+      "w": 200,
+      "h": 80
+    },
+    "V_rego": {
+      "x": 560,
+      "y": 310
+    },
+    "k_sed": {
+      "x": 560,
+      "y": 380
+    },
+    "DC": {
+      "x": 700,
+      "y": 310
+    },
+    "Conc_lake": {
+      "x": 360,
+      "y": 210
+    },
+    "Dose": {
+      "x": 640,
+      "y": 210
+    }
+  },
+  "view": {
+    "show_lookups": true,
+    "show_expressions": true,
+    "show_parameters": false,
+    "show_influences": true
+  }
+}

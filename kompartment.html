@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!--
+    The tool itself is in ./kompartment/ and carries its own, much stricter
+    policy; this page only frames it. base-uri stops anything injected here
+    from repointing the relative URLs, object-src closes a sink nothing uses.
+  -->
+  <meta http-equiv="Content-Security-Policy" content="base-uri 'self'; object-src 'none'">
+  <script>
+    // Set the theme before first paint so dark-mode visitors get no white flash.
+    (function () {
+      try {
+        var t = localStorage.getItem('kvot-theme');
+        if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* storage unavailable — site.js will apply the default */ }
+    })();
+  </script>
+  <link rel="stylesheet" href="./resources/css/kvot.css?v=20260918b">
+  <!-- The tool's own mark, so a tab on this page and a tab on the bare tool
+       look like the same thing. -->
+  <link rel="icon" href="./kompartment/icon.svg" type="image/svg+xml">
+  <link rel="alternate icon" href="./kompartment/icon-32.png" sizes="32x32" type="image/png">
+  <title>Kompartment — kvot ab</title>
+  <meta name="description" content="Build compartment models in the browser — blocks and fluxes, expressions, uncertainty and calibration — and solve them with a choice of stiff and non-stiff solvers.">
+  <link rel="canonical" href="https://kvotab.se/kompartment.html">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="kvot ab">
+  <meta property="og:title" content="Kompartment — kvot ab">
+  <meta property="og:description" content="Build compartment models in the browser — blocks and fluxes, expressions, uncertainty and calibration — and solve them with a choice of stiff and non-stiff solvers.">
+  <meta property="og:url" content="https://kvotab.se/kompartment.html">
+  <meta property="og:image" content="https://kvotab.se/resources/images/kvot-logotype.png">
+  <meta name="twitter:card" content="summary">
+  <style>
+    /*
+      The frame is the whole window, not the gap between the header and the
+      footer. The tool inside is one grid of `height: 100vh`, and `?chrome=`
+      tells it to inset itself by the site's own two heights — so the gap is
+      measured in the document that owns the header and the footer, and this
+      page never has to keep a second copy of those numbers in step.
+      See kompartment/css/theme-kvotab.css.
+    */
+    .komp-frame {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      border: 0;
+      /* Under the site's header (10000), the map (200000) and the menu. The
+         footer carries no z-index of its own, so it is given one here rather
+         than left to win on document order alone. */
+      z-index: 0;
+    }
+    footer { z-index: 1; }
+
+    /* The way out of the frame, in the header's third column. */
+    .komp-open {
+      justify-self: end;
+      align-self: center;
+      font-size: 13px;
+      color: var(--header-text);
+      text-decoration: none;
+      opacity: 0.85;
+      white-space: nowrap;
+    }
+    .komp-open:hover { opacity: 1; text-decoration: underline; }
+    @media (max-width: 700px) { .komp-open { display: none; } }
+
+    /* Without scripting the frame never gets its address; say where to go.
+       The same place is where the page explains itself when it has been opened
+       from the disk rather than served. */
+    .komp-noscript,
+    .komp-offline {
+      position: fixed;
+      top: calc(var(--header-height) + 24px);
+      left: 0;
+      right: 0;
+      text-align: center;
+      font-family: RawengulkSans;
+      color: var(--text-primary);
+    }
+    .komp-offline { padding: 0 16px; line-height: 1.5; }
+    .komp-offline pre {
+      display: inline-block;
+      margin: 4px 0 12px;
+      padding: 8px 14px;
+      text-align: left;
+    }
+  </style>
+</head>
+<body>
+  <header></header>
+
+  <!--
+    No `src` in the markup: it is written below, once the theme is known, so
+    the tool boots straight into the right palette instead of flashing the
+    other one. Everything is same-origin, so the frame keeps the clipboard,
+    the file pickers and the drag-and-drop it has on its own page.
+  -->
+  <iframe id="komp-frame" class="komp-frame" title="Kompartment"></iframe>
+
+  <noscript>
+    <p class="komp-noscript">Kompartment needs JavaScript.
+      <a href="./kompartment/">Open it directly</a>.</p>
+  </noscript>
+
+  <div id="kvotmap"></div>
+  <footer></footer>
+
+  <script src="./resources/js/kvot-errors.js?v=20260921"></script>
+  <script src="./resources/js/kvot-safe.js?v=20260911"></script>
+  <script src="./resources/js/kvot-actions.js?v=20260902"></script>
+  <script src="./resources/js/kvot-icons.js?v=20260902"></script>
+  <script src="./resources/js/site.js?v=20260907"></script>
+  <script>
+    (function () {
+      var frame = document.getElementById('komp-frame');
+
+      function theme() {
+        return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+      }
+
+      /*
+        `brand` is the palette, `chrome` says the site's own header and footer
+        are above and below this, and `theme` is light against dark. Anything
+        else on this page's address is the tool's own — ?model=, ?tab=,
+        ?workers= — and is handed straight through, so a link into a tab or an
+        example works whether it is written against this page or the bare one.
+      */
+      function frameURL() {
+        // `index.html` by name, not the directory: a bare directory resolves to
+        // the index only when a server does it.
+        var url = new URL('./kompartment/index.html', location.href);
+        var mine = new URLSearchParams(location.search);
+        mine.delete('brand'); mine.delete('chrome'); mine.delete('theme');
+        mine.forEach(function (v, k) { url.searchParams.set(k, v); });
+        url.searchParams.set('brand', 'kvotab');
+        url.searchParams.set('chrome', 'kvotab');
+        url.searchParams.set('theme', theme());
+        return url;
+      }
+
+      /*
+        Opened from the disk rather than served, the tool cannot start at all:
+        browsers refuse to load ES modules over `file://`, and a directory
+        address has no index page to resolve to. Framed anyway it left the
+        window blank between the header and the footer with nothing to say why,
+        so the frame gives way to the reason — which is what the tool does on
+        its own page too. See kompartment/src/ui/boot-problem.js.
+      */
+      var onDisk = location.protocol === 'file:';
+
+      if (onDisk) {
+        frame.remove();
+        var note = document.createElement('div');
+        note.className = 'komp-offline';
+        note.innerHTML = '<p><b>Kompartment has to be served, not opened from the disk.</b></p>'
+          + '<p>Browsers refuse to load ES modules from a <code>file://</code> page, '
+          + 'so nothing here can start.</p>'
+          + '<p>From the site folder:</p>'
+          + '<pre>python3 -m http.server 8000</pre>'
+          + '<p>then open <a href="http://localhost:8000/kompartment.html">'
+          + 'http://localhost:8000/kompartment.html</a>.</p>';
+        document.body.appendChild(note);
+      } else {
+        frame.src = frameURL().href;
+      }
+
+      /*
+        The same address without the site's chrome, for the reader who wants
+        the whole window. The palette and the theme go with it, so stepping
+        out of the frame is not also a change of skin.
+      */
+      var openLink = document.createElement('a');
+      openLink.className = 'komp-open';
+      openLink.textContent = 'full window ↗';
+      openLink.title = 'Open Kompartment without the site header and footer';
+      function pointOpenLink() {
+        var url = frameURL();
+        url.searchParams.delete('chrome');
+        // The address a reader may keep: the directory, which a server resolves
+        // to the same page. On disk there is nothing to resolve it, so the file
+        // is named — and it is worth linking even there, because that page says
+        // for itself why it cannot start.
+        if (!onDisk) url.pathname = url.pathname.replace(/index\.html$/, '');
+        openLink.href = url.href;
+      }
+      pointOpenLink();
+
+      KVOT.renderHeader('Kompartment');
+      KVOT.renderNav('kompartment.html');
+      KVOT.renderFooter();
+      KVOT.initMap('kvotmap');
+
+      // renderHeader writes the header's contents, so the link goes in after
+      // it — into the third column, where the other pages put their toolbars.
+      var slot = document.querySelector('header .title');
+      if (slot && slot.nextElementSibling) {
+        slot.insertAdjacentElement('afterend', openLink);
+      } else {
+        document.querySelector('header')?.appendChild(openLink);
+      }
+
+      /*
+        The site's toggle is the only one on this page — the tool's own is
+        hidden while it wears this chrome — so the choice has to reach into
+        the frame. A message rather than a reload: the model in there is the
+        reader's unsaved work.
+      */
+      document.documentElement.addEventListener('kvot-theme-change', function (e) {
+        pointOpenLink();
+        var win = onDisk ? null : frame.contentWindow;
+        if (!win) return;
+        win.postMessage({ type: 'kvot:theme', theme: e.detail && e.detail.theme }, location.origin);
+      });
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,211 @@
+{
+  "name": "Peak dose and when it happened",
+  "description": "A release pulse passes through a lake and out again. The five blocks that depend on what has already happened are all here: a discrete event fires when the concentration falls back past a limit, a min/max holds the peak dose, a snapshot remembers the year the limit was crossed, a running mean averages the dose from that year on, and a delay reports the dose a century earlier. Nothing here is a function of the state alone -- each one has to be recorded as the solver goes.",
+  "nuclides": [
+    "Cs-137"
+  ],
+  "simulation": {
+    "start_time": 0,
+    "end_time": 600,
+    "output_points": 400,
+    "spacing": "linear",
+    "solver": "ros23",
+    "rtol": 1e-07,
+    "abstol": 1e-09,
+    "time_unit": "year"
+  },
+  "parameters": [
+    {
+      "name": "k_out",
+      "value": 0.02,
+      "unit": "1/year"
+    },
+    {
+      "name": "Volume",
+      "value": 2000000,
+      "unit": "m3"
+    },
+    {
+      "name": "DoseCoeff",
+      "value": 1.3e-08,
+      "unit": "Sv/year/(Bq/m3)"
+    },
+    {
+      "name": "Limit",
+      "value": 1e-05,
+      "unit": "Sv/year"
+    }
+  ],
+  "lookups": [
+    {
+      "name": "Release",
+      "unit": "Bq/year",
+      "interpolation": "linear",
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          40,
+          4000000000.0
+        ],
+        [
+          90,
+          4000000000.0
+        ],
+        [
+          140,
+          0
+        ],
+        [
+          600,
+          0
+        ]
+      ]
+    }
+  ],
+  "compartments": [
+    {
+      "name": "Lake",
+      "initial": "0",
+      "unit": "Bq",
+      "color": "#4b83c7"
+    }
+  ],
+  "inflows": [
+    {
+      "name": "Inflow",
+      "to": "Lake",
+      "rate": "Release"
+    }
+  ],
+  "transfers": [
+    {
+      "name": "Outflow",
+      "from": "Lake",
+      "to": null,
+      "rate": "k_out"
+    }
+  ],
+  "expressions": [
+    {
+      "name": "Conc",
+      "equation": "Lake / Volume",
+      "unit": "Bq/m3"
+    },
+    {
+      "name": "Dose",
+      "equation": "Conc * DoseCoeff",
+      "unit": "Sv/year"
+    }
+  ],
+  "triggers": [
+    {
+      "name": "Below_limit",
+      "first": "Dose",
+      "second": "Limit",
+      "direction": "falling",
+      "comment": "The year the dose falls back through the limit on its way down."
+    }
+  ],
+  "min_maxes": [
+    {
+      "name": "Peak_dose",
+      "target": "Dose",
+      "operation": "max",
+      "unit": "Sv/year"
+    }
+  ],
+  "snapshots": [
+    {
+      "name": "Year_below_limit",
+      "target": "time",
+      "initial": "-1",
+      "unit": "year",
+      "trigger": "Below_limit"
+    }
+  ],
+  "running_means": [
+    {
+      "name": "Mean_dose_after",
+      "target": "Dose",
+      "unit": "Sv/year",
+      "start_trigger": "Below_limit"
+    }
+  ],
+  "delays": [
+    {
+      "name": "Dose_a_century_ago",
+      "target": "Dose",
+      "delay": "100",
+      "unit": "Sv/year"
+    }
+  ],
+  "layout": {
+    "Lake": {
+      "x": 420,
+      "y": 80
+    },
+    "Conc": {
+      "x": 420,
+      "y": 230
+    },
+    "Dose": {
+      "x": 420,
+      "y": 340
+    },
+    "Release": {
+      "x": 150,
+      "y": 80,
+      "w": 200,
+      "h": 78
+    },
+    "k_out": {
+      "x": 660,
+      "y": 90
+    },
+    "Volume": {
+      "x": 620,
+      "y": 230
+    },
+    "DoseCoeff": {
+      "x": 620,
+      "y": 340
+    },
+    "Limit": {
+      "x": 800,
+      "y": 450
+    },
+    "Below_limit": {
+      "x": 620,
+      "y": 450
+    },
+    "Peak_dose": {
+      "x": 150,
+      "y": 340
+    },
+    "Year_below_limit": {
+      "x": 620,
+      "y": 560
+    },
+    "Mean_dose_after": {
+      "x": 420,
+      "y": 560
+    },
+    "Dose_a_century_ago": {
+      "x": 150,
+      "y": 450
+    }
+  },
+  "view": {
+    "show_expressions": true,
+    "show_parameters": true,
+    "show_lookups": true,
+    "show_reductions": true,
+    "show_recorders": true,
+    "show_influences": true,
+    "show_sinks": true,
+    "connection_label": "name"
+  }
+}

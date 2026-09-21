@@ -1,0 +1,254 @@
+/**
+ * The kvotab palette, for the page this tool is embedded in.
+ *
+ * `css/app.css` carries the whole interface in custom properties, so a second
+ * skin is only the tokens -- nothing here is a rule about a component, and
+ * adding one would be the beginning of a second stylesheet to keep in step.
+ *
+ * Turned on with `?brand=kvotab`, which sets `data-brand` on the root element.
+ * Nothing below matches without it, so this file costs a default page nothing
+ * but its own bytes.
+ *
+ * ---------------------------------------------------------------------------
+ * WHAT CHANGES
+ *
+ * The greys go warm. The brand is four colours -- `#f3b87b` beige, `#bb6c5d`
+ * red-brown, `#352921` dark brown, `#344126` dark green -- and a page built on
+ * them reads warm throughout. This tool's own palette is neutral: near-black
+ * ink on paper-white, greys with no hue at all. Dropping it into that page
+ * unchanged looks like a screenshot pasted onto it.
+ *
+ * So every surface, every border and every piece of ink is re-tinted toward
+ * `#352921`, and the page ground, the raised surfaces and the text pick up the
+ * site's own values where it has one.
+ *
+ * WHAT DOES NOT
+ *
+ * **The colours that mean something.** Red is a model that will not run, amber
+ * is a warning, the eight series colours are the chart's and were chosen to be
+ * told apart. None of those is decoration, and re-tinting them to match a
+ * header would be trading a reader's ability to read the model for a page that
+ * matches. `--danger`, `--warn*`, `--caution` and `--series-*` are untouched.
+ *
+ * **The block fills.** A compartment is green, an expression lilac, a
+ * parameter sand: the diagram's own vocabulary, which a reader learns once.
+ * The three neutral ones are warmed, because a grey rock on warm paper reads
+ * as a hole in it; the rest stay.
+ *
+ * THE ACCENT IS THE ONE REAL DECISION
+ *
+ * The accent rings a selected block, draws a focus ring and fills the primary
+ * button. The brand's own accent is `#bb6c5d`, and it cannot be used for this:
+ * a red-brown ring around a selected block sits next to the red ring around a
+ * broken one, and the two readings are *selected* and *will not run*. The
+ * site's light link colour `#a8503f` is nearer the danger red still.
+ *
+ * So the accent comes from the brand's other pole, the dark green `#344126` --
+ * lightened in light mode so white ink can sit on it, and lifted well clear of
+ * the ground in dark mode where `#344126` is almost invisible on `#1a1410`.
+ * It is a brand colour, and it is the one that cannot be mistaken for either
+ * of the two states that already own a colour here.
+ *
+ * `#bb6c5d` is not wasted: it is what a *link* is, in both modes, which is
+ * where the site uses it and where nothing else competes.
+ */
+
+/* ------------------------------------------------------------------ light */
+
+:root[data-brand="kvotab"] {
+	/* The site's own three, warmed one step further at the page ground so the
+	   panels above it separate. */
+	--surface-0: #f1ece5;
+	--surface-1: #faf8f4;
+	--surface-2: #ffffff;
+	--surface-sunken: #e7e0d6;
+
+	/* The brand brown at low alpha rather than black: a border drawn in the
+	   page's own darkest colour belongs to it, and stays right over every
+	   surface above. */
+	--border: rgba(53, 41, 33, 0.16);
+	--border-strong: rgba(53, 41, 33, 0.30);
+
+	--text-primary: #352921;
+	--text-secondary: #6b5d4f;
+	--text-muted: #8a7d6f;
+
+	--grid: rgba(53, 41, 33, 0.08);
+	--axis: rgba(53, 41, 33, 0.32);
+
+	/* The brand's own accent, where the site's pages put it: filled buttons,
+	   focus rings, the tick in a checkbox.
+	 *
+	 * One step down from `#bb6c5d` itself, which carries white at 3.88:1 --
+	 * under the 4.5 a label needs, and this palette fills a button with it and
+	 * writes Run on it. `#ad5748` is the same terracotta at 4.96:1, and sits
+	 * beside the site's own link colour `#a8503f` rather than apart from it. */
+	--accent: #ad5748;
+	--accent-ink: #ffffff;
+	--accent-hover: #984739;
+
+	/* Everywhere but the one place. See the note above: `#344126` lightened
+	   until white ink on it clears 4.5:1, because the brand green is too dark
+	   to carry a label at the size a control is. */
+	--select: #4d6437;
+
+	/* The site's own link colour. */
+	--link: #a8503f;
+
+	/* Paper-white blocks would float off a warm ground. */
+	--node-fill: #fffdf9;
+	--node-fill-farfield: #e0ded9;
+	--node-fill-waste: #e8e0d2;
+	--node-stroke: rgba(53, 41, 33, 0.30);
+	--node-ink: #352921;
+	--node-ink-dim: #6b5d4f;
+	--edge: rgba(53, 41, 33, 0.48);
+}
+
+/* ------------------------------------------------------------------- dark */
+
+/* Both routes to dark, as app.css does it: the system's preference unless the
+   page has been told otherwise, and the explicit choice. Kept as two blocks
+   rather than one list so neither can be edited without the other being in
+   view -- a token in one and not the other is invisible until somebody on a
+   light system picks Dark. */
+@media (prefers-color-scheme: dark) {
+	:root[data-brand="kvotab"]:not([data-theme="light"]) {
+		--surface-0: #1a1410;
+		--surface-1: #241d17;
+		--surface-2: #2e251d;
+		--surface-sunken: #120e0a;
+
+		/* The bright beige at low alpha: on a brown ground a border wants the
+		   light end of the brand, not the dark one. */
+		--border: rgba(243, 184, 123, 0.16);
+		--border-strong: rgba(243, 184, 123, 0.30);
+
+		--text-primary: #e8ddd0;
+		--text-secondary: #b8a898;
+		--text-muted: #9c8e7f;
+
+		--grid: rgba(243, 184, 123, 0.06);
+		--axis: rgba(243, 184, 123, 0.32);
+
+		/* The brand's accent, lifted so white ink still sits on it against a
+		   dark ground. */
+		--accent: #c97f6e;
+		--accent-ink: #1a1410;
+		--accent-hover: #d99383;
+
+		/* And the brand green lifted off a near-black brown, which `#344126`
+		   cannot be seen against. */
+		--select: #8aa864;
+
+		--link: #f3b87b;
+
+		/* Each fill keeps its *offset* from the ground it was drawn against
+		   and takes that offset onto this one. The offset is what tells a
+		   compartment from an expression from a lookup table, so it is the
+		   thing to preserve; mixing brown into the colours themselves closes
+		   the gaps between them and the diagram stops saying what each block
+		   is. */
+		--node-fill: #312820;
+		--node-fill-compartment: #2e3625;
+		--node-fill-expression: #342935;
+		--node-fill-parameter: #3e2f1a;
+		--node-fill-lookup: #37351b;
+		--node-fill-reduction: #2a3323;
+		--node-fill-aggregate: #27332c;
+		--node-fill-recorder: #41321c;
+		--node-fill-delay: #29332c;
+		--node-fill-event: #432821;
+		--node-fill-farfield: #362f2e;
+		--node-fill-waste: #45362b;
+		--node-stroke: rgba(243, 184, 123, 0.34);
+		--node-ink: #e8ddd0;
+		--node-ink-dim: #b8a898;
+		--edge: rgba(243, 184, 123, 0.50);
+	}
+}
+
+:root[data-brand="kvotab"][data-theme="dark"] {
+	--surface-0: #1a1410;
+	--surface-1: #241d17;
+	--surface-2: #2e251d;
+	--surface-sunken: #120e0a;
+
+	--border: rgba(243, 184, 123, 0.16);
+	--border-strong: rgba(243, 184, 123, 0.30);
+
+	--text-primary: #e8ddd0;
+	--text-secondary: #b8a898;
+	--text-muted: #9c8e7f;
+
+	--grid: rgba(243, 184, 123, 0.06);
+	--axis: rgba(243, 184, 123, 0.32);
+
+	--accent: #c97f6e;
+	--accent-ink: #1a1410;
+	--accent-hover: #d99383;
+	--select: #8aa864;
+
+	--link: #f3b87b;
+
+	/* See the note in the block above. */
+	--node-fill: #312820;
+	--node-fill-compartment: #2e3625;
+	--node-fill-expression: #342935;
+	--node-fill-parameter: #3e2f1a;
+	--node-fill-lookup: #37351b;
+	--node-fill-reduction: #2a3323;
+	--node-fill-aggregate: #27332c;
+	--node-fill-recorder: #41321c;
+	--node-fill-delay: #29332c;
+	--node-fill-event: #432821;
+	--node-fill-farfield: #362f2e;
+	--node-fill-waste: #45362b;
+	--node-stroke: rgba(243, 184, 123, 0.34);
+	--node-ink: #e8ddd0;
+	--node-ink-dim: #b8a898;
+	--edge: rgba(243, 184, 123, 0.50);
+}
+
+/* ------------------------------------------------- inside the page's chrome
+ *
+ * The site's header and footer are fixed and always there; this tool's own
+ * `#app` is `height: 100vh`, so under them the top of the toolbar and the
+ * bottom of the footer are behind the page's own. `?chrome=kvotab` sets
+ * `data-chrome`, and the whole adjustment is one height and two margins --
+ * which is the point of the tool being one grid that fills its box.
+ *
+ * The two heights are the site's own variables where the site defines them,
+ * with its current values as the fallback for a page that does not.
+ */
+:root[data-chrome="kvotab"] #app {
+	height: calc(100dvh - var(--header-height, 43px) - var(--footer-height, 31px));
+	margin-top: var(--header-height, 43px);
+	margin-bottom: var(--footer-height, 31px);
+}
+
+/* Two things in this tool's own footer belong to the page once the page is
+   there: whose site this is, and which build is served. The footer keeps the
+   statistics -- solver, states, steps, timings -- because those are about the
+   run and nothing on the page can say them. */
+:root[data-chrome="kvotab"] .foot-link,
+:root[data-chrome="kvotab"] .build-stamp { display: none; }
+
+/* And the light/dark switch, for the same reason: the page has one in its
+   footer, and two switches for one setting is two of them to find disagreeing.
+   The page's own sends the choice in -- see the `kvot:theme` message in
+   ../src/ui/app.js. */
+:root[data-chrome="kvotab"] #theme { display: none; }
+
+/* A dialog is the one thing that does not size itself from `#app`. It is a
+   native `<dialog>`, so it is in the top layer and the browser centres it in
+   the window -- and the window here is the whole of the page's, chrome
+   included, because the page frames this tool at full size and lets it inset
+   itself. On a short window a tall modal therefore reached up behind the
+   page's header. Capping the height at the window less twice the taller inset
+   keeps a centred dialog clear of both: it cannot start above the header, and
+   by symmetry it cannot end below the footer. The panels, the canvas and the
+   chart need none of this -- they are inside `#app`. */
+:root[data-chrome="kvotab"] .modal {
+	max-height: min(84dvh, 900px, calc(100dvh - 2 * var(--header-height, 43px) - 2px));
+}

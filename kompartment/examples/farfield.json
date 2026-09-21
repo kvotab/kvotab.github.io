@@ -1,0 +1,230 @@
+{
+  "name": "Fractured rock: a far-field path",
+  "description": "A waste vault leaks into a fracture in the host rock; the nuclides travel along it by advection, sorb on the fracture coating and diffuse into the pore water of the rock matrix beside it, and what survives the journey reaches a well. The rock is one FARFCOMP block — a dual-porosity transport model ported from SKB's own farf_comp, with 20 fracture cells and 20 matrix layers per nuclide behind it — and the whole thing is solved as one system with the two compartments.\n\nThe three nuclides are a decay chain, and they decay and grow into one another everywhere: in the vault, in every cell of the fracture, in every layer of the rock, and in the well. Th-230 hardly reaches the well as itself; almost all of what arrives grew in on the way.\n\nTry: the travel time TW and the flow resistance F are what a hydrogeological model supplies, so change them and watch the arrival move. Turn on \"Report every cell\" in the block's Discretisation section to chart the profile down the fracture and into the rock.",
+  "simulation": {
+    "start_time": 0,
+    "end_time": 1000000,
+    "output_points": 400,
+    "spacing": "both",
+    "output_times": [
+      {
+        "kind": "log",
+        "points": 400,
+        "from": 1,
+        "to": null
+      }
+    ],
+    "solver": "ndf",
+    "rtol": 1e-08,
+    "abstol": 1e-16,
+    "time_unit": "year"
+  },
+  "nuclides": [
+    "U-238",
+    "U-234",
+    "Th-230"
+  ],
+  "decay_unit": "Bq",
+  "parameters": [
+    {
+      "name": "leach_rate",
+      "value": 0.0001,
+      "unit": "1/year",
+      "comment": "How fast the vault gives up its inventory to the fracture."
+    },
+    {
+      "name": "well_flow",
+      "value": 1000,
+      "unit": "m3/year",
+      "comment": "The volume the well draws, which dilutes what arrives."
+    },
+    {
+      "name": "Kd_matrix",
+      "value": 0.001,
+      "unit": "m3/kg",
+      "index_lists": [
+        "Radionuclides"
+      ],
+      "entries": [
+        {
+          "index": {
+            "Radionuclides": "U-238"
+          },
+          "value": 0.0017
+        },
+        {
+          "index": {
+            "Radionuclides": "U-234"
+          },
+          "value": 0.0017
+        },
+        {
+          "index": {
+            "Radionuclides": "Th-230"
+          },
+          "value": 0.05
+        }
+      ],
+      "comment": "Sorption in the rock matrix, per nuclide. Thorium is held far harder than uranium, which is why it arrives so much later."
+    },
+    {
+      "name": "De_matrix",
+      "value": 3.15e-05,
+      "unit": "m2/year",
+      "comment": "Effective diffusivity: 1e-12 m2/s in the pore water."
+    }
+  ],
+  "compartments": [
+    {
+      "name": "Vault",
+      "initial": "1e12",
+      "unit": "Bq",
+      "index_lists": [
+        "Radionuclides"
+      ],
+      "entries": [
+        {
+          "index": {
+            "Radionuclides": "U-234"
+          },
+          "initial": "0"
+        },
+        {
+          "index": {
+            "Radionuclides": "Th-230"
+          },
+          "initial": "0"
+        }
+      ],
+      "comment": "The waste. Only U-238 is emplaced; the other two grow in."
+    },
+    {
+      "name": "Well",
+      "initial": "0",
+      "unit": "Bq",
+      "index_lists": [
+        "Radionuclides"
+      ],
+      "comment": "What arrives, before it is drawn off."
+    }
+  ],
+  "farfields": [
+    {
+      "name": "Rock",
+      "index_lists": [
+        "Radionuclides"
+      ],
+      "tw": "50",
+      "f": "1e5",
+      "kd_f": "0",
+      "kd_m": "Kd_matrix",
+      "de_m": "De_matrix",
+      "eps_m": "0.0018",
+      "rho_m": "2700",
+      "pe": "10",
+      "pen_dep": "12.5",
+      "pen_dep_0": "",
+      "n_f": 20,
+      "n_m": 20,
+      "o_b": 1,
+      "n_b": 0,
+      "handle_decay": true,
+      "report_cells": false,
+      "unit": "Bq/year",
+      "comment": "SKB's FARFCOMP. TW is the water travel time along the path and F the flow-related transport resistance; the rest is the rock and the chemistry. The first matrix layer is left empty, so it is worked out — which makes it 44 nanometres, and the path very stiff."
+    }
+  ],
+  "transfers": [
+    {
+      "name": "Leach",
+      "from": "Vault",
+      "to": "Rock",
+      "rate": "leach_rate",
+      "multiply_by_donor": true,
+      "unit": "1/year",
+      "comment": "Into the first cell of the fracture."
+    },
+    {
+      "name": "Release",
+      "from": "Rock",
+      "to": "Well",
+      "rate": "Rock",
+      "multiply_by_donor": false,
+      "unit": "Bq/year",
+      "index_lists": [
+        "Radionuclides"
+      ],
+      "comment": "The flux out of the far end of the path. Its rate is the path itself, so there is nothing to set: the block works it out from its own cells."
+    },
+    {
+      "name": "Drawn_off",
+      "from": "Well",
+      "to": null,
+      "rate": "well_flow / 1",
+      "multiply_by_donor": true,
+      "unit": "1/year",
+      "comment": "The well is flushed, so its inventory is a steady state rather than an accumulation."
+    }
+  ],
+  "expressions": [
+    {
+      "name": "Well_concentration",
+      "equation": "Rock / well_flow",
+      "unit": "Bq/m3",
+      "index_lists": [
+        "Radionuclides"
+      ],
+      "comment": "What arrives per year, diluted into the volume the well draws. `Rock` is the release out of the far end of the path."
+    },
+    {
+      "name": "Total_concentration",
+      "equation": "Well_concentration[U-238] + Well_concentration[U-234] + Well_concentration[Th-230]",
+      "unit": "Bq/m3",
+      "index_lists": [],
+      "comment": "The three added together."
+    }
+  ],
+  "inflows": [],
+  "layout": {
+    "Vault": {
+      "x": 60,
+      "y": 160
+    },
+    "Rock": {
+      "x": 280,
+      "y": 156
+    },
+    "Well": {
+      "x": 520,
+      "y": 160
+    },
+    "Well_concentration": {
+      "x": 520,
+      "y": 260
+    },
+    "Total_concentration": {
+      "x": 520,
+      "y": 350
+    },
+    "leach_rate": {
+      "x": 60,
+      "y": 60
+    },
+    "well_flow": {
+      "x": 740,
+      "y": 260
+    },
+    "Kd_matrix": {
+      "x": 280,
+      "y": 40
+    },
+    "De_matrix": {
+      "x": 280,
+      "y": 260
+    }
+  },
+  "view": {
+    "show_parameters": true,
+    "show_expressions": true
+  }
+}
