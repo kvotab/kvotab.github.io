@@ -221,7 +221,8 @@ function isTimeDependent(dataset) {
 /**
  * Check if a group contains data suitable for special time-chart plotting.
  * A qualifying group must have:
- * - IndexLists attribute containing 'Radionuclides', 'Materials', 'Repositories', 'NHB', or 'exposed_groups'
+ * - IndexLists attribute containing 'Radionuclides', 'Materials', 'Contaminants',
+ *   'Repositories', 'NHB', or 'exposed_groups'
  * - time_dependent attribute set to true
  * 
  * These groups get special treatment: all child datasets are plotted together
@@ -238,7 +239,8 @@ function checkGroupForRadionuclides(file, path) {
       return false;
     }
     
-    const chartIndexNames = ['Radionuclides', 'Materials', 'Repositories', 'NHB', 'exposed_groups'];
+    const chartIndexNames = ['Radionuclides', 'Materials', 'Contaminants', 'Repositories',
+      'NHB', 'exposed_groups'];
     let hasRadionuclidesIndex = false;
     let isTimeDependentGroup = false;
     
