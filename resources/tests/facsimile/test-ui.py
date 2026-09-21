@@ -1044,6 +1044,44 @@ async def main():
                 page, "document.getElementById('facStatus').textContent.slice(0, 4)",
                 'Done', tries=120), 'Done')
 
+            # --- the foot of the panel stays still ----------------------------
+            # Run, Stop and Check Jacobian sit at the bottom of a flex column,
+            # so anything below them that changes height moves them: a status
+            # line of one line against four, and the progress bar appearing the
+            # moment Run is pressed, walked the buttons about under the pointer.
+            tops = []
+            for text in ['Stopped.', 'x ' * 220,
+                         'Model compiled: 64 species, 264 reactions. Ready to run.']:
+                await page.ev("document.getElementById('facStatus').textContent = %s"
+                              % json.dumps(text))
+                await asyncio.sleep(0.25)
+                tops.append(await page.ev(
+                    "Math.round(document.getElementById('facRun').getBoundingClientRect().top)"))
+            await page.ev("document.getElementById('facProgress').hidden = false")
+            await asyncio.sleep(0.25)
+            tops.append(await page.ev(
+                "Math.round(document.getElementById('facRun').getBoundingClientRect().top)"))
+            await page.ev("document.getElementById('facProgress').hidden = true")
+            check(f'the Run button does not move with the status below it ({tops})',
+                  len(set(tops)) == 1, True)
+            await page.ev("document.getElementById('facStatus').textContent = %s"
+                          % json.dumps('x ' * 220))
+            await asyncio.sleep(0.25)
+            check('and the status scrolls instead of growing', await page.ev(
+                "(() => { const el = document.getElementById('facStatus');"
+                " return el.scrollHeight > el.clientHeight; })()"), True)
+
+            # --- the window does not scroll -----------------------------------
+            # The page is one screen: a panel and a work area, both of which
+            # scroll inside themselves. The hidden checkbox in a species cell
+            # is absolutely placed, and with no positioned ancestor of its own
+            # it took .content as its containing block, escaped every clip and
+            # added the cell's static position to the page: a chart tab of
+            # sixty species grew the window several hundred pixels of nothing.
+            check('the window itself does not scroll', await page.ev(
+                "(() => { const de = document.documentElement;"
+                " return de.scrollHeight - de.clientHeight; })()"), 0)
+
             errors = [f'{kind}: {text}' for kind, text in page.logs if kind in ('error', 'exception')]
             check('no console errors', errors, [])
         finally:

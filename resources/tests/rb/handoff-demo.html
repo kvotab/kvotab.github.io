@@ -4,6 +4,14 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>HDF5 handoff — producer demo</title>
+<!--
+  h5wasm, the same build and integrity hash rb.html uses. A page that produces
+  HDF5 data is what this demo stands for, so it makes a real file here rather
+  than fetching a prepared one -- which it used to do, and which tied the demo
+  and its test to a sample file being committed. The samples were taken out of
+  the repository on purpose, and this now needs nothing from it.
+-->
+<script defer src="https://cdn.jsdelivr.net/npm/h5wasm@0.9.0/dist/iife/h5wasm.min.js" integrity="sha384-0kPHehXdhwrXsjsY2cFREoF1T3bEwA7VXlpZGg3zE1DDnW294q/kakEEPAsA5JXW" crossorigin="anonymous"></script>
 <style>
   body { font: 14px/1.5 system-ui, sans-serif; margin: 0; padding: 2rem; max-width: 60rem; }
   h1 { font-size: 1.3rem; }
@@ -18,10 +26,9 @@
 <h1>Handing an in-memory HDF5 file to the browser page</h1>
 
 <p>
-  This page stands in for a page that <em>produces</em> HDF5 data. It fetches a
-  sample file into an <code>ArrayBuffer</code> — pretend it built those bytes
-  itself — and hands them to <code>rb.html</code> without ever writing a file
-  to disk.
+  This page stands in for a page that <em>produces</em> HDF5 data. It builds a
+  small file with h5wasm in an <code>ArrayBuffer</code> and hands the bytes to
+  <code>rb.html</code>, without either page ever writing a file to disk.
 </p>
 
 <p>
@@ -40,7 +47,6 @@
   producer, RB_HANDOFF_ALLOWED_ORIGINS in rb-handoff.js must list this origin.
 */
 const RB_URL = '../../../rb.html';
-const SAMPLE = '../../data/SFR_FSAR_CCP14.h5';
 const RB_ORIGIN = location.origin;
 
 const statusEl = document.getElementById('status');
@@ -67,19 +73,42 @@ async function buildHdf5Bytes(target) {
   };
 
   tell('Preparing the model output', 0, 100);
-  const resp = await fetch(SAMPLE);
-  if (!resp.ok) throw new Error(`HTTP ${resp.status} fetching the sample file`);
-  const buffer = await resp.arrayBuffer();
+  if (!window.h5wasm) throw new Error('h5wasm did not load');
+  if (window.h5wasm.ready instanceof Promise) await window.h5wasm.ready;
 
   /*
-    A real producer would be computing here. This just paces out a few steps so
-    the progress reporting is visible rather than instantaneous.
+    A real producer would be computing here. The datasets are written one at a
+    time with a pause between, so that the progress reporting this demo is
+    partly about has something to report.
   */
-  for (let step = 1; step <= 4; step++) {
-    await new Promise(r => setTimeout(r, 400));
-    tell('Writing datasets', step * 25, 100);
+  const path = `demo-${Date.now()}.h5`;
+  const f = new window.h5wasm.File(path, 'w');
+  try {
+    const n = 200;
+    const t = Float64Array.from({ length: n }, (_, i) => i * 0.5);
+    f.create_attribute('title', 'Produced in memory by handoff-demo.html');
+    const series = [
+      ['time', t],
+      ['concentration', Float64Array.from(t, (x) => Math.exp(-x / 40))],
+      ['flux', Float64Array.from(t, (x) => Math.sin(x / 8) / (1 + x / 30))],
+      ['inventory', Float64Array.from(t, (x) => 1 - Math.exp(-x / 25))],
+    ];
+    const results = f.create_group('results');
+    for (let i = 0; i < series.length; i++) {
+      const [name, data] = series[i];
+      results.create_dataset({ name, data, shape: [n], dtype: '<f8' });
+      await new Promise((r) => setTimeout(r, 400));
+      tell(`Writing ${name}`, ((i + 1) / series.length) * 100, 100);
+    }
+  } finally {
+    f.close();
   }
-  return buffer;
+  // Read the bytes back out of the virtual filesystem and drop the file.
+  const bytes = window.h5wasm.FS.readFile(path);
+  try { window.h5wasm.FS.unlink(path); } catch (_) { /* already gone */ }
+  // A copy that owns its memory: the FS view is onto the wasm heap, which is
+  // not something to hand across to another page and then transfer.
+  return bytes.slice().buffer;
 }
 
 /**

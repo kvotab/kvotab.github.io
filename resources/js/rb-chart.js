@@ -3271,6 +3271,42 @@ async function createRadionuclidesChart(path, savedAxisState) {
     }
   }
   
+  renderRadionuclidesChart({
+    traces, path, enabledFiles, chartContainer, savedAxisState, hasProbabilistic,
+    hasProbTime, hasSDOM, probTimeIterMax, showRatioChecked, backgroundSourceOptions,
+    backgroundSourceValue, indexBackgroundSegments, timeUnit, yAxisUnit, yAxisName,
+    wasCIChecked, wasSDOMChecked, ciCheckbox, sdomCheckbox
+  });
+  } catch (err) {
+    console.error('createRadionuclidesChart failed:', err);
+    hideChartLoading(chartContainer);
+    setupBackgroundOverlayTooltip(getElement('plotlyChart'), []);
+    hideChart();
+  }
+}
+
+/**
+ * Draw the radionuclides chart once its traces exist.
+ *
+ * Split out of createRadionuclidesChart, which ran to 660 lines. Everything
+ * here is presentation: which controls to show for the data that was found,
+ * the axis titles, the Plotly call and what to do when there is nothing to
+ * draw. Nothing in it decides what the traces are.
+ *
+ * It takes a context object rather than twenty arguments, which is what the
+ * split actually costs - the block reads that many values from the function
+ * it used to sit inside.
+ *
+ * @param {Object} ctx - see the destructuring below for the fields used
+ */
+function renderRadionuclidesChart(ctx) {
+  const {
+    traces, path, enabledFiles, chartContainer, savedAxisState, hasProbabilistic,
+    hasProbTime, hasSDOM, probTimeIterMax, showRatioChecked, backgroundSourceOptions,
+    backgroundSourceValue, indexBackgroundSegments, timeUnit, yAxisUnit, yAxisName,
+    wasCIChecked, wasSDOMChecked, ciCheckbox, sdomCheckbox
+  } = ctx;
+
   // Render chart if we have traces
   if (traces.length > 0) {
     // Show CI / SDOM controls only for regular (non prob-time) probabilistic data
@@ -3412,13 +3448,8 @@ async function createRadionuclidesChart(path, savedAxisState) {
     setupBackgroundOverlayTooltip(getElement('plotlyChart'), []);
     hideChart();
   }
-  } catch (err) {
-    console.error('createRadionuclidesChart failed:', err);
-    hideChartLoading(chartContainer);
-    setupBackgroundOverlayTooltip(getElement('plotlyChart'), []);
-    hideChart();
-  }
 }
+
 
 /**
  * Get standard Plotly configuration with custom toolbar buttons.

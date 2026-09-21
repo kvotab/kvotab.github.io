@@ -3,11 +3,57 @@
    ========================================================================== */
 
 let _fileTabTooltipEl = null;
+// Where the pointer was when a tooltip was last dismissed by a click, or null.
+// While this is set the tooltip stays away; see hideFileTabTooltip.
+let _tooltipSuppressedAt = null;
 
 /**
  * Ensure a shared tooltip element exists for file tabs.
  * @returns {HTMLElement}
  */
+/**
+ * Put the tab tooltip away.
+ *
+ * It is a div on the body rather than a title attribute, shown on a tab's
+ * mouseenter and hidden on its mouseleave -- and a tab that is REMOVED never
+ * gets a mouseleave, so closing a file left its tooltip on the screen.
+ *
+ * Hiding it is not enough on its own. Closing a tab shuffles the ones after it
+ * leftwards, one slides under the stationary pointer, Chrome fires mouseenter
+ * on it, and a tooltip appears again straight away -- for the next file along,
+ * which nobody pointed at. What a title attribute does after a click is stay
+ * away until the pointer actually moves, so `untilPointerMoves` does that:
+ * the position is remembered here and shouldFileTabTooltipShow refuses until
+ * the pointer has left it.
+ *
+ * @param {MouseEvent|null} [untilPointerMoves] the click that dismissed it
+ */
+function hideFileTabTooltip(untilPointerMoves) {
+  if (_fileTabTooltipEl) _fileTabTooltipEl.style.display = 'none';
+  // Only ever set here, never cleared: removing an enabled file goes on to
+  // call updateTabs, which hides the tooltip again with no event, and an
+  // `else` branch here would wipe the suppression the close had just asked
+  // for -- which is precisely the case this was written for. It is cleared
+  // when the pointer moves, in shouldFileTabTooltipShow.
+  if (untilPointerMoves) {
+    _tooltipSuppressedAt = { x: untilPointerMoves.clientX, y: untilPointerMoves.clientY };
+  }
+}
+
+/**
+ * Whether a tooltip may appear for a pointer at this event.
+ *
+ * A couple of pixels of slack, because a click can be followed by a mousemove
+ * at the same place and that is not the pointer moving.
+ */
+function shouldFileTabTooltipShow(evt) {
+  if (!_tooltipSuppressedAt) return true;
+  const moved = Math.abs(evt.clientX - _tooltipSuppressedAt.x) > 2
+    || Math.abs(evt.clientY - _tooltipSuppressedAt.y) > 2;
+  if (moved) _tooltipSuppressedAt = null;
+  return moved;
+}
+
 function ensureFileTabTooltip() {
   if (_fileTabTooltipEl && document.body.contains(_fileTabTooltipEl)) return _fileTabTooltipEl;
   const el = document.createElement('div');
@@ -97,6 +143,9 @@ function positionFileTabTooltip(tooltip, evt) {
  */
 function updateTabs(forceRefresh) {
   const tabsContainer = document.getElementById('fileTabs');
+  // The tabs about to be replaced include whichever one the pointer is over,
+  // and a removed element cannot report that the pointer has left it.
+  hideFileTabTooltip();
   const previousTreeFile = currentTreeFile;
   const tooltipHtmlByFile = {};
 
@@ -127,6 +176,7 @@ function updateTabs(forceRefresh) {
 
     // Tooltip
     tab.addEventListener('mouseenter', (evt) => {
+      if (!shouldFileTabTooltipShow(evt)) return;
       const tooltip = ensureFileTabTooltip();
       tooltip.innerHTML = tooltipHtmlByFile[fileName] || `<div class="file-tab-tooltip-title">${escapeHtml(fileName || '')}</div>`;
       tooltip.style.display = 'block';
@@ -134,7 +184,15 @@ function updateTabs(forceRefresh) {
     });
     tab.addEventListener('mousemove', (evt) => {
       const tooltip = ensureFileTabTooltip();
-      if (tooltip.style.display !== 'none') positionFileTabTooltip(tooltip, evt);
+      // Moving within a tab is also how a suppressed tooltip comes back: the
+      // tab it belongs to is already entered, so no mouseenter is coming.
+      if (tooltip.style.display === 'none') {
+        if (!shouldFileTabTooltipShow(evt)) return;
+        tooltip.innerHTML = tooltipHtmlByFile[fileName]
+          || `<div class="file-tab-tooltip-title">${escapeHtml(fileName || '')}</div>`;
+        tooltip.style.display = 'block';
+      }
+      positionFileTabTooltip(tooltip, evt);
     });
     tab.addEventListener('mouseleave', () => {
       ensureFileTabTooltip().style.display = 'none';
@@ -145,6 +203,9 @@ function updateTabs(forceRefresh) {
     if (closeBtn) {
       closeBtn.addEventListener('click', (e) => {
         e.stopPropagation();
+        // Before the tab goes: this one stays away until the pointer moves,
+        // rather than re-appearing for whichever tab slides into its place.
+        hideFileTabTooltip(e);
         removeFile(fileName);
       });
     }

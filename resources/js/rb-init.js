@@ -629,9 +629,25 @@ async function openSampleDataDialog() {
   errorEl.textContent = '';
   listEl.innerHTML = '';
   dialog.style.display = '';
+  // Nothing to load until the manifest says there is. The button is enabled
+  // again below, per file listed.
+  setSampleDataLoadEnabled(false);
 
   try {
+    /*
+      A manifest that is not there means the same thing as an empty one: no
+      samples are published at the moment. The site is served from a
+      repository the files can be taken out of -- they were, so as not to
+      publish them -- and a reader who opens this should be told there are
+      none, not shown "HTTP 404" as though the page were broken. Any other
+      failure (a manifest that is not JSON, a network that is down) is still
+      reported, because those are faults.
+    */
     const resp = await fetch('./resources/data/files.json');
+    if (resp.status === 404) {
+      listEl.innerHTML = '<div class="sample-data-empty">No sample files available.</div>';
+      return;
+    }
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const files = await resp.json();
 
@@ -640,6 +656,7 @@ async function openSampleDataDialog() {
       return;
     }
 
+    setSampleDataLoadEnabled(true);
     files.forEach(name => {
       const alreadyLoaded = !!loadedFiles[name];
       const item = document.createElement('div');
@@ -663,6 +680,19 @@ async function openSampleDataDialog() {
     errorEl.textContent = 'Could not load sample file list: ' + err.message;
     errorEl.style.display = '';
   }
+}
+
+/**
+ * Enable or disable the dialog's Load button.
+ *
+ * With no files listed there is nothing to select, and a live button whose
+ * only answer is "Select at least one file" is a dead end.
+ */
+function setSampleDataLoadEnabled(on) {
+  const btn = document.getElementById('sampleDataLoadBtn');
+  if (!btn) return;
+  btn.disabled = !on;
+  btn.title = on ? '' : 'There are no sample files to load';
 }
 
 /** Close the sample-data dialog. */
@@ -716,7 +746,8 @@ async function loadSelectedSampleData() {
     errorEl.textContent = 'Failed to load: ' + err.message;
     errorEl.style.display = '';
   } finally {
-    loadBtn.disabled = false;
+    // Only back on if there is still something listed to load.
+    setSampleDataLoadEnabled(!!listEl.querySelector('input[type="checkbox"]'));
     loadBtn.textContent = 'Load Selected';
   }
 }

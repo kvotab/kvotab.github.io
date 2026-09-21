@@ -701,6 +701,24 @@ async def main():
                 " return el.scrollHeight > el.clientHeight + 20; })()"), True)
             await page.ev("document.getElementById('rtmStatus').textContent = 'Ready.'")
 
+            # --- the window does not scroll, and the text box fills the pane ---
+            # The page is one screen: the panel and the work area scroll inside
+            # themselves. The hidden checkbox in a species cell is absolutely
+            # placed, and with no positioned ancestor of its own it takes
+            # .content as its containing block, escapes every clip and adds the
+            # cell's static position to the page's scrollable height.
+            check('the window itself does not scroll', await page.ev(
+                "(() => { const de = document.documentElement;"
+                " return de.scrollHeight - de.clientHeight; })()"), 0)
+            await page.ev("document.querySelector('[data-tab=\"model\"]').click()")
+            await asyncio.sleep(0.4)
+            # The model text takes what the pane has left, so its foot lines up
+            # with the foot of the status box in the panel beside it.
+            check('the model text reaches the foot of the panel beside it', await page.ev(
+                "(() => { const ta = document.getElementById('rtmText').getBoundingClientRect();"
+                " const st = document.getElementById('rtmStatus').getBoundingClientRect();"
+                " return Math.abs(ta.bottom - st.bottom) <= 2; })()"), True)
+
             check('no console errors throughout', page.errors[:3], [])
         finally:
             await page.call('Target.closeTarget', {'targetId': tid})

@@ -223,6 +223,15 @@
 }
 .fac-btn.small { padding: 3px 8px; font-size: 11px; }
 
+/*
+  A box of a fixed size that scrolls, not one that grows: the foot is laid
+  out from the bottom of a flex column, so a status line that took a line
+  more moved Run, Stop and Check Jacobian up the panel -- the buttons walked
+  about under the pointer as the run reported itself. Three lines hold what
+  the page writes in the ordinary course, the compile summary included; the
+  longer failures scroll inside the box rather than pushing it open. The
+  panel beside it on rtm.html is the same box.
+*/
 .fac-status {
   margin-top: 8px;
   padding: 8px 10px;
@@ -232,7 +241,9 @@
   font-size: 12px;
   line-height: 1.45;
   color: var(--text-secondary);
-  min-height: 2.6em;
+  height: 4.35em;               /* three lines at the line-height above */
+  overflow-y: auto;
+  overscroll-behavior: contain;
   overflow-wrap: anywhere;
 }
 .fac-status.error { border-color: var(--color-kvot-accent); color: var(--text-primary); }
@@ -244,6 +255,11 @@
   background: var(--bg-secondary);
   overflow: hidden;
 }
+/* Hidden but still taking its space, for the same reason as the fixed
+   height above: with display: none the bar appearing at the start of a run
+   made the foot 14px taller and the buttons jumped the moment Run was
+   pressed. */
+.fac-progress[hidden] { display: block; visibility: hidden; }
 .fac-progress > div {
   height: 100%;
   width: 0;
@@ -429,6 +445,15 @@
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
+  /*
+    The cell is the containing block for the hidden checkbox below. Without
+    it the nearest positioned ancestor is .content, so an absolutely placed
+    checkbox is not clipped by the list it is in nor by the overflow: hidden
+    on .fac: every cell past the fold added its static position to the
+    page's scrollable height, and the window grew a scrollbar onto several
+    hundred pixels of nothing.
+  */
+  position: relative;
 }
 .fac-item[hidden] { display: none; }
 /*

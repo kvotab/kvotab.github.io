@@ -3,6 +3,14 @@
 Covers the two transports a producing page can use — a postMessage handshake
 and a ?url= link — plus the checks that stop an unwanted file getting in.
 
+The bytes come from the demo page's own `buildHdf5Bytes`, which makes a small
+HDF5 file with h5wasm. This test used to fetch a committed sample instead, and
+when those were taken out of the repository the fetch 404ed -- which `fetch`
+does not treat as an error, so the page posted an HTML error document as if it
+were a file, rb.html refused it, no `rb-opened` ever came back and the check
+waited for ever. Producing the bytes here needs nothing from the repository and
+exercises the same path the demo does.
+
 Run the server and Chrome as described in README.md, then:
 
     python3 test-handoff.py
@@ -113,7 +121,7 @@ async def main():
                       document.body.appendChild(f);
                       await new Promise(r => f.addEventListener('load', r));
                       await new Promise(r => setTimeout(r, 1500));
-                      const buf = await (await fetch('../../data/SFR_FSAR_CCP14.h5')).arrayBuffer();
+                      const buf = await buildHdf5Bytes(null);
                       f.contentWindow.postMessage({kvot:'rb-open', name:'sneaky.h5', buffer: buf},
                                                  location.origin, [buf]);
                       await new Promise(r => setTimeout(r, 2500));
@@ -166,7 +174,7 @@ async def main():
         await check(page, 'the ticker clears once the file is open',
                     """(async () => {
                       const f = window._waitFrame;
-                      const buf = await (await fetch('../../data/SFR_FSAR_CCP14.h5')).arrayBuffer();
+                      const buf = await buildHdf5Bytes(null);
                       const done = new Promise(res => {
                         window.addEventListener('message', function onMsg(e) {
                           if (e.data && e.data.kvot === 'rb-opened') {
@@ -195,7 +203,7 @@ async def main():
                       // listener only after a build far longer than one ping.
                       await new Promise(r => setTimeout(r, 3500));
 
-                      const buf = await (await fetch('../../data/SFR_FSAR_CCP14.h5')).arrayBuffer();
+                      const buf = await buildHdf5Bytes(null);
                       const got = await new Promise(resolve => {
                         let sent = false;
                         const timer = setTimeout(() => resolve('never announced again'), 15000);
@@ -223,7 +231,7 @@ async def main():
         print('?url= blob handoff')
         await check(page, 'a blob: URL made here opens in rb.html',
                     """(async () => {
-                      const buf = await (await fetch('../../data/SFR_FSAR_CCP14.h5')).arrayBuffer();
+                      const buf = await buildHdf5Bytes(null);
                       const blobUrl = URL.createObjectURL(new Blob([buf]));
                       const f = document.createElement('iframe');
                       f.src = '../../../rb.html?url=' + encodeURIComponent(blobUrl);

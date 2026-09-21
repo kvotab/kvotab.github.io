@@ -171,27 +171,34 @@
 @keyframes rtm-stripes { to { background-position: 16px 0; } }
 
 /*
-  A fixed four lines, scrolling past that.
+  A box of a fixed size that scrolls, drawn as facsimile.html draws the same
+  thing: a bordered well under the buttons, and the tone in its border rather
+  than in the text.
 
   The buttons above this sit at the bottom of the side panel, so anything that
   changes the height of this line moves them: between "Ready.", a compile
   error and a run's own report the Run button travelled 127 px, and it moved
-  under the pointer as it was clicked. Four lines hold every message the page
-  writes in the ordinary course -- the compiled summary and the run's report
-  are three -- and a longer one scrolls rather than pushing anything.
+  under the pointer as it was clicked. Three lines hold what the page writes
+  in the ordinary course -- the run's report is two of them and the compiled
+  summary three -- and a longer message scrolls rather than pushing anything.
 */
 .rtm-status {
-  height: 4.35em;               /* four lines at the line-height below */
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  font-size: 11px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  font-size: 12px;
   line-height: 1.45;
   color: var(--text-secondary);
-  word-break: break-word;
+  height: 4.35em;               /* three lines at the line-height above */
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  overflow-wrap: anywhere;
 }
-.rtm-status.ok { color: var(--text-secondary); }
-.rtm-status.error { color: var(--color-kvot-accent); font-weight: 600; }
-.rtm-status.warn { color: var(--text-primary); }
+.rtm-status.ok { border-color: var(--color-kvot-primary); }
+.rtm-status.error { border-color: var(--color-kvot-accent); color: var(--text-primary); }
+.rtm-status.warn { border-color: var(--color-kvot-bright); color: var(--text-primary); }
 
 /* ---- the work area ------------------------------------------------------ */
 .rtm-main {
@@ -291,6 +298,11 @@
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
+  /* The containing block for the hidden checkbox below: otherwise that is
+     .content, the checkbox escapes both the list's scroll and the
+     overflow: hidden on .rtm, and every cell past the fold adds its static
+     position to the page's scrollable height. */
+  position: relative;
 }
 .rtm-item[hidden] { display: none; }
 .rtm-item:hover { background: var(--bg-surface); }
@@ -305,12 +317,21 @@
 .rtm-empty { margin: 0; padding: 24px 12px 40px; color: var(--text-muted); font-size: 12px; }
 .rtm-empty[hidden] { display: none; }
 
-/* ---- the model text ----------------------------------------------------- */
+/* ---- the model text -----------------------------------------------------
+   The pane is a column -- toolbar, the text, and the warnings under it -- so
+   the text can take whatever is left rather than a height guessed from the
+   pane's: the toolbar wraps on a narrow window and the note about the chosen
+   example comes and goes, and calc(100% - 70px) was only ever right for one
+   of those. Filling the column puts the foot of the text box level with the
+   foot of the status box in the panel beside it, whatever is above either.
+*/
+.rtm-pane[data-pane="model"] { display: flex; flex-direction: column; }
+.rtm-pane[data-pane="model"][hidden] { display: none; }
 .rtm-text {
   box-sizing: border-box;
   width: 100%;
-  height: calc(100% - 70px);
-  min-height: 320px;
+  flex: 1 1 auto;
+  min-height: 160px;
   padding: 8px 10px;
   border: 1px solid var(--input-border);
   border-radius: 6px;
