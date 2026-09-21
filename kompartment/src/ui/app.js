@@ -3080,6 +3080,36 @@ function openRunLog() {
 	modal.dialog.classList.add('modal-wide');
 }
 
+/**
+ * The build stamp, which is the one thing on that line not about the run.
+ *
+ * Made here rather than written out where it is wanted, because it is wanted
+ * in three places -- boot, the end of a run, and the reset between models --
+ * and a title this long kept in three copies is a title that stops agreeing
+ * with itself.
+ */
+function buildStamp() {
+	return el('span', {
+		className: 'stat build-stamp',
+		title: 'Build of the loaded code. If this looks old, the browser is serving '
+			+ 'a cached copy — serve with serve.py, which disables caching.',
+	}, `build ${BUILD}`);
+}
+
+/**
+ * The footer's line with nothing on it but the build.
+ *
+ * `#status` is a run's account of itself, so it belongs to the results and
+ * goes when they do. Only `setStatus` ever wrote it, so New -- and Open, and
+ * Apply on the JSON tab -- left the closed model's solver, step count and
+ * timings standing under the new one's name, describing a run that no longer
+ * exists and cannot be repeated from what is on screen. The log button beside
+ * them still opened that run's log, which is worse than the numbers.
+ */
+function clearStatus() {
+	$('#status')?.replaceChildren(buildStamp());
+}
+
 function setStatus(p) {
 	const s = p.stats;
 	// A model with no compartments was not integrated at all: its blocks were
@@ -3185,11 +3215,7 @@ function setStatus(p) {
 		+ 'written into a results archive too.' }, 'log');
 	log.addEventListener('click', openRunLog);
 	host.append(log);
-	host.append(el('span', {
-		className: 'stat build-stamp',
-		title: 'Build of the loaded code. If this looks old, the browser is serving '
-			+ 'a cached copy — serve with serve.py, which disables caching.',
-	}, `build ${BUILD}`));
+	host.append(buildStamp());
 }
 
 // --- selection ---------------------------------------------------------------
@@ -5715,6 +5741,9 @@ function clearResultsViews() {
 	const table = $('#table-body');
 	if (table) table.replaceChildren(pendingResults());
 	tableDirty = true;
+	// And the footer's line, which is a view of the results like the rest of
+	// these -- the one that was left behind when a model was replaced.
+	clearStatus();
 	renderRunKind();
 	renderStaleness();
 }
@@ -9566,7 +9595,7 @@ function selectTab(name) {
 // --- boot -----------------------------------------------------------------------------
 
 export function boot() {
-	$('#status').append(el('span', { className: 'stat build-stamp' }, `build ${BUILD}`));
+	clearStatus();
 	wireFlash();
 	wireRailSplit();
 	wirePaneSplits();
@@ -9981,6 +10010,33 @@ export function boot() {
 		setModel(structuredClone(BLANK), { label: 'New model' });
 		offerDraft(held);
 		return;
+	}
+
+	/*
+	  `?model=draft` is how the model gets out of the page's frame. The "full
+	  window" link on kompartment.html sets it, and what it names is the draft
+	  this tab has already written -- the two pages are one origin, and the
+	  framed one flushes on `pagehide`, which is what leaving it is. So the
+	  model that was open comes with, unsaved edits and all.
+
+	  Restored rather than offered, which is the one place that is right: the
+	  reader has just said which model they mean by stepping out of the frame
+	  with it open, and a bar asking them to confirm it would be the editor
+	  pretending not to know.
+
+	  Nothing held means the draft was refused -- storage switched off, or a
+	  model past the ceiling in ./autosave.js. Then this falls through to the
+	  usual start and says so, because the model silently not arriving is the
+	  one failure here the reader would otherwise read as their work being gone.
+	*/
+	if (wanted === 'draft') {
+		if (held?.raw) {
+			setModel(held.raw, { label: held.meta?.label || held.raw.name || UNTITLED });
+			return;
+		}
+		flash('The model could not be carried over from the framed page — it was not '
+			+ 'being kept, so this is the usual starting point. Nothing is lost: the '
+			+ 'other page still has it.', 'warn');
 	}
 
 	const start = EXAMPLES.some((e) => e.file === wanted) ? wanted : EXAMPLES[0].file;

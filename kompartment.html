@@ -172,15 +172,25 @@
       /*
         The same address without the site's chrome, for the reader who wants
         the whole window. The palette and the theme go with it, so stepping
-        out of the frame is not also a change of skin.
+        out of the frame is not also a change of skin — and so does the model,
+        by `?model=draft`: the tool keeps a draft of what it is working on in
+        this origin's storage and writes it out as the frame is unloaded, so
+        the page arriving reads the model that was on screen a moment ago
+        rather than starting again on an example. See the `model=draft` branch
+        in kompartment/src/ui/app.js.
       */
       var openLink = document.createElement('a');
       openLink.className = 'komp-open';
       openLink.textContent = 'full window ↗';
-      openLink.title = 'Open Kompartment without the site header and footer';
+      openLink.title = 'Open Kompartment in the whole window, without the site header and '
+        + 'footer — the model you are working on comes with it';
       function pointOpenLink() {
         var url = frameURL();
         url.searchParams.delete('chrome');
+        // After the pass-through in frameURL, so it beats a ?model= this page
+        // was itself opened on: the link means *this* model in the whole
+        // window, and this model is whatever has been done to that one since.
+        url.searchParams.set('model', 'draft');
         // The address a reader may keep: the directory, which a server resolves
         // to the same page. On disk there is nothing to resolve it, so the file
         // is named — and it is worth linking even there, because that page says
