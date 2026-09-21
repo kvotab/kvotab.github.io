@@ -1,0 +1,533 @@
+{
+ "_console": [],
+ "bad.input": {
+  "missingFile": false,
+  "missingPath": false,
+  "validatorRejects": {
+   "ok": false,
+   "reason": "Missing HDF5 signature. The file is not a valid HDF5 payload."
+  },
+  "validatorRejectsEmpty": {
+   "ok": false,
+   "reason": "File is too small to be a valid HDF5 file."
+  },
+  "validatorRejectsHtml": {
+   "ok": false,
+   "reason": "Downloaded content is HTML, not an HDF5 file. The address of a page that shows a file is not the address of the file: look for a \"raw\" or \"download\" link on that page and use the address it points at."
+  },
+  "validatorRejectsLfs": {
+   "ok": false,
+   "reason": "This file looks like a Git LFS pointer, not actual HDF5 binary data."
+  }
+ },
+ "chart.scales": {
+  "activeButtons": [
+   "x:log",
+   "y:log"
+  ],
+  "xType": "log",
+  "yType": "log"
+ },
+ "chart.toggles": {
+  "afterDynamicLegendOff": 9,
+  "afterMax": 9,
+  "afterTotalToggle": 9,
+  "legendHasMax": [
+   false,
+   false,
+   false
+  ],
+  "legendStatus": ""
+ },
+ "dialogs": {
+  "presetClosed": "none",
+  "presetOpen": "flex",
+  "presetOptions": [
+   "default",
+   "release",
+   "dose"
+  ],
+  "presetRows": true,
+  "urlClosed": "none",
+  "urlInputValue": "",
+  "urlOpen": ""
+ },
+ "dom.inventory": {
+  "chartControlLabels": [
+   "X-axis: lin log",
+   "Y-axis: lin log",
+   "Dynamic Legend",
+   "Show Total",
+   "Show Ratio",
+   "Show Max",
+   "CI (5-95%)",
+   "SEM",
+   "Show iteration:",
+   "Background:",
+   "Deterministic",
+   "PDF",
+   "Statistics from sample",
+   "Log\u2081\u2080 scale",
+   "Iteration:"
+  ],
+  "controlIds": [
+   "backgroundSourceLabel",
+   "backgroundSourceSelect",
+   "chartResizeHandle",
+   "clearSearch",
+   "datasetInfoHeading",
+   "dropOverlay",
+   "dynamicLegend",
+   "fileInput",
+   "fileLoadTicker",
+   "fileTabs",
+   "histControls",
+   "histDet",
+   "histDetLabel",
+   "histIterLabel",
+   "histIterNum",
+   "histLogLabel",
+   "histLogScale",
+   "histPdf",
+   "histPdfLabel",
+   "histStats",
+   "histStatsLabel",
+   "info",
+   "kvotmap",
+   "leftPanel",
+   "legendStatus",
+   "lockAxesBtn",
+   "menu",
+   "multiSelectHint",
+   "multiSelectHintClose",
+   "plotly.js-style-global",
+   "plotlyChart",
+   "plotlyChartContainer",
+   "presetDialogTitle",
+   "presetManagerList",
+   "presetManagerOverlay",
+   "presetSelect",
+   "resizeHandle",
+   "sampleDataDialog",
+   "sampleDataError",
+   "sampleDataList",
+   "sampleDataLoadBtn",
+   "sampleDataTitle",
+   "showCI",
+   "showCILabel",
+   "showHintButton",
+   "showIterLabel",
+   "showIterNum",
+   "showMax",
+   "showMaxLabel",
+   "showRatio",
+   "showRatioLabel",
+   "showSDOM",
+   "showSDOMLabel",
+   "showTotal",
+   "showTotalLabel",
+   "tree",
+   "treeModeContainer",
+   "treeSearch",
+   "urlAuth",
+   "urlDialog",
+   "urlDialogTitle",
+   "urlError",
+   "urlInput",
+   "urlLoadBtn",
+   "urlToken",
+   "xScaleToggle",
+   "yScaleToggle"
+  ],
+  "dialogs": [
+   "presetManagerOverlay",
+   "sampleDataDialog",
+   "urlDialog"
+  ],
+  "hiddenAtStart": [
+   "backgroundSourceLabel",
+   "datasetInfoHeading",
+   "histControls",
+   "histDetLabel",
+   "histIterLabel",
+   "histPdfLabel",
+   "multiSelectHint",
+   "presetManagerOverlay",
+   "sampleDataDialog",
+   "sampleDataError",
+   "showCILabel",
+   "showHintButton",
+   "showIterLabel",
+   "showMaxLabel",
+   "showRatioLabel",
+   "showSDOMLabel",
+   "showTotalLabel",
+   "ticker-cancel",
+   "treeModeContainer",
+   "urlDialog",
+   "urlError"
+  ],
+  "inputs": 44,
+  "treePlaceholder": "Drop HDF5 files or click \"Add Files\" to start..."
+ },
+ "export.dataset.excel": {
+  "blobBytes": true,
+  "call": "ok",
+  "entries": [
+   "[Content_Types].xml",
+   "_rels/",
+   "_rels/.rels",
+   "docProps/",
+   "docProps/app.xml",
+   "docProps/core.xml",
+   "xl/",
+   "xl/_rels/",
+   "xl/_rels/workbook.xml.rels",
+   "xl/sharedStrings.xml",
+   "xl/styles.xml",
+   "xl/theme/",
+   "xl/theme/theme1.xml",
+   "xl/workbook.xml",
+   "xl/worksheets/",
+   "xl/worksheets/sheet1.xml",
+   "xl/worksheets/sheet2.xml",
+   "xl/worksheets/sheet3.xml"
+  ],
+  "rowsPerSheet": {
+   "xl/worksheets/sheet1.xml": 8,
+   "xl/worksheets/sheet2.xml": 4,
+   "xl/worksheets/sheet3.xml": 62
+  },
+  "stringCount": 35,
+  "strings": [
+   "Dataset Information",
+   "Property",
+   "Value",
+   "File",
+   "sample-a.h5",
+   "Path",
+   "/biosphere/vault_A/mire/total/Ac-227",
+   "Type",
+   "Dataset",
+   "Data Type",
+   "Float",
+   "Shape",
+   "60 \u00d7 12",
+   "Export Date",
+   "<date>",
+   "Attributes",
+   "Name",
+   "probabilistic",
+   "1",
+   "unit",
+   "Sv/year",
+   "Data",
+   "Time (years)",
+   "Col 1",
+   "Col 2",
+   "Col 3",
+   "Col 4",
+   "Col 5",
+   "Col 6",
+   "Col 7",
+   "Col 8",
+   "Col 9",
+   "Col 10",
+   "Col 11",
+   "Col 12"
+  ]
+ },
+ "exports": {
+  "csv": "threw: Cannot read properties of undefined (reading '0')",
+  "excel": "ok"
+ },
+ "file.toggle.remove": {
+  "afterDisable": {
+   "enabled": [
+    "sample-a.h5"
+   ],
+   "rows": 4
+  },
+  "afterEnable": {
+   "enabled": [
+    "sample-a.h5",
+    "sample-b.h5"
+   ],
+   "rows": 8
+  },
+  "afterRemove": {
+   "enabled": [
+    "sample-a.h5"
+   ],
+   "loadedKeys": [
+    "sample-a.h5"
+   ],
+   "memfsAfter": 1,
+   "memfsBefore": 2
+  }
+ },
+ "globals.present": {
+  "functions": [
+   "applySelectedPreset=function",
+   "buildTree=function",
+   "cancelTreeRefresh=function",
+   "closePresetManager=function",
+   "closeSampleDataDialog=function",
+   "closeUrlDialog=function",
+   "createMultiDatasetChart=function",
+   "createPlotlyChart=function",
+   "createRadionuclidesChart=function",
+   "downloadChartData=function",
+   "downloadChartDataAsExcel=function",
+   "filterTree=function",
+   "findTreeItem=function",
+   "getEnabledFiles=function",
+   "getPathChildIndex=function",
+   "getRealizationStride=function",
+   "getTreeMode=function",
+   "handleFile=undefined",
+   "loadFromUrl=function",
+   "loadSelectedSampleData=function",
+   "openPresetManager=function",
+   "openSampleDataDialog=function",
+   "openUrlDialog=function",
+   "redrawHistogram=function",
+   "refreshTreeStructure=function",
+   "releaseLoadedFile=function",
+   "removeFile=function",
+   "saveCurrentAsPreset=function",
+   "selectDataset=function",
+   "toggleAxesLock=function",
+   "toggleBackgroundOverlay=function",
+   "toggleDynamicLegend=function",
+   "toggleFileState=function",
+   "toggleGroup=function",
+   "toggleGroupExpansion=function",
+   "toggleShowCI=function",
+   "toggleShowIteration=function",
+   "toggleShowMax=function",
+   "toggleShowRatio=function",
+   "toggleShowSDOM=function",
+   "toggleShowTotal=function",
+   "updateTabs=function"
+  ],
+  "globals": [
+   "loadedFiles=undefined",
+   "fileStates=undefined",
+   "fileOrder=undefined",
+   "loadedFileBuffers=undefined",
+   "selectedDatasetPath=undefined",
+   "selectedFileKey=undefined",
+   "selectedDatasets=undefined",
+   "multiSelectMode=undefined",
+   "selectedIsRadionuclidesGroup=undefined",
+   "currentChartData=undefined",
+   "currentSearchTerm=undefined"
+  ]
+ },
+ "info.panel": {
+  "dataset": {
+   "buttons": [
+    "\u2b07 Download CSV",
+    "\ud83d\udcca Download Excel"
+   ],
+   "firstRows": [
+    [
+     "Name",
+     "Value"
+    ],
+    [
+     "probabilistic",
+     "1"
+    ],
+    [
+     "unit",
+     "Sv/year"
+    ]
+   ],
+   "headingShown": "",
+   "htmlValueNodes": 0,
+   "scriptNodes": 0,
+   "sectionLabels": [
+    "Path",
+    "Type",
+    "Data Type",
+    "Shape",
+    "Data Preview (first 100/720 items)\u2b07 Download CSV",
+    "Attributes (2)"
+   ],
+   "sectionValues": [
+    "/biosphere/vault_A/mire/total/Ac-227",
+    "Dataset",
+    "Float",
+    "60, 12",
+    "[ 2.0650315513208316e-24, 4.3114619105218404e-24, 3.844600511943073e-24, 2.8443902609641157e-24, 3.98165741273765e-24, 3",
+    "NameValueprobabilistic1unitSv/year"
+   ],
+   "tableRowCount": 3
+  },
+  "datasetPath": "/biosphere/vault_A/mire/total/Ac-227",
+  "group": {
+   "buttons": [],
+   "firstRows": [
+    [
+     "Name",
+     "Value"
+    ],
+    [
+     "IndexLists",
+     "[Radionuclides]"
+    ],
+    [
+     "information",
+     "Dose to the mire object (synthetic test data)"
+    ],
+    [
+     "time_dependent",
+     "1"
+    ],
+    [
+     "unit",
+     "Sv/year"
+    ]
+   ],
+   "headingShown": "",
+   "htmlValueNodes": 1,
+   "scriptNodes": 0,
+   "sectionLabels": [
+    "Path",
+    "Type",
+    "Attributes (4)"
+   ],
+   "sectionValues": [
+    "/biosphere/vault_A/mire/total",
+    "Group",
+    "NameValueIndexLists[Radionuclides]informationDose to the mire object (synthetic test data)time_dependent1unitSv/year"
+   ],
+   "tableRowCount": 5
+  },
+  "groupPath": "/biosphere/vault_A/mire/total"
+ },
+ "load.two.files": {
+  "enabled": [
+   "sample-a.h5",
+   "sample-b.h5"
+  ],
+  "modeToggleShown": "inline-flex",
+  "order": [
+   "sample-a.h5",
+   "sample-b.h5"
+  ],
+  "searchVisible": true,
+  "tabs": [
+   "sample-a.h5",
+   "sample-b.h5"
+  ],
+  "treeRows": 8
+ },
+ "multi.select": {
+  "domMarked": 4,
+  "multiMode": true,
+  "selectedCount": 4,
+  "traces": 4
+ },
+ "search": {
+  "Am": {
+   "hidden": 18,
+   "matches": 2,
+   "pathSearch": false
+  },
+  "Am*1": {
+   "hidden": 20,
+   "matches": 0,
+   "pathSearch": false
+  },
+  "Am-241": {
+   "hidden": 20,
+   "matches": 0,
+   "pathSearch": false
+  },
+  "afterClear": {
+   "hidden": 0,
+   "matches": 0
+  },
+  "biosphere/vault_A": {
+   "hidden": 4,
+   "matches": 24,
+   "pathSearch": true
+  },
+  "zzz-no-match": {
+   "hidden": 32,
+   "matches": 0,
+   "pathSearch": false
+  }
+ },
+ "select.dataset": {
+  "domSelected": 1,
+  "firstY": [],
+  "infoHeadingShown": "",
+  "isGroup": false,
+  "selectedPath": "/biosphere/vault_A/mire/total/Ac-227",
+  "traceNames": [
+   "Samples"
+  ],
+  "traces": 1,
+  "xTitle": {
+   "text": "Value"
+  }
+ },
+ "select.group": {
+  "firstFiveNames": [
+   "Total",
+   "Ac-227",
+   "Cl-36",
+   "I-129",
+   "Nb-94"
+  ],
+  "isGroup": true,
+  "selectedPath": "/biosphere/vault_A/mire/total",
+  "showMaxVisible": "",
+  "showTotalVisible": "",
+  "traces": 10
+ },
+ "tree.expand": {
+  "classes": [
+   "tree-item dataset",
+   "tree-item group",
+   "tree-item group root-node"
+  ],
+  "firstTenPaths": [
+   "/",
+   "/biosphere",
+   "/biosphere/vault_A",
+   "/biosphere/vault_A/mire",
+   "/biosphere/vault_A/mire/total",
+   "/biosphere/vault_A/mire/total/Ac-227",
+   "/biosphere/vault_A/mire/total/Cl-36",
+   "/biosphere/vault_A/mire/total/I-129",
+   "/biosphere/vault_A/mire/total/Nb-94",
+   "/biosphere/vault_A/mire/total/Ni-59"
+  ],
+  "rows": 20
+ },
+ "tree.modes": {
+  "intersect": {
+   "activeButton": "intersect",
+   "intersected": 17,
+   "reported": "intersect",
+   "rows": 4
+  },
+  "separated": {
+   "activeButton": "separated",
+   "intersected": null,
+   "reported": "separated",
+   "rows": 8
+  },
+  "union": {
+   "activeButton": "union",
+   "intersected": 17,
+   "reported": "union",
+   "rows": 4
+  }
+ }
+}
