@@ -9,33 +9,78 @@
 	--header-height: 43px;
 	--footer-height: 31px;
 
+	/*
+	  COLOUR ROLES.
+
+	  The four brand colours above are fixed marks -- they are what the logo is
+	  painted with, and they do not move. What follows are the roles a page
+	  actually paints with, and a role may need a different value in each theme
+	  to go on doing the same job.
+
+	  Every neutral below sits on the same warm hue as the brand browns
+	  (OKLCH H ~ 68), so no part of the ramp reads cold against another part.
+	  The light theme used to mix pure greys (#f5f5f5, #ccc, #333, #ddd,
+	  #f9f9f9) into that warm ramp: a neutral grey beside a warm off-white
+	  looks dirty rather than neutral, and it was the one cold note on an
+	  otherwise warm page. The dark theme never had the fault -- every token in
+	  it was already warm -- which is why the two halves did not feel like one
+	  design.
+	*/
+
 	/* Light mode (default) */
 	--bg-primary: #ffffff;
-	--bg-secondary: #f5f5f5;
-	--bg-surface: #faf8f6;
+	--bg-secondary: #f6efe8;
+	--bg-surface: #fcf7f2;
 	--text-primary: #352921;
 	--text-secondary: #6b5d4f;
 	--text-muted: #786b5d;
-	--border-color: #e5ddd5;
+	--border-color: #e0d7ce;
 	--input-bg: #ffffff;
-	--input-border: #cccccc;
-	--input-text: #333333;
+	/* 3.1:1 against every page surface: the border IS the field (WCAG 1.4.11),
+	   and the #ccc it replaces was 1.6:1. */
+	--input-border: #96887b;
+	--input-text: #3b3126;
 	--header-bg: #352921;
 	--header-text: #f3b87b;
 	--footer-bg: #352921;
 	--footer-text: #f3b87b;
 	--link-color: #a8503f;
-	--shadow-color: rgba(0, 0, 0, 0.1);
-	--code-bg: #f4f4f4;
-	--code-text: #333;
-	--overlay-bg: rgba(0, 0, 0, 0.4);
-	--modal-bg: #fefefe;
-	--table-border: #ddd;
-	--table-stripe: #f9f9f9;
-	--scrollbar-thumb: #c1b9b0;
-	--scrollbar-track: #f0ece8;
+	/* Warm shadow. A neutral-black shadow over a warm surface greys it. */
+	--shadow-color: rgba(53, 41, 33, 0.12);
+	--code-bg: #f6efe8;
+	--code-text: #3b3126;
+	--overlay-bg: rgba(26, 20, 16, 0.45);
+	--modal-bg: #fefcfb;
+	--table-border: #e0d7ce;
+	--table-stripe: #fbf8f4;
+	--scrollbar-thumb: #c3b8ad;
+	--scrollbar-track: #f1ece6;
 	/* Readable text on a --color-kvot-bright fill; white gives only 1.8:1. */
 	--on-bright: #352921;
+	/*
+	  THE BRAND COLOUR AS A LINE, rather than as a fill.
+
+	  --color-kvot-bright works as a fill in either theme: put --on-bright on
+	  it and that is 8:1. It does not work as a *stroke* on a light page.
+	  #f3b87b is 1.76:1 against white, so a 1px hover border or a 2px focus
+	  ring drawn in it is very nearly not there -- and a focus ring has to
+	  clear 3:1 (WCAG 1.4.11), so on the light theme that was a keyboard user
+	  with no visible focus. This is the same colour carried down in lightness
+	  until it can be seen on paper; in the dark theme the brand colour already
+	  clears 3:1 and this is simply that colour.
+
+	  Use --color-kvot-bright for fills, and for anything drawn on the dark
+	  brown chrome (header, footer, nav toggle). Use --accent-line for
+	  outlines, hover borders and focus rings drawn on the page itself.
+	*/
+	--accent-line: #bb7d37;
+	/*
+	  --color-kvot-primary is the green facet of the logo and stays where it
+	  is. This is that green as a usable signal colour: the logo green is
+	  1.7:1 on the dark page, which is why rb.css had already grown private
+	  overrides for the places it was used as text.
+	*/
+	--accent-success: #587339;
 }
 
 [data-theme="dark"] {
@@ -44,26 +89,29 @@
 	--bg-surface: #332b23;
 	--text-primary: #e8ddd0;
 	--text-secondary: #b8a898;
-	--text-muted: #9c8e7f;
-	--border-color: #4a3f35;
+	/* Was #9c8e7f, which fell to 4.4:1 once it sat on --bg-surface. */
+	--text-muted: #9f9182;
+	--border-color: #51453a;
 	--input-bg: #2a221b;
-	--input-border: #5a4f42;
+	--input-border: #817364;
 	--input-text: #e8ddd0;
 	--header-bg: #0f0b08;
 	--header-text: #f3b87b;
 	--footer-bg: #0f0b08;
 	--footer-text: #f3b87b;
 	--link-color: #f3b87b;
-	--shadow-color: rgba(0, 0, 0, 0.4);
+	--shadow-color: rgba(0, 0, 0, 0.45);
 	--code-bg: #2a221b;
 	--code-text: #e8ddd0;
 	--overlay-bg: rgba(0, 0, 0, 0.7);
 	--modal-bg: #2a221b;
-	--table-border: #4a3f35;
+	--table-border: #51453a;
 	--table-stripe: #332b23;
-	--scrollbar-thumb: #5a4f42;
+	--scrollbar-thumb: #6b5d4e;
 	--scrollbar-track: #2a221b;
 	--on-bright: #352921;
+	--accent-line: #f3b87b;
+	--accent-success: #9bba7d;
 }
 
 /*
@@ -283,7 +331,7 @@ body{
   color: var(--link-color);
 }
 #menu a:focus-visible {
-  outline: 2px solid var(--color-kvot-bright);
+  outline: 2px solid var(--accent-line);
   outline-offset: -2px;
 }
 #menu .nav-divider {
@@ -358,7 +406,7 @@ header .title {
 header input {
 width:140px;
 border-radius:4px;
-border: 1px solid #004285;
+border: 1px solid var(--input-border);
 margin-top:4px;
 padding:1px;
 padding-left:8px;
@@ -467,13 +515,13 @@ footer .theme-toggle {
   transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
 }
 .project-card:hover {
-  border-color: var(--color-kvot-bright);
+  border-color: var(--accent-line);
   box-shadow: 0 4px 14px var(--shadow-color);
   transform: translateY(-2px);
   text-decoration: none;
 }
 .project-card:focus-visible {
-  outline: 2px solid var(--color-kvot-bright);
+  outline: 2px solid var(--accent-line);
   outline-offset: 2px;
 }
 .project-card-title {
@@ -533,7 +581,7 @@ footer .theme-toggle {
   background: var(--bg-secondary);
 }
 .copy-btn:focus-visible {
-  outline: 2px solid var(--color-kvot-bright);
+  outline: 2px solid var(--accent-line);
   outline-offset: 1px;
 }
 .copy-btn .copy-hint {
@@ -892,8 +940,8 @@ pre {
   which it is. Colour is the only difference — position, timing and the dismiss
   control stay identical, so the thing does not move about depending on tone.
 */
-.failure-banner.tone-info { border-color: var(--color-kvot-bright); }
-.failure-banner.tone-success { border-color: var(--color-kvot-primary); }
+.failure-banner.tone-info { border-color: var(--accent-line); }
+.failure-banner.tone-success { border-color: var(--accent-success); }
 .failure-banner.tone-error { border-color: var(--color-kvot-accent); }
 .failure-banner-text { flex: 1 1 auto; overflow-wrap: anywhere; }
 .failure-banner-close {

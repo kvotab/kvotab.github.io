@@ -172,7 +172,7 @@
   overscroll-behavior: contain;
   overflow-wrap: anywhere;
 }
-.ec-status.ok { border-color: var(--color-kvot-primary); }
+.ec-status.ok { border-color: var(--accent-success); }
 .ec-status.error { border-color: var(--color-kvot-accent); color: var(--text-primary); }
 .ec-status.warn { border-color: var(--color-kvot-bright); color: var(--text-primary); }
 

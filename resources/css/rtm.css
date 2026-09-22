@@ -196,7 +196,7 @@
   overscroll-behavior: contain;
   overflow-wrap: anywhere;
 }
-.rtm-status.ok { border-color: var(--color-kvot-primary); }
+.rtm-status.ok { border-color: var(--accent-success); }
 .rtm-status.error { border-color: var(--color-kvot-accent); color: var(--text-primary); }
 .rtm-status.warn { border-color: var(--color-kvot-bright); color: var(--text-primary); }
 

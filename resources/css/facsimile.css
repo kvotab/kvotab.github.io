@@ -247,7 +247,7 @@
   overflow-wrap: anywhere;
 }
 .fac-status.error { border-color: var(--color-kvot-accent); color: var(--text-primary); }
-.fac-status.ok { border-color: var(--color-kvot-primary); }
+.fac-status.ok { border-color: var(--accent-success); }
 .fac-progress {
   height: 8px;
   margin-top: 6px;

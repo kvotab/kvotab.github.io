@@ -628,8 +628,11 @@ pre {
   font-weight: 500;
   transition: background .15s;
 }
-.ic-btn-ok     { background: var(--color-kvot-bright); color: #fff; }
-.ic-btn-ok:hover { background: var(--color-kvot-accent); }
+/* White on the apricot fill is 1.8:1. --on-bright is the colour that fill
+   is meant to carry (8:1). The hover swaps to the terracotta accent, which
+   is dark enough to want the white back. */
+.ic-btn-ok     { background: var(--color-kvot-bright); color: var(--on-bright); }
+.ic-btn-ok:hover { background: var(--color-kvot-accent); color: #fff; }
 .ic-btn-cancel { background: var(--bg-secondary, #eee); color: var(--text-primary, #333); }
 .ic-btn-cancel:hover { background: var(--border-color, #ddd); }
 [data-theme="dark"] .ic-btn-cancel { background: var(--bg-surface); }
