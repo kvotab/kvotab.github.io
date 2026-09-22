@@ -81,6 +81,41 @@
 	  overrides for the places it was used as text.
 	*/
 	--accent-success: #587339;
+	/*
+	  THE ACCENT AS A SOLID FILL CARRYING WHITE TEXT.
+
+	  --color-kvot-accent is a brand constant and stays put, but white on it is
+	  3.88:1 -- fine for a large label, short of the 4.5:1 that ~14px button
+	  text needs, and it was the fill under a dozen buttons. This is the same
+	  terracotta carried down in lightness until white clears 4.5:1 with room
+	  to spare.
+
+	  It is per-theme because the two requirements collide on a dark page:
+	  white at 4.5:1 caps the fill's relative luminance at 0.183, while
+	  clearing 3:1 against the --bg-surface panel needs 0.184. Light can
+	  afford the darker, safer fill; dark takes the lightest fill that still
+	  carries white, which is also the one that separates from the panel.
+	*/
+	--accent-fill: #a5503f;
+	/*
+	  The accent as TEXT on a page surface or on a faint accent tint -- the
+	  error pills in logn.html and skbref.css, where the accent was 2.8-3.1:1
+	  on its own 10-18% wash.
+	*/
+	--accent-text: #9d4637;
+	/*
+	  The hover for an --accent-fill button. It can only ever be DARKER: the
+	  dark theme's fill already sits at the lightest a fill can be and still
+	  carry white at 4.5:1, so lightening a hover takes the label under. Set as
+	  a value rather than a `filter: brightness()`, because a filter darkens the
+	  label along with the fill and quietly costs contrast rather than gaining
+	  it -- which is what it was doing here (4.38:1 on the dark theme).
+
+	  The dark hover is 2.5:1 against a --bg-surface panel, under the 3:1 the
+	  rest state holds. That is the trade the two constraints force, and it is
+	  the transient state rather than the one the button sits in.
+	*/
+	--accent-fill-hover: #914637;
 }
 
 [data-theme="dark"] {
@@ -112,6 +147,9 @@
 	--on-bright: #352921;
 	--accent-line: #f3b87b;
 	--accent-success: #9bba7d;
+	--accent-fill: #b35d4e;
+	--accent-text: #ce8b7d;
+	--accent-fill-hover: #a15343;
 }
 
 /*

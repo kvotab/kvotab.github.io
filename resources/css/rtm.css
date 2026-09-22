@@ -130,7 +130,7 @@
   padding: 5px 14px;
   border: 1px solid transparent;
   border-radius: 6px;
-  background: var(--color-kvot-accent);
+  background: var(--accent-fill);
   color: #fff;
   font: 600 12px verdana, sans-serif;
   cursor: pointer;
@@ -307,7 +307,7 @@
 .rtm-item[hidden] { display: none; }
 .rtm-item:hover { background: var(--bg-surface); }
 .rtm-item input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
-.rtm-item.on { background: var(--color-kvot-accent); color: #fff; }
+.rtm-item.on { background: var(--accent-fill); color: #fff; }
 .rtm-item:focus-within { outline: 2px solid var(--color-kvot-accent); outline-offset: -2px; }
 
 
@@ -386,7 +386,7 @@
   pointer-events: none;
 }
 .rtm-code-box.hl .rtm-code-hl { display: block; }
-.rtm-code-box ::selection { background: var(--color-kvot-accent); color: #fff; }
+.rtm-code-box ::selection { background: var(--accent-fill); color: #fff; }
 
 /* The colours themselves: comments recede, everything else is a hue apart.
    The same six as facsimile.html, so a reader who knows one knows the other. */

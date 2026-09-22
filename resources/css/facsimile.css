@@ -207,14 +207,16 @@
 }
 .fac-btn {
   padding: 6px 12px;
-  border: 1px solid var(--color-kvot-accent);
+  border: 1px solid var(--accent-fill);
   border-radius: 6px;
-  background: var(--color-kvot-accent);
+  background: var(--accent-fill);
   color: #fff;
   font: 600 12px verdana, sans-serif;
   cursor: pointer;
 }
-.fac-btn:hover { filter: brightness(1.08); }
+/* A value, not a filter: brightness() darkens the white label along with the
+   fill, which left this at 4.38:1 on the dark theme. */
+.fac-btn:hover { background: var(--accent-fill-hover); border-color: var(--accent-fill-hover); }
 .fac-btn:disabled { opacity: 0.5; cursor: default; }
 .fac-btn.secondary {
   background: var(--bg-primary);
@@ -483,7 +485,7 @@
   pointer-events: none;
 }
 .fac-item.on {
-  background: var(--color-kvot-accent);
+  background: var(--accent-fill);
   color: #fff;
 }
 .fac-item.on .fac-unit { color: rgba(255, 255, 255, 0.75); }
@@ -510,7 +512,7 @@
   font-size: 11px;
   cursor: pointer;
 }
-.fac-chip:hover { background: var(--color-kvot-accent); color: #fff; }
+.fac-chip:hover { background: var(--accent-fill); color: #fff; }
 .fac-chip:hover .fac-unit, .fac-chip:hover .fac-chip-x { color: rgba(255, 255, 255, 0.8); }
 .fac-chip-x { color: var(--text-muted); font-size: 12px; line-height: 1; }
 /* The unit, beside the name it belongs to and quieter than it. */
@@ -610,7 +612,7 @@ table.fac-table tr:nth-child(even) td { background: var(--table-stripe); }
 }
 .fac-code-box.hl .fac-code-hl { display: block; }
 .fac-code-box textarea.error { border-color: var(--color-kvot-accent); }
-.fac-code-box ::selection { background: var(--color-kvot-accent); color: #fff; }
+.fac-code-box ::selection { background: var(--accent-fill); color: #fff; }
 
 /* The colours themselves: comments recede, everything else is a hue apart. */
 .hl-com { color: var(--text-secondary); font-style: italic; }

@@ -146,7 +146,7 @@
   padding: 5px 14px;
   border: 1px solid transparent;
   border-radius: 6px;
-  background: var(--color-kvot-accent);
+  background: var(--accent-fill);
   color: #fff;
   font: 600 12px verdana, sans-serif;
   cursor: pointer;

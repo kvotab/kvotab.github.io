@@ -309,7 +309,7 @@
         the dark theme was a muddy pill on a near-black bar. White on the accent
         is the same pairing the tick in a checkbox uses.
       */
-      background: var(--color-kvot-accent);
+      background: var(--accent-fill);
       color: #fff;
       border: none;
       border-radius: 4px 4px 0 0;
@@ -323,8 +323,10 @@
       white-space: nowrap;
     }
     
+    /* Was #405533, a hard-coded dark green left over from before this button
+       moved to the accent -- the one off-palette hue in the button set. */
     .add-file-btn:hover {
-      background: #405533;
+      background: var(--accent-fill-hover);
     }
 
     .url-file-btn {
@@ -409,11 +411,14 @@
       background: var(--color-panel-border);
     }
     .url-btn-load {
-      background: var(--color-kvot-accent);
+      background: var(--accent-fill);
       color: #fff;
     }
+    /* #a85d4f was a hair lighter than the old fill; against --accent-fill it
+       is the same luminance, i.e. no hover at all. --color-kvot-background is
+       no good either: on the dark theme it is 1.0:1 against the panel. */
     .url-btn-load:hover {
-      background: #a85d4f;
+      background: var(--accent-fill-hover);
     }
     .url-btn-load:disabled {
       opacity: 0.6;
@@ -1860,7 +1865,7 @@
     }
 
     [data-theme="dark"] .search-highlight {
-      background: var(--color-kvot-accent);
+      background: var(--accent-fill);
       color: #fff;
     }
 

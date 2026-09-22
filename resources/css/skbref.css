@@ -222,7 +222,7 @@
     .result-section summary:hover { border-color: var(--color-kvot-bright); background: var(--bg-surface); }
     .section-body { padding: 16px 18px; border: 1px solid var(--border-color); border-top: 0; border-radius: 0 0 10px 10px; background: var(--bg-secondary); }
     .section-badge { margin-left: auto; padding: 2px 10px; border-radius: 12px; background: var(--border-color); color: var(--text-muted); font-size: .74rem; font-weight: 700; }
-    .section-badge.error { background: color-mix(in srgb, var(--color-kvot-accent) 18%, var(--bg-secondary)); color: var(--color-kvot-accent); }
+    .section-badge.error { background: color-mix(in srgb, var(--color-kvot-accent) 18%, var(--bg-secondary)); color: var(--accent-text); }
     .section-badge.warn { background: color-mix(in srgb, #f0ad4e 18%, var(--bg-secondary)); color: #c87d0a; }
     .section-badge.good { background: color-mix(in srgb, #5cb85c 18%, var(--bg-secondary)); color: #357a35; }
 
