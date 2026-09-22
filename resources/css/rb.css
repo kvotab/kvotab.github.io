@@ -119,6 +119,13 @@
       top: 3px;
     }
 
+    /*
+      The strip the tabs scroll in, and the one place on this page where the
+      scrollbar's thickness is a layout fact rather than a matter of taste: the
+      header row is 32.8px, a tab is 25px of it, and the bar has what is left.
+      Section 17's 8px fits; the 15px this page was getting instead did not,
+      and what it pushed out was the top of every tab. See the note there.
+    */
     #fileTabs {
       display: flex;
       gap: 4px;
@@ -1711,7 +1718,44 @@
 
     /* ==========================================================================
        17. CUSTOM SCROLLBAR
+
+       An 8px bar, in the page's own colours, on every box that scrolls.
+
+       These rules stopped applying on 2026-09-18 without being touched. In
+       Chrome a `scrollbar-color` or `scrollbar-width` that is not `auto` takes
+       a box off the ::-webkit-scrollbar path altogether and draws the standard
+       bar instead; kvot.css now sets `scrollbar-color` on `:root` so that a
+       dark page gets a dark scrollbar, and that property is inherited, so it
+       reached every box here. The whole of this section quietly became a
+       no-op and every scrollbar on the page went to the platform's own --
+       15px on macOS, where these ask for 8. It showed up first in the file
+       tabs, which sit in a header row with no 15px to spare (section 5), but
+       the tree and the panels had it too.
+
+       So `auto` is put back, for this page only and only where the custom path
+       exists, which is exactly where these rules can do anything. Nothing is
+       lost by going round kvot.css's colours: the ones below are the same two
+       themes read from this file's own variables.
+
+       Firefox has never read any of this -- it has only ever had the standard
+       bar -- so it is given the standard way of asking for a thin one. The
+       declaration sits outside the @supports so that it is also what a browser
+       with neither gets. `scrollbar-width` does not inherit, hence `*`.
        ========================================================================== */
+    * { scrollbar-width: thin; }
+
+    @supports selector(::-webkit-scrollbar) {
+      /* `:root` as well as `*`: kvot.css sets the colour on `:root`, which
+         outranks a lone `*`, and the element it would go on outranking is the
+         one carrying the window's own scrollbar. This file is loaded after
+         kvot.css, so at equal specificity it wins. */
+      *,
+      :root {
+        scrollbar-width: auto;
+        scrollbar-color: auto;
+      }
+    }
+
     ::-webkit-scrollbar {
       width: 8px;
       height: 8px;
