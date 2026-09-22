@@ -354,7 +354,14 @@
   white-space: pre;
   overflow: auto;
 }
-.rtm-text {
+/*
+  Addressed as `.rtm-code-box textarea` rather than as `.rtm-text`, and not
+  for tidiness: the rule above it is `.rtm-code-box textarea` too, and it
+  paints a transparent border to keep the coloured copy the same size as the
+  box. A class on its own is the weaker selector, so the border it asked for
+  never arrived and the model text sat in the pane with no edge at all.
+*/
+.rtm-code-box textarea {
   flex: 1 1 auto;
   position: relative;
   z-index: 1;
@@ -363,7 +370,7 @@
   color: var(--text-primary);
   resize: none;
 }
-.rtm-code-box.hl .rtm-text {
+.rtm-code-box.hl textarea {
   /* The coloured copy underneath is what is read; the caret stays visible. */
   color: transparent;
   background: transparent;

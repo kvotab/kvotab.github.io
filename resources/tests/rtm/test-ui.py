@@ -736,6 +736,19 @@ async def main():
                 " const pre = document.getElementById('rtmHighlight');"
                 " return Math.round(a.top - b.top) === 0 && Math.round(a.left - b.left) === 0"
                 " && ta.scrollWidth === pre.scrollWidth && ta.scrollHeight === pre.scrollHeight; })()"), True)
+            # The box keeps the edge every input on the site has. The rule that
+            # sizes the two boxes together paints a transparent border to do
+            # it, and it is the more specific selector, so asking for the real
+            # one by class alone left the model text in the pane with no edge.
+            check('and the box still has its border, in both states', await page.ev(
+                "(() => { const ta = document.getElementById('rtmText');"
+                " const box = document.getElementById('rtmCodeBox');"
+                " const edge = () => { const cs = getComputedStyle(ta);"
+                "   return [cs.borderTopWidth, cs.borderTopStyle, cs.borderTopColor].join(' '); };"
+                " const on = edge(); box.classList.remove('hl'); const off = edge();"
+                " box.classList.add('hl');"
+                " const clear = /transparent|rgba\\(0, 0, 0, 0\\)|^0px/;"
+                " return on === off && !clear.test(on); })()"), True)
             check('a section heading, a comment and a setting are coloured', await page.ev(
                 "(() => { const pre = document.getElementById('rtmHighlight');"
                 " const kinds = new Set([...pre.querySelectorAll('span')].map((s) => s.className));"
