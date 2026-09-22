@@ -305,7 +305,10 @@ class Integrator {
  * Counted in attempts and called from the rejection paths too, not only after
  * an accepted step. A solver in difficulty can reject hundreds of steps in a
  * row, and that is precisely when a page wants to show that something is
- * happening and to offer a way out of it.
+ * happening and to offer a way out of it -- so all three call sites obey the
+ * answer, not only the one after an accepted step. A run collapsing its step
+ * towards the minimum is exactly the run somebody wants to stop, and it is the
+ * one that never reaches an accepted step to be stopped at.
  *
  * @returns {false} if the caller asked for the run to stop.
  */
@@ -576,7 +579,11 @@ export function solve(prob, alg, options = {}) {
 
     if (!ok || integ.forceStepfail) {
       integ.stats.nreject++;
-      reportProgress(integ, opts);
+      if (reportProgress(integ, opts) === false) {
+        retcode = Terminated;
+        message = 'The run was stopped from outside';
+        break;
+      }
       // A step that failed for a reason other than accuracy -- a Newton that
       // would not converge, a singular W -- is not the controller's business:
       // halve it, and make sure the next attempt uses a fresh Jacobian.
@@ -641,7 +648,11 @@ export function solve(prob, alg, options = {}) {
       // true, and the generic controller keeps its hands off.
       const handled = integ.cache.rejected ? integ.cache.rejected(integ) === true : false;
       if (!handled) integ.dt = integ.controller.reject(integ.EEst, integ.dt);
-      reportProgress(integ, opts);
+      if (reportProgress(integ, opts) === false) {
+        retcode = Terminated;
+        message = 'The run was stopped from outside';
+        break;
+      }
       continue;
     }
 

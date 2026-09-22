@@ -167,13 +167,34 @@ export function julia(id) {
 		if (opts.belowTolRun > 0) settings.belowTolRun = opts.belowTolRun;
 		if (opts.matrix) settings.matrix = opts.matrix;
 		if (opts.onAccepted) settings.onAccepted = opts.onAccepted;
-		// The two things a caller may want to stop for: an abort from the page,
-		// and a progress bar that wants the clock.
-		if (opts.signal || opts.onProgress) {
-			settings.progress = (t) => {
-				opts.onProgress?.(Math.min(1, Math.abs(t - t0) / Math.abs(tf - t0)));
-				return !opts.signal?.aborted;
+		/*
+		  Where the run has got to, and the caller's chance to stop it.
+
+		  `onStep` is what every other solver here is handed -- `(fraction,
+		  nsteps, t)`, answering false to stop; see ./onestep.js. This read
+		  `opts.onProgress` and `opts.signal` instead, which are the names the
+		  runner's *own* caller uses and are not in what the runner passes a
+		  solver. So no ported method ever installed the callback: all six ran
+		  with the bar never moving and Stop doing nothing, which on a model of
+		  an hour is a page that says "Solving…" and cannot be got out of.
+
+		  Every attempt rather than the package's every 64th. A step here can
+		  cost seconds -- 55 000 states is a real model -- and 64 of those is
+		  several minutes between two signs of life. The cost of asking more
+		  often is a call and a clock read; the worker is what decides how much
+		  of it reaches the page, and it already posts at most one message every
+		  80 ms. See `onProgress` in ../worker/sim-worker.js.
+		*/
+		let stoppedHere = false;
+		if (opts.onStep) {
+			settings.progress = (t, nsteps) => {
+				const go = opts.onStep(
+					Math.min(1, Math.abs(t - t0) / Math.abs(tf - t0)), nsteps, t,
+				) !== false;
+				if (!go) stoppedHere = true;
+				return go;
 			};
+			settings.progressEvery = 1;
 		}
 
 		let sol;
@@ -181,6 +202,19 @@ export function julia(id) {
 			sol = solve(problem, algorithm(), settings);
 		} catch (e) {
 			throw new SolverError(e.message, e.t ?? t0);
+		}
+
+		/*
+		  A stop the caller asked for is an abort, not a result. The package
+		  reports it as `Terminated`, which is also what an event's stop is --
+		  and those two must not be confused: the event's is a solution that
+		  ends early and is charted, this one is half a solve that nobody asked
+		  to keep. Thrown, because that is how every other solver here says it
+		  -- see `Simulation aborted` in ./onestep.js -- and it is what the
+		  worker is listening for.
+		*/
+		if (stoppedHere) {
+			throw new SolverError('Simulation aborted', sol.t[sol.t.length - 1] ?? t0);
 		}
 
 		// A run that stopped at an event did what it was asked; anything else

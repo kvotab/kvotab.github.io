@@ -29,15 +29,40 @@ WHAT THIS FOUND, so that it is not worked out twice:
   1e-8 and 1e-11 moves it onto our answer to five or six significant figures, so
   the stored file is the unconverged one. Everything at the end of those same
   runs agrees to about 2e-3.
+* AND THE FOUR THAT STILL DISAGREE AT THE END are the same story. HS_case3, 6,
+  10 and 18 come out 1.0 %, 6.4 %, 1.2 % and 1.2 % from the stored answer, and
+  in every one it is OUR value that holds still while the stored one moves --
+  settled by running each case several ways rather than by tightening one:
+
+      case3   O2-2  3.52851e-10    fbdf 1e-6, radau5 1e-6, radau5 1e-8 and
+                                   rodas5p 1e-8: six figures, two methods,
+                                   two tolerances      (stored 3.565183e-10)
+      case6   O2-2  1.0393e-12     fbdf 1e-5, radau5 1e-6, rodas5p 1e-6,
+                                   radau5 1e-7: four figures, three methods
+                                                       (stored 1.110309e-12)
+      case10  HO2-  3.484489e-15   rtol 1e-6, 1e-8 and 1e-10 all identical
+                                                       (stored 3.444300e-15)
+      case18  CO2   3.50546        rtol 1e-6 and 1e-8 agree to 2e-5
+                                                       (stored 3.546491)
+
+  Cases 3 and 6 are the two no MULTISTEP method here gets through at rtol 1e-8
+  -- NDF, FBDF and QNDF all reach the step limit. The one-step methods do:
+  Rodas5P and RadauIIA5 solve case3 at 1e-8, and case6 yields to agreement
+  across three methods at 1e-6 rather than to a tighter tolerance. Where a
+  tolerance cannot be tightened, several methods agreeing is the evidence to
+  use, and it is what those two have.
 * HS_case20's database has a typo: the stoichiometry consumes UVIO2s+ while the
   rate law reads [UVIO2s+2]. UVIO2s+ appears nowhere else, so it is driven below
   zero -- BRUM's own stored answer for it is -2.55e-8. This script turns its
   non-negativity off wherever the reference itself went negative.
-* Our own NDF and BDF cannot get through these cases at all: they hit millions
-  of steps part way. Every one of the seven ported solvers does it in a few
-  hundred to a few thousand, QNDF included -- and QNDF is the same formulas as
-  our NDF, written by other people. That is a defect in our implementation, not
-  in the method, and it is why --solver defaults to julia_fbdf here.
+* Our own NDF and BDF could not get through these cases at all -- millions of
+  steps part way, then a stop -- while every ported solver managed in a few
+  hundred to a few thousand. The cause was the corrector reading a correction
+  that had reached the arithmetic floor of the residual as divergence; see
+  `stagnationTol` in ../../js/facsimile-solver.js. With it they all run, and
+  give the same fifteen agreements as the ports. --solver still defaults to
+  julia_fbdf here because it is the cheapest of them on this problem, not
+  because ours cannot.
 """
 import argparse
 import ast

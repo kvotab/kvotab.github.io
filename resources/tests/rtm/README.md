@@ -204,7 +204,10 @@ radiolysis driving a surface mechanism, 1890 days, 128 reactions over 35 species
 
 It needs `h5py` and the case set, which is not in this repository. At the end of
 1890 days, nineteen of the twenty agree to better than 1.2 %, and most to a few
-parts in a thousand — with both codes at their own loose tolerances.
+parts in a thousand — with both codes at their own loose tolerances. Every one
+of the remaining gaps has since been chased down to the stored reference's own
+tolerance rather than to a disagreement about the model: see *What this found*
+in the script.
 
 Four things came out of writing it, all of them worth keeping:
 

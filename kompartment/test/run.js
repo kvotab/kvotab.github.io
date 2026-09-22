@@ -29819,6 +29819,48 @@ test('a ported method takes this tool’s analytic Jacobian, and may decline a p
 		`declining a point changed the answer: ${s.y[s.y.length - 1][0]}`);
 });
 
+test('every ported method says where it has got to, and stops when told to', async () => {
+	// The `onStep` this tool hands a solver -- `(fraction, nsteps, t)`,
+	// answering false to stop -- reached none of the ported six: the wrapper
+	// read `onProgress` and `signal`, which are the names the *runner's* caller
+	// uses and are not among the options a solver is given. So the bar never
+	// moved and Stop did nothing, on every model, for all six. It showed up on
+	// a model of 55 000 states where a run is an hour: a page saying "Solving…"
+	// with no way out of it. Tested through `run`, because the mismatch was
+	// between two layers and a unit test of either would have passed.
+	const ids = ['fbdf', 'qndf', 'rodas5p', 'radau5', 'kencarp4', 'trbdf2'];
+	const raw = {
+		name: 'p', simulation: { ...DEFAULT_SIMULATION, time_unit: 'year', start_time: 0,
+			end_time: 200, output_points: 21, spacing: 'linear', rtol: 1e-8, abstol: 1e-10 },
+		index_lists: [], expressions: [], inflows: [],
+		parameters: [{ name: 'k', value: 0.05, index_lists: [] }],
+		compartments: [{ name: 'A', initial: '10', index_lists: [] }, { name: 'B', initial: '0', index_lists: [] }],
+		transfers: [{ name: 'T', from: 'A', to: 'B', rate: 'k', index_lists: [] }],
+	};
+	for (const id of ids) {
+		const model = structuredClone(raw);
+		model.simulation.solver = id;
+
+		let calls = 0;
+		let far = 0;
+		run(model, { onProgress: (f) => { calls++; far = Math.max(far, f); } });
+		assert(calls > 0, `${id} never said where it had got to`);
+		assert(far > 0.5, `${id} reported at most ${far} of the way through`);
+
+		// And the answer to it is obeyed: a caller that aborts gets the abort
+		// every other solver here throws, not a truncated run handed back as
+		// though it were a result.
+		const ac = new AbortController();
+		let stopped = 0;
+		let error = null;
+		try {
+			run(model, { signal: ac.signal, onProgress: () => { if (++stopped === 3) ac.abort(); } });
+		} catch (e) { error = e; }
+		assert(error && /aborted/i.test(error.message), `${id} ran on: ${error?.message ?? 'no error'}`);
+		assert(stopped < calls, `${id} stopped no earlier than a whole run`);
+	}
+});
+
 test('the ported methods agree with variableOrder on the bundled models, events and all', async () => {
 	const { readFileSync } = await import('node:fs');
 	const ids = ['rodas5p', 'radau5', 'fbdf', 'qndf', 'kencarp4'];
