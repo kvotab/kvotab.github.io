@@ -113,7 +113,7 @@ import {
  * caused more than one "the code says otherwise" puzzle. Serve with serve.py,
  * which disables caching.
  */
-const BUILD = '2026-09-21';
+const BUILD = '2026-09-22';
 
 const EXAMPLES = [
 	{ file: 'four-compartment.json', title: 'Four-compartment test model' },
@@ -5652,7 +5652,13 @@ function renderRunKind() {
 	const r = state.results;
 	const prob = currentProb();
 	const words = [];
-	if (!r) words.push('Nothing has run yet');
+	/*
+	  No result yet: this line says nothing at all. pendingResults() fills the
+	  body of both views with that fact, and says why it is so and offers the
+	  button. A line above it repeating the bare fact is the fact twice, the
+	  first time without the one control that could act on it.
+	*/
+	if (!r) { /* the body speaks for this state */ }
 	else if (r.replayed != null) {
 		words.push(`Realisation ${(Number(r.replayed.index ?? r.replayed) + 1).toLocaleString()}`,
 			'of the probabilistic run, integrated again on its own values');

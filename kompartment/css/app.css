@@ -7578,6 +7578,14 @@ input.ix-unit { width: 130px; padding: 2px 6px; font-size: 11.5px; }
 	white-space: nowrap;
 }
 
+/*
+  A .panel is a grid, and with no row template the default align-content
+  stretches the free space across BOTH auto rows -- so an empty table pushed
+  its "nothing has run" line halfway down the pane. Packed to the start, the
+  way #panel-matrix already does it; .panel's own overflow still scrolls a
+  table taller than the pane.
+*/
+#panel-table { align-content: start; }
 #panel-table > .toolbar { padding-bottom: 4px; }
 
 .chart-mode {

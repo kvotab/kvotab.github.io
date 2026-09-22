@@ -894,18 +894,48 @@
     return html + (comment ? hlSpan('com', comment) : '');
   }
 
-  /** The whole model text as coloured HTML. */
-  function highlightModel(text) {
+  /*
+    THE COLOURED COPY, REPAINTED A LINE AT A TIME.
+
+    Recolouring the whole model on every keystroke costs the whole file, and
+    the tokeniser is very nearly all of it: with the colouring off the same
+    keystroke costs about 1 ms at any size. On facsimile.html's own default
+    model, 47 kB, it was 20 ms of main-thread work per keystroke, which fast
+    typing and key repeat outrun; rtm.html's 10 kB default was 7 ms. A
+    keystroke changes one line, so only that line is tokenised again and only
+    that line's element is rewritten -- 8.5 ms and 4 ms measured the same way.
+
+    One <span> per line, each ending in its own newline, so what the <pre>
+    lays out is character for character what it laid out before. hlLines and
+    hlSecs hold what each line was last painted from -- the section as well as
+    the text, since the same words colour differently under a different
+    heading.
+  */
+  let hlLines = [];
+  let hlSecs = [];
+
+  /** Each line's section, resolved from the top down. */
+  function lineSections(lines) {
+    const secs = new Array(lines.length);
     let section = '';
-    const out = [];
-    for (const line of String(text).split('\n')) {
-      const sec = /^\s*<\s*([A-Za-z][A-Za-z ]*?)(?:\s+[A-Za-z_][A-Za-z0-9_]*)?\s*>\s*$/.exec(line);
+    for (let i = 0; i < lines.length; i += 1) {
+      const sec = /^\s*<\s*([A-Za-z][A-Za-z ]*?)(?:\s+[A-Za-z_][A-Za-z0-9_]*)?\s*>\s*$/.exec(lines[i]);
       if (sec) section = sec[1].trim().toUpperCase().replace(/\s+/g, ' ');
-      out.push(highlightLine(line, section));
+      secs[i] = section;
     }
-    // A <pre> swallows one trailing newline; the textarea does not, so
-    // without this the two scroll out of step at the end of the file.
-    return `${out.join('\n')}\n`;
+    return secs;
+  }
+
+  /** One line's element, the newline it ends with included. */
+  function hlLineEl(line, section) {
+    const el = document.createElement('span');
+    /*
+      A <pre> swallows one trailing newline and the textarea does not, so the
+      last line carries its own newline like every other: without it the two
+      scroll out of step at the end of the file.
+    */
+    el.innerHTML = `${highlightLine(line, section)}\n`;
+    return el;
   }
 
   /** Repaints the coloured copy and keeps it under the same part of the text. */
@@ -913,8 +943,37 @@
     const pre = $('facHighlight');
     const ta = $('facModelText');
     if (!pre || !ta) return;
-    if (!state.syntax) { pre.firstElementChild.textContent = ''; return; }
-    pre.firstElementChild.innerHTML = highlightModel(ta.value);
+    const code = pre.firstElementChild;
+    if (!state.syntax) { code.textContent = ''; hlLines = []; hlSecs = []; return; }
+    const lines = ta.value.split('\n');
+    const secs = lineSections(lines);
+    /*
+      What actually moved. Typing sits inside one line, so the run of untouched
+      lines above it and the run below it are between them nearly the whole
+      file, and comparing those strings is far cheaper than colouring them
+      again. Enter, or a cut line, shifts everything below by one -- which is
+      why the match is made from both ends rather than only from the top.
+    */
+    const n = lines.length;
+    const m = hlLines.length;
+    // Compared as two arrays rather than as one joined key per line: building
+    // those keys allocated a second copy of the whole model on every repaint,
+    // which is the cost this is here to avoid.
+    const same = (i, j) => lines[i] === hlLines[j] && secs[i] === hlSecs[j];
+    let head = 0;
+    while (head < n && head < m && same(head, head)) head += 1;
+    let tail = 0;
+    while (tail < n - head && tail < m - head && same(n - 1 - tail, m - 1 - tail)) tail += 1;
+    // Out with the lines that changed, in with what they became. Backwards,
+    // so an index stays valid until it has been used.
+    for (let i = m - tail - 1; i >= head; i -= 1) code.children[i].remove();
+    if (n - tail > head) {
+      const frag = document.createDocumentFragment();
+      for (let i = head; i < n - tail; i += 1) frag.append(hlLineEl(lines[i], secs[i]));
+      code.insertBefore(frag, code.children[head] || null);
+    }
+    hlLines = lines;
+    hlSecs = secs;
     pre.scrollTop = ta.scrollTop;
     pre.scrollLeft = ta.scrollLeft;
   }

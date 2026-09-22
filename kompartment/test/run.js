@@ -30869,14 +30869,18 @@ test('the Chart and the Table say what produced them, and the Chart has a second
 
 	// --- what ran -----------------------------------------------------------
 	//
-	// Four states, and a chart of five curves looks like a chart of five
-	// medians from across a desk. Both views say which, in the same words.
+	// A chart of five curves looks like a chart of five medians from across a
+	// desk. Both views say which, in the same words.
 	const kind = /function renderRunKind\(\) \{([\s\S]*?)\n\}/.exec(app)?.[1];
 	assert(kind, 'nothing says what produced the view');
-	for (const phrase of ['Nothing has run yet', 'One deterministic run', 'realisations',
-		'Realisation ']) {
+	for (const phrase of ['One deterministic run', 'realisations', 'Realisation ']) {
 		assert(kind.includes(phrase), `the run kind never says ${phrase}`);
 	}
+	// The fourth state is deliberately silent here. pendingResults() fills the
+	// body of both views with it, with the reason and the button; this line
+	// repeating the bare fact put it above the only thing that could act on it.
+	assert(!/Nothing has run yet/.test(kind),
+		'the run kind repeats what the body already says');
 	assert(/for \(const id of \['#chart-what', '#table-what'\]\)/.test(kind),
 		'the two views do not say the same thing');
 	assert(/id="chart-what"/.test(html) && /id="table-what"/.test(html), 'neither line exists');
