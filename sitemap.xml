@@ -11,6 +11,11 @@
     <priority>0.8</priority>
   </url>
   <url>
+    <loc>https://kvotab.se/ensdf.html</loc>
+    <lastmod>2026-09-22</lastmod>
+    <priority>0.8</priority>
+  </url>
+  <url>
     <loc>https://kvotab.se/rb.html</loc>
     <lastmod>2026-08-31</lastmod>
     <priority>0.8</priority>
@@ -28,6 +33,11 @@
   <url>
     <loc>https://kvotab.se/skbref.html</loc>
     <lastmod>2026-08-31</lastmod>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://kvotab.se/zoterify.html</loc>
+    <lastmod>2026-09-22</lastmod>
     <priority>0.8</priority>
   </url>
   <url>

@@ -1,0 +1,367 @@
+/* ==========================================================================
+   ZOTERIFY.HTML
+
+   The same shape as erosion_corrosion.html: a settings panel on the left, a
+   drag handle, and a work area of tabs. Colours are the tokens in kvot.css,
+   so the page follows the theme toggle. Class prefix: zf-.
+   ========================================================================== */
+
+.zf {
+  display: grid;
+  grid-template-columns: var(--zf-side-width, 340px) 8px minmax(0, 1fr);
+  height: 100%;
+  overflow: hidden;
+  font-family: verdana, sans-serif;
+  font-size: 13px;
+}
+
+/* ---- the settings column ------------------------------------------------ */
+.zf-side {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+  border-right: 1px solid var(--border-color);
+  background: var(--bg-surface);
+}
+.zf-side-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0 14px 10px; }
+.zf-side-foot {
+  flex: 0 0 auto;
+  padding: 8px 14px 10px;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+}
+
+.zf-resize {
+  cursor: col-resize;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  position: relative;
+  z-index: 1;
+}
+.zf-resize::after { content: ''; width: 3px; border-radius: 2px; transition: background 0.15s; }
+.zf-resize:hover::after, .zf-resize.active::after { background: var(--color-kvot-accent); }
+
+/* ---- a folding section -------------------------------------------------- */
+.zf-sec { margin: 0 0 4px; }
+.zf-sec > summary {
+  margin: 10px 0 6px;
+  padding: 0 0 4px 16px;
+  border-bottom: 1px solid var(--border-color);
+  font: 700 0.95rem RawengulkSans, sans-serif;
+  color: var(--text-primary);
+  cursor: pointer;
+  list-style: none;
+  position: relative;
+}
+.zf-sec > summary::-webkit-details-marker { display: none; }
+.zf-sec > summary::before {
+  content: '▸';
+  position: absolute;
+  left: 0;
+  transition: transform 0.15s;
+  color: var(--text-muted);
+}
+.zf-sec[open] > summary::before { transform: rotate(90deg); }
+.zf-about { margin: 0 0 8px; font-size: 11px; line-height: 1.5; color: var(--text-muted); }
+.zf-about code { font-size: 10.5px; }
+
+/* ---- controls ----------------------------------------------------------- */
+.zf-row { display: block; margin: 0 0 8px; }
+.zf-row label { display: block; margin: 0 0 2px; color: var(--text-primary); }
+.zf-row input, .zf-row select {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 3px 5px;
+  border: 1px solid var(--input-border);
+  border-radius: 4px;
+  font-size: 12px;
+}
+.zf-check { display: flex; gap: 6px; align-items: flex-start; margin: 0 0 6px; cursor: pointer; line-height: 1.35; }
+.zf-check input { margin-top: 2px; flex: 0 0 auto; }
+
+.zf-slider { margin: 0 0 8px; }
+.zf-slider label { display: block; margin: 0 0 1px; }
+.zf-slider input[type="range"] { width: 100%; margin: 2px 0 0; }
+.zf-ticks { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--text-muted); }
+
+.zf-drop {
+  border: 1px dashed var(--input-border);
+  border-radius: 6px;
+  padding: 8px;
+  margin: 0 0 8px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.5;
+  transition: border-color 0.15s, background 0.15s;
+}
+.zf.dragging .zf-drop { border-color: var(--color-kvot-accent); background: var(--bg-secondary); color: var(--text-primary); }
+
+.zf-file {
+  padding: 6px 8px;
+  margin: 0 0 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.zf-file[hidden] { display: none; }
+.zf-file .zf-file-name { font-weight: 600; color: var(--text-primary); }
+.zf-file .zf-file-meta { color: var(--text-secondary); }
+.zf-file .zf-file-warn { color: var(--text-primary); border-left: 3px solid var(--color-kvot-bright); padding-left: 6px; margin-top: 3px; }
+
+/* ---- buttons ------------------------------------------------------------ */
+.zf-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.zf-btn {
+  padding: 5px 14px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: var(--accent-fill);
+  color: #fff;
+  font: 600 12px verdana, sans-serif;
+  cursor: pointer;
+}
+.zf-btn.secondary { background: var(--bg-primary); color: var(--text-primary); border-color: var(--border-color); }
+.zf-btn.small { padding: 3px 8px; font-size: 11px; font-weight: 400; }
+.zf-btn.tiny { padding: 1px 7px; font-size: 11px; font-weight: 400; border-radius: 4px; }
+.zf-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.zf-btn:focus-visible { outline: 2px solid var(--color-kvot-bright); outline-offset: 1px; }
+
+.zf-progress { height: 4px; margin-top: 8px; border-radius: 2px; background: var(--border-color); overflow: hidden; }
+.zf-progress[hidden] { display: none; }
+.zf-progress > div { height: 100%; width: 0; background: var(--color-kvot-accent); transition: width 0.15s; }
+
+/* The status well: fixed height, scrolls, so the buttons above it do not move. */
+.zf-status {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  height: 5.8em;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  overflow-wrap: anywhere;
+}
+.zf-status.ok { border-color: var(--accent-success); }
+.zf-status.error { border-color: var(--color-kvot-accent); color: var(--text-primary); }
+.zf-status.warn { border-color: var(--color-kvot-bright); color: var(--text-primary); }
+
+/* ---- the work area ------------------------------------------------------ */
+.zf-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+  margin-left: -8px;
+  padding-left: 8px;
+}
+/* The line under the tabs is an inset shadow, inside the strip, so the
+   active tab's background covers it without reaching out of the strip: a
+   tab hanging 1px below it made the strip scroll, and show a scrollbar. */
+.zf-tabs {
+  display: flex;
+  gap: 2px;
+  margin-left: -8px;
+  padding: 6px 10px 0 18px;
+  box-shadow: inset 0 -1px 0 var(--border-color);
+  background: var(--bg-secondary);
+  flex: 0 0 auto;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.zf-tabs button {
+  padding: 6px 12px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: 12px verdana, sans-serif;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.zf-tabs button:hover { color: var(--text-primary); }
+.zf-tabs button.active {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border-color: var(--border-color);
+  font-weight: 600;
+}
+.zf-tabs .zf-count {
+  display: inline-block;
+  min-width: 1.4em;
+  margin-left: 5px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--border-color);
+  color: var(--text-primary);
+  font-size: 10.5px;
+  font-weight: 600;
+  text-align: center;
+}
+.zf-tabs .zf-count.attention { background: var(--color-kvot-bright); color: var(--on-bright); }
+.zf-pane {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 14px 24px;
+  background: var(--bg-primary);
+}
+.zf-pane[hidden] { display: none; }
+.zf-empty { margin: 0; padding: 24px 12px 40px; color: var(--text-muted); font-size: 12px; line-height: 1.6; max-width: 46rem; }
+.zf-empty[hidden] { display: none; }
+
+/* ---- summary ------------------------------------------------------------ */
+.zf-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+.zf-summary[hidden] { display: none; }
+.zf-stat {
+  padding: 6px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  min-width: 7em;
+}
+.zf-stat b { display: block; font: 700 1.2rem ui-monospace, Menlo, Consolas, monospace; color: var(--text-primary); }
+.zf-stat span { font-size: 11px; color: var(--text-secondary); }
+
+/* ---- a citation to review ----------------------------------------------- */
+.zf-group-title { margin: 14px 0 6px; font: 700 0.95rem RawengulkSans, sans-serif; color: var(--text-primary); }
+.zf-group-title:first-child { margin-top: 2px; }
+.zf-group-title small { font: 400 11px verdana, sans-serif; color: var(--text-muted); margin-left: 6px; }
+.zf-item {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-left: 4px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  max-width: 64rem;
+}
+.zf-item.amb { border-left-color: var(--color-kvot-primary); }
+[data-theme="dark"] .zf-item.amb { border-left-color: var(--color-kvot-bright); }
+.zf-item.sug { border-left-color: var(--color-kvot-bright); }
+.zf-item.none { border-left-color: var(--color-kvot-accent); }
+.zf-item-head { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: baseline; }
+.zf-cite { font-weight: 700; color: var(--text-primary); }
+.zf-kind { font-size: 11px; color: var(--text-secondary); }
+.zf-where { font-size: 11px; color: var(--text-muted); }
+.zf-spacer { flex: 1 1 auto; }
+.zf-context {
+  margin: 5px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.zf-context mark { background: var(--bg-secondary); color: var(--text-primary); border-bottom: 2px solid var(--color-kvot-bright); padding: 0 1px; }
+.zf-hint { margin: 4px 0 0; font-size: 11.5px; line-height: 1.45; color: var(--text-secondary); overflow-wrap: anywhere; }
+.zf-hint b { color: var(--text-primary); font-weight: 600; }
+.zf-cands { list-style: none; margin: 6px 0 0; padding: 0; }
+.zf-cands li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: baseline;
+  padding: 3px 0;
+  border-top: 1px solid var(--table-border);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.zf-cands li:first-child { border-top: 0; }
+.zf-cands .zf-conf, .zf-conf { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+.zf-itemline { overflow-wrap: anywhere; }
+.zf-itemline .zf-year { color: var(--text-secondary); }
+.zf-itemline .zf-key { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 10.5px; color: var(--text-muted); }
+.zf-search { margin-top: 6px; display: flex; gap: 6px; align-items: center; }
+.zf-search input {
+  flex: 1 1 auto;
+  max-width: 26rem;
+  padding: 2px 6px;
+  border: 1px solid var(--input-border);
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+/* ---- tables ------------------------------------------------------------- */
+.zf-table-wrap { overflow: auto; max-width: 100%; }
+.zf-table { border-collapse: collapse; font-size: 12px; width: 100%; }
+.zf-table th, .zf-table td {
+  padding: 4px 10px 4px 6px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--table-border);
+}
+.zf-table th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-weight: 600;
+  z-index: 1;
+  white-space: nowrap;
+}
+.zf-table tbody tr:nth-child(even) { background: var(--table-stripe); }
+.zf-table td.nowrap { white-space: nowrap; }
+.zf-table td.num { text-align: right; font-family: ui-monospace, Menlo, Consolas, monospace; white-space: nowrap; }
+.zf-status-tag { font-size: 11px; white-space: nowrap; }
+.zf-status-tag.ok { color: var(--accent-success); }
+.zf-status-tag.amb { color: var(--text-primary); }
+.zf-status-tag.sug { color: var(--text-primary); }
+.zf-status-tag.none { color: var(--color-kvot-accent); }
+
+.zf-report {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-color);
+  border-left: 4px solid var(--accent-success);
+  border-radius: 6px;
+  background: var(--bg-surface);
+  font-size: 12px;
+  line-height: 1.55;
+  max-width: 64rem;
+}
+.zf-report.warn { border-left-color: var(--color-kvot-bright); }
+.zf-report ul { margin: 4px 0 0; padding-left: 18px; }
+.zf-report h4 { margin: 0 0 4px; font: 700 0.95rem RawengulkSans, sans-serif; color: var(--text-primary); }
+
+/* ---- reference list ----------------------------------------------------- */
+.zf-refs h3 { margin: 14px 0 6px; font: 700 1rem RawengulkSans, sans-serif; color: var(--text-primary); }
+.zf-refs h3:first-child { margin-top: 2px; }
+.zf-refs p { font-size: 12px; line-height: 1.55; max-width: 64rem; }
+.zf-reflist { margin: 0; padding-left: 18px; font-size: 12px; line-height: 1.55; max-width: 64rem; }
+.zf-reflist li { margin: 0 0 4px; overflow-wrap: anywhere; }
+
+/* ---- help --------------------------------------------------------------- */
+.zf-help { max-width: 64rem; line-height: 1.65; }
+.zf-help h2 { margin: 4px 0 10px; font: 700 1.3rem RawengulkSans, sans-serif; color: var(--text-primary); }
+.zf-help h3 { margin: 22px 0 6px; font: 700 1.05rem RawengulkSans, sans-serif; color: var(--text-primary); }
+.zf-help p { margin: 0 0 10px; }
+.zf-help li { margin: 0 0 4px; }
+.zf-help code { padding: 1px 4px; border-radius: 3px; background: var(--code-bg); font-size: 0.92em; overflow-wrap: anywhere; }
+
+/* ---- narrow screens ----------------------------------------------------- */
+@media (max-width: 760px) {
+  .zf { grid-template-columns: 1fr; grid-template-rows: auto 1fr; overflow: auto; }
+  .zf-side { height: auto; max-height: 55vh; border-right: 0; border-bottom: 1px solid var(--border-color); }
+  .zf-resize { display: none; }
+  .zf-main { margin-left: 0; padding-left: 0; }
+  .zf-tabs { margin-left: 0; padding-left: 10px; }
+  .zf-cands li { grid-template-columns: minmax(0, 1fr) auto; }
+  .zf-cands li .zf-conf { grid-column: 1; }
+}

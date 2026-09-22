@@ -1,0 +1,1 @@
+KVOT_ENSDF_DATA("260901","a2",{"a":2,"nuc":{"1":{"ds":[["adopted","ADOPTED LEVELS","","ENSDF","200309"],["reaction","1H(N,G) E=THERMAL","1994KI27,1982VA13,1980IS02","ENSDF","200309"]],"lv":[["0","","1+","STABLE","","","","",0]],"gm":[],"hist":[["FUL","J.H. KELLEY, J.L. GODWIN","ENSDF","1-May-2003"]]}}});

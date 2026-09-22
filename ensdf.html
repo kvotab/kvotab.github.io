@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <meta http-equiv="Content-Security-Policy" content="base-uri 'self'; object-src 'none'">
+  <title>Chart of Nuclides (ENSDF) — kvot ab</title>
+  <meta name="description" content="An interactive chart of nuclides drawn from the Evaluated Nuclear Structure Data File (ENSDF): half-lives, decay modes, Q-values, level schemes and decay radiation for every nuclide, and the whole decay chain from any radionuclide. Open another ENSDF release to switch database.">
+  <link rel="canonical" href="https://kvotab.se/ensdf.html">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="kvot ab">
+  <meta property="og:title" content="Chart of Nuclides (ENSDF) — kvot ab">
+  <meta property="og:description" content="Every nuclide in ENSDF by N and Z, coloured by half-life or decay mode, with states, Q-values, levels, radiation and the full decay chain of any radionuclide.">
+  <meta property="og:url" content="https://kvotab.se/ensdf.html">
+  <meta property="og:image" content="https://kvotab.se/resources/images/kvot-logotype.png">
+  <meta name="twitter:card" content="summary">
+  <script>
+    // Set the theme before first paint so dark-mode visitors get no white flash.
+    (function () {
+      try {
+        var t = localStorage.getItem('kvot-theme');
+        if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* storage unavailable — site.js will apply the default */ }
+    })();
+  </script>
+  <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
+  <link rel="stylesheet" href="./resources/css/ensdf.css?v=20260922c">
+  <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
+</head>
+<body>
+  <header></header>
+
+  <div class="content nz-content">
+    <div class="nz" id="nz">
+      <!-- ============================ toolbar ============================ -->
+      <div class="nz-bar" role="toolbar" aria-label="Chart controls">
+        <div class="nz-search">
+          <input id="nzSearch" type="search" placeholder="Nuclide: 60Co, U-238, Tc-99m…" autocomplete="off" spellcheck="false" aria-label="Find a nuclide" data-on-keydown="nz:searchKey">
+          <button type="button" class="nz-btn" data-on-click="nz:search">Find</button>
+        </div>
+        <label class="nz-field">Colour by
+          <select id="nzColour" data-on-change="nz:colour">
+            <option value="halflife">Half-life</option>
+            <option value="mode">Decay mode</option>
+            <option value="qb">Q(β⁻)</option>
+            <option value="qa">Q(α)</option>
+            <option value="sn">S(n)</option>
+            <option value="sp">S(p)</option>
+            <option value="e2">E(2⁺₁), even-even</option>
+            <option value="year">Evaluation date</option>
+          </select>
+        </label>
+        <label class="nz-field">Database
+          <select id="nzDb" data-on-change="nz:db"></select>
+        </label>
+        <button type="button" class="nz-btn secondary" data-on-click="nz:open" title="Open an ENSDF release zip, or ENSDF text files, from your computer. Nothing is uploaded.">Open ENSDF…</button>
+        <button type="button" class="nz-btn secondary" id="nzForget" data-on-click="nz:forget" title="Stop keeping this opened database in the browser" hidden>Forget</button>
+        <input type="file" id="nzFile" multiple hidden data-on-change="nz:fileChosen">
+        <span class="nz-status" id="nzStatus" role="status" aria-live="polite">Loading…</span>
+      </div>
+
+      <div class="nz-body">
+        <!-- ============================ main area ============================ -->
+        <main class="nz-main">
+          <div class="nz-views">
+            <div class="nz-viewtabs" role="tablist" aria-label="Views">
+              <button type="button" role="tab" class="active" aria-selected="true" data-view="chart" data-on-click="nz:view">Chart of nuclides</button>
+              <button type="button" role="tab" aria-selected="false" data-view="chain" data-on-click="nz:view">Decay chain <span id="nzChainTabName" class="nz-tabname"></span></button>
+            </div>
+            <!-- The decay chain's settings serve both views: the chart draws the same chain. -->
+            <div class="nz-chainopts" role="group" aria-label="Decay-chain settings, for both views">
+              <span class="nz-chainopts-head">Chain</span>
+              <select id="nzMinBranch" data-on-change="nz:minBranch" aria-label="Smallest branch to show" title="Leave out branches smaller than this share of a nuclide's decays">
+                <option value="0">all branches</option>
+                <option value="1e-6">branches ≥ 1e-6 %</option>
+                <option value="0.001">branches ≥ 0.001 %</option>
+                <option value="0.1">branches ≥ 0.1 %</option>
+                <option value="1">branches ≥ 1 %</option>
+              </select>
+              <select id="nzMinLife" data-on-change="nz:minLife" aria-label="Shortest half-life to draw in the chain" title="A member of the chain, nuclide or isomer, that lives less than this is left out, and the arrows go straight on to where it decays. The nuclide the chain starts from stays, and so do stable ones"></select>
+              <label class="nz-check" title="Draw the chain over the chart of nuclides"><input type="checkbox" id="nzOverlay" data-on-change="nz:overlay" checked> on chart</label>
+            </div>
+          </div>
+
+          <section class="nz-view" data-viewpane="chart" aria-label="Chart of nuclides">
+            <div class="nz-chart" id="nzChart">
+              <div class="nz-tools" id="nzChartTools" role="group" aria-label="Chart tools">
+                <button type="button" class="nz-icon" data-on-click="nz:zoomOut" title="Zoom out (−)" aria-label="Zoom out">−</button>
+                <button type="button" class="nz-icon" data-on-click="nz:zoomIn" title="Zoom in (+)" aria-label="Zoom in">+</button>
+                <button type="button" class="nz-icon" data-on-click="nz:fit" title="Whole chart (0)" aria-label="Show the whole chart">⤢</button>
+                <button type="button" class="nz-btn secondary small" data-on-click="nz:chartPng" title="The chart as it is on screen, as a PNG image">PNG</button>
+                <button type="button" class="nz-btn secondary small" data-on-click="nz:chartCsv" title="Every ground state as a table: half-life, decay modes, Q-values">CSV</button>
+              </div>
+              <div class="nz-legend" id="nzLegend" aria-label="Legend"></div>
+              <div class="nz-drop" aria-hidden="true">Drop ENSDF files to open them</div>
+            </div>
+          </section>
+
+          <section class="nz-view nz-chainview" data-viewpane="chain" hidden aria-label="Decay chain">
+            <div class="nz-chain-bar">
+              <label class="nz-field" hidden>Start from
+                <select id="nzChainState" data-on-change="nz:chainState"></select>
+              </label>
+              <span class="nz-spacer"></span>
+              <button type="button" class="nz-btn secondary small" data-on-click="nz:chainFrame" title="Show the chain on the chart of nuclides">On chart</button>
+              <button type="button" class="nz-btn secondary small" data-on-click="nz:chainSvg">SVG</button>
+              <button type="button" class="nz-btn secondary small" data-on-click="nz:chainPng">PNG</button>
+              <button type="button" class="nz-btn secondary small" data-on-click="nz:chainCsv">CSV</button>
+            </div>
+            <div class="nz-chain-scroll">
+              <div class="nz-chain-draw"><svg id="nzChainSvg" role="img" aria-label="Decay chain: atomic number across, mass number down"></svg></div>
+              <div class="nz-chain-note" id="nzChainNote"></div>
+              <div class="nz-table-wrap" id="nzChainTable"></div>
+            </div>
+          </section>
+        </main>
+
+        <div class="nz-resize" id="nzResize" role="separator" aria-orientation="vertical" aria-label="Drag to resize the panel; double-click to reset" tabindex="0"></div>
+
+        <!-- ============================ the panel ============================ -->
+        <aside class="nz-panel" id="nzPanel" aria-label="Nuclide data">
+          <div class="nz-tabs" role="tablist">
+            <button type="button" role="tab" class="active" data-tab="nuclide" data-on-click="nz:tab">Nuclide</button>
+            <button type="button" role="tab" data-tab="levels" data-on-click="nz:tab">Levels</button>
+            <button type="button" role="tab" data-tab="radiation" data-on-click="nz:tab">Radiation</button>
+            <button type="button" role="tab" data-tab="datasets" data-on-click="nz:tab">Data sets</button>
+            <button type="button" role="tab" data-tab="about" data-on-click="nz:tab">About</button>
+          </div>
+          <section class="nz-pane" data-pane="nuclide" id="nzPaneNuclide"></section>
+          <section class="nz-pane" data-pane="levels" id="nzPaneLevels" hidden></section>
+          <section class="nz-pane" data-pane="radiation" id="nzPaneRadiation" hidden></section>
+          <section class="nz-pane" data-pane="datasets" id="nzPaneDatasets" hidden></section>
+          <section class="nz-pane nz-help" data-pane="about" hidden>
+            <h2>A chart of nuclides from ENSDF</h2>
+            <p>The Evaluated Nuclear Structure Data File is the evaluated, recommended nuclear structure and decay data for every known nuclide, kept by the <a href="https://www.nndc.bnl.gov/ensdf/" target="_blank" rel="noopener noreferrer">National Nuclear Data Center</a> at Brookhaven for the international Nuclear Structure and Decay Data network. It is published as one text file per mass number, in the fixed 80-column format of the <a href="https://www.nndc.bnl.gov/ensdf/ensdf-manual.pdf" target="_blank" rel="noopener noreferrer">ENSDF manual</a>. This page reads those files as they are — the release on this site was built from the NNDC distribution by the same reader that runs when you open a file — and draws every nuclide with an adopted data set by its neutron number <i>N</i> and proton number <i>Z</i>.</p>
+
+            <h3>What the chart shows</h3>
+            <p>Each cell is a nuclide’s ground state, or, strictly, its lowest known level. The colour is its half-life by default; the menu above also colours by the main decay mode, the Q-values and separation energies of the adopted data set, the energy of the first 2<sup>+</sup> level of the even-even nuclides, and the date the adopted data set was entered. Stable nuclides are drawn darkest on the light theme and lightest on the dark one. The double lines trace the magic numbers 2, 8, 20, 28, 50, 82 and 126. A notch in a cell’s top right corner means the nuclide has isomers. Hover over a cell for its half-life and decay modes, and point at a legend entry to pick out one class.</p>
+            <p>The <b>states</b> of a nuclide are its ground state and the levels the evaluators flag as metastable (the MS field), together with any excited level that lives at least 1 µs. The second rule is needed: in this release the 3.19 h isomer of <sup>90</sup>Y and the 258 s isomer of <sup>90</sup>Rb carry no flag, and both decay by β⁻ as well as by IT. Isomers are named m, m1, m2 … after the evaluators’ flags.</p>
+
+            <h3>The decay chain</h3>
+            <p>The decay modes of each state come from the adopted data set: <code>%B-=100</code>, <code>%EC+%B+=56.3 20</code>, <code>%A&lt;1E-4</code>. Following the ENSDF convention, a β-delayed mode such as <code>%B-N</code> is part of <code>%B-</code>, so the branch that ends at the plain β⁻ daughter is what is left after the delayed ones are taken out.</p>
+            <p>Where a branch lands in the daughter is worked out from the decay data sets. The cascade in the data set is followed from the levels the decay feeds — the direct β, ε or α feeding of each level, then down through the γ rays leaving it in proportion to their total transition intensities — until it reaches the ground state or an isomer. That is how <sup>234</sup>Th is seen to feed <sup>234m</sup>Pa (99.85 %), <sup>99</sup>Mo to feed <sup>99m</sup>Tc (87.6 %) and <sup>137</sup>Cs <sup>137m</sup>Ba (94.7 %). Which level of a decay data set is which isomer is decided by the evaluators’ own cross-references (XREF), not by energy alone: <sup>212</sup>Pb feeds a picosecond level of <sup>212</sup>Bi at 238.6 keV that lies within a keV of the 25-minute isomer. An isomer with no IT data set decays through the γ cascade of the adopted level scheme.</p>
+            <p>Checked against the ICRP Publication 107 decay data of <a href="./rdc.html">Radionuclide Decay Chains</a>: of 1508 nuclides, 1470 give the same daughters and branching fractions to within 2 % (absolute) or 10 % (relative), with isomers shorter than a minute passed through as ICRP does. The rest differ because the evaluations have moved on since 2008 — <sup>50</sup>V, <sup>93</sup>Zr, <sup>232</sup>Pu — or because ICRP treats a very long-lived nuclide such as <sup>209</sup>Bi or <sup>130</sup>Te as stable.</p>
+            <p>The chain is drawn with <i>Z</i> across and the mass number <i>A</i> down: α decay steps down a row and two columns to the left, β⁻ one column to the right, electron capture one to the left, and an isomer stands above the ground state it decays to. The share on each arrow is of the decays of the nuclide it leaves; the table gives the share of the first nuclide’s decays that passes through each member. The settings beside the view tabs serve both views, since the chart draws the same chain: the smallest branch to draw, the shortest half-life to draw, and whether to draw the chain over the chart. By default every nuclide is drawn and only isomers living less than a second are left out; with a half-life from 1 ms up to 1000 years, every member that lives less — nuclide or isomer, but never the one the chain starts from — is left out, and the chain goes straight on to where it decays, each share the product of the branches on the way. An arrow that jumps over left-out members is marked “via” them: with members under a year left out, <sup>238</sup>U goes to <sup>234</sup>U via <sup>234</sup>Th and <sup>234m</sup>Pa, <sup>226</sup>Ra to <sup>210</sup>Pb via <sup>222</sup>Rn … <sup>214</sup>Po, and <sup>210</sup>Pb to <sup>206</sup>Pb via <sup>210</sup>Bi and <sup>210</sup>Po. What goes through an isomer’s IT stays in the nuclide and joins the plain arrow: with members under an hour left out, <sup>137</sup>Cs goes to <sup>137</sup>Ba by one arrow of 100 %, 94.7 % of it through <sup>137m</sup>Ba. The note under the drawing lists what was left out. Where arrows would cross a box or run on top of each other, they bend; where labels have no room, the gap between the rows widens.</p>
+            <p><b>What the file does not say.</b> A few radioactive ground states have no decay mode in the adopted data set — in this release <sup>127</sup>Te and <sup>128</sup>La, whose percentage is given only in a comment — and a few give only a minor mode (<sup>251</sup>Fm lists its 1.8 % α but not the electron capture). For those the page adds the β⁻ or electron-capture branch the Q-values leave open, when only one of the two is, and marks it as inferred: a dashed arrow with a *. An excited state with no decay mode is taken to decay by γ emission.</p>
+
+            <h3>Levels, radiation and data sets</h3>
+            <p><b>Levels</b> lists the adopted levels with their spins, half-lives and decay modes, and under each the γ rays leaving it with their relative intensities, multipolarities and final levels. <b>Radiation</b> lists what the decay data sets give for the state you are on: γ rays, α particles, β⁻ and β⁺/ε branches and delayed particles, per 100 decays of the parent where the data set’s normalisation allows it, and as relative intensities where it does not. X-rays and conversion electrons are not records in ENSDF and are not shown. <b>Data sets</b> lists every data set filed under the nuclide, and the history of its adopted one.</p>
+
+            <h3>Another database</h3>
+            <p>The menu offers every release installed on this site, the newest first. To use another one, download it from the <a href="https://www.nndc.bnl.gov/ensdfarchivals/" target="_blank" rel="noopener noreferrer">NNDC ENSDF archive</a> — the monthly zip files, <code>ensdf_YYMMDD.zip</code> — and open it with <b>Open ENSDF…</b> or drop it on the page. The page reads the zip in your browser in a few seconds; nothing is uploaded. Individual <code>ensdf.NNN</code> files, or any ENSDF text, can be opened the same way. An opened database is kept in this browser and stays in the menu until you choose <b>Forget</b>. (The page cannot fetch a release from NNDC by itself: their server does not allow other sites to read its files.)</p>
+            <p class="nz-dim">To install a release on the site, run <code>node scripts/gen-ensdf.mjs ensdf_YYMMDD.zip</code>; it writes the data under <code>resources/data/ensdf/</code> and adds it to the menu.</p>
+
+            <h3>Links, keys and files</h3>
+            <p>The address follows the nuclide you are on — <code>ensdf.html#99mTc</code> — so a link opens the page there. On the chart, arrow keys step between nuclides, + and − zoom and 0 shows the whole chart. <b>CSV</b> saves every ground state as a table, <b>PNG</b> the chart as it is on screen; the decay chain saves as SVG, PNG or CSV.</p>
+            <p class="nz-dim">Data: Evaluated Nuclear Structure Data File, National Nuclear Data Center, Brookhaven National Laboratory, on behalf of the Nuclear Structure and Decay Data network. The release in use is named in the menu above.</p>
+          </section>
+        </aside>
+      </div>
+    </div>
+  </div>
+
+  <div class="nz-tip" id="nzTip" role="tooltip" hidden></div>
+  <div id="kvotmap"></div>
+  <footer></footer>
+
+  <script src="./resources/js/kvot-errors.js?v=20260921"></script>
+  <script src="./resources/js/kvot-safe.js?v=20260911"></script>
+  <script src="./resources/js/kvot-actions.js?v=20260902"></script>
+  <script src="./resources/js/kvot-icons.js?v=20260902"></script>
+  <script src="./resources/js/site.js?v=20260922"></script>
+  <script>
+    KVOT.renderHeader('Chart of Nuclides');
+    KVOT.renderNav('ensdf.html');
+    KVOT.renderFooter();
+    KVOT.initMap('kvotmap');
+  </script>
+  <!--
+      ensdf-parse   the ENSDF reader (also run by the worker and by scripts/gen-ensdf.mjs)
+      ensdf-core    names, formatting, colours and the decay chain
+      ensdf-chart   the chart of nuclides (canvas)
+      ensdf-chain   the decay-chain chart (SVG)
+      ensdf-ui      this page
+      The release on show is loaded by ensdf-ui from resources/data/ensdf/.
+  -->
+  <script src="./resources/js/ensdf-parse.js?v=20260922b"></script>
+  <script src="./resources/js/ensdf-core.js?v=20260922f"></script>
+  <script src="./resources/js/ensdf-chart.js?v=20260922b"></script>
+  <script src="./resources/js/ensdf-chain.js?v=20260922g"></script>
+  <script src="./resources/js/ensdf-ui.js?v=20260922g"></script>
+</body>
+</html>

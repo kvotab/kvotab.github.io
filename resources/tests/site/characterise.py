@@ -950,6 +950,32 @@ ${p('Styrelseledamot')}
         })()"""),
     ],
 
+    'ensdf.html': [
+        ('ensdf.load', """(async () => {
+          for (let i = 0; i < 60 && !(window.ENSDFPage && ENSDFPage.state.idx); i++) await new Promise(r => setTimeout(r, 250));
+          const s = ENSDFPage.state;
+          return {
+            release: s.source && s.source.label,
+            nuclides: s.idx && s.idx.shown.length,
+            dbOptions: [...document.querySelectorAll('#nzDb option')].map(o => o.value),
+            colourModes: [...document.querySelectorAll('#nzColour option')].map(o => o.value),
+            legendItems: document.querySelectorAll('#nzLegend li').length,
+            canvas: !!document.querySelector('#nzChart canvas')
+          };
+        })()"""),
+        ('ensdf.select', """(async () => {
+          ENSDFPage.select('U-238');
+          await new Promise(r => setTimeout(r, 400));
+          const ch = ENSDFPage.state.chain;
+          return {
+            hash: location.hash,
+            title: (document.querySelector('#nzPaneNuclide .nz-big') || {}).textContent,
+            chainMembers: ch && ch.nodes.length,
+            ends: ch && ch.nodes.filter(n => n.st && n.st.st).map(n => n.a + ':' + n.z).sort()
+          };
+        })()"""),
+    ],
+
     'karaoke.html': [
         ('karaoke.dom', """(() => ({
           lang: document.documentElement.lang,

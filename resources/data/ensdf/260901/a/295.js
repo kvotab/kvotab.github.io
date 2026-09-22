@@ -1,0 +1,1 @@
+KVOT_ENSDF_DATA("260901","a295",{"a":295,"nuc":{"118":{"ds":[["adopted","ADOPTED LEVELS:UNOBSERVED","","22NDS","202205"]],"lv":[],"gm":[],"hist":[["FUL","C. Morse","NDS 182, 130 (2022).","14-Sep-2021"]]}}});

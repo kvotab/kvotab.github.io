@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <meta http-equiv="Content-Security-Policy" content="base-uri 'self'; object-src 'none'">
+  <title>Zoterify — kvot ab</title>
+  <meta name="description" content="Turn the plain-text citations in a Word document into live Zotero citations, matched against your own zotero.sqlite, and get the document back with every change tracked for review. Nothing is uploaded.">
+  <link rel="canonical" href="https://kvotab.se/zoterify.html">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="kvot ab">
+  <meta property="og:title" content="Zoterify — kvot ab">
+  <meta property="og:description" content="Plain-text citations in a Word document matched against your Zotero library and converted to Zotero fields, as tracked changes in your own document.">
+  <meta property="og:url" content="https://kvotab.se/zoterify.html">
+  <meta property="og:image" content="https://kvotab.se/resources/images/kvot-logotype.png">
+  <meta name="twitter:card" content="summary">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" integrity="sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG" crossorigin="anonymous"></script>
+  <script>
+    // Set the theme before first paint so dark-mode visitors get no white flash.
+    (function () {
+      try {
+        var t = localStorage.getItem('kvot-theme');
+        if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* storage unavailable — site.js will apply the default */ }
+    })();
+  </script>
+  <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
+  <link rel="stylesheet" href="./resources/css/zoterify.css?v=20260922b">
+  <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
+</head>
+<body>
+  <header></header>
+
+  <div class="content">
+    <div class="zf" id="zf">
+      <!-- ===================== the settings column ===================== -->
+      <aside class="zf-side">
+        <div class="zf-side-scroll">
+
+          <details class="zf-sec" id="sec-doc" open>
+            <summary>Word document</summary>
+            <p class="zf-about">The .docx whose citations are plain text. It is read here, in the browser; nothing is uploaded.</p>
+            <div class="zf-drop" id="zfDocDrop">Drop a .docx here, or
+              <button type="button" class="zf-btn secondary small" data-on-click="zf:openDoc">Open…</button>
+            </div>
+            <input type="file" id="zfDocFile" accept=".docx,.docm,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden data-on-change="zf:docChosen">
+            <div class="zf-file" id="zfDocInfo" hidden></div>
+          </details>
+
+          <details class="zf-sec" id="sec-db" open>
+            <summary>Zotero library</summary>
+            <p class="zf-about"><b>zotero.sqlite</b> from your Zotero data directory: <code>~/Zotero</code> on a Mac or Linux, <code>C:\Users\<i>you</i>\Zotero</code> on Windows, or Zotero → Settings → Advanced → Files and Folders → Show Data Directory. If Zotero is running, pick <b>zotero.sqlite-wal</b> from the same folder as well, or the newest items may be missing.</p>
+            <div class="zf-drop" id="zfDbDrop">Drop zotero.sqlite here, or
+              <button type="button" class="zf-btn secondary small" data-on-click="zf:openDb">Open…</button>
+            </div>
+            <input type="file" id="zfDbFile" multiple hidden data-on-change="zf:dbChosen">
+            <div class="zf-file" id="zfDbInfo" hidden></div>
+            <div class="zf-row">
+              <label for="zfScope">Look for items in</label>
+              <select id="zfScope" data-on-change="zf:optionChanged" disabled>
+                <option value="">All libraries</option>
+              </select>
+            </div>
+          </details>
+
+          <details class="zf-sec" id="sec-match" open>
+            <summary>Matching</summary>
+            <div class="zf-slider">
+              <label for="zfLevel">How close a fit must be</label>
+              <input type="range" id="zfLevel" min="0" max="2" step="1" value="1" data-on-change="zf:optionChanged">
+              <div class="zf-ticks"><span>Lenient</span><span>Balanced</span><span>Strict</span></div>
+            </div>
+            <div class="zf-slider">
+              <label for="zfYearTolerance">Offer items whose year is off by</label>
+              <input type="range" id="zfYearTolerance" min="0" max="2" step="1" value="1" data-on-change="zf:optionChanged">
+              <div class="zf-ticks"><span>nothing</span><span>1 year</span><span>2 years</span></div>
+            </div>
+            <p class="zf-about">Lenient links more on its own and asks less; strict asks whenever two items are near. A changed setting takes effect on the next Analyse.</p>
+          </details>
+
+          <details class="zf-sec" id="sec-fields">
+            <summary>Citations that are already fields</summary>
+            <label class="zf-check"><input type="checkbox" id="zfRecodeOther" checked data-on-change="zf:optionChanged"><span>Convert EndNote and Mendeley citations to Zotero</span></label>
+            <label class="zf-check"><input type="checkbox" id="zfRecodeZotero" data-on-change="zf:optionChanged"><span>Match Zotero citations again as well</span></label>
+            <p class="zf-about">Left as they are, existing Zotero citations are counted as cited when the reference list is checked.</p>
+          </details>
+
+          <details class="zf-sec" id="sec-track" open>
+            <summary>Track changes</summary>
+            <label class="zf-check"><input type="checkbox" id="zfTrack" checked data-on-change="zf:trackChanged"><span>Record every conversion as a tracked change</span></label>
+            <div class="zf-row">
+              <label for="zfAuthor">Author of the changes</label>
+              <input type="text" id="zfAuthor" value="Zoterify" maxlength="80" data-on-change="zf:trackChanged">
+            </div>
+            <label class="zf-check"><input type="checkbox" id="zfKeepTracking" checked data-on-change="zf:trackChanged"><span>Leave Track Changes switched on in the saved document</span></label>
+            <p class="zf-about">Review the changes in Word, then accept them <em>before</em> you press Refresh in Zotero's tab: Zotero expects its citations not to be inside tracked changes.</p>
+          </details>
+        </div>
+
+        <div class="zf-side-foot">
+          <div class="zf-actions">
+            <button type="button" class="zf-btn" id="zfAnalyse" data-on-click="zf:analyse" disabled>Analyse</button>
+            <button type="button" class="zf-btn" id="zfSave" data-on-click="zf:save" disabled title="Write the resolved citations into a copy of the document">Save document</button>
+            <button type="button" class="zf-btn secondary small" id="zfExport" data-on-click="zf:export" disabled title="Every reference, where it stands and the item it resolves to, and the reference-list entries nothing cites">Report as CSV</button>
+          </div>
+          <div class="zf-progress" id="zfProgressTrack" hidden><div id="zfProgress"></div></div>
+          <div class="zf-status" id="zfStatus" role="status">Open a Word document and your Zotero database.</div>
+        </div>
+      </aside>
+
+      <div class="zf-resize" id="zfResize" role="separator" aria-orientation="vertical" aria-label="Drag to resize the panel; double-click to reset"></div>
+
+      <!-- ========================= the work area ======================== -->
+      <main class="zf-main">
+        <div class="zf-tabs" role="tablist">
+          <button type="button" class="active" data-tab="review" data-on-click="zf:tab">To review</button>
+          <button type="button" data-tab="linked" data-on-click="zf:tab">Resolved</button>
+          <button type="button" data-tab="all" data-on-click="zf:tab">All citations</button>
+          <button type="button" data-tab="refs" data-on-click="zf:tab">Reference list</button>
+          <button type="button" data-tab="help" data-on-click="zf:tab">Help</button>
+        </div>
+
+        <section class="zf-pane" data-pane="review">
+          <div class="zf-summary" id="zfSummary" hidden></div>
+          <div id="zfReview"></div>
+          <p class="zf-empty" id="zfReviewEmpty">Open a Word document and your zotero.sqlite, then press Analyse. Citations that need a decision from you are listed here.</p>
+        </section>
+
+        <section class="zf-pane" data-pane="linked" hidden>
+          <div id="zfSaveReport"></div>
+          <div class="zf-table-wrap" id="zfLinked"></div>
+          <p class="zf-empty" id="zfLinkedEmpty">Citations resolved to a Zotero item are listed here: matched outright, or by a choice you made.</p>
+        </section>
+
+        <section class="zf-pane" data-pane="all" hidden>
+          <div class="zf-table-wrap" id="zfAll"></div>
+          <p class="zf-empty" id="zfAllEmpty">Every citation found in the document, in order.</p>
+        </section>
+
+        <section class="zf-pane" data-pane="refs" hidden>
+          <div id="zfRefs"></div>
+          <p class="zf-empty" id="zfRefsEmpty">After an analysis: where the reference list was found, which of its entries no citation points to, and the Zotero citations already in the document.</p>
+        </section>
+
+        <section class="zf-pane zf-help" data-pane="help" hidden>
+          <h2>Plain-text citations to Zotero citations, in your own document</h2>
+          <p>A report written without a reference manager, converted from another format, or received from
+            someone who uses a different one has its citations as text: “(Smith, 2020; Jones et al. 2019,
+            p. 4)”, “Smith (2020)”, “[3]”. This page finds them, looks each one up in your Zotero library and
+            puts a live Zotero citation in its place, so that the document behaves as if the citations had been
+            inserted with Zotero from the start: you can change the citation style, update the references, and
+            let Zotero build the bibliography.</p>
+          <p>Your document is not rebuilt. It is opened, the citations are replaced where they stand, and each
+            replacement is recorded as a tracked change: the old text struck through, the Zotero citation
+            inserted, both by the author you name. Everything else — formatting, comments, images, other
+            people’s tracked changes — is left as it was. Nothing is uploaded: the document and the database
+            are read by this page, in your browser.</p>
+
+          <h3>Working through a document</h3>
+          <ol>
+            <li>Open the <b>.docx</b>, and <b>zotero.sqlite</b> from your Zotero data directory. If Zotero is
+              running, add <b>zotero.sqlite-wal</b> from the same folder: Zotero keeps its most recent changes
+              there, and this page replays them.</li>
+            <li>Press <b>Analyse</b>. Each reference in the document comes out as one of these:
+              <ul>
+                <li><b>matched</b> — one item fits the authors and the year clearly better than any other, or its
+                  title is in the document’s own reference list entry; it goes straight to <em>Resolved</em>;</li>
+                <li><b>choose</b> — several items fit equally well (the same authors twice in a year, say);
+                  pick one;</li>
+                <li><b>year differs</b> — the authors fit an item a year or two off; confirm it or not;</li>
+                <li><b>possible</b> — only looser fits, of any year, to offer;</li>
+                <li><b>not found</b> — search the library and pick an item yourself, or leave it as text.</li>
+              </ul>
+              A choice holds for every place the same reference is cited. A match can be unlinked if it is
+              wrong.</li>
+            <li>Press <b>Save document</b>. You get <code><i>name</i>_zotero.docx</code>; your original is not
+              changed. <em>Report as CSV</em> lists every reference, where it stands and what it resolved to.</li>
+            <li>Open the document in Word. Review the changes (Review → Show Markup → Specific People lets you see
+              only this page’s), then <b>accept them</b>.</li>
+            <li>In Word’s Zotero tab press <b>Refresh</b>. Zotero asks for a citation style the first time,
+              formats every citation, and <em>Add/Edit Bibliography</em> builds the reference list.</li>
+          </ol>
+          <p>Accept before you refresh. Zotero’s own advice is not to work with its citations while they sit in
+            tracked changes: it turns Track Changes off while it edits citations, and tracked citations can
+            confuse it. Once accepted, the citations are ordinary Zotero fields.</p>
+
+          <h3>What is found</h3>
+          <p>Author–year citations in parentheses, with any number of references separated by semicolons or
+            commas — “(Smith, 2020; Jones et al. 2019, p. 4)”, “(Andersson 2010, Berglund and Lindborg 2017)”;
+            further years of the same authors — “(Smith 2019, 2020a, b)”; undated and forthcoming works —
+            “(SKB, n.d.)”, “(Jones, in press)”, “(Nilsson u.å.)”; organisations — “(Svensk
+            Kärnbränslehantering AB 2010)”, “(Intergovernmental Panel on Climate Change (IPCC) 2022)”.
+            Narrative citations — “Smith (2020)”, “Öhman et al. (2014)”, “Smith &amp; Jones (2020, s. 12)” —
+            and a narrative author followed by more references — “Lane (2014, 20; cf. Bildtgård 2010)”.
+            Numbered citations — “[3]”, “[2–4, 7]” — tied to the numbered reference list. A table cell that
+            holds nothing but a citation. Citations inside a parenthesis of prose, as in “(see Annex D of
+            Publication 100 (ICRP, 2006))”, are found on their own.</p>
+          <p>The forms of SKB’s reports too. A report number — “(SKB TR-11-01)”, “SKB (R-09-20)”, “(SKB
+            TR-10-52, Section 3.2)”, “(SKBdoc 1175208)” — is looked up in the items’ <em>Report Number</em>;
+            in running text, “SKB TR-11-01” keeps “SKB” as text and the number becomes the citation. A
+            designation — “(SSMFS 2008:37)”, “SSMFS (2008:21)”, “(SFS 1984:3; SOU 2010:6)”, “(SS-EN
+            1936:1999)” — is looked up in the items’ number and title; the number after the colon names the
+            regulation, so it is not read as a page. A work cited by a number that no item carries is only
+            offered, never linked: another SSMFS of 2008 is not SSMFS 2008:37. A name entered under
+            “References with abbreviated names” — “(Data report, Section 6.1)” — is found through its entry.
+            Initials after a name, “Vallery C (2001)”, choose between two authors of one surname, and
+            “Aquilonius (ed) (2010)” is read with its editor’s mark.</p>
+          <p>The reference list is found under its heading (“References”, “Referenser”, “Litteratur” and their
+            like in other languages) or as a long run of entries, and it ends at the next heading of its level,
+            so citations in appendices after it are found too. Each citation is tied to its entry, and an item
+            whose title appears in the entry is taken over its namesakes; an entry’s own report number (“SKB,
+            2011. … SKB TR-11-01, Svensk Kärnbränslehantering AB.”) settles which item “(SKB 2011)” means. An
+            abbreviated name or a designation mentioned in running text — “the Data report”, “SSMFS 2008:21” —
+            is left as text, and its entry is not counted as uncited.</p>
+
+          <h3>What is written</h3>
+          <p>Each citation becomes one Zotero citation with one item per reference, the page, chapter or section
+            as its locator. Nothing in the parenthesis is lost: words that are not a reference — “see”, “cf.”,
+            or a whole clause — become the prefix or suffix of the reference beside them, so Zotero prints them
+            too. A narrative citation keeps the author’s name as text and only the parenthesis becomes a Zotero
+            citation with the author omitted, as Zotero’s own <em>Omit Author</em> does it.</p>
+          <p>A citation is written only when every reference in it is resolved. A replacement is also refused —
+            and listed with the reason under <em>Resolved</em> — when the text runs into a footnote reference, a
+            comment, a picture, a hyperlink or another Word field, a content control, moved text, or a citation
+            that is already a Zotero field. Citations in footnotes and endnotes are converted as well; text
+            boxes are not read. EndNote and Mendeley citations can be converted to Zotero ones.</p>
+          <p>Each Zotero citation carries the item’s URI, which is how Zotero finds the item on refresh:
+            <code>http://zotero.org/users/…/items/…</code> for your own library,
+            <code>http://zotero.org/groups/…/items/…</code> for a group library. It also carries the item’s data
+            in CSL-JSON, so the citation still formats for someone who does not have the item.</p>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <footer></footer>
+
+  <script src="./resources/js/kvot-errors.js?v=20260921"></script>
+  <script src="./resources/js/kvot-safe.js?v=20260911"></script>
+  <script src="./resources/js/kvot-actions.js?v=20260902"></script>
+  <script src="./resources/js/kvot-icons.js?v=20260902"></script>
+  <script src="./resources/js/site.js?v=20260922"></script>
+  <script>
+    KVOT.renderHeader('Zoterify');
+    KVOT.renderNav('zoterify.html');
+    KVOT.renderFooter();
+  </script>
+  <!--
+      zoterify-parse    finding citations and the reference list
+      zoterify-match    matching them to library items
+      zoterify-zotero   reading zotero.sqlite through sql.js, with the -wal file
+      zoterify-docx     reading the document and writing Zotero fields as tracked changes
+      zoterify-ui       this page
+  -->
+  <script src="./resources/js/zoterify-parse.js?v=20260922c"></script>
+  <script src="./resources/js/zoterify-match.js?v=20260922c"></script>
+  <script src="./resources/js/zoterify-zotero.js?v=20260922b"></script>
+  <script src="./resources/js/zoterify-docx.js?v=20260922b"></script>
+  <script src="./resources/js/zoterify-ui.js?v=20260922c"></script>
+</body>
+</html>

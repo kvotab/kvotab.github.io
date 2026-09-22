@@ -26,6 +26,11 @@ const KVOT = (() => {
       desc: 'Explore the ICRP Publication 107 decay data as an interactive chain graph, and plot activity over time.',
     },
     {
+      href: './ensdf.html',
+      label: 'Chart of Nuclides',
+      desc: 'Every nuclide in the Evaluated Nuclear Structure Data File by N and Z, coloured by half-life or decay mode, with its states, Q-values, levels and radiation, and the whole decay chain of any radionuclide.',
+    },
+    {
       href: './rb.html',
       label: 'HDF5 Browser',
       desc: 'Open .h5 files straight in the browser — walk the tree, inspect datasets, plot them and export to Excel.',
@@ -44,6 +49,11 @@ const KVOT = (() => {
       href: './skbref.html',
       label: 'SKB Reference Checker',
       desc: 'Check citations and reference lists in a Word document against the SKB reference guides.',
+    },
+    {
+      href: './zoterify.html',
+      label: 'Zoterify',
+      desc: 'Turn the plain-text citations in a Word document into live Zotero citations, matched against your own zotero.sqlite, with every change tracked in your own document.',
     },
     {
       href: './skb_qa_summary.html',

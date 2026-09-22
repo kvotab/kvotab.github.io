@@ -1,0 +1,1 @@
+KVOT_ENSDF_DATA("260901","a298",{"a":298,"nuc":{"120":{"ds":[["adopted","ADOPTED LEVELS: NOT OBSERVED","","19NDS","201902"]],"lv":[],"gm":[],"hist":[["FUL","BALRAJ SINGH","NDS 156, 70 (2019)","31-Jan-2019"]]}}});

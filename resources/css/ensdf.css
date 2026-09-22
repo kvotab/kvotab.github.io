@@ -1,0 +1,489 @@
+/* ==========================================================================
+   ENSDF.HTML
+
+   A toolbar, then the main area (the chart of nuclides, or the decay-chain
+   chart) beside a panel of tabs with a drag handle between them. Colours
+   are the tokens in kvot.css, so the page follows the theme toggle; the few
+   below are the chart's own. Class prefix: nz-.
+
+   The chart's cell colours are not here: they are drawn on a canvas, and
+   live in ensdf-core.js (PALETTE) with the reasoning beside them. The
+   decay-mode colours are the documented categorical slots of the dataviz
+   palette, assigned by an exhaustive search over the pairs of modes that
+   touch on the chart (beta-minus against electron capture, alpha against
+   fission, electron capture against proton emission ...): the assignment
+   used clears the normal-vision floor in both themes, and its worst
+   colour-blind pair sits in the floor band -- which is why every cell also
+   carries its mode in the hover card, the legend and, zoomed in, its label.
+   ========================================================================== */
+
+:root {
+  --nz-chart-bg: #fdfaf7;
+  --nz-magic: #c9bdb1;
+  --nz-select: #bb6c5d;
+}
+[data-theme="dark"] {
+  --nz-chart-bg: #1f1813;
+  --nz-magic: #5a4d41;
+  --nz-select: #f3b87b;
+}
+
+.nz-content { overflow: hidden; }
+.nz {
+  --nz-panel-width: 440px;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  font-family: verdana, sans-serif;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+/* ---- toolbar ------------------------------------------------------------ */
+.nz-bar {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  align-items: center;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+}
+.nz-search { display: flex; gap: 4px; }
+.nz-search input {
+  box-sizing: border-box;
+  width: 230px;
+  height: 28px;
+  padding: 3px 8px;
+  border: 1px solid var(--input-border);
+  border-radius: 6px;
+  font: 13px verdana, sans-serif;
+}
+.nz-search input:focus-visible, .nz-field select:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 1px; }
+.nz-field { display: inline-flex; gap: 6px; align-items: center; color: var(--text-secondary); font-size: 12px; }
+.nz-field[hidden] { display: none; }
+.nz-field select {
+  height: 28px;
+  max-width: 290px;
+  padding: 2px 6px;
+  border: 1px solid var(--input-border);
+  border-radius: 6px;
+  font: 12px verdana, sans-serif;
+}
+.nz-check { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; color: var(--text-secondary); cursor: pointer; }
+.nz-status {
+  flex: 1 1 200px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
+}
+.nz-status.warn { color: var(--text-primary); }
+.nz-spacer { flex: 1 1 auto; }
+
+.nz-btn {
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: var(--accent-fill);
+  color: #fff;
+  font: 600 12px verdana, sans-serif;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.nz-btn:hover { background: var(--accent-fill-hover); }
+.nz-btn.secondary { background: var(--bg-primary); color: var(--text-primary); border-color: var(--border-color); font-weight: 400; }
+.nz-btn.secondary:hover { border-color: var(--accent-line); }
+.nz-btn.small { height: 24px; padding: 0 8px; font-size: 11px; }
+.nz-btn[hidden] { display: none; }
+.nz-btn:focus-visible, .nz-icon:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 1px; }
+.nz-icon {
+  width: 26px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: 15px/1 verdana, sans-serif;
+  cursor: pointer;
+}
+.nz-icon:hover { border-color: var(--accent-line); }
+.nz-link { padding: 0; border: 0; background: none; color: var(--link-color); font: inherit; cursor: pointer; text-decoration: underline; }
+
+/* ---- the body: main area, handle, panel ---------------------------------- */
+.nz-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 8px var(--nz-panel-width);
+}
+.nz-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.nz-views {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 2px;
+  align-items: flex-end;
+  padding: 6px 10px 0;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+}
+.nz-viewtabs { display: flex; gap: 2px; align-items: flex-end; }
+/* The chain settings, beside the tabs because both views use them. */
+.nz-chainopts {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: center;
+  align-self: center;
+  margin: 0 0 4px 12px;
+  padding-left: 12px;
+  border-left: 1px solid var(--border-color);
+}
+.nz-chainopts-head { color: var(--text-muted); font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+.nz-chainopts select {
+  height: 26px;
+  padding: 1px 6px;
+  border: 1px solid var(--input-border);
+  border-radius: 6px;
+  font: 12px verdana, sans-serif;
+}
+.nz-chainopts select:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 1px; }
+.nz-views [data-view], .nz-tabs button {
+  padding: 6px 12px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: 12px verdana, sans-serif;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.nz-views [data-view]:hover, .nz-tabs button:hover { color: var(--text-primary); }
+.nz-views [data-view].active, .nz-tabs button.active {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border-color: var(--border-color);
+  font-weight: 600;
+  margin-bottom: -1px;
+}
+.nz-views [data-view]:focus-visible, .nz-tabs button:focus-visible { outline: 2px solid var(--accent-line); outline-offset: -2px; }
+.nz-tabname { font-weight: 600; color: var(--text-primary); }
+/* Zoom and export sit on the chart itself, top right, as map controls do. */
+.nz-tools {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  z-index: 2;
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  padding: 4px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-surface) 94%, transparent);
+  box-shadow: 0 2px 10px var(--shadow-color);
+}
+.nz-tools[hidden] { display: none; }
+
+.nz-view { position: relative; flex: 1 1 auto; min-height: 0; background: var(--nz-chart-bg); }
+.nz-view[hidden] { display: none; }
+.nz-chart { position: absolute; inset: 0; overflow: hidden; }
+.nz-canvas { display: block; cursor: default; touch-action: none; outline: none; }
+.nz-canvas:focus-visible { box-shadow: inset 0 0 0 2px var(--accent-line); }
+.nz-canvas.panning { cursor: grabbing; }
+
+.nz-resize { cursor: col-resize; display: flex; justify-content: center; position: relative; z-index: 1; background: var(--bg-secondary); }
+.nz-resize::after { content: ''; width: 3px; border-radius: 2px; transition: background 0.15s; }
+.nz-resize:hover::after, .nz-resize.active::after, .nz-resize:focus-visible::after { background: var(--color-kvot-accent); }
+.nz-resize:focus-visible { outline: none; }
+
+.nz-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-left: 1px solid var(--border-color);
+  background: var(--bg-primary);
+}
+/* The row scrolls sideways where the tabs do not fit, and so it must not
+   scroll up and down: the line under the tabs is drawn inside the row, for
+   the open tab to cover without reaching out of it by the pixel that gave
+   the row a scroll bar of its own. */
+.nz-tabs {
+  flex: none;
+  display: flex;
+  gap: 2px;
+  padding: 6px 8px 0;
+  box-shadow: inset 0 -1px 0 var(--border-color);
+  background: var(--bg-secondary);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.nz-tabs::-webkit-scrollbar { display: none; }
+.nz-tabs button.active { margin-bottom: 0; }
+/* The panel is as wide as its reader drags it, down to 300 px, and full
+   width on a phone; the five tabs close up as it narrows, so that they
+   always fit (390 px as they are, 350 px, then 292 px). */
+.nz-panel { container: nzpanel / inline-size; }
+@container nzpanel (max-width: 400px) {
+  .nz-tabs button { padding-left: 8px; padding-right: 8px; }
+}
+@container nzpanel (max-width: 350px) {
+  .nz-tabs { padding-left: 4px; padding-right: 4px; }
+  .nz-tabs button { padding-left: 5px; padding-right: 5px; font-size: 11px; }
+}
+.nz-pane { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 12px 14px 18px; line-height: 1.5; }
+.nz-pane[hidden] { display: none; }
+.nz-pane h3 { margin: 16px 0 6px; font: 700 0.98rem RawengulkSans, sans-serif; color: var(--text-primary); }
+.nz-pane h4 { margin: 12px 0 4px; font: 700 12px verdana, sans-serif; color: var(--text-primary); }
+.nz-pane-head { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; justify-content: space-between; }
+.nz-pane-head h3 { margin-top: 2px; }
+
+/* ---- the legend over the chart ------------------------------------------ */
+.nz-legend {
+  position: absolute;
+  right: 10px;
+  bottom: 28px;
+  z-index: 2;
+  box-sizing: border-box;
+  max-width: 230px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-surface) 94%, transparent);
+  box-shadow: 0 2px 10px var(--shadow-color);
+  font-size: 11px;
+  line-height: 1.35;
+}
+.nz-legend-head { margin: 0 0 5px; font-weight: 700; color: var(--text-primary); }
+.nz-legend-list { margin: 0; padding: 0; list-style: none; columns: 1; }
+.nz-legend-list li { display: flex; gap: 6px; align-items: center; padding: 1px 2px; border-radius: 3px; color: var(--text-secondary); cursor: default; }
+.nz-legend-list li:hover { background: var(--bg-secondary); color: var(--text-primary); }
+.nz-sw { flex: none; width: 12px; height: 12px; border-radius: 3px; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08); }
+[data-theme="dark"] .nz-sw { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1); }
+.nz-ramp { height: 12px; border-radius: 3px; }
+.nz-ramp-ticks { display: flex; justify-content: space-between; margin: 2px 0 6px; color: var(--text-muted); }
+.nz-legend-note { margin: 6px 0 0; color: var(--text-muted); }
+@media (min-height: 700px) { .nz-legend-list { columns: 1; } }
+
+.nz-drop {
+  position: absolute;
+  inset: 12px;
+  z-index: 3;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed var(--accent-line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-surface) 80%, transparent);
+  color: var(--text-primary);
+  font: 700 1.1rem RawengulkSans, sans-serif;
+  pointer-events: none;
+}
+.nz.dropping .nz-drop { display: flex; }
+
+/* ---- the hover card ------------------------------------------------------ */
+.nz-tip {
+  position: fixed;
+  z-index: 100001;
+  max-width: 300px;
+  padding: 7px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  box-shadow: 0 4px 14px var(--shadow-color);
+  font: 12px/1.45 verdana, sans-serif;
+  pointer-events: none;
+}
+.nz-tip[hidden] { display: none; }
+.nz-tip-head { color: var(--text-primary); font-weight: 700; font-size: 13px; margin-bottom: 2px; }
+.nz-tip-long { margin-left: 7px; font-weight: 400; color: var(--text-muted); font-size: 12px; }
+.nz-tip-dim { color: var(--text-muted); }
+
+/* ---- the nuclide tab ----------------------------------------------------- */
+.nz-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; margin: 0 0 8px; }
+.nz-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.nz-big { font: 700 2rem RawengulkSans, sans-serif; color: var(--text-primary); line-height: 1.1; }
+.nz-big sup { font-size: 0.55em; vertical-align: 0.8em; margin-right: 1px; }
+.nz-long { color: var(--text-secondary); }
+.nz-zna { color: var(--text-muted); font-size: 12px; white-space: nowrap; }
+.nz-states { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
+.nz-states button {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px 9px;
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font: 11px verdana, sans-serif;
+  text-align: left;
+  cursor: pointer;
+}
+.nz-states button span { color: var(--text-muted); }
+.nz-states button:hover { border-color: var(--accent-line); }
+.nz-states button.active { border-color: var(--nz-select); box-shadow: inset 0 0 0 1px var(--nz-select); }
+.nz-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 5px 14px; margin: 0 0 6px; }
+.nz-facts dt { color: var(--text-muted); }
+.nz-facts dd { margin: 0; overflow-wrap: anywhere; }
+.nz-facts.nz-small { font-size: 12px; }
+.nz-modes { margin: 0; padding: 0; list-style: none; }
+.nz-modes li { margin: 0 0 2px; }
+.nz-mode { font-weight: 600; }
+.nz-unc { margin-left: 2px; font-size: 0.82em; color: var(--text-muted); }
+.nz-asym { display: inline-flex; flex-direction: column; vertical-align: middle; line-height: 1; font-size: 0.72em; }
+.nz-asym sup, .nz-asym sub { vertical-align: baseline; }
+.nz-alt { color: var(--text-muted); font-size: 12px; }
+.nz-dim { color: var(--text-muted); }
+.nz-note { margin: 6px 0 0; color: var(--text-muted); font-size: 11px; }
+.nz-inferred { display: block; color: var(--text-muted); font-size: 11px; border-left: 3px solid var(--color-kvot-bright); padding-left: 6px; margin: 1px 0 3px; }
+.nz-missing { color: var(--text-muted); border-bottom: 1px dashed var(--text-muted); }
+a.nz-nuc, .nz-pane a { color: var(--link-color); }
+a.nz-nuc:hover { text-decoration: underline; }
+.nz-card {
+  margin: 12px 0 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-surface);
+}
+.nz-card h3 { margin-top: 0; }
+.nz-card p { margin: 0 0 6px; }
+.nz-ends { margin: 0 0 8px; padding-left: 18px; }
+.nz-kv { border-collapse: collapse; font-size: 12px; }
+.nz-kv th { padding: 3px 12px 3px 0; text-align: left; font-weight: 600; white-space: nowrap; }
+.nz-kv td { padding: 3px 12px 3px 0; white-space: nowrap; }
+.nz-kv td.nz-dim { white-space: normal; }
+.nz-welcome h2 { margin: 2px 0 8px; font: 700 1.3rem RawengulkSans, sans-serif; }
+.nz-welcome p { margin: 0 0 10px; }
+
+/* ---- tables -------------------------------------------------------------- */
+.nz-table-wrap { overflow: auto; max-width: 100%; }
+.nz-table {
+  border-collapse: collapse;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  width: 100%;
+}
+.nz-table caption { text-align: left; font-weight: 600; padding: 8px 0 3px; color: var(--text-primary); }
+.nz-table th, .nz-table td { padding: 3px 8px 3px 4px; text-align: right; border-bottom: 1px solid var(--table-border); vertical-align: top; }
+.nz-table th { position: sticky; top: 0; z-index: 1; background: var(--bg-secondary); font-weight: 600; white-space: nowrap; }
+.nz-table th.text, .nz-table td.text { text-align: left; }
+.nz-table tbody tr:nth-child(even) { background: var(--table-stripe); }
+.nz-table tbody tr.current { box-shadow: inset 3px 0 0 var(--nz-select); }
+.nz-table td { white-space: nowrap; }
+.nz-table td.nz-wrap { white-space: normal; min-width: 14em; }
+.nz-levels .nz-isomer-row td:first-child { font-weight: 600; }
+.nz-gamma { display: inline-block; margin: 0 10px 1px 0; white-space: nowrap; }
+.nz-state-mark {
+  display: inline-block;
+  margin-left: 5px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  font-size: 10px;
+  font-weight: 600;
+  text-decoration: none;
+}
+.nz-kind { display: inline-block; padding: 0 6px; border-radius: 8px; font-size: 10px; background: var(--bg-secondary); color: var(--text-secondary); }
+.nz-kind-adopted { background: color-mix(in srgb, var(--accent-success) 22%, transparent); color: var(--text-primary); }
+.nz-kind-decay { background: color-mix(in srgb, var(--color-kvot-bright) 35%, transparent); color: var(--text-primary); }
+.nz-hist { margin: 0; padding-left: 18px; font-size: 12px; }
+.nz-hist li { margin: 0 0 4px; }
+.nz-rad { margin: 0 0 12px; }
+.nz-rad h4 { font-weight: 700; }
+.nz-sort { display: inline-flex; gap: 2px; align-items: center; font-size: 11px; color: var(--text-muted); }
+.nz-sort button { padding: 2px 7px; border: 1px solid var(--border-color); border-radius: 5px; background: var(--bg-primary); color: var(--text-secondary); font: 11px verdana, sans-serif; cursor: pointer; }
+.nz-sort button.active { border-color: var(--nz-select); color: var(--text-primary); }
+
+/* ---- the decay-chain view ------------------------------------------------ */
+.nz-chainview { display: flex; flex-direction: column; background: var(--bg-primary); }
+.nz-chainview[hidden] { display: none; }
+.nz-chain-bar {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  align-items: center;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-surface);
+}
+.nz-chain-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 12px; }
+.nz-chain-draw { overflow-x: auto; margin: 0 0 8px; }
+.nz-chain-draw svg { display: block; max-width: none; }
+.nz-chain-draw .nz-node { cursor: pointer; outline: none; }
+.nz-chain-draw .nz-node:hover rect:first-child, .nz-chain-draw .nz-node:focus-visible rect:first-child { filter: brightness(1.06); }
+.nz-chain-draw .nz-node:focus-visible rect:first-child { stroke: var(--accent-line); stroke-width: 2; }
+.nz-chain-note ul { margin: 0 0 10px; padding-left: 18px; color: var(--text-muted); font-size: 12px; }
+.nz-chain-tab { max-width: 900px; }
+.nz-chain-tab td { white-space: normal; }
+
+/* ---- about --------------------------------------------------------------- */
+.nz-help { line-height: 1.6; }
+.nz-help h2 { margin: 2px 0 10px; font: 700 1.25rem RawengulkSans, sans-serif; }
+.nz-help h3 { margin: 18px 0 6px; }
+.nz-help p { margin: 0 0 10px; }
+.nz-help code { padding: 1px 4px; border-radius: 3px; background: var(--code-bg); font-size: 0.92em; }
+
+/* ---- narrow screens ------------------------------------------------------ */
+@media (max-width: 860px) {
+  .nz { --nz-panel-width: 360px; }
+  .nz-search input { width: 180px; }
+}
+@media (max-width: 760px) {
+  .nz-content { overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  .nz { height: auto; min-height: 100%; }
+  .nz-bar { gap: 6px 10px; padding: 6px 10px; }
+  .nz-search { flex: 1 1 100%; }
+  .nz-search input { flex: 1 1 auto; width: auto; }
+  .nz-status { flex-basis: 100%; text-align: left; }
+  .nz-body { display: flex; flex-direction: column; }
+  .nz-main { height: 62vh; height: 62dvh; min-height: 320px; flex: none; }
+  .nz-resize { display: none; }
+  .nz-panel { border-left: 0; border-top: 1px solid var(--border-color); }
+  .nz-pane { overflow: visible; }
+  .nz-legend { right: 6px; bottom: 24px; max-width: 170px; padding: 6px 8px; font-size: 10px; }
+  .nz-legend-note { display: none; }
+  .nz-tools .nz-btn { display: none; }
+}
+@media (pointer: coarse) {
+  .nz-icon { width: 34px; height: 30px; }
+}
+
+/* ---- the levels table: a level on one line, what leaves it on the next -- */
+.nz-levels tbody tr:nth-child(even) { background: none; }
+.nz-levels tr.nz-level td { border-bottom: 0; padding-top: 5px; }
+.nz-levels tr.nz-level-out td { padding: 0 4px 5px 14px; white-space: normal; color: var(--text-secondary); font-size: 11px; }
+.nz-levels tr.nz-level-out + tr.nz-level td, .nz-levels tr.nz-level + tr.nz-level td { border-top: 1px solid var(--table-border); }
+.nz-level-dec { color: var(--text-primary); margin-bottom: 1px; }
+.nz sup { font-size: 0.72em; line-height: 0; vertical-align: 0.45em; }
+.nz-legend sup { font-size: 0.8em; }
+.nz .nz-big sup { font-size: 0.55em; vertical-align: 0.8em; line-height: 1; }
+.nz-sf { margin: 4px 0 12px; }
+.nz-sf > summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
+.nz-sf[open] > summary { margin-bottom: 4px; }
+
+/* ---- the chain in small, in the panel ----------------------------------- */
+.nz-chain-mini { margin: 2px 0 8px; overflow: hidden; border-radius: 6px; cursor: zoom-in; }
+.nz-chain-mini svg { display: block; max-width: 100%; height: auto; }
+.nz-chain-mini .nz-node, .nz-chain-mini .nz-edge-label { pointer-events: none; }
+.nz-chain-mini:hover { box-shadow: 0 0 0 2px var(--accent-line); }
+.nz .nz-asym sup, .nz .nz-asym sub { vertical-align: baseline; font-size: 1em; line-height: 1; }
+
+/* The hover card lives outside .nz, so it needs its own superscripts. */
+.nz-tip sup { font-size: 0.72em; line-height: 0; vertical-align: 0.45em; }
+@media (max-width: 760px) {
+  .nz-chainopts { margin-left: 0; padding: 6px 0; border-left: 0; }
+}

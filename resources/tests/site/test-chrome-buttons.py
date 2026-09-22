@@ -10,7 +10,7 @@ import asyncio, json, sys, time, urllib.request, websockets
 
 PAGES = ['index.html', 'proj.html', 'rb.html', 'rdc.html', 'logn.html',
          'karaoke.html', 'skbref.html', 'skb_qa_summary.html', 'uppsala.html',
-         'solna.html', 'kompartment.html', '404.html']
+         'solna.html', 'kompartment.html', 'ensdf.html', 'zoterify.html', '404.html']
 
 PROBE = r"""(async () => {
   const button = document.querySelector('button.theme-toggle');

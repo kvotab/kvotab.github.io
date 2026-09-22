@@ -25,10 +25,22 @@ others. Each item keeps its own licence.
 
 jQuery and jQuery UI (MIT), MathJax (Apache-2.0), Leaflet (BSD-2-Clause),
 SheetJS `xlsx` (Apache-2.0), SortableJS (MIT), h5wasm (BSD-3-Clause), JSZip
-(MIT/GPLv3 dual), pdf.js (Apache-2.0), and — only when a model in Kompartment
+(MIT/GPLv3 dual), pdf.js (Apache-2.0), sql.js (MIT, with SQLite, public
+domain), and — only when a model in Kompartment
 asks for a SciPy solver — Pyodide (MPL-2.0) with the CPython (PSF), NumPy and
 SciPy (BSD-3-Clause) builds it carries. They are fetched by the visitor's
 browser from their publishers and are not redistributed here.
+
+## Work followed, not copied
+
+- **Identifyer for Zotero** by Jonas Bååth
+  (https://github.com/JonasBaath/identifyer-for-zotero): the idea behind
+  `zoterify.html`, of converting a document's plain-text citations against the
+  local Zotero database. The page's parser, matcher and word lists are written
+  independently; no code of it is used.
+- **docXMLater** by DiaTech (https://github.com/ItMeDiaTech/docXMLater, MIT):
+  `resources/js/zoterify-docx.js` follows its way of editing an existing Word
+  document under Track Changes. No code is copied from it.
 
 ## Data
 
@@ -37,6 +49,13 @@ browser from their publishers and are not redistributed here.
   Publication 107, *Nuclear Decay Data for Dosimetric Calculations*, Annals of
   the ICRP 38(3), 2008, © ICRP. Dose coefficients are from ICRP Publications
   72 and 119 as cited on the page.
+- **Nuclear structure and decay data** (`resources/data/ensdf/`) are built from
+  the Evaluated Nuclear Structure Data File (ENSDF), maintained by the National
+  Nuclear Data Center, Brookhaven National Laboratory, for the international
+  Nuclear Structure and Decay Data network
+  (https://www.nndc.bnl.gov/ensdf/). The release is named on `ensdf.html`;
+  the data are read as published and not altered, except where the page says a
+  value is inferred. Element names are those of IUPAC.
 - **Chemical element data** (`resources/js/rndatatree.js`: names, origins of
   names, atomic weights, densities, melting and boiling points) are adapted
   from Wikipedia's *List of chemical elements* and the element articles,
