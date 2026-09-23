@@ -76,7 +76,13 @@
 
           <details class="fac-sec" id="sec-solver" open>
             <summary>Solver</summary>
-            <div class="fac-row">
+            <!--
+              The same settings as rtm.html's panel, by the same names and in the
+              same order, since the two pages run the same solver; Kompartment's
+              Advanced settings use the same names where they fit. Each row
+              explains itself on hover.
+            -->
+            <div class="fac-row" title="Which integrator solves the model. NDF is the default; BDF is the same integrator with the NDF&#8217;s &#954; set to zero; the Julia ports are methods of DifferentialEquations.jl, run in the page.">
               <label>Method</label>
               <select id="facMethod" data-on-change="fac:solverChanged">
                 <option value="ndf">NDF</option>
@@ -92,11 +98,11 @@
                 <option value="julia_trbdf2">TRBDF2 (Julia port)</option>
               </select>
             </div>
-            <div class="fac-row" data-solver-opt="rtol">
+            <div class="fac-row" data-solver-opt="rtol" title="Relative tolerance (rtol): the error a step may make, as a fraction of each quantity&#8217;s own size. 1e-5 is about five significant digits; tighter is slower and more accurate.">
               <label>Relative tolerance<span class="fac-name">rtol</span></label>
               <input id="facRtol" type="text" value="1e-5" data-on-change="fac:solverChanged">
             </div>
-            <div class="fac-row" data-solver-opt="atol">
+            <div class="fac-row" data-solver-opt="atol" title="Absolute tolerance (atol): the error allowed on a concentration near zero, in mol/cm&#179;. Below it a species is not controlled, so set it below the smallest concentration that matters.">
               <label>Absolute tolerance (mol/cm³)<span class="fac-name">atol</span></label>
               <input id="facAtol" type="text" value="1e-30" data-on-change="fac:solverChanged">
             </div>
@@ -112,35 +118,35 @@
                     data-on-click="fac:solverMore"
                     aria-expanded="false" aria-controls="facSolverAdvanced">Advanced settings</button>
             <div id="facSolverAdvanced" hidden>
-            <div class="fac-row" data-solver-opt="atolSpecies">
+            <div class="fac-row" data-solver-opt="atolSpecies" title="Absolute tolerances for named species, one SPECIES VALUE a line; every species not listed keeps the absolute tolerance above.">
               <label>Per-species absolute tolerance<span class="fac-name">one <code>SPECIES VALUE</code> a line; everything unlisted keeps the value above</span></label>
               <textarea id="facAtolSpecies" rows="3" spellcheck="false" placeholder="H2O 1e-12&#10;OH 1e-22" data-on-change="fac:solverChanged"></textarea>
             </div>
-            <div class="fac-row" data-solver-opt="norm">
+            <div class="fac-row" data-solver-opt="norm" title="How the errors of the components are combined into the one number a step is accepted or refused on: max lets the worst-resolved component decide, rms averages over all of them, as CVODE does. The maximum is the stricter.">
               <label>Error norm<span class="fac-name">max: the worst-resolved species decides · rms: averaged over all of them, as in CVODE</span></label>
               <select id="facNorm" data-on-change="fac:solverChanged">
                 <option value="max">max</option>
                 <option value="rms">rms</option>
               </select>
             </div>
-            <div class="fac-row" data-solver-opt="maxOrder">
+            <div class="fac-row" data-solver-opt="maxOrder" title="The highest order the variable-order formulas may reach. Lower is steadier through a discontinuity and slower on a smooth stretch.">
               <label>Maximum order<span class="fac-name">the variable-order methods: NDF, BDF, FBDF, QNDF, QBDF</span></label>
               <select id="facMaxOrder" data-on-change="fac:solverChanged">
                 <option>1</option><option>2</option><option>3</option><option>4</option><option selected>5</option>
               </select>
             </div>
-            <div class="fac-row" data-solver-opt="minOrder">
+            <div class="fac-row" data-solver-opt="minOrder" title="The lowest order to drop to. Raising it to the maximum gives a fixed-order method.">
               <label>Minimum order<span class="fac-name">pin both to the same value to hold the order fixed</span></label>
               <select id="facMinOrder" data-on-change="fac:solverChanged">
                 <option selected>1</option><option>2</option><option>3</option><option>4</option><option>5</option>
               </select>
             </div>
-            <div class="fac-row" data-solver-opt="hmax">
+            <div class="fac-row" data-solver-opt="hmax" title="The longest step the solver may take; 0 is a tenth of the run. Set it where a model changes faster than its output can show and the solver steps over the change &#8212; and to catch a trigger that moves faster than the solution (see the Help tab).">
               <label>Maximum step (years)<span class="fac-name">0 = a tenth of the run</span></label>
               <input id="facHmax" type="text" value="0" data-on-change="fac:solverChanged">
             </div>
-            <div class="fac-row" data-solver-opt="matrix">
-              <label>Iteration matrix I − hJ<span class="fac-name">auto: chosen by the measured fill</span></label>
+            <div class="fac-row" data-solver-opt="matrix" title="How I &#8722; hJ, the matrix every implicit step solves with, is factorised: a sparse LU that keeps its pivots from one factorisation to the next, a sparse LU that chooses them each time, or a dense LU. auto measures the fill and chooses, and is right almost always.">
+              <label>Iteration matrix<span class="fac-name">I − hJ; auto: chosen by the measured fill</span></label>
               <select id="facMatrix" data-on-change="fac:solverChanged">
                 <option value="auto">auto</option>
                 <option value="refactor">sparse LU, pivots kept</option>
@@ -148,33 +154,41 @@
                 <option value="dense">dense LU</option>
               </select>
             </div>
-            <div class="fac-row" data-solver-opt="jacobian">
+            <div class="fac-row" data-solver-opt="jacobian" title="Where df/dy comes from: derived from the equations, which is exact, or by finite differences through the same pattern. Differencing is slower and less exact; it is the check to run when the analytic one is in doubt.">
               <label>Jacobian<span class="fac-name">analytic from the equations, or differenced through its pattern</span></label>
               <select id="facJacobian" data-on-change="fac:solverChanged">
                 <option value="analytic">analytic, sparse</option>
                 <option value="numeric">finite differences</option>
               </select>
             </div>
-            <div class="fac-row" data-solver-opt="kappa">
+            <div class="fac-row" data-solver-opt="kappa" title="How tightly each stage&#8217;s Newton iteration must converge, as a fraction of the error tolerance (&#954;). Loose leaves a stage half-solved, which contaminates the error estimate read off those stages; 1e-3 was measured, not chosen.">
               <label>Newton tolerance<span class="fac-name">κ: how closely each stage is solved, as a share of one tolerance</span></label>
               <input id="facKappa" type="text" value="1e-3" data-on-change="fac:solverChanged">
             </div>
-            <div class="fac-row" data-solver-opt="maxJacAge">
-              <label>Reuse a Jacobian for<span class="fac-name">steps, at most; 1 re-evaluates every step</span></label>
+            <div class="fac-row" data-solver-opt="maxJacAge" title="How many steps a Jacobian may be reused before it is formed again; 1 forms it every step. Reusing it is most of what makes a stiff solver cheap on a large model; reusing it too long costs Newton iterations instead.">
+              <label>Jacobian reuse<span class="fac-name">steps, at most; 1 re-evaluates every step</span></label>
               <input id="facJacAge" type="text" value="20" data-on-change="fac:solverChanged">
             </div>
-            <div class="fac-row" data-solver-opt="belowTolRun">
-              <label>Accept failing steps at the floor<span class="fac-name">in a row, when no shorter step exists; 0 stops and returns what it has</span></label>
+            <div class="fac-row" data-solver-opt="belowTolRun" title="How many steps that failed the error test at the smallest representable size may be accepted in a row. 0 stops instead, which is what the published methods do: accepting a step known to be inaccurate should be asked for.">
+              <label>Steps at the floor<span class="fac-name">failing steps accepted in a row when no shorter step exists; 0 stops and returns what it has</span></label>
               <input id="facBelowTol" type="text" value="5" data-on-change="fac:solverChanged">
             </div>
-            <div class="fac-row" data-solver-opt="maxSteps">
+            <div class="fac-row" data-solver-opt="maxSteps" title="How many steps the solver may take before it gives up and says so. A run that hits this has usually met something the model did not mean, rather than needing a larger budget.">
               <label>Step budget<span class="fac-name">the run gives up past this, and hands back what it had</span></label>
               <input id="facMaxSteps" type="text" value="2000000" data-on-change="fac:solverChanged">
             </div>
-            <label class="fac-check" data-solver-opt="autoAtol"><input type="checkbox" id="facAutoAtol" data-on-change="fac:solverChanged"> Let the absolute tolerance follow the solution upwards</label>
-            <label class="fac-check" data-solver-opt="smoothEst"><input type="checkbox" id="facSmoothEst" checked data-on-change="fac:solverChanged"> Smooth the error estimate through I − hJ (Shampine)</label>
-            <label class="fac-check" data-solver-opt="clamp"><input type="checkbox" id="facClamp" checked data-on-change="fac:solverChanged"> Read negative concentrations as zero in the rate laws</label>
-            <label class="fac-check" data-solver-opt="nonNegative"><input type="checkbox" id="facNonNeg" checked data-on-change="fac:solverChanged"> Solver keeps every species non-negative</label>
+            <div class="fac-row" data-solver-opt="stagnationTol" title="How large a Newton correction may be and still be accepted once it has stopped shrinking, as a fraction of the error tolerance; 0 never accepts one, which is this page&#8217;s default. Raise it to 0.5 only for a model whose rates cancel so heavily that the correction cannot shrink any further &#8212; constants of 1e16 against concentrations of 1e-9, as rtm.html&#8217;s networks have. On a model that does not need it, it costs accuracy.">
+              <label>Stall tolerance<span class="fac-name">a stalled Newton correction is taken when within this share of one tolerance; 0 never</span></label>
+              <input id="facStagnation" type="text" value="0" data-on-change="fac:solverChanged">
+            </div>
+            <div class="fac-row" title="How many points of the solution are kept. Past this the stored points are thinned as the run goes, so a long run still fits; the solution itself is not affected.">
+              <label>Points kept<span class="fac-name">thinned as it goes to stay inside this</span></label>
+              <input id="facMaxPoints" type="text" value="20000" data-on-change="fac:solverChanged">
+            </div>
+            <label class="fac-check" data-solver-opt="autoAtol" title="Let each species&#8217; absolute tolerance rise with it, so it is judged against the largest it has ever been rather than a floor fixed before the run. Much cheaper where concentrations span many decades; it only ever loosens, so a species that peaked and fell is no longer controlled in its tail."><input type="checkbox" id="facAutoAtol" data-on-change="fac:solverChanged"> Absolute tolerance follows the solution</label>
+            <label class="fac-check" data-solver-opt="smoothEst" title="Filter the error estimate through I &#8722; hJ, as Shampine proposed, so that a stiff component cannot inflate it and force a needlessly small step."><input type="checkbox" id="facSmoothEst" checked data-on-change="fac:solverChanged"> Smooth the error estimate through I − hJ (Shampine)</label>
+            <label class="fac-check" data-solver-opt="clamp" title="Read every concentration in the rate laws as max(0, c), so a small negative excursion cannot drive a rate the wrong way. The solution itself may still dip below zero unless the next setting stops it."><input type="checkbox" id="facClamp" checked data-on-change="fac:solverChanged"> Read negative concentrations as zero in the rate laws</label>
+            <label class="fac-check" data-solver-opt="nonNegative" title="Keep every species at or above zero: NDF and BDF damp the derivative so a species at zero cannot be pushed further down, count a violation in the error test, and project an accepted step back; the Julia ports only project."><input type="checkbox" id="facNonNeg" checked data-on-change="fac:solverChanged"> Keep every species non-negative</label>
             <!--
               Filled in by updateSolverOptions: which of the settings above the
               chosen method does not read. Said rather than silently hidden,
@@ -562,9 +576,9 @@ Y2 = , rf = 3.0E7*Y2*Y2</pre>
   <script src="./resources/js/facsimile-default.js?v=20260921a"></script>
   <script src="./resources/js/ode-julia.js?v=20260917zd"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20260917zd"></script>
-  <script src="./resources/js/facsimile-worker.js?v=20260917zd"></script>
+  <script src="./resources/js/facsimile-worker.js?v=20260923c"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/facsimile-hdf5.js?v=20260917zd"></script>
-  <script src="./resources/js/facsimile-ui.js?v=20260923b"></script>
+  <script src="./resources/js/facsimile-ui.js?v=20260923c"></script>
 </body>
 </html>

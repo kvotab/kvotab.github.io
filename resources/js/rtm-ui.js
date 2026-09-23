@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20260923b';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20260923c';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -21,9 +21,14 @@
      --------------------------------------------------------------------- */
   const state = {
     text: typeof RTM_DEFAULT_MODEL === 'string' ? RTM_DEFAULT_MODEL : '',
+    // facsimile.html's settings, since the two pages run the same solver, with
+    // this page's own defaults: a tighter rtol, and a stalled Newton correction
+    // taken (see stagnationTol in solverPayload).
     solver: {
       method: 'ndf', tend: '', rtol: '1e-6', atol: '1e-20', matrix: 'auto', norm: 'max',
-      maxSteps: '500000', maxPoints: '4000', nonNegative: true, autoAtol: false,
+      maxOrder: 5, minOrder: 1, hmax: '0', jacobianMode: 'analytic', kappa: '1e-3',
+      maxJacAge: '20', belowTolRun: '5', stagnationTol: '0.5',
+      maxSteps: '500000', maxPoints: '4000', nonNegative: true, autoAtol: false, smoothEst: true,
     },
     picked: [],            // species names drawn on the time chart
     cell: 0,               // which cell the time chart is of
@@ -402,6 +407,7 @@
     // for a "from" time in seconds.
     const u = timeUnit();
     $('rtmTendUnit').textContent = `${u.name}s; blank uses TEND from the text`;
+    $('rtmHmaxUnit').textContent = `${u.name}s; 0 = a tenth of the run`;
     $('rtmTMinUnit').textContent = u.symbol;
     $('rtmGradTMinUnit').textContent = u.symbol;
     if (m.nparameters) bits.push(`${m.nparameters} parameter${m.nparameters === 1 ? '' : 's'}: ${m.parameters.join(', ')}`);
@@ -431,16 +437,31 @@
       if (!test(x)) throw new Error(what);
       return x;
     };
+    const maxOrder = Math.round(num(s.maxOrder, 'The maximum order must be 1 to 5', (x) => x >= 1 && x <= 5));
     const out = {
       method: s.method,
       rtol: num(s.rtol, 'The relative tolerance must be between 0 and 1', (x) => x > 0 && x < 1),
       atol: num(s.atol, 'The absolute tolerance must be a non-negative number', (x) => x >= 0),
       matrix: s.matrix,
       norm: s.norm,
+      maxOrder,
+      // Pinned below the maximum, as facsimile.html does: a floor above the
+      // ceiling is a fixed order at the ceiling.
+      minOrder: Math.min(maxOrder, Math.round(num(s.minOrder, 'The minimum order must be 1 to 5',
+        (x) => x >= 1 && x <= 5))),
+      hmax: num(s.hmax || 0, `The maximum step must be a non-negative number of ${timeUnit().name}s`, (x) => x >= 0),
+      jacobianMode: s.jacobianMode === 'numeric' ? 'numeric' : 'analytic',
+      kappa: num(s.kappa, 'The Newton tolerance must be a number between 0 and 1', (x) => x > 0 && x < 1),
+      maxJacAge: Math.round(num(s.maxJacAge, 'A Jacobian must be reused for at least one step', (x) => x >= 1)),
+      belowTolRun: Math.round(num(s.belowTolRun, 'Steps at the floor must be a count of zero or more', (x) => x >= 0)),
+      stagnationTol: num(s.stagnationTol, 'The stall tolerance must be a number from 0 to 1', (x) => x >= 0 && x <= 1),
       maxSteps: num(s.maxSteps, 'The step budget must be at least 100', (x) => x >= 100),
-      maxPoints: num(s.maxPoints, 'Points kept must be at least 10', (x) => x >= 10),
+      // The engine keeps at least 1000 whatever it is told, so that is the floor
+      // said here rather than a smaller number it would quietly raise.
+      maxPoints: num(s.maxPoints, 'Points kept must be at least 1000', (x) => x >= 1000),
       nonNegative: s.nonNegative,
       autoAtol: s.autoAtol,
+      smoothEst: s.smoothEst !== false,
     };
     if (String(s.tend).trim()) {
       out.tend = num(s.tend, `The simulated time must be a positive number of ${timeUnit().name}s`, (x) => x > 0);
@@ -1234,10 +1255,19 @@
     s.atol = $('rtmAtol').value.trim();
     s.matrix = $('rtmMatrix').value;
     s.norm = $('rtmNorm').value;
+    s.maxOrder = parseInt($('rtmMaxOrder').value, 10) || 5;
+    s.minOrder = parseInt($('rtmMinOrder').value, 10) || 1;
+    s.hmax = $('rtmHmax').value.trim();
+    s.jacobianMode = $('rtmJacobian').value;
+    s.kappa = $('rtmKappa').value.trim();
+    s.maxJacAge = $('rtmJacAge').value.trim();
+    s.belowTolRun = $('rtmBelowTol').value.trim();
+    s.stagnationTol = $('rtmStagnation').value.trim();
     s.maxSteps = $('rtmMaxSteps').value.trim();
     s.maxPoints = $('rtmMaxPoints').value.trim();
     s.nonNegative = $('rtmNonNeg').checked;
     s.autoAtol = $('rtmAutoAtol').checked;
+    s.smoothEst = $('rtmSmoothEst').checked;
   }
 
   function writeSolverControls() {
@@ -1250,10 +1280,91 @@
     $('rtmAtol').value = s.atol;
     $('rtmMatrix').value = s.matrix;
     $('rtmNorm').value = s.norm;
+    $('rtmMaxOrder').value = String(s.maxOrder ?? 5);
+    $('rtmMinOrder').value = String(s.minOrder ?? 1);
+    $('rtmHmax').value = s.hmax ?? '0';
+    $('rtmJacobian').value = s.jacobianMode === 'numeric' ? 'numeric' : 'analytic';
+    $('rtmKappa').value = s.kappa ?? '1e-3';
+    $('rtmJacAge').value = s.maxJacAge ?? '20';
+    $('rtmBelowTol').value = s.belowTolRun ?? '5';
+    $('rtmStagnation').value = s.stagnationTol ?? '0.5';
     $('rtmMaxSteps').value = s.maxSteps;
     $('rtmMaxPoints').value = s.maxPoints;
     $('rtmNonNeg').checked = !!s.nonNegative;
     $('rtmAutoAtol').checked = !!s.autoAtol;
+    $('rtmSmoothEst').checked = s.smoothEst !== false;
+  }
+
+  /**
+   * Which of the settings the built-in NDF and BDF read -- facsimile.html's
+   * list, less the two that are properties of its own model language
+   * (per-species tolerances and reading negatives as zero), plus the stalled
+   * correction this page takes and facsimile leaves off.
+   */
+  const BUILTIN_OPTIONS = ['rtol', 'atol', 'norm', 'maxOrder', 'hmax', 'matrix', 'jacobian',
+    'belowTolRun', 'maxSteps', 'stagnationTol', 'autoAtol', 'nonNegative'];
+
+  /** What the reader should see a setting called, when told it is not used: facsimile's words. */
+  const OPTION_NAMES = {
+    rtol: 'the relative tolerance',
+    atol: 'the absolute tolerance',
+    norm: 'the error norm',
+    maxOrder: 'the maximum order',
+    minOrder: 'the minimum order',
+    hmax: 'the maximum step',
+    matrix: 'the choice of iteration matrix',
+    jacobian: 'the choice of Jacobian',
+    kappa: 'the Newton tolerance',
+    maxJacAge: 'how long a Jacobian is reused',
+    belowTolRun: 'accepting failing steps at the floor',
+    maxSteps: 'the step budget',
+    stagnationTol: 'the stall tolerance',
+    autoAtol: 'letting the absolute tolerance follow the solution',
+    smoothEst: 'smoothing the error estimate',
+    nonNegative: 'keeping species non-negative',
+  };
+
+  /** "a", "a and b", "a, b and c". */
+  function listOf(items) {
+    if (items.length === 1) return items[0];
+    return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+  }
+
+  /**
+   * Show only the settings the chosen method reads, and name the rest, as
+   * facsimile.html does: a knob that does nothing is worse than a missing one,
+   * because nothing tells the reader which it is. The ported methods declare
+   * theirs in facsimile-ode-julia.js, beside the code that passes them on.
+   */
+  function updateSolverOptions() {
+    const method = $('rtmMethod').value;
+    let allowed = BUILTIN_OPTIONS;
+    let partial = {};
+    if (typeof FacsimileOdeJulia !== 'undefined' && FacsimileOdeJulia.is(method)) {
+      allowed = FacsimileOdeJulia.options(method);
+      partial = FacsimileOdeJulia.notes(method) || {};
+    }
+    const set = new Set(allowed);
+    const dropped = [];
+    document.querySelectorAll('#sec-solver [data-solver-opt]').forEach((el) => {
+      const key = el.dataset.solverOpt;
+      const off = !set.has(key);
+      el.hidden = off;
+      if (off && OPTION_NAMES[key]) dropped.push(OPTION_NAMES[key]);
+    });
+    const chosen = $('rtmMethod').selectedOptions[0];
+    const label = chosen ? chosen.textContent.replace(/\s*[↓(].*$/, '').trim() : method;
+    const lines = [];
+    if (dropped.length) {
+      lines.push(`${label} does not read ${listOf(dropped)}, so ${
+        dropped.length === 1 ? 'it is' : 'they are'} not shown.`);
+    }
+    for (const key of Object.keys(partial)) {
+      if (set.has(key) && OPTION_NAMES[key]) lines.push(`${label} honours ${OPTION_NAMES[key]} ${partial[key]}.`);
+    }
+    const note = $('rtmSolverNote');
+    note.hidden = !lines.length;
+    note.textContent = lines.join(' ');
   }
 
   /* ---------------------------------------------------------------------
@@ -1688,7 +1799,7 @@
     'rtm:downloadCsv': () => downloadCsv(),
     'rtm:toHdf5': () => { viewInHdf5Browser(); },
     'rtm:downloadHdf5': () => downloadHdf5(),
-    'rtm:solverChanged': () => { readSolverControls(); saveState(); },
+    'rtm:solverChanged': () => { readSolverControls(); updateSolverOptions(); saveState(); },
     'rtm:more': () => {
       const open = !state.sections[ADVANCED_KEY];
       state.sections[ADVANCED_KEY] = open;
@@ -1739,6 +1850,7 @@
   renderExamples();
   $('rtmProfileTimes').value = state.profileTimes;
   writeSolverControls();
+  updateSolverOptions();
   initSideResize();
   initSections();
   initDrop();

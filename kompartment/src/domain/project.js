@@ -256,7 +256,10 @@ export class Project {
 				+ `(${this.simulation.max_order ?? 5})`,
 			);
 		}
-		for (const [key, allowed] of [['error_norm', ['rms', 'max']], ['matrix', ['auto', 'sparse', 'dense']]]) {
+		for (const [key, allowed] of [
+			['error_norm', ['rms', 'max']], ['matrix', ['auto', 'sparse', 'dense']],
+			['jacobian', ['analytic', 'numeric']],
+		]) {
 			const v = this.simulation[key];
 			if (v == null || v === '') { delete this.simulation[key]; continue; }
 			if (!allowed.includes(v)) {

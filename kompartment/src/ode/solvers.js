@@ -148,47 +148,56 @@ export const SOLVER_INFO = Object.assign(Object.create(null), {
  * `kind` is how the interface draws it: a number, a choice, or a switch.
  */
 export const SOLVER_OPTION_INFO = Object.assign(Object.create(null), {
+	// The labels are facsimile.html's and rtm.html's, where they fit the
+	// sidebar's name column, so a setting is called the same in all three;
+	// `name` is how the note under the rows refers to one it drops, in the
+	// words facsimile.html uses. `unit` is `true` for the model's time unit,
+	// or the unit itself. `short` is what the sidebar shows where the label and
+	// its unit would not fit the name column -- abbreviated as `Rel. tolerance`
+	// is -- with the full label at the head of its tooltip.
 	max_step: {
-		label: 'Largest step', kind: 'number', unit: true,
+		label: 'Maximum step', short: 'Max. step', name: 'the maximum step', kind: 'number', unit: true,
 		blurb: 'The longest step the solver may take. 0 leaves it to the solver, which is '
 			+ 'almost always right; set it where a model changes faster than its output '
 			+ 'grid can show and the solver steps over the change.',
 	},
 	initial_step: {
-		label: 'First step', kind: 'number', unit: true,
+		label: 'First step', name: 'the first step', kind: 'number', unit: true,
 		blurb: 'The first step to try. 0 lets the solver choose one from the derivative at '
 			+ 'the start, which is usually better than a guess.',
 	},
 	max_steps: {
-		label: 'Step budget', kind: 'number',
+		label: 'Step budget', name: 'the step budget', kind: 'number',
 		blurb: 'How many steps the solver may take before it gives up and says so. A run '
 			+ 'that hits this has usually met something the model did not mean, rather '
 			+ 'than needing a larger budget.',
 	},
 	max_order: {
-		label: 'Highest order', kind: 'choice', choices: [1, 2, 3, 4, 5],
+		label: 'Maximum order', name: 'the maximum order', kind: 'choice', choices: [1, 2, 3, 4, 5],
 		blurb: 'The highest order the variable-order formulas may reach. Lower is steadier '
 			+ 'through a discontinuity and slower on a smooth stretch.',
 	},
 	min_order: {
-		label: 'Lowest order', kind: 'choice', choices: [1, 2, 3, 4, 5],
-		blurb: 'The lowest order to drop to. Raising it with the highest gives a '
+		label: 'Minimum order', name: 'the minimum order', kind: 'choice', choices: [1, 2, 3, 4, 5],
+		blurb: 'The lowest order to drop to. Raising it to the maximum gives a '
 			+ 'fixed-order method.',
 	},
 	norm_control: {
-		label: 'Error on the norm', kind: 'switch', on: false,
-		blurb: 'Judge the error against the norm of the whole '
-			+ 'solution rather than component by component. Looser on a model whose '
-			+ 'components differ by orders of magnitude \u2014 which is most of them here, '
-			+ 'so it is off.',
+		label: 'Norm control', name: 'norm control', kind: 'switch', on: false,
+		blurb: 'Judge the error against the norm of the whole solution rather than each '
+			+ 'component against its own size (MATLAB’s NormControl). Looser on a model '
+			+ 'whose components differ by orders of magnitude — which is most of them '
+			+ 'here, so it is off.',
 	},
 	error_norm: {
-		label: 'Error norm', kind: 'choice', choices: ['rms', 'max'],
-		blurb: 'How the error of a step is measured across components: the root-mean-square '
-			+ 'of them, or the largest. The maximum is the stricter of the two.',
+		label: 'Error norm', name: 'the error norm', kind: 'choice',
+		choices: [['max', 'max'], ['rms', 'rms']],
+		blurb: 'How the errors of the components are combined into the one number a step '
+			+ 'is accepted or refused on: max lets the worst-resolved component decide, rms '
+			+ 'averages over all of them, as CVODE does. The maximum is the stricter.',
 	},
 	stagnation_tol: {
-		label: 'Take a stalled correction', kind: 'number',
+		label: 'Stall tolerance', name: 'the stall tolerance', kind: 'number',
 		blurb: 'How large a Newton correction may be and still be accepted once it has '
 			+ 'stopped shrinking, as a fraction of the error tolerance; 0 never accepts '
 			+ 'one, which is the default. Raise it to 0.5 only for a model whose rates '
@@ -198,31 +207,44 @@ export const SOLVER_OPTION_INFO = Object.assign(Object.create(null), {
 			+ 'model that does not need it, it costs accuracy.',
 	},
 	newton_kappa: {
-		label: 'Newton tolerance', kind: 'number',
-		blurb: 'How tightly each stage\u2019s Newton iteration must converge, as a fraction '
-			+ 'of the error tolerance. Loose leaves a stage half-solved, which contaminates '
-			+ 'the error estimate read off those stages; 1e-3 was measured, not chosen.',
+		label: 'Newton tolerance', name: 'the Newton tolerance', kind: 'number',
+		blurb: 'How tightly each stage’s Newton iteration must converge, as a fraction '
+			+ 'of the error tolerance (κ). Loose leaves a stage half-solved, which '
+			+ 'contaminates the error estimate read off those stages; 1e-3 was measured, '
+			+ 'not chosen.',
 	},
 	max_jac_age: {
-		label: 'Reuse df/dy for', kind: 'number',
-		blurb: 'How many steps a Jacobian may be reused before it is formed again. Reusing '
-			+ 'it is most of what makes a stiff solver cheap on a large model; reusing it '
-			+ 'too long costs Newton iterations instead.',
+		label: 'Jacobian reuse', name: 'how long a Jacobian is reused', kind: 'number',
+		blurb: 'How many steps a Jacobian may be reused before it is formed again; 1 forms '
+			+ 'it every step. Reusing it is most of what makes a stiff solver cheap on a '
+			+ 'large model; reusing it too long costs Newton iterations instead.',
 	},
 	below_tol_run: {
-		label: 'Steps at the floor', kind: 'number',
+		label: 'Steps at the floor', name: 'accepting failing steps at the floor', kind: 'number',
 		blurb: 'How many steps that failed the error test at the smallest representable '
 			+ 'size may be accepted in a row. 0 stops instead, which is what the published '
 			+ 'methods do: accepting a step known to be inaccurate should be asked for.',
 	},
 	matrix: {
-		label: 'Linear algebra', kind: 'choice', choices: ['auto', 'sparse', 'dense'],
-		blurb: 'Whether the iteration matrix is factorised sparsely or densely. Automatic '
-			+ 'reads the model\u2019s own sparsity and is right almost always.',
+		label: 'Iteration matrix', name: 'the choice of iteration matrix', kind: 'choice',
+		choices: [['auto', 'auto'], ['sparse', 'sparse LU'], ['dense', 'dense LU']],
+		blurb: 'How I − hJ, the matrix every implicit step solves with, is factorised: '
+			+ 'sparsely or densely. auto reads the model’s own sparsity and is right '
+			+ 'almost always.',
+	},
+	jacobian: {
+		label: 'Jacobian', name: 'the choice of Jacobian', kind: 'choice',
+		choices: [['analytic', 'analytic'], ['numeric', 'finite differences']],
+		blurb: 'Where df/dy comes from: generated from the equations, which is exact and '
+			+ 'costs one pass per colour of its pattern, or by finite differences through '
+			+ 'the same pattern. Differencing is slower and less exact; it is the check to '
+			+ 'run when the generated one is in doubt. A model the generator declines is '
+			+ 'differenced either way.',
 	},
 	auto_abstol: {
-		label: 'Tolerance follows the solution', kind: 'switch', on: false,
-		blurb: 'Let each component\u2019s absolute tolerance rise with it, so it is judged '
+		label: 'Absolute tolerance follows the solution', name: 'letting the absolute tolerance follow the solution',
+		kind: 'switch', on: false,
+		blurb: 'Let each component’s absolute tolerance rise with it, so it is judged '
 			+ 'against the largest it has ever been rather than a floor fixed before the '
 			+ 'run. Much cheaper on a decay chain; it only ever loosens, so a quantity that '
 			+ 'peaked and decayed is no longer controlled in its tail.',
@@ -232,7 +254,7 @@ export const SOLVER_OPTION_INFO = Object.assign(Object.create(null), {
 // The groups the per-solver lists are built from.
 const STEPS = ['max_step', 'initial_step', 'max_steps'];
 // Every ported method: they share one integrator loop and one Newton.
-const JULIA = [...STEPS, 'matrix', 'max_jac_age', 'below_tol_run', 'error_norm', 'auto_abstol'];
+const JULIA = [...STEPS, 'matrix', 'jacobian', 'max_jac_age', 'below_tol_run', 'error_norm', 'auto_abstol'];
 // ...but a Rosenbrock is linearly implicit, so there is no iteration to give a
 // tolerance to, and it re-forms the Jacobian every step by definition -- a
 // stale one changes its order rather than its speed, so there is no age to set.
@@ -249,9 +271,11 @@ const ORDER = ['max_order', 'min_order'];
  */
 export const SOLVER_OPTIONS = Object.assign(Object.create(null), {
 	// The NDF integrator, under both its names.
-	ndf: [...STEPS, 'max_order', 'norm_control', 'auto_abstol', 'stagnation_tol'],
-	bdf: [...STEPS, 'max_order', 'norm_control', 'auto_abstol', 'stagnation_tol'],
-	ros23: STEPS,
+	ndf: [...STEPS, 'max_order', 'norm_control', 'jacobian', 'auto_abstol', 'stagnation_tol'],
+	bdf: [...STEPS, 'max_order', 'norm_control', 'jacobian', 'auto_abstol', 'stagnation_tol'],
+	// A Jacobian to difference or not, and nothing else: its order and its
+	// linear algebra are its own.
+	ros23: [...STEPS, 'jacobian'],
 	dp45: STEPS,
 	fbdf: [...NEWTON, ...ORDER],
 	qndf: [...NEWTON, ...ORDER],
@@ -269,12 +293,12 @@ export function solverOptions(id) {
 	return Object.keys(SOLVER_OPTION_INFO).filter((k) => keys.includes(k));
 }
 
-/** The settings `id` does not read, by label, for the note that says so. */
+/** The settings `id` does not read, in prose, for the note that says so. */
 export function solverIgnores(id) {
 	const keys = new Set(SOLVER_OPTIONS[id] ?? []);
 	return Object.keys(SOLVER_OPTION_INFO)
 		.filter((k) => !keys.has(k))
-		.map((k) => SOLVER_OPTION_INFO[k].label.toLowerCase());
+		.map((k) => SOLVER_OPTION_INFO[k].name);
 }
 
 /**

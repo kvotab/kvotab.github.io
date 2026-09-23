@@ -48,35 +48,68 @@
 
           <details class="rtm-sec" id="sec-solver" open>
             <summary>Solver</summary>
-            <div class="rtm-row">
+            <!--
+              The same settings as facsimile.html's panel, by the same names and
+              in the same order, since the two pages run the same solver; each
+              explains itself on hover. Rows carry data-solver-opt so that
+              updateSolverOptions can show only the ones the chosen method reads
+              and name the rest in rtmSolverNote. facsimile's per-species
+              tolerances and its reading of negatives as zero are properties of
+              its own model language, so they are not here.
+            -->
+            <div class="rtm-row" title="Which integrator solves the model. NDF is the default; BDF is the same integrator with the NDF&#8217;s &#954; set to zero; the Julia ports are methods of DifferentialEquations.jl, run in the page.">
               <label>Method</label>
               <select id="rtmMethod" data-on-change="rtm:solverChanged">
                 <option value="ndf">NDF</option>
                 <option value="bdf">BDF</option>
                 <option value="julia_fbdf">FBDF (Julia port)</option>
                 <option value="julia_qndf">QNDF (Julia port)</option>
+                <option value="julia_qbdf">QBDF (Julia port)</option>
                 <option value="julia_kencarp4">KenCarp4 (Julia port)</option>
                 <option value="julia_radau5">RadauIIA5 (Julia port)</option>
                 <option value="julia_rodas5p">Rodas5P (Julia port)</option>
                 <option value="julia_trbdf2">TRBDF2 (Julia port)</option>
               </select>
             </div>
-            <div class="rtm-row">
+            <div class="rtm-row" title="How long to run, in the model&#8217;s time unit. Blank runs to the TEND the model text gives.">
               <label>Simulated time<span class="rtm-name" id="rtmTendUnit">seconds; blank uses TEND from the text</span></label>
               <input id="rtmTend" type="text" placeholder="from the model" data-on-change="rtm:solverChanged">
             </div>
-            <div class="rtm-row">
+            <div class="rtm-row" data-solver-opt="rtol" title="Relative tolerance (rtol): the error a step may make, as a fraction of each quantity&#8217;s own size. 1e-6 is about six significant digits; tighter is slower and more accurate.">
               <label>Relative tolerance<span class="rtm-name">rtol</span></label>
               <input id="rtmRtol" type="text" value="1e-6" data-on-change="rtm:solverChanged">
             </div>
-            <div class="rtm-row">
+            <div class="rtm-row" data-solver-opt="atol" title="Absolute tolerance (atol): the error allowed on a quantity near zero, in its own units. Below it a quantity is not controlled, so set it below the smallest amount that matters.">
               <label>Absolute tolerance<span class="rtm-name">atol</span></label>
               <input id="rtmAtol" type="text" value="1e-20" data-on-change="rtm:solverChanged">
             </div>
             <button type="button" class="rtm-more" id="rtmMore" data-on-click="rtm:more"
                     aria-expanded="false" aria-controls="rtmAdvanced">Advanced settings</button>
             <div id="rtmAdvanced" hidden>
-              <div class="rtm-row">
+              <div class="rtm-row" data-solver-opt="norm" title="How the errors of the components are combined into the one number a step is accepted or refused on: max lets the worst-resolved component decide, rms averages over all of them, as CVODE does. The maximum is the stricter.">
+                <label>Error norm<span class="rtm-name">max: the worst-resolved species decides &#183; rms: averaged over all of them, as in CVODE</span></label>
+                <select id="rtmNorm" data-on-change="rtm:solverChanged">
+                  <option value="max">max</option>
+                  <option value="rms">rms</option>
+                </select>
+              </div>
+              <div class="rtm-row" data-solver-opt="maxOrder" title="The highest order the variable-order formulas may reach. Lower is steadier through a discontinuity and slower on a smooth stretch.">
+                <label>Maximum order<span class="rtm-name">the variable-order methods: NDF, BDF, FBDF, QNDF, QBDF</span></label>
+                <select id="rtmMaxOrder" data-on-change="rtm:solverChanged">
+                  <option>1</option><option>2</option><option>3</option><option>4</option><option selected>5</option>
+                </select>
+              </div>
+              <div class="rtm-row" data-solver-opt="minOrder" title="The lowest order to drop to. Raising it to the maximum gives a fixed-order method.">
+                <label>Minimum order<span class="rtm-name">pin both to the same value to hold the order fixed</span></label>
+                <select id="rtmMinOrder" data-on-change="rtm:solverChanged">
+                  <option selected>1</option><option>2</option><option>3</option><option>4</option><option>5</option>
+                </select>
+              </div>
+              <div class="rtm-row" data-solver-opt="hmax" title="The longest step the solver may take; 0 is a tenth of the run. Set it where a model changes faster than its output can show and the solver steps over the change.">
+                <label>Maximum step<span class="rtm-name" id="rtmHmaxUnit">seconds; 0 = a tenth of the run</span></label>
+                <input id="rtmHmax" type="text" value="0" data-on-change="rtm:solverChanged">
+              </div>
+              <div class="rtm-row" data-solver-opt="matrix" title="How I &#8722; hJ, the matrix every implicit step solves with, is factorised: a sparse LU that keeps its pivots from one factorisation to the next, a sparse LU that chooses them each time, or a dense LU. auto measures the fill and chooses, and is right almost always.">
                 <label>Iteration matrix<span class="rtm-name">auto: chosen by the measured fill</span></label>
                 <select id="rtmMatrix" data-on-change="rtm:solverChanged">
                   <option value="auto">auto</option>
@@ -85,23 +118,40 @@
                   <option value="dense">dense LU</option>
                 </select>
               </div>
-              <div class="rtm-row">
-                <label>Error norm<span class="rtm-name">max: the worst species decides · rms: averaged</span></label>
-                <select id="rtmNorm" data-on-change="rtm:solverChanged">
-                  <option value="max">max</option>
-                  <option value="rms">rms</option>
+              <div class="rtm-row" data-solver-opt="jacobian" title="Where df/dy comes from: derived from the equations, which is exact, or by finite differences through the same pattern. Differencing is slower and less exact; it is the check to run when the analytic one is in doubt.">
+                <label>Jacobian<span class="rtm-name">analytic from the equations, or differenced through its pattern</span></label>
+                <select id="rtmJacobian" data-on-change="rtm:solverChanged">
+                  <option value="analytic">analytic, sparse</option>
+                  <option value="numeric">finite differences</option>
                 </select>
               </div>
-              <div class="rtm-row">
-                <label>Step budget<span class="rtm-name">the run gives up past this</span></label>
+              <div class="rtm-row" data-solver-opt="kappa" title="How tightly each stage&#8217;s Newton iteration must converge, as a fraction of the error tolerance (&#954;). Loose leaves a stage half-solved, which contaminates the error estimate read off those stages; 1e-3 was measured, not chosen.">
+                <label>Newton tolerance<span class="rtm-name">&#954;: how closely each stage is solved, as a share of one tolerance</span></label>
+                <input id="rtmKappa" type="text" value="1e-3" data-on-change="rtm:solverChanged">
+              </div>
+              <div class="rtm-row" data-solver-opt="maxJacAge" title="How many steps a Jacobian may be reused before it is formed again; 1 forms it every step. Reusing it is most of what makes a stiff solver cheap on a large model; reusing it too long costs Newton iterations instead.">
+                <label>Jacobian reuse<span class="rtm-name">steps, at most; 1 re-evaluates every step</span></label>
+                <input id="rtmJacAge" type="text" value="20" data-on-change="rtm:solverChanged">
+              </div>
+              <div class="rtm-row" data-solver-opt="belowTolRun" title="How many steps that failed the error test at the smallest representable size may be accepted in a row. 0 stops instead, which is what the published methods do: accepting a step known to be inaccurate should be asked for.">
+                <label>Steps at the floor<span class="rtm-name">failing steps accepted in a row when no shorter step exists; 0 stops and returns what it has</span></label>
+                <input id="rtmBelowTol" type="text" value="5" data-on-change="rtm:solverChanged">
+              </div>
+              <div class="rtm-row" data-solver-opt="maxSteps" title="How many steps the solver may take before it gives up and says so. A run that hits this has usually met something the model did not mean, rather than needing a larger budget.">
+                <label>Step budget<span class="rtm-name">the run gives up past this, and hands back what it had</span></label>
                 <input id="rtmMaxSteps" type="text" value="500000" data-on-change="rtm:solverChanged">
               </div>
-              <div class="rtm-row">
+              <div class="rtm-row" data-solver-opt="stagnationTol" title="How large a Newton correction may be and still be accepted once it has stopped shrinking, as a fraction of the error tolerance; 0 never accepts one. This page defaults it to 0.5: reaction networks with rate constants to 1e16 against concentrations of 1e-9 cancel so heavily that the correction cannot shrink any further, and without it such a run cuts its step for ever. On a model that does not need it, it costs accuracy.">
+                <label>Stall tolerance<span class="rtm-name">a stalled Newton correction is taken when within this share of one tolerance; 0 never</span></label>
+                <input id="rtmStagnation" type="text" value="0.5" data-on-change="rtm:solverChanged">
+              </div>
+              <div class="rtm-row" title="How many points of the solution are kept. Past this the stored points are thinned as the run goes, so a long run still fits; the solution itself is not affected.">
                 <label>Points kept<span class="rtm-name">thinned as it goes to stay inside this</span></label>
                 <input id="rtmMaxPoints" type="text" value="4000" data-on-change="rtm:solverChanged">
               </div>
-              <label class="rtm-check"><input type="checkbox" id="rtmNonNeg" checked data-on-change="rtm:solverChanged"> Keep every concentration non-negative</label>
-              <label class="rtm-check"><input type="checkbox" id="rtmAutoAtol" data-on-change="rtm:solverChanged"> Let the absolute tolerance follow the solution upwards</label>
+              <label class="rtm-check" data-solver-opt="autoAtol" title="Let each component&#8217;s absolute tolerance rise with it, so it is judged against the largest it has ever been rather than a floor fixed before the run. Much cheaper on a decay chain; it only ever loosens, so a quantity that peaked and decayed is no longer controlled in its tail."><input type="checkbox" id="rtmAutoAtol" data-on-change="rtm:solverChanged"> Absolute tolerance follows the solution</label>
+              <label class="rtm-check" data-solver-opt="smoothEst" title="Filter the error estimate through I &#8722; hJ, as Shampine proposed, so that a stiff component cannot inflate it and force a needlessly small step."><input type="checkbox" id="rtmSmoothEst" checked data-on-change="rtm:solverChanged"> Smooth the error estimate through I &#8722; hJ (Shampine)</label>
+              <label class="rtm-check" data-solver-opt="nonNegative" title="Keep every species at or above zero: NDF and BDF damp the derivative so a component at zero cannot be pushed further down, count a violation in the error test, and project an accepted step back; the Julia ports only project."><input type="checkbox" id="rtmNonNeg" checked data-on-change="rtm:solverChanged"> Keep every species non-negative</label>
               <p class="rtm-muted" id="rtmSolverNote" hidden></p>
             </div>
           </details>
@@ -840,10 +890,10 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-model.js?v=20260923a"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
   <script src="./resources/js/rtm-examples.js?v=20260921b"></script>
-  <script src="./resources/js/rtm-worker.js?v=20260923"></script>
+  <script src="./resources/js/rtm-worker.js?v=20260923c"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20260921a"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
-  <script src="./resources/js/rtm-ui.js?v=20260923b"></script>
+  <script src="./resources/js/rtm-ui.js?v=20260923c"></script>
 </body>
 </html>

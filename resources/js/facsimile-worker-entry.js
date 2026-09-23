@@ -23,7 +23,7 @@ importScripts(
   './facsimile-solver.js?v=20260923b',
   './ode-julia.js?v=20260917zd',
   './facsimile-ode-julia.js?v=20260917zd',
-  './facsimile-worker.js?v=20260917zd',
+  './facsimile-worker.js?v=20260923c',
 );
 
 self.onmessage = (ev) => self.handleFacsimileMessage(

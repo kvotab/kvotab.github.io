@@ -19,7 +19,7 @@ import { valueAt } from '../domain/project.js';
 import { dormandPrince, SolverError } from '../ode/dormand-prince.js';
 import { rosenbrock23 } from '../ode/rosenbrock23.js';
 import { variableOrder } from '../ode/variable-order.js';
-import { SOLVER_IDS, solverLabel, solverName } from '../ode/solvers.js';
+import { SOLVER_IDS, DEFAULT_SOLVER, solverLabel, solverName, solverOptions } from '../ode/solvers.js';
 import { isScipySolver, scipySolver } from '../ode/scipy.js';
 import { csvCell } from '../io/csv.js';
 
@@ -375,7 +375,21 @@ export function run(input, opts = {}) {
 		// Generated from the equations; absent when the model uses a
 		// function with no derivative rule, in which case the solvers
 		// difference it as they always did.
-		jacobian: system.jacobian?.available ? system.jacobian : null,
+		jacobian: !system.jacobian?.available ? null
+			// Asked to difference it (`Jacobian: finite differences`): the
+			// generated pattern and its colouring, and never a value. Every
+			// solver here differences through the pattern when `evaluate`
+			// answers null, so this is facsimile.html's "differenced through
+			// its pattern" -- with no dense rows to fall back on either. Never
+			// constant, even for a linear model whose generated one is: a
+			// difference taken once, at a start where most of the state is
+			// empty, loses entries to rounding and would be kept for the whole
+			// run (the bundled far field then never finishes). Re-formed when
+			// Newton stalls, as a differenced Jacobian always has been.
+			: sim.jacobian === 'numeric'
+				? { pattern: system.jacobian.pattern, groups: system.jacobian.groups,
+					constant: false, evaluate: () => null }
+				: system.jacobian,
 		nonNegative,
 		// Let each component's absolute tolerance follow its own history
 		// upwards. ndf only -- it is a property of the NDF error test, and
@@ -1037,6 +1051,20 @@ export class Results {
 	get jacobian() {
 		const j = this.system.jacobian;
 		if (!j?.available) return { available: false, reason: j?.reason ?? null };
+		// Differenced because it was asked for, through the generated pattern:
+		// the same colours and non-zeros, and no generated values.
+		const sim = this.project.simulation;
+		if (sim.jacobian === 'numeric' && solverOptions(sim.solver ?? DEFAULT_SOLVER).includes('jacobian')) {
+			return {
+				available: false,
+				asked: true,
+				colours: j.colours,
+				nnz: j.nnz,
+				density: j.density,
+				sparse: !!this.stats.sparse,
+				fill: this.stats.fill ?? null,
+			};
+		}
 		return {
 			available: true,
 			constant: j.constant,

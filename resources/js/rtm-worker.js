@@ -239,6 +239,14 @@ function handleRtmMessage(msg, post) {
       maxSteps: s.maxSteps,
       maxPoints: s.maxPoints || 4000,
       norm: s.norm,
+      // The rest of facsimile.html's settings, which this page now offers too.
+      maxOrder: s.maxOrder || 5,
+      minOrder: s.minOrder || 1,
+      hmax: s.hmax > 0 ? s.hmax : undefined,
+      jacobianMode: s.jacobianMode || 'analytic',
+      kappa: s.kappa,
+      maxJacAge: s.maxJacAge,
+      smoothEst: s.smoothEst !== false,
       /*
         Let the corrector stop when it has stopped improving, as long as the
         correction is within half the tolerance and the Jacobian is the one for
@@ -249,9 +257,10 @@ function handleRtmMessage(msg, post) {
         out as diverging and h is cut, which does nothing at all, because
         arithmetic noise does not scale with h: a run can then take millions of
         steps to cover a few seconds. facsimile.html leaves it off; see the note in
-        facsimile-solver.js for what it costs a model that does not need it.
+        facsimile-solver.js for what it costs a model that does not need it. The
+        page's Stall tolerance, 0.5 unless it says otherwise.
       */
-      stagnationTol: 0.5,
+      stagnationTol: s.stagnationTol ?? 0.5,
       belowTolRun: s.belowTolRun,
       autoAtol: s.autoAtol,
       onProgress: (t, nsteps) => {

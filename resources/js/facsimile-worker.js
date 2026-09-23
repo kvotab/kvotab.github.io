@@ -138,6 +138,8 @@ function handleFacsimileMessage(msg, post) {
         kappa: s.kappa,
         maxJacAge: s.maxJacAge,
         belowTolRun: s.belowTolRun,
+        // Off unless the page says: see stagnationTol in facsimile-solver.js.
+        stagnationTol: s.stagnationTol || 0,
         autoAtol: !!s.autoAtol,
         smoothEst: s.smoothEst !== false,
         hmax: s.hmaxSeconds > 0 ? s.hmaxSeconds : undefined,

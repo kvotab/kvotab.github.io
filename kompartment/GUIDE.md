@@ -1920,32 +1920,39 @@ model that comes back out is identical to the one that went in.
 
 ## The solver's own settings
 
-Under **SIMULATION**, below the tolerances, is a fold named after whichever
-solver is chosen — *stiff, NDF options*, *stiff, Radau IIA 5 options* — holding
-the settings **that solver actually reads**, and nothing else. Leave one empty
-and the solver chooses for itself, which is almost always right.
+Under **SIMULATION**, below the tolerances, is a fold called **Advanced
+settings**, as in facsimile.html and rtm.html, holding the settings **that the
+chosen solver actually reads**, and nothing else. Leave one empty and the solver
+chooses for itself, which is almost always right. Every setting in the panel —
+these and the ones above them — explains itself when you point at its name.
+
+The same settings go by the same names in all three pages, where the name fits
+the sidebar's column:
 
 | | what it does | read by |
 |---|---|---|
-| **Largest step** | the longest step the solver may take | all |
+| **Maximum step** | the longest step the solver may take | all |
 | **First step** | the first step to try | all |
 | **Step budget** | how many steps before it gives up and says so | all |
-| **Highest order** / **Lowest order** | cap and floor the variable-order formulas; set both equal for a fixed order | the NDF/BDF solvers and FBDF/QNDF |
-| **Error on the norm** | Judge the error against the norm of the whole solution rather than component by component | `ndf`, `bdf` |
-| **Error norm** | root-mean-square across components, or the largest | the vendored methods except Radau, which uses its own |
+| **Maximum order** / **Minimum order** | cap and floor the variable-order formulas; set both equal for a fixed order | the NDF/BDF solvers (maximum only) and FBDF/QNDF |
+| **Norm control** | judge the error against the norm of the whole solution rather than component by component (MATLAB's NormControl) | `ndf`, `bdf` |
+| **Error norm** | the largest of the components' errors, or their root mean square | the vendored methods except Radau, which uses its own |
+| **Stall tolerance** | how large a Newton correction may be and still be taken once it has stopped shrinking | `ndf`, `bdf` |
 | **Newton tolerance** | how tightly each stage's iteration must converge | the vendored methods with a Newton iteration |
-| **Reuse df/dy for** | how many steps a Jacobian may be reused | as above, except Rodas5P |
+| **Jacobian reuse** | how many steps a Jacobian may be reused | as above, except Rodas5P |
 | **Steps at the floor** | how many steps that failed the error test at the smallest representable size may be accepted in a row | the vendored methods |
-| **Linear algebra** | factorise the iteration matrix sparsely or densely | the vendored methods |
-| **Tolerance follows the solution** | see below | `ndf`, `bdf`, the vendored methods |
+| **Iteration matrix** | factorise I − hJ with a sparse or a dense LU | the vendored methods |
+| **Jacobian** | generated from the equations, or differenced through the same pattern (*finite differences*): the check to run when the generated one is in doubt | every stiff solver |
+| **Absolute tolerance follows the solution** | see below | `ndf`, `bdf`, the vendored methods |
 
 **What the chosen solver does not read is named rather than hidden.** Under the
-fold there is a line — *"stiff, Rosenbrock 5 does not read highest order, lowest
-order, error on the norm, newton tolerance and reuse df/dy for, so they are not
-shown"* — because a knob that silently does nothing is worse than a missing
-one: nothing on screen would tell you which it was. A Rosenbrock method is
-linearly implicit, so there is no Newton iteration to give a tolerance to, and
-it re-forms its Jacobian every step by definition, so there is no age to set.
+fold there is a line — *"stiff, Rosenbrock 5 does not read the maximum order,
+the minimum order, norm control, the stall tolerance, the Newton tolerance and
+how long a Jacobian is reused, so they are not shown"* — because a knob that
+silently does nothing is worse than a missing one: nothing on screen would tell
+you which it was. A Rosenbrock method is linearly implicit, so there is no Newton
+iteration to give a tolerance to, and it re-forms its Jacobian every step by
+definition, so there is no age to set.
 
 Which solver reads what lives in `SOLVER_OPTIONS` in `src/ode/solvers.js`,
 beside the code that passes them on, because that is the only place the answer
@@ -1953,7 +1960,7 @@ stays honest.
 
 ## Letting the tolerance follow the solution
 
-**Tolerance follows the solution** under SIMULATION is a trade, and worth
+**Absolute tolerance follows the solution**, under Advanced settings, is a trade, and worth
 understanding before switching it on. Normally a component is judged against an
 absolute tolerance fixed before the run — so a nuclide that grew in to 10¹² and
 decayed back to 10⁻⁴⁰ is still being resolved to `abstol`, orders below anything

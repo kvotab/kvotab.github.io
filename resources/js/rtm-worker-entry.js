@@ -17,7 +17,7 @@ importScripts(
   './ode-julia.js?v=20260920',
   './facsimile-ode-julia.js?v=20260920',
   './rtm-model.js?v=20260923a',
-  './rtm-worker.js?v=20260923',
+  './rtm-worker.js?v=20260923c',
 );
 
 self.onmessage = (ev) => self.handleRtmMessage(

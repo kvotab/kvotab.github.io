@@ -210,7 +210,7 @@ const SIM_LABELS = {
 // are. Written in here rather than repeated: `numField` and its two siblings
 // look a label up by key, and a second copy of these would be a second place
 // for them to go stale. See SOLVER_OPTION_INFO in ../ode/solvers.js.
-for (const [key, info] of Object.entries(SOLVER_OPTION_INFO)) SIM_LABELS[key] = info.label;
+for (const [key, info] of Object.entries(SOLVER_OPTION_INFO)) SIM_LABELS[key] = info.short ?? info.label;
 
 /**
  * The settings that change how the model is *solved* and nothing about it.
@@ -2931,12 +2931,20 @@ function wireFlash() {
  */
 function describeJacobian(p) {
 	const j = p.jacobian;
+	if (j?.asked) return `differenced, ${p.stats.sparse ? 'sparse' : 'dense'}`;
 	if (!j?.available) return 'differenced';
 	return `analytic, ${p.stats.sparse ? 'sparse' : 'dense'}`;
 }
 
 function jacobianDetail(p) {
 	const j = p.jacobian;
+	if (j?.asked) {
+		return 'df/dy is differenced through the pattern of the generated one, as the '
+			+ 'Jacobian setting under Advanced settings asks: '
+			+ `${j.colours} evaluation${j.colours === 1 ? '' : 's'} of the model per Jacobian, `
+			+ `not ${p.stateCount}. `
+			+ (p.stats.sparse ? `Factorised sparsely, fill ${p.stats.fill}.` : 'Factorised densely.');
+	}
 	if (!j?.available) {
 		return 'df/dy is approximated by finite differences'
 			+ (j?.reason ? `, because ${j.reason}` : '')
@@ -4897,7 +4905,10 @@ function renderSidebar() {
 				flash(`'${input.value}' — ${label.toLowerCase()} has to be a number`, 'warn');
 			}
 		});
-		return el('div', { className: 'field' },
+		// On the row, so pointing at the name explains it as well as pointing
+		// at the box: the name column clips a long label with an ellipsis, and
+		// the name is where anyone looks for what a setting is.
+		return el('div', { className: 'field', title: title || '' },
 			el('label', {}, label, unit ? el('span', { className: 'unit' }, ` ${unit}`) : ''),
 			input);
 	};
@@ -4930,7 +4941,7 @@ function renderSidebar() {
 		// column: a switch needs 13px of value column, and `Cannot go negative`
 		// does not fit in what is left. It reads as a phrase with a box after
 		// it, which is what it is.
-		return el('div', { className: 'field is-wide' },
+		return el('div', { className: 'field is-wide', title: disabled || title || '' },
 			el('label', { title }, label), box);
 	};
 
@@ -4957,7 +4968,7 @@ function renderSidebar() {
 			modelChanged({ solveOnly: SOLVE_ONLY_SETTINGS.has(key) });
 		});
 		return el('div', { className: wide ? 'field is-wide' : 'field' },
-			el('label', {}, label), sel);
+			el('label', { title: title || '' }, label), sel);
 	};
 
 	/**
@@ -5005,7 +5016,8 @@ function renderSidebar() {
 			} catch (e) { flash(e.message, 'warn'); }
 		});
 		return el('div', { className: 'field' },
-			el('label', {}, SIM_LABELS.spacing), sel);
+			el('label', { title: 'How the times the result is reported at are chosen. Point at a '
+				+ 'choice in the list for what it does.' }, SIM_LABELS.spacing), sel);
 	};
 
 	/**
@@ -5085,19 +5097,31 @@ function renderSidebar() {
 		// `Start`, not `Start time`: the unit suffix beside it already says
 		// what kind of quantity it is, and in a column this narrow the word
 		// `time` costs 23px on two rows to repeat the section's own title.
-		numField('start_time', sim.time_unit ?? 'year'),
-		numField('end_time', sim.time_unit ?? 'year'),
+		numField('start_time', sim.time_unit ?? 'year', {
+			title: 'When the run starts, in the time unit below. The initial amounts are the '
+				+ 'state at this time.',
+		}),
+		numField('end_time', sim.time_unit ?? 'year', {
+			title: 'When the run ends, in the time unit below.',
+		}),
 		// Only where it means something: a list of series carries its own
 		// counts, and the solver's own steps are however many it takes.
 		...(['series', 'solver', 'both'].includes(sim.spacing)
-			? [] : [numField('output_points')]),
+			? [] : [numField('output_points', '', {
+				title: 'How many times the result is reported at, spaced as the time spacing '
+					+ 'says. More points make a finer chart and table; they do not change the '
+					+ 'solution, which the tolerances control.',
+			})]),
 		spacingField(),
 		...(sim.spacing === 'series' || sim.spacing === 'both'
 			? [savedTimesField()] : []),
 		selField('time_unit', [
 			['year', 'Years'], ['day', 'Days'], ['hour', 'Hours'],
 			['minute', 'Minutes'], ['second', 'Seconds'],
-		]),
+		], {
+			title: 'The unit every time in the model is in: the span above, every rate per '
+				+ 'unit time, every half-life. Changing it re-derives the unit of every flux.',
+		}),
 		// Labelled by what the solver is for, not by which method it
 		// is; the id stays in the tooltip and in the project file. In the same
 		// column as everything above it: a control that starts further left
@@ -5116,6 +5140,9 @@ function renderSidebar() {
 			// open list is not clipped at all.
 			SOLVER_IDS.map((id) => [id, (solverIsRemote(id) ? '\u2193 ' : '') + solverLabel(id)]),
 			{
+				title: 'Which integrator solves the model. Point at a choice in the list for '
+					+ 'what it is for; the settings it reads beyond the two tolerances are under '
+					+ 'Advanced settings, below.',
 				describe: (id) => `${id} — ${SOLVER_INFO[id]?.blurb ?? ''}`
 					+ (solverIsRemote(id)
 						? '\n\nDownloads a Python runtime (about 22 MB) the first time it '
@@ -5123,8 +5150,16 @@ function renderSidebar() {
 							+ 'network connection; the other solvers do not.'
 						: ''),
 			}),
-		numField('rtol'),
-		numField('abstol'),
+		numField('rtol', '', {
+			title: 'Relative tolerance (rtol): the error a step may make, as a fraction of each '
+				+ 'quantity\u2019s own size. 1e-6 is about six significant digits; tighter is '
+				+ 'slower and more accurate.',
+		}),
+		numField('abstol', '', {
+			title: 'Absolute tolerance (atol): the error allowed on a quantity near zero, in its '
+				+ 'own units. Below it a quantity is not controlled, so set it below the smallest '
+				+ 'amount that matters.',
+		}),
 		// Below the tolerances because it belongs with them: all three are
 		// about how the solve is allowed to behave rather than about what the
 		// model says. The file's `saturation-enabled`, in the one form this tool
@@ -5274,19 +5309,24 @@ function renderSidebar() {
 						// these is the right default and the honest label for
 						// an empty box.
 						['', 'the solver\u2019s own'],
-						...info.choices.map((c) => [String(c), String(c)]),
+						// A choice is a value, or a value and what to call it:
+						// `numeric` is shown as `finite differences`.
+						...info.choices.map((c) => (Array.isArray(c) ? [String(c[0]), c[1]] : [String(c), String(c)])),
 					], { title }));
 				} else {
-					box.append(numField(key, info.unit ? (sim.time_unit ?? 'year') : '', { title }));
+					const unit = info.unit === true ? (sim.time_unit ?? 'year') : (info.unit || '');
+					box.append(numField(key, unit, { title }));
 				}
 			}
 			// The fold is remembered the way every other section here is: the
 			// panel rebuilds on each edit, so a fold that did not would close
 			// itself the moment one of its own fields was typed in.
+			// `Advanced settings`, as facsimile.html and rtm.html call theirs: the
+			// same settings go by the same names in all three.
 			const fold = el('details', { className: 'sim-opts', open: sectionOpen('solver-opts', false) },
 				el('summary', { title: `The settings ${solverLabel(id)} reads, beyond the `
 					+ 'tolerances above. Empty means the solver\u2019s own choice.' },
-				`${solverLabel(id)} options`),
+				'Advanced settings'),
 				box);
 			fold.addEventListener('toggle', () => { state.sbSections['solver-opts'] = fold.open; });
 			group.append(fold);

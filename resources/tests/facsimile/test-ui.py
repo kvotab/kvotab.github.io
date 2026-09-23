@@ -312,7 +312,7 @@ async def main():
                      ".filter(el => getComputedStyle(el).display !== 'none')"
                      ".map(el => el.dataset.solverOpt).join(' ')")
             builtin = ('rtol atol atolSpecies norm maxOrder hmax matrix jacobian '
-                       'belowTolRun maxSteps autoAtol clamp nonNegative')
+                       'belowTolRun maxSteps stagnationTol autoAtol clamp nonNegative')
             check('the built-in NDF shows its own settings', await page.ev(shown), builtin)
             # BDF is the same integrator with every kappa set to zero, so it
             # reads the same settings. If these ever diverge, this says so.
@@ -330,8 +330,8 @@ async def main():
             check('and says which, rather than just hiding them', await page.ev(
                 "document.getElementById('facSolverNote').textContent.split('.')[0]"),
                 'Rodas5P does not read the maximum order, the minimum order, '
-                'the Newton tolerance, how long a Jacobian is reused and '
-                'smoothing the error estimate, so they are not shown')
+                'the Newton tolerance, how long a Jacobian is reused, the stall '
+                'tolerance and smoothing the error estimate, so they are not shown')
 
             await set_control(page, '#facMethod', 'julia_fbdf')
             check('a variable-order method shows both order limits and the Newton tolerance',

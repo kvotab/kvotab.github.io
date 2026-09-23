@@ -30305,7 +30305,7 @@ test('a switch shows the setting it controls, whichever way the setting defaults
 	const { solverOptions, solverIgnores, SOLVER_OPTION_INFO } = await import('../src/ode/solvers.js');
 	assert(solverOptions('ndf').includes('auto_abstol'));
 	assert(!solverOptions('ros23').includes('auto_abstol'));
-	assert(solverIgnores('ros23').includes('tolerance follows the solution'));
+	assert(solverIgnores('ros23').includes('letting the absolute tolerance follow the solution'));
 	assert(/const keys = solverOptions\(id\);/.test(app), 'the panel no longer asks which settings apply');
 	assert(/does not read \$\{list\}/.test(app), 'the dropped settings are not named');
 	// And the claim it is greyed out for is true: the solvers that honour it
@@ -30424,7 +30424,7 @@ test('a solver’s own settings are offered where they are read, and reach it', 
 		&& solverOptions('bdf').includes('stagnation_tol'), 'the NDF corrector cannot be told to take a stalled correction');
 	assert(!solverOptions('dp45').includes('stagnation_tol')
 		&& !solverOptions('fbdf').includes('stagnation_tol'), 'offered to a solver that does not read it');
-	assert(solverIgnores('dp45').includes('newton tolerance'));
+	assert(solverIgnores('dp45').includes('the Newton tolerance'));
 	assert(solverOptions('scipy_bdf').length === 0 && solverIgnores('scipy_bdf').length > 0);
 
 	// Each one is normalised by the model, refused when it is nonsense...

@@ -16,7 +16,7 @@
   // an entry whose imports changed while its own URL did not is served from
   // cache with the old import list, and the symptom is a solver that the page
   // offers and the worker has never heard of.
-  const WORKER_URL = 'resources/js/facsimile-worker-entry.js?v=20260923b';
+  const WORKER_URL = 'resources/js/facsimile-worker-entry.js?v=20260923c';
   const YEAR_S = 365.25 * 86400;
 
   const $ = (id) => document.getElementById(id);
@@ -32,6 +32,9 @@
       method: 'ndf', rtol: '1e-5', atol: '1e-30', atolSpecies: '', norm: 'max',
       maxOrder: 5, minOrder: 1, hmaxYears: '0', matrix: 'auto', jacobianMode: 'analytic',
       kappa: '1e-3', maxJacAge: '20', maxSteps: '2000000', belowTolRun: '5',
+      // rtm.html's two, which this page now offers too: left off, and the
+      // engine's own store size.
+      stagnationTol: '0', maxPoints: '20000',
       autoAtol: false, smoothEst: true, clamp: true, nonNegative: true,
     },
     syntax: true,            // colour the model text in the editor
@@ -425,6 +428,8 @@
     s.maxJacAge = $('facJacAge').value.trim();
     s.maxSteps = $('facMaxSteps').value.trim();
     s.belowTolRun = $('facBelowTol').value.trim();
+    s.stagnationTol = $('facStagnation').value.trim();
+    s.maxPoints = $('facMaxPoints').value.trim();
     s.autoAtol = $('facAutoAtol').checked;
     s.smoothEst = $('facSmoothEst').checked;
     s.clamp = $('facClamp').checked;
@@ -440,7 +445,7 @@
    * rather than settings they happen to ignore.
    */
   const BUILTIN_OPTIONS = ['rtol', 'atol', 'atolSpecies', 'norm', 'maxOrder', 'hmax', 'matrix',
-    'jacobian', 'belowTolRun', 'maxSteps', 'autoAtol', 'clamp', 'nonNegative'];
+    'jacobian', 'belowTolRun', 'maxSteps', 'stagnationTol', 'autoAtol', 'clamp', 'nonNegative'];
 
   /** What the reader should see a setting called, when told it is not used. */
   const OPTION_NAMES = {
@@ -457,6 +462,7 @@
     maxJacAge: 'how long a Jacobian is reused',
     maxSteps: 'the step budget',
     belowTolRun: 'accepting failing steps at the floor',
+    stagnationTol: 'the stall tolerance',
     autoAtol: 'letting the absolute tolerance follow the solution',
     smoothEst: 'smoothing the error estimate',
     clamp: 'reading negatives as zero',
@@ -554,6 +560,8 @@
     $('facJacAge').value = s.maxJacAge ?? '20';
     $('facMaxSteps').value = s.maxSteps ?? '2000000';
     $('facBelowTol').value = s.belowTolRun ?? '5';
+    $('facStagnation').value = s.stagnationTol ?? '0';
+    $('facMaxPoints').value = s.maxPoints ?? '20000';
     $('facAutoAtol').checked = !!s.autoAtol;
     $('facSmoothEst').checked = s.smoothEst !== false;
     $('facClamp').checked = !!s.clamp;
@@ -1046,12 +1054,16 @@
     if (!(belowTolRun >= 0)) {
       throw new Error('Accepting failing steps must be a count of zero or more');
     }
+    const stagnationTol = Number(s.stagnationTol ?? 0);
+    if (!(stagnationTol >= 0 && stagnationTol <= 1)) throw new Error('The stall tolerance must be a number from 0 to 1');
+    const maxPoints = Math.round(Number(s.maxPoints ?? 20000));
+    if (!(maxPoints >= 1000)) throw new Error('Points kept must be at least 1000');
     const minOrder = Math.min(s.minOrder, s.maxOrder);
     return {
       method: s.method, rtol, atol, atolSpecies, norm: s.norm, maxOrder: s.maxOrder, minOrder,
       hmaxSeconds: hmaxYears > 0 ? hmaxYears * YEAR_S : 0, matrix: s.matrix, jacobianMode: s.jacobianMode,
-      kappa, maxJacAge, maxSteps, belowTolRun, autoAtol: s.autoAtol, smoothEst: s.smoothEst,
-      nonNegative: s.nonNegative, tendYears,
+      kappa, maxJacAge, maxSteps, belowTolRun, stagnationTol, maxPoints,
+      autoAtol: s.autoAtol, smoothEst: s.smoothEst, nonNegative: s.nonNegative, tendYears,
     };
   }
 
