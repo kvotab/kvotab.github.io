@@ -221,9 +221,12 @@ export const SOLVER_OPTION_INFO = Object.assign(Object.create(null), {
 	},
 	below_tol_run: {
 		label: 'Steps at the floor', name: 'accepting failing steps at the floor', kind: 'number',
-		blurb: 'How many steps that failed the error test at the smallest representable '
-			+ 'size may be accepted in a row. 0 stops instead, which is what the published '
-			+ 'methods do: accepting a step known to be inaccurate should be asked for.',
+		blurb: 'How many failing steps at the smallest representable size may be accepted '
+			+ 'in a row \u2014 steps that fail the error test, and for NDF and BDF steps whose '
+			+ 'Newton iteration will not converge. 0 stops instead, which is what the published '
+			+ 'methods do: accepting a step known to be inaccurate should be asked for. Empty '
+			+ 'is the solver\u2019s own rule, which for NDF and BDF is twenty failed error tests '
+			+ 'and no failed iteration. The status line counts every one taken.',
 	},
 	matrix: {
 		label: 'Iteration matrix', name: 'the choice of iteration matrix', kind: 'choice',
@@ -271,8 +274,15 @@ const ORDER = ['max_order', 'min_order'];
  */
 export const SOLVER_OPTIONS = Object.assign(Object.create(null), {
 	// The NDF integrator, under both its names.
-	ndf: [...STEPS, 'max_order', 'norm_control', 'jacobian', 'auto_abstol', 'stagnation_tol'],
-	bdf: [...STEPS, 'max_order', 'norm_control', 'jacobian', 'auto_abstol', 'stagnation_tol'],
+	// facsimile.html's NDF reads the same, less norm control and the first
+	// step, which are this one's own: its Newton has its own convergence test
+	// rather than a kappa, it keeps a Jacobian until Newton stalls, and its
+	// error estimate is not smoothed, so those are not its settings there
+	// either.
+	ndf: [...STEPS, 'max_order', 'norm_control', 'error_norm', 'stagnation_tol', 'below_tol_run',
+		'matrix', 'jacobian', 'auto_abstol'],
+	bdf: [...STEPS, 'max_order', 'norm_control', 'error_norm', 'stagnation_tol', 'below_tol_run',
+		'matrix', 'jacobian', 'auto_abstol'],
 	// A Jacobian to difference or not, and nothing else: its order and its
 	// linear algebra are its own.
 	ros23: [...STEPS, 'jacobian'],

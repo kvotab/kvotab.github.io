@@ -347,17 +347,21 @@ class DifferenceTable {
 /**
  * Every size in this solver is measured against the solution: per state,
  * |v_i| over max(|y_i|, |y_i,new|, abstol_i/rtol), and the result compared
- * with rtol. Under norm control the whole vector is weighed at once, by its
- * 2-norm over the larger of the two states' norms.
+ * with rtol -- the largest of those (`errorNorm: 'max'`, the default), or
+ * their root mean square (`'rms'`, what CVODE and SciPy's BDF use), which is
+ * facsimile.html's choice of the same name. Under norm control the whole
+ * vector is weighed at once, by its 2-norm over the larger of the two states'
+ * norms, and the choice does not arise.
  *
  * Two of these are kept when the absolute tolerance floats: the error test
  * measures against the floor as it now is, the Newton test against the floor
  * the run began with. See `autoAbstol` below.
  */
 class Weighting {
-	constructor(neq, threshold, normControl) {
+	constructor(neq, threshold, normControl, rms = false) {
 		this.threshold = threshold;
 		this.normControl = normControl;
+		this.rms = !normControl && rms;
 		this.inv = new Float64Array(normControl ? 1 : neq);
 	}
 
@@ -378,6 +382,12 @@ class Weighting {
 	of(v) {
 		const inv = this.inv;
 		if (this.normControl) return twoNorm(v) * inv[0];
+		if (this.rms) {
+			// A NaN anywhere carries through the sum, as the maximum's check says.
+			let ss = 0;
+			for (let i = 0; i < v.length; i++) { const a = v[i] * inv[i]; ss += a * a; }
+			return Math.sqrt(ss / v.length);
+		}
 		let m = 0;
 		for (let i = 0; i < v.length; i++) {
 			const a = Math.abs(v[i]) * inv[i];
@@ -394,6 +404,11 @@ class Weighting {
 			let ss = 0;
 			for (let i = 0; i < a.length; i++) { const v = a[i] + b[i]; ss += v * v; }
 			return Math.sqrt(ss) * inv[0];
+		}
+		if (this.rms) {
+			let ss = 0;
+			for (let i = 0; i < a.length; i++) { const v = (a[i] + b[i]) * inv[i]; ss += v * v; }
+			return Math.sqrt(ss / a.length);
 		}
 		let m = 0;
 		for (let i = 0; i < a.length; i++) {
@@ -594,14 +609,31 @@ class Differencer {
  * factorisation of each ordering says the fill is worth it. Rows named in
  * `held` are rows of a state the constraint is holding, whose derivative is
  * identically zero: they become rows of the identity.
+ *
+ * `choice` is the `matrix` option, facsimile.html's Iteration matrix: 'auto'
+ * decides as above; 'sparse' keeps the sparse path whatever the trial says
+ * about the fill (whichever sparse LU is the cheaper), wherever there is a
+ * pattern to be sparse in; 'dense' never takes it, and says so where a dense
+ * matrix could not be held at all.
  */
-function iterationMatrix(neq, jac, values) {
-	const mustBeSparse = neq * neq * 8 > DENSE_MAX_BYTES;
+function iterationMatrix(neq, jac, values, choice = 'auto') {
+	const tooBigForDense = neq * neq * 8 > DENSE_MAX_BYTES;
+	if (choice === 'dense') {
+		if (tooBigForDense) {
+			throw new Error(
+				`A dense iteration matrix for ${neq} states is ${neq} by ${neq} numbers -- `
+				+ `${(neq * neq * 8 / 1073741824).toFixed(1)} GB, which no browser tab has. `
+				+ 'Choose auto or sparse LU under Advanced settings.',
+			);
+		}
+		return dense(neq, jac?.sparse ? jac.pattern : null);
+	}
+	const mustBeSparse = tooBigForDense || choice === 'sparse';
 	if (jac?.sparse) {
 		const sparse = sparseIterationMatrix(neq, jac.pattern, values, { mustBeSparse });
 		if (sparse) return maskedSparse(sparse, jac.pattern);
 	}
-	if (mustBeSparse) {
+	if (tooBigForDense) {
 		throw new Error(
 			`This model has ${neq} states, and without a sparsity pattern the solver `
 			+ `would have to hold the iteration matrix as ${neq} by ${neq} numbers -- `
@@ -704,9 +736,11 @@ function dense(neq, pattern) {
  * @param {ArrayLike<number>} tspan  the output times; the first and last bound the run
  * @param {ArrayLike<number>} y0
  * @param {object} [options]
- *   rtol, abstol (number or per state), normControl, nonNegative (state
- *   indices), autoAbstol, maxSteps, stagnationTol, hmax, h0, maxOrder, bdf,
- *   jacobian, events ({n, direction, fun(t, y, out)}), onAccepted(t, y),
+ *   rtol, abstol (number or per state), normControl, errorNorm ('max' |
+ *   'rms'), nonNegative (state indices), autoAbstol, maxSteps, stagnationTol,
+ *   hmax, h0, maxOrder, bdf, matrix ('auto' | 'sparse' | 'dense'),
+ *   belowTolRun (failing steps at the floor, in a row; unset is this solver's
+ *   own rule), jacobian, events ({n, direction, fun(t, y, out)}), onAccepted(t, y),
  *   onOutput(t, y) for every requested time as it is passed, endsOnly (keep
  *   only the first and last rows)
  * @returns {{t: Float64Array, y: Float64Array[], stopped: object|null, stats: object}}
@@ -725,6 +759,10 @@ export function ndf(f, tspan, y0, options = {}) {
 		h0: -1,
 		maxOrder: MAX_ORDER,
 		bdf: false,
+		errorNorm: 'max',
+		matrix: 'auto',
+		// Failing steps at the floor: null is this solver's own rule, see below.
+		belowTolRun: null,
 		jacobian: null,
 		events: null,
 		onAccepted: null,
@@ -764,8 +802,16 @@ export function ndf(f, tspan, y0, options = {}) {
 	// been solved is not, and loosening that leaves a stage half-solved and the
 	// error estimate reading a corrector that did not converge.
 	const newtonThreshold = o.autoAbstol ? threshold.slice() : threshold;
-	const errorWeight = new Weighting(neq, threshold, o.normControl);
-	const newtonWeight = o.autoAbstol ? new Weighting(neq, newtonThreshold, o.normControl) : errorWeight;
+	const rms = o.errorNorm === 'rms';
+	const errorWeight = new Weighting(neq, threshold, o.normControl, rms);
+	const newtonWeight = o.autoAbstol ? new Weighting(neq, newtonThreshold, o.normControl, rms) : errorWeight;
+	// How many failing steps at the smallest step size may be taken in a row.
+	// Unset, this solver's own rule, which is what every run before the setting
+	// had: up to MAX_BELOW_TOLERANCE steps that fail the error test, and none
+	// whose Newton iteration will not converge. Set, facsimile.html's: that many
+	// of either, a finite iterate taken as it stands, and 0 for none at all.
+	const floorRun = o.belowTolRun == null ? MAX_BELOW_TOLERANCE : Math.max(0, Math.round(o.belowTolRun));
+	const floorNewtonRun = o.belowTolRun == null ? 0 : floorRun;
 
 	const hmax = o.hmax < 0 ? 0.1 * span : Math.min(o.hmax, span);
 
@@ -841,7 +887,7 @@ export function ndf(f, tspan, y0, options = {}) {
 	};
 	evaluateJacobian(f0);
 
-	const W = iterationMatrix(neq, jac, J);
+	const W = iterationMatrix(neq, jac, J, o.matrix ?? 'auto');
 	// Which rows the constraint holds for the step being taken, and which W
 	// was formed with. The mask is read once per step, from the derivative at
 	// the point the step starts from: a state hovering on zero can be caught
@@ -1107,7 +1153,21 @@ export function ndf(f, tspan, y0, options = {}) {
 				// point; only then a shorter step.
 				if (projected && snapOntoBound((i) => projected.heldRows[i])) continue;
 				if (!jacFresh) { evaluateJacobian(null); readHeld(); formW(); continue; }
-				if (Math.abs(h) <= hmin) throw floorFailure(outcome === 'nonfinite');
+				if (Math.abs(h) <= hmin) {
+					// A step of the smallest size whose corrector still will not
+					// converge, and none shorter to try. Where the iterate is a
+					// number and the model asked for it, the step is taken as it
+					// stands and counted, as facsimile's NDF does: a residual that
+					// cannot be evaluated any finer than the arithmetic allows is
+					// not mended by any step size.
+					if (outcome === 'nonfinite' || belowTolRun >= floorNewtonRun) {
+						throw floorFailure(outcome === 'nonfinite');
+					}
+					belowTolRun++;
+					nbelowtol++;
+					err = rtol;
+					break;
+				}
 				changeStep(NEWTON_CUT);
 				last = false;
 				formW();
@@ -1157,7 +1217,7 @@ export function ndf(f, tspan, y0, options = {}) {
 				// Nothing shorter is possible. The step is taken as it is and
 				// counted, so the run can say how many of its numbers it could
 				// not justify; a run of them is a run that will never finish.
-				if (++belowTolRun > MAX_BELOW_TOLERANCE) throw floorFailure(false);
+				if (++belowTolRun > floorRun) throw floorFailure(false);
 				nbelowtol++;
 				break;
 			}

@@ -30106,7 +30106,7 @@ test('the absolute tolerance can follow the solution, and the Newton test does n
 	// where it is not. Off, the two share one array and nothing is copied.
 	const ndf = readFileSync(new URL('../src/ode/ndf.js', import.meta.url), 'utf8');
 	assert(/const newtonThreshold = o\.autoAbstol \? threshold\.slice\(\) : threshold;/.test(ndf));
-	assert(/const newtonWeight = o\.autoAbstol \? new Weighting\(neq, newtonThreshold, o\.normControl\) : errorWeight;/.test(ndf));
+	assert(/const newtonWeight = o\.autoAbstol \? new Weighting\(neq, newtonThreshold, o\.normControl, rms\) : errorWeight;/.test(ndf));
 	assert(/const size = newtonWeight\.of\(delta\);/.test(ndf), 'the Newton test still reads the floating weights');
 	assert(/const roundoff = 100 \* EPS \* newtonWeight\.of\(ynew\);/.test(ndf));
 
@@ -30280,6 +30280,64 @@ test('the adapter passes only the options it was given', async () => {
 	const runner = readFileSync(new URL('../src/sim/runner.js', import.meta.url), 'utf8');
 	for (const id of ['fbdf', 'qndf', 'rodas5p', 'radau5', 'kencarp4', 'trbdf2']) {
 		assert(new RegExp(`${id}: julia\\('${id}'\\)`).test(runner), `${id} is not wired to the runner`);
+	}
+});
+
+test('the NDF reads facsimile\'s error norm, iteration matrix and steps at the floor', async () => {
+	const { readFileSync } = await import('node:fs');
+	const { ndf } = await import('../src/ode/ndf.js');
+	const { solverOptions } = await import('../src/ode/solvers.js');
+	for (const key of ['error_norm', 'matrix', 'below_tol_run']) {
+		assert(solverOptions('ndf').includes(key) && solverOptions('bdf').includes(key), `the NDF does not read ${key}`);
+	}
+	const last = (r) => { const o = r.outputs(); const v = r.series(o[o.length - 1]); return v[v.length - 1]; };
+	const far = JSON.parse(readFileSync(new URL('../examples/farfield.json', import.meta.url), 'utf8'));
+	far.simulation.solver = 'ndf';
+	const at = (patch) => { const m = structuredClone(far); Object.assign(m.simulation, patch); return run(m); };
+	const auto = at({});
+	// The root mean square is the looser of the two norms: fewer steps, the same answer.
+	const rms = at({ error_norm: 'rms' });
+	assert(rms.stats.nsteps < auto.stats.nsteps, `rms took ${rms.stats.nsteps} steps against ${auto.stats.nsteps}`);
+	close(last(rms), last(auto), 1e-6, 'the rms run');
+	// Dense where auto is sparse, and the same numbers.
+	const dense = at({ matrix: 'dense' });
+	assert(auto.stats.sparse && !dense.stats.sparse, 'dense LU was asked for and not given');
+	close(last(dense), last(auto), 1e-6, 'the dense run');
+	// ...and sparse where auto would not be, on a model too small to be worth it.
+	const chain = JSON.parse(readFileSync(new URL('../examples/decay-chain.json', import.meta.url), 'utf8'));
+	chain.simulation.solver = 'ndf';
+	const alone = run(chain);
+	assert(!alone.stats.sparse, 'the decay chain is sparse on its own now; pick a smaller model');
+	chain.simulation.matrix = 'sparse';
+	const asked = run(chain);
+	assert(asked.stats.sparse, 'sparse LU was asked for and not given');
+	close(last(asked), last(alone), 1e-9, 'the sparse run');
+
+	// Steps at the floor. At t = 1e15 the smallest step is about a fifth of a
+	// unit of time, and an oscillation a thousand times faster fails the error
+	// test at every size -- so each step is one at the floor.
+	const floorSteps = (belowTolRun) => {
+		let n = 0;
+		try {
+			ndf((t, y) => [Math.sin(1e3 * t)], [1e15, 1e15 + 1000], [0], {
+				rtol: 1e-6, abstol: 1e-9, onAccepted: () => { n++; },
+				...(belowTolRun === undefined ? {} : { belowTolRun }),
+			});
+		} catch (e) {
+			assert(e.code === 'tolerance', `${e.code}: ${e.message}`);
+			return n;
+		}
+		return Infinity;
+	};
+	// Unset is the NDF's own rule, which every run before the setting had:
+	// twenty failed error tests at the floor, then stop.
+	assert(floorSteps(undefined) === 20, `the NDF's own rule took ${floorSteps(undefined)}`);
+	// Set, it is facsimile's: that many in a row, and 0 for none.
+	for (const n of [0, 1, 3]) assert(floorSteps(n) === n, `below_tol_run ${n} took ${floorSteps(n)}`);
+	// And the setting reaches the NDF from a model.
+	const vo = readFileSync(new URL('../src/ode/variable-order.js', import.meta.url), 'utf8');
+	for (const key of ['errorNorm', 'matrix', 'belowTolRun']) {
+		assert(new RegExp(`\\.\\.\\.\\(opts\\.${key}`).test(vo), `variableOrder does not pass ${key}`);
 	}
 });
 

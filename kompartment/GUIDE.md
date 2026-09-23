@@ -1927,7 +1927,10 @@ chooses for itself, which is almost always right. Every setting in the panel —
 these and the ones above them — explains itself when you point at its name.
 
 The same settings go by the same names in all three pages, where the name fits
-the sidebar's column:
+the sidebar's column, and the NDF reads the ones facsimile's NDF reads. Norm
+control and the first step are this one's own; the Newton tolerance, Jacobian
+reuse and the minimum order belong to the vendored methods in both, since the
+NDF's Newton has its own convergence test and keeps a Jacobian until it stalls:
 
 | | what it does | read by |
 |---|---|---|
@@ -1936,12 +1939,12 @@ the sidebar's column:
 | **Step budget** | how many steps before it gives up and says so | all |
 | **Maximum order** / **Minimum order** | cap and floor the variable-order formulas; set both equal for a fixed order | the NDF/BDF solvers (maximum only) and FBDF/QNDF |
 | **Norm control** | judge the error against the norm of the whole solution rather than component by component (MATLAB's NormControl) | `ndf`, `bdf` |
-| **Error norm** | the largest of the components' errors, or their root mean square | the vendored methods except Radau, which uses its own |
+| **Error norm** | the largest of the components' errors, or their root mean square | `ndf`, `bdf`, and the vendored methods except Radau, which uses its own |
 | **Stall tolerance** | how large a Newton correction may be and still be taken once it has stopped shrinking | `ndf`, `bdf` |
 | **Newton tolerance** | how tightly each stage's iteration must converge | the vendored methods with a Newton iteration |
 | **Jacobian reuse** | how many steps a Jacobian may be reused | as above, except Rodas5P |
-| **Steps at the floor** | how many steps that failed the error test at the smallest representable size may be accepted in a row | the vendored methods |
-| **Iteration matrix** | factorise I − hJ with a sparse or a dense LU | the vendored methods |
+| **Steps at the floor** | how many failing steps at the smallest representable size may be accepted in a row; empty is the solver's own rule, which for `ndf` and `bdf` is twenty failed error tests and no failed Newton iteration | `ndf`, `bdf`, the vendored methods |
+| **Iteration matrix** | factorise I − hJ with a sparse or a dense LU, or let *auto* measure the fill and choose | `ndf`, `bdf`, the vendored methods |
 | **Jacobian** | generated from the equations, or differenced through the same pattern (*finite differences*): the check to run when the generated one is in doubt | every stiff solver |
 | **Absolute tolerance follows the solution** | see below | `ndf`, `bdf`, the vendored methods |
 

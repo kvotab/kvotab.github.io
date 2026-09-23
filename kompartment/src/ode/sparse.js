@@ -701,10 +701,13 @@ const SPARSE_MAX_FILL = 0.15;
 /**
  * @param {object} [opts]
  * @param {boolean} [opts.mustBeSparse] there is no dense alternative to fall
- *   back to, so answer whatever the trial says about the fill
+ *   back to -- the model is too big for one, or sparse was asked for -- so
+ *   answer whatever the trial says about the fill, at any size
  */
 export function sparseIterationMatrix(neq, pattern, values, { mustBeSparse = false } = {}) {
-	if (neq < SPARSE_MIN_EQUATIONS) return null;
+	// Sparse because it was asked for (the NDF's `matrix: 'sparse'`) holds below
+	// this size too: the answer to "is sparse worth it here" has been given.
+	if (neq < SPARSE_MIN_EQUATIONS && !mustBeSparse) return null;
 	const J = new CSC(
 		neq, neq, pattern.colPtr, pattern.rowIdx, new Float64Array(pattern.nnz),
 	);

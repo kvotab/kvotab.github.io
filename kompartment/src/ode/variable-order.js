@@ -96,6 +96,11 @@ export function variableOrder(f, tspan, y0, opts = {}) {
 			// The step budget is a setting of the model like the rest.
 			...(opts.maxSteps > 0 ? { maxSteps: opts.maxSteps } : {}),
 			...(opts.stagnationTol > 0 ? { stagnationTol: opts.stagnationTol } : {}),
+			// facsimile.html's three, passed only where the model sets them, so
+			// an unset one is the solver's own default rather than an undefined.
+			...(opts.errorNorm ? { errorNorm: opts.errorNorm } : {}),
+			...(opts.matrix ? { matrix: opts.matrix } : {}),
+			...(opts.belowTolRun != null ? { belowTolRun: opts.belowTolRun } : {}),
 			jacobian: opts.jacobian ?? null,
 			// false selects the NDF formulas, which is what variableOrder does by
 			// default; true falls back to plain BDF.
