@@ -553,6 +553,10 @@
         x: b.x, y: b.y, width: b.w, height: b.h, rx: 5, fill,
         stroke: n.kind === 'missing' ? col.muted : 'none', 'stroke-dasharray': n.kind === 'missing' ? '4 3' : null,
       }, g);
+      /* The bucket level of the Inventory tab, empty until setLevels() fills it. */
+      if (n.kind !== 'missing') el('rect', { class: 'nz-level', x: b.x, y: b.y + b.h, width: b.w, height: 0, rx: 5, fill, visibility: 'hidden', 'pointer-events': 'none' }, g);
+      g.dataset.fill = fill;
+      g.dataset.ink = ink;
       if (n === chain.root || n.key === opt.selected) {
         el('rect', { x: b.x - 3, y: b.y - 3, width: b.w + 6, height: b.h + 6, rx: 7, fill: 'none', stroke: n === chain.root ? col.select : col.accent, 'stroke-width': 2.5 }, g);
       }
@@ -664,6 +668,62 @@
     return `${nm}${n.k > 0 ? ` (${n.st.e} keV)` : ''}: ${life}; ${reached}.`;
   }
 
+  /**
+   * Fill each box as a bucket to its share of the whole, for the Inventory
+   * tab: levels maps a node key to 0 .. 1; null puts the boxes back. A box in
+   * bucket mode keeps its colour as an outline and a faint fill, with the
+   * full colour rising from the bottom, and its text takes a halo so it reads
+   * over either.
+   */
+  function setLevels(svg, levels) {
+    const css = getComputedStyle(document.documentElement);
+    const halo = css.getPropertyValue('--bg-surface').trim() || '#fcf7f2';
+    const ink = css.getPropertyValue('--text-primary').trim() || '#352921';
+    svg.querySelectorAll('.nz-node').forEach((g) => {
+      const base = g.querySelector('rect');
+      const lv = g.querySelector('.nz-level');
+      if (!lv) return;
+      const texts = g.querySelectorAll('text');
+      if (!levels) {
+        base.removeAttribute('fill-opacity');
+        base.setAttribute('stroke', 'none');
+        lv.setAttribute('visibility', 'hidden');
+        texts.forEach((t) => { t.setAttribute('fill', g.dataset.ink); t.removeAttribute('stroke'); t.removeAttribute('stroke-width'); t.removeAttribute('paint-order'); });
+        return;
+      }
+      const f = Math.max(0, Math.min(1, levels.get(g.dataset.key) || 0));
+      const y = +base.getAttribute('y'), h = +base.getAttribute('height');
+      base.setAttribute('fill-opacity', 0.16);
+      base.setAttribute('stroke', g.dataset.fill);
+      base.setAttribute('stroke-width', 1.2);
+      lv.setAttribute('y', (y + h * (1 - f)).toFixed(1));
+      lv.setAttribute('height', (h * f).toFixed(1));
+      lv.setAttribute('visibility', f > 0.004 ? 'visible' : 'hidden');
+      texts.forEach((t) => {
+        t.setAttribute('fill', ink);
+        t.setAttribute('stroke', halo);
+        t.setAttribute('stroke-width', 3);
+        t.setAttribute('stroke-linejoin', 'round');
+        t.setAttribute('paint-order', 'stroke');
+      });
+    });
+  }
+
+  /** Ring one box (by node key) as the member picked out elsewhere, or none. */
+  function setHot(svg, key) {
+    svg.querySelectorAll('.nz-hot-ring').forEach((r) => r.remove());
+    if (!key) return;
+    const g = [...svg.querySelectorAll('.nz-node')].find((x) => x.dataset.key === key);
+    if (!g) return;
+    const b = g.querySelector('rect');
+    const css = getComputedStyle(document.documentElement);
+    const ring = el('rect', {
+      class: 'nz-hot-ring', x: +b.getAttribute('x') - 4, y: +b.getAttribute('y') - 4, width: +b.getAttribute('width') + 8, height: +b.getAttribute('height') + 8,
+      rx: 8, fill: 'none', stroke: css.getPropertyValue('--accent-line').trim() || '#bb7d37', 'stroke-width': 3, 'pointer-events': 'none',
+    });
+    g.appendChild(ring);
+  }
+
   /** The drawing as a stand-alone SVG file. */
   function svgFile(svg) {
     const copy = svg.cloneNode(true);
@@ -672,5 +732,5 @@
     return '<?xml version="1.0" encoding="UTF-8"?>\n' + new XMLSerializer().serializeToString(copy);
   }
 
-  window.KVOT_ENSDF_CHAIN = { layout, render, svgFile, nodeName, nodeTitle, viaNames, viaText, edgeAbout, shareText, GEOM };
+  window.KVOT_ENSDF_CHAIN = { layout, render, svgFile, setLevels, setHot, nodeName, nodeTitle, viaNames, viaText, edgeAbout, shareText, GEOM };
 })();

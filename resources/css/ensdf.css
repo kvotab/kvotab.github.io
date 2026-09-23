@@ -230,16 +230,20 @@
 }
 .nz-tabs::-webkit-scrollbar { display: none; }
 .nz-tabs button.active { margin-bottom: 0; }
-/* The panel is as wide as its reader drags it, down to 300 px, and full
-   width on a phone; the five tabs close up as it narrows, so that they
-   always fit (390 px as they are, 350 px, then 292 px). */
+/* The panel is as wide as its reader drags it, down to 330 px, and full
+   width on a phone; the six tabs close up as it narrows, so that they
+   always fit (about 480 px as they are, 435, 365, then 330). */
 .nz-panel { container: nzpanel / inline-size; }
-@container nzpanel (max-width: 400px) {
+@container nzpanel (max-width: 490px) {
   .nz-tabs button { padding-left: 8px; padding-right: 8px; }
 }
-@container nzpanel (max-width: 350px) {
+@container nzpanel (max-width: 440px) {
   .nz-tabs { padding-left: 4px; padding-right: 4px; }
   .nz-tabs button { padding-left: 5px; padding-right: 5px; font-size: 11px; }
+}
+@container nzpanel (max-width: 372px) {
+  .nz-tabs { gap: 1px; }
+  .nz-tabs button { padding-left: 3px; padding-right: 3px; font-size: 10.5px; }
 }
 .nz-pane { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 12px 14px 18px; line-height: 1.5; }
 .nz-pane[hidden] { display: none; }
@@ -522,3 +526,64 @@ a.nz-nuc:hover { text-decoration: underline; }
 @media (max-width: 760px) {
   .nz-chainopts { margin-left: 0; padding: 6px 0; border-left: 0; }
 }
+
+/* ---- the inventory over time -------------------------------------------- */
+.nz-inv .nz-inv-lead { margin: 0 0 8px; font-size: 11.5px; }
+.nz-inv-bar { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; margin: 0 0 6px; }
+.nz-inv-bar .nz-field { display: inline-flex; gap: 5px; align-items: center; font-size: 12px; }
+.nz-inv-bar input[type=text] { box-sizing: border-box; width: 5.6em; height: 26px; padding: 2px 5px; border: 1px solid var(--input-border); border-radius: 6px; font: 12px verdana, sans-serif; }
+.nz-inv-bar select { height: 26px; padding: 1px 4px; border: 1px solid var(--input-border); border-radius: 6px; font: 12px verdana, sans-serif; max-width: 100%; }
+.nz-inv-at { margin: 0 0 4px; font-size: 11.5px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nz-inv-tools { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 0 0 6px; }
+.nz-inv-tools .nz-btn[aria-pressed] { min-width: 6.2em; }
+.nz-inv-chart { position: relative; margin: 0 0 10px; border: 1px solid var(--border-color); border-radius: 6px; overflow: hidden; }
+.nz-inv-svg { display: block; width: 100%; height: auto; }
+.nz-inv-tip {
+  position: absolute;
+  z-index: 3;
+  min-width: 150px;
+  max-width: 230px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  box-shadow: 0 4px 14px var(--shadow-color);
+  font: 11px/1.45 verdana, sans-serif;
+  pointer-events: none;
+}
+.nz-inv-tip[hidden] { display: none; }
+.nz-inv-tip-head { color: var(--text-primary); font-weight: 700; margin-bottom: 2px; }
+.nz-inv-tip-row { display: flex; align-items: center; gap: 5px; }
+.nz-inv-tip-row.hot { color: var(--text-primary); font-weight: 700; }
+.nz-inv-tip-row.total { margin-top: 2px; padding-top: 2px; border-top: 1px solid var(--border-color); color: var(--text-primary); }
+.nz-inv-tip-val { margin-left: auto; padding-left: 8px; font-variant-numeric: tabular-nums; }
+.nz-inv-tip-more { color: var(--text-muted); font-style: italic; }
+.nz-inv-tip sup, .nz-inv-table sup { font-size: 0.72em; line-height: 0; vertical-align: 0.45em; }
+.nz-inv-sw { display: inline-block; flex: none; width: 18px; height: 0; border-top: 3px solid transparent; vertical-align: middle; }
+.nz-inv-sw.none { border-top: 1px dotted var(--border-color); }
+/* Columns of fixed width: the values change as the cursor moves over the
+   chart, and a longer number must not push the other columns about. The
+   value column holds the longest one numText() writes, 1.23×10⁻¹⁵; the
+   member column takes what is left, and a narrow panel scrolls the table. */
+.nz-inv-table { table-layout: fixed; width: 100%; min-width: 370px; }
+.nz-inv-c-sw { width: 30px; }
+.nz-inv-c-life { width: 80px; }
+.nz-inv-c-in { width: 126px; }
+.nz-inv-c-now { width: 82px; }
+.nz-inv-table td.text, .nz-inv-table td.nz-inv-now { overflow: hidden; text-overflow: ellipsis; }
+.nz-inv-table th:first-child, .nz-inv-table td.nz-inv-swcell { padding-left: 5px; padding-right: 3px; }
+@container nzpanel (max-width: 400px) {
+  .nz-inv-table { min-width: 340px; }
+  .nz-inv-c-life { width: 74px; }
+  .nz-inv-c-in { width: 110px; }
+  .nz-inv-table td.nz-inv-in input { width: 4.3em; }
+}
+.nz-inv-table td.nz-inv-in { white-space: nowrap; }
+.nz-inv-table td.nz-inv-in input { box-sizing: border-box; width: 5.2em; height: 22px; padding: 1px 4px; border: 1px solid var(--input-border); border-radius: 4px; font: 11.5px verdana, sans-serif; }
+.nz-inv-table td.nz-inv-in select { height: 22px; font: 11px verdana, sans-serif; border: 1px solid var(--input-border); border-radius: 4px; }
+.nz-inv-table td.nz-inv-in select { margin-left: 3px; }
+.nz-inv-table td.nz-inv-now { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.nz-inv-table tr.hot td { background: var(--bg-secondary); }
+.nz-inv .nz-note li { margin-bottom: 4px; }
+.nz-card .nz-btn + .nz-btn { margin-left: 6px; }

@@ -581,7 +581,11 @@
         const limit = isLimit(op) ? op : '';
         const p = pct === null ? null : (limit ? pct : pct * scale);
         if (p !== null && minBranch && p < minBranch) continue;
-        out.push([mode, p, targets, !!inferred, limit]);
+        /* Where a branch lands is kept to six digits; rounded shares that
+           miss 1 by a little would lose decays (234Th's add up to 0.99999957). */
+        const sum = targets.reduce((t, x) => t + x[3], 0);
+        const tg = sum !== 1 && Math.abs(sum - 1) < 1e-3 ? targets.map((x) => [x[0], x[1], x[2], x[3] / sum]) : targets;
+        out.push([mode, p, tg, !!inferred, limit]);
       }
       return out;
     }
@@ -753,6 +757,50 @@
       if (e.via.length) e.skipped = e.via.concat(e.skipped.filter((s) => !e.via.some((v) => v.key === s.key)));
     }
 
+    /*
+      What each drawn state carries with it in secular equilibrium: the
+      share of its decays that passes through each left-out state before
+      coming to rest. A left-out state decays as fast as it is made, so each
+      decay of the drawn state brings that share of the left-out state's
+      decays -- and of the energy they give off -- with it. The shares are
+      pushed down the left-out states in the order the decays run (each
+      state's share is complete before it is passed on), and one with no
+      percentage on the way is marked `more`.
+    */
+    const parseKey = (s) => s.split(',').map(Number);
+    function carriedBy(st) {
+      const flux = new Map();
+      const add = (z2, a2, k2, f, more) => {
+        const kk = key(z2, a2, k2);
+        const x = flux.get(kk);
+        if (x) { x.f += f; x.more = x.more || more; } else flux.set(kk, { key: kk, z: z2, a: a2, k: k2, f, more });
+      };
+      for (const [, p, targets] of branches(st)) {
+        for (const [z2, a2, k2, g] of targets) if (leftOut(z2, a2, k2)) add(z2, a2, k2, p === null ? 0 : (p / 100) * g, p === null);
+      }
+      if (!flux.size) return [];
+      const order = [];
+      const seen2 = new Set();
+      const visit = (kk) => {
+        if (seen2.has(kk)) return;
+        seen2.add(kk);
+        const lo = leftOut(...parseKey(kk));
+        if (lo) for (const [, , targets] of branches(lo.st)) for (const [z2, a2, k2] of targets) if (leftOut(z2, a2, k2)) visit(key(z2, a2, k2));
+        order.push(kk);
+      };
+      for (const kk of [...flux.keys()]) visit(kk);
+      for (let i = order.length - 1; i >= 0; i--) {
+        const x = flux.get(order[i]);
+        const lo = x && leftOut(x.z, x.a, x.k);
+        if (!lo) continue;
+        for (const [, p, targets] of branches(lo.st)) {
+          for (const [z2, a2, k2, g] of targets) if (leftOut(z2, a2, k2)) add(z2, a2, k2, p === null ? 0 : x.f * (p / 100) * g, x.more || p === null);
+        }
+      }
+      return [...flux.values()];
+    }
+    for (const nd of nodes.values()) nd.carried = nd.kind === 'state' && nd.st && !nd.st.st ? carriedBy(nd.st) : [];
+
     /* Cumulative fractions and generations, in topological order. A cycle
        cannot happen in real data; if one ever did, the nodes on it are
        simply left where they are. */
@@ -779,8 +827,149 @@
     return { nodes: order, edges: [...edges.values()], root, truncated };
   }
 
+  /* ---------------------------------------------------------------------
+     Decay over time
+     --------------------------------------------------------------------- */
+
+  /*
+    CRAM, the Chebyshev rational approximation of the matrix exponential, of
+    order 16 (M. Pusa, Nucl. Sci. Eng. 169 (2011) 155): exp(x) is alpha0 + 2
+    Re sum alpha_k / (x - theta_k), to about 1e-14 over the whole negative
+    real axis, which is where a decay matrix keeps its eigenvalues. Burnup
+    codes use it for the same reason: a chain whose members live from
+    microseconds to billions of years is as easy as any other, at any time,
+    with no steps to take and no tolerance to set. What has decayed away
+    comes out as a remnant of about 2e-16 of what fed it, so anything below
+    1e-13 of the largest value is noise.
+  */
+  const CRAM_THETA = [
+    [-10.843917078696988026, 19.277446167181652284], [-5.2649713434426468895, 16.220221473167927305],
+    [5.9481522689511774808, 3.5874573620183222829], [3.5091036084149180974, 8.4361989858843750826],
+    [6.4161776990994341923, 1.1941223933701386874], [1.4193758971856659786, 10.925363484496722585],
+    [4.9931747377179963991, 5.9968817136039422260], [-1.4139284624888862114, 13.497725698892745389],
+  ];
+  const CRAM_ALPHA = [
+    [-5.0901521865224915650e-7, -2.4220017652852287970e-5], [2.1151742182466030907e-4, 4.3892969647380673918e-3],
+    [1.1339775178483930527e2, 1.0194721704215856450e2], [1.5059585270023467528e1, -5.7514052776421819979],
+    [-6.4500878025539646595e1, -2.2459440762652096056e2], [-1.4793007113557999718, 1.7686588323782937906],
+    [-6.2518392463207918892e1, -1.1190391094283228480e1], [4.1023136835410021273e-2, -1.5743466173455468191e-1],
+  ];
+  const CRAM_ALPHA0 = 2.1248537104952237488e-16;
+  const AVOGADRO = 6.02214076e23;
+
+  /**
+   * A chain set up for decay: its members in the order the decays run, each
+   * one's decay constant, and who feeds whom.
+   *
+   * @param {Object} chain - buildChain()
+   * @returns {{members: Array, lambda: Float64Array, rows: Array}} members
+   *   are the chain's nodes. A stable member, a nuclide not in the database,
+   *   fission, and a member whose half-life is not known do not decay (lambda
+   *   0); they collect what reaches them -- fission counts fissions. rows[i]
+   *   lists [j, share of j's decays that reach i].
+   */
+  function decaySystem(chain) {
+    const members = chain.nodes;
+    const at = new Map(members.map((nd, i) => [nd.key, i]));
+    const lambda = new Float64Array(members.length);
+    members.forEach((nd, i) => { if (nd.kind === 'state' && nd.st && !nd.st.st && nd.st.ts > 0) lambda[i] = Math.LN2 / nd.st.ts; });
+    const rows = members.map(() => []);
+    for (const e of chain.edges) {
+      const i = at.get(e.to.key), j = at.get(e.from.key);
+      /* The order is the order the decays run: nothing feeds an earlier member. */
+      if (i === undefined || j === undefined || j >= i || e.pct === null || !(lambda[j] > 0)) continue;
+      rows[i].push([j, e.pct / 100]);
+    }
+    return { members, lambda, rows };
+  }
+
+  /**
+   * The inventory of a chain at the given times, from the atoms each member
+   * has at t = 0. Worked in activities for the members that decay and atoms
+   * for those that do not: members in equilibrium then have values of one
+   * size, which is what CRAM's accuracy is measured against.
+   *
+   * @param {Object} sys - decaySystem()
+   * @param {ArrayLike<number>} n0 - atoms of each member at t = 0
+   * @param {number[]} times - seconds
+   * @returns {{A: Float64Array[], N: Float64Array[]}} for each time, each
+   *   member's activity (Bq) and atoms
+   */
+  function decayAt(sys, n0, times) {
+    const { lambda, rows } = sys;
+    const n = lambda.length;
+    const y0 = new Float64Array(n);
+    for (let i = 0; i < n; i++) y0[i] = lambda[i] > 0 ? lambda[i] * n0[i] : n0[i];
+    const xr = new Float64Array(n), xi = new Float64Array(n);
+    const outA = [], outN = [];
+    for (const t of times) {
+      const y = new Float64Array(n);
+      if (!(t > 0)) y.set(y0);
+      else {
+        for (let i = 0; i < n; i++) y[i] = CRAM_ALPHA0 * y0[i];
+        for (let k = 0; k < 8; k++) {
+          const [tr, ti] = CRAM_THETA[k], [ar, ai] = CRAM_ALPHA[k];
+          /* (M t - theta) x = y0, forward: M is lower triangular. */
+          for (let i = 0; i < n; i++) {
+            let sr = y0[i], si = 0;
+            const li = lambda[i];
+            for (const [j, f] of rows[i]) {
+              const m = (li > 0 ? li * f : f) * t;
+              sr -= m * xr[j];
+              si -= m * xi[j];
+            }
+            const dr = -li * t - tr, di = -ti;
+            const den = dr * dr + di * di;
+            xr[i] = (sr * dr + si * di) / den;
+            xi[i] = (si * dr - sr * di) / den;
+          }
+          for (let i = 0; i < n; i++) y[i] += 2 * (ar * xr[i] - ai * xi[i]);
+        }
+      }
+      const A = new Float64Array(n), N = new Float64Array(n);
+      for (let i = 0; i < n; i++) {
+        const v = y[i] > 0 ? y[i] : 0;
+        if (lambda[i] > 0) { A[i] = v; N[i] = v / lambda[i]; } else N[i] = v;
+      }
+      outA.push(A);
+      outN.push(N);
+    }
+    return { A: outA, N: outN };
+  }
+
+  /**
+   * What a drawn member of a chain gives off per decay, in MeV, as [alpha,
+   * electrons, photons]: its own emission and, in secular equilibrium, that
+   * of the members left out below it (buildChain's `carried`).
+   *
+   * @returns {{v: number[], known: boolean, estimated: boolean, parts: Array}}
+   *   known is false where the member, or one it carries, has no emitted
+   *   energies in the database or lacks some of them; estimated where some
+   *   are estimated (from a Q-value, or relative gamma intensities scaled);
+   *   parts lists the carried states with their shares.
+   */
+  function chainEmission(idx, nd) {
+    const out = { v: [0, 0, 0], known: true, estimated: false, parts: [] };
+    const add = (st, f) => {
+      if (!st || st.st) return;
+      if (!st.emit) { out.known = false; return; }
+      for (let i = 0; i < 3; i++) out.v[i] += f * st.emit[i];
+      if (st.emitx & 1) out.known = false;
+      if (st.emitx & 6) out.estimated = true;
+    };
+    add(nd.st, 1);
+    for (const c of nd.carried || []) {
+      const nuc = idx.get(c.z, c.a);
+      add(nuc && nuc.s[c.k], c.f);
+      if (c.more) out.known = false;
+      out.parts.push({ ...c, name: plainName(c.z, c.a, c.k, nuc) });
+    }
+    return out;
+  }
+
   return {
-    ELEMENTS, index, name, plainName, sup, supRuns, asciiText, isomerLabel, parseQuery, stateForLabel,
+    ELEMENTS, index, name, plainName, sup, supRuns, asciiText, isomerLabel, parseQuery, stateForLabel, chainEmission,
+    decaySystem, decayAt, AVOGADRO,
     expText, valueParts, uncertaintyText, halfLifeParts, halfLifeText, halfLifeAlt, halfLifeShort,
     modeText, modeMeaning, modeStated, pctText, sharePct, isLimit, primaryMode, modeFamily,
     HALF_LIFE_CLASSES, PALETTE, MODE_LEGEND, halfLifeClass, halfLifeColour, along, luminance, inkOn,

@@ -6,7 +6,7 @@ Two suites. The first needs only Node; the second a server and headless Chrome.
 
     node resources/tests/ensdf/test-parse.js
 
-100 checks in four parts:
+115 checks in four parts:
 
 1. **Fields**, each against what the ENSDF manual says the record means:
    NUCIDs (including `NN` for the neutron and `Z - 100` above Z = 109),
@@ -38,10 +38,18 @@ Two suites. The first needs only Node; the second a server and headless Chrome.
    saying what it lacks -- NNDC lists 2017-05-01 and 2021-07-01 without
    A = 1-99), the names opened files get (`ensdf_250101.zip`,
    `ensdf_120307_099.zip`, `ENSDF_0410_099.zip`) matching that list,
-   and a cross-check of every branch against the ICRP Publication
+   a cross-check of every branch against the ICRP Publication
    107 data in `resources/js/rndecaydata.js` — at least 1460 of the 1508
    nuclides must agree (1470 do for the 2026-09-01 release; the rest are
-   evaluations that have moved on since 2008).
+   evaluations that have moved on since 2008) — and of the energy given off
+   per decay (at least 1000 of about 1260 within 5 % in all, with isomers
+   under a minute counted with their parents; 1025 are, and 1252 in their
+   alpha energy), with 210Po, 60Co, 137Cs, 234mPa and 55Fe by name, and
+   226Ra carrying 222Rn to 214Po in equilibrium at T½ >= 1 y. Then the decay
+   itself: Bateman's two-member chain (15.7214 Bq after 5 d, as rdc.html
+   checks), equal half-lives (where Bateman's formula divides by zero),
+   the 238U chain in secular equilibrium after 10 My, and no atom lost over
+   10^10 years.
 
 Part 4 reads the committed data, so run it again after `scripts/gen-ensdf.mjs`
 installs a release.
@@ -54,7 +62,7 @@ Chrome with `--remote-debugging-port=9222`), then
 
     python3 resources/tests/ensdf/test-ui.py
 
-63 checks: the built-in release loads; the hover card sets its superscripts as
+73 checks: the built-in release loads; the hover card sets its superscripts as
 `<sup>` and draws no Unicode superscript character (Verdana has only ¹ ² ³, so
 "²³⁸" came out in two fonts); a nuclide is reached by address
 (`#60Co`), by search, by a click on the chart and by the arrow keys; every
@@ -70,10 +78,16 @@ unlabelled arrow, 234Th → 234U is marked via 234mPa, and the view opens
 with 234Th's daughters in it); the crowded 101Br
 chain, full of β-delayed neutron branches, has no label on another label or
 on a box; a box in the chain opens its member without moving the start of
-the chain; the chain settings are there in the chart view as well; the panel
-tabs fit with no scroll bar of their own, also dragged to 300 px; the
+the chain; the chain settings are there in the chart view as well; the six
+panel tabs fit with no scroll bar of their own, also dragged to 330 px; the
 Levels, Radiation and Data
-sets tabs fill; the four downloads produce files; the database menu lists
+sets tabs fill; the four downloads produce files; the Inventory tab draws
+the 238U chain over time with 1 Bq at its start and that box full, turns
+1 g of 226Ra into 3.66E10 Bq, shows the total emitted energy, and pointing at
+a line rings its member in the chain and fills the boxes to that time, while
+pointing at a row picks out its line and box, while the table under the chart keeps its columns wherever the cursor is; Run through takes the cursor
+to the end, the values save as CSV, and leaving the tab puts the boxes back;
+the database menu lists
 NNDC's archive back to 2004 less the release on the site, and choosing one
 opens a dialog with the right NNDC link (all three parts, with their mass
 numbers, for a release before 2022; a warning for one NNDC lists

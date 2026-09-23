@@ -39,6 +39,14 @@ non-zero on a failure. `build-fixtures.py` rebuilds `fixtures/`.
   are: "(SKB R-13-25, Section 4.2)" with its section, "SKB (R-19-01)" with
   "SKB" left as text, and "SKB R-19-01" in running text with only the
   number replaced.
+- With the comment options on, each citation left as text gets a Word
+  comment over exactly its text saying why -- the reference not found, the
+  other one matched, the footnote reference in the way -- and a summary
+  comment sits at the start of the document; comment ids are new, each with
+  its range and reference; the text and the fields are as without comments.
+  A document with no comments gets `comments.xml` with its relationship and
+  content type, and a citation in a footnote gets its comment on the note's
+  mark in the body text.
 - Revision ids are unique, formatting revisions included, and above every id
   the document had; `w:trackRevisions` sits where the schema puts it;
   `people.xml` lists the author; the parts not edited are byte for byte the
@@ -87,6 +95,12 @@ On 2026-09-22, with documents and a library that are not part of the site:
   original. That validator caught a real fault on the way -- a split run
   copying the id of a tracked formatting change -- which `test-ui.py` now
   covers.
+- **Comments.** Every plain-text citation of two reports given a comment
+  (21 and 465, and a summary): the text read back unchanged, every comment
+  id unique with one range and one reference, and nothing new for the
+  validator: only two errors in a chart the original already had. It rejected
+  comments anchored inside footnotes -- the standard allows them, but the
+  SDK does not resolve them -- so those now go on the note's mark.
 
 To repeat the accuracy check: take a `.docx` coded with Zotero, analyse it
 with `ZFDocx.analyse(pkg, { recode: { zotero: true } })` so the fields read

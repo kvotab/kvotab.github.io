@@ -343,6 +343,69 @@ check('percent: 0.0037', C.pctText(0.0037), '0.0037 %');
   }
   console.log(`ICRP 107: ${agree} of ${total} nuclides agree`);
   check('ICRP 107: at least 1460 of the 1508 nuclides give the same branches', agree >= 1460 && total >= 1500, true);
+
+  /* Emitted energy per decay against ICRP 107, with isomers under a minute
+     counted with their parents (secular equilibrium) as ICRP counts them. */
+  let eTotal = 0, eOk = 0, aOk = 0, eN = 0;
+  for (const d of decaydata) {
+    const p = parse(d.name);
+    const n = p && idx.get(p.z, p.a);
+    if (!n || !n.s.length) continue;
+    const k = stateFor(n, p.iso, d.Halflife_y * Y);
+    if (k < 0 || !n.s[k] || n.s[k].st) continue;
+    if ((n.s[k].br || []).some((b) => b[0] === 'SF' && (b[1] || 0) > 1)) continue;
+    const ref = [d.Alpha_energy || 0, d.Electron_energy || 0, d.Photon_energy || 0];
+    const R = ref[0] + ref[1] + ref[2];
+    const v = C.chainEmission(idx, C.buildChain(idx, p.z, p.a, k, { minIsomerS: 60, maxNodes: 40 }).root).v;
+    const T = v[0] + v[1] + v[2];
+    eN++;
+    if (Math.abs(T - R) <= 0.05 * R || Math.abs(T - R) < 0.001) eOk++;
+    if (Math.abs(v[0] - ref[0]) <= 0.05 * ref[0] || Math.abs(v[0] - ref[0]) < 0.002) aOk++;
+    eTotal++;
+  }
+  console.log(`ICRP 107 energies: total within 5 % for ${eOk} of ${eN}, alpha for ${aOk}`);
+  check('ICRP 107: the energy given off per decay within 5 % for at least 1000 of the ~1260 nuclides', eOk >= 1000 && eN >= 1200, true);
+  check('... and the alpha energy (with the recoil) for at least 1240', aOk >= 1240, true);
+}
+
+/* Energies of particular nuclides, MeV per decay: [alpha, electrons, photons]. */
+{
+  const em = (z, a, k = 0) => idx.get(z, a).s[k].emit;
+  check('210Po gives off its whole Q in alpha and recoil, 5.407 MeV', em(84, 210)[0], near(5.4075, 0.002));
+  check('60Co: 0.097 MeV of electrons, 2.50 MeV of photons (ICRP 0.0969, 2.504)', [+em(27, 60)[1].toFixed(3), +em(27, 60)[2].toFixed(2)], [0.097, 2.5]);
+  check('137Cs gives off its beta (ICRP 0.188 MeV); the 662 keV gamma ray is 137mBa\'s', [Math.abs(em(55, 137)[1] - 0.188) < 0.003, em(55, 137)[2] < 0.01], [true, true]);
+  check('234mPa: 0.83 MeV all told (ICRP 0.833)', em(91, 234, 1).reduce((t, x) => t + x, 0), near(0.833, 0.02));
+  check('55Fe, electron capture: its X-rays and Auger electrons, estimated (ICRP 1.66 and 4.16 keV)', [em(26, 55)[2], em(26, 55)[1]], (v) => Math.abs(v[0] - 0.00166) < 0.0005 && Math.abs(v[1] - 0.00416) < 0.001);
+  /* A member carries what the half-life setting leaves out below it. */
+  const ra = C.buildChain(idx, 88, 226, 0, { minHalfLifeS: C.YEAR_S });
+  const car = C.chainEmission(idx, ra.root);
+  check('at T½ >= 1 y 226Ra carries 222Rn, 218Po, 214Pb, 214Bi and 214Po in equilibrium', ['86,222,0', '84,218,0', '82,214,0', '83,214,0', '84,214,0'].every((kk) => ra.root.carried.some((c) => c.key === kk && Math.abs(c.f - 1) < 0.001)), true);
+  check('... and their alpha energy with its own: about 24.4 MeV a decay', car.v[0], near(4.871 + 5.590 + 6.115 + 7.833, 0.1));
+}
+
+/* The decay: CRAM on a chain. */
+{
+  const day = 86400;
+  const two = { nodes: [{ key: 'p', kind: 'state', st: { ts: 2 * day } }, { key: 'd', kind: 'state', st: { ts: 8 * day } }, { key: 's', kind: 'state', st: { st: 1 } }],
+    edges: [{ from: { key: 'p' }, to: { key: 'd' }, pct: 100 }, { from: { key: 'd' }, to: { key: 's' }, pct: 100 }] };
+  const sys2 = C.decaySystem(two);
+  const r2 = C.decayAt(sys2, [100 * 2 * day / Math.LN2, 0, 0], [5 * day, 2000 * day]);
+  check('two-member chain: the daughter\'s activity after 5 d is Bateman\'s (15.7214 Bq, as rdc.html checks)', r2.A[0][1], near(15.721436067628932, 1e-9));
+  check('... and after 2000 d every atom is in the stable end', r2.N[1][2] / (100 * 2 * day / Math.LN2), near(1, 1e-12));
+  /* Equal half-lives, where the Bateman formula divides by zero: A_d = A0 lambda t exp(-lambda t). */
+  const eq = { nodes: [{ key: 'p', kind: 'state', st: { ts: day } }, { key: 'd', kind: 'state', st: { ts: day } }], edges: [{ from: { key: 'p' }, to: { key: 'd' }, pct: 100 }] };
+  const l = Math.LN2 / day;
+  const re = C.decayAt(C.decaySystem(eq), [1 / l, 0], [3 * day]);
+  check('equal half-lives, which the Bateman formula cannot do: A0 λt e^-λt', re.A[0][1], near(l * 3 * day * Math.exp(-l * 3 * day), 1e-12));
+  /* 238U: secular equilibrium after 10 My, and no atom lost over 10^10 y. */
+  const u = C.buildChain(idx, 92, 238, 0, { minIsomerS: 1 });
+  const su = C.decaySystem(u);
+  const n0 = new Float64Array(su.members.length); n0[0] = 1e24;
+  const ru = C.decayAt(su, n0, [1e7 * C.YEAR_S, 1e10 * C.YEAR_S]);
+  const eqOk = su.members.every((m, i) => !(su.lambda[i] > 0) || m.cum < 1e-6 || Math.abs(ru.A[0][i] / ru.A[0][0] - m.cum) < 2e-4 * Math.max(1, m.cum));
+  check('238U after 10 My: every member in secular equilibrium, its activity the parent\'s times its share', eqOk, true);
+  check('... and after 10^10 y the atoms add up to what there was', ru.N[1].reduce((t, x) => t + x, 0) / 1e24, near(1, 1e-11));
+  check('... 238U itself as 2^-(t/T½)', ru.N[1][0] / 1e24, near(Math.exp(-Math.LN2 * 1e10 * C.YEAR_S / u.root.st.ts), 1e-12));
 }
 
 console.log(`\n${checks - failures.length} of ${checks} checks pass`);

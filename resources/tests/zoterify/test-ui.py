@@ -345,6 +345,20 @@ async def run_checks(page):
     check('with every reference and where it stands', '"¶ 12","(Zzyzx, 1999)","Zzyzx 1999","not found"' in csv, True)
     check('and the entries nothing cites', '"uncited entry","","","Uncited U, 2001.' in csv, True)
 
+    # --- saving with comments ----------------------------------------------
+    await page.ev("(() => { for (const id of ['zfComment', 'zfSummaryComment']) { const b = document.getElementById(id); b.checked = true; b.dispatchEvent(new Event('change', { bubbles: true })); } })()")
+    await page.ev('ZFPage.save()')
+    status = await page.ev("document.getElementById('zfStatus').textContent")
+    print('      ', status)
+    check('the save says the places left as text have comments, and there is a summary',
+          ['3 places left as text, each with a comment' in status, 'a summary comment at the start' in status], [True, True])
+    commented = await saved_bytes(page)
+    check_comments(original, saved, commented)
+    await page.ev("(() => { for (const id of ['zfComment', 'zfSummaryComment']) { const b = document.getElementById(id); b.checked = false; b.dispatchEvent(new Event('change', { bubbles: true })); } })()")
+
+    # A document with no comments part yet: the writer makes one.
+    await check_new_comments_part(page)
+
     # --- saving without Track Changes -------------------------------------
     await page.ev("(() => { for (const id of ['zfTrack', 'zfKeepTracking']) { const b = document.getElementById(id); b.checked = false; b.dispatchEvent(new Event('change', { bubbles: true })); } })()")
     await page.ev('ZFPage.save()')
@@ -364,6 +378,150 @@ async def run_checks(page):
 async def saved_bytes(page):
     b64 = await page.ev("(async () => { const b = ZFPage.getState().lastSaved; let s = ''; for (let i = 0; i < b.length; i += 32768) s += String.fromCharCode.apply(null, b.subarray(i, i + 32768)); return btoa(s); })()")
     return base64.b64decode(b64)
+
+
+def ranged_text(p, cid):
+    """The w:t text between a comment's range marks in one paragraph."""
+    out, on = [], False
+    for e in p.getElementsByTagNameNS(W, '*'):
+        name = local(e)
+        if name == 'commentRangeStart' and e.getAttributeNS(W, 'id') == cid:
+            on = True
+        elif name == 'commentRangeEnd' and e.getAttributeNS(W, 'id') == cid:
+            on = False
+        elif name == 't' and on:
+            out.append(e.firstChild.data if e.firstChild else '')
+    return ''.join(out)
+
+
+def comment_texts(comments_xml, author):
+    doc = minidom.parseString(comments_xml)
+    out = {}
+    for c in doc.getElementsByTagNameNS(W, 'comment'):
+        if c.getAttributeNS(W, 'author') != author:
+            continue
+        out[c.getAttributeNS(W, 'id')] = ['' .join(t.firstChild.data for t in p.getElementsByTagNameNS(W, 't') if t.firstChild)
+                                          for p in c.getElementsByTagNameNS(W, 'p')]
+    return out
+
+
+def check_comments(original, first_save, saved):
+    """The save with a comment on each citation left as text and a summary."""
+    zo = zipfile.ZipFile(io.BytesIO(original))
+    zs = zipfile.ZipFile(io.BytesIO(saved))
+    if os.environ.get('ZF_KEEP'):
+        with open(os.environ['ZF_KEEP'].replace('.docx', '-comments.docx'), 'wb') as f:
+            f.write(saved)
+    check('with comments: the parts are the same, comments.xml already being one', sorted(set(zs.namelist()) - set(zo.namelist())), ['word/people.xml'])
+    texts = comment_texts(zs.read('word/comments.xml'), 'Zoterify')
+    check('Bob\'s comment is still there', [c.getAttributeNS(W, 'author') for c in minidom.parseString(zs.read('word/comments.xml')).getElementsByTagNameNS(W, 'comment')][0], 'Bob')
+    check('four comments by the page: three citations and the summary', len(texts), 4)
+    check('their ids are new: above every id the document had', all(int(i) > 57 for i in texts), True)
+    doc_s = minidom.parseString(zs.read('word/document.xml'))
+    fn_s = minidom.parseString(zs.read('word/footnotes.xml'))
+    marks = {}
+    for part in (doc_s, fn_s):
+        for e in part.getElementsByTagNameNS(W, '*'):
+            if local(e) in ('commentRangeStart', 'commentRangeEnd', 'commentReference') and e.getAttributeNS(W, 'id') in texts:
+                marks.setdefault(e.getAttributeNS(W, 'id'), []).append(local(e))
+    check('each has its range start, range end and reference, in that order',
+          sorted(marks.values()), [['commentRangeStart', 'commentRangeEnd', 'commentReference']] * 4)
+    ps = paragraphs(doc_s)
+    anchored = {}
+    for cid in texts:
+        for k, p in enumerate(ps):
+            if any(e.getAttributeNS(W, 'id') == cid for e in p.getElementsByTagNameNS(W, 'commentRangeStart')):
+                anchored[cid] = (k, ranged_text(p, cid))
+    by_text = {t: texts[cid] for cid, (k, t) in anchored.items()}
+    check('the comments cover exactly the citations left as text, and the summary sits at the start',
+          sorted((k, t) for k, t in anchored.values()), [(0, ''), (8, '(Smith, 2020)'), (11, '(Zzyzx, 1999)'), (12, '(Smith, 2020; Zzyzx, 1999)')])
+    check('the unmatched citation: why', by_text['(Zzyzx, 1999)'],
+          ['Zoterify read this as an in-text citation but left it as text.', 'Zzyzx 1999: not found in the Zotero library.'])
+    check('the half-resolved one: which reference, and that the other was matched', by_text['(Smith, 2020; Zzyzx, 1999)'],
+          ['Zoterify read this as an in-text citation but left it as text.', 'Zzyzx 1999: not found in the Zotero library.',
+           'The other reference in it was matched; a citation is converted only when all its references are.'])
+    check('the refused one: matched, but the text holds a footnote reference', by_text['(Smith, 2020)'],
+          ['Zoterify matched this citation to the Zotero library but could not convert it: the text contains a footnote reference.'])
+    summary = by_text['']
+    print('       summary:', summary)
+    check('the summary says what was found and converted',
+          [summary[1], summary[2]], ['Found: 24 references in 21 in-text citations.', 'Converted: 20 references in 18 Zotero citations, each a tracked change by Zoterify.'])
+    check('... what was left as text and why',
+          summary[3], 'Left as text: 3 citations (2 with a reference not found in the library, 1 that could not be replaced safely); each has a comment saying why.')
+    check('... the Zotero citation left as it was, and the entry nothing cites',
+          [summary[4], summary[5]], ['Left as they were: 1 Zotero citation already in the document.',
+                                     'Reference list: 8 entries; 1 entry is cited nowhere: Uncited U, 2001. Never cited anywhere. Nowhere Press.'])
+    ps_o = paragraphs(minidom.parseString(zo.read('word/document.xml')))
+    check('comments change no text: rejecting the page\'s changes still gives the original',
+          all(visible_text(ps_, reject_author='Zoterify') == visible_text(po) for po, ps_ in zip(ps_o, ps)), True)
+    first = minidom.parseString(zipfile.ZipFile(io.BytesIO(first_save)).read('word/document.xml'))
+    check('and the same Zotero fields are written as without comments',
+          sorted(f['text'] for f in zotero_fields(doc_s) if not f['deleted']), sorted(f['text'] for f in zotero_fields(first) if not f['deleted']))
+    check('no comment mark is inside a tracked change', all(local(r.parentNode.parentNode) == 'p' for r in doc_s.getElementsByTagNameNS(W, 'commentReference')), True)
+
+
+async def check_new_comments_part(page):
+    body = ('<w:p><w:r><w:t xml:space="preserve">A title</w:t></w:r></w:p>'
+            '<w:p><w:r><w:t xml:space="preserve">Nobody cited (Nobody, 1999) here.</w:t></w:r>'
+            '<w:r><w:footnoteReference w:id="1"/></w:r><w:r><w:t xml:space="preserve"> And on.</w:t></w:r></w:p>')
+    notes = ('<w:footnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:footnote>'
+             '<w:footnote w:type="continuationSeparator" w:id="0"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:footnote>'
+             '<w:footnote w:id="1"><w:p><w:r><w:footnoteRef/></w:r><w:r><w:t xml:space="preserve"> A note (Nobody, 2000).</w:t></w:r></w:p></w:footnote>')
+    parts = {
+        '[Content_Types].xml': '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+                               '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>'
+                               '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+                               '<Override PartName="/word/footnotes.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml"/></Types>',
+        '_rels/.rels': '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                       '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>',
+        'word/document.xml': f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n<w:document xmlns:w="{W}"><w:body>{body}<w:sectPr/></w:body></w:document>',
+        'word/_rels/document.xml.rels': '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                                        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" Target="footnotes.xml"/></Relationships>',
+        'word/footnotes.xml': f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n<w:footnotes xmlns:w="{W}">{notes}</w:footnotes>',
+    }
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:
+        for name, text in parts.items():
+            z.writestr(name, text)
+    b64 = base64.b64encode(buf.getvalue()).decode()
+    out = await page.ev(f"""(async () => {{
+      const pkg = await ZFDocx.open(Uint8Array.from(atob('{b64}'), (c) => c.charCodeAt(0)), JSZip);
+      const a = ZFDocx.analyse(pkg, {{}});
+      const group = (para) => {{ const text = a.paras[para].text, start = text.indexOf('('), end = text.indexOf(')') + 1;
+        return {{ para, start, end, authorStart: start, text: text.slice(start, end), refs: [{{ label: 'Nobody', key: 'k' + para }}], items: [null], problem: null }}; }};
+      const inNote = a.paras.findIndex((p) => p.story === 'footnote' && p.text.includes('(Nobody, 2000)'));
+      const r = await ZFDocx.writeCitations(pkg, a, [group(1), group(inNote)], {{ track: true, keepTracking: false, author: 'Test Person',
+        commentText: () => ['First line.', 'Second line.'], summaryText: () => ['A summary.'] }});
+      const b = await ZFDocx.save(pkg);
+      let s = ''; for (let i = 0; i < b.length; i += 32768) s += String.fromCharCode.apply(null, b.subarray(i, i + 32768));
+      return JSON.stringify({{ bytes: btoa(s), commented: r.skipped.map((k) => k.commented), summarised: r.summarised }});
+    }})()""")
+    res = json.loads(out)
+    z = zipfile.ZipFile(io.BytesIO(base64.b64decode(res['bytes'])))
+    check('a document without comments: both citations are commented and the summary made', [res['commented'], res['summarised']], [[True, True], True])
+    check('comments.xml is made, with people.xml',
+          sorted(set(z.namelist()) - set(parts)), ['word/comments.xml', 'word/people.xml'])
+    check('it has its content type', '<Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/>' in z.read('[Content_Types].xml').decode(), True)
+    check('and its relationship', 'relationships/comments" Target="comments.xml"' in z.read('word/_rels/document.xml.rels').decode(), True)
+    cm = minidom.parseString(z.read('word/comments.xml'))
+    check('the comments, with author, initials and one paragraph per line',
+          [(c.getAttributeNS(W, 'author'), c.getAttributeNS(W, 'initials'), [''.join(t.firstChild.data for t in p.getElementsByTagNameNS(W, 't')) for p in c.getElementsByTagNameNS(W, 'p')])
+           for c in cm.getElementsByTagNameNS(W, 'comment')],
+          [('Test Person', 'TP', ['First line.', 'Second line.']),
+           ('Test Person', 'TP', ['In the footnote marked here, at “(Nobody, 2000)”:', 'First line.', 'Second line.']), ('Test Person', 'TP', ['A summary.'])])
+    doc = minidom.parseString(z.read('word/document.xml'))
+    ps = paragraphs(doc)
+    ids = [c.getAttributeNS(W, 'id') for c in cm.getElementsByTagNameNS(W, 'comment')]
+    check('the citation comment covers the parenthesis; the summary is at the start of the first paragraph',
+          [ranged_text(ps[1], ids[0]), [local(c) for c in el_children(ps[0])][:3]], ['(Nobody, 1999)', ['commentRangeStart', 'commentRangeEnd', 'r']])
+    note_mark = [c for c in el_children(ps[1]) if c.getElementsByTagNameNS(W, 'footnoteReference')]
+    check('the footnote\'s comment is on its mark in the body, none inside the footnote',
+          [[local(c) for c in el_children(ps[1])].index('commentRangeStart', 3) + 1 == el_children(ps[1]).index(note_mark[0]),
+           b'comment' in z.read('word/footnotes.xml')], [True, False])
+    check('and the text is unchanged', [visible_text(p) for p in ps], ['A title', 'Nobody cited (Nobody, 1999) here. And on.'])
+    if os.environ.get('ZF_KEEP'):
+        with open(os.environ['ZF_KEEP'].replace('.docx', '-comments-new.docx'), 'wb') as f:
+            f.write(base64.b64decode(res['bytes']))
 
 
 def check_document(original, saved):

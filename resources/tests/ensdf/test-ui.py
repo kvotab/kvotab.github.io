@@ -289,10 +289,10 @@ async def main():
         check('the chain settings are there in the chart view too', shared, [True, True, True])
         tabs = json.loads(await page.ev("""(async () => { const t = document.querySelector('.nz-tabs');
           const fits = () => [t.scrollWidth <= t.clientWidth, t.scrollHeight <= t.clientHeight];
-          const out = [fits()]; document.getElementById('nz').style.setProperty('--nz-panel-width', '300px');
+          const out = [fits()]; document.getElementById('nz').style.setProperty('--nz-panel-width', '330px');
           await new Promise(r => setTimeout(r, 100)); out.push(fits());
           document.getElementById('nz').style.removeProperty('--nz-panel-width'); return JSON.stringify(out); })()"""))
-        check('the panel tabs fit with no scroll bar of their own, at full width and dragged to 300 px', tabs, [[True, True], [True, True]])
+        check('the panel tabs, six of them, fit with no scroll bar of their own, at full width and dragged to 330 px', tabs, [[True, True], [True, True]])
         for tab, probe in (('levels', "t => t.includes('286 levels') && document.querySelector('#nzPaneLevels [data-on-click=\"nz:levelsAll\"]')"),
                            ('radiation', "t => t.includes('1332.492') && t.includes('1173.228')"),
                            ('datasets', "t => t.includes('ADOPTED LEVELS, GAMMAS') && t.includes('60CO IT DECAY')")):
@@ -314,6 +314,76 @@ async def main():
         check('four downloads: chart CSV, chain SVG, PNG and CSV', names, sorted(['ensdf-260901-ground-states.csv', 'decay-chain-232Th.svg', 'decay-chain-232Th.png', 'decay-chain-232Th.csv']))
         check('none of them empty', all(f[1] > 200 for f in files), True)
         await page.ev("document.querySelector('[data-view=chart]').click(); 'ok'")
+
+        # ---------------------------------------------------------- the inventory
+        invt = json.loads(await page.ev("""(async () => {
+          ENSDFPage.select('U-238'); document.querySelector('[data-view=chain]').click();
+          document.querySelector('[data-tab=inventory]').click();
+          await new Promise(r => setTimeout(r, 600));
+          const pane = document.getElementById('nzPaneInventory');
+          const lvl = (k) => { const r = document.querySelector(`#nzChainSvg .nz-node[data-key="${k}"] .nz-level`); return r && r.getAttribute('visibility') === 'visible' ? +r.getAttribute('height') : 0; };
+          const out = { lines: pane.querySelectorAll('#nzInvChart path').length, rows: pane.querySelectorAll('.nz-inv-table tbody tr').length,
+            root: pane.querySelector('.nz-inv-table input[data-key="92,238,0"]').value, full: lvl('92,238,0'), other: lvl('90,230,0') };
+          const ra = pane.querySelector('input[data-key="88,226,0"]');
+          ra.value = '1'; ra.parentNode.querySelector('select').value = 'g';
+          ra.dispatchEvent(new Event('input', {bubbles: true}));
+          await new Promise(r => setTimeout(r, 800));
+          out.ra = document.querySelector('#nzPaneInventory .nz-inv-now[data-key="88,226,0"]').textContent;
+          const q = document.getElementById('nzInvQty'); q.value = 'total'; q.dispatchEvent(new Event('change', {bubbles: true}));
+          await new Promise(r => setTimeout(r, 400));
+          out.title = document.querySelector('#nzInvChart svg').textContent.includes('Total emitted energy (MeV/s)');
+          /* A point on a line: a vertex of its path, in screen coordinates. */
+          const svg = document.querySelector('#nzInvChart svg');
+          const line = [...svg.querySelectorAll('path')].find((p) => p.getAttribute('stroke-width') === '2' && p.getAttribute('d').length > 200);
+          const pts = line.getAttribute('d').split(/[ML]/).filter(Boolean).map((p) => p.split(',').map(Number));
+          const mid = pts[Math.floor(pts.length * 0.6)];
+          const r = svg.getBoundingClientRect(), vb = svg.viewBox.baseVal;
+          out.box = { x: r.left + mid[0] * r.width / vb.width, y: r.top + mid[1] * r.height / vb.height };
+          return JSON.stringify(out); })()"""))
+        check('the Inventory tab draws the 238U chain over time, the start with 1 Bq', (invt['lines'] >= 20, invt['rows'] >= 25, invt['root']), (True, True, '1'))
+        check('... and fills the start\'s box, alone, as a bucket', (invt['full'] > 39, invt['other']), (True, 0))
+        check('1 g of 226Ra is 3.66E10 Bq at the start (the curie: 1 g of radium)', invt['ra'], lambda t: t.startswith('3.66×10'))
+        check('the chart shows the total emitted energy when asked', invt['title'], True)
+        for x in (invt['box']['x'] - 2, invt['box']['x']):
+            await page.call('Input.dispatchMouseEvent', {'type': 'mouseMoved', 'x': x, 'y': invt['box']['y']}, session=page.sid)
+            await asyncio.sleep(0.15)
+        hov = json.loads(await page.ev("""JSON.stringify({ tip: !document.querySelector('.nz-inv-tip').hidden,
+          ring: !!document.querySelector('#nzChainSvg .nz-hot-ring'),
+          filled: [...document.querySelectorAll('#nzChainSvg .nz-level')].filter(r => r.getAttribute('visibility') === 'visible').length,
+          at: document.getElementById('nzInvAt').textContent })"""))
+        check('pointing at the chart: a tooltip, the nearest member ringed in the chain, its boxes filled to that time', (hov['tip'], hov['ring'], hov['filled'] >= 3, 'the start' not in hov['at']), (True, True, True, True))
+        # The table's values change with the cursor; its columns must not move.
+        cols = "JSON.stringify([...document.querySelectorAll('#nzPaneInventory .nz-inv-table tbody tr')].map(tr => [...tr.children].map(td => Math.round(td.getBoundingClientRect().left)).join(',')).concat([Math.round(document.querySelector('#nzPaneInventory .nz-inv-table').getBoundingClientRect().top)]))"
+        chart = json.loads(await page.ev("(() => { const r = document.querySelector('#nzInvChart svg').getBoundingClientRect(); return JSON.stringify({ x: r.left, y: r.top, w: r.width, h: r.height }); })()"))
+        seen = set()
+        for f in (0.2, 0.45, 0.7, 0.93, None):
+            x, y = (5, 5) if f is None else (chart['x'] + chart['w'] * f, chart['y'] + chart['h'] * 0.45)
+            await page.call('Input.dispatchMouseEvent', {'type': 'mouseMoved', 'x': x, 'y': y}, session=page.sid)
+            await asyncio.sleep(0.15)
+            seen.add(await page.ev(cols))
+        check('... and the table below keeps its columns and its place wherever the cursor is', len(seen), 1)
+        await page.call('Input.dispatchMouseEvent', {'type': 'mouseMoved', 'x': 5, 'y': 5}, session=page.sid)
+        row = json.loads(await page.ev("""(async () => {
+          const tr = document.querySelector('#nzPaneInventory .nz-inv-table tr[data-key="86,222,0"]');
+          tr.dispatchEvent(new PointerEvent('pointerenter'));
+          await new Promise(r => setTimeout(r, 50));
+          const thick = [...document.querySelectorAll('#nzInvChart path')].filter(p => p.getAttribute('stroke-width') === '3.5').length;
+          const ring = document.querySelector('#nzChainSvg .nz-hot-ring');
+          const out = { thick, ringOn: ring ? ring.parentNode.dataset.key : null };
+          tr.dispatchEvent(new PointerEvent('pointerleave'));
+          document.getElementById('nzInvPlay').click();
+          await new Promise(r => setTimeout(r, 7600));
+          out.cursor = ENSDFPage.state.inv.cursor; out.button = document.getElementById('nzInvPlay').textContent;
+          document.querySelector('[data-on-click="nz:invCsv"]').click();
+          await new Promise(r => setTimeout(r, 400));
+          out.csv = window.__saved.filter(f => f[0].startsWith('inventory-')).map(f => f[0]);
+          document.querySelector('[data-tab=nuclide]').click();
+          out.after = [...document.querySelectorAll('#nzChainSvg .nz-level')].filter(r => r.getAttribute('visibility') === 'visible').length;
+          return JSON.stringify(out); })()"""))
+        check('pointing at a row of the table picks out its line and its box', (row['thick'], row['ringOn']), (1, '86,222,0'))
+        check('Run through takes the cursor from start to end', (row['cursor'], row['button']), (240, 'Run through'))
+        check('the values save as CSV', row['csv'], ['inventory-238U-total.csv'])
+        check('leaving the tab puts the boxes back', row['after'], 0)
 
         # ---------------------------------------------------------- the NNDC archive
         nn = json.loads(await page.ev("""(async () => {

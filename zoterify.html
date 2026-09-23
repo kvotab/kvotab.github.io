@@ -90,11 +90,18 @@
             <summary>Track changes</summary>
             <label class="zf-check"><input type="checkbox" id="zfTrack" checked data-on-change="zf:trackChanged"><span>Record every conversion as a tracked change</span></label>
             <div class="zf-row">
-              <label for="zfAuthor">Author of the changes</label>
+              <label for="zfAuthor">Author of the changes and comments</label>
               <input type="text" id="zfAuthor" value="Zoterify" maxlength="80" data-on-change="zf:trackChanged">
             </div>
             <label class="zf-check"><input type="checkbox" id="zfKeepTracking" checked data-on-change="zf:trackChanged"><span>Leave Track Changes switched on in the saved document</span></label>
             <p class="zf-about">Review the changes in Word, then accept them <em>before</em> you press Refresh in Zotero's tab: Zotero expects its citations not to be inside tracked changes.</p>
+          </details>
+
+          <details class="zf-sec" id="sec-comments" open>
+            <summary>Comments in the document</summary>
+            <label class="zf-check"><input type="checkbox" id="zfComment" data-on-change="zf:trackChanged"><span>Comment on each citation left as text, saying why</span></label>
+            <label class="zf-check"><input type="checkbox" id="zfSummaryComment" data-on-change="zf:trackChanged"><span>Add a summary comment at the start of the document</span></label>
+            <p class="zf-about">A citation is left as text when a reference in it was not found in the library or not decided, or when it cannot be replaced safely. The summary says what was converted, what was left and why, and which reference-list entries nothing cites. Comments are by the author named above and are not tracked changes.</p>
           </details>
         </div>
 
@@ -225,6 +232,12 @@
             comment, a picture, a hyperlink or another Word field, a content control, moved text, or a citation
             that is already a Zotero field. Citations in footnotes and endnotes are converted as well; text
             boxes are not read. EndNote and Mendeley citations can be converted to Zotero ones.</p>
+          <p>Under <em>Comments in the document</em>, each citation left as text can get a Word comment over it
+            saying why — which references were not found in the library or not decided, or what stopped the
+            replacement — and the document can get a comment at its start summing up the run: what was found
+            and converted, what was left as text and why, and which reference-list entries nothing cites.
+            Comments are not tracked changes, so rejecting the page’s changes leaves them; delete them in Word
+            with <em>Review → Delete → Delete All Comments in Document</em> if you do not want them.</p>
           <p>Each Zotero citation carries the item’s URI, which is how Zotero finds the item on refresh:
             <code>http://zotero.org/users/…/items/…</code> for your own library,
             <code>http://zotero.org/groups/…/items/…</code> for a group library. It also carries the item’s data
@@ -256,7 +269,7 @@
   <script src="./resources/js/zoterify-parse.js?v=20260922c"></script>
   <script src="./resources/js/zoterify-match.js?v=20260922c"></script>
   <script src="./resources/js/zoterify-zotero.js?v=20260922b"></script>
-  <script src="./resources/js/zoterify-docx.js?v=20260922b"></script>
-  <script src="./resources/js/zoterify-ui.js?v=20260922c"></script>
+  <script src="./resources/js/zoterify-docx.js?v=20260923a"></script>
+  <script src="./resources/js/zoterify-ui.js?v=20260923a"></script>
 </body>
 </html>

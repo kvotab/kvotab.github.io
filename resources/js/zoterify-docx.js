@@ -39,6 +39,11 @@
    hyperlink or cross-reference, a content control, moved text, or an
    existing Zotero citation.
 
+   A citation left as text can get a Word comment saying why (addComment):
+   range marks around its runs and a comment reference after them, with
+   the comment in word/comments.xml. The text itself is not touched, and,
+   as in Word, a comment is not a tracked change.
+
    Needs JSZip, DOMParser and XMLSerializer: the browser, or the page under
    headless Chrome for resources/tests/zoterify/test-docx.py.
    ========================================================================== */
@@ -61,6 +66,7 @@
   const REL_PEOPLE = 'http://schemas.microsoft.com/office/2011/relationships/people';
   const CT_PEOPLE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.people+xml';
   const CT_SETTINGS = 'application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml';
+  const CT_COMMENTS = 'application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml';
   const CSL_SCHEMA = 'https://github.com/citation-style-language/schema/raw/master/csl-citation.json';
 
   // Elements that hold runs and may be kept around a deletion or split.
@@ -900,6 +906,150 @@
   }
 
   /* ---------------------------------------------------------------------
+     Comments
+     --------------------------------------------------------------------- */
+
+  /** An element in the W namespace of a part other than the one the
+      package's prefix was read from. */
+  function wIn(doc, local, attrs) {
+    const pfx = doc.documentElement.lookupPrefix(W) || 'w';
+    const e = doc.createElementNS(W, `${pfx}:${local}`);
+    for (const [k, v] of Object.entries(attrs || {})) e.setAttributeNS(W, `${pfx}:${k}`, v);
+    return e;
+  }
+
+  /** word/comments.xml, made with its relationship and content type when
+      the document has no comments yet. */
+  async function commentsPart(pkg) {
+    if (!pkg.commentsPath) {
+      let path = resolveTarget(pkg.mainPath, 'comments.xml');
+      for (let n = 2; pkg.zip.file(path) || pkg.parts.has(path); n++) path = resolveTarget(pkg.mainPath, `comments${n}.xml`);
+      pkg.commentsPath = path;
+      const doc = parseXml(`<w:comments xmlns:w="${W}"/>`, path);
+      pkg.parts.set(path, { doc, decl: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>', dirty: true });
+      addRelationship(pkg, `${REL_BASE}comments`, path.slice(dirOf(pkg.mainPath).length));
+      await addOverride(pkg, `/${path}`, CT_COMMENTS);
+    }
+    return readPart(pkg, pkg.commentsPath);
+  }
+
+  /** The comment itself, one paragraph per line; its id. */
+  async function newComment(pkg, lines, who) {
+    const doc = await commentsPart(pkg);
+    const id = String(pkg.nextId++);
+    const initials = who.author.split(/\s+/).filter(Boolean).map((w) => Array.from(w)[0]).join('').toUpperCase().slice(0, 9);
+    const c = wIn(doc, 'comment', { id, author: who.author, date: who.date, initials: initials || 'Z' });
+    lines.forEach((line, k) => {
+      const p = wIn(doc, 'p');
+      if (k === 0) {
+        const mark = wIn(doc, 'r');
+        mark.appendChild(wIn(doc, 'annotationRef'));
+        p.appendChild(mark);
+      }
+      const r = wIn(doc, 'r');
+      const t = wIn(doc, 't');
+      preserve(t);
+      t.textContent = line;
+      r.appendChild(t);
+      p.appendChild(r);
+      c.appendChild(p);
+    });
+    doc.documentElement.appendChild(c);
+    markDirty(pkg, pkg.commentsPath);
+    return id;
+  }
+
+  const coveredRuns = (model, start, end) => model.runs.filter((r) => r.end > r.start && r.start < end && r.end > start);
+
+  /**
+   * A comment on [start, end) of a paragraph. The runs are cut at the
+   * edges so the range covers the citation and no more; a citation in the
+   * result of a field (an EndNote citation left as it was) gets the range
+   * around the whole field, which its program may rewrite. The comment
+   * reference goes after the range, outside any hyperlink or insertion it
+   * ends in.
+   */
+  async function addComment(pkg, model, start, end, lines, who, options) {
+    let runs = coveredRuns(model, start, end);
+    if (!runs.length) return false;
+    let cut = false;
+    for (const at of [end, start]) {
+      const rec = runs.find((r) => r.start < at && at < r.end);
+      if (!rec || rec.fieldChars.length || rec.hasInstr) continue;
+      splitRun(pkg, rec.run, at - rec.start);
+      cut = true;
+    }
+    if (cut) {
+      model = rebuild(model, options);
+      runs = coveredRuns(model, start, end);
+    }
+    let first = runs[0].run;
+    let last = runs[runs.length - 1].run;
+    const outer = (rec) => (rec.stack.length ? rec.stack[0].field : null);
+    const f0 = outer(runs[0]);
+    if (f0 && f0.beginRun && model.p.contains(f0.beginRun)) first = f0.beginRun;
+    const f1 = outer(runs[runs.length - 1]);
+    if (f1 && f1.endRun && model.p.contains(f1.endRun)) last = f1.endRun;
+
+    markAround(pkg, model.p, first, last, await newComment(pkg, lines, who));
+    markDirty(pkg, model.part);
+    return true;
+  }
+
+  /** Range marks from before `first` to after `last`, and the comment
+      reference after them at the level of the paragraph. */
+  function markAround(pkg, p, first, last, id) {
+    const doc = p.ownerDocument;
+    first.parentNode.insertBefore(el(pkg, doc, 'commentRangeStart', { id }), first);
+    const rangeEnd = el(pkg, doc, 'commentRangeEnd', { id });
+    last.parentNode.insertBefore(rangeEnd, last.nextSibling);
+    let top = rangeEnd;
+    while (top.parentNode !== p) top = top.parentNode;
+    const ref = el(pkg, doc, 'r');
+    ref.appendChild(el(pkg, doc, 'commentReference', { id }));
+    p.insertBefore(ref, top.nextSibling);
+  }
+
+  /**
+   * A comment on a citation in a footnote or endnote goes on the note's
+   * mark in the body text instead, its first line saying which citation it
+   * is about. Comments belong to the main document: the Open XML SDK does
+   * not resolve one anchored inside a note, and that is not worth risking
+   * on a document Word must open.
+   */
+  async function addNoteComment(pkg, analysed, model, text, lines, who) {
+    let note = model.p;
+    while (note && !(isW(note, 'footnote') || isW(note, 'endnote'))) note = note.parentNode;
+    if (!note) return false;
+    const noteId = note.getAttributeNS(W, 'id');
+    const main = pkg.parts.get(pkg.mainPath).doc;
+    const mark = Array.from(main.getElementsByTagNameNS(W, `${note.localName}Reference`)).find((r) => r.getAttributeNS(W, 'id') === noteId);
+    const run = mark && mark.parentNode;
+    const body = run && analysed.models.find((m) => m.story === 'body' && m.p.contains(run));
+    if (!body) return false;
+    const where = note.localName === 'footnote' ? 'footnote' : 'endnote';
+    markAround(pkg, body.p, run, run, await newComment(pkg, [`In the ${where} marked here, at “${text}”:`, ...lines], who));
+    markDirty(pkg, pkg.mainPath);
+    return true;
+  }
+
+  /** A comment at the start of the document: on the first body paragraph
+      with text that is not inside a field, before its first run. */
+  async function addOpeningComment(pkg, analysed, lines, who) {
+    const model = analysed.models.find((m) => m.story === 'body' && m.text.trim() && !m.startStack.length) || analysed.models.find((m) => m.story === 'body');
+    if (!model) return false;
+    const p = model.p;
+    const doc = p.ownerDocument;
+    const id = await newComment(pkg, lines, who);
+    const at = kids(p).find((c) => !isW(c, 'pPr')) || null;
+    const ref = el(pkg, doc, 'r');
+    ref.appendChild(el(pkg, doc, 'commentReference', { id }));
+    for (const node of [el(pkg, doc, 'commentRangeStart', { id }), el(pkg, doc, 'commentRangeEnd', { id }), ref]) p.insertBefore(node, at);
+    markDirty(pkg, model.part);
+    return true;
+  }
+
+  /* ---------------------------------------------------------------------
      Writing the citations
      --------------------------------------------------------------------- */
 
@@ -914,32 +1064,55 @@
    * @param {Array<{para: number, start: number, end: number, refs: Array, items: Array, problem: ?string}>} groups
    *        groups as zoterify-parse.js finds them, each with the library item
    *        every reference resolves to (null when it is unresolved)
-   * @param {{track: boolean, keepTracking: boolean, author: string, recode: Object, date?: Date}} options
-   * @returns {Promise<{written: Array, skipped: Array}>}
+   * @param {{track: boolean, keepTracking: boolean, author: string, recode: Object, date?: Date,
+   *          commentText?: function(Object, string, boolean): ?Array<string>,
+   *          summaryText?: function({written: Array, skipped: Array}): ?Array<string>}} options
+   *        commentText, when given, is asked for the lines of a comment on
+   *        each group left as text -- with the reason, and whether it was the
+   *        writer that refused it -- and summaryText for a comment at the
+   *        start of the document
+   * @returns {Promise<{written: Array, skipped: Array<{group, reason, commented}>, summarised: boolean}>}
    */
   async function writeCitations(pkg, analysed, groups, options) {
-    const rev = options.track ? { author: options.author || 'Zoterify', date: xmlDate(options.date || new Date()) } : null;
-    const jobs = [];
-    const skipped = [];
-    for (const g of groups) {
-      if (g.problem) { skipped.push({ group: g, reason: g.problem }); continue; }
-      if (g.items.some((it) => !it)) { skipped.push({ group: g, reason: 'not every reference in it is resolved yet' }); continue; }
-      jobs.push({ group: g, model: g.para, start: g.start, end: g.end });
-    }
+    const who = { author: options.author || 'Zoterify', date: xmlDate(options.date || new Date()) };
+    const rev = options.track ? who : null;
+    const jobs = groups.map((g) => ({
+      group: g, model: g.para, start: g.start, end: g.end,
+      reason: g.problem || (g.items.some((it) => !it) ? 'not every reference in it is resolved yet' : null),
+    }));
     // Later positions first, so earlier offsets in the paragraph hold.
     jobs.sort((a, b) => (a.model - b.model) || (b.start - a.start) || (b.end - a.end));
     const written = [];
+    const skipped = [];
     const opts = Object.assign({}, options, { created: new WeakSet() });
+    let comments = 0;
     for (const job of jobs) {
-      const members = job.group.refs.map((ref, i) => ({ ref, item: job.group.items[i] }));
-      const model = rebuild(analysed.models[job.model], opts);
-      const res = replaceSpan(pkg, model, job.start, job.end, members, rev, opts);
-      if (res.ok) written.push({ group: job.group, deleted: res.deleted, inserted: res.inserted });
-      else skipped.push({ group: job.group, reason: res.reason });
+      let reason = job.reason;
+      if (!reason) {
+        const members = job.group.refs.map((ref, i) => ({ ref, item: job.group.items[i] }));
+        const res = replaceSpan(pkg, rebuild(analysed.models[job.model], opts), job.start, job.end, members, rev, opts);
+        if (res.ok) { written.push({ group: job.group, deleted: res.deleted, inserted: res.inserted }); continue; }
+        reason = res.reason;
+      }
+      const entry = { group: job.group, reason, commented: false };
+      const lines = options.commentText ? options.commentText(job.group, reason, !job.reason) : null;
+      if (lines && lines.length) {
+        const model = analysed.models[job.model];
+        const from = Number.isInteger(job.group.authorStart) ? Math.min(job.group.authorStart, job.start) : job.start;
+        entry.commented = model.story === 'body'
+          ? await addComment(pkg, rebuild(model, opts), from, job.end, lines, who, opts)
+          : await addNoteComment(pkg, analysed, model, model.shown.slice(from, job.end), lines, who);
+        if (entry.commented) comments++;
+      }
+      skipped.push(entry);
     }
-    if (written.length && rev) await addPerson(pkg, rev.author);
+    skipped.sort((a, b) => (a.group.para - b.group.para) || (a.group.start - b.group.start));
+    const result = { written, skipped, summarised: false };
+    const summary = options.summaryText ? options.summaryText(result) : null;
+    if (summary && summary.length) result.summarised = await addOpeningComment(pkg, analysed, summary, who);
+    if ((written.length && rev) || comments || result.summarised) await addPerson(pkg, who.author);
     await setTracking(pkg, !!options.keepTracking);
-    return { written, skipped };
+    return result;
   }
 
   /** The edited package as bytes. Parts that were not touched are copied. */

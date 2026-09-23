@@ -25,7 +25,7 @@
    state for the browser test. Everything else is inside the IIFE and reached
    through the data-on-* actions registered at the bottom.
    ========================================================================== */
-/* global KVOT_ENSDF, KVOT_ENSDF_CORE, KVOT_ENSDF_CHART, KVOT_ENSDF_CHAIN, KVOT_ENSDF_OPEN, registerActions, reportFailure, notifyUser, kvotEscapeHtml, kvotCsvCell, kvotFileTooLarge */
+/* global KVOT_ENSDF, KVOT_ENSDF_CORE, KVOT_ENSDF_CHART, KVOT_ENSDF_CHAIN, KVOT_ENSDF_OPEN, KVOT_ENSDF_INVENTORY, registerActions, reportFailure, notifyUser, kvotEscapeHtml, kvotCsvCell, kvotFileTooLarge */
 (function () {
   'use strict';
 
@@ -35,7 +35,7 @@
   const $ = (id) => document.getElementById(id);
   const esc = (s) => kvotEscapeHtml(s);
   const DATA_DIR = './resources/data/ensdf/';
-  const WORKER_URL = './resources/js/ensdf-worker.js?v=20260923';
+  const WORKER_URL = './resources/js/ensdf-worker.js?v=20260923b';
   const STORAGE_KEY = 'kvot-ensdf-v1';
   const LEVEL_PAGE = 150;
   const LINE_PAGE = 80;
@@ -187,6 +187,8 @@
     tab: 'nuclide',
     colour: 'halflife',
     chainOpt: { minBranch: 0, life: 'iso', overlay: true },
+    inv: { from: 0, end: 0, unit: 'y', qty: 'Bq', xLog: true, yLog: true, for: '', cursor: null },
+    inventories: {},       // chain start key -> {member key: [value, unit]}
     levelsAll: false,
     radSort: 'energy',
     radAll: false,
@@ -200,6 +202,8 @@
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
         colour: state.colour, chainOpt: state.chainOpt, tab: state.tab, view: state.view, panelWidth: state.panelWidth,
         dbKey: state.dbKey, sel: state.sel, radSort: state.radSort,
+        inv: { from: state.inv.from, end: state.inv.end, unit: state.inv.unit, qty: state.inv.qty, xLog: state.inv.xLog, yLog: state.inv.yLog, for: state.inv.for },
+        inventories: Object.fromEntries(Object.entries(state.inventories).slice(-20)),
       }));
     } catch (e) { /* storage unavailable */ }
   }
@@ -214,7 +218,24 @@
         if (typeof s.chainOpt.life === 'string') state.chainOpt.life = s.chainOpt.life;
         if (typeof s.chainOpt.overlay === 'boolean') state.chainOpt.overlay = s.chainOpt.overlay;
       }
-      if (['nuclide', 'levels', 'radiation', 'datasets', 'about'].includes(s.tab)) state.tab = s.tab;
+      if (['nuclide', 'levels', 'radiation', 'datasets', 'inventory', 'about'].includes(s.tab)) state.tab = s.tab;
+      if (s.inv && typeof s.inv === 'object') {
+        if (s.inv.end > 0) state.inv.end = s.inv.end;
+        if (s.inv.from > 0) state.inv.from = s.inv.from;
+        if (['s', 'min', 'h', 'd', 'y'].includes(s.inv.unit)) state.inv.unit = s.inv.unit;
+        if (typeof s.inv.qty === 'string') state.inv.qty = s.inv.qty;
+        if (typeof s.inv.xLog === 'boolean') state.inv.xLog = s.inv.xLog;
+        if (typeof s.inv.yLog === 'boolean') state.inv.yLog = s.inv.yLog;
+        if (typeof s.inv.for === 'string') state.inv.for = s.inv.for;
+      }
+      if (s.inventories && typeof s.inventories === 'object') {
+        for (const [k, v] of Object.entries(s.inventories)) {
+          if (!/^\d+,\d+,\d+$/.test(k) || !v || typeof v !== 'object') continue;
+          const clean = {};
+          for (const [mk, e] of Object.entries(v)) if (/^\d+,\d+,\d+$/.test(mk) && Array.isArray(e) && Number.isFinite(+e[0]) && ['Bq', 'mol', 'g'].includes(e[1])) clean[mk] = [+e[0], e[1]];
+          state.inventories[k] = clean;
+        }
+      }
       if (['chart', 'chain'].includes(s.view)) state.view = s.view;
       if (Number.isFinite(s.panelWidth)) state.panelWidth = s.panelWidth;
       if (typeof s.dbKey === 'string') state.dbKey = s.dbKey;
@@ -557,6 +578,8 @@
     else if (state.tab === 'levels') renderLevels();
     else if (state.tab === 'radiation') renderRadiation();
     else if (state.tab === 'datasets') renderDatasets();
+    else if (state.tab === 'inventory') renderInventory();
+    if (state.tab !== 'inventory') { invStop(); invBuckets(); }
   }
 
   function welcomeHtml() {
@@ -645,6 +668,7 @@
         <p>${count} from ${nameHtml(z, a, k, nuc)}${ch.truncated ? ' (cut off: the chain is too large to draw whole)' : ''}. Where it ends:</p>
         <ul class="nz-ends">${endList.join('')}</ul>
         <button type="button" class="nz-btn" data-on-click="nz:showChain">Show the decay chain</button>
+        <button type="button" class="nz-btn secondary" data-on-click="nz:showInventory" title="Give the chain an initial inventory and follow it over time">Inventory over time</button>
       </section>`);
     }
 
@@ -878,9 +902,13 @@
     const size = CH.render(svg, ch, {
       selected: sel,
       onPick: (n) => { if (n.kind === 'state') select({ z: n.z, a: n.a, k: n.k }, { from: 'chain' }); },
-      onHover: (n, ev) => { if (n) showTip(chainTip(n), ev.clientX, ev.clientY); else hideTip(); },
+      onHover: (n, ev) => {
+        if (n) showTip(chainTip(n), ev.clientX, ev.clientY); else hideTip();
+        invPointAt(n ? n.key : null);
+      },
     });
     fitChain(size);
+    invBuckets();
     const notes = [];
     if (nuc.s[r.k] && nuc.s[r.k].st) notes.push(`${supHtml(C.plainName(r.z, r.a, r.k, nuc))} is stable: there is no chain to follow.`);
     if (ch.truncated) notes.push('The chain is larger than the drawing allows; it has been cut off.');
@@ -1163,6 +1191,393 @@
   }
 
   /* ---------------------------------------------------------------------
+     The Inventory tab: the chain's inventory over time
+     --------------------------------------------------------------------- */
+  /*
+    An initial amount for any drawn member of the chain -- an activity, an
+    amount in moles or a mass -- and what becomes of the whole inventory:
+    each member's activity, amount, mass or emitted energy over a span of
+    time, worked by ensdf-core's decayAt() on the chain as it is drawn. The
+    half-life setting counts: a member left out decays as fast as it is made,
+    and what it gives off is counted with the member it is carried by
+    (secular equilibrium). The chain drawing fills each box, as a bucket, to
+    its share of the whole at the time under the cursor, and pointing at a
+    line, a box or a row of the table picks out the same member in all three.
+  */
+  const TIME_UNITS = [['s', 1], ['min', 60], ['h', 3600], ['d', 86400], ['y', C.YEAR_S]];
+  const TIME_WORDS = { s: 'seconds', min: 'minutes', h: 'hours', d: 'days', y: 'years' };
+  const QUANTITIES = [
+    { id: 'Bq', label: 'Activity (Bq)', unit: 'Bq' },
+    { id: 'mol', label: 'Amount (mol)', unit: 'mol' },
+    { id: 'g', label: 'Mass (g)', unit: 'g' },
+    { id: 'alpha', label: 'Alpha energy (MeV/s)', unit: 'MeV/s', e: 0 },
+    { id: 'electron', label: 'Electron energy, beta included (MeV/s)', unit: 'MeV/s', e: 1 },
+    { id: 'photon', label: 'Photon energy (MeV/s)', unit: 'MeV/s', e: 2 },
+    { id: 'total', label: 'Total emitted energy (MeV/s)', unit: 'MeV/s', e: 3 },
+    { id: 'W', label: 'Total emitted power (W)', unit: 'W', e: 3, scale: 1.602176634e-13 },
+  ];
+  /* A number for an input: plain, or with an exponent when it is long. */
+  const inputNum = (v) => (!(v > 0) ? '' : v >= 1e5 || v < 1e-3 ? v.toExponential().replace(/\.?0+e/, 'e').replace('e+', 'e') : String(+v.toPrecision(10)));
+  const INV_POINTS = 240;
+  let invChart = null;
+  let inv = null;          // the last calculation: for the chart, the buckets, the table and the files
+  let invFrame = 0;        // requestAnimationFrame id while running through the times
+  let invHotKey = null;    // the member picked out, by node key
+
+  const invRootKey = () => (state.root ? `${state.root.z},${state.root.a},${state.root.k}` : '');
+  const decaysAway = (nd) => !!(nd && nd.kind === 'state' && nd.st && !nd.st.st && nd.st.ts > 0);
+
+  /* The initial inventory of the chain on show, member key -> [value, unit].
+     Its start holds 1 Bq until something is set. */
+  function invEntries() {
+    const k = invRootKey();
+    if (!k) return {};
+    if (!state.inventories[k]) {
+      const r = state.chain && state.chain.root;
+      state.inventories[k] = { [k]: decaysAway(r) ? [1, 'Bq'] : [1, 'mol'] };
+    }
+    return state.inventories[k];
+  }
+
+  /* Atoms in an amount given in Bq, mol or g. A mass takes the mass number for
+     the molar mass, which is right to 0.1 % above A = 20. */
+  function atomsOf(nd, value, unit) {
+    const v = +value;
+    if (!(v > 0) || !Number.isFinite(v)) return 0;
+    if (unit === 'Bq') return decaysAway(nd) ? (v * nd.st.ts) / Math.LN2 : 0;
+    if (unit === 'mol') return v * C.AVOGADRO;
+    if (unit === 'g') return (v / nd.a) * C.AVOGADRO;
+    return 0;
+  }
+
+  /* The span a new chain opens with, as rdc.html chooses it: a power of ten
+     past ten half-lives of its start, in the largest unit it is one of. */
+  function defaultSpan() {
+    const ts = state.chain && state.chain.root.st && state.chain.root.st.ts;
+    if (!(ts > 0)) return { end: 1, unit: 'y' };
+    for (let i = TIME_UNITS.length - 1; i >= 0; i--) {
+      const v = ts / TIME_UNITS[i][1];
+      if (v >= 1 || i === 0) return { end: Math.pow(10, 1 + Math.ceil(Math.log10(v))), unit: TIME_UNITS[i][0] };
+    }
+    return { end: 1, unit: 'y' };
+  }
+
+  function computeInventory() {
+    inv = null;
+    const ch = state.chain;
+    if (!ch || !state.idx) return;
+    const rk = invRootKey();
+    if (state.inv.for !== rk) {
+      const d = defaultSpan();
+      state.inv.end = d.end;
+      state.inv.from = 0;
+      state.inv.unit = d.unit;
+      state.inv.for = rk;
+      state.inv.cursor = null;
+    }
+    const sys = C.decaySystem(ch);
+    const entries = invEntries();
+    const n0 = new Float64Array(sys.members.length);
+    let any = false;
+    sys.members.forEach((nd, i) => {
+      const e = entries[nd.key];
+      if (!e || nd.kind !== 'state') return;
+      n0[i] = atomsOf(nd, e[0], e[1]);
+      if (n0[i] > 0) any = true;
+    });
+    const unit = TIME_UNITS.find((u) => u[0] === state.inv.unit) || TIME_UNITS[4];
+    const end = (state.inv.end > 0 ? state.inv.end : 1) * unit[1];
+    /* A log axis starts where it is told to, or six decades before the end. */
+    let from = state.inv.from > 0 ? state.inv.from * unit[1] : end * 1e-6;
+    if (!(from < end)) from = end * 1e-6;
+    const times = [0];
+    if (state.inv.xLog) for (let i = 0; i < INV_POINTS; i++) times.push(from * Math.pow(end / from, i / (INV_POINTS - 1)));
+    else for (let i = 1; i <= INV_POINTS; i++) times.push((end * i) / INV_POINTS);
+    const res = any ? C.decayAt(sys, n0, times) : null;
+    const q = QUANTITIES.find((x) => x.id === state.inv.qty) || QUANTITIES[0];
+    const em = sys.members.map((nd) => (nd.kind === 'state' && nd.st && !nd.st.st ? C.chainEmission(state.idx, nd) : null));
+    const theme = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+    /* Every drawn member keeps its colour whatever is shown: its place in the chain. */
+    const series = [];
+    let slot = 0;
+    sys.members.forEach((nd, i) => {
+      if (nd.kind === 'fission') return;
+      const values = new Float64Array(times.length);
+      let peak = 0;
+      const e = em[i];
+      const per = e ? (q.e === 3 ? e.v[0] + e.v[1] + e.v[2] : e.v[q.e]) : 0;
+      if (res) {
+        for (let t = 0; t < times.length; t++) {
+          const A = res.A[t][i], N = res.N[t][i];
+          let v;
+          if (q.id === 'Bq') v = A;
+          else if (q.id === 'mol') v = N / C.AVOGADRO;
+          else if (q.id === 'g') v = (N / C.AVOGADRO) * nd.a;
+          else v = A * per * (q.scale || 1);
+          values[t] = v;
+          if (v > peak) peak = v;
+        }
+      }
+      const style = KVOT_ENSDF_INVENTORY.lineStyle(slot++, theme);
+      series.push({ i, nd, key: nd.key, label: CH.nodeName(nd), values, peak, color: style.color, dash: style.dash });
+    });
+    const shown = series.filter((x) => x.peak > 0);
+    const total = new Float64Array(times.length);
+    for (const x of shown) for (let t = 0; t < times.length; t++) total[t] += x.values[t];
+    inv = { sys, times, res, q, unit, series, shown, total, em, any, root: rk };
+  }
+
+  function renderInventory() {
+    const pane = $('nzPaneInventory');
+    invStop();
+    if (!state.chain || !state.idx || !state.root) {
+      pane.innerHTML = '<p class="nz-dim">Choose a radionuclide on the chart: its decay chain can be given an initial inventory here, and followed over time.</p>';
+      invBuckets();
+      return;
+    }
+    const ch = state.chain;
+    const r = ch.root;
+    if (r.st && r.st.st) {
+      pane.innerHTML = `<p class="nz-dim">${nameHtml(r.z, r.a, r.k, r.nuc)} is stable: it has no decay chain to follow.</p>`;
+      invBuckets();
+      return;
+    }
+    computeInventory();
+    const unitOpts = TIME_UNITS.map(([u]) => `<option value="${u}"${u === state.inv.unit ? ' selected' : ''}>${TIME_WORDS[u]}</option>`).join('');
+    const qOpts = QUANTITIES.map((x) => `<option value="${x.id}"${x.id === inv.q.id ? ' selected' : ''}>${esc(x.label)}</option>`).join('');
+    const axisBtn = (axis, on) => `<button type="button" class="nz-btn secondary small" data-on-click="nz:invAxis" data-axis="${axis}" aria-pressed="${on}" title="Logarithmic or linear ${axis === 'x' ? 'time' : 'value'} axis">${axis === 'x' ? 'time' : 'value'}: ${on ? 'log' : 'linear'}</button>`;
+    const rows = chainRows(ch).filter((n) => n.kind === 'state').map((n) => {
+      const e = invEntries()[n.key];
+      const units = decaysAway(n) ? ['Bq', 'mol', 'g'] : ['mol', 'g'];
+      const u = e && units.includes(e[1]) ? e[1] : units[0];
+      const opts = units.map((x) => `<option value="${x}"${x === u ? ' selected' : ''}>${x}</option>`).join('');
+      const plain = C.asciiText(CH.nodeName(n));
+      return `<tr data-key="${n.key}" class="${n === ch.root ? 'current' : ''}">
+        <td class="nz-inv-swcell"><span class="nz-inv-sw" data-key="${n.key}"></span></td>
+        <td class="text">${nucLink(n.z, n.a, n.k)}</td>
+        <td class="text nz-dim">${supHtml(n.st.st ? 'stable' : C.halfLifeShort(n.st) || '?')}</td>
+        <td class="text nz-inv-in"><input type="number" min="0" step="any" inputmode="decimal" value="${e && e[0] ? esc(inputNum(e[0])) : ''}" placeholder="0" data-on-input="nz:invValue" data-key="${n.key}" aria-label="Initial amount of ${esc(plain)}"><select data-on-change="nz:invValueUnit" data-key="${n.key}" aria-label="Unit of the initial amount of ${esc(plain)}">${opts}</select></td>
+        <td class="nz-inv-now" data-key="${n.key}"></td>
+      </tr>`;
+    }).join('');
+    pane.innerHTML = `
+      <div class="nz-pane-head"><h3>Inventory of the ${nameHtml(r.z, r.a, r.k, r.nuc)} chain</h3></div>
+      <p class="nz-dim nz-inv-lead">Give any member an initial amount below, and follow each one over time. Point at a line, a box in the chain or a row to find a member in all three; the boxes fill to their share at the time under the cursor.</p>
+      <div class="nz-inv-bar">
+        <label class="nz-field">${state.inv.xLog ? 'From' : 'Up to'}${state.inv.xLog ? ` <input type="text" inputmode="decimal" id="nzInvFrom" value="${esc(inputNum(state.inv.from > 0 ? state.inv.from : state.inv.end * 1e-6))}" data-on-change="nz:invFrom" aria-label="Start of the time span"> to` : ''} <input type="text" inputmode="decimal" id="nzInvEnd" value="${esc(inputNum(state.inv.end))}" data-on-change="nz:invEnd" aria-label="End of the time span"> <select id="nzInvUnit" data-on-change="nz:invUnit" aria-label="Unit of the time span">${unitOpts}</select></label>
+        <label class="nz-field">Show <select id="nzInvQty" data-on-change="nz:invQty">${qOpts}</select></label>
+      </div>
+      <div class="nz-inv-tools">
+        <button type="button" class="nz-btn small" id="nzInvPlay" data-on-click="nz:invPlay" title="Move the cursor from the start to the end, filling the boxes as it goes">Run through</button>
+        ${axisBtn('x', state.inv.xLog)} ${axisBtn('y', state.inv.yLog)}
+        <span class="nz-dialog-gap"></span>
+        <button type="button" class="nz-btn secondary small" data-on-click="nz:invCsv" title="The values drawn, as a table">CSV</button>
+        <button type="button" class="nz-btn secondary small" data-on-click="nz:invSvg">SVG</button>
+        <button type="button" class="nz-btn secondary small" data-on-click="nz:invPng">PNG</button>
+      </div>
+      <div class="nz-inv-chart" id="nzInvChart"></div>
+      <p class="nz-inv-at" id="nzInvAt"></p>
+      <div class="nz-table-wrap"><table class="nz-table nz-inv-table">
+        <colgroup><col class="nz-inv-c-sw"><col><col class="nz-inv-c-life"><col class="nz-inv-c-in"><col class="nz-inv-c-now"></colgroup>
+        <thead><tr><th></th><th class="text">Member</th><th class="text">T½</th><th class="text">Initial amount</th><th>${esc(inv.q.unit)}</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+      <p><button type="button" class="nz-btn secondary small" data-on-click="nz:invClear">Clear every amount</button></p>
+      <div id="nzInvNotes"></div>`;
+    for (const sw of pane.querySelectorAll('.nz-inv-sw')) {
+      const x = inv.series.find((y) => y.key === sw.dataset.key);
+      if (x && x.peak > 0) { sw.style.borderTopColor = x.color; sw.style.borderTopStyle = x.dash ? 'dashed' : 'solid'; } else sw.classList.add('none');
+    }
+    for (const tr of pane.querySelectorAll('.nz-inv-table tbody tr')) {
+      tr.addEventListener('pointerenter', () => invPointAt(tr.dataset.key));
+      tr.addEventListener('pointerleave', () => invPointAt(null));
+    }
+    $('nzInvNotes').innerHTML = invNotes();
+    invChart = KVOT_ENSDF_INVENTORY.createInventoryChart($('nzInvChart'), { onHover: invHover, onPick: invPick });
+    drawInvChart();
+  }
+
+  function drawInvChart() {
+    if (!invChart || !inv) return;
+    if (!inv.any) {
+      invChart.render(null, 'No initial inventory: give a member an amount below.');
+    } else if (!inv.shown.length) {
+      invChart.render(null, `Nothing in this chain has ${inv.q.id === 'Bq' ? 'an activity' : 'emitted energy'} to draw.`);
+    } else {
+      invChart.render({
+        times: inv.times, tScale: { factor: inv.unit[1], unit: inv.unit[0] },
+        series: inv.shown.map((x) => ({ label: x.label, values: x.values, color: x.color, dash: x.dash })),
+        total: inv.shown.length > 1 ? inv.total : null, yTitle: inv.q.label, xLog: state.inv.xLog, yLog: state.inv.yLog,
+      });
+      if (state.inv.cursor !== null && state.inv.cursor < inv.times.length) invChart.setCursor(state.inv.cursor);
+    }
+    invShowTime(state.inv.cursor ?? 0);
+  }
+
+  /* The notes under the table: how the energies are got, what is carried, what is not known. */
+  function invNotes() {
+    const notes = [];
+    const energy = inv.q.e !== undefined;
+    const carried = inv.sys.members.filter((nd) => nd.carried && nd.carried.length && nd.st && !nd.st.st);
+    if (carried.length) {
+      const list = carried.slice(0, 8).map((nd) => `${nameHtml(nd.z, nd.a, nd.k, nd.nuc)} (${nd.carried.slice(0, 5).map((c) => supHtml(C.plainName(c.z, c.a, c.k, state.idx.get(c.z, c.a)))).join(', ')}${nd.carried.length > 5 ? ', …' : ''})`);
+      notes.push(`Members left out by the half-life setting decay as fast as they are made, in secular equilibrium with the member that feeds them: what they give off is counted with it — ${list.join('; ')}${carried.length > 8 ? '; …' : ''}. Their own activity is not drawn.`);
+    }
+    if (energy) {
+      notes.push('Energy per decay is worked out from the ENSDF decay data sets: alpha particles with the recoil of the nucleus, the mean beta and positron energies, gamma rays, annihilation radiation, and the de-excitation energy the gamma rays do not carry (conversion electrons, with the X-rays and Auger electrons that follow them). X-rays and Auger electrons after electron capture, which ENSDF does not list, are estimated from the K-shell binding energy. Neutrinos and fission fragments are not counted.');
+      const unknown = inv.sys.members.filter((nd, i) => decaysAway(nd) && inv.em[i] && !inv.em[i].known);
+      const est = inv.sys.members.filter((nd, i) => decaysAway(nd) && inv.em[i] && inv.em[i].estimated);
+      if (unknown.length) notes.push(`Not all of what these give off is known — the database has no decay data set for some of their decays, or no percentage: ${unknown.map((nd) => nameHtml(nd.z, nd.a, nd.k, nd.nuc)).join(', ')}.`);
+      if (est.length) notes.push(`Estimated in part (from a Q-value, or from gamma intensities the data set gives only relative to each other): ${est.map((nd) => nameHtml(nd.z, nd.a, nd.k, nd.nuc)).join(', ')}.`);
+    }
+    if (inv.q.id === 'g' || Object.values(invEntries()).some((e) => e[1] === 'g')) notes.push('A mass is converted with the mass number as the molar mass (g/mol), which is right to within 0.1 % above A = 20.');
+    const noLife = inv.sys.members.filter((nd) => nd.kind === 'state' && nd.st && !nd.st.st && !(nd.st.ts > 0));
+    if (noLife.length) notes.push(`With no half-life in the database these are held, not decayed: ${noLife.map((nd) => nameHtml(nd.z, nd.a, nd.k, nd.nuc)).join(', ')}.`);
+    notes.push('Worked by the Chebyshev rational approximation of the matrix exponential (CRAM, order 16), exact for any span; values more than twelve decades below the largest are not drawn.');
+    return `<ul class="nz-note">${notes.map((n) => `<li>${n}</li>`).join('')}</ul>`;
+  }
+
+  /* Shares of the whole at time index t, by member key. */
+  function invLevels(t) {
+    if (!inv || !inv.any || !inv.shown.length) return null;
+    const tot = inv.total[t];
+    const out = new Map();
+    for (const x of inv.shown) out.set(x.key, tot > 0 ? x.values[t] / tot : 0);
+    return out;
+  }
+
+  /* The boxes of the chain drawing as buckets, while the Inventory tab is open. */
+  function invBuckets(t) {
+    const svg = $('nzChainSvg');
+    if (!svg || !svg.firstChild) return;
+    const on = state.tab === 'inventory' && inv && inv.root === invRootKey();
+    CH.setLevels(svg, on ? invLevels(t ?? state.inv.cursor ?? 0) : null);
+    CH.setHot(svg, on ? invHotKey : null);
+  }
+
+  /* The time shown: the table's last column and the boxes. */
+  function invShowTime(t) {
+    if (!inv) return;
+    const pane = $('nzPaneInventory');
+    const at = $('nzInvAt');
+    if (at) at.innerHTML = t ? `At ${supHtml(KVOT_ENSDF_INVENTORY.numText(inv.times[t] / inv.unit[1]))} ${esc(TIME_WORDS[inv.unit[0]])}:` : 'At the start:';
+    for (const td of pane.querySelectorAll('.nz-inv-now')) {
+      const x = inv.series.find((y) => y.key === td.dataset.key);
+      td.innerHTML = x && inv.any ? supHtml(KVOT_ENSDF_INVENTORY.numText(x.values[t])) : '';
+    }
+    invBuckets(t);
+  }
+
+  /* A member picked out from anywhere: its line, its box and its row. */
+  function invPointAt(key) {
+    if (state.tab !== 'inventory' || !inv) return;
+    invHotKey = key;
+    if (invChart) invChart.setHot(key ? inv.shown.findIndex((x) => x.key === key) : null);
+    const svg = $('nzChainSvg');
+    if (svg && svg.firstChild) CH.setHot(svg, key);
+    for (const tr of $('nzPaneInventory').querySelectorAll('.nz-inv-table tbody tr')) tr.classList.toggle('hot', tr.dataset.key === key);
+  }
+
+  function invHover(k, t) {
+    const key = k === null || k === undefined ? null : inv.shown[k].key;
+    invHotKey = key;
+    const svg = $('nzChainSvg');
+    if (svg && svg.firstChild) CH.setHot(svg, key);
+    for (const tr of $('nzPaneInventory').querySelectorAll('.nz-inv-table tbody tr')) tr.classList.toggle('hot', tr.dataset.key === key);
+    invShowTime(t ?? state.inv.cursor ?? 0);
+  }
+
+  function invPick(t) {
+    state.inv.cursor = t;
+    invShowTime(t);
+  }
+
+  /* Run the cursor from the first time to the last, in about seven seconds. */
+  function invPlayToggle() {
+    if (invFrame) { invStop(); return; }
+    if (!inv || !inv.any || !invChart) return;
+    const btn = $('nzInvPlay');
+    if (btn) btn.textContent = 'Stop';
+    const n = inv.times.length;
+    let start = null;
+    const from = state.inv.cursor !== null && state.inv.cursor < n - 1 ? state.inv.cursor : 0;
+    const step = (now) => {
+      if (start === null) start = now - (from / (n - 1)) * 7000;
+      const t = Math.min(n - 1, Math.round(((now - start) / 7000) * (n - 1)));
+      state.inv.cursor = t;
+      invChart.setCursor(t);
+      invShowTime(t);
+      if (t >= n - 1) { invStop(); return; }
+      invFrame = requestAnimationFrame(step);
+    };
+    invFrame = requestAnimationFrame(step);
+  }
+
+  function invStop() {
+    if (invFrame) cancelAnimationFrame(invFrame);
+    invFrame = 0;
+    const btn = $('nzInvPlay');
+    if (btn) btn.textContent = 'Run through';
+  }
+
+  /* A recalculation shortly after the last keystroke, keeping the pane as it is. */
+  let invTimer = 0;
+  function invRecalc() {
+    clearTimeout(invTimer);
+    invTimer = setTimeout(() => {
+      const focus = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.key : null;
+      renderInventory();
+      if (focus) {
+        const input = $('nzPaneInventory').querySelector(`input[data-key="${focus}"]`);
+        if (input) { input.focus(); const v = input.value; input.value = ''; input.value = v; }
+      }
+      saveState();
+    }, 250);
+  }
+
+  function invCsv() {
+    if (!inv || !inv.any) return;
+    const head = [`time (${inv.unit[0]})`].concat(inv.shown.map((x) => `${C.asciiText(x.label)} ${inv.q.label}`), inv.shown.length > 1 ? [`total ${inv.q.label}`] : []);
+    const rows = [
+      ['ENSDF decay chain inventory'].map(cell).join(','),
+      ['release', state.source ? state.source.label : ''].map(cell).join(','),
+      ['chain start', C.name(state.chain.root.z, state.chain.root.a, state.chain.root.k, state.chain.root.nuc).text].map(cell).join(','),
+      ['isomer and half-life setting', lifeOption().text].map(cell).join(','),
+      ['initial amounts', ...Object.entries(invEntries()).filter((e) => +e[1][0] > 0).map(([k, e]) => { const nd = state.chain.nodes.find((n) => n.key === k); return nd ? `${C.asciiText(CH.nodeName(nd))} ${e[0]} ${e[1]}` : ''; })].map(cell).join(','),
+      '',
+      head.map(cell).join(','),
+    ];
+    inv.times.forEach((t, i) => {
+      rows.push([+(t / inv.unit[1]).toPrecision(8)].concat(inv.shown.map((x) => +x.values[i].toPrecision(8)), inv.shown.length > 1 ? [+inv.total[i].toPrecision(8)] : []).map(cell).join(','));
+    });
+    download(`inventory-${C.name(state.chain.root.z, state.chain.root.a, state.chain.root.k, state.chain.root.nuc).key}-${inv.q.id}.csv`, '﻿' + rows.join('\r\n'), 'text/csv');
+  }
+
+  function invSvg() {
+    if (!invChart || !inv || !inv.any) return;
+    download(`inventory-${C.name(state.chain.root.z, state.chain.root.a, state.chain.root.k, state.chain.root.nuc).key}-${inv.q.id}.svg`, invChart.svgFile(), 'image/svg+xml');
+  }
+
+  function invPng() {
+    if (!invChart || !inv || !inv.any) return;
+    const svg = invChart.svg;
+    const w = +svg.getAttribute('width'), h = +svg.getAttribute('height');
+    const img = new Image();
+    const url = URL.createObjectURL(new Blob([invChart.svgFile()], { type: 'image/svg+xml' }));
+    img.onload = () => {
+      const c = document.createElement('canvas');
+      c.width = w * 2; c.height = h * 2;
+      const g = c.getContext('2d');
+      g.scale(2, 2);
+      g.drawImage(img, 0, 0);
+      URL.revokeObjectURL(url);
+      c.toBlob((b) => download(`inventory-${C.name(state.chain.root.z, state.chain.root.a, state.chain.root.k, state.chain.root.nuc).key}-${inv.q.id}.png`, b), 'image/png');
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reportFailure('ensdf:invPng', new Error('the chart could not be turned into an image'), { userMessage: 'The PNG could not be made.' }); };
+    img.src = url;
+  }
+
+  /* ---------------------------------------------------------------------
      Opening files
      --------------------------------------------------------------------- */
   async function openChosen(files) {
@@ -1214,7 +1629,7 @@
     handle.addEventListener('pointermove', (ev) => {
       if (!start) return;
       const max = Math.max(320, window.innerWidth - 360);
-      state.panelWidth = Math.round(Math.max(300, Math.min(max, start.w - (ev.clientX - start.x))));
+      state.panelWidth = Math.round(Math.max(330, Math.min(max, start.w - (ev.clientX - start.x))));
       applyPanelWidth();
     });
     const end = () => { if (start) { start = null; handle.classList.remove('active'); saveState(); } };
@@ -1225,7 +1640,7 @@
       const d = ev.key === 'ArrowLeft' ? 24 : ev.key === 'ArrowRight' ? -24 : 0;
       if (!d) return;
       ev.preventDefault();
-      state.panelWidth = Math.round(Math.max(300, ($('nzPanel').getBoundingClientRect().width) + d));
+      state.panelWidth = Math.round(Math.max(330, ($('nzPanel').getBoundingClientRect().width) + d));
       applyPanelWidth();
       saveState();
     });
@@ -1246,7 +1661,15 @@
       onHover: (n, x, y) => { if (n) showTip(chartTip(n), x, y); else hideTip(); },
     });
     chart.setMode(state.colour);
-    document.documentElement.addEventListener('kvot-theme-change', () => { renderLegend(); drawMiniChain(); if (state.view === 'chain') renderChainView(); });
+    document.documentElement.addEventListener('kvot-theme-change', () => { renderLegend(); drawMiniChain(); if (state.view === 'chain') renderChainView(); if (state.tab === 'inventory') renderInventory(); });
+    /* The inventory chart is drawn to the width of its pane. */
+    let invWidth = 0;
+    new ResizeObserver(() => {
+      const w = $('nzPaneInventory').clientWidth;
+      if (state.tab !== 'inventory' || !w || Math.abs(w - invWidth) < 8) return;
+      invWidth = w;
+      drawInvChart();
+    }).observe($('nzPaneInventory'));
     setupResize();
     setupDrop();
     /* Refit the chain when its container changes width. The scroll box is
@@ -1317,9 +1740,52 @@
     },
     'nz:view': (ev, el) => setView(el.dataset.view),
     'nz:tab': (ev, el) => { state.tab = el.dataset.tab; renderPanel(); saveState(); },
+    'nz:invValue': (ev, el) => {
+      const e = invEntries();
+      const v = el.value.trim();
+      const unit = el.parentNode.querySelector('select').value;
+      if (v === '' || !(+v > 0)) delete e[el.dataset.key]; else e[el.dataset.key] = [+v, unit];
+      invRecalc();
+    },
+    'nz:invValueUnit': (ev, el) => {
+      const e = invEntries();
+      const input = el.parentNode.querySelector('input');
+      if (+input.value > 0) e[el.dataset.key] = [+input.value, el.value];
+      invRecalc();
+    },
+    'nz:invEnd': (ev, el) => { const v = +el.value.replace(',', '.'); if (v > 0) { state.inv.end = v; state.inv.cursor = null; } renderInventory(); saveState(); },
+    'nz:invFrom': (ev, el) => { const v = +el.value.replace(',', '.'); if (v > 0) { state.inv.from = v; state.inv.cursor = null; } renderInventory(); saveState(); },
+    'nz:invUnit': (ev, el) => {
+      /* The same span in the new unit. */
+      const f0 = (TIME_UNITS.find((u) => u[0] === state.inv.unit) || TIME_UNITS[4])[1], f1 = (TIME_UNITS.find((u) => u[0] === el.value) || TIME_UNITS[4])[1];
+      state.inv.end = +(state.inv.end * f0 / f1).toPrecision(6);
+      if (state.inv.from > 0) state.inv.from = +(state.inv.from * f0 / f1).toPrecision(6);
+      state.inv.unit = el.value;
+      state.inv.cursor = null;
+      renderInventory();
+      saveState();
+    },
+    'nz:invQty': (ev, el) => { state.inv.qty = el.value; renderInventory(); saveState(); },
+    'nz:invAxis': (ev, el) => {
+      if (el.dataset.axis === 'x') { state.inv.xLog = !state.inv.xLog; state.inv.cursor = null; } else state.inv.yLog = !state.inv.yLog;
+      renderInventory();
+      saveState();
+    },
+    'nz:invPlay': () => invPlayToggle(),
+    'nz:invClear': () => { state.inventories[invRootKey()] = {}; state.inv.cursor = null; renderInventory(); saveState(); },
+    'nz:invCsv': () => invCsv(),
+    'nz:invSvg': () => invSvg(),
+    'nz:invPng': () => invPng(),
     'nz:go': (ev, el) => { ev.preventDefault(); select({ z: +el.dataset.z, a: +el.dataset.a, k: +el.dataset.k }, { from: state.view === 'chain' ? 'chain' : 'panel' }); },
     'nz:state': (ev, el) => { ev.preventDefault(); if (state.sel) select({ z: state.sel.z, a: state.sel.a, k: +el.dataset.k }, { from: 'panel' }); },
     'nz:showChain': () => { if (state.sel) { state.root = { ...state.sel }; computeChain(); } setView('chain'); },
+    'nz:showInventory': () => {
+      if (state.sel) { state.root = { ...state.sel }; computeChain(); }
+      state.tab = 'inventory';
+      setView('chain');
+      renderPanel();
+      saveState();
+    },
     'nz:chainState': (ev, el) => { if (state.root) select({ z: state.root.z, a: state.root.a, k: +el.value }, { from: 'panel' }); },
     'nz:minBranch': (ev, el) => { state.chainOpt.minBranch = +el.value; computeChain(); renderChainView(); renderPanel(); saveState(); },
     'nz:minLife': (ev, el) => { state.chainOpt.life = el.value; computeChain(); renderChainView(); renderPanel(); saveState(); },

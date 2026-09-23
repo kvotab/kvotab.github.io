@@ -49,7 +49,7 @@
     lastSaved: null,
     busy: false,
     settings: {
-      author: 'Zoterify', track: true, keepTracking: true, recodeOther: true, recodeZotero: false,
+      author: 'Zoterify', track: true, keepTracking: true, recodeOther: true, recodeZotero: false, comment: false, summary: false,
       level: 1, yearTolerance: 1, tab: 'review', sideWidth: null, sections: {},
     },
   };
@@ -67,7 +67,7 @@
       if (!s || typeof s !== 'object') return;
       const t = state.settings;
       if (typeof s.author === 'string' && s.author.trim()) t.author = s.author.slice(0, 80);
-      for (const k of ['track', 'keepTracking', 'recodeOther', 'recodeZotero']) if (typeof s[k] === 'boolean') t[k] = s[k];
+      for (const k of ['track', 'keepTracking', 'recodeOther', 'recodeZotero', 'comment', 'summary']) if (typeof s[k] === 'boolean') t[k] = s[k];
       if ([0, 1, 2].includes(s.level)) t.level = s.level;
       if ([0, 1, 2].includes(s.yearTolerance)) t.yearTolerance = s.yearTolerance;
       if (['review', 'linked', 'all', 'refs', 'help'].includes(s.tab)) t.tab = s.tab;
@@ -83,9 +83,11 @@
     $('zfKeepTracking').checked = t.keepTracking;
     $('zfRecodeOther').checked = t.recodeOther;
     $('zfRecodeZotero').checked = t.recodeZotero;
+    $('zfComment').checked = t.comment;
+    $('zfSummaryComment').checked = t.summary;
     $('zfLevel').value = t.level;
     $('zfYearTolerance').value = t.yearTolerance;
-    $('zfAuthor').disabled = !t.track;
+    $('zfAuthor').disabled = !t.track && !t.comment && !t.summary;
   }
 
   function readControls() {
@@ -95,9 +97,11 @@
     t.keepTracking = $('zfKeepTracking').checked;
     t.recodeOther = $('zfRecodeOther').checked;
     t.recodeZotero = $('zfRecodeZotero').checked;
+    t.comment = $('zfComment').checked;
+    t.summary = $('zfSummaryComment').checked;
     t.level = Number($('zfLevel').value);
     t.yearTolerance = Number($('zfYearTolerance').value);
-    $('zfAuthor').disabled = !t.track;
+    $('zfAuthor').disabled = !t.track && !t.comment && !t.summary;
   }
 
   const recodeOptions = () => ({
@@ -610,8 +614,10 @@
     const parts = [`<div class="zf-report${rep.skipped.length ? ' warn' : ''}"><h4>Saved ${esc(rep.fileName)}</h4>`
       + `${plural(n, 'reference')} written as ${plural(rep.written.length, 'Zotero citation')}${rep.track ? `, each a tracked change by “${esc(rep.author)}”` : ''}.`
       + ` Track Changes is ${rep.keepTracking ? 'on' : 'off'} in the saved document.`];
+    if (rep.summarised) parts.push(' A comment at the start of the document says what was done and what was not.');
     if (rep.skipped.length) {
-      parts.push(`<br>${plural(rep.skipped.length, 'place')} left as text:<ul>`);
+      const commented = rep.skipped.filter((s) => s.commented).length;
+      parts.push(`<br>${plural(rep.skipped.length, 'place')} left as text${commented ? `, ${commented === rep.skipped.length ? 'each' : commented} with a Word comment saying why` : ''}:<ul>`);
       for (const s of rep.skipped.slice(0, 60)) {
         parts.push(`<li><b>${esc(clip(s.group.text, 120))}</b> <span class="zf-where">${esc(state.run.labels[s.group.para])}</span>: ${esc(s.reason)}.</li>`);
       }
@@ -704,16 +710,102 @@
   /* ---------------------------------------------------------------------
      Saving and the report
      --------------------------------------------------------------------- */
+  // Why a reference is left unresolved, for the comment on its citation.
+  const UNRESOLVED = {
+    none: 'not found in the Zotero library',
+    dismissed: 'none of the items offered was the right one',
+    unlinked: 'its match was unlinked',
+    ambiguous: 'several items fit, and none was chosen',
+    year: 'an item from another year fits, but it was not confirmed',
+    possible: 'only loose matches were found, and none was chosen',
+  };
+  const NOT_FOUND = new Set(['none', 'dismissed', 'unlinked']);
+
+  /** The lines of the comment on a citation left as text. */
+  function commentLines(group, reason, refused) {
+    if (refused) return [`Zoterify matched this citation to the Zotero library but could not convert it: ${reason}.`];
+    if (group.problem) return [`Zoterify read this as an in-text citation but left it as text: ${group.problem}.`];
+    const run = state.run;
+    const lines = ['Zoterify read this as an in-text citation but left it as text.'];
+    const seen = new Set();
+    let resolved = 0;
+    group.refs.forEach((ref, k) => {
+      if (group.items[k]) { resolved++; return; }
+      if (seen.has(ref.key)) return;
+      seen.add(ref.key);
+      const i = run.indexOf.get(ref);
+      const note = run.results[i].note;
+      lines.push(`${ref.label}: ${UNRESOLVED[statusOf(i)] || 'not resolved'}.${note ? ` ${note}` : ''}`);
+    });
+    if (resolved) {
+      lines.push(`${resolved === 1 ? 'The other reference in it was' : `The other ${resolved} references in it were`} matched; a citation is converted only when all its references are.`);
+    }
+    return lines;
+  }
+
+  /** Why each place was left as text, in words, counted. */
+  function leftAsText(skipped) {
+    const run = state.run;
+    const count = { missing: 0, undecided: 0, problem: 0, refused: 0 };
+    for (const s of skipped) {
+      const g = s.group;
+      if (g.problem) count.problem++;
+      else if (g.items.every(Boolean)) count.refused++;
+      else if (g.refs.some((ref, k) => !g.items[k] && NOT_FOUND.has(statusOf(run.indexOf.get(ref))))) count.missing++;
+      else count.undecided++;
+    }
+    return [
+      [count.missing, 'with a reference not found in the library'], [count.undecided, 'with a reference not yet decided'],
+      [count.refused, 'that could not be replaced safely'], [count.problem, 'with a year that has no author'],
+    ].filter(([n]) => n).map(([n, what]) => `${n.toLocaleString('en')} ${what}`).join(', ');
+  }
+
+  /** The lines of the comment at the start of the document. */
+  function summaryLines(result) {
+    const run = state.run;
+    const s = state.settings;
+    const d = new Date();
+    const two = (n) => String(n).padStart(2, '0');
+    const when = `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}`;
+    const scope = $('zfScope').selectedOptions[0];
+    const lines = [
+      `Zoterify, ${when}: this document was matched against ${state.db.name} (${scope ? scope.textContent : 'all libraries'}), with ${LEVEL_NAMES[s.level]} matching.`,
+      `Found: ${plural(run.parsed.refs.length, 'reference')} in ${plural(run.parsed.groups.length, 'in-text citation')}.`,
+    ];
+    const n = result.written.reduce((k, w) => k + w.group.refs.length, 0);
+    lines.push(`Converted: ${plural(n, 'reference')} in ${plural(result.written.length, 'Zotero citation')}${s.track ? `, each a tracked change by ${s.author}` : ''}.`);
+    if (result.skipped.length) {
+      lines.push(`Left as text: ${plural(result.skipped.length, 'citation')} (${leftAsText(result.skipped)})${s.comment ? '; each has a comment saying why' : ''}.`);
+    } else {
+      lines.push('Left as text: none.');
+    }
+    const kept = run.options.recode.zotero ? 0 : run.inventory.existingZotero.length;
+    if (kept) lines.push(`Left as they were: ${plural(kept, 'Zotero citation')} already in the document.`);
+    const list = run.parsed.list;
+    if (!list) lines.push('No reference list was found, so none was checked.');
+    else if (!run.uncited.length) lines.push(`Reference list: ${plural(list.entries.length, 'entry', 'entries')}, every one cited.`);
+    else {
+      const shown = run.uncited.slice(0, 10).map((e) => clip(e.text, 90)).join(' | ');
+      lines.push(`Reference list: ${plural(list.entries.length, 'entry', 'entries')}; ${plural(run.uncited.length, 'entry is', 'entries are')} cited nowhere: ${shown}${run.uncited.length > 10 ? ' | …' : ''}`);
+    }
+    lines.push('Not read: text boxes, headers and footers.');
+    if (s.track) lines.push('In Word, accept the tracked changes before pressing Refresh in Zotero’s tab.');
+    return lines;
+  }
+
   async function save() {
     const run = state.run;
     if (!run || state.busy) return;
     readControls();
     saveSettings();
-    const groups = run.parsed.groups.map((g) => {
+    const s = state.settings;
+    const all = run.parsed.groups.map((g) => {
       const items = g.refs.map((ref) => { const r = resolve(run.indexOf.get(ref)); return r ? r.item : null; });
       return Object.assign({}, g, { items });
-    }).filter((g) => g.items.some(Boolean));
-    if (!groups.length) {
+    });
+    // Unresolved citations go to the writer only to be commented or counted.
+    const groups = s.comment || s.summary ? all : all.filter((g) => g.items.some(Boolean));
+    if (!all.some((g) => g.items.some(Boolean)) && !s.comment && !s.summary) {
       setStatus('Nothing is resolved yet, so there is nothing to write.', 'warn');
       return;
     }
@@ -727,9 +819,9 @@
       const analysed = ZFDocx.analyse(pkg, { recode: run.options.recode });
       const same = analysed.paras.length === run.paraTexts.length && analysed.paras.every((p, k) => p.text === run.paraTexts[k]);
       if (!same) throw new Error('the document reads differently now than when it was analysed; press Analyse again');
-      const s = state.settings;
       const result = await ZFDocx.writeCitations(pkg, analysed, groups, {
         track: s.track, keepTracking: s.keepTracking, author: s.author, recode: run.options.recode,
+        commentText: s.comment ? commentLines : null, summaryText: s.summary ? summaryLines : null,
       });
       setProgress(0.8);
       const bytes = await ZFDocx.save(pkg);
@@ -738,8 +830,10 @@
       download(fileName, bytes, DOCX_TYPE);
       state.report = Object.assign(result, { fileName, track: s.track, author: s.author, keepTracking: s.keepTracking });
       const n = result.written.reduce((k, w) => k + w.group.refs.length, 0);
+      const commented = result.skipped.filter((k) => k.commented).length;
       setStatus(`Saved ${fileName}: ${plural(n, 'reference')} in ${plural(result.written.length, 'Zotero citation')}`
-        + `${result.skipped.length ? `; ${plural(result.skipped.length, 'place')} left as text (see “Resolved”)` : ''}.`
+        + `${result.skipped.length ? `; ${plural(result.skipped.length, 'place')} left as text${commented ? `, ${commented === result.skipped.length ? 'each' : commented} with a comment` : ''} (see “Resolved”)` : ''}`
+        + `${result.summarised ? '; a summary comment at the start' : ''}.`
         + ' In Word, accept the changes, then press Refresh in the Zotero tab.', result.skipped.length ? 'warn' : 'ok');
       renderLinked();
     } catch (e) {

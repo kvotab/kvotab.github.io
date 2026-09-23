@@ -590,6 +590,84 @@
      release, and both decay by beta as well as by IT. */
   const ISOMER_MIN_S = 1e-6;
 
+  /* Flags on a state's emitted energies (st.emitx). */
+  const EMIT_MISSING = 1;   // a branch has neither decay data set nor Q-value: the energies are low
+  const EMIT_SCALED = 2;    // gamma intensities only relative, scaled to the energy they carry
+  const EMIT_Q = 4;         // a branch estimated from its Q-value
+
+  /*
+    K-shell (1s) binding energies in keV, Z = 1 to 100 (X-ray Data Booklet,
+    after Bearden and Burr), for the X-rays and Auger electrons that follow
+    electron capture, which ENSDF does not list.
+  */
+  const K_SHELL_KEV = [0,
+    0.0136, 0.0246, 0.0548, 0.111, 0.188, 0.2842, 0.4099, 0.5431, 0.6967, 0.8701,
+    1.0708, 1.305, 1.5596, 1.8389, 2.1455, 2.472, 2.8224, 3.206, 3.6074, 4.0381,
+    4.4928, 4.9664, 5.4651, 5.9892, 6.539, 7.112, 7.7089, 8.3328, 8.9789, 9.6586,
+    10.3671, 11.1031, 11.8667, 12.6578, 13.4737, 14.3256, 15.1997, 16.1046, 17.0384, 17.9976,
+    18.9856, 19.9995, 21.044, 22.1172, 23.2199, 24.3503, 25.514, 26.7112, 27.9399, 29.2001,
+    30.4912, 31.8138, 33.1694, 34.5614, 35.9846, 37.4406, 38.9246, 40.443, 41.9906, 43.5689,
+    45.184, 46.8342, 48.519, 50.2391, 51.9957, 53.7885, 55.6177, 57.4855, 59.3896, 61.3323,
+    63.3138, 65.3508, 67.4164, 69.525, 71.6764, 73.8708, 76.111, 78.3948, 80.7249, 83.1023,
+    85.5304, 88.0045, 90.5259, 93.105, 95.73, 98.404, 101.137, 103.9218, 106.755, 109.6509,
+    112.6014, 115.6061, 118.678, 121.818, 125.027, 128.22, 131.59, 135.96, 139.49, 143.09,
+  ];
+  function kShellKeV(z) {
+    if (z < 1) return 0;
+    if (z < K_SHELL_KEV.length) return K_SHELL_KEV[z];
+    return K_SHELL_KEV[100] + (z - 100) * 3.8;
+  }
+  /* K fluorescence yield, the fit of Bambynek et al. (1972); L3, Hubbell et al. (1994). */
+  function fluorescenceK(z) {
+    const x = Math.pow(0.015 + 0.0327 * z - 0.64e-6 * z * z * z, 4);
+    return x / (1 + x);
+  }
+  function fluorescenceL(z) {
+    const x = Math.pow(0.17765 + 0.00298937 * z + 8.91297e-5 * z * z - 2.67184e-7 * z * z * z, 4);
+    return x / (1 + x);
+  }
+  /* L1 and L3 binding energies, near enough, as shares of the K. */
+  const l1ShellKeV = (z) => kShellKeV(z) * (0.10 + 0.001 * z);
+  const l3ShellKeV = (z) => kShellKeV(z) * (0.085 + 0.0007 * z);
+
+  /*
+    What the atom gives off after electron capture with q keV to spare, per
+    capture, as [energy, of it in X-rays]. The electron comes from the K,
+    L1 or M1 shell in proportion to (q - B)^2 times its density at the
+    nucleus, so near the K threshold the K shell falls out: 235Np, with 8.6
+    keV over the uranium K edge, captures from it 5 % of the time.
+  */
+  function captureAtom(q, z) {
+    const bk = kShellKeV(z), bl = l1ShellKeV(z), bm = 0.22 * bl;
+    const rl = 0.07 + 0.0013 * z;
+    const w = (b, r) => (q > b ? (q - b) * (q - b) * r : 0);
+    const wk = Number.isFinite(q) ? w(bk, 1) : 1;
+    const wl = Number.isFinite(q) ? w(bl, rl) : rl;
+    const wm = Number.isFinite(q) ? w(bm, rl * 0.25) : rl * 0.25;
+    const sum = wk + wl + wm;
+    if (!sum) return [0, 0];
+    const pk = wk / sum, pl = wl / sum, pm = wm / sum;
+    const energy = pk * bk + pl * bl + pm * bm;
+    const xray = pk * fluorescenceK(z) * 0.88 * bk + pl * fluorescenceL(z) * 0.8 * l3ShellKeV(z);
+    return [energy, xray];
+  }
+
+  /*
+    The multipliers that turn a decay data set's relative intensities into
+    intensities per 100 decays of the parent: NR x BR for photons, NB x BR
+    for beta and electron-capture feedings. The N record's own product comes
+    first where it gives both factors; the production-normalisation (PN)
+    record is for when it does not. The two can disagree -- 115mIn's beta-
+    minus data set has NB = 20 and BR = 0.050 on its N record and "20.0" as
+    NB x BR on its PN record, which would make its 5 % branch 100 %.
+  */
+  function normProducts(n, pn, br) {
+    const nr = num(n.nr), nb = num(n.nb), hasBr = Number.isFinite(num(n.br));
+    const nrbr = Number.isFinite(nr) && hasBr ? nr * br : Number.isFinite(num(pn.nrbr)) ? num(pn.nrbr) : (Number.isFinite(nr) ? nr * br : NaN);
+    const nbbr = Number.isFinite(nb) && hasBr ? nb * br : Number.isFinite(num(pn.nbbr)) ? num(pn.nbbr) : (Number.isFinite(nb) ? nb : 1) * br;
+    return { nrbr, nbbr };
+  }
+
   function createBuilder() {
     const nuclides = new Map();      // z*1000+a -> nuclide record
     const decays = [];               // decay data sets, resolved in finish()
@@ -1159,8 +1237,244 @@
           const map = feedingOf(ds, dNuc, dStates, fam === 'IT' ? levelEnergy(lv.e) : null);
           if (map) st._feeding.set(fam, { map, dsid: ds.dsid });
         }
-        void k;
+        if (!hl.stable) {
+          const em = emissionOf(n, ad, st, k, lv, dsList);
+          if (em) {
+            st.emit = em.v;
+            if (em.flags) st.emitx = em.flags;
+          }
+        }
         return st;
+      }
+
+      /*
+        What a state gives off per decay, in MeV, as [alpha, electrons,
+        photons] -- sorted the way ICRP 107 sorts it: alpha particles with the
+        recoil of the nucleus they leave; beta particles, positrons,
+        conversion and Auger electrons; gamma rays, X-rays and annihilation
+        radiation. Neutrinos and fission fragments are not counted.
+
+        Worked out from the decay data sets, one for each way the state
+        decays. A branch gives its particles' own energies -- the alpha
+        energies, the mean beta and positron energies -- and the energy of the
+        levels it feeds, less whatever is left in a daughter isomer: that is
+        given off when the isomer itself decays, and counted there. The
+        gamma rays the data set lists take their share of that de-excitation
+        energy; conversion electrons take the rest, with the X-rays and Auger
+        electrons that follow them. After electron capture the atom gives off
+        the binding energy of the captured electron as X-rays and Auger
+        electrons, which ENSDF does not list; that is estimated from the K-
+        shell binding energy and the fluorescence yield. A branch with no
+        decay data set is estimated from its Q-value where it can be (alpha:
+        all of Q; beta: a third of it) and flagged.
+
+        @returns {{v: number[], flags: number}|null} flags: EMIT_MISSING where
+          a branch other than fission has neither data set nor Q-value,
+          EMIT_SCALED where gamma intensities were only relative and are set by
+          the energy they must carry, EMIT_Q where a branch is estimated from Q.
+      */
+      function emissionOf(n, ad, st, k, lv, dsList) {
+        const tot = [0, 0, 0];
+        let flags = 0;
+        let covered = 0;
+        const done = new Set();
+        for (const ds of dsList) {
+          const fam = dsFamily(ds.mode);
+          if (done.has(fam) || !['A', 'B-', 'EC', 'IT'].includes(fam)) continue;
+          const e = datasetEmission(n, st, fam, ds, lv);
+          if (!e) continue;
+          done.add(fam);
+          for (let i = 0; i < 3; i++) tot[i] += e.v[i];
+          flags |= e.flags;
+          covered += e.br;
+        }
+        /* Branches no data set covers. */
+        for (const b of st._branches) {
+          if (b.pct === null || b.shift.fission || b.shift.delayed) continue;
+          const fam = b.shift.family;
+          if (done.has(fam)) continue;
+          const f = b.pct / 100;
+          if (fam === 'IT' && k > 0) {
+            const it = adoptedItEmission(n, k, lv);
+            if (it) { for (let i = 0; i < 3; i++) tot[i] += f * it[i]; covered += f; continue; }
+          }
+          const q = ad.q ? num(fam === 'A' ? ad.q.qa : fam === 'B-' ? ad.q.qb : '') : NaN;
+          if (Number.isFinite(q) && q > 0) {
+            if (fam === 'A') tot[0] += f * (q + st.en);
+            else tot[1] += f * (q + st.en) / 3;
+            flags |= EMIT_Q;
+            covered += f;
+          } else if (f > 0.001) flags |= EMIT_MISSING;
+        }
+        /* An isomer with no modes at all de-excites by IT. */
+        if (k > 0 && !st._branches.length && !dsList.length) {
+          const it = adoptedItEmission(n, k, lv);
+          if (it) { for (let i = 0; i < 3; i++) tot[i] += it[i]; covered = 1; }
+        }
+        if (!covered) return null;
+        return { v: tot.map((x) => +(x / 1000).toPrecision(5)), flags };
+      }
+
+      /* One decay data set's share, in keV per decay of the parent. */
+      function datasetEmission(n, st, fam, ds, lv) {
+        const norm = ds.norm || {};
+        const pn = ds.prod || {};
+        let br = num(norm.br);
+        if (!Number.isFinite(br)) {
+          const b = st._branches.find((x) => x.shift.family === fam && !x.shift.delayed && x.pct !== null);
+          br = b ? b.pct / 100 : (st._branches.length === 1 && st._branches[0].pct === null ? 1 : NaN);
+        }
+        if (!Number.isFinite(br) || br <= 0) return null;
+        const { nrbr, nbbr } = normProducts(norm, pn, br);
+        const d = ds.daughter;
+        const dLevels = d.adopted ? d.adopted.levels : [];
+        const dStates = stateIdx.get(d.z * 1000 + d.a) || [];
+        /* Where the branch comes to rest, and the energy it leaves there. */
+        const fed = st._feeding.get(fam);
+        const kept = [];
+        let retained = 0;
+        if (fed) {
+          for (const [kk, f] of fed.map) {
+            if (kk <= 0 || dStates[kk] === undefined) continue;
+            const e = levelEnergy(dLevels[dStates[kk]].e);
+            if (!Number.isFinite(e.n)) continue;
+            retained += f * e.n;
+            kept.push(e.n);
+          }
+        }
+        const isKept = (e) => Number.isFinite(e) && kept.some((x) => Math.abs(x - e) <= Math.max(1, 0.002 * x));
+        let flags = 0;
+        let alpha = 0, electron = 0, photon = 0;
+        let feedE = 0, feedI = 0;
+        const qp = num((ds.parents[0] || {}).qp);
+        const zd = d.z;
+        const bk = kShellKeV(zd);
+        const E = ds.levels.map((l) => levelEnergy(l.e));
+        ds.levels.forEach((l, i) => {
+          const el = Number.isFinite(E[i].n) ? E[i].n : 0;
+          for (const f of l.feed) {
+            if (f.kind === 'A') {
+              const ia = num(f.ia), ea = num(f.e);
+              if (!(ia > 0) || !Number.isFinite(ea)) continue;
+              const I = ia * br;
+              alpha += I * ea * (1 + 4 / Math.max(1, n.a - 4));
+              feedE += I * el; feedI += I;
+            } else if (f.kind === 'B') {
+              const ib = num(f.ib);
+              if (!(ib > 0)) continue;
+              const I = ib * nbbr;
+              let eav = num(f.eav);
+              if (!Number.isFinite(eav)) { const e0 = num(f.e); eav = Number.isFinite(e0) ? e0 / 3 : 0; }
+              electron += I * eav;
+              feedE += I * el; feedI += I;
+            } else if (f.kind === 'E') {
+              const ib = num(f.ib) > 0 ? num(f.ib) * nbbr : 0;
+              let ie = num(f.ie) > 0 ? num(f.ie) * nbbr : 0;
+              if (!ib && !ie && num(f.ti) > 0) ie = num(f.ti) * nbbr;
+              if (!ib && !ie) continue;
+              let eav = num(f.eav);
+              if (!Number.isFinite(eav)) { const e0 = num(f.e); eav = Number.isFinite(e0) ? 0.4 * e0 : 0; }
+              electron += ib * eav;
+              photon += ib * 2 * 510.99895;
+              const [atom, xray] = captureAtom(Number.isFinite(qp) ? qp + st.en - el : NaN, zd);
+              photon += ie * xray;
+              electron += ie * (atom - xray);
+              feedE += (ib + ie) * el; feedI += ib + ie;
+            }
+          }
+        });
+        /* The de-excitation energy of the branch. */
+        let deexc;
+        if (fam === 'IT') deexc = 100 * br * Math.max(0, st.en - retained);
+        else if (feedI > 0) deexc = Math.max(0, feedE - feedI * retained);
+        else deexc = NaN;
+        if (feedI === 0 && fam !== 'IT') {
+          /* No feeding records: take the whole Q to the ground state. */
+          if (fam === 'A' && Number.isFinite(qp)) { alpha = 100 * br * (qp + st.en); flags |= EMIT_Q; }
+          else if (fam === 'B-' && Number.isFinite(qp)) { electron = 100 * br * (qp + st.en) / 3; flags |= EMIT_Q; }
+        }
+        /* Its gamma rays, what conversion they carry, and the K and L
+           vacancies conversion leaves: three quarters of it in the K shell
+           where the transition can reach it, in the L shell where not. */
+        let g = 0, gc = 0, rel = 0, relc = 0, vac = 0, relvac = 0;
+        const xk = fluorescenceK(zd) * 0.88 * bk, xl = fluorescenceL(zd) * 0.8 * l3ShellKeV(zd);
+        const gammas = [];
+        ds.levels.forEach((l, i) => {
+          const from = E[i].n;
+          if (isKept(from) && !(fam === 'IT' && Math.abs(from - st.en) <= Math.max(1, 0.002 * st.en))) return;
+          for (const x of l.gam) gammas.push([x, from]);
+        });
+        for (const x of ds.unplaced) if (x.ri !== undefined) gammas.push([x, NaN]);
+        /* Relative intensity that ends in the ground state or a daughter isomer. */
+        let toRest = 0;
+        for (const [x, from] of gammas) {
+          const eg = num(x.e);
+          if (!Number.isFinite(eg)) continue;
+          const cc = num(x.cc) > 0 ? num(x.cc) : 0;
+          const ig = num(x.ig);
+          const ri = num(x.ri);
+          const xr = cc * (eg > bk ? 0.75 * xk + 0.2 * xl : 0.75 * xl);
+          if (Number.isFinite(ig) || (Number.isFinite(ri) && Number.isFinite(nrbr))) {
+            const I = Number.isFinite(ig) ? ig : ri * nrbr;
+            g += I * eg; gc += I * cc * eg; vac += I * xr;
+          } else if (Number.isFinite(ri)) {
+            rel += ri * eg; relc += ri * cc * eg; relvac += ri * xr;
+            const fl = x.fl ? levelEnergy(x.fl.replace(/\?$/, '')).n : from - eg;
+            if (Number.isFinite(fl) && (Math.abs(fl) <= 1 + 0.001 * eg || isKept(fl))) toRest += ri * (1 + cc);
+          }
+        }
+        if (!g && rel) {
+          /* Relative intensities only: scaled to the energy they must carry,
+             where the feedings say what that is, or else on the rule that
+             every decay ends in the ground state or an isomer. */
+          let sc = 0;
+          if (Number.isFinite(deexc) && deexc > 0) sc = deexc / (rel + relc);
+          else if (toRest > 0) {
+            sc = (100 * br) / toRest;
+            deexc = sc * (rel + relc);
+            if (fam === 'EC') {
+              const mean = deexc / (100 * br);
+              const [atom, xray] = captureAtom(Number.isFinite(qp) ? qp + st.en - mean : NaN, zd);
+              photon += 100 * br * xray;
+              electron += 100 * br * (atom - xray);
+            }
+          }
+          if (sc) {
+            g = sc * rel; gc = sc * relc; vac = sc * relvac;
+            flags |= EMIT_SCALED;
+          }
+        }
+        if (Number.isFinite(deexc)) {
+          const gam = Math.min(g, deexc);
+          const xray = Math.min(vac, deexc - gam);
+          photon += gam + xray;
+          electron += deexc - gam - xray;
+        } else {
+          photon += g + vac;
+          electron += Math.max(0, gc - vac);
+        }
+        return { v: [alpha / 100, electron / 100, photon / 100], flags, br };
+      }
+
+      /* An isomer that de-excites by IT with no data set of its own, from its adopted gamma rays. */
+      function adoptedItEmission(n, k, lv) {
+        const id = n.z * 1000 + n.a;
+        const sIdx = stateIdx.get(id);
+        if (!sIdx) return null;
+        const map = adoptedItOf(n, sIdx, k);
+        let retained = 0;
+        if (map) for (const [kk, f] of map) if (kk > 0 && kk < k) { const e = levelEnergy(n.adopted.levels[sIdx[kk]].e); if (Number.isFinite(e.n)) retained += f * e.n; }
+        const deexc = Math.max(0, levelEnergy(lv.e).n - retained);
+        if (!Number.isFinite(deexc)) return null;
+        let r = 0, rc = 0;
+        for (const x of lv.gam) {
+          const eg = num(x.e), ri = num(x.ri);
+          if (!Number.isFinite(eg) || !(ri > 0)) continue;
+          const cc = num(x.cc) > 0 ? num(x.cc) : 0;
+          r += ri * eg; rc += ri * cc * eg;
+        }
+        const share = r + rc > 0 ? r / (r + rc) : 1;
+        return [0, deexc * (1 - share), deexc * share];
       }
     }
 
@@ -1172,8 +1486,7 @@
       const n = ds.norm || {};
       const pn = ds.prod || {};
       const br = Number.isFinite(num(n.br)) ? num(n.br) : 1;
-      const nrbr = Number.isFinite(num(pn.nrbr)) ? num(pn.nrbr) : (Number.isFinite(num(n.nr)) ? num(n.nr) * br : NaN);
-      const nbbr = Number.isFinite(num(pn.nbbr)) ? num(pn.nbbr) : (Number.isFinite(num(n.nb)) ? num(n.nb) : 1) * br;
+      const { nrbr, nbbr } = normProducts(n, pn, br);
       const np = Number.isFinite(num(pn.np)) ? num(pn.np) : num(n.np);
       const scale = (v, f) => (Number.isFinite(v) && Number.isFinite(f) ? v * f : NaN);
       /* An intensity times its normalisation, with its uncertainty, both as

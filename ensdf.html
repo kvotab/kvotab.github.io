@@ -25,7 +25,7 @@
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
-  <link rel="stylesheet" href="./resources/css/ensdf.css?v=20260923">
+  <link rel="stylesheet" href="./resources/css/ensdf.css?v=20260923e">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
 </head>
 <body>
@@ -125,12 +125,14 @@
             <button type="button" role="tab" data-tab="levels" data-on-click="nz:tab">Levels</button>
             <button type="button" role="tab" data-tab="radiation" data-on-click="nz:tab">Radiation</button>
             <button type="button" role="tab" data-tab="datasets" data-on-click="nz:tab">Data sets</button>
+            <button type="button" role="tab" data-tab="inventory" data-on-click="nz:tab" title="Give the decay chain an initial inventory and follow it over time">Inventory</button>
             <button type="button" role="tab" data-tab="about" data-on-click="nz:tab">About</button>
           </div>
           <section class="nz-pane" data-pane="nuclide" id="nzPaneNuclide"></section>
           <section class="nz-pane" data-pane="levels" id="nzPaneLevels" hidden></section>
           <section class="nz-pane" data-pane="radiation" id="nzPaneRadiation" hidden></section>
           <section class="nz-pane" data-pane="datasets" id="nzPaneDatasets" hidden></section>
+          <section class="nz-pane nz-inv" data-pane="inventory" id="nzPaneInventory" hidden></section>
           <section class="nz-pane nz-help" data-pane="about" hidden>
             <h2>A chart of nuclides from ENSDF</h2>
             <p>The Evaluated Nuclear Structure Data File is the evaluated, recommended nuclear structure and decay data for every known nuclide, kept by the <a href="https://www.nndc.bnl.gov/ensdf/" target="_blank" rel="noopener noreferrer">National Nuclear Data Center</a> at Brookhaven for the international Nuclear Structure and Decay Data network. It is published as one text file per mass number, in the fixed 80-column format of the <a href="https://www.nndc.bnl.gov/ensdf/ensdf-manual.pdf" target="_blank" rel="noopener noreferrer">ENSDF manual</a>. This page reads those files as they are — the release on this site was built from the NNDC distribution by the same reader that runs when you open a file — and draws every nuclide with an adopted data set by its neutron number <i>N</i> and proton number <i>Z</i>.</p>
@@ -148,6 +150,10 @@
 
             <h3>Levels, radiation and data sets</h3>
             <p><b>Levels</b> lists the adopted levels with their spins, half-lives and decay modes, and under each the γ rays leaving it with their relative intensities, multipolarities and final levels. <b>Radiation</b> lists what the decay data sets give for the state you are on: γ rays, α particles, β⁻ and β⁺/ε branches and delayed particles, per 100 decays of the parent where the data set’s normalisation allows it, and as relative intensities where it does not. X-rays and conversion electrons are not records in ENSDF and are not shown. <b>Data sets</b> lists every data set filed under the nuclide, and the history of its adopted one.</p>
+
+            <h3>Inventory over time</h3>
+            <p>The <b>Inventory</b> tab gives the decay chain on show an initial inventory — an activity (Bq), an amount (mol) or a mass (g) for any of its members; the start of the chain has 1 Bq until you set something else — and follows it over the span of time you choose: each member’s activity, amount or mass, or the energy it gives off as alpha particles, electrons (beta particles, positrons, conversion and Auger electrons) or photons (gamma rays, X-rays, annihilation radiation), or all together. The chain is taken as it is drawn, so the half-life setting counts: a member it leaves out decays as fast as it is made, in secular equilibrium with the member that feeds it, and what it gives off is counted with that member. Point at a line, a box of the chain or a row of the table and the same member is picked out in all three; the boxes fill, as buckets, to their share of the whole at the time under the cursor, and <b>Run through</b> moves that time from start to end. The values drawn save as CSV, the chart as SVG or PNG.</p>
+            <p class="nz-dim">The decay is worked by the Chebyshev rational approximation of the matrix exponential (CRAM, order 16), which is exact to about 10<sup>−14</sup> of the largest value for any span, with members from microseconds to billions of years. Energy per decay is worked out from the ENSDF decay data sets: the alpha energies with the recoil of the nucleus, the mean beta and positron energies, the gamma rays, and the de-excitation energy of the levels fed that the gamma rays do not carry; X-rays and Auger electrons after electron capture, which ENSDF does not list, are estimated from the K-shell binding energy and the fluorescence yield. Against ICRP Publication 107, with isomers under a minute counted with their parents as ICRP counts them, the total is within 5 % for four nuclides in five and within 10 % for nine in ten. Neutrinos and fission fragments are not counted, and a mass is converted with the mass number as the molar mass.</p>
 
             <h3>Another database</h3>
             <p>The menu offers the releases installed on this site, then those you have opened in this browser, then every release in the <a href="https://www.nndc.bnl.gov/ensdfarchivals/" target="_blank" rel="noopener noreferrer">NNDC ENSDF archive</a>, back to 2004. The page cannot fetch a release from NNDC by itself — their server does not allow other sites to read its files — so choosing one from the archive shows the file to download, <code>ensdf_YYMMDD.zip</code> (before 2022 a release came in three parts by mass number, <code>_099</code>, <code>_199</code> and <code>_299</code>, to be opened together), and a button to open it once it is downloaded; dropping it on the page does the same. The page reads it in your browser in a few seconds; nothing is uploaded. Individual <code>ensdf.NNN</code> files, or any ENSDF text, can be opened with <b>Open ENSDF…</b> in the same way. An opened database is kept in this browser and stays in the menu until you choose <b>Forget</b>.</p>
@@ -196,10 +202,11 @@
       ensdf-ui      this page
       The release on show is loaded by ensdf-ui from resources/data/ensdf/.
   -->
-  <script src="./resources/js/ensdf-parse.js?v=20260922b"></script>
-  <script src="./resources/js/ensdf-core.js?v=20260922f"></script>
+  <script src="./resources/js/ensdf-parse.js?v=20260923"></script>
+  <script src="./resources/js/ensdf-core.js?v=20260923"></script>
   <script src="./resources/js/ensdf-chart.js?v=20260922b"></script>
-  <script src="./resources/js/ensdf-chain.js?v=20260922g"></script>
-  <script src="./resources/js/ensdf-ui.js?v=20260923"></script>
+  <script src="./resources/js/ensdf-chain.js?v=20260923"></script>
+  <script src="./resources/js/ensdf-inventory.js?v=20260923"></script>
+  <script src="./resources/js/ensdf-ui.js?v=20260923b"></script>
 </body>
 </html>
