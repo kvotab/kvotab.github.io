@@ -37,17 +37,28 @@ const SIMULATION = {
  * The ids used to be borrowed from another suite's routine names, which said
  * nothing about the method to anyone who did not already know that suite. They
  * are now named for what they are -- `ndf` for the numerical differentiation
- * formulas, `bdf` for the same with those terms off, `ros23` for the
- * Rosenbrock (2,3) pair, `dp45` for Dormand-Prince (4,5). A file written under
- * the old names still names a solver this project has, so it is migrated
- * rather than rejected: the alternative is `Unknown solver` on a model that
- * ran yesterday.
+ * formulas, `ros23` for the Rosenbrock (2,3) pair, `dp45` for Dormand-Prince
+ * (4,5). A file written under the old names still names a solver this project
+ * has, so it is migrated rather than rejected: the alternative is `Unknown
+ * solver` on a model that ran yesterday.
+ *
+ * `bdf`, the same formulas with those terms off, was a solver of its own and
+ * is now the NDF's switch, `simulation.bdf` -- see `BDF_OF` below.
  */
 const SOLVER_IDS = {
 	ode15s: 'ndf',
 	ode15s_bdf: 'bdf',
 	ode23s: 'ros23',
 	ode45: 'dp45',
+};
+
+/**
+ * Solver ids that are now a method with its BDF switch on. A file that asks
+ * for `bdf` asked for the NDF integrator with every κ zero, which is what
+ * `solver: 'ndf', bdf: true` runs -- the same code, bit for bit.
+ */
+const BDF_OF = {
+	bdf: 'ndf',
 };
 
 const VIEW = {
@@ -209,6 +220,8 @@ export function migrateKeys(raw) {
 		out.simulation = rename(out.simulation, SIMULATION);
 		const renamed = SOLVER_IDS[out.simulation.solver];
 		if (renamed) out.simulation = { ...out.simulation, solver: renamed };
+		const method = BDF_OF[out.simulation.solver];
+		if (method) out.simulation = { ...out.simulation, solver: method, bdf: true };
 	}
 	if (isObject(out.view)) out.view = rename(out.view, VIEW);
 

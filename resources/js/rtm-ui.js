@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20260923e';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20260923f';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -25,7 +25,7 @@
     // this page's own defaults: a tighter rtol, and a stalled Newton correction
     // taken (see stagnationTol in solverPayload).
     solver: {
-      method: 'ndf', tend: '', rtol: '1e-6', atol: '1e-20', matrix: 'auto', norm: 'max',
+      method: 'ndf', bdf: false, tend: '', rtol: '1e-6', atol: '1e-20', matrix: 'auto', norm: 'max',
       maxOrder: 5, minOrder: 1, hmax: '0', jacobianMode: 'analytic', kappa: '1e-3',
       maxJacAge: '20', belowTolRun: '5', stagnationTol: '0.5',
       maxSteps: '500000', maxPoints: '4000', nonNegative: true, autoAtol: false, smoothEst: true,
@@ -440,6 +440,7 @@
     const maxOrder = Math.round(num(s.maxOrder, 'The maximum order must be 1 to 5', (x) => x >= 1 && x <= 5));
     const out = {
       method: s.method,
+      bdf: !!s.bdf,
       rtol: num(s.rtol, 'The relative tolerance must be between 0 and 1', (x) => x > 0 && x < 1),
       atol: num(s.atol, 'The absolute tolerance must be a non-negative number', (x) => x >= 0),
       matrix: s.matrix,
@@ -559,9 +560,15 @@
     setStatus('Stopped.');
   }
 
+  /**
+   * What to call the chosen method in prose: the menu's text without where it
+   * came from, and with the BDF formulas switch on the method that runs --
+   * NDF as BDF, QNDF as QBDF.
+   */
   function methodLabel() {
     const chosen = $('rtmMethod').selectedOptions[0];
-    return chosen ? chosen.textContent.replace(/\s*\(.*$/, '').trim() : state.solver.method;
+    const name = chosen ? chosen.textContent.replace(/\s*[↓(].*$/, '').trim() : state.solver.method;
+    return $('rtmBdf').checked && readsBdf($('rtmMethod').value) ? name.replace(/NDF$/, 'BDF') : name;
   }
 
   /* ---------------------------------------------------------------------
@@ -1250,6 +1257,7 @@
   function readSolverControls() {
     const s = state.solver;
     s.method = $('rtmMethod').value;
+    s.bdf = $('rtmBdf').checked;
     s.tend = $('rtmTend').value.trim();
     s.rtol = $('rtmRtol').value.trim();
     s.atol = $('rtmAtol').value.trim();
@@ -1273,8 +1281,14 @@
   function writeSolverControls() {
     const s = state.solver;
     const menu = $('rtmMethod');
+    // BDF and QBDF were entries of their own, and are now the BDF formulas
+    // switch on the NDF and on QNDF: a visit that had one chosen gets that
+    // method with the switch on, which is the same run.
+    if (s.method === 'bdf') { s.method = 'ndf'; s.bdf = true; }
+    if (s.method === 'julia_qbdf') { s.method = 'julia_qndf'; s.bdf = true; }
     if (!Array.prototype.some.call(menu.options, (o) => o.value === s.method)) s.method = 'ndf';
     menu.value = s.method;
+    $('rtmBdf').checked = !!s.bdf;
     $('rtmTend').value = s.tend;
     $('rtmRtol').value = s.rtol;
     $('rtmAtol').value = s.atol;
@@ -1296,16 +1310,23 @@
   }
 
   /**
-   * Which of the settings the built-in NDF and BDF read -- facsimile.html's
-   * list, less the two that are properties of its own model language
-   * (per-species tolerances and reading negatives as zero), plus the stalled
-   * correction this page takes and facsimile leaves off.
+   * Which of the settings the built-in NDF reads -- facsimile.html's list,
+   * less the two that are properties of its own model language (per-species
+   * tolerances and reading negatives as zero), plus the stalled correction
+   * this page takes and facsimile leaves off.
    */
-  const BUILTIN_OPTIONS = ['rtol', 'atol', 'norm', 'maxOrder', 'hmax', 'matrix', 'jacobian',
+  const BUILTIN_OPTIONS = ['bdf', 'rtol', 'atol', 'norm', 'maxOrder', 'hmax', 'matrix', 'jacobian',
     'belowTolRun', 'maxSteps', 'stagnationTol', 'autoAtol', 'nonNegative'];
+
+  /** Whether `method` has the BDF formulas switch: the NDF, and QNDF. */
+  function readsBdf(method) {
+    const julia = typeof FacsimileOdeJulia !== 'undefined' && FacsimileOdeJulia.is(method);
+    return (julia ? FacsimileOdeJulia.options(method) : BUILTIN_OPTIONS).includes('bdf');
+  }
 
   /** What the reader should see a setting called, when told it is not used: facsimile's words. */
   const OPTION_NAMES = {
+    bdf: 'the BDF switch',
     rtol: 'the relative tolerance',
     atol: 'the absolute tolerance',
     norm: 'the error norm',
@@ -1352,8 +1373,7 @@
       el.hidden = off;
       if (off && OPTION_NAMES[key]) dropped.push(OPTION_NAMES[key]);
     });
-    const chosen = $('rtmMethod').selectedOptions[0];
-    const label = chosen ? chosen.textContent.replace(/\s*[↓(].*$/, '').trim() : method;
+    const label = methodLabel();
     const lines = [];
     if (dropped.length) {
       lines.push(`${label} does not read ${listOf(dropped)}, so ${

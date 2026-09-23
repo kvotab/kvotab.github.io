@@ -178,14 +178,17 @@ def zotero_fields(doc):
     runs in document order, following w:instrText and w:delInstrText alike."""
     fields = []
     for p in doc.getElementsByTagNameNS(W, 'p'):
-        cur = None
+        # The field open at this point, {} when none is: an open one is never
+        # empty, and a dict throughout lets a linter follow `cur` from one run
+        # to the next, which it cannot through None.
+        cur = {}
         for r in p.getElementsByTagNameNS(W, 'r'):
             deleted = any(local(a) == 'del' for a in ancestors(r))
             for c in el_children(r):
                 name = local(c)
                 if name == 'fldChar':
                     typ = c.getAttributeNS(W, 'fldCharType')
-                    if typ == 'begin' and cur is None:
+                    if typ == 'begin' and not cur:
                         cur = {'instr': '', 'text': '', 'phase': 'instr', 'deleted': deleted, 'depth': 1}
                     elif typ == 'begin':
                         cur['depth'] += 1
@@ -195,7 +198,7 @@ def zotero_fields(doc):
                         cur['depth'] -= 1
                         if cur['depth'] == 0:
                             fields.append(cur)
-                            cur = None
+                            cur = {}
                 elif name in ('instrText', 'delInstrText') and cur and cur['phase'] == 'instr' and cur['depth'] == 1:
                     cur['instr'] += c.firstChild.data if c.firstChild else ''
                 elif name in ('t', 'delText') and cur and cur['phase'] == 'result':
@@ -388,14 +391,14 @@ def field_runs(p):
     """Each outermost field of a paragraph, from runs not deleted: its
     instruction, its result runs as (text, names of the w:rPr children), and
     the JSON of a Zotero citation ({} for any other field)."""
-    out, cur = [], None
+    out, cur = [], {}    # the open field, {} when none is: see zotero_fields
     for r in p.getElementsByTagNameNS(W, 'r'):
         if any(local(a) == 'del' for a in ancestors(r)):
             continue
         for c in el_children(r):
             if local(c) == 'fldChar':
                 typ = c.getAttributeNS(W, 'fldCharType')
-                if typ == 'begin' and cur is None:
+                if typ == 'begin' and not cur:
                     cur = {'instr': '', 'runs': [], 'phase': 'instr', 'depth': 1}
                 elif typ == 'begin':
                     cur['depth'] += 1
@@ -405,7 +408,7 @@ def field_runs(p):
                     cur['depth'] -= 1
                     if not cur['depth']:
                         out.append(cur)
-                        cur = None
+                        cur = {}
             elif local(c) == 'instrText' and cur and cur['phase'] == 'instr' and cur['depth'] == 1:
                 cur['instr'] += c.firstChild.data if c.firstChild else ''
         texts = [c for c in el_children(r) if local(c) == 't']

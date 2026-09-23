@@ -272,6 +272,12 @@ export class Project {
 			const v = this.simulation.norm_control;
 			this.simulation.norm_control = v === true || v === 'true' || v === 1;
 		}
+		// The NDF's and QNDF's BDF switch: every κ zero, the plain backward
+		// differentiation formulas. Off unless the file says so.
+		{
+			const v = this.simulation.bdf;
+			this.simulation.bdf = v === true || v === 'true' || v === 1;
+		}
 		// The master switch, as a boolean. A file may spell it `"false"` or
 		// `0`, which are both true as they stand -- the same coercion the
 		// per-compartment flag gets, for the same reason.

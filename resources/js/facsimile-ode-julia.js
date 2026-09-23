@@ -1,9 +1,9 @@
 /* ==========================================================================
    FACSIMILE.HTML: THE ode_julia SOLVERS
 
-   Seven stiff solvers ported from DifferentialEquations.jl -- FBDF, QNDF,
-   QBDF, Rodas5P, KenCarp4, TRBDF2 and RadauIIA5 -- offered here beside the
-   page's own NDF and BDF. The package is in resources/js/ode/julia/ and knows nothing about
+   Six stiff solvers ported from DifferentialEquations.jl -- FBDF, QNDF,
+   Rodas5P, KenCarp4, TRBDF2 and RadauIIA5 -- offered here beside the page's
+   own NDF. The package is in resources/js/ode/julia/ and knows nothing about
    this page; this file is the adapter, and it is thin on purpose.
 
    WHY THEY ARE WORTH HAVING HERE. The built-in solver is one method with one set of
@@ -17,10 +17,11 @@
      QNDF        the same numerical differentiation formulas as this page's
                  own NDF: the same kappa, the same backward differences,
                  written by other people. The most direct check there is of
-                 the built-in solver.
-     QBDF        QNDF with every kappa set to zero, which is the plain
-                 variable-step BDF. Slightly more stable and slightly less
-                 accurate per step; a control on what the kappa terms buy.
+                 the built-in solver. With the BDF formulas switch it is
+                 QBDF, every kappa zero: the plain variable-step BDF,
+                 slightly more stable and slightly less accurate per step,
+                 and a control on what the kappa terms buy -- as the switch
+                 is on the page's own NDF.
      Rodas5P     no nonlinear iteration at all, so nothing to fail to converge.
                  The one to try when a run will not get past something.
      RadauIIA5   the most accurate per step, and the least troubled by
@@ -47,11 +48,17 @@
 }(typeof self !== 'undefined' ? self : this, function (OJ) {
   'use strict';
 
-  /** Page id -> how to build the algorithm. */
+  /**
+   * Page id -> how to build the algorithm. `bdf` is what it is called, and
+   * how it is built, with the BDF formulas switch on: QNDF with every kappa
+   * zero is the package's QBDF.
+   */
   const METHODS = Object.freeze({
     julia_fbdf: { label: 'FBDF', make: (o) => OJ.FBDF(o) },
-    julia_qndf: { label: 'QNDF', make: (o) => OJ.QNDF(o) },
-    julia_qbdf: { label: 'QBDF', make: (o) => OJ.QBDF(o) },
+    julia_qndf: {
+      label: 'QNDF', make: (o) => OJ.QNDF(o),
+      bdf: { label: 'QBDF', make: (o) => OJ.QBDF(o) },
+    },
     julia_rodas5p: { label: 'Rodas5P', make: () => OJ.Rodas5P() },
     julia_radau5: { label: 'RadauIIA5', make: () => OJ.RadauIIA5() },
     julia_kencarp4: { label: 'KenCarp4', make: () => OJ.KenCarp4() },
@@ -83,8 +90,7 @@
   const ORDER = ['maxOrder', 'minOrder'];
   const OPTIONS = Object.freeze({
     julia_fbdf: [...NEWTON, ...ORDER],
-    julia_qndf: [...NEWTON, ...ORDER],
-    julia_qbdf: [...NEWTON, ...ORDER],
+    julia_qndf: ['bdf', ...NEWTON, ...ORDER],
     julia_kencarp4: [...NEWTON, 'smoothEst'],
     julia_trbdf2: [...NEWTON, 'smoothEst'],
     // A Rosenbrock method re-forms the Jacobian at every step by definition --
@@ -103,15 +109,14 @@
    * Keeping a species non-negative is three things at once: the derivative is
    * damped so that a component already at or below zero cannot be pushed
    * further down, the size of any violation is folded into the error test, and
-   * an accepted step is projected back. NDF and BDF here do all three. These
-   * do the last one
-   * only. That is enough to keep the Jacobian on the physical side, which is
+   * an accepted step is projected back. The NDF here does all three, with its
+   * BDF formulas or without. These do the last one only. That is enough to keep the Jacobian on the physical side, which is
    * what it is mostly for, but it is not the same thing and saying "yes" to
    * the same checkbox without saying so would be a small lie.
    */
   const PARTIAL = Object.freeze({
     nonNegative: 'by projecting each accepted step back to zero, without the damped '
-      + 'derivative and the error-test term that NDF and BDF add',
+      + 'derivative and the error-test term that the NDF adds',
   });
 
   /** Remarks on settings `id` reads only partly. */
@@ -148,11 +153,14 @@
    * @param {string} id
    */
   function solver(id) {
-    const entry = METHODS[id];
-    if (!entry) throw new Error(`'${id}' is not one of the ode_julia solvers`);
+    const method = METHODS[id];
+    if (!method) throw new Error(`'${id}' is not one of the ode_julia solvers`);
 
     return function solveOne(f, t0, tfinal, y0, opts = {}) {
       if (!OJ) throw new Error('ode_julia is not loaded');
+      // The BDF formulas switch, on the one method that has it; ignored by
+      // the rest, which do not offer it.
+      const entry = opts.bdf && method.bdf ? method.bdf : method;
       const neq = y0.length;
       if (!(Math.abs(tfinal - t0) > 0)) throw new Error('The start and end times are equal');
 

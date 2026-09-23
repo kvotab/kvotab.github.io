@@ -22,19 +22,9 @@ export const SOLVER_INFO = Object.assign(Object.create(null), {
 		label: 'stiff, NDF',
 		blurb: 'Variable-order numerical differentiation formulas \u2014 the method the '
 			+ 'desktop tools default to for stiff problems, and the default here. '
-			+ 'Usually the fewest steps on a stiff model, which is most of them.',
-	},
-	// The same code with the kappa terms set to zero, which is what turns an
-	// NDF back into a BDF. Worth offering rather than hiding in a flag,
-	// because kappa is precisely the difference between the two
-	// formulas, so running both says what those terms are worth on a model,
-	// and a reference worked out against plain BDF can be reproduced.
-	bdf: {
-		label: 'stiff, BDF',
-		blurb: 'The variable-order solver with the NDF terms switched off: plain '
-			+ 'backward differentiation formulas. Usually a few more steps than the '
-			+ 'NDFs for the same answer \u2014 run both to see what those terms buy '
-			+ 'here, or to match a result someone else worked out with BDF.',
+			+ 'Usually the fewest steps on a stiff model, which is most of them. '
+			+ 'BDF formulas, under Advanced settings, runs the plain backward '
+			+ 'differentiation formulas instead.',
 	},
 	ros23: {
 		label: 'stiff, low order, Rosenbrock 2-3',
@@ -82,7 +72,7 @@ export const SOLVER_INFO = Object.assign(Object.create(null), {
 		blurb: 'The numerical differentiation formulas of Shampine and Reichelt — the '
 			+ 'same method the variable-order solver implements, written independently '
 			+ 'from the Julia sources. The closest thing here to a line-by-line check '
-			+ 'of that solver.',
+			+ 'of that solver. With BDF formulas on, it is QBDF.',
 	},
 	kencarp4: {
 		label: 'stiff, ESDIRK 4',
@@ -155,6 +145,19 @@ export const SOLVER_OPTION_INFO = Object.assign(Object.create(null), {
 	// or the unit itself. `short` is what the sidebar shows where the label and
 	// its unit would not fit the name column -- abbreviated as `Rel. tolerance`
 	// is -- with the full label at the head of its tooltip.
+	//
+	// The kappa terms of the NDFs, switched off: what turns an NDF into the
+	// plain backward differentiation formulas, in either implementation. A
+	// setting of the method rather than a solver of its own, because it is
+	// the same integrator either way -- which is also why running with and
+	// without it says what those terms are worth on a model.
+	bdf: {
+		label: 'BDF formulas', name: 'the BDF switch', kind: 'switch', on: false,
+		blurb: 'Run the plain backward differentiation formulas: the NDFs with every κ '
+			+ 'set to zero. Usually a few more steps for the same answer \u2014 switch it on '
+			+ 'to see what those terms buy on a model, or to match a result someone else '
+			+ 'worked out with BDF. On QNDF it gives QBDF.',
+	},
 	max_step: {
 		label: 'Maximum step', short: 'Max. step', name: 'the maximum step', kind: 'number', unit: true,
 		blurb: 'The longest step the solver may take. 0 leaves it to the solver, which is '
@@ -275,22 +278,20 @@ const ORDER = ['max_order', 'min_order'];
  * own options over the wire and are configured where they are launched.
  */
 export const SOLVER_OPTIONS = Object.assign(Object.create(null), {
-	// The NDF integrator, under both its names.
+	// The NDF integrator, with its BDF switch.
 	// facsimile.html's NDF reads the same, less norm control and the first
 	// step, which are this one's own: its Newton has its own convergence test
 	// rather than a kappa, it keeps a Jacobian until Newton stalls, and its
 	// error estimate is not smoothed, so those are not its settings there
 	// either.
-	ndf: [...STEPS, 'max_order', 'norm_control', 'error_norm', 'stagnation_tol', 'below_tol_run',
-		'matrix', 'jacobian', 'auto_abstol'],
-	bdf: [...STEPS, 'max_order', 'norm_control', 'error_norm', 'stagnation_tol', 'below_tol_run',
+	ndf: ['bdf', ...STEPS, 'max_order', 'norm_control', 'error_norm', 'stagnation_tol', 'below_tol_run',
 		'matrix', 'jacobian', 'auto_abstol'],
 	// A Jacobian to difference or not, and nothing else: its order and its
 	// linear algebra are its own.
 	ros23: [...STEPS, 'jacobian'],
 	dp45: STEPS,
 	fbdf: [...NEWTON, ...ORDER],
-	qndf: [...NEWTON, ...ORDER],
+	qndf: ['bdf', ...NEWTON, ...ORDER],
 	// Radau measures its error against Hairer's own transformed tolerances in
 	// a fixed norm, and does not read this one.
 	radau5: NEWTON.filter((k) => k !== 'error_norm'),

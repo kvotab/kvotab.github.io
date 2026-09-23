@@ -16,7 +16,7 @@
   // an entry whose imports changed while its own URL did not is served from
   // cache with the old import list, and the symptom is a solver that the page
   // offers and the worker has never heard of.
-  const WORKER_URL = 'resources/js/facsimile-worker-entry.js?v=20260923e';
+  const WORKER_URL = 'resources/js/facsimile-worker-entry.js?v=20260923f';
   const YEAR_S = 365.25 * 86400;
 
   const $ = (id) => document.getElementById(id);
@@ -29,7 +29,7 @@
     text: FACSIMILE_DEFAULT_MODEL,
     presetId: '13g',
     solver: {
-      method: 'ndf', rtol: '1e-5', atol: '1e-30', atolSpecies: '', norm: 'max',
+      method: 'ndf', bdf: false, rtol: '1e-5', atol: '1e-30', atolSpecies: '', norm: 'max',
       maxOrder: 5, minOrder: 1, hmaxYears: '0', matrix: 'auto', jacobianMode: 'analytic',
       kappa: '1e-3', maxJacAge: '20', maxSteps: '2000000', belowTolRun: '5',
       // rtm.html's two, which this page now offers too: left off, and the
@@ -415,6 +415,7 @@
   function readSolverControls() {
     const s = state.solver;
     s.method = $('facMethod').value;
+    s.bdf = $('facBdf').checked;
     s.rtol = $('facRtol').value.trim();
     s.atol = $('facAtol').value.trim();
     s.atolSpecies = $('facAtolSpecies').value;
@@ -436,7 +437,7 @@
     s.nonNegative = $('facNonNeg').checked;
   }
   /**
-   * Which of the page's solver settings the built-in NDF and BDF read.
+   * Which of the page's solver settings the built-in NDF reads.
    *
    * Not the ones added for the ported solvers: they have no minimum order,
    * they decide for themselves how long to keep a Jacobian, their Newton
@@ -444,11 +445,18 @@
    * estimate is not smoothed. Those four are genuinely not their settings,
    * rather than settings they happen to ignore.
    */
-  const BUILTIN_OPTIONS = ['rtol', 'atol', 'atolSpecies', 'norm', 'maxOrder', 'hmax', 'matrix',
+  const BUILTIN_OPTIONS = ['bdf', 'rtol', 'atol', 'atolSpecies', 'norm', 'maxOrder', 'hmax', 'matrix',
     'jacobian', 'belowTolRun', 'maxSteps', 'stagnationTol', 'autoAtol', 'clamp', 'nonNegative'];
+
+  /** Whether `method` has the BDF formulas switch: the NDF, and QNDF. */
+  function readsBdf(method) {
+    const julia = typeof FacsimileOdeJulia !== 'undefined' && FacsimileOdeJulia.is(method);
+    return (julia ? FacsimileOdeJulia.options(method) : BUILTIN_OPTIONS).includes('bdf');
+  }
 
   /** What the reader should see a setting called, when told it is not used. */
   const OPTION_NAMES = {
+    bdf: 'the BDF switch',
     rtol: 'the relative tolerance',
     atol: 'the absolute tolerance',
     atolSpecies: 'per-species absolute tolerances',
@@ -520,13 +528,15 @@
    * What to call the chosen method in prose: the menu's own text, without the
    * parenthetical that says where it came from. The option values are short
    * ids ('ndf', 'julia_fbdf') and reading one back to the reader mid-run is
-   * not what they chose from.
+   * not what they chose from. With the BDF formulas switch on it is the
+   * method that runs: NDF as BDF, QNDF as QBDF.
    */
   function methodLabel() {
     const chosen = $('facMethod').selectedOptions[0];
-    return chosen
+    const name = chosen
       ? chosen.textContent.replace(/\s*[↓(].*$/, '').trim()
       : $('facMethod').value;
+    return $('facBdf').checked && readsBdf($('facMethod').value) ? name.replace(/NDF$/, 'BDF') : name;
   }
 
   /** "a", "a and b", "a, b and c" -- or "a, b or c" when asked. */
@@ -545,8 +555,14 @@
     // next save would store it again.
     const menu = $('facMethod');
     if (s.method === 'ode15s') s.method = 'ndf';
+    // BDF and QBDF were entries of their own, and are now the BDF formulas
+    // switch on the NDF and on QNDF: a visit that had one chosen gets that
+    // method with the switch on, which is the same run.
+    if (s.method === 'bdf') { s.method = 'ndf'; s.bdf = true; }
+    if (s.method === 'julia_qbdf') { s.method = 'julia_qndf'; s.bdf = true; }
     if (!Array.prototype.some.call(menu.options, (o) => o.value === s.method)) s.method = 'ndf';
     menu.value = s.method;
+    $('facBdf').checked = !!s.bdf;
     $('facRtol').value = s.rtol;
     $('facAtol').value = s.atol;
     $('facAtolSpecies').value = s.atolSpecies || '';
@@ -1060,7 +1076,7 @@
     if (!(maxPoints >= 1000)) throw new Error('Points kept must be at least 1000');
     const minOrder = Math.min(s.minOrder, s.maxOrder);
     return {
-      method: s.method, rtol, atol, atolSpecies, norm: s.norm, maxOrder: s.maxOrder, minOrder,
+      method: s.method, bdf: !!s.bdf, rtol, atol, atolSpecies, norm: s.norm, maxOrder: s.maxOrder, minOrder,
       hmaxSeconds: hmaxYears > 0 ? hmaxYears * YEAR_S : 0, matrix: s.matrix, jacobianMode: s.jacobianMode,
       kappa, maxJacAge, maxSteps, belowTolRun, stagnationTol, maxPoints,
       autoAtol: s.autoAtol, smoothEst: s.smoothEst, nonNegative: s.nonNegative, tendYears,
@@ -1112,15 +1128,16 @@
    */
   function methodRefusal(method) {
     // A model with algebraic variables is a differential-algebraic system.
-    // Only the built-in pair takes a mass matrix; the ported solvers would
+    // Only the built-in NDF takes a mass matrix; the ported solvers would
     // integrate the constraint residuals as if they were rates of change,
     // which is a wrong answer rather than a slow one. Said before the run
     // rather than thrown part-way through it.
     const m = state.compiled;
-    if (m && m.nalgebraic && method !== 'ndf' && method !== 'bdf') {
+    if (m && m.nalgebraic && method !== 'ndf') {
       return `This model has ${m.nalgebraic} algebraic variable${m.nalgebraic === 1 ? '' : 's'} `
         + `(${(m.algebraicNames || []).join(', ')}), which makes it a differential-algebraic `
-        + 'system. The ported solvers do not take a mass matrix. Use NDF or BDF.';
+        + 'system. The ported solvers do not take a mass matrix. Use NDF, with its BDF '
+        + 'formulas or without.';
     }
     ensureWorker();
     // Where the run would happen first, because that explains the refusal
@@ -1129,7 +1146,7 @@
     if (typeof FacsimileOdeJulia !== 'undefined' && FacsimileOdeJulia.is(method)
       && workerKind !== 'worker') {
       return `${FacsimileOdeJulia.label(method)} can run for minutes on this model, and `
-        + `there is nowhere to run it but the page itself. ${INLINE_NOTE} Use NDF or BDF.`;
+        + `there is nowhere to run it but the page itself. ${INLINE_NOTE} Use NDF.`;
     }
     if (worker && workerSolvers && !workerSolvers.includes(method)) {
       return `The background worker does not have ${method}. That usually means the browser `
@@ -1778,7 +1795,9 @@
       const xlsx = new XlsxWriter(`${fileStem()}.xlsx`);
       const settings = (state.compiled ? state.compiled.settings : []).map((s) => [s.name, s.isTable ? s.value : Number(s.value), s.comment || '']);
       const s = state.solver;
-      settings.push(['METHOD', s.method, 'Solver'], ['RTOL', Number(s.rtol), 'Relative tolerance'], ['ATOL', Number(s.atol), 'Absolute tolerance (mol/cm3)'],
+      settings.push(['METHOD', s.method, 'Solver'],
+        ...(readsBdf(s.method) ? [['BDF', s.bdf ? 'TRUE' : 'FALSE', 'BDF formulas: every κ of the NDF zero']] : []),
+        ['RTOL', Number(s.rtol), 'Relative tolerance'], ['ATOL', Number(s.atol), 'Absolute tolerance (mol/cm3)'],
         ['ATOLSPECIES', (s.atolSpecies || '').replace(/\s*\n\s*/g, '; ').trim(), 'Per-species absolute tolerance'],
         ['NORM', s.norm, 'Error norm'],
         ['SCENARIO', state.presetId || 'custom', 'Scenario'],
@@ -2129,7 +2148,7 @@
     // on top of it; the compile below works out that that is the scenario.
     setModelText(FACSIMILE_DEFAULT_MODEL);
     const p = FACSIMILE_PRESETS.find((x) => x.id === '13g');
-    state.solver = { method: 'ndf', rtol: String(p.solver.rtol), atol: '1e-30', norm: 'max', maxOrder: 5, hmaxYears: '0', matrix: 'auto', jacobianMode: 'analytic', clamp: true, nonNegative: true };
+    state.solver = { method: 'ndf', bdf: false, rtol: String(p.solver.rtol), atol: '1e-30', norm: 'max', maxOrder: 5, hmaxYears: '0', matrix: 'auto', jacobianMode: 'analytic', clamp: true, nonNegative: true };
     writeSolverControls();
     compile();
   }

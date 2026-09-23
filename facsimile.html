@@ -82,16 +82,14 @@
               Advanced settings use the same names where they fit. Each row
               explains itself on hover.
             -->
-            <div class="fac-row" title="Which integrator solves the model. NDF is the default; BDF is the same integrator with the NDF&#8217;s &#954; set to zero; the Julia ports are methods of DifferentialEquations.jl, run in the page.">
+            <div class="fac-row" title="Which integrator solves the model. NDF is the default, and its BDF formulas switch under Advanced settings runs it with every &#954; set to zero; the Julia ports are methods of DifferentialEquations.jl, run in the page.">
               <label>Method</label>
               <select id="facMethod" data-on-change="fac:solverChanged">
+                <!-- With its BDF formulas switch, the same integrator with every κ zero. -->
                 <option value="ndf">NDF</option>
-                <!-- The same integrator with every κ set to zero. -->
-                <option value="bdf">BDF</option>
                 <!-- Ported from DifferentialEquations.jl; see resources/js/ode/julia/. -->
                 <option value="julia_fbdf">FBDF (Julia port)</option>
                 <option value="julia_qndf">QNDF (Julia port)</option>
-                <option value="julia_qbdf">QBDF (Julia port)</option>
                 <option value="julia_kencarp4">KenCarp4 (Julia port)</option>
                 <option value="julia_radau5">RadauIIA5 (Julia port)</option>
                 <option value="julia_rodas5p">Rodas5P (Julia port)</option>
@@ -118,6 +116,7 @@
                     data-on-click="fac:solverMore"
                     aria-expanded="false" aria-controls="facSolverAdvanced">Advanced settings</button>
             <div id="facSolverAdvanced" hidden>
+            <label class="fac-check" data-solver-opt="bdf" title="Run the plain backward differentiation formulas: the NDF with every &#954; set to zero. Usually a few more steps for the same answer; switch it on to see what those terms buy, or to match a result someone else worked out with BDF. On QNDF it gives QBDF."><input type="checkbox" id="facBdf" data-on-change="fac:solverChanged"> BDF formulas: every κ of the NDF zero</label>
             <div class="fac-row" data-solver-opt="atolSpecies" title="Absolute tolerances for named species, one SPECIES VALUE a line; every species not listed keeps the absolute tolerance above.">
               <label>Per-species absolute tolerance<span class="fac-name">one <code>SPECIES VALUE</code> a line; everything unlisted keeps the value above</span></label>
               <textarea id="facAtolSpecies" rows="3" spellcheck="false" placeholder="H2O 1e-12&#10;OH 1e-22" data-on-change="fac:solverChanged"></textarea>
@@ -130,7 +129,7 @@
               </select>
             </div>
             <div class="fac-row" data-solver-opt="maxOrder" title="The highest order the variable-order formulas may reach. Lower is steadier through a discontinuity and slower on a smooth stretch.">
-              <label>Maximum order<span class="fac-name">the variable-order methods: NDF, BDF, FBDF, QNDF, QBDF</span></label>
+              <label>Maximum order<span class="fac-name">the variable-order methods: NDF, FBDF and QNDF</span></label>
               <select id="facMaxOrder" data-on-change="fac:solverChanged">
                 <option>1</option><option>2</option><option>3</option><option>4</option><option selected>5</option>
               </select>
@@ -188,7 +187,7 @@
             <label class="fac-check" data-solver-opt="autoAtol" title="Let each species&#8217; absolute tolerance rise with it, so it is judged against the largest it has ever been rather than a floor fixed before the run. Much cheaper where concentrations span many decades; it only ever loosens, so a species that peaked and fell is no longer controlled in its tail."><input type="checkbox" id="facAutoAtol" data-on-change="fac:solverChanged"> Absolute tolerance follows the solution</label>
             <label class="fac-check" data-solver-opt="smoothEst" title="Filter the error estimate through I &#8722; hJ, as Shampine proposed, so that a stiff component cannot inflate it and force a needlessly small step."><input type="checkbox" id="facSmoothEst" checked data-on-change="fac:solverChanged"> Smooth the error estimate through I − hJ (Shampine)</label>
             <label class="fac-check" data-solver-opt="clamp" title="Read every concentration in the rate laws as max(0, c), so a small negative excursion cannot drive a rate the wrong way. The solution itself may still dip below zero unless the next setting stops it."><input type="checkbox" id="facClamp" checked data-on-change="fac:solverChanged"> Read negative concentrations as zero in the rate laws</label>
-            <label class="fac-check" data-solver-opt="nonNegative" title="Keep every species at or above zero: NDF and BDF damp the derivative so a species at zero cannot be pushed further down, count a violation in the error test, and project an accepted step back; the Julia ports only project."><input type="checkbox" id="facNonNeg" checked data-on-change="fac:solverChanged"> Keep every species non-negative</label>
+            <label class="fac-check" data-solver-opt="nonNegative" title="Keep every species at or above zero: the NDF damps the derivative so a species at zero cannot be pushed further down, counts a violation in the error test, and projects an accepted step back; the Julia ports only project."><input type="checkbox" id="facNonNeg" checked data-on-change="fac:solverChanged"> Keep every species non-negative</label>
             <!--
               Filled in by updateSolverOptions: which of the settings above the
               chosen method does not read. Said rather than silently hidden,
@@ -391,14 +390,14 @@
           <p>Three settings deserve a word because they are not all-or-nothing.</p>
           <ul>
             <li><strong>Reading negatives as zero</strong> is not a solver setting at all. It changes the generated rate laws, so it is built into the derivative and the Jacobian that every solver is handed, and it applies to all of them identically.</li>
-            <li><strong>Keeping every species non-negative</strong> is three things at once, and the two families do different amounts of it. <em>NDF</em> and <em>BDF</em> do all three: it damps the derivative so that a species at zero cannot be pushed below it, folds the size of any violation into the error test, and projects the accepted step back. The <em>Julia ports</em> project only. The panel says which you are getting.</li>
+            <li><strong>Keeping every species non-negative</strong> is three things at once, and the two families do different amounts of it. <em>NDF</em>, with its BDF formulas or without, does all three: it damps the derivative so that a species at zero cannot be pushed below it, folds the size of any violation into the error test, and projects the accepted step back. The <em>Julia ports</em> project only. The panel says which you are getting.</li>
             <li><strong>The Newton tolerance</strong> κ is how closely each stage is solved, as a share of one unit of the integration tolerance. It is not a cosmetic knob: at 1/100, which is what SciML uses, the left-over iteration error in an ESDIRK's stages is enough to corrupt its embedded error estimate, and the step-size controller then acts on a corrupted number. The default here is 1/1000, which on the standard stiff test problems is both more accurate and cheaper.</li>
           </ul>
           <p>What each method reads is declared in the code that hands the settings over, which is the only place the answer stays honest.</p>
 
           <h3>The Julia ports</h3>
-          <p>Seven more solvers, ported into JavaScript from <a href="https://docs.sciml.ai/DiffEqDocs/stable/" target="_blank" rel="noopener noreferrer">DifferentialEquations.jl</a>: <em>FBDF</em>, <em>QNDF</em>, <em>QBDF</em>, <em>Rodas5P</em>, <em>RadauIIA5</em>, <em>KenCarp4</em> and <em>TRBDF2</em>. They are a package of their own — the sources are under <code>resources/js/ode/julia/</code> with their own tests and README — and they are plain JavaScript: nothing is downloaded and they work offline exactly as the built-in pair does.</p>
-          <p><strong>Which does what.</strong> <em>QNDF</em> is the same method as this page's own <em>NDF</em> — the same numerical differentiation formulas, the same κ coefficients and the same backward-difference machinery — written by other people, so it is the most direct check there is on the built-in solver. <em>QBDF</em> stands in the same relation to <em>BDF</em>: κ set to zero throughout, which is what turns a numerical differentiation formula back into a plain backward differentiation formula, so running the pair either way shows exactly what those terms are worth on a given problem. <em>FBDF</em> is a close relative: a multistep formula of variable order that reuses one matrix factorisation across many steps, which is what makes it cheap on a system this size. <em>RadauIIA5</em> is fully implicit and suffers the least from stiffness, so it is the one to believe when two others disagree. <em>KenCarp4</em> and <em>TRBDF2</em> are diagonally implicit and cheap at moderate and loose tolerances. <em>Rosenbrock</em> methods like <em>Rodas5P</em> take one linear solve per stage and no nonlinear iteration at all, so there is nothing that can fail to converge.</p>
+          <p>Six more solvers, ported into JavaScript from <a href="https://docs.sciml.ai/DiffEqDocs/stable/" target="_blank" rel="noopener noreferrer">DifferentialEquations.jl</a>: <em>FBDF</em>, <em>QNDF</em>, <em>Rodas5P</em>, <em>RadauIIA5</em>, <em>KenCarp4</em> and <em>TRBDF2</em>. They are a package of their own — the sources are under <code>resources/js/ode/julia/</code> with their own tests and README — and they are plain JavaScript: nothing is downloaded and they work offline exactly as the built-in NDF does.</p>
+          <p><strong>Which does what.</strong> <em>QNDF</em> is the same method as this page's own <em>NDF</em> — the same numerical differentiation formulas, the same κ coefficients and the same backward-difference machinery — written by other people, so it is the most direct check there is on the built-in solver. Both have a <em>BDF formulas</em> switch under Advanced settings, which sets κ to zero throughout, and QNDF then runs as <em>QBDF</em>. That is what turns a numerical differentiation formula back into a plain backward differentiation formula, so running either with the switch on and off shows exactly what those terms are worth on a given problem. <em>FBDF</em> is a close relative: a multistep formula of variable order that reuses one matrix factorisation across many steps, which is what makes it cheap on a system this size. <em>RadauIIA5</em> is fully implicit and suffers the least from stiffness, so it is the one to believe when two others disagree. <em>KenCarp4</em> and <em>TRBDF2</em> are diagonally implicit and cheap at moderate and loose tolerances. <em>Rosenbrock</em> methods like <em>Rodas5P</em> take one linear solve per stage and no nonlinear iteration at all, so there is nothing that can fail to converge.</p>
           <p><strong>On this model, in particular.</strong> Every one of them that finishes agrees with <code>NDF</code> on the water left after 500 years — 65.935 g against 65.933 g — so the physics is not in question. What differs is the cost, and by a lot:</p>
           <table class="fac-table-small">
             <thead><tr><th>solver</th><th>steps</th><th>rejected</th><th>seconds</th></tr></thead>
@@ -475,7 +474,7 @@ Y2 = , rf = 3.0E7*Y2*Y2</pre>
           <p>Three things are worth knowing.</p>
           <ul>
             <li><strong>The start is solved for you.</strong> A differential-algebraic system has to begin from a state that satisfies its own constraints, and the value you write in <code>&lt;INITIAL&gt;</code> generally will not. FACSIMILE asked the author for one close enough for its iteration to work; what that gives when the guess is off is not a warning but a stall. Take the circle of the FACSIMILE User Guide, <em>y₁′ = y₂</em> with <em>y₁² + y₂² = 1</em>, started at its own documented <em>y₂ = −0.9</em> where the constraint wants −0.866: the first step moves the algebraic variable by 0.034, the error test measures that jump and rejects the step, and halving the step does not shrink the jump, because the constraint has to hold at the new point whatever the step is. The step size collapses and the run never leaves zero. So the constraints are solved here first, by Newton on the algebraic variables with the differential ones held where you put them, and the footer says how far they moved. Your starting value is a first guess, and only has to be close enough for that Newton to find the right root.</li>
-            <li><strong>Only NDF and BDF.</strong> The ported solvers take no mass matrix and would read a constraint residual as a rate of change, so they are refused rather than allowed to produce a wrong answer quietly.</li>
+            <li><strong>Only the NDF</strong>, with its BDF formulas or without. The ported solvers take no mass matrix and would read a constraint residual as a rate of change, so they are refused rather than allowed to produce a wrong answer quietly.</li>
             <li><strong>Index 1.</strong> Each constraint must determine its own variable. If it does not, the iteration matrix is singular and the page says which variable and why, rather than reporting an arithmetic failure.</li>
           </ul>
           <p>A worked example is in the repository at <code>resources/data/facsimile-langmuir.fac</code>: a gas consumed at a fixed rate with a surface whose coverage is in equilibrium with it at every instant. Open it with <em>Open…</em>, or drop it on the page. It uses all of this at once — an algebraic variable, a named rate, an output grid, an event value list and an event that stops the run — and everything in it has an exact answer to check against.</p>
@@ -575,13 +574,13 @@ Y2 = , rf = 3.0E7*Y2*Y2</pre>
   -->
   <script src="./resources/js/facsimile-model.js?v=20260923"></script>
   <script src="./resources/js/ode-core.js?v=20260923e"></script>
-  <script src="./resources/js/facsimile-solver.js?v=20260923e"></script>
+  <script src="./resources/js/facsimile-solver.js?v=20260923f"></script>
   <script src="./resources/js/facsimile-default.js?v=20260921a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
-  <script src="./resources/js/facsimile-ode-julia.js?v=20260917zd"></script>
-  <script src="./resources/js/facsimile-worker.js?v=20260923c"></script>
+  <script src="./resources/js/facsimile-ode-julia.js?v=20260923f"></script>
+  <script src="./resources/js/facsimile-worker.js?v=20260923f"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/facsimile-hdf5.js?v=20260917zd"></script>
-  <script src="./resources/js/facsimile-ui.js?v=20260923e"></script>
+  <script src="./resources/js/facsimile-ui.js?v=20260923f"></script>
 </body>
 </html>

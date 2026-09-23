@@ -1,0 +1,16 @@
+// Pylance's settings for the Python in this repository, read by VSCode.
+{
+  // What Pylance used before this file existed: a config file would otherwise
+  // switch it to "standard".
+  "typeCheckingMode": "off",
+  "enableReachabilityAnalysis": true,
+  // Where each page test finds its CDP helper, driver.py: beside it in rb/ and
+  // site/, and rb.html's for the other tests, which put resources/tests/rb on
+  // sys.path when they run.
+  "executionEnvironments": [
+    { "root": "resources/tests/rb" },
+    { "root": "resources/tests/site" },
+    { "root": "resources/tests", "extraPaths": ["resources/tests/rb"] },
+    { "root": "." }
+  ]
+}

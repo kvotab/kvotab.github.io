@@ -1,0 +1,19 @@
+# Pylint's settings for the Python in this repository: the page tests under
+# resources/tests/ and the generators under scripts/. The VSCode Pylint
+# extension reads this file too, since it runs Pylint from the repository's
+# root. Everything not named here is Pylint's default.
+
+[MAIN]
+
+# facsimile.html's page test and the probabilistic fixture builder drive the
+# page through rb.html's CDP helper, resources/tests/rb/driver.py, which they
+# put on sys.path when they run. Appended, so that a test with a driver.py of
+# its own beside it (resources/tests/site/) still has that one, and only once:
+# the VSCode extension runs Pylint again and again in one process.
+init-hook=import sys; 'resources/tests/rb' in sys.path or sys.path.append('resources/tests/rb')
+
+[TYPECHECK]
+
+# h5py's File and Group index to a Group, a Dataset or a Datatype, decided at
+# run time. Pylint takes every one for a Group, and then finds no .shape on it.
+ignored-classes=h5py._hl.group.Group

@@ -105,7 +105,8 @@ PROBLEMS = {
 
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
-    for name, (f, u0, span, teval, rtol, atol) in PROBLEMS.items():
+    for name, problem in PROBLEMS.items():
+        f, u0, span, teval, rtol, atol = problem
         teval = np.asarray([t for t in teval if span[0] < t <= span[1]])
         sol = solve_ivp(f, span, u0, method='Radau', t_eval=teval, rtol=rtol, atol=atol)
         if not sol.success:

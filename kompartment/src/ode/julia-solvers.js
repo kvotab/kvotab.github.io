@@ -47,7 +47,7 @@
 
 import { ODEProblem, solve, Success, Terminated } from './julia/index.js';
 import { FBDF } from './julia/solvers/fbdf.js';
-import { QNDF } from './julia/solvers/qndf.js';
+import { QNDF, QBDF } from './julia/solvers/qndf.js';
 import { Rodas5P } from './julia/solvers/rosenbrock.js';
 import { RadauIIA5 } from './julia/solvers/radau.js';
 import { TRBDF2, KenCarp4 } from './julia/solvers/esdirk.js';
@@ -61,6 +61,15 @@ const ALGORITHMS = Object.assign(Object.create(null), {
 	radau5: RadauIIA5,
 	kencarp4: KenCarp4,
 	trbdf2: TRBDF2,
+});
+
+/**
+ * What `simulation.bdf` runs instead, for the one method that has a plain-BDF
+ * variant: QNDF with every κ zero, which is the package's own QBDF. By the id
+ * the run then reports, so a run log never says `qndf` for a QBDF run.
+ */
+const AS_BDF = Object.assign(Object.create(null), {
+	qndf: { id: 'qbdf', algorithm: QBDF },
 });
 
 /**
@@ -107,6 +116,7 @@ export function julia(id) {
 	if (!algorithm) throw new SolverError(`'${id}' is not one of the ported methods`, 0);
 
 	return function solveIt(f, tspan, y0, opts = {}) {
+		const variant = opts.bdf ? AS_BDF[id] : null;
 		const grid = Float64Array.from(tspan);
 		const t0 = grid[0];
 		const tf = grid[grid.length - 1];
@@ -199,7 +209,7 @@ export function julia(id) {
 
 		let sol;
 		try {
-			sol = solve(problem, algorithm(), settings);
+			sol = solve(problem, (variant?.algorithm ?? algorithm)(), settings);
 		} catch (e) {
 			throw new SolverError(e.message, e.t ?? t0);
 		}
@@ -221,7 +231,7 @@ export function julia(id) {
 		// that is not Success is a failure this tool reports as one.
 		if (sol.retcode !== Success && sol.retcode !== Terminated) {
 			throw new SolverError(
-				`${sol.message || sol.retcode} (${id})`,
+				`${sol.message || sol.retcode} (${variant?.id ?? id})`,
 				sol.t[sol.t.length - 1] ?? t0,
 			);
 		}
@@ -253,7 +263,7 @@ export function julia(id) {
 				npds: s.njacs ?? 0,
 				ndecomps: s.nw ?? 0,
 				nsolves: s.nsolve ?? 0,
-				solver: id,
+				solver: variant?.id ?? id,
 				sparse: !!s.sparse,
 				fill: s.fill ?? null,
 			},

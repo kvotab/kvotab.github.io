@@ -2945,13 +2945,19 @@ name them, and `domain/project.js` can name a default, without dragging the
 builder, the parser and three integrators onto the main thread — runs happen in
 a Worker.
 
-**`bdf` and `ndf` are one routine under two names.** Kappa is precisely the
-difference between the two families of formulas — zeroing it turns the NDFs
-into the plain BDFs — so both are in the catalogue rather than one being a flag
-on the other. Offering both says what those terms are worth on a given model,
-and lets an answer worked out against plain BDF be reproduced exactly. The
-statistics report whichever name ran, so a run log never says `ndf` for a BDF
-run.
+**The plain BDFs are a switch on the NDF, not a second solver.** Kappa is
+precisely the difference between the two families of formulas — zeroing it
+turns the NDFs into the plain BDFs — and it is the same integrator either way.
+So the list has one entry, `ndf`, and the NDF has a setting, `simulation.bdf`
+(*BDF formulas*, off), as QNDF has the same one for QBDF. They used to be two
+entries, `ndf` and `bdf`, on the argument that offering both says what those
+terms are worth; the switch says the same with one list entry fewer, in all
+three pages alike. Running with and without it still shows what the terms buy,
+and an answer worked out against plain BDF is still reproduced exactly. A file
+that names the solver `bdf` (or its older name, `ode15s_bdf`) opens as `ndf`
+with the switch on, in `domain/keys.js`, and runs the same code bit for bit.
+The statistics report the formulas that ran, so a run log never says `ndf`
+for a BDF run, nor `qndf` for a QBDF one.
 
 ## What the file gate enforces
 
@@ -4596,7 +4602,7 @@ unlike those two it needs the clock to carry a tangent through
 call is live. The cost is one evaluation per step on one solver, and the
 vendored `rodas5p` takes an exact `tgrad` already.
 
-**A non-negativity constraint that binds is only safe under `ndf` and `bdf`.**
+**A non-negativity constraint that binds is only safe under `ndf`**, with or without its BDF switch.
 Holding a compartment at zero while its equations push it below makes the
 derivative discontinuous there. A multistep method's Newton iteration lands on
 the kink and carries it; a one-step method's stages straddle it and disagree by

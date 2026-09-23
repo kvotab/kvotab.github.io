@@ -36,12 +36,9 @@ export {
 // `SOLVERS.constructor` is `Object` -- truthy, so `solverFor` handed back the
 // Object constructor as the solver and the run failed somewhere downstream
 // with nothing to say which setting was wrong.
-/** The two names one integrator runs under: the NDFs, and the same with kappa = 0. */
-const bdf = (f, tspan, y0, opts = {}) => variableOrder(f, tspan, y0, { ...opts, bdf: true });
-
 const SOLVERS = Object.assign(Object.create(null), {
+	// The NDFs; `simulation.bdf` runs the same integrator as the plain BDFs.
 	ndf: variableOrder,
-	bdf,
 	ros23: rosenbrock23,
 	dp45: dormandPrince,
 	// The ported DifferentialEquations.jl methods, each wrapped in this
@@ -406,6 +403,9 @@ export function run(input, opts = {}) {
 		maxSteps: sim.max_steps,
 		maxOrder: sim.max_order,
 		minOrder: sim.min_order,
+		// Every κ zero: the NDF as the plain BDFs, and QNDF as QBDF. Read by
+		// those two only; see SOLVER_OPTIONS in ../ode/solvers.js.
+		bdf: sim.bdf === true,
 		normControl: sim.norm_control === true,
 		errorNorm: sim.error_norm,
 		newtonKappa: sim.newton_kappa,
@@ -527,9 +527,10 @@ export function run(input, opts = {}) {
 			// like a stiffness problem. Unless the solver has already said it,
 			// which ros23 does when it stops at a held state.
 			const saidAlready = /cannot go negative/.test(e.message);
-			// Both names of the NDF integrator carry it: it is the Newton
-			// iteration that lands on the kink, and kappa does not change that.
-			const bindsHere = solverId === 'ndf' || solverId === 'bdf';
+			// The NDF integrator carries it with or without its BDF switch: it is
+			// the Newton iteration that lands on the kink, and kappa does not
+			// change that.
+			const bindsHere = solverId === 'ndf';
 			if (!saidAlready && !bindsHere && nonNegative.some(Boolean)) {
 				hints.push(`If a compartment reaches zero at this time, its `
 					+ `"cannot go negative" setting is the likely cause: `

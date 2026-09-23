@@ -629,6 +629,34 @@ async def main():
             check(f'and gets the same answer as the built-in one ({fb} against exp(-5))',
                   isinstance(fb, (int, float)) and abs(fb - 0.006737947) < 1e-5, True)
 
+            # QNDF has the BDF formulas switch, which makes it QBDF -- the same
+            # switch the NDF has, where it makes the NDF the BDF. It is off.
+            await page.ev("document.querySelector('[data-tab=\"model\"]').click()")
+            check('the BDF formulas switch is off', await page.ev(
+                "document.getElementById('rtmBdf').checked"), False)
+            await page.ev("""(() => {
+              const m = document.getElementById('rtmMethod');
+              m.value = 'julia_qndf'; m.dispatchEvent(new Event('change', { bubbles: true }));
+              const b = document.getElementById('rtmBdf');
+              b.checked = true; b.dispatchEvent(new Event('change', { bubbles: true }));
+            })()""")
+            check('QNDF with the switch on is called QBDF', await page.ev(
+                "document.getElementById('rtmSolverNote').textContent.split(' ')[0]"), 'QBDF')
+            await page.ev("document.getElementById('rtmRun').click()")
+            run = await wait_run(page)
+            check('and runs', isinstance(run, str) and run.startswith('Done'), True)
+            await page.ev("document.querySelector('[data-tab=\"time\"]').click()")
+            await asyncio.sleep(1.2)
+            qb = await page.ev(
+                "(() => { const d = document.getElementById('rtmChartTime');"
+                " const y = d.data[0].y; return y[y.length - 1]; })()")
+            check(f'to the same answer ({qb} against exp(-5))',
+                  isinstance(qb, (int, float)) and abs(qb - 0.006737947) < 1e-5, True)
+            await page.ev("""(() => {
+              const b = document.getElementById('rtmBdf');
+              b.checked = false; b.dispatchEvent(new Event('change', { bubbles: true }));
+            })()""")
+
             # --- the progress bar, on a run long enough to see it --------------
             await page.ev("document.querySelector('[data-tab=\"model\"]').click()")
             await page.ev("""(() => {

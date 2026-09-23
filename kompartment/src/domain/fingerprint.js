@@ -69,7 +69,7 @@ const SOLVE_SETTINGS = [
 	'max_step', 'initial_step',
 	// The solver's own settings: each one changes how the run is stepped.
 	'max_steps', 'max_order', 'min_order', 'norm_control', 'error_norm', 'stagnation_tol',
-	'newton_kappa', 'max_jac_age', 'below_tol_run', 'matrix', 'jacobian',
+	'newton_kappa', 'max_jac_age', 'below_tol_run', 'matrix', 'jacobian', 'bdf',
 	// Not a solver setting, but it appends states to the vector and changes
 	// what the run reports, so a run without it is not a run with it.
 	'mass_balance',

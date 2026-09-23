@@ -151,10 +151,17 @@ async def main():
             await set_control(s, '[data-setting="TEND"]', '0.01')
             check('worker: the built-in NDF runs',
                   (await run_method(s, 'ndf')).startswith('Done'), True)
-            # The same integrator with every kappa set to zero. Its own menu
-            # entry, so the worker has to answer to the name.
-            check('worker: BDF runs too',
-                  (await run_method(s, 'bdf')).startswith('Done'), True)
+            # The plain BDFs: the same integrator with every kappa zero, which
+            # is a switch on the NDF rather than a menu entry, so the worker has
+            # to carry the switch through to the solver.
+            flip = ("(() => { const b = document.getElementById('facBdf'); b.checked = %s;"
+                    " b.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await s.ev(flip % 'true')
+            check('worker: the NDF runs with its BDF formulas too',
+                  (await run_method(s, 'ndf')).startswith('Done'), True)
+            check('and says it ran them', await s.ev(
+                "document.getElementById('facStats').textContent.startsWith('BDF')"), True)
+            await s.ev(flip % 'false')
             # The point of the worker: the long solvers get off the main thread.
             check('worker: a Julia port runs off the main thread',
                   (await run_method(s, 'julia_fbdf')).startswith('Done'), True)
@@ -164,7 +171,7 @@ async def main():
             menu = await s.ev("[...document.getElementById('facMethod').options]"
                               ".map(o => o.value)")
             said = await s.ev("""new Promise((ok) => {
-              const w = new Worker('resources/js/facsimile-worker-entry.js?v=20260923b');
+              const w = new Worker('resources/js/facsimile-worker-entry.js?v=20260923f');
               w.onmessage = (e) => { ok(e.data.solvers || []); w.terminate(); };
               w.onerror = () => ok(['<<the worker would not start>>']);
               w.postMessage({ type: 'capabilities', id: 1 });

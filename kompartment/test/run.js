@@ -1122,9 +1122,9 @@ test('solvers are named for what they are for, not which routine they are', () =
 	// The interface labels say stiff or non-stiff; the id stays available for
 	// error messages and for comparing against desktop output.
 	assert(solverLabel('ndf') === 'stiff, NDF');
-	// One integrator under two names: the NDFs, and the same with the kappa
-	// terms zeroed, which is exactly what makes an NDF a BDF.
-	assert(solverLabel('bdf') === 'stiff, BDF');
+	// The plain BDFs are the NDF's switch, not a solver of their own: see
+	// "the plain BDFs are the NDF with its switch on".
+	assert(solverLabel('bdf') === 'bdf', 'bdf is still in the catalogue');
 	assert(solverLabel('ros23') === 'stiff, low order, Rosenbrock 2-3');
 	assert(solverLabel('dp45') === 'non-stiff, Dormand-Prince 4-5');
 	assert(solverName('ndf') === 'stiff, NDF (ndf)');
@@ -30288,7 +30288,7 @@ test('the NDF reads facsimile\'s error norm, iteration matrix and steps at the f
 	const { ndf } = await import('../src/ode/solvers/ndf.js');
 	const { solverOptions } = await import('../src/ode/solvers.js');
 	for (const key of ['error_norm', 'matrix', 'below_tol_run']) {
-		assert(solverOptions('ndf').includes(key) && solverOptions('bdf').includes(key), `the NDF does not read ${key}`);
+		assert(solverOptions('ndf').includes(key), `the NDF does not read ${key}`);
 	}
 	const last = (r) => { const o = r.outputs(); const v = r.series(o[o.length - 1]); return v[v.length - 1]; };
 	const far = JSON.parse(readFileSync(new URL('../examples/farfield.json', import.meta.url), 'utf8'));
@@ -30399,41 +30399,78 @@ test('a switch shows the setting it controls, whichever way the setting defaults
 	}
 });
 
-test('the NDFs and the plain BDFs are one integrator offered under two names', async () => {
+test('the plain BDFs are the NDF with its switch on, and QBDF is QNDF with it', async () => {
 	const { readFileSync } = await import('node:fs');
-	const { SOLVER_INFO, solverFloatsAbsTol } = await import('../src/ode/solvers.js');
-	assert(SOLVER_INFO.bdf && !SOLVER_INFO.bdf.remote, 'the BDF solver is not offered');
-	// It is the same code: `BDF: true` sets the kappa terms to zero, which is
+	const { SOLVER_INFO, SOLVER_OPTION_INFO, solverOptions, solverFloatsAbsTol, SOLVER_IDS: ids } =
+		await import('../src/ode/solvers.js');
+	// One entry in the list, and a switch under Advanced settings -- off,
+	// since the NDFs are the better formulas -- on the two methods that have
+	// the choice.
+	assert(!SOLVER_INFO.bdf && !ids.includes('bdf'), 'bdf is still offered as a solver of its own');
+	assert(SOLVER_OPTION_INFO.bdf?.kind === 'switch' && SOLVER_OPTION_INFO.bdf.on === false,
+		'the BDF switch is not a switch, off');
+	assert(solverOptions('ndf').includes('bdf') && solverOptions('qndf').includes('bdf'),
+		'the BDF switch is not offered on the NDF and QNDF');
+	for (const id of ['fbdf', 'ros23', 'dp45', 'rodas5p', 'radau5', 'kencarp4', 'trbdf2']) {
+		assert(!solverOptions(id).includes('bdf'), `the BDF switch is offered on ${id}, which has none`);
+	}
+	// It is the same code: the switch sets the kappa terms to zero, which is
 	// exactly what makes an NDF a BDF, and is what odeset('BDF','on') does.
 	const ndf = readFileSync(new URL('../src/ode/solvers/ndf.js', import.meta.url), 'utf8');
 	assert(/const kappa = o\.bdf \? 0 : KAPPA\[k - 1\];/.test(ndf), 'the BDF flag no longer zeroes kappa');
-	const runner = readFileSync(new URL('../src/sim/runner.js', import.meta.url), 'utf8');
-	assert(/\n\tbdf,\n/.test(runner) && /variableOrder\(f, tspan, y0, \{ \.\.\.opts, bdf: true \}\)/.test(runner));
-	// Both float their absolute tolerance, since that is the same error test.
-	assert(solverFloatsAbsTol('ndf') && solverFloatsAbsTol('bdf'));
+	// The same error test, so the tolerance floats either way.
+	assert(solverFloatsAbsTol('ndf'));
 
-	// Same answer, and the kappa terms are worth a few steps -- which is the
-	// whole reason for offering both rather than hiding one in a flag.
+	// Same answer, and the kappa terms are worth a few steps -- which is why
+	// the switch is there: running with and without it says what they buy.
 	const raw = JSON.parse(readFileSync(new URL('../examples/biosphere.json', import.meta.url), 'utf8'));
-	const at = (solver) => {
+	const at = (solver, bdf) => {
 		const m = structuredClone(raw);
 		m.simulation.solver = solver;
+		m.simulation.bdf = bdf;
 		const r = run(m);
 		const o = r.outputs().find((x) => x.label === 'Well [I-129]');
 		assert(o, 'the model stopped reporting the series this test reads');
 		return { steps: r.stats.nsteps, solver: r.stats.solver, end: r.series(o)[r.t.length - 1] };
 	};
-	const a = at('ndf');
-	const b = at('bdf');
-	// Each reports the name it ran under, not the module it lives in.
+	const a = at('ndf', false);
+	const b = at('ndf', true);
+	// Each reports the formulas it ran, not the entry it was chosen under.
 	assert(a.solver === 'ndf' && b.solver === 'bdf', `${a.solver} / ${b.solver}`);
 	assert(a.end > 0 && Math.abs(b.end / a.end - 1) < 1e-4, `${b.end} against ${a.end}`);
 	assert(b.steps > a.steps, `the NDF terms bought nothing: ${a.steps} against ${b.steps}`);
+	const q = at('qndf', false);
+	const qb = at('qndf', true);
+	assert(q.solver === 'qndf' && qb.solver === 'qbdf', `${q.solver} / ${qb.solver}`);
+	assert(Math.abs(qb.end / q.end - 1) < 1e-3 && qb.steps !== q.steps,
+		`QBDF is not QNDF with kappa off: ${qb.end} in ${qb.steps} steps against ${q.end} in ${q.steps}`);
 
-	// And a model that asks for it by name runs it, rather than falling back.
-	const m = structuredClone(raw);
-	m.simulation.solver = 'bdf';
-	assert(new Project(m).simulation.solver === 'bdf', 'the id did not survive a Project');
+	// A file that names the old solver runs what it asked for: the NDF
+	// integrator with every kappa zero, which is the same code bit for bit.
+	const old = structuredClone(raw);
+	old.simulation.solver = 'bdf';
+	const p = new Project(old);
+	assert(p.simulation.solver === 'ndf' && p.simulation.bdf === true,
+		`solver 'bdf' opened as ${p.simulation.solver}, bdf ${p.simulation.bdf}`);
+	const older = structuredClone(raw);
+	older.simulation.solver = 'ode15s_bdf';
+	assert(new Project(older).simulation.bdf === true, 'the oldest name of the BDF solver lost its switch');
+	const r = run(old);
+	const o = r.outputs().find((x) => x.label === 'Well [I-129]');
+	assert(r.series(o)[r.t.length - 1] === b.end && r.stats.nsteps === b.steps,
+		'a file naming bdf does not run what the switch runs');
+	// Off unless a file says so, as a boolean however it is spelt.
+	assert(new Project(structuredClone(raw)).simulation.bdf === false);
+	const spelt = structuredClone(raw);
+	spelt.simulation.bdf = 'true';
+	assert(new Project(spelt).simulation.bdf === true);
+
+	// And it is part of what the trajectory is a function of.
+	const { integrationFingerprint } = await import('../src/domain/fingerprint.js');
+	const base = { simulation: { ...DEFAULT_SIMULATION }, compartments: [{ name: 'A', initial: '1' }] };
+	assert(integrationFingerprint(new Project(base))
+		!== integrationFingerprint(new Project({ ...base, simulation: { ...base.simulation, bdf: true } })),
+	'a run with the BDF formulas is the same run without them');
 });
 
 test('a solver’s own settings are offered where they are read, and reach it', async () => {
@@ -30478,8 +30515,7 @@ test('a solver’s own settings are offered where they are read, and reach it', 
 	  under a second and agrees with the reference code. See the note at the
 	  stagnation test in ../src/ode/solvers/ndf.js.
 	*/
-	assert(solverOptions('ndf').includes('stagnation_tol')
-		&& solverOptions('bdf').includes('stagnation_tol'), 'the NDF corrector cannot be told to take a stalled correction');
+	assert(solverOptions('ndf').includes('stagnation_tol'), 'the NDF corrector cannot be told to take a stalled correction');
 	assert(!solverOptions('dp45').includes('stagnation_tol')
 		&& !solverOptions('fbdf').includes('stagnation_tol'), 'offered to a solver that does not read it');
 	assert(solverIgnores('dp45').includes('the Newton tolerance'));

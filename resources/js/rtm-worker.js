@@ -157,7 +157,9 @@ function rtmSummary(model) {
 
 /** Which solvers this worker can actually run; asked for as it starts. */
 function rtmSolvers() {
-  const out = ['ndf', 'bdf'];
+  // The NDF runs the plain BDFs with its BDF formulas switch, and QNDF runs
+  // QBDF the same way, so neither is an entry of its own.
+  const out = ['ndf'];
   if (typeof FacsimileOdeJulia !== 'undefined') out.push(...Object.keys(FacsimileOdeJulia.METHODS));
   return out;
 }
@@ -236,6 +238,8 @@ function handleRtmMessage(msg, post) {
       atol: s.atol,
       nonNegative: !!s.nonNegative,
       matrix: s.matrix || 'auto',
+      // Every κ zero: the NDF as the plain BDFs, QNDF as QBDF.
+      bdf: !!s.bdf,
       maxSteps: s.maxSteps,
       maxPoints: s.maxPoints || 4000,
       norm: s.norm,

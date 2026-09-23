@@ -274,8 +274,8 @@ async def main():
 
             check('every solver is offered', await page.ev(
                 "[...document.getElementById('facMethod').options].map(o => o.value).join(',')"),
-                'ndf,bdf,'
-                'julia_fbdf,julia_qndf,julia_qbdf,julia_kencarp4,'
+                'ndf,'
+                'julia_fbdf,julia_qndf,julia_kencarp4,'
                 'julia_radau5,julia_rodas5p,julia_trbdf2')
             # FBDF is the one that solves this model comfortably; the others
             # are covered by the package's own tests under
@@ -311,14 +311,36 @@ async def main():
             shown = ("[...document.querySelectorAll('[data-solver-opt]')]"
                      ".filter(el => getComputedStyle(el).display !== 'none')"
                      ".map(el => el.dataset.solverOpt).join(' ')")
-            builtin = ('rtol atol atolSpecies norm maxOrder hmax matrix jacobian '
+            builtin = ('rtol atol bdf atolSpecies norm maxOrder hmax matrix jacobian '
                        'belowTolRun maxSteps stagnationTol autoAtol clamp nonNegative')
             check('the built-in NDF shows its own settings', await page.ev(shown), builtin)
-            # BDF is the same integrator with every kappa set to zero, so it
-            # reads the same settings. If these ever diverge, this says so.
-            await set_control(page, '#facMethod', 'bdf')
-            check('and BDF, being the same integrator, shows the same',
-                  await page.ev(shown), builtin)
+            # The plain BDFs are the same integrator with every kappa zero: a
+            # switch on the NDF rather than an entry of their own, so ticking
+            # it changes nothing else that is shown -- and the run says it
+            # ran the BDF formulas.
+            check('BDF is a switch, off', await page.ev(
+                "document.getElementById('facBdf').checked"), False)
+            await page.ev("(() => { const b = document.getElementById('facBdf'); b.checked = true;"
+                          " b.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            check('and with it on, the NDF shows the same settings', await page.ev(shown), builtin)
+            # A change of setting recompiles 150 ms later, and the status line
+            # already says so from the change before. Waited out, as a reader
+            # would, or that compile's line lands after the run's.
+            await asyncio.sleep(1)
+            await click(page, '#facRun')
+            check('the NDF runs with the BDF formulas', await settle(
+                page, "document.getElementById('facStatus').textContent.slice(0, 4)",
+                'Done', tries=240), 'Done')
+            check('and says it ran the BDF formulas', await settle(
+                page, "document.getElementById('facStats').textContent.startsWith('BDF')",
+                True), True)
+            # QNDF has the same switch, which makes it QBDF; FBDF has none.
+            await set_control(page, '#facMethod', 'julia_qndf')
+            check('QNDF offers the switch', 'bdf' in (await page.ev(shown)).split(), True)
+            await set_control(page, '#facMethod', 'julia_fbdf')
+            check('FBDF does not', 'bdf' in (await page.ev(shown)).split(), False)
+            await page.ev("(() => { const b = document.getElementById('facBdf'); b.checked = false;"
+                          " b.dispatchEvent(new Event('change', { bubbles: true })); })()")
 
             await set_control(page, '#facMethod', 'julia_rodas5p')
             # Rosenbrock: no nonlinear iteration to give a tolerance to, and a
@@ -329,7 +351,7 @@ async def main():
                   'rtol atol atolSpecies norm hmax matrix jacobian belowTolRun maxSteps autoAtol clamp nonNegative')
             check('and says which, rather than just hiding them', await page.ev(
                 "document.getElementById('facSolverNote').textContent.split('.')[0]"),
-                'Rodas5P does not read the maximum order, the minimum order, '
+                'Rodas5P does not read the BDF switch, the maximum order, the minimum order, '
                 'the Newton tolerance, how long a Jacobian is reused, the stall '
                 'tolerance and smoothing the error estimate, so they are not shown')
 
@@ -1099,6 +1121,24 @@ async def main():
             await settle(page, "document.getElementById('facStatus').textContent !== 'Loading\u2026'", True)
             check('and the old name for the built-in solver still selects it',
                   await page.ev("document.getElementById('facMethod').value"), 'ndf')
+
+            # BDF and QBDF were menu entries, and are now the BDF formulas
+            # switch on the NDF and on QNDF. A visit that had one chosen gets
+            # that method with the switch on, which is the same run.
+            for old, method in (('bdf', 'ndf'), ('julia_qbdf', 'julia_qndf')):
+                await page.send('Page.navigate', {'url': 'http://127.0.0.1:8765/'})
+                await asyncio.sleep(1.5)
+                await page.ev("""(() => {
+                  const kept = JSON.parse(localStorage.getItem('kvot-facsimile-v1'));
+                  kept.solver = Object.assign({}, kept.solver, { method: %s, bdf: false });
+                  localStorage.setItem('kvot-facsimile-v1', JSON.stringify(kept));
+                })()""" % json.dumps(old))
+                await page.send('Page.navigate', {'url': URL})
+                await asyncio.sleep(3)
+                await settle(page, "document.getElementById('facStatus').textContent !== 'Loading\u2026'", True)
+                check(f'a stored {old} comes back as {method} with the BDF switch on', await page.ev(
+                    "document.getElementById('facMethod').value + ' ' + document.getElementById('facBdf').checked"),
+                    f'{method} true')
             # Reset first: the editor was exercised earlier by typing a
             # half-written output into the model, and that text is in storage
             # too. Reset also puts the method back, which is the point here --
@@ -1108,6 +1148,8 @@ async def main():
                          'Model compiled:')
             check('and Reset leaves a solver that exists',
                   await page.ev("document.getElementById('facMethod').value"), 'ndf')
+            check('with the BDF switch off',
+                  await page.ev("document.getElementById('facBdf').checked"), False)
             await set_control(page, '[data-setting="TEND"]', str(TEND_YEARS))
             await settle(page, "document.querySelector('[data-setting=\"TEND\"]').title",
                          f'TEND = {TEND_YEARS}')

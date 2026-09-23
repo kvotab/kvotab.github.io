@@ -225,10 +225,28 @@ AA = A
   check('the interpolated values are accurate to 1e-7', worst < 1e-7);
 
   // Every solver on the menu is served by the same code, so one other is
-  // enough to show that it does not depend on the built-in one.
-  const bdf = FacsimileODE.runModel(model, { solver: 'bdf', tend: 10, rtol: 1e-10, atol: 1e-16 });
+  // enough to show that it does not depend on the built-in one: the NDF with
+  // its BDF formulas switch on.
+  const bdf = FacsimileODE.runModel(model, { solver: 'ndf', bdf: true, tend: 10, rtol: 1e-10, atol: 1e-16 });
   check('a second solver gets the same grid', bdf.grid.t.length, 11);
   near('and agrees on it', bdf.grid.y[5][0], res.grid.y[5][0], 1e-7);
+  check('the BDF formulas switch runs the BDF, and says so', bdf.stats.solver, 'BDF');
+  check('without it the NDF runs', res.stats.solver, 'NDF');
+  // QNDF has the same switch, which makes it QBDF; the ported solvers are
+  // handed it the same way.
+  const OdeJuliaPage = require(path.join(jsDir, 'facsimile-ode-julia.js'));
+  const qbdf = FacsimileODE.runModel(model, {
+    solver: OdeJuliaPage.solver('julia_qndf'), bdf: true, tend: 10, rtol: 1e-10, atol: 1e-16,
+  });
+  check('QNDF with the BDF formulas switch runs as QBDF', qbdf.stats.solver, 'QBDF');
+  near('and agrees on the grid', qbdf.grid.y[5][0], res.grid.y[5][0], 1e-6);
+  const qndf = FacsimileODE.runModel(model, {
+    solver: OdeJuliaPage.solver('julia_qndf'), tend: 10, rtol: 1e-10, atol: 1e-16,
+  });
+  check('and without it as QNDF', qndf.stats.solver, 'QNDF');
+  check('QBDF is not on the menu of its own any more', OdeJuliaPage.is('julia_qbdf'), false);
+  check('and the switch is offered on QNDF only among the ports',
+    Object.keys(OdeJuliaPage.METHODS).filter((id) => OdeJuliaPage.options(id).includes('bdf')).join(), 'julia_qndf');
 
   // Times past the end of the run are simply not reached.
   const short = FacsimileODE.runModel(model, { solver: 'ndf', tend: 4.5, rtol: 1e-8, atol: 1e-16 });

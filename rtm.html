@@ -57,14 +57,13 @@
               tolerances and its reading of negatives as zero are properties of
               its own model language, so they are not here.
             -->
-            <div class="rtm-row" title="Which integrator solves the model. NDF is the default; BDF is the same integrator with the NDF&#8217;s &#954; set to zero; the Julia ports are methods of DifferentialEquations.jl, run in the page.">
+            <div class="rtm-row" title="Which integrator solves the model. NDF is the default, and its BDF formulas switch under Advanced settings runs it with every &#954; set to zero; the Julia ports are methods of DifferentialEquations.jl, run in the page.">
               <label>Method</label>
               <select id="rtmMethod" data-on-change="rtm:solverChanged">
+                <!-- With its BDF formulas switch, the same integrator with every κ zero. -->
                 <option value="ndf">NDF</option>
-                <option value="bdf">BDF</option>
                 <option value="julia_fbdf">FBDF (Julia port)</option>
                 <option value="julia_qndf">QNDF (Julia port)</option>
-                <option value="julia_qbdf">QBDF (Julia port)</option>
                 <option value="julia_kencarp4">KenCarp4 (Julia port)</option>
                 <option value="julia_radau5">RadauIIA5 (Julia port)</option>
                 <option value="julia_rodas5p">Rodas5P (Julia port)</option>
@@ -86,6 +85,7 @@
             <button type="button" class="rtm-more" id="rtmMore" data-on-click="rtm:more"
                     aria-expanded="false" aria-controls="rtmAdvanced">Advanced settings</button>
             <div id="rtmAdvanced" hidden>
+              <label class="rtm-check" data-solver-opt="bdf" title="Run the plain backward differentiation formulas: the NDF with every &#954; set to zero. Usually a few more steps for the same answer; switch it on to see what those terms buy, or to match a result someone else worked out with BDF. On QNDF it gives QBDF."><input type="checkbox" id="rtmBdf" data-on-change="rtm:solverChanged"> BDF formulas: every &#954; of the NDF zero</label>
               <div class="rtm-row" data-solver-opt="norm" title="How the errors of the components are combined into the one number a step is accepted or refused on: max lets the worst-resolved component decide, rms averages over all of them, as CVODE does. The maximum is the stricter.">
                 <label>Error norm<span class="rtm-name">max: the worst-resolved species decides &#183; rms: averaged over all of them, as in CVODE</span></label>
                 <select id="rtmNorm" data-on-change="rtm:solverChanged">
@@ -94,7 +94,7 @@
                 </select>
               </div>
               <div class="rtm-row" data-solver-opt="maxOrder" title="The highest order the variable-order formulas may reach. Lower is steadier through a discontinuity and slower on a smooth stretch.">
-                <label>Maximum order<span class="rtm-name">the variable-order methods: NDF, BDF, FBDF, QNDF, QBDF</span></label>
+                <label>Maximum order<span class="rtm-name">the variable-order methods: NDF, FBDF and QNDF</span></label>
                 <select id="rtmMaxOrder" data-on-change="rtm:solverChanged">
                   <option>1</option><option>2</option><option>3</option><option>4</option><option selected>5</option>
                 </select>
@@ -151,7 +151,7 @@
               </div>
               <label class="rtm-check" data-solver-opt="autoAtol" title="Let each component&#8217;s absolute tolerance rise with it, so it is judged against the largest it has ever been rather than a floor fixed before the run. Much cheaper on a decay chain; it only ever loosens, so a quantity that peaked and decayed is no longer controlled in its tail."><input type="checkbox" id="rtmAutoAtol" data-on-change="rtm:solverChanged"> Absolute tolerance follows the solution</label>
               <label class="rtm-check" data-solver-opt="smoothEst" title="Filter the error estimate through I &#8722; hJ, as Shampine proposed, so that a stiff component cannot inflate it and force a needlessly small step."><input type="checkbox" id="rtmSmoothEst" checked data-on-change="rtm:solverChanged"> Smooth the error estimate through I &#8722; hJ (Shampine)</label>
-              <label class="rtm-check" data-solver-opt="nonNegative" title="Keep every species at or above zero: NDF and BDF damp the derivative so a component at zero cannot be pushed further down, count a violation in the error test, and project an accepted step back; the Julia ports only project."><input type="checkbox" id="rtmNonNeg" checked data-on-change="rtm:solverChanged"> Keep every species non-negative</label>
+              <label class="rtm-check" data-solver-opt="nonNegative" title="Keep every species at or above zero: the NDF damps the derivative so a component at zero cannot be pushed further down, counts a violation in the error test, and projects an accepted step back; the Julia ports only project."><input type="checkbox" id="rtmNonNeg" checked data-on-change="rtm:solverChanged"> Keep every species non-negative</label>
               <p class="rtm-muted" id="rtmSolverNote" hidden></p>
             </div>
           </details>
@@ -796,8 +796,8 @@ NpO2+ &lt;=&gt; NpO2_s,      K = 2.0E4, kf = 1.0E3   # also held during the run<
             make — so those are counted separately rather than called wrong.</p>
 
           <h3>Choosing a solver</h3>
-          <p><em>NDF</em> is the default and is the right first choice. <em>BDF</em> is the same
-            integrator with the κ terms switched off. The Julia ports are independent
+          <p><em>NDF</em> is the default and is the right first choice. Its <em>BDF formulas</em>
+            switch, under Advanced settings, runs the same integrator with the κ terms off. The Julia ports are independent
             implementations of other methods; <em>FBDF</em> is the one to try on a large transport
             problem, and <em>RadauIIA5</em> when two others disagree. They are described on the
             <a href="./facsimile.html">canister radiolysis</a> page, which shares them.</p>
@@ -887,16 +887,16 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   -->
   <script src="./resources/js/facsimile-model.js?v=20260920"></script>
   <script src="./resources/js/ode-core.js?v=20260923e"></script>
-  <script src="./resources/js/facsimile-solver.js?v=20260923e"></script>
+  <script src="./resources/js/facsimile-solver.js?v=20260923f"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
-  <script src="./resources/js/facsimile-ode-julia.js?v=20260920"></script>
+  <script src="./resources/js/facsimile-ode-julia.js?v=20260923f"></script>
   <script src="./resources/js/rtm-model.js?v=20260923a"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
   <script src="./resources/js/rtm-examples.js?v=20260921b"></script>
-  <script src="./resources/js/rtm-worker.js?v=20260923c"></script>
+  <script src="./resources/js/rtm-worker.js?v=20260923f"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20260921a"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
-  <script src="./resources/js/rtm-ui.js?v=20260923e"></script>
+  <script src="./resources/js/rtm-ui.js?v=20260923f"></script>
 </body>
 </html>

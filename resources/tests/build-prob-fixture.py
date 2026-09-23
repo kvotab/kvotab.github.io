@@ -10,6 +10,7 @@ import asyncio
 import base64
 import json
 import os
+import sys
 import urllib.request
 
 import websockets
@@ -68,7 +69,11 @@ BUILD = """(async () => {
 async def main():
     ver = json.load(urllib.request.urlopen('http://127.0.0.1:9222/json/version'))
     async with websockets.connect(ver['webSocketDebuggerUrl'], max_size=200 * 1024 * 1024) as bws:
-        from rb_drive import open_page
+        # rb.html's CDP helper, resources/tests/rb/driver.py, as its own tests
+        # use it. It was imported as `rb_drive`, a module this repository never
+        # had, so the script could not run as it stood.
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'rb'))
+        from driver import open_page
         tid, page = await open_page(bws)
         out = await page.ev(BUILD, timeout=120)
         if not isinstance(out, str) or out.startswith('EXCEPTION'):

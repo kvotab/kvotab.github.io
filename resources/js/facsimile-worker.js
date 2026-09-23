@@ -71,7 +71,9 @@ function errorMessage(e) {
  * menu entry and a line saying to reload.
  */
 function facsimileSolvers() {
-  const out = ['ndf', 'bdf'];
+  // The NDF runs the plain BDFs with its BDF formulas switch, and QNDF runs
+  // QBDF the same way, so neither is an entry of its own.
+  const out = ['ndf'];
   if (typeof FacsimileOdeJulia !== 'undefined') out.push(...Object.keys(FacsimileOdeJulia.METHODS));
   return out;
 }
@@ -133,6 +135,8 @@ function handleFacsimileMessage(msg, post) {
         matrix: s.matrix || 'auto',
         jacobianMode: s.jacobianMode || 'analytic',
         norm: s.norm || 'max',
+        // Every κ zero: the NDF as the plain BDFs, QNDF as QBDF.
+        bdf: !!s.bdf,
         maxOrder: s.maxOrder || 5,
         minOrder: s.minOrder || 1,
         kappa: s.kappa,

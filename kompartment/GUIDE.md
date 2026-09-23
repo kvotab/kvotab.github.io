@@ -837,7 +837,7 @@ equations (text)
    -> parser        tokenize, AST, C-family precedence
    -> compile       AST -> JavaScript source -> new Function
    -> builder       index-list layout, dependency order, decay/ingrowth terms
-   -> solver        ndf / bdf or ros23 (stiff) or dp45 (non-stiff)
+   -> solver        ndf or ros23 (stiff) or dp45 (non-stiff)
    -> results       time series, peaks, CSV
 ```
 
@@ -1934,19 +1934,20 @@ NDF's Newton has its own convergence test and keeps a Jacobian until it stalls:
 
 | | what it does | read by |
 |---|---|---|
+| **BDF formulas** | the plain backward differentiation formulas: every κ of the NDFs zero. Off, since the NDFs take fewer steps for the same answer; on to see what those terms buy, or to match a result worked out with BDF. On QNDF it gives QBDF | `ndf`, `qndf` |
 | **Maximum step** | the longest step the solver may take | all |
 | **First step** | the first step to try | all |
 | **Step budget** | how many steps before it gives up and says so | all |
-| **Maximum order** / **Minimum order** | cap and floor the variable-order formulas; set both equal for a fixed order | the NDF/BDF solvers (maximum only) and FBDF/QNDF |
-| **Norm control** | judge the error against the norm of the whole solution rather than component by component (MATLAB's NormControl) | `ndf`, `bdf` |
-| **Error norm** | the largest of the components' errors, or their root mean square | `ndf`, `bdf`, and the vendored methods except Radau, which uses its own |
-| **Stall tolerance** | how large a Newton correction may be and still be taken once it has stopped shrinking | `ndf`, `bdf` |
+| **Maximum order** / **Minimum order** | cap and floor the variable-order formulas; set both equal for a fixed order | `ndf` (maximum only) and FBDF/QNDF |
+| **Norm control** | judge the error against the norm of the whole solution rather than component by component (MATLAB's NormControl) | `ndf` |
+| **Error norm** | the largest of the components' errors, or their root mean square | `ndf`, and the vendored methods except Radau, which uses its own |
+| **Stall tolerance** | how large a Newton correction may be and still be taken once it has stopped shrinking | `ndf` |
 | **Newton tolerance** | how tightly each stage's iteration must converge | the vendored methods with a Newton iteration |
 | **Jacobian reuse** | how many steps a Jacobian may be reused | as above, except Rodas5P |
-| **Steps at the floor** | how many failing steps at the smallest representable size may be accepted in a row; empty is the solver's own rule, which for `ndf` and `bdf` is twenty failed error tests and no failed Newton iteration | `ndf`, `bdf`, the vendored methods |
-| **Iteration matrix** | factorise I − hJ with the sparse LU that keeps its pivots from one factorisation to the next (*sparse LU, pivots kept*), the sparse LU that chooses them every time (*sparse LU*) or a dense LU, or let *auto* measure the fill and choose. The vendored methods have no LU that keeps its pivots and use their sparse one for it | `ndf`, `bdf`, the vendored methods |
+| **Steps at the floor** | how many failing steps at the smallest representable size may be accepted in a row; empty is the solver's own rule, which for `ndf` is twenty failed error tests and no failed Newton iteration | `ndf`, the vendored methods |
+| **Iteration matrix** | factorise I − hJ with the sparse LU that keeps its pivots from one factorisation to the next (*sparse LU, pivots kept*), the sparse LU that chooses them every time (*sparse LU*) or a dense LU, or let *auto* measure the fill and choose. The vendored methods have no LU that keeps its pivots and use their sparse one for it | `ndf`, the vendored methods |
 | **Jacobian** | generated from the equations, or differenced through the same pattern (*finite differences*): the check to run when the generated one is in doubt | every stiff solver |
-| **Absolute tolerance follows the solution** | see below | `ndf`, `bdf`, the vendored methods |
+| **Absolute tolerance follows the solution** | see below | `ndf`, the vendored methods |
 
 **What the chosen solver does not read is named rather than hidden.** Under the
 fold there is a line — *"stiff, Rosenbrock 5 does not read the maximum order,
@@ -2241,14 +2242,13 @@ desktop output. `src/ode/solvers.js` is the one place both are defined.
 
 | In the interface | id | Method | Notes |
 |---|---|---|---|
-| **stiff, NDF** | `ndf` | Variable-order numerical differentiation formulas | **The default.** The standard variable-order choice for a stiff problem, and usually the cheapest here: on the bundled `landscape.json` it takes a quarter of `ros23`'s steps for the same answer to seven figures, and it re-forms its iteration matrix only when the step size or order changes, where a Rosenbrock method re-forms it at every step. |
-| **stiff, BDF** | `bdf` | The same, with the NDF terms off | Plain variable-order backward differentiation formulas. One integrator under two names: `bdf: true` zeroes the κ terms, which is exactly what makes an NDF a BDF. A few more steps than the NDFs for the same answer (480 against 477 on `biosphere.json`), so run both to see what those terms buy, or to match a result someone else worked out with BDF. |
+| **stiff, NDF** | `ndf` | Variable-order numerical differentiation formulas | **The default.** The standard variable-order choice for a stiff problem, and usually the cheapest here: on the bundled `landscape.json` it takes a quarter of `ros23`'s steps for the same answer to seven figures, and it re-forms its iteration matrix only when the step size or order changes, where a Rosenbrock method re-forms it at every step. **BDF formulas**, under Advanced settings, runs the plain variable-order backward differentiation formulas instead: the same integrator with every κ zero, which is exactly what makes an NDF a BDF. A few more steps for the same answer (480 against 477 on `biosphere.json`), so switch it on to see what those terms buy, or to match a result someone else worked out with BDF. A file that names the solver `bdf` opens as this one with the switch on. |
 | **stiff, low order, Rosenbrock 2-3** | `ros23` | Rosenbrock (2,3) | Robust, lower order, and it re-forms its iteration matrix every step, which makes it steady through a discontinuity. Holds a compartment on zero once it reaches the bound — see below. |
 | **non-stiff, Dormand-Prince 4-5** | `dp45` | Dormand–Prince (4,5) | Cheaper per step on a smooth problem, but stalls when rates differ by orders of magnitude — which most decay chains do. |
 | **stiff, Rosenbrock 5** | `rodas5p` | Rodas5P | Order 5, L-stable, and **no Newton iteration at all**, so there is nothing to fail to converge — the one to reach for when a model will not run. On `biosphere.json` it is both the most accurate solver here and a third of `ndf`'s steps. |
 | **stiff, Radau IIA 5** | `radau5` | RadauIIA5 | Fully implicit Runge–Kutta of order 5 — a different family from every BDF solver here, and the least order reduction on a stiff problem. The one to believe when two others disagree. It factorises densely, so prefer `fbdf` above a few thousand states. |
 | **stiff, fixed-leading-coefficient BDF** | `fbdf` | FBDF | SciML's recommendation for the largest stiff systems: it reuses one matrix factorisation across many steps, which on hundreds of states is most of the cost. |
-| **stiff, quasi-constant-step NDF** | `qndf` | QNDF | Shampine and Reichelt's NDFs — the same method `ndf` implements, written independently from the Julia sources. The closest thing here to a line-by-line check of the default solver. |
+| **stiff, quasi-constant-step NDF** | `qndf` | QNDF | Shampine and Reichelt's NDFs — the same method `ndf` implements, written independently from the Julia sources. The closest thing here to a line-by-line check of the default solver. With **BDF formulas** on it is QBDF, the same with every κ zero. |
 | **stiff, ESDIRK 4** | `kencarp4` | KenCarp4 | Order 4, L-stable. A reasonable middle: cheaper per step than Radau, higher order than the low-order Rosenbrock. |
 | **stiff, ESDIRK 2 (loose tolerances)** | `trbdf2` | TRBDF2 | Order 2, L-stable, forgiving — and second order is the catch: on sharp transients it loses phase accuracy long before local accuracy, and reports success either way. Use it loose, or use the ESDIRK 4. |
 | **SciPy BDF, stiff** ↓ | `scipy_bdf` | `solve_ivp(method="BDF")` | The same family as `ndf`, written independently of it. A second opinion rather than a faster route to the same one. |

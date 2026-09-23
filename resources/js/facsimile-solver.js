@@ -338,10 +338,11 @@
    * event after applying it.
    *
    * @param {object} model   from FacsimileModel.compile
-   * @param {object} opts    solver ('ndf', 'bdf' or a function), tend (s), rtol, atol,
+   * @param {object} opts    solver ('ndf' or a function), bdf (the BDF formulas: every
+   *                         kappa zero, for the NDF and for QNDF), tend (s), rtol, atol,
    *                         atolSpecies ({NAME: value} overriding atol for those species),
    *                         nonNegative (bool), matrix, jacobianMode ('analytic'|'numeric'),
-   *                         maxOrder, bdf, onProgress(t, nsteps), maxPoints (how many
+   *                         maxOrder, onProgress(t, nsteps), maxPoints (how many
    *                         points to keep; the store is thinned to stay inside it),
    *                         outputTimes (seconds; defaults to the model's <TIMES> section)
    * @returns {{t: Float64Array, y: Float64Array[], grid: object|null, events: object[], stats: object}}
@@ -362,12 +363,15 @@
         `This model has ${model.nalgebraic} algebraic variable${model.nalgebraic === 1 ? '' : 's'} `
         + `(${(model.algebraicNames || []).join(', ')}), which makes it a differential-algebraic `
         + 'system. The ported solvers do not take a mass matrix and would integrate the '
-        + 'constraint residuals as if they were rates of change. Use NDF or BDF.', 0);
+        + 'constraint residuals as if they were rates of change. Use NDF, with its BDF '
+        + 'formulas or without.', 0);
     }
     let solver;
     if (typeof opts.solver === 'function') solver = opts.solver;
-    // 'ndf' and 'bdf' are the same integrator: the kappa terms that make an
-    // NDF out of a BDF are switched off by `bdf`, which is the only difference.
+    // The plain BDFs are the NDF with every kappa zero: `bdf: true`, which is
+    // the only difference. 'bdf' is still read as that, from a caller -- a
+    // script, a test -- that names it as the solver it was before the pages
+    // made it a switch.
     else if (opts.solver == null || opts.solver === 'ndf' || opts.solver === 'bdf') solver = ndf;
     else {
       // A name nothing here answers to -- a Julia port where the adapter did

@@ -21,10 +21,10 @@
 importScripts(
   './facsimile-model.js?v=20260923',
   './ode-core.js?v=20260923e',
-  './facsimile-solver.js?v=20260923e',
+  './facsimile-solver.js?v=20260923f',
   './ode-julia.js?v=20260923e',
-  './facsimile-ode-julia.js?v=20260917zd',
-  './facsimile-worker.js?v=20260923c',
+  './facsimile-ode-julia.js?v=20260923f',
+  './facsimile-worker.js?v=20260923f',
 );
 
 self.onmessage = (ev) => self.handleFacsimileMessage(
