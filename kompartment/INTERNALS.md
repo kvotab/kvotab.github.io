@@ -3804,6 +3804,25 @@ textbook that might differ, and check that every curve encloses one unit of
 probability -- the property that catches a density written with the wrong
 constant.
 
+`dtriang` and `logdt` are not a file format's but skbrnt's (`samp_util.Dtriang`
+and `Logdt`, the second being the first in `ln x`), which is where SKB's SFK
+data sets take them from. They are spelled as skbrnt spells them,
+`dtriang(min=, max=, mode=)` with skbrnt's `a`, `b` and `m`:
+
+```
+a < x <= c :   (x - a) / (c - a)^2
+c < x <= b :   (b - x) / (b - c)^2
+```
+
+-- two right triangles, each holding half the probability however wide it is,
+and `logdt` is the same in `ln x` carried back by the `1/x`. So the mode is
+always the median, the quantile splits at 1/2, and the density steps at the
+mode unless the mode is the middle of the range (the geometric middle for
+`logdt`). A mode at an end is allowed, as in skbrnt, and puts half of every
+sample on that end; `pdfProblems` says so, since a release fraction whose best
+estimate is its maximum is written exactly that way. The tests pin the CDF, the
+quantile and the truncated draws of both to skbrnt's own numbers.
+
 **A distribution may be declared and not filled in.** `logn(gm,gsd)` -- the
 argument names with no values -- appears 11 times in the corpus, and 994 more
 carry a truncation and no shape. Ecolego writes those when the kind has been

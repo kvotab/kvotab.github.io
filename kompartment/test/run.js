@@ -1343,7 +1343,8 @@ test('drawing from a distribution reproduces the distribution', async () => {
 	for (const [expr, attr] of [
 		['unif(min=2,max=8)', 'unif'], ['triang(min=1,max=9,mode=3)', 'triang'],
 		['norm(mean=5,sd=1.5)', 'norm'], ['logu(min=0.001,max=10)', 'logu'],
-		['logt(min=0.7,max=20,mode=3)', 'logt'], ['logn(gm=0.002,gsd=5.2)', 'Logn4'],
+		['logt(min=0.7,max=20,mode=3)', 'logt'], ['logdt(min=0.7,max=20,mode=3)', 'logdt'],
+		['dtriang(min=1,max=9,mode=3)', 'dtriang'], ['logn(gm=0.002,gsd=5.2)', 'Logn4'],
 		['logn(mean=4,sd=2)', 'logn'], ['logn(p1=0.05,x1=1,p2=0.95,x2=100)', 'logn5'],
 	]) {
 		const spec = P.parsePDF(expr, attr);
@@ -1420,6 +1421,138 @@ test('drawing from a distribution reproduces the distribution', async () => {
 	};
 	assert(slices(true) === 200, `latin covered ${slices(true)} of 200 slices`);
 	assert(slices(false) < 180, 'independent draws covered every slice, which cannot be');
+});
+
+test('a double-triangular is skbrnt\'s Dtriang, number for number', async () => {
+	const P = await import('../src/domain/pdf.js');
+	const S = await import('../src/domain/sample.js');
+	const DF = await import('../src/io/datafile.js');
+	// skbrnt's own numbers (samp_util.Dtriang, a=1, b=9, m=3): two right
+	// triangles, each holding half the probability, so the mode is the median
+	// and the density steps from 0.5 to 1/6 across it.
+	const spec = P.parsePDF('dtriang(min=1,max=9,mode=3)');
+	assert(spec?.kind === 'dtriang' && P.describePDF(spec) === 'Double-triangular: min 1, max 9, mode 3',
+		P.describePDF(spec));
+	assert(P.PDF_KIND_IDS.includes('dtriang') && P.pdfProblems(spec).length === 0, P.pdfProblems(spec).join(' '));
+	const near = (a, b, what) => assert(Math.abs(a - b) <= 1e-13 * Math.max(1, Math.abs(b)),
+		`${what}: ${a}, skbrnt says ${b}`);
+	[[1, 0], [2, 0.125], [3, 0.5], [6, 0.875], [9, 1]]
+		.forEach(([x, want]) => near(P.cdfAt(spec, x), want, `cdf(${x})`));
+	[[0.1, 1.8944271909999157], [0.5, 3], [0.9, 6.316718427000253]]
+		.forEach(([u, want]) => near(P.quantile(spec, u), want, `quantile(${u})`));
+	const curve = P.curveOf(spec, { points: 6000 });
+	const k = curve.xs.findIndex((x) => x > 3);
+	near(curve.ys[k - 1], 0.5 - (3 - curve.xs[k - 1]) / 4, 'the density just below the mode');
+	near(curve.ys[k], (9 - curve.xs[k]) / 36, 'the density just above it');
+
+	// Truncated as skbrnt truncates, at values and at percentiles.
+	const cut = P.parsePDF('dtriang(min=1,max=9,mode=3,trmin=2,trmax=8)');
+	near(S.valueAtProbability(cut, 0.25), 2.6499158227686106, 'truncated at u = 0.25');
+	near(S.valueAtProbability(cut, 0.75), 4.93798079768202, 'truncated at u = 0.75');
+	const pct = P.parsePDF('dtriang(min=1,max=9,mode=3,pmin=0.05,pmax=0.95)');
+	near(S.valueAtProbability(pct, 0), 1.632455532033676, 'the 5th percentile');
+	near(S.valueAtProbability(pct, 1), 7.102633403898972, 'the 95th percentile');
+
+	// A release fraction is the typical use, and one that starts at zero is
+	// fine: this shape, unlike its log, has no business with the sign.
+	const zero = P.parsePDF('dtriang(min=0,max=0.02,mode=0.005)');
+	assert(P.pdfProblems(zero).length === 0 && S.valueAtProbability(zero, 0.5) === 0.005,
+		P.pdfProblems(zero).join(' '));
+	// A mode at an end is allowed -- skbrnt allows it -- and puts half of every
+	// sample on that end, which the editor says.
+	const atEnd = P.parsePDF('dtriang(min=0.6,max=1,mode=1)');
+	assert(P.pdfProblems(atEnd).some((m) => /half of every sample/.test(m)), P.pdfProblems(atEnd).join(' '));
+	assert(S.valueAtProbability(atEnd, 0.75) === 1 && S.valueAtProbability(atEnd, 0.25) < 1,
+		'the half at the maximum is not the maximum');
+	assert(P.pdfProblems(P.parsePDF('dtriang(min=1,max=9,mode=0.5)')).some((m) => /below the minimum/.test(m)),
+		'a mode below the minimum went unremarked');
+
+	// The data files: skbrnt's HDF5 attribute, and a sheet row with the mode in
+	// `Value`.
+	const h = DF.pdfFromJSON('{"type": "dtriang", "a": 0.4, "b": 0.6, "m": 0.45, "trmin": 0.4, "trmax": 0.6}');
+	assert(h?.kind === 'dtriang' && h.params.mode === 0.45 && h.trmin === null && h.trmax === null,
+		JSON.stringify(h));
+	assert(JSON.stringify(DF.pdfToJSON(h)) === '{"type":"dtriang","a":0.4,"b":0.6,"m":0.45}',
+		JSON.stringify(DF.pdfToJSON(h)));
+	const at = (row) => (name) => row[name];
+	const r = DF.pdfFromColumns(at({ Type: 'dtriang', Min: 0, Max: 0.02, Value: 0.005 }));
+	assert(r.kind === 'dtriang' && r.params.min === 0 && r.params.mode === 0.005, JSON.stringify(r));
+});
+
+test('a log-double-triangular is skbrnt\'s Logdt, number for number', async () => {
+	const P = await import('../src/domain/pdf.js');
+	const S = await import('../src/domain/sample.js');
+	const DF = await import('../src/io/datafile.js');
+	// The references are skbrnt's own (samp_util.Logdt, a=0.7, b=20, m=3):
+	// its Dtriang in ln x, two right triangles each holding half the
+	// probability, so the mode is the median wherever it sits.
+	const spec = P.parsePDF('logdt(min=0.7,max=20,mode=3)');
+	assert(spec?.kind === 'logdt' && spec.params.mode === 3, JSON.stringify(spec));
+	assert(P.describePDF(spec) === 'Log-double-triangular: min 0.7, max 20, mode 3', P.describePDF(spec));
+	assert(P.PDF_KIND_IDS.includes('logdt') && P.pdfProblems(spec).length === 0, P.pdfProblems(spec).join(' '));
+	const near = (a, b, what) => assert(Math.abs(a - b) <= 1e-13 * Math.max(1, Math.abs(b)),
+		`${what}: ${a}, skbrnt says ${b}`);
+	[[0.7, 0], [1.5, 0.13713305035136691], [3, 0.5], [8, 0.8833601389112944], [20, 1]]
+		.forEach(([x, want]) => near(P.cdfAt(spec, x), want, `cdf(${x})`));
+	[[0.1, 1.3419842360091996], [0.5, 3.0000000000000004], [0.9, 8.561834038331375]]
+		.forEach(([u, want]) => near(P.quantile(spec, u), want, `quantile(${u})`));
+
+	// The density the chart draws is the derivative of that CDF -- two
+	// formulas, which agree only if both are right -- and it steps down at the
+	// mode, from 0.229 to 0.176 in skbrnt's Logdt.pdf: the sides are not the
+	// same width, and each holds half.
+	const curve = P.curveOf(spec);
+	for (let i = 5; i < curve.xs.length - 5; i += 17) {
+		const x = curve.xs[i];
+		if (Math.abs(Math.log(x / 3)) < 0.05) continue;
+		const h = x * 1e-6;
+		const slope = (P.cdfAt(spec, x + h) - P.cdfAt(spec, x - h)) / (2 * h);
+		assert(Math.abs(curve.ys[i] - slope) <= 1e-6 * slope, `density ${curve.ys[i]} at ${x}, CDF slope ${slope}`);
+	}
+	const k = curve.xs.findIndex((x) => x > 3);
+	assert(curve.ys[k - 1] > 0.2 && curve.ys[k] < 0.18, `no step at the mode: ${curve.ys[k - 1]}, ${curve.ys[k]}`);
+
+	// Truncated as skbrnt truncates: the probabilities between the CDF at the
+	// cuts, and a percentile pair read as the probabilities themselves.
+	const cut = P.parsePDF('logdt(min=0.7,max=20,mode=3,trmin=1,trmax=10)');
+	near(S.valueAtProbability(cut, 0.25), 1.9824160832967044, 'truncated at u = 0.25');
+	near(S.valueAtProbability(cut, 0.75), 4.6860333841159045, 'truncated at u = 0.75');
+	const pct = P.parsePDF('logdt(min=0.7,max=20,mode=3,pmin=0.05,pmax=0.95)');
+	near(S.valueAtProbability(pct, 0), 1.1090760558018506, 'the 5th percentile');
+	near(S.valueAtProbability(pct, 1), 10.977088740209929, 'the 95th percentile');
+
+	// What the editor says. A mode at an end is allowed -- skbrnt allows it --
+	// but it puts half of every sample on that one number.
+	const says = (expr, re) => assert(P.pdfProblems(P.parsePDF(expr)).some((m) => re.test(m)),
+		`${expr}: ${P.pdfProblems(P.parsePDF(expr)).join(' | ') || 'no problem found'}`);
+	says('logdt(min=0.7,max=20,mode=0.7)', /half of every sample/);
+	says('logdt(min=0.7,max=20,mode=30)', /above the maximum/);
+	says('logdt(min=20,max=0.7,mode=3)', /range is empty/);
+	says('logdt(min=-1,max=20,mode=3)', /more than zero/);
+	const atEnd = P.parsePDF('logdt(min=0.7,max=20,mode=0.7)');
+	assert(S.valueAtProbability(atEnd, 0.25) === 0.7 && S.valueAtProbability(atEnd, 0.75) > 0.7,
+		'the half at the minimum is not the minimum');
+
+	// And the data files spell it as skbrnt's HDF5 attribute and SKB's sheets
+	// do: `{"type": "logdt", "a", "b", "m"}` with its own ends as a truncation
+	// that cuts nothing, and a row with the mode in `Value`.
+	const h = DF.pdfFromJSON('{"type": "logdt", "a": 0.7, "b": 20, "m": 3, "trmin": 0.7, "trmax": 20, "group": "G1"}');
+	assert(h?.kind === 'logdt' && h.params.min === 0.7 && h.params.max === 20 && h.params.mode === 3
+		&& h.trmin === null && h.trmax === null && h.group === 'G1', JSON.stringify(h));
+	assert(JSON.stringify(DF.pdfToJSON(h)) === '{"type":"logdt","a":0.7,"b":20,"m":3,"group":"G1"}',
+		JSON.stringify(DF.pdfToJSON(h)));
+	const at = (row) => (name) => row[name];
+	const r = DF.pdfFromColumns(at({ Type: 'logdt', Min: 0.7, Max: 20, Value: 3 }));
+	assert(r.kind === 'logdt' && r.params.mode === 3 && r.trmin === null, JSON.stringify(r));
+	const rows = [{ id: 'De.Cl', unit: 'm^2/year', time: null, value: 3, pdf: h }];
+	for (const [what, got] of [
+		['xlsx', (await DF.readDataWorkbook(await DF.writeDataWorkbook(rows, { name: 'd' }))).rows],
+		['h5', (await DF.readDataHDF5(DF.writeDataHDF5(rows, { root: 'm' }))).rows],
+	]) {
+		const back = got[0]?.pdf;
+		assert(back?.kind === 'logdt' && back.params.mode === 3 && back.group === 'G1',
+			`${what}: ${JSON.stringify(back)}`);
+	}
 });
 
 test('dy/dp is the derivative it claims to be', async () => {
@@ -3731,6 +3864,8 @@ test('a distribution reads, draws and writes back as Ecolego spells it', async (
 		['norm(mean=5,sd=1.5)', 'norm'],
 		['logu(min=0.001,max=10)', 'logu'],
 		['logt(min=0.7,max=20,mode=3)', 'logt'],
+		['logdt(min=0.7,max=20,mode=3)', 'logdt'],
+		['dtriang(min=1,max=9,mode=3)', 'dtriang'],
 		['logn(gm=0.002,gsd=5.2)', 'Logn4'],
 		['logn(gm=1,gsd=3,trmin=0.5,trmax=9)', 'Logn4'],
 	]) {
@@ -3778,7 +3913,8 @@ test('a distribution reads, draws and writes back as Ecolego spells it', async (
 	for (const [expr, attr] of [
 		['unif(min=2,max=8)', 'unif'], ['triang(min=1,max=9,mode=3)', 'triang'],
 		['norm(mean=5,sd=1.5)', 'norm'], ['logu(min=0.001,max=10)', 'logu'],
-		['logt(min=0.7,max=20,mode=3)', 'logt'], ['logn(gm=0.002,gsd=5.2)', 'Logn4'],
+		['logt(min=0.7,max=20,mode=3)', 'logt'], ['logdt(min=0.7,max=20,mode=3)', 'logdt'],
+		['dtriang(min=1,max=9,mode=3)', 'dtriang'], ['logn(gm=0.002,gsd=5.2)', 'Logn4'],
 		['logn(mean=4,sd=2)', 'logn'], ['logn(p1=0.05,x1=1,p2=0.95,x2=100)', 'logn5'],
 	]) {
 		const c = P.curveOf(P.parsePDF(expr, attr), { points: 6000 });

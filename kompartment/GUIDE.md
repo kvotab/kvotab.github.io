@@ -1551,7 +1551,10 @@ the way in only when `ID` itself is empty.
 two ends; for a normal or a log-normal they are a truncation of it. `Pmin` and
 `Pmax` are always the percentile truncation. A triangular's most likely value
 is the `Value` column where `Mean` is empty — the number the model runs at *is*
-the mode.
+the mode — for the double triangulars (`dtriang`, `logdt`) as for the
+triangulars. The `Type` words are `unif`, `triang`, `dtriang`, `norm`, `logu`,
+`logt`, `logdt` and `logn`, spelled as skbrnt spells them, and in HDF5 the
+numbers carry skbrnt's names: `{"type": "dtriang", "a": …, "b": …, "m": …}`.
 
 **A row with both a `Time` and a `Type`** gives that point of the lookup table
 its own distribution. In HDF5 the same thing is a *list* of specs on the
@@ -5110,15 +5113,17 @@ logarithmic axis with a tick per decade, because a log-triangular over five
 decades drawn on a linear axis is a spike beside a flat line and tells you
 nothing.
 
-Nine shapes, which are the ones the corpus uses:
+Eleven shapes: the nine the corpus uses, and skbrnt's two double triangulars:
 
 | | |
 |---|---|
 | **Uniform** | every value between the ends equally likely |
 | **Triangular** | a rise to the most likely value and a fall away from it |
+| **Double-triangular** | two triangles meeting at the most likely value, each holding half the probability — so that value is the median too. skbrnt's `dtriang`, which SKB's SFK data uses for release fractions; its density steps at the mode unless the mode is the middle of the range |
 | **Normal** | the bell curve |
 | **Log-uniform** | uniform in the logarithm — every decade equally likely |
 | **Log-triangular** | a triangle in the logarithm, and the commonest here by far |
+| **Log-double-triangular** | the same in the logarithm: skbrnt's `logdt`, which SKB's SFK data uses for diffusivities |
 | **Log-normal (geometric)** | a geometric mean and a geometric SD: "a factor of three either way" |
 | **Log-normal (mean, SD)** | the same curve from the ordinary mean and standard deviation |
 | **Log-normal (two quantiles)** | fitted through two points you know — "5% below this, 95% below that" |

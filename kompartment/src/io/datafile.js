@@ -23,7 +23,7 @@
  *             and read on the way in *only* when ID itself is empty.
  *   Time      empty for a parameter; the point's time for a lookup table
  *   Value     the deterministic value — what the model runs at
- *   Type      which curve: norm, unif, logn, logu, triang, logt
+ *   Type      which curve: norm, unif, logn, logu, triang, dtriang, logt, logdt
  *   Group     inputs sharing a group share one underlying sample
  *   Min, Max  the two ends for a curve that has them, and the truncation for
  *             one that does not — see `SHAPES`
@@ -141,6 +141,12 @@ export const SHAPES = {
 	logu: { kind: 'logu', params: { min: 'Min', max: 'Max' }, cut: false },
 	triang: { kind: 'triang', params: { min: 'Min', max: 'Max', mode: 'Mean' }, cut: false },
 	logt: { kind: 'logt', params: { min: 'Min', max: 'Max', mode: 'Mean' }, cut: false },
+	// skbrnt's double triangulars, which SKB's SFK data sets use for release
+	// fractions (dtriang) and diffusivities (logdt). The HDF5 form is
+	// `{"type": "dtriang", "a", "b", "m"}`, and a sheet row gives Min, Max and
+	// the mode in Value, as a triangular's does.
+	dtriang: { kind: 'dtriang', params: { min: 'Min', max: 'Max', mode: 'Mean' }, cut: false },
+	logdt: { kind: 'logdt', params: { min: 'Min', max: 'Max', mode: 'Mean' }, cut: false },
 };
 
 /** Back the other way: a spec's kind to the word a file uses for it. */

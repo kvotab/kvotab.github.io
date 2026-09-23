@@ -87,6 +87,20 @@ export const PDF_KINDS = {
 			{ key: 'mode', label: 'Most likely' },
 		],
 	},
+	// skbrnt's `dtriang` (samp_util.Dtriang). Ecolego has no such shape, so the
+	// spelling is skbrnt's and the numbers are its `a`, `b` and `m`.
+	dtriang: {
+		label: 'Double-triangular',
+		expr: 'dtriang',
+		blurb: 'Two triangles that meet at the most likely value, with half the '
+			+ 'probability on each side — so that value is the median as well as '
+			+ 'the peak, wherever it sits between the ends.',
+		params: [
+			{ key: 'min', label: 'Minimum' },
+			{ key: 'max', label: 'Maximum' },
+			{ key: 'mode', label: 'Most likely (the median)' },
+		],
+	},
 	norm: {
 		label: 'Normal',
 		expr: 'norm',
@@ -121,6 +135,21 @@ export const PDF_KINDS = {
 			{ key: 'min', label: 'Minimum', positive: true },
 			{ key: 'max', label: 'Maximum', positive: true },
 			{ key: 'mode', label: 'Most likely', positive: true },
+		],
+	},
+	// skbrnt's `logdt` (samp_util.Logdt): the double triangular in `ln x`.
+	logdt: {
+		label: 'Log-double-triangular',
+		expr: 'logdt',
+		positive: true,
+		log: true,
+		blurb: 'Two triangles in the logarithm that meet at the most likely value, '
+			+ 'with half the probability on each side — so that value is the median '
+			+ 'as well as the peak, wherever it sits between the ends.',
+		params: [
+			{ key: 'min', label: 'Minimum', positive: true },
+			{ key: 'max', label: 'Maximum', positive: true },
+			{ key: 'mode', label: 'Most likely (the median)', positive: true },
 		],
 	},
 	Logn4: {
@@ -175,7 +204,7 @@ export const PDF_KINDS = {
 
 /** The order the editor offers them in: the shapes first, the list last. */
 export const PDF_KIND_IDS = [
-	'unif', 'triang', 'norm', 'logu', 'logt', 'Logn4', 'logn', 'logn5', 'pg',
+	'unif', 'triang', 'dtriang', 'norm', 'logu', 'logt', 'logdt', 'Logn4', 'logn', 'logn5', 'pg',
 ];
 
 /**
@@ -404,6 +433,18 @@ export function cdfAt(spec, x) {
 				? ((x - a) ** 2) / ((b - a) * (c - a))
 				: 1 - ((b - x) ** 2) / ((b - a) * (b - c));
 		}
+		case 'dtriang': {
+			// skbrnt's Dtriang.cdf: each side is a right triangle holding half
+			// the probability, so the mode is at exactly 1/2. A mode at an end
+			// never divides by zero here -- the side it would divide on is the
+			// one outside the range.
+			const { min: a, max: b, mode: c } = p;
+			if (x <= a) return 0;
+			if (x >= b) return 1;
+			return x <= c
+				? ((x - a) ** 2) / (2 * (c - a) ** 2)
+				: 1 - ((b - x) ** 2) / (2 * (b - c) ** 2);
+		}
 		case 'logu': {
 			if (x <= p.min) return 0;
 			if (x >= p.max) return 1;
@@ -420,6 +461,18 @@ export function cdfAt(spec, x) {
 			return lx <= lc
 				? ((lx - la) ** 2) / ((lc - la) * (lb - la))
 				: 1 - ((lb - lx) ** 2) / ((lb - la) * (lb - lc));
+		}
+		case 'logdt': {
+			// The double triangular's CDF, in `ln x`.
+			if (x <= p.min) return 0;
+			if (x >= p.max) return 1;
+			const la = Math.log(p.min);
+			const lb = Math.log(p.max);
+			const lc = Math.log(p.mode);
+			const lx = Math.log(x);
+			return lx <= lc
+				? ((lx - la) ** 2) / (2 * (lc - la) ** 2)
+				: 1 - ((lb - lx) ** 2) / (2 * (lb - lc) ** 2);
 		}
 		case 'norm':
 			return phi((x - p.mean) / p.sd);
@@ -446,6 +499,12 @@ export function quantile(spec, u) {
 				? a + Math.sqrt(u * (b - a) * (c - a))
 				: b - Math.sqrt((1 - u) * (b - a) * (b - c));
 		}
+		case 'dtriang': {
+			// Dtriang.inv: the split is always the median, wherever the mode
+			// sits between the ends.
+			const { min: a, max: b, mode: c } = p;
+			return u <= 0.5 ? a + Math.sqrt(2 * u) * (c - a) : b - (b - c) * Math.sqrt(2 * (1 - u));
+		}
 		case 'logu':
 			return Math.exp(Math.log(p.min) + u * (Math.log(p.max) - Math.log(p.min)));
 		case 'logt': {
@@ -457,6 +516,16 @@ export function quantile(spec, u) {
 			const lx = u <= split
 				? la + Math.sqrt(u * (lb - la) * (lc - la))
 				: lb - Math.sqrt((1 - u) * (lb - la) * (lb - lc));
+			return Math.exp(lx);
+		}
+		case 'logdt': {
+			// The double triangular's quantile in `ln x`, carried back by `exp`.
+			const la = Math.log(p.min);
+			const lb = Math.log(p.max);
+			const lc = Math.log(p.mode);
+			const lx = u <= 0.5
+				? la + Math.sqrt(2 * u) * (lc - la)
+				: lb - (lb - lc) * Math.sqrt(2 * (1 - u));
 			return Math.exp(lx);
 		}
 		case 'norm':
@@ -486,6 +555,15 @@ function bareDensity(spec, x) {
 			if (x > a && x > c && x <= b && b !== a && b !== c) return (2 * (b - x)) / (b - a) / (b - c);
 			return 0;
 		}
+		case 'dtriang': {
+			// Dtriang.pdf. The two sides meet at the mode at different heights
+			// unless it is the middle of the range: each holds half the
+			// probability however wide it is.
+			const a = p.min; const b = p.max; const c = p.mode;
+			if (x > a && x <= c && a !== c) return (x - a) / (c - a) ** 2;
+			if (x > a && x > c && x <= b && b !== c) return (b - x) / (b - c) ** 2;
+			return 0;
+		}
 		case 'norm': {
 			const { mean: mu, sd } = p;
 			if (!(sd > 0)) return 0;
@@ -503,6 +581,17 @@ function bareDensity(spec, x) {
 			const lx = Math.log(x);
 			if (x > a && x <= c && a !== c) return (1 / x) * ((2 * (lx - la)) / (lc - la) / (lb - la));
 			if (x > a && x > c && x <= b && b !== c) return (1 / x) * ((2 * (lb - lx)) / (lb - lc) / (lb - la));
+			return 0;
+		}
+		case 'logdt': {
+			// The double triangular's density in `ln x`, over x: a step at the
+			// mode unless it is the geometric middle of the range.
+			const a = p.min; const b = p.max; const c = p.mode;
+			if (!(a > 0 && b > 0 && c > 0) || x <= 0) return 0;
+			const la = Math.log(a); const lb = Math.log(b); const lc = Math.log(c);
+			const lx = Math.log(x);
+			if (x > a && x <= c && a !== c) return (lx - la) / (lc - la) ** 2 / x;
+			if (x > a && x > c && x <= b && b !== c) return (lb - lx) / (lb - lc) ** 2 / x;
 			return 0;
 		}
 		case 'Logn4': {
@@ -614,8 +703,8 @@ export function supportOf(spec) {
 	const p = spec.params ?? {};
 	let lo; let hi;
 	switch (spec.kind) {
-		case 'unif': case 'triang': lo = p.min; hi = p.max; break;
-		case 'logu': case 'logt': lo = p.min; hi = p.max; break;
+		case 'unif': case 'triang': case 'dtriang': lo = p.min; hi = p.max; break;
+		case 'logu': case 'logt': case 'logdt': lo = p.min; hi = p.max; break;
 		case 'norm': lo = p.mean - 4 * p.sd; hi = p.mean + 4 * p.sd; break;
 		case 'Logn4': {
 			const s = Math.log(p.gsd);
@@ -800,12 +889,22 @@ export function pdfProblems(spec) {
 			out.push(`${what} — the maximum has to be above the minimum.`);
 		}
 	};
-	if (spec.kind === 'unif' || spec.kind === 'triang' || spec.kind === 'logu' || spec.kind === 'logt') {
-		pair('min', 'max', 'The range is empty');
-	}
-	if ((spec.kind === 'triang' || spec.kind === 'logt') && p.mode != null) {
+	const ranged = ['unif', 'triang', 'dtriang', 'logu', 'logt', 'logdt'];
+	if (ranged.includes(spec.kind)) pair('min', 'max', 'The range is empty');
+	const moded = ['triang', 'dtriang', 'logt', 'logdt'];
+	if (moded.includes(spec.kind) && p.mode != null) {
 		if (p.min != null && p.mode < p.min) out.push('The most likely value is below the minimum.');
 		if (p.max != null && p.mode > p.max) out.push('The most likely value is above the maximum.');
+	}
+	// Each side of a double triangular holds half the probability however
+	// narrow it is, so a side of no width is half of every sample at one number.
+	// skbrnt allows it; it is still rarely what was meant.
+	if ((spec.kind === 'dtriang' || spec.kind === 'logdt') && p.mode != null && p.min != null
+		&& p.max != null && p.max > p.min
+		&& (p.mode === p.min || p.mode === p.max)) {
+		out.push(`With the most likely value at the ${p.mode === p.min ? 'minimum' : 'maximum'}, `
+			+ 'half of every sample is that one number: each side of this shape holds half '
+			+ 'the probability, however narrow it is.');
 	}
 	if (spec.kind === 'Logn4' && p.gsd != null && p.gsd !== null && p.gsd <= 1 && p.gsd > 0) {
 		out.push('A geometric standard deviation of 1 or less is a single value, not a '
