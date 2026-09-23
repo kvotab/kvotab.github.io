@@ -6,7 +6,7 @@
    page opened from file://) the same handler runs inline.
    ========================================================================== */
 /* global KVOT, Plotly, XlsxWriter, registerActions, reportFailure, notifyUser, kvotEscapeHtml, kvotCsvCell,
-          FACSIMILE_DEFAULT_MODEL, FACSIMILE_PRESETS, FacsimileHDF5, handleFacsimileMessage */
+          kvotFormatBytes, FACSIMILE_DEFAULT_MODEL, FACSIMILE_PRESETS, FacsimileHDF5, handleFacsimileMessage */
 (function () {
   'use strict';
 
@@ -523,10 +523,10 @@
       : $('facMethod').value;
   }
 
-  /** "a", "a and b", "a, b and c". */
-  function listOf(items) {
+  /** "a", "a and b", "a, b and c" -- or "a, b or c" when asked. */
+  function listOf(items, conjunction = 'and') {
     if (items.length === 1) return items[0];
-    return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+    return `${items.slice(0, -1).join(', ')} ${conjunction} ${items[items.length - 1]}`;
   }
 
   function writeSolverControls() {
@@ -1134,6 +1134,10 @@
     const refusal = methodRefusal(solver.method);
     if (refusal) { setStatus(refusal, 'error'); return; }
     if (!(await compile({ reveal: true }))) return;
+    // The text as it was run. It can be edited while the run is going, or
+    // replaced by opening a file, and what is recorded about this run --
+    // the model the HDF5 file carries -- has to be the text that produced it.
+    const text = state.text;
     state.running = true;
     $('facRun').disabled = true;
     // The worker is about to be busy for as long as this takes; a Jacobian
@@ -1146,7 +1150,7 @@
     const started = Date.now();
     try {
       const reply = await request(
-        { type: 'run', text: state.text, clampNegative: state.solver.clamp, solver },
+        { type: 'run', text, clampNegative: state.solver.clamp, solver },
         (p) => {
           setProgress(p.frac);
           // What it has solved, of what was asked, and what that has cost so
@@ -1161,7 +1165,7 @@
       // What this result came out of, kept beside it. The text and the settings
       // can be edited straight afterwards, and a file describing the run has to
       // describe the run that happened rather than the page as it now stands.
-      state.ran = { model: state.compiled, solver, text: state.text, scenario: state.presetId || 'custom' };
+      state.ran = { model: state.compiled, solver, text, scenario: state.presetId || 'custom' };
       const st = reply.stats;
       setStatus(st.stoppedBy
         ? `Done in ${reply.seconds.toFixed(2)} s: the event “${st.stoppedBy.expr}” stopped the run at ${fmtTime(st.stoppedBy.t)}.`
@@ -1183,7 +1187,7 @@
           : '';
         if (e.partial) {
           state.result = { ...e.partial, stats: null, partialFailure: e.message, seconds: (Date.now() - started) / 1000 };
-          state.ran = { model: state.compiled, solver, text: state.text, scenario: state.presetId || 'custom' };
+          state.ran = { model: state.compiled, solver, text, scenario: state.presetId || 'custom' };
           afterResult();
           const reached = e.partial.t && e.partial.n ? e.partial.t[e.partial.n - 1] : null;
           $('facStats').innerHTML = `<b>${esc(solver.method)}</b>: the run did not finish. `
@@ -1981,20 +1985,123 @@
     compile({ reveal: true });
   }
 
-  function loadFile(ev) {
+  /*
+    A model file is a few tens of kilobytes of text; the canister model is
+    under 50 kB. Past this it is something else with the right ending -- a
+    solver log, an output listing -- and reading it would hold the page while
+    the editor coloured every line.
+  */
+  const MODEL_FILE_LIMIT = 16 * 1024 * 1024;
+
+  /**
+   * Reads a model file into the editor and compiles it: what Open… does, and
+   * what dropping a file on the page does.
+   */
+  function openModelFile(file) {
+    if (file.size > MODEL_FILE_LIMIT) {
+      notifyUser(`${file.name} was not opened: it is ${kvotFormatBytes(file.size)}, and a model file `
+        + `can be at most ${kvotFormatBytes(MODEL_FILE_LIMIT)}.`);
+      return;
+    }
+    file.text().then((text) => {
+      setModelText(text);
+      // Held while a run has the worker, as an edit typed into the text is:
+      // sent now, the compile would wait behind the run, and be thrown away
+      // with it if Stop were pressed.
+      if (state.running) scheduleCompile();
+      else compile({ reveal: true });
+      showTab('model');
+    }).catch((e) => reportFailure('loadFile', e, { userMessage: 'The file could not be read' }));
+  }
+
+  function loadFile() {
     const input = $('facFileInput');
     input.onchange = () => {
       const file = input.files && input.files[0];
       if (!file) return;
-      file.text().then((text) => {
-        setModelText(text);
-        compile({ reveal: true });
-        showTab('model');
-      }).catch((e) => reportFailure('loadFile', e, { userMessage: 'The file could not be read' }));
+      openModelFile(file);
       input.value = '';
     };
     input.click();
-    void ev;
+  }
+
+  /** The endings Open… offers, read off the file input so the two agree. */
+  function modelFileEndings() {
+    return $('facFileInput').accept.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+  }
+
+  /**
+   * Opens what was dropped, if it is one model file.
+   *
+   * Stricter than Open…, whose dialog is a choice the reader made. A drop can
+   * be a slip -- the wrong file picked up off the desktop, or several -- and
+   * what it replaces is the text in the editor, which may be the only copy.
+   */
+  function openDropped(files) {
+    if (files.length > 1) {
+      notifyUser(`Drop one model file at a time: that was ${files.length} files.`);
+      return;
+    }
+    const file = files[0];
+    const endings = modelFileEndings();
+    if (!endings.some((end) => file.name.toLowerCase().endsWith(end))) {
+      notifyUser(`${file.name} was not opened: only a ${listOf(endings, 'or')} file is read as a model. `
+        + 'Rename it if it is one.');
+      return;
+    }
+    openModelFile(file);
+  }
+
+  /**
+   * A file dropped anywhere on the page opens as a model, not just one dropped
+   * on the editor: the browser's own answer to a file dropped where nothing
+   * takes it is to leave the page and show the file.
+   *
+   * Only a drag that carries files is the page's business. Text dragged within
+   * the editor, or into it from elsewhere, is left to the browser.
+   */
+  function initDrop() {
+    const overlay = $('facDrop');
+    let depth = 0;
+    const carriesFiles = (ev) => !!ev.dataTransfer && Array.from(ev.dataTransfer.types || []).includes('Files');
+    const show = (on) => { overlay.hidden = !on; };
+    document.addEventListener('dragenter', (ev) => {
+      if (!carriesFiles(ev)) return;
+      ev.preventDefault();
+      depth += 1;
+      show(true);
+    });
+    // Shown again on every dragover, not only on entering: the count can be
+    // reset under a drag that is still going on, and dragover keeps coming for
+    // as long as one is.
+    document.addEventListener('dragover', (ev) => {
+      if (!carriesFiles(ev)) return;
+      ev.preventDefault();
+      ev.dataTransfer.dropEffect = 'copy';
+      show(true);
+    });
+    // Each element the pointer crosses sends an enter and then a leave, so the
+    // count is back at zero only when the drag has left the page.
+    document.addEventListener('dragleave', (ev) => {
+      if (!carriesFiles(ev)) return;
+      depth = Math.max(0, depth - 1);
+      if (!depth) show(false);
+    });
+    document.addEventListener('drop', (ev) => {
+      if (!carriesFiles(ev)) return;
+      ev.preventDefault();
+      depth = 0;
+      show(false);
+      if (ev.dataTransfer.files.length) openDropped(ev.dataTransfer.files);
+    });
+    // The count goes wrong when an element the pointer entered is taken out
+    // from under it -- a run finishing mid-drag redraws the charts and the
+    // footer -- because the leave that would have balanced it never comes. A
+    // page is sent no mouse events while a drag is over it, so the first one
+    // afterwards means the drag is done.
+    document.addEventListener('mousemove', () => {
+      if (depth || !overlay.hidden) { depth = 0; show(false); }
+    });
   }
   function saveFile() {
     const text = $('facModelText').value;
@@ -2049,7 +2156,7 @@
     'fac:run': () => { run(); },
     'fac:stop': () => { stop(); },
     'fac:verify': () => { verify(); },
-    'fac:loadFile': (ev) => loadFile(ev),
+    'fac:loadFile': () => loadFile(),
     'fac:saveFile': () => saveFile(),
     'fac:resetModel': () => resetModel(),
     'fac:tab': (ev, el) => showTab(el.dataset.tab),
@@ -2105,6 +2212,7 @@
   initSideResize();
   initSections();
   initSolverAdvanced();
+  initDrop();
   showTab('charts');
   compile().then(() => renderSeriesList());
 })();

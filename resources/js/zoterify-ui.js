@@ -25,13 +25,6 @@
   const DOCX_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
   const LEVEL_NAMES = ['lenient', 'balanced', 'strict'];
 
-  const SQLJS = {
-    js: 'https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.14.2/sql-wasm.min.js',
-    jsIntegrity: 'sha384-ua6rbgEfbwIWlrG1MxSagm4g3MI0VYpCkQQCjt6CtFL345h8/3ttwVWpyKiRzt/9',
-    wasm: 'https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.14.2/sql-wasm.wasm',
-    wasmIntegrity: 'sha384-x0YkuPkDHnKTZcB1JO4eb6j5+eU36aka+jBA6tOKTFaTz98b9V7fPT0QgZ9qyQW2',
-  };
-
   const newChoices = () => ({
     chosen: new Map(),     // ref key -> itemId, picked among the candidates offered
     picked: new Map(),     // ref key -> itemId, found by searching the library
@@ -50,9 +43,11 @@
     busy: false,
     settings: {
       author: 'Zoterify', track: true, keepTracking: true, recodeOther: true, recodeZotero: false, comment: true, summary: true,
+      names: '', boldNames: true,
       v: 2, level: 1, yearTolerance: 1, tab: 'review', sideWidth: null, sections: {},
     },
   };
+  const NAMES_MAX = 50000; // characters of the list of abbreviated names
 
   /* ---------------------------------------------------------------------
      Settings, remembered in this browser
@@ -67,7 +62,8 @@
       if (!s || typeof s !== 'object') return;
       const t = state.settings;
       if (typeof s.author === 'string' && s.author.trim()) t.author = s.author.slice(0, 80);
-      for (const k of ['track', 'keepTracking', 'recodeOther', 'recodeZotero']) if (typeof s[k] === 'boolean') t[k] = s[k];
+      for (const k of ['track', 'keepTracking', 'recodeOther', 'recodeZotero', 'boldNames']) if (typeof s[k] === 'boolean') t[k] = s[k];
+      if (typeof s.names === 'string') t.names = s.names.slice(0, NAMES_MAX);
       // The comment options were off by default before version 2 of these
       // settings; an "off" stored then was the old default, not a choice.
       if (s.v >= 2) for (const k of ['comment', 'summary']) if (typeof s[k] === 'boolean') t[k] = s[k];
@@ -88,9 +84,12 @@
     $('zfRecodeZotero').checked = t.recodeZotero;
     $('zfComment').checked = t.comment;
     $('zfSummaryComment').checked = t.summary;
+    $('zfNames').value = t.names;
+    $('zfBoldNames').checked = t.boldNames;
     $('zfLevel').value = t.level;
     $('zfYearTolerance').value = t.yearTolerance;
     $('zfAuthor').disabled = !t.track && !t.comment && !t.summary;
+    renderNames();
   }
 
   function readControls() {
@@ -102,6 +101,8 @@
     t.recodeZotero = $('zfRecodeZotero').checked;
     t.comment = $('zfComment').checked;
     t.summary = $('zfSummaryComment').checked;
+    t.names = $('zfNames').value.slice(0, NAMES_MAX);
+    t.boldNames = $('zfBoldNames').checked;
     t.level = Number($('zfLevel').value);
     t.yearTolerance = Number($('zfYearTolerance').value);
     $('zfAuthor').disabled = !t.track && !t.comment && !t.summary;
@@ -110,6 +111,57 @@
   const recodeOptions = () => ({
     endnote: state.settings.recodeOther, mendeley: state.settings.recodeOther, zotero: state.settings.recodeZotero,
   });
+
+  /* ---------------------------------------------------------------------
+     The list of abbreviated names
+     --------------------------------------------------------------------- */
+  const TARGET = {
+    report: (t) => `report number ${t.report}`, designation: (t) => `designation ${t.designation}`,
+    key: (t) => `Zotero item ${t.key}`, author: (t) => t.text, words: (t) => `items with the words “${t.text}”`,
+  };
+
+  /** How each line of the list is read, under the box, as it is typed. */
+  function renderNames() {
+    const box = $('zfNamesInfo');
+    const read = ZFParse.readNameList($('zfNames').value);
+    const rows = read.problems.slice(0, 10).map((p) => `<li class="zf-names-problem">Line ${p.line}: ${esc(p.reason)}.</li>`);
+    for (const n of read.names.slice(0, 100)) rows.push(`<li><b>${esc(n.name)}</b> → ${esc(TARGET[n.target.kind](n.target))}</li>`);
+    if (read.names.length > 100) rows.push(`<li>and ${read.names.length - 100} more</li>`);
+    box.innerHTML = rows.length ? `<ul>${rows.join('')}</ul>` : '';
+    box.hidden = !rows.length;
+  }
+
+  /** The entries under "References with abbreviated names" in the analysed
+      document whose names are not in the list yet, and can be added. */
+  function namesNotListed() {
+    const list = state.run && state.run.parsed.list;
+    if (!list) return [];
+    const have = new Set(ZFParse.readNameList(state.settings.names).names.map((n) => ZFParse.fold(n.name)));
+    return list.entries.filter((e) => e.abbrev && !have.has(ZFParse.fold(e.abbrev)) && ZFParse.nameLine(e));
+  }
+
+  function renderNamesToAdd() {
+    const box = $('zfNamesAdd');
+    const missing = namesNotListed();
+    box.hidden = !missing.length;
+    box.innerHTML = missing.length
+      ? `${esc(`The reference list has ${plural(missing.length, 'abbreviated name')} not in this list: ${clip(missing.map((e) => e.abbrev).join(', '), 140)}.`)}`
+        + ` <button type="button" class="zf-btn tiny secondary" data-on-click="zf:addNames">Add ${missing.length === 1 ? 'it' : 'them'}</button>`
+      : '';
+  }
+
+  function addListedNames() {
+    const lines = namesNotListed().map(ZFParse.nameLine);
+    if (!lines.length) return;
+    const box = $('zfNames');
+    const before = box.value.replace(/\s+$/u, '');
+    box.value = `${before}${before ? '\n' : ''}${lines.join('\n')}\n`;
+    readControls();
+    saveSettings();
+    renderNames();
+    renderNamesToAdd();
+    setStatus(`${plural(lines.length, 'name')} added from the reference list. Press Analyse again to use ${lines.length === 1 ? 'it' : 'them'}.`, 'warn');
+  }
 
   /* ---------------------------------------------------------------------
      Status, progress, small helpers
@@ -148,31 +200,6 @@
     $('zfAnalyse').disabled = state.busy || !state.doc || !state.db || !state.db.sqldb;
     $('zfSave').disabled = state.busy || !state.run;
     $('zfExport').disabled = state.busy || !state.run;
-  }
-
-  function loadScript(src, integrity) {
-    return new Promise((resolve, reject) => {
-      const s = document.createElement('script');
-      s.src = src;
-      s.integrity = integrity;
-      s.crossOrigin = 'anonymous';
-      s.onload = resolve;
-      s.onerror = () => reject(new Error(`${src} could not be loaded`));
-      document.head.appendChild(s);
-    });
-  }
-
-  let sqlPromise = null;
-  function loadSql() {
-    if (!sqlPromise) {
-      sqlPromise = (async () => {
-        if (typeof initSqlJs !== 'function') await loadScript(SQLJS.js, SQLJS.jsIntegrity);
-        const res = await fetch(SQLJS.wasm, { integrity: SQLJS.wasmIntegrity, mode: 'cors', credentials: 'omit' });
-        if (!res.ok) throw new Error(`the SQLite library could not be fetched (HTTP ${res.status})`);
-        return initSqlJs({ wasmBinary: await res.arrayBuffer() }); // eslint-disable-line no-undef
-      })().catch((e) => { sqlPromise = null; throw e; });
-    }
-    return sqlPromise;
   }
 
   /* ---------------------------------------------------------------------
@@ -239,7 +266,7 @@
     setStatus(`Opening ${db.name}…`);
     setProgress(0.1);
     try {
-      const SQL = await loadSql();
+      const SQL = await ZFZotero.loadSqlJs();
       setProgress(0.4);
       await tick();
       db.walMode = db.bytes[18] === 2;
@@ -364,7 +391,7 @@
       const pkg = await ZFDocx.open(state.doc.bytes, JSZip);
       const analysed = ZFDocx.analyse(pkg, { recode: options.recode });
       const inventory = ZFDocx.inventory(pkg, analysed);
-      const parsed = ZFParse.parseDocument(analysed.paras);
+      const parsed = ZFParse.parseDocument(analysed.paras, { names: ZFParse.readNameList(state.settings.names).names });
 
       setStatus(`Found ${plural(parsed.refs.length, 'reference')}. Reading the library…`);
       setProgress(0.1);
@@ -383,8 +410,11 @@
       }
       const kept = options.recode.zotero ? [] : inventory.existingZotero;
       const alsoCited = kept.flatMap((e) => e.items.map((it) => [it.surname, it.year])).filter(([s]) => s);
+      // How many places cite each abbreviated name without its being in bold.
+      const notBold = new Map();
+      for (const r of parsed.refs) if (r.at && r.bold === false) notBold.set(r.key, (notBold.get(r.key) || 0) + 1);
       state.run = {
-        options, parsed, results, library, inventory,
+        options, parsed, results, library, inventory, notBold,
         labels: locationLabels(analysed.models),
         paraTexts: analysed.paras.map((p) => p.text),
         shown: analysed.models.map((m) => m.shown),
@@ -506,11 +536,23 @@
   }
 
   function entryHint(ref) {
-    return ref.entry ? `<div class="zf-hint"><b>Reference list:</b> ${esc(clip(ref.entry.text, 240))}</div>` : '';
+    const out = [];
+    if (ref.target) out.push(`<div class="zf-hint"><b>Your list:</b> ${esc(ref.abbrev)} → ${esc(TARGET[ref.target.kind](ref.target))}</div>`);
+    if (ref.entry) out.push(`<div class="zf-hint"><b>Reference list:</b> ${esc(clip(ref.entry.text, 240))}</div>`);
+    return out.join('');
   }
 
-  // How a candidate was found when it was by a number rather than by name.
-  const BY = { report: 'report number · ', designation: 'designation · ' };
+  /** "abbreviated name · 2 of 3 not in bold", beside a reference by name. */
+  function nameTag(i, count) {
+    const ref = state.run.results[i].ref;
+    if (!ref.abbrev) return '';
+    const n = state.run.notBold.get(ref.key) || 0;
+    const plain = !n ? '' : count > 1 ? ` · ${n} of ${count} not in bold` : ' · not in bold';
+    return `<span class="zf-kind">abbreviated name${plain}</span>`;
+  }
+
+  // How a candidate was found when it was not by name.
+  const BY = { report: 'report number · ', designation: 'designation · ', key: 'item key · ', words: 'words · ' };
   const noteHint = (r) => (r.note ? `<div class="zf-hint">${esc(r.note)}</div>` : '');
 
   function candidateList(i, r, note) {
@@ -523,7 +565,7 @@
 
   function reviewItem(i, count, tone, body, actions) {
     const r = state.run.results[i];
-    return `<div class="zf-item ${tone}"><div class="zf-item-head"><span class="zf-cite">${esc(r.ref.label)}</span>${where(i, count)}<span class="zf-spacer"></span>${actions || ''}</div>${context(i)}${body}</div>`;
+    return `<div class="zf-item ${tone}"><div class="zf-item-head"><span class="zf-cite">${esc(r.ref.label)}</span>${nameTag(i, count)}${where(i, count)}<span class="zf-spacer"></span>${actions || ''}</div>${context(i)}${body}</div>`;
   }
 
   function renderReview() {
@@ -602,7 +644,7 @@
         : `<button type="button" class="zf-btn tiny secondary" data-on-click="zf:undo" data-row="${i}">Undo</button>`;
       const cand = res.candidates.find((c) => r.item && c.item.itemId === r.item.itemId);
       const conf = r.how === 'picked' || !cand ? '' : `${BY[cand.by] || ''}${pct(cand.confidence)}`;
-      rows.push(`<tr><td class="nowrap"><b>${esc(res.ref.label)}</b>${count > 1 ? ` <span class="zf-where">${count}×</span>` : ''}</td><td>${itemLine(r.item)}</td><td><span class="zf-status-tag ok">${esc(STATUS[r.how][0])}</span></td><td class="num">${conf}</td><td>${action}</td></tr>`);
+      rows.push(`<tr><td class="nowrap"><b>${esc(res.ref.label)}</b>${count > 1 ? ` <span class="zf-where">${count}×</span>` : ''}${res.ref.abbrev ? `<br>${nameTag(i, count)}` : ''}</td><td>${itemLine(r.item)}</td><td><span class="zf-status-tag ok">${esc(STATUS[r.how][0])}</span></td><td class="num">${conf}</td><td>${action}</td></tr>`);
     }
     host.innerHTML = rows.length
       ? `<table class="zf-table"><thead><tr><th>Reference</th><th>Zotero item</th><th>How</th><th>Fit</th><th></th></tr></thead><tbody>${rows.join('')}</tbody></table>`
@@ -617,6 +659,10 @@
     const parts = [`<div class="zf-report${rep.skipped.length ? ' warn' : ''}"><h4>Saved ${esc(rep.fileName)}</h4>`
       + `${plural(n, 'reference')} written as ${plural(rep.written.length, 'Zotero citation')}${rep.track ? `, each a tracked change by “${esc(rep.author)}”` : ''}.`
       + ` Track Changes is ${rep.keepTracking ? 'on' : 'off'} in the saved document.`];
+    const named = namedCitations(rep.written);
+    if (named.citations) {
+      parts.push(` ${plural(named.citations, 'citation')} by abbreviated name ${named.citations === 1 ? 'keeps its' : 'keep their'} text: Zotero leaves ${named.citations === 1 ? 'it' : 'them'} as written.`);
+    }
     if (rep.summarised) parts.push(' A comment at the start of the document says what was done and what was not.');
     if (rep.skipped.length) {
       const commented = rep.skipped.filter((s) => s.commented).length;
@@ -641,7 +687,8 @@
       const r = resolve(i);
       const [label, tone] = STATUS[s];
       const item = r ? r.item : (res.candidates[0] ? res.candidates[0].item : null);
-      return `<tr><td class="nowrap">${esc(run.labels[groupOf(i).para])}</td><td><b>${esc(res.ref.label)}</b></td><td><span class="zf-status-tag ${tone}">${esc(label)}</span></td><td>${item ? itemLine(item) : ''}</td></tr>`;
+      const plain = res.ref.at && res.ref.bold === false ? ' <span class="zf-kind">not in bold</span>' : '';
+      return `<tr><td class="nowrap">${esc(run.labels[groupOf(i).para])}</td><td><b>${esc(res.ref.label)}</b>${plain}</td><td><span class="zf-status-tag ${tone}">${esc(label)}</span></td><td>${item ? itemLine(item) : ''}</td></tr>`;
     });
     host.innerHTML = `<table class="zf-table"><thead><tr><th>Where</th><th>Reference</th><th>State</th><th>Zotero item</th></tr></thead><tbody>${rows.join('')}</tbody></table>`;
   }
@@ -700,6 +747,7 @@
     renderAllTab();
     renderRefs();
     renderTabCounts();
+    renderNamesToAdd();
     updateButtons();
   }
 
@@ -763,6 +811,13 @@
     ].filter(([n]) => n).map(([n, what]) => `${n.toLocaleString('en')} ${what}`).join(', ');
   }
 
+  /** Of the citations written, those by abbreviated name, and how many of
+      the names in them were not in bold. */
+  function namedCitations(written) {
+    const named = written.filter((w) => w.group.refs.some((r) => r.abbrev));
+    return { citations: named.length, notBold: named.reduce((k, w) => k + w.group.refs.filter((r) => r.at && r.bold === false).length, 0) };
+  }
+
   /** The lines of the comment at the start of the document. */
   function summaryLines(result) {
     const run = state.run;
@@ -781,6 +836,12 @@
       lines.push(`Left as text: ${plural(result.skipped.length, 'citation')} (${leftAsText(result.skipped)})${s.comment ? '; each has a comment saying why' : ''}.`);
     } else {
       lines.push('Left as text: none.');
+    }
+    const named = namedCitations(result.written);
+    if (named.citations) {
+      const now = named.notBold === 1 ? ' and now is' : ' and now are';
+      const plain = !named.notBold ? '' : `; ${plural(named.notBold, 'name was', 'names were')} not in bold${s.boldNames ? now : ''}`;
+      lines.push(`By abbreviated name: ${plural(named.citations, 'citation')}, each keeping the name as its text, which Zotero leaves as it is${plain}.`);
     }
     const kept = run.options.recode.zotero ? 0 : run.inventory.existingZotero.length;
     if (kept) lines.push(`Left as they were: ${plural(kept, 'Zotero citation')} already in the document.`);
@@ -823,7 +884,7 @@
       const same = analysed.paras.length === run.paraTexts.length && analysed.paras.every((p, k) => p.text === run.paraTexts[k]);
       if (!same) throw new Error('the document reads differently now than when it was analysed; press Analyse again');
       const result = await ZFDocx.writeCitations(pkg, analysed, groups, {
-        track: s.track, keepTracking: s.keepTracking, author: s.author, recode: run.options.recode,
+        track: s.track, keepTracking: s.keepTracking, author: s.author, recode: run.options.recode, boldNames: s.boldNames,
         commentText: s.comment ? commentLines : null, summaryText: s.summary ? summaryLines : null,
       });
       setProgress(0.8);
@@ -931,6 +992,14 @@
       if (state.run) setStatus('The changed setting takes effect when you press Analyse again; the choices made so far are then cleared.', 'warn');
     },
     'zf:trackChanged': () => { readControls(); saveSettings(); },
+    'zf:namesTyped': () => renderNames(),
+    'zf:namesChanged': () => {
+      readControls();
+      saveSettings();
+      renderNamesToAdd();
+      if (state.run) setStatus('The changed list takes effect when you press Analyse again; the choices made so far are then cleared.', 'warn');
+    },
+    'zf:addNames': () => addListedNames(),
     'zf:analyse': () => analyse(),
     'zf:save': () => save(),
     'zf:export': () => exportCsv(),

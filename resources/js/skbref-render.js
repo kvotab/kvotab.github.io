@@ -277,6 +277,7 @@
       summaryCards.classList.add('show');
       resultActions.classList.add('show');
       results.innerHTML = buildRefListSection(entries) + buildCitationOccurrencesSection(citations) + buildOrphanSection(report.orphanCites) + buildPotentialInvalidCitationsSection(potentialInvalidCitations) + buildUncitedSection(report.uncitedRefs) + buildFormatSection(issues, entries) + buildRuleFindingSummary(officialWritingIssues, potentialInvalidCitations, forbiddenMatches) + buildOfficialSkbWritingSection(officialWritingIssues) + buildForbiddenWordsSection(forbiddenMatches);
+      updateZoteroBulkBars();
       resetBtn.classList.add('show');
     }
 
@@ -293,17 +294,14 @@
                 <td class="ref-text">${renderTextWithBold(entry.body, entry.boldSpans)}</td>
                 <td class="cite-count">${entry.cites.length}</td>
                 <td class="cite-pages">${sections}${sourceBadges ? `<div style="margin-top:5px">${sourceBadges}</div>` : ''}</td>
-                <td class="zotero-cell">
-                  <button class="zotero-row-btn" type="button" data-kind="reference" data-index="${index}" data-search-id="reference-${index}" data-result-id="zotero-reference-${index}" title="Search Zotero using authors, publication year, and title extracted from this reference">Check Zotero</button>
-                  <div id="zotero-reference-${index}" class="zotero-inline-results"></div>
-                </td>
-              </tr>`;
+                ${zoteroCellHtml('reference', index, 'Match this entry against the Zotero library: its authors, year, title and any report number')}
+              </tr>${zoteroDetailRowHtml('reference', index, 5)}`;
           }).join('')
         : '<tr><td colspan="5" class="empty-notice">No reference list detected.</td></tr>';
       return section(
         'Reference list entries',
         entries.length,
-        `<table class="ref-table ref-list-table"><colgroup><col class="col-key"><col class="col-text"><col class="col-cited"><col class="col-sections"><col class="col-zotero"></colgroup><thead><tr><th>Key</th><th>Reference text</th><th>Cited (#)</th><th>In section(s)</th><th>Zotero</th></tr></thead><tbody>${rows}</tbody></table>`,
+        `${zoteroBulkBarHtml('reference', entries.length)}<table class="ref-table ref-list-table"><colgroup><col class="col-key"><col class="col-text"><col class="col-cited"><col class="col-sections"><col class="col-zotero"></colgroup><thead><tr><th>Key</th><th>Reference text</th><th>Cited (#)</th><th>In section(s)</th><th>Zotero</th></tr></thead><tbody>${rows}</tbody></table>`,
         true
       );
     }
@@ -370,7 +368,7 @@
 
     function buildOrphanSection(items) {
       const body = items.length
-        ? `<table class="ref-table orphan-table"><thead><tr><th>Citation</th><th>Closest entry</th><th>Context</th><th>Section</th><th>Zotero</th></tr></thead><tbody>${items.map((citation, index) => `
+        ? `${zoteroBulkBarHtml('citation', items.length)}<table class="ref-table orphan-table"><thead><tr><th>Citation</th><th>Closest entry</th><th>Context</th><th>Section</th><th>Zotero</th></tr></thead><tbody>${items.map((citation, index) => `
             <tr class="error-row">
               <td>
                 <span class="ref-key">${escHtml(citation.key)}</span>
@@ -381,11 +379,8 @@
                 : '<span class="rule-legacy-id">no similar entry</span>'}</td>
               <td><div class="citation-context">${renderCitationContext(citation)}</div></td>
               <td>${renderCitationLocation(citation)}</td>
-              <td class="zotero-cell">
-                <button class="zotero-row-btn" type="button" data-kind="citation" data-index="${index}" data-search-id="citation-${index}" data-result-id="zotero-citation-${index}" title="Search Zotero using this citation key">Check Zotero</button>
-                <div id="zotero-citation-${index}" class="zotero-inline-results"></div>
-              </td>
-            </tr>`).join('')}</tbody></table>`
+              ${zoteroCellHtml('citation', index, 'Match this citation against the Zotero library')}
+            </tr>${zoteroDetailRowHtml('citation', index, 5)}`).join('')}</tbody></table>`
         : '<p class="empty-notice">All in-text citations match a reference list entry.</p>';
       return section('In-text citations with no matching reference list entry', items.length, body, items.length > 0);
     }

@@ -68,10 +68,20 @@ function savePresetsToStorage(presets) {
   localStorage.setItem(_PRESETS_STORAGE_KEY, JSON.stringify(presets));
 }
 
-/** Populate the preset <select> dropdown. */
+/**
+ * Populate the preset <select> dropdown, keeping whatever was selected.
+ *
+ * Every edit, capture, delete and import in the preset manager rebuilds the
+ * list, and this used to drop the selection on the floor: the browser falls
+ * back to the first option, so editing any preset quietly switched the chart's
+ * preset to Auto range -- and closing the manager then applied it. A preset
+ * that no longer exists falls back to Auto range; the caller decides whether
+ * the view it left behind should read as Custom instead.
+ */
 function populatePresetDropdown() {
   const sel = document.getElementById('presetSelect');
   if (!sel) return;
+  const previous = sel.value;
   const presets = loadPresets();
   sel.innerHTML = '';
   presets.forEach(p => {
@@ -80,6 +90,8 @@ function populatePresetDropdown() {
     opt.textContent = p.name;
     sel.appendChild(opt);
   });
+  if (previous === '__custom__') _markCustomPreset();
+  else if (presets.some(p => p.id === previous)) sel.value = previous;
 }
 
 /** Apply the selected preset to the chart. */
@@ -91,19 +103,19 @@ function applySelectedPreset() {
   applyPresetById(sel.value);
 }
 
-/** Apply a preset by its id string. */
+/** Apply a preset by its id string. Resolves once the chart has moved. */
 function applyPresetById(id) {
-  if (!currentChartData) return;
+  if (!currentChartData) return Promise.resolve();
   const presets = loadPresets();
   const preset = presets.find(p => p.id === id);
-  if (!preset) return;
+  if (!preset) return Promise.resolve();
 
   // Default preset → reset to autorange with current scale toggles
   if (preset.id === 'default') {
     const xScale = getScaleValue('x');
     const yScale = getScaleValue('y');
     _suppressPresetSync = true;
-    Plotly.relayout('plotlyChart', {
+    return Plotly.relayout('plotlyChart', {
       'xaxis.autorange': true,
       'yaxis.autorange': true,
       'xaxis.dtick': xScale === 'log' ? 1 : null,
@@ -116,62 +128,75 @@ function applyPresetById(id) {
       'yaxis.minor.ticks': 'outside',
       'yaxis.minor.ticklen': 3,
       'yaxis.minor.showgrid': yScale === 'log'
-    }).then(() => { _suppressPresetSync = false; refreshDynamicLegend(); snapLogRangeToDecades(document.getElementById('plotlyChart')); });
-    return;
+    }).then(() => { _suppressPresetSync = false; refreshDynamicLegend(); return snapLogRangeToDecades(document.getElementById('plotlyChart')); });
   }
 
+  const rangeOf = (lo, hi) => (lo != null && hi != null ? [lo, hi] : null);
+  return _applyAxisSettings({
+    x: { scale: preset.xScale || null, range: rangeOf(preset.xMin, preset.xMax) },
+    y: { scale: preset.yScale || null, range: rangeOf(preset.yMin, preset.yMax) }
+  });
+}
+
+/**
+ * Move the chart's axes, for a preset or for the Current view editor.
+ *
+ * `settings.x` and `settings.y` are each optional -- an axis left out is not
+ * touched at all, which is how the editor changes only what the reader
+ * changed. Within an axis, `scale` null keeps the current scale, and `range`
+ * is [min, max] in data units, null for auto range, or undefined to keep the
+ * limits as they are (Plotly carries them across a change of scale, the same
+ * as the lin/log buttons).
+ *
+ * The limits are converted for the scale the axis ENDS UP on. This used to go
+ * by the preset's own scale only, so a preset with scale "auto" and limits,
+ * applied to a log axis, handed Plotly years as if they were exponents.
+ *
+ * @returns {Promise}
+ */
+function _applyAxisSettings(settings) {
+  const plotDiv = document.getElementById('plotlyChart');
+  const fullLayout = plotDiv && plotDiv._fullLayout;
   const update = {};
-  if (preset.xScale) {
-    setScaleValue('x', preset.xScale);
-    update['xaxis.type'] = preset.xScale;
-    if (preset.xScale === 'log') {
-      update['xaxis.dtick'] = 1;
-      update['xaxis.minor.ticks'] = 'outside';
-      update['xaxis.minor.ticklen'] = 3;
-      update['xaxis.minor.showgrid'] = true;
+  for (const axis of ['x', 'y']) {
+    const s = settings[axis];
+    if (!s) continue;
+    const key = axis + 'axis';
+    if (s.scale) {
+      const typeChanges = !fullLayout || !fullLayout[key] || fullLayout[key].type !== s.scale;
+      setScaleValue(axis, s.scale);
+      update[key + '.type'] = s.scale;
+      if (s.scale === 'log') {
+        update[key + '.dtick'] = 1;
+        update[key + '.minor.ticks'] = 'outside';
+        update[key + '.minor.ticklen'] = 3;
+        update[key + '.minor.showgrid'] = true;
+      } else {
+        update[key + '.tickmode'] = 'auto';
+        update[key + '.dtick'] = null;
+        update[key + '.minor.ticks'] = 'outside';
+        update[key + '.minor.showgrid'] = false;
+      }
+      if (axis === 'x' && typeChanges) {
+        const bgShapes = backgroundShapesForXScale(plotDiv, s.scale);
+        if (bgShapes) update.shapes = bgShapes;
+      }
+    }
+    if (s.range === undefined) continue;
+    if (s.range) {
+      const onScale = s.scale || getScaleValue(axis);
+      update[key + '.range'] = onScale === 'log'
+        ? [Math.log10(s.range[0]), Math.log10(s.range[1])]
+        : [s.range[0], s.range[1]];
+      update[key + '.autorange'] = false;
     } else {
-      update['xaxis.tickmode'] = 'auto';
-      update['xaxis.dtick'] = null;
-      update['xaxis.minor.ticks'] = 'outside';
-      update['xaxis.minor.showgrid'] = false;
+      update[key + '.autorange'] = true;
     }
   }
-  if (preset.yScale) {
-    setScaleValue('y', preset.yScale);
-    update['yaxis.type'] = preset.yScale;
-    if (preset.yScale === 'log') {
-      update['yaxis.dtick'] = 1;
-      update['yaxis.minor.ticks'] = 'outside';
-      update['yaxis.minor.ticklen'] = 3;
-      update['yaxis.minor.showgrid'] = true;
-    } else {
-      update['yaxis.tickmode'] = 'auto';
-      update['yaxis.dtick'] = null;
-      update['yaxis.minor.ticks'] = 'outside';
-      update['yaxis.minor.showgrid'] = false;
-    }
-  }
-
-  if (preset.xMin != null && preset.xMax != null) {
-    update['xaxis.range'] = preset.xScale === 'log'
-      ? [Math.log10(preset.xMin), Math.log10(preset.xMax)]
-      : [preset.xMin, preset.xMax];
-    update['xaxis.autorange'] = false;
-  } else {
-    update['xaxis.autorange'] = true;
-  }
-
-  if (preset.yMin != null && preset.yMax != null) {
-    update['yaxis.range'] = preset.yScale === 'log'
-      ? [Math.log10(preset.yMin), Math.log10(preset.yMax)]
-      : [preset.yMin, preset.yMax];
-    update['yaxis.autorange'] = false;
-  } else {
-    update['yaxis.autorange'] = true;
-  }
+  if (!Object.keys(update).length) return Promise.resolve();
 
   _suppressPresetSync = true;
-  Plotly.relayout('plotlyChart', update).then(() => { _suppressPresetSync = false; refreshDynamicLegend(); snapLogRangeToDecades(document.getElementById('plotlyChart')); });
+  return Plotly.relayout('plotlyChart', update).then(() => { _suppressPresetSync = false; refreshDynamicLegend(); return snapLogRangeToDecades(plotDiv); });
 }
 
 /** Capture the current chart view state as a preset object (without id/name). */
@@ -217,6 +242,15 @@ function saveCurrentAsPreset() {
 
 /* ---------- Preset Manager Dialog ---------- */
 
+/*
+  The first row of the manager is the chart's current view, not a saved
+  preset. Editing it moves the chart and saves nothing, and since the view then
+  matches no preset, the dropdown changes to Custom. Editing a saved preset
+  moves the chart only when that preset is the selected one: it stays selected
+  and the chart follows the edit. Any other preset changes in storage only.
+*/
+const _CURRENT_VIEW_ROW = '__current__';
+
 function openPresetManager() {
   const overlay = document.getElementById('presetManagerOverlay');
   if (!overlay) return;
@@ -224,114 +258,161 @@ function openPresetManager() {
   overlay.style.display = 'flex';
 }
 
+/*
+  Closing only closes. It used to re-apply the selected preset, which was how
+  an edit to that preset reached the chart -- but it did so on every close,
+  and since every change in here had already reset the dropdown to Auto range
+  (see populatePresetDropdown), opening and closing the dialog threw a zoomed
+  view away. Each change now reaches the chart when it is made.
+*/
 function closePresetManager() {
   const overlay = document.getElementById('presetManagerOverlay');
   if (overlay) overlay.style.display = 'none';
+  _cancelPresetEdit();
+}
 
-  // Re-sync dropdown: keep current selection if it still exists, else fall back to default
+function _refreshPresetManagerIfOpen() {
+  const overlay = document.getElementById('presetManagerOverlay');
+  if (overlay && overlay.style.display !== 'none') _renderPresetManagerList();
+}
+
+function _selectedPresetId() {
   const sel = document.getElementById('presetSelect');
-  if (sel) {
-    const prev = sel.value;
-    populatePresetDropdown();
-    const presets = loadPresets();
-    if (presets.find(p => p.id === prev)) {
-      sel.value = prev;
-    } else {
-      sel.value = 'default';
-    }
-    // Apply the (possibly updated) selected preset to the chart
-    applyPresetById(sel.value);
+  return sel ? sel.value : null;
+}
+
+/**
+ * The chart's axes as the reader sees them, in data units: each axis's scale
+ * and its visible limits, whether those were set or autoranged. The Current
+ * view editor starts from these, so the numbers in it are the ones on screen.
+ *
+ * @returns {Object|null} {xScale, xMin, xMax, yScale, yMin, yMax}
+ */
+function _visibleAxisSettings() {
+  const plotDiv = document.getElementById('plotlyChart');
+  const fl = plotDiv && plotDiv._fullLayout;
+  if (!fl || !fl.xaxis || !fl.yaxis) return null;
+  const out = {};
+  for (const axis of ['x', 'y']) {
+    const ax = fl[axis + 'axis'];
+    const scale = ax.type === 'log' ? 'log' : 'linear';
+    const r = Array.isArray(ax.range) ? ax.range.map(Number) : [];
+    // Six significant figures: 10 ** 5 is 100000, not 99999.99999999997.
+    const toData = (v) => Number.isFinite(v)
+      ? Number((scale === 'log' ? Math.pow(10, v) : v).toPrecision(6))
+      : null;
+    out[axis + 'Scale'] = scale;
+    out[axis + 'Min'] = toData(r[0]);
+    out[axis + 'Max'] = toData(r[1]);
   }
+  return out;
+}
+
+function _axisSummary(s) {
+  const fmtR = (lo, hi) => (lo != null && hi != null) ? lo + ' – ' + hi : 'auto';
+  return 'X: ' + (s.xScale || 'auto') + ' [' + fmtR(s.xMin, s.xMax) + ']   '
+    + 'Y: ' + (s.yScale || 'auto') + ' [' + fmtR(s.yMin, s.yMax) + ']';
+}
+
+/** A manager row: name, one-line summary, and an optional tag after the name. */
+function _presetManagerRow(id, name, summaryText, tag) {
+  const row = document.createElement('div');
+  row.className = 'preset-manager-row';
+  row.dataset.presetId = id;
+
+  const nameSpan = document.createElement('span');
+  nameSpan.className = 'preset-manager-name';
+  nameSpan.textContent = name;
+  if (tag) {
+    const tagSpan = document.createElement('span');
+    tagSpan.className = 'preset-manager-tag';
+    tagSpan.textContent = tag;
+    nameSpan.appendChild(tagSpan);
+  }
+
+  const summary = document.createElement('span');
+  summary.className = 'preset-manager-summary';
+  summary.textContent = summaryText;
+
+  const nameBlock = document.createElement('div');
+  nameBlock.className = 'preset-manager-name-block';
+  nameBlock.appendChild(nameSpan);
+  nameBlock.appendChild(summary);
+  row.appendChild(nameBlock);
+  return row;
+}
+
+function _presetManagerButton(label, title, onclick, className) {
+  const btn = document.createElement('button');
+  btn.textContent = label;
+  btn.title = title;
+  if (className) btn.className = className;
+  btn.onclick = onclick;
+  return btn;
 }
 
 function _renderPresetManagerList() {
   const list = document.getElementById('presetManagerList');
   if (!list) return;
   const presets = loadPresets();
+  const selectedId = _selectedPresetId();
   list.innerHTML = '';
 
-  presets.forEach((p, idx) => {
-    const row = document.createElement('div');
-    row.className = 'preset-manager-row';
-    row.dataset.presetId = p.id;
+  // The chart as it is now. Tagged when the dropdown says Custom, since then
+  // this row is the only one that describes what is on screen.
+  const view = currentChartData ? _visibleAxisSettings() : null;
+  const currentRow = _presetManagerRow(
+    _CURRENT_VIEW_ROW, 'Current view',
+    view ? _axisSummary(view) : 'No chart drawn yet',
+    selectedId === '__custom__' ? 'Custom ✱' : '');
+  currentRow.classList.add('preset-manager-current');
+  if (selectedId === '__custom__') currentRow.classList.add('is-selected');
+  const currentActions = document.createElement('span');
+  currentActions.className = 'preset-manager-actions';
+  const currentEdit = _presetManagerButton('Edit',
+    'Change the chart’s axes without saving a preset', () => _editCurrentView());
+  currentEdit.disabled = !view;
+  currentActions.appendChild(currentEdit);
+  currentRow.appendChild(currentActions);
+  list.appendChild(currentRow);
 
-    const nameSpan = document.createElement('span');
-    nameSpan.className = 'preset-manager-name';
-    nameSpan.textContent = p.name;
-    if (p.id === 'default') nameSpan.style.fontStyle = 'italic';
-
-    // Summary line showing current axis settings
-    const summary = document.createElement('span');
-    summary.className = 'preset-manager-summary';
-    if (p.id === 'default') {
-      summary.textContent = 'auto';
-    } else {
-      const parts = [];
-      const xS = p.xScale || 'auto';
-      const yS = p.yScale || 'auto';
-      const fmtR = (lo, hi) => (lo != null && hi != null) ? lo + ' – ' + hi : 'auto';
-      parts.push('X: ' + xS + ' [' + fmtR(p.xMin, p.xMax) + ']');
-      parts.push('Y: ' + yS + ' [' + fmtR(p.yMin, p.yMax) + ']');
-      summary.textContent = parts.join('   ');
-    }
-
-    const nameBlock = document.createElement('div');
-    nameBlock.className = 'preset-manager-name-block';
-    nameBlock.appendChild(nameSpan);
-    nameBlock.appendChild(summary);
-    row.appendChild(nameBlock);
+  presets.forEach(p => {
+    const isSelected = p.id === selectedId;
+    const row = _presetManagerRow(p.id, p.name,
+      p.id === 'default' ? 'auto' : _axisSummary(p),
+      isSelected ? 'selected' : '');
+    if (isSelected) row.classList.add('is-selected');
+    if (p.id === 'default') row.querySelector('.preset-manager-name').style.fontStyle = 'italic';
 
     if (p.id !== 'default') {
       const btnGroup = document.createElement('span');
       btnGroup.className = 'preset-manager-actions';
-
-      const editBtn = document.createElement('button');
-      editBtn.textContent = 'Edit';
-      editBtn.title = 'Edit preset settings';
-      editBtn.onclick = () => _editPreset(p.id);
-      btnGroup.appendChild(editBtn);
-
-      const captureBtn = document.createElement('button');
-      captureBtn.textContent = 'Capture';
-      captureBtn.title = 'Overwrite with current chart view';
-      captureBtn.onclick = () => _updatePresetFromView(p.id);
-      btnGroup.appendChild(captureBtn);
-
-      const deleteBtn = document.createElement('button');
-      deleteBtn.textContent = 'Delete';
-      deleteBtn.title = 'Delete preset';
-      deleteBtn.className = 'preset-delete-btn';
-      deleteBtn.onclick = () => _deletePreset(p.id);
-      btnGroup.appendChild(deleteBtn);
-
+      btnGroup.appendChild(_presetManagerButton('Edit', 'Edit preset settings', () => _editPreset(p.id)));
+      btnGroup.appendChild(_presetManagerButton('Capture', 'Overwrite with current chart view', () => _updatePresetFromView(p.id)));
+      btnGroup.appendChild(_presetManagerButton('Delete', 'Delete preset', () => _deletePreset(p.id), 'preset-delete-btn'));
       row.appendChild(btnGroup);
     }
     list.appendChild(row);
   });
 }
 
-/** Show inline edit form for a preset. */
-function _editPreset(id) {
-  const presets = loadPresets();
-  const p = presets.find(x => x.id === id);
-  if (!p) return;
-
-  // Remove any existing edit form first
-  const prev = document.getElementById('presetEditForm');
-  if (prev) prev.remove();
-
+/**
+ * Open the inline edit form under a manager row, filled from `v`.
+ *
+ * @param {string} rowId - the row's data-preset-id
+ * @param {Object} v - {name?, xScale, xMin, xMax, yScale, yMin, yMax}
+ * @param {Object} opts - withName: show the name field; autoScale: offer
+ *   "auto" as a scale (a preset can leave the scale alone, a view cannot);
+ *   saveLabel: the confirm button's text
+ * @returns {HTMLElement|null} the form, or null if the row is not there
+ */
+function _openAxisForm(rowId, v, { withName, autoScale, saveLabel }) {
+  _cancelPresetEdit();
   const list = document.getElementById('presetManagerList');
-  if (!list) return;
-
-  // Find the row for this preset
-  const rows = list.querySelectorAll('.preset-manager-row');
-  let targetRow = null;
-  rows.forEach(r => { if (r.dataset.presetId === id) targetRow = r; });
-  if (!targetRow) return;
-
-  const form = document.createElement('div');
-  form.id = 'presetEditForm';
-  form.className = 'preset-edit-form';
+  if (!list) return null;
+  const targetRow = Array.from(list.querySelectorAll('.preset-manager-row'))
+    .find(r => r.dataset.presetId === rowId);
+  if (!targetRow) return null;
 
   /*
     Escaped, not just stringified. These fields look numeric but nothing
@@ -340,43 +421,88 @@ function _editPreset(id) {
     interpolated straight into value="…" below. A preset file with
     xMin: '" autofocus onfocus=… x="' broke out of the attribute.
   */
-  const fmtVal = (v) => (v == null ? '' : kvotEscapeHtml(v));
+  const fmtVal = (val) => (val == null ? '' : kvotEscapeHtml(val));
+  const scaleSelect = (id, value) =>
+    '<select id="' + id + '">' +
+      (autoScale ? '<option value=""' + (value == null ? ' selected' : '') + '>auto</option>' : '') +
+      '<option value="linear"' + (value === 'linear' ? ' selected' : '') + '>linear</option>' +
+      '<option value="log"' + (value === 'log' ? ' selected' : '') + '>log</option>' +
+    '</select>';
+  const axisRow = (axis) => {
+    const A = axis.toUpperCase();
+    return '<div class="preset-edit-row">' +
+      '<label>' + A + ' scale ' + scaleSelect('pe_' + axis + 'Scale', v[axis + 'Scale']) + '</label>' +
+      '<label>' + A + ' min <input type="text" id="pe_' + axis + 'Min" value="' + fmtVal(v[axis + 'Min']) + '" placeholder="auto"></label>' +
+      '<label>' + A + ' max <input type="text" id="pe_' + axis + 'Max" value="' + fmtVal(v[axis + 'Max']) + '" placeholder="auto"></label>' +
+    '</div>';
+  };
 
+  const form = document.createElement('div');
+  form.id = 'presetEditForm';
+  form.className = 'preset-edit-form';
   form.innerHTML =
-    '<div class="preset-edit-row">' +
-      '<label>Name <input type="text" id="pe_name" class="preset-name-input" value="' + _escAttr(p.name) + '"></label>' +
-    '</div>' +
-    '<div class="preset-edit-row">' +
-      '<label>X scale ' +
-        '<select id="pe_xScale">' +
-          '<option value=""' + (p.xScale == null ? ' selected' : '') + '>auto</option>' +
-          '<option value="linear"' + (p.xScale === 'linear' ? ' selected' : '') + '>linear</option>' +
-          '<option value="log"' + (p.xScale === 'log' ? ' selected' : '') + '>log</option>' +
-        '</select>' +
-      '</label>' +
-      '<label>X min <input type="text" id="pe_xMin" value="' + fmtVal(p.xMin) + '" placeholder="auto"></label>' +
-      '<label>X max <input type="text" id="pe_xMax" value="' + fmtVal(p.xMax) + '" placeholder="auto"></label>' +
-    '</div>' +
-    '<div class="preset-edit-row">' +
-      '<label>Y scale ' +
-        '<select id="pe_yScale">' +
-          '<option value=""' + (p.yScale == null ? ' selected' : '') + '>auto</option>' +
-          '<option value="linear"' + (p.yScale === 'linear' ? ' selected' : '') + '>linear</option>' +
-          '<option value="log"' + (p.yScale === 'log' ? ' selected' : '') + '>log</option>' +
-        '</select>' +
-      '</label>' +
-      '<label>Y min <input type="text" id="pe_yMin" value="' + fmtVal(p.yMin) + '" placeholder="auto"></label>' +
-      '<label>Y max <input type="text" id="pe_yMax" value="' + fmtVal(p.yMax) + '" placeholder="auto"></label>' +
-    '</div>' +
+    (withName
+      ? '<div class="preset-edit-row">' +
+          '<label>Name <input type="text" id="pe_name" class="preset-name-input" value="' + _escAttr(v.name) + '"></label>' +
+        '</div>'
+      : '') +
+    axisRow('x') + axisRow('y') +
     '<div class="preset-edit-btns">' +
-      '<button id="pe_save" class="preset-edit-save">Save</button>' +
+      '<button id="pe_save" class="preset-edit-save">' + kvotEscapeHtml(saveLabel) + '</button>' +
       '<button id="pe_cancel">Cancel</button>' +
     '</div>';
 
   targetRow.insertAdjacentElement('afterend', form);
-
-  document.getElementById('pe_save').onclick = () => _savePresetEdit(id);
   document.getElementById('pe_cancel').onclick = () => _cancelPresetEdit();
+  return form;
+}
+
+/** The edit form's axis fields, as typed. */
+function _readAxisForm() {
+  const val = (id) => {
+    const el = document.getElementById(id);
+    return el ? String(el.value).trim() : '';
+  };
+  const out = {};
+  for (const axis of ['x', 'y']) {
+    out[axis + 'Scale'] = val('pe_' + axis + 'Scale');
+    out[axis + 'Min'] = val('pe_' + axis + 'Min');
+    out[axis + 'Max'] = val('pe_' + axis + 'Max');
+  }
+  return out;
+}
+
+/**
+ * One axis's limits from the form: `range` is [min, max], or null for auto
+ * range when both are empty; `message` says why they cannot be used.
+ *
+ * Stricter than the form used to be. It read a limit that was not a number as
+ * empty and kept a range with one end missing, and either way the preset was
+ * then applied as auto range with no word about it; and a log axis with a
+ * limit of zero became Math.log10(0).
+ */
+function _formRange(axis, minText, maxText, scale) {
+  const A = axis.toUpperCase();
+  if (minText === '' && maxText === '') return { range: null };
+  if (minText === '' || maxText === '') {
+    return { message: 'Give both ' + A + ' limits, or leave both empty for auto range.' };
+  }
+  const lo = Number(minText);
+  const hi = Number(maxText);
+  const bad = [[minText, lo], [maxText, hi]].find(([, n]) => !Number.isFinite(n));
+  if (bad) return { message: A + ' limit “' + bad[0] + '” is not a number.' };
+  if (scale === 'log' && (lo <= 0 || hi <= 0)) {
+    return { message: 'A log ' + A + ' axis needs limits above zero.' };
+  }
+  return { range: [lo, hi] };
+}
+
+/** Show inline edit form for a preset. */
+function _editPreset(id) {
+  const p = loadPresets().find(x => x.id === id);
+  if (!p) return;
+  if (!_openAxisForm(id, p, { withName: true, autoScale: true, saveLabel: 'Save' })) return;
+  document.getElementById('pe_save').onclick = () => _savePresetEdit(id);
 }
 
 /*
@@ -388,14 +514,6 @@ function _escAttr(s) {
   return kvotEscapeHtml(s);
 }
 
-function _parseNum(s) {
-  if (s == null) return null;
-  const t = String(s).trim();
-  if (t === '') return null;
-  const n = Number(t);
-  return isNaN(n) ? null : n;
-}
-
 function _savePresetEdit(id) {
   const presets = loadPresets();
   const p = presets.find(x => x.id === id);
@@ -404,17 +522,69 @@ function _savePresetEdit(id) {
   const nameVal = (document.getElementById('pe_name').value || '').trim();
   if (!nameVal) { notifyUser('Give the preset a name before saving.'); return; }
 
+  const f = _readAxisForm();
+  const x = _formRange('x', f.xMin, f.xMax, f.xScale);
+  const y = _formRange('y', f.yMin, f.yMax, f.yScale);
+  const problem = [x, y].find(r => r.message);
+  if (problem) { notifyUser(problem.message); return; }
+
   p.name   = nameVal;
-  p.xScale = document.getElementById('pe_xScale').value || null;
-  p.yScale = document.getElementById('pe_yScale').value || null;
-  p.xMin   = _parseNum(document.getElementById('pe_xMin').value);
-  p.xMax   = _parseNum(document.getElementById('pe_xMax').value);
-  p.yMin   = _parseNum(document.getElementById('pe_yMin').value);
-  p.yMax   = _parseNum(document.getElementById('pe_yMax').value);
+  p.xScale = f.xScale || null;
+  p.yScale = f.yScale || null;
+  p.xMin   = x.range ? x.range[0] : null;
+  p.xMax   = x.range ? x.range[1] : null;
+  p.yMin   = y.range ? y.range[0] : null;
+  p.yMax   = y.range ? y.range[1] : null;
 
   savePresetsToStorage(presets);
   populatePresetDropdown();
   _renderPresetManagerList();
+  // The selected preset stays selected and the chart follows the edit.
+  if (_selectedPresetId() === id) applyPresetById(id).then(_refreshPresetManagerIfOpen);
+}
+
+/** Show the inline edit form for the chart's current view. */
+function _editCurrentView() {
+  if (!currentChartData) { notifyUser('Draw a chart first — there is nothing to edit yet.'); return; }
+  const view = _visibleAxisSettings();
+  if (!view) return;
+  if (!_openAxisForm(_CURRENT_VIEW_ROW, view, { withName: false, autoScale: false, saveLabel: 'Apply' })) return;
+  const before = _readAxisForm();
+  document.getElementById('pe_save').onclick = () => _applyCurrentViewEdit(before);
+}
+
+/**
+ * Apply the Current view form to the chart, saving nothing.
+ *
+ * Only an axis whose fields were changed is touched, and within it a scale
+ * change on its own keeps the limits, as the lin/log buttons do -- the form
+ * starts from the limits on screen, so leaving them alone must not pin an
+ * autoranged axis to them. Applying with nothing changed leaves the
+ * selection alone; any change makes it Custom.
+ *
+ * @param {Object} before - the form as it was opened, from _readAxisForm
+ */
+function _applyCurrentViewEdit(before) {
+  const now = _readAxisForm();
+  const settings = {};
+  for (const axis of ['x', 'y']) {
+    const scaleChanged = now[axis + 'Scale'] !== before[axis + 'Scale'];
+    const rangeChanged = now[axis + 'Min'] !== before[axis + 'Min']
+      || now[axis + 'Max'] !== before[axis + 'Max'];
+    if (!scaleChanged && !rangeChanged) continue;
+    const s = { scale: now[axis + 'Scale'] || null };
+    if (rangeChanged) {
+      const r = _formRange(axis, now[axis + 'Min'], now[axis + 'Max'], s.scale);
+      if (r.message) { notifyUser(r.message); return; }
+      s.range = r.range;
+    }
+    settings[axis] = s;
+  }
+  if (!settings.x && !settings.y) { _cancelPresetEdit(); return; }
+
+  _markCustomPreset();
+  _renderPresetManagerList();
+  _applyAxisSettings(settings).then(_refreshPresetManagerIfOpen);
 }
 
 function _cancelPresetEdit() {
@@ -437,10 +607,14 @@ function _updatePresetFromView(id) {
 
 function _deletePreset(id) {
   if (!confirm('Delete this preset?')) return;
+  const wasSelected = _selectedPresetId() === id;
   let presets = loadPresets();
   presets = presets.filter(x => x.id !== id);
   savePresetsToStorage(presets);
   populatePresetDropdown();
+  // The chart keeps the view the deleted preset gave it, which is now no
+  // preset's; without a chart there is no view, and Auto range stands.
+  if (wasSelected && currentChartData) _markCustomPreset();
   _renderPresetManagerList();
 }
 
@@ -623,6 +797,11 @@ function importPresets() {
         savePresetsToStorage([...merged.values()]);
         populatePresetDropdown();
         _renderPresetManagerList();
+        // Replacing the selected preset is editing it: the chart follows.
+        const selectedId = _selectedPresetId();
+        if (selectedId !== 'default' && imported.some(p => p.id === selectedId)) {
+          applyPresetById(selectedId).then(_refreshPresetManagerIfOpen);
+        }
         notifyUser(
           `Imported ${imported.length} preset(s): ${addedCount} added, ${replaced} replaced. `
           + 'Presets not in the file were kept.',

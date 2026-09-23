@@ -95,6 +95,42 @@ Three things the block taught, kept as comments:
   sorbed mass too. `on = inventory` is the difference, and the "sorbing" release
   case is what proves it: to 2×10⁻¹⁰ one way, 0.6 out the other.
 
+**What skbrtm's databases needed.** Reading skbrtm-main's examples called for
+six things the format lacked, and each is checked against a number worked out
+independently rather than against the code's own output:
+
+* *The syntax.* `Fe(OH)3` as a name; `[A]**(2/3)` and `10**-3` in a law, and an
+  exponent that is a constant of the line or a parameter varying by cell, each
+  with a Jacobian that agrees with a difference; `kr = 1.33*10**12` and
+  `kb = kf/4` as constants; `c = [B]` as an alias, whose extra Jacobian entry,
+  `-k[A]`, is read out of the pattern; arithmetic in settings and species
+  lines; and skbrtm's biotite rate law, passed through verbatim, against its
+  value by hand.
+* *The grids.* A power-law grid's faces at `L(i/N)^3` to 1e-20, `FACES` as a list
+  and as an expression in `i`, `GRID_RATIO`, and `SURFACE_LAYER`'s first cell; a
+  closed power-law column conserving its content to 4e-15; and skbrtm's own b1
+  benchmark -- Crank's slab -- on it: 1.4e-4 at ten days with 50 cells, and
+  exactly four times closer with 100, which is second order on a grid this
+  uneven.
+* *A surface.* `w`, `xl` and `xr` are the cell's width and faces; a site
+  density written per m² over `w` is the same amount per m² on three grids; and
+  the reason for `SURFACE_LAYER`: a second-order surface reaction whose product
+  per m² moves 69 % between 10, 20 and 40 cells without it, and 2.5e-6 % with
+  it.
+* *Tables.* Interpolated at the cell centres to hand-worked values, held flat
+  beyond the ends, the same through `interp(t, x)`, and a `log` table a quarter
+  of the way along giving `0.1^(1/4)`; refused when x does not increase, a log
+  table holds a zero, or a rate law reads one.
+* *Held cells.* A cell held with `fixed` in `<INITIAL>` stays at 1 while feeding
+  its neighbours; a species held in cells 5-9 stays at zero there while the
+  reaction makes it everywhere else and the reactant still decays under it.
+* *The importer.* A small skbrtm case written into the test -- script order and
+  time span, decimal commas, bounds, a name in two cases, `<=` and a bare `=`,
+  skbrtm's `(kr/kh)`, `boundary_values`, `units:` with a colon, a lone `cell_id`,
+  a species constant in one cell, a value per cell width -- opens, compiles and
+  runs, with each of skbrtm's four misreadings named. When skbrtm-main is in
+  `~/Downloads`, its five cases are opened and run as well.
+
 **The examples the page offers.** Every one of them is compiled and run here,
 so the picker cannot hand a reader something broken, and the two with a
 published answer are held to it: Robertson (1966) at *t* = 0.4 against
@@ -249,6 +285,11 @@ examples through the tokeniser unchanged, since a span too many or an escape
 too few puts the caret over the wrong letter — and that turning it off puts
 the copy away and is remembered; that the page can build the HDF5 file it
 offers and says what it wrote;
+that a model file dropped on the page outlines the page while it is held
+there, loads, switches to the Model tab, is described in the panel -- power-law
+grid, table, held cells -- is coloured without a character changed, and runs,
+and that skbrtm's files dropped together, a stray `.md` among them, open as one
+model with what skbrtm reads differently written at the top;
 that a model using a parameter, an `R=` and an equilibrium at once compiles with
 all three reported in the panel, runs, verifies, starts its chart from the
 speciated state rather than what was typed, and draws a profile whose mean is

@@ -294,6 +294,78 @@ check('headings', ['References', 'Referenser', '7 References', 'Litteraturförte
   check('footnotes are read', notes.groups.map((g) => [g.story, g.text]), [['footnote', '(Smith 2020)']]);
 }
 
+/* ---- the user's list of abbreviated names ------------------------------------ */
+{
+  const read = P.readNameList([
+    'Data report: SKB TR-10-52', 'Main report\tTR-11-01', 'Limits: SSMFS 2008:37', 'Lane book: LANE0014',
+    'Group item: http://zotero.org/groups/777/items/OHMAN014', 'The old one: SKB 2010', 'Erosion paper: buffer erosion dilute',
+    'Climate report, 2020. Climate for the assessment. Svensk Kärnbränslehantering AB.', '# a note', '', 'no colon',
+    'Data report: SKB TR-10-53', '“Fuel report”, 2010: SKB TR-10-46',
+  ].join('\n'));
+  check('the list: each name with what it refers to',
+    read.names.map((n) => [n.name, n.target.kind, n.target.report || n.target.designation || n.target.key || n.target.text]),
+    [['Data report', 'report', 'TR-10-52'], ['Main report', 'report', 'TR-11-01'], ['Limits', 'designation', 'SSMFS 2008:37'],
+      ['Lane book', 'key', 'LANE0014'], ['Group item', 'key', 'OHMAN014'], ['The old one', 'author', 'SKB 2010'],
+      ['Erosion paper', 'words', 'buffer erosion dilute'], ['Climate report', 'words', 'Climate for the assessment 2020'],
+      ['Fuel report', 'report', 'TR-10-46']]);
+  check('... an item link with its library, an author and year read as a citation, SKB\'s numbers told from anyone\'s',
+    [read.names[4].target.library, read.names[5].target.authors, read.names[5].target.yearKey, read.names[0].target.skb, read.names[1].target.skb],
+    ['groups/777', ['SKB'], '2010', true, false]);
+  check('lines it cannot read, and a name given twice', read.problems, [
+    { line: 11, reason: 'there is no colon between the name and what it refers to' },
+    { line: 12, reason: '“Data report” is listed twice; the first is used' }]);
+  check('the line for an entry under "References with abbreviated names"',
+    ['Data report, 2010. Data report for the safety assessment SR-Site. SKB TR-10-52, Svensk Kärnbränslehantering AB.',
+      'Climate report, 2020. Climate for the assessment. Svensk Kärnbränslehantering AB.', 'Memo, 2020.'].map((t) => P.nameLine(P.readAbbreviatedEntry(t))),
+    ['Data report: SKB TR-10-52', 'Climate report: Climate for the assessment 2020', '']);
+
+  const names = P.readNameList('Data report: SKB TR-10-52\nClimate report: SKB TR-10-49').names;
+  const bolded = 'In bold, the Data Report is the name.';
+  const at = bolded.indexOf('Data Report');
+  const paras = [
+    { text: 'The Data report', level: 0 },
+    { text: 'As the Data report shows, and the data report does not, rates are low (Data report, Section 2.1).' },
+    { text: bolded, bold: [[at, at + 'Data Report'.length]] },
+    { text: 'Data report\nSKB TR-10-52' },
+    { text: 'Contents: Climate report 7', fixed: [[0, 26]] },
+    { text: 'Smith (2020, as in the Data report) agrees; see the Climate report (Section 3).' },
+    { text: 'References', level: 0 },
+    { text: 'SKB, 2010. Data report for the safety assessment SR-Site. SKB TR-10-52, Svensk Kärnbränslehantering AB.' },
+    { text: 'Smith J, 2020. Buffer erosion. Applied Clay Science 185.' },
+    { text: 'Uncited U, 2001. Never cited anywhere.' },
+  ].map((p) => Object.assign({ story: 'body', level: null }, p));
+  const doc = P.parseDocument(paras, { names });
+  check('a listed name is a citation in running text -- in bold even with a capital out of place, not in bold only as listed -- and in a parenthesis;'
+    + ' not in a heading, alone on its line, in a field\'s result, or inside another citation',
+  doc.groups.map((g) => [g.para, ...describe(g)]), [
+    [1, 'inline', 'Data report', 'Data report'], [1, 'parenthesis', '(Data report, Section 2.1)', 'Data report @section:2.1'],
+    [2, 'inline', 'Data Report', 'Data report'],
+    [5, 'narrative', '(2020, as in the Data report)', 'Smith 2020 >as in the Data report< [a]'], [5, 'inline', 'Climate report', 'Climate report']]);
+  const named = doc.refs.filter((r) => r.abbrev);
+  check('where each name stands, and whether it is in bold', named.map((r) => [paras[doc.groups[r.group].para].text.slice(...r.at), r.bold]),
+    [['Data report', false], ['Data report', false], ['Data Report', true], ['Climate report', false]]);
+  check('one decision for a name, wherever and however it is cited', [...new Set(named.map((r) => r.key))], ['n|data report', 'n|climate report']);
+  check('a name is tied to the entry with its report number', named.map((r) => r.entry && r.entry.authors[0]), ['SKB', 'SKB', 'SKB', null]);
+  check('... which is cited, then', P.uncitedEntries(doc).map((e) => e.text), ['Uncited U, 2001. Never cited anywhere.']);
+  check('without a reference list, the names are found all the same',
+    P.parseDocument(paras.slice(0, 6), { names }).groups.map((g) => g.text), ['Data report', '(Data report, Section 2.1)', 'Data Report', '(2020, as in the Data report)', 'Climate report']);
+  check('without the list, a name in running text is not a citation', P.parseDocument(paras).groups.map((g) => g.text), ['(2020, as in the Data report)']);
+
+  // From SKB's PSAR reports: what the name must not be taken for.
+  const bold = (text, words) => ({ text, story: 'body', bold: [[text.indexOf(words), text.indexOf(words) + words.length]] });
+  const more = P.parseDocument([
+    bold('The Activities and input data report is another report.', 'Activities and input data report'),
+    bold('As in the Data Report, bold with a capital out of place.', 'Data Report'),
+    { text: 'Initial state report for the safety assessment SR-PSU (SKB TR-14-02).', story: 'body' },
+    { text: 'As described in the SR-Site Geosphere process report (SKB TR-10-48).', story: 'body' },
+    { text: 'As SKB’s Data report shows, not in bold.', story: 'body' },
+  ], { names: P.readNameList('Data report: SKB TR-10-52\nInitial state report: SKB TR-23-02\nGeosphere process report: SKB TR-14-05').names });
+  check('in bold, the first letter as listed ("input data report" is another report\'s name, "Data Report" this one\'s);'
+    + ' not in bold, not at the start of a line, where it begins a title, nor after a qualifier such as "SR-Site"',
+  more.groups.map((g) => [g.para, g.kind, g.text]),
+  [[1, 'inline', 'Data Report'], [2, 'parenthesis', '(SKB TR-14-02)'], [3, 'parenthesis', '(SKB TR-10-48)'], [4, 'inline', 'Data report']]);
+}
+
 console.log(`${CASES.length} paragraphs: ${checks} checks`);
 if (failures.length) {
   console.log(`${failures.length} FAILED:`);

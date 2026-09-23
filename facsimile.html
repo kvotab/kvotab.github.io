@@ -28,7 +28,7 @@
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
-  <link rel="stylesheet" href="./resources/css/facsimile.css?v=20260922c">
+  <link rel="stylesheet" href="./resources/css/facsimile.css?v=20260923">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
 </head>
 <body>
@@ -62,11 +62,11 @@
           <details class="fac-sec" id="sec-file">
             <summary>Model file</summary>
             <div class="fac-actions">
-              <button type="button" class="fac-btn secondary small" data-on-click="fac:loadFile">Open…</button>
+              <button type="button" class="fac-btn secondary small" data-on-click="fac:loadFile" title="Read a model file into the editor; dropping one on the page does the same">Open…</button>
               <button type="button" class="fac-btn secondary small" data-on-click="fac:saveFile">Save as .fac</button>
               <button type="button" class="fac-btn secondary small" data-on-click="fac:resetModel" title="Back to the built-in model text and the 13g settings">Reset</button>
             </div>
-            <p class="fac-muted">The model text, the settings and the solver options are kept in this browser between visits. Nothing leaves your machine.</p>
+            <p class="fac-muted">A .fac file dropped anywhere on the page opens too. The model text, the settings and the solver options are kept in this browser between visits. Nothing leaves your machine.</p>
           </details>
 
           <details class="fac-sec" id="sec-case" open>
@@ -463,7 +463,7 @@ Y2 = , rf = 3.0E7*Y2*Y2</pre>
             <li><strong>Only NDF and BDF.</strong> The ported solvers take no mass matrix and would read a constraint residual as a rate of change, so they are refused rather than allowed to produce a wrong answer quietly.</li>
             <li><strong>Index 1.</strong> Each constraint must determine its own variable. If it does not, the iteration matrix is singular and the page says which variable and why, rather than reporting an arithmetic failure.</li>
           </ul>
-          <p>A worked example is in the repository at <code>resources/data/facsimile-langmuir.fac</code>: a gas consumed at a fixed rate with a surface whose coverage is in equilibrium with it at every instant. Open it with <em>Open…</em>. It uses all of this at once — an algebraic variable, a named rate, an output grid, an event value list and an event that stops the run — and everything in it has an exact answer to check against.</p>
+          <p>A worked example is in the repository at <code>resources/data/facsimile-langmuir.fac</code>: a gas consumed at a fixed rate with a surface whose coverage is in equilibrium with it at every instant. Open it with <em>Open…</em>, or drop it on the page. It uses all of this at once — an algebraic variable, a named rate, an output grid, an event value list and an event that stops the run — and everything in it has an exact answer to check against.</p>
           <p>There is an example of the trade-off in the built-in model already. Setting <em>H2OPAIR</em> to 1 holds water at saturation with FACSIMILE's evaporation and condensation pair at a rate constant of a million, which is the usual way of avoiding a constraint; the default substitutes the saturation expression at compile time instead. An algebraic variable is the third way, and imposes it exactly.</p>
 
           <h3>Events at a list of values</h3>
@@ -487,7 +487,7 @@ Y2 = , rf = 3.0E7*Y2*Y2</pre>
           </ul>
 
           <h3>Files</h3>
-          <p><em>Save as .fac</em> writes the model text; <em>Open…</em> reads one back. <em>Download Excel</em> writes SETTINGS, DATA (the outputs) and STATES (the species) sheets in the layout of the Python port; CSV writes the table's columns at every solver step. Where the model has a <code>&lt;TIMES&gt;</code> section and the Table tab is set to those times, all three write that grid instead, and the buttons say so.</p>
+          <p><em>Save as .fac</em> writes the model text; <em>Open…</em> reads one back, and so does dropping the file anywhere on the page. A dropped file is taken as a model only when it ends in <code>.fac</code>, <code>.txt</code> or <code>.in</code>, and only one at a time, so that something dropped by mistake does not replace the text in the editor. <em>Download Excel</em> writes SETTINGS, DATA (the outputs) and STATES (the species) sheets in the layout of the Python port; CSV writes the table's columns at every solver step. Where the model has a <code>&lt;TIMES&gt;</code> section and the Table tab is set to those times, all three write that grid instead, and the buttons say so.</p>
 
           <h3>Sending a run to the HDF5 Browser</h3>
           <p><em>View in HDF5 Browser</em> on the Charts tab writes the run as an HDF5 file and opens it in the <a href="./rb.html">HDF5 Browser</a> in a second tab. The bytes are handed straight across between the two tabs, so nothing is written to disk and nothing is uploaded. <em>Download HDF5</em> on the Table tab writes the same file, for h5py or anything else that reads HDF5.</p>
@@ -506,6 +506,17 @@ Y2 = , rf = 3.0E7*Y2*Y2</pre>
           <p class="muted">Sources: the FACSIMILE model files skbcanister11b/13g/16x.fac and the Python port skbcanister.py of the SKB TR-22-15 study; the built-in solver implements the numerical differentiation formulas of Shampine and Reichelt; thermodynamic data from the CHEMKIN data base (SAND87-8215B).</p>
         </section>
       </main>
+    </div>
+
+    <!-- Shown while a file is dragged over the page (initDrop in
+         facsimile-ui.js). Beside .fac rather than in it: .fac scrolls once
+         the columns stack, and this has to stay over what is on screen. It
+         takes no pointer events, so the drop lands on whatever is under it. -->
+    <div class="fac-drop" id="facDrop" hidden aria-hidden="true">
+      <div>
+        <b>Drop a .fac file to open it</b>
+        <span>It replaces the model text in the editor.</span>
+      </div>
     </div>
   </div>
 
@@ -553,6 +564,6 @@ Y2 = , rf = 3.0E7*Y2*Y2</pre>
   <script src="./resources/js/facsimile-worker.js?v=20260917zd"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/facsimile-hdf5.js?v=20260917zd"></script>
-  <script src="./resources/js/facsimile-ui.js?v=20260922a"></script>
+  <script src="./resources/js/facsimile-ui.js?v=20260923"></script>
 </body>
 </html>

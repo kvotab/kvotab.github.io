@@ -155,6 +155,36 @@ const LIB2 = [
   check('... and the page says why', /other authors or another year/u.test(x.note || ''), true);
 }
 
+/* ---- names from the user's list ----------------------------------------------- */
+{
+  const lib = [...LIB2, item('ABCD2345', ['Nobody'], '2015', 'A memo found by its key', { uri: 'http://zotero.org/users/1/items/ABCD2345' })];
+  const skb = M.createMatcher(lib, { level: 'balanced', yearTolerance: 1 });
+  const matched = (list, texts = 'As the Data report shows.') => {
+    const paras = [].concat(texts).map((text) => ({ text, story: 'body' }));
+    return skb.match(P.parseDocument(paras, { names: P.readNameList(list).names }).refs[0]);
+  };
+  const named = (list, text) => { const x = matched(list, text); return [x.status, x.item ? x.item.key : null, x.candidates.map((c) => c.item.key), x.by || '']; };
+  check('a listed name, by its report number', named('Data report: SKB TR-10-52'), ['matched', 'DATA10', ['DATA10'], 'report']);
+  check('... another organisation\'s number when the list gives it', named('Data report: Posiva TR-12-01'), ['matched', 'POS12', ['POS12'], 'report']);
+  check('... or gives no organisation', named('Data report: TR-12-01')[1], 'POS12');
+  check('... but not when the list says it is SKB\'s', named('Data report: SKB TR-12-01'), ['none', null, [], '']);
+  check('by designation', named('Data report: SSMFS 2008:21'), ['matched', 'SSM0821', ['SSM0821'], 'designation']);
+  check('by item key', named('Data report: ABCD2345'), ['matched', 'ABCD2345', ['ABCD2345'], 'key']);
+  check('... or the item\'s URI', named('Data report: http://zotero.org/users/1/items/ABCD2345')[1], 'ABCD2345');
+  check('... not an item of another library', named('Data report: http://zotero.org/groups/9/items/ABCD2345')[0], 'none');
+  check('by author and year, as a citation would be', named('Data report: SKB 2011'), ['ambiguous', 'SR11', ['SR11', 'R1105', 'SKBX11'], '']);
+  check('by title words', named('Data report: climate-related issues SR-Site'), ['matched', 'CLIM10', ['CLIM10'], 'words']);
+  check('in a parenthesis, with its locator', [named('Data report: SKB TR-10-52', 'Rates (Data report, Section 2).')[1], matched('Data report: SKB TR-10-52', 'Rates (Data report, Section 2).').ref.locator], ['DATA10', '2']);
+  check('a number no item has: not found, and the note says what the list gave',
+    [named('Data report: SKB TR-10-99')[0], matched('Data report: SKB TR-10-99').note],
+    ['none', 'No item in the library has the report number TR-10-99, which your list gives for “Data report”.']);
+  check('the list comes before the reference list\'s entry',
+    named('Data report: SKB TR-11-01', ['As the Data report shows.', 'References with abbreviated names',
+      'Data report, 2010. Data report for the safety assessment SR-Site. SKB TR-10-52, Svensk Kärnbränslehantering AB.',
+      'Climate report, 2010. Climate and climate-related issues for the safety assessment SR-Site. Svensk Kärnbränslehantering AB.',
+      'Other references', 'Smith J, 2020. Buffer erosion.'])[1], 'SR11');
+}
+
 /* ---- picking by hand -------------------------------------------------------- */
 check('by report number', M.searchLibrary(LIB2, 'TR-11-01').map((i) => i.key), ['SR11']);
 check('by author and title words', M.searchLibrary(LIB, 'jones copper').map((i) => i.key), ['JONES20B']);

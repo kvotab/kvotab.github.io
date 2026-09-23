@@ -20,7 +20,7 @@ modules in load order reproduces the original script line for line.
 | `skbref-docx.js` | reading a .docx: runs, styles, the paragraph model |
 | `skbref-references.js` | finding the reference list and reading its entries |
 | `skbref-citations.js` | finding citations and cross-referencing them |
-| `skbref-zotero.js` | the Zotero client: settings, search, candidate scoring |
+| `skbref-zotero.js` | the Zotero client: settings, zotero.sqlite or a web source, matching, the results |
 | `skbref-export.js` | the CSV and the standalone HTML report |
 | `skbref-checks.js` | the writing-rule engine, chemistry, ordering, collation |
 | `skbref-rulepacks.js` | loading, storing and exporting rule packs |
@@ -28,6 +28,13 @@ modules in load order reproduces the original script line for line.
 | `skbref-selftests-references.js` | self-tests for names, designations, the guide |
 | `skbref-util.js` | section shells, escaping, bold-run rendering |
 | `skbref-boot.js` | **everything that runs at load** |
+
+`skbref-zotero.js` matches with zoterify.html's modules, loaded just before
+it: `zoterify-parse.js` reads an entry or a citation, `zoterify-match.js`
+judges it against library items (matched, choose, year differs, possible, not
+found) and `zoterify-zotero.js` opens zotero.sqlite through sql.js and reads a
+web-API item into the same form. A change to their interfaces is a change to
+this page too.
 
 ## Three things to know before adding code
 
@@ -56,5 +63,5 @@ module with no template literal in it, so it alone is not indented.
     "$CHROME" --headless=new --remote-debugging-port=9222 --user-data-dir=/tmp/p
     python3 resources/tests/site/test-chrome-pdf.py
 
-The page also runs nine self-test suites on load; open the console and they
-should report nine passes and no errors.
+The page also runs ten self-test suites on load; open the console and they
+should report ten passes and no errors.

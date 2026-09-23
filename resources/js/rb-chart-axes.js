@@ -211,6 +211,8 @@ function updateChartScales() {
   const update = {};
   if (xScale !== curX) {
     update['xaxis.type'] = xScale;
+    const bgShapes = backgroundShapesForXScale(plotDiv, xScale);
+    if (bgShapes) update.shapes = bgShapes;
     if (xScale === 'log') {
       update['xaxis.dtick'] = 1;
       update['xaxis.minor.ticks'] = 'outside';

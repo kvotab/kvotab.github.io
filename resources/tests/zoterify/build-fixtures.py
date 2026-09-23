@@ -248,6 +248,12 @@ PARAGRAPHS = [
     # 18: SKB report numbers, found in the items' Report Number: in a parenthesis with a section
     #     locator; narrative, "SKB" kept; in running text, "SKB " kept and only the number replaced
     p(r('The site model (SKB R-13-25, Section 4.2) and SKB (R-19-01) agree, as SKB R-19-01 shows.')),
+    # 19: an abbreviated name, once the test lists "Data report: SKB R-19-01" -- no citation without the
+    #     list. In running text: not in bold but written as listed, in a run with properties w:b must go
+    #     between, and in bold; in a parenthesis with a section; and "the data report", in lower case and
+    #     not in bold, which is prose. Each becomes a field that keeps its text, the names made bold.
+    p(r('The Data report and the ', '<w:rFonts w:ascii="Arial" w:hAnsi="Arial"/><w:lang w:val="en-GB"/>'), r('Data report', BOLD),
+      r(' agree; the data report does not (Data report, Section 3).')),
 ]
 
 TABLE = ('<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid>'

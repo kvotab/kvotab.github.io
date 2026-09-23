@@ -443,9 +443,9 @@ X 0 D=1e-9 left=1
   check('  and a free face the flow points into', 
     /points into the model/.test(mk('free', 'neumann', 1).warnings.join(' ')),
     mk('free', 'neumann', 1).warnings.join(' | ').slice(0, 70));
-  check('a robin inlet leaves the first cell where it was put, unlike dirichlet',
+  check('neither a robin nor a dirichlet inlet moves the first cell from where it was put',
     mk('robin', 'free', 1).initialState()[0] === 0
-    && mk('dirichlet', 'free', 1).initialState()[0] === 1,
+    && mk('dirichlet', 'free', 1).initialState()[0] === 0,
     `robin ${mk('robin', 'free', 1).initialState()[0]}, dirichlet ${mk('dirichlet', 'free', 1).initialState()[0]}`);
   let message = '(no error)';
   try { mk('mixed', 'free', 1); } catch (e) { message = e.message; }
@@ -603,8 +603,8 @@ A => B, r = ${law}
   check('  and is told what to write instead', /\[A\]\^2/.test(inLaw('pow([A],2)')));
   check('a function that does not exist says so',
     /not a function this page knows/.test(inLaw('tanh([A])')));
-  check('and a variable exponent is refused',
-    /plain number as its exponent/.test(inLaw('[A]^[A]')));
+  check('and an exponent that depends on a concentration is refused',
+    /may not depend on a concentration/.test(inLaw('[A]^[A]')));
 
   // All three in <PARAMETERS>, where they are worked out once.
   const m = RtmModel.compile(`
@@ -1010,9 +1010,10 @@ W + A => , k = 5.0
     Array.from(last(run(m, { tend: 1e4 }))).filter((_, i) => i % 2 === 0).join(', '));
 }
 {
-  // A Dirichlet face seeds the cell that touches it, which is worth a check of
-  // its own: it silently overrides the concentration on the <SPECIES> line,
-  // and a fixed species is deliberately left out of it.
+  // A Dirichlet face is a boundary condition and nothing more: it must not
+  // change what the cells start at. It once seeded the cell touching it with
+  // the face value, which silently overrode the <SPECIES> line and made the
+  // Crank benchmark (zero everywhere at t = 0) three times less accurate.
   const m = RtmModel.compile(`
 <SETTINGS>
 MODE = transport
@@ -1035,10 +1036,10 @@ A  0  3.0
 `);
   const y = m.initialState();
   const at = (cell, name) => y[cell * 3 + m.speciesNames.indexOf(name)];
-  check('a Dirichlet face starts the cell that touches it at the face value',
-    at(0, 'B') === 7.0, `B in cell 0 is ${at(0, 'B')}, not the 1.0 on its line`);
-  check('  but a fixed species keeps what it was given', at(0, 'W') === 10.0, String(at(0, 'W')));
-  check('  and <INITIAL> beats the face', at(0, 'A') === 3.0, String(at(0, 'A')));
+  check('a Dirichlet face leaves the cell that touches it at its stated start',
+    at(0, 'B') === 1.0, `B in cell 0 is ${at(0, 'B')}, not the 1.0 on its line`);
+  check('  a fixed species keeps what it was given', at(0, 'W') === 10.0, String(at(0, 'W')));
+  check('  and <INITIAL> still sets that cell', at(0, 'A') === 3.0, String(at(0, 'A')));
   check('  while the cells behind it are untouched',
     at(1, 'A') === 1.0 && at(1, 'B') === 1.0 && at(3, 'B') === 1.0,
     `${at(1, 'A')}, ${at(1, 'B')}, ${at(3, 'B')}`);
@@ -1576,6 +1577,388 @@ X 0 D=${D} left=1
   check('  and one the grid can reach is quiet', !/Pe\/2/.test(warns(mk(10, 1e-9, 'PECLET = 10'))));
 }
 
+/* ======================================================================
+   2i. What skbrtm's databases needed: names, constants, grids, a surface,
+       tables, cells held
+   ====================================================================== */
+console.log('\n--- names with groups, constants as arithmetic, aliases ---');
+{
+  const rhsOf = (text) => {
+    const m = RtmModel.compile(text);
+    const y = m.initialState();
+    const f = new Float64Array(y.length);
+    m.rhs(0, y, f);
+    const at = (name, cell = 0) => f[cell * m.speciesNames.length + m.speciesNames.indexOf(name)];
+    return { m, y, f, at, clean: RtmModel.verifyJacobian(m, 0, y) };
+  };
+  const batch = (species, rx) => rhsOf(`<SETTINGS>\nMODE = batch\n\n<SPECIES>\n${species}\n\n<REACTIONS>\n${rx}\n`);
+
+  const a = batch('Fe+2 2\nO2 3\nFe(OH)3 0', 'Fe+2 + 0.25 O2 => Fe(OH)3, r = k*[Fe+2]*[O2], k = 0.5');
+  check('a species may be named with a group in round brackets: Fe(OH)3',
+    a.m.speciesNames.includes('Fe(OH)3'), a.m.speciesNames.join(' '));
+  close('  and it is made at the rate its law says', a.at('Fe(OH)3'), 0.5 * 2 * 3, 1e-15);
+  let msg = '(no error)';
+  try { batch('Fe(OH 1', 'Fe(OH => , k = 1'); } catch (e) { msg = e.message; }
+  check('  while an unclosed bracket is not a name', /not a species name.*round brackets/.test(msg), msg.slice(0, 80));
+
+  const b = batch('A 8\nB 0', 'A => B, r = k*[A]**(2/3), k = 3');
+  close('an exponent written as arithmetic, (2/3), is worked out: 3 * 8^(2/3)', b.at('B'), 12, 1e-14);
+  check('  and differentiated: the Jacobian agrees with a difference',
+    b.clean.discrepancies.length === 0 && b.clean.checked > 0, JSON.stringify(b.clean.discrepancies));
+  close('a power of ten with a negative exponent, 10**-3, is a number', batch('A 2', 'A => , r = 10**-3*[A]').at('A'), -2e-3, 1e-15);
+  const d = batch('A 9', 'A => , r = [A]**n, n = 0.5');
+  close('an exponent may be a constant of the line: [A]**n, n = 0.5', d.at('A'), -3, 1e-15);
+  check('  and is differentiated as one', d.clean.discrepancies.length === 0);
+  const e = rhsOf(`<SETTINGS>\nMODE = transport\nCELLS = 3\nLENGTH = 1\nDIFFUSION = 0\n\n<SPECIES>\nA 2\n\n`
+    + `<PARAMETERS>\nN all 1 + i\n\n<REACTIONS>\nA => , r = [A]**N\n`);
+  check('an exponent may be a parameter that differs from cell to cell: 2^1, 2^2, 2^3',
+    [0, 1, 2].every((c) => Math.abs(e.at('A', c) + 2 ** (c + 1)) < 1e-14), [0, 1, 2].map((c) => e.at('A', c)).join(', '));
+  check('  with a Jacobian that agrees in every cell', e.clean.discrepancies.length === 0);
+
+  const f = batch('A 1', 'A => , r = (kr/kh)*[A], kr = 1.33*10**12, kh = 1.3*10**-3');
+  close('a constant may be arithmetic: kr/kh = 1.33*10**12 / (1.3*10**-3), as the text means',
+    -f.at('A'), 1.33e12 / 1.3e-3, 1e-15);
+  close('a constant may use one named before it: kb = kf/4', batch('A 1', 'A => , r = kb*[A], kf = 2, kb = kf/4').at('A'), -0.5, 1e-15);
+  msg = '(no error)';
+  try { batch('A 1', 'A => , r = k*[A], k = 2*kk'); } catch (err) { msg = err.message; }
+  check('  but a name it does not know is refused, not read as zero', /Parameter k = "2\*kk" is not a number/.test(msg), msg.slice(0, 90));
+
+  const h = batch('A 2\nB 5', 'A => , r = k*c*[A], k = 0.1, c = [B]');
+  close('an alias, c = [B], is that concentration in the law', h.at('A'), -0.1 * 5 * 2, 1e-15);
+  {
+    // The entry the alias adds: d(dA/dt)/dB = -k*[A] = -0.2.
+    const V = new Float64Array(h.m.nnz);
+    h.m.jac(0, h.y, V);
+    const { colPtr, rowIdx } = h.m.pattern;
+    let dAdB = null;
+    for (let k = colPtr[1]; k < colPtr[2]; k++) if (rowIdx[k] === 0) dAdB = V[k];
+    check('  and the Jacobian has the entry it adds, d(dA/dt)/dB = -0.2, agreeing with a difference',
+      dAdB !== null && Math.abs(dAdB + 0.2) < 1e-15 && h.clean.discrepancies.length === 0 && !h.clean.outsidePattern,
+      `${dAdB}`);
+  }
+  const skb = batch('bt_Fe+2 380.482\nFe+2 1.0E-6\nFeOH3 0',
+    'bt_Fe+2 = Fe+2, r = k*ab0*(c_3/c30)**(2/3)*(10**-3/pm)*(1-c_2/c20), k = 5.45e-13, ab0 = 6.141, '
+    + 'c_3 = [bt_Fe+2], c30 = 380.482, pm = 1.8e-3, c_2 = [Fe+2], c20 = 1.8e-6');
+  close('skbrtm\'s biotite line reads as written: aliases, (2/3), 10**-3 and a bare =',
+    skb.at('Fe+2'), 5.45e-13 * 6.141 * 1 * (1e-3 / 1.8e-3) * (1 - 1e-6 / 1.8e-6), 1e-14);
+  check('  and its Jacobian agrees', skb.clean.discrepancies.length === 0);
+
+  const s = RtmModel.compile('<SETTINGS>\nMODE = transport\nCELLS = 2\nLENGTH = 2*0.5\nTEND = 365*86400\n\n'
+    + '<SPECIES>\nA 2*3 D=1e-9*2\n\n<REACTIONS>\n');
+  check('a setting may be arithmetic: TEND = 365*86400', s.settings.TEND === 31536000, String(s.settings.TEND));
+  check('  and so may the numbers on a species line: 2*3, D=1e-9*2',
+    s.initialState()[0] === 6 && s.speciesList[0].D === 2e-9, `${s.initialState()[0]}, ${s.speciesList[0].D}`);
+}
+
+console.log('\n--- grids: power-law, faces given outright, a log ratio, a surface layer ---');
+{
+  const grid = (settings) => RtmModel.compile(`<SETTINGS>\nMODE = transport\n${settings}\nTEND = 1\n\n`
+    + '<SPECIES>\nX 0 D=1e-9\n\n<REACTIONS>\n').grid;
+  const worst = (a, b) => Math.max(...Array.from(a, (v, i) => Math.abs(v - b[i])));
+  const p3 = grid('CELLS = 10\nLENGTH = 1e-4\nGRID = powerlaw');
+  check('GRID = powerlaw puts the faces at L*(i/N)^3',
+    worst(p3.faces, Array.from({ length: 11 }, (_, i) => 1e-4 * (i / 10) ** 3)) < 1e-20);
+  check('  the centres midway between them, the widths face to face',
+    p3.centres.every((c, i) => Math.abs(c - (p3.faces[i] + p3.faces[i + 1]) / 2) < 1e-20)
+    && p3.width.every((w, i) => Math.abs(w - (p3.faces[i + 1] - p3.faces[i])) < 1e-20));
+  const p2 = grid('CELLS = 10\nLENGTH = 1e-4\nGRID = powerlaw\nGRID_POWER = 2');
+  check('  and GRID_POWER sets the exponent', Math.abs(p2.faces[5] - 1e-4 * 0.25) < 1e-20, String(p2.faces[5]));
+  const fl = grid('FACES = 0, 1, 3, 6');
+  check('FACES as a list is the grid: three cells of 1, 2 and 3 m, centres 0.5, 2 and 4.5',
+    fl.n === 3 && fl.L === 6 && worst(fl.width, [1, 2, 3]) === 0 && worst(fl.centres, [0.5, 2, 4.5]) === 0,
+    `${fl.n} cells, ${Array.from(fl.width)}`);
+  const fe = grid('CELLS = 10\nFACES = 1e-4*(i/10)^3');
+  check('  and as an expression in i it gives what powerlaw does', worst(fe.faces, p3.faces) < 1e-20);
+  const lg = grid('CELLS = 5\nLENGTH = 1\nGRID = log\nGRID_RATIO = 10');
+  close('GRID_RATIO sets how much larger the last log cell is than the first', lg.width[4] / lg.width[0], 10, 1e-12);
+  const l0 = grid('CELLS = 5\nLENGTH = 1\nGRID = log');
+  close('  and without it the ratio is still 1000', l0.width[4] / l0.width[0], 1000, 1e-12);
+  const sl = grid('CELLS = 10\nLENGTH = 1e-4\nGRID = log\nSURFACE_LAYER = 2.5e-7');
+  check('SURFACE_LAYER makes the first cell exactly that thick', sl.width[0] === 2.5e-7, String(sl.width[0]));
+  close('  lays the other nine out over the rest by the same GRID', sl.width[9] / sl.width[1], 1000, 1e-12);
+  close('  and the column is still LENGTH long', sl.faces[10], 1e-4, 1e-15);
+  for (const [label, settings, re] of [
+    ['a first face that is not 0', 'FACES = 1, 2, 3', /must be 0/],
+    ['faces that do not increase', 'FACES = 0, 2, 1', /must increase/],
+    ['a CELLS that disagrees with the faces', 'CELLS = 4\nFACES = 0, 1, 2', /describes 2 cells/],
+    ['a surface layer as long as the column', 'CELLS = 4\nLENGTH = 1\nSURFACE_LAYER = 1', /less than LENGTH/],
+    ['a surface layer with the faces given', 'FACES = 0, 1, 2\nSURFACE_LAYER = 0.1', /cannot be combined/],
+  ]) {
+    let m = '(no error)';
+    try { grid(settings); } catch (err) { m = err.message; }
+    check(`  refused: ${label}`, re.test(m), m.slice(0, 70));
+  }
+
+  // A closed box on a power-law grid still conserves what it holds.
+  const box = RtmModel.compile('<SETTINGS>\nMODE = transport\nCELLS = 20\nLENGTH = 1e-4\nGRID = powerlaw\n'
+    + 'LEFT = neumann\nRIGHT = neumann\nTEND = 10\n\n<SPECIES>\nX 0 D=1e-9\n\n<INITIAL>\nX 0 1\n\n<REACTIONS>\n');
+  const inv = (y) => Array.from(box.grid.width).reduce((s2, w, i) => s2 + w * y[i], 0);
+  const drift = Math.abs(inv(last(run(box, { tend: 10 }))) - inv(box.initialState())) / inv(box.initialState());
+  check(`a closed power-law column conserves its content (drift ${drift.toExponential(1)})`, drift < 1e-12);
+
+  // b1 of skbrtm: Crank's slab on a power-law grid, and doubling the cells.
+  const crank = (x, t, L, D) => {
+    let c = 1;
+    for (let k = 0; k < 400; k++) {
+      const kn = ((2 * k + 1) * Math.PI) / (2 * L);
+      c -= (4 / ((2 * k + 1) * Math.PI)) * Math.sin(kn * x) * Math.exp(-D * kn * kn * t);
+    }
+    return c;
+  };
+  const err = (n) => {
+    const m = RtmModel.compile(`<SETTINGS>\nMODE = transport\nCELLS = ${n}\nLENGTH = 0.1\nGRID = powerlaw\n`
+      + 'LEFT = dirichlet\nRIGHT = neumann\nTEND = 864000\n\n<SPECIES>\nTracer 0 D=1e-9 left=1\n\n<REACTIONS>\n');
+    const y = last(run(m, { tend: 864000, rtol: 1e-10, atol: 1e-14 }));
+    return Math.max(...Array.from(m.grid.centres, (x, i) => Math.abs(y[i] - crank(x, 864000, 0.1, 1e-9))));
+  };
+  const e50 = err(50);
+  const e100 = err(100);
+  check(`skbrtm's b1 on our power-law grid: ${e50.toExponential(2)} from Crank at ten days with 50 cells`, e50 < 1e-3);
+  check(`  and ${(e50 / e100).toFixed(2)}x closer with 100`, e50 / e100 > 1.9);
+}
+
+console.log('\n--- a surface: the cell width in expressions, a layer that stays put ---');
+{
+  const perCell = (text) => {
+    const m = RtmModel.compile(text);
+    const y = m.initialState();
+    const f = new Float64Array(y.length);
+    m.rhs(0, y, f);
+    return { m, y, f };
+  };
+  const w = perCell('<SETTINGS>\nMODE = transport\nCELLS = 4\nLENGTH = 1\nGRID = log\nGRID_RATIO = 8\nDIFFUSION = 0\n\n'
+    + '<SPECIES>\nA 0\nB 0\nC 0\n\n<PARAMETERS>\nW all w\nXL all xl\nXR all xr\n\n'
+    + '<REACTIONS>\n=> A, r = W\n=> B, r = XL\n=> C, r = XR\n');
+  const g = w.m.grid;
+  check('w, xl and xr in <PARAMETERS> are the cell\'s width and its two faces',
+    [0, 1, 2, 3].every((c) => w.f[c * 3] === g.width[c] && w.f[c * 3 + 1] === g.faces[c] && w.f[c * 3 + 2] === g.faces[c + 1]));
+  // A surface amount stated per m2 comes out the same whatever the grid.
+  for (const kind of ['linear', 'log', 'powerlaw']) {
+    const m = RtmModel.compile(`<SETTINGS>\nMODE = transport\nCELLS = 10\nLENGTH = 1e-4\nGRID = ${kind}\n\n`
+      + '<SPECIES>\nU_site 0\n\n<INITIAL>\nU_site 0 2.1e-4*1/w*1e-3\n\n<REACTIONS>\n');
+    close(`  a site density per m2, 2.1e-4/w, is 2.1e-4 mol/m2 of surface on a ${kind} grid`,
+      m.initialState()[0] * m.grid.width[0] * 1e3, 2.1e-4, 1e-14);
+  }
+  /*
+    What the layer is for. Two surface sites S in the first cell, per m2,
+    react with each other -- S + S => P, second order in a CONCENTRATION --
+    and P diffuses away. Per m2 of surface that rate is k*(G/w0)^2*w0, so it
+    grows as the first cell thins: refine the grid and the answer moves,
+    which is exactly what skbrtm's fuel-dissolution example does. With the
+    first cell pinned by SURFACE_LAYER the answer stops depending on CELLS.
+  */
+  const surface = (cells, layer) => {
+    const m = RtmModel.compile(`<SETTINGS>\nMODE = transport\nCELLS = ${cells}\nLENGTH = 1e-4\nGRID = log\n`
+      + `${layer ? `SURFACE_LAYER = ${layer}\n` : ''}LEFT = neumann\nRIGHT = neumann\nTEND = 1\n\n`
+      + '<SPECIES>\nS 0\nO2 1e-3 D=1e-9\nP 0 D=1e-9\n\n<INITIAL>\nS 0 1e-7/w\n\n'
+      + '<REACTIONS>\nS + S => P, r = k*[S]**2, k = 1e-3\nS + O2 => P, r = k*[S]*[O2], k = 1e-2\n');
+    // One second: long enough to make some, short enough that the sites are
+    // barely touched, so the rate itself is what is measured.
+    const y = last(run(m, { tend: 1, rtol: 1e-9, atol: 1e-24 }));
+    const ns = m.speciesNames.length;
+    const iP = m.speciesNames.indexOf('P');
+    return Array.from(m.grid.width).reduce((sum, wc, c) => sum + wc * y[c * ns + iP], 0);
+  };
+  const free = [10, 20, 40].map((n) => surface(n, 0));
+  const pinned = [10, 20, 40].map((n) => surface(n, 2.5e-7));
+  const spread = (v) => (Math.max(...v) - Math.min(...v)) / Math.max(...v);
+  check(`without a surface layer the product per m2 moves with the grid by ${(spread(free) * 100).toFixed(0)} %`,
+    spread(free) > 0.2, free.map((v) => v.toExponential(3)).join(', '));
+  check(`  and with SURFACE_LAYER = 2.5e-7 m by ${(spread(pinned) * 100).toExponential(1)} %`,
+    spread(pinned) < 1e-3, pinned.map((v) => v.toExponential(4)).join(', '));
+}
+
+console.log('\n--- tables ---');
+{
+  const withTable = (table, params, length = 2, cells = 4) => {
+    const m = RtmModel.compile(`<SETTINGS>\nMODE = transport\nCELLS = ${cells}\nLENGTH = ${length}\nDIFFUSION = 0\n\n`
+      + `<SPECIES>\nX 0\n\n${table}\n<PARAMETERS>\n${params}\n\n<REACTIONS>\n=> X, r = P\n`);
+    const y = m.initialState();
+    const f = new Float64Array(y.length);
+    m.rhs(0, y, f);
+    return { m, f: Array.from(f) };
+  };
+  const T = '<TABLE t>\n0 0\n1 10\n2 30\n';
+  const lin = withTable(T, 'P all t(x)');
+  check('a <TABLE> read as t(x) is interpolated at each cell centre: 2.5, 7.5, 15, 25',
+    lin.f.every((v, i) => Math.abs(v - [2.5, 7.5, 15, 25][i]) < 1e-14), lin.f.join(', '));
+  check('  interp(t, x), as FACSIMILE writes it, is the same thing',
+    withTable(T, 'P all interp(t, x)').f.join() === lin.f.join());
+  const past = withTable(T, 'P all t(x)', 4);
+  check('  and beyond its last row it holds the last value: 5, 20, 30, 30',
+    past.f.every((v, i) => Math.abs(v - [5, 20, 30, 30][i]) < 1e-14), past.f.join(', '));
+  const lg = withTable('<TABLE e log>\n0 1\n1 0.1\n', 'P all e(x)', 1, 2);
+  close('a log table interpolates the logarithm: 0.1^(1/4) a quarter of the way along',
+    lg.f[0], 0.1 ** 0.25, 1e-14);
+  check('  and that is the table in the name: its parameter is listed', lin.m.tables.includes('t'));
+  const init = RtmModel.compile(`<SETTINGS>\nMODE = transport\nCELLS = 4\nLENGTH = 2\n\n<SPECIES>\nX 0\n\n${T}\n`
+    + '<INITIAL>\nX all t(x)\n\n<REACTIONS>\n');
+  check('a table may give a starting profile in <INITIAL> too',
+    Array.from(init.initialState()).every((v, i) => Math.abs(v - [2.5, 7.5, 15, 25][i]) < 1e-14));
+  for (const [label, table, params, re] of [
+    ['x that does not increase', '<TABLE t>\n0 1\n0 2\n', 'P all t(x)', /must increase/],
+    ['a log table with a zero in it', '<TABLE t log>\n0 1\n1 0\n', 'P all t(x)', /above zero/],
+    ['a row that is not two numbers', '<TABLE t>\n0 1 2\n', 'P all t(x)', /not two numbers/],
+    ['a table with no name', '<TABLE>\n0 1\n', 'P all 1', /needs a name/],
+  ]) {
+    let m = '(no error)';
+    try { withTable(table, params); } catch (err) { m = err.message; }
+    check(`  refused: ${label}`, re.test(m), m.slice(0, 70));
+  }
+  let m = '(no error)';
+  try {
+    RtmModel.compile(`<SETTINGS>\nMODE = batch\n\n<SPECIES>\nX 1\n\n${T}\n<REACTIONS>\nX => , r = t(1)*[X]\n`);
+  } catch (err) { m = err.message; }
+  check('  and a table read in a rate law is refused, with the way to do it instead',
+    /cannot.*<PARAMETERS>/.test(m), m.slice(0, 90));
+}
+
+console.log('\n--- a species held in some cells only ---');
+{
+  const res = RtmModel.compile('<SETTINGS>\nMODE = transport\nCELLS = 10\nLENGTH = 1e-2\nLEFT = neumann\n'
+    + 'RIGHT = neumann\nTEND = 1e5\n\n<SPECIES>\nX 0 D=1e-9\n\n<INITIAL>\nX 0 1 fixed\n\n<REACTIONS>\n');
+  const y = last(run(res, { tend: 1e5 }));
+  check('a cell held with "fixed" in <INITIAL> is a reservoir: it stays at 1',
+    Math.abs(y[0] - 1) < 1e-12, String(y[0]));
+  check('  and still feeds its neighbours', y[1] > 0.1 && y[1] < 1 && y[1] > y[2], `${y[1]}, ${y[2]}`);
+  check('  with a Jacobian that agrees', RtmModel.verifyJacobian(res, 0, res.initialState()).discrepancies.length === 0);
+  check('  and the model says which cells it holds',
+    res.held.length === 1 && res.held[0].species === 'X' && res.held[0].cells.join() === '0', JSON.stringify(res.held));
+
+  const rx = RtmModel.compile('<SETTINGS>\nMODE = transport\nCELLS = 10\nLENGTH = 1\nDIFFUSION = 0\nTEND = 1\n\n'
+    + '<SPECIES>\nA 1\nB 0\n\n<INITIAL>\nB 5-9 0 fixed\n\n<REACTIONS>\nA => B, k = 1\n');
+  const z = last(run(rx, { tend: 1 }));
+  const B = (c) => z[c * 2 + 1];
+  const A = (c) => z[c * 2];
+  close('where B is free the reaction makes it: 1 - exp(-1)', B(2), 1 - Math.exp(-1), 1e-8);
+  // The row is zero; what is left is the factorisation's round-off, which
+  // the page writes back out (rtmHoldFixed).
+  check('  where it is held it stays at 0', [5, 6, 7, 8, 9].every((c) => Math.abs(B(c)) < 1e-15), [5, 9].map(B).join(', '));
+  close('  while A still decays there, since only B is held', A(7), Math.exp(-1), 1e-8);
+  const keep = RtmModel.compile('<SETTINGS>\nMODE = transport\nCELLS = 5\nLENGTH = 1\n\n'
+    + '<SPECIES>\nX 3 D=1e-3\n\n<INITIAL>\nX 3-4 fixed\n\n<REACTIONS>\n');
+  check('"fixed" with no value holds a species where it already is',
+    keep.initialState()[4] === 3 && keep.fixedAt[3] === 1 && keep.fixedAt[2] === 0);
+  let msg = '(no error)';
+  try {
+    RtmModel.compile('<SETTINGS>\nMODE = transport\nCELLS = 3\nLENGTH = 1\nEQUILIBRATE = 1\n\n<SPECIES>\n'
+      + 'H+ 1e-7\nOH- 1e-7\n\n<INITIAL>\nH+ 0 1e-7 fixed\n\n<EQUILIBRIUM>\n <=> H+ + OH-, logK = -14\n\n<REACTIONS>\n');
+  } catch (err) { msg = err.message; }
+  check('a species held in some cells cannot be speciated, and the text says why',
+    /held in some cells only/.test(msg), msg.slice(0, 80));
+}
+
+console.log('\n--- opening skbrtm databases ---');
+{
+  /*
+    A small skbrtm case written out here -- the databases are not in this
+    repository -- that touches every rule the importer follows: the script's
+    order and time span, decimal commas and bounds in a REGRESSION, a name in
+    two cases, <= and a bare =, a placeholder line, skbrtm's (kr/kh), a
+    boundary_values it ignores, a colon for a semicolon, a lone cell_id,
+    a species constant in one cell only, a value per cell width.
+  */
+  const RtmImport = require(path.join(jsDir, 'rtm-import.js'));
+  const files = [
+    { name: 'run.py', text: [
+      "pm = parent_directory() + '/databases/'",
+      "p0 = pm + 'reaction.in'", "p1 = pm + 'sourceterm.in'", "p2 = pm + 'diffusion.in'",
+      "p3 = pm + 'solutions.in'", "p4 = pm + 'doserate.in'",
+      'paths = [p4, p1, p0, p2, p3]',
+      "solver = Solver(processes = (*db.sourceterm, *db.reaction, *db.diffusion),",
+      "                solutions = (*db.solution,),",
+      "                t_span    = (0, 2, 'days'), rtol = 1e-4)"].join('\n') },
+    { name: 'doserate.in', text: 'REGRESSION;dose\nbounds; (0., None, 0., None)\nfunction; exponential\n'
+      + 'predictor;response\n-1,0e-06;9,0\n0,0;4,0\n1,0e-06;2,0\n2,0e-06;1,0\n' },
+    { name: 'sourceterm.in', text: "SOURCETERM;radiolysis\nparameters; {'g_scale' : 2.0}\n"
+      + 'SPECIES;EXPRESSION;ARGUMENTS\nH2O2;G*dose(coordinates)*g_scale;G = 1.0e-7\n' },
+    { name: 'reaction.in', text: 'REACTION;chem\nSTOICHIOMETRY;EXPRESSION;ARGUMENTS\n'
+      + 'H2O2 + Site => Ox;r = k*[h2o2]*[Site];k = 2.0\n'
+      + 'Fe+2 + 0.25O2 = Fe(OH)3;r = (kr/kh)*[O2]*[Fe+2];kr = 1.33*10**12, kh = 1.3*10**-3\n'
+      + 'Ox <= Red;r = k*[Red];k = 3.0\n'
+      + 'Tr = Tr;r = k;k = 0\n' },
+    { name: 'diffusion.in', text: "DIFFUSION;col\ncells;6\ngrid_type;'powerlaw'\nmax_length;1e-5\nmin_length;0\n"
+      + "boundary_conditions;('dirichlet', 'neumann')\nboundary_values; {'left': {'o2': 5e-4}}\n"
+      + 'SPECIES;DIFFUSION_COEFFICIENT\nSite;0.\nOx;0.\n' },
+    { name: 'solutions.in', text: "SOLUTION; surface\nunits; mol/L\ncell_id; 0\nconstant; Red\nparameters; {'sites' : 1e-4}\n"
+      + 'SPECIES;CONCENTRATION\nSite; sites/cell_width*1e-3\nO2; 2.5e-4\nFe+2; 1e-6\nRed; 1e-3\n\n'
+      + 'SOLUTION; water\nunits: mol/L\ncell_id; 1-6\nSPECIES;CONCENTRATION\nO2; 2.5e-4\nFe+2; 1e-6\n\n'
+      + 'SOLUTION; one cell\nunits; mol/L\ncell_id; 3\nSPECIES;CONCENTRATION\nTr; 1.0\n' },
+  ];
+  const res = RtmImport.convert(files);
+  let m = null;
+  let msg = '(compiled)';
+  try { m = RtmModel.compile(res.text); } catch (e) { msg = e.message; }
+  check('a set of skbrtm databases and their script opens as one model that compiles', !!m, msg);
+  if (m) {
+    const ns = m.speciesNames.length;
+    const at = (name, cell = 0) => m.initialState()[cell * ns + m.speciesNames.indexOf(name)];
+    const s = m.settings;
+    check('the script gives the time span: 2 days is 172800 s', s.TEND === 172800, String(s.TEND));
+    check('  and DIFFUSION the column: 6 power-law cells over 10 um, dirichlet | neumann',
+      s.MODE === 'transport' && m.fracture === 6 && s.GRID === 'powerlaw' && s.LEFT === 'dirichlet'
+      && s.RIGHT === 'neumann' && Math.abs(m.grid.L - 1e-5) < 1e-20);
+    check('names keep their spelling, and [h2o2] is the H2O2 of the stoichiometry',
+      m.speciesNames.includes('H2O2') && !m.speciesNames.includes('h2o2') && m.speciesNames.includes('Fe(OH)3'),
+      m.speciesNames.join(' '));
+    check('a species DIFFUSION does not list moves at 1e-9; one it gives 0 does not',
+      m.speciesList.find((x) => x.name === 'O2').D === 1e-9 && !m.mobile[m.speciesNames.indexOf('Site')]);
+    close('a value per cell width is per m2: Site holds 1e-4 * 1e-3 mol per m2 of the first cell',
+      at('Site') * m.grid.width[0], 1e-7, 1e-12);
+    check('  and nowhere else, as its SOLUTION says', at('Site', 1) === 0);
+    check('a species constant in one SOLUTION is held in those cells only: Red, in cell 0',
+      m.held.length === 1 && m.held[0].species === 'Red' && m.held[0].cells.join() === '0' && at('Red') === 1e-3,
+      JSON.stringify(m.held));
+    check('boundary_values, which skbrtm ignores, becomes the face value: O2 at 5e-4',
+      m.speciesList.find((x) => x.name === 'O2').left === 5e-4);
+    check('  and the cell by the face starts where the column behind it does', at('O2') === 2.5e-4, String(at('O2')));
+    check('a lone cell_id 3 goes in cell 3, every species set there as a SOLUTION does',
+      at('Tr', 3) === 1 && at('O2', 3) === 0 && at('Tr', 0) === 0);
+    check('the REGRESSION is its own table, the rows its bounds keep, interpolated in the log',
+      /<TABLE dose log>\n# x -> value\n0  4\n1e-6  2\n2e-6  1\n/.test(res.text), res.text.slice(res.text.indexOf('<TABLE'), res.text.indexOf('<TABLE') + 60));
+    const y = m.initialState();
+    const f = new Float64Array(y.length);
+    m.rhs(0, y, f);
+    const x0 = m.grid.centres[0];
+    close('the source reads it at each cell: G*dose(x)*g_scale in cell 0',
+      f[m.speciesNames.indexOf('H2O2')], 1e-7 * 4 * Math.pow(2, -x0 / 1e-6) * 2, 1e-12);
+    check('"Ox <= Red" runs from Red to Ox', /Red => Ox, r = k\*\[Red\]/.test(res.text));
+    check('the placeholder "Tr = Tr" is kept as a comment', /^# Tr = Tr/m.test(res.text));
+    const says = (re) => res.warnings.some((w) => re.test(w));
+    check('it says that skbrtm reads (kr/kh) a million times smaller', says(/Fe\+2.*1\.000e-6 times/));
+    check('  that skbrtm puts the lone cell_id in cell 0', says(/cell 3.*cell 0/));
+    check('  that skbrtm ignores boundary_values', says(/ignores boundary_values/));
+    check('  and that it reads nothing from "units: mol/L"', says(/units: mol\/L/));
+    let ran = null;
+    try { ran = run(m, { tend: s.TEND, rtol: 1e-6, atol: 1e-20, nonNegative: true }); } catch (e) { ran = e.message; }
+    check('and the model runs to its TEND', ran && typeof ran === 'object' && ran.t[ran.t.length - 1] === s.TEND,
+      typeof ran === 'string' ? ran : String(ran && ran.t[ran.t.length - 1]));
+  }
+  // The real thing, when it is on this machine: skbrtm-main's five cases.
+  const skb = path.join(require('os').homedir(), 'Downloads', 'skbrtm-main');
+  if (require('fs').existsSync(skb)) {
+    const fs = require('fs');
+    let ok = 0;
+    const cases = [['benchmarks/b0_benchmark', 'b0_main.py'], ['benchmarks/b1_benchmark', 'b1_main.py'],
+      ['examples/batch/0_example', '0_example.py'], ['examples/batch/fuel dissolution', 'BRUM1Cell.py'],
+      ['examples/transport/fuel dissolution', 'BRUM1D.py']];
+    const bad = [];
+    for (const [dir, script] of cases) {
+      const d = path.join(skb, dir);
+      try {
+        const fl = [{ name: script, text: fs.readFileSync(path.join(d, script), 'utf8') }];
+        for (const fn of fs.readdirSync(path.join(d, 'databases'))) fl.push({ name: fn, text: fs.readFileSync(path.join(d, 'databases', fn), 'utf8') });
+        const mm = RtmModel.compile(RtmImport.convert(fl).text);
+        run(mm, { tend: mm.settings.TEND, rtol: 1e-6, atol: 1e-20, nonNegative: true, stagnationTol: 0.5 });
+        ok++;
+      } catch (e) { bad.push(`${dir}: ${e.message.slice(0, 60)}`); }
+    }
+    check(`skbrtm-main's ${cases.length} cases open, compile and run`, ok === cases.length, bad.join(' | '));
+  } else {
+    console.log('      (skbrtm-main is not in ~/Downloads here; its own cases were not tried)');
+  }
+}
+
 console.log('\n--- the examples ---');
 {
   /*
@@ -1733,7 +2116,7 @@ console.log('\n--- reading the model text ---');
     ['a species used but not declared', '<SETTINGS>\nMODE=batch\n<SPECIES>\nA 1\n<REACTIONS>\nA => Q, k=1\n', /not in <SPECIES>/],
     ['a reaction with no rate', '<SETTINGS>\nMODE=batch\n<SPECIES>\nA 1\n<REACTIONS>\nA => \n', /k = \.\.\.|rate law/],
     ['a bare name in a rate law', '<SETTINGS>\nMODE=batch\n<SPECIES>\nA 1\n<REACTIONS>\nA => , r = A\n', /brackets|\[name\]/],
-    ['a power with a variable exponent', '<SETTINGS>\nMODE=batch\n<SPECIES>\nA 1\nB 1\n<REACTIONS>\nA => , r = [A]**[B]\n', /plain number/],
+    ['a power whose exponent is a concentration', '<SETTINGS>\nMODE=batch\n<SPECIES>\nA 1\nB 1\n<REACTIONS>\nA => , r = [A]**[B]\n', /may not depend on a concentration/],
     ['transport with one cell', '<SETTINGS>\nMODE=transport\nCELLS=1\n<SPECIES>\nA 1\n<REACTIONS>\n', /at least 2/],
     ['an initial patch past the end', '<SETTINGS>\nMODE=transport\nCELLS=5\n<SPECIES>\nA 1\n<REACTIONS>\n\n<INITIAL>\nA 9 1\n', /past the last/],
   ];

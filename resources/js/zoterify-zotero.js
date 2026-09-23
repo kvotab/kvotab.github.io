@@ -206,6 +206,46 @@
   }
 
   /* ---------------------------------------------------------------------
+     sql.js, loaded on first use
+
+     From cdnjs, pinned and checked against its integrity hashes. Shared by
+     zoterify.html and skbref.html, which both read zotero.sqlite.
+     --------------------------------------------------------------------- */
+
+  const SQLJS = {
+    js: 'https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.14.2/sql-wasm.min.js',
+    jsIntegrity: 'sha384-ua6rbgEfbwIWlrG1MxSagm4g3MI0VYpCkQQCjt6CtFL345h8/3ttwVWpyKiRzt/9',
+    wasm: 'https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.14.2/sql-wasm.wasm',
+    wasmIntegrity: 'sha384-x0YkuPkDHnKTZcB1JO4eb6j5+eU36aka+jBA6tOKTFaTz98b9V7fPT0QgZ9qyQW2',
+  };
+
+  function loadScript(src, integrity) {
+    return new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = src;
+      s.integrity = integrity;
+      s.crossOrigin = 'anonymous';
+      s.onload = resolve;
+      s.onerror = () => reject(new Error(`${src} could not be loaded`));
+      document.head.appendChild(s);
+    });
+  }
+
+  let sqlPromise = null;
+  /** The sql.js module, loaded once per page. A failed load is not cached. */
+  function loadSqlJs() {
+    if (!sqlPromise) {
+      sqlPromise = (async () => {
+        if (typeof initSqlJs !== 'function') await loadScript(SQLJS.js, SQLJS.jsIntegrity);
+        const res = await fetch(SQLJS.wasm, { integrity: SQLJS.wasmIntegrity, mode: 'cors', credentials: 'omit' });
+        if (!res.ok) throw new Error(`the SQLite library could not be fetched (HTTP ${res.status})`);
+        return initSqlJs({ wasmBinary: await res.arrayBuffer() }); // eslint-disable-line no-undef
+      })().catch((e) => { sqlPromise = null; throw e; });
+    }
+    return sqlPromise;
+  }
+
+  /* ---------------------------------------------------------------------
      Queries
      --------------------------------------------------------------------- */
 
@@ -438,8 +478,50 @@
     };
   }
 
+  /* The creator roles that are an item type's primary one somewhere in
+     Zotero's schema. The database says which is primary for each type; an
+     item from the web API does not, so these count as its author. */
+  const PRIMARY_CREATORS = new Set(['author', 'artist', 'cartographer', 'director', 'interviewee', 'inventor',
+    'performer', 'podcaster', 'presenter', 'programmer', 'sponsor']);
+
+  /**
+   * An item as the Zotero web API returns it ({key, library, data}), in the
+   * form readItems() gives, so that one matcher serves both. The API names
+   * fields as the database does ("reportNumber", "institution").
+   *
+   * @param {Object} apiItem
+   * @param {number} itemID  any number unique among the items matched together
+   */
+  function itemFromApi(apiItem, itemID) {
+    const data = (apiItem && apiItem.data) || {};
+    const key = String((apiItem && apiItem.key) || data.key || '');
+    const fields = {};
+    for (const [name, value] of Object.entries(data)) if (typeof value === 'string' && value) fields[name] = value;
+    // The database keeps a date as "2019-03-00 March 2019"; the API gives
+    // "March 2019", and the parsed part in meta.parsedDate ("2019-03").
+    const dateField = DATE_FIELDS.find((name) => fields[name]);
+    if (dateField) {
+      const parsed = /^(\d{4})(?:-(\d{2}))?(?:-(\d{2}))?$/.exec((apiItem.meta && apiItem.meta.parsedDate) || '')
+        || /^(\d{4})$/.exec(fields[dateField]);
+      if (parsed) fields[dateField] = `${parsed[1]}-${parsed[2] || '00'}-${parsed[3] || '00'} ${fields[dateField]}`;
+    }
+    const creators = (Array.isArray(data.creators) ? data.creators : []).map((c) => ({
+      firstName: c.name !== undefined ? '' : String(c.firstName || ''),
+      lastName: String(c.name !== undefined ? c.name : c.lastName || ''),
+      fieldMode: c.name !== undefined ? 1 : 0,
+      type: c.creatorType || 'author',
+      isPrimary: PRIMARY_CREATORS.has(c.creatorType),
+    }));
+    const lib = (apiItem && apiItem.library) || {};
+    const item = buildItem({ itemID, key, libraryID: lib.id || 0, type: data.itemType || 'document', fields, creators },
+      { libraries: [], userId: '', localUserKey: '' });
+    item.uri = lib.type === 'group' ? `http://zotero.org/groups/${lib.id}/items/${key}`
+      : lib.type === 'user' ? `http://zotero.org/users/${lib.id}/items/${key}` : '';
+    return item;
+  }
+
   return {
     applyWal, prepareDatabase, readInfo, readItems, listCollections, descendantIds, uriBase,
-    extractYear, cslDate, CSL_TYPE,
+    extractYear, cslDate, CSL_TYPE, loadSqlJs, itemFromApi,
   };
 }));

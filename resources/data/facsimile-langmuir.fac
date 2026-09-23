@@ -1,6 +1,6 @@
 # ============================================================================
 #  A worked differential-algebraic model, and a tour of the newer parts of
-#  the model language. Open it with "Open..." on the left.
+#  the model language. Open it with "Open...", or drop it on the page.
 #
 #  A gas is consumed at a fixed rate while a solid surface in contact with it
 #  holds a coverage that is in equilibrium with the gas at every instant:

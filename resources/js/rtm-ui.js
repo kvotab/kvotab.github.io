@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20260921a';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20260923';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -373,7 +373,14 @@
       `${s.MODE === 'transport' ? 'transport' : 'batch'} · ${m.nspecies} species · ${m.nreactions} reactions`,
     ];
     if (m.transport) {
-      bits.push(`${m.fracture} cells over ${s.LENGTH} m, ${s.GRID} grid`);
+      // The layout in words: its kind, the number that shapes it, and a
+      // pinned surface layer when there is one.
+      const g = m.grid || { kind: s.GRID };
+      const shape = g.kind === 'log' ? `log grid, last cell ${g.ratio}× the first`
+        : g.kind === 'powerlaw' ? `power-law grid, exponent ${g.power}`
+          : g.kind === 'faces' ? 'faces as given' : `${g.kind} grid`;
+      bits.push(`${m.fracture} cells over ${m.length != null ? m.length : s.LENGTH} m, ${shape}`
+        + (g.surface > 0 ? `, surface layer ${g.surface} m` : ''));
       if (m.matrix) {
         bits.push(`dual porosity: ${m.matrix.n} matrix layer${m.matrix.n === 1 ? '' : 's'} to `
           + `${m.matrix.total} m behind each cell, porosity ${m.matrix.porosity}, `
@@ -398,6 +405,15 @@
     $('rtmTMinUnit').textContent = u.symbol;
     $('rtmGradTMinUnit').textContent = u.symbol;
     if (m.nparameters) bits.push(`${m.nparameters} parameter${m.nparameters === 1 ? '' : 's'}: ${m.parameters.join(', ')}`);
+    if (m.tables && m.tables.length) bits.push(`${m.tables.length} table${m.tables.length === 1 ? '' : 's'}: ${m.tables.join(', ')}`);
+    // A species held in some cells only; one held everywhere is in its line.
+    for (const h of m.held || []) {
+      const c = h.cells;
+      const contiguous = c.every((v, k) => k === 0 || v === c[k - 1] + 1);
+      const where = c.length === 1 ? `cell ${c[0]}`
+        : contiguous ? `cells ${c[0]}–${c[c.length - 1]}` : `${c.length} cells`;
+      bits.push(`${h.species} held in ${where}`);
+    }
     if (m.anyMass) bits.push('a mass matrix is in force');
     bits.push(`${m.states} equations, ${m.nnz} non-zeros`);
     bits.push(`TEND ${fmtTime(s.TEND)}`);
@@ -1303,7 +1319,7 @@
   /** Words that mean something on their own, by section. */
   const HL_WORDS = {
     SPECIES: new Set(['fixed']),
-    INITIAL: new Set(['all', 'matrix']),
+    INITIAL: new Set(['all', 'matrix', 'fixed']),
     PARAMETERS: new Set(['all', 'matrix', 'fracture']),
     REACTIONS: new Set(['water', 'inventory']),
   };
@@ -1405,7 +1421,8 @@
     const secs = new Array(lines.length);
     let section = '';
     for (let i = 0; i < lines.length; i += 1) {
-      const sec = /^\s*<\s*([A-Za-z]+)\s*>\s*$/.exec(lines[i]);
+      // <TABLE name> carries a name after the word; the section is the word.
+      const sec = /^\s*<\s*([A-Za-z]+)(?:\s+[^<>]*)?>\s*$/.exec(lines[i]);
       if (sec) section = sec[1].toUpperCase();
       secs[i] = section;
     }
@@ -1480,13 +1497,145 @@
     downloadBlob(new Blob([state.text], { type: 'text/plain' }), 'model.rtm');
   }
 
+  /*
+    Open… takes a model text, or skbrtm's databases: any of reaction.in,
+    solutions.in, diffusion.in, sourceterm*.in and doserate*.in, and the
+    Python script that runs them, which says which of them are read, in what
+    order, and for how long. Those are converted to one model text by
+    RtmImport, which writes at the top of it everything skbrtm itself would
+    read differently.
+  */
   async function fileChosen(ev) {
-    const file = ev.target.files && ev.target.files[0];
-    if (!file) return;
-    state.text = await file.text();
+    const picked = Array.from((ev.target.files) || []);
+    ev.target.value = '';
+    if (!picked.length) return;
+    openFiles(await Promise.all(picked.map(async (f) => ({ name: f.name, text: await f.text() }))));
+  }
+
+  /*
+    DROPPED ON THE PAGE. A model text, skbrtm's files, or the folder they are
+    in -- an skbrtm example's own folder, script and databases/ together --
+    opens as Open... would open it. What is read is what either can use; a
+    folder's notes, plots and results are passed over, and a folder is not
+    followed without end.
+  */
+  const READABLE = /\.(rtm|txt|in|py)$/i;
+  const DROP_MAX_FILES = 200;
+  const DROP_MAX_BYTES = 20 * 1024 * 1024;
+
+  /** The files under what was dropped, as {name, text}. */
+  async function readDropped(entries, plain) {
+    const out = [];
+    let bytes = 0;
+    let skipped = 0;
+    const take = async (file, name) => {
+      if (!READABLE.test(file.name)) return;
+      if (out.length >= DROP_MAX_FILES || bytes + file.size > DROP_MAX_BYTES) { skipped++; return; }
+      bytes += file.size;
+      out.push({ name, text: await file.text() });
+    };
+    if (entries.some(Boolean)) {
+      const walk = async (entry, prefix, depth) => {
+        if (entry.isFile) {
+          const file = await new Promise((res, rej) => entry.file(res, rej));
+          await take(file, prefix + entry.name);
+        } else if (entry.isDirectory && depth < 6) {
+          const reader = entry.createReader();
+          for (;;) {
+            // eslint-disable-next-line no-await-in-loop
+            const batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+            if (!batch.length) break;
+            // eslint-disable-next-line no-await-in-loop
+            for (const e of batch) await walk(e, `${prefix}${entry.name}/`, depth + 1);
+          }
+        }
+      };
+      for (const e of entries) if (e) await walk(e, '', 0);
+    } else {
+      for (const f of plain) await take(f, f.name);
+    }
+    return { files: out, skipped };
+  }
+
+  function initDrop() {
+    const app = document.querySelector('.rtm');
+    if (!app) return;
+    let depth = 0;
+    const withFiles = (ev) => !!ev.dataTransfer && Array.from(ev.dataTransfer.types || []).includes('Files');
+    const done = () => { depth = 0; app.classList.remove('dropping'); };
+    document.addEventListener('dragenter', (ev) => {
+      if (!withFiles(ev)) return;
+      depth++;
+      app.classList.add('dropping');
+    });
+    document.addEventListener('dragleave', (ev) => {
+      if (!withFiles(ev)) return;
+      depth = Math.max(0, depth - 1);
+      if (!depth) app.classList.remove('dropping');
+    });
+    // Accepting the drag everywhere also keeps a file dropped beside the app
+    // from replacing the page with the file's own text.
+    document.addEventListener('dragover', (ev) => {
+      if (!withFiles(ev)) return;
+      ev.preventDefault();
+      ev.dataTransfer.dropEffect = 'copy';
+    });
+    document.addEventListener('drop', (ev) => {
+      if (!withFiles(ev)) return;
+      ev.preventDefault();
+      done();
+      // The browser takes the items back once this handler returns, so they
+      // are read out now and the files read later.
+      const dt = ev.dataTransfer;
+      const entries = Array.from(dt.items || [])
+        .map((it) => (it.kind === 'file' && typeof it.webkitGetAsEntry === 'function' ? it.webkitGetAsEntry() : null));
+      const plain = Array.from(dt.files || []);
+      readDropped(entries, plain).then(({ files, skipped }) => {
+        if (!files.length) {
+          setStatus('Nothing here can be opened: a model text (.rtm, .txt), or skbrtm\'s databases and '
+            + 'script (.in, .py), or the folder they are in.', 'warn');
+          return;
+        }
+        openFiles(files);
+        if (skipped) setStatus(`${skipped} file${skipped === 1 ? ' was' : 's were'} left out: a drop reads `
+          + `${DROP_MAX_FILES} files and 20 MB at most.`, 'warn');
+      }, (e) => setStatus(`The drop could not be read: ${e.message}`, 'error'));
+    });
+    window.addEventListener('dragend', done);
+  }
+
+  /** A model text, or skbrtm's files, however they arrived: [{name, text}]. */
+  function openFiles(files) {
+    const about = $('rtmExampleAbout');
+    const skbrtm = typeof RtmImport !== 'undefined'
+      && files.some((f) => /\.py$/i.test(f.name) || RtmImport.isDatabase(f.text));
+    if (skbrtm) {
+      let res;
+      try {
+        res = RtmImport.convert(files);
+      } catch (e) {
+        setStatus(`These could not be opened as skbrtm databases: ${e.message}`, 'error');
+        return;
+      }
+      state.text = res.text;
+      const n = files.filter((f) => /\.py$/i.test(f.name) || RtmImport.isDatabase(f.text)).length;
+      about.textContent = `Opened ${n} skbrtm file${n === 1 ? '' : 's'} as one model.`
+        + (res.warnings.length ? ` ${res.warnings.length} thing${res.warnings.length === 1 ? '' : 's'} that `
+          + 'skbrtm would read differently, or that needs a look, are noted at the top of the text.' : '');
+      about.hidden = false;
+    } else {
+      // A model file before any other text file that came with it.
+      const pick = files.find((f) => /\.rtm$/i.test(f.name)) || files[0];
+      if (files.length > 1) {
+        setStatus(`One model text at a time: ${pick.name} was opened, the other ${files.length - 1} were not.`, 'warn');
+      }
+      state.text = pick.text;
+      about.hidden = true;
+    }
+    $('rtmExample').value = '';
     $('rtmText').value = state.text;
     renderHighlight();
-    ev.target.value = '';
+    showTab('model');
     scheduleCompile(0);
   }
 
@@ -1592,6 +1741,7 @@
   writeSolverControls();
   initSideResize();
   initSections();
+  initDrop();
   showAdvanced(!!state.sections[ADVANCED_KEY]);
   $('rtmGradScale').value = state.gradScale;
   $('rtmGradTMin').value = state.gradTMin;

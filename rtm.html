@@ -26,7 +26,7 @@
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
-  <link rel="stylesheet" href="./resources/css/rtm.css?v=20260922b">
+  <link rel="stylesheet" href="./resources/css/rtm.css?v=20260923">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
 </head>
 <body>
@@ -196,7 +196,7 @@
             <button type="button" class="rtm-btn secondary small" data-on-click="rtm:saveFile">Save</button>
             <label class="rtm-check inline"><input type="checkbox" id="rtmSyntax" checked
               data-on-change="rtm:syntaxToggle"> colour the syntax</label>
-            <input type="file" id="rtmFile" accept=".txt,.rtm,.in" hidden data-on-change="rtm:fileChosen">
+            <input type="file" id="rtmFile" accept=".txt,.rtm,.in,.py" multiple hidden data-on-change="rtm:fileChosen">
           </div>
           <p class="rtm-muted rtm-example-about" id="rtmExampleAbout" hidden></p>
           <!--
@@ -262,8 +262,14 @@
 
           <h3>The model text</h3>
           <p>Six sections, of which two are needed: <code>&lt;SPECIES&gt;</code> and
-            <code>&lt;REACTIONS&gt;</code>. Everything after a <code>#</code> is a comment. A rock
-            matrix beside the column is a few more settings; see <em>A rock matrix</em>.</p>
+            <code>&lt;REACTIONS&gt;</code>, and any number of named tables,
+            <code>&lt;TABLE name&gt;</code>. Everything after a <code>#</code> is a comment. A rock
+            matrix beside the column is a few more settings; see <em>A rock matrix</em>. Wherever
+            a number goes it may be written as arithmetic on numbers — <code>365*86400</code>,
+            <code>1.33*10**12</code>, <code>2/3</code> — and is worked out when the model compiles.
+            <em>Open…</em> loads a model text from a file, and so does dropping the file anywhere on
+            the page; either also reads skbrtm's database files, see <em>Opening skbrtm and BRUM
+            databases</em>.</p>
           <p><em>Colour the syntax</em>, on the Model tab, paints comments, section headings,
             numbers, function names and the words that mean something where they stand — a setting
             and the words its value may take, <code>fixed</code> and <code>D</code> on a species
@@ -279,7 +285,11 @@
               <tr><td><code>MODE</code></td><td><em>batch</em> stirs everything together — one cell, no transport. <em>transport</em> builds a one-dimensional column.</td></tr>
               <tr><td><code>CELLS</code></td><td>How many cells across the column.</td></tr>
               <tr><td><code>LENGTH</code></td><td>How long the column is, in metres.</td></tr>
-              <tr><td><code>GRID</code></td><td><em>linear</em> spaces the cells evenly; <em>log</em> packs them against the left-hand boundary, which is where a dissolving surface puts the chemistry.</td></tr>
+              <tr><td><code>GRID</code></td><td>How the cells are laid out. <em>linear</em> spaces them evenly. <em>log</em> packs them against the left-hand boundary, which is where a dissolving surface puts the chemistry: each cell is a constant factor wider than the one before, the last <code>GRID_RATIO</code> times the first. <em>powerlaw</em> puts the faces at <em>L</em>·(<em>i</em>/<em>N</em>)<sup><code>GRID_POWER</code></sup>, skbrtm's grid. <em>faces</em> takes them from <code>FACES</code>.</td></tr>
+              <tr><td><code>GRID_RATIO</code></td><td>For <em>log</em>: how many times wider the last cell is than the first. 1000 unless given.</td></tr>
+              <tr><td><code>GRID_POWER</code></td><td>For <em>powerlaw</em>: the exponent, 3 unless given. Above 1 is fine at the left, below 1 at the right.</td></tr>
+              <tr><td><code>FACES</code></td><td>The face positions outright, in metres from the left end: a list, <code>FACES = 0, 1e-7, 8e-7, 2.7e-6, …</code>, or an expression in <code>i</code> worked out for <em>i</em> = 0 to <code>CELLS</code>, <code>FACES = 1e-4*(i/10)^3</code>. The first must be 0 and each must be larger than the last. A list decides <code>CELLS</code> and <code>LENGTH</code>; if they are given too they have to agree.</td></tr>
+              <tr><td><code>SURFACE_LAYER</code></td><td>Makes the first cell exactly this thick, in metres, and lays the other <code>CELLS</code>&nbsp;−&nbsp;1 out over the rest by <code>GRID</code>. See <em>A surface</em> below.</td></tr>
               <tr><td><code>DIFFUSION</code>, <code>ADVECTION</code></td><td>1 or 0. Either, both or neither.</td></tr>
               <tr><td><code>VELOCITY</code></td><td>m/s, positive left to right. Advection is upwind, so it is stable at any step but adds numerical dispersion of <code>v·Δx/2</code>.</td></tr>
               <tr><td><code>POROSITY</code></td><td>Divides the velocity to give the pore-water speed.</td></tr>
@@ -319,7 +329,9 @@ UO2                      # no number: starts at zero, does not move</pre>
             <em>K</em>/[H<sup>+</sup>]. Fixing every species of a relation is refused, since then
             there is nothing left to satisfy it with.</p>
           <p>A name may be a chemical formula: <code>e-</code>, <code>H+</code>, <code>OH-</code>,
-            <code>C2O4-2</code>, <code>UO2+2</code>, <code>U_site</code>.</p>
+            <code>C2O4-2</code>, <code>UO2+2</code>, <code>U_site</code>, and groups in round
+            brackets, one level deep: <code>Fe(OH)3</code>, <code>UO2(CO3)3-4</code>. Square brackets
+            are what a rate law puts round a name, so a name cannot contain those.</p>
           <p><code>R=</code> (or <code>mass=</code>, the same thing) is the coefficient on the left
             of the equation rather than the right: <code>R dC/dt = &hellip;</code>. A retardation
             factor for a sorbing species, a porosity, a water content — anything that divides
@@ -340,7 +352,18 @@ OH- => , k = 0.1                               # nothing on the right is a sink<
             <code>k =</code> you get mass action and the rate is that constant times each reactant
             raised to its coefficient. With <code>r =</code> you write the rate yourself and a
             concentration goes in brackets — <code>[S]</code> — so that a name like <code>H+</code>
-            is never read as arithmetic. A power needs a plain number as its exponent.</p>
+            is never read as arithmetic. A power's exponent may be anything that does not depend on
+            a concentration: a number, arithmetic such as <code>(2/3)</code>, a constant of the line
+            or a parameter.</p>
+          <pre>Fe+2 + 0.25 O2 => Fe(OH)3, r = (kr/kh)*[O2]*[Fe+2]*[OH-]^2, kr = 1.33*10**12, kh = 1.3*10**-3
+A => B, r = k*c^(2/3)*(1 - [B]/cmax), k = 5e-13, c = [A], cmax = 1.8e-6</pre>
+          <p>A constant may be arithmetic, and may use the constants named before it on its line —
+            <code>kf = 2, kb = kf/4</code>. A constant written <code>c = [A]</code> is an
+            <em>alias</em>: in the law, <code>c</code> is the concentration of <code>A</code>,
+            exactly as if <code>[A]</code> had been written there. Both are how skbrtm writes its
+            databases, and they mean here what they say. (skbrtm itself pastes each constant into
+            the law as text, so it reads <code>(kr/kh)</code> above as
+            <code>1.33*10**12/1.3*10**-3</code> — a million times less.)</p>
 
           <h4>The time unit</h4>
           <p>A model has one time unit and everything in it is in that unit: the rate constants,
@@ -367,9 +390,9 @@ OH- => , k = 0.1                               # nothing on the right is a sink<
                 <td>The face is held at the concentration on the species' <code>left=</code> or
                   <code>right=</code>. Diffusion sees that concentration half a cell away, and the
                   flow, if there is any, carries it in. Right for a face against a large
-                  well-mixed reservoir. It also starts the cell that touches it at the face value
-                  rather than at the one on the <code>&lt;SPECIES&gt;</code> line; say otherwise in
-                  <code>&lt;INITIAL&gt;</code> for a sharp front there at <em>t</em>&nbsp;=&nbsp;0.</td></tr>
+                  well-mixed reservoir. It sets nothing inside the column: every cell, the one
+                  touching the face included, starts where <code>&lt;SPECIES&gt;</code> and
+                  <code>&lt;INITIAL&gt;</code> put it.</td></tr>
               <tr><td><code>neumann</code><br><span class="rtm-muted">second type</span></td>
                 <td>Nothing crosses. A wall.</td></tr>
               <tr><td><code>robin</code>, <code>cauchy</code><br><span class="rtm-muted">third type</span></td>
@@ -512,9 +535,11 @@ Cs + X => Y, k = 1.2E-4                   # chemistry: in the water, on = water 
             two arguments cross, so an analytic Jacobian would be wrong on one side of the crossing;
             <code>pow(a,b)</code> differentiates to something containing log&nbsp;<em>a</em>, which
             is undefined at a zero concentration — which is exactly where a rate law gets evaluated.
-            A power with a plain number as its exponent, <code>[A]^2</code>, has neither problem and
-            is what to write. <code>&lt;PARAMETERS&gt;</code> is worked out once when the model
-            compiles and never differentiated, so all three may be used there.</p>
+            A power whose exponent does not depend on a concentration — <code>[A]^2</code>,
+            <code>[A]^(2/3)</code>, <code>[A]^n</code> with <code>n</code> a constant or a
+            parameter — has neither problem and is what to write. <code>&lt;PARAMETERS&gt;</code> is
+            worked out once when the model compiles and never differentiated, so all three may be
+            used there.</p>
           <p><code>step</code> and <code>ramp</code> are allowed, with the derivative of the kink
             taken as zero: they are flat everywhere they are differentiable, and a stiff solver
             steps over the corner rather than through it. A rate that switches hard is still worth
@@ -522,16 +547,31 @@ Cs + X => Y, k = 1.2E-4                   # chemistry: in the water, on = water 
           <p>Which names are in scope depends on where the expression is. A rate law may use the
             concentrations it writes in brackets, the constants named on its own line, and any
             parameter; a constant on the reaction line wins if a parameter has the same name. A
-            parameter may use <code>x</code>, the cell centre in metres, <code>i</code>, the cell
-            index, and any parameter named above it.</p>
+            parameter, and a starting value in <code>&lt;INITIAL&gt;</code>, may use
+            <code>x</code>, the cell centre in metres, <code>w</code>, the cell's width,
+            <code>xl</code> and <code>xr</code>, its two faces, <code>i</code>, the cell index, the
+            tables, and any parameter named above it.</p>
 
           <h4>&lt;INITIAL&gt;</h4>
-          <pre>X   0-9   1.0      # the first ten cells
-O2  all   2.1E-4
-Fe  20    0.5      # one cell</pre>
+          <pre>X       0-9   1.0                 # the first ten cells
+O2      all   2.1E-4
+Fe      20    0.5                 # one cell
+U_site  0     2.1e-4/w/1000       # per m2 of surface, spread through cell 0
+B       5-9   0      fixed        # held at 0 in cells 5 to 9, and only there
+X       0     1      fixed        # a reservoir: cell 0 held at 1, feeding the rest</pre>
           <p>Optional, and only useful with transport: it overrides the concentration in
             <code>&lt;SPECIES&gt;</code> cell by cell, which is how you start a front, a plume or a
-            layer.</p>
+            layer. The value may be an expression in what a parameter can use, worked out in each
+            cell — so an amount per m² of surface goes in as itself divided by <code>w</code>, and
+            stays the same amount per m² whatever the grid.</p>
+          <p><code>fixed</code> at the end of the line holds the species in those cells and nowhere
+            else, as <code>fixed</code> on its species line holds it everywhere: its row is zero
+            there, so nothing — reaction, diffusion, a face — can move it, and it still feeds its
+            neighbours and drives its reactions. That is a reservoir cell, or a surface species that
+            must not appear in the water. With no value, <code>U_site 1-9 fixed</code> holds it where
+            it already is. A species held in some cells only cannot be put on the
+            <code>&lt;EQUILIBRIUM&gt;</code> relations by <code>EQUILIBRATE</code>, and the page says
+            so rather than moving it anyway.</p>
 
           <h4>&lt;PARAMETERS&gt;</h4>
           <pre>DOSE  all  0.64                  # the same everywhere
@@ -540,9 +580,46 @@ POR   0-4  0.15                  # and a later line overrides an earlier one
 POR   5    0.3</pre>
           <p>A named number that any rate law may use and that may differ from cell to cell. The
             value is an expression in <code>x</code>, the distance to the cell centre in metres,
-            <code>i</code>, the cell's index, and any parameter named above it. It is worked out
-            once, when the model is compiled, so a parameter is constant in time — it varies in
-            space, not with the solution.</p>
+            <code>w</code>, the cell's width, <code>xl</code> and <code>xr</code>, its faces,
+            <code>i</code>, the cell's index, the tables, and any parameter named above it. It is
+            worked out once, when the model is compiled, so a parameter is constant in time — it
+            varies in space, not with the solution.</p>
+
+          <h4>&lt;TABLE name&gt;</h4>
+          <pre>&lt;TABLE dose_alpha log&gt;
+# distance from the surface (m)   dose rate (Gy/s)
+1.0e-7    2.119
+1.0e-6    2.02
+1.0e-5    0.93
+4.0e-5    5.6e-3
+
+&lt;PARAMETERS&gt;
+DOSE  all  dose_alpha(x)          # or interp(dose_alpha, x), as FACSIMILE writes it</pre>
+          <p>Two columns, <em>x</em> increasing and a value, used in a parameter or a starting value
+            as <code>name(x)</code> — at any argument, <code>name(x - 1e-6)</code> included. It is
+            interpolated linearly between rows and held at its end values beyond them.
+            <code>log</code> after the name interpolates the logarithm instead, which follows a
+            profile that dies away exponentially, a dose rate, far better between rows that are far
+            apart; its values then have to be above zero. A table cannot be read in a rate law: a
+            rate law is a function of the concentrations, a table of the place. Give it a parameter,
+            as above, and use that.</p>
+          <p>This is how a tabulated dose-rate profile goes in as it is, where skbrtm fits a
+            function to it first — and a fit is only as good as where it was started: skbrtm's beta
+            and gamma fits come out as straight lines, 30&nbsp;% low at the surface.</p>
+
+          <h4>A surface</h4>
+          <p>A dissolving surface — sites, a coating, a reacting film — is written as species that
+            live in the first cell, stated per m² of surface and spread through that cell:
+            <code>U_site 0 2.1e-4/w/1000</code> in <code>&lt;INITIAL&gt;</code>, with no
+            <code>D</code> so that they stay put. The amount per m² is then right on any grid.</p>
+          <p>What the chemistry does there is another matter. A rate law is written in
+            concentrations, so a reaction between two surface species goes as the square of
+            something divided by the cell's width, and when that width comes from the grid,
+            refining the grid moves the answer: in skbrtm's fuel-dissolution example the dissolved
+            uranium per m² halves each time the cells are halved. <code>SURFACE_LAYER</code> pins the
+            first cell's thickness, making it a property of the model — a reaction zone, as the
+            batch model's 40&nbsp;µm alpha layer is — and lays the rest of the column out behind it.
+            Refine the grid then and the surface does not change.</p>
           <p>This is how a dose rate that dies away from a surface is written, or a porosity that
             changes down a column, or a rate constant that follows a temperature profile. A rate law
             may use a parameter by name, exactly as it uses a constant declared on its own line; a
@@ -571,6 +648,26 @@ NpO2+ &lt;=&gt; NpO2_s,      K = 2.0E4, kf = 1.0E3   # also held during the run<
             equilibrium held exactly throughout is an algebraic constraint, a different kind of
             problem. A <code>kf</code> a few orders above the fastest rate in the model holds the
             relation to within the solver's tolerance; making it enormous only costs steps.</p>
+
+          <h4>Opening skbrtm and BRUM databases</h4>
+          <p><em>Open…</em> takes skbrtm's database files as well as a model text: select any of
+            <code>reaction.in</code>, <code>solutions.in</code>, <code>diffusion.in</code>, the
+            <code>sourceterm</code> and <code>doserate</code> files, and the Python script that runs
+            them — or drop them on the page, or drop an example's whole folder, script and
+            <code>databases</code> together; what is in it besides those is passed over. The script says which files are read, in what order, and for how long; without it
+            every database selected is read and <code>TEND</code> is one second, to be set by hand.
+            The files are read as skbrtm reads them — a <code>SOLUTION</code> sets every species in
+            its cells, a species the <code>DIFFUSION</code> block does not name diffuses at
+            10<sup>-9</sup> m²/s, names are the same whatever their case — and become one model
+            text, with rate constants per second as skbrtm integrates them.</p>
+          <p>Where skbrtm would read the text differently from what it says, the model follows the
+            text and the difference is written at the top of it. Every rate law is read both ways,
+            and one whose arguments skbrtm pastes in so that the value changes is named, with the
+            factor. A Dirichlet end holds the face here, where skbrtm holds the first cell; a
+            <code>REGRESSION</code> becomes a <code>&lt;TABLE&gt;</code> of its own data, where
+            skbrtm fits a function to it; a <code>constant</code> species becomes <code>fixed</code>,
+            in the cells its <code>SOLUTION</code> names; and a lone <code>cell_id</code> means that
+            cell, where skbrtm puts it in cell 0.</p>
 
           <h3>What it actually solves</h3>
           <p>For every species <em>s</em> in every cell <em>i</em>:</p>
@@ -732,18 +829,20 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
       rtm-worker         the request handler (compile, run, verify)
       kvot-hdf5-write    an HDF5 writer, for handing a run to the browser
       rtm-hdf5           a run as an HDF5 tree
+      rtm-import         skbrtm's database files, read as one model text
       rtm-ui             this page
   -->
   <script src="./resources/js/facsimile-model.js?v=20260920"></script>
   <script src="./resources/js/facsimile-solver.js?v=20260921"></script>
   <script src="./resources/js/ode-julia.js?v=20260920"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20260920"></script>
-  <script src="./resources/js/rtm-model.js?v=20260921a"></script>
+  <script src="./resources/js/rtm-model.js?v=20260923"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
   <script src="./resources/js/rtm-examples.js?v=20260921b"></script>
-  <script src="./resources/js/rtm-worker.js?v=20260920e"></script>
+  <script src="./resources/js/rtm-worker.js?v=20260923"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20260921a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20260922a"></script>
+  <script src="./resources/js/rtm-import.js?v=20260923"></script>
+  <script src="./resources/js/rtm-ui.js?v=20260923"></script>
 </body>
 </html>

@@ -91,6 +91,22 @@ a synthetic `MouseEvent` would not reproduce.
 
     python3 test-tabs.py
 
+`test-axes.py` covers changing the chart's axes. First, a background overlay
+across lin/log: every phase must be named correctly by its tooltip on a linear
+chart, after clicking log, on a chart drawn on log, and back again, and the
+rectangles must be redrawn for the new scale — left at t = 0 on a log axis they
+dragged autorange out to 1e-9. The overlay's tooltip used to convert its bounds
+once, at draw time, so after clicking log the whole chart named the first
+phase. Second, the preset manager: its Current view row edits the chart
+without saving anything and turns the dropdown to Custom, applying it
+unchanged leaves the selection alone, editing the *selected* preset keeps it
+selected and moves the chart, editing any other preset moves nothing, and
+closing the dialog re-applies nothing. The file with the overlay is built in
+the page with h5wasm, as `handoff-demo.html` does, so no data file is
+committed for it.
+
+    python3 test-axes.py
+
 `test-handoff.py` covers the in-memory handoff — another page opening a file
 here without it ever being saved to disk. It drives both transports (the
 postMessage handshake and a `?url=` blob link) and the guards that stop an
@@ -114,7 +130,8 @@ so the page posted an HTML error document as though it were a file, rb.html
 refused it, and the check that waits for `rb-opened` waited for ever. The demo
 now builds a small file with h5wasm instead, which is what a page that produces
 HDF5 data would really do, and the test uses that same builder. Neither needs
-anything from `resources/data`.
+anything from `resources/data`. `test-axes.py` builds its overlay file the
+same way.
 
 ## Known noise
 

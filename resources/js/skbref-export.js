@@ -67,8 +67,15 @@
       */
       const exportedResults = results.cloneNode(true);
       exportedResults.querySelectorAll('.rule-summary-filters').forEach(node => node.remove());
-      exportedResults.querySelectorAll('.zotero-row-btn').forEach(button => {
-        button.remove();
+      exportedResults.querySelectorAll('.zotero-row-btn, .zotero-detail-toggle, .zotero-bulk-hint, .zotero-bulk-filter').forEach(node => {
+        node.remove();
+      });
+      /* The items behind each verdict are shown, whether or not they were
+         open on the page; rows never checked are left out. */
+      exportedResults.querySelectorAll('.zotero-only-unmatched').forEach(table => table.classList.remove('zotero-only-unmatched'));
+      exportedResults.querySelectorAll('.zotero-detail-row').forEach(row => {
+        if (row.querySelector('.zotero-inline-results:empty')) row.remove();
+        else row.hidden = false;
       });
       exportedResults.querySelectorAll('.zotero-inline-results:empty').forEach(container => {
         container.remove();
@@ -81,7 +88,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escHtml(reportTitle)}</title>
 <style>
-body{max-width:1000px;margin:0 auto;padding:32px;font:15px/1.5 system-ui,sans-serif;color:#222}h1{font-size:1.5rem}small{color:#666}.result-section{margin:16px 0;border:1px solid #ccc;border-radius:8px}.result-section summary{padding:10px 14px;font-weight:700}.section-body{padding:14px}.section-badge{float:right}.ref-table{width:100%;border-collapse:collapse}.ref-table th,.ref-table td{padding:7px;border-bottom:1px solid #ddd;text-align:left;vertical-align:top}.ref-key,code,.rule-id,.rule-legacy-id{font-family:monospace}.tag{display:inline-block;margin:3px;padding:3px 8px;border:1px solid #d6a54a;border-radius:12px}a{color:#075fa8}.rule-name{display:block;font-weight:800}.rule-id{display:block;font-size:.75rem;color:#666}.rule-legacy-id{display:block;font-size:.7rem;color:#777}.rule-full-context,.citation-context{white-space:pre-wrap;overflow-wrap:anywhere}.rule-context-match,.citation-context-match{font-weight:800;background:#fff1bd;padding:0 2px;border-radius:3px}.rule-document-group{margin:12px 0;border:1px solid #ddd;border-radius:7px}.rule-document-group>summary{padding:8px;font-weight:800}.rule-document-group-body{padding:8px}.rule-detail-item{padding:9px;margin:8px 0;border:1px solid #ddd;border-radius:6px}.language-intervals{margin-top:7px;padding:7px;border-left:3px solid #aaa}.citation-location-region{display:block;font-weight:700}.citation-location-paragraph{display:block;font-size:.75rem;color:#666}
+body{max-width:1000px;margin:0 auto;padding:32px;font:15px/1.5 system-ui,sans-serif;color:#222}h1{font-size:1.5rem}small{color:#666}.result-section{margin:16px 0;border:1px solid #ccc;border-radius:8px}.result-section summary{padding:10px 14px;font-weight:700}.section-body{padding:14px}.section-badge{float:right}.ref-table{width:100%;border-collapse:collapse}.ref-table th,.ref-table td{padding:7px;border-bottom:1px solid #ddd;text-align:left;vertical-align:top}.ref-key,code,.rule-id,.rule-legacy-id{font-family:monospace}.tag{display:inline-block;margin:3px;padding:3px 8px;border:1px solid #d6a54a;border-radius:12px}a{color:#075fa8}.rule-name{display:block;font-weight:800}.rule-id{display:block;font-size:.75rem;color:#666}.rule-legacy-id{display:block;font-size:.7rem;color:#777}.rule-full-context,.citation-context{white-space:pre-wrap;overflow-wrap:anywhere}.rule-context-match,.citation-context-match{font-weight:800;background:#fff1bd;padding:0 2px;border-radius:3px}.rule-document-group{margin:12px 0;border:1px solid #ddd;border-radius:7px}.rule-document-group>summary{padding:8px;font-weight:800}.rule-document-group-body{padding:8px}.rule-detail-item{padding:9px;margin:8px 0;border:1px solid #ddd;border-radius:6px}.language-intervals{margin-top:7px;padding:7px;border-left:3px solid #aaa}.citation-location-region{display:block;font-weight:700}.citation-location-paragraph{display:block;font-size:.75rem;color:#666}.zotero-verdict-chip{display:inline-block;margin-right:6px;font-weight:700}.zotero-candidate{margin:6px 0;padding:8px;border:1px solid #ddd;border-radius:6px}.zotero-candidate-title{font-weight:700}.zotero-formatted-reference{margin-top:6px;padding-left:8px;border-left:3px solid #075fa8}
 </style>
 </head>
 <body>

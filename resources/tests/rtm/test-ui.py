@@ -255,8 +255,8 @@ async def main():
             run = await wait_run(page)
             check('a column with a third-type inlet runs',
                   isinstance(run, str) and run.startswith('Done'), True)
-            # A robin inlet does not hold the first cell at the face value; a
-            # dirichlet one does. That is the whole difference between them.
+            # A robin inlet never brings the first cell up to the face value;
+            # diffusion through a dirichlet face pulls it most of the way.
             await page.ev("document.querySelector('[data-tab=\"profile\"]').click()")
             await asyncio.sleep(1.2)
             first = await page.ev(
@@ -790,6 +790,67 @@ async def main():
                   bool(re.match(r'^rtm[\w.-]*\.h5 written \(\d+\.\d MB\)\.$', str(written))), True)
             check('and says it went well', await page.ev(
                 "document.getElementById('rtmStatus').className"), 'rtm-status ok')
+
+            # --- a file dropped on the page, and skbrtm's databases -----------
+            # A DataTransfer built in the page goes down the same path a user's
+            # drop does: dragenter shows the outline, drop reads the files.
+            drop_js = """((files) => {
+              const dt = new DataTransfer();
+              for (const [name, text] of files) dt.items.add(new File([text], name, { type: 'text/plain' }));
+              const target = document.querySelector('.rtm-main');
+              target.dispatchEvent(new DragEvent('dragenter', { bubbles: true, cancelable: true, dataTransfer: dt }));
+              const shown = document.querySelector('.rtm').classList.contains('dropping');
+              target.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
+              return shown;
+            })(%s)"""
+            model = ('<SETTINGS>\nMODE = transport\nCELLS = 8\nLENGTH = 1e-4\nGRID = powerlaw\n'
+                     'LEFT = neumann\nRIGHT = neumann\nTEND = 100\n\n<SPECIES>\nFe(OH)3 0 D=1e-9\nX 1\n\n'
+                     '<TABLE prof log>\n0 1\n1e-4 0.01\n\n<PARAMETERS>\nP all prof(x)\n\n'
+                     '<INITIAL>\nX 1-7 0 fixed\n\n'
+                     '<REACTIONS>\nX => Fe(OH)3, r = k*P*[X]^(2/3), k = 1.33*10**-2\n')
+            shown = await page.ev(drop_js % json.dumps([['dropped.rtm', model]]))
+            check('a file held over the page outlines it', shown, True)
+            await settle(page, "document.getElementById('rtmText').value.includes('Fe(OH)3')", True, tries=20)
+            check('dropping a model file loads its text', await page.ev(
+                "document.getElementById('rtmText').value"), model)
+            check('  the outline goes when it lands', await page.ev(
+                "document.querySelector('.rtm').classList.contains('dropping')"), False)
+            check('  and the Model tab is shown', await page.ev(
+                "document.querySelector('.rtm-tabs button.active').dataset.tab"), 'model')
+            await settle(page, "document.getElementById('rtmFacts').textContent.includes('power-law')", True, tries=40)
+            facts = await page.ev("document.getElementById('rtmFacts').textContent")
+            check('the panel describes the power-law grid', 'power-law grid, exponent 3' in facts, True)
+            check('  names the table', '1 table: prof' in facts, True)
+            check('  and says where X is held', 'X held in cells 1–7' in facts, True)
+            check('the colouring passes a <TABLE>, Fe(OH)3 and (2/3) through unchanged', await page.ev(
+                "document.getElementById('rtmHighlight').textContent === document.getElementById('rtmText').value + '\\n'"),
+                True)
+            await page.ev("document.getElementById('rtmRun').click()")
+            run = await wait_run(page)
+            check('and the dropped model runs', isinstance(run, str) and run.startswith('Done'), True)
+
+            skb = [
+                ['run.py', "pm = parent_directory() + '/databases/'\np0 = pm + 'reaction.in'\n"
+                           "p1 = pm + 'solutions.in'\npaths = [p0, p1]\n"
+                           "solver = Solver(processes = (*db.reaction,), solutions = (*db.solution,),\n"
+                           "                t_span = (0, 10, 'seconds'))\n"],
+                ['reaction.in', 'REACTION;r\nSTOICHIOMETRY;EXPRESSION;ARGUMENTS\n'
+                                'A = B;r = (kr/kh)*[A]*1e-15;kr = 1.33*10**12, kh = 1.3*10**-3\n'],
+                ['solutions.in', 'SOLUTION;s\nunits;mol/L\nSPECIES;CONCENTRATION\nA;1\nB;0\n'],
+                ['notes.md', '# not a database\n'],
+            ]
+            await page.ev(drop_js % json.dumps(skb))
+            await settle(page, "document.getElementById('rtmExampleAbout').textContent.startsWith('Opened')",
+                         True, tries=20)
+            check("dropping skbrtm's files opens them as one model, the notes passed over", await page.ev(
+                "document.getElementById('rtmExampleAbout').textContent.startsWith("
+                "'Opened 3 skbrtm files as one model.')"), True)
+            check('  with what skbrtm reads differently at the top of the text', await page.ev(
+                "document.getElementById('rtmText').value.includes('1.000e-6 times')"), True)
+            await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('Compiled')",
+                         True, tries=40)
+            check('  and it compiles, with the script\'s time span', await page.ev(
+                "document.getElementById('rtmFacts').textContent.includes('TEND 10.0 s')"), True)
 
             check('no console errors throughout', page.errors[:3], [])
         finally:

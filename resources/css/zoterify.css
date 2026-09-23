@@ -72,7 +72,7 @@
 /* ---- controls ----------------------------------------------------------- */
 .zf-row { display: block; margin: 0 0 8px; }
 .zf-row label { display: block; margin: 0 0 2px; color: var(--text-primary); }
-.zf-row input, .zf-row select {
+.zf-row input, .zf-row select, .zf-row textarea {
   box-sizing: border-box;
   width: 100%;
   padding: 3px 5px;
@@ -80,6 +80,15 @@
   border-radius: 4px;
   font-size: 12px;
 }
+.zf-row textarea { min-height: 5.5em; resize: vertical; font: 11.5px/1.45 ui-monospace, Menlo, Consolas, monospace; }
+
+/* How each line of the list of abbreviated names was read. */
+.zf-names { margin: -4px 0 8px; font-size: 11px; line-height: 1.45; color: var(--text-secondary); }
+.zf-names[hidden], .zf-names-add[hidden] { display: none; }
+.zf-names ul { margin: 0; padding: 0; list-style: none; max-height: 9.5em; overflow-y: auto; overflow-wrap: anywhere; }
+.zf-names b { color: var(--text-primary); font-weight: 600; }
+.zf-names .zf-names-problem { color: var(--text-primary); border-left: 3px solid var(--color-kvot-bright); padding-left: 6px; }
+.zf-names-add { margin: 0 0 8px; font-size: 11px; line-height: 1.5; color: var(--text-secondary); overflow-wrap: anywhere; }
 .zf-check { display: flex; gap: 6px; align-items: flex-start; margin: 0 0 6px; cursor: pointer; line-height: 1.35; }
 .zf-check input { margin-top: 2px; flex: 0 0 auto; }
 

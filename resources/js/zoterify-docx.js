@@ -39,6 +39,10 @@
    hyperlink or cross-reference, a content control, moved text, or an
    existing Zotero citation.
 
+   A citation by abbreviated name keeps its text, run by run, and tells
+   Zotero to keep it ("dontUpdate"), since no citation style prints the
+   name; the name can be made bold as it is written.
+
    A citation left as text can get a Word comment saying why (addComment):
    range marks around its runs and a comment reference after them, with
    the comment in word/comments.xml. The text itself is not touched, and,
@@ -443,12 +447,73 @@
     return levels.of(levels.fallback);
   }
 
+  /* ---------------------------------------------------------------------
+     Bold: the run's own w:b, else its character style's, else its
+     paragraph style's, else the document default, each style following
+     w:basedOn. Word toggles bold between the style levels; here a style
+     that sets it simply sets it, which is right unless styles are stacked
+     against each other. The parser uses this to tell an abbreviated name
+     in bold from the same words in prose.
+     --------------------------------------------------------------------- */
+  const onOff = (el) => !['0', 'false', 'off'].includes(el.getAttributeNS(W, 'val'));
+  const childW = (el, local) => el && kids(el).find((c) => isW(c, local));
+
+  function styleBold(pkg) {
+    const part = pkg.stylesPath && pkg.parts.get(pkg.stylesPath);
+    const styles = new Map();
+    let paraDefault = null;
+    let docDefault = false;
+    if (part) {
+      const b = childW(childW(childW(part.doc.getElementsByTagNameNS(W, 'docDefaults')[0], 'rPrDefault'), 'rPr'), 'b');
+      docDefault = b ? onOff(b) : false;
+      for (const st of part.doc.getElementsByTagNameNS(W, 'style')) {
+        const type = st.getAttributeNS(W, 'type');
+        const id = st.getAttributeNS(W, 'styleId');
+        const own = childW(childW(st, 'rPr'), 'b');
+        const based = childW(st, 'basedOn');
+        styles.set(`${type}:${id}`, { b: own ? onOff(own) : null, basedOn: based ? based.getAttributeNS(W, 'val') : null });
+        if (type === 'paragraph' && st.getAttributeNS(W, 'default') === '1') paraDefault = id;
+      }
+    }
+    const of = (type, id, depth = 0) => {
+      const st = id !== null && styles.get(`${type}:${id}`);
+      if (!st || depth > 20) return null;
+      return st.b !== null ? st.b : of(type, st.basedOn, depth + 1);
+    };
+    /** Whether the text of run `r` in paragraph `p` is bold. */
+    return (r, p) => {
+      const rPr = childW(r, 'rPr');
+      const own = childW(rPr, 'b');
+      if (own) return onOff(own);
+      const rs = childW(rPr, 'rStyle');
+      const byChar = rs ? of('character', rs.getAttributeNS(W, 'val')) : null;
+      if (byChar !== null) return byChar;
+      const ps = childW(childW(p, 'pPr'), 'pStyle');
+      const byPara = of('paragraph', ps ? ps.getAttributeNS(W, 'val') : paraDefault);
+      return byPara !== null ? byPara : docDefault;
+    };
+  }
+
+  /** [start, end) ranges of a model's text where `test(rec)` holds, adjacent ones joined. */
+  function rangesWhere(model, test) {
+    const out = [];
+    for (const rec of model.runs) {
+      if (rec.end <= rec.start || !test(rec)) continue;
+      const last = out[out.length - 1];
+      if (last && last[1] === rec.start) last[1] = rec.end; else out.push([rec.start, rec.end]);
+    }
+    return out;
+  }
+
   /**
    * Read every paragraph of the document.
    *
    * @param {Object} pkg
    * @param {{recode?: {endnote?: boolean, mendeley?: boolean, zotero?: boolean}}} options
-   * @returns {{paras: Array<{text: string, story: string, level: number|null}>, models: Array, fields: Array}}
+   * @returns {{paras: Array<{text: string, story: string, level: number|null, bold: Array, fixed: Array}>, models: Array, fields: Array}}
+   *          bold: where the text is bold; fixed: where it is the result of
+   *          a field that is not a citation to convert (a table of contents,
+   *          a cross-reference), as [start, end) ranges
    */
   function analyse(pkg, options = {}) {
     const paras = [];
@@ -456,6 +521,7 @@
     const fields = [];
     const fieldSerial = { next: 1 };
     const levels = styleLevels(pkg);
+    const isBold = styleBold(pkg);
     for (const s of stories(pkg)) {
       const stack = [];
       for (const p of s.paragraphs) {
@@ -467,7 +533,11 @@
         model.index = models.length;
         models.push(model);
         fields.push(...model.fields);
-        paras.push({ text: model.text, story: s.story, level: s.story === 'body' ? paragraphLevel(p, levels) : null });
+        paras.push({
+          text: model.text, story: s.story, level: s.story === 'body' ? paragraphLevel(p, levels) : null,
+          bold: rangesWhere(model, (rec) => isBold(rec.run, p)),
+          fixed: rangesWhere(model, (rec) => rec.stack.some((e) => !e.field.recode)),
+        });
       }
     }
     return { paras, models, fields };
@@ -654,18 +724,68 @@
     return !kids(c).some((k) => !(k.namespaceURI === W && /Pr$/.test(k.localName)));
   }
 
-  /** The run properties the new field's text takes: the first replaced
-      run's, without its own revision marks. */
-  function resultRunProps(runs) {
-    const src = runs.find((r) => r.end > r.start) || runs[0];
-    const rPr = kids(src.run).find((c) => isW(c, 'rPr'));
+  /** A run's properties for new text: without its revision marks, and
+      without the character style of a hyperlink it stood in. */
+  function runProps(rec) {
+    const rPr = kids(rec.run).find((c) => isW(c, 'rPr'));
     if (!rPr) return null;
     const copy = rPr.cloneNode(true);
     for (const c of kids(copy)) {
       if (c.namespaceURI === W && (c.localName === 'rPrChange' || REVISION.has(c.localName))) copy.removeChild(c);
-      else if (isW(c, 'rStyle') && src.containers.some((x) => x.localName === 'hyperlink')) copy.removeChild(c);
+      else if (isW(c, 'rStyle') && rec.containers.some((x) => x.localName === 'hyperlink')) copy.removeChild(c);
     }
     return copy;
+  }
+
+  /** The run properties the new field's text takes: the first replaced run's. */
+  const resultRunProps = (runs) => runProps(runs.find((r) => r.end > r.start) || runs[0]);
+
+  // w:rPr children that come before w:b (ECMA-376 Part 1, 17.3.2.28).
+  const BEFORE_BOLD = new Set(['rStyle', 'rFonts']);
+
+  /** Run properties made bold: w:b where the schema puts it, or switched on. */
+  function withBold(pkg, doc, rPr) {
+    const props = rPr || el(pkg, doc, 'rPr');
+    const b = kids(props).find((c) => isW(c, 'b'));
+    if (b) {
+      b.removeAttributeNS(W, 'val');
+    } else {
+      const before = kids(props).find((c) => !(c.namespaceURI === W && BEFORE_BOLD.has(c.localName)));
+      props.insertBefore(el(pkg, doc, 'b'), before || null);
+    }
+    return props;
+  }
+
+  /**
+   * The text of [pl.start, pl.end) as new runs, each with the properties
+   * of the run it comes from, and those inside the `bold` ranges bold:
+   * the result of a citation whose text is kept.
+   */
+  function keptRuns(pkg, doc, model, pl, bold) {
+    const out = [];
+    for (const rec of pl.runs) {
+      const a = Math.max(rec.start, pl.start);
+      const b = Math.min(rec.end, pl.end);
+      if (b <= a) continue;
+      const cuts = [a, b];
+      for (const [x, y] of bold) for (const c of [x, y]) if (c > a && c < b) cuts.push(c);
+      cuts.sort((m, n) => m - n);
+      for (let k = 0; k + 1 < cuts.length; k++) {
+        const [x, y] = [cuts[k], cuts[k + 1]];
+        const text = model.shown.slice(x, y).replace(/[\t\n]/g, ' ').replace(/￼/g, '');
+        if (!text) continue;
+        const r = el(pkg, doc, 'r');
+        let rPr = runProps(rec);
+        if (bold.some(([u, v]) => x >= u && y <= v)) rPr = withBold(pkg, doc, rPr);
+        if (rPr) r.appendChild(rPr);
+        const t = el(pkg, doc, 't');
+        preserve(t);
+        t.textContent = text;
+        r.appendChild(t);
+        out.push(r);
+      }
+    }
+    return out;
   }
 
   function randomId(n = 8) {
@@ -676,11 +796,15 @@
   }
 
   /**
-   * The Zotero field instruction for one group of references.
+   * The Zotero field instruction for one group of references. A citation
+   * whose text is kept gets "dontUpdate", which is what Zotero records when
+   * you edit a citation's text in Word and keep the change: Refresh leaves
+   * its text alone, and still puts its items in the bibliography.
    * @param {Array<{ref: Object, item: Object}>} members
    * @param {string} text   the text the field will show
+   * @param {boolean} keep  whether Zotero is to keep that text
    */
-  function citationInstruction(members, text) {
+  function citationInstruction(members, text, keep) {
     const seen = new Set();
     const citationItems = [];
     for (const { ref, item } of members) {
@@ -693,21 +817,21 @@
       if (ref.suppressAuthor) ci['suppress-author'] = true;
       citationItems.push(ci);
     }
-    const json = {
-      citationID: randomId(),
-      properties: { formattedCitation: text, plainCitation: text, noteIndex: 0 },
-      citationItems,
-      schema: CSL_SCHEMA,
-    };
+    const properties = keep
+      ? { formattedCitation: text, plainCitation: text, dontUpdate: true, noteIndex: 0 }
+      : { formattedCitation: text, plainCitation: text, noteIndex: 0 };
+    const json = { citationID: randomId(), properties, citationItems, schema: CSL_SCHEMA };
     return ` ADDIN ZOTERO_ITEM CSL_CITATION ${JSON.stringify(json)} `;
   }
 
   /**
-   * Replace [start, end) of a paragraph with a Zotero field.
+   * Replace [start, end) of a paragraph with a Zotero field. With
+   * how.keep the field keeps the text as it stands, run by run, and Zotero
+   * is told to keep it; how.bold are ranges of it to make bold.
    *
    * @returns {{ok: true, deleted: string, inserted: string} | {ok: false, reason: string}}
    */
-  function replaceSpan(pkg, model, start, end, members, rev, options) {
+  function replaceSpan(pkg, model, start, end, members, rev, options, how = {}) {
     let pl = plan(model, start, end);
     if (pl.error) return { ok: false, reason: pl.error };
 
@@ -730,7 +854,8 @@
     const doc = model.p.ownerDocument;
     const shown = model.shown.slice(pl.start, pl.end);
     const display = shown.replace(/[\t\n]/g, ' ').replace(/￼/g, '');
-    const rPr = resultRunProps(pl.runs);
+    const rPr = how.keep ? null : resultRunProps(pl.runs);
+    const kept = how.keep ? keptRuns(pkg, doc, model, pl, how.bold || []) : null;
 
     const last = pl.runs[pl.runs.length - 1].run;
     const marker = doc.createComment('zoterify');
@@ -774,17 +899,21 @@
     const ir = el(pkg, doc, 'r');
     const it = el(pkg, doc, 'instrText');
     preserve(it);
-    it.textContent = citationInstruction(members, display);
+    it.textContent = citationInstruction(members, display, !!how.keep);
     ir.appendChild(it);
     runs.push(ir);
     runs.push(fld('separate'));
-    const tr = el(pkg, doc, 'r');
-    if (rPr) tr.appendChild(rPr);
-    const t = el(pkg, doc, 't');
-    preserve(t);
-    t.textContent = display;
-    tr.appendChild(t);
-    runs.push(tr);
+    if (kept) {
+      runs.push(...kept);
+    } else {
+      const tr = el(pkg, doc, 'r');
+      if (rPr) tr.appendChild(rPr);
+      const t = el(pkg, doc, 't');
+      preserve(t);
+      t.textContent = display;
+      tr.appendChild(t);
+      runs.push(tr);
+    }
     runs.push(fld('end'));
 
     const anchor = splitAfter(pkg, marker, model.p);
@@ -1064,7 +1193,7 @@
    * @param {Array<{para: number, start: number, end: number, refs: Array, items: Array, problem: ?string}>} groups
    *        groups as zoterify-parse.js finds them, each with the library item
    *        every reference resolves to (null when it is unresolved)
-   * @param {{track: boolean, keepTracking: boolean, author: string, recode: Object, date?: Date,
+   * @param {{track: boolean, keepTracking: boolean, author: string, recode: Object, date?: Date, boldNames?: boolean,
    *          commentText?: function(Object, string, boolean): ?Array<string>,
    *          summaryText?: function({written: Array, skipped: Array}): ?Array<string>}} options
    *        commentText, when given, is asked for the lines of a comment on
@@ -1072,6 +1201,11 @@
    *        writer that refused it -- and summaryText for a comment at the
    *        start of the document
    * @returns {Promise<{written: Array, skipped: Array<{group, reason, commented}>, summarised: boolean}>}
+   *
+   * A citation by abbreviated name ("the Data report", "(Data report,
+   * Section 6.1)") keeps its text: no citation style prints the name, so a
+   * Refresh would otherwise turn "the Data report" into "the (SKB 2010)".
+   * With boldNames the names in it are made bold.
    */
   async function writeCitations(pkg, analysed, groups, options) {
     const who = { author: options.author || 'Zoterify', date: xmlDate(options.date || new Date()) };
@@ -1090,7 +1224,9 @@
       let reason = job.reason;
       if (!reason) {
         const members = job.group.refs.map((ref, i) => ({ ref, item: job.group.items[i] }));
-        const res = replaceSpan(pkg, rebuild(analysed.models[job.model], opts), job.start, job.end, members, rev, opts);
+        const names = job.group.refs.filter((ref) => ref.abbrev);
+        const how = { keep: names.length > 0, bold: options.boldNames ? names.filter((ref) => ref.at).map((ref) => ref.at) : [] };
+        const res = replaceSpan(pkg, rebuild(analysed.models[job.model], opts), job.start, job.end, members, rev, opts, how);
         if (res.ok) { written.push({ group: job.group, deleted: res.deleted, inserted: res.inserted }); continue; }
         reason = res.reason;
       }

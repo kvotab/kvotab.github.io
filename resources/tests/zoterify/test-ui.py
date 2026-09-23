@@ -377,7 +377,128 @@ async def run_checks(page):
     check('the text reads the same', all(visible_text(a) == visible_text(b) for a, b in zip(paragraphs(minidom.parseString(zipfile.ZipFile(io.BytesIO(original)).read('word/document.xml'))), paragraphs(doc_p))), True)
     check('Track Changes is not switched on', b'trackRevisions' in plain.read('word/settings.xml'), False)
     check('no people.xml without revisions', 'word/people.xml' in plain.namelist(), False)
+
+    # Last, as they analyse again and so clear the choices made above.
+    await check_names(page)
+    await check_names_from_list(page)
     check('no script errors at the end', page.errors, [])
+
+
+def field_runs(p):
+    """Each outermost field of a paragraph, from runs not deleted: its
+    instruction, its result runs as (text, names of the w:rPr children), and
+    the JSON of a Zotero citation ({} for any other field)."""
+    out, cur = [], None
+    for r in p.getElementsByTagNameNS(W, 'r'):
+        if any(local(a) == 'del' for a in ancestors(r)):
+            continue
+        for c in el_children(r):
+            if local(c) == 'fldChar':
+                typ = c.getAttributeNS(W, 'fldCharType')
+                if typ == 'begin' and cur is None:
+                    cur = {'instr': '', 'runs': [], 'phase': 'instr', 'depth': 1}
+                elif typ == 'begin':
+                    cur['depth'] += 1
+                elif typ == 'separate' and cur and cur['depth'] == 1:
+                    cur['phase'] = 'result'
+                elif typ == 'end' and cur:
+                    cur['depth'] -= 1
+                    if not cur['depth']:
+                        out.append(cur)
+                        cur = None
+            elif local(c) == 'instrText' and cur and cur['phase'] == 'instr' and cur['depth'] == 1:
+                cur['instr'] += c.firstChild.data if c.firstChild else ''
+        texts = [c for c in el_children(r) if local(c) == 't']
+        if cur and cur['phase'] == 'result' and texts:
+            props = [c for c in el_children(r) if local(c) == 'rPr']
+            cur['runs'].append((''.join(t.firstChild.data for t in texts if t.firstChild), [local(x) for x in el_children(props[0])] if props else []))
+    for f in out:
+        j = f['instr']
+        f['json'] = json.loads(j[j.index('{'):j.rindex('}') + 1]) if 'ZOTERO_ITEM' in j else {}
+    return out
+
+
+async def check_names(page):
+    """The list of abbreviated names: paragraph 19 of the fixture, with
+    "Data report: SKB R-19-01" listed, and Track Changes on again."""
+    js_set = "(() => { const b = document.getElementById('zfNames'); b.value = %s; for (const t of ['input', 'change']) b.dispatchEvent(new Event(t, { bubbles: true })); })()"
+    await page.ev(js_set % json.dumps('Data report: SKB R-19-01\nno colon here'))
+    check('the list is read as it is typed, with the line it cannot read',
+          await page.ev("[...document.querySelectorAll('#zfNamesInfo li')].map(l => l.textContent)"),
+          ['Line 2: there is no colon between the name and what it refers to.', 'Data report → report number R-19-01'])
+    await page.ev(js_set % json.dumps('Data report: SKB R-19-01'))
+    await page.ev("(() => { for (const id of ['zfTrack', 'zfKeepTracking', 'zfSummaryComment']) { const b = document.getElementById(id); b.checked = true; b.dispatchEvent(new Event('change', { bubbles: true })); } })()")
+    check('the bold option is on by default', await page.ev("document.getElementById('zfBoldNames').checked"), True)
+    await page.ev('ZFPage.analyse()')
+    rows = json.loads(await page.ev("JSON.stringify(ZFPage.getState().run.results.map((r, i) => [r.ref.label, ZFPage.statusOf(i), r.item ? r.item.key : null, ZFPage.getState().run.parsed.groups[r.ref.group].text]).filter(r => r[0] === 'Data report'))"))
+    check('the name, twice in running text and once in a parenthesis, is matched by its report number',
+          rows, [['Data report', 'matched', 'BROWN019', 'Data report'], ['Data report', 'matched', 'BROWN019', 'Data report'],
+                 ['Data report', 'matched', 'BROWN019', '(Data report, Section 3)']])
+    check('"All citations" says which were not in bold',
+          await page.ev("[...document.querySelectorAll('#zfAll tr')].filter(r => r.textContent.includes('not in bold')).length"), 2)
+    check('"Resolved" too', await page.ev("[...document.querySelectorAll('#zfLinked tr')].find(r => r.textContent.includes('Data report')).querySelector('.zf-kind').textContent"),
+          'abbreviated name · 2 of 3 not in bold')
+    await page.ev('ZFPage.save()')
+    z = zipfile.ZipFile(io.BytesIO(await saved_bytes(page)))
+    if os.environ.get('ZF_KEEP'):
+        with open(os.environ['ZF_KEEP'].replace('.docx', '-names.docx'), 'wb') as f:
+            f.write(z.fp.getvalue())
+    doc = minidom.parseString(z.read('word/document.xml'))
+    ps = paragraphs(doc)
+    fields = field_runs(ps[19])
+    check('three fields, and "the data report" in lower case left as prose',
+          [''.join(t for t, _ in f['runs']) for f in fields], ['Data report', 'Data report', '(Data report, Section 3)'])
+    check('each keeps its text: Zotero is told not to update it', [f['json']['properties'].get('dontUpdate') for f in fields], [True, True, True])
+    check('... and each cites the report numbered R-19-01, the parenthesis with its section',
+          [[(ci['uris'][0].rsplit('/', 1)[1], ci.get('locator'), ci.get('label')) for ci in f['json']['citationItems']] for f in fields],
+          [[('BROWN019', None, None)], [('BROWN019', None, None)], [('BROWN019', '3', 'section')]])
+    check('the name not in bold is made bold, w:b where the schema puts it', fields[0]['runs'], [('Data report', ['rFonts', 'b', 'lang'])])
+    check('the name in bold stays so', fields[1]['runs'], [('Data report', ['b'])])
+    check('in the parenthesis only the name is made bold', fields[2]['runs'], [('(', []), ('Data report', ['b']), (', Section 3)', [])])
+    others = [f for k, p in enumerate(ps) if k != 19 for f in field_runs(p)]
+    check('other citations are left for Zotero to format', [f for f in others if f['json'].get('properties', {}).get('dontUpdate')], [])
+    original = paragraphs(minidom.parseString(zipfile.ZipFile(os.path.join(HERE, 'fixtures', 'fixture.docx')).read('word/document.xml')))[19]
+    check('accepting or rejecting the changes gives the text as it was',
+          [visible_text(ps[19]), visible_text(ps[19], reject_author='Zoterify')], [visible_text(original)] * 2)
+    summary = [line for lines in comment_texts(z.read('word/comments.xml'), 'Zoterify').values() for line in lines if line.startswith('By abbreviated name')]
+    check('the summary counts them, and the names that were not in bold',
+          summary, ['By abbreviated name: 3 citations, each keeping the name as its text, which Zotero leaves as it is; 2 names were not in bold and now are.'])
+
+
+async def check_names_from_list(page):
+    """A document with its own "References with abbreviated names": the
+    names not yet in the list are offered, and added with their report
+    number or, without one, their title and year."""
+    texts = ['The Data report and the Climate report agree (SKB 2011).', 'References', 'References with abbreviated names',
+             'Data report, 2019. Groundwater flow at Forsmark. SKB R-19-01, Svensk Kärnbränslehantering AB.',
+             'Climate report, 2014. Hydrogeological modelling of SFR. Svensk Kärnbränslehantering AB.',
+             'Other references', 'SKB, 2011. A report of that year. Svensk Kärnbränslehantering AB.']
+    body = ''.join(f'<w:p><w:r><w:t xml:space="preserve">{t}</w:t></w:r></w:p>' for t in texts)
+    parts = {
+        '[Content_Types].xml': '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+                               '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>'
+                               '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>',
+        '_rels/.rels': '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                       '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>',
+        'word/document.xml': f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n<w:document xmlns:w="{W}"><w:body>{body}<w:sectPr/></w:body></w:document>',
+    }
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:
+        for name, text in parts.items():
+            z.writestr(name, text)
+    b64 = base64.b64encode(buf.getvalue()).decode()
+    await page.ev(f"ZFPage.addFiles([new File([Uint8Array.from(atob('{b64}'), (c) => c.charCodeAt(0))], 'names.docx')])")
+    await page.ev('ZFPage.analyse()')
+    check('the names of the reference list not yet listed are offered', await page.ev("document.getElementById('zfNamesAdd').textContent"),
+          'The reference list has 1 abbreviated name not in this list: Climate report. Add it')
+    await page.ev("document.querySelector('#zfNamesAdd button').click()")
+    check('... and added, by its title and year for want of a report number',
+          [await page.ev("document.getElementById('zfNames').value"), await page.ev("document.getElementById('zfNamesAdd').hidden")],
+          ['Data report: SKB R-19-01\nClimate report: Hydrogeological modelling of SFR 2014\n', True])
+    await page.ev('ZFPage.analyse()')
+    rows = json.loads(await page.ev("JSON.stringify(ZFPage.getState().run.results.map((r, i) => [r.ref.label, ZFPage.statusOf(i), r.item ? r.item.key : null]))"))
+    check('both names are then citations, the second found by its title words',
+          [r for r in rows if r[0] in ('Data report', 'Climate report')], [['Data report', 'matched', 'BROWN019'], ['Climate report', 'matched', 'OHMAN014']])
 
 
 async def check_stored_settings(page):
@@ -389,13 +510,15 @@ async def check_stored_settings(page):
     tid = (await page.call('Target.createTarget', {'url': 'about:blank'}))['result']['targetId']
     page.sid = (await page.call('Target.attachToTarget', {'targetId': tid, 'flatten': True}))['result']['sessionId']
     await page.call('Runtime.enable', session=page.sid)
-    read = "JSON.stringify([document.getElementById('zfComment').checked, document.getElementById('zfSummaryComment').checked, document.getElementById('zfAuthor').value])"
+    read = ("JSON.stringify(['zfComment', 'zfSummaryComment', 'zfAuthor', 'zfNames', 'zfBoldNames']"
+            ".map(id => { const e = document.getElementById(id); return e.type === 'checkbox' ? e.checked : e.value; }))")
     try:
         for stored, want, label in [
-            ({'author': 'Old Author', 'comment': False, 'summary': False}, [True, True, 'Old Author'],
+            ({'author': 'Old Author', 'comment': False, 'summary': False}, [True, True, 'Old Author', '', True],
              'settings stored before: the comment options come on, the author is kept'),
-            ({'v': 2, 'author': 'New Author', 'comment': False, 'summary': True}, [False, True, 'New Author'],
-             'settings stored since: the choice is kept'),
+            ({'v': 2, 'author': 'New Author', 'comment': False, 'summary': True, 'names': 'Data report: SKB R-19-01', 'boldNames': False},
+             [False, True, 'New Author', 'Data report: SKB R-19-01', False],
+             'settings stored since: the choices are kept, the list of abbreviated names with them'),
         ]:
             await page.call('Page.navigate', {'url': URL}, session=page.sid)
             await asyncio.sleep(1.5)

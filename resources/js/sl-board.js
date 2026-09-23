@@ -441,22 +441,19 @@
       ${n > 1 ? `
       <div class="sl-track" id="sl-track" aria-label="Where the trains are along the line">
         <svg class="sl-track-svg" id="sl-track-svg" viewBox="0 0 1000 260" preserveAspectRatio="none" role="img"></svg>
-        <div class="sl-legend" id="sl-legend"></div>
-        <div class="sl-track-note" id="sl-track-note"></div>
+        <p class="sl-sr" id="sl-track-note"></p>
       </div>` : ''}
       <div class="sl-deviations" id="sl-deviations" hidden></div>
+      <p class="sl-note" id="sl-note"></p>
       <div class="sl-foot">
-        <button type="button" class="sl-refresh" id="sl-refresh">Refresh now</button>
-        <span class="sl-note" id="sl-note"></span>
-      </div>
-      <p class="sl-attribution">
-        Real-time data: this page is based on information retrieved from
-        <a href="https://www.trafiklab.se/" target="_blank" rel="noopener noreferrer">Trafiklab.se</a>
-        (SL Transport API, CC&nbsp;BY). Times are SL's own forecasts and can change.
-        Train positions come from
-        <a href="https://www.trafikverket.se/" target="_blank" rel="noopener noreferrer">Trafikverket</a>
-        (TrainPosition).
-      </p>`;
+        ${n > 1 ? '<div class="sl-legend" id="sl-legend"></div>' : ''}
+        <p class="sl-attribution">
+          Based on information retrieved from
+          <a href="https://www.trafiklab.se/" target="_blank" rel="noopener noreferrer">Trafiklab.se</a>
+          (CC&nbsp;BY) and
+          <a href="https://www.trafikverket.se/" target="_blank" rel="noopener noreferrer">Trafikverket</a>.
+        </p>
+      </div>`;
 
     const $ = (id) => root.querySelector('#' + id);
 
@@ -712,17 +709,12 @@
          still EXPECTED is the tell. */
       const first = upcoming[0];
       const skew = first && first.state === 'EXPECTED' ? minutesUntil(first.expected, now) : 0;
+      /* Only ever a warning. It used to carry "Next 3 departures · line 40 ·
+         data every 10 s" the rest of the time, which the board itself already
+         says; empty, the line is not drawn at all. */
       $('sl-note').textContent = skew < -2
         ? 'Your device clock seems to be ahead of Swedish time; countdowns may be off.'
-        /* The line was hardcoded as 40, which is what `keep` happens to leave
-           on both boards today. Taking it from the departures actually shown
-           means a change to `keep` cannot turn this line into a lie. */
-        : (() => {
-            const ls = [...new Set(upcoming.map((d) => d.line).filter(Boolean))]
-              .sort((a, b) => a.localeCompare(b, 'sv', { numeric: true }));
-            const which = ls.length === 1 ? `line ${ls[0]}` : ls.length ? `lines ${ls.join(', ')}` : 'pendeltåg';
-            return `Next ${upcoming.length} departure${upcoming.length === 1 ? '' : 's'} · ${which} · data every ${Math.round(backoffMs / 1000)} s`;
-          })();
+        : '';
     }
 
     /*
@@ -899,12 +891,11 @@
                the edge of the drawing. */
             const half = halfName(s.name);
             const anchor = x - half < 6 ? 'start' : x + half > VB_W - 6 ? 'end' : 'middle';
-            /* One heavy ringed stop straddling both bands: it serves both
-               directions, which is what their interchange marker says. Drawn
-               Sized so it is about twice as tall as it is wide, which is
-               their double-stop proportion; the first attempt was four times
-               and came out spindly, and a circle floating in the gap between
-               the bands read as a hole rather than a node. */
+            /* One ringed stop straddling both rails: it serves both
+               directions. About twice as tall as it is wide; the first
+               attempt was four times and came out spindly, and a circle
+               floating in the gap between the rails read as a hole rather
+               than a node. */
             const r = home ? 19 : 16;
             return `<g class="sl-station${home ? ' sl-station-home' : ''}">` +
               `<rect class="sl-stop" x="${(x - r * wide).toFixed(1)}" y="${RAIL_Y - laneSpan - r}" ` +
@@ -1261,18 +1252,17 @@
       for (const g of [...trains.children]) if (!seenIds.has(g.getAttribute('data-key'))) g.remove();
 
 
-      /* A train with no line contributes no key of its own; null would throw
-         out of the comparator, and there is no line to name. */
-      const lines = [...new Set(placed.map((p) => p.line).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'sv', { numeric: true }));
+      /* The rings, and nothing the drawing already says. There used to be a
+         key per line as well, but every chip has its line printed on it, and a
+         "live GPS" key whose swatch could not be told from "on time" - that
+         difference is the tilde on an estimated speed. On time and late are
+         the code a reader is always meeting; the rarer states are named only
+         while one is on the line. */
       $('sl-legend').innerHTML =
-        lines.map((l) => `<span class="sl-key"><i class="sl-key-line sl-line-${/^\d+$/.test(l) ? l : 'other'}">${esc(l)}</i> line ${esc(l)}</span>`).join('') +
         `<span class="sl-key"><i class="sl-key-ring sl-ontime"></i> on time</span>` +
-        `<span class="sl-key"><i class="sl-key-ring sl-late"></i> late</span>` +
-        `<span class="sl-key"><i class="sl-key-ring sl-cancel"></i> cancelled</span>`
-        /* Only when one is drawn: the hollow grey chip is the one state a
-           reader meets without warning, and it needs naming. */
-        + (placed.some((p) => p.approaching !== null) ? `<span class="sl-key"><i class="sl-key-ring sl-key-approaching"></i> not here yet</span>` : '')
-        + (placed.some((p) => p.live) ? `<span class="sl-key"><i class="sl-key-ring sl-key-live"></i> live GPS</span>` : '');
+        `<span class="sl-key"><i class="sl-key-ring sl-late"></i> late</span>`
+        + (placed.some((p) => p.punctual === 'cancel') ? `<span class="sl-key"><i class="sl-key-ring sl-cancel"></i> cancelled</span>` : '')
+        + (placed.some((p) => p.approaching !== null) ? `<span class="sl-key"><i class="sl-key-ring sl-key-approaching"></i> not here yet</span>` : '');
       const a = placed.filter((p) => p.forward && p.approaching === null).length;
       const b = placed.filter((p) => !p.forward && p.approaching === null).length;
       const coming = placed.length - a - b;
@@ -1472,15 +1462,9 @@
     global.addEventListener('online', onWake);
     global.addEventListener('pageshow', onWake);
     global.addEventListener('focus', onWake);
-    /* An explicit click is proof somebody is looking. Resuming already
-       fetches, and asking again in the same instant would spend exactly the
-       quota this section exists to save. */
-    $('sl-refresh').addEventListener('click', () => {
-      lastActivity = Date.now();
-      const wasStopped = tickTimer === null;
-      sync();
-      if (!wasStopped && tickTimer !== null) { refresh(); refreshTrains(); }
-    });
+    /* There is no refresh button. The board fetches every ten seconds on its
+       own, and a paused one resumes - fetching at once - on any click, key or
+       scroll, which the activity listeners above already catch. */
 
     sync();
     const handle = {

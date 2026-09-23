@@ -5,8 +5,8 @@ citations, as tracked changes in the document itself.
 
 | file | what it checks | needs |
 | --- | --- | --- |
-| `test-parse.js` | the citation finder on 120 paragraphs written out by hand -- parenthetical, narrative, numbered, nested and bare citations, years and locators, the words kept around references, what is not a citation, and SKB's forms: report numbers, designations ("SSMFS 2008:37"), initials after a name -- then reference-list entries with their report numbers, abbreviated names, headings, and whole documents with SKB's two-part list | Node |
-| `test-match.js` | Jaro–Winkler against Winkler's published values; the matcher on a small library: folding, co-authors and "et al.", acronyms, year tolerance, the reference list settling a choice, numbered and undated references, the three strictness levels; on a second, SKB library: report numbers and designations in items' numbers and titles, a number no item has, another regulation of the same year, an entry's number settling "SKB 2011", abbreviated names, initials | Node |
+| `test-parse.js` | the citation finder on 120 paragraphs written out by hand -- parenthetical, narrative, numbered, nested and bare citations, years and locators, the words kept around references, what is not a citation, and SKB's forms: report numbers, designations ("SSMFS 2008:37"), initials after a name -- then reference-list entries with their report numbers, abbreviated names, headings, and whole documents with SKB's two-part list; the user's list of abbreviated names -- how each line is read, and a listed name found in running text in bold or written as listed, not in a heading, a field's result or another citation, nor alone on its line | Node |
+| `test-match.js` | Jaro–Winkler against Winkler's published values; the matcher on a small library: folding, co-authors and "et al.", acronyms, year tolerance, the reference list settling a choice, numbered and undated references, the three strictness levels; on a second, SKB library: report numbers and designations in items' numbers and titles, a number no item has, another regulation of the same year, an entry's number settling "SKB 2011", abbreviated names, initials; names from the user's list by report number (SKB's alone when the list says so), designation, item key or URI, author and year, or title words | Node |
 | `test-zotero.js` | reading `zotero.sqlite`, the `-wal` replay (clean, torn, foreign, empty), URIs, CSL-JSON, collections and scopes | Node, `sql.js` |
 | `test-ui.py` | the page in Chrome: loads the fixtures, analyses, decides, saves, then takes the saved `.docx` apart (see below) | Python `websockets`, Chrome |
 
@@ -52,6 +52,15 @@ non-zero on a failure. `build-fixtures.py` rebuilds `fixtures/`.
   `people.xml` lists the author; the parts not edited are byte for byte the
   parts given. Saving without Track Changes writes the same fields with no
   revisions of its own.
+- With "Data report: SKB R-19-01" listed, the name becomes a citation where
+  it stands in running text -- not in bold but written as listed, and in
+  bold -- and in "(Data report, Section 3)", while "the data report" in lower
+  case stays prose. Each field keeps its text, run by run, with
+  `dontUpdate` so that Zotero leaves it; the names are made bold, `w:b`
+  going where the schema puts it among the run's properties; the summary
+  counts them. A document's own "References with abbreviated names" offers
+  the names not yet listed, and adds one without a report number by its
+  title and year.
 
 ## Checked against real material, not committed
 

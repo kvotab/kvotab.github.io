@@ -79,22 +79,22 @@ function rtmPatternBlocks(model) {
  * round-off has somewhere to show up rather than being quietly erased.
  */
 function rtmHoldFixed(model, states, n, width) {
-  if (!model.fixed.some(Boolean)) return 0;
+  // Held state by state: `fixed` on a species line holds it in every cell,
+  // "fixed" in <INITIAL> in the cells that line names.
+  const held = model.fixedAt || null;
+  if (held ? !held.some(Boolean) : !model.fixed.some(Boolean)) return 0;
   const ns = model.speciesNames.length;
   const y0 = model.initialState();
   let worst = 0;
-  for (let s = 0; s < ns; s++) {
-    if (!model.fixed[s]) continue;
-    for (let c = 0; c < model.cells; c++) {
-      const k = c * ns + s;
-      const v = y0[k];
-      const scale = Math.max(Math.abs(v), 1e-300);
-      for (let i = 0; i < n; i++) {
-        const at = i * width + k;
-        const d = Math.abs(states[at] - v) / scale;
-        if (d > worst) worst = d;
-        states[at] = v;
-      }
+  for (let k = 0; k < ns * model.cells; k++) {
+    if (held ? !held[k] : !model.fixed[k % ns]) continue;
+    const v = y0[k];
+    const scale = Math.max(Math.abs(v), 1e-300);
+    for (let i = 0; i < n; i++) {
+      const at = i * width + k;
+      const d = Math.abs(states[at] - v) / scale;
+      if (d > worst) worst = d;
+      states[at] = v;
     }
   }
   return worst;
@@ -123,9 +123,15 @@ function rtmSummary(model) {
     centres: Array.from(model.grid.centres),
     width: Array.from(model.grid.width),
     length: model.grid.L,
+    // What the panel says about the layout: the kind and its one number, and
+    // a surface layer's thickness when the first cell is pinned.
+    grid: { kind: model.settings.GRID, ratio: model.settings.GRID_RATIO,
+      power: model.settings.GRID_POWER, surface: model.grid.surface || 0 },
     transport: model.transport,
     mobile: model.mobile,
     fixed: model.fixed,
+    held: model.held || [],
+    tables: model.tables || [],
     nreactions: model.nreactions,
     nchannels: model.nchannels,
     nequilibria: model.nequilibria,

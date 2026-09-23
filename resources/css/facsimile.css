@@ -676,6 +676,31 @@ table.fac-table tr:nth-child(even) td { background: var(--table-stripe); }
 .fac-inline-err { color: var(--color-kvot-accent); }
 .fac-kbd { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; background: var(--code-bg); padding: 1px 4px; border-radius: 3px; }
 
+/* ---- a file dragged over the page ------------------------------------------ */
+/*
+  A sibling of .fac in the site's .content box, which is positioned and does
+  not scroll, so it covers what is on screen in either layout. No pointer
+  events: the drop has to land on the page underneath, where the page's
+  document-wide handler reads it.
+*/
+.fac-drop {
+  position: absolute;
+  inset: 12px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed var(--accent-line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-surface) 85%, transparent);
+  color: var(--text-primary);
+  text-align: center;
+  pointer-events: none;
+}
+.fac-drop[hidden] { display: none; }
+.fac-drop b { display: block; font: 700 1.1rem RawengulkSans, sans-serif; }
+.fac-drop span { display: block; margin-top: 6px; font: 13px verdana, sans-serif; color: var(--text-secondary); }
+
 /* narrow screens: stack the columns */
 @media (max-width: 860px) {
   .fac { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); overflow-y: auto; }

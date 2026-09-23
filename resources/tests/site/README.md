@@ -531,6 +531,54 @@ than failing. It now advances each journey down the line and includes one
 service that has already departed, so there is a train on the track and not
 only trains yet to leave.
 
+### Quieter below the list (2026-09-23)
+
+The Trafiklab idiom was taken back to a plain line diagram on request: the
+area under the departure list read as cluttered. The shapes and every position
+are unchanged, so nothing above needs re-measuring. What changed:
+
+- **Rails, not bands.** One neutral colour for both directions at 6px instead
+  of lilac and yellow at 20 units. Stops have a 2px grey ring instead of a
+  heavy near-black one; the home station keeps a darker ring. Line 40's beige
+  and the green or red punctuality rings are now the only strong colour.
+- **The punctuality rings glow in their own colour.** Each has two
+  `drop-shadow`s: 2px near-opaque, which lights the ring, and 7px at .7, for
+  the halo. Trains not here yet stay unlit. A CSS filter follows the chip's
+  rounded outline and stays round on a phone despite the stretch. A late
+  train's halo also breathes over 3 s (`sl-late-glow`, off under reduced
+  motion). `render()` rewrites every chip's `class` each second, and that
+  keeps the same `Animation` object running rather than restarting the pulse.
+  Checked through `getAnimations()`.
+- **Chip numbers are readable in the dark theme.** Line 40's number used
+  `--tl-ink`, which is near-white in the dark theme, on beige that stays light:
+  1.5:1. It now uses `--on-bright`, as the list's badges do (8:1). The dark
+  greys for 41 and 43 and the waiting-40 wash were each stepped down to clear
+  4.5:1, keeping 41 and 43 as far apart from each other as before.
+- **Strokes are `vector-effect: non-scaling-stroke`**, so their widths are
+  screen pixels. The same stretch that condenses the text used to make a ring
+  twice as thick on top as on its sides.
+- **The legend only explains the rings.** The per-line keys are gone, since
+  every chip already has its line number printed on it. "Live GPS" is gone too:
+  its swatch looked exactly like "on time", and a tilde on the speed already
+  marks an estimate. "Cancelled" and "not here yet" appear only while one is
+  drawn.
+- **The sentence counting the trains is for screen readers only** (`.sl-sr`).
+  The hiding recipe carries no `margin: -1px`, because the phone check "nothing
+  hangs off the left" caught that pixel.
+- **No refresh button, no status line.** The board fetches every 10 s by
+  itself, and a paused board resumes and fetches on any click, key or scroll.
+  `#sl-note` now appears only for the device-clock warning.
+- **One footer row:** the legend on the left, the credit on the right, wrapping
+  under each other on a phone. The credit keeps Trafiklab's required wording,
+  "based on information retrieved from Trafiklab.se".
+
+A harness note that cost a rerun: two Claude sessions shared the headless
+Chrome on 9222. A tab the other session opened came to the front and hid this
+one, so the board paused itself ("Paused - not in view") and seven checks failed
+for reasons unrelated to the code. If failures here are all about pausing,
+check `http://127.0.0.1:9222/json/list` for someone else's tabs, or run on a
+private port.
+
 ### Junctions, and trains that take them
 
 A line that leaves this one, or joins it, is a straight stub running out from

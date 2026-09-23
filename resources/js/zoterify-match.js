@@ -23,7 +23,9 @@
    TR-11-01"). A citation by number that no item carries is only offered
    items, never matched: "SSMFS 2008:37" is not "SSMFS 2008:21", nor any
    other SKB report of 2011 "TR-11-01". An abbreviated name ("Data report")
-   has no author; its entry's title words find it.
+   has no author; its entry's title words find it. A name from the user's
+   list is found by what the list gives for it alone: a report number,
+   designation, item key, author and year, or words.
 
    From these a reference is
      matched    one item fits the name and the year, clearly better than any
@@ -170,8 +172,11 @@
     const byAcronym = new Map();
     const byReport = new Map();
     const byDesignation = new Map();
+    // Report numbers of any organisation: a name's list entry says whose.
+    const byAnyReport = new Map();
     const add = (map, key, p) => { if (!map.has(key)) map.set(key, []); map.get(key).push(p); };
     for (const p of prepared) {
+      for (const k of reportsIn((p.item.csl && p.item.csl.number) || '')) add(byAnyReport, k, p);
       for (const k of p.reports) add(byReport, k, p);
       for (const k of p.designations) add(byDesignation, k, p);
       if (!p.names.length || !p.names[0].folded) continue;
@@ -338,7 +343,36 @@
       return { ref, status: 'none', item: null, confidence: 0, candidates: [] };
     }
 
+    /** A name from the user's list: the items that carry the report number
+        or designation it is given, have the item key, fit the author and
+        year, or contain all the words. */
+    function byTarget(ref) {
+      const t = ref.target;
+      if (t.kind === 'author') {
+        const as = { authors: t.authors, aliases: t.aliases, initials: t.initials, etAl: t.etAl, year: t.year, letter: t.letter, yearKey: t.yearKey };
+        return Object.assign(byName(Object.assign({}, ref, as, { entry: null })), { ref });
+      }
+      const items = (ps) => (ps || []).map((p) => p.item).sort((a, b) => a.itemId - b.itemId);
+      let hits = [];
+      let by = t.kind;
+      if (t.kind === 'report') hits = items(byReport.get(t.report) || (t.skb ? null : byAnyReport.get(t.report)));
+      else if (t.kind === 'designation') hits = items(byDesignation.get(designationKey(t.designation)));
+      else if (t.kind === 'key') hits = library.filter((it) => it.key === t.key && (!t.library || it.uri.includes(`/${t.library}/items/`)));
+      if (!hits.length && (t.kind === 'key' || t.kind === 'words')) {
+        hits = searchLibrary(library, t.text, 7);
+        by = 'words';
+      }
+      const candidates = hits.slice(0, 6).map((item) => ({ item, confidence: 1, entryConfirmed: false, by }));
+      if (hits.length) {
+        return { ref, status: hits.length === 1 ? 'matched' : 'ambiguous', item: hits[0], confidence: 1, entryConfirmed: false, by, candidates };
+      }
+      const what = { report: `the report number ${t.report}`, designation: `the designation ${t.designation}`, key: `the key ${t.key}` }[t.kind]
+        || `all the words “${t.text}”`;
+      return { ref, status: 'none', item: null, confidence: 0, candidates: [], note: `No item in the library has ${what}, which your list gives for “${ref.abbrev}”.` };
+    }
+
     function match(ref) {
+      if (ref.target) return byTarget(ref);
       const numbered = byNumber(ref);
       if (numbered) return numbered;
       const e = ref.entry || {};

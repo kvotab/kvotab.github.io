@@ -31,7 +31,10 @@
  *
  * On a log x-axis a segment starting at or below zero cannot be drawn, so it
  * is clamped to the smallest positive x in the data and dropped if that leaves
- * it empty.
+ * it empty. Left at zero, Plotly still draws it -- from far past the left edge
+ * -- and autorange follows it there: clicking "log" on a chart drawn linear
+ * put the axis at 1e-9 to 1e5. So a change of x scale has to redraw these as
+ * well (backgroundShapesForXScale), not just flip the axis type.
  *
  * The minimum is accumulated directly rather than collected into an array and
  * spread into Math.min, which throws RangeError once the trace set exceeds
@@ -47,6 +50,31 @@
  * @returns {Array} Plotly shape objects, ready to concat onto layout.shapes
  */
 function backgroundRectShapes(segments, traces, xScale) {
+  return backgroundSegmentsOnScale(segments, traces, xScale).map(seg => ({
+    type: 'rect', xref: 'x', yref: 'paper', name: BACKGROUND_SHAPE_NAME,
+    x0: seg.x0, x1: seg.x1, y0: 0, y1: 1,
+    line: { width: 0 }, fillcolor: seg.color, layer: 'below'
+  }));
+}
+
+/*
+  How the overlay's rectangles are told apart from any other shape, by the
+  tooltip and by a change of x scale -- the plot div outlives the chart drawn
+  in it, so "this div once had an overlay" says nothing about the chart now.
+*/
+const BACKGROUND_SHAPE_NAME = 'kvot-background-overlay';
+
+/**
+ * Where the overlay segments sit on an x-axis of this scale: the clamping
+ * described above, and nothing else. Both the rectangles and the tooltip over
+ * them come from here, so what is coloured and what is named always agree.
+ *
+ * @param {Array} segments - {x0, x1, ...} in data coordinates
+ * @param {Array} traces - the traces being plotted, for the log-axis minimum
+ * @param {string} xScale - 'log' or 'linear'
+ * @returns {Array} the segments, clamped and filtered for that scale
+ */
+function backgroundSegmentsOnScale(segments, traces, xScale) {
   let shapeSegments = segments.slice();
   if (xScale === 'log') {
     let minPositiveX = null;
@@ -75,11 +103,7 @@ function backgroundRectShapes(segments, traces, xScale) {
         .filter(Boolean);
     }
   }
-  return shapeSegments.map(seg => ({
-    type: 'rect', xref: 'x', yref: 'paper',
-    x0: seg.x0, x1: seg.x1, y0: 0, y1: 1,
-    line: { width: 0 }, fillcolor: seg.color, layer: 'below'
-  }));
+  return shapeSegments;
 }
 
 

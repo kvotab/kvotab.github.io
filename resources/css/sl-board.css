@@ -132,20 +132,24 @@
 
 /* ── Where the trains are ───────────────────────────────────────────────── */
 /*
-  The diagram in Trafiklab's own idiom. Their landing page draws a network as
-  thick pastel bands with heavy ringed stops sitting on them, flat colour
-  chips for labels, and everything inked in near-black. Taken from their
-  stylesheet rather than guessed at: bands #F4BFFF and #FFF199 at stroke-width
-  20 in a 60-tall box, stops 48px white with a 12px #232323 ring, a stop that
-  serves two lines drawn as one tall marker across both, and motion eased
-  rather than linear. The proportions below are that grammar scaled to this
-  232-unit viewBox.
+  A plain line diagram: one thin neutral rail per direction, light ringed
+  stops, and flat chips for the trains. It started in Trafiklab's own idiom -
+  thick lilac and yellow bands, heavy near-black rings - which read well on
+  their landing page and loudly under a departure list, where the bands and
+  rings outweighed the trains riding them. Now the only strong colour below
+  the list is line 40's beige and the green or red of a ring.
+
+  Every stroke is `vector-effect: non-scaling-stroke`, so its width is in
+  screen pixels. The drawing is stretched by preserveAspectRatio="none", about
+  0.39 across against 0.75 down on a phone, and a stroke given in viewBox
+  units came out twice as thick on the top of a ring as on its sides.
 */
 :root {
   --tl-ink: #232323;
-  --tl-band-a: #f4bfff;   /* lilac, the lane running to the far end */
-  --tl-band-b: #fff199;   /* yellow, the lane coming back */
+  --tl-band-a: #e2d8cc;   /* the rail, one quiet colour for both directions */
+  --tl-band-b: #e2d8cc;
   --tl-stop: #ffffff;
+  --tl-stop-ring: #9a8b7c;
   --tl-chip: #cec6ba;   /* an unnamed train: clear of the stop's white */
   /*
     The other lines are context, not subject. They are on the diagram to show
@@ -162,70 +166,85 @@
   --tl-wait-40: #fbe6d1;
 }
 [data-theme="dark"] {
-  /* Those pastels are built for a white page; at full strength on a dark one
-     they glare. Taken down in value, kept apart in hue. */
   --tl-ink: #f0e9e0;
-  --tl-band-a: #6d4f7a;
-  --tl-band-b: #7d7040;
+  --tl-band-a: #463b31;
+  --tl-band-b: #463b31;
   --tl-stop: #1c1611;
+  --tl-stop-ring: #9f9182;
   --tl-chip: #4d4339;
-  --tl-quiet-41: #7c7266;
-  --tl-quiet-43: #635a50;
-  --tl-wait-40: #5d4631;
+  /* Stepped down from #7c7266 and #635a50: the light chip text on a 41 was
+     3.9:1, under the 4.5 small type needs. Now 4.7:1 and 6.9:1, and still
+     as far apart from each other as they were. */
+  --tl-quiet-41: #6f665b;
+  --tl-quiet-43: #564d44;
+  --tl-wait-40: #4c3826;   /* #5d4631 left its number at 3.8:1; now 4.8 */
 }
 
 /* No side gutter: the drawing runs to the panel's own edge, so a line that
    carries on past the last station carries on out of the picture instead of
-   stopping 27px short of it. The gutter the legend and the note still want is
-   given to them directly. */
-.sl-track { margin: 4px 0 10px; padding: 10px 0 4px; border-top: 1px solid var(--border-color); }
-.sl-legend, .sl-track-note { padding: 0 20px; }
+   stopping 27px short of it. */
+.sl-track { margin: 4px 0 0; padding: 10px 0 0; border-top: 1px solid var(--border-color); }
 .sl-track-svg { display: block; width: 100%; height: 214px; overflow: visible; font-family: inherit; }
-/* The lane a train runs in is the line it rides on. */
-.sl-band { stroke-width: 20; stroke-linecap: butt; }
+.sl-band, .sl-branch, .sl-stop, .sl-train-body { vector-effect: non-scaling-stroke; }
+.sl-band { stroke-width: 6; stroke-linecap: butt; }
 .sl-band-a { stroke: var(--tl-band-a); }
 .sl-band-b { stroke: var(--tl-band-b); }
-.sl-lane-label { fill: var(--tl-ink); font-size: 13px; font-weight: 750; letter-spacing: .04em; }
-/* A line leaving this one, drawn as thick as the band it leaves. */
-/* Drawn like the band it leaves: same weight, so it reads as a line rather
-   than an annotation. Rounded only at the far end - the near end is under the
-   stop marker. */
-.sl-branch { fill: none; stroke-width: 20; stroke-linecap: round; }
+.sl-lane-label { fill: var(--text-muted); font-size: 12px; }
+/* A line leaving this one, drawn as thick as the rail it leaves, so it reads
+   as a line rather than an annotation. Rounded only at the far end - the near
+   end is under the stop marker. */
+.sl-branch { fill: none; stroke-width: 6; stroke-linecap: round; }
 .sl-branch-41 { stroke: var(--tl-quiet-41); }
 .sl-branch-43 { stroke: var(--tl-quiet-43); }
-.sl-branch-label { fill: var(--tl-ink); font-size: 13px; font-weight: 750; }
-/* One marker across both bands: the stop serves both directions. */
-.sl-stop { fill: var(--tl-stop); stroke: var(--tl-ink); stroke-width: 5.5; }
-.sl-station-home .sl-stop { stroke-width: 7; }
-/* SVG text takes no background, so the white plate behind their station names
-   is drawn as a halo: stroke first, fill over it. */
-.sl-station text { fill: var(--tl-ink); font-size: 15px; font-weight: 700;
-  paint-order: stroke fill; stroke: var(--tl-stop); stroke-width: 5; stroke-linejoin: round; }
-.sl-station-home text { font-weight: 800; }
+.sl-branch-label { fill: var(--text-muted); font-size: 12px; }
+/* One marker across both rails: the stop serves both directions. */
+.sl-stop { fill: var(--tl-stop); stroke: var(--tl-stop-ring); stroke-width: 2; }
+.sl-station-home .sl-stop { stroke: var(--text-primary); stroke-width: 2.5; }
+/* SVG text takes no background, so where a name crosses a branch it is kept
+   legible by a halo in the panel's own colour: stroke first, fill over it. */
+.sl-station text { fill: var(--text-secondary); font-size: 14px;
+  paint-order: stroke fill; stroke: var(--bg-secondary); stroke-width: 5; stroke-linejoin: round; }
+.sl-station-home text { fill: var(--text-primary); font-weight: 700; }
 
-/* A train: its line's colour inside, its punctuality as the ring, a chevron
-   for the way it is going. The group slides over one second between ticks;
-   the data behind it moves in whole minutes, so no polling rate would
-   make it smoother than this. */
-/* Eased, not linear: their vehicle marker glides with ease-in-out. */
+/* A train: its line's colour inside, its punctuality as the ring. The group
+   slides over one second between ticks; the data behind it moves in whole
+   minutes, so no polling rate would make it smoother than this. */
 .sl-train { transition: transform 1s ease-in-out; }
-.sl-train-body { stroke-width: 4; }
-.sl-train-line { font-size: 13px; font-weight: 800; }
-.sl-train-speed { fill: var(--tl-ink); font-size: 13px; font-weight: 750; }
-/* Flat fills, ink lettering, ink chevrons - their chips carry no gradient and
-   no coloured type. Line 40 keeps the site's own beige so the board still
-   reads as part of kvotab.se. */
-.sl-line-40 .sl-train-body { fill: var(--color-kvot-bright); } .sl-line-40 .sl-train-line { fill: var(--tl-ink); }
+.sl-train-body { stroke-width: 2; }
+.sl-train-line { font-size: 12px; font-weight: 700; }
+.sl-train-speed { fill: var(--text-muted); font-size: 12px; }
+/* Line 40 keeps the site's own beige so the board still reads as part of
+   kvotab.se. The beige stays light in both themes, so its number is always
+   dark: --on-bright, as on the badges in the list. --tl-ink turns near-white
+   in the dark theme and read at 1.5:1 on it. */
+.sl-line-40 .sl-train-body { fill: var(--color-kvot-bright); } .sl-line-40 .sl-train-line { fill: var(--on-bright); }
 /* Grey, and deliberately dull: these are the trains around the one the reader
-   came for. They still need to be told apart from the band they ride and from
+   came for. They still need to be told apart from the rail they ride and from
    each other, which two steps of the same warm grey do. */
 .sl-line-41 .sl-train-body { fill: var(--tl-quiet-41); } .sl-line-41 .sl-train-line { fill: var(--tl-ink); }
 .sl-line-43 .sl-train-body { fill: var(--tl-quiet-43); } .sl-line-43 .sl-train-line { fill: var(--tl-ink); }
 .sl-line-other .sl-train-body { fill: var(--tl-chip); } .sl-line-other .sl-train-line { fill: var(--tl-ink); }
-.sl-ontime .sl-train-body { stroke: #3f8b55; }
-.sl-late .sl-train-body { stroke: #d84a43; stroke-width: 4; }
-.sl-late .sl-train-speed { fill: #d84a43; font-weight: 750; }
-.sl-early .sl-train-body { stroke: #c47c13; }
+/* The ring glows in its own colour: punctuality reads at a glance without the
+   ring having to be heavy. Two shadows - a tight bright one that makes the
+   ring itself luminous and a wide faint one for the halo. drop-shadow follows
+   the chip's outline, fill and all, so the glow hugs the rounded shape rather
+   than a box around it. */
+.sl-ontime .sl-train-body { stroke: #3f8b55;
+  filter: drop-shadow(0 0 2px rgba(63, 139, 85, .95)) drop-shadow(0 0 7px rgba(63, 139, 85, .7)); }
+.sl-late .sl-train-body { stroke: #d84a43;
+  filter: drop-shadow(0 0 2px rgba(216, 74, 67, .95)) drop-shadow(0 0 7px rgba(216, 74, 67, .7));
+  animation: sl-late-glow 3s ease-in-out infinite; }
+/* A late train breathes: its halo swells and settles over three seconds,
+   slower than the live dot's 2.4 so the two do not beat against each other.
+   The low point is the steady glow every other ring has, so a late train
+   never looks dimmer than an on-time one. */
+@keyframes sl-late-glow {
+  0%, 100% { filter: drop-shadow(0 0 2px rgba(216, 74, 67, .95)) drop-shadow(0 0 7px rgba(216, 74, 67, .7)); }
+  50% { filter: drop-shadow(0 0 3px rgba(216, 74, 67, 1)) drop-shadow(0 0 14px rgba(216, 74, 67, .95)); }
+}
+.sl-late .sl-train-speed { fill: #d84a43; font-weight: 600; }
+.sl-early .sl-train-body { stroke: #c47c13;
+  filter: drop-shadow(0 0 2px rgba(196, 124, 19, .95)) drop-shadow(0 0 7px rgba(196, 124, 19, .7)); }
 .sl-unknown .sl-train-body { stroke: var(--border-color); }
 .sl-cancel { opacity: .35; }
 .sl-cancel .sl-train-body { stroke: #d84a43; stroke-dasharray: 4 3; }
@@ -235,10 +254,9 @@
    already the one with no speed printed under it, so the dash is gone and a
    dashed outline now means only "not a train running normally": hollow grey
    for one that has not arrived, faded red for one that is cancelled. */
-.sl-train-live .sl-train-body { stroke-width: 4; filter: drop-shadow(0 0 3px rgba(63,139,85,.55)); }
-.sl-key-ring.sl-key-live { border-color: #3f8b55; box-shadow: 0 0 3px rgba(63,139,85,.7); }
 /* Not on the stretch yet: hollow, parked just short of its first station. */
-.sl-train-approaching .sl-train-body { fill: var(--bg-secondary) !important; stroke: var(--text-muted); stroke-dasharray: 3 3; }
+.sl-train-approaching .sl-train-body { fill: var(--bg-secondary) !important; stroke: var(--text-muted); stroke-dasharray: 3 3;
+  filter: none; animation: none; }
 /* Except line 40, which keeps a hint of its own colour so the train the board
    is actually about can be picked out of a queue of waiting trains. The dashed
    grey outline still says it has not arrived. Two class names deep, so it wins
@@ -249,20 +267,10 @@
    four-digit number needs a smaller face than a two-digit line to fit. */
 .sl-train-unnamed .sl-train-line { font-size: 10.5px; font-weight: 700; letter-spacing: -.02em; }
 
-.sl-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 2px 0 0; font-size: .74rem; color: var(--text-muted); }
-.sl-key { display: inline-flex; align-items: center; gap: 6px; }
-.sl-key-line { display: inline-flex; align-items: center; justify-content: center; min-width: 26px; height: 18px; padding: 0 5px;
-  border-radius: 5px; font-size: .7rem; font-weight: 800; font-style: normal; }
-.sl-key-line.sl-line-40 { background: var(--color-kvot-bright); color: var(--tl-ink); }
-.sl-key-line.sl-line-41 { background: var(--tl-quiet-41); color: var(--tl-ink); }
-.sl-key-line.sl-line-43 { background: var(--tl-quiet-43); color: var(--tl-ink); }
-.sl-key-line.sl-line-other { background: var(--tl-chip); color: var(--tl-ink); box-shadow: inset 0 0 0 2px var(--tl-ink); }
-.sl-key-ring { display: inline-block; width: 14px; height: 14px; border-radius: 5px; border: 3px solid; background: var(--bg-surface); }
-.sl-key-ring.sl-ontime { border-color: #3f8b55; }
-.sl-key-ring.sl-late { border-color: #d84a43; }
-.sl-key-ring.sl-cancel { border-color: #d84a43; border-style: dashed; opacity: .5; }
-.sl-key-ring.sl-key-approaching { border-color: var(--text-muted); border-style: dashed; background: transparent; }
-.sl-track-note { margin: 6px 0 0; font-size: .74rem; color: var(--text-muted); line-height: 1.4; }
+/* Read by a screen reader, not drawn: the sentence that counts the trains on
+   the line. The diagram already shows it to everyone who can see it. */
+.sl-sr { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden;
+  clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; }
 
 .sl-deviations { margin: 0 20px; padding: 12px 14px; border: 1px solid rgba(196, 124, 19, .45); border-radius: 10px;
   background: rgba(196, 124, 19, .08); }
@@ -270,16 +278,28 @@
 .sl-dev { margin: 4px 0; font-size: .85rem; line-height: 1.45; color: var(--text-primary); }
 .sl-dev-major { font-weight: 700; }
 
-.sl-foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
-  padding: 12px 20px; font-size: .78rem; color: var(--text-muted); }
-.sl-refresh { padding: 6px 14px; border: 1px solid var(--border-color); border-radius: 20px; background: var(--bg-primary);
-  color: var(--text-secondary); font: inherit; font-size: .78rem; cursor: pointer; }
-.sl-refresh:hover { border-color: var(--color-kvot-bright); color: var(--text-primary); }
-.sl-refresh:focus-visible { outline: 2px solid var(--color-kvot-bright); outline-offset: 2px; }
-
-.sl-attribution { margin: 0; padding: 10px 20px 14px; border-top: 1px solid var(--border-color);
-  font-size: .72rem; line-height: 1.5; color: var(--text-muted); }
-.sl-attribution a { color: var(--link-color); }
+/* One quiet line closes the panel: the key to the rings on the left, the
+   credit on the right. They were four separate blocks - legend, a sentence
+   counting the trains, a refresh button with a status line, and a boxed
+   two-line attribution - which is more furniture than the diagram above them.
+   The credit wording is Trafiklab's: the licence asks that the page "expressly
+   state" it is based on information retrieved from Trafiklab.se. */
+.sl-foot { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 6px 20px;
+  padding: 6px 20px 14px; font-size: .72rem; color: var(--text-muted); }
+.sl-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; }
+.sl-key { display: inline-flex; align-items: center; gap: 6px; }
+.sl-key-ring { display: inline-block; width: 10px; height: 10px; box-sizing: border-box; border-radius: 3px; border: 2px solid; }
+.sl-key-ring.sl-ontime { border-color: #3f8b55; box-shadow: 0 0 5px rgba(63, 139, 85, .8); }
+.sl-key-ring.sl-late { border-color: #d84a43; box-shadow: 0 0 5px rgba(216, 74, 67, .85); }
+.sl-key-ring.sl-cancel { border-color: #d84a43; border-style: dashed; opacity: .5; }
+.sl-key-ring.sl-key-approaching { border-color: var(--text-muted); border-style: dashed; }
+.sl-attribution { margin: 0 0 0 auto; line-height: 1.5; }
+.sl-attribution a { color: inherit; text-decoration: underline; text-decoration-color: var(--border-color); text-underline-offset: 2px; }
+.sl-attribution a:hover { color: var(--link-color); text-decoration-color: currentColor; }
+/* The one thing the old status line said that the board does not: that the
+   visitor's own clock is wrong. Nothing is drawn while there is nothing to say. */
+.sl-note { margin: 10px 20px 0; font-size: .78rem; color: #c47c13; }
+.sl-note:empty { display: none; }
 
 .sl-other { margin: 18px 0 0; font-size: .85rem; color: var(--text-muted); text-align: center; }
 .sl-other a { color: var(--link-color); font-weight: 650; }
@@ -288,10 +308,12 @@
 @media (prefers-reduced-motion: reduce) {
   .sl-live-ok::after { animation: none; }
   .sl-train { transition: none; }
+  .sl-late .sl-train-body { animation: none; }
   .sl-paused .sl-body, .sl-paused .sl-track, .sl-paused .sl-deviations { transition: none; }
 }
 .sl-reduced .sl-live-ok::after { animation: none; }
 .sl-reduced .sl-train { transition: none; }
+.sl-reduced .sl-late .sl-train-body { animation: none; }
 .sl-reduced .sl-paused .sl-body, .sl-reduced .sl-paused .sl-track, .sl-reduced .sl-paused .sl-deviations { transition: none; }
 
 @media (max-width: 560px) {
@@ -345,10 +367,13 @@
   .sl-row-count { grid-area: count; } .sl-row-dest { grid-area: dest; } .sl-row-badge { grid-area: badge; }
   .sl-row-time { grid-area: time; font-size: .82rem; } .sl-row-plat { grid-area: plat; }
   .sl-row .sl-row-dev { grid-area: dev; }
-  .sl-track { margin: 4px 0 8px; }
-  .sl-legend, .sl-track-note { padding: 0 12px; }
+  .sl-track { margin: 4px 0 0; }
+  /* Key above credit, both to the left: a credit pushed to the right of its
+     own wrapped line reads as an afterthought hanging off the edge. */
+  .sl-foot { padding: 6px 12px 12px; }
+  .sl-attribution { margin-left: 0; }
+  .sl-note { margin: 10px 12px 0; }
   .sl-track-svg { height: 196px; }
-  .sl-station text { font-size: 17px; }
-  .sl-train-speed { font-size: 15px; }
-  .sl-lane-label { font-size: 15px; }
+  .sl-station text { font-size: 16px; }
+  .sl-train-speed, .sl-lane-label, .sl-branch-label { font-size: 14px; }
 }

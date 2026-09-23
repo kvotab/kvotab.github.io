@@ -28,7 +28,8 @@
     const resultActions = $('result-actions');
     const downloadResultsBtn = $('download-results-btn');
     const downloadRuleSummaryBtn = $('download-rule-summary-btn');
-    const zoteroFuzzyMatch = $('zotero-fuzzy-match');
+    const zoteroMatchLevel = $('zotero-match-level');
+    const zoteroYearTolerance = $('zotero-year-tolerance');
     const zoteroSourceType = $('zotero-source-type');
     const zoteroGroupId = $('zotero-group-id');
     const zoteroUserId = $('zotero-user-id');
@@ -40,12 +41,14 @@
     const zoteroPassword = $('zotero-password');
     const zoteroSettingsStatus = $('zotero-settings-status');
     const zoteroTestLocalAccess = $('zotero-test-local-access');
+    const zoteroDbFile = $('zotero-db-file');
+    const zoteroDbDrop = $('zotero-db-drop');
+    const zoteroDbInfo = $('zotero-db-info');
+    const zoteroDbScope = $('zotero-db-scope');
 
     const ZOTERO_CONFIG = Object.freeze({
-      groupId: '6640399', apiVersion: '3', minimumScore: 45,
-      maximumCandidates: 5, searchResultLimit: 15,
-      searchTimeoutMilliseconds: 30000,
-      maximumOrphanLookups: 5, maximumUncitedLookups: 5
+      groupId: '6640399', apiVersion: '3',
+      searchResultLimit: 15, searchTimeoutMilliseconds: 30000
     });
 
     const DEFAULT_ZOTERO_SETTINGS = Object.freeze({

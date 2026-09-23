@@ -43,6 +43,15 @@
    An entry's own report number ("SKB, 2011. Title. SKB TR-11-01, ...") is
    kept with it, and settles which item "(SKB 2011)" means.
 
+   The user may list abbreviated names too, each with what it refers to
+   ("Data report: SKB TR-10-52"; readNameList). A listed name is a
+   citation wherever it stands in running text -- "as the Data report
+   shows" -- when it is in bold, as SKB writes it, or, for when the bold
+   was forgotten, written exactly as listed and inside a sentence: "the
+   data report" in lower case and not in bold is ordinary prose, and in
+   SKB's PSAR reports the names not in bold were mostly the starts of
+   titles and other works' names ("the SR-Site Geosphere process report").
+
    The problem, and the idea of solving it against the local Zotero
    database, come from Identifyer for Zotero by Jonas Bååth; the design, the
    code and the word lists here are this page's own.
@@ -515,11 +524,14 @@
 
   /* report is an SKB report number ("TR-11-01"), designation a
      designation ("SSMFS 2008:37"), abbrev an abbreviated name ("Data
-     report"); initials are those written after each author's name. */
+     report"); initials are those written after each author's name. An
+     abbreviated name has `at`, where it stands in the paragraph, and
+     `bold`; one from the user's list has `target`, what the list says it
+     refers to (see nameTarget). */
   function makeRef(fields) {
     return Object.assign({
       authors: [], aliases: [], initials: [], etAl: false, year: '', letter: '', yearKey: '', num: null,
-      report: '', designation: '', abbrev: '',
+      report: '', designation: '', abbrev: '', target: null, at: null, bold: null,
       locator: '', locatorLabel: '', prefix: '', suffix: '', suppressAuthor: false, entry: null,
     }, fields);
   }
@@ -556,9 +568,13 @@
    * is prose is looked into, so "(see Annex D of Publication 100 (ICRP,
    * 2006))" gives the inner citation. A short paragraph that is nothing but
    * citations -- a table's source column -- is a group without parentheses.
-   * `context.abbrevs` are the abbreviated names of the reference list.
+   * `context.abbrevs` are the abbreviated names of the reference list and
+   * the user's list, `context.listed` the user's alone. `format` says what
+   * the text looks like: `bold` and `fixed` (the result of a field such as
+   * a table of contents) as [start, end) ranges, and whether the paragraph
+   * is a heading.
    */
-  function findInParagraph(text, para = 0, story = 'body', context = null) {
+  function findInParagraph(text, para = 0, story = 'body', context = null, format = null) {
     const L = lexemes(text);
     const groups = [];
     const pairs = parentheses(L);
@@ -576,7 +592,65 @@
     }
     if (!groups.some((g) => g.kind === 'bare')) groups.push(...readRunningReports(text, L, pairs, para, story));
     groups.push(...readNumbered(text, L, para, story));
+    const f = { bold: [], fixed: [], heading: false, ...(format || {}) };
+    for (const g of groups) for (const r of g.refs) if (r.at) r.bold = isCovered(f.bold, text, r.at[0], r.at[1]);
+    groups.push(...readListedNames(text, groups, para, story, context, f));
     return groups.sort((x, y) => x.start - y.start);
+  }
+
+  /** Whether every character of [a, b) but spaces lies in one of the ranges. */
+  function isCovered(ranges, text, a, b) {
+    for (let k = a; k < b; k++) {
+      if (/\s/u.test(text[k])) continue;
+      if (!ranges.some(([x, y]) => k >= x && k < y)) return false;
+    }
+    return true;
+  }
+
+  // A name as compared when case matters: one space for any run of spaces,
+  // one hyphen for any hyphen.
+  const squash = (s) => s.replace(/\s+/gu, ' ').replace(/[-‐‑]/gu, '-');
+  // Its first letter as listed, when listed as a capital: "Data report" is
+  // not found in "Activities and input data report", another report's name.
+  const sameStart = (shown, name) => name[0] === name[0].toLowerCase() || shown[0] === name[0];
+  // A qualifier just before a name makes it another work's: "the SR-Site
+  // Geosphere process report", "the SR-PSU FHA report".
+  const QUALIFIER = /(?:^|\s)\p{Lu}[\p{Lu}\p{N}]+(?:[-‐‑][\p{L}\p{N}]+)*\s+$/u;
+
+  /**
+   * The names of the user's list standing in running text, "as the Data
+   * report shows": each a citation of its own. A name in bold is taken
+   * with its first letter as listed; one not in bold only when written
+   * exactly as listed and inside a sentence -- not at the start of a line,
+   * where it begins a title ("Initial state report for the safety
+   * assessment SR-PSU"), nor after a qualifier. Neither is taken in a
+   * heading, in the result of a field, in another citation, or alone on
+   * its line, where it labels rather than cites.
+   */
+  function readListedNames(text, groups, para, story, context, format) {
+    const out = [];
+    if (!context || !context.listed || !context.listed.length || format.heading) return out;
+    const used = groups.map((g) => [Math.min(g.authorStart, g.start), g.end]);
+    for (const ab of context.listed) {
+      for (const m of text.matchAll(ab.re)) {
+        const a = m.index;
+        const b = a + m[0].length;
+        if (used.some(([x, y]) => a < y && b > x) || format.fixed.some(([x, y]) => a < y && b > x)) continue;
+        const bold = isCovered(format.bold, text, a, b);
+        if (!sameStart(m[0], ab.name) || (!bold && squash(m[0]) !== squash(ab.name))) continue;
+        const from = Math.max(text.lastIndexOf('\n', a), text.lastIndexOf('\t', a)) + 1;
+        const to = text.slice(b).search(/[\n\t]/u);
+        const before = text.slice(from, a);
+        if (!/[\p{L}\p{N}]/u.test(before + text.slice(b, to < 0 ? text.length : b + to))) continue;
+        if (!bold && (!before.trim() || QUALIFIER.test(before))) continue;
+        used.push([a, b]);
+        out.push({
+          para, story, kind: 'inline', start: a, end: b, text: m[0], authorStart: a,
+          refs: [makeRef({ abbrev: ab.name, target: ab.target, at: [a, b], bold })], problem: null,
+        });
+      }
+    }
+    return out;
   }
 
   /** "Smith & Jones 2019; SKB 2010" as the whole of a short paragraph. A
@@ -596,8 +670,8 @@
     return Object.assign(g, { kind: 'bare', start, end, text: text.slice(start, end), authorStart: start });
   }
 
-  /** Where the reference list's abbreviated names stand between lexemes
-      open and close: first lexeme -> { end, name }, the longest name first. */
+  /** Where the abbreviated names stand between lexemes open and close:
+      first lexeme -> { end, name, target }, the longest name first. */
   function abbreviationSpans(text, L, open, close, context) {
     const out = new Map();
     if (!context || !context.abbrevs || !context.abbrevs.length) return out;
@@ -613,7 +687,7 @@
         const ei = L.findIndex((lx) => lx.b === b);
         if (si <= open || ei >= close || ei < si) continue;
         taken.push([a, b]);
-        out.set(si, { end: ei, name: ab.name });
+        out.set(si, { end: ei, name: ab.name, target: ab.target || null });
       }
     }
     return out;
@@ -669,7 +743,7 @@
         // described in the Data report)" the name is part of the prose.
         const lead = trimSeparators(text.slice(L[lo].b, lx.a)).trim();
         if (lead && !LEAD_INS.test(lead) && !(prev && JOINS_ONLY.test(lead))) continue;
-        unit = { names: NO_NAMES, abbrev: span.name, startIdx: y, y: null, endIdx: span.end };
+        unit = { names: NO_NAMES, abbrev: span.name, target: span.target, at: [lx.a, L[span.end].b], startIdx: y, y: null, endIdx: span.end };
         let k = span.end + 1;
         while (k < close && isSpace(L[k])) k++;
         if (isPunct(L[k], ',')) { k++; while (k < close && isSpace(L[k])) k++; }
@@ -740,7 +814,7 @@
         const after = L[m + 1];
         if (!(w && w.type === 'w' && /^\p{Ll}$/u.test(w.s))) break;
         if (after && !(isSpace(after) || isPunct(after, ',') || isPunct(after, ';') || isPunct(after, ')'))) break;
-        units.push({ names: unit.names, abbrev: unit.abbrev, startIdx: m, y: m, endIdx: m, followOn: true, letterOf: yl, letter: w.s });
+        units.push({ names: unit.names, abbrev: unit.abbrev, target: unit.target, startIdx: m, y: m, endIdx: m, followOn: true, letterOf: yl, letter: w.s });
         k = m + 1;
       }
     }
@@ -754,6 +828,7 @@
       return makeRef(Object.assign(yf, {
         authors: u.names.names, aliases: u.names.aliases, initials: u.names.initials || [], etAl: u.names.etAl,
         report: u.report ? u.report.key : '', designation: u.designation || '', abbrev: u.abbrev || '',
+        target: u.target || null, at: u.at || null,
         locator: u.locator ? u.locator.value : '', locatorLabel: u.locator ? u.locator.label : '',
         suppressAuthor: !!u.external,
       }));
@@ -1068,6 +1143,107 @@
   }
 
   /* ---------------------------------------------------------------------
+     The user's list of abbreviated names
+     --------------------------------------------------------------------- */
+
+  // A Zotero item key, alone or at the end of the item's URI or link:
+  // "ABCD2345", "http://zotero.org/groups/777/items/ABCD2345",
+  // "zotero://select/library/items/ABCD2345".
+  const ITEM_KEY_RE = /^(?:(?:\S*?\/)?(?:((?:users|groups)\/\d+)\/)?items\/)?([A-Z0-9]{8})$/u;
+
+  /**
+   * What a name in the list refers to, from what is written after it: an
+   * SKB report number ("SKB TR-10-52", "SKBdoc 1175208"), a designation
+   * ("SSMFS 2008:37"), a Zotero item key or URI, an author and year ("SKB
+   * 2010", "Smith et al. 2020a"), or else words that the item's creators,
+   * year, title or number must all contain.
+   */
+  function nameTarget(reference) {
+    const text = tidy(reference);
+    const report = reportsIn(text)[0];
+    // "SKB TR-12-01" is SKB's alone; "TR-12-01" may be anyone's.
+    if (report) return { kind: 'report', report, skb: reportsIn(text, true)[0] === report, text };
+    if (/^(.*\S)\s+((?:1[6-9]|20)\d{2}:\d{1,4}[a-z]?)$/u.test(text)) return { kind: 'designation', designation: text, text };
+    const key = ITEM_KEY_RE.exec(text);
+    if (key) return { kind: 'key', key: key[2], library: key[1] || '', text };
+    const gs = findInParagraph(`(${text})`);
+    const r = gs.length === 1 && !gs[0].problem && gs[0].refs.length === 1 ? gs[0].refs[0] : null;
+    if (r && r.authors.length && r.yearKey && !r.prefix && !r.suffix && !r.locator && !r.report && !r.designation) {
+      return {
+        kind: 'author', authors: r.authors, aliases: r.aliases, initials: r.initials, etAl: r.etAl,
+        year: r.year, letter: r.letter, yearKey: r.yearKey, text,
+      };
+    }
+    return { kind: 'words', text };
+  }
+
+  /** The title of a reference-list entry: what follows "Name, 2010." up to the next full stop. */
+  function entryTitle(text) {
+    const m = /^\s*(?:\[\d{1,4}\]\s*|\d{1,4}[.)]\s+)?.+?,\s*(?:1[6-9]|20)\d{2}[a-z]?\s*\.\s*(.*)$/u.exec(text);
+    if (!m) return '';
+    const stop = m[1].search(/\.(?:\s|$)/u);
+    return (stop < 0 ? m[1] : m[1].slice(0, stop)).trim();
+  }
+
+  /** What an entry under "References with abbreviated names" refers to:
+      its report number, or else its title and year. */
+  function entryReference(entry) {
+    if (entry.report) return entry.report.startsWith('SKBdoc') ? entry.report : `SKB ${entry.report}`;
+    const title = entryTitle(entry.text);
+    return title ? tidy(`${title} ${entry.year}`) : '';
+  }
+
+  /** The line of the list for such an entry, "Data report: SKB TR-10-52",
+      or '' when it gives nothing to find the work by. */
+  function nameLine(entry) {
+    const reference = entryReference(entry);
+    return reference ? `${entry.abbrev}: ${reference}` : '';
+  }
+
+  const QUOTES_AROUND = /^["“”'‘’*]+|["“”'‘’*]+$/gu;
+  const YEAR_AFTER = /,\s*(?:1[6-9]|20)\d{2}[a-z]?$/u;
+
+  /**
+   * The user's list: one name per line as it stands in the text, a colon
+   * or a tab, and what it refers to -- "Data report: SKB TR-10-52". An
+   * entry pasted from "References with abbreviated names" ("Data report,
+   * 2010. Title. SKB TR-10-52, ...") does as well. A line that starts with
+   * # is a note. Returns { names: [{ name, target, line }], problems:
+   * [{ line, reason }] }.
+   */
+  function readNameList(text) {
+    const names = [];
+    const problems = [];
+    const seen = new Set();
+    String(text || '').split(/\r\n?|\n/u).forEach((raw, k) => {
+      const line = raw.trim();
+      if (!line || line.startsWith('#')) return;
+      const problem = (reason) => problems.push({ line: k + 1, reason });
+      let name;
+      let reference;
+      const tab = line.indexOf('\t');
+      const entry = tab < 0 ? readAbbreviatedEntry(line) : null;
+      if (tab >= 0) {
+        [name, reference] = [line.slice(0, tab), line.slice(tab + 1)];
+      } else if (entry && !entry.abbrev.includes(':')) {
+        [name, reference] = [entry.abbrev, entryReference(entry)];
+      } else {
+        const sep = /:\s/u.exec(line) || /:/u.exec(line);
+        if (!sep) { problem('there is no colon between the name and what it refers to'); return; }
+        [name, reference] = [line.slice(0, sep.index), line.slice(sep.index + sep[0].length)];
+      }
+      name = tidy(tidy(name).replace(YEAR_AFTER, '').replace(QUOTES_AROUND, ''));
+      reference = tidy(reference);
+      if (!/\p{L}/u.test(name)) { problem('the name has no letters'); return; }
+      if (!reference) { problem(`nothing is given for “${name}” to refer to`); return; }
+      if (seen.has(fold(name))) { problem(`“${name}” is listed twice; the first is used`); return; }
+      seen.add(fold(name));
+      names.push({ name, target: nameTarget(reference), line: k + 1 });
+    });
+    return { names, problems };
+  }
+
+  /* ---------------------------------------------------------------------
      A whole document
      --------------------------------------------------------------------- */
 
@@ -1075,9 +1251,11 @@
   const entryKey = (name, yearKey) => `${fold(name).split(' ')[0]}|${yearKey}`;
 
   /** One decision covers every citation with the same key: first three
-      authors, et al., year and letter -- or the number. */
+      authors, et al., year and letter -- or the number, or a listed name,
+      whatever year is given with it. */
   function refKey(ref) {
     if (ref.num !== null) return `#${ref.num}`;
+    if (ref.target) return `n|${fold(ref.abbrev)}`;
     if (ref.abbrev) return `a|${fold(ref.abbrev)}|${ref.yearKey}${ref.letter}`;
     if (ref.designation) return `d|${designationKey(ref.designation)}`;
     if (ref.report) return `r|${ref.report}`;
@@ -1108,21 +1286,22 @@
   }
 
   /**
-   * paras: [{ text, story, level }] in document order; story is 'body',
-   * 'footnote' or 'endnote', level the outline level of a heading or null.
+   * paras: [{ text, story, level, bold, fixed }] in document order; story
+   * is 'body', 'footnote' or 'endnote', level the outline level of a
+   * heading or null, bold and fixed as findInParagraph takes them.
+   * options.names: the user's list of abbreviated names, from readNameList.
    * Returns { groups, refs, list, mentioned }: group.para indexes paras,
    * ref.group indexes groups, and mentioned holds the entries named in
    * running text without a citation -- "the Data report", "SSMFS 2008:21"
    * -- which are not written as fields but are not uncited either.
    */
-  function parseDocument(paras) {
+  function parseDocument(paras, options = {}) {
     const bodyIdx = [];
     paras.forEach((p, i) => { if (p.story === 'body') bodyIdx.push(i); });
     const found = findReferenceList(bodyIdx.map((i) => paras[i].text),
       bodyIdx.map((i) => (Number.isInteger(paras[i].level) ? paras[i].level : null)));
     const skip = new Set();
     let list = null;
-    let context = null;
     if (found) {
       for (let k = found.start; k < found.end; k++) skip.add(bodyIdx[k]);
       const entries = found.entries.map((e) => Object.assign({}, e, { para: bodyIdx[e.index] }));
@@ -1141,18 +1320,30 @@
         for (const key of [entryKey(e.authors[0], e.yearKey + e.letter), entryKey(e.authors[0], e.yearKey)]) first(byKey, key, e);
       }
       list = { start: bodyIdx[found.start], end: found.end < bodyIdx.length ? bodyIdx[found.end] : null, entries, byKey, byNum, byReport, byDesignation, byAbbrev };
-      context = {
-        abbrevs: [...byAbbrev.values()].map((e) => ({ name: e.abbrev, entry: e, re: abbreviationPattern(e.abbrev) }))
-          .sort((a, b) => b.name.length - a.name.length),
-      };
     }
+
+    // The names: the user's, each tied to its entry in the list when there
+    // is one -- under the name, or with the report number or designation
+    // it is given -- and then the list's own.
+    const longestFirst = (a, b) => b.name.length - a.name.length;
+    const entryOf = ({ name, target }) => (list && (list.byAbbrev.get(fold(name))
+      || (target.report && list.byReport.get(target.report))
+      || (target.designation && list.byDesignation.get(designationKey(target.designation))))) || null;
+    const listed = (options.names || []).map((n) => ({ name: n.name, target: n.target, entry: entryOf(n), re: abbreviationPattern(n.name) }))
+      .sort(longestFirst);
+    const given = new Map(listed.map((ab) => [fold(ab.name), ab]));
+    const fromList = list ? [...list.byAbbrev.values()].filter((e) => !given.has(fold(e.abbrev)))
+      .map((e) => ({ name: e.abbrev, target: null, entry: e, re: abbreviationPattern(e.abbrev) })) : [];
+    const context = listed.length || fromList.length ? { abbrevs: [...listed, ...fromList].sort(longestFirst), listed } : null;
+
     const groups = [];
     const mentioned = new Set();
     paras.forEach((p, i) => {
       if (skip.has(i) || !p.text.trim()) return;
-      groups.push(...findInParagraph(p.text, i, p.story, context));
+      const format = { bold: p.bold || [], fixed: p.fixed || [], heading: p.story === 'body' && Number.isInteger(p.level) };
+      groups.push(...findInParagraph(p.text, i, p.story, context, format));
       if (!list) return;
-      for (const ab of context.abbrevs) if (p.text.search(ab.re) >= 0) mentioned.add(ab.entry);
+      for (const ab of context ? context.abbrevs : []) if (ab.entry && p.text.search(ab.re) >= 0) mentioned.add(ab.entry);
       for (const keys of designationsIn(p.text)) for (const k of keys) if (list.byDesignation.has(k)) mentioned.add(list.byDesignation.get(k));
       for (const k of reportsIn(p.text)) if (list.byReport.has(k)) mentioned.add(list.byReport.get(k));
     });
@@ -1162,6 +1353,7 @@
       r.index = ri;
       if (!list) r.entry = null;
       else if (r.num !== null) r.entry = list.byNum.get(r.num) || null;
+      else if (r.target) r.entry = (given.get(fold(r.abbrev)) || {}).entry || null;
       else if (r.abbrev) r.entry = list.byAbbrev.get(fold(r.abbrev)) || null;
       // A designation has its own entry or none: under "SSMFS|2008" the
       // entry would be whichever SSMFS of 2008 the list has.
@@ -1189,6 +1381,7 @@
 
   return {
     parseDocument, findInParagraph, findReferenceList, readEntry, readAbbreviatedEntry, isListHeading, uncitedEntries,
+    readNameList, nameTarget, nameLine,
     fold, lexemes, refKey, refLabel, entryKey, reportsIn, designationsIn, designationKey, PARTICLES,
   };
 }));

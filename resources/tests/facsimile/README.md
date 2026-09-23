@@ -211,6 +211,25 @@ geometry), that the edge can be dragged and clamps, that the charts are
 re-measured to the new width, and that the width and the folded sections come
 back after a reload.
 
+Opening a model by dropping it on the page is checked with real drags, sent
+through the browser's own drag machinery (`Input.dispatchDragEvent`) rather
+than events made up in the page. What matters is how the page answers the
+browser: a drag carrying a file has to be cancelled, or the browser will not
+drop it, and a file dropped where the page does not take it is shown by the
+browser in place of the page. That last part never happens over DevTools -- a
+page with no drop handling at all stays put there too -- so the cancelling is
+what is asserted, from a listener on the window. The checks are that the
+overlay comes up for a file and not for text, that a file dropped on the
+charts or on the editor itself replaces the model text and is compiled, that
+text dragged into the editor still goes in where it is let go, that a file
+that is not a model, two files at once and a file far larger than any model
+are refused with a reason and leave the text alone, and that an overlay left
+up by a drag the page never heard leave goes at the next mouse movement.
+Open… is checked through the same reading. So is a file dropped during a run:
+it is compiled once the run is over or stopped, and the HDF5 file of that run,
+caught on its way to the disk, still holds the text the run solved rather than
+the one that arrived meanwhile.
+
 The settings are checked in both directions, because they are one thing seen
 twice: a value typed into the panel has to appear on its line in the model
 text, a value typed into the line has to appear in the panel, and choosing a

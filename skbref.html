@@ -25,7 +25,7 @@
   <meta property="og:url" content="https://kvotab.se/skbref.html">
   <meta property="og:image" content="https://kvotab.se/resources/images/kvot-logotype.png">
   <meta name="twitter:card" content="summary">
-  <link rel="stylesheet" href="./resources/css/skbref.css?v=20260922a">
+  <link rel="stylesheet" href="./resources/css/skbref.css?v=20260923">
 </head>
 <body>
   <header></header>
@@ -91,10 +91,26 @@
                 <label for="zotero-source-type">Database source</label>
                 <select id="zotero-source-type">
                   <option value="public-group">Public Zotero group (default)</option>
+                  <option value="sqlite">Zotero database file on this computer (zotero.sqlite)</option>
                   <option value="web-group">Another Zotero web group</option>
                   <option value="web-user">Zotero web user library</option>
-                  <option value="local">Local Zotero desktop database</option>
+                  <option value="local">Zotero desktop, through its local API</option>
                   <option value="custom">Custom Zotero-compatible endpoint</option>
+                </select>
+              </div>
+              <div class="zotero-setting full" data-setting="sqlite" hidden>
+                <label for="zotero-db-file">Zotero database file</label>
+                <div class="zotero-db-drop" id="zotero-db-drop">Drop zotero.sqlite here, or
+                  <button id="zotero-db-open" class="zotero-row-btn" type="button">Open…</button>
+                </div>
+                <input type="file" id="zotero-db-file" multiple hidden>
+                <div class="zotero-db-about">From your Zotero data directory: <code>~/Zotero</code> on a Mac or Linux, <code>C:\Users\<i>you</i>\Zotero</code> on Windows, or Zotero → Settings → Advanced → Files and Folders → Show Data Directory. If Zotero is running, choose <b>zotero.sqlite-wal</b> from the same folder as well, or the newest items may be missing.</div>
+                <div id="zotero-db-info" class="zotero-db-info"></div>
+              </div>
+              <div class="zotero-setting full" data-setting="sqlite-scope" hidden>
+                <label for="zotero-db-scope">Look for items in</label>
+                <select id="zotero-db-scope" disabled>
+                  <option value="">All libraries</option>
                 </select>
               </div>
               <div class="zotero-setting" data-setting="group-id">
@@ -113,7 +129,23 @@
                 <label for="zotero-local-url">Local API base URL</label>
                 <input id="zotero-local-url" type="url" value="http://localhost:23119/api/users/0/items/top" autocomplete="off">
               </div>
-              <div class="zotero-setting full">
+              <div class="zotero-setting">
+                <label for="zotero-match-level">How close a fit must be</label>
+                <select id="zotero-match-level">
+                  <option value="lenient">Lenient: links more, asks less</option>
+                  <option value="balanced" selected>Balanced</option>
+                  <option value="strict">Strict: asks whenever two items are near</option>
+                </select>
+              </div>
+              <div class="zotero-setting">
+                <label for="zotero-year-tolerance">Offer items whose year is off by</label>
+                <select id="zotero-year-tolerance">
+                  <option value="0">Nothing</option>
+                  <option value="1" selected>1 year</option>
+                  <option value="2">2 years</option>
+                </select>
+              </div>
+              <div class="zotero-setting full" data-setting="auth">
                 <label for="zotero-auth-type">Authentication</label>
                 <select id="zotero-auth-type">
                   <option value="none">None</option>
@@ -133,10 +165,6 @@
                 <label for="zotero-password">Password</label>
                 <input id="zotero-password" type="password" autocomplete="current-password">
               </div>
-              <label class="zotero-checkbox full" title="Show plausible matches based on similar titles, author names, years, and report numbers.">
-                <input id="zotero-fuzzy-match" type="checkbox" checked>
-                Include fuzzy Zotero matches
-              </label>
             </div>
             <div class="zotero-settings-actions">
               <button id="zotero-save-settings" class="zotero-row-btn" type="button">Apply settings</button>
@@ -145,7 +173,7 @@
               <span id="zotero-settings-status"></span>
             </div>
             <div class="zotero-settings-note">
-              Credentials are kept only in this page's memory and are not included in downloaded reports. References are formatted by the built-in SKB reference formatter. For security, prefer an API key over a username and password. A local Zotero database requires Zotero's local API to be enabled. Edge must also grant this site Local Network Access; use “Request/test local access” after selecting the local source.
+              Matching is the same as in <a href="zoterify.html">Zoterify</a>: the authors against the item’s creators, the year, the entry’s title words and any SKB report number or designation. With a zotero.sqlite file every item is at hand, so a whole list can be checked in one go; the file can also be dropped on the page together with the document. A web source is searched first, so there the result is only as good as the search. Credentials are kept only in this page's memory and are not included in downloaded reports. References are formatted by the built-in SKB reference formatter. For security, prefer an API key over a username and password. Zotero desktop’s local API must be enabled in Zotero, and Edge must grant this site Local Network Access; use “Request/test local access” after selecting that source.
             </div>
           </div>
         </details>
@@ -191,7 +219,7 @@
     KVOT.initMap('kvotmap');
   </script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" integrity="sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG" crossorigin="anonymous"></script>
-  <script src="./resources/js/skbref-config.js?v=20260911"></script>
+  <script src="./resources/js/skbref-config.js?v=20260923"></script>
   <script src="./resources/js/skbref-rules.js?v=20260923"></script>
   <script src="./resources/js/skbref-selftests-rules.js?v=20260923"></script>
   <script src="./resources/js/skbref-shell.js?v=20260911"></script>
@@ -200,13 +228,16 @@
   <script src="./resources/js/skbref-docx.js?v=20260911"></script>
   <script src="./resources/js/skbref-references.js?v=20260911"></script>
   <script src="./resources/js/skbref-citations.js?v=20260923"></script>
-  <script src="./resources/js/skbref-zotero.js?v=20260911"></script>
-  <script src="./resources/js/skbref-export.js?v=20260911"></script>
+  <script src="./resources/js/zoterify-parse.js?v=20260923a"></script>
+  <script src="./resources/js/zoterify-match.js?v=20260923a"></script>
+  <script src="./resources/js/zoterify-zotero.js?v=20260923"></script>
+  <script src="./resources/js/skbref-zotero.js?v=20260923"></script>
+  <script src="./resources/js/skbref-export.js?v=20260923"></script>
   <script src="./resources/js/skbref-checks.js?v=20260923"></script>
   <script src="./resources/js/skbref-rulepacks.js?v=20260911"></script>
-  <script src="./resources/js/skbref-render.js?v=20260923"></script>
-  <script src="./resources/js/skbref-selftests-references.js?v=20260923"></script>
+  <script src="./resources/js/skbref-render.js?v=20260923b"></script>
+  <script src="./resources/js/skbref-selftests-references.js?v=20260923b"></script>
   <script src="./resources/js/skbref-util.js?v=20260911"></script>
-  <script src="./resources/js/skbref-boot.js?v=20260911"></script>
+  <script src="./resources/js/skbref-boot.js?v=20260923"></script>
 </body>
 </html>

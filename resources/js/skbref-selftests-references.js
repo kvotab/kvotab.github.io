@@ -315,3 +315,85 @@
       else console.info(`Reference-guide regression tests passed (${CORRECT.length} correct and ${INCORRECT.length} incorrect references from 1215757, plus ordering and access-date checks).`);
       return failures;
     }
+
+    /*
+      Zotero matching: reference-list entries and citations read into
+      zoterify's form and matched against a small library. The cases are the
+      ones the SKB forms make hard: an entry's own report number settling
+      namesakes, a report or designation that names one work and must never
+      fall back to another of the same series and year, an abbreviated name,
+      two papers by one author in one year told apart by the entry's title.
+    */
+    function runZoteroMatchingRegressionTests() {
+      const failures = [];
+      let serial = 1;
+      const item = (key, people, year, title, extra = {}) => ({
+        key, itemId: serial++, libraryId: 1, itemTypeZotero: extra.type || 'report', title, year,
+        authors: people.map(([family]) => family), editors: [], uri: `http://zotero.org/groups/1/items/${key}`,
+        csl: {
+          title, author: people.map(([family, given]) => (given ? { family, given } : { literal: family })),
+          number: extra.number || '', publisher: extra.publisher ?? 'Svensk Kärnbränslehantering AB', ...(extra.csl || {})
+        }
+      });
+      const library = [
+        item('ANDE2004', [['Andersson', 'Johan'], ['Munier', 'Raymond'], ['Ström', 'Anders']], '2004', 'When is there sufficient information from the site investigations?', { number: 'SKB R-04-23' }),
+        item('ANDE204B', [['Andersson', 'Johan']], '2004', 'Another report of the same year', { number: 'SKB R-04-99' }),
+        item('SKB2011A', [['SKB']], '2011', 'Long-term safety for the final repository for spent nuclear fuel at Forsmark', { number: 'SKB TR-11-01' }),
+        item('SKB2011B', [['SKB']], '2011', 'Environmental impact statement', { number: 'SKB TR-11-02' }),
+        item('SSMFS021', [], '2008', 'Strålsäkerhetsmyndighetens föreskrifter om säkerhet vid slutförvaring av kärnämne och kärnavfall', { type: 'statute', number: 'SSMFS 2008:21', publisher: '' }),
+        item('DATA2010', [['SKB']], '2010', 'Data report for the safety assessment SR-Site', { number: 'SKB TR-10-52' }),
+        item('SMIT020A', [['Smith', 'John']], '2020', 'Buffer erosion in dilute groundwater', { type: 'journalArticle', publisher: '', csl: { 'container-title': 'Applied Clay Science', volume: '185', page: '105-117' } }),
+        item('SMIT020B', [['Smith', 'John']], '2020', 'Colloid release from bentonite in fractures', { type: 'journalArticle', publisher: '' }),
+        item('JONE2019', [['Jones', 'Ann'], ['Brown', 'Peter'], ['Green', 'Eva']], '2019', 'Groundwater flow at Forsmark', { number: 'SKB R-19-01' })
+      ];
+      const matcher = ZFMatch.createMatcher(library, { level: 'balanced', yearTolerance: 1 });
+
+      let index = 0;
+      const paragraph = text => ({
+        index: index++, localIndex: 0, text, style: '', section: 'References',
+        sourcePart: 'fixture', sourceLabel: 'Fixture', documentRegion: 'references',
+        isReferenceList: true, language: 'en', languageConfidence: 1,
+        languageRanges: [], formatSpans: []
+      });
+      const entries = extractRefEntries([
+        paragraph('References with abbreviated names'),
+        paragraph('Data report, 2010. Data report for the safety assessment SR-Site. SKB TR-10-52, Svensk Kärnbränslehantering AB.'),
+        paragraph('Other references'),
+        paragraph('Andersson J, Munier R, Ström A, 2004. When is there sufficient information from the site investigations? SKB R-04-23, Svensk Kärnbränslehantering AB.'),
+        paragraph('SKB, 2011. Long-term safety for the final repository for spent nuclear fuel at Forsmark. Main report of the SR-Site project. SKB TR-11-01, Svensk Kärnbränslehantering AB.'),
+        paragraph('Smith J, 2020. Buffer erosion in dilute groundwater. Applied Clay Science 185, 105–117.'),
+        paragraph('SSMFS 2008:21. Strålsäkerhetsmyndighetens föreskrifter om säkerhet vid slutförvaring av kärnämne och kärnavfall. Stockholm: Strålsäkerhetsmyndigheten.'),
+        paragraph('SSMFS 2008:37. Strålsäkerhetsmyndighetens föreskrifter om skydd av människors hälsa och miljön. Stockholm: Strålsäkerhetsmyndigheten.')
+      ]);
+      const expected = ['DATA2010', 'ANDE2004', 'SKB2011A', 'SMIT020A', 'SSMFS021', null];
+      if (entries.length !== expected.length) failures.push(`Zotero fixture: ${entries.length} entries read, expected ${expected.length}`);
+      entries.forEach((entry, position) => {
+        const result = matcher.match(zoteroRefFromEntry(entry));
+        const want = expected[position];
+        const got = result.status === 'matched' ? result.item.key : null;
+        if (got !== want) failures.push(`Entry "${entry.body.slice(0, 50)}…": ${result.status} ${got || ''}, expected ${want || 'no match'}`);
+      });
+
+      const citations = [
+        [{ key: 'Jones et al. 2019', type: 'author-year' }, 'JONE2019'],
+        [{ key: 'SKB TR-11-01', type: 'skb-report' }, 'SKB2011A'],
+        [{ key: 'SSMFS 2008:37', type: 'designation' }, null],
+        [{ key: 'Smith 2020', type: 'author-year' }, null]
+      ];
+      for (const [citation, want] of citations) {
+        const ref = zoteroRefFromCitation(citation);
+        const result = ref ? matcher.match(ref) : { status: 'unread' };
+        const got = result.status === 'matched' ? result.item.key : null;
+        if (got !== want) failures.push(`Citation "${citation.key}": ${result.status} ${got || ''}, expected ${want || 'no match'}`);
+      }
+      if (zoteroRefFromCitation({ key: '[3]', type: 'numbered' }) !== null) failures.push('A numbered citation without an entry was read as something to look for');
+
+      const formatted = formatSkbReference(zoteroItemData(library.find(entry => entry.key === 'SMIT020A'))).plain;
+      if (formatted !== 'Smith J, 2020. Buffer erosion in dilute groundwater. Applied Clay Science 185, 105-117.') {
+        failures.push(`A database item formatted as ${JSON.stringify(formatted)}`);
+      }
+
+      if (failures.length) console.error('Zotero matching regression tests failed:', failures);
+      else console.info(`Zotero matching regression tests passed (${entries.length} entries and ${citations.length + 1} citations against ${library.length} items).`);
+      return failures;
+    }

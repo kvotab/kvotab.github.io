@@ -27,7 +27,9 @@ Exit status is 0 when every check passes.
 import asyncio
 import json
 import os
+import shutil
 import sys
+import tempfile
 import urllib.request
 
 import websockets
@@ -38,6 +40,7 @@ from driver import open_page  # noqa: E402
 URL = 'http://127.0.0.1:8765/facsimile.html'
 # Long enough to exercise the whole machinery, short enough to answer at once.
 TEND_YEARS = 0.01
+REPO = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..'))
 
 failures = []
 checks = 0
@@ -125,6 +128,24 @@ async def drag(page, x0, y0, x1, y1, steps=6):
     await page.send('Input.dispatchMouseEvent', {
         'type': 'mouseReleased', 'x': x1, 'y': y1, 'button': 'left', 'clickCount': 1})
     await asyncio.sleep(0.25)
+
+
+async def drag_in(page, kind, x, y, files=None, text=None):
+    """One step of a drag from outside the page, through the browser's own
+    drag machinery: `files` are paths on this machine, `text` a plain-text
+    drag. `kind` is dragEnter, dragOver, drop or dragCancel."""
+    data = {'items': [{'mimeType': 'text/plain', 'data': text}] if text is not None else [],
+            'dragOperationsMask': 1}
+    if files is not None:
+        data['files'] = files
+    return await page.send('Input.dispatchDragEvent', {'type': kind, 'x': x, 'y': y, 'data': data})
+
+
+async def drop_in(page, x, y, files=None, text=None):
+    """Brought over the page and let go."""
+    for kind in ('dragEnter', 'dragOver', 'drop'):
+        await drag_in(page, kind, x, y, files, text)
+    await asyncio.sleep(0.3)
 
 
 async def click(page, selector):
@@ -1134,6 +1155,190 @@ async def main():
             check('the window itself does not scroll', await page.ev(
                 "(() => { const de = document.documentElement;"
                 " return de.scrollHeight - de.clientHeight; })()"), 0)
+
+            # --- a model file dropped on the page -------------------------------
+            # Real drags, sent through the browser's own drag machinery rather
+            # than events made up in the page, because what matters is how the
+            # page answers the browser. A drag carrying a file has to be
+            # cancelled or the browser will not drop it, and a file dropped
+            # where the page does not take it is shown by the browser in place
+            # of the page. That last part never happens over DevTools -- a page
+            # with no drop handling at all stays put there too -- so it is the
+            # cancelling that is checked, by a listener on the window, which
+            # hears each event after the page's own listener on the document.
+            await click(page, '[data-on-click="fac:resetModel"]')
+            await settle(page, "document.getElementById('facModelText').value === FACSIMILE_DEFAULT_MODEL", True)
+            langmuir = os.path.join(REPO, 'resources', 'data', 'facsimile-langmuir.fac')
+            canister = os.path.join(REPO, 'resources', 'data', 'facsimile-canister.fac')
+            with open(langmuir, encoding='utf-8') as fh:
+                langmuir_text = fh.read()
+            with open(canister, encoding='utf-8') as fh:
+                canister_text = fh.read()
+            editor_holds = "document.getElementById('facModelText').value === %s"
+            overlay_shown = "document.getElementById('facDrop').checkVisibility()"
+            banner = "(document.querySelector('#failureBanner .failure-banner-text') || {}).textContent"
+            await page.ev("""(() => {
+              window.facDragSeen = [];
+              for (const type of ['dragover', 'drop']) {
+                window.addEventListener(type, (ev) => window.facDragSeen.push(`${type}:${ev.defaultPrevented}`));
+              }
+            })()""")
+
+            await click(page, '[data-tab="charts"]')
+            await asyncio.sleep(0.4)
+            cx, cy = json.loads(await page.ev(
+                "(() => { const r = document.getElementById('chart1').getBoundingClientRect();"
+                " return JSON.stringify([r.left + r.width / 2, r.top + r.height / 2]); })()"))
+            await drag_in(page, 'dragEnter', cx, cy, files=[langmuir])
+            await drag_in(page, 'dragOver', cx, cy, files=[langmuir])
+            await asyncio.sleep(0.2)
+            check('a file dragged over the page brings up the overlay', await page.ev(overlay_shown), True)
+            check('and the page takes the drag', await page.ev("window.facDragSeen.at(-1)"), 'dragover:true')
+            await drag_in(page, 'drop', cx, cy, files=[langmuir])
+            check('letting go opens the file in the editor', await settle(
+                page, editor_holds % json.dumps(langmuir_text), True), True)
+            check("and the drop is the page's, not the browser's", await page.ev(
+                "window.facDragSeen.at(-1)"), 'drop:true')
+            check('and the overlay goes', await page.ev(overlay_shown), False)
+            check('and the Model tab comes up to show it', await page.ev(
+                "!document.getElementById('pane-model').hidden"), True)
+            check('and it is compiled', await settle(
+                page, "document.getElementById('facStatus').textContent.slice(0, 26)",
+                'Model compiled: 2 species,'), 'Model compiled: 2 species,')
+
+            # Onto the editor itself, where a text area would otherwise take a
+            # drop as something to insert.
+            tx, ty = json.loads(await page.ev(
+                "(() => { const r = document.getElementById('facModelText').getBoundingClientRect();"
+                " return JSON.stringify([r.left + 200, r.top + 80]); })()"))
+            await drop_in(page, tx, ty, files=[canister])
+            check('a file dropped on the editor replaces the text rather than going into it', await settle(
+                page, editor_holds % json.dumps(canister_text), True), True)
+            check('and is compiled', await settle(
+                page, "document.getElementById('facStatus').textContent.slice(0, 27)",
+                'Model compiled: 64 species,'), 'Model compiled: 64 species,')
+
+            # Refused, and saying why: what is not a model, more than one file,
+            # and a file far larger than any model. Each would otherwise have
+            # replaced the text in the editor.
+            await drop_in(page, tx, ty, files=[os.path.join(REPO, 'resources', 'tests', 'facsimile', 'ref', 'fac_1.csv')])
+            check('a file that is not a model is refused', await page.ev(banner),
+                  'fac_1.csv was not opened: only a .fac, .txt or .in file is read as a model. '
+                  'Rename it if it is one.')
+            await drop_in(page, tx, ty, files=[langmuir, canister])
+            check('and so are two files at once', await page.ev(banner),
+                  'Drop one model file at a time: that was 2 files.')
+            big_dir = tempfile.mkdtemp(prefix='factest-')
+            try:
+                big = os.path.join(big_dir, 'solver-log.txt')
+                with open(big, 'wb') as fh:
+                    fh.truncate(17 * 1024 * 1024)
+                await drop_in(page, tx, ty, files=[big])
+                check('and a file far larger than a model', await page.ev(banner),
+                      'solver-log.txt was not opened: it is 17 MB, and a model file can be at most 16 MB.')
+            finally:
+                shutil.rmtree(big_dir, ignore_errors=True)
+            check('none of which touched the text', await page.ev(editor_holds % json.dumps(canister_text)), True)
+
+            # A drag carrying text is not the page's business: the editor
+            # takes it where it is let go, as any text area does, and the
+            # overlay does not appear.
+            await drag_in(page, 'dragEnter', tx, ty, text='ZZDROPPEDZZ')
+            await drag_in(page, 'dragOver', tx, ty, text='ZZDROPPEDZZ')
+            await asyncio.sleep(0.2)
+            check('a drag carrying text brings no overlay', await page.ev(overlay_shown), False)
+            check('and is left to the browser', await page.ev("window.facDragSeen.at(-1)"), 'dragover:false')
+            await drag_in(page, 'drop', tx, ty, text='ZZDROPPEDZZ')
+            check('which drops the text into the editor', await settle(
+                page, "document.getElementById('facModelText').value.includes('ZZDROPPEDZZ')", True), True)
+
+            # A drag that ends without the page hearing it leave -- an element
+            # the pointer had entered is redrawn from under it, and the leave
+            # that would balance the count never comes -- leaves the overlay
+            # up. Made here with an enter and nothing after it. No mouse event
+            # reaches a page during a drag, so the next one takes it away.
+            await page.ev("""(() => {
+              const dt = new DataTransfer();
+              dt.items.add(new File(['x'], 'x.fac'));
+              document.getElementById('facModelText').dispatchEvent(
+                new DragEvent('dragenter', { bubbles: true, cancelable: true, dataTransfer: dt }));
+            })()""")
+            stuck = await page.ev(overlay_shown)
+            await page.send('Input.dispatchMouseEvent', {'type': 'mouseMoved', 'x': tx + 10, 'y': ty + 10})
+            await asyncio.sleep(0.2)
+            check('an overlay left up by a drag that never said it left goes at the next mouse move',
+                  [stuck, await page.ev(overlay_shown)], [True, False])
+
+            # Open… goes through the same reading.
+            await page.send('Page.setInterceptFileChooserDialog', {'enabled': True})
+            await click(page, '[data-on-click="fac:loadFile"]')
+            root = (await page.send('DOM.getDocument', {'depth': 0}))['result']['root']['nodeId']
+            node = (await page.send('DOM.querySelector',
+                                    {'nodeId': root, 'selector': '#facFileInput'}))['result']['nodeId']
+            await page.send('DOM.setFileInputFiles', {'nodeId': node, 'files': [langmuir]})
+            await page.send('Page.setInterceptFileChooserDialog', {'enabled': False})
+            check('Open… still reads a file into the editor', await settle(
+                page, editor_holds % json.dumps(langmuir_text), True), True)
+
+            # Dropped while a run is going. The run carries on with the model
+            # it started with; the new text is compiled once the worker is
+            # free rather than queued behind the run, where Stop would throw
+            # it away; and what is recorded about the run is the text it
+            # solved, not the one that arrived meanwhile. A maximum step of
+            # 0.005 years makes the 500-year case last a few seconds.
+            async def run_and_drop():
+                await click(page, '[data-on-click="fac:resetModel"]')
+                await settle(page, "document.getElementById('facModelText').value === FACSIMILE_DEFAULT_MODEL", True)
+                await set_control(page, '#facHmax', '0.005')
+                await click(page, '#facRun')
+                await settle(page, "/^Running NDF:/.test(document.getElementById('facStatus').textContent)",
+                             True, tries=100, pause=0.05)
+                await drop_in(page, tx, ty, files=[langmuir])
+                return await page.ev("document.getElementById('facRun').disabled")
+
+            check('a file dropped during a run lands while it is still going', await run_and_drop(), True)
+            check('and is in the editor at once', await settle(
+                page, editor_holds % json.dumps(langmuir_text), True, tries=20), True)
+            await click(page, '#facStop')
+            check('and is compiled when the run is stopped, not lost with it', await settle(
+                page, "document.getElementById('facStatus').textContent.slice(0, 26)",
+                'Model compiled: 2 species,'), 'Model compiled: 2 species,')
+
+            check('dropped during a run that is left to finish', await run_and_drop(), True)
+            check('it is compiled when the run is over', await settle(
+                page, "document.getElementById('facStatus').textContent.slice(0, 26)",
+                'Model compiled: 2 species,', tries=240), 'Model compiled: 2 species,')
+            check('which it was, rather than stopped', await page.ev(
+                "/^NDF: [\\d,]+ steps/.test(document.getElementById('facStats').textContent)"), True)
+            # The HDF5 file is caught on its way to the disk and searched for a
+            # line of each model: it keeps the text a line per string.
+            recorded = await page.ev("""(async () => {
+              const saved = [];
+              const make = URL.createObjectURL;
+              const revoke = URL.revokeObjectURL;
+              const follow = HTMLAnchorElement.prototype.click;
+              URL.createObjectURL = (blob) => { saved.push(blob); return 'blob:captured'; };
+              URL.revokeObjectURL = () => {};
+              HTMLAnchorElement.prototype.click = () => {};
+              try {
+                document.querySelector('[data-on-click="fac:downloadHdf5"]').click();
+              } finally {
+                URL.createObjectURL = make;
+                URL.revokeObjectURL = revoke;
+                HTMLAnchorElement.prototype.click = follow;
+              }
+              if (!saved.length) return 'nothing written';
+              const bytes = await saved[0].text();
+              return ['Radiolysis and corrosion in the gas of an intact KBS-3 canister',
+                      'A worked differential-algebraic model'].map((line) => bytes.includes(line)).join(',');
+            })()""")
+            check('and the HDF5 file of the run holds the text it solved, not the one dropped during it',
+                  recorded, 'true,false')
+
+            await set_control(page, '#facHmax', '0')
+            await click(page, '[data-on-click="fac:resetModel"]')
+            check('Reset puts the built-in model back after all that', await settle(
+                page, "document.getElementById('facModelText').value === FACSIMILE_DEFAULT_MODEL", True), True)
 
             # --- colouring the model text ---------------------------------------
             # Last, and from a fresh load of the page, for two reasons: the

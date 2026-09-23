@@ -477,3 +477,28 @@
   .rtm-main { margin-left: 0; padding-left: 0; }
   .rtm-tabs { margin-left: 0; padding-left: 10px; }
 }
+
+/* ---- a file dragged over the page --------------------------------------- */
+/*
+  An outline over the whole app while a file is held above it, saying what a
+  drop will do. pointer-events: none, so the drop lands on the page beneath
+  and the document's own handler reads it.
+*/
+.rtm { position: relative; }
+.rtm.dropping::after {
+  content: "Drop to open: a model text (.rtm, .txt), or skbrtm's databases and script, or their folder";
+  position: absolute;
+  inset: 6px;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  border: 2px dashed var(--color-kvot-accent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-primary) 88%, transparent);
+  color: var(--text-primary);
+  font-size: 15px;
+  text-align: center;
+  pointer-events: none;
+}

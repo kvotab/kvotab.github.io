@@ -62,7 +62,21 @@
     MODE: { def: 'batch', kind: 'word', of: ['batch', 'transport'] },
     CELLS: { def: 20, kind: 'int' },
     LENGTH: { def: 1, kind: 'number' },
-    GRID: { def: 'linear', kind: 'word', of: ['linear', 'log'] },
+    /*
+      How the cells are laid out. linear: equal widths. log: widths growing
+      geometrically, the last GRID_RATIO times the first. powerlaw: faces at
+      LENGTH*(i/CELLS)^GRID_POWER, fine at the left for a power above 1.
+      faces: FACES gives the face positions outright -- a list, or an
+      expression in i for i = 0..CELLS. Whatever the kind, SURFACE_LAYER > 0
+      makes the first cell exactly that thick and lays the rest out over what
+      is left, so the cell a surface lives in does not change when the grid
+      does.
+    */
+    GRID: { def: 'linear', kind: 'word', of: ['linear', 'log', 'powerlaw', 'faces'] },
+    GRID_RATIO: { def: 1000, kind: 'number' },
+    GRID_POWER: { def: 3, kind: 'number' },
+    FACES: { def: '', kind: 'text' },
+    SURFACE_LAYER: { def: 0, kind: 'number' },
     DIFFUSION: { def: 1, kind: 'flag' },
     ADVECTION: { def: 0, kind: 'flag' },
     VELOCITY: { def: 0, kind: 'number' },
@@ -143,29 +157,80 @@
   function readSections(text) {
     const out = {};
     for (const name of SECTIONS) out[name] = [];
+    // <TABLE name> may appear any number of times, one named table each.
+    out.TABLES = [];
     let current = null;
+    let table = null;
     String(text).split(/\r?\n/).forEach((raw, i) => {
       const line = raw.replace(/(^|\s)#.*$/, '').trim();
       if (!line) return;
-      const header = /^<\s*([A-Za-z]+)\s*>$/.exec(line);
+      const header = /^<\s*([A-Za-z]+)((?:\s+[^\s<>]+)*)\s*>$/.exec(line);
       if (header) {
         const name = header[1].toUpperCase();
-        if (!SECTIONS.includes(name)) {
-          throw new RtmError(`"${name}" is not a section. Use ${SECTIONS.map((s) => `<${s}>`).join(', ')}.`, i + 1);
+        const args = header[2].trim().split(/\s+/).filter(Boolean);
+        if (name === 'TABLE') {
+          if (!args.length || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(args[0])) {
+            throw new RtmError('<TABLE name> needs a name, for example <TABLE dose_alpha>, '
+              + 'and "log" after it to interpolate the logarithm of the values.', i + 1);
+          }
+          const how = (args[1] || 'linear').toLowerCase();
+          if (!['linear', 'log'].includes(how) || args.length > 2) {
+            throw new RtmError(`<TABLE ${args.join(' ')}>: after the name comes "log" or "linear", `
+              + 'or nothing.', i + 1);
+          }
+          if (out.TABLES.some((t) => t.name === args[0])) {
+            throw new RtmError(`There are two tables called ${args[0]}.`, i + 1);
+          }
+          table = { name: args[0], log: how === 'log', rows: [], line: i + 1 };
+          out.TABLES.push(table);
+          current = 'TABLE';
+          return;
         }
+        if (!SECTIONS.includes(name)) {
+          throw new RtmError(`"${name}" is not a section. Use ${SECTIONS.map((s) => `<${s}>`).join(', ')}, `
+            + 'or <TABLE name>.', i + 1);
+        }
+        if (args.length) throw new RtmError(`<${name}> takes no name; only <TABLE name> does.`, i + 1);
         current = name;
+        table = null;
         return;
       }
       if (!current) throw new RtmError('Text before the first section; start with <SETTINGS>.', i + 1);
-      out[current].push({ text: line, line: i + 1 });
+      if (current === 'TABLE') table.rows.push({ text: line, line: i + 1 });
+      else out[current].push({ text: line, line: i + 1 });
     });
     return out;
+  }
+
+  /**
+   * A number that may be written as arithmetic: 1.33*10**12, 365*86400, 2/3.
+   * A plain number is the common case and never reaches the parser. `lookup`
+   * says what else a value may name; by default it may name nothing, so that
+   * a misspelt constant is an error rather than a silent zero.
+   */
+  function constValue(raw, line, what, lookup = () => undefined) {
+    const s = String(raw).trim();
+    const plain = Number(s);
+    if (s !== '' && Number.isFinite(plain)) return plain;
+    let v;
+    try {
+      v = FacsimileModel.evalAst(FacsimileModel.parseExpression(s, line), lookup, {}, line);
+    } catch (e) {
+      throw new RtmError(`${what} = "${s}" is not a number, or arithmetic on numbers `
+        + `(${e.message.replace(/^Line \d+: /, '')}).`, line);
+    }
+    if (!Number.isFinite(v)) throw new RtmError(`${what} = "${s}" does not come to a finite number.`, line);
+    return v;
   }
 
   /** `NAME = value` lines, read against the table above. */
   function readSettings(lines) {
     const out = {};
     for (const [name, spec] of Object.entries(SETTINGS)) out[name] = spec.def;
+    // Which settings the text gave, as against the defaults: FACES decides
+    // CELLS and LENGTH, and only a CELLS the text wrote can disagree with it.
+    const given = new Set();
+    Object.defineProperty(out, 'given', { value: given, enumerable: false });
     for (const { text, line } of lines) {
       const m = /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)$/.exec(text);
       if (!m) throw new RtmError(`"${text}" is not NAME = value.`, line);
@@ -175,6 +240,7 @@
         throw new RtmError(`"${name}" is not a setting. Known: ${Object.keys(SETTINGS).join(', ')}.`, line);
       }
       const raw = m[2].trim();
+      given.add(name);
       if (spec.kind === 'word') {
         const word = raw.toLowerCase();
         if (!spec.of.includes(word)) {
@@ -184,11 +250,19 @@
         if (name === 'TIME_UNIT') out[name] = TIME_UNITS[out[name]].name;
       } else if (spec.kind === 'flag') {
         out[name] = /^(1|yes|true|on)$/i.test(raw) ? 1 : 0;
+      } else if (spec.kind === 'text') {
+        out[name] = raw;
+        Object.defineProperty(out, `${name}_line`, { value: line, enumerable: false });
       } else {
-        const v = Number(raw);
-        if (!Number.isFinite(v)) throw new RtmError(`${name} = "${raw}" is not a number.`, line);
+        const v = constValue(raw, line, name);
         out[name] = spec.kind === 'int' ? Math.round(v) : v;
       }
+    }
+    // FACES implies the grid it describes, whatever GRID says.
+    if (out.FACES && !given.has('GRID')) out.GRID = 'faces';
+    if (out.GRID === 'faces' && !out.FACES) {
+      throw new RtmError('GRID = faces needs FACES = ..., the face positions in metres: a list, '
+        + 'or an expression in i for i = 0 to CELLS.');
     }
     if (out.MODE === 'transport' && !(out.CELLS >= 2)) {
       throw new RtmError('Transport needs CELLS of at least 2.');
@@ -204,9 +278,13 @@
     OH-, C2O4-2, UO2+2, U_site. It must therefore never be read as arithmetic,
     which is why a rate law writes concentrations in brackets -- [e-] -- and why
     a stoichiometry is split on " + " with the spaces, so the + inside H+ is
-    left alone.
+    left alone. A formula may group atoms in round brackets -- Fe(OH)3,
+    UO2(CO3)3-4 -- one level deep; square brackets are what a rate law puts
+    round a name, so a name cannot contain them.
   */
-  const SPECIES_NAME = /^[A-Za-z][A-Za-z0-9_]*(?:[+-][0-9]*)?$/;
+  const SPECIES_NAME = /^[A-Za-z](?:[A-Za-z0-9_]|\([A-Za-z0-9_]+\))*(?:[+-][0-9]*)?$/;
+  const NAME_RULE = 'Letters, digits and _ , groups in round brackets such as (OH)3, and '
+    + 'optionally a charge at the end such as + , - , +2 or -2.';
 
   /**
    * One line of <SPECIES>: a name, a concentration, then any of the flags.
@@ -221,8 +299,7 @@
       const parts = text.split(/[\s,;]+/).filter(Boolean);
       const name = parts.shift();
       if (!SPECIES_NAME.test(name)) {
-        throw new RtmError(`"${name}" is not a species name. Letters, digits and _ , optionally `
-          + 'ending in a charge such as + , - , +2 or -2.', line);
+        throw new RtmError(`"${name}" is not a species name. ${NAME_RULE}`, line);
       }
       if (seen.has(name)) throw new RtmError(`Species "${name}" is given twice.`, line);
       const entry = { name, initial: 0, fixed: false, D: 0, left: null, right: null,
@@ -243,8 +320,7 @@
           // SKB reports -- the coefficient on the left of the matrix equation
           // -- and like R it may name a parameter.
           if (key === 'rm') { entry.Rm = kv[2].trim(); continue; }
-          const value = Number(kv[2]);
-          if (!Number.isFinite(value)) throw new RtmError(`"${part}" is not a number.`, line);
+          const value = constValue(kv[2], line, kv[1]);
           if (key === 'd') entry.D = value;
           else if (key === 'dm') entry.Dm = value;
           else if (key === 'left') entry.left = value;
@@ -255,9 +331,7 @@
         }
         if (/^fixed$/i.test(part)) { entry.fixed = true; continue; }
         if (first) {
-          const v = Number(part);
-          if (!Number.isFinite(v)) throw new RtmError(`"${part}" is not a concentration.`, line);
-          entry.initial = v;
+          entry.initial = constValue(part, line, `the concentration of ${name}`);
           first = false;
           continue;
         }
@@ -274,29 +348,59 @@
    * One line of the optional <INITIAL> section: a species, which cells, and
    * what to put there.
    *
-   *   X   0-9    1.0        the first ten cells
-   *   O2  all    2.1e-4     every cell, the same as writing it in <SPECIES>
-   *   Fe  20     0.5        one cell
+   *   X       0-9    1.0            the first ten cells
+   *   O2      all    2.1e-4         every cell, the same as writing it in <SPECIES>
+   *   Fe      20     0.5            one cell
+   *   U_site  0      2.1e-4/w/1000  per m2 of surface: w is the cell's width
+   *   U_site  1-9    0  fixed       held there: nothing may change it in those cells
    *
    * <SPECIES> gives a concentration the whole domain starts at, which is all a
-   * batch run can have; a front, a plume or a layer needs this.
+   * batch run can have; a front, a plume or a layer needs this. The value may
+   * be an expression in what <PARAMETERS> can use -- x, i, w, the parameters,
+   * the tables -- worked out once per cell. After it may come "fixed", which
+   * holds the species at that value in those cells and nowhere else, and
+   * "matrix", which aims the line at the rock behind those cells.
    */
   function readInitial(lines, index, cells) {
     const out = [];
     for (const { text, line } of lines) {
-      const parts = text.split(/[\s,;]+/).filter(Boolean);
-      // A fourth word, "matrix", aims the line at the rock behind those cells
-      // rather than at the cells themselves.
-      let matrix = false;
-      if (parts.length === 4 && /^matrix$/i.test(parts[3])) { matrix = true; parts.pop(); }
-      if (parts.length !== 3) {
-        throw new RtmError(`"${text}" is not "species cells value" -- for example "X 0-9 1.0", `
-          + 'or "X 0-9 1.0 matrix" for the rock behind those cells.', line);
+      // Commas and semicolons outside brackets separate as spaces do, so that
+      // "X, 0-9, 1.0" still reads and max(a, b) in a value is left whole.
+      let depth = 0;
+      let flat = '';
+      for (const c of text) {
+        if (c === '(' || c === '[') depth++;
+        else if (c === ')' || c === ']') depth--;
+        flat += depth === 0 && (c === ',' || c === ';') ? ' ' : c;
       }
-      const [name, where, raw] = parts;
+      const parts = flat.trim().split(/\s+/).filter(Boolean);
+      let matrix = false;
+      let fixed = false;
+      while (parts.length > 2 && /^(matrix|fixed)$/i.test(parts[parts.length - 1])) {
+        if (/^matrix$/i.test(parts.pop())) matrix = true; else fixed = true;
+      }
+      // "U_site 1-9 fixed" holds it where it already is, and needs no value.
+      const keep = parts.length === 2 && fixed;
+      if (parts.length < 3 && !keep) {
+        throw new RtmError(`"${text}" is not "species cells value" -- for example "X 0-9 1.0"; `
+          + 'then "fixed" to hold it there, "matrix" for the rock behind those cells.', line);
+      }
+      const [name, where] = parts;
+      const raw = parts.slice(2).join(' ');
       if (!index.has(name)) throw new RtmError(`"${name}" is not in <SPECIES>.`, line);
-      const value = Number(raw);
-      if (!Number.isFinite(value)) throw new RtmError(`"${raw}" is not a concentration.`, line);
+      // A plain number is kept as one; anything else is parsed now, so that a
+      // typing error is reported by line, and worked out per cell later.
+      let value = keep ? null : Number(raw);
+      let ast = null;
+      if (!keep && !Number.isFinite(value)) {
+        value = null;
+        try {
+          ast = FacsimileModel.parseExpression(raw, line);
+        } catch (e) {
+          throw new RtmError(`"${raw}" is not a concentration or an expression for one `
+            + `(${e.message.replace(/^Line \d+: /, '')}).`, line);
+        }
+      }
       let from;
       let to;
       if (/^all$/i.test(where)) { from = 0; to = cells - 1; } else {
@@ -307,9 +411,103 @@
       }
       if (from > to) { const t = from; from = to; to = t; }
       if (to >= cells) throw new RtmError(`Cell ${to} is past the last one (${cells - 1}).`, line);
-      out.push({ si: index.get(name), from, to, value, matrix });
+      out.push({ si: index.get(name), from, to, value, ast, src: raw, matrix, fixed, line });
     }
     return out;
+  }
+
+  /**
+   * <TABLE name> sections: two columns, x and a value, x increasing. A table
+   * is used in <PARAMETERS> or <INITIAL> as name(x), or interp(name, x) as
+   * FACSIMILE writes it, and is interpolated linearly between its rows and
+   * held at its end values beyond them. "log" after the name interpolates the
+   * logarithm instead, which follows a profile that dies away exponentially
+   * -- a dose rate -- far better between sparse rows; its values must be
+   * above zero.
+   */
+  function readTables(tables) {
+    const out = new Map();
+    for (const t of tables) {
+      const xs = [];
+      const ys = [];
+      for (const { text, line } of t.rows) {
+        const parts = text.split(/[\s,;]+/).filter(Boolean);
+        if (parts.length !== 2) {
+          throw new RtmError(`"${text}" in <TABLE ${t.name}> is not two numbers, x and a value.`, line);
+        }
+        const x = constValue(parts[0], line, 'x');
+        const y = constValue(parts[1], line, `${t.name}(${parts[0]})`);
+        if (xs.length && !(x > xs[xs.length - 1])) {
+          throw new RtmError(`In <TABLE ${t.name}> x must increase from row to row; ${x} does not.`, line);
+        }
+        if (t.log && !(y > 0)) {
+          throw new RtmError(`<TABLE ${t.name} log> interpolates the logarithm, so every value must be `
+            + `above zero; ${y} is not.`, line);
+        }
+        xs.push(x);
+        ys.push(t.log ? Math.log(y) : y);
+      }
+      if (!xs.length) throw new RtmError(`<TABLE ${t.name}> has no rows.`, t.line);
+      out.set(t.name, { name: t.name, log: t.log, x: Float64Array.from(xs), y: Float64Array.from(ys) });
+    }
+    return out;
+  }
+
+  /** A table at one point: linear between rows, flat beyond them. */
+  function tableAt(tab, x) {
+    const v = FacsimileModel.interpTable(tab, x);
+    return tab.log ? Math.exp(v) : v;
+  }
+
+  /**
+   * An expression that may call tables, ready to be worked out cell by cell.
+   * Each call -- name(arg) or interp(name, arg) -- becomes a placeholder the
+   * lookup answers by working out arg and reading the table there, so the
+   * shared evaluator never has to know what a table is.
+   */
+  function bindTables(ast, tables, line) {
+    const calls = [];
+    const walk = (node) => {
+      if (!node || typeof node !== 'object') return node;
+      if (node.type === 'call') {
+        let tab = null;
+        let arg = null;
+        if (tables.has(node.name)) {
+          if (node.args.length !== 1) throw new RtmError(`The table ${node.name} takes one argument: ${node.name}(x).`, line);
+          tab = tables.get(node.name);
+          [arg] = node.args;
+        } else if (node.name.toLowerCase() === 'interp') {
+          const first = node.args[0];
+          if (!first || first.type !== 'id' || !tables.has(first.name) || node.args.length !== 2) {
+            throw new RtmError('interp(name, x) needs the name of a <TABLE> and one more argument.', line);
+          }
+          tab = tables.get(first.name);
+          arg = node.args[1];
+        }
+        if (tab) {
+          const id = `__table${calls.length}__`;
+          calls.push({ id, tab, arg: walk(arg) });
+          return { type: 'id', name: id };
+        }
+        return { ...node, args: node.args.map(walk) };
+      }
+      if (node.type === 'bin') return { ...node, l: walk(node.l), r: walk(node.r) };
+      if (node.type === 'neg') return { ...node, a: walk(node.a) };
+      return node;
+    };
+    const bound = walk(ast);
+    return {
+      ast: bound,
+      // Wraps a lookup so that it answers the placeholders too.
+      lookup(base) {
+        const self = (id) => {
+          const call = calls.find((c) => c.id === id);
+          if (call) return tableAt(call.tab, FacsimileModel.evalAst(call.arg, self, {}, line));
+          return base(id);
+        };
+        return self;
+      },
+    };
   }
 
   /* ======================================================================
@@ -462,7 +660,26 @@
    * a porosity that varies down a column, or a rate constant that follows the
    * temperature is written -- none of which a single number can say.
    */
-  function readParameters(lines, grid, geom) {
+  /**
+   * What a cell is, by the names a per-cell expression may use: x its centre,
+   * w its width, xl and xr its faces, i its index -- all of the column cell,
+   * in a matrix layer too -- and j and xm the layer and its depth.
+   */
+  function placeValue(id, grid, g) {
+    const i = g.i;
+    switch (id) {
+      case 'x': return grid.centres[i];
+      case 'w': return grid.width[i];
+      case 'xl': return grid.faces[i];
+      case 'xr': return grid.faces[i + 1];
+      case 'i': return i;
+      case 'j': return g.j;
+      case 'xm': return g.xm;
+      default: return undefined;
+    }
+  }
+
+  function readParameters(lines, grid, geom, tables = new Map()) {
     const order = [];
     const index = new Map();
     const values = [];              // one Float64Array(cells) per parameter
@@ -499,12 +716,14 @@
       if (from > to) { const t = from; from = to; to = t; }
       if (to >= cells) throw new RtmError(`Cell ${to} is past the last one (${cells - 1}).`, line);
 
-      let ast;
+      let parsed;
       try {
-        ast = FacsimileModel.parseExpression(src, line);
+        parsed = FacsimileModel.parseExpression(src, line);
       } catch (e) {
         throw new RtmError(`In "${src}": ${e.message.replace(/^Line \d+: /, '')}`, line);
       }
+      const bound = bindTables(parsed, tables, line);
+      const ast = bound.ast;
       if (!index.has(name)) {
         index.set(name, values.length);
         order.push(name);
@@ -519,23 +738,22 @@
         if (g.i < from || g.i > to) continue;
         if (scope === 'fracture' && g.j > 0) continue;
         if (scope === 'matrix' && g.j === 0) continue;
-        const i = g.i;
-        const lookup = (id) => {
-          if (id === 'x') return grid.centres[i];
-          if (id === 'i') return i;
-          if (id === 'j') return g.j;
-          if (id === 'xm') return g.xm;
-          if (index.has(id) && index.get(id) !== index.get(name)) return values[index.get(id)][c];
+        const own = index.get(name);
+        const lookup = bound.lookup((id) => {
+          const where2 = placeValue(id, grid, g);
+          if (where2 !== undefined) return where2;
+          if (index.has(id) && index.get(id) !== own) return values[index.get(id)][c];
           return undefined;
-        };
+        });
         let v;
         try {
           v = FacsimileModel.evalAst(ast, lookup, {}, line);
         } catch (e) {
           throw new RtmError(`In "${src}": ${e.message.replace(/^Line \d+: /, '')}. A parameter may `
-            + 'use x (the cell centre, m), i (the cell index) and parameters named above it.', line);
+            + 'use x (the cell centre, m), w (its width), xl and xr (its faces), i (its index), '
+            + 'the tables and the parameters named above it.', line);
         }
-        if (!Number.isFinite(v)) throw new RtmError(`"${src}" is not a number in cell ${i}.`, line);
+        if (!Number.isFinite(v)) throw new RtmError(`"${src}" is not a number in cell ${g.i}.`, line);
         into[c] = v;
       }
     }
@@ -552,7 +770,7 @@
     if (!m) throw new RtmError(`"${term}" is not a species with an optional coefficient.`, line);
     const name = m[2].trim();
     if (!SPECIES_NAME.test(name)) {
-      throw new RtmError(`"${name}" is not a species name.`, line);
+      throw new RtmError(`"${name}" is not a species name. ${NAME_RULE}`, line);
     }
     return [m[1] ? Number(m[1]) : 1, name];
   }
@@ -623,6 +841,13 @@
       eps_m/Rm of its real rate.
     */
     let whole = false;
+    /*
+      A constant may be arithmetic -- kr = 1.33*10**12 -- and may use the
+      constants named before it on the line, so kb = kf/K reads as meant.
+      c = [Fe+2] is an ALIAS: in the rate law, c stands for that
+      concentration. Both are how skbrtm writes its databases.
+    */
+    const aliases = new Map();
     for (const [key, value] of assigned) {
       if (key === 'on') {
         if (/^inventory$/i.test(value)) whole = true;
@@ -635,11 +860,15 @@
         rates[key] = { src: value, line };
         continue;
       }
-      const v = Number(value);
-      if (!Number.isFinite(v)) {
-        throw new RtmError(`Parameter ${key} = "${value}" is not a number. A rate law goes in `
-          + 'r = ... ; everything else on the line is one of its constants.', line);
+      const alias = /^\[\s*([^\]]+?)\s*\]$/.exec(value);
+      if (alias) {
+        if (!SPECIES_NAME.test(alias[1])) {
+          throw new RtmError(`"${key} = [${alias[1]}]": "${alias[1]}" is not a species name.`, line);
+        }
+        aliases.set(key, alias[1]);
+        continue;
       }
+      const v = constValue(value, line, `Parameter ${key}`, (id) => params.get(id));
       params.set(key, v);
     }
 
@@ -650,7 +879,7 @@
     if (!reversible && !(rates.k || rates.r || rates.kf)) {
       throw new RtmError('A reaction needs k = ... (mass action) or r = ... (a rate law of your own).', line);
     }
-    return { reactants, products, params, rates, reversible, whole, line, text };
+    return { reactants, products, params, aliases, rates, reversible, whole, line, text };
   }
 
   /** Split on commas that are not inside brackets or parentheses. */
@@ -706,8 +935,7 @@
       for (const part of parts) {
         const m = /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)$/.exec(part);
         if (!m) throw new RtmError(`"${part}" is not NAME = value.`, line);
-        const v = Number(m[2]);
-        if (!Number.isFinite(v)) throw new RtmError(`${m[1]} = "${m[2]}" is not a number.`, line);
+        const v = constValue(m[2], line, m[1]);
         if (m[1] === 'logK') lnK = v * Math.LN10;
         else if (m[1] === 'K') {
           if (!(v > 0)) throw new RtmError('K must be greater than zero; use logK for a small one.', line);
@@ -968,7 +1196,7 @@
     const masked = String(src).replace(/\[([^\]]*)\]/g, (_, inner) => {
       const name = inner.trim();
       if (!SPECIES_NAME.test(name)) {
-        throw new RtmError(`"[${inner}]" is not a species name.`, line);
+        throw new RtmError(`"[${inner}]" is not a species name. ${NAME_RULE}`, line);
       }
       const id = `S_${names.size}__`;
       names.set(id, name);
@@ -1012,6 +1240,43 @@
   }
 
   /**
+   * The constant pieces of a tree, worked out once: (2/3) becomes a number,
+   * 10**-3 becomes 0.001, and a constant of the reaction's own line becomes
+   * its value. The operations are the ones the generated code would have done,
+   * in the same order, so nothing changes but where they happen -- and an
+   * exponent written as arithmetic is then one the derivative can read.
+   */
+  function fold(node, consts) {
+    switch (node.type) {
+      case 'num': return node;
+      case 'id': return consts && consts.has(node.name) ? NUM(consts.get(node.name)) : node;
+      case 'neg': {
+        const a = fold(node.a, consts);
+        return a.type === 'num' ? NUM(-a.v) : { type: 'neg', a };
+      }
+      case 'bin': {
+        const l = fold(node.l, consts);
+        const r = fold(node.r, consts);
+        if (l.type === 'num' && r.type === 'num') {
+          let v;
+          switch (node.op) {
+            case '+': v = l.v + r.v; break;
+            case '-': v = l.v - r.v; break;
+            case '*': v = l.v * r.v; break;
+            case '/': v = l.v / r.v; break;
+            case '**': v = Math.pow(l.v, r.v); break;
+            default: v = undefined;
+          }
+          if (Number.isFinite(v)) return NUM(v);
+        }
+        return { type: 'bin', op: node.op, l, r };
+      }
+      case 'call': return { ...node, args: node.args.map((a) => fold(a, consts)) };
+      default: return node;
+    }
+  }
+
+  /**
    * d(node)/d(id), symbolically.
    *
    * Only the operators a rate law uses. An unknown function is an error rather
@@ -1032,14 +1297,17 @@
         if (op === '*') return add(mul(dl, r), mul(l, dr));
         if (op === '/') return div(sub(mul(dl, r), mul(l, dr)), pow(r, NUM(2)));
         if (op === '**') {
-          // A constant exponent is the only case a rate law needs, and the
-          // general one would need log(base) -- undefined at a zero
-          // concentration, which is exactly where these are evaluated.
-          if (r.type !== 'num') {
-            throw new RtmError('A power in a rate law needs a plain number as its exponent.', line);
+          // The exponent may be anything that does not depend on a
+          // concentration -- a number, arithmetic on numbers, a constant of
+          // the line, a parameter. One that does would need log(base) in the
+          // derivative, undefined at a zero concentration, which is exactly
+          // where these are evaluated.
+          if (!isNum(dr, 0)) {
+            throw new RtmError('The exponent of a power in a rate law may not depend on a '
+              + 'concentration: write [A]^2, [A]^(2/3) or [A]^n with n a constant or a parameter.', line);
           }
           if (isNum(dl, 0)) return NUM(0);
-          return mul(mul(NUM(r.v), pow(l, NUM(r.v - 1))), dl);
+          return mul(mul(r, pow(l, r.type === 'num' ? NUM(r.v - 1) : sub(r, NUM(1)))), dl);
         }
         throw new RtmError(`Cannot differentiate "${op}".`, line);
       }
@@ -1140,24 +1408,163 @@
    * for an uneven grid, so neither is a special case.
    */
   function makeGrid(settings) {
-    const n = settings.MODE === 'transport' ? settings.CELLS : 1;
+    const transport = settings.MODE === 'transport';
+    if (!transport) {
+      const L = settings.LENGTH;
+      return { n: 1, centres: Float64Array.of(0), width: Float64Array.of(L || 1),
+        faces: Float64Array.of(0, L || 1), L, surface: 0 };
+    }
+    if (settings.GRID === 'faces') {
+      if (settings.SURFACE_LAYER > 0) {
+        throw new RtmError('SURFACE_LAYER cannot be combined with FACES: the faces already say how '
+          + 'thick the first cell is.');
+      }
+      return facesGrid(settings);
+    }
+    const n = settings.CELLS;
     const L = settings.LENGTH;
+    if (!(settings.GRID_RATIO > 0)) throw new RtmError(`GRID_RATIO = ${settings.GRID_RATIO} must be above zero.`);
+    if (!(settings.GRID_POWER > 0)) throw new RtmError(`GRID_POWER = ${settings.GRID_POWER} must be above zero.`);
+    /*
+      A SURFACE LAYER of fixed thickness. A surface -- sites, a coating, a
+      reacting film -- lives in the first cell, and when that cell's
+      thickness comes from the grid, refining the grid thins the surface and
+      moves the answer: in skbrtm's fuel-dissolution example the dissolved
+      uranium per m2 halves every time the cells are halved. Pinning the
+      first cell makes its thickness a property of the model; the other
+      CELLS - 1 cells are laid out over what is left, by the same GRID.
+    */
+    const s = settings.SURFACE_LAYER;
+    if (s > 0) {
+      if (!(s < L)) throw new RtmError(`SURFACE_LAYER = ${s} m must be less than LENGTH = ${L} m.`);
+      const rest = widthsFor(settings.GRID, n - 1, L - s, settings);
+      return fromWidths([s, ...rest], L, s);
+    }
+    if (settings.GRID === 'powerlaw') return fromFaces(powerFaces(n, L, settings.GRID_POWER), s);
     const centres = new Float64Array(n);
-    if (n === 1) { centres[0] = 0; return { n, centres, width: Float64Array.of(L || 1), L }; }
     if (settings.GRID === 'log') {
       // Geometric widths, normalised to the length. The first face is at zero.
-      const ratio = Math.pow(1000, 1 / (n - 1));
+      const ratio = Math.pow(settings.GRID_RATIO, 1 / (n - 1));
       const w = new Float64Array(n);
       let total = 0;
       for (let i = 0; i < n; i++) { w[i] = Math.pow(ratio, i); total += w[i]; }
       let x = 0;
-      for (let i = 0; i < n; i++) { w[i] *= L / total; centres[i] = x + w[i] / 2; x += w[i]; }
-      return { n, centres, width: w, L };
+      const faces = new Float64Array(n + 1);
+      for (let i = 0; i < n; i++) {
+        w[i] *= L / total;
+        centres[i] = x + w[i] / 2;
+        x += w[i];
+        faces[i + 1] = x;
+      }
+      faces[n] = L;
+      return { n, centres, width: w, faces, L, surface: 0 };
     }
     const dx = L / n;
     const w = new Float64Array(n).fill(dx);
-    for (let i = 0; i < n; i++) centres[i] = (i + 0.5) * dx;
-    return { n, centres, width: w, L };
+    const faces = new Float64Array(n + 1);
+    for (let i = 0; i < n; i++) { centres[i] = (i + 0.5) * dx; faces[i] = i * dx; }
+    faces[n] = L;
+    return { n, centres, width: w, faces, L, surface: 0 };
+  }
+
+  /** Faces at L*(i/n)^p: fine at the left for p above 1, as skbrtm's powerlaw is. */
+  function powerFaces(n, L, p) {
+    const f = new Float64Array(n + 1);
+    for (let i = 0; i <= n; i++) f[i] = L * Math.pow(i / n, p);
+    f[n] = L;
+    return f;
+  }
+
+  /** The widths of m cells over a span, by one of the GRID kinds. */
+  function widthsFor(kind, m, span, settings) {
+    if (m < 1) return [];
+    if (kind === 'powerlaw') {
+      const f = powerFaces(m, span, settings.GRID_POWER);
+      return Array.from({ length: m }, (_, i) => f[i + 1] - f[i]);
+    }
+    if (kind === 'log' && m > 1) {
+      const ratio = Math.pow(settings.GRID_RATIO, 1 / (m - 1));
+      const w = Array.from({ length: m }, (_, i) => Math.pow(ratio, i));
+      const total = w.reduce((a, b) => a + b, 0);
+      return w.map((v) => (v * span) / total);
+    }
+    return new Array(m).fill(span / m);
+  }
+
+  function fromWidths(widths, L, surface) {
+    const n = widths.length;
+    const faces = new Float64Array(n + 1);
+    for (let i = 0; i < n; i++) faces[i + 1] = faces[i] + widths[i];
+    faces[n] = L;
+    return fromFaces(faces, surface);
+  }
+
+  function fromFaces(faces, surface) {
+    const n = faces.length - 1;
+    const centres = new Float64Array(n);
+    const width = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+      centres[i] = (faces[i] + faces[i + 1]) / 2;
+      width[i] = faces[i + 1] - faces[i];
+    }
+    return { n, centres, width, faces: Float64Array.from(faces), L: faces[n], surface };
+  }
+
+  /**
+   * FACES = the face positions outright, in metres from the left end: a list
+   * -- 0, 1e-7, 8e-7, ... -- or an expression in i, worked out for i = 0 to
+   * CELLS -- 1e-4*(i/10)^3. The list decides CELLS and LENGTH; a CELLS or a
+   * LENGTH the text also gives has to agree with it.
+   */
+  function facesGrid(settings) {
+    const raw = settings.FACES;
+    const line = settings.FACES_line;
+    const parts = splitTop(raw).map((p) => p.trim()).filter(Boolean);
+    const words = raw.trim().split(/\s+/);
+    let faces;
+    if (parts.length > 1 || (words.length > 1 && words.every((w) => Number.isFinite(Number(w))))) {
+      const items = parts.length > 1 ? parts : words;
+      faces = items.map((p, i) => constValue(p, line, `face ${i}`));
+    } else {
+      let ast;
+      try {
+        ast = FacsimileModel.parseExpression(raw, line);
+      } catch (e) {
+        throw new RtmError(`FACES = "${raw}" is neither a list of positions nor an expression in i `
+          + `(${e.message.replace(/^Line \d+: /, '')}).`, line);
+      }
+      const n = settings.CELLS;
+      faces = [];
+      for (let i = 0; i <= n; i++) {
+        let v;
+        try {
+          v = FacsimileModel.evalAst(ast, (id) => (id === 'i' ? i : (id === 'n' ? n : undefined)), {}, line);
+        } catch (e) {
+          throw new RtmError(`FACES = "${raw}": ${e.message.replace(/^Line \d+: /, '')}. An expression `
+            + 'for the faces may use i, the face number from 0 to CELLS, and n, which is CELLS.', line);
+        }
+        faces.push(v);
+      }
+    }
+    if (faces.length < 3) throw new RtmError('FACES needs three positions at least: two cells.', line);
+    if (faces[0] !== 0) {
+      throw new RtmError(`The first of the FACES is the left end of the column and must be 0, not ${faces[0]}.`, line);
+    }
+    for (let i = 1; i < faces.length; i++) {
+      if (!(Number.isFinite(faces[i]) && faces[i] > faces[i - 1])) {
+        throw new RtmError(`FACES must increase from one to the next; face ${i} (${faces[i]}) does not.`, line);
+      }
+    }
+    const given = settings.given || new Set();
+    const n = faces.length - 1;
+    if (given.has('CELLS') && settings.CELLS !== n) {
+      throw new RtmError(`CELLS = ${settings.CELLS}, but FACES describes ${n} cells.`, line);
+    }
+    const L = faces[n];
+    if (given.has('LENGTH') && Math.abs(settings.LENGTH - L) > 1e-12 * L) {
+      throw new RtmError(`LENGTH = ${settings.LENGTH} m, but the last of the FACES is at ${L} m.`, line);
+    }
+    return fromFaces(faces, 0);
   }
 
   /* ======================================================================
@@ -1197,11 +1604,15 @@
       geom.push({ i, j: 0, x: grid.centres[i], xm: 0 });
       for (let j = 1; j <= nm; j++) geom.push({ i, j, x: grid.centres[i], xm: matrix.centre[j - 1] });
     }
-    const params = readParameters(sections.PARAMETERS, grid, geom);
+    const tables = readTables(sections.TABLES);
+    const params = readParameters(sections.PARAMETERS, grid, geom, tables);
     const ns = species.length;
     const index = new Map(species.map((s, i) => [s.name, i]));
     const nameOf = species.map((s) => s.name);
     const warnings = [];
+    // Read now, applied at the end: a line may hold a species in some cells,
+    // and the transport and the pattern below have to know which.
+    const patches = readInitial(sections.INITIAL, index, nf);
 
     const needSpecies = (name, line) => {
       if (!index.has(name)) {
@@ -1239,6 +1650,37 @@
         } catch (e) {
           throw new RtmError(`In the rate "${src}": ${e.message.replace(/^Line \d+: /, '')}`, rx.line);
         }
+        // An alias on the line -- c = [Fe+2] -- is that species wherever the
+        // law names it, exactly as if [Fe+2] had been written there.
+        if (rx.aliases && rx.aliases.size) {
+          const aliasId = new Map();
+          for (const [key, sp] of rx.aliases) {
+            const id = `S_${names.size}__`;
+            names.set(id, sp);
+            aliasId.set(key, id);
+          }
+          const swap = (node) => {
+            if (!node || typeof node !== 'object') return node;
+            if (node.type === 'id' && aliasId.has(node.name)) return { type: 'id', name: aliasId.get(node.name) };
+            if (node.type === 'bin') return { ...node, l: swap(node.l), r: swap(node.r) };
+            if (node.type === 'neg') return { ...node, a: swap(node.a) };
+            if (node.type === 'call') return { ...node, args: node.args.map(swap) };
+            return node;
+          };
+          ast = swap(ast);
+        }
+        // A table is a function of place, read once per cell in <PARAMETERS>;
+        // a rate law is a function of the concentrations, and cannot use one.
+        (function noTables(node) {
+          if (!node || typeof node !== 'object') return;
+          if (node.type === 'call' && (tables.has(node.name) || node.name.toLowerCase() === 'interp')) {
+            throw new RtmError(`"${node.name}(...)" reads a table, which a rate law cannot: give it a `
+              + `parameter -- NAME all ${node.name}(x) in <PARAMETERS> -- and use NAME here.`, rx.line);
+          }
+          [node.l, node.r, node.a, ...(node.args || [])].forEach(noTables);
+        }(ast));
+        // The constant parts worked out once, the line's own constants among them.
+        ast = fold(ast, rx.params);
         // Every identifier is either a masked species or a parameter of this line.
         const deps = [];
         const seen = new Set();
@@ -1383,7 +1825,9 @@
     }
     if (transport && !peclet && settings.ADVECTION && settings.VELOCITY !== 0 && settings.DIFFUSION) {
       const u = Math.abs(settings.VELOCITY) / (settings.POROSITY > 0 ? settings.POROSITY : 1);
-      const dz = grid.L / nf;
+      // The coarsest cell is where the scheme disperses most; on an even grid
+      // that is every cell.
+      const dz = Math.max(...grid.width);
       const added = (u * dz) / 2;
       // The worst offender: the mobile species whose own D is smallest beside
       // what the grid adds. One line however many species are in that state.
@@ -1402,6 +1846,33 @@
     }
     const fixed = species.map((s) => !!s.fixed);
     const n = ns * nc;
+    /*
+      HELD, STATE BY STATE. `fixed` on a species line holds it in every cell;
+      "fixed" at the end of an <INITIAL> line holds it in those cells only --
+      a reservoir cell at the end of a column, a surface species that must
+      not appear in the water. Either way the state's row is zero: nothing
+      moves it, and it still drives its neighbours and its reactions.
+    */
+    const fixedAt = new Uint8Array(n);
+    for (let c = 0; c < nc; c++) for (let s = 0; s < ns; s++) if (fixed[s]) fixedAt[c * ns + s] = 1;
+    const patchCells = (p) => {
+      const out = [];
+      for (let i = p.from; i <= p.to; i++) {
+        if (!p.matrix) { out.push(cellOf(i, 0)); continue; }
+        if (!matrix) throw new RtmError('"matrix" in <INITIAL> needs MATRIX_CELLS above zero.', p.line);
+        for (let j = 1; j <= nm; j++) out.push(cellOf(i, j));
+      }
+      return out;
+    };
+    for (const p of patches) if (p.fixed) for (const c of patchCells(p)) fixedAt[c * ns + p.si] = 1;
+    // Held somewhere but not everywhere, by species: what the panel reports.
+    const held = [];
+    for (let s = 0; s < ns; s++) {
+      if (fixed[s]) continue;
+      const cellsHeld = [];
+      for (let c = 0; c < nc; c++) if (fixedAt[c * ns + s]) cellsHeld.push(c);
+      if (cellsHeld.length) held.push({ species: nameOf[s], si: s, cells: cellsHeld });
+    }
 
     /*
       THE MASS MATRIX, M dC/dt = f.
@@ -1481,7 +1952,7 @@
       const b = i * ns;
       for (const ch of channels) {
         for (const [p] of ch.net) {
-          if (fixed[p]) continue;
+          if (fixedAt[b + p]) continue;
           for (const dep of ch.deps) touch(b + p, b + dep.si);
         }
       }
@@ -1715,6 +2186,11 @@
       }
     }
     // Pre-resolved slots, so neither rhs nor jac searches the pattern per step.
+    // A held state takes nothing from its neighbours or its faces: its row
+    // is zero. It still gives -- the terms in its neighbours' rows stay --
+    // which is what makes a held cell a reservoir.
+    for (let k = flowIn.length - 1; k >= 0; k--) if (fixedAt[flowIn[k].row]) flowIn.splice(k, 1);
+    for (let k = boundary.length - 1; k >= 0; k--) if (fixedAt[boundary[k].row]) boundary.splice(k, 1);
     const flowSlot = flowIn.map((f) => slot(f.row, f.col));
 
     /* ---- the model ------------------------------------------------------ */
@@ -1731,7 +2207,7 @@
       for (const ch of channels) {
         const perNet = [];
         for (const [p] of ch.net) {
-          if (fixed[p]) { perNet.push([]); continue; }
+          if (fixedAt[b + p]) { perNet.push([]); continue; }
           perNet.push(ch.deps.map((dep) => slot(b + p, b + dep.si)));
         }
         perChannel.push(perNet);
@@ -1752,7 +2228,7 @@
           const net = ch.net;
           for (let m = 0; m < net.length; m++) {
             const p = net[m][0];
-            if (fixed[p]) continue;
+            if (fixedAt[b + p]) continue;
             out[b + p] += net[m][1] * r * (ch.whole ? massOf[b + p] : sc);
           }
         }
@@ -1764,7 +2240,7 @@
       for (let k = 0; k < boundary.length; k++) out[boundary[k].row] += boundary[k].value;
       for (let i = 0; i < nc; i++) {
         const b = i * ns;
-        for (let s = 0; s < ns; s++) if (fixed[s]) out[b + s] = 0;
+        for (let s = 0; s < ns; s++) if (fixedAt[b + s]) out[b + s] = 0;
       }
       // M dC/dt = f, so every term on the right -- reaction, transport and
       // boundary alike -- is divided by the coefficient of that row.
@@ -1783,7 +2259,7 @@
           const d0 = derivIndex[j];
           for (let m = 0; m < ch.net.length; m++) {
             const p = ch.net[m][0];
-            if (fixed[p]) continue;
+            if (fixedAt[b + p]) continue;
             const c = ch.net[m][1] * (ch.whole ? massOf[b + p] : sc);
             for (let q = 0; q < ch.deps.length; q++) {
               const dv = D[d0 + q];
@@ -1802,20 +2278,56 @@
     for (let i = 0; i < nc; i++) {
       for (let s = 0; s < ns; s++) initial[i * ns + s] = species[s].initial;
     }
-    // A Dirichlet face is a stated concentration; starting the touching cell
-    // there too saves the solver a jump on its very first step. Not for robin:
-    // there the first cell is not at the face value and never becomes it.
-    if (transport && settings.LEFT === 'dirichlet') {
-      for (let s = 0; s < ns; s++) if (mobile[s] && species[s].left != null) initial[s] = species[s].left;
-    }
-    // Last, so that it overrides both of the above: it is the most specific
+    /*
+      A Dirichlet face does NOT set the cell that touches it. It used to start
+      that cell at the face value, to spare the solver a jump on its first
+      step, and that silently replaced the starting state the text gives: the
+      Crank benchmark, which starts at zero everywhere, was three times less
+      accurate at one day for it. The face is a boundary condition; what the
+      cells hold at t = 0 is <SPECIES> and <INITIAL>, and nothing else.
+    */
+    // Last, so that it overrides the <SPECIES> line: it is the most specific
     // thing the reader can have said. A line names fracture cells; with
-    // "matrix" it means the rock behind them instead.
-    for (const patch of readInitial(sections.INITIAL, index, nf)) {
-      for (let i = patch.from; i <= patch.to; i++) {
-        if (!patch.matrix) { initial[cellOf(i, 0) * ns + patch.si] = patch.value; continue; }
-        if (!matrix) throw new RtmError('"matrix" in <INITIAL> needs MATRIX_CELLS above zero.');
-        for (let j = 1; j <= nm; j++) initial[cellOf(i, j) * ns + patch.si] = patch.value;
+    // "matrix" it means the rock behind them instead. A value that is an
+    // expression is worked out in each cell, with what a parameter may use.
+    for (const patch of patches) {
+      const bound = patch.ast ? bindTables(patch.ast, tables, patch.line) : null;
+      for (const c of patchCells(patch)) {
+        if (patch.value === null && !bound) continue;       // "fixed" alone: held where it is
+        let v = patch.value;
+        if (bound) {
+          const g = geom[c];
+          const lookup = bound.lookup((id) => {
+            const at = placeValue(id, grid, g);
+            if (at !== undefined) return at;
+            if (params.index.has(id)) return params.values[params.index.get(id)][c];
+            return undefined;
+          });
+          try {
+            v = FacsimileModel.evalAst(bound.ast, lookup, {}, patch.line);
+          } catch (e) {
+            throw new RtmError(`In "${patch.src}": ${e.message.replace(/^Line \d+: /, '')}. A starting `
+              + 'value may use x, w, xl, xr, i, the parameters and the tables.', patch.line);
+          }
+          if (!Number.isFinite(v)) {
+            throw new RtmError(`"${patch.src}" is not a number in cell ${g.i}.`, patch.line);
+          }
+        }
+        initial[c * ns + patch.si] = v;
+      }
+    }
+    /*
+      A species held in some cells and not others cannot be put on the
+      equilibria: the speciation holds a species everywhere or nowhere, and
+      would move it in the very cells it was meant to stay put in.
+    */
+    if (settings.EQUILIBRATE && held.length) {
+      const inEq = new Set(equilibriumSpecies(equilibria));
+      const bad = held.filter((h) => inEq.has(h.si));
+      if (bad.length) {
+        throw new RtmError(`${bad.map((h) => h.species).join(', ')} ${bad.length > 1 ? 'are' : 'is'} held in `
+          + 'some cells only and takes part in an <EQUILIBRIUM>; EQUILIBRATE = 1 cannot speciate that. '
+          + 'Hold it everywhere (fixed on its species line) or equilibrate without it.');
       }
     }
 
@@ -1860,6 +2372,10 @@
       speciesNames: nameOf,
       mobile,
       fixed,
+      // Held state by state, and the species held in some cells only.
+      fixedAt,
+      held: held.map((h) => ({ species: h.species, cells: h.cells })),
+      tables: [...tables.keys()],
       reactions: reactions.map((rx) => ({ line: rx.line, text: rx.text })),
       nreactions: reactions.length,
       equilibria,

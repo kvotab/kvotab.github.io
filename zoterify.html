@@ -26,7 +26,7 @@
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
-  <link rel="stylesheet" href="./resources/css/zoterify.css?v=20260922b">
+  <link rel="stylesheet" href="./resources/css/zoterify.css?v=20260923a">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
 </head>
 <body>
@@ -77,6 +77,18 @@
               <div class="zf-ticks"><span>nothing</span><span>1 year</span><span>2 years</span></div>
             </div>
             <p class="zf-about">Lenient links more on its own and asks less; strict asks whenever two items are near. A changed setting takes effect on the next Analyse.</p>
+          </details>
+
+          <details class="zf-sec" id="sec-names" open>
+            <summary>Abbreviated names</summary>
+            <div class="zf-row">
+              <label for="zfNames">Names and the works they stand for</label>
+              <textarea id="zfNames" rows="4" spellcheck="false" autocomplete="off" placeholder="Data report: SKB TR-10-52&#10;Main report: SKB TR-11-01" data-on-input="zf:namesTyped" data-on-change="zf:namesChanged"></textarea>
+            </div>
+            <div class="zf-names" id="zfNamesInfo" hidden></div>
+            <div class="zf-names-add" id="zfNamesAdd" hidden></div>
+            <label class="zf-check"><input type="checkbox" id="zfBoldNames" checked data-on-change="zf:trackChanged"><span>Write the names in bold</span></label>
+            <p class="zf-about">One per line: the name as it stands in the text, a colon, and the work — an SKB report number, a designation such as SSMFS 2008:37, a Zotero item key, an author and year such as SKB 2010, or words of its title. An entry pasted from “References with abbreviated names” works too. Wherever the name stands it becomes a citation of that work, and keeps the name as its text. It is found in bold; not in bold, only when written exactly as here and inside a sentence.</p>
           </details>
 
           <details class="zf-sec" id="sec-fields">
@@ -213,13 +225,26 @@
             “References with abbreviated names” — “(Data report, Section 6.1)” — is found through its entry.
             Initials after a name, “Vallery C (2001)”, choose between two authors of one surname, and
             “Aquilonius (ed) (2010)” is read with its editor’s mark.</p>
+          <p>Abbreviated names can also be listed under <em>Abbreviated names</em>, each with the work it stands
+            for: “Data report: SKB TR-10-52”. A listed name is a citation of that work wherever it stands —
+            “(Data report, Section 6.1)”, and in running text too: in “as the <b>Data report</b> shows”, the
+            name itself becomes the citation. SKB writes such names in bold. A name in bold is taken when it
+            begins as listed: “input data report”, in another report’s name, is not the Data report. One not
+            in bold is taken only when it is written exactly as listed and stands inside a sentence — not at
+            the start of a line, where it may begin a title (“Initial state report for the safety assessment
+            SR-PSU”), nor after a qualifier such as “SR-Site”, which makes it another work’s name. So the bold
+            may be forgotten, while “the data report” in ordinary prose is left alone, as are headings, a table
+            of contents, and a name alone on its line, which labels something rather than cites it. The work
+            can be given by an SKB report number, a designation, a Zotero item key (or the item’s link), an
+            author and year — “SKB 2010” — or words of its title. After an analysis, <em>Add them</em> copies
+            the names of the document’s own “References with abbreviated names” into the list.</p>
           <p>The reference list is found under its heading (“References”, “Referenser”, “Litteratur” and their
             like in other languages) or as a long run of entries, and it ends at the next heading of its level,
             so citations in appendices after it are found too. Each citation is tied to its entry, and an item
             whose title appears in the entry is taken over its namesakes; an entry’s own report number (“SKB,
             2011. … SKB TR-11-01, Svensk Kärnbränslehantering AB.”) settles which item “(SKB 2011)” means. An
             abbreviated name or a designation mentioned in running text — “the Data report”, “SSMFS 2008:21” —
-            is left as text, and its entry is not counted as uncited.</p>
+            is left as text unless the name is in your list, and its entry is not counted as uncited.</p>
 
           <h3>What is written</h3>
           <p>Each citation becomes one Zotero citation with one item per reference, the page, chapter or section
@@ -227,6 +252,12 @@
             or a whole clause — become the prefix or suffix of the reference beside them, so Zotero prints them
             too. A narrative citation keeps the author’s name as text and only the parenthesis becomes a Zotero
             citation with the author omitted, as Zotero’s own <em>Omit Author</em> does it.</p>
+          <p>A citation by abbreviated name keeps its text. No citation style prints the name, so a Refresh
+            would turn “the Data report” into “the (SKB 2010)”. Instead the citation is marked the way Zotero
+            marks one whose text you edited in Word and chose to keep: Refresh leaves it as written, and the
+            work is still in the bibliography. The names in it are made bold unless you untick <em>Write the
+            names in bold</em>. Opening such a citation in Zotero’s citation dialog hands it back to the style,
+            after a warning.</p>
           <p>A citation is written only when every reference in it is resolved. A replacement is also refused —
             and listed with the reason under <em>Resolved</em> — when the text runs into a footnote reference, a
             comment, a picture, a hyperlink or another Word field, a content control, moved text, or a citation
@@ -266,10 +297,10 @@
       zoterify-docx     reading the document and writing Zotero fields as tracked changes
       zoterify-ui       this page
   -->
-  <script src="./resources/js/zoterify-parse.js?v=20260922c"></script>
-  <script src="./resources/js/zoterify-match.js?v=20260922c"></script>
-  <script src="./resources/js/zoterify-zotero.js?v=20260922b"></script>
-  <script src="./resources/js/zoterify-docx.js?v=20260923a"></script>
-  <script src="./resources/js/zoterify-ui.js?v=20260923b"></script>
+  <script src="./resources/js/zoterify-parse.js?v=20260923a"></script>
+  <script src="./resources/js/zoterify-match.js?v=20260923a"></script>
+  <script src="./resources/js/zoterify-zotero.js?v=20260923"></script>
+  <script src="./resources/js/zoterify-docx.js?v=20260923b"></script>
+  <script src="./resources/js/zoterify-ui.js?v=20260923d"></script>
 </body>
 </html>

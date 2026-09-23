@@ -329,8 +329,14 @@
       background: var(--accent-fill-hover);
     }
 
-    .url-file-btn {
-      margin-left: 4px;
+    /*
+      Only the first of the three is pushed to the right; the ones after it are
+      spaced by the container's 4px gap alone, the same 4px as between file
+      tabs. URL used to add a margin of its own on top, which made it the one
+      8px gap in the row.
+    */
+    .add-file-btn + .add-file-btn {
+      margin-left: 0;
     }
 
     /* URL dialog overlay & modal */
@@ -1312,6 +1318,24 @@
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+    /* The chart's own view, set apart from the saved presets below it */
+    .preset-manager-row.preset-manager-current {
+      border-bottom-color: var(--color-panel-border);
+    }
+    /* Whichever row the preset dropdown is showing: a preset, or Custom */
+    .preset-manager-row.is-selected .preset-manager-name {
+      font-weight: 600;
+    }
+    .preset-manager-tag {
+      margin-left: 6px;
+      padding: 0 5px;
+      border-radius: 3px;
+      font-size: 10px;
+      font-style: normal;
+      font-weight: 500;
+      background: var(--accent-fill);
+      color: #fff;
+    }
     .preset-manager-actions {
       display: inline-flex;
       gap: 4px;
@@ -1329,6 +1353,11 @@
     }
     .preset-manager-actions button:hover {
       background: var(--color-hover-bg);
+    }
+    .preset-manager-actions button:disabled {
+      opacity: 0.5;
+      cursor: default;
+      background: var(--color-panel-bg);
     }
     .preset-manager-actions .preset-delete-btn {
       color: #c0392b;

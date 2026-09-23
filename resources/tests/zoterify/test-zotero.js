@@ -11,7 +11,8 @@
    Checks: the WAL replay against a database copied while a transaction
    was in its -wal file (and against a torn, a foreign and an empty -wal
    file); which items are citable; the URIs Zotero writes; the CSL-JSON;
-   collections and scopes.
+   collections and scopes; an item from the web API read into the same
+   form.
 
    Exit status is 0 when every check passes. */
 'use strict';
@@ -112,6 +113,26 @@ function check(label, got, want) {
   check('a collection with its subcollections, the binned item left out',
     keys(Z.readItems(lib.sqldb, lib.info, { collectionId: 1 })), ['JONES20B', 'JONES20A', 'SMITH020']);
   check('one library', keys(Z.readItems(lib.sqldb, lib.info, { libraryID: 2 })), ['LANE0014', 'OHMAN014']);
+
+  /* ---- an item from the web API, as skbref.html matches it ---------------- */
+  const api = Z.itemFromApi({
+    key: 'BROWN019', library: { type: 'group', id: 777 },
+    data: {
+      key: 'BROWN019', itemType: 'report', title: 'Groundwater flow at Forsmark', date: '2019', reportNumber: 'R-19-01',
+      institution: 'Svensk Kärnbränslehantering AB', place: 'Stockholm', relations: {}, tags: [],
+      creators: [{ creatorType: 'author', firstName: 'Peter', lastName: 'Brown' }, { creatorType: 'seriesEditor', name: 'Svensk Kärnbränslehantering AB' }],
+    },
+  }, 13);
+  check('an API item reads as the database item does', [api.key, api.itemId, api.title, api.year, api.authors, api.editors, api.csl],
+    [item('BROWN019').key, item('BROWN019').itemId, item('BROWN019').title, item('BROWN019').year, item('BROWN019').authors,
+      item('BROWN019').editors, item('BROWN019').csl]);
+  check('its URI names its group', api.uri, 'http://zotero.org/groups/777/items/BROWN019');
+  const film = Z.itemFromApi({ key: 'FILM0001', library: { type: 'user', id: 4242 }, data: { itemType: 'film', title: 'A film',
+    creators: [{ creatorType: 'director', firstName: 'Ann', lastName: 'Director' }, { creatorType: 'contributor', lastName: 'Other' }] } }, 1);
+  check('the primary creator of a type (a director) is its author; a contributor is not', [film.authors, film.uri],
+    [['Director'], 'http://zotero.org/users/4242/items/FILM0001']);
+  const dated = Z.itemFromApi({ key: 'DATED001', meta: { parsedDate: '2020-03' }, data: { itemType: 'journalArticle', title: 'T', date: 'March 2020' } }, 1);
+  check('an API date is read through meta.parsedDate', [dated.year, dated.csl.issued], ['2020', { 'date-parts': [['2020', '3']] }]);
 
   console.log(`${checks} checks`);
   if (failures.length) {

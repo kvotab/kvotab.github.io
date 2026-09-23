@@ -88,6 +88,29 @@ function removeBackgroundOverlayTooltipHandlers(plotDiv) {
   delete plotDiv.__bgTooltipHandlers;
 }
 
+/** Whether the chart now in plotDiv is showing a background overlay. */
+function chartHasBackgroundShapes(plotDiv) {
+  const shapes = plotDiv && plotDiv._fullLayout && plotDiv._fullLayout.shapes;
+  return Array.isArray(shapes) && shapes.some(s => s && s.name === BACKGROUND_SHAPE_NAME);
+}
+
+/**
+ * The layout.shapes a relayout must carry when it switches the x-axis to
+ * `xScale`, or null when the chart has no background overlay. A relayout that
+ * changes only xaxis.type leaves the rectangles clamped for the old scale; see
+ * backgroundRectShapes for what that did to a log axis.
+ *
+ * @param {HTMLElement} plotDiv
+ * @param {string} xScale - 'log' or 'linear'
+ * @returns {Array|null}
+ */
+function backgroundShapesForXScale(plotDiv, xScale) {
+  if (!chartHasBackgroundShapes(plotDiv)) return null;
+  const segments = plotDiv.__bgSegments;
+  if (!Array.isArray(segments) || !segments.length) return null;
+  return backgroundRectShapes(segments, plotDiv.data || [], xScale);
+}
+
 function setupBackgroundOverlayTooltip(plotDiv, segments) {
   if (!plotDiv) return;
   removeBackgroundOverlayTooltipHandlers(plotDiv);
@@ -96,48 +119,52 @@ function setupBackgroundOverlayTooltip(plotDiv, segments) {
   tip.style.display = 'none';
 
   if (!Array.isArray(segments) || segments.length === 0) {
+    delete plotDiv.__bgSegments;
     return;
   }
+  plotDiv.__bgSegments = segments;
 
-  const fullLayout = plotDiv._fullLayout;
-  const xAxis = fullLayout && fullLayout.xaxis;
-  if (!xAxis) {
-    return;
-  }
-
-  const toAxisLinearValue = (v) => {
-    try {
-      if (xAxis && typeof xAxis.d2l === 'function') {
-        const lv = xAxis.d2l(v);
-        const n = Number(lv);
-        if (isFinite(n)) return n;
-      }
-    } catch (_) { ignoreFailure('toAxisLinearValue', _); }
-    return toComparableAxisValue(v);
+  /*
+    The segment bounds in the axis's own linear units, for the axis as it is
+    NOW. This used to be worked out once, when the chart was drawn, and kept:
+    clicking "log" then compared the pointer's log10(x), a number between
+    about -9 and 5, with bounds still in years, so the whole chart read as the
+    first segment -- and clicking back to "lin" on a chart drawn on log did the
+    reverse, so nothing past x = 5 had a tooltip at all. The scale can change without a redraw
+    (the scale buttons, a preset), so it is redone whenever the type differs.
+  */
+  let cachedFor = null;
+  let cachedSegments = [];
+  const segmentsOnAxis = (xAxis) => {
+    if (cachedFor === xAxis.type) return cachedSegments;
+    const toAxisLinearValue = (v) => {
+      try {
+        if (typeof xAxis.d2l === 'function') {
+          const n = Number(xAxis.d2l(v));
+          if (isFinite(n)) return n;
+        }
+      } catch (_) { ignoreFailure('toAxisLinearValue', _); }
+      return toComparableAxisValue(v);
+    };
+    cachedFor = xAxis.type;
+    cachedSegments = backgroundSegmentsOnScale(segments, plotDiv.data || [], xAxis.type)
+      .map(seg => {
+        const x0 = toAxisLinearValue(seg.x0);
+        const x1 = toAxisLinearValue(seg.x1);
+        if (x0 === null || x1 === null) return null;
+        return { ...seg, _x0: Math.min(x0, x1), _x1: Math.max(x0, x1) };
+      })
+      .filter(Boolean);
+    return cachedSegments;
   };
-
-  const normalizedSegments = segments
-    .map(seg => {
-      const x0 = toAxisLinearValue(seg.x0);
-      const x1 = toAxisLinearValue(seg.x1);
-      if (x0 === null || x1 === null) return null;
-      return {
-        ...seg,
-        _x0: Math.min(x0, x1),
-        _x1: Math.max(x0, x1)
-      };
-    })
-    .filter(Boolean);
-
-  if (!normalizedSegments.length) {
-    return;
-  }
 
   const mousemove = (evt) => {
     const fullLayout = plotDiv._fullLayout;
     const xAxis = fullLayout && fullLayout.xaxis;
     const yAxis = fullLayout && fullLayout.yaxis;
-    if (!xAxis || !yAxis) {
+    // The listener is on the div, which the next chart reuses; a chart
+    // without the overlay must not answer with the last one's segments.
+    if (!xAxis || !yAxis || !chartHasBackgroundShapes(plotDiv)) {
       tip.style.display = 'none';
       return;
     }
@@ -160,7 +187,7 @@ function setupBackgroundOverlayTooltip(plotDiv, segments) {
       return;
     }
 
-    const match = normalizedSegments.find(seg => xVal >= seg._x0 && xVal <= seg._x1);
+    const match = segmentsOnAxis(xAxis).find(seg => xVal >= seg._x0 && xVal <= seg._x1);
     if (!match) {
       tip.style.display = 'none';
       return;
