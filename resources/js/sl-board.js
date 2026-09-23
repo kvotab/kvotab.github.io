@@ -170,6 +170,14 @@
   const hhmm = (d) => d ? d.toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' }) : '';
   const hhmmss = (d) => d ? d.toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
 
+  /* Text as HTML with every digit and colon in a fixed-width cell, for any
+     number that changes while it is being looked at. This font has no tabular
+     figures, so a countdown written as plain text shifts sideways every
+     second - see .sl-tnum in sl-board.css. Everything else is escaped. */
+  const tabular = (text) => String(text).replace(/[\d:]|[^\d:]+/g, (s) =>
+    s === ':' ? '<span class="sl-tnum-sep">:</span>'
+      : /\d/.test(s) ? `<span class="sl-tnum">${s}</span>` : esc(s));
+
   function minutesUntil(when, now) {
     return Math.round((when - now) / 60000);
   }
@@ -612,8 +620,9 @@
 
       Each character therefore gets a cell of its own, the width of the widest
       digit: what tabular figures would have done, done in the layout instead.
-      Cells are reused across ticks so a clock running all day is a handful of
-      textContent writes rather than eight elements a second.
+      The same cells as tabular(), but reused across ticks so a clock running
+      all day is a handful of textContent writes rather than eight elements a
+      second.
     */
     function paintClock(el, text) {
       if (el.childElementCount !== text.length) {
@@ -623,7 +632,7 @@
       for (let i = 0; i < text.length; i++) {
         const cell = el.children[i], ch = text[i];
         if (cell.textContent !== ch) cell.textContent = ch;
-        const cls = ch === ':' ? 'sl-clock-sep' : 'sl-clock-digit';
+        const cls = ch === ':' ? 'sl-tnum-sep' : 'sl-tnum';
         if (cell.className !== cls) cell.className = cls;
       }
     }
@@ -645,10 +654,10 @@
         $('sl-live').textContent = 'No connection';
         $('sl-live').className = 'sl-live sl-live-bad';
       } else if (lastError) {
-        $('sl-live').textContent = `Last update ${hhmm(fetchedAt)} — retrying`;
+        $('sl-live').innerHTML = tabular(`Last update ${hhmm(fetchedAt)} — retrying`);
         $('sl-live').className = 'sl-live sl-live-stale';
       } else if (ageSec !== null) {
-        $('sl-live').textContent = ageSec < 3 ? 'Live' : `Updated ${ageSec}s ago`;
+        $('sl-live').innerHTML = ageSec < 3 ? 'Live' : tabular(`Updated ${ageSec}s ago`);
         $('sl-live').className = 'sl-live' + (ageMs > STALE_MS ? ' sl-live-stale' : ' sl-live-ok');
       }
 
@@ -1319,7 +1328,7 @@
       return `
         <div class="sl-hero${cancelled ? ' sl-hero-cancel' : ''}">
           <div class="sl-count">
-            <span class="sl-count-big">${esc(c.big)}</span>
+            <span class="sl-count-big">${tabular(c.big)}</span>
             <span class="sl-count-small">${esc(c.day ? (c.day === 1 ? 'tomorrow' : `in ${c.day} days`) : c.small)}</span>
           </div>
           <div class="sl-details">
@@ -1345,7 +1354,7 @@
         : (c.big === 'Now' || CANCELLED.has(d.state) || c.small !== 'minutes') ? '' : ' min';
       return `
         <li class="sl-row${CANCELLED.has(d.state) ? ' sl-row-cancel' : ''}">
-          <span class="sl-row-count">${esc(c.big)}<small>${unit}</small></span>
+          <span class="sl-row-count">${tabular(c.big)}<small>${unit}</small></span>
           <span class="sl-row-time">${hhmm(d.scheduled)}${d.delayMin >= 2 ? ` <span class="sl-row-exp">→ ${hhmm(d.expected)}</span>` : ''}</span>
           <span class="sl-row-dest"><span class="sl-line sl-line-sm">${esc(d.line)}</span> ${esc(d.destination)}</span>
           <span class="sl-row-plat">${d.platform ? 'Pl. ' + esc(d.platform) : ''}</span>

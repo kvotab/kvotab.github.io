@@ -239,6 +239,7 @@ async def main():
         await asyncio.sleep(2.5)
         try:
             await run_checks(page)
+            await check_stored_settings(page)
         finally:
             await page.call('Target.closeTarget', {'targetId': tid})
 
@@ -324,6 +325,10 @@ async def run_checks(page):
     check('the tab count says 1', await page.ev("document.querySelector('[data-tab=\"review\"] .zf-count').textContent"), '1')
 
     # --- save -------------------------------------------------------------
+    check('both comment options are on by default',
+          await page.ev("[document.getElementById('zfComment').checked, document.getElementById('zfSummaryComment').checked]"), [True, True])
+    # The first save is the plain one; the comments are checked on their own below.
+    await page.ev("(() => { for (const id of ['zfComment', 'zfSummaryComment']) { const b = document.getElementById(id); b.checked = false; b.dispatchEvent(new Event('change', { bubbles: true })); } })()")
     await page.ev('ZFPage.save()')
     status = await page.ev("document.getElementById('zfStatus').textContent")
     print('      ', status)
@@ -373,6 +378,35 @@ async def run_checks(page):
     check('Track Changes is not switched on', b'trackRevisions' in plain.read('word/settings.xml'), False)
     check('no people.xml without revisions', 'word/people.xml' in plain.namelist(), False)
     check('no script errors at the end', page.errors, [])
+
+
+async def check_stored_settings(page):
+    """Settings remembered in the browser: an "off" stored before the comment
+    options were on by default is the old default and is ignored; one stored
+    since is a choice and is kept. A second tab, without the clearing script,
+    on the same connection."""
+    main_sid = page.sid
+    tid = (await page.call('Target.createTarget', {'url': 'about:blank'}))['result']['targetId']
+    page.sid = (await page.call('Target.attachToTarget', {'targetId': tid, 'flatten': True}))['result']['sessionId']
+    await page.call('Runtime.enable', session=page.sid)
+    read = "JSON.stringify([document.getElementById('zfComment').checked, document.getElementById('zfSummaryComment').checked, document.getElementById('zfAuthor').value])"
+    try:
+        for stored, want, label in [
+            ({'author': 'Old Author', 'comment': False, 'summary': False}, [True, True, 'Old Author'],
+             'settings stored before: the comment options come on, the author is kept'),
+            ({'v': 2, 'author': 'New Author', 'comment': False, 'summary': True}, [False, True, 'New Author'],
+             'settings stored since: the choice is kept'),
+        ]:
+            await page.call('Page.navigate', {'url': URL}, session=page.sid)
+            await asyncio.sleep(1.5)
+            await page.ev(f"localStorage.setItem('kvot-zf-v2', {json.dumps(json.dumps(stored))})")
+            await page.call('Page.reload', {'ignoreCache': True}, session=page.sid)
+            await asyncio.sleep(2)
+            check(label, json.loads(await page.ev(read)), want)
+    finally:
+        await page.ev("localStorage.removeItem('kvot-zf-v2')")
+        await page.call('Target.closeTarget', {'targetId': tid})
+        page.sid = main_sid
 
 
 async def saved_bytes(page):

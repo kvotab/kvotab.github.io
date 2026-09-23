@@ -49,8 +49,8 @@
     lastSaved: null,
     busy: false,
     settings: {
-      author: 'Zoterify', track: true, keepTracking: true, recodeOther: true, recodeZotero: false, comment: false, summary: false,
-      level: 1, yearTolerance: 1, tab: 'review', sideWidth: null, sections: {},
+      author: 'Zoterify', track: true, keepTracking: true, recodeOther: true, recodeZotero: false, comment: true, summary: true,
+      v: 2, level: 1, yearTolerance: 1, tab: 'review', sideWidth: null, sections: {},
     },
   };
 
@@ -67,7 +67,10 @@
       if (!s || typeof s !== 'object') return;
       const t = state.settings;
       if (typeof s.author === 'string' && s.author.trim()) t.author = s.author.slice(0, 80);
-      for (const k of ['track', 'keepTracking', 'recodeOther', 'recodeZotero', 'comment', 'summary']) if (typeof s[k] === 'boolean') t[k] = s[k];
+      for (const k of ['track', 'keepTracking', 'recodeOther', 'recodeZotero']) if (typeof s[k] === 'boolean') t[k] = s[k];
+      // The comment options were off by default before version 2 of these
+      // settings; an "off" stored then was the old default, not a choice.
+      if (s.v >= 2) for (const k of ['comment', 'summary']) if (typeof s[k] === 'boolean') t[k] = s[k];
       if ([0, 1, 2].includes(s.level)) t.level = s.level;
       if ([0, 1, 2].includes(s.yearTolerance)) t.yearTolerance = s.yearTolerance;
       if (['review', 'linked', 'all', 'refs', 'help'].includes(s.tab)) t.tab = s.tab;

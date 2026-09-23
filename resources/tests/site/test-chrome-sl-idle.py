@@ -485,7 +485,7 @@ async def main():
             clock.textContent = '';
             for (const ch of t) {
               const cell = document.createElement('span');
-              cell.className = ch === ':' ? 'sl-clock-sep' : 'sl-clock-digit';
+              cell.className = ch === ':' ? 'sl-tnum-sep' : 'sl-tnum';
               cell.textContent = ch;
               clock.appendChild(cell);
             }
@@ -495,7 +495,7 @@ async def main():
           for (const t of ['11:11:11', '23:33:33', '00:00:00', '08:58:38', '19:30:00'])
             widths[t] = paint(t);
           paint('23:33:33');
-          const digitCells = [...clock.querySelectorAll('.sl-clock-digit')]
+          const digitCells = [...clock.querySelectorAll('.sl-tnum')]
             .map((c) => Math.round(c.getBoundingClientRect().width * 100) / 100);
           return { widths, digitCells };
         })())"""))

@@ -809,6 +809,40 @@ serve the previous run's `sl-board.js` against the current `sl-board.css` -
 which produced one genuinely confusing failure where the synthetic cell checks
 passed and the live clock still jittered. New CSS, old JS.
 
+## test-chrome-sl-tabular.py
+
+Whether anything on the SL boards shifts sideways as its numbers tick.
+
+    python3 -m http.server 8765 --bind 127.0.0.1
+    "$CHROME" --headless=new --remote-debugging-port=9222 --user-data-dir=/tmp/p
+    python3 resources/tests/site/test-chrome-sl-tabular.py    # expect 36/36
+
+The clock's digit cells (above) fixed the clock and nothing else. Three other
+numbers tick once a second in the same proportional figures: the next train's
+countdown, which under two minutes reads `1:51`, `1:50`, ...; the following
+trains' counts; and `Updated 4s ago` beside the clock. The countdown is centred,
+so each change of width moved all of it - **13.4px a tick** at desktop width,
+the colon wandering with the digits. `tabular()` in `sl-board.js` now writes
+all of them into the same `.sl-tnum` / `.sl-tnum-sep` cells the clock uses.
+
+The departures are stubbed so the next two trains are 113 s and 118 s away,
+and the board is read once a second for twelve seconds on both pages, at 1000px
+and 390px. Positions are taken from the text through a `Range`, not from the
+elements. The hero's count is a block as wide as its grid column, so its box
+stood perfectly still while the digits inside it jumped, and the first probe
+reported it fixed.
+
+`Updated Ns ago` is meant to move when its wording changes: it is aligned to
+the dot's side and grows leftwards, and `Live` to `Updated 3s ago`, or 9 s to
+10 s, is a different length. The check groups samples by text length and
+requires the left edge to hold within each group.
+
+Against the code before the fix it scores **20/36**: the countdown's colon
+moves 8-14px at every size, the following count's width changes by 6.6px, and
+the status text by 1px between `Updated 3s ago` and `Updated 4s ago`. Each
+count also has a guard asserting it really ticked, since a board that stood
+still would pass everything else.
+
 ## test-chrome-theme-default.py
 
 Which theme a page starts in, given the system setting and what is stored.

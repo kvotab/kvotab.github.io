@@ -15,6 +15,17 @@
 
 .sl-board { border: 1px solid var(--border-color); border-radius: 14px; background: var(--bg-secondary); overflow: hidden; }
 
+/* Tabular figures, done in the layout. Every number on the board that ticks -
+   the clock, the "Updated 12s ago" beside it, the countdowns - is written by
+   the script with each digit in a cell of its own. tabular-nums is declared
+   on those elements and computes, but this font has no tnum feature for it to
+   act on, so without the cells "1" is .178em where "3" and "8" are .482em and
+   a centred "1:51" shifted 13px sideways every second. .5em clears the widest
+   digit and .15em the colon (.142em). Measured, not guessed - a cell narrower
+   than its glyph would overlap the next. */
+.sl-tnum { display: inline-block; width: .5em; text-align: center; }
+.sl-tnum-sep { display: inline-block; width: .15em; text-align: center; }
+
 .sl-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap;
   padding: 16px 20px 12px; border-bottom: 1px solid var(--border-color); background: var(--bg-surface); }
 .sl-relation { font-size: 1.25rem; font-weight: 750; color: var(--text-primary); letter-spacing: .01em; }
@@ -40,12 +51,6 @@
    clipping here: the "live" pulse is a box-shadow ring that spreads 7px beyond
    the dot, and overflow:hidden would cut it off. */
 .sl-live { white-space: nowrap; justify-self: end; }
-/* The clock's own tabular cells. tabular-nums above computes but this font has
-   no tnum feature for it to act on, so the widths are set here: .5em clears
-   the widest digit (.482em) and .15em the colon (.142em). Measured, not
-   guessed - a cell narrower than its glyph would overlap the next. */
-.sl-clock-digit { display: inline-block; width: .5em; text-align: center; }
-.sl-clock-sep { display: inline-block; width: .15em; text-align: center; }
 .sl-live::after { content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-left: 6px; background: var(--text-muted); vertical-align: middle; }
 @keyframes sl-pulse { 0%, 100% { box-shadow: 0 0 0 3px rgba(63, 139, 85, .18); } 50% { box-shadow: 0 0 0 7px rgba(63, 139, 85, .05); } }
 .sl-live-ok::after { background: #3f8b55; box-shadow: 0 0 0 3px rgba(63, 139, 85, .18); animation: sl-pulse 2.4s ease-in-out infinite; }
