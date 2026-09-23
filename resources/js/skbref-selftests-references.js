@@ -212,7 +212,19 @@
         'Bugmann H K M, 1994. On the ecology of mountainous forest in a changing climate: a simulation study. PhD thesis. Swiss Federal Institute of Technology.',
         'Leskinen N, Ronneteg U, 2011. Tillverkning av kapselkomponenter. SKBdoc 1175208 ver 5.0, Svensk Kärnbränslehantering AB.',
         'Keller B, 2002. Nuclear nightmares. The New York Times, 26 May, 6.',
-        'Itasca, 2007. 3DEC – 3-dimensional distinct element code, version 4.1. Minneapolis, MN: Itasca Consulting Group, Inc.'
+        'Itasca, 2007. 3DEC – 3-dimensional distinct element code, version 4.1. Minneapolis, MN: Itasca Consulting Group, Inc.',
+        'SKB, 2003. Planning report for the safety assessment SR-Can. SKB TR-03-08, Svensk Kärnbränslehantering AB.',
+        'Sibeck L, 2014. Toughness of ferritic nodular irons. Report 20230-C, issue 7, Swerea Swecast. SKBdoc 1265058 ver 3.0, Svensk Kärnbränslehantering AB.',
+        'Östergren I, Falk R, Mjönes L, Ek B-M, 2003. Mätning av naturlig radioaktivitet i dricksvatten: test av mätmetoder och resultat av en pilotundersökning. SSI Rapport 2003:07, Statens strålskyddsinstitut (Swedish Radiation Protection Authority). (In Swedish.)',
+        'van der Veen C J, 2007. Fracture propagation as means of rapidly transferring surface meltwater to the base of glaciers. Geophysical Research Letters 34, L01501. https://doi.org/10.1029/2006GL028385',
+        'Lamarsh J R, Baratta A J, 2001. Introduction to nuclear engineering. 3rd ed. Upper Saddle River, NJ: Prentice Hall.',
+        'Coulson J M, Richardson J F, Backhurst J R, Harker J H, 1999. Chemical engineering. Vol 1. Fluid flow, heat transfer and mass transfer. 6th ed. Oxford: Pergamon.',
+        'Bardet J P, Huang Q, Proubet J, 1992. A micromechanical investigation of the influence of couple stresses on failure in granular materials. In Tillerson J A, Wawersik W R (eds). Proceedings of the 33rd U.S. Symposium on Rock Mechanics, Santa Fe, New Mexico, 3–5 June 1992. Rotterdam: Balkema, 609–617.',
+        'Birks H J B, 1995. Quantitative palaeoenvironmental reconstructions. In Maddy D, Brew J S (eds). Statistical modelling of quaternary science data. Cambridge: Quaternary Research Association. (Technical Guide 5), 161–254.',
+        'García Ambrosiani K, 1990. Pleistocene stratigraphy in central and northern Sweden: a reinvestigation of some classical sites. Stockholm: Stockholm University. (Reports of Department of Quaternary Research 16)',
+        'Kärnavfallsrådet, 2010. Kunskapslägesrapport på kärnavfallsområdet 2010: utmaningar för slutförvarsprogrammet. Stockholm: Kärnavfallsrådet. (Statens offentliga utredningar 2010:6) (In Swedish.)',
+        'SSMFS 2008:21. Strålsäkerhetsmyndighetens föreskrifter och allmänna råd om säkerhet vid slutförvaring av kärnämne och kärnavfall. Stockholm: Strålsäkerhetsmyndigheten (Swedish Radiation Safety Authority). (In Swedish.)',
+        'DOF, n d. Natur og fugle. Dansk Ornitologisk Forening. Available at: http://www.dofbasen.dk/ART/ [15 August 2011]. (In Danish.)'
       ];
       for (const body of CORRECT) {
         const found = referenceIssues(body);
@@ -227,7 +239,15 @@
         ['Berger, A., Loutre, M. F., 2002. Title of the work. Journal of Climate 15, 1–20.', /comma after the surname/i],
         ['Birgersson M, Karnland O and Nilsson U, 2010. Title of the work. SKB TR-10-01, Svensk Kärnbränslehantering AB.', /Separate all authors with commas/i],
         ['Andersson J et al., 2012. Title of the work. SKB TR-12-01, Svensk Kärnbränslehantering AB.', /do not use et al/i],
-        ['Leskinen N, 2011. Tillverkning. SKBdoc 1175208, Svensk Kärnbränslehantering AB.', /must include its version/i]
+        ['Leskinen N, 2011. Tillverkning. SKBdoc 1175208, Svensk Kärnbränslehantering AB.', /must include its version/i],
+        /* Section 3.2: pages without pp, (ed) without a full stop, 2nd ed, the language note */
+        ['Akagawa F, 2006. Redox front formation. Geochemistry 6, pp 49–56.', /without p, pp or s/i],
+        ['Jenne E A (Ed.), 1998. Adsorption of metals by geomedia. San Diego, CA: Academic Press.', /\(ed\) or \(eds\)/i],
+        ['Lamarsh J R, Baratta A J, 2001. Introduction to nuclear engineering. 3rd edn. Upper Saddle River, NJ: Prentice Hall.', /2nd ed, 3rd ed/i],
+        ['Östergren I, 2003. Mätning av naturlig radioaktivitet. SSI Rapport 2003:07, Statens strålskyddsinstitut. (In Swedish)', /full stop inside the parenthesis/i],
+        /* Sections 4.1 and 4.7 */
+        ['SKB, 2003. Planning report for the safety assessment SR-Can. SKB TR-03-08.', /Svensk Kärnbränslehantering AB, after/i],
+        ['Brown C L, 2003. Thermodynamics. Vol. 2. 2nd ed. New York: McGraw-Hill.', /Vol 2, without a full stop/i]
       ];
       for (const [body, expected] of INCORRECT) {
         const found = referenceIssues(body);
@@ -243,6 +263,24 @@
       if (referenceIssues('Moore J, Allard B (eds), 2001. Title. Berlin: Springer.', false).some(d => /\(red\)/.test(d))) {
         failures.push('English reference list: (eds) must not be reported');
       }
+      if (!referenceIssues('Cooke S, 2009. A nuclear waste. The New York Times, 17 mars. Available at: http://www.nytimes.com/x [12 maj 2009].', true).some(d => /Tillgänglig:/.test(d))) {
+        failures.push('Swedish reference list: "Available at:" should be reported in favour of "Tillgänglig:"');
+      }
+
+      /*
+        Section 3.2: the author, the year and the full stop after it are bold,
+        and so is a designation an entry is entered under. The bold ranges are
+        what the .docx reader records for each entry.
+      */
+      const boldEntry = (body, boldSpans) => ({ key: extractAuthorYearKey(body) || body.slice(0, 12), body, paraIndex: 0, num: null, cites: [], boldSpans });
+      const boldFindings = list => findBoldHeadingIssues(list, FULL_CAPABILITIES).map(issue => issue.description);
+      const clair = 'Clair B, 2004. A title of the work. Stockholm: Förlag.';
+      if (boldFindings([boldEntry(clair, [{ start: 0, end: 14 }])]).length) failures.push('Bold heading: a correctly bold "Clair B, 2004." was reported');
+      if (!boldFindings([boldEntry(clair, [{ start: 0, end: 13 }])]).some(d => /full stop after the year in bold/i.test(d))) failures.push('Bold heading: a roman full stop after the year was not reported');
+      if (!boldFindings([boldEntry(clair, [])]).some(d => /in bold/i.test(d))) failures.push('Bold heading: an entry with no bold was not reported');
+      if (boldFindings([boldEntry('SFS 1984:3. Lag om kärnteknisk verksamhet. Stockholm: Riksdagen.', [{ start: 0, end: 11 }])]).length) failures.push('Bold heading: a bold designation heading was reported');
+      const plainList = ['Adams A, 2001. X. Y.', 'Berg B, 2002. X. Y.', 'Cole C, 2003. X. Y.', 'Dahl D, 2004. X. Y.'].map(body => boldEntry(body, []));
+      if (boldFindings(plainList).length !== 1) failures.push(`Bold heading: a list with no bold at all gave ${boldFindings(plainList).length} findings, expected one`);
 
       /* Chapter 5: the three-tier order, using the guide's own example list. */
       const ordered = [

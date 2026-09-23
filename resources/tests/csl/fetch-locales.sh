@@ -5,7 +5,9 @@
 set -e
 cd "$(dirname "$0")"
 mkdir -p locales
-for lang in en-GB en-US sv-SE; do
+# de-DE and da-DK let run-rules.js check that a German or Danish source
+# brings none of its own terms or quotation marks into an SKB reference.
+for lang in en-GB en-US sv-SE de-DE da-DK; do
   curl -fsSL -o "locales/locales-$lang.xml" \
     "https://raw.githubusercontent.com/citation-style-language/locales/master/locales-$lang.xml"
   echo "locales/locales-$lang.xml"

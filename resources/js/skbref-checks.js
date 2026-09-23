@@ -76,15 +76,18 @@
 
         /* Heading checks use the Word heading style, or, reading a PDF, the
            level inferred from the type size. */
+        /* 1715629 section 6: "Rubriker avslutas inte med punkt" -- a full stop,
+           not a question mark -- and "helst färre än sex ord", so six words is
+           already one too many. A leading section number is not a word. */
         if (headingLevel(paragraph.style) > 0 && text) {
-          if (/[.!?]$/.test(text)) {
+          if (/\.$/.test(text.trim())) {
             issues.push(makeOfficialIssue({
               match: text,
-              description: 'Headings should not end with punctuation.',
+              description: 'Headings do not end with a full stop.',
               source: 'handbook', paragraph
             }));
           }
-          if (text.trim().split(/\s+/).length > 6) {
+          if (text.trim().replace(/^(?:\d+|[A-Z])(?:\.\d+)*\.?\s+/, '').split(/\s+/).filter(Boolean).length >= 6) {
             issues.push(makeOfficialIssue({
               match: text,
               description: 'Keep headings as short as possible, preferably fewer than six words.',
@@ -134,6 +137,10 @@
           if (!/(?:1[89]\d{2}|20\d{2})/.test(content)) continue;
 
           for (const commaYear of content.matchAll(/(?:^|[;,]\s*)([^;,()]{1,80}?),\s*((?:1[89]\d{2}|20\d{2})[a-z]?)/gu)) {
+            /* "(Williams 1999, 2000, 2003)", "(Smith 2003a, b, 2010b, c)" and
+               "Halley (1988, 1990)" are the guide's own forms: what stands
+               before the comma is a year, or a year's letter, not a name. */
+            if (/(?:^|\s)(?:(?:1[89]|20)\d{2}[a-z]?|[a-z])$/u.test(commaYear[1].trim())) continue;
             issues.push(makeOfficialIssue({
               match: commaYear[0].replace(/^[;,]\s*/, ''),
               description: 'Do not place a comma between the author name and publication year in an SKB Harvard in-text citation.',
@@ -387,8 +394,8 @@
         }
 
         /*
-          1215757, section 5: the ordinal suffix of an edition is not
-          superscript.
+          1215757, section 3.2 ("Upplaga"): the ordinal suffix of an edition is
+          not superscript.
         */
         if (paragraph.isReferenceList) {
           for (const match of text.matchAll(/\b\d+(st|nd|rd|th)\s+ed\b/g)) {
@@ -401,6 +408,26 @@
                 source: 'references', paragraph, context: text
               }));
             }
+          }
+        }
+
+        /*
+          1215757 appendix 2: "et al." is always upright, with its full stop;
+          1469987 section 6.5: so are the common Latin terms. Only an italic
+          stretch inside a paragraph that is not italic throughout counts, so
+          a caption, which is set in bold italic, is not reported.
+        */
+        if (capabilities['character-styles'] !== false && !spans.every(span => span.italic)) {
+          for (const match of text.matchAll(/\bet al\.|\b(?:in situ|a priori|ad hoc|status quo|e\.g\.|i\.e\.|cf\.|etc\.)/gu)) {
+            const state = formattingAt(paragraph, match.index, match.index + match[0].length);
+            if (!state || !state.italic) continue;
+            issues.push(makeOfficialIssue({
+              match: match[0],
+              description: match[0] === 'et al.'
+                ? 'Write et al. in upright (roman) type, never in italics.'
+                : 'Write common Latin terms and abbreviations such as in situ, e.g. and cf. in upright (roman) type.',
+              source: match[0] === 'et al.' ? 'references' : 'technical', paragraph, context: text
+            }));
           }
         }
 
@@ -571,16 +598,134 @@
       [/\bLic thesis\b/, 'Lic-avh'],
       [/,\s*n\s+d\b/, 'u å'],
       [/\bIn\s+[A-ZÅÄÖÀ-Þ][a-zåäöà-þ]+\s+[A-ZÅÄÖÀ-Þ]\b/, 'I'],
-      [/\b\d+(?:st|nd|rd|th)\s+ed\b/, '2. uppl']
+      [/\b\d+(?:st|nd|rd|th)\s+ed\b/, '2. uppl'],
+      [/\bAvailable at:/, 'Tillgänglig:']
     ]);
 
-    function findOfficialSkbReferenceIssues(entries, refParagraphs, isSwedish) {
-      const issues = [];
+    /*
+      Section 3.2 of 1215757: "Författarnamn, utgivningsår och efterföljande
+      punkt i början av referensen skrivs med fet stil" -- the author (or the
+      title or designation an entry is entered under), the year and the full
+      stop after it, and nothing else. The heading of an entry is the text up
+      to that full stop.
+    */
+    function referenceHeading(text) {
+      const authorYear = text.match(/^.+?,\s*(?:(?:1[89]|20)\d{2}[a-z]?|n\s?d|u\s?å)\./u);
+      if (authorYear) return authorYear[0];
+      const designation = text.match(/^[A-ZÅÄÖ][\p{L}-]{0,11}(?:\s[A-Z]{1,4})?\s+\d{1,4}(?:\/\d{2})?:\d{1,4}[a-z]?\./u);
+      return designation ? designation[0] : '';
+    }
+
+    function boldCoverage(entry, length) {
+      const covered = new Uint8Array(length);
+      for (const span of entry.boldSpans || []) {
+        for (let index = Math.max(0, span.start); index < Math.min(length, span.end); index++) covered[index] = 1;
+      }
+      let bold = 0, letters = 0;
+      for (let index = 0; index < length; index++) {
+        if (/\s/.test(entry.body[index])) continue;
+        letters++;
+        if (covered[index]) bold++;
+      }
+      return { bold, letters, stop: length > 0 && covered[length - 1] === 1 };
+    }
+
+    function findBoldHeadingIssues(entries, capabilities) {
+      if (capabilities && capabilities['character-styles'] === false) return [];
+      const checked = entries.filter(entry => entry.num === null && Array.isArray(entry.boldSpans) && referenceHeading(entry.body || ''));
+      const problems = [];
+      for (const entry of checked) {
+        const heading = referenceHeading(entry.body);
+        const coverage = boldCoverage(entry, heading.length);
+        if (coverage.bold === coverage.letters) continue;
+        problems.push({ entry, heading, kind: coverage.bold === 0 ? 'none' : coverage.bold === coverage.letters - 1 && !coverage.stop ? 'stop' : 'part' });
+      }
+      if (!problems.length) return [];
+      /* A list with no bold at all is one finding, not one per entry. */
+      if (problems.every(problem => problem.kind === 'none') && problems.length === checked.length && checked.length > 3) {
+        const first = problems[0].entry;
+        return [makeOfficialIssue({
+          match: problems[0].heading,
+          description: 'Write the author, the year and the full stop after it in bold at the start of every reference; none of the ' + checked.length + ' references is.',
+          source: 'references', paragraph: { index: first.paraIndex, section: 'References', text: first.body }
+        })];
+      }
+      return problems.map(problem => makeOfficialIssue({
+        match: problem.heading,
+        description: problem.kind === 'stop'
+          ? 'Write the full stop after the year in bold too.'
+          : 'Write the author, the year and the full stop after it in bold.',
+        source: 'references', paragraph: { index: problem.entry.paraIndex, section: 'References', text: problem.entry.body }
+      }));
+    }
+
+    function findOfficialSkbReferenceIssues(entries, refParagraphs, isSwedish, capabilities = FULL_CAPABILITIES) {
+      const issues = findBoldHeadingIssues(entries, capabilities);
       const allRefText = refParagraphs.map(p => p.text).join('\n');
 
       for (const entry of entries) {
         const paragraph = { index: entry.paraIndex, section: 'References', text: entry.body };
         const text = entry.body || '';
+
+        /* Section 3.2: page numbers in the list are written without p or pp. */
+        const labelledPages = text.match(/,\s*((?:pp?|s)\.?\s+\d+(?:\s*[–-]\s*\d+)?)(?=\s*[.,]?\s*(?:\(|https?:|$))/u);
+        if (labelledPages) {
+          issues.push(makeOfficialIssue({
+            match: labelledPages[1],
+            description: 'Write page numbers in the reference list without p, pp or s; the label belongs to in-text citations only.',
+            source: 'references', paragraph
+          }));
+        }
+
+        /* Section 3.2: "(ed)" and "(eds)", lower case and without a full stop. */
+        const editorMark = text.match(/\((?:[Ee]ds?\.|Eds?|[Rr]ed\.|Red)\)/u);
+        if (editorMark) {
+          issues.push(makeOfficialIssue({
+            match: editorMark[0],
+            description: isSwedish ? 'Write the editor mark as (red), without a full stop.' : 'Write the editor mark as (ed) or (eds), in lower case and without a full stop.',
+            source: 'references', paragraph
+          }));
+        }
+
+        /* Section 3.2: the edition as "2nd ed", "3rd ed". */
+        const editionForm = text.match(/\b\d+(?:st|nd|rd|th)\s+(?:edn\b\.?|edition\b|Ed\b\.?)/u);
+        if (editionForm) {
+          issues.push(makeOfficialIssue({
+            match: editionForm[0],
+            description: 'Write the edition as 2nd ed, 3rd ed, 4th ed.',
+            source: 'references', paragraph
+          }));
+        }
+
+        /* Section 4.7: "Vol 2", without a full stop. */
+        const volumeStop = text.match(/\bVol\.\s*\d/u);
+        if (volumeStop) {
+          issues.push(makeOfficialIssue({
+            match: volumeStop[0],
+            description: 'Write the volume of a multivolume work as Vol 2, without a full stop.',
+            source: 'references', paragraph, severity: 'review'
+          }));
+        }
+
+        /* Section 3.2: the language note ends with a full stop inside the parenthesis. */
+        const languageNote = text.match(/\((?:In|På)\s+[\p{L}]+\)/u);
+        if (languageNote) {
+          issues.push(makeOfficialIssue({
+            match: languageNote[0],
+            description: isSwedish ? 'Write the language note with a full stop inside the parenthesis, for example (På tyska.).' : 'Write the language note with a full stop inside the parenthesis, for example (In Swedish.).',
+            source: 'references', paragraph, severity: 'review'
+          }));
+        }
+
+        /* Section 4.1: an SKB report number is followed by the publisher. */
+        /* A PDF can lose the diacritics ("Karnbranslehantering"); that is still the publisher. */
+        if (/\bSKB\s+(?:TR|R|P|IPR|RD|SR|TM|U|F)-\d{2,}-\d+/u.test(text) && !/Svensk\s+K[äa]rnbr[äa]nslehantering\s+AB/iu.test(text)) {
+          issues.push(makeOfficialIssue({
+            match: text.match(/\bSKB\s+(?:TR|R|P|IPR|RD|SR|TM|U|F)-\d{2,}-\d+/u)[0],
+            description: 'Give the publisher, Svensk Kärnbränslehantering AB, after the SKB report number.',
+            source: 'references', paragraph, severity: 'review'
+          }));
+        }
 
         if (/\bet\s+al\.?\b/i.test(text)) {
           issues.push(makeOfficialIssue({

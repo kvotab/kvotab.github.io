@@ -618,7 +618,7 @@
         */
         const hasBracketedDate = /\[[^\]]*\b(?:1[89]\d{2}|20\d{2})\b[^\]]*\]/.test(text);
         const hasAccessWord = /(?:accessed|hämtad|hämtat|visited|retrieved|besökt)\s/i.test(text);
-        if (/https?:\/\//.test(text) && !isDoi && !hasBracketedDate && !hasAccessWord) issues.push({ key: entry.key, issue: 'URL present but no access date', severity: 'warn' });
+        if (/https?:\/\//.test(text) && !isDoi && !hasBracketedDate && !hasAccessWord) issues.push({ key: entry.key, issue: 'URL present but no access date; it may be left out only for material that is unlikely to change (1215757, section 4.13)', severity: 'warn' });
         const last = text.trim().slice(-1);
         if (text.length > 20 && !endsWithLink && !['.', ')'].includes(last)) issues.push({ key: entry.key, issue: `Reference does not end with a period (ends with "${last}")`, severity: 'info' });
         if (endsWithLink && last === '.') issues.push({ key: entry.key, issue: 'Do not write a period after a link at the end of a reference', severity: 'info' });

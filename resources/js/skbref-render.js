@@ -407,13 +407,14 @@
       the other, and two such references in one list as duplicates.
     */
     /*
-      Abbreviated reference names, chapter 4.9 of 1215757, against author-year
-      references. Both are written "<name>, <year>." so nothing but the shape
+      Abbreviated reference names against author-year references. 1215757
+      has no rule for these; they are the "References with abbreviated names"
+      of SKB's PSAR reports. Both are written "<name>, <year>." so nothing but the shape
       of the name separates them, and getting it wrong is not a cosmetic
       mistake: an author-year reference read as an abbreviated name is entered
       under its whole author list with no year, so two works by the same
       authors collide and are reported as duplicates of each other.
 
-      The abbreviated names below are the ones 1215757 lists; the author lists
-      are taken from the reference list of SKB TR-23-02.
+      The abbreviated names below are the ones those reports use; the author
+      lists are taken from the reference list of SKB TR-23-02.
     */

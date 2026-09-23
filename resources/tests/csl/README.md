@@ -37,6 +37,13 @@ in-text citation.
   nine-entry example
 - the Swedish forms of chapter 6: `och`, `s`, `red`, `I`, `u å`,
   `Tillgänglig:`, `uppl`
+- the author, the year **and the full stop after it** in bold (section 3.2)
+- the Swedish alphabet in both styles: Ü as Y, and Å, Ä/Æ, Ö/Ø after Z
+  (chapter 5)
+- language notes only for sources in languages other than English
+  (section 3.2), in the report's language (chapter 6)
+- no term, quotation mark or month from another locale in the output, and a
+  space before AD and BC (1469987, section 6.2.2)
 
 ## Adding a case
 

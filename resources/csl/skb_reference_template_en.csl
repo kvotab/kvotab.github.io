@@ -8,11 +8,16 @@
   Titles       Type them in sentence case with a colon before the subtitle.
                The style deliberately does not re-case titles, because
                automatic casing would corrupt names such as "Geochimica et
-               Cosmochimica Acta" or "PLOS ONE".
+               Cosmochimica Acta" or "PLOS ONE". Journal titles are written
+               in full with capitalised main words (section 4.4).
   Language     For non-English sources, put a lower-case language CODE in the
                Language field: sv, da, no, fi, de, fr ... ("sv-SE" also works,
                "Swedish" and "SV" do NOT). This produces "(In Swedish.)" at the
-               end of the reference.
+               end of the reference. Leave it empty for English sources.
+  Authors      A work without a personal author is entered under the body
+               that issued it: one creator in single-field mode, using an
+               accepted abbreviation ("SKB", "MIT", "IAEA"), with the name
+               written out in Publisher (sections 4.1 and 4.6).
   SKB report   Item type Report. Report Number = "SKB R-08-107".
                Institution/Publisher = "Svensk Kärnbränslehantering AB".
                Leave Place empty (SKB reports carry no place of publication).
@@ -24,57 +29,86 @@
                field "original-publisher: <that organisation>", Archive =
                "SKBdoc", Loc. in Archive = "1265058 ver 3.0" and Publisher =
                "Svensk Kärnbränslehantering AB".
+  Other        Place = the COUNTRY, and only when the institution's name does
+  reports,     not already show it (sections 4.2 and 4.3): "... National
+  theses       Cooperative for the Disposal of Radioactive Waste,
+               Switzerland." A thesis has "PhD thesis" or "Lic thesis" in
+               Type and the university in University.
+  Books        Place of publication without the country; a place in the
+               United States takes the two-letter state: "Thousand Oaks, CA".
+               Edition as a number ("3" gives "3rd ed").
   Volumes      Put the volume title in the Volume field after the number,
                e.g. Volume = "1. Fluid flow, heat transfer and mass transfer".
   Series       Series = "Technical Guide", Series Number = "5" gives
                "(Technical Guide 5)" at the end, with no full stop after it.
+  Journals     Volume and pages; the issue is left out automatically. An
+               article without page numbers takes its article number in
+               Pages ("L01501"). A DOI goes in the DOI field and is printed
+               as https://doi.org/... at the very end, with no full stop.
   Laws, SOU,   Item type Statute (or Standard). Put the designation in the
-  standards    number field ("SFS 1984:3", "SS-EN 1936:1999") and leave the
-               author empty to enter the work under its designation. To enter
-               it under the issuing body instead, fill in the author and move
-               the designation to Series/Series Number so it is printed as
-               "(SSMFS 2008:21)" at the end.
+  Ds, stand-   number field - Public Law Number for a statute, Number for a
+  ards         standard ("SFS 1984:3", "SS-EN 1936:1999") - and leave the
+               author empty to enter the work under its designation. A
+               statute has no Publisher or Place fields, so add them to Extra
+               as two lines: "publisher: Riksdagen" and "publisher-place:
+               Stockholm". (A Report with the line "type: legislation" in
+               Extra works too.) To enter it under the issuing body instead,
+               fill in the author and move the designation to Series/Series
+               Number so it is printed as "(SSMFS 2008:21)" at the end.
   Conferences  Zotero has no separate fields for conference place and dates -
                append them to Proceedings Title, e.g. "Proceedings of the 33rd
                U.S. Symposium on Rock Mechanics, Santa Fe, New Mexico,
                3-5 June 1992".
+  Web pages    Fill in Accessed; it is printed as "[24 September 2011]". A
+               database version goes in Extra as "version: 2011.1".
   Page ranges  Plain hyphens are converted to en dashes automatically.
+
+  SORTING
+  =======
+  default-locale is "sv-FI" - Swedish as written in Finland - although every
+  word the style prints is English. It is there for chapter 5: Swedish
+  collation files Å, Ä/Æ and Ö/Ø last and Ü as Y, as SKB's lists do, where
+  English collation files Å and Ä under A and Ö under O. It is sv-FI rather
+  than sv-SE because a source whose Language is "sv" only gets its
+  "(In Swedish.)" when its language differs from the style's own; both
+  collate alike. Every term is defined in the cs:locale below, so nothing
+  Swedish reaches the output. Do not change it to en-GB or sv-SE.
 
   KNOWN LIMITATIONS (require manual editing)
   ==========================================
-  * Sorting uses the word processor's English collation. It files Å and Ä
-    under A and Ö under O instead of placing them last in the alphabet, and
-    it does not treat Ü as Y, Æ as Ä or Ø as Ö. Check the order of
-    Scandinavian names by hand (the instruction itself notes that this has
-    to be adjusted manually).
-    Changing default-locale to "sv-SE" does give correct Swedish
-    collation, and all the English wording above is preserved by the
-    cs:locale block. The trade-off is that Swedish sources then stop
-    getting "(In Swedish.)" automatically, because a conditional layout is
-    never applied to items in the style's own default locale. Pick
-    whichever of the two you would rather fix by hand.
   * A work entered under its title keeps the comma before the year, so a
     title that ends in a question mark comes out as
     "Do we support sustainable development?, 2002." The instruction prints
     no comma there (section 4.4). CSL cannot test the last character of a
     string, so delete that one comma by hand. Note that the full stop after
     such a title IS suppressed automatically, so only the comma needs it.
-  * A surname containing a space is not collated as one word: the
-    instruction files "Delaine J-M" before "de Maury E" (chapter 5 says the
-    space is ignored), while both styles produce the opposite order.
-    Hyphenated names such as "Berg-Liljeblad" ARE handled correctly.
+  * A work entered under a title that begins with "The", "A" or "An" is
+    filed under that word; the guide files it under the first significant
+    word ("The new Encyclopaedia Britannica" under N). Move it by hand.
+  * A surname containing a space or a particle is filed as if the first
+    word ended there: the instruction files "Délaine J-M" before "de Maury
+    E" (chapter 5 says the space is ignored), while both styles produce the
+    opposite order. Hyphenated names such as "Berg-Liljeblad" ARE handled
+    correctly.
+  * One author written sometimes with one initial and sometimes with two
+    ("Werme L", "Werme L O") is filed as two authors; the guide sorts such
+    works together, chronologically, when there is no doubt they are the
+    same person (chapter 5).
   * Two authors with the same surname only get initials added when both
     references are actually cited in the document; add them manually
     otherwise.
-  * Locator labels are only pluralised for purely numeric ranges, so
-    "Sections 3.4-3.8" has to be typed with the label suppressed.
+  * Locator labels are only pluralised for purely numeric ranges, and only
+    page ranges get an en dash, so "Sections 3.4–3.8" has to be typed with
+    the label suppressed and the en dash typed in the locator.
   * The SKB exception of citing a report by number instead of year
-    ("SKB TR-10-53") is not automatic - edit that citation by hand.
+    ("SKB TR-10-53") is not automatic - edit that citation, and write the
+    reference as "SKB TR-10-53. SKB 2010. Title. Svensk Kärnbränslehantering
+    AB.", by hand.
   * Personal communications and database records must not be in the
     reference list; keep them in the running text.
 -->
 <style xmlns="http://purl.org/net/xbiblio/csl" class="in-text" version="1.0"
-       default-locale="en-GB"
+       default-locale="sv-FI"
        initialize-with-hyphen="true"
        demote-non-dropping-particle="never"
        page-range-format="expanded">
@@ -94,7 +128,7 @@
     <issn>1404-0344</issn>
     <issn>1651-4416</issn>
     <summary>Author-date (Harvard) style for SKB public reports in English, per SKBdoc 1215757 "Angivande av referenser i publika rapporter".</summary>
-    <updated>2026-09-01T00:00:00+00:00</updated>
+    <updated>2026-09-23T00:00:00+00:00</updated>
   </info>
 
   <!-- ===================================================================
@@ -107,10 +141,31 @@
        layouts to add "(In Swedish.)" etc, and those layouts also switch
        the active locale. Without the overrides below, a Swedish or Danish
        source would get Swedish/Danish abbreviations and month names,
-       which the instruction does not allow in an English report.
+       which the instruction does not allow in an English report. The
+       default locale is Swedish for its collation (see SORTING above), so
+       every term the processor can print is defined here: nothing falls
+       through to the Swedish locale.
        =================================================================== -->
   <locale>
+    <style-options punctuation-in-quote="false"/>
     <terms>
+      <!-- British quotation marks, as before the locale was changed -->
+      <term name="open-quote">‘</term>
+      <term name="close-quote">’</term>
+      <term name="open-inner-quote">“</term>
+      <term name="close-inner-quote">”</term>
+      <term name="page-range-delimiter">–</term>
+      <!-- a space before the era, as 1469987 section 6.2.2 asks: the
+           processor writes the term straight after the year -->
+      <term name="ad"> AD</term>
+      <term name="bc"> BC</term>
+      <term name="circa">circa</term>
+      <term name="and others">and others</term>
+      <term name="anonymous">anonymous</term>
+      <term name="season-01">Spring</term>
+      <term name="season-02">Summer</term>
+      <term name="season-03">Autumn</term>
+      <term name="season-04">Winter</term>
       <term name="editor" form="short"><single>ed</single><multiple>eds</multiple></term>
       <term name="translator" form="short"><single>transl</single><multiple>transl</multiple></term>
       <term name="et-al">et al.</term>
@@ -127,6 +182,26 @@
       <term name="paragraph" form="short"><single>Paragraph</single><multiple>Paragraphs</multiple></term>
       <term name="part" form="short"><single>Part</single><multiple>Parts</multiple></term>
       <term name="appendix" form="short"><single>Appendix</single><multiple>Appendices</multiple></term>
+      <term name="equation" form="short"><single>Equation</single><multiple>Equations</multiple></term>
+      <!-- The remaining locators, lower case: 1469987 section 6.4 capitalises
+           only the parts of a document -->
+      <term name="book" form="short"><single>book</single><multiple>books</multiple></term>
+      <term name="column" form="short"><single>column</single><multiple>columns</multiple></term>
+      <term name="folio" form="short"><single>folio</single><multiple>folios</multiple></term>
+      <term name="issue" form="short"><single>issue</single><multiple>issues</multiple></term>
+      <term name="line" form="short"><single>line</single><multiple>lines</multiple></term>
+      <term name="note" form="short"><single>note</single><multiple>notes</multiple></term>
+      <term name="opus" form="short"><single>opus</single><multiple>opera</multiple></term>
+      <term name="sub-verbo" form="short"><single>s.v.</single><multiple>s.vv.</multiple></term>
+      <term name="verse" form="short"><single>verse</single><multiple>verses</multiple></term>
+      <term name="article-locator" form="short"><single>article</single><multiple>articles</multiple></term>
+      <term name="elocation" form="short"><single>location</single><multiple>locations</multiple></term>
+      <term name="rule" form="short"><single>rule</single><multiple>rules</multiple></term>
+      <term name="scene" form="short"><single>scene</single><multiple>scenes</multiple></term>
+      <term name="supplement" form="short"><single>supplement</single><multiple>supplements</multiple></term>
+      <term name="canon" form="short"><single>canon</single><multiple>canons</multiple></term>
+      <term name="act" form="short"><single>act</single><multiple>acts</multiple></term>
+      <term name="title-locator" form="short"><single>title</single><multiple>titles</multiple></term>
       <!-- English month names for accessed/published dates -->
       <term name="month-01">January</term>
       <term name="month-02">February</term>
@@ -585,13 +660,18 @@
 
   <!-- ===================================================================
        BIBLIOGRAPHY
-       Author(s), year and the following full stop are bold.
+       Author(s), year and the following full stop are bold. The full stop
+       is a text element inside the bold group, not the group's suffix: a
+       suffix is printed outside the formatting, which left it roman.
        =================================================================== -->
   <macro name="bibliography-entry">
     <group delimiter=" ">
-      <group delimiter=", " suffix="." font-weight="bold">
-        <text macro="name-form-bibliography"/>
-        <text macro="year"/>
+      <group font-weight="bold">
+        <group delimiter=", ">
+          <text macro="name-form-bibliography"/>
+          <text macro="year"/>
+        </group>
+        <text value="."/>
       </group>
       <text macro="title" suffix="."/>
       <text macro="tail"/>

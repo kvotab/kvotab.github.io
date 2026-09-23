@@ -1,7 +1,9 @@
 /*
   The rules of 1215757 that its example references do not exercise: page
   locators, multiple sources in one parenthesis, year disambiguation, the
-  reference-list order of chapter 5, and the Swedish forms of chapter 6.
+  reference-list order of chapter 5, the Swedish forms of chapter 6, bold,
+  the Swedish alphabet, language notes, and that no other locale's wording
+  reaches the output.
 */
 const fs = require('fs');
 const path = require('path');
@@ -151,10 +153,79 @@ console.log('\n6 Swedish publication: och, s, red, I, u å, Tillgänglig, uppl')
   is('och between two authors', e.makeCitationCluster([{ id: 'wyllie' }]), '(Wyllie och Mah 2004)');
   is('s for pages',            e.makeCitationCluster([{ id: 'mill', locator: '65-67', label: 'page' }]), '(Mill 2005, s 65–67)');
   is('u å for no date',        e.makeCitationCluster([{ id: 'smhi' }]), '(SMHI, u å)');
-  is('(red) after an editor',  bib['jenne'], 'Jenne E A (red), 1998. Adsorption of metals by geomedia. San Diego, CA: Academic Press. (På engelska.)');
-  is('uppl for edition',       bib['wyllie'], 'Wyllie D C, Mah C W, 2004. Rock slope engineering: civil and mining. 4. uppl. New York: Spon Press. (På engelska.)');
-  is('I before the editors',   bib['saugier'], 'Saugier B, Roy R, Mooney H A, 2001. Estimations of global terrestrial productivity. I Roy J, Saugier B, Mooney H A (red). Terrestrial global productivity. London: Academic Press, 543–557. (På engelska.)');
+  /* Section 3.2 gives a language note to sources in languages other than
+     English; chapter 6 only translates the wording. These English sources
+     therefore carry none -- an earlier version of this test expected
+     "(På engelska.)", which the instruction does not print anywhere. */
+  is('(red) after an editor',  bib['jenne'], 'Jenne E A (red), 1998. Adsorption of metals by geomedia. San Diego, CA: Academic Press.');
+  is('uppl for edition',       bib['wyllie'], 'Wyllie D C, Mah C W, 2004. Rock slope engineering: civil and mining. 4. uppl. New York: Spon Press.');
+  is('I before the editors',   bib['saugier'], 'Saugier B, Roy R, Mooney H A, 2001. Estimations of global terrestrial productivity. I Roy J, Saugier B, Mooney H A (red). Terrestrial global productivity. London: Academic Press, 543–557.');
   is('Tillgänglig and a Swedish month', bib['smhi'], 'SMHI, u å. Klimatdata. Tillgänglig: https://www.smhi.se/ [15 augusti 2011].');
+}
+
+/* ═══════════════════════════ Section 3.2: bold ═══════════════════════════ */
+console.log('\n3.2 the author, the year and the full stop after it are bold');
+for (const styleKey of ['en', 'sv']) {
+  const items = [
+    { id: 'clair', type: 'book', author: [{ family: 'Clair', given: 'B' }], issued: { 'date-parts': [[2004]] }, title: 'A title', publisher: 'P', 'publisher-place': 'X' },
+    { id: 'sfs', type: 'legislation', number: 'SFS 1984:3', issued: { 'date-parts': [[1984]] }, title: 'Lag om kärnteknisk verksamhet', publisher: 'Riksdagen', 'publisher-place': 'Stockholm' },
+  ];
+  const e = engineFor(styleKey, items);
+  const html = e.makeBibliography()[1].join('\n');
+  /* A group's suffix is printed outside its formatting, which once left the
+     full stop roman: "<b>Clair B, 2004</b>." */
+  is(`${styleKey}: "Clair B, 2004." is bold, full stop included`, (html.match(/<b>(Clair[^<]*)<\/b>/) || [])[1], 'Clair B, 2004.');
+  is(`${styleKey}: a designation heading is bold`, (html.match(/<b>(SFS[^<]*)<\/b>/) || [])[1], 'SFS 1984:3.');
+}
+
+/* ═══════════════════════════ Chapter 5: the alphabet ═══════════════════════════ */
+console.log('\n5 the Swedish alphabet: Ü as Y, Å, Ä/Æ and Ö/Ø after Z, in both styles');
+for (const styleKey of ['en', 'sv']) {
+  const names = ['Ulfsson', 'Vik', 'Überg', 'Yttergren', 'Zetterberg', 'Åkesson', 'Æbeltoft', 'Ärlig', 'Öberg', 'Ørsted'];
+  const items = [...names].reverse().map((family, k) => ({ ...book(`n${k}`, family, 2000, 'x') }));
+  const e = engineFor(styleKey, items);
+  const [params] = e.makeBibliography();
+  const byId = Object.fromEntries(items.map(i => [i.id, i.author[0].family]));
+  /* "Überg" sorts as "Yberg": after Vik, before Yttergren. */
+  is(`${styleKey}: order`, params.entry_ids.map(ids => byId[ids[0]]).join(' '), 'Ulfsson Vik Überg Yttergren Zetterberg Åkesson Æbeltoft Ärlig Öberg Ørsted');
+}
+
+/* ═══════════════════════════ Section 3.2: language ═══════════════════════════ */
+console.log('\n3.2 language notes: for sources in languages other than English');
+{
+  const item = (id, language, title) => ({ ...book(id, id.charAt(0).toUpperCase() + id.slice(1), 2001, title), language });
+  const items = [item('ek', 'sv', 'En ny studie'), item('mueller', 'de', 'Eine neue Studie'), item('brown', 'en', 'A new study')];
+  const en = engineFor('en', items);
+  const enBib = Object.fromEntries(en.makeBibliography()[0].entry_ids.map((ids, i) => [ids[0], en.makeBibliography()[1][i]]));
+  is('en: a Swedish source', enBib['ek'], 'Ek A, 2001. En ny studie. X: P. (In Swedish.)');
+  is('en: a German source', enBib['mueller'], 'Mueller A, 2001. Eine neue Studie. X: P. (In German.)');
+  is('en: an English source', enBib['brown'], 'Brown A, 2001. A new study. X: P.');
+  const sv = engineFor('sv', items);
+  const svBib = Object.fromEntries(sv.makeBibliography()[0].entry_ids.map((ids, i) => [ids[0], sv.makeBibliography()[1][i]]));
+  is('sv: a Swedish source, the report\'s own language', svBib['ek'], 'Ek A, 2001. En ny studie. X: P.');
+  is('sv: a German source', svBib['mueller'], 'Mueller A, 2001. Eine neue Studie. X: P. (På tyska.)');
+  is('sv: an English source', svBib['brown'], 'Brown A, 2001. A new study. X: P.');
+}
+
+/* ═════════════════ Nothing from another locale reaches the output ═════════════════ */
+console.log('\nthe style\'s own wording only: terms, quotation marks, eras (1469987 section 6.2.2)');
+{
+  const items = [
+    { ...book('de', 'Müller', 1999, 'Die "neue" Methode'), language: 'de', edition: '21' },
+    { ...book('pl', 'Plinius', 77, 'Naturalis historia') },
+    { ...book('br', 'Brown', 2001, 'A study') },
+  ];
+  const en = engineFor('en', items);
+  const enBib = Object.fromEntries(en.makeBibliography()[0].entry_ids.map((ids, i) => [ids[0], en.makeBibliography()[1][i]]));
+  /* clean() folds typographic single quotes to ', so the British quotes read as 'neue' */
+  is('en: British quotes and "21st ed" in a German source', enBib['de'], "Müller A, 1999. Die 'neue' Methode. 21st ed. X: P. (In German.)");
+  is('en: a space before AD', enBib['pl'].replace(/\u00a0/g, ' '), 'Plinius A, 77 AD. Naturalis historia. X: P.');
+  is('en: an English locator label', en.makeCitationCluster([{ id: 'br', locator: '5', label: 'line' }]), '(Brown 2001, line 5)');
+  const sv = engineFor('sv', items);
+  const svBib = Object.fromEntries(sv.makeBibliography()[0].entry_ids.map((ids, i) => [ids[0], sv.makeBibliography()[1][i]]));
+  is('sv: Swedish quotes and "21. uppl" in a German source', svBib['de'], 'Müller A, 1999. Die ”neue” Methode. 21. uppl. X: P. (På tyska.)');
+  is('sv: a space before e Kr', svBib['pl'].replace(/\u00a0/g, ' '), 'Plinius A, 77 e Kr. Naturalis historia. X: P.');
+  is('sv: a Swedish plural label', sv.makeCitationCluster([{ id: 'br', locator: '3-4', label: 'figure' }]), '(Brown 2001, figurer 3–4)');
 }
 
 console.log('\n' + pass + ' passed, ' + failures.length + ' failed');

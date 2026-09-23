@@ -180,6 +180,51 @@
       { text: 'The campaign ran 29 September–2 October last year.', expect: /Space the en dash/i },
       { text: 'The campaign ran 29 September – 2 October last year.', expect: null },
 
+      /* 1215757 section 3.2 and appendix 3: more of the guide's own correct citations */
+      { text: 'In the late eighties, Halley (1988, 1990) has promoted the viewpoint that the model holds.', expect: null },
+      { text: 'The controversial results were extensively debated (Williams 1999, 2000, 2003).', expect: null },
+      { text: 'Several works by one author in one year are cited as (Smith 2003a, b, 2010b, c).', expect: null },
+      { text: 'Several works by one author are cited as (Brown 2002, 2004) in the text.', expect: null },
+      { text: 'Works by authors with one surname are cited as (Cole G 2003, Cole P 2001).', expect: null },
+      { text: 'Fuchs et al. (1993a, b) have presented several new ideas about the process.', expect: null },
+      { text: 'Larson E et al. (2009) have reported a major finding which seems to hold.', expect: null },
+      { text: 'Further research (Anderson et al. 1997, Brown 1999, de Rosa and Dolan 1997) has widened the understanding.', expect: null },
+      { text: 'Bauer (1989, p 112) argues that extraordinary measures are necessary.', expect: null },
+      { text: 'Ponti C (2000, personal communication) advises that the experiment is repeated.', expect: null },
+      { text: 'Cole’s observations (1999, cited in Morris 2001, pp 22–23) led to a new model.', expect: null },
+      { text: 'This is described in SKB (TR-10-53) and is too far away to influence the repository (SKB TR-10-53).', expect: null },
+      { text: 'The database of bird observations in Denmark (DOF, n d) lists the species.', expect: null },
+      { text: 'According to standard BS ISO 81782 (BSI 2008) the measurement is made at full load.', expect: null },
+      { text: 'This is done using the extensively tested 3DEC code (Itasca 2007).', expect: null },
+      { text: 'This is stated in the design premises report (Posiva SKB 2017).', expect: null },
+      { text: 'The values are measured (see Section 2.5 and Lin et al. 2006).', expect: null },
+
+      /* 1469987 section 6.1.5: storey is the British spelling */
+      { text: 'The building has three storeys above ground.', expect: null },
+
+      /* 1469987 section 3.1 (SV): a comma is the Swedish decimal separator;
+         1715629 section 7.6: digit groups are separated by spaces */
+      { text: 'Halten var 0,125 mg per liter i provet.', expect: null, lang: 'sv' },
+      { text: 'Förvaret rymmer 12.000 kapslar enligt planen.', expect: /not full stops, between groups/i, lang: 'sv' },
+      { text: 'Förvaret rymmer 12 000 kapslar enligt planen.', expect: null, lang: 'sv' },
+      { text: '0.001', expect: null, lang: 'sv' },
+
+      /* 1715629 sections 12 and 13: lower-case figur and tabell in running
+         text, but a sentence still begins with a capital letter */
+      { text: 'Figur 3-1 visar resultatet av mätningen.', expect: null, lang: 'sv' },
+      { text: 'Resultatet framgår av Figur 3-1 och tabell 3-2.', expect: /lower-case “figur”/i, lang: 'sv' },
+
+      /* 1715629 section 11.2: no "från" or "mellan" with an en dash */
+      { text: 'Anläggningen är öppen mellan 13–14 varje dag.', expect: /mellan/i, lang: 'sv' },
+      { text: 'Anläggningen är öppen 13–14 varje dag.', expect: null, lang: 'sv' },
+
+      /* 1715629 section 6: a heading does not end with a full stop and has
+         preferably fewer than six words */
+      { text: 'Results of the measurements.', style: 'heading 1', expect: /full stop/i },
+      { text: 'What does the model predict?', style: 'heading 1', expect: null },
+      { text: 'Groundwater flow in the rock mass', style: 'heading 1', expect: /fewer than six words/i },
+      { text: 'Groundwater flow in rock', style: 'heading 1', expect: null },
+
       /* 1715629 sections 7.1, 7.3, 7.4, 7.5, 18.1 and 18.2 */
       { text: 'Vi mätte t.ex. temperaturen i borrhålet.', expect: /without full stops/i, lang: 'sv' },
       { text: 'Vi mätte t ex temperaturen i borrhålet.', expect: null, lang: 'sv' },
@@ -203,7 +248,7 @@
         /* A case may declare its language; the SKB rules are language-gated. */
         const language = testCase.lang || 'en';
         const paragraph = {
-          index, localIndex: index, text: testCase.text, style: '', section: 'Fixture',
+          index, localIndex: index, text: testCase.text, style: testCase.style || '', section: 'Fixture',
           sourcePart: 'fixture', sourceLabel: 'Fixture', language,
           languageConfidence: 1, languageRanges: [], formatSpans: []
         };
@@ -231,6 +276,24 @@
       }
       if (!(skbSortKey('Ünger') < skbSortKey('Zetterlund'))) failures.push('Collation failed: u-diaeresis should sort as y');
       if (!(skbSortKey('Ärlig') < skbSortKey('Öberg'))) failures.push('Collation failed: a-diaeresis should sort before o-diaeresis');
+
+      /* 1215757 appendix 2 and 1469987 section 6.5: et al. and common Latin
+         terms are upright; an italic caption is not a finding. */
+      const styled = (text, spans) => ({ index: 0, localIndex: 0, text, style: '', section: 'Fixture', sourcePart: 'fixture',
+        language: 'en', languageConfidence: 1, languageRanges: [], formatSpans: spans });
+      const roman = { italic: false, bold: false, sup: false, sub: false, underline: false };
+      const italic = { ...roman, italic: true };
+      const etAlText = 'As shown by Ludvigsson et al. 2002, the flow is slow.';
+      const etAlAt = etAlText.indexOf('et al.');
+      const italicEtAl = findFormattingIssues([styled(etAlText, [
+        { start: 0, end: etAlAt, ...roman }, { start: etAlAt, end: etAlAt + 6, ...italic }, { start: etAlAt + 6, end: etAlText.length, ...roman }])]);
+      if (!italicEtAl.some(issue => /et al\. in upright/i.test(issue.description))) failures.push('Italic et al. was not reported');
+      const uprightEtAl = findFormattingIssues([styled(etAlText, [{ start: 0, end: etAlText.length, ...roman }])]);
+      if (uprightEtAl.some(issue => /upright/i.test(issue.description))) failures.push('Upright et al. was reported');
+      const caption = 'Figure 3-1. Measured in situ, after Ludvigsson et al. 2002.';
+      if (findFormattingIssues([styled(caption, [{ start: 0, end: caption.length, ...italic, bold: true }])]).some(issue => /upright/i.test(issue.description))) {
+        failures.push('An italic caption was reported for its Latin terms');
+      }
 
       /* Chemistry must not swallow project identifiers. */
       for (const identifier of ['SFR1', 'CCP33', 'KBS3', 'R2', 'P14']) {

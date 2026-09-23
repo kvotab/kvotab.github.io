@@ -269,8 +269,9 @@
       },
       {
             "enabled": true,
+            "id": "review-terminology-old-style-skb-reference-1ifsy",
             "pattern": "\\bSKB\\s+[12]\\d{3}\\b",
-            "description": "old style SKB reference"
+            "description": "SKB cited by year. This is the normal form in 1215757 (SKB 2010); citing by report number instead (SKB TR-10-53) is an allowed exception when many SKB reports without authors are cited. Check that the document keeps to one form."
       },
       {
             "enabled": true,
@@ -1068,15 +1069,21 @@
       { pattern: String.raw`\d(?:\u0020|\t)*(?:%|‰)`, reject: String.raw`\d\u00a0(?:%|‰)`, description: 'Use a non-breaking space between a number and % or ‰.', source: 'technical', needs: 'space-characters' },
       { pattern: String.raw`\d(?:\u0020|\t)*°C`, reject: String.raw`\d\u00a0°C`, description: 'Use a non-breaking space between the number and °C.', source: 'technical', needs: 'space-characters' },
       { pattern: String.raw`\b\d+(?:\.\d+)?[eE][+−-]?\d+\b`, description: 'Do not use E notation in running text; use × 10 with an exponent.', source: 'technical' },
-      { pattern: String.raw`\b\d{1,3}(?:,\d{3})+\b`, description: 'Use spaces, not commas, as thousands separators.', source: 'technical' },
+      { pattern: String.raw`\b\d{1,3}(?:,\d{3})+\b`, description: 'Use spaces, not commas, as thousands separators.', source: 'technical', language: 'en' },
+      /* 1715629 section 7.6: in Swedish the groups are separated by spaces, and a comma is the decimal sign */
+      /* A group never starts with 0 ("0.001" is a decimal), and the number
+         must stand in running text: a bare table cell carries no reliable
+         language, and SKB's templates mark such cells Swedish in English reports. */
+      { pattern: String.raw`(?<=\p{L}[^.!?]{0,60}\s)[1-9]\d{0,2}(?:\.\d{3})+(?![\d.,])`, description: 'Use spaces, not full stops, between groups of digits, for example 10 000.', source: 'handbook', language: 'sv', severity: 'review' },
       { pattern: String.raw`\b(?:from\s+[-+−]?\d+(?:\.\d+)?|between\s+[-+−]?\d+(?:\.\d+)?)\s*[–-]\s*[-+−]?\d+(?:\.\d+)?\b`, description: 'Do not combine “from” or “between” with a dash range; use “from … to” or “between … and”.', source: 'technical' },
+      { pattern: String.raw`\b(?:[Ff]rån|[Mm]ellan)\s+[-+−]?\d+(?:[.,]\d+)?\s*[–-]\s*[-+−]?\d+(?:[.,]\d+)?\b`, description: 'Do not combine “från” or “mellan” with an en dash; write “mellan 13 och 14” or “13–14”.', source: 'handbook', language: 'sv' },
       { pattern: String.raw`\b(?:and/or)\b`, description: 'Avoid “and/or”; rewrite with “or both” or another unambiguous construction.', source: 'technical' },
       { pattern: String.raw`\b(?:E\.g\.|I\.e\.)`, description: 'Do not begin a sentence with e.g. or i.e.; spell out “For example” or rewrite.', source: 'technical' },
       { pattern: String.raw`\be\.g\.,`, description: 'In British English, do not place a comma directly after e.g.', source: 'technical' },
       { pattern: String.raw`\bi\.e\.,`, description: 'In British English, do not place a comma directly after i.e.', source: 'technical' },
       { pattern: String.raw`\be\.g\.[^.!?]{0,80}\betc\.`, description: 'Do not use etc. in a list introduced by e.g.', source: 'technical' },
       { pattern: String.raw`\bi\.e\.[^.!?]{0,80}\betc\.`, description: 'Do not use etc. in a list introduced by i.e.', source: 'technical' },
-      { pattern: String.raw`\betc(?!\.)\b`, description: 'The abbreviation etc. must end with a period and should be preceded by a comma.', source: 'technical' },
+      { id: 'official-technical-the-abbreviation-etc-must-end-with-a-period-and-should-be', pattern: String.raw`\betc(?!\.)\b`, description: 'The abbreviation etc. ends with a full stop and is always preceded by a comma.', source: 'technical' },
       { pattern: String.raw`\b(?:wasn't|weren't|isn't|aren't|doesn't|don't|didn't|can't|couldn't|shouldn't|wouldn't|hasn't|haven't|hadn't)\b`, flags: 'giu', description: 'Avoid contracted forms in scientific text.', source: 'technical' },
       { pattern: String.raw`\b(?:SKB|SSM|OKG)('s|´s|’s)\b`, description: 'In Swedish, write the genitive with colon and s, for example SKB:s.', source: 'handbook', language: 'sv' },
       { pattern: String.raw`\b[Ii]dag\b`, description: 'Write “i dag” as two words.', source: 'handbook', language: 'sv' },
@@ -1090,7 +1097,7 @@
       { pattern: String.raw`\b[Pp]ressrelease\b`, description: 'Use “pressmeddelande”.', source: 'handbook', language: 'sv' },
       { pattern: String.raw`\b(?:CLAB|ClAB|clab)\b`, description: 'The facility name is written “Clab”.', source: 'handbook' },
       { pattern: String.raw`\b(?:figure|table|chapter|section|appendix)\s+[A-Z]?\d`, flags: 'gu', description: 'A numbered Figure, Table, Chapter, Section or Appendix starts with a capital letter in English.', source: 'technical', language: 'en' },
-      { pattern: String.raw`\b(?:Figur|Tabell)\s+\d`, flags: 'gu', description: 'In Swedish running text, write numbered references with lower-case “figur” and “tabell”.', source: 'handbook', language: 'sv' },
+      { pattern: String.raw`(?<=[\p{L}\d,;)]\s+)(?:Figur|Tabell)\s+\d`, flags: 'gu', description: 'In Swedish running text, write numbered references with lower-case “figur” and “tabell”.', source: 'handbook', language: 'sv' },
       { pattern: String.raw`\b(?:figur|tabell)\s+\d`, flags: 'gu', description: 'In English running text, write numbered references as “Figure” and “Table”.', source: 'handbook', language: 'en' },
       { pattern: String.raw`\b\d+\s*(?:kg|g|mg|µg|m|cm|mm|km|s|min|h|d|Hz|Pa|kPa|MPa|V|mV|A|mA|W|kW|MW|J|kJ|mol|Bq|Gy|Sv)\b`, description: 'Use a non-breaking space between a numerical value and a unit symbol.', source: 'technical', custom: 'unit-space', needs: 'space-characters' },
       { pattern: String.raw`\b\d+\s*[xX]\s*10(?:\^?[-+]?\d+|[⁰¹²³⁴⁵⁶⁷⁸⁹]+)`, description: 'Use the multiplication sign ×, not the letter x, in scientific notation.', source: 'technical' },
@@ -1135,7 +1142,7 @@
       { pattern: String.raw`\b(?:archeolog|paleontolog|paleo|medieval|encyclopedia)\w*\b`, flags: 'gu', description: 'American spelling: British English keeps ae or oe (archaeology, palaeontology, mediaeval, encyclopaedia).', source: 'technical', severity: 'review', language: 'en' },
       { pattern: String.raw`\b(?:modeling|modeled|labeled|labeling|traveled|traveler|traveling|canceled|canceling|counselor|equaling|signaled|signaling|totaled|fueled|fueling)\b`, flags: 'gu', description: 'American spelling: British English doubles the final l (modelling, labelled, traveller, cancelled).', source: 'technical', severity: 'review', language: 'en' },
       { pattern: String.raw`\b(?:aging|sizable|salable)\b`, flags: 'gu', description: 'American spelling: British English keeps the silent e (ageing, sizeable, saleable).', source: 'technical', severity: 'review', language: 'en' },
-      { pattern: String.raw`\b(?:molds?|molded|molding|grays?|grayish|artifacts?|oriented|tires?|storeys?|storys?)\b`, flags: 'gu', description: 'American spelling: British English writes mould, grey, artefact, orientated, tyre, storey. Check which sense is intended.', source: 'technical', severity: 'review', language: 'en' },
+      { id: 'official-technical-american-spelling-british-english-writes-mould-grey-artefa', pattern: String.raw`\b(?:molds?|molded|molding|grays?|grayish|artifacts?|oriented|tires?)\b`, flags: 'gu', description: 'American spelling: British English writes mould, grey, artefact, orientated, tyre. Check which sense is intended.', source: 'technical', severity: 'review', language: 'en' },
       /* ── Appendix 2 of 1215757: the in-text citation errors the guide lists ── */
       { pattern: String.raw`\b((?:1[89]|20)\d{2})[a-z]\s*,\s*\1[a-z]\b`, description: 'Do not repeat the year for works by the same author in the same year; write “(1993a, b)”.', source: 'references' },
       { pattern: String.raw`\([^()]*\((?:1[89]|20)\d{2}[a-z]?\)[^()]*\)`, description: 'Do not put the year in a second pair of parentheses inside a citation; write “(see van der Wal et al. 2001)”.', source: 'references' },
@@ -1168,7 +1175,7 @@
       { pattern: String.raw`\bOKG\s+AB\b`, description: 'In legal contexts the owner’s name is OKG Aktiebolag, not OKG AB.', source: 'handbook' },
 
       /* ── Sections 7.1 and 7.5 of 1715629: Swedish usage ── */
-      { pattern: String.raw`(?<!^)\b(?:Miljöbalken|Kärntekniklagen|Strålskyddslagen|Kärnteknikförordningen)\b`, flags: 'gu', description: 'Names of laws are written with a lower-case initial: miljöbalken, kärntekniklagen.', source: 'handbook', severity: 'review', language: 'sv' },
+      { pattern: String.raw`(?<=[\p{L}\d,;)]\s+)(?:Miljöbalken|Kärntekniklagen|Strålskyddslagen|Kärnteknikförordningen)\b`, flags: 'gu', description: 'Names of laws are written with a lower-case initial: miljöbalken, kärntekniklagen.', source: 'handbook', severity: 'review', language: 'sv' },
       { pattern: String.raw`\b[Hh]uvudtidsplan(?:en|er|erna|s)?\b`, description: 'Use “huvudtidplan”, which is the dominant form.', source: 'handbook', language: 'sv' },
       { pattern: String.raw`\b[Rr]adioaktiv\s+strålning\b`, description: 'The source is radioactive, not the radiation: write “joniserande strålning” or “strålning från radioaktiva ämnen”.', source: 'handbook', language: 'sv' },
       { pattern: String.raw`\b[Bb]ränsleflask(?:a|an|or|orna)\b`, description: 'Use “transportbehållare för använt kärnbränsle”.', source: 'handbook', language: 'sv' },

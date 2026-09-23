@@ -109,7 +109,7 @@
         await yieldToBrowser();
         const refEntries = extractRefEntries(refListParagraphs);
         officialWritingIssues.push(
-          ...findOfficialSkbReferenceIssues(refEntries, refListParagraphs, isSwedish),
+          ...findOfficialSkbReferenceIssues(refEntries, refListParagraphs, isSwedish, capabilities),
           ...findReferenceListOrderIssues(refEntries),
           ...findYearSuffixIssues(refEntries)
         );

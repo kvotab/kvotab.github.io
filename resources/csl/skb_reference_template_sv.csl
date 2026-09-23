@@ -10,15 +10,35 @@
                 undertiteln. Stilen ändrar medvetet inte versalisering,
                 eftersom automatisk omvandling förstör namn som
                 "Geochimica et Cosmochimica Acta" eller "PLOS ONE".
-  Språk         Fältet Språk fylls i med gemen språkKOD för källor som inte
-                är på svenska: en, da, no, fi, de, fr ... ("en-GB" fungerar
-                också, "engelska" och "EN" gör det INTE). Det ger
-                "(På engelska.)" sist i referensen. Svenska källor lämnas
-                tomma.
-  Avhandlingar  Skriv "Doktorsavh" eller "Lic-avh" i fältet Typ (genre).
+                Tidskriftstitlar skrivs ut i sin helhet med versal i
+                huvudorden (avsnitt 4.4).
+  Språk         Fältet Språk fylls i med gemen språkKOD för källor på andra
+                språk än svenska och engelska: da, no, fi, de, fr ...
+                ("de-DE" fungerar också, "tyska" och "DE" gör det INTE).
+                Det ger "(På tyska.)" sist i referensen. Instruktionens regel
+                gäller källor på andra språk än engelska (avsnitt 3.2), så
+                engelska källor får ingen notering, och svenska källor i en
+                svensk rapport inte heller.
+  Författare    Ett verk utan personlig upphovsman förs in under den
+                institution som gett ut det: en författare i enfältsläge,
+                med vedertagen förkortning ("SKB", "MIT", "IAEA") och namnet
+                utskrivet i Utgivare (avsnitt 4.1 och 4.6).
+  Avhandlingar  Skriv "Doktorsavh" eller "Lic-avh" i fältet Typ (genre),
+                universitetet i Universitet och landet i Ort, men bara om
+                det inte framgår av universitetets namn (avsnitt 4.3).
   SKB-rapport   Posttyp Rapport. Rapportnummer = "SKB R-08-107".
                 Utgivare = "Svensk Kärnbränslehantering AB". Lämna
                 utgivningsort tom – SKB-rapporter har ingen ort.
+  Andra         Ort = LANDET, och bara om det inte framgår av institutionens
+  rapporter     namn (avsnitt 4.2): "... National Cooperative for the
+                Disposal of Radioactive Waste, Switzerland."
+  Böcker        Förlagsort utan land; en ort i USA får delstatens
+                tvåbokstavsförkortning: "Thousand Oaks, CA". Upplaga som
+                siffra ("3" ger "3. uppl").
+  Tidskrifter   Volym och sidor; häftets nummer utelämnas automatiskt. En
+                artikel utan sidnummer får artikelnumret i Sidor ("L01501").
+                En doi läggs i fältet DOI och skrivs som https://doi.org/...
+                allra sist, utan punkt.
   SKBdoc        Posttyp Rapport. Rapportnummer = "SKBdoc 1175208 ver 5.0",
                 Utgivare = "Svensk Kärnbränslehantering AB". Ange alltid
                 versionen.
@@ -32,21 +52,28 @@
   Serie         Serie = "Technical Guide", Serienummer = "5" ger
                 "(Technical Guide 5)" sist, utan punkt efter parentesen.
   Lagar, SOU,   Posttyp Lag/författning (eller Standard). Lägg beteckningen
-  standarder    i nummerfältet ("SFS 1984:3", "SS-EN 1936:1999") och lämna
+  Ds, stan-     i nummerfältet – Offentligt lagnummer för en lag, Nummer för
+  darder        en standard ("SFS 1984:3", "SS-EN 1936:1999") – och lämna
                 författaren tom för att få beteckningen som huvuduppslag.
-                Vill du i stället ha myndigheten som huvuduppslag: fyll i
-                författare och flytta beteckningen till Serie/Serienummer,
-                så skrivs den som "(SSMFS 2008:21)" sist.
+                Posttypen Lag saknar fält för utgivare och ort, så lägg dem i
+                Extra som två rader: "publisher: Riksdagen" och
+                "publisher-place: Stockholm". (En Rapport med raden
+                "type: legislation" i Extra fungerar också.) Vill du i
+                stället ha myndigheten som huvuduppslag: fyll i författare
+                och flytta beteckningen till Serie/Serienummer, så skrivs den
+                som "(SSMFS 2008:21)" sist.
   Konferenstryck  Zotero saknar egna fält för konferensort och datum – lägg
                 dem sist i fältet Publikationstitel (Proceedings Title).
+  Webbsidor     Fyll i Åtkomstdatum; det skrivs "[24 september 2011]". En
+                databasversion läggs i Extra som "version: 2011.1".
   Sidintervall  Vanliga bindestreck görs om till tankstreck automatiskt.
 
   SORTERING
   =========
   default-locale är satt till sv-SE, vilket ger svensk kollationering:
-  A–Z följt av Å, Ä/Æ och Ö/Ø sist, i enlighet med kapitel 5. Ändra inte
-  detta – då hamnar svenska namn på fel plats i referenslistan. Det är också
-  det som gör att svenska källor inte får någon språknotering.
+  A–Z följt av Å, Ä/Æ och Ö/Ø sist och Ü som Y, i enlighet med kapitel 5.
+  Ändra inte detta – då hamnar svenska namn på fel plats i referenslistan.
+  Det är också det som gör att svenska källor inte får någon språknotering.
 
   KÄNDA BEGRÄNSNINGAR (kräver manuell redigering)
   ===============================================
@@ -56,17 +83,29 @@
     inget komma där (avsnitt 4.4). CSL kan inte pröva sista tecknet i en
     sträng, så det enda kommat får tas bort för hand. Punkten efter en sådan
     titel undertrycks däremot automatiskt.
-  * Ett efternamn som innehåller mellanslag sorteras inte som ett ord:
-    instruktionen placerar "Delaine J-M" före "de Maury E" (kapitel 5 säger
-    att mellanslaget ska bortses från), medan båda stilarna ger omvänd
-    ordning. Bindestrecksnamn som "Berg-Liljeblad" hanteras däremot rätt.
+  * Ett verk som förs in under en titel som börjar med "The", "A" eller "An"
+    sorteras under det ordet; instruktionen sorterar under första
+    betydelsebärande ord ("The new Encyclopaedia Britannica" under N). Flytta
+    det för hand.
+  * Ett efternamn med mellanslag eller namnpartikel sorteras som om första
+    ordet slutade där: instruktionen placerar "Délaine J-M" före "de Maury E"
+    (kapitel 5 säger att mellanslaget ska bortses från), medan båda
+    stilarna ger omvänd ordning. Bindestrecksnamn som "Berg-Liljeblad"
+    hanteras däremot rätt.
+  * En författare som ibland skrivs med en initial och ibland med två
+    ("Werme L", "Werme L O") sorteras som två författare; instruktionen
+    sorterar sådana verk tillsammans, kronologiskt, när det inte råder något
+    tvivel om att det är samma person (kapitel 5).
   * Två författare med samma efternamn får bara initialer när båda
     referenserna faktiskt är citerade i dokumentet; lägg annars till dem
     för hand.
-  * Lokalisatoretiketter böjs bara för rent numeriska intervall, så
-    "avsnitt 3.4–3.8" måste skrivas med undertryckt etikett.
+  * Lokalisatoretiketter böjs bara för rent numeriska intervall, och bara
+    sidintervall får tankstreck, så "avsnitt 3.4–3.8" måste skrivas med
+    undertryckt etikett och tankstrecket skrivet i lokalisatorn.
   * Undantaget att hänvisa till en SKB-rapport med rapportnummer i stället
-    för årtal ("SKB TR-10-53") är inte automatiskt.
+    för årtal ("SKB TR-10-53") är inte automatiskt – redigera
+    hänvisningen, och skriv referensen som "SKB TR-10-53. SKB 2010. Titel.
+    Svensk Kärnbränslehantering AB.", för hand.
   * Muntliga källor och databasposter ska inte stå i referenslistan; de
     nämns bara i löptexten.
 -->
@@ -91,7 +130,7 @@
     <issn>1404-0344</issn>
     <issn>1651-4416</issn>
     <summary>Harvardstil (författare–årtal) för SKB:s publika rapporter på svenska, enligt SKBdoc 1215757 "Angivande av referenser i publika rapporter", kapitel 6.</summary>
-    <updated>2026-09-01T00:00:00+00:00</updated>
+    <updated>2026-09-23T00:00:00+00:00</updated>
   </info>
 
   <!-- ===================================================================
@@ -101,13 +140,32 @@
 
        OBS: detta cs:locale saknar medvetet xml:lang och gäller därför alla
        språk. Bibliografin nedan använder språkvillkorade layouter för att
-       lägga till "(På engelska.)" m m, och de layouterna byter samtidigt
-       aktivt språk. Utan överskrivningarna nedan skulle en engelsk eller
-       tysk källa få engelska respektive tyska förkortningar och
-       månadsnamn, vilket instruktionen inte tillåter i en svensk rapport.
+       lägga till "(På tyska.)" m m, och de layouterna byter samtidigt
+       aktivt språk. Utan överskrivningarna nedan skulle en tysk eller dansk
+       källa få tyska respektive danska förkortningar, månadsnamn och
+       citattecken, vilket instruktionen inte tillåter i en svensk rapport.
+       Därför definieras här varje term som processorn kan skriva ut.
        =================================================================== -->
   <locale>
+    <style-options punctuation-in-quote="false"/>
     <terms>
+      <term name="open-quote">”</term>
+      <term name="close-quote">”</term>
+      <term name="open-inner-quote">’</term>
+      <term name="close-inner-quote">’</term>
+      <term name="page-range-delimiter">–</term>
+      <!-- Förkortningar utan punkt (Skrivhandboken 7.4) -->
+      <!-- a space before the era, as 1469987 section 6.2.2 asks: the
+           processor writes the term straight after the year -->
+      <term name="ad"> e Kr</term>
+      <term name="bc"> f Kr</term>
+      <term name="circa">cirka</term>
+      <term name="and others">med flera</term>
+      <term name="anonymous">anonym</term>
+      <term name="season-01">vår</term>
+      <term name="season-02">sommar</term>
+      <term name="season-03">höst</term>
+      <term name="season-04">vinter</term>
       <term name="editor" form="short"><single>red</single><multiple>red</multiple></term>
       <term name="translator" form="short"><single>övers</single><multiple>övers</multiple></term>
       <term name="et-al">et al.</term>
@@ -119,11 +177,29 @@
       <term name="page" form="short"><single>s</single><multiple>s</multiple></term>
       <term name="chapter" form="short"><single>kapitel</single><multiple>kapitel</multiple></term>
       <term name="section" form="short"><single>avsnitt</single><multiple>avsnitt</multiple></term>
-      <term name="figure" form="short"><single>figur</single><multiple>figur</multiple></term>
-      <term name="table" form="short"><single>tabell</single><multiple>tabell</multiple></term>
+      <term name="figure" form="short"><single>figur</single><multiple>figurer</multiple></term>
+      <term name="table" form="short"><single>tabell</single><multiple>tabeller</multiple></term>
       <term name="paragraph" form="short"><single>stycke</single><multiple>stycken</multiple></term>
       <term name="part" form="short"><single>del</single><multiple>delar</multiple></term>
       <term name="appendix" form="short"><single>bilaga</single><multiple>bilagor</multiple></term>
+      <term name="equation" form="short"><single>ekvation</single><multiple>ekvationer</multiple></term>
+      <term name="book" form="short"><single>bok</single><multiple>böcker</multiple></term>
+      <term name="column" form="short"><single>spalt</single><multiple>spalter</multiple></term>
+      <term name="folio" form="short"><single>folio</single><multiple>folier</multiple></term>
+      <term name="issue" form="short"><single>nr</single><multiple>nr</multiple></term>
+      <term name="line" form="short"><single>rad</single><multiple>rader</multiple></term>
+      <term name="note" form="short"><single>not</single><multiple>noter</multiple></term>
+      <term name="opus" form="short"><single>opus</single><multiple>opus</multiple></term>
+      <term name="sub-verbo" form="short"><single>s.v.</single><multiple>s.vv.</multiple></term>
+      <term name="verse" form="short"><single>vers</single><multiple>verser</multiple></term>
+      <term name="article-locator" form="short"><single>artikel</single><multiple>artiklar</multiple></term>
+      <term name="elocation" form="short"><single>plats</single><multiple>platser</multiple></term>
+      <term name="rule" form="short"><single>regel</single><multiple>regler</multiple></term>
+      <term name="scene" form="short"><single>scen</single><multiple>scener</multiple></term>
+      <term name="supplement" form="short"><single>supplement</single><multiple>supplement</multiple></term>
+      <term name="canon" form="short"><single>kanon</single><multiple>kanon</multiple></term>
+      <term name="act" form="short"><single>akt</single><multiple>akter</multiple></term>
+      <term name="title-locator" form="short"><single>titel</single><multiple>titlar</multiple></term>
       <!-- Svenska månadsnamn för åtkomst- och publiceringsdatum -->
       <term name="month-01">januari</term>
       <term name="month-02">februari</term>
@@ -575,12 +651,18 @@
   <!-- ===================================================================
        REFERENSLISTA
        Författarnamn, årtal och den efterföljande punkten skrivs med fet stil.
+       Punkten är ett eget textelement inuti den feta gruppen, inte gruppens
+       suffix: ett suffix skrivs utanför formateringen, och punkten blev då
+       inte fet.
        =================================================================== -->
   <macro name="bibliography-entry">
     <group delimiter=" ">
-      <group delimiter=", " suffix="." font-weight="bold">
-        <text macro="name-form-bibliography"/>
-        <text macro="year"/>
+      <group font-weight="bold">
+        <group delimiter=", ">
+          <text macro="name-form-bibliography"/>
+          <text macro="year"/>
+        </group>
+        <text value="."/>
       </group>
       <text macro="title" suffix="."/>
       <text macro="tail"/>
@@ -600,11 +682,12 @@
       <key macro="year"/>
       <key macro="title"/>
     </sort>
-    <!-- Källor på andra språk än rapportens får en språknotering sist.
-         Svenska källor faller på den avslutande layouten utan locale, som
-         inte lägger till någon notering, eftersom sv-SE är stilens
-         default-locale. -->
-    <layout locale="en"><text macro="bibliography-entry"/><text value="(På engelska.)" prefix=" "/></layout>
+    <!-- Avsnitt 3.2: källor på andra språk än engelska får en språknotering
+         sist, i en svensk rapport på svenska (kapitel 6). Engelska källor
+         har därför ingen egen layout, och svenska källor faller på den
+         avslutande layouten utan locale, eftersom sv-SE är stilens
+         default-locale – i en svensk rapport är svenskan rapportens eget
+         språk. -->
     <layout locale="da"><text macro="bibliography-entry"/><text value="(På danska.)" prefix=" "/></layout>
     <layout locale="no"><text macro="bibliography-entry"/><text value="(På norska.)" prefix=" "/></layout>
     <layout locale="nb"><text macro="bibliography-entry"/><text value="(På norska.)" prefix=" "/></layout>
