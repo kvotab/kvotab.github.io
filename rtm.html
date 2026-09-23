@@ -871,7 +871,9 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
     worker file exposes the same request handler either way.
 
       facsimile-model    the expression parser the rate laws are read with
-      facsimile-ode      sparse LU and the NDF/BDF integrator
+      ode-core           the solver core shared with facsimile.html and
+                         Kompartment: the NDF/BDF, its LUs, event location
+      facsimile-solver   that core in these pages' terms, and the model driver
       ode-julia          the ode_julia solver package
       facsimile-ode-julia  those solvers, wired to the page's solver contract
       rtm-model          the reactive-transport compiler
@@ -884,8 +886,9 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
       rtm-ui             this page
   -->
   <script src="./resources/js/facsimile-model.js?v=20260920"></script>
-  <script src="./resources/js/facsimile-solver.js?v=20260923b"></script>
-  <script src="./resources/js/ode-julia.js?v=20260920"></script>
+  <script src="./resources/js/ode-core.js?v=20260923e"></script>
+  <script src="./resources/js/facsimile-solver.js?v=20260923e"></script>
+  <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20260920"></script>
   <script src="./resources/js/rtm-model.js?v=20260923a"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
@@ -894,6 +897,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20260921a"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
-  <script src="./resources/js/rtm-ui.js?v=20260923c"></script>
+  <script src="./resources/js/rtm-ui.js?v=20260923e"></script>
 </body>
 </html>

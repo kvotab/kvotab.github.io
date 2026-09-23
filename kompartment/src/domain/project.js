@@ -257,7 +257,7 @@ export class Project {
 			);
 		}
 		for (const [key, allowed] of [
-			['error_norm', ['rms', 'max']], ['matrix', ['auto', 'sparse', 'dense']],
+			['error_norm', ['rms', 'max']], ['matrix', ['auto', 'refactor', 'sparse', 'dense']],
 			['jacobian', ['analytic', 'numeric']],
 		]) {
 			const v = this.simulation[key];

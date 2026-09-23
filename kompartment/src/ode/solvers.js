@@ -230,10 +230,12 @@ export const SOLVER_OPTION_INFO = Object.assign(Object.create(null), {
 	},
 	matrix: {
 		label: 'Iteration matrix', name: 'the choice of iteration matrix', kind: 'choice',
-		choices: [['auto', 'auto'], ['sparse', 'sparse LU'], ['dense', 'dense LU']],
+		choices: [['auto', 'auto'], ['refactor', 'sparse LU, pivots kept'], ['sparse', 'sparse LU'], ['dense', 'dense LU']],
 		blurb: 'How I − hJ, the matrix every implicit step solves with, is factorised: '
-			+ 'sparsely or densely. auto reads the model’s own sparsity and is right '
-			+ 'almost always.',
+			+ 'a sparse LU that keeps its pivots from one factorisation to the next, a sparse '
+			+ 'LU that chooses them each time, or a dense LU. auto measures the fill and '
+			+ 'chooses, and is right almost always. The ported solvers have no LU that keeps '
+			+ 'its pivots, and use their sparse one for it.',
 	},
 	jacobian: {
 		label: 'Jacobian', name: 'the choice of Jacobian', kind: 'choice',

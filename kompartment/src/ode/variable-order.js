@@ -15,10 +15,22 @@
  * constant matrix, a function (t, y), or the sparse object ../sim/jacobian.js
  * generates from the model, which also lets the iteration matrix be factorised
  * sparsely. See ./ndf.js.
+ *
+ * ./ndf.js is the solver core this tool shares with facsimile.html and
+ * rtm.html (resources/js/ode_core/ in the site; the copy here is the same
+ * bytes). Its own defaults are this tool's settings, so what is not passed
+ * below is what every run before the merge had.
  */
 
 import { ndf, NdfFailure } from './ndf.js';
 import { SolverError, nonFiniteError } from './dormand-prince.js';
+
+/** Sentences for the shared solver's messages, in this tool's terms. */
+const HINTS = {
+	singular: 'A compartment with no way in and no way out will do this.',
+	noPattern: 'Give the model an analytic Jacobian (see the Generated code tab for why '
+		+ 'it was declined), or run fewer states.',
+};
 
 /**
  * Same signature as dormandPrince/rosenbrock23 in this directory.
@@ -96,8 +108,8 @@ export function variableOrder(f, tspan, y0, opts = {}) {
 			// The step budget is a setting of the model like the rest.
 			...(opts.maxSteps > 0 ? { maxSteps: opts.maxSteps } : {}),
 			...(opts.stagnationTol > 0 ? { stagnationTol: opts.stagnationTol } : {}),
-			// facsimile.html's three, passed only where the model sets them, so
-			// an unset one is the solver's own default rather than an undefined.
+			// Passed only where the model sets them, so an unset one is the
+			// solver's own default rather than an undefined.
 			...(opts.errorNorm ? { errorNorm: opts.errorNorm } : {}),
 			...(opts.matrix ? { matrix: opts.matrix } : {}),
 			...(opts.belowTolRun != null ? { belowTolRun: opts.belowTolRun } : {}),
@@ -105,6 +117,9 @@ export function variableOrder(f, tspan, y0, opts = {}) {
 			// false selects the NDF formulas, which is what variableOrder does by
 			// default; true falls back to plain BDF.
 			bdf: opts.bdf ?? false,
+			// What this tool adds to the shared solver's messages: the advice
+			// is about compartments and this tool's own tabs.
+			hints: HINTS,
 			normControl: opts.normControl ?? false,
 			autoAbstol: opts.autoUpdateAbsTol ?? false,
 			// The caller may be keeping its own points off `onAccepted` and will

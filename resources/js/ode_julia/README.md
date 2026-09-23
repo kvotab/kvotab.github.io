@@ -18,7 +18,9 @@ sol.retcode;    // 'Success', or why not
 
 A single-file build for a plain `<script>` tag is at `../ode-julia.js`, which
 puts the same names on `OdeJulia`. Rebuild it with
-`node scripts/build-ode-julia.mjs` after changing anything here.
+`node scripts/build-solvers.mjs` after changing anything here: it also rewrites
+Kompartment's copy (`kompartment/src/ode/julia/`), which is the same bytes, and
+`node scripts/build-solvers.mjs --check` fails when either is out of date.
 
 [sciml]: https://docs.sciml.ai/DiffEqDocs/stable/
 
@@ -71,7 +73,7 @@ Passed as the third argument to `solve`.
 | `maxPoints` | — | a ceiling on the stored points, thinned by halving |
 | `tstops` | — | times the solver must land on exactly |
 | `nonNegative` | — | `true`, or a boolean per component, to clamp at zero |
-| `matrix` | `'auto'` | `'sparse'` or `'dense'` to decide the linear algebra |
+| `matrix` | `'auto'` | `'sparse'` or `'dense'` to decide the linear algebra; `'refactor'`, which asks the NDF of `../ode_core/` for its LU that keeps its pivots, is the sparse LU here |
 | `norm` | `'rms'` | `'max'` for the maximum norm |
 | `central` | `false` | central differences for a differenced Jacobian |
 | `maxJacAge` | `20` | steps a Jacobian may be reused for |

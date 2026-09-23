@@ -32,8 +32,10 @@ menu and that one of them runs the model in the page.
 ## The engine
 
 `run.js` drives the browser engine of facsimile.html (the model compiler in
-`resources/js/facsimile-model.js` and the solvers in `facsimile-solver.js`)
-under Node and compares it with the reference results kept in `ref/`.
+`resources/js/facsimile-model.js`, and the solvers in `facsimile-solver.js`
+over the solver core it shares with rtm.html and Kompartment,
+`resources/js/ode_core/`, loaded as `ode-core.js`) under Node and compares it
+with the reference results kept in `ref/`.
 
 ```
 node resources/tests/facsimile/run.js                 # Jacobian check, then case 13g

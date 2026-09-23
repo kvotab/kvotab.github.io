@@ -1,0 +1,16 @@
+{
+  "name": "ode_core",
+  "version": "0.1.0",
+  "description": "The stiff-solver core of facsimile.html, rtm.html and Kompartment: a variable-order NDF/BDF integrator, the dense, sparse and kept-pivot LUs of its iteration matrix, differenced Jacobians and event location. No dependencies.",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./*": "./*"
+  },
+  "files": ["index.js", "linalg.js", "refactor.js", "sparse.js", "events.js", "ndf.js", "README.md"],
+  "keywords": ["ode", "stiff", "ndf", "bdf", "sparse", "lu"],
+  "license": "MIT",
+  "private": true,
+  "sideEffects": false
+}

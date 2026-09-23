@@ -562,7 +562,9 @@ Y2 = , rf = 3.0E7*Y2*Y2</pre>
     the main thread is a frozen tab.
 
       facsimile-model    the model-text compiler and the analytic Jacobian
-      facsimile-ode      sparse LU and the built-in NDF/BDF integrator
+      ode-core           the solver core shared with rtm.html and Kompartment:
+                         the NDF/BDF integrator, its LUs, event location
+      facsimile-solver   that core in this page's terms, and the model driver
       facsimile-default  the built-in model text and the scenario presets
       facsimile-worker   the request handler (compile, run, verify)
       ode-julia          the ode_julia solver package, built from its modules
@@ -572,13 +574,14 @@ Y2 = , rf = 3.0E7*Y2*Y2</pre>
       facsimile-ui       this page
   -->
   <script src="./resources/js/facsimile-model.js?v=20260923"></script>
-  <script src="./resources/js/facsimile-solver.js?v=20260923b"></script>
+  <script src="./resources/js/ode-core.js?v=20260923e"></script>
+  <script src="./resources/js/facsimile-solver.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-default.js?v=20260921a"></script>
-  <script src="./resources/js/ode-julia.js?v=20260917zd"></script>
+  <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20260917zd"></script>
   <script src="./resources/js/facsimile-worker.js?v=20260923c"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/facsimile-hdf5.js?v=20260917zd"></script>
-  <script src="./resources/js/facsimile-ui.js?v=20260923c"></script>
+  <script src="./resources/js/facsimile-ui.js?v=20260923e"></script>
 </body>
 </html>

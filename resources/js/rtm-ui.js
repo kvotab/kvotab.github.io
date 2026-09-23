@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20260923c';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20260923e';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------

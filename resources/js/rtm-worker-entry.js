@@ -13,8 +13,9 @@
    ========================================================================== */
 importScripts(
   './facsimile-model.js?v=20260920',
-  './facsimile-solver.js?v=20260923b',
-  './ode-julia.js?v=20260920',
+  './ode-core.js?v=20260923e',
+  './facsimile-solver.js?v=20260923e',
+  './ode-julia.js?v=20260923e',
   './facsimile-ode-julia.js?v=20260920',
   './rtm-model.js?v=20260923a',
   './rtm-worker.js?v=20260923c',

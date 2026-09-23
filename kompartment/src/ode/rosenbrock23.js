@@ -39,6 +39,9 @@ import { LU } from './linalg.js';
 import { sparseIterationMatrix } from './sparse.js';
 import { integrate, SolverError } from './onestep.js';
 
+/** What this tool adds to the shared sparse LU's singular message. */
+const SINGULAR_HINT = 'A compartment with no way in and no way out will do this.';
+
 const D = 1 / (2 + Math.SQRT2);
 const E32 = 6 + Math.SQRT2;
 const EPS = 2 ** -52;
@@ -221,7 +224,7 @@ export const rosenbrockMethod = {
 					values = sparseJacobian(t, y);
 					npds++;
 					needJacobian = false;
-					sparse = sparseIterationMatrix(neq, pattern, values);
+					sparse = sparseIterationMatrix(neq, pattern, values, { hint: SINGULAR_HINT });
 					if (!sparse) scatter(values);
 				}
 				if (!sparse) {

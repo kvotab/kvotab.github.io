@@ -305,7 +305,10 @@ class Integrator {
  * Counted in attempts and called from the rejection paths too, not only after
  * an accepted step. A solver in difficulty can reject hundreds of steps in a
  * row, and that is precisely when a page wants to show that something is
- * happening and to offer a way out of it.
+ * happening and to offer a way out of it -- so all three call sites obey the
+ * answer, not only the one after an accepted step. A run collapsing its step
+ * towards the minimum is exactly the run somebody wants to stop, and it is the
+ * one that never reaches an accepted step to be stopped at.
  *
  * @returns {false} if the caller asked for the run to stop.
  */
@@ -378,8 +381,25 @@ function findEvent(integ, evalAt, gPrev, work) {
     else { hi = mid; fhi = fmid; flo *= 0.5; }
   }
   const theta = 0.5 * (lo + hi);
+  const tEvent = integ.t + theta * integ.dt;
+  // A root at the instant the solve began is not a crossing.
+  //
+  // A caller that stops at a terminal event and restarts from it -- which is
+  // what a compartment model does, to apply whatever the event drives -- hands
+  // back the state *at* the root, where g is zero to rounding. Whether that
+  // leaves g at -1e-17 or +1e-17 is luck, and on the unlucky side the very
+  // first step of the new run crosses it again: the same event fires twice, a
+  // duplicate row lands in the output, and a caller that restarts on every
+  // event can be walked round that loop indefinitely. KenCarp4 found this on
+  // `examples/recorders.json` where the other five methods happened to land on
+  // the lucky side.
+  const t0 = integ.prob.tspan[0];
+  if (Math.abs(tEvent - t0)
+    <= 16 * Number.EPSILON * Math.max(Math.abs(t0), Math.abs(integ.dt))) {
+    return null;
+  }
   evalAt(theta, utmp);
-  return { theta, t: integ.t + theta * integ.dt, which };
+  return { theta, t: tEvent, which };
 }
 
 /**
@@ -559,7 +579,11 @@ export function solve(prob, alg, options = {}) {
 
     if (!ok || integ.forceStepfail) {
       integ.stats.nreject++;
-      reportProgress(integ, opts);
+      if (reportProgress(integ, opts) === false) {
+        retcode = Terminated;
+        message = 'The run was stopped from outside';
+        break;
+      }
       // A step that failed for a reason other than accuracy -- a Newton that
       // would not converge, a singular W -- is not the controller's business:
       // halve it, and make sure the next attempt uses a fresh Jacobian.
@@ -624,7 +648,11 @@ export function solve(prob, alg, options = {}) {
       // true, and the generic controller keeps its hands off.
       const handled = integ.cache.rejected ? integ.cache.rejected(integ) === true : false;
       if (!handled) integ.dt = integ.controller.reject(integ.EEst, integ.dt);
-      reportProgress(integ, opts);
+      if (reportProgress(integ, opts) === false) {
+        retcode = Terminated;
+        message = 'The run was stopped from outside';
+        break;
+      }
       continue;
     }
 

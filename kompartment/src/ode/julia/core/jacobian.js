@@ -112,7 +112,7 @@ export class JacobianCache {
    * @param {object} opts
    * @param {(t:number,u:Float64Array,J:object)=>void} [opts.jac]  fills J in place
    * @param {{colPtr:Int32Array,rowIdx:Int32Array}} [opts.jacPattern]
-   * @param {'auto'|'sparse'|'dense'} [opts.matrix]
+   * @param {'auto'|'refactor'|'sparse'|'dense'} [opts.matrix]  'refactor' is the sparse LU here
    * @param {boolean} [opts.central]  central differences (2 f per group, one more digit)
    */
   constructor(n, opts = {}) {
@@ -127,9 +127,12 @@ export class JacobianCache {
     // Which storage J lives in. Sparse only pays when the pattern is given and
     // genuinely sparse; the factorisation decides separately, since a sparse J
     // can still have a factor so full that a dense LU is faster.
+    // 'refactor' asks for the LU that keeps its pivots, which is the NDF's
+    // (resources/js/ode_core/refactor.js); this package has none, and its
+    // sparse LU is the nearest thing to it.
     const want = opts.matrix || 'auto';
     const nnz = this.pattern ? this.pattern.colPtr[n] : n * n;
-    this.sparse = want === 'sparse' || (want === 'auto' && !!this.pattern && nnz < 0.25 * n * n);
+    this.sparse = want === 'sparse' || want === 'refactor' || (want === 'auto' && !!this.pattern && nnz < 0.25 * n * n);
 
     if (!this.pattern && (this.sparse || !this.userJac)) this.pattern = densePattern(n);
 
@@ -142,8 +145,12 @@ export class JacobianCache {
     // Differencing machinery. Built even when a `jac` was given, because that
     // callback may answer `false` for a point it will not vouch for -- see
     // `evaluate` -- and differencing that one call is the whole answer to it.
-    // A colouring at construction and three vectors is what it costs.
-    this.groups = colourColumns(n, this.pattern.colPtr, this.pattern.rowIdx).groups;
+    // A colouring at construction and three vectors is what it costs; for a
+    // `jac` given with no pattern, the colouring waits until the callback first
+    // declines, since the pattern to difference through is then a dense one --
+    // n^2 entries a run that is never declined should not pay for.
+    this.diffPattern = this.pattern;
+    this.groups = this.pattern ? colourColumns(n, this.pattern.colPtr, this.pattern.rowIdx).groups : null;
     this.upert = new Float64Array(n);
     this.fpert = new Float64Array(n);
     this.fpert2 = this.central ? new Float64Array(n) : null;
@@ -167,8 +174,12 @@ export class JacobianCache {
     // matrix with an infinity in it. Anything else, including undefined, is
     // the matrix having been filled.
     if (this.userJac && this.userJac(t, u, this.J) !== false) return this.J;
+    if (!this.groups) {
+      this.diffPattern = densePattern(this.n);
+      this.groups = colourColumns(this.n, this.diffPattern.colPtr, this.diffPattern.rowIdx).groups;
+    }
     const { n, groups, upert, fpert, delta } = this;
-    const { colPtr, rowIdx } = this.pattern;
+    const { colPtr, rowIdx } = this.diffPattern;
     const values = this.sparse ? this.J.values : this.J.data;
     if (this.sparse) values.fill(0); else this.J.data.fill(0);
 
@@ -230,7 +241,7 @@ export class WFactorization {
    * @param {number} n
    * @param {JacobianCache} jacCache
    * @param {object} [opts]
-   * @param {'auto'|'sparse'|'dense'} [opts.matrix]
+   * @param {'auto'|'refactor'|'sparse'|'dense'} [opts.matrix]  'refactor' is the sparse LU here
    * @param {boolean} [opts.reorder]  apply a fill-reducing ordering (sparse only)
    */
   constructor(n, jacCache, opts = {}) {

@@ -37,6 +37,7 @@ import { FUNCTIONS, FUNCTION_ALIASES } from '../parser/functions.js';
 import { resolveReference } from '../domain/systems.js';
 import { FARF_EQUATION_KEYS } from '../domain/farfield.js';
 import { hazardCode } from '../domain/wastepackage.js';
+import { colourColumns } from '../ode/sparse.js';
 
 /**
  * How many temporaries the tangent function may hoist.
@@ -1544,53 +1545,12 @@ export function toCSC(cols, n) {
 }
 
 /**
- * Groups columns so that no two in a group share a row.
- *
- * With that property one evaluation of J*v, seeded on a whole group at once,
- * carries exactly one column's entry in every row it touches -- so G
- * evaluations fill the matrix, where G is the number of groups rather than the
- * number of columns. Greedy, largest-degree first, which is the standard
- * heuristic and lands within one or two colours of optimal on matrices like
- * these.
+ * Groups columns so that no two in a group share a row: one evaluation of J*v
+ * seeded on a whole group fills that group's columns. The solvers' own
+ * colouring, in ../ode/sparse.js (the solver core shared with facsimile.html
+ * and rtm.html), which differences through the same groups.
  */
-export function colourColumns(pattern) {
-	const { n, colPtr, rowIdx } = pattern;
-
-	// Rows -> the columns that touch them, so conflicts can be looked up.
-	const rowCount = new Int32Array(n + 1);
-	for (let k = 0; k < rowIdx.length; k++) rowCount[rowIdx[k] + 1]++;
-	for (let i = 0; i < n; i++) rowCount[i + 1] += rowCount[i];
-	const rowPtr = Int32Array.from(rowCount);
-	const rowCols = new Int32Array(rowIdx.length);
-	const fill = Int32Array.from(rowPtr);
-	for (let j = 0; j < n; j++) {
-		for (let k = colPtr[j]; k < colPtr[j + 1]; k++) rowCols[fill[rowIdx[k]]++] = j;
-	}
-
-	const order = Array.from({ length: n }, (_, j) => j)
-		.sort((a, c) => (colPtr[c + 1] - colPtr[c]) - (colPtr[a + 1] - colPtr[a]));
-
-	const colour = new Int32Array(n).fill(-1);
-	const used = new Int32Array(n + 1).fill(-1);
-	let ncolours = 0;
-	for (const j of order) {
-		for (let k = colPtr[j]; k < colPtr[j + 1]; k++) {
-			const row = rowIdx[k];
-			for (let q = rowPtr[row]; q < rowPtr[row + 1]; q++) {
-				const other = rowCols[q];
-				if (colour[other] >= 0) used[colour[other]] = j;
-			}
-		}
-		let c = 0;
-		while (used[c] === j) c++;
-		colour[j] = c;
-		if (c + 1 > ncolours) ncolours = c + 1;
-	}
-
-	const groups = Array.from({ length: ncolours }, () => []);
-	for (let j = 0; j < n; j++) groups[colour[j]].push(j);
-	return groups.map((g) => Int32Array.from(g));
-}
+export { colourColumns };
 
 /** True when no two columns in a group share a row. Used by the tests. */
 export function colouringIsValid(pattern, groups) {

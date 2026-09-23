@@ -8,7 +8,7 @@
    the page down to running on its own thread when they would not. Nothing
    here needs one.
 
-   The four files below are ordinary scripts that each leave one object on the
+   The files below are ordinary scripts that each leave one object on the
    global, brought in for that effect in dependency order.
 
    Version stamps: bump this file's OWN stamp, in facsimile-ui.js, whenever the
@@ -20,8 +20,9 @@
    ========================================================================== */
 importScripts(
   './facsimile-model.js?v=20260923',
-  './facsimile-solver.js?v=20260923b',
-  './ode-julia.js?v=20260917zd',
+  './ode-core.js?v=20260923e',
+  './facsimile-solver.js?v=20260923e',
+  './ode-julia.js?v=20260923e',
   './facsimile-ode-julia.js?v=20260917zd',
   './facsimile-worker.js?v=20260923c',
 );

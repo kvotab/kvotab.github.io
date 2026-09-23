@@ -6,6 +6,7 @@ Three of them, and they answer three different questions.
 node resources/tests/ode_julia/test-linalg.mjs
 node resources/tests/ode_julia/test-order.mjs
 node resources/tests/ode_julia/test-stiff.mjs [--verbose]
+node resources/tests/ode_julia/test-build.mjs     # the bundles and Kompartment's copies are up to date
 ```
 
 Nothing here needs a browser or a network. The package under test is

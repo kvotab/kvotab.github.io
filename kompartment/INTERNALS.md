@@ -32,16 +32,17 @@ exercise `domain/` and `sim/` directly, which is why they can be plain Node.
 | `src/sim/partition.js` | Cutting a model into parts that cannot see each other |
 | `src/sim/localsens.js` | dy/dp for a chosen parameter, by forward sensitivities |
 | `src/sim/probabilistic.js` | Latin hypercube sampling and the statistics over realisations |
-| `src/ode/ndf.js` | The NDF/BDF formulas and their linear algebra (Shampine & Reichelt 1997; Hairer & Wanner 1996, ch. V) |
+| `src/ode/ndf.js` | The NDF/BDF formulas (Shampine & Reichelt 1997; Hairer & Wanner 1996, ch. V). One of the five shared-core files: see *One solver core for three pages* |
 | `src/ode/variable-order.js` | The adapter that gives those formulas this project's solver shape |
 | `src/ode/rosenbrock23.js` | The modified Rosenbrock (2,3) pair (Shampine & Reichelt 1997, §4) |
 | `src/ode/dormand-prince.js` | The explicit (4,5) pair (Dormand & Prince 1980) |
 | `src/ode/onestep.js` | The driver the two one-step pairs share: step control, events, output, the constraint |
 | `src/ode/julia/`, `src/ode/julia-solvers.js` | Six stiff methods from SciML's DifferentialEquations.jl, vendored whole, and the adapter. See *The DifferentialEquations.jl solvers* |
 | `src/ode/scipy.js` | `scipy.integrate.solve_ivp` through Pyodide, as an independent check on the rest |
-| `src/ode/events.js` | Locating the instant an event function crosses zero |
-| `src/ode/linalg.js` | Dense LU with partial pivoting |
-| `src/ode/sparse.js` | CSC, Gilbert-Peierls left-looking LU, reverse Cuthill-McKee |
+| `src/ode/events.js` | Locating the instant an event function crosses zero (shared core) |
+| `src/ode/linalg.js` | Dense LU with partial pivoting (shared core) |
+| `src/ode/sparse.js` | CSC, Gilbert-Peierls left-looking LU, reverse Cuthill-McKee, colouring, differencing, and the choice of iteration matrix (shared core) |
+| `src/ode/refactor.js` | The sparse LU that keeps its pivots (shared core) |
 | `src/ode/solvers.js` | The catalogue: names, blurbs, and which settings each method reads |
 | `src/domain/project.js` | The block types and the normalised project |
 | `src/domain/edit.js` | Every editing operation, as pure functions over the project |
@@ -2608,7 +2609,9 @@ problem strip's business.
 here -- with the backward differentiation formulas as the special case of
 every κ set to zero. `src/ode/variable-order.js` is adaptation around it: the
 derivative convention, the progress report, the abort, and the translation of
-the integrator's named failures into advice a modeller can act on.
+the integrator's named failures into advice a modeller can act on. The
+integrator and its linear algebra are the same code facsimile.html and
+rtm.html run; see *One solver core for three pages*.
 
 The method is written from its published descriptions -- Shampine and
 Reichelt's paper for the κ values and the error estimate, Hairer and Wanner's
@@ -2635,8 +2638,11 @@ time:
   one evaluation of the model per colour and stores the pattern's entries
   rather than the square; without a pattern it is one evaluation per column.
 - **The iteration matrix** I − (h/l_k)·J, held and factorised densely through
-  `linalg.js` or in CSC through `sparse.js`, whichever one real factorisation
-  of each ordering says fills less. Past a quarter of a gigabyte the dense
+  `linalg.js` or in CSC through `sparse.js` and `refactor.js`, whichever one
+  real factorisation of each ordering says is cheapest. *Iteration matrix*
+  under Advanced settings overrides the choice: `refactor` is the sparse LU
+  that keeps its pivots, `sparse` the Gilbert-Peierls LU that chooses them
+  every time, `dense` the dense LU. Past a quarter of a gigabyte the dense
   form is not offered at all and the solver says why.
 
 **The corrector** is a simplified Newton iteration on the correction to the
@@ -4590,11 +4596,6 @@ unlike those two it needs the clock to carry a tangent through
 call is live. The cost is one evaluation per step on one solver, and the
 vendored `rodas5p` takes an exact `tgrad` already.
 
-**No threshold pivoting or refactorisation.** `src/ode/sparse.js` re-runs a full
-Gilbert-Peierls factorisation each time, where a library would reuse the pivot
-order and redo only the numerics. Measured at about 3× on the factorisation
-itself, which is no longer where the time goes.
-
 **A non-negativity constraint that binds is only safe under `ndf` and `bdf`.**
 Holding a compartment at zero while its equations push it below makes the
 derivative discontinuous there. A multistep method's Newton iteration lands on
@@ -4735,9 +4736,8 @@ factorisations were 28 % of the run, and the solves another 5 %.
 
 `src/ode/refactor.js` chooses the pivots once, from the values, and records
 every elimination. Each later matrix is factorised by replaying the record,
-with nothing searched. It is a port of the same class in
-`resources/js/facsimile-solver.js`, where the canister and reactive-transport
-pages use it.
+with nothing searched. The canister and reactive-transport pages use the
+same module; see *One solver core for three pages*.
 
 **Choosing.** At each step it takes the entry with the least (row count - 1) x
 (column count - 1), among those at least 0.1 times the largest in their column
@@ -4792,3 +4792,56 @@ times, so this is the model's sensitivity at its tolerance, not the LU.
 `test/run.js` checks the backward error on the farfield model's matrices over
 nine orders of magnitude of h, the choosing-again of a collapsed pivot, the
 declining of singular and NaN matrices, and the singular message.
+
+## One solver core for three pages
+
+facsimile.html and rtm.html used to carry an NDF of their own, written from the
+same papers as this one and in the same shape, and the two had drifted: each
+page had tuned its copy on its own models, fixed its own faults, and grown
+settings the other lacked. They are now one. The integrator and its linear
+algebra live in the site at `resources/js/ode_core/`, and five files here are
+copies of it, the same bytes:
+
+    src/ode/linalg.js   src/ode/refactor.js   src/ode/sparse.js
+    src/ode/events.js   src/ode/ndf.js
+
+Do not edit them here. Edit the modules in `resources/js/ode_core/` and run
+`node scripts/build-solvers.mjs` from the site's root, which rewrites these
+copies and the single-file build the other pages load; `--check` fails when
+either is stale. This folder stays self-contained: nothing here reaches up
+into the site, and `src/ode/julia/` is the same arrangement for the ported
+solvers. The module's README says what every option does.
+
+**What differs between the pages is settings, not code.** The defaults of the
+shared `ndf` are this tool's, so `variable-order.js` passes only what the
+model sets. facsimile.html and rtm.html pass their own: the Newton system
+scaled by each species' weight (their species span forty orders of
+magnitude), two Newton iterations a step at least, five failing steps at the
+floor in a row where this tool allows twenty failed error tests and no failed
+iteration, a stall window of 4,000 steps, and their own measurements of when
+a dense LU is cheaper (no minimum size, and a third of n² rather than 15 %).
+Each of those was measured where it was set, and making them one set of
+numbers would move one page's answers or the other's at round-off level. That
+is a separate decision, not part of this merge.
+
+**Checked by the bits.** Before the switch, every bundled example ran under
+fifteen settings -- the NDF, the BDF, each LU, the differenced Jacobian, a
+floating tolerance, both norms and norm control, the floor rule, the stall
+tolerance, tight tolerances, a lower top order, and `ros23`, which uses the
+shared LU and `sparseIterationMatrix` -- and the SFK FSAR model of 9,120
+states with both Jacobians. Each run was recorded as a hash of every output
+value at full precision. After the switch 144 of the 152 are bit-identical.
+The eight that are not are all *Iteration matrix: sparse LU*, and four of them
+differ only in the fill they report. It used to mean
+whichever sparse LU was cheaper, which is what `auto` does, and facsimile.html
+and rtm.html have always used it for the Gilbert-Peierls LU alone; it now
+means that here too, and *sparse LU, pivots kept* (`refactor`) is offered as
+it is there. The same hashes over the other two pages found the only other
+difference in the floating absolute tolerance, which facsimile.html raised
+from the corrector's value before the step was folded in. It now does what
+this tool always did.
+
+The ported solvers of `src/ode/julia/` keep their own linear algebra:
+column-major storage, a complex LU for Radau's stages, and a sparse LU written
+against their own Jacobian cache. They read `refactor` as their sparse LU,
+since they have none that keeps its pivots.

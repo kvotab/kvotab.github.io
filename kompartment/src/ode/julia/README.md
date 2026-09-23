@@ -4,6 +4,14 @@ Stiff ODE solvers ported from [DifferentialEquations.jl][sciml], for the
 browser and for Node. No dependencies. Licence: MIT, as the original; the
 notice is in `LICENSE` beside this file.
 
+**This directory is a copy.** The package is written once, in the site's
+`resources/js/ode_julia/`, which facsimile.html and rtm.html use too;
+`node scripts/build-solvers.mjs` writes this copy byte for byte from it, and
+`--check` fails if anything here has been edited by hand. Change the package
+there, not here. It is a copy rather than an import because Kompartment is
+self-contained: it can be served from this folder alone, which cannot reach up
+into the site.
+
 ```js
 import { solve, ODEProblem, FBDF } from './index.js';
 
