@@ -241,9 +241,8 @@ function handleRtmMessage(msg, post) {
         that the residual cannot be evaluated to better than a part in 1e7, and
         the corrections stop shrinking there. Without this the step is thrown
         out as diverging and h is cut, which does nothing at all, because
-        arithmetic noise does not scale with h: the twenty BRUM cases in
-        resources/tests/rtm/verify-brum.py took millions of steps to cover a
-        few seconds. facsimile.html leaves it off; see the note in
+        arithmetic noise does not scale with h: a run can then take millions of
+        steps to cover a few seconds. facsimile.html leaves it off; see the note in
         facsimile-solver.js for what it costs a model that does not need it.
       */
       stagnationTol: 0.5,

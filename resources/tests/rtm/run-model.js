@@ -4,8 +4,6 @@
 
    Reads { text, tend, rtol, atol, solver, teval } as JSON on stdin and writes
    { species, t, y } back on stdout, y being one row per requested time.
-
-   verify-brum.py uses this to put our answer next to another code's.
    ========================================================================== */
 'use strict';
 

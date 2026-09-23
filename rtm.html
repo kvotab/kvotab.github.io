@@ -667,9 +667,8 @@ NpO2+ &lt;=&gt; NpO2_s,      K = 2.0E4, kf = 1.0E3   # also held during the run<
             part in 10<sup>7</sup>. A Newton correction that has reached that floor stops shrinking,
             which an ordinary convergence test reads as divergence. This page tells the solver to
             take such a correction when it is within half the tolerance and the Jacobian is the one
-            for that point; without it, the twenty published spent-fuel cases in
-            <code>resources/tests/rtm/verify-brum.py</code> took millions of steps to cover a few
-            seconds, and with it they run in a few thousand and agree with the reference code.</p>
+            for that point; without it, a reaction set of this kind can take millions of steps to
+            cover a few seconds, and with it runs in a few thousand.</p>
 
           <h3>The examples</h3>
           <p>The <em>Example</em> picker on the <em>Model</em> tab loads any of them; the text is
@@ -682,15 +681,8 @@ NpO2+ &lt;=&gt; NpO2_s,      K = 2.0E4, kf = 1.0E3   # also held during the run<
               <tr><td>Chemistry</td><td>Carbonate speciation: three coupled equilibria and the conserved totals found from the stoichiometry alone.</td></tr>
               <tr><td>Transport</td><td>A tracer against Ogata–Banks; the Danckwerts inlet; a retarded front; and a source that varies down the column.</td></tr>
               <tr><td>Dual porosity</td><td>Matrix diffusion against the <code>erfc</code> solution, and the <strong>U-238 chain</strong> along a real flow path — six nuclides decaying into one another while diffusing into the rock and sorbing there, from SKB TR-19-06 Appendix B. Deep in the rock the chain reaches secular equilibrium to a tenth of a per cent; in the fracture the flow keeps it from doing so.</td></tr>
-              <tr><td>Hydrosäk</td><td>All twenty <em>HS_case</em> databases of BRUM_for_Hydrosäk: spent-fuel dissolution in one stirred cell, 128 reactions over 35 species, 1890 days. Converted by the same reader that <code>resources/tests/rtm/verify-brum.py</code> checks against each case's own <code>results.h5</code>.</td></tr>
             </tbody>
           </table>
-          <p>One of them will not run as it stands. <em>HS_case20</em>'s own database names
-            <code>UVIO2s+</code> in a stoichiometry whose rate law reads <code>[UVIO2s+2]</code>;
-            they are different species, and the first appears nowhere else, so it is driven below
-            zero — BRUM's own answer for it is negative too. Turn off <em>keep concentrations
-            non-negative</em> under the solver's advanced settings and this page reproduces that
-            result, negative species and all. The note is at the top of the model text.</p>
           <p>Every example is compiled and run by <code>resources/tests/rtm/test-model.js</code>,
             so the picker cannot offer something broken, and the ones with a published answer are
             checked against it there.</p>

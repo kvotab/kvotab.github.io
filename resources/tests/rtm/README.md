@@ -189,64 +189,6 @@ mode worth remembering:
   against the analytic half-height, which the model matches to a fiftieth of a
   cell.
 
-## verify-brum.py: against another code, on twenty published cases
-
-The rest of this directory measures the page against closed solutions and
-conservation laws. That finds a wrong sign or a missing factor and says nothing
-about whether a real reaction set comes out the same as somebody else's code.
-`verify-brum.py` does that: it converts each of the twenty `HS_case` databases
-of *BRUM_for_Hydrosäk* — spent-fuel dissolution in one stirred cell, alpha
-radiolysis driving a surface mechanism, 1890 days, 128 reactions over 35 species
-— into the rtm model text, solves it here, and puts the answer next to the
-`results.h5` that BRUM wrote through SciPy's BDF.
-
-    python3 resources/tests/rtm/verify-brum.py [--case N] [--rtol R] [--verbose]
-
-It needs `h5py` and the case set, which is not in this repository. At the end of
-1890 days, nineteen of the twenty agree to better than 1.2 %, and most to a few
-parts in a thousand — with both codes at their own loose tolerances. Every one
-of the remaining gaps has since been chased down to the stored reference's own
-tolerance rather than to a disagreement about the model: see *What this found*
-in the script.
-
-Four things came out of writing it, all of them worth keeping:
-
-* **A bare `=` is a reaction arrow.** One line of every case's `reaction.in`
-  writes `H2O2 + OH- = HO2- + H2O` rather than `=>`; skbrtm's `processes.py`
-  accepts `=>`, `<=` and `=` alike. Reading only `=>` dropped that one line, and
-  the only visible effect was HO2- coming out five orders of magnitude low with
-  every other species still right. A converter that drops a line quietly is
-  worse than one that fails.
-* **The stored reference is not converged everywhere.** In the window where
-  UVIO2s+2 has collapsed to ~1e-17 and `red` sits at a quasi-steady state held
-  by a k = 1e16 reaction, HS_case7, 13 and 14 disagreed by up to four orders of
-  magnitude. Running BRUM itself at rtol 1e-8 and 1e-11 moves it onto our answer
-  to five or six significant figures. The stored file was the unconverged one,
-  and the end of those same runs agreed all along to about 2e-3.
-* **HS_case20's database has a typo.** Its stoichiometry consumes `UVIO2s+`
-  while the rate law reads `[UVIO2s+2]`. `UVIO2s+` appears nowhere else, so it
-  is driven below zero, and BRUM's own stored answer for it is −2.55e-8. Our
-  non-negativity guard fights that for ever and the run never leaves t = 1e-4 s.
-  The script now turns the guard off wherever the reference itself went
-  negative, and the case then agrees to 2.4e-3.
-* **Our own NDF and BDF could not solve these cases, and now can.** They used to
-  reach millions of steps part way through and stop, while every ported solver
-  managed in a few hundred to a few thousand. The cause, found with `--debug`:
-  every failure was a Newton failure, never an error test, and the Newton
-  corrections were 2e-13 — converged by any reading. Two things then conspired.
-  `minNewton = 2` forbids accepting on the first iteration, and the second
-  correction cannot be smaller than the first when the first has already reached
-  the arithmetic floor of a residual whose terms cancel over sixteen digits. So
-  `newnrm > 0.9 * oldnrm` fired, the step was thrown out as diverging, and h was
-  cut — which does nothing, because arithmetic noise does not scale with h.
-
-  The fix is `stagnationTol` in `facsimile-solver.js`: a correction that has
-  stopped shrinking is judged on its own size rather than on a rate, and taken
-  if it is within half the tolerance with a Jacobian formed at this point. It is
-  off by default and this page sets it to 0.5, because it is not free — see the
-  note in `facsimile-solver.js`. With it, all twenty cases run under our own NDF in
-  3600 to 230000 steps and give the same fifteen agreements as the ports.
-
 ## What test-hdf5.py checks
 
 `resources/js/kvot-hdf5-write.js` writes HDF5 by hand rather than through a
@@ -277,12 +219,11 @@ The wiring rather than the mathematics: that the text compiles through the
 worker, that a transport run reaches both chart tabs, that ticking a species
 draws it and the chip removes it again, that *Check Jacobian* answers and finds
 nothing wrong, that switching to batch recompiles to one cell and the profile
-tab says so, that the Example picker offers all 31 in their groups and loading one brings
+tab says so, that the Example picker offers all 11 in their groups and loading one brings
 its text, its description and a run; that a model in years labels its axis,
-its panel and its boxes in years rather than seconds; that a Hydrosäk case
-loads with all 128 reactions; that the Run button does not move when the status
-line below it changes size, which it used to do by 127 px, under the pointer as
-it was clicked;
+its panel and its boxes in years rather than seconds; that the Run button does
+not move when the status line below it changes size, which it used to do by
+127 px, under the pointer as it was clicked;
 that a dual-porosity model compiles with the panel saying how deep and what
 enters, that the layer picker appears and the time chart follows it, that the
 profile can be drawn into the rock with the fracture at depth zero and falls
@@ -303,7 +244,7 @@ reporting a token it could not read or a time past the end of the run rather
 than dropping it silently — that a model typed from scratch runs and puts the
 right number on the chart, and
 that the syntax colouring lays a second copy of the text exactly over the box
-being typed in — the same characters, the same metrics, every one of the 31
+being typed in — the same characters, the same metrics, every one of the 11
 examples through the tokeniser unchanged, since a span too many or an escape
 too few puts the caret over the wrong letter — and that turning it off puts
 the copy away and is remembered; that the page can build the HDF5 file it

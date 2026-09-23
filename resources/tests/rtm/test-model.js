@@ -1593,11 +1593,8 @@ console.log('\n--- the examples ---');
       if (!m.speciesNames.length) throw new RtmModel.RtmError('no species');
       // Every field the picker shows.
       if (!e.id || !e.label || !e.group || !e.about) throw new RtmModel.RtmError('a field is missing');
-      // hs20's own database drives a species below zero, which is the point of
-      // it; the rest must stay non-negative.
-      const nonNegative = e.id !== 'hs20';
       FacsimileODE.runModel(m, { solver: 'ndf', rtol: 1e-6, atol: 1e-24, tend: m.settings.TEND,
-        nonNegative, maxSteps: 4e5, maxPoints: 4, stagnationTol: 0.5 });
+        nonNegative: true, maxSteps: 4e5, maxPoints: 4, stagnationTol: 0.5 });
       if (m.warnings.length && !worstWarn) worstWarn = `${e.id}: ${m.warnings[0].slice(0, 50)}`;
     } catch (err) {
       broke++;
@@ -1606,11 +1603,6 @@ console.log('\n--- the examples ---');
   }
   check(`all ${RTM_EXAMPLES.length} examples compile and run`, broke === 0, `${broke} failed`);
   check('  and none of them raises a warning', worstWarn === '', worstWarn);
-  check('  the Hydrosäk set is all twenty',
-    RTM_EXAMPLES.filter((e) => /^hs\d+$/.test(e.id)).length === 20,
-    `${RTM_EXAMPLES.filter((e) => /^hs\d+$/.test(e.id)).length} of them`);
-  check('  and hs20 warns in its own text about the typo in its database',
-    /will not run until/.test(byId('hs20').text) && /non-negative/.test(byId('hs20').about));
 
   // Robertson: the point everyone quotes, and the invariant.
   const rob = RtmModel.compile(byId('robertson').text);

@@ -284,7 +284,7 @@ async def main():
             check('the picker offers every example, in groups', await page.ev(
                 "(() => { const s = document.getElementById('rtmExample');"
                 " return s.querySelectorAll('option[value]:not([value=\"\"])').length"
-                " + ':' + s.querySelectorAll('optgroup').length; })()"), '31:6')
+                " + ':' + s.querySelectorAll('optgroup').length; })()"), '11:5')
             # Robertson: a batch model in seconds with a published answer.
             await page.ev("""(() => { const s = document.getElementById('rtmExample');
               s.value = 'robertson'; s.dispatchEvent(new Event('change', { bubbles: true })); })()""")
@@ -321,24 +321,19 @@ async def main():
             await asyncio.sleep(1.2)
             check('and its time axis is in years, not seconds', await page.ev(
                 "document.getElementById('rtmChartTime').layout.xaxis.title.text"), 'time (a)')
-            # A Hydrosäk case, straight from the picker.
-            await page.ev("document.querySelector('[data-tab=\"model\"]').click()")
-            await page.ev("""(() => { const s = document.getElementById('rtmExample');
-              s.value = 'hs1'; s.dispatchEvent(new Event('change', { bubbles: true })); })()""")
-            await settle(page, "document.getElementById('rtmStatus')"
-                               ".textContent.startsWith('Compiled: 35 species')", True, tries=60)
-            check('a Hydrosäk case loads with all its reactions', await page.ev(
-                "document.getElementById('rtmStatus').textContent.includes('128 reactions')"), True)
 
             # --- a rock matrix beside the fracture ------------------------------
+            await page.ev("document.querySelector('[data-tab=\"model\"]').click()")
             await set_text(page, (
                 '<SETTINGS>\nMODE = transport\nCELLS = 5\nLENGTH = 20\n'
                 'DIFFUSION = 1\nADVECTION = 1\nVELOCITY = 1\nLEFT = robin\nRIGHT = free\n'
                 'PECLET = 8\nMATRIX_CELLS = 3\nMATRIX_DEPTH = 5\nMATRIX_FIRST = 0.001\n'
                 'MATRIX_POROSITY = 0.0018\nWETTED_SURFACE = 500\nTEND = 200\n\n'
                 '<SPECIES>\nX 0 D=0 left=1 Dm=0.001\n\n<REACTIONS>\n'))
+            # Wait for THIS model: the U-238 chain before it is dual porosity too,
+            # so the panel says "dual porosity" before the new text has compiled.
             await settle(page, "document.getElementById('rtmFacts').textContent"
-                               ".includes('dual porosity')", True, tries=40)
+                               ".includes('3 matrix layers to 5 m')", True, tries=40)
             check('a dual-porosity model compiles and the panel says so', await page.ev(
                 "document.getElementById('rtmFacts').textContent.includes('3 matrix layers to 5 m')"), True)
             check('and says which species enter the rock', await page.ev(

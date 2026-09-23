@@ -1,43 +1,22 @@
 #!/usr/bin/env python3
 """Writes resources/js/rtm-examples.js: the models the page offers to load.
 
-Two kinds. Most are written out below, each chosen to show one thing the model
-text can do and, wherever there is one, to have an answer that can be checked
-against something other than this code. The rest are the twenty HS_case
-databases of BRUM_for_Hydrosäk, converted by the same reader that
-resources/tests/rtm/verify-brum.py uses, so that what the page offers and what
-the tests check are the same conversion.
+Each is written out below, chosen to show one thing the model text can do and,
+wherever there is one, to have an answer that can be checked against something
+other than this code.
 
-    python3 scripts/gen-rtm-examples.py [--brum PATH]
+    python3 scripts/gen-rtm-examples.py
 
-The Hydrosäk set is not in this repository. Without it the script writes the
-rest and says how many it left out; with it, all of them. Twenty near-identical
-reaction sets are 150 kB of text and about 8 kB once served gzipped, which is
-why they are embedded rather than fetched: a page opened from a disk can still
-load them.
+They are embedded rather than fetched, so that a page opened from a disk can
+still load them.
 """
-import argparse
 import json
 import re
-import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 OUT = ROOT / 'resources/js/rtm-examples.js'
-DEFAULT_BRUM = Path.home() / 'Downloads' / 'Nuclear_fuel_dissolution' / 'BRUM_for_Hydrosäk'
-
-# The reader for the BRUM .in files lives with the test that checks against
-# them; importing it rather than copying it keeps one definition of what those
-# files mean.
-sys.path.insert(0, str(ROOT / 'resources/tests/rtm'))
-
-
-def brum_reader():
-    src = (ROOT / 'resources/tests/rtm/verify-brum.py').read_text().split('def main()')[0]
-    ns = {'__file__': str(ROOT / 'resources/tests/rtm/verify-brum.py')}
-    exec(compile(src, 'verify-brum', 'exec'), ns)  # noqa: S102 - our own file
-    return ns
 
 
 # ---------------------------------------------------------------------------
@@ -451,106 +430,8 @@ Po210 => ,      k = 1.8289E+0,  on = inventory   # 0.379 a
 ]
 
 
-def hs_examples(root, ns):
-    """The twenty HS_case databases, as model text."""
-    out = []
-    cases = sorted((d for d in root.glob('HS_case*') if d.is_dir()), key=lambda d: int(d.name[7:]))
-    for d in cases:
-        n = int(d.name[7:])
-        text, tend = ns['convert'](d)
-        # What makes this case different from the others: how much of each kind
-        # of surface site it starts with. Taken from the concentrations
-        # themselves rather than from the files' own "# 1%" comments, which
-        # three of the twenty do not carry -- so those three came out labelled
-        # "the reference parameterisation" and indistinguishable.
-        initial, _ = ns['read_solutions'](d / 'databases/solutions.in')
-        base = 2.1e-4 * 1 / 4e-5 * 1e-3      # sites_per_m2*surface/thickness*m3_to_L
-        marks = []
-        for name, short in (('U_site', 'U sites'), ('E_site', 'E sites'),
-                            ('UVO2s+', 'U(V)'), ('UVIO2s+2', 'U(VI)')):
-            v = initial.get(name)
-            if not v:
-                continue
-            pct = 100 * v / base
-            marks.append(f'{short} {pct:g}%')
-        # ...and how its mechanism differs, where it does. Five of the twenty
-        # replace the two-step reduction of U(VI) by H2 -- through the
-        # intermediate `red` -- with a single Langmuir-Hinshelwood step, or
-        # drop a step, and two of those name a species their rate law does not
-        # use. Without this, cases with the same starting inventory and
-        # different chemistry read as the same case.
-        rx = (d / 'databases/reaction.in').read_text()
-        live = [ln.strip() for ln in rx.splitlines()
-                if ln.strip() and not ln.strip().startswith('#')]
-        lh = [ln for ln in live if 'E_site + H2 +' in ln]
-        mech = None
-        if lh:
-            consumed = re.match(r'E_site \+ H2 \+ (\S+)', lh[0])
-            used = re.search(r'r = k\*\[(\S+?)\]', lh[0])
-            c, u = consumed.group(1), used.group(1)
-            mech = ('one-step reduction of ' + c
-                    + ('' if c == u else f', rate law on [{u}]'))
-        elif not any('UO2CO3 + H2 + E_site' in ln for ln in live):
-            mech = 'no reduction of the carbonate complex'
-        variant = ', '.join(marks) if marks else 'the reference parameterisation'
-        if mech:
-            variant += f' — {mech}'
-        # HS_case20's own database names UVIO2s+ in a stoichiometry whose rate
-        # law reads [UVIO2s+2]. They are different species and the first
-        # appears nowhere else, so it is driven below zero -- BRUM's own stored
-        # answer for it is -2.55e-8. Said here rather than left to be found
-        # when the run will not start.
-        broken = ''
-        if any('UVIO2s+ ' in f'{m} ' for m in [(d / 'databases/reaction.in').read_text()]) \
-                and 'E_site + H2 + UVIO2s+ =>' in (d / 'databases/reaction.in').read_text():
-            broken = (
-                '#\n'
-                '# NOTE. This case\'s own database has a typo: the last reaction consumes\n'
-                '# UVIO2s+ while its rate law reads [UVIO2s+2]. Those are different species,\n'
-                '# and UVIO2s+ appears nowhere else, so nothing replaces what is taken and it\n'
-                '# is driven below zero. BRUM\'s own answer for it is negative too.\n'
-                '#\n'
-                '# So this one will not run until "keep concentrations non-negative" is turned\n'
-                '# OFF under Solver -> advanced. With it off, this page reproduces BRUM\'s\n'
-                '# result for the case, negative species and all.\n')
-        head = (f'# HS_case{n} of BRUM_for_Hydrosäk: spent-fuel dissolution in one stirred cell,\n'
-                f'# alpha radiolysis driving a surface mechanism, 1890 days.\n'
-                f'# This case: {variant}.\n'
-                + broken
-                + '#\n'
-                '# Converted from the case\'s own reaction.in, sourceterm_alpha.in and\n'
-                '# solutions.in by scripts/gen-rtm-examples.py. Rate constants are per second.\n'
-                '# resources/tests/rtm/verify-brum.py checks this conversion against the\n'
-                '# results.h5 each case ships.\n\n')
-        body = text.replace('<SETTINGS>\n', '<SETTINGS>\n', 1)
-        body = body.replace(f'TEND = {tend:.10g}\n', f'TEND = {tend:.10g}\nTIME_UNIT = second\n', 1)
-        out.append(dict(
-            id=f'hs{n}', group='Hydrosäk: spent-fuel dissolution',
-            label=f'HS_case{n} — {variant}',
-            about=f'One of the twenty cases of BRUM_for_Hydrosäk: {len(re.findall("=>", text))} '
-                  'reactions over 35 species, 1890 days. Radiolysis of water at a spent-fuel '
-                  'surface drives a uranium dissolution mechanism.'
-                  + (' — This case needs "keep concentrations non-negative" turned off: its own '
-                     'database has a typo that drives a species below zero. See the note in the '
-                     'text.' if broken else ''),
-            reference='SKB SE-SFL / BRUM_for_Hydrosäk, HS_case' + str(n)
-                      + '. The conversion is checked against the case\'s own results.h5 in '
-                        'resources/tests/rtm/verify-brum.py.',
-            text=head + body))
-    return out
-
-
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument('--brum', type=Path, default=DEFAULT_BRUM)
-    args = ap.parse_args()
-
     examples = list(EXAMPLES)
-    note = ''
-    if args.brum.exists():
-        examples += hs_examples(args.brum, brum_reader())
-    else:
-        note = f'  (no Hydrosäk set at {args.brum}: those examples were left out)'
 
     body = ',\n'.join(
         '  ' + json.dumps({k: v for k, v in e.items()}, ensure_ascii=False, indent=2).replace('\n', '\n  ')
@@ -562,9 +443,7 @@ def main():
 
    Each is a complete model text the Model tab can load, chosen to show one
    thing the format can do and, where there is one, to have an answer that can
-   be checked against something other than this code. The Hydrosäk set is
-   converted from the BRUM_for_Hydrosäk databases by the same reader
-   resources/tests/rtm/verify-brum.py uses.
+   be checked against something other than this code.
 
    resources/tests/rtm/test-model.js compiles every one of them.
    ========================================================================== */
@@ -588,7 +467,7 @@ if (typeof module !== 'undefined' && module.exports) {{
         page.write_text(pat.sub(bump, src))
 
     kb = OUT.stat().st_size / 1024
-    print(f'{OUT.relative_to(ROOT)}: {len(examples)} examples, {kb:.0f} kB{note}')
+    print(f'{OUT.relative_to(ROOT)}: {len(examples)} examples, {kb:.0f} kB')
     for g in dict.fromkeys(e['group'] for e in examples):
         print(f'  {g}: ' + ', '.join(e['id'] for e in examples if e['group'] == g))
 
