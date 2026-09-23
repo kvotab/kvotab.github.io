@@ -5,8 +5,9 @@
       node scripts/build-solvers.mjs            # write
       node scripts/build-solvers.mjs --check    # write nothing; exit 1 if anything is stale
 
-  Each package is written once, as ES modules under resources/js/, and that is
-  the source of truth. Two things are made from it:
+  Each package is written once, as ES modules under resources/js/ode/ (the
+  NDF and its linear algebra in core/ and solvers/, the ported solvers in
+  julia/), and that is the source of truth. Two things are made from it:
 
   - a single-file build for a plain <script> tag and a classic worker.
     facsimile.html and rtm.html run their solver in a classic worker with an
@@ -17,10 +18,10 @@
     minified or rewritten: the bundle is the sources with two kinds of line
     removed, so a stack trace from it still reads.
 
-  - an identical copy inside kompartment/, which is self-contained by design:
-    no build step, and servable from its own folder, so it cannot reach up into
-    resources/js/. Its copy is the same bytes, and --check fails the moment it
-    is edited by hand.
+  - an identical copy inside kompartment/src/ode/, at the same relative paths,
+    since Kompartment is self-contained by design: no build step, and servable
+    from its own folder, so it cannot reach up into resources/js/. Its copy is
+    the same bytes, and --check fails the moment it is edited by hand.
 
   It refuses to build if two modules of a package declare the same top-level
   name, which concatenation would otherwise turn into a syntax error or, worse,
@@ -35,11 +36,11 @@ const CHECK = process.argv.includes('--check');
 
 const PACKAGES = [
 	{
-		name: 'ode_core',
-		src: 'resources/js/ode_core',
+		name: 'ode',
+		src: 'resources/js/ode',
 		bundle: 'resources/js/ode-core.js',
 		global: 'OdeCore',
-		files: ['linalg.js', 'refactor.js', 'sparse.js', 'events.js', 'ndf.js'],
+		files: ['core/linalg.js', 'core/refactor.js', 'core/sparse.js', 'core/events.js', 'solvers/ndf.js'],
 		exports: [
 			'EPS', 'zeros', 'identity', 'norm', 'LU', 'DenseLU', 'createMiter',
 			'RefactorLU', 'PIVOT_THRESHOLD', 'KEEP_THRESHOLD', 'OPS_BUDGET',
@@ -51,11 +52,12 @@ const PACKAGES = [
 			'crosses', 'anyCrossing', 'crossingTolerance', 'firstCrossing', 'locateCrossing',
 			'ndf', 'SolverError', 'NdfFailure', 'MAX_ORDER',
 		],
-		// Kompartment's own src/ode/ holds its other solvers beside these; the
-		// five modules are the same bytes, and index.js and the README stay here.
+		// The same relative paths in Kompartment's src/ode/, whose core/ and
+		// solvers/ also hold Kompartment's own driver and solvers beside these.
+		// The five modules are the same bytes; index.js and the README stay here.
 		copyTo: 'kompartment/src/ode',
 		copy: [],
-		describe: `ode_core -- a single-file build
+		describe: `ode/core and ode/solvers -- a single-file build
 
    The stiff-solver core of facsimile.html, rtm.html and Kompartment: the
    variable-order NDF/BDF integrator, the dense, sparse and kept-pivot LUs of
@@ -68,7 +70,7 @@ const PACKAGES = [
 	},
 	{
 		name: 'ode_julia',
-		src: 'resources/js/ode_julia',
+		src: 'resources/js/ode/julia',
 		bundle: 'resources/js/ode-julia.js',
 		global: 'OdeJulia',
 		// Dependency order. Checked: a module may only use names already defined.

@@ -128,8 +128,8 @@ export class JacobianCache {
     // genuinely sparse; the factorisation decides separately, since a sparse J
     // can still have a factor so full that a dense LU is faster.
     // 'refactor' asks for the LU that keeps its pivots, which is the NDF's
-    // (resources/js/ode_core/refactor.js); this package has none, and its
-    // sparse LU is the nearest thing to it.
+    // (../../core/refactor.js); this package has none, and its sparse LU is
+    // the nearest thing to it.
     const want = opts.matrix || 'auto';
     const nnz = this.pattern ? this.pattern.colPtr[n] : n * n;
     this.sparse = want === 'sparse' || want === 'refactor' || (want === 'auto' && !!this.pattern && nnz < 0.25 * n * n);

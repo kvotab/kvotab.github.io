@@ -4,7 +4,7 @@
    Stiff ODE solvers ported from DifferentialEquations.jl, for the browser and
    for Node. No dependencies.
 
-     import { solve, ODEProblem, Rodas5P } from './ode_julia/index.js';
+     import { solve, ODEProblem, Rodas5P } from './ode/julia/index.js';
 
      const prob = new ODEProblem(f, u0, [0, 1e5], { jac });
      const sol = solve(prob, Rodas5P(), { reltol: 1e-8, abstol: 1e-10 });

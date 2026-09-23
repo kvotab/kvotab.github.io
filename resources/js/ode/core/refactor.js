@@ -49,6 +49,11 @@
  * reactive-transport pages load and scale it with a mass diagonal and the
  * Newton weights, Kompartment as the plain I - h*J. The measurements behind
  * the constants are recorded in Kompartment's INTERNALS.md.
+ *
+ * Shared by facsimile.html, rtm.html and Kompartment. The source is
+ * resources/js/ode/ in the site; scripts/build-solvers.mjs copies it into
+ * kompartment/src/ode/ and builds resources/js/ode-core.js from it. See
+ * resources/js/ode/README.md.
  */
 
 export const PIVOT_THRESHOLD = 0.1;

@@ -41,8 +41,10 @@
  * values in a separate array, since the pattern is fixed for a run and the
  * values change at every evaluation; a CSC below carries its own values.
  *
- * One of the modules of resources/js/ode_core/, the solver core shared by
- * facsimile.html, rtm.html and Kompartment: see its README.md.
+ * Shared by facsimile.html, rtm.html and Kompartment. The source is
+ * resources/js/ode/ in the site; scripts/build-solvers.mjs copies it into
+ * kompartment/src/ode/ and builds resources/js/ode-core.js from it. See
+ * resources/js/ode/README.md.
  */
 
 import { EPS, LU } from './linalg.js';

@@ -36,7 +36,7 @@ import { calibrate, variablesOf } from '../sim/calibrate.js';
 import { runSensitivity, elasticity } from '../sim/localsens.js';
 import { checkJacobian, jacobianPattern } from '../sim/jaccheck.js';
 import { isScipySolver, loadScipy, scipyReady } from '../ode/scipy.js';
-import { SolverError } from '../ode/dormand-prince.js';
+import { SolverError } from '../ode/solvers/dormand-prince.js';
 import { layoutSignature, datasetEntries, restoreResults } from '../io/dataset.js';
 
 let cancelled = false;

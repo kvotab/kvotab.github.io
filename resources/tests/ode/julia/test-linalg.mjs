@@ -6,12 +6,12 @@
   the residual ‖Ax − b‖ is the whole truth, and a factorisation that agrees
   with a stored answer to six digits on one matrix can still be wrong.
 
-      node resources/tests/ode_julia/test-linalg.mjs
+      node resources/tests/ode/julia/test-linalg.mjs
 */
 import {
   DenseMatrix, CSC, cscFromTriplets, DenseLU, ComplexDenseLU, SparseLU,
   reverseCuthillMcKee, fillWeights, wrmsNorm, wmaxNorm,
-} from '../../js/ode_julia/core/linalg.js';
+} from '../../../js/ode/julia/core/linalg.js';
 
 let checks = 0;
 const failures = [];

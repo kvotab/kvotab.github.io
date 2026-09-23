@@ -8,8 +8,10 @@
  *
  * Matrices are stored row-major as an array of Float64Array rows.
  *
- * One of the modules of resources/js/ode_core/, the solver core shared by
- * facsimile.html, rtm.html and Kompartment: see its README.md.
+ * Shared by facsimile.html, rtm.html and Kompartment. The source is
+ * resources/js/ode/ in the site; scripts/build-solvers.mjs copies it into
+ * kompartment/src/ode/ and builds resources/js/ode-core.js from it. See
+ * resources/js/ode/README.md.
  */
 
 /** The machine epsilon, 2^-52, which every tolerance and increment here is scaled by. */

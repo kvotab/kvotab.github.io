@@ -26,7 +26,7 @@
  *
  * The pay-off is the sparsity, not the exactness: an exact dense Jacobian costs
  * about what the finite-difference one costs. What the pattern buys is the
- * colouring here and the sparse factorisation in ../ode/sparse.js.
+ * colouring here and the sparse factorisation in ../ode/core/sparse.js.
  */
 
 import {
@@ -37,7 +37,7 @@ import { FUNCTIONS, FUNCTION_ALIASES } from '../parser/functions.js';
 import { resolveReference } from '../domain/systems.js';
 import { FARF_EQUATION_KEYS } from '../domain/farfield.js';
 import { hazardCode } from '../domain/wastepackage.js';
-import { colourColumns } from '../ode/sparse.js';
+import { colourColumns } from '../ode/core/sparse.js';
 
 /**
  * How many temporaries the tangent function may hoist.
@@ -1547,8 +1547,8 @@ export function toCSC(cols, n) {
 /**
  * Groups columns so that no two in a group share a row: one evaluation of J*v
  * seeded on a whole group fills that group's columns. The solvers' own
- * colouring, in ../ode/sparse.js (the solver core shared with facsimile.html
- * and rtm.html), which differences through the same groups.
+ * colouring, in ../ode/core/sparse.js (the solver core shared with
+ * facsimile.html and rtm.html), which differences through the same groups.
  */
 export { colourColumns };
 

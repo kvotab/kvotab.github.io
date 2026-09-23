@@ -2,12 +2,13 @@
    STIFF ODE/DAE SOLVER FOR facsimile.html AND rtm.html
 
    The integrator and its linear algebra are the shared solver core,
-   resources/js/ode_core/ (loaded as ode-core.js, the global OdeCore): the
-   variable-order NDF/BDF for M·dy/dt = f(t, y) with M a diagonal of ones and
-   zeros, its iteration matrix M - h*J factorised by whichever of a sparse LU
-   that keeps its pivots, a searching Gilbert-Peierls LU and a dense LU the
-   measured fill says is cheapest, differenced Jacobians through the pattern,
-   and event location. Kompartment runs the same modules.
+   resources/js/ode/core/ and solvers/ (loaded as ode-core.js, the global
+   OdeCore): the variable-order NDF/BDF for M·dy/dt = f(t, y) with M a
+   diagonal of ones and zeros, its iteration matrix M - h*J factorised by
+   whichever of a sparse LU that keeps its pivots, a searching Gilbert-Peierls
+   LU and a dense LU the measured fill says is cheapest, differenced Jacobians
+   through the pattern, and event location. Kompartment runs the same
+   modules.
 
    What is here is this page's side of it:
 

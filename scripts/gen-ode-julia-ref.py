@@ -8,7 +8,7 @@ measure is the tested solver's error and not the reference's.
 
     python3 scripts/gen-ode-julia-ref.py
 
-Writes resources/tests/ode_julia/ref/<problem>.csv, one row per output time.
+Writes resources/tests/ode/julia/ref/<problem>.csv, one row per output time.
 """
 import csv
 from pathlib import Path
@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 from scipy.integrate import solve_ivp
 
-OUT = Path(__file__).resolve().parent.parent / 'resources/tests/ode_julia/ref'
+OUT = Path(__file__).resolve().parent.parent / 'resources/tests/ode/julia/ref'
 
 
 def rober(t, y):

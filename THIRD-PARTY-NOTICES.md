@@ -15,7 +15,7 @@ others. Each item keeps its own licence.
 | [jsTree](https://www.jstree.com/) | MIT | header in `vendors/js/jstree.min.js`; theme in `vendors/css/jstree/` |
 | [math.js](https://mathjs.org/) | Apache-2.0 | `vendors/js/LICENSE-math.js.txt` |
 | [FileSaver.js](https://github.com/eligrey/FileSaver.js) | MIT | `vendors/js/FileSaver.min.js` |
-| [OrdinaryDiffEq.jl](https://github.com/SciML/OrdinaryDiffEq.jl) (ported to JavaScript) | MIT | `resources/js/ode_julia/LICENSE`, `kompartment/src/ode/julia/LICENSE` |
+| [OrdinaryDiffEq.jl](https://github.com/SciML/OrdinaryDiffEq.jl) (ported to JavaScript) | MIT | `resources/js/ode/julia/LICENSE`, `kompartment/src/ode/julia/LICENSE` |
 | Coordinate conversions by Arnold Andreasson (`gausskruger.js`, `lat_lon_conv.js`, `latlong.js`, `map.js`) | MIT | headers in the files |
 | Error-function coefficients in `resources/js/erf.js` | Boost Software License 1.0 (John Maddock) | header in the file |
 | CALERF (`resources/js/erf.f`, `erf.js`) | public domain (W. J. Cody, Netlib SPECFUN) | header in the file |

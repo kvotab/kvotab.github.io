@@ -11,7 +11,7 @@
   is somebody else's arithmetic and three orders tighter than anything asked
   for here. Regenerate them with scripts/gen-ode-julia-ref.py.
 
-      node resources/tests/ode_julia/test-stiff.mjs [--verbose]
+      node resources/tests/ode/julia/test-stiff.mjs [--verbose]
 
   Exit status is 0 when every solver reaches the end of every problem inside
   the accuracy it was asked for.
@@ -20,8 +20,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-import { solve, ODEProblem } from '../../js/ode_julia/core/integrator.js';
-import * as alg from '../../js/ode_julia/index.js';
+import { solve, ODEProblem } from '../../../js/ode/julia/core/integrator.js';
+import * as alg from '../../../js/ode/julia/index.js';
 import { rober, hires, orego, pollution, vanderpol } from './problems.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));

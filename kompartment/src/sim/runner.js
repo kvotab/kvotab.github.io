@@ -16,8 +16,8 @@ import { julia } from '../ode/julia-solvers.js';
 import { audit as auditBudget } from '../domain/massbalance.js';
 import { cellNames } from '../domain/farfield.js';
 import { valueAt } from '../domain/project.js';
-import { dormandPrince, SolverError } from '../ode/dormand-prince.js';
-import { rosenbrock23 } from '../ode/rosenbrock23.js';
+import { dormandPrince, SolverError } from '../ode/solvers/dormand-prince.js';
+import { rosenbrock23 } from '../ode/solvers/rosenbrock23.js';
 import { variableOrder } from '../ode/variable-order.js';
 import { SOLVER_IDS, DEFAULT_SOLVER, solverLabel, solverName, solverOptions } from '../ode/solvers.js';
 import { isScipySolver, scipySolver } from '../ode/scipy.js';
@@ -393,7 +393,7 @@ export function run(input, opts = {}) {
 		nonNegative,
 		// Let each component's absolute tolerance follow its own history
 		// upwards. ndf only -- it is a property of the NDF error test, and
-		// the other two solvers have no equivalent. See ../ode/ndf.js.
+		// the other two solvers have no equivalent. See ../ode/solvers/ndf.js.
 		autoUpdateAbsTol: project.simulation.auto_abstol === true,
 		// The solver's own settings. Which of these the chosen solver reads is
 		// in SOLVER_OPTIONS (../ode/solvers.js); the ones it does not are
@@ -436,7 +436,7 @@ export function run(input, opts = {}) {
 			? (fraction, _n, at) => {
 				if (opts.signal?.aborted) return false;
 				// The clock as well as the fraction: see `onStep` in
-				// ../ode/ndf.js. A run made of several segments -- one per
+				// ../ode/solvers/ndf.js. A run made of several segments -- one per
 				// event -- reports a fraction of the segment it is in, so the
 				// clock is the only part of this that means the same thing
 				// from one end of a run to the other.

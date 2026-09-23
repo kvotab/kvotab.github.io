@@ -2273,7 +2273,7 @@ program knows the difference.
 
 [sciml]: https://docs.sciml.ai/DiffEqDocs/stable/
 
-The formulas live in `src/ode/ndf.js`, and `src/ode/variable-order.js` adapts
+The formulas live in `src/ode/solvers/ndf.js`, and `src/ode/variable-order.js` adapts
 them to the interface the other two use. Both stiff solvers are handed an
 analytic Jacobian — see below — which is what makes the larger models
 practical.
@@ -2837,7 +2837,7 @@ delay blocks all work as they do under the built-in solvers.
 One thing is refused outright rather than quietly ignored:
 
 - **Triggers.** Every trigger is terminal, and they are located by the
-  bracketing search in `src/ode/events.js`, including the rule that a crossing at the instant a previous event
+  bracketing search in `src/ode/core/events.js`, including the rule that a crossing at the instant a previous event
   fired is not a new one. SciPy has event support and it works, but reproducing
   *that* rule on top of it would risk a subtly different model rather than an
   independent check of this one. Use `ndf`, `ros23` or `dp45`.

@@ -39,7 +39,7 @@
  *                      handed over declines a point.
  *   iterationMatrix    Mass - (h/l_k)·J, held and factorised densely or in
  *                      CSC, whichever measured fill says is cheaper: see
- *                      ./sparse.js.
+ *                      ../core/sparse.js.
  *
  * THREE THINGS BEYOND THE PUBLISHED METHOD, each here because a model needed
  * it:
@@ -62,15 +62,17 @@
  * pages were tuned apart -- how many Newton iterations a step must take, how
  * many steps at the floor may fail, whether the Newton system is scaled, when
  * a dense LU is cheaper -- the difference is an option here, and each page
- * passes its own. The README of this directory lists them.
+ * passes its own. resources/js/ode/README.md lists them.
  *
- * One of the modules of resources/js/ode_core/, the solver core shared by
- * facsimile.html, rtm.html and Kompartment: see its README.md.
+ * Shared by facsimile.html, rtm.html and Kompartment. The source is
+ * resources/js/ode/ in the site; scripts/build-solvers.mjs copies it into
+ * kompartment/src/ode/ and builds resources/js/ode-core.js from it. See
+ * resources/js/ode/README.md.
  */
 
-import { EPS } from './linalg.js';
-import { iterationMatrix, colourColumns, differenceIncrement, differenceJacobian, DENSE_BELOW, DENSE_FILL } from './sparse.js';
-import { locateCrossing } from './events.js';
+import { EPS } from '../core/linalg.js';
+import { iterationMatrix, colourColumns, differenceIncrement, differenceJacobian, DENSE_BELOW, DENSE_FILL } from '../core/sparse.js';
+import { locateCrossing } from '../core/events.js';
 
 /** The highest order offered. The NDFs above five are not stable enough to be worth having. */
 export const MAX_ORDER = 5;
@@ -550,7 +552,7 @@ function jacobianSource(option, neq) {
 /**
  * df/dy by forward differences, one column at a time or -- given a sparsity
  * pattern -- one group of columns at a time, the groups a colouring of the
- * pattern's columns (./sparse.js).
+ * pattern's columns (../core/sparse.js).
  *
  * A colouring is a set of column groups within which no two columns share a
  * row, so every column of a group can be perturbed in the same evaluation and
@@ -617,8 +619,8 @@ class Differencer {
  *   mass               the diagonal of M: 1 differential, 0 algebraic
  *   suppressAlgebraic  leave the algebraic states out of the error test
  *   jacobian           see jacobianSource; differenced densely when absent
- *   matrix             'auto' | 'refactor' | 'sparse' | 'dense': ./sparse.js
- *   denseBelow, denseFill  when `auto` takes the dense LU (./sparse.js)
+ *   matrix             'auto' | 'refactor' | 'sparse' | 'dense': ../core/sparse.js
+ *   denseBelow, denseFill  when `auto` takes the dense LU (../core/sparse.js)
  *   scaling            solve the Newton system in the variables y_i / w_i,
  *                      w_i = max(|y_i|, abstol_i/rtol) (off)
  *   minNewton          Newton iterations a step must take unless its
@@ -856,7 +858,7 @@ export function ndf(f, tspan, y0, options = {}) {
 	};
 	// The scaled Newton system: each variable in units of its own weight,
 	// max(|y_i|, abstol_i/rtol), as the error control sees it. See
-	// makeMiterBuilder in ./sparse.js for why a chemistry model needs it.
+	// makeMiterBuilder in ../core/sparse.js for why a chemistry model needs it.
 	const wscale = o.scaling ? new Float64Array(neq) : null;
 	let anyHeld = false;
 	let hW = 0;

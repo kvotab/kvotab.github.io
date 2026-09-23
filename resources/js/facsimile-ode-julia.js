@@ -3,7 +3,7 @@
 
    Seven stiff solvers ported from DifferentialEquations.jl -- FBDF, QNDF,
    QBDF, Rodas5P, KenCarp4, TRBDF2 and RadauIIA5 -- offered here beside the
-   page's own NDF and BDF. The package is in resources/js/ode_julia/ and knows nothing about
+   page's own NDF and BDF. The package is in resources/js/ode/julia/ and knows nothing about
    this page; this file is the adapter, and it is thin on purpose.
 
    WHY THEY ARE WORTH HAVING HERE. The built-in solver is one method with one set of

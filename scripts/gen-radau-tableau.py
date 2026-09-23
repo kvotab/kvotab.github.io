@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Emit resources/js/ode_julia/solvers/radau-tableau.js from the Julia source.
+"""Emit resources/js/ode/julia/solvers/radau-tableau.js from the Julia source.
 
     python3 scripts/gen-radau-tableau.py [path/to/firk_tableaus.jl]
 
@@ -18,7 +18,7 @@ from pathlib import Path
 getcontext().prec = 40
 URL = ('https://raw.githubusercontent.com/SciML/OrdinaryDiffEq.jl/master/'
        'lib/OrdinaryDiffEqFIRK/src/firk_tableaus.jl')
-OUT = Path(__file__).resolve().parent.parent / 'resources/js/ode_julia/solvers/radau-tableau.js'
+OUT = Path(__file__).resolve().parent.parent / 'resources/js/ode/julia/solvers/radau-tableau.js'
 
 
 def source():

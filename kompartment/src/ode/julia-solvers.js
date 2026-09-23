@@ -51,7 +51,7 @@ import { QNDF } from './julia/solvers/qndf.js';
 import { Rodas5P } from './julia/solvers/rosenbrock.js';
 import { RadauIIA5 } from './julia/solvers/radau.js';
 import { TRBDF2, KenCarp4 } from './julia/solvers/esdirk.js';
-import { SolverError } from './dormand-prince.js';
+import { SolverError } from './solvers/dormand-prince.js';
 
 /** The methods offered, by the id a project file stores. */
 const ALGORITHMS = Object.assign(Object.create(null), {
@@ -147,7 +147,7 @@ export function julia(id) {
 			saveat,
 			saveEverystep: false,
 			// This tool's own extension, and the reason the idea travelled in
-			// this direction: see AutoUpdateAbsTol in ./ndf.js.
+			// this direction: see AutoUpdateAbsTol in ./solvers/ndf.js.
 			autoAbstol: !!opts.autoUpdateAbsTol,
 		};
 		if (opts.nonNegative?.some?.(Boolean)) settings.nonNegative = opts.nonNegative;
@@ -171,7 +171,7 @@ export function julia(id) {
 		  Where the run has got to, and the caller's chance to stop it.
 
 		  `onStep` is what every other solver here is handed -- `(fraction,
-		  nsteps, t)`, answering false to stop; see ./onestep.js. This read
+		  nsteps, t)`, answering false to stop; see ./core/onestep.js. This read
 		  `opts.onProgress` and `opts.signal` instead, which are the names the
 		  runner's *own* caller uses and are not in what the runner passes a
 		  solver. So no ported method ever installed the callback: all six ran
@@ -210,7 +210,7 @@ export function julia(id) {
 		  and those two must not be confused: the event's is a solution that
 		  ends early and is charted, this one is half a solve that nobody asked
 		  to keep. Thrown, because that is how every other solver here says it
-		  -- see `Simulation aborted` in ./onestep.js -- and it is what the
+		  -- see `Simulation aborted` in ./core/onestep.js -- and it is what the
 		  worker is listening for.
 		*/
 		if (stoppedHere) {

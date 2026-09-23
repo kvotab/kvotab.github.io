@@ -11,12 +11,12 @@
   method is order p the error must fall by 2^p each time, and if it does for
   four halvings then every coefficient that carries order is right.
 
-      node resources/tests/ode_julia/test-order.mjs
+      node resources/tests/ode/julia/test-order.mjs
 
   Exit status is 0 when every method shows its advertised order.
 */
-import { solve, ODEProblem } from '../../js/ode_julia/core/integrator.js';
-import * as alg from '../../js/ode_julia/index.js';
+import { solve, ODEProblem } from '../../../js/ode/julia/core/integrator.js';
+import * as alg from '../../../js/ode/julia/index.js';
 import { manufactured } from './problems.mjs';
 
 let checks = 0;

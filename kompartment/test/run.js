@@ -11,9 +11,9 @@ import { parse, ParseError } from '../src/parser/parser.js';
 import { percentile as percentileOf, operatedList } from '../src/domain/reduce.js';
 import { emit, buildFunction, FUNCTION_TABLE } from '../src/parser/compile.js';
 import { erf, erfc, FUNCTIONS } from '../src/parser/functions.js';
-import { LU, norm } from '../src/ode/linalg.js';
-import { dormandPrince } from '../src/ode/dormand-prince.js';
-import { rosenbrock23 } from '../src/ode/rosenbrock23.js';
+import { LU, norm } from '../src/ode/core/linalg.js';
+import { dormandPrince } from '../src/ode/solvers/dormand-prince.js';
+import { rosenbrock23 } from '../src/ode/solvers/rosenbrock23.js';
 import { variableOrder } from '../src/ode/variable-order.js';
 import { Project, ValidationError, hasDydt } from '../src/domain/project.js';
 import { IndexSpace, IndexError, COMPARTMENT_LIST } from '../src/domain/indexlists.js';
@@ -56,7 +56,7 @@ import { colouringIsValid, toCSC } from '../src/sim/jacobian.js';
 import {
 	CSC, SparseLU, cscFromTriplets, cscToDense, cscMulVec, makeMiterBuilder,
 	reverseCuthillMcKeeOrder,
-} from '../src/ode/sparse.js';
+} from '../src/ode/core/sparse.js';
 import { parseXML, child, children, childText, XMLError, decodeEntities } from '../src/io/xml.js';
 import { unzip, entryText, ZipError } from '../src/io/zip.js';
 import { importModelXML, importEcoFile, ImportError } from '../src/io/eco.js';
@@ -77,7 +77,7 @@ import * as cmp from '../src/domain/complete.js';
 import { FUNCTION_CATEGORIES } from '../src/parser/function-help.js';
 import { validateEquation } from '../src/ui/inspector.js';
 import { History, Recorder } from '../src/sim/history.js';
-import { firstCrossing, anyCrossing, crossingTolerance } from '../src/ode/events.js';
+import { firstCrossing, anyCrossing, crossingTolerance } from '../src/ode/core/events.js';
 import { FarfPath } from '../src/sim/farfield.js';
 import {
 	UndoStack, diff as textDiff, apply as textPatch, describe as describeStep,
@@ -965,7 +965,7 @@ test('a clamped state does not cost a dense Jacobian', async () => {
 	// The colouring is what makes it affordable: one evaluation per colour
 	// rather than one per column, and `nnz` numbers rather than neq squared.
 	const { readFileSync } = await import('node:fs');
-	const ndf = readFileSync(new URL('../src/ode/ndf.js', import.meta.url), 'utf8');
+	const ndf = readFileSync(new URL('../src/ode/solvers/ndf.js', import.meta.url), 'utf8');
 	assert(/\n\tsparse\(t, y, fy, out\) \{/.test(ndf), 'there is no sparse differencing');
 	assert(/return differ\.sparse\(t, y, fy, sparseValues\);/.test(ndf),
 		'the sparse path is not taken when it could be');
@@ -1637,7 +1637,7 @@ test('dy/dp is the derivative it claims to be', async () => {
 	// And J*v comes from the tangent rather than from forming J, which is what
 	// makes this affordable -- one pass per parameter instead of one per colour.
 	const sys = build(new Project(model));
-	const { sparseMatVec } = await import('../src/ode/sparse.js');
+	const { sparseMatVec } = await import('../src/ode/core/sparse.js');
 	const y0 = sys.initialState();
 	const v = Float64Array.from(y0, (_, i) => Math.sin(i + 1));
 	const viaTangent = sys.jacobian.jvp(0, y0, v);
@@ -10564,8 +10564,8 @@ test('a re-exported name a module also uses is imported, not just forwarded', as
 	// This is the static half of that lesson: if a module forwards a name and
 	// also calls it, it has to import it too.
 	const { readFileSync, readdirSync } = await import('node:fs');
-	const roots = ['src/domain', 'src/io', 'src/ode', 'src/parser', 'src/sim',
-		'src/ui', 'src/worker'];
+	const roots = ['src/domain', 'src/io', 'src/ode', 'src/ode/core', 'src/ode/solvers',
+		'src/parser', 'src/sim', 'src/ui', 'src/worker'];
 	let checked = 0;
 	for (const root of roots) {
 		const dir = new URL(`../${root}/`, import.meta.url);
@@ -10597,8 +10597,8 @@ test('a re-exported name a module also uses is imported, not just forwarded', as
 
 test('nothing imports a module that is not there', async () => {
 	const { readFileSync, readdirSync, existsSync } = await import('node:fs');
-	const roots = ['src/domain', 'src/io', 'src/ode', 'src/parser', 'src/sim',
-		'src/ui', 'src/worker', 'test'];
+	const roots = ['src/domain', 'src/io', 'src/ode', 'src/ode/core', 'src/ode/solvers',
+		'src/parser', 'src/sim', 'src/ui', 'src/worker', 'test'];
 	let checked = 0;
 	for (const root of roots) {
 		const dir = new URL(`../${root}/`, import.meta.url);
@@ -20534,7 +20534,7 @@ test('a held state does not cost a Jacobian it did not make wrong', async () => 
 	// almost never, and answering the second re-formed a matrix that was not
 	// wrong 546 times in one run.
 	const { readFileSync } = await import('node:fs');
-	const src = readFileSync(new URL('../src/ode/ndf.js', import.meta.url), 'utf8');
+	const src = readFileSync(new URL('../src/ode/solvers/ndf.js', import.meta.url), 'utf8');
 	assert(/if \(h !== hW \|\| k !== kW \|\| heldMoved\(\)\) formW\(\);/.test(src),
 		'the mask is not read at the point the next step starts from');
 	assert(/if \(maskReforms < 1 && releasedInW\(\)\) \{/.test(src),
@@ -25102,7 +25102,7 @@ test('the Jacobian times a vector is one pass, not one per row', async () => {
 	// call walked the whole CSC matrix and kept the entries in that row. That
 	// is n*nnz work for an nnz product, and it grows as the square of the
 	// model.
-	const { sparseMatVec } = await import('../src/ode/sparse.js');
+	const { sparseMatVec } = await import('../src/ode/core/sparse.js');
 	// A small matrix, written out both ways.
 	const dense = [
 		[2, 0, -1, 0],
@@ -30104,7 +30104,7 @@ test('the absolute tolerance can follow the solution, and the Newton test does n
 	// test asks whether a component is accurate enough, where its history is a
 	// fair measure, and the Newton test asks how well a stage has been solved,
 	// where it is not. Off, the two share one array and nothing is copied.
-	const ndf = readFileSync(new URL('../src/ode/ndf.js', import.meta.url), 'utf8');
+	const ndf = readFileSync(new URL('../src/ode/solvers/ndf.js', import.meta.url), 'utf8');
 	assert(/const newtonThreshold = o\.autoAbstol \? threshold\.slice\(\) : threshold;/.test(ndf));
 	assert(/const newtonWeight = o\.autoAbstol \? new Weighting\(neq, newtonThreshold, o\.normControl, rms\) : errorWeight;/.test(ndf));
 	assert(/const size = newtonWeight\.of\(delta\);/.test(ndf), 'the Newton test still reads the floating weights');
@@ -30285,7 +30285,7 @@ test('the adapter passes only the options it was given', async () => {
 
 test('the NDF reads facsimile\'s error norm, iteration matrix and steps at the floor', async () => {
 	const { readFileSync } = await import('node:fs');
-	const { ndf } = await import('../src/ode/ndf.js');
+	const { ndf } = await import('../src/ode/solvers/ndf.js');
 	const { solverOptions } = await import('../src/ode/solvers.js');
 	for (const key of ['error_norm', 'matrix', 'below_tol_run']) {
 		assert(solverOptions('ndf').includes(key) && solverOptions('bdf').includes(key), `the NDF does not read ${key}`);
@@ -30405,7 +30405,7 @@ test('the NDFs and the plain BDFs are one integrator offered under two names', a
 	assert(SOLVER_INFO.bdf && !SOLVER_INFO.bdf.remote, 'the BDF solver is not offered');
 	// It is the same code: `BDF: true` sets the kappa terms to zero, which is
 	// exactly what makes an NDF a BDF, and is what odeset('BDF','on') does.
-	const ndf = readFileSync(new URL('../src/ode/ndf.js', import.meta.url), 'utf8');
+	const ndf = readFileSync(new URL('../src/ode/solvers/ndf.js', import.meta.url), 'utf8');
 	assert(/const kappa = o\.bdf \? 0 : KAPPA\[k - 1\];/.test(ndf), 'the BDF flag no longer zeroes kappa');
 	const runner = readFileSync(new URL('../src/sim/runner.js', import.meta.url), 'utf8');
 	assert(/\n\tbdf,\n/.test(runner) && /variableOrder\(f, tspan, y0, \{ \.\.\.opts, bdf: true \}\)/.test(runner));
@@ -30476,7 +30476,7 @@ test('a solver’s own settings are offered where they are read, and reach it', 
 	  set with constants to 1e16: with the setting at 0 this solver reaches its
 	  step budget partway through and stops; at 0.5 the same run finishes in
 	  under a second and agrees with the reference code. See the note at the
-	  stagnation test in ../src/ode/ndf.js.
+	  stagnation test in ../src/ode/solvers/ndf.js.
 	*/
 	assert(solverOptions('ndf').includes('stagnation_tol')
 		&& solverOptions('bdf').includes('stagnation_tol'), 'the NDF corrector cannot be told to take a stalled correction');
@@ -33048,10 +33048,10 @@ test('a long generated function runs in parts and gives the same numbers', async
 });
 
 test('the LU that keeps its pivots solves what the searching one does', async () => {
-	// ./refactor.js chooses pivots once and replays them, checking each one;
+	// ../src/ode/core/refactor.js chooses pivots once and replays them, checking each one;
 	// sparseIterationMatrix uses it where it costs no more than Gilbert-Peierls.
-	const { RefactorLU } = await import('../src/ode/refactor.js');
-	const { sparseIterationMatrix } = await import('../src/ode/sparse.js');
+	const { RefactorLU } = await import('../src/ode/core/refactor.js');
+	const { sparseIterationMatrix } = await import('../src/ode/core/sparse.js');
 	const { readFileSync: read } = await import('node:fs');
 	const project = new Project(JSON.parse(read(new URL('../examples/farfield.json', import.meta.url), 'utf8')));
 	const sys = buildSystem(project);

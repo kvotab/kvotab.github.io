@@ -25,8 +25,8 @@ either way: seven nudges of rtol by 1e-10 relative gave the dense LU 4,718 to
 `run.js --all` shows the same agreement with the references.
 
 The page also offers seven solvers ported from DifferentialEquations.jl. They
-are a package of their own, `resources/js/ode_julia/`, with its own tests under
-`resources/tests/ode_julia/`; what is checked here is only that they are on the
+are a package of their own, `resources/js/ode/julia/`, with its own tests under
+`resources/tests/ode/julia/`; what is checked here is only that they are on the
 menu and that one of them runs the model in the page.
 
 ## The engine
@@ -34,7 +34,7 @@ menu and that one of them runs the model in the page.
 `run.js` drives the browser engine of facsimile.html (the model compiler in
 `resources/js/facsimile-model.js`, and the solvers in `facsimile-solver.js`
 over the solver core it shares with rtm.html and Kompartment,
-`resources/js/ode_core/`, loaded as `ode-core.js`) under Node and compares it
+`resources/js/ode/`, loaded as `ode-core.js`) under Node and compares it
 with the reference results kept in `ref/`.
 
 ```

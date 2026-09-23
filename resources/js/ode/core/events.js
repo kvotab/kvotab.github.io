@@ -36,8 +36,10 @@
  * at again. That is FACSIMILE's WHEN against its WHENEVER, which is the only
  * difference between the two.
  *
- * One of the modules of resources/js/ode_core/, the solver core shared by
- * facsimile.html, rtm.html and Kompartment: see its README.md.
+ * Shared by facsimile.html, rtm.html and Kompartment. The source is
+ * resources/js/ode/ in the site; scripts/build-solvers.mjs copies it into
+ * kompartment/src/ode/ and builds resources/js/ode-core.js from it. See
+ * resources/js/ode/README.md.
  */
 
 import { EPS } from './linalg.js';

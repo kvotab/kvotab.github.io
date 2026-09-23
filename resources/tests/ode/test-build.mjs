@@ -1,6 +1,6 @@
 // The single-file builds and Kompartment's copies are what their sources build to.
 //
-//     node resources/tests/ode_julia/test-build.mjs
+//     node resources/tests/ode/test-build.mjs
 //
 // scripts/build-solvers.mjs --check rebuilds every solver package in memory and
 // compares: a bundle edited by hand, a copy in kompartment/ edited by hand, or a

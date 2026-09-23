@@ -3,14 +3,14 @@
 Three of them, and they answer three different questions.
 
 ```
-node resources/tests/ode_julia/test-linalg.mjs
-node resources/tests/ode_julia/test-order.mjs
-node resources/tests/ode_julia/test-stiff.mjs [--verbose]
-node resources/tests/ode_julia/test-build.mjs     # the bundles and Kompartment's copies are up to date
+node resources/tests/ode/julia/test-linalg.mjs
+node resources/tests/ode/julia/test-order.mjs
+node resources/tests/ode/julia/test-stiff.mjs [--verbose]
+node resources/tests/ode/test-build.mjs           # the bundles and Kompartment's copies are up to date
 ```
 
 Nothing here needs a browser or a network. The package under test is
-`resources/js/ode_julia/`; see its README for what the solvers are and when to
+`resources/js/ode/julia/`; see its README for what the solvers are and when to
 use them.
 
 ## Is the linear algebra right?

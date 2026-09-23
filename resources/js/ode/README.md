@@ -1,13 +1,33 @@
-# ode_core
+# ode
 
-The stiff-solver core shared by `facsimile.html`, `rtm.html` and Kompartment:
-the variable-order NDF/BDF integrator (orders 1–5, Shampine and Reichelt's
-numerical differentiation formulas, with the BDFs as the case κ = 0), the
-linear algebra behind its iteration matrix, and event location. It runs in a
-page, in a worker and in Node, with no dependencies.
+The ODE solvers of `facsimile.html`, `rtm.html` and Kompartment, in one tree
+that has the same shape in both places:
+
+```
+ode/
+  core/       linear algebra and event location
+  solvers/    the integrators
+  julia/      the solvers ported from DifferentialEquations.jl, a package of
+    core/     their own: see julia/README.md
+    solvers/
+```
+
+Here in the site it is `resources/js/ode/`, and it is the source of truth. In
+Kompartment it is `kompartment/src/ode/`, where `core/`, `solvers/` and
+`julia/` hold byte copies of these files beside Kompartment's own: its
+one-step driver in `core/onestep.js`, its Dormand-Prince and Rosenbrock
+solvers in `solvers/`, and at the top the adapters that give each solver
+Kompartment's shape and the catalogue that names them. A module imports its
+neighbours by the same relative path in both trees.
+
+The NDF of `solvers/ndf.js` is the variable-order NDF/BDF integrator (orders
+1–5, Shampine and Reichelt's numerical differentiation formulas, with the BDFs
+as the case κ = 0), with the linear algebra behind its iteration matrix and
+event location in `core/`. It runs in a page, in a worker and in Node, with no
+dependencies.
 
 ```js
-import { ndf } from './ode_core/index.js';
+import { ndf } from './ode/index.js';
 
 const f = (t, y, out) => { out[0] = -0.04 * y[0] + 1e4 * y[1] * y[2]; /* … */ return out; };
 const res = ndf(f, [0, 1, 10, 100], Float64Array.of(1, 0, 0), {
@@ -24,38 +44,39 @@ res.stats;        // steps, failures, factorisations, which LU, its fill
 `f(t, y, out)` fills `out` and returns it, or returns an array of its own;
 the return value is what is read.
 
-## Where it lives
+## What is built from it
 
-The ES modules here are the source of truth. Two things are made from them by
-`node scripts/build-solvers.mjs`:
+`node scripts/build-solvers.mjs` makes, from these modules:
 
-- `../ode-core.js`, a single file for a plain `<script>` tag and a classic
-  worker, which puts the same names on `OdeCore`. `facsimile.html`,
-  `rtm.html` and `rdc.html` load it before `facsimile-solver.js`, which is
-  those pages' side of it: the integrator in their calling convention and with
-  their settings, and the model driver.
-- `kompartment/src/ode/{linalg,refactor,sparse,events,ndf}.js`, the same
-  bytes, since Kompartment is self-contained and cannot reach up into
-  `resources/js/`. Kompartment's `variable-order.js` is its side of it.
+- `../ode-core.js`, a single file of `core/` and `solvers/` for a plain
+  `<script>` tag and a classic worker, which puts the same names on
+  `OdeCore`. `facsimile.html`, `rtm.html` and `rdc.html` load it before
+  `facsimile-solver.js`, which is those pages' side of it: the integrator in
+  their calling convention and with their settings, and the model driver.
+  `../ode-julia.js` is the same for `julia/`, on `OdeJulia`.
+- the copies in `kompartment/src/ode/`, since Kompartment is self-contained and
+  cannot reach up into `resources/js/`. Kompartment's `variable-order.js` and
+  `julia-solvers.js` are its side of them.
 
 `node scripts/build-solvers.mjs --check` fails when either is not what the
-modules build to, which is what `resources/tests/ode_julia/test-build.mjs`
-runs. Edit the modules, then run the script. The core's own checks are
-`resources/tests/ode_core/test-core.mjs`.
+modules build to, which is what `resources/tests/ode/test-build.mjs` runs.
+Edit the modules here, then run the script. The core's own checks are
+`resources/tests/ode/test-core.mjs`, the ported solvers' are under
+`resources/tests/ode/julia/`.
 
 | module | what it holds |
 |---|---|
-| `linalg.js` | the dense LU with partial pivoting, which also forms Mass − a·J from a pattern |
-| `refactor.js` | the sparse LU that keeps its pivots from one factorisation to the next |
-| `sparse.js` | CSC, the Gilbert-Peierls LU, reverse Cuthill-McKee, column colouring, differenced Jacobians, and `iterationMatrix`: which LU, decided by measured fill |
-| `events.js` | the earliest zero-crossing in a step, by safeguarded regula falsi on the interpolant |
-| `ndf.js` | the integrator |
+| `core/linalg.js` | the dense LU with partial pivoting, which also forms Mass − a·J from a pattern |
+| `core/refactor.js` | the sparse LU that keeps its pivots from one factorisation to the next |
+| `core/sparse.js` | CSC, the Gilbert-Peierls LU, reverse Cuthill-McKee, column colouring, differenced Jacobians, and `iterationMatrix`: which LU, decided by measured fill |
+| `core/events.js` | the earliest zero-crossing in a step, by safeguarded regula falsi on the interpolant |
+| `solvers/ndf.js` | the integrator |
 
-The ported DifferentialEquations.jl solvers are a package of their own,
-`../ode_julia/`, and keep their own linear algebra: column-major storage, a
-complex LU for Radau's stages, and a sparse LU written against its own
-Jacobian cache. It was not merged with this one. What the two have in common
-is small next to what the merge would have had to change in both.
+The ported solvers keep their own linear algebra, in `julia/core/`:
+column-major storage, a complex LU for Radau's stages, and a sparse LU written
+against their own Jacobian cache. It was not merged with this one. What the
+two have in common is small next to what the merge would have had to change
+in both.
 
 ## The integrator's options
 

@@ -316,7 +316,7 @@ export function solverIgnores(id) {
 /**
  * The solvers whose error test can let `abstol` float up with the solution.
  *
- * `ndf` has it as an extension (see AutoUpdateAbsTol in ./ndf.js) and
+ * `ndf` has it as an extension (see AutoUpdateAbsTol in ./solvers/ndf.js) and
  * the ported methods have it as `autoAbstol`. `ros23`, `dp45` and the SciPy
  * ones have no equivalent, and a switch that silently does nothing on the
  * solver you happen to have chosen is worse than no switch -- so the interface

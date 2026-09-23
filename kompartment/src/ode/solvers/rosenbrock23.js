@@ -17,10 +17,10 @@
  * magnitude: an explicit method grinds its step to nothing on the fastest
  * nuclide, and this one does not.
  *
- * The iteration matrix is factorised densely through ./linalg.js, or in CSC
- * through ./sparse.js where a supplied pattern pays for it. Everything around
+ * The iteration matrix is factorised densely through ../core/linalg.js, or in
+ * CSC through ../core/sparse.js where a supplied pattern pays for it. Everything around
  * the step -- step-size control, events, output, the constraint -- is the
- * shared driver in ./onestep.js.
+ * shared driver in ../core/onestep.js.
  *
  * The published pair has no non-negativity option. This one takes the
  * option's meaning from the methods that have it: the derivative of a state
@@ -35,9 +35,9 @@
  * the driver's stall guard is what ends that with an explanation.
  */
 
-import { LU } from './linalg.js';
-import { sparseIterationMatrix } from './sparse.js';
-import { integrate, SolverError } from './onestep.js';
+import { LU } from '../core/linalg.js';
+import { sparseIterationMatrix } from '../core/sparse.js';
+import { integrate, SolverError } from '../core/onestep.js';
 
 /** What this tool adds to the shared sparse LU's singular message. */
 const SINGULAR_HINT = 'A compartment with no way in and no way out will do this.';
@@ -320,7 +320,7 @@ export const rosenbrockMethod = {
  * @param {(t: number, y: Float64Array, out: Float64Array) => Float64Array} f
  * @param {number[]|Float64Array} tspan  output grid; first and last bound the run
  * @param {Float64Array} y0
- * @param {object} opts  see ./onestep.js, plus `jacobian`
+ * @param {object} opts  see ../core/onestep.js, plus `jacobian`
  * @returns {{ t: Float64Array, y: Float64Array[], stats: object }}
  */
 export function rosenbrock23(f, tspan, y0, opts = {}) {

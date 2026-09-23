@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Emit resources/js/ode_julia/solvers/esdirk-tableaus.js from a transcription
+"""Emit resources/js/ode/julia/solvers/esdirk-tableaus.js from a transcription
 of OrdinaryDiffEqSDIRK's TRBDF2 and KenCarp4 tableaux.
 
     python3 scripts/gen-esdirk-tableaus.py path/to/esdirk.json
 
 The JSON is the machine-checked transcription of `TRBDF2Tableau`
 (sdirk_tableaus.jl) and `KenCarp4ESDIRKIMEXTableau` (imex_tableaus.jl); see
-resources/tests/ode_julia/README.md for how it was made and checked.
+resources/tests/ode/julia/README.md for how it was made and checked.
 """
 import json
 import sys
 from pathlib import Path
 
-OUT = Path(__file__).resolve().parent.parent / 'resources/js/ode_julia/solvers/esdirk-tableaus.js'
+OUT = Path(__file__).resolve().parent.parent / 'resources/js/ode/julia/solvers/esdirk-tableaus.js'
 
 
 def rows(m, indent='    '):

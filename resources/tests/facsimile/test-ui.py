@@ -279,7 +279,7 @@ async def main():
                 'julia_radau5,julia_rodas5p,julia_trbdf2')
             # FBDF is the one that solves this model comfortably; the others
             # are covered by the package's own tests under
-            # resources/tests/ode_julia/.
+            # resources/tests/ode/julia/.
             await set_control(page, '#facMethod', 'julia_fbdf')
             await click(page, '#facRun')
             check('a Julia-port solver runs in the page', await settle(

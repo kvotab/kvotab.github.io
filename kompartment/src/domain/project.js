@@ -287,7 +287,7 @@ export class Project {
 		}
 		// The floating absolute tolerance is opt-in for the same reason: it
 		// trades accuracy in a decayed tail for steps, and which of those a
-		// model wants is the modeller's to say. See ../ode/ndf.js.
+		// model wants is the modeller's to say. See ../ode/solvers/ndf.js.
 		{
 			const v = this.simulation.auto_abstol;
 			this.simulation.auto_abstol = v === true || v === 'true' || v === 1;

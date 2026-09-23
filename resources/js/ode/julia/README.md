@@ -4,7 +4,7 @@ Stiff ODE solvers ported from [DifferentialEquations.jl][sciml], for the
 browser and for Node. No dependencies.
 
 ```js
-import { solve, ODEProblem, FBDF } from './ode_julia/index.js';
+import { solve, ODEProblem, FBDF } from './ode/julia/index.js';
 
 const f = (t, u, du) => { du[0] = -0.04 * u[0] + 1e4 * u[1] * u[2]; /* … */ };
 const prob = new ODEProblem(f, [1, 0, 0], [0, 1e5], { jac });
@@ -16,7 +16,7 @@ sol.stats;      // what it cost
 sol.retcode;    // 'Success', or why not
 ```
 
-A single-file build for a plain `<script>` tag is at `../ode-julia.js`, which
+A single-file build for a plain `<script>` tag is at `../../ode-julia.js`, which
 puts the same names on `OdeJulia`. Rebuild it with
 `node scripts/build-solvers.mjs` after changing anything here: it also rewrites
 Kompartment's copy (`kompartment/src/ode/julia/`), which is the same bytes, and
@@ -73,7 +73,7 @@ Passed as the third argument to `solve`.
 | `maxPoints` | — | a ceiling on the stored points, thinned by halving |
 | `tstops` | — | times the solver must land on exactly |
 | `nonNegative` | — | `true`, or a boolean per component, to clamp at zero |
-| `matrix` | `'auto'` | `'sparse'` or `'dense'` to decide the linear algebra; `'refactor'`, which asks the NDF of `../ode_core/` for its LU that keeps its pivots, is the sparse LU here |
+| `matrix` | `'auto'` | `'sparse'` or `'dense'` to decide the linear algebra; `'refactor'`, which asks the NDF of `../solvers/ndf.js` for its LU that keeps its pivots, is the sparse LU here |
 | `norm` | `'rms'` | `'max'` for the maximum norm |
 | `central` | `false` | central differences for a differenced Jacobian |
 | `maxJacAge` | `20` | steps a Jacobian may be reused for |
@@ -181,9 +181,9 @@ Robertson, HIRES, the Oregonator, pollution, van der Pol at μ = 10⁶ — compa
 with references from `scipy.integrate` Radau at `rtol = 1e-12`.
 
 ```
-node resources/tests/ode_julia/test-linalg.mjs
-node resources/tests/ode_julia/test-order.mjs
-node resources/tests/ode_julia/test-stiff.mjs [--verbose]
+node resources/tests/ode/julia/test-linalg.mjs
+node resources/tests/ode/julia/test-order.mjs
+node resources/tests/ode/julia/test-stiff.mjs [--verbose]
 ```
 
 ## Layout

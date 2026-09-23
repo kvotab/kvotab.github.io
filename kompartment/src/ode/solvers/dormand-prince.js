@@ -10,14 +10,14 @@
  * Differential Equations I*, section II.6.
  *
  * Everything around the step -- step-size control, events, output, the
- * constraint -- is the shared driver in ./onestep.js. Non-negativity here
+ * constraint -- is the shared driver in ../core/onestep.js. Non-negativity here
  * participates only in the error test: an explicit pair cannot hold a state
  * on its bound, since its stages straddle the kink and disagree by the whole
  * jump, so a constraint that binds is something this method reports rather
  * than carries.
  */
 
-import { integrate, SolverError, nonFiniteError, STALL_WINDOW_STEPS, STALL_SPAN_FRACTION } from './onestep.js';
+import { integrate, SolverError, nonFiniteError, STALL_WINDOW_STEPS, STALL_SPAN_FRACTION } from '../core/onestep.js';
 
 export { SolverError, nonFiniteError, STALL_WINDOW_STEPS, STALL_SPAN_FRACTION };
 
@@ -152,7 +152,7 @@ export const dormandPrinceMethod = {
  * @param {(t: number, y: Float64Array, out: Float64Array) => Float64Array} f
  * @param {number[]|Float64Array} tspan  output grid; first and last bound the run
  * @param {Float64Array} y0
- * @param {object} opts  see ./onestep.js
+ * @param {object} opts  see ../core/onestep.js
  * @returns {{ t: Float64Array, y: Float64Array[], stats: object }}
  */
 export function dormandPrince(f, tspan, y0, opts = {}) {

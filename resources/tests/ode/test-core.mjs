@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /*
   The solver core shared by facsimile.html, rtm.html and Kompartment
-  (resources/js/ode_core/), checked on its own.
+  (resources/js/ode/core/ and solvers/), checked on its own.
 
-      node resources/tests/ode_core/test-core.mjs
+      node resources/tests/ode/test-core.mjs
 
   1. The single-file build is the modules: the same run through each gives the
      same bits.
@@ -26,7 +26,7 @@
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import * as core from '../../js/ode_core/index.js';
+import * as core from '../../js/ode/index.js';
 
 const require = createRequire(import.meta.url);
 const jsDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'js');

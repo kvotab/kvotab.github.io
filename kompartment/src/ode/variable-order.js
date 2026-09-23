@@ -14,16 +14,17 @@
  * `opts.jacobian` hands it df/dy instead of leaving it to difference one -- a
  * constant matrix, a function (t, y), or the sparse object ../sim/jacobian.js
  * generates from the model, which also lets the iteration matrix be factorised
- * sparsely. See ./ndf.js.
+ * sparsely. See ./solvers/ndf.js.
  *
- * ./ndf.js is the solver core this tool shares with facsimile.html and
- * rtm.html (resources/js/ode_core/ in the site; the copy here is the same
- * bytes). Its own defaults are this tool's settings, so what is not passed
- * below is what every run before the merge had.
+ * ./solvers/ndf.js and ./core/ are the solver core this tool shares with
+ * facsimile.html and rtm.html (resources/js/ode/ in the site, at the same
+ * relative paths; the copies here are the same bytes). Its own defaults are
+ * this tool's settings, so what is not passed below is what every run before
+ * the merge had.
  */
 
-import { ndf, NdfFailure } from './ndf.js';
-import { SolverError, nonFiniteError } from './dormand-prince.js';
+import { ndf, NdfFailure } from './solvers/ndf.js';
+import { SolverError, nonFiniteError } from './solvers/dormand-prince.js';
 
 /** Sentences for the shared solver's messages, in this tool's terms. */
 const HINTS = {

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Emit resources/js/ode_julia/solvers/rodas5p-tableau.js from the Julia source.
+"""Emit resources/js/ode/julia/solvers/rodas5p-tableau.js from the Julia source.
 
 The coefficients are read out of OrdinaryDiffEq.jl's rosenbrock_tableaus.jl as
 raw text tokens and spliced into JavaScript without ever being retyped, because
@@ -19,7 +19,7 @@ from pathlib import Path
 
 URL = ('https://raw.githubusercontent.com/SciML/OrdinaryDiffEq.jl/master/'
        'lib/OrdinaryDiffEqRosenbrock/src/rosenbrock_tableaus.jl')
-OUT = Path(__file__).resolve().parent.parent / 'resources/js/ode_julia/solvers/rodas5p-tableau.js'
+OUT = Path(__file__).resolve().parent.parent / 'resources/js/ode/julia/solvers/rodas5p-tableau.js'
 
 
 def source() -> str:

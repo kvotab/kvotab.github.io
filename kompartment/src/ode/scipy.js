@@ -44,7 +44,7 @@
  * own numerics and this code is told when a step is accepted. See `DRIVER`.
  */
 
-import { SolverError } from './dormand-prince.js';
+import { SolverError } from './solvers/dormand-prince.js';
 
 /**
  * Pinned, not floating.
