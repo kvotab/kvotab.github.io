@@ -110,6 +110,25 @@ const compareCols = ['PRESSP', 'H2OTOTAL', 'H2ORH', 'O2MOL', 'H2MOL', 'HNO3MOL',
 const floors = { PRESSP: 1e-3, H2OTOTAL: 1e-3, H2ORH: 1e-3, O2MOL: 1e-6, H2MOL: 1e-6, HNO3MOL: 1e-9, HNO2MOL: 1e-9, H2O2MOL: 1e-9, N2MOL: 1e-6, NH3MOL: 1e-6, H2OMOL: 1e-6 };
 
 let failures = 0;
+
+// --- the generated code stays small enough to be optimised --------------------
+// V8 will not optimise a function of more than 60 KB of bytecode, and a
+// character of this code is up to a byte of it. Whole, the canister model's
+// Jacobian was 156 KB and ran thirty times slower; facsimile-model.js cuts it
+// into parts (layOut there), and this is what notices if that stops.
+{
+  const sizes = {};
+  let largest = 0;
+  for (const [name, text] of Object.entries(model.sources)) {
+    const parts = text.split(/\n\/\/ ---- part \d+ of \d+ ----\n/).slice(text.includes('---- part 1 of') ? 1 : 0);
+    sizes[name] = parts.length;
+    for (const p of parts) largest = Math.max(largest, p.length);
+  }
+  const ok = largest <= 50000;
+  console.log(`generated code: ${Object.entries(sizes).map(([k, n]) => `${k} ${n} part${n > 1 ? 's' : ''}`).join(', ')}; largest part ${largest} characters${ok ? '' : ' -- TOO LARGE for the browser to optimise'}`);
+  if (!ok) failures++;
+}
+
 for (const id of scenarios) {
   const preset = FACSIMILE_PRESETS.find((p) => p.id === id);
   if (!preset) { console.log(`\n${id}: no preset`); failures++; continue; }

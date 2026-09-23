@@ -346,7 +346,7 @@
                 <option value="init">init — the &lt;INITIAL&gt; section</option>
               </select>
             </label>
-            <span class="fac-muted">The JavaScript generated from the model text. Temporaries are shared between the value and its derivatives.</span>
+            <span class="fac-muted">The JavaScript generated from the model text. Temporaries are shared between the value and its derivatives. A long function is cut into parts, run one after another, because a browser will not optimise a function past a certain size.</span>
           </div>
           <pre class="fac-pre" id="facCode"></pre>
         </section>
@@ -556,7 +556,7 @@ Y2 = , rf = 3.0E7*Y2*Y2</pre>
       facsimile-hdf5     a run as an HDF5 tree
       facsimile-ui       this page
   -->
-  <script src="./resources/js/facsimile-model.js?v=20260917zd"></script>
+  <script src="./resources/js/facsimile-model.js?v=20260923"></script>
   <script src="./resources/js/facsimile-solver.js?v=20260921"></script>
   <script src="./resources/js/facsimile-default.js?v=20260921a"></script>
   <script src="./resources/js/ode-julia.js?v=20260917zd"></script>
@@ -564,6 +564,6 @@ Y2 = , rf = 3.0E7*Y2*Y2</pre>
   <script src="./resources/js/facsimile-worker.js?v=20260917zd"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/facsimile-hdf5.js?v=20260917zd"></script>
-  <script src="./resources/js/facsimile-ui.js?v=20260923"></script>
+  <script src="./resources/js/facsimile-ui.js?v=20260923a"></script>
 </body>
 </html>

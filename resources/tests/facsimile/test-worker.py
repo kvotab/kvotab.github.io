@@ -164,7 +164,7 @@ async def main():
             menu = await s.ev("[...document.getElementById('facMethod').options]"
                               ".map(o => o.value)")
             said = await s.ev("""new Promise((ok) => {
-              const w = new Worker('resources/js/facsimile-worker-entry.js?v=20260917zd');
+              const w = new Worker('resources/js/facsimile-worker-entry.js?v=20260923');
               w.onmessage = (e) => { ok(e.data.solvers || []); w.terminate(); };
               w.onerror = () => ok(['<<the worker would not start>>']);
               w.postMessage({ type: 'capabilities', id: 1 });

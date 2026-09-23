@@ -34,6 +34,12 @@ test), `--autoatol` (let the absolute tolerance follow the solution upwards),
 auto|sparse|dense`, `--jacobian analytic|numeric`, `--no-nonneg` (the projection is on by default), `--noscaling`,
 `--minnewton 1|2`, `--quiet`.
 
+Before the cases it also checks that no part of the generated code is too large
+for the browser to optimise. V8 won't optimise a function of more than 60 KB of
+bytecode, and whole, the canister model's Jacobian was 156 KB and ran about
+thirty times slower. `layOut` in `facsimile-model.js` cuts it into parts, and
+this check fails if a part grows past 50,000 characters.
+
 ## What is compared
 
 * `ref/py_<case>.csv` — the Python port (`skbcanister.py`, SciPy BDF with

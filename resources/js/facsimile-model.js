@@ -900,6 +900,155 @@
   }
 
   /* ------------------------------------------------------------------------
+     Laying the generated code out in parts
+     ------------------------------------------------------------------------ */
+  /*
+    A JavaScript engine optimises a function only while it is small enough.
+    V8 will not hand a function of more than 60 KB of bytecode to its
+    optimising compiler at all, and the larger one under that is, the longer
+    it waits before it does. The canister model's Jacobian is 156 KB of
+    bytecode and its dy/dt 92 KB, and both ran some thirty times slower than
+    the same code cut into pieces. So a long generated function is cut into
+    parts, each a function of its own well under the limit, called one after
+    another. A value one part computes and a later part reads is carried
+    between them in a scratch array, W.
+
+    The cut is made by source length. Measured on the canister model, a
+    character of this code is 0.7 to 1 byte of bytecode, so a part of 24,000
+    characters is 17 to 24 KB, well inside the limit and small enough to be
+    optimised early. Nothing depends on the exact number.
+  */
+  const PART_CHARS = 24000;
+  const PART_PARAMS = ['t', 'y', 'P', 'H', 'out', 'extra'];
+
+  /**
+   * Lays out a generated function whose `lines` are the emitter's (every
+   * `const` temporary, plus anything else it wrote in order) and whose `body`
+   * writes `out`, and cuts it into parts if it is long.
+   *
+   * Every body line is moved up to just after the last line it reads from, in
+   * its own order, so each reaction's temporaries sit beside the lines that
+   * use them. This is what lets a cut fall between reactions with little to
+   * carry across. The result is the same to the last bit. The temporaries
+   * are pure, a body line reads only them and the arguments, and the body
+   * lines still add into `out` in exactly the order they did before. Anything
+   * in `lines` that touches `out` (none of the generators writes such a line)
+   * turns the reordering off.
+   *
+   * A local that is an array (the observe block's D) cannot go through W. It
+   * is made by the caller of the parts instead, once a call as before, and
+   * handed to every part by name.
+   *
+   * @returns {{ parts: string[], arrays: {name: string, decl: string}[], nscratch: number, text: string }}
+   */
+  function layOut(lines, body) {
+    const defined = new Map();          // local name -> index in lines
+    const arrays = [];
+    lines.forEach((s, i) => {
+      const m = /^const ([A-Za-z_$][\w$]*) = (.*);$/.exec(s);
+      if (!m) return;
+      defined.set(m[1], i);
+      if (m[2].startsWith('new Float64Array(')) arrays.push({ name: m[1], decl: s, index: i });
+    });
+    const isArray = new Set(arrays.map((a) => a.name));
+    // The locals a statement reads: identifiers that are not a property
+    // name, and not the name a `const` line is defining.
+    const reads = (s) => {
+      if (s.startsWith('//')) return [];
+      const m = /^const ([A-Za-z_$][\w$]*) = /.exec(s);
+      const found = new Set();
+      for (const id of (m ? s.slice(m[0].length) : s).match(/\.?[A-Za-z_$][\w$]*/g) || []) {
+        if (id[0] !== '.' && defined.has(id)) found.add(id);
+      }
+      return [...found];
+    };
+    const lastMention = new Map();      // array local -> last line that mentions it
+    lines.forEach((s, i) => { for (const id of reads(s)) if (isArray.has(id)) lastMention.set(id, i); });
+
+    let order;
+    if (lines.some((s) => /\bout\b/.test(s))) {
+      order = [...lines, ...body];
+    } else {
+      order = [];
+      let next = 0;
+      for (const b of body) {
+        let need = -1;
+        for (const id of reads(b)) need = Math.max(need, isArray.has(id) ? lastMention.get(id) : defined.get(id));
+        while (next <= need) order.push(lines[next++]);
+        order.push(b);
+      }
+      // What is left reaches no body line and so no output.
+    }
+
+    // Cut at the first reaction comment past the length, or anywhere once a
+    // quarter past it: observe and events have no comments to cut at.
+    const chunks = [[]];
+    let size = 0;
+    for (const s of order) {
+      if (size > PART_CHARS && (s.startsWith('//') || size > 1.25 * PART_CHARS)) { chunks.push([]); size = 0; }
+      chunks[chunks.length - 1].push(s);
+      size += s.length + 1;
+    }
+    if (chunks.length === 1) {
+      const src = `"use strict";\n${order.join('\n')}\nreturn out;`;
+      return { parts: [src], arrays: [], nscratch: 0, text: src };
+    }
+
+    // Which part defines each local, and which locals each part reads from
+    // an earlier one. Each of those gets a slot in W.
+    const home = new Map();
+    const arrayDecls = new Set(arrays.map((a) => a.decl));
+    const kept = chunks.map((chunk) => chunk.filter((s) => !arrayDecls.has(s)));
+    kept.forEach((chunk, p) => chunk.forEach((s) => {
+      const m = /^const ([A-Za-z_$][\w$]*) = /.exec(s);
+      if (m) home.set(m[1], p);
+    }));
+    const slot = new Map();
+    const imports = kept.map((chunk, p) => {
+      const need = new Set();
+      for (const s of chunk) for (const id of reads(s)) if (!isArray.has(id) && home.get(id) < p) need.add(id);
+      for (const id of need) if (!slot.has(id)) slot.set(id, slot.size);
+      return [...need];
+    });
+    const parts = kept.map((chunk, p) => {
+      const exports = chunk.map((s) => /^const ([A-Za-z_$][\w$]*) = /.exec(s)).filter((m) => m && slot.has(m[1])).map((m) => m[1])
+        .sort((a, b) => slot.get(a) - slot.get(b));
+      return [
+        '"use strict";',
+        ...imports[p].map((id) => `const ${id} = W[${slot.get(id)}];`),
+        ...chunk,
+        ...exports.map((id) => `W[${slot.get(id)}] = ${id};`),
+      ].join('\n');
+    });
+    const args = [...PART_PARAMS, 'W', ...arrays.map((a) => a.name)].join(', ');
+    const text = [
+      `// In ${parts.length} parts, run one after another, each a function of`,
+      `// (${args}).`,
+      '// A value one part computes and a later part reads is carried in W.',
+      ...arrays.map((a) => `// Made once a call and handed to every part: ${a.decl}`),
+      ...parts.map((src, p) => `\n// ---- part ${p + 1} of ${parts.length} ----\n${src}`),
+    ].join('\n');
+    return { parts, arrays: arrays.map(({ name, decl }) => ({ name, decl })), nscratch: slot.size, text };
+  }
+
+  /** Compiles what layOut made into one function of PART_PARAMS. */
+  function linkParts(prog) {
+    if (prog.parts.length === 1) return new Function(...PART_PARAMS, prog.parts[0]);
+    const names = prog.arrays.map((a) => a.name);
+    const parts = prog.parts.map((src) => new Function(...PART_PARAMS, 'W', ...names, src));
+    const args = [...PART_PARAMS, 'W', ...names].join(', ');
+    const caller = [
+      '"use strict";',
+      `return function (${PART_PARAMS.join(', ')}) {`,
+      ...prog.arrays.map((a) => `  ${a.decl}`),
+      ...parts.map((_, k) => `  parts[${k}](${args});`),
+      '  return out;',
+      '};',
+    ].join('\n');
+    return new Function('parts', 'W', caller)(parts, new Float64Array(prog.nscratch));
+  }
+
+  /* ------------------------------------------------------------------------
      compile(text, options) -> model object
      ------------------------------------------------------------------------ */
   /**
@@ -1211,12 +1360,14 @@
 
     const H = { T: tableList.map((t) => ({ x: Float64Array.from(t.x), y: Float64Array.from(t.y) })), interp: interpTable, slope: slopeTable };
     const fns = {};
-    for (const [name, src] of Object.entries(generated.sources)) {
+    const sources = {};                 // what the Code tab shows: the code that runs
+    for (const [name, prog] of Object.entries(generated.programs)) {
       try {
-        fns[name] = new Function('t', 'y', 'P', 'H', 'out', 'extra', src);
+        fns[name] = linkParts(prog);
       } catch (e) {
         throw new ModelError(`Internal error compiling ${name}: ${e.message}`);
       }
+      sources[name] = prog.text;
     }
 
     const observeNames = [...generated.observeNames];
@@ -1247,7 +1398,7 @@
       algebraicNames: algebraic.map((a) => a.name),
       nalgebraic: algebraic.length,
       outputTimes, outputTimeUnit: m.timeUnit,
-      warnings, sources: generated.sources, clampNegative: clamp,
+      warnings, sources, clampNegative: clamp,
       settings: Pmeta.filter((p) => p.section === 'settings').map((p) => ({
         name: p.name, expr: p.expr, comment: p.comment, isTable: p.isTable,
         value: p.isTable ? stringValues.get(p.name) : P[p.index],
@@ -1447,7 +1598,7 @@
       return { v, g };
     }
 
-    const sources = {};
+    const programs = {};
 
     /**
      * The net rate of one reaction, and its gradient: forward less backward,
@@ -1529,15 +1680,16 @@
           }
         }
       });
-      sources[which] = `"use strict";\n${em.lines.join('\n')}\n${body.join('\n')}\nreturn out;`;
+      programs[which] = layOut(em.lines, body);
     }
 
     // ---- observe: equations, named reaction rates, then outputs --------------
     //
     // The accumulation into D and the rate assignments go into the emitter's
-    // own line list rather than into `body`, because the generated function is
-    // every temporary followed by every body line: an output reading D[i] has
-    // its temporary hoisted above the body, so D has to be filled up there too.
+    // own line list rather than into `body`, because an output reading D[i]
+    // does so through a temporary, which is one of those lines and keeps its
+    // place among them (layOut moves body lines, never these): D has to be
+    // filled in there too.
     {
       const ctx = makeEmitter('observe');
       const { em, eqValues } = ctx;
@@ -1589,7 +1741,7 @@
         names.push(o.name);
         body.push(`out[${k++}] = ${r.v};`);
       });
-      sources.observe = `"use strict";\n${em.lines.join('\n')}\n${body.join('\n')}\nreturn out;`;
+      programs.observe = layOut(em.lines, body);
       c.observeNames = names;
     }
 
@@ -1599,7 +1751,7 @@
       const { em } = ctx;
       emitEquations(ctx, 'events');
       const body = events.map((ev, k) => `out[${k}] = ${em.emit(ev.ast, ev.line).v};`);
-      sources.events = `"use strict";\n${em.lines.join('\n')}\n${body.join('\n')}\nreturn out;`;
+      programs.events = layOut(em.lines, body);
     }
 
     // ---- init: time-only equations at t0, then the <INITIAL> lines -----------
@@ -1648,10 +1800,13 @@
         em.cse.clear();
       });
       // `extra` is speciesToo; the positional parameter `out` is unused here.
-      sources.init = `"use strict";\n${body.join('\n')}\nreturn y;`;
+      // Not laid out: its lines write y and P and must stay in order, and it
+      // runs once.
+      const init = `"use strict";\n${body.join('\n')}\nreturn y;`;
+      programs.init = { parts: [init], arrays: [], nscratch: 0, text: init };
     }
 
-    return { sources, observeNames: c.observeNames };
+    return { programs, observeNames: c.observeNames };
   }
 
   /* The emitter accepts a pre-emitted operand through a private node type. */
