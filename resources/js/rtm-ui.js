@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20260923';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20260923b';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -524,7 +524,7 @@
       : '';
     setStatus(`Done in ${(ms / 1000).toFixed(2)} s — ${(st.nsteps || 0).toLocaleString()} steps `
       + `(${(st.nfailed || 0).toLocaleString()} rejected), ${reply.n.toLocaleString()} points kept, `
-      + `${st.sparse ? 'sparse' : 'dense'} LU.${drift}`, drift ? 'warn' : 'ok');
+      + `${st.lu === 'refactor' ? 'sparse LU keeping its pivots' : st.sparse ? 'sparse LU' : 'dense LU'}.${drift}`, drift ? 'warn' : 'ok');
   }
 
   function stop() {

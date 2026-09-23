@@ -16,7 +16,7 @@
   // an entry whose imports changed while its own URL did not is served from
   // cache with the old import list, and the symptom is a solver that the page
   // offers and the worker has never heard of.
-  const WORKER_URL = 'resources/js/facsimile-worker-entry.js?v=20260923';
+  const WORKER_URL = 'resources/js/facsimile-worker-entry.js?v=20260923b';
   const YEAR_S = 365.25 * 86400;
 
   const $ = (id) => document.getElementById(id);
@@ -1224,7 +1224,10 @@
       + (st.nbelowtol ? `, <b>${st.nbelowtol} step${st.nbelowtol === 1 ? '' : 's'} accepted below tolerance</b>` : '')
       + (st.restarts ? `, <b>rebuilt ${st.restarts} time${st.restarts === 1 ? '' : 's'}</b> where the step size stalled` : '')
       + (st.negative ? `, ${st.negative} projections onto zero` : '')
-      + `.<br>Iteration matrix I − hJ: <b>${st.sparse ? 'sparse LU' : 'dense LU'}</b>` + (st.fill != null ? ` (the sparse factor has ${st.fill} entries against ${st.n * st.n} dense, ${st.ordering} ordering)` : '')
+      + `.<br>Iteration matrix I − hJ: <b>${st.lu === 'refactor' ? 'sparse LU keeping its pivots' : st.sparse ? 'sparse LU' : 'dense LU'}</b>`
+      + (st.lu === 'refactor'
+        ? ` (${st.fill} entries against ${st.n * st.n} dense, ${st.ordering} order; the pivots were chosen again ${st.repivots} time${st.repivots === 1 ? '' : 's'}${st.fallbacks ? `, and ${st.fallbacks} factorisation${st.fallbacks === 1 ? '' : 's'} went to the dense LU` : ''})`
+        : st.fill != null ? ` (the sparse factor has ${st.fill} entries against ${st.n * st.n} dense, ${st.ordering} ordering)` : '')
       + `; Jacobian ${st.nnz} non-zeros of ${st.n}×${st.n}.`
       + (st.consistentStart && st.consistentStart.moved > 1e-12
         ? `<br>Algebraic start: the constraints were solved in ${st.consistentStart.iterations} iteration${
@@ -1770,7 +1773,7 @@
         ['REFERENCE', (FACSIMILE_PRESETS.find((x) => x.id === state.presetId) || {}).reference || '', 'Where the case is defined'],
         ['DATE', new Date().toISOString(), 'Time of simulation'], ['SIMULATIONTIME', r.seconds ?? '', 'Seconds'],
         ['ROWS', wantsGrid() ? 'output times' : 'solver steps', 'What the DATA and STATES sheets hold']);
-      if (r.stats) settings.push(['STEPS', r.stats.nsteps, 'Accepted steps'], ['MATRIX', r.stats.sparse ? 'sparse' : 'dense', 'Iteration matrix']);
+      if (r.stats) settings.push(['STEPS', r.stats.nsteps, 'Accepted steps'], ['MATRIX', r.stats.lu || (r.stats.sparse ? 'sparse' : 'dense'), 'Iteration matrix']);
       xlsx.writeData(settings, 'SETTINGS', { header: ['SETTING', 'VALUE', 'DESCRIPTION'] });
       const src = tableSource();
       const outCols = r.observeNames.map((c) => column(c, src));
@@ -1920,7 +1923,9 @@
     const st = state.result && state.result.stats;
     let html = `<p><b>${n} × ${n}</b> matrix, <b>${m.nnz}</b> structurally non-zero entries (${(100 * m.density).toFixed(1)} %). Rows are the species' equations, columns the species differentiated with respect to; the diagonal is drawn in the accent colour.</p>`
       + `<p>A finite-difference Jacobian through this pattern needs <b>${m.colours}</b> evaluations of the model (one per group of columns that share no row) instead of ${n}. The analytic one needs none: its values come from the derivative code, see the <em>Code</em> tab.</p>`;
-    if (st) html += `<p>Last run: the iteration matrix I − hJ was factorised <b>${st.sparse ? 'sparsely' : 'densely'}</b>. ${st.fill != null ? `A sparse LU factor of it holds ${st.fill} entries against ${n * n} for the dense matrix (${(100 * st.fill / (n * n)).toFixed(0)} %, ${st.ordering} ordering), which is why ${st.sparse ? 'the sparse path was kept' : 'the dense factorisation was cheaper'}.` : ''}</p>`;
+    if (st && st.lu === 'refactor') {
+      html += `<p>Last run: the iteration matrix I − hJ was factorised as a <b>sparse LU that keeps its pivots</b>. Its factor holds ${st.fill} entries against ${n * n} for the dense matrix (${(100 * st.fill / (n * n)).toFixed(0)} %, ${st.ordering} order). Each factorisation repeats the same eliminations and checks every pivot; the pivots were chosen again ${st.repivots} time${st.repivots === 1 ? '' : 's'} where one failed the check${st.fallbacks ? `, and ${st.fallbacks} factorisation${st.fallbacks === 1 ? '' : 's'} went to the dense LU` : ''}.</p>`;
+    } else if (st) html += `<p>Last run: the iteration matrix I − hJ was factorised <b>${st.sparse ? 'sparsely' : 'densely'}</b>. ${st.fill != null ? `A sparse LU factor of it holds ${st.fill} entries against ${n * n} for the dense matrix (${(100 * st.fill / (n * n)).toFixed(0)} %, ${st.ordering} ordering), which is why ${st.sparse ? 'the sparse path was kept' : 'the dense factorisation was cheaper'}.` : ''}</p>`;
     if (state.verify) html += verifyHtml(state.verify);
     else html += '<p class="fac-muted">Press <em>Check Jacobian</em> to compare the analytic entries with finite differences.</p>';
     info.innerHTML = html;

@@ -32,7 +32,7 @@
 import {
 	emitWithTangent, makeTape, tapePrelude, buildFunction, NoDerivative,
 } from '../parser/compile.js';
-import { schemeOf } from '../domain/availability.js';
+import { expressionOf, tangentOf } from '../domain/availability.js';
 import { FUNCTIONS, FUNCTION_ALIASES } from '../parser/functions.js';
 import { resolveReference } from '../domain/systems.js';
 import { FARF_EQUATION_KEYS } from '../domain/farfield.js';
@@ -225,23 +225,21 @@ function refuseNonFinite(evaluate, b) {
  * @returns {object} either { available: true, ... } or { available: false, reason }
  */
 export function buildJacobian(b) {
-	// A transfer whose flux is scaled by an availability is not `donor * rate`
-	// any more -- it is `g(donor) * rate` with `g` the scheme's own function of
-	// the inventory, and for a *shared* scheme `g` reads the inventories of
-	// every other member of the group, which puts entries in this matrix that
-	// the sparsity pattern below does not know about.
+	// A transfer whose flux is scaled by an availability is differentiated
+	// like any other: its value is rate × availability, and both the columns
+	// that product reads (the donor, every member of a shared group, the
+	// limit's own) and its tangent are generated below from the same list of
+	// terms as the value. See `availabilityTerms` in builder.js.
 	//
-	// Emitting the wrong matrix is far worse than emitting none. It was tried:
-	// the flux was right and the matrix was the linear one, so above a
+	// It had to be all three at once. An earlier version emitted the
+	// availability into the derivative and left the matrix linear, so above a
 	// solubility limit Newton was told the flux still moved with the inventory
 	// when it no longer did, and `examples/biosphere.json` ran to a million
 	// steps and stopped -- at the moment the inventory crossed the limit,
-	// whatever the limit was. The solvers difference what they are not given,
-	// which is slower and right.
+	// whatever the limit was. A wrong matrix is far worse than none, which is
+	// why the check in test/run.js compares this one with differences taken
+	// across the limit.
 	//
-	// The way to lift this is to give each scheme a `g` and a `g'` and to widen
-	// the pattern for the shared ones; the shape of that is in
-	// ../domain/availability.js, and it is a piece of work rather than a line.
 	// The mass-balance audit appends budget states that accumulate every
 	// flux, and those rows are not in the pattern below. Differencing is the
 	// honest answer for an audit run, which is a run made to check the model,
@@ -251,15 +249,6 @@ export function buildJacobian(b) {
 			available: false,
 			reason: 'The mass-balance audit is on, which adds budget states the generator '
 				+ 'does not differentiate. The solver works out df/dy by differencing instead.',
-		};
-	}
-	const limited = (b.project?.transfers ?? []).find((t) => schemeOf(t));
-	if (limited) {
-		return {
-			available: false,
-			reason: `'${limited.name}' scales its flux by an availability, which makes it `
-				+ 'non-linear in the inventory. The solver works out df/dy by differencing '
-				+ 'instead, which is slower and gives the same answer.',
 		};
 	}
 	try {
@@ -580,6 +569,7 @@ function patternSource(b, opts = {}) {
 		project, space, algebraic, stateByName, algByName,
 		makeLocator, mapIndex, emitLoop, emitByEquation, stateOffsetExpr, tupleByList, decaying,
 		farfLayout, pathByName, farfInletExpr, dydtSlots = [], wasteLayout = [], disruptionLayout = [],
+		availabilityTerms,
 	} = b;
 
 	// Which columns are being collected. `state` fills each algebraic slot's
@@ -695,6 +685,31 @@ function patternSource(b, opts = {}) {
 		} else {
 			emitByEquation(algLines, space, a, '\t', ({ ast, vars, tuple, slot, indent }) => {
 				record(ast, makeLocator(a, a.dims, vars, tuple), slot, indent);
+			});
+		}
+		// A transfer with an availability is rate × availability, and the
+		// availability reads the donor -- every member of its group, for a
+		// shared scheme -- and whatever its limit or coefficients read. The
+		// transfer's rows take all of it below, as they take the rate's.
+		if (a.availability) {
+			const t = a.block;
+			const src = stateByName.get(t.from);
+			const { scheme, operands } = a.availability;
+			emitLoop(algLines, space, a.dims, '\t', (vars, offExpr, indent) => {
+				algLines.push(`${indent}{`);
+				algLines.push(`${indent}\tconst s = SX[${a.base} + ${offExpr}];`);
+				// The inventories are state columns, and so no part of df/dp.
+				if (!wantParams) {
+					for (const term of availabilityTerms(t, scheme, src, a, space, vars, mapIndex)) {
+						algLines.push(term.when
+							? `${indent}\tif (${term.when}) s.add(${term.off});`
+							: `${indent}\ts.add(${term.off});`);
+					}
+				}
+				for (const op of Object.values(operands)) {
+					algLines.push(`${indent}\tADD(s, SX[${op.base} + ${offExpr}]);`);
+				}
+				algLines.push(`${indent}}`);
 			});
 		}
 	}
@@ -851,7 +866,7 @@ function jvpSourceFor(b, opts = {}) {
 		project, space, algebraic, stateByName, algByName,
 		makeLocator, makeCall, mapIndex, emitLoop, emitByEquation, stateOffsetExpr, tupleByList,
 		decaying, recorders, farfLayout, pathByName, farfInletExpr, dydtSlots = [], wasteLayout = [],
-		disruptionLayout = [],
+		disruptionLayout = [], availabilityTerms, availabilitySum,
 	} = b;
 
 	/**
@@ -1148,6 +1163,35 @@ function jvpSourceFor(b, opts = {}) {
 			emitByEquation(lines, space, a, '\t', ({ ast, vars, tuple, slot, indent }) => {
 				emitOne(ast, makeLocator(a, a.dims, vars, tuple),
 					makeCall(a, a.dims, vars, tuple), slot, indent);
+			});
+		}
+		// Rate × availability, differentiated: d(r·A) = dr·A + r·dA, the
+		// availability's tangent taken through the amount (along the state;
+		// along a parameter the inventories are held fixed) and through the
+		// limit or the coefficients, where those move. Written after the
+		// rate's own value and tangent, exactly as the builder writes the
+		// product after the rate. See ../domain/availability.js.
+		if (a.availability) {
+			const t = a.block;
+			const src = stateByName.get(t.from);
+			const { scheme, operands } = a.availability;
+			emitLoop(lines, space, a.dims, '\t', (vars, offExpr, indent) => {
+				const terms = availabilityTerms(t, scheme, src, a, space, vars, mapIndex);
+				const ops = {};
+				const dops = {};
+				for (const [key, op] of Object.entries(operands)) {
+					ops[key] = `X[${op.base} + ${offExpr}]`;
+					dops[key] = doesNotMove(op) ? null : `dX[${op.base} + ${offExpr}]`;
+				}
+				const slot = `${a.base} + ${offExpr}`;
+				const dA = tangentOf(scheme, 'am', alongState ? 'dam' : null, ops, dops);
+				lines.push(`${indent}{`);
+				lines.push(`${indent}\tconst am = ${availabilitySum(terms, 'y')};`);
+				if (alongState) lines.push(`${indent}\tconst dam = ${availabilitySum(terms, 'v')};`);
+				lines.push(`${indent}\tconst av = ${expressionOf(scheme, 'am', ops)};`);
+				lines.push(`${indent}\tdX[${slot}] = dX[${slot}] * av${dA ? ` + X[${slot}] * ${dA}` : ''};`);
+				lines.push(`${indent}\tX[${slot}] = X[${slot}] * av;`);
+				lines.push(`${indent}}`);
 			});
 		}
 	}

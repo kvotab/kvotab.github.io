@@ -188,10 +188,20 @@ function emitNode(ast, resolveRef, resolveCall) {
 export function buildFunction(paramNames, body, name = 'compiled') {
 	const src = `"use strict";\n${body}`;
 	try {
+		let parts = splitBody(body);
+		let fn = null;
+		if (parts) {
+			// A part that does not compile is a body the scan misjudged, and
+			// the whole of it is still good: it runs whole, as it always did.
+			try { fn = linkParts(paramNames, parts); } catch { parts = null; }
+		}
 		// eslint-disable-next-line no-new-func
-		const fn = new Function('F', 'ctx', ...paramNames, src);
+		fn ??= new Function('F', 'ctx', ...paramNames, src);
 		Object.defineProperty(fn, 'name', { value: name });
+		// The whole of it, as one piece: the parts are slices of it and
+		// add nothing a reader needs.
 		fn.source = src;
+		fn.parts = parts ? parts.length : 1;
 		return fn;
 	} catch (e) {
 		// The head of it, not all of it. A generated derivative function runs
@@ -215,6 +225,149 @@ export function buildFunction(paramNames, body, name = 'compiled') {
 
 /** How much of a failed generated function goes into its error message. */
 const ERROR_SOURCE_LINES = 40;
+
+/*
+ * A generated function is run in parts when it is long.
+ *
+ * V8 will not hand a function of more than 60 KB of bytecode to its optimising
+ * compiler. A longer one stays in the baseline tier for the whole run, however
+ * hot it is, and raising the limit is no way out: at these sizes the optimising
+ * compiler crashes. The functions here get long. The landscape model in the
+ * SR-PSU biosphere folder (LandscapeAllChain, 9,462 states) has a derivative
+ * of 3 MB of source and a Jacobian tangent of 7 MB, fifty to a hundred times
+ * the limit.
+ *
+ * So the body is cut into parts of about PART_CHARS characters, each compiled
+ * as a function of its own with the same arguments, and called in order by a
+ * function that returns what the last one returns. A part is a slice of the
+ * body and nothing else. Everything the generated code carries from one
+ * statement to a later one is in the arrays it was handed (X, T, out, dX...),
+ * which every part sees. A cut is only made where that is the whole story:
+ *
+ *   - between top-level statements, never inside a loop, a block or a bracket;
+ *   - where no local declared at the top level is read again later. A
+ *     transfer's `const f12` and a conditional's `let v3` live for a few lines,
+ *     and the cut waits for them;
+ *   - the tape line (tapePrelude) is the exception: it is idempotent and read
+ *     throughout, so every part begins with it.
+ *
+ * A body this scan does not fully understand (a string, a template, a block
+ * comment, a nested function, a `return` anywhere but at the end, or a
+ * declaration it cannot parse) is compiled whole, as it always was, and so is
+ * one whose parts do not compile. That is safe: the parts only exist to make
+ * it faster. `fn.parts` says how many there are.
+ */
+const PART_CHARS = 24000;
+
+const TOP_DECL = /^\s*(const|let|var)\s+(.*)$/;
+const IDENT = /[A-Za-z_$][\w$]*/g;
+
+/**
+ * The parts of a body, or null to compile it whole.
+ * @param {string} body
+ * @returns {string[] | null}
+ */
+function splitBody(body) {
+	if (body.length <= PART_CHARS * 1.25) return null;
+	const prelude = tapePrelude('').trim();
+	const lines = body.split('\n');
+	const n = lines.length;
+	const depthAfter = new Int32Array(n);
+	const declared = new Map();         // top-level local -> line it is declared on
+	const lastUse = new Map();          // top-level local -> last line that names it
+	const replicated = new Uint8Array(n);
+	let depth = 0;
+	let returnLine = -1;
+	for (let i = 0; i < n; i++) {
+		const line = lines[i];
+		// A comment is whatever follows `//`. That holds only while the code
+		// before it has no string in it, which the next test makes sure of.
+		const cut = line.indexOf('//');
+		const code = cut < 0 ? line : line.slice(0, cut);
+		if (/[`'"]|\/\*|=>|\bfunction\b/.test(code)) return null;
+		if (code.trim() === prelude) {
+			if (depth !== 0) return null;
+			replicated[i] = 1;
+			depthAfter[i] = 0;
+			continue;
+		}
+		const atTop = depth === 0;
+		if (atTop) {
+			const m = TOP_DECL.exec(code);
+			if (m) {
+				// `let v3;`, `let v3, v4;` or `const f12 = ...;`: nothing else.
+				let names;
+				if (m[1] === 'let' && /^[\w$\s,]+;\s*$/.test(m[2])) names = m[2].replace(/;\s*$/, '').split(',').map((s) => s.trim());
+				else if (/^[A-Za-z_$][\w$]*\s*=/.test(m[2])) names = [m[2].match(/^[A-Za-z_$][\w$]*/)[0]];
+				else return null;
+				for (const nm of names) declared.set(nm, i);
+			}
+		}
+		if (/\breturn\b/.test(code)) {
+			if (!atTop || returnLine >= 0) return null;
+			returnLine = i;
+		}
+		for (let k = 0; k < code.length; k++) {
+			const c = code.charCodeAt(k);
+			if (c === 40 || c === 91 || c === 123) depth++;          // ( [ {
+			else if (c === 41 || c === 93 || c === 125) depth--;     // ) ] }
+		}
+		if (depth < 0) return null;
+		depthAfter[i] = depth;
+		if (declared.size) {
+			IDENT.lastIndex = 0;
+			let t;
+			while ((t = IDENT.exec(code)) !== null) {
+				if (declared.has(t[0])) lastUse.set(t[0], i);
+			}
+		}
+	}
+	if (depth !== 0) return null;
+	// The return must close the body: nothing but blank lines and comments after it.
+	if (returnLine >= 0) {
+		for (let i = returnLine + 1; i < n; i++) if (lines[i].replace(/\/\/.*$/, '').trim()) return null;
+	}
+
+	// Where a cut may follow a line: at the top level, and past the last use
+	// of every top-level local declared so far.
+	const head = lines.filter((_, i) => replicated[i]);
+	const parts = [];
+	let chunk = [];
+	let size = 0;
+	let liveTo = -1;
+	const openers = new Map();
+	for (const [nm, at] of declared) {
+		if (!openers.has(at)) openers.set(at, []);
+		openers.get(at).push(nm);
+	}
+	for (let i = 0; i < n; i++) {
+		if (replicated[i]) continue;
+		chunk.push(lines[i]);
+		size += lines[i].length + 1;
+		for (const nm of openers.get(i) ?? []) liveTo = Math.max(liveTo, lastUse.get(nm) ?? i);
+		if (size > PART_CHARS && depthAfter[i] === 0 && liveTo <= i && (returnLine < 0 || i < returnLine)) {
+			parts.push(chunk);
+			chunk = [];
+			size = 0;
+		}
+	}
+	if (chunk.length) parts.push(chunk);
+	if (parts.length < 2) return null;
+	return parts.map((p) => `"use strict";\n${[...head, ...p].join('\n')}`);
+}
+
+/** One function of F, ctx and the parameters that calls the parts in order. */
+function linkParts(paramNames, parts) {
+	const params = ['F', 'ctx', ...paramNames];
+	// eslint-disable-next-line no-new-func
+	const fns = parts.map((src) => new Function(...params, src));
+	const args = params.join(', ');
+	const calls = fns.map((_, k) => (k === fns.length - 1
+		? `\treturn parts[${k}](${args});`
+		: `\tparts[${k}](${args});`));
+	// eslint-disable-next-line no-new-func
+	return new Function('parts', `"use strict";\nreturn function (${args}) {\n${calls.join('\n')}\n};`)(fns);
+}
 
 // --- forward-mode derivatives -----------------------------------------------
 
@@ -417,6 +570,20 @@ const TANGENT_RULES = {
 	interpolationExtrapolation: ({ A, dA }) => (dA.slice(1).some((d) => d != null)
 		? null
 		: `(F.interpolationExtrapolation.slope(${A.join(', ')}) * ${dA[0]})`),
+	// The unit conversions. bq2mole(a, T) is c·a·T, so its tangent is the
+	// same conversion applied to each argument's tangent in turn; mole2bq(n, T)
+	// is c·n/T, linear in the amount and falling as 1/T in the half-life.
+	// Through the library's own functions rather than a constant written out
+	// here, so the tangent can never use a different Avogadro's number or a
+	// different year from the value it is the tangent of.
+	bq2mole: ({ A, dA }) => added([
+		dA[0] == null ? null : `F.bq2mole.fn(${dA[0]}, ${A[1]})`,
+		dA[1] == null ? null : `F.bq2mole.fn(${A[0]}, ${dA[1]})`,
+	]),
+	mole2bq: ({ A, dA, V }) => added([
+		dA[0] == null ? null : `F.mole2bq.fn(${dA[0]}, ${A[1]})`,
+		dA[1] == null ? null : `(-${V} * ${dA[1]} / ${A[1]})`,
+	]),
 };
 
 /**
@@ -428,6 +595,13 @@ const LIVE_OR_REFUSE = new Set(['interpolationUseEndValues', 'interpolationExtra
 /** `d` scaled by `a`, dropping a structurally zero factor. */
 function term(a, d) {
 	return d == null ? '' : `${a} * ${d}`;
+}
+
+/** The terms that are there, added up; null when none of them is. */
+function added(parts) {
+	const live = parts.filter((p) => p != null);
+	if (!live.length) return null;
+	return live.length === 1 ? live[0] : `(${live.join(' + ')})`;
 }
 const plus = (s) => (s ? ` + ${s}` : '');
 const minus = (s) => (s ? ` - ${s}` : '');

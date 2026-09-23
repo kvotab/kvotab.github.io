@@ -1259,11 +1259,14 @@ export function renderInspector(host, project, selection, hooks = {}, opts = {})
 				[['', 'choose a list\u2026'], ...lists.map((n) => [n, n])],
 				(v) => { into().over = v ?? ''; hooks.onChange?.(); },
 				{
-					hint: 'The amount is summed over this list before the scheme is '
+					hint: 'The amount is summed over a group before the scheme is '
 						+ 'applied, so one limit covers the whole group and what moves '
-						+ 'keeps the proportions of what is there. The isotopes of an '
-						+ 'element against an elemental solubility: '
-						+ (dims[0] ?? 'the radionuclide list') + '.',
+						+ 'keeps the proportions of what is there. A list the donor is '
+						+ 'indexed by is one group: '
+						+ (dims[0] ?? 'the radionuclide list') + ' shares one limit '
+						+ 'among every nuclide. A grouping of it is one group per index: '
+						+ 'Elements shares each element’s limit among its isotopes, '
+						+ 'which is what an elemental solubility is.',
 				}));
 			// What is summed. An elemental solubility is about atoms, and in
 			// becquerels the isotopes are not counted in atoms.

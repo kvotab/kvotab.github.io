@@ -24,10 +24,15 @@
  * precisely what the other one leaves behind.
  *
  * **This makes the equations non-linear**, because the availability reads the
- * inventory it is scaling. Nothing else in this tool has to know: each scheme
- * comes out of here as an *expression* in the donor's amount, the builder
- * multiplies it into the flux, and the tangent generator differentiates it the
- * way it differentiates everything else. So the Jacobian stays analytic.
+ * inventory it is scaling. Each scheme comes out of here twice: as an
+ * *expression* in the donor's amount (`expressionOf`), which the builder folds
+ * into the transfer's own value -- rate × availability -- and as that
+ * expression's *tangent* (`tangentOf`), which the Jacobian generator folds into
+ * the tangent of the same value. So the flux is still `donor × value` wherever
+ * it is assembled, `T * donor` in an equation is still the flux through `T`,
+ * and the Jacobian stays analytic. The limit and the two Langmuir coefficients
+ * are equations with slots of their own (`OPERANDS`), differentiated like any
+ * other.
  */
 
 /** The schemes, as a model spells them. */
@@ -46,9 +51,9 @@ export const SCHEME_BLURB = {
 	limit: 'Only as much as the limit can travel; the excess is precipitate and '
 		+ 'stays behind. Availability = min(limit ÷ amount, 1).',
 	shared_limit: 'The same, with one limit shared over a group — the isotopes of '
-		+ 'an element against an elemental solubility. The amount is summed over '
-		+ 'the group, so the isotopic proportions of what moves are those of what '
-		+ 'is there.',
+		+ 'an element against an elemental solubility, when it is shared over '
+		+ 'Elements. The amount is summed over the group, so the isotopic '
+		+ 'proportions of what moves are those of what is there.',
 	langmuir: 'A sorption isotherm: the fraction free to move rises with the '
 		+ 'inventory rather than staying fixed. Availability = (amount + α) ÷ '
 		+ '(amount + β), the linear approximation AMBER uses.',
@@ -62,9 +67,37 @@ export function schemeOf(transfer) {
 	return a;
 }
 
-/** Whether this scheme needs the amount summed over a group. */
+/**
+ * Whether this scheme needs the amount summed over a group.
+ *
+ * What the group is comes from `over`, read against the donor's dimensions by
+ * the builder (`availabilityTerms` in ../sim/builder.js):
+ *
+ *   one of the donor's own lists   the whole of it is one group -- one limit
+ *                                  shared by every nuclide the donor holds
+ *   a grouping of one of them      one group per index of the grouping -- over
+ *                                  `Elements`, the isotopes of each element
+ *                                  share that element's limit, which is what
+ *                                  an elemental solubility is
+ *
+ * Anything else is refused by name rather than quietly read as the individual
+ * scheme, which is what an unrecognised list used to come to.
+ */
 export function isShared(scheme) {
 	return scheme === 'shared_limit' || scheme === 'shared_langmuir';
+}
+
+/**
+ * The equations a scheme reads beside the amount, in the order they get slots.
+ *
+ * Each is an ordinary equation of the transfer's -- a parameter, an expression,
+ * something time-dependent -- and the builder gives it an algebraic slot of the
+ * transfer's own dimensions, named `<transfer>#<key>`, so that it is worked out
+ * once per call and differentiated like everything else.
+ */
+export function operandKeys(scheme) {
+	if (!scheme) return [];
+	return scheme.scheme === 'limit' || scheme.scheme === 'shared_limit' ? ['limit'] : ['top', 'bottom'];
 }
 
 /**
@@ -143,22 +176,92 @@ export function molesPerUnit(decayUnit, lambdaPerTimeUnit, secondsPerTimeUnit) {
  * @returns {string} an expression between 0 and 1
  */
 export function expressionFor(scheme, amount, compile) {
+	const operands = {};
+	for (const key of operandKeys(scheme)) operands[key] = compile(scheme[key]);
+	return expressionOf(scheme, amount, operands);
+}
+
+/**
+ * The availability as an expression, given its operands already compiled.
+ *
+ * `operands` holds an expression per `operandKeys` entry -- in the builder the
+ * slots `X[...]` those equations were worked out into. `amount` should be
+ * something cheap to repeat, a local or a slot, since it appears more than
+ * once.
+ */
+export function expressionOf(scheme, amount, operands) {
 	const inverted = !!scheme.unavailable;
 	const body = (() => {
 		if (scheme.scheme === 'limit' || scheme.scheme === 'shared_limit') {
-			const limit = compile(scheme.limit);
 			// `min(limit/amount, 1)`, with the empty compartment answered
 			// rather than divided by.
-			return `((${amount}) > 0 ? Math.min((${limit}) / (${amount}), 1) : 1)`;
+			return `((${amount}) > 0 ? Math.min((${operands.limit}) / (${amount}), 1) : 1)`;
 		}
 		// Langmuir, in the linear approximation: (amount + a) / (amount + b).
 		// Rises towards 1 as the inventory grows when a < b, which is the
 		// sorption case -- more material, a larger fraction in solution.
-		const a = compile(scheme.top);
-		const b = compile(scheme.bottom);
+		const a = operands.top;
+		const b = operands.bottom;
 		return `(((${amount}) + (${b})) !== 0 ? (((${amount}) + (${a})) / ((${amount}) + (${b}))) : 1)`;
 	})();
 	return inverted ? `(1 - ${body})` : body;
+}
+
+/**
+ * The tangent of `expressionOf` along whatever direction the caller is taking
+ * it: `dAmount` and each `dOperands[key]` are the tangents of the amount and of
+ * the operands, or null where one is structurally zero. Null back when the
+ * whole tangent is.
+ *
+ * Differentiated as the code is written, branch by branch, which is the only
+ * derivative a Newton iteration can use:
+ *
+ *   limit      1 where nothing is held back, so 0; L/a past the limit, so
+ *              (dL·a − L·da)/a². At L = a exactly `Math.min` takes the 1, and so
+ *              does this.
+ *   Langmuir   the quotient rule on (a + α)/(a + β); 0 on the guard.
+ *   held back  the same with its sign turned over.
+ *
+ * Past a limit the two halves of `donor × L/a × rate` meet: for an individual
+ * limit the donor and the amount are the same inventory, their tangents
+ * cancel, and the flux is L × rate whatever the inventory -- which is the
+ * point of a solubility limit, and what the Jacobian has to say.
+ */
+export function tangentOf(scheme, amount, dAmount, operands, dOperands = {}) {
+	const inverted = !!scheme.unavailable;
+	const body = (() => {
+		if (scheme.scheme === 'limit' || scheme.scheme === 'shared_limit') {
+			const L = operands.limit;
+			const dL = dOperands.limit ?? null;
+			if (dL == null && dAmount == null) return null;
+			const top = [
+				dL != null ? `(${dL}) * (${amount})` : null,
+				dAmount != null ? `(${L}) * (${dAmount})` : null,
+			];
+			const num = top[0] && top[1] ? `${top[0]} - ${top[1]}` : (top[0] ?? `-${top[1]}`);
+			return `((${amount}) > 0 && (${L}) < (${amount}) ? (${num}) / ((${amount}) * (${amount})) : 0)`;
+		}
+		const a = operands.top;
+		const b = operands.bottom;
+		const da = dOperands.top ?? null;
+		const db = dOperands.bottom ?? null;
+		if (dAmount == null && da == null && db == null) return null;
+		const sum = (...xs) => {
+			const live = xs.filter((x) => x != null);
+			return live.length ? `(${live.join(' + ')})` : null;
+		};
+		const dTop = sum(dAmount, da);
+		const dBottom = sum(dAmount, db);
+		const bottom = `((${amount}) + (${b}))`;
+		const parts = [
+			dTop != null ? `${dTop} * ${bottom}` : null,
+			dBottom != null ? `((${amount}) + (${a})) * ${dBottom}` : null,
+		];
+		const num = parts[0] && parts[1] ? `${parts[0]} - ${parts[1]}` : (parts[0] ?? `-${parts[1]}`);
+		return `(${bottom} !== 0 ? (${num}) / (${bottom} * ${bottom}) : 0)`;
+	})();
+	if (body == null) return null;
+	return inverted ? `(-${body})` : body;
 }
 
 /**

@@ -51,6 +51,10 @@
     }
   }
 
+  // Characters of generated rate code in one function, 17 to 24 KB of
+  // bytecode: well inside what V8 optimises (see compile, "the rates").
+  const RATE_PART_CHARS = 24000;
+
   /* ======================================================================
      1. The model text
      ====================================================================== */
@@ -1774,10 +1778,31 @@
         nd++;
       }
     });
+    /*
+      Cut into parts when it is long, for the reason facsimile-model.js gives
+      at layOut: V8 will not optimise a function of more than 60 KB of
+      bytecode, and this one grows with the chemistry. Whole, a synthetic
+      network of 600 reactions (76,000 characters) ran 95 times slower per
+      call than in parts. The largest network shipped or imported so far is
+      a fifth of that size, and stays in one piece. The lines are independent
+      assignments, so a part needs nothing from another. The parts are called
+      in the order of the lines.
+    */
     let rates;
     try {
+      const chunks = [[]];
+      let size = 0;
+      for (const line of body) {
+        if (size > RATE_PART_CHARS) { chunks.push([]); size = 0; }
+        chunks[chunks.length - 1].push(line);
+        size += line.length + 1;
+      }
       // eslint-disable-next-line no-new-func
-      rates = new Function('y', 'b', 'P', 'pb', 'R', 'D', body.join('\n'));
+      const parts = chunks.map((c) => new Function('y', 'b', 'P', 'pb', 'R', 'D', c.join('\n')));
+      rates = parts.length === 1 ? parts[0]
+        // eslint-disable-next-line no-new-func
+        : new Function('parts', `"use strict";\nreturn function (y, b, P, pb, R, D) {\n${
+          parts.map((_, k) => `  parts[${k}](y, b, P, pb, R, D);`).join('\n')}\n};`)(parts);
     } catch (e) {
       throw new RtmError(`The generated rate code did not compile: ${e.message}`);
     }

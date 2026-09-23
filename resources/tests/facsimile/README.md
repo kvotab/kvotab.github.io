@@ -1,11 +1,28 @@
 # facsimile.html — tests
 
-Six of them: `run.js` checks the numbers against the reference results,
+Seven of them: `run.js` checks the numbers against the reference results,
 `test-features.js` checks what the model language gained from the FACSIMILE
-manuals, `test-limits.js` checks that a long run stays bounded, `test-hdf5.py`
+manuals, `test-limits.js` checks that a long run stays bounded, `test-lu.js`
+checks the sparse LU that keeps its pivots against the dense LU, `test-hdf5.py`
 checks the HDF5 file the page writes with the real library, `test-ui.py` checks
 the page in a real browser, and `test-worker.py` checks where the work is put.
 None of them needs the network.
+
+## The sparse LU that keeps its pivots
+
+`test-lu.js` captures every iteration matrix of a real run of case 13g (1,971
+of them). It checks that the kept-pivot LU factors all of them without falling
+back to the dense LU, and that its solutions are at round-off (normwise
+backward error below 1e-15, the dense LU's is the same). It also checks that a
+collapsed pivot is chosen again, that singular and NaN matrices are declined,
+that `auto` picks it where it costs no more than the alternative (and leaves a
+full matrix on the dense LU), and that the singular message is the dense LU's.
+
+It does not compare step sequences. On this model, a change at the level of
+round-off from either factorisation moves a 13g run by hundreds of steps
+either way: seven nudges of rtol by 1e-10 relative gave the dense LU 4,718 to
+6,271 steps. Against a run at rtol 1e-9, the two LUs give the same errors, and
+`run.js --all` shows the same agreement with the references.
 
 The page also offers seven solvers ported from DifferentialEquations.jl. They
 are a package of their own, `resources/js/ode_julia/`, with its own tests under
@@ -31,7 +48,7 @@ Options: `--times <file>` (write the model's own output grid to CSV),
 `--belowtol` (steps at the floor that may be accepted after failing the error
 test), `--autoatol` (let the absolute tolerance follow the solution upwards),
 `--norm max|rms`, `--maxorder 1..5`, `--hmax` (seconds), `--matrix
-auto|sparse|dense`, `--jacobian analytic|numeric`, `--no-nonneg` (the projection is on by default), `--noscaling`,
+auto|refactor|sparse|dense`, `--jacobian analytic|numeric`, `--no-nonneg` (the projection is on by default), `--noscaling`,
 `--minnewton 1|2`, `--quiet`.
 
 Before the cases it also checks that no part of the generated code is too large

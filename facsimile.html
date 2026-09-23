@@ -140,9 +140,10 @@
               <input id="facHmax" type="text" value="0" data-on-change="fac:solverChanged">
             </div>
             <div class="fac-row" data-solver-opt="matrix">
-              <label>Iteration matrix I − hJ<span class="fac-name">auto: sparse unless the factor fills in</span></label>
+              <label>Iteration matrix I − hJ<span class="fac-name">auto: chosen by the measured fill</span></label>
               <select id="facMatrix" data-on-change="fac:solverChanged">
                 <option value="auto">auto</option>
+                <option value="refactor">sparse LU, pivots kept</option>
                 <option value="sparse">sparse LU</option>
                 <option value="dense">dense LU</option>
               </select>
@@ -481,7 +482,7 @@ Y2 = , rf = 3.0E7*Y2*Y2</pre>
             <li><strong>Accept failing steps at the floor.</strong> What to do when a step at the smallest size the clock can represent fails the error test anyway. There is nothing left to try: a shorter step does not exist. Set to <em>0</em> the run stops there and hands back what it had, which is what the published method does — it raises a tolerance-not-met error and returns — and what every solver in DifferentialEquations.jl does. Above 0, that many such steps in a row are accepted instead, and the footer reports how many were taken. The case for accepting is that the error test is not always asking a sensible question: after a restart from an interpolated state, a species with a lifetime of femtoseconds is off its steady state by more than the tolerance, and no step size mends that — the implicit step itself does. The case against is that you are accepting a step known to be inaccurate. The default here is 5, because at 0 three of the built-in scenarios stop early; across all thirty-nine, the escape is used three times in total.</li>
             <li><strong>Error norm.</strong> How the error of one step is turned from a number per species into a single number to compare with the tolerance. <em>max</em> takes the largest, after each species is scaled by its own tolerance, so the worst-resolved one decides the step; that is what the numerical differentiation formulas were published with and what this page defaults to. <em>rms</em> takes the root mean square instead, which is what CVODE and SUNDIALS do. The difference is not small here: with one species out by exactly one unit of tolerance and the other sixty-two perfect, <em>max</em> reads 1 and rejects the step while <em>rms</em> reads 0.126 and accepts it — a factor of √63, about 8. So <em>rms</em> gives longer steps and a looser answer, and on a model whose trace species sit forty orders of magnitude below the main ones, it is the trace species that the choice is about.</li>
             <li><strong>Method.</strong> <em>NDF</em> solves a 500-year case here in a second or two, and is the one to use. <em>BDF</em> is the same integrator with the κ terms switched off: a little more stable and a little less accurate per step, which on this model costs about 6 % more steps for the same answer, and is the honest control on what those terms buy. It gets through thirty-eight of the thirty-nine presets; the one it misses stops at the moment the water supply is cut off, where restarting from the interpolated state leaves a trace species further from its steady state than a plain BDF will tolerate. Letting the absolute tolerance follow the solution gets it through that one, in fewer steps than <em>NDF</em> takes. The Julia port of <em>FBDF</em> is about as quick and is an independent check that costs nothing. Any run reports its progress in simulated years as it goes, and <em>Stop</em> ends it at once.</li>
-            <li><strong>Iteration matrix.</strong> <em>auto</em> measures the fill of one sparse factorisation and keeps the sparse path only when it is cheaper than a dense LU.</li>
+            <li><strong>Iteration matrix.</strong> <em>auto</em> measures the fill of one sparse factorisation, then tries a <em>sparse LU that keeps its pivots</em> and uses it wherever it costs no more than the sparse or dense LU would. On this model it needs about 6,000 multiply-adds per factorisation, against 85,000 for the dense LU. It chooses its pivots from the values once, among entries at least a tenth of the largest in their column, in an order that keeps the factor small. Then it repeats the same eliminations on every later matrix, checking each pivot: it must be at least a hundredth of the largest entry below it. A pivot that fails is chosen again from that point on, and a matrix it cannot factor goes to the dense or sparse LU with partial pivoting. On this model, that makes each step about 30 % cheaper, and it is as accurate: measured against a run at a tolerance of 1e-9, the two give the same errors. The individual steps are not the same, because on this model a change at the level of round-off, from either factorisation, moves the step sequence by several hundred steps either way.</li>
             <li><strong>Jacobian.</strong> <em>finite differences</em> differences the model through the analytic pattern, one evaluation per group of columns that share no row (45 groups for 63 species), for comparison.</li>
             <li><strong>Non-negative.</strong> Three things at once: the derivative of a species at or below zero may not take it lower, a step that leaves a species negative by more than the tolerance is rejected, and what is left below zero is projected back. On by default: with it every scenario of the study integrates in a second or two, whereas a trace species that has drifted a little below zero is exactly where the Newton iteration of a stiff solver comes to grief (the derivative of the clamped rate law is zero on that side). The Python port ran without it and paid in tolerance and time.</li>
           </ul>
@@ -557,13 +558,13 @@ Y2 = , rf = 3.0E7*Y2*Y2</pre>
       facsimile-ui       this page
   -->
   <script src="./resources/js/facsimile-model.js?v=20260923"></script>
-  <script src="./resources/js/facsimile-solver.js?v=20260921"></script>
+  <script src="./resources/js/facsimile-solver.js?v=20260923b"></script>
   <script src="./resources/js/facsimile-default.js?v=20260921a"></script>
   <script src="./resources/js/ode-julia.js?v=20260917zd"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20260917zd"></script>
   <script src="./resources/js/facsimile-worker.js?v=20260917zd"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/facsimile-hdf5.js?v=20260917zd"></script>
-  <script src="./resources/js/facsimile-ui.js?v=20260923a"></script>
+  <script src="./resources/js/facsimile-ui.js?v=20260923b"></script>
 </body>
 </html>

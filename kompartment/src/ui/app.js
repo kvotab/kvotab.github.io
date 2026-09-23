@@ -113,7 +113,7 @@ import {
  * caused more than one "the code says otherwise" puzzle. Serve with serve.py,
  * which disables caching.
  */
-const BUILD = '2026-09-22';
+const BUILD = '2026-09-23';
 
 const EXAMPLES = [
 	{ file: 'four-compartment.json', title: 'Four-compartment test model' },
@@ -1228,7 +1228,12 @@ function openProbabilistic() {
 		// there is one: this is a question about the model, not about the
 		// distributions, so a deterministic result answers it exactly.
 		series: outputsNow()?.length ?? 0,
-		times: state.results?.t?.length ?? Number(state.raw.simulation?.output_points ?? 0),
+		// The times, though, are the grid's and not that run's: every
+		// realisation is reported on the grid (runProbabilistic), and a run
+		// that also keeps the solver's own points has many more. Counting
+		// those put 8,150 realisations of a 16,720-state model at 7.7 GB where
+		// the run would hold 774 MB, and refused a run that fits.
+		times: timesOfModel().length,
 		lastSolveMs: state.lastSolveMs || null,
 		endpoints: ed.endpoints(state.raw),
 		// What those endpoints come to in series, which is what decides the

@@ -1372,6 +1372,28 @@ test('drawing from a distribution reproduces the distribution', async () => {
 		const v = S.valueAtProbability(cut, us[i], i);
 		assert(v >= 2 && v <= 10, `a truncated draw landed at ${v}`);
 	}
+	// A truncation of a normal or log-normal curve is where its CDF says, and
+	// in a tail that needs the CDF to be right in relative terms, not only to
+	// seven places: A&S 7.1.26 had the probability below z = -5 0.16% out and
+	// below -8 2%. The references are SciPy's norm.cdf, which is what skbrnt
+	// truncates with.
+	for (const [z, want] of [
+		[-8, 6.22096057427174e-16], [-5, 2.8665157187919344e-07],
+		[-3, 0.001349898031630093], [-1, 0.15865525393145707],
+		[0, 0.5], [2, 0.9772498680518208], [5, 0.9999997133484281],
+	]) {
+		const got = P.phi(z);
+		assert(Math.abs(got - want) <= 1e-13 * Math.min(want, 1 - want) + 1e-300,
+			`phi(${z}) is ${got}, not ${want}`);
+	}
+	const tail = P.parsePDF('norm(mean=0,sd=1,trmin=-6,trmax=-5)', 'norm');
+	for (let i = 0; i < us.length; i++) {
+		const v = S.valueAtProbability(tail, us[i], i);
+		assert(v >= -6 * (1 + 1e-8) && v <= -5 * (1 - 1e-8), `a draw from the tail landed at ${v}`);
+	}
+	close(P.cdfAt(P.parsePDF('logn(gm=1,gsd=2.718281828459045)', 'Logn4'), Math.exp(-5)),
+		2.8665157187919344e-07, 1e-12);
+
 	// And Ecolego's way of spelling "no truncation" -- the two the wrong way
 	// round -- draws from the whole curve rather than from nothing.
 	const inside = P.parsePDF('unif(min=0,max=6.5,trmin=6.5,trmax=0)', 'unif');
@@ -2420,6 +2442,39 @@ test('a decay constant and a half-life are one value seen two ways', async () =>
 	}
 });
 
+/**
+ * The analytic Jacobian of a built system against central differences of its
+ * own derivative at (t, y): null where every entry agrees, otherwise the first
+ * that does not, named.
+ */
+function differencesDisagree(sys, t, y, rtol = 1e-6) {
+	const n = sys.layout.nstate;
+	const J = Float64Array.from(sys.jacobian.evaluate(t, y));
+	const { colPtr, rowIdx } = sys.jacobian.pattern;
+	const f = (at) => { const out = new Float64Array(n); sys.dydt(t, at, out); return out; };
+	// The step follows the state as a whole as well as the entry: an empty
+	// compartment beside a full one would otherwise be moved by less than the
+	// derivative of its row can resolve, and read as a zero slope.
+	let ymax = 0;
+	for (const v of y) ymax = Math.max(ymax, Math.abs(v));
+	for (let j = 0; j < n; j++) {
+		const h = 1e-6 * Math.max(Math.abs(y[j]), 1e-3 * ymax, 1e-9);
+		const up = Float64Array.from(y); up[j] += h;
+		const down = Float64Array.from(y); down[j] -= h;
+		const fu = f(up);
+		const fd = f(down);
+		const col = new Float64Array(n);
+		for (let k = colPtr[j]; k < colPtr[j + 1]; k++) col[rowIdx[k]] = J[k];
+		for (let i = 0; i < n; i++) {
+			const want = (fu[i] - fd[i]) / (2 * h);
+			if (Math.abs(want - col[i]) > rtol * Math.max(1, Math.abs(want))) {
+				return `df[${i}]/dy[${j}] is ${col[i]} analytically and ${want} differenced`;
+			}
+		}
+	}
+	return null;
+}
+
 test('only part of what a compartment holds may be free to move', async () => {
 	const A = await import('../src/domain/availability.js');
 	const { buildSystem: build } = await import('../src/sim/builder.js');
@@ -2508,21 +2563,43 @@ test('only part of what a compartment holds may be free to move', async () => {
 	assert(lang.at(1)[0] > free.at(1)[0] && lang.at(1)[0] < 100,
 		`langmuir released ${100 - lang.at(1)[0]}`);
 
-	// And the matrix. A transfer with an availability is *not* `donor × rate`
-	// any more, so the analytic Jacobian is declined and the solvers difference
-	// df/dy instead.
+	// And the matrix. A transfer with an availability is not `donor × rate`
+	// any more: its value is rate × availability, and the availability reads
+	// the inventory it scales. The generator differentiates that product --
+	// the scheme's own tangent, the members of a shared group as columns --
+	// so the Jacobian stays analytic.
 	//
-	// That is the safe half of a trap worth recording. The first version
-	// emitted the availability into the derivative and left the Jacobian
-	// generator untouched, so the flux was right and the matrix was the linear
-	// one: above a solubility limit Newton was told the flux still moved with
-	// the inventory when it no longer did. `examples/biosphere.json` then ran
-	// to a million steps and stopped — at the moment the inventory crossed the
-	// limit, whatever the limit was. A wrong matrix is worse than none.
+	// Which is only worth having if it is right, and this is where a trap is
+	// worth recording. The first version emitted the availability into the
+	// derivative and left the Jacobian generator untouched, so the flux was
+	// right and the matrix was the linear one: above a solubility limit Newton
+	// was told the flux still moved with the inventory when it no longer did.
+	// `examples/biosphere.json` then ran to a million steps and stopped — at
+	// the moment the inventory crossed the limit, whatever the limit was. So
+	// every scheme is checked against differences, on both sides of its limit.
+	const { checkJacobian } = await import('../src/sim/jaccheck.js');
 	assert(free.analytic, 'a plain transfer lost its analytic Jacobian');
-	for (const r of [each, shared, lang]) {
-		assert(!r.analytic, 'an availability kept the analytic Jacobian, which cannot be right '
-			+ 'unless the tangent has learned the scheme');
+	for (const [label, scheme] of [
+		['a limit', { scheme: 'limit', limit: 'Lim' }],
+		['a shared limit', { scheme: 'shared_limit', limit: 'Lim', over: 'Nuc' }],
+		['Langmuir', { scheme: 'langmuir', top: '1', bottom: '100' }],
+		['a shared Langmuir', { scheme: 'shared_langmuir', top: '1', bottom: '100', over: 'Nuc' }],
+		['what a limit holds back', { scheme: 'limit', limit: 'Lim', unavailable: true }],
+	]) {
+		for (const start of [null, uneven]) {
+			const r = held(scheme, start ?? undefined);
+			assert(r.analytic, `${label} declined the analytic Jacobian`);
+			const c = checkJacobian(model(scheme, start));
+			assert(c.available && c.verdict === 'agrees', `${label}: the Jacobian ${c.verdict} — `
+				+ `${JSON.stringify(c.at?.flatMap((s) => s.disagreements)[0] ?? {})}`);
+		}
+		// The check above starts from the model's own state, a hundred of
+		// each and so past every limit. Below one the flux is linear again and
+		// the availability's tangent has to vanish; differenced directly, at
+		// five of each.
+		const sys = build(new Project(model(scheme)));
+		const bad = differencesDisagree(sys, 0, new Float64Array(sys.layout.nstate).fill(5));
+		assert(!bad, `${label}, below the limit: ${bad}`);
 	}
 
 	// --- what a scheme comes to, on its own.
@@ -2561,6 +2638,146 @@ test('only part of what a compartment holds may be free to move', async () => {
 	assert(/nonsense: .*not an availability scheme/.test(said), said);
 	assert(!A.availabilityProblems({ transfers: [{ name: 'plain', from: 'A', to: 'B' }] }).length,
 		'a transfer with no availability was complained about');
+});
+
+test('a limit shared over Elements is one limit per element, shared by its isotopes in moles', async () => {
+	const { buildSystem: build } = await import('../src/sim/builder.js');
+	const { checkJacobian } = await import('../src/sim/jaccheck.js');
+	const { molesPerUnit } = await import('../src/domain/availability.js');
+	const { lambda } = await import('../src/domain/nuclides.js');
+
+	// A canister's water holding two uranium isotopes, a thorium and two
+	// caesiums, flushed out at q per year. Uranium is over its elemental
+	// solubility, the rest are not. Shared over the nuclide list, one limit
+	// would cover all five -- the caesium would be held back by the
+	// uranium's solubility. Shared over Elements, each element has its own.
+	const nuclides = ['U-238', 'U-234', 'Th-230', 'Cs-135', 'Cs-137'];
+	const inventory = { 'U-238': 2e10, 'U-234': 5e8, 'Th-230': 1e3, 'Cs-135': 1e9, 'Cs-137': 3e9 };
+	const model = (over, limit = 'Sol', held = nuclides) => ({
+		name: 'canister',
+		simulation: {
+			start_time: 0, end_time: 1, output_points: 2, spacing: 'linear',
+			solver: 'ndf', rtol: 1e-10, abstol: 1e-12, time_unit: 'year',
+		},
+		nuclides: held,
+		parameters: [
+			{ name: 'q', value: 0.6, index_lists: [] },
+			// mol: uranium well below what the canister holds, the others far above.
+			{
+				name: 'Sol', value: 1e300, index_lists: ['Elements'],
+				entries: [{ index: { Elements: 'U' }, value: 1e-6 }],
+			},
+			// The same limit written per transfer, read with no index at all.
+			{ name: 'SolQ', value: 1e-6, index_lists: ['Transfers'] },
+		],
+		compartments: [
+			{
+				name: 'Canister', index_lists: ['Radionuclides'], initial: '0',
+				entries: held.map((n) => ({ index: { Radionuclides: n }, initial: String(inventory[n]) })),
+			},
+			{ name: 'Water', initial: '0', index_lists: ['Radionuclides'] },
+		],
+		transfers: [{
+			name: 'Q', from: 'Canister', to: 'Water', rate: 'q', index_lists: ['Radionuclides'],
+			availability: { scheme: 'shared_limit', limit, over, basis: 'moles' },
+		}],
+	});
+	const secondsPerYear = 365.25 * 24 * 3600;
+	const mol = (n) => inventory[n] * molesPerUnit('Bq', lambda(n, 'year'), secondsPerYear);
+
+	// The transfer's value is its rate times its availability -- so the
+	// chart, and `Q * Canister` in an equation, read the flux it carries.
+	const valueAtStart = (raw) => {
+		const r = run(new Project(structuredClone(raw)));
+		const out = {};
+		for (const o of r.outputs().filter((x) => x.block === 'Q')) out[o.nuclide] = r.series(o)[0];
+		return out;
+	};
+	const byElement = valueAtStart(model('Elements'));
+	const uranium = mol('U-238') + mol('U-234');
+	close(byElement['U-238'], 0.6 * 1e-6 / uranium, 1e-9, 'uranium shares its own limit');
+	close(byElement['U-234'], byElement['U-238'], 1e-12, 'every isotope of an element gets the same fraction');
+	for (const n of ['Th-230', 'Cs-135', 'Cs-137']) {
+		close(byElement[n], 0.6, 1e-12, `${n} is not held back by the uranium's solubility`);
+	}
+	// In moles, uranium leaves at q \u00d7 Sol, split by atoms.
+	const uFlux = byElement['U-238'] * mol('U-238') + byElement['U-234'] * mol('U-234');
+	close(uFlux, 0.6 * 1e-6, 1e-9, 'the element leaves at q \u00d7 limit');
+
+	// Over the nuclide list it is one group, as it always was: every atom in
+	// the canister counts against the limit read at the index -- uranium's
+	// for a uranium isotope, so the caesium holds the uranium back further.
+	const overAll = valueAtStart(model('Radionuclides'));
+	const everything = nuclides.reduce((sum, n) => sum + mol(n), 0);
+	close(overAll['U-238'], 0.6 * 1e-6 / everything, 1e-9, 'one group over the whole list');
+	close(overAll['Cs-137'], 0.6, 1e-12, 'with a limit of 1e300 nothing is held back');
+
+	// A limit may read a value per transfer, which it answers for exactly as
+	// the rate would -- `SolQ` means `SolQ[Q]` -- and it reaches the same
+	// answer when no element other than uranium is in the canister.
+	const perTransfer = valueAtStart(model('Elements', 'SolQ', ['U-238', 'U-234']));
+	close(perTransfer['U-238'], byElement['U-238'], 1e-12, 'a per-transfer limit read in a limit');
+
+	// The matrix: analytic, and in agreement with differences. A uranium flux
+	// reads both uranium inventories; it does not read the caesium's.
+	const sys = build(new Project(model('Elements')));
+	assert(sys.jacobian?.available, `declined: ${sys.jacobian?.reason}`);
+	const state = (block, n) => {
+		const s = sys.layout.states.find((x) => x.name === block);
+		return s.base + nuclides.indexOf(n);
+	};
+	const { colPtr, rowIdx } = sys.jacobian.pattern;
+	const has = (row, col) => {
+		for (let k = colPtr[col]; k < colPtr[col + 1]; k++) if (rowIdx[k] === row) return true;
+		return false;
+	};
+	assert(has(state('Water', 'U-238'), state('Canister', 'U-234')), 'the uranium isotopes are not coupled');
+	assert(!has(state('Water', 'U-238'), state('Canister', 'Cs-137')), 'the caesium couples to the uranium');
+	const c = checkJacobian(model('Elements'));
+	assert(c.verdict === 'agrees', `the Jacobian ${c.verdict}: ${JSON.stringify(c.at?.flatMap((s) => s.disagreements)[0] ?? {})}`);
+	// Uranium below its limit, and past it, differenced directly.
+	for (const scale of [1e-9, 1]) {
+		const y = new Float64Array(sys.layout.nstate);
+		for (const n of nuclides) y[state('Canister', n)] = inventory[n] * scale;
+		const bad = differencesDisagree(sys, 0, y);
+		assert(!bad, `at ${scale} of the inventory: ${bad}`);
+	}
+
+	// A list that is neither one the donor has nor a grouping of one leaves
+	// nothing to share along: the individual scheme, as before -- and like
+	// that scheme it reads the donor in the model's own unit, since a molar
+	// basis is a way of adding up a group and there is no group.
+	const lone = valueAtStart(model('Compartments'));
+	close(lone['U-238'], 0.6 * Math.min(1e-6 / inventory['U-238'], 1), 1e-9,
+		'an unrelated list is the individual limit');
+});
+
+test('bq2mole and mole2bq have derivatives, so a rate that reads the state through them stays analytic', async () => {
+	const { buildSystem: build } = await import('../src/sim/builder.js');
+	const raw = {
+		name: 'conv',
+		simulation: {
+			start_time: 0, end_time: 1, output_points: 2, spacing: 'linear',
+			solver: 'ndf', rtol: 1e-10, abstol: 1e-12, time_unit: 'year',
+		},
+		nuclides: ['I-129', 'Cs-137'],
+		parameters: [{ name: 'T', value: 30, index_lists: [] }],
+		compartments: [
+			{ name: 'A', initial: '1e9', index_lists: ['Radionuclides'] },
+			{ name: 'B', initial: '1e6', index_lists: ['Radionuclides'] },
+		],
+		transfers: [
+			// Both arguments carry a tangent: the amount and a half-life that
+			// follows the other compartment.
+			{ name: 'ab', from: 'A', to: 'B', rate: '1e-3 * bq2mole(A, T + 1e-6 * B) * 1e12' },
+			{ name: 'ba', from: 'B', to: 'A', rate: '1e-15 * mole2bq(1e-6 * A, T + 1e-6 * A)' },
+		],
+	};
+	const sys = build(new Project(raw));
+	assert(sys.jacobian?.available, `declined: ${sys.jacobian?.reason}`);
+	const y = sys.initialState();
+	const bad = differencesDisagree(sys, 0, y, 1e-5);
+	assert(!bad, bad);
 });
 
 test('an availability is set in the transfer\u2019s own settings', async () => {
@@ -3389,6 +3606,19 @@ test('a model brings its own probabilistic settings, and Run stays deterministic
 	assert(runSim, 'runSimulation is gone');
 	assert(!/probabilistic/i.test(runSim), 'Run starts a probabilistic run');
 	assert(/type: 'probabilistic'/.test(app), 'nothing can start one at all');
+
+	// The dialog's size is the run's size: realisations are reported on the
+	// model's grid, not at the last run's times, which on a model that also
+	// keeps the solver's own points are ten times as many.
+	const opener = /function openProbabilistic\(\)[\s\S]*?\n\}/.exec(app)?.[0] ?? '';
+	assert(/times: timesOfModel\(\)\.length/.test(opener),
+		'the probabilistic dialog is not counting the grid the run reports on');
+	assert(/new Project\(structuredClone\(state\.raw\)\)\.timeGrid\(\)/.test(app), 'timesOfModel changed');
+	const both = new Project({
+		simulation: { ...DEFAULT_SIMULATION, spacing: 'both', start_time: 0, end_time: 100,
+			output_times: [{ kind: 'linear', points: 11, from: 0, to: 100 }] },
+	});
+	assert(both.timeGrid().length === 11, `a 'both' model's grid is ${both.timeGrid().length} times`);
 });
 
 test('a probabilistic run gives the band the maths says it should', async () => {
@@ -32560,6 +32790,131 @@ test('ticking a parameter does not throw the list back to the top', async () => 
 	const epHandler = /box\.addEventListener\('change', \(\) => \{([\s\S]*?)\n\t\t\t\t\}\);/.exec(eps)?.[1] ?? '';
 	assert(epHandler && !/modal\.refresh\(\)/.test(epHandler) && /retally\(\)/.test(epHandler),
 		'the endpoint picker rebuilds on a tick');
+});
+
+test('a long generated function runs in parts and gives the same numbers', async () => {
+	const { tapePrelude } = await import('../src/parser/compile.js');
+	// V8 will not optimise a function of more than 60 KB of bytecode, so
+	// buildFunction cuts a long body into parts (see splitBody in
+	// compile.js). This body has the shapes the generators write: the tape
+	// line, conditionals through a top-level `let`, a flux `const` read on
+	// the next lines, loops with block-scoped locals, and a return at the end.
+	const lines = [tapePrelude()];
+	for (let k = 0; k < 900; k++) {
+		lines.push(`\t// block ${k}`);
+		// A local read twenty blocks after it is made: no cut may fall
+		// between the two.
+		if (k === 400) lines.push('\tconst early = y[0] * 2;');
+		if (k === 420) lines.push('\tout[0] += early;');
+		lines.push(`\tT[${k}] = y[${k % 7}] * P[${k % 3}] + ${k};`);
+		lines.push(`\tlet v${k};`);
+		lines.push(`\tif (T[${k}] > ${k + 1.5}) { v${k} = T[${k}] / 3; } else { v${k} = -T[${k}]; }`);
+		lines.push(`\tconst f${k} = v${k} * y[${(k + 1) % 7}];`);
+		lines.push(`\tout[${k % 7}] -= f${k};`);
+		lines.push(`\tout[${(k + 3) % 7}] += f${k};`);
+		lines.push(`\tfor (let n0 = 0; n0 < 3; n0++) {`);
+		lines.push(`\t\tconst s = T[${k}] * n0;`);
+		lines.push(`\t\tX[${k} * 3 + n0] = s + y[n0];`);
+		lines.push('\t}');
+	}
+	lines.push('\treturn out;');
+	const body = lines.join('\n');
+	const params = ['y', 'out', 'P', 'X'];
+	const split = buildFunction(params, body, 'dydt');
+	assert(split.parts > 5, `a ${body.length}-character body was not cut (${split.parts} part)`);
+	assert(split.source === `"use strict";\n${body}`, 'the source is no longer the whole body');
+	// eslint-disable-next-line no-new-func
+	const whole = new Function('F', 'ctx', ...params, `"use strict";\n${body}`);
+	const y = Float64Array.from([1.5, -2, 3.25, 0.5, 7, -1, 2]);
+	const P = Float64Array.from([0.3, 2, -1.1]);
+	const run1 = (fn) => {
+		const ctx = {};
+		const out = new Float64Array(7);
+		const X = new Float64Array(2700);
+		const r = fn({}, ctx, y, out, P, X);
+		return { r, out, X, T: ctx.__tape };
+	};
+	const a = run1(split);
+	const b = run1(whole);
+	assert(a.r === a.out, 'the parts do not return what the last one returns');
+	assert(a.out.every((v, i) => Object.is(v, b.out[i])), 'the parts change out');
+	assert(a.X.every((v, i) => Object.is(v, b.X[i])), 'the parts change X');
+	assert(a.T.length === b.T.length && a.T.every((v, i) => Object.is(v, b.T[i])), 'the parts change the tape');
+
+	// What the scan does not understand is compiled whole, as before.
+	const filler = Array.from({ length: 2000 }, (_, k) => `\tX[${k}] = y[0] + ${k};`).join('\n');
+	for (const [what, text] of [
+		['a string', `${filler}\n\tX[0] = F.named("a").fn(ctx);\n${filler}`],
+		['a return before the end', `${filler}\n\tif (y[0] > 0) { return X; }\n${filler}`],
+		['an arrow function', `${filler}\n\tX[1] = [1, 2].map((q) => q)[0];\n${filler}`],
+	]) {
+		assert(buildFunction(['y', 'X'], text).parts === 1, `a body with ${what} was cut`);
+	}
+	assert(buildFunction(['y', 'X'], '\tX[0] = y[0];').parts === 1, 'a short body was cut');
+});
+
+test('the LU that keeps its pivots solves what the searching one does', async () => {
+	// ./refactor.js chooses pivots once and replays them, checking each one;
+	// sparseIterationMatrix uses it where it costs no more than Gilbert-Peierls.
+	const { RefactorLU } = await import('../src/ode/refactor.js');
+	const { sparseIterationMatrix } = await import('../src/ode/sparse.js');
+	const { readFileSync: read } = await import('node:fs');
+	const project = new Project(JSON.parse(read(new URL('../examples/farfield.json', import.meta.url), 'utf8')));
+	const sys = buildSystem(project);
+	const { pattern } = sys.jacobian;
+	const { n, colPtr, rowIdx } = pattern;
+	const J = Float64Array.from(sys.jacobian.evaluate(0, sys.initialState()));
+	// ||(I - hJ) x - b|| / (||I - hJ|| ||x|| + ||b||), infinity norms.
+	const backward = (h, x, b) => {
+		const r = Float64Array.from(x, (v, i) => v - b[i]);
+		const rowSum = new Float64Array(n).fill(1);
+		for (let j = 0; j < n; j++) {
+			for (let p = colPtr[j]; p < colPtr[j + 1]; p++) {
+				r[rowIdx[p]] -= h * J[p] * x[j];
+				rowSum[rowIdx[p]] += Math.abs(h * J[p]);
+			}
+		}
+		const inf = (v) => v.reduce((m, e) => Math.max(m, Math.abs(e)), 0);
+		return inf(r) / (inf(rowSum) * inf(x) + inf(b));
+	};
+	const b = Float64Array.from({ length: n }, (_, i) => Math.sin(i + 1));
+	const lu = new RefactorLU(pattern);
+	for (const h of [1e-3, 1, 1e3, 1e6, 1e9]) {
+		assert(lu.factor(h, J), `I - ${h}J of the farfield model was declined`);
+		const e = backward(h, lu.solve(b), b);
+		assert(e < 1e-14, `I - ${h}J solves with backward error ${e}`);
+	}
+	const W = sparseIterationMatrix(n, pattern, J);
+	assert(W?.lu === 'refactor', `sparseIterationMatrix gave the farfield model ${W?.lu}`);
+	W.form(1e3, J);
+	assert(backward(1e3, W.solve(b), b) < 1e-14, 'through sparseIterationMatrix it solves worse');
+
+	// With h = -1 the matrix is I + J: a full 3 x 3 whose first kept pivot
+	// collapses is chosen again; a zero matrix and a NaN are declined.
+	const full = { n: 3, nnz: 9, colPtr: Int32Array.from([0, 3, 6, 9]), rowIdx: Int32Array.from([0, 1, 2, 0, 1, 2, 0, 1, 2]) };
+	const ofMatrix = (A) => Float64Array.from(A, (v, k) => v - (k % 4 === 0 ? 1 : 0));	// column-major, minus I
+	const small = new RefactorLU(full);
+	const A = [4, 1, 0, 1, 5, 1, 0, 1, 6];
+	assert(small.factor(-1, ofMatrix(A)), 'a well-conditioned 3 x 3 was declined');
+	const collapsed = A.slice();
+	collapsed[small.pc[0] * 3 + small.pr[0]] = 1e-9;
+	const before = small.repivots;
+	assert(small.factor(-1, ofMatrix(collapsed)), 'the matrix with a collapsed pivot was declined');
+	assert(small.repivots === before + 1, 'a collapsed kept pivot was used rather than chosen again');
+	const x = small.solve(Float64Array.from([1, 2, 3]));
+	const res = [0, 1, 2].map((i) => Math.abs(collapsed[i] * x[0] + collapsed[3 + i] * x[1] + collapsed[6 + i] * x[2] - (i + 1)));
+	assert(Math.max(...res) < 1e-14, `after choosing again the residual is ${Math.max(...res)}`);
+	assert(!small.factor(-1, ofMatrix([0, 0, 0, 0, 0, 0, 0, 0, 0])), 'a zero matrix was factorised');
+	assert(!small.factor(-1, ofMatrix([NaN, 1, 0, 1, 5, 1, 0, 1, 6])), 'a matrix with a NaN was factorised');
+
+	// A matrix it declines goes to Gilbert-Peierls, whose singular message is
+	// the one the reader gets: I - 1*I is zero.
+	const m = 30;
+	const diag = { n: m, nnz: m, colPtr: Int32Array.from({ length: m + 1 }, (_, k) => k), rowIdx: Int32Array.from({ length: m }, (_, k) => k) };
+	const D = sparseIterationMatrix(m, diag, new Float64Array(m).fill(0.5));
+	let said = '';
+	try { D.form(2, new Float64Array(m).fill(0.5)); } catch (e) { said = e.message; }
+	assert(/singular at column/.test(said), `a singular matrix said ${JSON.stringify(said)}`);
 });
 
 // =========================================================================

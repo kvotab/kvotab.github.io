@@ -146,7 +146,11 @@ L, with their sizes given where they matter.
    years by the seconds in a year, where it must be multiplied, leaves the two
    out by that factor squared — about 1e15. Neither name is reachable from an
    equation in any corpus file, so there is no behaviour in the field to match,
-   and the honest inverse is what this implements.
+   and the honest inverse is what this implements. Both have tangent rules —
+   `bq2mole(a, T)` is bilinear and `mole2bq(n, T)` linear in `n` and `1/T` —
+   written through the functions themselves, so a rate that reads a
+   compartment through one keeps the analytic Jacobian and can never use a
+   different Avogadro's number or year from the value it differentiates.
 
 4. **`lambda = ln(2) / halfLife`, with the half-life converted into the
    simulation's time unit**, not into seconds.
@@ -3037,12 +3041,38 @@ with the inventory when it no longer does, and `examples/biosphere.json` runs
 to a million steps and stops at the moment the inventory crosses the limit,
 whatever the limit is.
 
-So the analytic Jacobian is **declined** for a transfer that carries an
-availability, and the solvers difference df/dy instead — slower, and right. A
-wrong matrix is worse than none. Lifting the restriction means giving each
-scheme a `g(y) = y·a(y)` and a `g'`, and — for the shared ones, where the
-availability reads every other inventory in the group — widening the sparsity
-pattern to match.
+The analytic Jacobian used to be **declined** for such a transfer, which is
+safe and made availabilities unusable on large models: a 16,720-state
+repository model with one solubility limit would have needed its matrix
+differenced densely, 2.1 GB of it. Now the availability is folded into the
+transfer's own algebraic slot, so the transfer's value is rate × availability:
+
+- **its operands have slots of their own.** The limit, or the two Langmuir
+  coefficients, are `<transfer>#limit` (`#top`, `#bottom`), hidden, of the
+  transfer's dimensions, parsed and ordered like any equation and answering
+  `_source_`, `_target_` and a per-transfer value as the rate does. The
+  transfer's slot `needs` them.
+- **the product is one pass after the rate.** Whichever way the rate was
+  written out — one scalar line, a loop, per-entry bodies — `emitAvailability`
+  then loops the transfer's dimensions and multiplies each slot by the
+  scheme's expression (`expressionOf`) in the donor's amount. The slot now
+  reads `y`, so the classification puts it with the slots worked out on every
+  call, and the derivative assembly is `donor × value` for every transfer.
+- **the amount is a list of terms.** `availabilityTerms` gives the offsets it
+  sums, each with its molar weight and, for a group, its condition: shared
+  over a *grouping* of the donor's list (`Elements`), the group is read at run
+  time from the grouping's table, `MAPS[g][peer] === k`, against each
+  member's group worked out at build time. The value (`y`), its tangent (`v`)
+  and the pattern's columns are all written from that one list.
+- **the tangent is the scheme's own** (`tangentOf`): zero before a limit's
+  corner, `(dL·a − L·da)/a²` past it, the quotient rule for Langmuir, the sign
+  turned over for what is held back — differentiated as the code is written,
+  branch by branch. `d(r·A) = dr·A + r·dA` is emitted after the rate's own
+  tangent. Along a parameter the amount's tangent is null.
+
+`test/run.js` compares the matrix with central differences on both sides of
+every scheme's limit, individual and shared, and with a grouped limit whose
+groups must not couple.
 
 ## Switch times
 
@@ -4517,13 +4547,11 @@ needed one new idea, `dashed`, and no other.
 Each of these is a decision rather than an oversight, and each says what it
 costs and what it would take to lift.
 
-**The analytic Jacobian is optional, and the fallback is dense.** Four things
-decline it: a transfer scaled by an *availability*, which makes the flux
-non-linear in the inventory and puts entries in the matrix the pattern does not
-know about; the *mass-balance audit*, which appends budget states that are not
+**The analytic Jacobian is optional, and the fallback is dense.** Three things
+decline it: the *mass-balance audit*, which appends budget states that are not
 in the pattern; a function with no derivative rule, or one reached with a live
 argument; and a model large enough to pass the tangent generator's ceiling of
-250,000 statements. Without the pattern there is nothing for `src/ode/sparse.js`
+250,000 statements. (An availability used to be a fourth; see *Availability*.) Without the pattern there is nothing for `src/ode/sparse.js`
 to factorise either, so those runs difference `df/dy` and factorise it densely —
 comfortable to a few hundred states and slow past a thousand. Each refusal
 names itself in the run's statistics rather than happening quietly.
@@ -4614,3 +4642,134 @@ correlates sampled parameters by Iman and Conover's permutation — see
 project is not read into it. The importer counts the pairs and warns that a
 probabilistic run here will spread wider than the file's own would; setting the
 correlations up again in the model is what makes it agree.
+
+## Generated functions in parts
+
+V8 will not hand a function of more than 60 KB of bytecode to its optimising
+compiler (`--max-optimized-bytecode-size`, 61,440 bytes). A longer one stays in
+the baseline tier for the whole run, however hot it is. The generated functions
+here pass that as soon as a model is large. On LandscapeAllChain (the SR-PSU
+biosphere model, 9,462 states), the derivative is 3.0 MB of source in 39,710
+lines and the Jacobian tangent 7.3 MB in 246,892 lines. Raising the limit is no
+way out: at these sizes the optimising compiler crashes, as it did in Node when
+the flag was tried.
+
+So `buildFunction` (`src/parser/compile.js`) cuts a body of more than about
+30,000 characters into parts of about 24,000, which is 17 to 24 KB of bytecode.
+Each part is compiled as a function of the same arguments, and the result is a
+function that calls them in order and returns what the last one returns. A part
+is a slice of the body and nothing else. Everything the generated code carries
+from one statement to a later one is in the arrays it is handed (`X`, `T`,
+`out`, `dX` and so on), which every part sees. `splitBody` cuts only where that
+is the whole story:
+
+- between top-level statements, never inside a loop, a block or a bracket;
+- past the last use of every top-level local declared so far. A transfer's
+  `const f12` or a conditional's `let v3` lives for a few lines, and the cut
+  waits for it;
+- the tape line (`tapePrelude`) is the one exception: it is idempotent and read
+  throughout, so every part begins with it.
+
+A body the scan does not fully understand (a string, a template, a block
+comment, a nested function, a `return` before the end, or an unfamiliar
+declaration) is compiled whole, as before. So is one whose parts fail to
+compile. `fn.source` is still the whole body, which is what the code view
+shows, and `fn.parts` says how many parts there are. The jump functions
+(`builder.js`, compiled with `new Function` directly) are not cut, because they
+run once per jump.
+
+Measured in Node 20, per call, at steady state:
+
+| model | states | derivative | clock-only pass | Jacobian |
+|---|---|---|---|---|
+| LandscapeAllChain | 9,462 | 19.4 → 0.76 ms | 1.32 → 0.05 ms | 151 → 7.7 ms |
+| Loviisa AoRD model-2 | 16,244 | 19.7 → 1.0 ms | 0.70 → 0.07 ms | 2,675 → 229 ms |
+
+A whole run of the Loviisa model took 1,361 s before and takes 186 s now, in
+the same 5,741 steps. Build times did not change (4.3 s; Loviisa 5.7 s before,
+4.9 s now).
+
+**The results are the same to the last bit.**
+
+- Every one of the 66 files in the `.eco` corpus here that builds gives
+  identical derivative and Jacobian values at six (t, y) points.
+- The ten bundled examples, and full runs of four corpus models (SimpleSilo,
+  BHASimplePA, BHKSimplePA and Loviisa), give identical output series.
+
+`test/run.js` has a test that builds a long body in the generators' shapes and
+compares it with the same body compiled whole. It fails if the cut ignores
+either the brackets or the liveness of a local.
+
+**Not yet revisited.** The tangent's statement ceiling (`MAX_STATEMENTS` and
+`MAX_LINES` in `src/sim/jacobian.js`) was set for the compile time and the cost
+per call of one whole function. With parts, the cost per call is an order of
+magnitude lower, so the ceiling may now be set too low. It has not been
+re-measured.
+
+## An LU that keeps its pivots
+
+A stiff run factorises I - h*J hundreds or thousands of times. The pattern
+never changes and the values change slowly, yet the Gilbert-Peierls LU in
+`src/ode/sparse.js` redoes all of it every time: a depth-first reach for every
+column, and a search for every pivot. On a 16,244-state assessment model the
+factorisations were 28 % of the run, and the solves another 5 %.
+
+`src/ode/refactor.js` chooses the pivots once, from the values, and records
+every elimination. Each later matrix is factorised by replaying the record,
+with nothing searched. It is a port of the same class in
+`resources/js/facsimile-solver.js`, where the canister and reactive-transport
+pages use it.
+
+**Choosing.** At each step it takes the entry with the least (row count - 1) x
+(column count - 1), among those at least 0.1 times the largest in their column
+(threshold Markowitz; 0.1 is UMFPACK's and MA48's default). The search looks at
+the sixteen sparsest columns that have a candidate. It can also keep the column
+order `sparseIterationMatrix` already found (natural or reverse Cuthill-McKee)
+and choose only each pivot's row, by the same test, preferring short rows.
+`sparseIterationMatrix` runs both on the trial matrix and keeps the cheaper.
+Markowitz wins where the bandwidth order fills in, and the fixed order wins on
+banded blocks that order keeps together: a decay chain in a column of cells
+took 22,800 multiply-adds against Markowitz's 44,000.
+
+**Checking.** Every replayed step is checked. The pivot must be nonzero and
+finite, and no entry below it may exceed it by more than 100, a threshold of
+0.01 (MA57's default). That bounds the growth of each step. A pivot chosen at
+0.1 can drift a long way before it fails 0.01. On a reactive-transport model,
+re-checking at 0.1 meant choosing again at half of all factorisations; at 0.01
+it was one in twenty. A failing step is chosen again from the matrix as it
+stands, and so is every later step. Choosing from the middle keeps pivots
+chosen for an earlier matrix, and the order drifts: re-choosing from the
+failing step every time took one model's work per factorisation from 190,000
+multiply-adds to 820,000. So past 1.2 times the work of the last choice made
+from the start, it starts again.
+
+**Declining.** A matrix it cannot factor this way, because nothing acceptable
+is left to pivot on or a value is not finite, goes to Gilbert-Peierls. That LU
+either factors it or reports it singular with the message it always gave, so
+a declined matrix never needs a dense one.
+
+**When it is used.** `sparseIterationMatrix` uses it when a trial on the same
+matrix costs no more than the alternative: Gilbert-Peierls's own count where
+the factor stays sparse, a quarter of n^3/3 where it would have gone dense.
+Both counts are structural. Gilbert-Peierls skips exact zeros as it goes, and
+a trial taken at the initial state is full of them, so its runtime count
+flattered it by a factor of two on one model. It is also kept under 4 million
+multiply-adds. The record holds one index per multiply-add, and past that it is
+16 MB; a synthetic chemistry of dense 120 x 120 blocks needed 32 million, and
+stays on Gilbert-Peierls. The stats say which LU ran (`lu`), and the UI reports
+it as sparse, with its fill.
+
+**Measured.** In Node, with the same steps:
+- the 16,244-state assessment model: 176 s to 128 s;
+- the mid-size corpus models (1,100 to 1,500 states), where the LU was about
+  a tenth of the run: 3 to 6 % faster;
+- the farfield example: 0.68 s to 0.64 s.
+
+It does not give the same bits, since the pivots differ. On the farfield and
+decay-chain examples and two corpus models, the output series agree to within
+a fifth of rtol x |y| + atol. On a third they differ by up to 19 times that.
+Nudging rtol by one part in 10^10 moves that model's own answer by 12 to 20
+times, so this is the model's sensitivity at its tolerance, not the LU.
+`test/run.js` checks the backward error on the farfield model's matrices over
+nine orders of magnitude of h, the choosing-again of a collapsed pivot, the
+declining of singular and NaN matrices, and the singular message.

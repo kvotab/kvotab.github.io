@@ -185,7 +185,7 @@ for (const id of scenarios) {
   }
   const s = res.stats;
   console.log(`\n${id}: ${preset.label}`);
-  console.log(`  ${s.solver} rtol ${rtol} atol ${opt.atol}: ${s.nsteps} steps, ${s.nfailed} failed, ${s.nfevals} f-evals, ${s.npds} Jacobians, ${s.ndecomps} LU, ${s.nsolves} solves, ${s.segments} segment(s), ${(Date.now() - t0) / 1000} s; iteration matrix ${s.sparse ? 'sparse' : 'dense'} (fill ${s.fill}, ${s.ordering})`);
+  console.log(`  ${s.solver} rtol ${rtol} atol ${opt.atol}: ${s.nsteps} steps, ${s.nfailed} failed, ${s.nfevals} f-evals, ${s.npds} Jacobians, ${s.ndecomps} LU, ${s.nsolves} solves, ${s.segments} segment(s), ${(Date.now() - t0) / 1000} s; iteration matrix ${s.lu || (s.sparse ? 'sparse' : 'dense')} (fill ${s.fill}, ${s.ordering}${s.lu === 'refactor' ? `, pivots re-chosen ${s.repivots}, dense fallbacks ${s.fallbacks}` : ''})`);
   res.events.forEach((ev) => console.log(`  event at t = ${(ev.t / 3600).toFixed(4)} h: ${
     ev.stop ? `the run stopped here${ev.changed.length ? ` (${ev.changed.join(', ')})` : ''}` : ev.changed.join(', ')}`));
   if (res.grid) console.log(`  output grid: ${res.grid.t.length} of the ${res.grid.wanted} times the model asks for`);

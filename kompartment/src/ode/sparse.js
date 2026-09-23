@@ -34,6 +34,8 @@
  *   qcol[k]      = j, the original column factorised at step k
  */
 
+import { RefactorLU, OPS_BUDGET } from './refactor.js';
+
 // --- the container ----------------------------------------------------------
 
 export class CSC {
@@ -402,6 +404,10 @@ export class SparseLU {
 			const j = xi[px];
 			const J = pinv[j];
 			if (J < 0) continue;				// row j has no pivot yet: nothing to do
+			// Counted whatever the value, for comparing with ./refactor.js,
+			// whose count is structural too: a zero at the trial is rarely a
+			// zero at every step.
+			this.flops += Lp[J + 1] - Lp[J] - 1;
 			const xj = x[j];					// L(j,j) === 1, so no division
 			if (xj === 0) continue;
 			for (let p = Lp[J] + 1; p < Lp[J + 1]; p++) x[Li[p]] -= Lx[p] * xj;
@@ -434,6 +440,7 @@ export class SparseLU {
 		this.mark.fill(-1);
 		this.stampCounter = 0;
 		this.x.fill(0);
+		this.flops = 0;
 
 		this.maxA = A.maxAbs();
 		let maxU = 0;
@@ -735,20 +742,77 @@ export function sparseIterationMatrix(neq, pattern, values, { mustBeSparse = fal
 		best = pattern.nnz;
 		q = rcm;
 	}
-	if (!mustBeSparse && !(best < SPARSE_MAX_FILL * neq * neq)) return null;
+	const fillsIn = !mustBeSparse && !(best < SPARSE_MAX_FILL * neq * neq);
+	const searching = (a, current) => {
+		factors.factorize(builder.update(a, current), { q });
+		if (factors.singular) {
+			throw new Error(
+				`The iteration matrix I - h*J is singular at column `
+					+ `${factors.failOriginalColumn}. A compartment with no way in `
+					+ `and no way out will do this.`,
+			);
+		}
+		return factors;
+	};
+
+	// The LU that keeps its pivots (./refactor.js), if it costs no more than
+	// what would otherwise be used: the dense LU's n^3/3 (a quarter of it, for
+	// margin) where this factor fills in, and this LU's own count where it does
+	// not, both structural. Two trials: pivots by threshold Markowitz, and rows
+	// chosen in the column order found above. Each stops as soon as it has
+	// spent that much, or OPS_BUDGET.
+	factors.factorize(M, { q });
+	const alternative = fillsIn ? 0.25 * neq * neq * neq / 3 : factors.flops;
+	const limit = Math.min(OPS_BUDGET, alternative);
+	const trial = (columns, most) => {
+		const lu = new RefactorLU(pattern, columns);
+		lu.limit = most;
+		const ok = lu.factor(1e-3, values);
+		lu.limit = Infinity;
+		return ok ? lu : null;
+	};
+	const byMarkowitz = trial(null, limit);
+	const byColumns = trial(q ?? Int32Array.from({ length: neq }, (_, i) => i),
+		byMarkowitz ? Math.min(limit, byMarkowitz.ops) : limit);
+	const kept = byColumns && (!byMarkowitz || byColumns.ops < byMarkowitz.ops) ? byColumns : byMarkowitz;
+	if (kept) {
+		// A matrix it declines goes to the searching LU, whose answer, or
+		// singular message, is final.
+		let current = kept;
+		const matrix = {
+			sparse: true,
+			lu: 'refactor',
+			fill: kept.nnz,
+			repivots: 0,
+			fallbacks: 0,
+			form(a, J) {
+				const before = kept.repivots;
+				if (kept.factor(a, J)) {
+					current = kept;
+					matrix.fill = kept.nnz;
+				} else {
+					matrix.fallbacks++;
+					current = searching(a, J);
+				}
+				matrix.repivots += kept.repivots - before;
+			},
+			solve(rhs) {
+				return current.solve(rhs);
+			},
+			rowsDotY(J, yp, out) {
+				return sparseMatVec(pattern, J, yp, out);
+			},
+		};
+		return matrix;
+	}
+	if (fillsIn) return null;
 
 	return {
 		sparse: true,
+		lu: 'sparse',
 		fill: best,
 		form(a, current) {
-			factors.factorize(builder.update(a, current), { q });
-			if (factors.singular) {
-				throw new Error(
-					`The iteration matrix I - h*J is singular at column `
-						+ `${factors.failOriginalColumn}. A compartment with no way in `
-						+ `and no way out will do this.`,
-				);
-			}
+			searching(a, current);
 		},
 		solve(rhs) {
 			return factors.solve(rhs);

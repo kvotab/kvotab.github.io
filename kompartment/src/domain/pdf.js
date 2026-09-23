@@ -62,6 +62,8 @@
  * fields empty, and they are written back as they came.
  */
 
+import { erfc } from '../parser/functions.js';
+
 /** What each kind is called where a person reads it, and what it takes. */
 export const PDF_KINDS = {
 	unif: {
@@ -328,14 +330,20 @@ export function formatPDF(spec) {
 	return `${meta.expr}(${bits.join(',')})`;
 }
 
-/** The standard normal's CDF, from Abramowitz & Stegun 7.1.26 on erf. */
+/**
+ * The standard normal's CDF, to double precision.
+ *
+ * It was Abramowitz & Stegun 7.1.26, which is good to 7e-8 absolutely and
+ * nothing like that relatively in a tail: 0.16% of the probability below
+ * z = -5, 2% below -8. That is where a truncation reads it -- `trmin` and
+ * `trmax` become the probabilities a draw is taken between -- so a curve cut
+ * in its own tail was cut in the wrong place, and every draw from a truncated
+ * normal sat up to 1e-7 in probability away from where SciPy (skbrnt) puts it.
+ * `erfc` rather than `1 + erf`, because the lower tail is a small number in
+ * its own right and a sum with 1 rounds it away.
+ */
 export function phi(z) {
-	const x = z / Math.SQRT2;
-	const t = 1 / (1 + 0.3275911 * Math.abs(x));
-	const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t
-		- 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x);
-	const erf = x >= 0 ? y : -y;
-	return 0.5 * (1 + erf);
+	return 0.5 * erfc(-z / Math.SQRT2);
 }
 
 /* -------------------------------------------------------------------------
@@ -541,7 +549,8 @@ function quantileFit({ p1, x1, p2, x2 }) {
  *
  * Accurate to about 1.15e-9 over the whole range, which is far more than a
  * curve on screen needs and enough that the two points a `logn5` is fitted
- * through land where they were asked to.
+ * through land where they were asked to. A draw from a truncated curve can
+ * come back that far outside its cut; `valueAtProbability` clamps it.
  */
 export function probit(p) {
 	const q = Number(p);

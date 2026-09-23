@@ -617,7 +617,8 @@ function maskedSparse(inner, pattern) {
 	let masked = null;
 	return {
 		sparse: true,
-		fill: inner.fill,
+		lu: inner.lu,
+		get fill() { return inner.fill; },
 		form(a, values, held) {
 			let use = values;
 			if (held) {
@@ -1302,6 +1303,7 @@ export function ndf(f, tspan, y0, options = {}) {
 			nsteps, nfailed, npds, ndecomps, nsolves, nbelowtol, negative, held,
 			sparse: W.sparse,
 			fill: W.fill,
+			lu: W.lu ?? (W.sparse ? 'sparse' : 'dense'),
 		},
 	};
 }

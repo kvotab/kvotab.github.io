@@ -77,9 +77,10 @@
                     aria-expanded="false" aria-controls="rtmAdvanced">Advanced settings</button>
             <div id="rtmAdvanced" hidden>
               <div class="rtm-row">
-                <label>Iteration matrix<span class="rtm-name">auto: sparse unless the factor fills in</span></label>
+                <label>Iteration matrix<span class="rtm-name">auto: chosen by the measured fill</span></label>
                 <select id="rtmMatrix" data-on-change="rtm:solverChanged">
                   <option value="auto">auto</option>
+                  <option value="refactor">sparse LU, pivots kept</option>
                   <option value="sparse">sparse LU</option>
                   <option value="dense">dense LU</option>
                 </select>
@@ -833,16 +834,16 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
       rtm-ui             this page
   -->
   <script src="./resources/js/facsimile-model.js?v=20260920"></script>
-  <script src="./resources/js/facsimile-solver.js?v=20260921"></script>
+  <script src="./resources/js/facsimile-solver.js?v=20260923b"></script>
   <script src="./resources/js/ode-julia.js?v=20260920"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20260920"></script>
-  <script src="./resources/js/rtm-model.js?v=20260923"></script>
+  <script src="./resources/js/rtm-model.js?v=20260923a"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
   <script src="./resources/js/rtm-examples.js?v=20260921b"></script>
   <script src="./resources/js/rtm-worker.js?v=20260923"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20260921a"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
-  <script src="./resources/js/rtm-ui.js?v=20260923"></script>
+  <script src="./resources/js/rtm-ui.js?v=20260923b"></script>
 </body>
 </html>

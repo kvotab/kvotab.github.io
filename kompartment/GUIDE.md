@@ -4386,7 +4386,7 @@ In the model file it is one object on the transfer:
 
 ```json
 { "name": "Leaching", "from": "Waste", "to": "Water", "rate": "k",
-  "availability": { "scheme": "shared_limit", "limit": "Sol[Element]", "over": "Radionuclides" } }
+  "availability": { "scheme": "shared_limit", "limit": "Sol * V", "over": "Elements", "basis": "moles" } }
 ```
 
 | `scheme` | What it does |
@@ -4410,6 +4410,25 @@ in. Three nuclides at 100, 50 and 25 under a shared limit stay at 0.571, 0.286
 and 0.143 of the total as they drain; under an individual limit they do not,
 because each is being held to the same cap regardless of how much of it there is.
 
+**What the group is comes from Shared over** (`over`), read against the donor's
+own dimensions:
+
+| `over` | The group |
+|---|---|
+| a list the donor is indexed by — `Radionuclides` | the whole of it: one limit shared by every nuclide the donor holds |
+| a grouping of one of those — `Elements` | one group per index: the isotopes of each element share that element's limit |
+
+The second is an elemental solubility: `Sol` per element, `over: "Elements"`, and
+uranium's isotopes share uranium's limit while caesium's share caesium's —
+the caesium is not held back by the uranium. The first adds everything the
+donor holds into one amount, so every atom in the compartment counts against
+the limit read at the index; it is the right choice for one element's
+isotopes on their own list, and it is what `over` naming the nuclide list has
+always done. An element that should not be limited at all is given a limit
+larger than anything the compartment can hold — `1e300`, say. A list that is
+neither — nothing along it for the donor to share — leaves the individual
+scheme, reading the donor in the model's own unit as that scheme does.
+
 **Sum the group in moles, not becquerels.** A solubility is a limit on atoms
 in solution, and becquerels do not count atoms: at equal activity U-238 is
 18,200 times the atoms of U-234, so a limit shared by activity holds the U-234
@@ -4424,17 +4443,23 @@ the basis decides *how much* moves, not *what*. To write a limit from a
 solubility, the expression is yours to type: `Sol * (V + Kd * M)` if the
 compartment's inventory includes what is sorbed.
 
-This makes the equations non-linear, and that has a cost: a transfer with an
-availability is no longer `donor × rate`, so the model gives up its **analytic
-Jacobian** and the solver differences df/dy instead. The answer is the same and
-the run is slower. On `examples/biosphere.json` with a solubility limit that is
-about 1,850 steps against 1,750 — but on a large model the difference is the
-one an analytic Jacobian usually makes.
+**With an availability, the transfer's own value is rate × availability.**
+That is what its name means in an equation and what the chart draws for it, so
+`Leaching * Waste` is still the flux through `Leaching` — the idiom every
+assessment model uses to read a flux keeps working — and the rate as typed is
+in the transfer's settings, where it is edited.
 
-Give an availability only to the transfers that need one. The rest keep theirs.
-(Teaching the tangent generator each scheme would lift this; for the shared ones
-it also means widening the sparsity pattern, since the availability then reads
-every other inventory in the group.)
+This makes the equations non-linear, and the **analytic Jacobian** follows: the
+tangent generator differentiates the scheme as the code is written, branch by
+branch — nothing past a limit's corner, `(dL·a − L·da)/a²` beyond it, the
+quotient rule for Langmuir — and the sparsity pattern takes every member of a
+shared group, since each flux reads all of them. The test suite checks the
+matrix against differences on both sides of every scheme's limit. On
+`examples/biosphere.json` with a solubility limit on the release, ros23 takes
+the same 734 steps it took when the matrix was differenced, with 2,204
+evaluations of the derivative rather than 13,948 — and on a model of tens of
+thousands of states, which could not be differenced at all, it is the
+difference between running and not.
 
 ## Reducing a dimension
 
@@ -5961,7 +5986,9 @@ tab, which is rewritten on **Apply**. `src/domain/units.js` is the derivation;
 `Project` falls back to it for a file that never passed through the editor.
 
 Referencing a transfer by name yields its rate, so `TCOut*C3` is the flux
-through `TCOut` — a common idiom in assessment models.
+through `TCOut` — a common idiom in assessment models. A transfer with an
+availability yields its rate times the availability, so the idiom still reads
+the flux; see [When only part of an inventory can move](#when-only-part-of-an-inventory-can-move).
 
 **A compartment's unit follows the model too, when it holds a radionuclide.** A
 compartment on the radionuclide dimension holds an inventory, and there are

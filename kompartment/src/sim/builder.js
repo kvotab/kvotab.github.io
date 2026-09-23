@@ -29,7 +29,9 @@ import { valueAt, hasDydt } from '../domain/project.js';
 import { makeTable, LookupError } from '../domain/lookup.js';
 import { materialUnit } from '../domain/units.js';
 import { OPERATION_FUNCTION, operatedList } from '../domain/reduce.js';
-import { schemeOf, expressionFor, isShared, basisOf, molesPerUnit } from '../domain/availability.js';
+import {
+	schemeOf, expressionOf, operandKeys, isShared, basisOf, molesPerUnit,
+} from '../domain/availability.js';
 import { TIME_UNITS, SECONDS_PER_YEAR, lambda } from '../domain/nuclides.js';
 import { TERMS as BUDGET_TERMS, UNINDEXED } from '../domain/massbalance.js';
 import {
@@ -503,7 +505,30 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 		return entry;
 	};
 	for (const e of project.expressions) addAlgebraic(e.qname ?? e.name, 'expression', e, 'equation');
-	for (const t of project.transfers) addAlgebraic(t.qname ?? t.name, 'transfer', t, 'rate');
+	for (const t of project.transfers) {
+		const slot = addAlgebraic(t.qname ?? t.name, 'transfer', t, 'rate');
+		// An availability's limit, or its two Langmuir coefficients, are the
+		// transfer's own equations with slots of their own -- of the transfer's
+		// dimensions, named with a `#` so that nothing can refer to them --
+		// worked out before the transfer's value, which is then its rate times
+		// the availability. So the flux is still `donor × value` wherever it
+		// is assembled, `T * donor` in an equation is still the flux through
+		// `T`, and the tangent generator differentiates the operands like any
+		// other equation. See ../domain/availability.js.
+		const scheme = schemeOf(t);
+		if (!scheme) continue;
+		slot.availability = { scheme, operands: {} };
+		for (const key of operandKeys(scheme)) {
+			const op = addAlgebraic(`${slot.name}#${key}`, `availability:${key}`,
+				{ ...t, entries: [], [key]: scheme[key] }, key, slot.dims);
+			op.hidden = true;
+			// The transfer it belongs to, so that `k[_source_]` and a value
+			// per transfer read in a limit mean what they mean in the rate.
+			op.transfer = slot.name;
+			slot.availability.operands[key] = op;
+		}
+		slot.needs = Object.values(slot.availability.operands).map((op) => op.name);
+	}
 	for (const s of project.inflows) addAlgebraic(s.qname ?? s.name, 'inflow', s, 'rate');
 	// A compartment's explicit dy/dt term -- the extra term the standard
 	// differential-equation assembly puts first in the sum of fluxes -- is a
@@ -1310,6 +1335,159 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 		}
 	}
 
+	/**
+	 * What an availability's amount is made of: one term per inventory it
+	 * sums, each `{ off, factor, when }` -- a state offset, the weight a unit
+	 * of it carries (1, or moles per unit on a molar basis), and the condition
+	 * under which it is in this flux's group at all (null for always).
+	 *
+	 * For an individual scheme that is the donor's own inventory. For a
+	 * shared one it is the donor summed over a group, and `over` says which:
+	 *
+	 *   one of the donor's own lists   the whole of it -- one limit for every
+	 *                                  nuclide the donor holds;
+	 *   a grouping of one of them      one group per index of the grouping --
+	 *                                  over `Elements`, the isotopes of each
+	 *                                  element against that element's limit,
+	 *                                  which is what an elemental solubility
+	 *                                  is.
+	 *
+	 * Which group this flux is in is only known when the code runs -- it is
+	 * the grouping's table read at the loop's own index -- so a grouped term
+	 * carries its condition, `MAPS[g][peer] === 3`, against the member's group
+	 * worked out here. The members are written out one per term, as the
+	 * whole-list sum always was: the group is known at build time. Every
+	 * member of a group then gets the same availability, which is what keeps
+	 * the proportions of what moves those of what is there; AMBER makes the
+	 * same point, that the values "are all equal ... this ensures that the
+	 * available amounts are in proportion to the full amounts".
+	 *
+	 * The derivative (as the amount), the tangent (as its tangent) and the
+	 * sparsity pattern (as the columns a flux reads) are all written from this
+	 * one list, so the three cannot disagree about what is in a group.
+	 */
+	const availabilityTerms = (transfer, scheme, src, alg, space2, vars, mapIdx) => {
+		const base = stateOffsetExpr(space2, alg.dims, vars, src, transfer.name, mapIdx);
+		const own = [{ off: base, factor: 1, when: null }];
+		if (!isShared(scheme.scheme)) return own;
+		const over = String(scheme.over ?? '').trim();
+		const dims = src.dims ?? [];
+		// Which of the donor's lists the group runs along, and how: the list
+		// itself (one group), or a grouping of it -- several of its indices to
+		// one of `over`'s, as `Elements` is of the nuclides.
+		let which = dims.indexOf(over);
+		let groups = null;
+		if (which < 0 && over && space2.has(over)) {
+			const grouping = space2.get(over);
+			for (let k = 0; k < dims.length && which < 0; k++) {
+				if (!grouping.mapping || grouping.rootName !== space2.get(dims[k]).rootName) continue;
+				const rel = space2.relate(over, dims[k]);
+				if (!rel || rel.kind !== 'map') continue;
+				which = k;
+				groups = rel.table;
+			}
+		}
+		// Where the donor has nothing along `over` there is nothing to share,
+		// and the sum is the donor itself -- which is the individual scheme,
+		// and the right answer rather than an error.
+		if (which < 0) return own;
+		const along = dims[which];
+		const size = space2.size(along);
+		if (!(size > 1)) return own;
+		const stride = space2.strides(dims)[which];
+		// Where in its list *this* one sits. `vars` is positional against the
+		// dimensions the loop was opened over -- the transfer's, not the
+		// donor's -- so the variable is found by position in those, and carried
+		// through a table when the transfer is indexed by a sub-set of it.
+		let peer = null;
+		const at = (alg.dims ?? []).indexOf(along);
+		if (at >= 0 && vars[at] != null) {
+			peer = vars[at];
+		} else {
+			for (let k = 0; k < (alg.dims ?? []).length && peer == null; k++) {
+				const rel = space2.relate(along, alg.dims[k]);
+				if (rel && rel.kind === 'map' && vars[k] != null) {
+					peer = `MAPS[${mapIdx(Array.from(rel.table))}][${vars[k]}]`;
+				}
+			}
+		}
+		if (peer == null) {
+			throw new BuildError(
+				`'${transfer.name}' shares its amount along '${along}', which the transfer is `
+				+ 'not indexed by, so there is no telling which member of the group each flux '
+				+ 'belongs to.', transfer.name,
+			);
+		}
+		// The offset of the list's first member: this one's offset with its
+		// own contribution along the shared dimension taken back out.
+		const first = `((${base}) - ${stride === 1 ? peer : `${stride} * ${peer}`})`;
+		// In moles, each member is weighted by what a unit of its inventory is
+		// in atoms -- a build-time constant per isotope, from its half-life --
+		// so an elemental limit is shared by atoms and not by activity. The
+		// factors are written into the line, where the tangent generator sees
+		// them as the constants they are.
+		const moles = basisOf(scheme) === 'moles';
+		const names = space2.get(along).enabled ?? [];
+		const unit = project.simulation?.time_unit ?? 'year';
+		const secondsPer = TIME_UNITS[unit] * SECONDS_PER_YEAR;
+		const groupAt = groups ? `MAPS[${mapIdx(Array.from(groups))}][${peer}]` : null;
+		const terms = [];
+		for (let i = 0; i < size; i++) {
+			// A member in no group shares with nothing.
+			if (groups && groups[i] < 0) continue;
+			const factor = moles
+				? molesPerUnit(project.decayUnit, lambda(names[i]?.name, unit, project.halfLives), secondsPer)
+				: 1;
+			// A stable isotope contributes nothing in becquerels: left out
+			// rather than multiplied by zero, which reads as what it is.
+			if (factor === 0) continue;
+			terms.push({
+				off: i === 0 ? first : `${first} + ${i * stride}`,
+				factor,
+				when: groupAt ? `${groupAt} === ${groups[i]}` : null,
+			});
+		}
+		return terms;
+	};
+
+	/** The amount, as one expression over `y` -- or over `v`, for its tangent. */
+	const availabilitySum = (terms, vec) => {
+		if (!terms.length) return '0';
+		const parts = terms.map((term) => {
+			const read = term.factor === 1 ? `${vec}[${term.off}]` : `${term.factor} * ${vec}[${term.off}]`;
+			return term.when ? `(${term.when} ? ${read} : 0)` : read;
+		});
+		return parts.length === 1 ? parts[0] : `(${parts.join(' + ')})`;
+	};
+
+	/**
+	 * A transfer with an availability: its value is its rate times the
+	 * availability, worked out right after the rate -- one pass over the
+	 * transfer's dimensions, whichever way the rate itself was written out --
+	 * so that the flux is `donor × value` wherever it is assembled and the
+	 * transfer's name in an equation means the same product.
+	 */
+	const emitAvailability = (lines, a) => {
+		const t = a.block;
+		const src = t.from ? stateByName.get(t.from) : null;
+		if (!src) {
+			throw new BuildError(
+				`'${t.name}' has an availability, which is a fraction of what is in the `
+				+ 'compartment it flows out of, and it does not flow out of one.', t.name,
+			);
+		}
+		const { scheme, operands } = a.availability;
+		emitLoop(lines, space, a.dims, '\t', (vars, offExpr, indent) => {
+			const terms = availabilityTerms(t, scheme, src, a, space, vars, mapIndex);
+			const ops = {};
+			for (const [key, op] of Object.entries(operands)) ops[key] = `X[${op.base} + ${offExpr}]`;
+			lines.push(`${indent}{`);
+			lines.push(`${indent}\tconst am = ${availabilitySum(terms, 'y')};`);
+			lines.push(`${indent}\tX[${a.base} + ${offExpr}] *= ${expressionOf(scheme, 'am', ops)};`);
+			lines.push(`${indent}}`);
+		});
+	};
+
 	// --- generate the algebraic block --------------------------------------
 	const algLines = [];
 	// Which lines belong to which block, so that the few an initial condition
@@ -1442,6 +1620,10 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 					+ `${tuple ? `  // ${describeTuple(tuple)}` : ''}`);
 			});
 		}
+		// Rate times availability, in the same block's lines -- so a rate that
+		// reads nothing that moves still moves with the inventory it scales,
+		// and is worked out on every call.
+		if (a.availability) emitAvailability(algLines, a);
 		algLineRanges.set(a.name, [from, algLines.length]);
 	}
 
@@ -1530,68 +1712,6 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 	}
 	const stillSlots = Uint8Array.from(slotClass, (c) => (c === 0 ? 1 : 0));
 
-	/**
-	 * The amount an availability is a fraction of.
-	 *
-	 * For an individual scheme that is the donor's own inventory. For a
-	 * *shared* one it is the inventory summed over a group -- the isotopes of
-	 * an element against an elemental solubility -- and the sum is written out
-	 * as an addition over the group's slots rather than a loop, because the
-	 * group is known at build time and the result is one line the tangent
-	 * generator can differentiate like any other.
-	 *
-	 * The availability that comes out is then the same for every contaminant in
-	 * the group, which is what keeps the isotopic proportions of what moves
-	 * equal to the proportions of what is there. AMBER makes the same point:
-	 * the values "are all equal ... this ensures that the available amounts are
-	 * in proportion to the full amounts".
-	 */
-	const availabilityAmount = (transfer, scheme, src, alg, space2, vars, mapIdx) => {
-		const own = `y[${stateOffsetExpr(space2, alg.dims, vars, src, transfer.name, mapIdx)}]`;
-		if (!isShared(scheme.scheme)) return own;
-		const over = String(scheme.over ?? '').trim();
-		// The group is one dimension of the donor, summed across. Where the
-		// donor does not carry that dimension there is nothing to share, and
-		// the sum is the donor itself -- which is the individual scheme, and
-		// the right answer rather than an error.
-		const which = (src.dims ?? []).indexOf(over);
-		if (which < 0) return own;
-		const size = space2.size(over);
-		if (!(size > 1)) return own;
-		const stride = space2.strides(src.dims)[which];
-		// Where in the group *this* one sits. `vars` is positional against the
-		// dimensions the loop was opened over -- the transfer's, not the
-		// donor's -- so the variable is found by position in those.
-		const at = (alg.dims ?? []).indexOf(over);
-		if (at < 0 || vars[at] == null) return own;
-		const peer = vars[at];
-		// The offset of the group's first member: this one's offset with its
-		// own contribution along the shared dimension taken back out.
-		const base = stateOffsetExpr(space2, alg.dims, vars, src, transfer.name, mapIdx);
-		const first = `((${base}) - ${stride === 1 ? peer : `${stride} * ${peer}`})`;
-		// In moles, each member is weighted by what a unit of its inventory is
-		// in atoms -- a build-time constant per isotope, from its half-life --
-		// so an elemental limit is shared by atoms and not by activity. The
-		// factors are written into the line, where the tangent generator sees
-		// them as the constants they are.
-		const moles = basisOf(scheme) === 'moles';
-		const names = space2.get(over).enabled ?? [];
-		const unit = project.simulation?.time_unit ?? 'year';
-		const secondsPer = TIME_UNITS[unit] * SECONDS_PER_YEAR;
-		const parts = [];
-		for (let i = 0; i < size; i++) {
-			const term = i === 0 ? `y[${first}]` : `y[${first} + ${i * stride}]`;
-			if (!moles) { parts.push(term); continue; }
-			const f = molesPerUnit(project.decayUnit, lambda(names[i]?.name, unit, project.halfLives), secondsPer);
-			// A stable isotope contributes nothing in becquerels: left out
-			// rather than multiplied by zero, which reads as what it is.
-			if (f === 0) continue;
-			parts.push(f === 1 ? term : `${f} * ${term}`);
-		}
-		if (!parts.length) return '0';
-		return `(${parts.join(' + ')})`;
-	};
-
 	// --- generate the derivative assembly ------------------------------------
 	const dLines = [];
 	dLines.push('\tout.fill(0);');
@@ -1640,7 +1760,6 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 
 		// How much of the donor's inventory is free to move. Null for almost
 		// every transfer, which is the linear case this tool has always had.
-		const avail = schemeOf(t);
 		emitLoop(dLines, space, alg.dims, '\t', (vars, offExpr, indent) => {
 			const f = `f${fluxSeq++}`;
 			const rate = `X[${alg.base} + ${offExpr}]`;
@@ -1649,34 +1768,12 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 			);
 			if (t.multiply_by_donor) {
 				// The donor is read from the state vector; resolveState gives
-				// an offset, not an access.
+				// an offset, not an access. A transfer with an availability has
+				// it folded into its value already -- rate times availability,
+				// worked out with the algebraic blocks -- so this line is the
+				// same for every transfer. See `emitAvailability`.
 				const held = `y[${resolveState(src)}]`;
-				if (!avail) {
-					dLines.push(`${indent}const ${f} = ${held} * ${rate};`);
-				} else {
-					// Past a solubility limit the excess is precipitate and does
-					// not travel; under a sorption isotherm the free fraction
-					// rises with the inventory. Either way the flux stops being
-					// linear in what the compartment holds -- see
-					// ../domain/availability.js.
-					//
-					// Emitted as an expression over the same `y` the rest of
-					// this line reads, so the tangent generator differentiates
-					// it with everything else and the Jacobian stays analytic.
-					// A *shared* scheme sums the donor across the group first:
-					// the isotopes of an element share one elemental solubility,
-					// and what moves has to keep the proportions of what is
-					// there.
-					const over = availabilityAmount(t, avail, src, alg, space, vars, mapIndex);
-					const compile = (text) => emit(
-						parseEquation(String(text), systemOf(t), t.name),
-						makeResolver(t, alg.dims, vars, null),
-						makeCall(t, alg.dims, vars, null),
-					);
-					const a = `a${fluxSeq}`;
-					dLines.push(`${indent}const ${a} = ${expressionFor(avail, over, compile)};`);
-					dLines.push(`${indent}const ${f} = ${held} * ${a} * ${rate};`);
-				}
+				dLines.push(`${indent}const ${f} = ${held} * ${rate};`);
 			} else {
 				dLines.push(`${indent}const ${f} = ${rate};`);
 			}
@@ -2261,6 +2358,9 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 		makeLocator, makeCall, mapIndex, emitLoop, emitByEquation,
 		stateOffsetExpr, tupleByList, nstate, nalg, nparam, decaying, recorders,
 		farfLayout, pathByName, farfInletExpr, dydtSlots, wasteLayout, disruptionLayout,
+		// What an availability's amount is made of, so that its tangent and
+		// its columns come from the same list as its value.
+		availabilityTerms, availabilitySum,
 		// Where the run starts, for the probe that decides whether the
 		// matrix is made of numbers there. See refuseNonFinite.
 		initialState,
@@ -2834,9 +2934,12 @@ function implicitIndices(owner) {
 	// every pair, and `_source_`/`_target_` are Begin and End), and a slice
 	// in the middle of the chain is Begin, whose initial condition it took.
 	const alias = block?.alias ?? {};
-	if (owner.kind === 'transfer') {
+	// An availability's limit and coefficients are equations of the transfer
+	// they sit on, so they answer for its ends and its place in `Transfers`
+	// exactly as its rate does.
+	if (owner.kind === 'transfer' || String(owner.kind).startsWith('availability:')) {
 		return {
-			[TRANSFER_LIST]: alias.transfer ?? owner.name,
+			[TRANSFER_LIST]: alias.transfer ?? owner.transfer ?? owner.name,
 			[SOURCE_INDEX]: alias.from ?? block?.from ?? null,
 			[TARGET_INDEX]: alias.to ?? block?.to ?? null,
 		};

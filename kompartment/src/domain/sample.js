@@ -144,11 +144,19 @@ export function valueAtProbability(spec, u, at = 0) {
 	// Ecolego writes `trmin=6.5,trmax=0.0` to mean "no truncation": the two the
 	// wrong way round. Taken as written it leaves nothing to draw from, so it
 	// is read as what it means. `pdfProblems` says so in the editor.
-	if (!(hi > lo)) { lo = 0; hi = 1; }
+	const cut = hi > lo;
+	if (!cut) { lo = 0; hi = 1; }
 	// Never exactly 0 or 1: the quantile of either is infinite for a curve
 	// with unbounded tails, and one infinite parameter ruins a whole run.
 	const q = Math.min(1 - 1e-12, Math.max(1e-12, lo + u * (hi - lo)));
-	return quantile(spec, q);
+	const v = quantile(spec, q);
+	// The trip through the CDF and back is good to a billionth, not exactly
+	// (see `probit`), and a truncation is a bound: a draw a billionth outside
+	// it is outside it.
+	if (!cut) return v;
+	if (spec.trmin != null && v < spec.trmin) return spec.trmin;
+	if (spec.trmax != null && v > spec.trmax) return spec.trmax;
+	return v;
 }
 
 /**
