@@ -180,6 +180,27 @@ const idx = C.index(summary);
 console.log(`\n${releases[0].label}: ${summary.release.nuclides} nuclides`);
 check('the release has the whole chart', summary.release.nuclides > 3300, true);
 
+/* The NNDC archive the database menu offers, and the names opened files get. */
+{
+  const nndc = loadData(path.join(dataDir, 'nndc.js'));
+  const rs = nndc.releases;
+  const date = (r) => (r.id.length === 6 ? r.id : `${r.id}01`);
+  check('the NNDC archive list reaches from 2004 to the release on this site', [rs.length >= 100, rs[rs.length - 1].id, rs[0].id === releases[0].id], [true, '0403', true]);
+  check('... newest first', rs.every((r, i) => !i || date(rs[i - 1]) > date(r)), true);
+  check('... every file in its year\'s folder', rs.every((r) => r.files.length && r.files.every((f) => f.startsWith(`dist${r.id.slice(0, 2)}/`))), true);
+  check('... a release in parts covers A = 1 on, or says what it lacks', rs.filter((r) => r.parts).every((r) => r.parts[0].startsWith('1-') || (r.missing && r.missing[0].startsWith('1-'))), true);
+  check('... the two NNDC lists without A = 1-99 are marked', rs.filter((r) => r.missing).map((r) => r.id).sort(), ['170501', '210701']);
+  globalThis.self = globalThis;
+  globalThis.KVOT_ENSDF = P;
+  new Function(fs.readFileSync(path.join(ROOT, 'resources/js/ensdf-open.js'), 'utf8'))();
+  const label = (names) => self.KVOT_ENSDF_OPEN.labelFor(names).label;
+  check('an opened release is named after its file: YYMMDD, its parts, or YYMM before 2012',
+    [label(['ensdf_250101.zip']), label(['ensdf_120307_099.zip', 'ensdf_120307_199.zip']), label(['ENSDF_0410_099.zip']), label(['ensdf.003'])],
+    ['ENSDF 2025-01-01', 'ENSDF 2012-03-07', 'ENSDF 2004-10', 'ensdf.003']);
+  check('... the same name the archive list gives it, so the menu does not offer it twice', rs.filter((r) => ['250101', '120307', '0410'].includes(r.id)).map((r) => r.label).sort(),
+    ['ENSDF 2004-10', 'ENSDF 2012-03-07', 'ENSDF 2025-01-01']);
+}
+
 const feed = (sym, a, k, dz, da) => {
   const z = C.ELEMENTS.findIndex(([s]) => s === sym);
   const st = idx.get(z, a).s[k];

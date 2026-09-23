@@ -25,7 +25,7 @@
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
-  <link rel="stylesheet" href="./resources/css/ensdf.css?v=20260922c">
+  <link rel="stylesheet" href="./resources/css/ensdf.css?v=20260923">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
 </head>
 <body>
@@ -150,8 +150,8 @@
             <p><b>Levels</b> lists the adopted levels with their spins, half-lives and decay modes, and under each the γ rays leaving it with their relative intensities, multipolarities and final levels. <b>Radiation</b> lists what the decay data sets give for the state you are on: γ rays, α particles, β⁻ and β⁺/ε branches and delayed particles, per 100 decays of the parent where the data set’s normalisation allows it, and as relative intensities where it does not. X-rays and conversion electrons are not records in ENSDF and are not shown. <b>Data sets</b> lists every data set filed under the nuclide, and the history of its adopted one.</p>
 
             <h3>Another database</h3>
-            <p>The menu offers every release installed on this site, the newest first. To use another one, download it from the <a href="https://www.nndc.bnl.gov/ensdfarchivals/" target="_blank" rel="noopener noreferrer">NNDC ENSDF archive</a> — the monthly zip files, <code>ensdf_YYMMDD.zip</code> — and open it with <b>Open ENSDF…</b> or drop it on the page. The page reads the zip in your browser in a few seconds; nothing is uploaded. Individual <code>ensdf.NNN</code> files, or any ENSDF text, can be opened the same way. An opened database is kept in this browser and stays in the menu until you choose <b>Forget</b>. (The page cannot fetch a release from NNDC by itself: their server does not allow other sites to read its files.)</p>
-            <p class="nz-dim">To install a release on the site, run <code>node scripts/gen-ensdf.mjs ensdf_YYMMDD.zip</code>; it writes the data under <code>resources/data/ensdf/</code> and adds it to the menu.</p>
+            <p>The menu offers the releases installed on this site, then those you have opened in this browser, then every release in the <a href="https://www.nndc.bnl.gov/ensdfarchivals/" target="_blank" rel="noopener noreferrer">NNDC ENSDF archive</a>, back to 2004. The page cannot fetch a release from NNDC by itself — their server does not allow other sites to read its files — so choosing one from the archive shows the file to download, <code>ensdf_YYMMDD.zip</code> (before 2022 a release came in three parts by mass number, <code>_099</code>, <code>_199</code> and <code>_299</code>, to be opened together), and a button to open it once it is downloaded; dropping it on the page does the same. The page reads it in your browser in a few seconds; nothing is uploaded. Individual <code>ensdf.NNN</code> files, or any ENSDF text, can be opened with <b>Open ENSDF…</b> in the same way. An opened database is kept in this browser and stays in the menu until you choose <b>Forget</b>.</p>
+            <p class="nz-dim">To install a release on the site, run <code>node scripts/gen-ensdf.mjs ensdf_YYMMDD.zip</code>; it writes the data under <code>resources/data/ensdf/</code> and adds it to the menu. <code>node scripts/gen-ensdf-archive.mjs</code> brings the list of NNDC’s releases up to date.</p>
 
             <h3>Links, keys and files</h3>
             <p>The address follows the nuclide you are on — <code>ensdf.html#99mTc</code> — so a link opens the page there. On the chart, arrow keys step between nuclides, + and − zoom and 0 shows the whole chart. <b>CSV</b> saves every ground state as a table, <b>PNG</b> the chart as it is on screen; the decay chain saves as SVG, PNG or CSV.</p>
@@ -163,6 +163,17 @@
   </div>
 
   <div class="nz-tip" id="nzTip" role="tooltip" hidden></div>
+  <!-- A release that is at NNDC but not here: where to download it, and how to open it. -->
+  <dialog class="nz-dialog" id="nzGet" aria-labelledby="nzGetTitle">
+    <h3 class="nz-dialog-title" id="nzGetTitle">A release from NNDC</h3>
+    <div class="nz-dialog-body" id="nzGetBody"></div>
+    <div class="nz-dialog-foot">
+      <a href="https://www.nndc.bnl.gov/ensdfarchivals/" target="_blank" rel="noopener noreferrer">Every release at NNDC</a>
+      <span class="nz-dialog-gap"></span>
+      <button type="button" class="nz-btn secondary" data-on-click="nz:getClose">Close</button>
+      <button type="button" class="nz-btn" id="nzGetOpen" data-on-click="nz:getOpen">Open the downloaded file…</button>
+    </div>
+  </dialog>
   <div id="kvotmap"></div>
   <footer></footer>
 
@@ -189,6 +200,6 @@
   <script src="./resources/js/ensdf-core.js?v=20260922f"></script>
   <script src="./resources/js/ensdf-chart.js?v=20260922b"></script>
   <script src="./resources/js/ensdf-chain.js?v=20260922g"></script>
-  <script src="./resources/js/ensdf-ui.js?v=20260922g"></script>
+  <script src="./resources/js/ensdf-ui.js?v=20260923"></script>
 </body>
 </html>

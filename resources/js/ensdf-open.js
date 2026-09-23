@@ -33,11 +33,19 @@
   const looksZip = (b) => b.length >= 4 && b[0] === 0x50 && b[1] === 0x4b && b[2] === 0x03 && b[3] === 0x04;
   const decoder = new TextDecoder('latin1');
 
-  /** A release label from a file name: ensdf_250101.zip -> ENSDF 2025-01-01. */
+  /**
+   * A release label from a file name: ensdf_250101.zip -> ENSDF 2025-01-01,
+   * and the parts of an older one, ensdf_120307_099.zip -> ENSDF 2012-03-07
+   * or ENSDF_0410_099.zip -> ENSDF 2004-10 (until 2011 NNDC named a release
+   * by its month alone).
+   */
   function labelFor(names) {
     for (const n of names) {
-      const m = /(?:^|[^\d])(\d{2})(\d{2})(\d{2})(?:[^\d]|$)/.exec(n);
-      if (/ensdf/i.test(n) && m && +m[2] >= 1 && +m[2] <= 12) return { id: `${m[1]}${m[2]}${m[3]}`, label: `ENSDF 20${m[1]}-${m[2]}-${m[3]}` };
+      if (!/ensdf/i.test(n)) continue;
+      let m = /(?:^|[^\d])(\d{2})(\d{2})(\d{2})(?:[^\d]|$)/.exec(n);
+      if (m && +m[2] >= 1 && +m[2] <= 12) return { id: `${m[1]}${m[2]}${m[3]}`, label: `ENSDF 20${m[1]}-${m[2]}-${m[3]}` };
+      m = /ensdf[_-](\d{2})(\d{2})(?:[_.]|$)/i.exec(n);
+      if (m && +m[2] >= 1 && +m[2] <= 12) return { id: `${m[1]}${m[2]}`, label: `ENSDF 20${m[1]}-${m[2]}` };
     }
     return { id: '', label: names.length === 1 ? names[0] : `${names.length} ENSDF files` };
   }

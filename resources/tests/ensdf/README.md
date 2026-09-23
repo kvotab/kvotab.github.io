@@ -6,7 +6,7 @@ Two suites. The first needs only Node; the second a server and headless Chrome.
 
     node resources/tests/ensdf/test-parse.js
 
-93 checks in four parts:
+100 checks in four parts:
 
 1. **Fields**, each against what the ENSDF manual says the record means:
    NUCIDs (including `NN` for the neutron and `Z - 100` above Z = 109),
@@ -33,6 +33,11 @@ Two suites. The first needs only Node; the second a server and headless Chrome.
    member but the start under a year, the start kept however short it lives,
    a branch with no percentage on the way leaving the known part (131In →
    131Sn at least 81.5 %), and every chain at 1000 y built in under 5 s),
+   the list of NNDC's archive in `nndc.js` (2004-03 to the release on this
+   site, newest first, every part of a split release covering A = 1 on or
+   saying what it lacks -- NNDC lists 2017-05-01 and 2021-07-01 without
+   A = 1-99), the names opened files get (`ensdf_250101.zip`,
+   `ensdf_120307_099.zip`, `ENSDF_0410_099.zip`) matching that list,
    and a cross-check of every branch against the ICRP Publication
    107 data in `resources/js/rndecaydata.js` — at least 1460 of the 1508
    nuclides must agree (1470 do for the 2026-09-01 release; the rest are
@@ -49,7 +54,7 @@ Chrome with `--remote-debugging-port=9222`), then
 
     python3 resources/tests/ensdf/test-ui.py
 
-57 checks: the built-in release loads; the hover card sets its superscripts as
+63 checks: the built-in release loads; the hover card sets its superscripts as
 `<sup>` and draws no Unicode superscript character (Verdana has only ¹ ² ³, so
 "²³⁸" came out in two fonts); a nuclide is reached by address
 (`#60Co`), by search, by a click on the chart and by the arrow keys; every
@@ -68,7 +73,12 @@ on a box; a box in the chain opens its member without moving the start of
 the chain; the chain settings are there in the chart view as well; the panel
 tabs fit with no scroll bar of their own, also dragged to 300 px; the
 Levels, Radiation and Data
-sets tabs fill; the four downloads produce files; a zip made from the fixture
+sets tabs fill; the four downloads produce files; the database menu lists
+NNDC's archive back to 2004 less the release on the site, and choosing one
+opens a dialog with the right NNDC link (all three parts, with their mass
+numbers, for a release before 2022; a warning for one NNDC lists
+incomplete) while staying on the database in use, and its open button brings
+up the file picker; a zip made from the fixture
 opens in the worker, survives a reload and can be forgotten; the theme switch
 recolours the chart; the phone layout does not overflow; and no error
 reaches the console.

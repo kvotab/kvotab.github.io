@@ -12,7 +12,10 @@
    text files -- which is read in a worker, never uploaded, and kept in this
    browser (IndexedDB) so the database menu can switch back to it later.
    NNDC's server sends no CORS header, so the page cannot fetch a release
-   from there by itself; the About tab says how to get one.
+   from there by itself. The menu lists every release in NNDC's archive
+   anyway, from resources/data/ensdf/nndc.js (scripts/gen-ensdf-archive.mjs),
+   and choosing one that is not to hand says which file to download and
+   opens it once it is here.
 
    Built-in data arrive as scripts calling KVOT_ENSDF_DATA(id, part, data),
    not as JSON: a page opened from the file system may load a script but not
@@ -32,7 +35,7 @@
   const $ = (id) => document.getElementById(id);
   const esc = (s) => kvotEscapeHtml(s);
   const DATA_DIR = './resources/data/ensdf/';
-  const WORKER_URL = './resources/js/ensdf-worker.js?v=20260922b';
+  const WORKER_URL = './resources/js/ensdf-worker.js?v=20260923';
   const STORAGE_KEY = 'kvot-ensdf-v1';
   const LEVEL_PAGE = 150;
   const LINE_PAGE = 80;
@@ -129,7 +132,7 @@
     if (window.KVOT_ENSDF_OPEN) return Promise.resolve();
     return new Promise((resolve, reject) => {
       const s = document.createElement('script');
-      s.src = './resources/js/ensdf-open.js?v=20260922b';
+      s.src = './resources/js/ensdf-open.js?v=20260923';
       s.onload = resolve;
       s.onerror = () => reject(new Error('could not load ensdf-open.js'));
       document.head.appendChild(s);
@@ -173,6 +176,7 @@
   const state = {
     releases: [],          // built-in, newest first
     stored: [],            // remembered opened databases: {key, label, names, size, opened}
+    archive: null,         // the NNDC archive: {page, base, releases: [{id, label, files, parts?, missing?}]}
     source: null,          // {key, label, kind, summary, detail(a)}
     idx: null,
     details: new Map(),    // a -> detail, for the current source
@@ -274,6 +278,12 @@
 
   async function switchDb(key) {
     if (!key || (state.source && state.source.key === key)) return;
+    if (key.startsWith('n:')) {
+      /* Not to hand: say where to get it, and stay on the database in use. */
+      renderDbMenu();
+      showGet(key.slice(2));
+      return;
+    }
     state.loading = true;
     try {
       if (key.startsWith('b:')) {
@@ -321,15 +331,60 @@
 
   function renderDbMenu() {
     const sel = $('nzDb');
-    const opts = [];
-    for (const r of state.releases) opts.push(`<option value="b:${esc(r.id)}">${esc(r.label)} (on this site)</option>`);
+    const here = [];
+    const opened = [];
+    const nndc = [];
+    for (const r of state.releases) here.push(`<option value="b:${esc(r.id)}">${esc(r.label)} (on this site)</option>`);
     for (const s of state.stored.slice().sort((p, q) => q.opened - p.opened)) {
-      opts.push(`<option value="s:${esc(s.key)}">${esc(s.label)} (opened ${esc(new Date(s.opened).toISOString().slice(0, 10))})</option>`);
+      opened.push(`<option value="s:${esc(s.key)}">${esc(s.label)} (opened ${esc(new Date(s.opened).toISOString().slice(0, 10))})</option>`);
     }
-    if (state.transient) opts.push(`<option value="${esc(state.transient.key)}">${esc(state.transient.label)} (opened)</option>`);
-    sel.innerHTML = opts.join('');
+    if (state.transient) opened.push(`<option value="${esc(state.transient.key)}">${esc(state.transient.label)} (opened)</option>`);
+    /* The rest of NNDC's archive, less what is already to hand. */
+    const have = new Set(state.releases.concat(state.stored, state.transient ? [state.transient] : []).map((r) => r.label));
+    for (const r of (state.archive && state.archive.releases) || []) {
+      if (have.has(r.label)) continue;
+      /* No longer than "(on this site)": a menu is as wide as its widest entry. */
+      nndc.push(`<option value="n:${esc(r.id)}">${esc(r.label)}${r.missing ? ' (incomplete)' : r.files.length > 1 ? ` (${r.files.length} parts)` : ''}</option>`);
+    }
+    const group = (label, opts) => (opts.length ? `<optgroup label="${esc(label)}">${opts.join('')}</optgroup>` : '');
+    sel.innerHTML = group('On this site', here) + group('Opened in this browser', opened) + group('At NNDC: download, then open', nndc);
     if (state.source) sel.value = state.source.key;
     $('nzForget').hidden = !(state.source && state.source.key.startsWith('s:'));
+  }
+
+  /*
+    A release in NNDC's archive that is not to hand: which file or files to
+    download -- before 2022 a release came in parts by mass number -- and
+    the way to open them once they are here.
+  */
+  function showGet(id) {
+    const a = state.archive;
+    const rel = a && a.releases.find((r) => r.id === id);
+    if (!rel) return;
+    const many = rel.files.length > 1;
+    const dash = (range) => range.replace('-', '–');
+    const link = (f, i) => `<a href="${esc(a.base + f)}" target="_blank" rel="noopener noreferrer" download>${esc(f.split('/').pop())}</a>`
+      + (rel.parts ? ` <span class="nz-dim">A = ${esc(dash(rel.parts[i]))}</span>` : '');
+    const files = many ? `<ul class="nz-files">${rel.files.map((f, i) => `<li>${link(f, i)}</li>`).join('')}</ul>` : link(rel.files[0], 0);
+    $('nzGetTitle').textContent = `${rel.label} from NNDC`;
+    $('nzGetBody').innerHTML = `
+      <p>This release is not on this site. Download it from NNDC’s archive and open it here: the page reads it in your browser, in a few seconds, and uploads nothing. It cannot fetch the release for you, as NNDC’s server does not let other sites read its files.</p>
+      <ol>
+        <li>Download ${many ? `its ${rel.files.length} parts, one for each range of mass numbers:${files}` : `${files}.`}</li>
+        <li>Choose <b>Open the downloaded ${many ? 'files' : 'file'}…</b>${many ? ' and pick the parts together' : ''}, or drop ${many ? 'them' : 'it'} on the page.</li>
+      </ol>
+      ${rel.missing ? `<p class="nz-note-warn">NNDC lists no part of this release for A = ${esc(rel.missing.map(dash).join(', '))}, so the chart will have no nuclides there.</p>` : ''}
+      <p class="nz-dim">It is then kept in this browser, in the menu, until you choose Forget.</p>`;
+    $('nzGetOpen').textContent = `Open the downloaded ${many ? 'files' : 'file'}…`;
+    const dlg = $('nzGet');
+    if (typeof dlg.showModal === 'function') { if (!dlg.open) dlg.showModal(); } else dlg.setAttribute('open', '');
+  }
+
+  function closeGet() {
+    const dlg = $('nzGet');
+    if (!dlg.open) return;
+    if (typeof dlg.close === 'function') dlg.close();
+    else dlg.removeAttribute('open');
   }
 
   /* ---------------------------------------------------------------------
@@ -1113,6 +1168,7 @@
   async function openChosen(files) {
     files = [...files].filter((f) => f && f.size);
     if (!files.length) return;
+    closeGet();
     const total = files.reduce((t, f) => t + f.size, 0);
     const limit = kvotFileTooLarge({ name: files.length === 1 ? files[0].name : 'The selection', size: total }, 1024 * 1024 * 1024);
     if (limit.tooLarge) { notifyUser(limit.reason); return; }
@@ -1209,12 +1265,17 @@
     setView(state.view);
     renderPanel();
 
+    /* The NNDC archive only adds to the menu, and may come after the rest;
+       the menu is drawn again with it once the rest of it is known. */
+    let menuReady = false;
+    loadScriptData('*', 'nndc', `${DATA_DIR}nndc.js`).then((archive) => { state.archive = archive; if (menuReady) renderDbMenu(); }, () => {});
     try {
       state.releases = await loadScriptData('*', 'releases', `${DATA_DIR}releases.js`);
     } catch (e) {
       state.releases = [];
     }
     try { state.stored = await IDB.list(); } catch (e) { state.stored = []; }
+    menuReady = true;
     let key = state.dbKey;
     const known = (k) => (k.startsWith('b:') && state.releases.some((r) => `b:${r.id}` === k)) || (k.startsWith('s:') && state.stored.some((s) => `s:${s.key}` === k));
     if (!key || !known(key)) key = state.releases.length ? `b:${state.releases[0].id}` : (state.stored[0] ? `s:${state.stored[0].key}` : '');
@@ -1243,6 +1304,8 @@
     'nz:colour': (ev, el) => { state.colour = el.value; chart.setMode(state.colour); renderLegend(); saveState(); },
     'nz:db': (ev, el) => switchDb(el.value),
     'nz:open': () => $('nzFile').click(),
+    'nz:getOpen': () => { closeGet(); $('nzFile').click(); },
+    'nz:getClose': () => closeGet(),
     'nz:fileChosen': (ev, el) => { const f = [...el.files]; el.value = ''; openChosen(f); },
     'nz:forget': async () => {
       if (!state.source || !state.source.key.startsWith('s:')) return;

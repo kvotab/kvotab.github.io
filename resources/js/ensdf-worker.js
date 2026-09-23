@@ -14,7 +14,7 @@
    list below changes. A Worker does not inherit the page's cache-busting.
    ========================================================================== */
 /* global KVOT_ENSDF_OPEN */
-importScripts('./ensdf-parse.js?v=20260922b', './ensdf-open.js?v=20260922b');
+importScripts('./ensdf-parse.js?v=20260922b', './ensdf-open.js?v=20260923');
 
 let details = null;
 

@@ -315,11 +315,45 @@ async def main():
         check('none of them empty', all(f[1] > 200 for f in files), True)
         await page.ev("document.querySelector('[data-view=chart]').click(); 'ok'")
 
+        # ---------------------------------------------------------- the NNDC archive
+        nn = json.loads(await page.ev("""(async () => {
+          for (let i = 0; i < 50 && !document.querySelector('#nzDb optgroup[label^="At NNDC"]'); i++) await new Promise(r => setTimeout(r, 100));
+          const g = document.querySelector('#nzDb optgroup[label^="At NNDC"]');
+          const s = document.getElementById('nzDb'), d = document.getElementById('nzGet'), before = ENSDFPage.state.source.key;
+          const pick = (v) => { s.value = v; s.dispatchEvent(new Event('change', {bubbles: true})); };
+          const out = { n: g ? g.children.length : 0, values: g ? [...g.children].map(o => o.value) : [] };
+          pick('n:250101');
+          out.one = { open: d.open, title: document.getElementById('nzGetTitle').textContent, links: [...d.querySelectorAll('#nzGetBody a')].map(a => a.href),
+            value: s.value, source: ENSDFPage.state.source.key === before };
+          document.querySelector('[data-on-click="nz:getClose"]').click();
+          out.closed = !d.open;
+          pick('n:120307');
+          out.parts = { links: [...d.querySelectorAll('#nzGetBody a')].map(a => a.href.split('/').pop()), text: document.getElementById('nzGetBody').textContent,
+            button: document.getElementById('nzGetOpen').textContent };
+          pick('n:170501');
+          out.partial = !!document.querySelector('#nzGetBody .nz-note-warn');
+          /* "Open the downloaded file" closes the dialog and brings up the file picker. */
+          const click = HTMLInputElement.prototype.click; let picked = '';
+          HTMLInputElement.prototype.click = function () { picked = this.id; };
+          document.getElementById('nzGetOpen').click();
+          HTMLInputElement.prototype.click = click;
+          out.picker = { closed: !d.open, picked };
+          return JSON.stringify(out); })()"""))
+        check('the menu lists the NNDC archive, back to 2004, less what is on this site', (nn['n'] >= 100, 'n:0403' in nn['values'], 'n:260901' in nn['values']), (True, True, False))
+        check('choosing a release that is not here offers its download, and stays on the database in use',
+              (nn['one']['open'], nn['one']['title'], nn['one']['links'], nn['one']['value'], nn['one']['source']),
+              (True, 'ENSDF 2025-01-01 from NNDC', ['https://www.nndc.bnl.gov/ensdfarchivals/distributions/dist25/ensdf_250101.zip'], 'b:260901', True))
+        check('... and Close closes it', nn['closed'], True)
+        check('a release in parts lists every part with its mass numbers', (nn['parts']['links'], 'A = 1–99' in nn['parts']['text'], nn['parts']['button']),
+              (['ensdf_120307_099.zip', 'ensdf_120307_199.zip', 'ensdf_120307_299.zip'], True, 'Open the downloaded files…'))
+        check('an incomplete one says what it lacks', nn['partial'], True)
+        check('"Open the downloaded files" closes the dialog and brings up the file picker', nn['picker'], {'closed': True, 'picked': 'nzFile'})
+
         # ---------------------------------------------------------- opening a file
         opened = await page.ev(f"""(async () => {{ const b = Uint8Array.from(atob('{fixture_zip_b64()}'), c => c.charCodeAt(0));
           await ENSDFPage.openFiles([new File([b], 'ensdf_990101.zip')]);
           const s = ENSDFPage.state; return JSON.stringify({{ label: s.source.label, key: s.source.key,
-            h3: s.idx.get(1, 3).s[0].t, menu: [...document.querySelectorAll('#nzDb option')].length,
+            h3: s.idx.get(1, 3).s[0].t, menu: [...document.querySelectorAll('#nzDb option:not([value^="n:"])')].length,
             forget: !document.getElementById('nzForget').hidden }}); }})()""")
         opened = json.loads(opened)
         check('an ENSDF zip opens, named after its release date', opened['label'], 'ENSDF 2099-01-01')
@@ -331,7 +365,7 @@ async def main():
         check('after a reload the opened database is still the one in use', again['label'], 'ENSDF 2099-01-01')
         check('... and the built-in one is still in the menu', any(v.startswith('b:') for v in again['menu']), True)
         await page.ev("document.getElementById('nzForget').click(); 'ok'")
-        back = await settle(page, "ENSDFPage.state.source.key.startsWith('b:') && document.querySelectorAll('#nzDb option').length === 1", True)
+        back = await settle(page, "ENSDFPage.state.source.key.startsWith('b:') && document.querySelectorAll('#nzDb option:not([value^=\"n:\"])').length === 1", True)
         check('forgetting it goes back to the built-in release', back, True)
 
         # ---------------------------------------------------------- theme and phone

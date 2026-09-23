@@ -55,7 +55,10 @@ browser from their publishers and are not redistributed here.
   Nuclear Structure and Decay Data network
   (https://www.nndc.bnl.gov/ensdf/). The release is named on `ensdf.html`;
   the data are read as published and not altered, except where the page says a
-  value is inferred. Element names are those of IUPAC.
+  value is inferred. Element names are those of IUPAC. `nndc.js` there lists
+  the releases in NNDC's archive (https://www.nndc.bnl.gov/ensdfarchivals/) by
+  file name and link only; the files themselves are downloaded from NNDC by the
+  visitor.
 - **Chemical element data** (`resources/js/rndatatree.js`: names, origins of
   names, atomic weights, densities, melting and boiling points) are adapted
   from Wikipedia's *List of chemical elements* and the element articles,
