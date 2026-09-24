@@ -184,7 +184,7 @@ function poolSize(msg) {
 	if (!canNest()) return { workers: 1, asked, why: 'nesting' };
 	const workers = workersFor({
 		iterations,
-		cores: (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 1,
+		cores: (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || null,
 		buildMs: lastCost.buildMs,
 		solveMs: lastCost.solveMs,
 		want: msg.workers ?? null,

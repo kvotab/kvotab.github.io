@@ -3370,15 +3370,19 @@ test('a probabilistic run gives the same answer however many cores run it', asyn
 	assert(workersFor({ iterations: 1000, cores: 999 }) === MOST_WORKERS, 'the cap did not hold');
 	assert(workersFor({ iterations: 1000, cores: 8, want: 2 }) === 2, 'an explicit count was ignored');
 	// A number the reader chose is used as it stands, not second-guessed by
-	// the build arithmetic below, and may be more than the machine admits to:
-	// some browsers round `hardwareConcurrency` down on purpose. Bounded only
-	// by the cap and by the realisations.
-	assert(workersFor({ iterations: 1000, cores: 8, exact: 12 }) === 12, 'a chosen count was not used');
+	// the build arithmetic below, up to every core the machine reports -- the
+	// one auto leaves for the page included, and past the cap on a machine
+	// that has more -- and no more workers than realisations. A machine that
+	// does not say is held to the cap.
+	assert(workersFor({ iterations: 1000, cores: 8, exact: 8 }) === 8, 'a chosen count was not used');
 	assert(workersFor({ iterations: 1000, cores: 8, buildMs: 60000, solveMs: 5, exact: 6 }) === 6,
 		'a chosen count was overruled by the cost of building');
+	assert(workersFor({ iterations: 1000, cores: 8, exact: 12 }) === 8, 'more cores than the machine has');
 	assert(workersFor({ iterations: 5, cores: 8, exact: 12 }) === 5, 'more workers than realisations');
-	assert(workersFor({ iterations: 1000, cores: 8, exact: 99 }) === MOST_WORKERS,
-		'the cap did not hold for a chosen count');
+	assert(workersFor({ iterations: 1000, cores: 32, exact: 32 }) === 32,
+		'a machine with more cores than the cap cannot be used in full');
+	assert(workersFor({ iterations: 1000, cores: null, exact: 99 }) === MOST_WORKERS,
+		'a machine that does not say was not held to the cap');
 
 	// Every worker rebuilds the model, so fanning out has to be worth the
 	// builds it adds. A minute to build and five milliseconds to solve is the
@@ -3779,17 +3783,23 @@ test('*What drove it* can read the whole distribution, not only a line through i
 test('the reader can say how many cores, and the run says how many it is on', async () => {
 	const { readFileSync } = await import('node:fs');
 	const read = (f) => readFileSync(new URL(f, import.meta.url), 'utf8');
-	const { chosenCores, chooseCores, poolNote } = await import('../src/ui/cores.js');
+	const { chosenCores, chooseCores, poolNote, machineCores, mostCores } = await import('../src/ui/cores.js');
 	const { MOST_WORKERS } = await import('../src/worker/prob-pool.js');
+
+	// At most the cores the machine reports, which is where the dialog's list
+	// ends; the cap only where the browser does not say.
+	assert(mostCores() === (machineCores() ?? MOST_WORKERS), `the most is ${mostCores()}`);
+	const cores = read('../src/ui/cores.js');
+	assert(/for \(let n = 1; n <= mostCores\(\); n\+\+\) \{/.test(cores), 'the list does not end at the machine');
 
 	// Kept in this browser rather than in the model -- it is about the
 	// machine -- and held in memory where storage refuses, which in Node it
 	// does, as it does in a private window.
 	const before = chosenCores();
-	chooseCores(5);
-	assert(chosenCores() === 5, 'the choice was not kept');
+	chooseCores(1);
+	assert(chosenCores() === 1, 'the choice was not kept');
 	chooseCores(99);
-	assert(chosenCores() === MOST_WORKERS, 'past the cap');
+	assert(chosenCores() === mostCores(), 'past the machine');
 	chooseCores(0);
 	assert(chosenCores() === null, 'nonsense is not auto');
 	chooseCores(before);

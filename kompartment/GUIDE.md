@@ -5242,9 +5242,9 @@ that is fewer than you asked for — the notice at the end says it again, and th
 estimate before it starts is divided by them.
 
 **Cores** in the dialog sets the number yourself: *auto*, which says what it
-comes to, or 1 to 16. A number is used as it stands — fewer to keep the machine
-free for something else, or more where the browser reports fewer cores than
-there are, which some do on purpose — bounded only by the number of
+comes to, or any number from 1 to the cores the machine has. A number is used
+as it stands — fewer to keep the machine free for something else, or all of
+them, the one auto leaves for the page included — bounded only by the number of
 realisations. It is remembered in this browser rather than in the model, since
 it is a fact about the machine and changes no number, and the tornado and the
 sensitivity designs use it too.

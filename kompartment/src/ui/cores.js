@@ -6,8 +6,9 @@
  * many workers as `workersFor` decides: every core the machine reports but
  * one, and fewer where building the model in each would cost more than it
  * saves. This is where a reader says otherwise -- fewer, to keep the machine
- * free for something else, or more, where a browser reports fewer cores than
- * there are (some round `hardwareConcurrency` down on purpose).
+ * free for something else, or every one of them, the one auto leaves for the
+ * page included. Never more than the machine reports: that is what the list
+ * counts up to, and what the worker holds a chosen number to.
  *
  * **Kept per browser, not in the model.** It is a fact about the machine, and
  * the answer does not depend on it: the realisations are the same to the last
@@ -27,7 +28,21 @@ const KEY = 'kompartment.cores';
  */
 let held;
 
-const valid = (n) => (Number.isInteger(n) && n >= 1 ? Math.min(n, MOST_WORKERS) : null);
+/** How many cores the machine reports, or null where the browser does not say. */
+export function machineCores() {
+	const n = typeof navigator === 'undefined' ? NaN : Number(navigator.hardwareConcurrency);
+	return Number.isInteger(n) && n >= 1 ? n : null;
+}
+
+/**
+ * The most a reader may ask for: the machine's cores. Where the browser does
+ * not say how many it has, the cap auto works under stands in for them.
+ */
+export function mostCores() {
+	return machineCores() ?? MOST_WORKERS;
+}
+
+const valid = (n) => (Number.isInteger(n) && n >= 1 ? Math.min(n, mostCores()) : null);
 
 /** The reader's number of cores, or null for the tool's own choice. */
 export function chosenCores() {
@@ -54,7 +69,8 @@ export function chooseCores(n) {
 }
 
 /**
- * The row a dialog shows: *auto*, saying what that comes to, then 1 to the cap.
+ * The row a dialog shows: *auto*, saying what that comes to, then 1 to the
+ * machine's cores.
  *
  * @param {object} o
  * @param {number} o.auto        how many cores auto would use for this run
@@ -62,11 +78,11 @@ export function chooseCores(n) {
  * @param {(n: number|null) => void} o.onChange
  */
 export function coresRow({ auto, value, onChange }) {
-	const machine = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || null;
+	const machine = machineCores();
 	const sel = el('select', { 'aria-label': 'Cores' });
 	sel.append(el('option', { value: '', selected: value == null },
 		`auto — ${auto} core${auto === 1 ? '' : 's'}`));
-	for (let n = 1; n <= MOST_WORKERS; n++) {
+	for (let n = 1; n <= mostCores(); n++) {
 		sel.append(el('option', { value: String(n), selected: value === n },
 			n === machine ? `${n} — every core this machine reports` : String(n)));
 	}
@@ -78,8 +94,9 @@ export function coresRow({ auto, value, onChange }) {
 				+ (machine ? `this machine reports (${machine}) ` : 'the machine reports ')
 				+ 'but one, which is left for the page, and fewer where building the '
 				+ 'model on each would cost more than it saves. A number is used as it '
-				+ 'stands. The results are the same to the last digit either way; this '
-				+ 'is remembered in this browser, not in the model.',
+				+ 'stands, up to every core the machine has. The results are the same to '
+				+ 'the last digit either way; this is remembered in this browser, not in '
+				+ 'the model.',
 		}, 'Cores'),
 		sel);
 }
@@ -102,7 +119,8 @@ export function poolNote(pool) {
 			+ 'so the runs are done one after another',
 		address: 'the address asks for one (?workers=1)',
 		work: 'no more than there are runs to share out',
-		cap: `${MOST_WORKERS} at most`,
+		cap: machineCores() ? `no more than the ${machineCores()} cores this machine has`
+			: `${MOST_WORKERS} at most`,
 	}[pool.why] ?? null;
 	const asked = pool.asked == null || pool.asked === n ? ''
 		: n === 1 ? `, not the ${pool.asked} asked for` : ` of the ${pool.asked} asked for`;

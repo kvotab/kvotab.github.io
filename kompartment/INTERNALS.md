@@ -3165,8 +3165,10 @@ where the browser will not nest Workers, which it finds out by trying.
 
 **A number the reader chose** (*Cores* in the Probabilistic and Tornado
 dialogs, `src/ui/cores.js`) goes to the worker as `cores` and to `workersFor`
-as `exact`: used as it stands, bounded by `MOST_WORKERS` and the number of
-realisations, and not second-guessed by the build arithmetic. It is kept in
+as `exact`: used as it stands, bounded by the cores the machine reports
+(`hardwareConcurrency`, which is also where the dialog's list ends; `MOST_WORKERS`
+where the browser does not say) and the number of realisations, and not
+second-guessed by the build arithmetic. It is kept in
 `localStorage` (`kompartment.cores`), not in the model: it changes no number. The
 coordinator posts `{type: 'pool', workers, asked, why}` once it has sized the
 pool and before anything is built, and the footer shows the count beside the

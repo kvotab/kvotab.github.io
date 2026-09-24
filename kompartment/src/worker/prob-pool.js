@@ -67,23 +67,26 @@ export const STARTUP_MS = 60;
  *
  * @param {object} o
  * @param {number} o.iterations
- * @param {number} [o.cores]      what the machine reports
+ * @param {number|null} [o.cores] what the machine reports; null where it does not say
  * @param {number} [o.buildMs]    what one build took, if a run has happened
  * @param {number} [o.solveMs]    what one integration took, if a run has happened
  * @param {number} [o.want]       a ceiling, from `?workers=`: the arithmetic
  *   below still applies under it
  * @param {number} [o.exact]      the number the reader chose in the dialog:
- *   that many, bounded only by the cap and by the realisations
+ *   that many, bounded only by the machine's cores and by the realisations
  * @returns {number} 1 means "do it here", which is always allowed
  */
 export function workersFor({ iterations, cores, buildMs = null, solveMs = null, want = null, exact = null }) {
 	// Chosen, not worked out: someone who asks for eight cores on a model that
-	// builds slowly has been told what that costs, and may know better than
-	// `hardwareConcurrency`, which some browsers round down on purpose. Never
-	// more workers than realisations, though -- a worker with nothing to
-	// integrate is a build for nothing -- and never past the cap.
+	// builds slowly has been told what that costs. Never more than the cores
+	// the machine reports, which is as far as the dialog counts -- all of
+	// them, the one auto leaves for the page included, and past MOST_WORKERS
+	// on a machine that has more -- nor more workers than realisations, since
+	// a worker with nothing to integrate is a build for nothing. Where the
+	// machine does not say, MOST_WORKERS stands in for it.
 	if (exact != null && Number.isFinite(Number(exact))) {
-		return Math.max(1, Math.min(MOST_WORKERS, Math.floor(Number(exact)), Math.floor(iterations)));
+		const most = Number(cores) >= 1 ? Math.floor(Number(cores)) : MOST_WORKERS;
+		return Math.max(1, Math.min(most, Math.floor(Number(exact)), Math.floor(iterations)));
 	}
 	const machine = Math.max(1, Math.floor(Number(cores) || 1));
 	// One core for the page. On a single-core machine that leaves one, which
