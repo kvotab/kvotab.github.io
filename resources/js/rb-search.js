@@ -310,10 +310,12 @@ function filterTree(searchTerm) {
     const parentGroup = child.previousElementSibling;
     if (parentGroup && itemsToShow.has(parentGroup)) {
       child.classList.add('search-expanded');
-      // Make the toggle arrow point "open" visually during search
+      // Make the toggle arrow, and with it the folder icon, show "open"
+      // during search. The row's `expanded` class is the selected look and
+      // is left alone: adding it here made every folder above a match look
+      // selected.
       const toggle = parentGroup.querySelector('.tree-toggle');
       if (toggle) toggle.classList.remove('collapsed');
-      parentGroup.classList.add('expanded');
     } else if (!child.classList.contains('expanded')) {
       child.classList.remove('search-expanded');
     }

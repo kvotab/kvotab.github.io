@@ -25,9 +25,10 @@ function toggleGroupExpansion(event, path, toggleArg) {
     const isExpanded = childrenDiv.classList.contains('expanded');
     
     if (isExpanded) {
+      // The row's own `expanded` class is the selected look, not the open
+      // state, so closing the selected group leaves it looking selected.
       childrenDiv.classList.remove('expanded');
       toggle.classList.add('collapsed');
-      groupItem.classList.remove('expanded');
     } else {
       // If children were rendered as lazy placeholders, load them on first expand
       if (childrenDiv && childrenDiv.getAttribute && childrenDiv.getAttribute('data-lazy') === 'true') {
@@ -371,7 +372,7 @@ async function toggleTreeMode() {
             <div class="tree-icon folder"></div>
             <div class="tree-label">/ (${modeLabel}) <span class="tree-inline-spinner" aria-hidden="true"></span></div>
           </div>
-          <div class="tree-group-children expanded" style="margin-left:20px;">
+          <div class="tree-group-children expanded">
             <div class="loading" style="padding:8px;font-size:12px;">Calculating ${modeLabel.toLowerCase()}…</div>
           </div>
         `;
@@ -1298,7 +1299,6 @@ async function buildTree(group, prefix = '', isNested = false, fileName = '', in
 
     rootChildren = document.createElement('div');
     rootChildren.className = 'tree-group-children' + (isRootSelected ? ' expanded' : '');
-    rootChildren.style.marginLeft = '20px';
     frag.appendChild(rootChildren);
   }
 

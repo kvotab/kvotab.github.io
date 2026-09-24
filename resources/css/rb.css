@@ -611,24 +611,37 @@
       padding-left: 5px;
     }
     
-    /* Tree Toggle Button */
+    /* Tree Toggle Button: ▶ when closed, turned a quarter to ▼ when open.
+       With its margin it is one 20px column, and that column is the tree's
+       grid: a level indents by it (see .tree-group-children), and a row with
+       no children keeps it empty (see the ::before below). */
     .tree-toggle {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      width: 20px;
+      width: 16px;
       height: 20px;
       margin-right: 4px;
       font-size: 10px;
+      transform: rotate(90deg);
       transition: transform 0.2s;
       flex-shrink: 0;
       color: var(--color-text-muted);
     }
-    
+
     .tree-toggle.collapsed {
-      transform: rotate(-90deg);
+      transform: none;
     }
-    
+
+    /* A dataset, a link or an error has no children and so no toggle. It
+       keeps the toggle's column empty, so its icon lines up with the icons of
+       the folders beside it rather than with their arrows. */
+    .tree-item:not(.group)::before {
+      content: '';
+      width: 20px;
+      flex-shrink: 0;
+    }
+
     /* Tree Icons — SVG via mask-image for crisp, theme-aware colouring */
     .tree-icon {
       width: 18px;
@@ -661,8 +674,11 @@
       mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z'/%3E%3C/svg%3E");
     }
 
-    /* Open-folder icon for expanded groups */
-    .tree-item.group.expanded > .tree-icon.folder::before {
+    /* Open-folder icon for a group that is open, which is what its arrow
+       says. It used to follow the row's `expanded` class, which is the
+       selected look: an opened folder kept the closed icon unless it was the
+       selected one, and a selected folder showed open while closed. */
+    .tree-toggle:not(.collapsed):not(.no-toggle) + .tree-icon.folder::before {
       -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2v1'/%3E%3Cpath d='M2 10l2.5 9H20l2-9H4.5'/%3E%3C/svg%3E");
       mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2v1'/%3E%3Cpath d='M2 10l2.5 9H20l2-9H4.5'/%3E%3C/svg%3E");
     }
@@ -764,16 +780,29 @@
       height: 140px;
     }
     
-    /* Tree Group Children Container */
+    /* Tree Group Children Container. Its left border is the guide line, and
+       it hangs from the middle of the parent's arrow: the row's 8px padding
+       and half the 16px toggle, less the line itself. The rows inside start
+       one toggle column in (15 + 1 + 4 = 20px), so each child's arrow sits
+       under its parent's icon and every child is visibly inside it. */
     .tree-group-children {
-      margin-left: 0;
-      border-left: 2px solid var(--color-panel-border);
+      margin-left: 15px;
+      border-left: 1px solid var(--color-panel-border);
       padding-left: 4px;
       display: none;
     }
-    
+
     .tree-group-children.expanded {
       display: block;
+    }
+
+    /* The guide along what is selected: a group's members, which are what
+       its chart draws, and the level a selected dataset is on. */
+    .tree-item.group.expanded + .tree-group-children {
+      border-left-color: var(--color-kvot-accent);
+    }
+    .tree-group-children:has(> .tree-item.selected) {
+      border-left-color: var(--color-kvot-accent);
     }
 
     /* ==========================================================================
@@ -1667,7 +1696,9 @@
     /* determinate progress bar inside the ticker */
 
     /* File badges (small colored dots showing which files contain a node) */
-    .tree-toggle.no-toggle { visibility: hidden; width: 12px; display: inline-block; }
+    /* A group that cannot be opened keeps its toggle's full column, hidden. It
+       was 12px wide, which put its icon 8px left of the folders beside it. */
+    .tree-toggle.no-toggle { visibility: hidden; }
     .file-load-ticker .ticker-progress { width: 160px; height: 6px; background: rgba(0,0,0,0.06); border-radius: 6px; overflow: hidden; }
     .file-load-ticker .ticker-progress-bar { height: 100%; width: 0%; background: var(--color-kvot-accent); transition: width 220ms linear; }
 

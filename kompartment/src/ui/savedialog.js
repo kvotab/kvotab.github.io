@@ -326,8 +326,11 @@ export function openSaveDialog({
 			body.append(cols);
 
 			// --- the buttons ----------------------------------------------
+			// Save is the end of the dialog. The HDF5 Browser is a look at the
+			// file in another tab, and the dialog stays for what usually comes
+			// next: another choice of blocks, or saving the file after all.
 			const send = (toBrowser) => {
-				shut();
+				if (!toBrowser) shut();
 				onSave({
 					kind: what.key,
 					format,
