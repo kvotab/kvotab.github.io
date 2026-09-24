@@ -7654,6 +7654,11 @@ input.ix-unit { width: 130px; padding: 2px 6px; font-size: 11.5px; }
 .save-kind-why { display: block; font-size: 11px; color: var(--text-muted); margin-top: 1px; }
 .save-how { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
 .save-pick { min-width: 0; }
+/* Which of a sample: the choice, and for one realisation its number. */
+.save-holds { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.save-holds select { flex: 1 1 auto; min-width: 0; }
+.save-holds .save-which { flex: 0 0 6em; width: 6em; }
+.save-of { flex: none; font-size: 11.5px; color: var(--text-muted); white-space: nowrap; }
 
 /* ------------------------------------------------------------- Optimise.
    Two lists of rows, each row a line of controls that has to stay on one

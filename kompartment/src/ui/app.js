@@ -115,7 +115,7 @@ import {
  * caused more than one "the code says otherwise" puzzle. Serve with serve.py,
  * which disables caching.
  */
-const BUILD = '2026-09-23';
+const BUILD = '2026-09-24';
 
 const EXAMPLES = [
 	{ file: 'four-compartment.json', title: 'Four-compartment test model' },
@@ -8067,6 +8067,7 @@ function openSave() {
 		can: {
 			results: !!r && !r.detached,
 			sample: !!prob,
+			iterations: prob?.iterations ?? 0,
 			stale: !!r && state.dirty,
 			data: data.length > 0,
 			fileName: state.fileHandle?.name ?? null,
@@ -8075,7 +8076,10 @@ function openSave() {
 		data,
 		endpoints: ed.endpoints(state.raw),
 		chosen: state.saveChoice,
-		onSave: (choice) => { state.saveChoice = { kind: choice.kind, format: choice.format }; runSave(choice); },
+		onSave: (choice) => {
+			state.saveChoice = { kind: choice.kind, format: choice.format, holds: choice.holds, which: choice.which };
+			runSave(choice);
+		},
 	});
 }
 
@@ -8087,7 +8091,7 @@ function openSave() {
  * pop-up is allowed out of a user gesture and not out of a promise that
  * settles after one.
  */
-async function runSave({ kind, format, keys, open = false }) {
+async function runSave({ kind, format, keys, open = false, holds = 'all', which = 1 }) {
 	const handoff = open ? openResultBrowser() : null;
 	if (open && !handoff) return;
 	const r = state.results;
@@ -8117,7 +8121,12 @@ async function runSave({ kind, format, keys, open = false }) {
 		else await downloadHDF5(idx, suffix, handoff);
 		return;
 	}
-	if (kind === 'realisations') { await downloadRealisations(idx, '-realisations', 'all', handoff); return; }
+	if (kind === 'realisations') {
+		// The file is named after what it holds: `-realisations`, `-mean`,
+		// `-realisation-7`.
+		await downloadRealisations(idx, null, holds === 'one' ? which : holds, handoff);
+		return;
+	}
 	if (kind === 'data') { await exportData(handoff ? 'h5' : format, keys, handoff); return; }
 	if (kind === 'log') {
 		download(`${slug(state.raw.name)}-run-log.txt`, runLogFor(), 'text/plain');
@@ -8518,14 +8527,6 @@ async function downloadRealisations(idx = null, suffix = null, want = 'all', han
 }
 
 /**
- * Right-clicking the table.
- *
- * The export used to be a button in the tab bar, which is an odd place for it:
- * it acts on the table, so it belongs to the table. Two entries, because the
- * table shows the charted selection and what you want is sometimes everything
- * the run produced.
- */
-/**
  * What can be done to the chart.
  *
  * The scales live here rather than above the chart because they are read far
@@ -8645,6 +8646,13 @@ async function openSavedTimes() {
 	}
 }
 
+/**
+ * Right-clicking the table.
+ *
+ * The export used to be a button in the tab bar, which is an odd place for it:
+ * it acts on the table, so it belongs to the table. What it holds, as CSV, as
+ * HDF5, or into the HDF5 Browser; every other file is in Save….
+ */
 function tableMenu(ev) {
 	ev.preventDefault();
 	const r = state.results;

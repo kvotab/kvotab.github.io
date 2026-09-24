@@ -33082,6 +33082,17 @@ test('everything this tool writes is in one room, and everything a file holds is
 	assert(!/id="save-as"/.test(html), 'the old caret menu is still in the markup');
 	assert(/\$\('#save'\)\.addEventListener\('click', \(\) => openSave\(\)\)/.test(app),
 		'the Save button does not open the dialog');
+	// A sample can be written three ways, and Realisations asks which: every
+	// run, their mean, or one of them -- what the endpoints picker asks, less
+	// the deterministic run, which is Results. The choice reaches the export
+	// as what it takes, and the file is named after it.
+	const dialog = readFileSync(new URL('src/ui/savedialog.js', root), 'utf8');
+	assert(KINDS.find((k) => k.key === 'realisations')?.holds === true, 'Realisations does not ask');
+	assert(/const HOLDS = \[\n\t\['all',[\s\S]*?\n\t\['mean',[\s\S]*?\n\t\['one',/.test(dialog),
+		'the three holdings are not offered');
+	assert(/holds,\n\t\t\t\t\twhich,\n\t\t\t\t\}\);/.test(dialog), 'the choice does not leave the dialog');
+	assert(/await downloadRealisations\(idx, null, holds === 'one' \? which : holds, handoff\);/.test(app),
+		'the export is not told which of the sample to write');
 
 	// --- the picker --------------------------------------------------------
 	//

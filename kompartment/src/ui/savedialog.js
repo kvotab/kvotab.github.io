@@ -30,7 +30,8 @@ import { renderPicker, pickerState } from './pick.js';
  * model. `needs` is what has to be true, and the dialog turns it into a
  * sentence rather than a grey row. `browser` is whether the same file can go
  * straight to the HDF5 Browser instead of the disk; it reads HDF5 and nothing
- * else, so that is the file it gets whichever format is chosen.
+ * else, so that is the file it gets whichever format is chosen. `holds` is
+ * whether it asks which of a sample the file is of -- see `HOLDS`.
  */
 export const KINDS = [
 	{
@@ -68,13 +69,14 @@ export const KINDS = [
 	},
 	{
 		key: 'realisations',
-		label: 'Every realisation',
-		blurb: 'Not the curve through a probabilistic run but all of it: one row per '
-			+ 'output time and one column per realisation.',
-		formats: [['hdf5', 'HDF5', 'One matrix per series']],
+		label: 'Realisations',
+		blurb: 'What a probabilistic run drew rather than the curve through it: every '
+			+ 'realisation, their mean, or one of them.',
+		formats: [['hdf5', 'HDF5', 'One matrix per series, or one curve per series']],
 		needs: 'sample',
 		picks: 'series',
 		browser: true,
+		holds: true,
 	},
 	{
 		key: 'data',
@@ -97,6 +99,24 @@ export const KINDS = [
 	},
 ];
 
+/**
+ * Which of a sample a Realisations file is of, as the endpoints picker asks it.
+ *
+ * One file cannot sensibly be all three. The runs, their mean and one named
+ * run are different answers to "what happened", and for a skewed output -- a
+ * dose -- they are not close: the mean of a thousand doses sits well above the
+ * median. So it is asked. The fourth answer the picker offers, the
+ * deterministic run, is Results here.
+ */
+const HOLDS = [
+	['all', (n) => `All ${n} realisations`,
+		'One row per output time and one column per realisation — the shape Ecolego writes. Large.'],
+	['mean', (n) => `The mean of ${n} realisations`,
+		'One curve per series: the average of the runs at each time.'],
+	['one', () => 'One realisation…',
+		'One curve per series: that run, exactly as it was integrated.'],
+];
+
 /** Why a kind cannot be written, in a sentence, or null when it can. */
 function refusal(kind, can) {
 	if (kind.needs === 'results' && !can.results) return 'Nothing has run yet.';
@@ -113,14 +133,15 @@ function refusal(kind, can) {
 
 /**
  * @param {object} opts
- * @param {object} opts.can        `{results, sample, stale, data, fileName}`
+ * @param {object} opts.can        `{results, sample, iterations, stale, data, fileName}`
  * @param {Array} opts.series      pickable result blocks
  * @param {Array} opts.data        pickable parameters and lookup tables
  * @param {string[]} opts.endpoints the model's endpoint list, pre-ticked
- * @param {object} opts.chosen     `{kind, format}` remembered between openings
- * @param {(choice) => void} opts.onSave  `{kind, format, keys, open}`; `open`
- *   is the HDF5 Browser rather than the disk, and is called from the click
- *   itself, so that the tab can be opened there
+ * @param {object} opts.chosen     `{kind, format, holds, which}` remembered between openings
+ * @param {(choice) => void} opts.onSave  `{kind, format, keys, open, holds, which}`;
+ *   `open` is the HDF5 Browser rather than the disk, and is called from the
+ *   click itself, so that the tab can be opened there; `holds` and `which` say
+ *   which of a sample a Realisations file is of
  */
 export function openSaveDialog({
 	can, series = [], data = [], endpoints = [], chosen = {}, onSave,
@@ -132,9 +153,14 @@ export function openSaveDialog({
 		?? usable[0] ?? KINDS[0];
 	let format = what.formats.some(([f]) => f === chosen.format)
 		? chosen.format : what.formats[0][0];
+	// Which of a sample, for Realisations: every run, their mean, or one of
+	// them by its number, from 1.
+	const iterations = Math.max(1, Math.round(Number(can.iterations) || 1));
+	let holds = HOLDS.some(([v]) => v === chosen.holds) ? chosen.holds : 'all';
+	let which = Math.min(iterations, Math.max(1, Math.round(Number(chosen.which)) || 1));
 
 	// One selection per list, kept while the dialog is open so switching
-	// between Results and Every realisation does not lose the ticks.
+	// between Results and Realisations does not lose the ticks.
 	const picks = {
 		series: { chosen: new Set(series.filter((s) => s.on).map((s) => s.key)), ui: pickerState() },
 		// The endpoints the model already declares, or everything when it
@@ -193,6 +219,32 @@ export function openSaveDialog({
 				if (why) right.append(el('p', { className: 'hint' }, why));
 			}
 
+			if (what.holds) {
+				const n = iterations.toLocaleString();
+				const sel = el('select', { 'aria-label': 'What the file holds' });
+				for (const [value, label] of HOLDS) {
+					sel.append(el('option', { value, selected: value === holds }, label(n)));
+				}
+				sel.addEventListener('change', () => { holds = sel.value; handle.refresh(); });
+				const row = el('div', { className: 'save-holds' }, sel);
+				if (holds === 'one') {
+					const box = el('input', {
+						type: 'number', className: 'mono save-which', min: '1', max: String(iterations),
+						value: String(which), 'aria-label': 'Which realisation',
+					});
+					box.addEventListener('change', () => {
+						const v = Math.round(Number(box.value));
+						which = Number.isFinite(v) ? Math.min(iterations, Math.max(1, v)) : 1;
+						box.value = String(which);
+					});
+					row.append(box, el('span', { className: 'save-of' }, `of ${n}`));
+				}
+				right.append(el('div', { className: 'field' },
+					el('label', { title: 'Which of the probabilistic run the file is of. The '
+						+ 'deterministic run is Results.' }, 'Holds'), row));
+				right.append(el('p', { className: 'hint' }, HOLDS.find(([v]) => v === holds)[2]));
+			}
+
 			let picked = null;
 			// Declared before the picker so a tick can reach them: the buttons
 			// are disabled while nothing is ticked, and a tick does not rebuild.
@@ -249,6 +301,8 @@ export function openSaveDialog({
 					format,
 					keys: what.picks ? [...picks[what.picks].chosen] : null,
 					open: toBrowser,
+					holds,
+					which,
 				});
 			};
 			go.addEventListener('click', () => send(false));

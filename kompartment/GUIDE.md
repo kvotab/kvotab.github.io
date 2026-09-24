@@ -1846,11 +1846,11 @@ memory stick.
 | **Model** | the model on its own — JSON, ZIP or gzip |
 | **Model with results** | the model *and the run it produced*, so it opens again without the solve |
 | **Results** | the series themselves — HDF5 or CSV |
-| **Every realisation** | a probabilistic run in full: one row per output time, one column per realisation |
+| **Realisations** | what a probabilistic run drew: all of it — one row per output time, one column per realisation — their mean, or one realisation by its number |
 | **Data** | parameters and lookup tables — Excel or HDF5 |
 | **Run log** | what the solver did, as text |
 
-**Results**, **Every realisation** and **Data** have **Open in the HDF5
+**Results**, **Realisations** and **Data** have **Open in the HDF5
 Browser** beside *Save…*: the same file, handed to the
 [HDF5 Browser](https://kvotab.se/rb.html) in a new tab instead of written to
 disk. The browser reads HDF5 and nothing else, so that is what it is sent
@@ -2401,8 +2401,8 @@ once, and says so while it works. See
 Right-click the **Table** for what it holds: **Export table to CSV**, **Export
 table to HDF5**, or **Open in the HDF5 Browser**, which hands the same HDF5 file
 to the reader without saving it. Everything else is in **Save…**: *Results*
-for any of the series, every output included, *Every realisation* for a
-probabilistic run's sample, and *Model with results*, whose ticks are the
+for any of the series, every output included, *Realisations* for a
+probabilistic run's sample, its mean or one realisation of it, and *Model with results*, whose ticks are the
 model's endpoints.
 
 ### Choosing endpoints
@@ -5551,10 +5551,12 @@ sits well above the median, which is exactly why it is worth seeing both. The
 choice is saved with the model and redrawn at once from the realisations the
 worker still holds.
 
-**Saving a probabilistic result.** The endpoints picker — **Choose…** beside
-*Keep only the endpoints* in Uncertainty → Probabilistic… — has a **HDF5
-holds** row once a probabilistic run stands behind the series, with four things
-the file can be:
+**Saving a probabilistic result.** **Save → Realisations** asks what the file
+holds — every realisation, their mean, or one realisation by its number — and
+the endpoints picker (**Choose…** beside *Keep only the endpoints* in
+Uncertainty → Probabilistic…) asks the same in its **HDF5 holds** row once a
+probabilistic run stands behind the series, with the deterministic run as a
+fourth answer, which in Save… is *Results*:
 
 | | What is written |
 |---|---|
@@ -5573,9 +5575,9 @@ the deterministic one carries neither. CSV always writes the deterministic
 values, and says so.
 
 The quick version: **Export table to HDF5** on the table's right-click menu
-for the curve, **Save → Every realisation** for the sample — and **Open in the
-HDF5 Browser**, on that menu and beside *Save…*, to send either straight to the
-reader without saving a file. The whole run is the usual thing to want there,
+for the curve, **Save → Realisations** for the sample, its mean or one run of it
+— and **Open in the HDF5 Browser**, on that menu and beside *Save…*, to send any
+of them straight to the reader without saving a file. The whole run is the usual thing to want there,
 which is **Save → Results** with every block ticked: a reader is opened to look
 around in, which is exactly when you want more than the four lines you happened
 to chart.
