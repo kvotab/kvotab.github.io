@@ -483,11 +483,45 @@ function renderPlotlyChart(ctx) {
 
 
 /**
+ * A flat line across `span` for a value that does not vary over time (see
+ * constantValuesOf). Given realisations it is their mean, and it carries what
+ * the CI, SEM and Show iteration toggles read, all of it flat as well: the
+ * 5-95 % band, mean ± σ/√n_iter and each realisation's own value.
+ *
+ * @param {{values: number[], name: string, line: Object, nIter: number|null}} constant
+ * @param {number[]} span - The times to draw it at
+ * @returns {Object} Plotly trace
+ */
+function constantTrace({ values, name, line, nIter }, span) {
+  const flat = (v) => span.map(() => v);
+  const finite = values.filter(Number.isFinite);
+  const mean = finite.reduce((a, b) => a + b, 0) / finite.length;
+  const many = values.length > 1;
+  const trace = ChartService.timeSeriesTrace({ x: span, y: flat(mean), name, line,
+    hovertemplate: `<b>${name}</b><br>Value: %{y}<br>${many ? `Mean of ${values.length} realisations, not` : 'Not'} time-dependent<extra></extra>` });
+  if (!many) return trace;
+  trace._isProbabilistic = true;
+  trace._timeData = span;
+  trace._ciP5 = flat(computeProbabilisticPercentile(values, [0], 5, values.length)[0]);
+  trace._ciP95 = flat(computeProbabilisticPercentile(values, [0], 95, values.length)[0]);
+  trace._constantSamples = values;
+  trace._numRealizations = values.length;
+  const sdom = nIter > 1 ? computeProbabilisticSDOMBand(values, [0], nIter, values.length) : null;
+  if (sdom) {
+    trace._sdomLower = flat(sdom.lower[0]);
+    trace._sdomUpper = flat(sdom.upper[0]);
+  }
+  return trace;
+}
+
+/**
  * Create a Plotly chart comparing multiple selected datasets.
  * Each selection item carries its own fileKey so cross-file comparisons work.
- * 
+ *
  * Used in multi-select mode (Ctrl+click on datasets, possibly from different files).
- * 
+ * A selected value that does not vary over time is drawn as a flat line across
+ * the time series, as long as there is at least one of those to draw.
+ *
  * @param {{path: string, fileKey: string|null}[]} items - Array of selected dataset items
  * @returns {void}
  */
@@ -578,6 +612,15 @@ function createMultiDatasetChart(items) {
   const allPaths = normalizedItems.map(d => d.path);
   const allFileKeys = normalizedItems.map(d => d.fileKey);
 
+  // One line style per file when several are compared, thinner than a single file's.
+  const dashStyles = ['solid', 'dash', 'dot', 'dashdot'];
+  const lineFor = (fileKey, color) => multiFile
+    ? { color, dash: dashStyles[uniqueFileKeys.indexOf(fileKey) % dashStyles.length], width: 1.5 }
+    : { color, dash: 'solid', width: 2 };
+
+  // Values that do not vary over time, drawn once the time series have set the span.
+  const constants = [];
+
   for (const [itemIndex, item] of normalizedItems.entries()) {
     const { path, fileKey } = item;
     const datasetName = path.split('/').pop();
@@ -593,8 +636,16 @@ function createMultiDatasetChart(items) {
     
     try {
       const dataset = FileService.get(file, path);
-      if (!isTimeDependent(dataset)) continue;
-      
+      if (!isTimeDependent(dataset)) {
+        const values = constantValuesOf(dataset, nIter);
+        if (values) {
+          constants.push({ at: traces.length, values, nIter, unit: getAttr(dataset, 'unit'),
+            name: buildTraceName(datasetName, path, fileKey, allPaths, allFileKeys),
+            line: lineFor(fileKey, baseColor) });
+        }
+        continue;
+      }
+
       // Get unit
       let yAxisUnit = '';
       const unitVal = getAttr(dataset, 'unit');
@@ -676,15 +727,7 @@ function createMultiDatasetChart(items) {
         
         // Build trace name — harmonized via buildTraceName
         const traceName = buildTraceName(datasetName, path, fileKey, allPaths, allFileKeys);
-        let lineWidth = 2;
-        let lineDash = 'solid';
-        if (multiFile) {
-          const fileIdx = uniqueFileKeys.indexOf(fileKey);
-          const dashStyles = ['solid', 'dash', 'dot', 'dashdot'];
-          lineDash = dashStyles[fileIdx % dashStyles.length];
-          lineWidth = 1.5;
-        }
-        const traceObj = ChartService.timeSeriesTrace({ x: trimmedTimeData, y: trimmedYData, name: traceName, line: { color: baseColor, dash: lineDash, width: lineWidth }, hovertemplate: `<b>${traceName}</b><br>Time: %{x}<br>Value: %{y}<extra></extra>` });
+        const traceObj = ChartService.timeSeriesTrace({ x: trimmedTimeData, y: trimmedYData, name: traceName, line: lineFor(fileKey, baseColor), hovertemplate: `<b>${traceName}</b><br>Time: %{x}<br>Value: %{y}<extra></extra>` });
         traceObj._isProbabilistic = isProbabilistic || !!ciFromColumns;
         if (isProbabilistic) {
           // Store raw data and time data on the trace for CI computation
@@ -710,7 +753,21 @@ function createMultiDatasetChart(items) {
       console.error(`Error creating trace for ${path} in ${fileKey}:`, e);
     }
   }
-  
+
+  // A constant runs flat across the time series, through every time any of
+  // them reports: it then answers a hover wherever they do, and it survives a
+  // log axis, which drops t = 0. It keeps its place in the selection's order.
+  if (traces.length > 0 && constants.length > 0) {
+    const span = [...new Set(traces.flatMap(t => t.x))].filter(Number.isFinite).sort((a, b) => a - b);
+    for (const c of constants.reverse()) {
+      const trace = constantTrace(c, span);
+      if (c.unit !== undefined && c.unit !== null) yAxisUnits.add(c.unit);
+      if (trace._isProbabilistic) hasProbabilistic = true;
+      if (trace._sdomLower) hasSDOM = true;
+      traces.splice(c.at, 0, trace);
+    }
+  }
+
   if (traces.length > 0) {
     // Show CI checkbox if we have probabilistic data
     if (hasProbabilistic) {

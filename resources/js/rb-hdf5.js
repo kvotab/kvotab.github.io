@@ -219,6 +219,41 @@ function isTimeDependent(dataset) {
 }
 
 /**
+ * The numbers a dataset that does not vary over time holds, when it can be
+ * drawn on a time chart as a flat line: the one value of an HDF5 scalar or of
+ * a dataset with a single element, or the value of each realisation of a
+ * probabilistic one (a column of them, as Kompartment writes a parameter).
+ *
+ * Anything else gives null: a time-dependent dataset, a table, a string, a
+ * compound, or a value that is not a number in any realisation.
+ *
+ * @param {Object} dataset - h5wasm Dataset object
+ * @param {number|null} [nIter] - The file's number of realisations (getRootNIter)
+ * @returns {number[]|null} One value, or one per realisation
+ */
+function constantValuesOf(dataset, nIter = null) {
+  if (!dataset || !Array.isArray(dataset.shape) || isTimeDependent(dataset)) return null;
+  const dims = dataset.shape.map(Number);
+  const size = dims.reduce((n, d) => n * d, 1);
+  // Realisations of one value lie along a single axis, one per run, and how
+  // many runs there were is the file's to say. A column of any other length is
+  // something else: a series stored without time_dependent, say, from a run of
+  // one realisation.
+  const runs = Number(PDFSampler.normalizeDataArray(getAttr(dataset, 'n_iter') ?? nIter ?? 0)[0]);
+  const realisations = size > 1 && size === runs && checkIsProbabilistic(dataset)
+    && dims.filter(d => d > 1).length === 1;
+  if (size !== 1 && !realisations) return null;
+  let values;
+  try {
+    values = PDFSampler.normalizeDataArray(typeof dataset.value !== 'undefined' ? dataset.value : dataset.toArray());
+  } catch (e) {
+    return null;
+  }
+  if (values.length !== size || !values.every(v => typeof v === 'number')) return null;
+  return values.some(Number.isFinite) ? values : null;
+}
+
+/**
  * Check if a group contains data suitable for special time-chart plotting.
  * A qualifying group must have:
  * - IndexLists attribute containing 'Radionuclides', 'Materials', 'Contaminants',

@@ -11,7 +11,13 @@ Serve the site and start Chrome with remote debugging:
     python3 -m http.server 8765 --bind 127.0.0.1
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
       --headless=new --remote-debugging-port=9222 --no-first-run \
+      --window-size=1400,1000 \
       --user-data-dir=/tmp/rbtest --disable-gpu about:blank
+
+The window size matters. `test-axes.py` points the mouse at the middle of the
+chart, and without `--window-size` Chrome 153 opens a headless window of
+756 × 469, which puts that point below the viewport. Every tooltip check then
+reads nothing, and five checks fail with the page working as it should.
 
 Then, from this directory:
 
@@ -121,6 +127,21 @@ data. That page is also worth opening by hand — its three buttons show the
 handoff into a new tab, into a blob URL, and into an iframe — and its source is
 the copy-paste starting point for a real producer.
 
+`test-constants.py` covers a multi-selection that mixes time series with
+values that do not vary over time. The chart used to be drawn only when every
+selected dataset was time-dependent, so a series selected together with the
+parameter that drives it gave the parameter's histogram, or no chart at all.
+Now one time-dependent dataset with a `/time` in its file is enough, and each
+value that does not vary over time is drawn as a flat line across the chart.
+A scalar or a one-element dataset is drawn at its value. A probabilistic column
+is drawn at the mean of its realisations, and the CI, SEM and Show iteration
+toggles work on it as they do on a series. Strings, tables and values that are
+not numbers are not drawn. The test checks that on screen the flat lines span
+exactly what the series do, on a linear axis and on a log one (which drops
+t = 0). It builds its three files in the page with h5wasm.
+
+    python3 test-constants.py
+
 ## Nothing here needs a committed data file
 
 `handoff-demo.html` used to fetch a sample HDF5 file to get valid bytes, and
@@ -131,7 +152,7 @@ refused it, and the check that waits for `rb-opened` waited for ever. The demo
 now builds a small file with h5wasm instead, which is what a page that produces
 HDF5 data would really do, and the test uses that same builder. Neither needs
 anything from `resources/data`. `test-axes.py` builds its overlay file the
-same way.
+same way, and `test-constants.py` its three files.
 
 ## Known noise
 
@@ -147,6 +168,12 @@ Lazy tree loading races the search filter: the background expansion that pulls
 matching paths into the DOM may or may not have finished when the counts are
 taken, so hidden rows swing by about fifty and match counts by one. The swing
 is not ±1, despite what this section used to claim.
+
+`/dialogs/presetOptions` moves when `test-axes.py` ran in the same Chrome
+profile between the two runs. It deletes the "release" preset and leaves it
+deleted, so the second run lists one preset fewer. Clear `chartPresets` from
+localStorage, or start Chrome with a fresh `--user-data-dir`, before each
+characterisation.
 
 Treat a diff confined to `/search/**` as inconclusive rather than clean — if it
 matters, run the unchanged code twice and compare those two runs, which

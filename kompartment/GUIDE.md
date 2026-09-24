@@ -2527,10 +2527,12 @@ number at every output time, and says `time_dependent = 'FALSE'`. These are:
 
 In a file of realisations each of these is one value per realisation: a column
 of *n* rather than a matrix of times by *n*. The result browser draws that as a
-histogram, and Import… takes it back as a sample. Which values these are is the
-model's to say, not the numbers'. A compartment that stays empty, or a flux that
-is zero until a release arrives, is still a quantity that moves. It is written at
-every time, with its nuclides.
+histogram, and Import… takes it back as a sample. Selected together with a
+series, any of these values is drawn as a flat line across the series' times: a
+column of realisations at its mean, with its 5–95 % band. Which values these
+are is the model's to say, not the numbers'. A compartment that stays empty, or
+a flux that is zero until a release arrives, is still a quantity that moves. It
+is written at every time, with its nuclides.
 
 A sub-system is a group, so `bio.Soil` is at `/bio/Soil`; a block indexed by
 two lists nests, `/Dose/<area>/<nuclide>`, with the nuclide as the leaf — which

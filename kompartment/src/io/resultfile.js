@@ -34,11 +34,12 @@
  * number at every output time: a parameter, a table's point, an expression of
  * parameters alone, the peak of a series. Its dataset holds that number -- and
  * in a file of realisations one number per realisation -- and says
- * `time_dependent = 'FALSE'`, so a reader does not draw a flat line of it
- * against `/time` and nobody stores it four hundred times over. Which values
- * those are is the model's to say, not the numbers': a compartment that stays
- * at nothing is still a quantity that moves, and is still drawn with its
- * nuclides. See `timeDependentOf` in ../sim/runner.js.
+ * `time_dependent = 'FALSE'`, so a reader does not take it for a series over
+ * `/time` -- the result browser draws it flat across a time chart only when
+ * it is selected beside a series -- and nobody stores it four hundred times
+ * over. Which values those are is the model's to say, not the numbers': a
+ * compartment that stays at nothing is still a quantity that moves, and is
+ * still drawn with its nuclides. See `timeDependentOf` in ../sim/runner.js.
  */
 
 import { F64, F32, STR, group, dataset, put } from './hdf5.js';

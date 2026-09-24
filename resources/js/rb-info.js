@@ -999,7 +999,9 @@ function showMultipleDatasetAttributes(items) {
     return section;
   };
 
-  let allTimeDependent = true;
+  // A time chart needs one series with a /time to draw against; a value that
+  // does not vary over time is then drawn flat across it (createMultiDatasetChart).
+  let anyTimeSeries = false;
   const combinedHistogramEntries = [];
 
   // Pre-compute context arrays for buildTraceName
@@ -1025,15 +1027,15 @@ function showMultipleDatasetAttributes(items) {
       if (!dataset) { frag.appendChild(fileSection); continue; }
 
       const isTimeDep = isTimeDependent(dataset);
-      if (!isTimeDep) allTimeDependent = false;
+      if (isTimeDep && checkDatasetExistsInFile(file, '/time')) anyTimeSeries = true;
 
       fileSection.appendChild(makeLabelSection('Type', String(dataset.type) + (isTimeDep ? ' ⏱️ (time-dependent)' : '')));
 
       if (dataset.dtype) fileSection.appendChild(makeLabelSection('Data Type', formatDataType(dataset.dtype)));
       if (dataset.shape && Array.isArray(dataset.shape)) fileSection.appendChild(makeLabelSection('Shape', dataset.shape.length === 0 ? 'Scalar' : dataset.shape.join(', ')));
 
-      // Show Data Preview for scalar values
-      if (dataset.shape && Array.isArray(dataset.shape) && dataset.shape.length === 0) {
+      // Show Data Preview for a single value: a scalar, or a dataset of one element
+      if (dataset.shape && Array.isArray(dataset.shape) && dataset.shape.reduce((n, d) => n * Number(d), 1) === 1) {
         try {
           const val = typeof dataset.value !== 'undefined' ? dataset.value : (typeof dataset.toArray === 'function' ? dataset.toArray() : undefined);
           if (val !== undefined) {
@@ -1104,7 +1106,7 @@ function showMultipleDatasetAttributes(items) {
   while (infoDiv.firstChild) infoDiv.removeChild(infoDiv.firstChild);
   infoDiv.appendChild(frag);
 
-  if (allTimeDependent && normalizedItems.length > 0) {
+  if (anyTimeSeries) {
     createMultiDatasetChart(normalizedItems);
   } else if (combinedHistogramEntries.length > 0) {
     createPdfHistogram({ type: 'lookup', entries: combinedHistogramEntries, path: 'Multi-selection' });

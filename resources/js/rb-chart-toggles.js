@@ -533,13 +533,15 @@ function toggleShowIteration() {
   const sourceTraces = (currentChartData && Array.isArray(currentChartData.traces))
     ? currentChartData.traces : (plotDiv.data || []);
   sourceTraces.forEach(trace => {
-    if (!trace._rawData || !trace._timeData) return;
+    // A value that does not vary over time has one number per realisation.
+    const constant = trace._constantSamples;
+    if ((!trace._rawData && !constant) || !trace._timeData) return;
     const numRealizations = trace._numRealizations;
     if (!numRealizations || iterNumRaw > numRealizations) return;
     const r = iterNumRaw - 1;
     const y = [];
     for (let t = 0; t < trace._timeData.length; t++) {
-      y.push(PDFSampler.toNumber(trace._rawData[t * numRealizations + r]));
+      y.push(constant ? constant[r] : PDFSampler.toNumber(trace._rawData[t * numRealizations + r]));
     }
     const color = (trace.line && trace.line.color) ? trace.line.color : '#888888';
     iterTraces.push({
