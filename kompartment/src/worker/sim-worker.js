@@ -485,6 +485,57 @@ function peakTime(values, times, iterations, mask) {
 	return best;
 }
 
+/**
+ * Each realisation's own peak: the largest value it reaches, and the output
+ * time at which it first reaches it.
+ *
+ * Not the same question as `peakTime`, which finds one time for all of them.
+ * A dose that peaks at a thousand years in one realisation and at fifty
+ * thousand in the next is compared here by how high each gets, which is what
+ * a reader asking "what drives the peak dose" usually means. A realisation the
+ * categories screen out, or with no finite value, has no peak: NaN, and -1 for
+ * its time.
+ *
+ * @param {Float64Array} values  `iterations * times`, realisation-major
+ * @returns {{max: Float64Array, when: Int32Array}}
+ */
+function ownPeaks(values, times, iterations, mask) {
+	const max = new Float64Array(iterations).fill(NaN);
+	const when = new Int32Array(iterations).fill(-1);
+	for (let i = 0; i < iterations; i++) {
+		if (mask && !mask[i]) continue;
+		let best = -Infinity;
+		let at = -1;
+		for (let j = 0; j < times; j++) {
+			const v = values[i * times + j];
+			if (v > best) { best = v; at = j; }	// NaN compares false and is passed over
+		}
+		if (at >= 0) { max[i] = best; when[i] = at; }
+	}
+	return { max, when };
+}
+
+/**
+ * Which sample columns an analysis is over: the ones asked for, in order and
+ * once each, or every column when nothing usable was asked for.
+ */
+function chosenInputs(asked, count) {
+	if (!Array.isArray(asked)) return Array.from({ length: count }, (_, c) => c);
+	const seen = new Set();
+	for (const c of asked) if (Number.isInteger(c) && c >= 0 && c < count) seen.add(c);
+	return [...seen].sort((p, q) => p - q);
+}
+
+/** When the realisations peak: the median time and the 5th to 95th percentile. */
+function peakTimes(t, when) {
+	const at = [];
+	for (const j of when) if (j >= 0) at.push(t[j]);
+	if (!at.length) return null;
+	at.sort((a, b) => a - b);
+	const q = (p) => at[Math.min(at.length - 1, Math.max(0, Math.round(p * (at.length - 1))))];
+	return { median: q(0.5), low: q(0.05), high: q(0.95), n: at.length };
+}
+
 /** How many realisations a mask keeps. */
 function kept(mask, iterations) {
 	if (!mask) return iterations;
@@ -635,15 +686,29 @@ function gsaAnswer(result, index, stat, at) {
  * of mutual information, the dummies -- come from streams of the run's seed,
  * so asking twice gives the same answer.
  */
-function distributionMeasures(r, values, times, at, rows, mask) {
-	const use = [];
+function distributionMeasures(r, values, times, at, rows, mask, { translate = 'none', use: inputs = null } = {}) {
+	let use = [];
 	for (let i = 0; i < r.iterations; i++) {
 		if (mask && !mask[i]) continue;
 		if (Number.isFinite(values[i * times + at])) use.push(i);
 	}
-	const y = Float64Array.from(use, (i) => values[i * times + at]);
+	// What the output is read as. Only two of these measures see the
+	// difference: EASI, a share of the variance, and RSA, which splits the
+	// realisations at the output's mean -- so at the geometric mean on
+	// logarithms and at the median on ranks. δ, mutual information, PAWN and
+	// discrepancy depend on order alone and give the same numbers, except that
+	// a logarithm has to leave out a realisation that is not positive.
+	let dropped = 0;
+	if (translate === 'log') {
+		const before = use.length;
+		use = use.filter((i) => values[i * times + at] > 0);
+		dropped = before - use.length;
+	}
+	const raw = Float64Array.from(use, (i) => values[i * times + at]);
+	const y = translate === 'log' ? raw.map(Math.log)
+		: translate === 'rank' ? averageRanks(raw) : raw;
 	const n = y.length;
-	if (n < 20) return { ok: false, used: n, rows: [] };
+	if (n < 20) return { ok: false, used: n, dropped, translate, rows: [] };
 	let flat = true;
 	for (let i = 1; i < n && flat; i++) if (y[i] !== y[0]) flat = false;
 	if (flat) return { ok: false, used: n, flat: true, rows: [] };
@@ -661,9 +726,10 @@ function distributionMeasures(r, values, times, at, rows, mask) {
 	// it, puts a dose that spans decades at the bottom of the square for
 	// nearly every realisation, and every input's share came out the same.
 	const varying = (col) => { for (let i = 1; i < col.length; i++) if (col[i] !== col[0]) return true; return false; };
-	const everyInput = r.samples.length * n * n <= 4e8;
+	const chosen = inputs ?? r.samples.map((_, k) => k);
+	const everyInput = chosen.length * n * n <= 4e8;
 	const pool = everyInput
-		? r.samples.map((col, k) => ({ k, x: Float64Array.from(use, (i) => col[i]) }))
+		? chosen.map((k) => ({ k, x: Float64Array.from(use, (i) => r.samples[k][i]) }))
 		: rows.map((row, j) => ({ k: row.k, x: columns[j] }));
 	const spread = pool.filter((c) => varying(c.x));
 	const shares = spread.length
@@ -687,9 +753,15 @@ function distributionMeasures(r, values, times, at, rows, mask) {
 			discrepancy: shareOf.get(row.k) ?? NaN,
 		};
 	});
+	// Where RSA split, in the output's own units rather than in logs or ranks.
+	const sorted = Float64Array.from(raw).sort();
+	const threshold = translate === 'log' ? Math.exp(split.threshold)
+		: translate === 'rank' ? (sorted[(n - 1) >> 1] + sorted[n >> 1]) / 2
+			: split.threshold;
 	return {
-		ok: true, used: n, rows: out,
-		threshold: split.threshold, behavioural: split.behavioural,
+		ok: true, used: n, rows: out, translate, dropped,
+		splitAt: translate === 'log' ? 'geometric mean' : translate === 'rank' ? 'median' : 'mean',
+		threshold, behavioural: split.behavioural,
 		ksDummyMean: split.dummyMean, ksDummySd: split.dummySd,
 		discrepancyOver: everyInput ? 'all' : 'listed',
 	};
@@ -942,14 +1014,29 @@ self.onmessage = async (ev) => {
 			const values = result.values[k];
 			if (!values) return;
 			const times = result.t.length;
-			const at = Math.min(times - 1, Math.max(0, Number(msg.at ?? times - 1)));
-			const sorted = sortedColumn(values, strideOf(result, k), result.iterations,
-				timeIn(result, k, at), mask);
+			const stride = strideOf(result, k);
+			// The same three questions as What drove it: a time, where the
+			// output peaks on average (`peak`), or each realisation's own peak
+			// (`max`), which is no one time -- `at` is null then, and `peaks`
+			// says when they fell.
+			let at = null;
+			let peaks = null;
+			let sorted;
+			if (msg.at === 'max') {
+				const found = ownPeaks(values, stride, result.iterations, mask);
+				sorted = sortedColumn(found.max, 1, result.iterations, 0);
+				if (stride > 1) peaks = peakTimes(result.t, found.when);
+			} else {
+				at = msg.at === 'peak'
+					? peakTime(values, stride, result.iterations, mask)
+					: Math.min(times - 1, Math.max(0, Number(msg.at ?? times - 1)));
+				sorted = sortedColumn(values, stride, result.iterations, timeIn(result, k, at), mask);
+			}
 			const column = Float64Array.from(sorted);
 			// Which category each kept realisation is in, in the column's
 			// order, so the page can colour a histogram by it.
 			self.postMessage({
-				type: 'prob-summary', id: msg.id, index: k, at, t: result.t,
+				type: 'prob-summary', id: msg.id, index: k, at, peaks, t: result.t,
 				summary: describeSample(sorted),
 				histogram: histogram(sorted),
 				column,
@@ -1378,12 +1465,39 @@ self.onmessage = async (ev) => {
 			// pick out of a list of four hundred. Worked out here because the
 			// matrix is here: the mean over the realisations at each time, and
 			// the time that maximises it.
-			const at = msg.at === 'peak'
-				? peakTime(values, stride, r.iterations, mask)
-				: Math.min(times - 1, Math.max(0, Number(msg.at ?? times - 1)));
-			const a = timeIn(r, k, at);
-			const rows = ranked(r.samples, values, stride, r.iterations, a,
-				{ most: msg.most ?? 20, mask });
+			//
+			// `at: 'max'` is each realisation's own peak instead: not a time of
+			// the matrix at all but a column of its own, one number per
+			// realisation, which every measure below reads in place of a time's
+			// column. `at` is then null, and `peaks` says when they fell.
+			const own = msg.at === 'max';
+			const at = own ? null
+				: msg.at === 'peak'
+					? peakTime(values, stride, r.iterations, mask)
+					: Math.min(times - 1, Math.max(0, Number(msg.at ?? times - 1)));
+			// What the table reads: `read[i * across + a]` for realisation i.
+			let read = values;
+			let across = stride;
+			let a = own ? 0 : timeIn(r, k, at);
+			let peaks = null;
+			if (own) {
+				const found = ownPeaks(values, stride, r.iterations, mask);
+				read = found.max;
+				across = 1;
+				a = 0;
+				// A varied parameter is one number, and "when" it peaks means nothing.
+				if (stride > 1) peaks = peakTimes(r.t, found.when);
+			}
+			// Which sampled inputs the analysis is over: those the reader chose,
+			// or all of them. The table ranks only these, the regression is
+			// fitted to only these, and the distribution measures are of these.
+			// `use[j]` is the sample column of the j-th, and the rows keep the
+			// sample's own numbering.
+			const use = chosenInputs(msg.inputs, r.samples.length);
+			const pool = use.map((c) => r.samples[c]);
+			const rows = ranked(pool, read, across, r.iterations, a,
+				{ most: msg.most ?? 20, mask }).map((row) => ({ ...row, k: use[row.k] }));
+			const posOf = new Map(use.map((c, j) => [c, j]));
 			// The over-time shape for the few that matter, which is the chart
 			// Ecolego draws: an input that governs the first century and not
 			// the next ten thousand years is a thing one number cannot say.
@@ -1397,27 +1511,28 @@ self.onmessage = async (ev) => {
 			// on screen rather than for all of them. Past a few thousand
 			// inputs it is declined rather than attempted.
 			let measures = null;
-			if (r.samples.length <= 3000) {
+			const translate = TRANSLATIONS.has(msg.translate) ? msg.translate : 'none';
+			if (pool.length <= 3000 && pool.length) {
 				const y = new Float64Array(r.iterations);
-				for (let i = 0; i < r.iterations; i++) y[i] = values[i * stride + a];
-				const translate = TRANSLATIONS.has(msg.translate) ? msg.translate : 'none';
-				const reg = regressionMeasures(r.samples, y, { translate, mask });
+				for (let i = 0; i < r.iterations; i++) y[i] = read[i * across + a];
+				const reg = regressionMeasures(pool, y, { translate, mask });
 				measures = {
 					ok: reg.ok, used: reg.used, r2: reg.r2, translate,
 					dropped: reg.dropped ?? 0,
-					src: rows.map((row) => reg.src[row.k]),
-					b: rows.map((row) => reg.b[row.k]),
-					pcc: rows.map((row) => reg.pcc[row.k]),
+					src: rows.map((row) => reg.src[posOf.get(row.k)]),
+					b: rows.map((row) => reg.b[posOf.get(row.k)]),
+					pcc: rows.map((row) => reg.pcc[posOf.get(row.k)]),
 					s1: rows.map((row) => firstOrderIndex(r.samples[row.k], y, { mask })),
 				};
 			}
 			const distribution = msg.family === 'distribution'
-				? distributionMeasures(r, values, stride, a, rows, mask) : null;
+				? distributionMeasures(r, read, across, a, rows, mask, { translate, use }) : null;
 			self.postMessage({
 				type: 'sensitivity',
 				id: msg.id,
 				index: k,
 				at,
+				peaks,
 				t: r.t,
 				rows: rows.map((row) => ({
 					...row,
@@ -1428,6 +1543,10 @@ self.onmessage = async (ev) => {
 				measures,
 				distribution,
 				kept: kept(mask, r.iterations),
+				// Every input the sample varies, for the dialog to choose from,
+				// and how many of them this answer is over.
+				sampled: r.plan.map((e, c) => ({ k: c, name: e.name, where: Object.values(e.index ?? {}) })),
+				using: use.length,
 			});
 		} catch (e) {
 			self.postMessage({ type: 'error', id: msg.id, name: e.name, message: e.message });

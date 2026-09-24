@@ -1203,7 +1203,9 @@ function captureAxisState() {
     xRange: xaxis.range ? [...xaxis.range] : null,
     yRange: yaxis.range ? [...yaxis.range] : null,
     xAutorange: xaxis.autorange,
-    yAutorange: yaxis.autorange
+    // A log y axis the snap has set is still on auto range, and a redraw
+    // (Show Total, say) should fit what it then draws, not the old range.
+    yAutorange: isAutoLogY(plotDiv) ? true : yaxis.autorange
   };
 }
 

@@ -19,7 +19,33 @@
 import { el } from './parts.js';
 import { openModal } from './modal.js';
 import { fmtTime } from '../domain/timeseries.js';
-import { valueAt, probabilityOf, conditionalTailExpectation } from '../domain/distribution.js';
+import { valueAt, probabilityOf, conditionalTailExpectation, histogram } from '../domain/distribution.js';
+
+/**
+ * The three things *At* can mean, as in What drove it: each realisation's own
+ * peak, whenever it comes; the realisations at the one time the output peaks
+ * on average; or at a chosen time.
+ */
+const WHEN = [
+	['own', 'each realisation’s peak',
+		'The largest value each realisation reaches, whenever it reaches it: the distribution of the peaks.'],
+	['mean', 'where it peaks on average',
+		'Every realisation’s value at the one time this output is largest averaged over them.'],
+	['time', 'a chosen time',
+		'Every realisation’s value at a time picked from the output grid; the last one to start with.'],
+];
+
+/**
+ * The axis the density and the cumulative curve are drawn on. Automatic is
+ * logarithmic when the middle 90% of the sample spans more than two decades,
+ * which a dose usually does and a pressure does not.
+ */
+const SCALES = [
+	['auto', 'automatic', 'Logarithmic when the middle 90% of the realisations spans more than a factor of 100, linear otherwise.'],
+	['linear', 'linear', 'The values as they are.'],
+	['log', 'logarithmic', 'The logarithm of the values: bins of equal width in decades, and a cumulative curve on '
+		+ 'the same axis. Only for a sample that is above zero throughout.'],
+];
 
 /** A number the way the table shows it. */
 export function fmtStat(v) {
@@ -146,21 +172,34 @@ function paint(canvas, sorted, hist, summary) {
  * @param {string[]} opts.outputs   every series the run kept
  * @param {number} opts.index
  * @param {Float64Array} opts.t
- * @param {number} opts.at          which time
+ * @param {number|null} opts.at     which time, as an index; null for each realisation's own peak
+ * @param {object|null} [opts.peaks] when those peaks fall: `{median, low, high}`
  * @param {object} opts.summary     from `describeSample`
- * @param {object} opts.histogram   from `histogram`
- * @param {Float64Array} opts.column  the sorted realisations
+ * @param {Float64Array} opts.column  the sorted realisations -- the histogram is
+ *   drawn from these here, on whichever axis is chosen
  * @param {number} opts.of          how many realisations the run had
  * @param {string} opts.unit
  * @param {string} opts.timeUnit
- * @param {(ask: {index: number, at: number}) => void} opts.onAsk
+ * @param {(ask: {index: number, at: number|'peak'|'max'}) => void} opts.onAsk
  */
 export function openDistributionDialog({
-	output, outputs = [], index = 0, t, at, summary, histogram: hist, column, of,
+	output, outputs = [], index = 0, t, at, peaks = null, summary, column, of,
 	unit = '', timeUnit = 'year', onAsk, onClose,
 }) {
-	let view = { output, outputs, index, t, at, summary, hist, column, of, unit };
+	// The histogram is not part of this: it is made here from `column`, so it
+	// cannot be left behind by an answer. It used to arrive from the worker as
+	// `histogram` and be kept as `hist`, and every answer after the first
+	// updated the one name the drawing did not read -- the statistics and the
+	// cumulative curve followed a change of series and the density did not.
+	let view = { output, outputs, index, t, at, peaks, summary, column, of, unit };
 	let asking = false;
+	// Which of the three questions (WHEN), and the chosen time: the last to
+	// start with, kept while the others are asked.
+	let when = 'time';
+	let chosen = Number.isInteger(at) ? at : Math.max(0, (t?.length ?? 1) - 1);
+	const question = () => (when === 'own' ? 'max' : when === 'mean' ? 'peak' : chosen);
+	// The axis, which is drawing only: no question to the worker.
+	let scale = 'auto';
 	// The calculator's own state, kept across refreshes.
 	let askValue = '';
 	let askProb = '95';
@@ -170,14 +209,15 @@ export function openDistributionDialog({
 		if (asking) return;
 		asking = true;
 		modal.refresh();
-		onAsk?.({ index: view.index, at: view.at, ...next });
+		onAsk?.({ index: view.index, at: question(), ...next });
 	};
 
 	const modal = openModal({
 		wide: true,
 		title: () => `Distribution of ${view.output}`,
-		subtitle: () => `${view.summary.n.toLocaleString()} of ${view.of.toLocaleString()} `
-			+ `realisations at ${fmtTime(view.t[view.at])} ${timeUnit}`
+		subtitle: () => `${view.summary.n.toLocaleString()} of ${view.of.toLocaleString()} realisations`
+			+ (view.at == null ? ', each at its own peak'
+				: ` at ${fmtTime(view.t[view.at])} ${timeUnit}${when === 'mean' ? ', where it peaks on average' : ''}`)
 			+ (view.unit ? ` — in ${view.unit}` : ''),
 		onClose,
 		build: (body) => {
@@ -191,13 +231,52 @@ export function openDistributionDialog({
 				ofSel.addEventListener('change', () => ask({ index: Number(ofSel.value) }));
 				body.append(el('div', { className: 'pdf-row pdf-row-wide' }, el('label', {}, 'Of'), ofSel));
 			}
-			const pick = el('select', { className: 'sens-time', disabled: asking });
-			for (let j = 0; j < view.t.length; j++) {
-				pick.append(el('option', { value: String(j), selected: j === view.at },
-					`${fmtTime(view.t[j])} ${timeUnit}`));
+			// *At*, as in What drove it: which question, and for a chosen time,
+			// which time, on one line.
+			const how = el('select', { className: 'sens-when', disabled: asking });
+			for (const [value, label, why] of WHEN) {
+				const text = value === 'mean' && when === 'mean' && Number.isInteger(view.at)
+					? `${label} — ${fmtTime(view.t[view.at])} ${timeUnit}` : label;
+				how.append(el('option', { value, selected: value === when, title: why }, text));
 			}
-			pick.addEventListener('change', () => ask({ at: Number(pick.value) }));
-			body.append(el('div', { className: 'pdf-row pdf-row-wide' }, el('label', {}, 'At'), pick));
+			how.addEventListener('change', () => { when = how.value; ask({}); });
+			const atRow = el('span', { className: 'sens-at' }, how);
+			if (when === 'time') {
+				const pick = el('select', { className: 'sens-time', disabled: asking, 'aria-label': 'Time' });
+				for (let j = 0; j < view.t.length; j++) {
+					pick.append(el('option', { value: String(j), selected: j === chosen },
+						`${fmtTime(view.t[j])} ${timeUnit}`));
+				}
+				pick.addEventListener('change', () => { chosen = Number(pick.value); ask({}); });
+				atRow.append(pick);
+			}
+			body.append(el('div', { className: 'pdf-row pdf-row-wide' }, el('label', {}, 'At'), atRow));
+			if (when === 'own' && view.at == null) {
+				const p = view.peaks;
+				body.append(el('p', { className: 'hint' }, p
+					? 'The largest value each realisation reaches, whenever it reaches it. They peak '
+						+ `between ${fmtTime(p.low)} and ${fmtTime(p.high)} ${timeUnit} (5th to 95th `
+						+ `percentile), at ${fmtTime(p.median)} ${timeUnit} in the median realisation.`
+					: 'The largest value each realisation reaches, whenever it reaches it.'));
+			}
+
+			// The axis: drawing only, answered here.
+			const axis = el('select', { className: 'dist-scale' });
+			for (const [value, label, why] of SCALES) {
+				axis.append(el('option', { value, selected: value === scale, title: why }, label));
+			}
+			axis.addEventListener('change', () => { scale = axis.value; modal.refresh(); });
+			body.append(el('div', { className: 'pdf-row' },
+				el('label', { title: 'The axis of the density and the cumulative curve. The statistics and '
+					+ 'the calculator are of the values whichever it is.' }, 'Scale'), axis));
+			const hist = histogram(col, null, scale);
+			if (hist.refused) {
+				const below = col.findIndex((v) => v > 0);
+				const n = below < 0 ? col.length : below;
+				body.append(el('p', { className: 'hint' },
+					`A logarithmic axis needs every value above zero, and ${n.toLocaleString()} `
+					+ `realisation${n === 1 ? ' is' : 's are'} zero or below here — drawn on a linear one instead.`));
+			}
 
 			if (!s.n) {
 				body.append(el('p', { className: 'hint' },
@@ -205,7 +284,7 @@ export function openDistributionDialog({
 			} else {
 				const canvas = el('canvas', { className: 'dist-canvas' });
 				body.append(el('div', { className: 'sens-chart' }, canvas));
-				requestAnimationFrame(() => paint(canvas, col, view.hist, s));
+				requestAnimationFrame(() => paint(canvas, col, hist, s));
 
 				// --- the numbers.
 				const stat = (label, value, hint) => el('div', { className: 'dist-stat', title: hint ?? '' },

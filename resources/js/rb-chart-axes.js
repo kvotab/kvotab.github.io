@@ -227,12 +227,17 @@ function updateChartScales() {
   }
   if (yScale !== curY) {
     update['yaxis.type'] = yScale;
+    // An axis on auto range stays on it in the other scale, rather than
+    // keeping the log range converted to linear limits.
+    if (isAutoLogY(plotDiv)) update['yaxis.autorange'] = true;
     if (yScale === 'log') {
       update['yaxis.dtick'] = 1;
       update['yaxis.minor.ticks'] = 'outside';
       update['yaxis.minor.ticklen'] = 3;
       update['yaxis.minor.showgrid'] = true;
     } else {
+      // From zero, as a chart drawn on a linear axis is (createBaseLayout).
+      update['yaxis.rangemode'] = 'tozero';
       update['yaxis.tickmode'] = 'auto';
       update['yaxis.dtick'] = null;
       update['yaxis.minor.ticks'] = 'outside';

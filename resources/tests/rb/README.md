@@ -153,6 +153,35 @@ what one click does.
 
     python3 test-constants.py
 
+`test-tree.py` covers how the file-structure tree is laid out. Rows sit on
+one grid: the toggle and its margin are a 20px column, a level indents by
+exactly that, and a dataset keeps the column empty, so its icon lines up with
+the folders beside it. Before, a dataset's icon sat 18px left of its own
+folder's icon and a level indented only 6px, so data did not look as if it
+were inside its folder. The test also checks that the arrow is ▶ closed and ▼
+open (it was ▲ and ▶), that the folder icon opens with the arrow rather than
+with selection, and that the row class `expanded` means selected and nothing
+else: a search no longer puts it on every folder above a match, and closing
+the selected folder no longer takes it off. The guide line along the selected
+item's level, and along a selected group's members, is drawn in the accent
+colour. It uses the committed fixture `sample-a.h5`.
+
+    python3 test-tree.py
+
+`test-log-range.py` covers auto range on a log y axis. The top is the decade at
+or above the highest value drawn, and the bottom the decade at or below the
+lowest, but never more than 12 decades below the top. It used to be Plotly's
+padded range snapped outwards, so a series reaching 9.5e3 whose first value was
+a 3e-30 left by round-off got an axis from 1e-32 to 1e6. The snap has to turn
+Plotly's autorange off to set the range, so the axis counts as on auto range
+while it still shows the range the snap chose. The test checks that the axis
+follows a CI band on and off, and that Show Total refits rather than cutting
+the total off at the old top. A zoom, a preset or the axes lock sets a range
+that nothing then moves, and switching an auto axis to linear gives linear
+auto range from zero. The file is built in the page with h5wasm.
+
+    python3 test-log-range.py
+
 ## Nothing here needs a committed data file
 
 `handoff-demo.html` used to fetch a sample HDF5 file to get valid bytes, and

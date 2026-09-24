@@ -663,38 +663,109 @@ function _removeCustomOption() {
   if (opt) opt.remove();
 }
 
+/** How many decades a log y axis on auto range may span below its top. */
+const LOG_Y_DECADES = 12;
+
+/**
+ * The decades a log y axis on auto range spans for these traces: the top is
+ * the decade at or above the highest value drawn, the bottom the decade at or
+ * below the lowest, and never more than LOG_Y_DECADES below the top. Null when
+ * there is nothing to go by: no positive value, or a histogram, whose bars
+ * Plotly counts itself.
+ *
+ * @param {Object[]} traces - The chart's traces (plotDiv.data)
+ * @returns {number[]|null} [bottom, top] as powers of ten
+ */
+function logYRangeOfData(traces) {
+  let lo = Infinity, hi = -Infinity;
+  for (const t of traces || []) {
+    if (t.type === 'histogram') return null;
+    if (t.visible === false || t.visible === 'legendonly' || !t.y) continue;
+    for (const v of t.y) {
+      if (v > 0 && v < Infinity) {
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+      }
+    }
+  }
+  if (!(hi > 0)) return null;
+  // The tolerance keeps a value that is a power of ten on its own decade.
+  const top = Math.ceil(Math.log10(hi) - 1e-9);
+  let bottom = Math.max(Math.floor(Math.log10(lo) + 1e-9), top - LOG_Y_DECADES);
+  if (bottom >= top) bottom = top - 1;
+  return [bottom, top];
+}
+
+/**
+ * Whether the y axis still shows the auto range the last snap gave it. The
+ * snap has to turn Plotly's autorange off to set its range, but until a zoom,
+ * a preset or the axes lock sets another, the axis is still on auto range, and
+ * should follow the traces when they change: a CI band, a realisation, a total.
+ *
+ * @param {HTMLElement} plotDiv
+ * @returns {boolean}
+ */
+function isAutoLogY(plotDiv) {
+  const held = plotDiv && plotDiv.__autoLogY;
+  const ax = plotDiv && plotDiv._fullLayout && plotDiv._fullLayout.yaxis;
+  if (!held || !ax || ax.type !== 'log' || !ax.range || _axesLocked) return false;
+  return Math.abs(ax.range[0] - held[0]) < 1e-9 && Math.abs(ax.range[1] - held[1]) < 1e-9;
+}
+
 /**
  * Snap log-scale axes to full-decade boundaries so the last major
  * gridline and its tick label are always visible.
+ *
+ * A y axis on auto range is set from the values drawn (logYRangeOfData)
+ * rather than from Plotly's padded range. Snapping that outwards let the
+ * padding add a decade above the data, and let one tiny value, a 1e-30 left
+ * by round-off, stretch the axis over thirty decades. An x axis is still
+ * snapped outwards from Plotly's range.
  */
 let _snappingLog = false;
+let _snapAgain = false;
 function snapLogRangeToDecades(plotDiv) {
-  if (!plotDiv || _snappingLog) return Promise.resolve();
+  if (!plotDiv) return Promise.resolve();
+  // One at a time. A request made meanwhile runs once this one is done, since
+  // what it was made for (a band just added, say) may change the range.
+  if (_snappingLog) { _snapAgain = true; return Promise.resolve(); }
   var fl = plotDiv._fullLayout;
   if (!fl) return Promise.resolve();
   var update = {};
   ['xaxis', 'yaxis'].forEach(function(axis) {
     var ax = fl[axis];
     if (!ax || ax.type !== 'log') return;
-    // Only snap auto-ranged axes; preserve explicit user/preset limits
-    if (!ax.autorange) return;
     var r = ax.range;
     if (!r || r.length < 2) return;
-    var r0 = r[0], r1 = r[1];
-    var target0 = Math.floor(r0);
-    var target1 = Math.ceil(r1);
-    if (Math.abs(r0 - target0) > 0.001 || Math.abs(r1 - target1) > 0.001) {
-      update[axis + '.range'] = [target0, target1];
+    var target = null;
+    if (axis === 'yaxis' && (ax.autorange || isAutoLogY(plotDiv))) {
+      target = logYRangeOfData(plotDiv.data);
+      if (target) plotDiv.__autoLogY = target;
+    }
+    if (!target) {
+      // Only snap auto-ranged axes; preserve explicit user/preset limits
+      if (!ax.autorange) return;
+      target = [Math.floor(r[0]), Math.ceil(r[1])];
+    }
+    if (Math.abs(r[0] - target[0]) > 0.001 || Math.abs(r[1] - target[1]) > 0.001) {
+      update[axis + '.range'] = target;
       update[axis + '.autorange'] = false;
     }
   });
   if (Object.keys(update).length > 0) {
     _suppressPresetSync = true;
     _snappingLog = true;
-    return Plotly.relayout(plotDiv, update).then(function() {
+    var done = function() {
       _suppressPresetSync = false;
       _snappingLog = false;
-    });
+    };
+    return Plotly.relayout(plotDiv, update).then(function() {
+      done();
+      if (_snapAgain) {
+        _snapAgain = false;
+        return snapLogRangeToDecades(plotDiv);
+      }
+    }, done);
   }
   return Promise.resolve();
 }

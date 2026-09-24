@@ -2470,8 +2470,8 @@ test('a sensitivity analysis names the input that drove the answer', async () =>
 	const { readFileSync } = await import('node:fs');
 	const worker = readFileSync(new URL('../src/worker/sim-worker.js', import.meta.url), 'utf8');
 	assert(/msg\.type === 'sensitivity'/.test(worker), 'the worker cannot compute one');
-	assert(/ranked\(r\.samples/.test(worker) && /overTime\(/.test(worker),
-		'the worker does not use the sample it kept');
+	assert(/const pool = use\.map\(\(c\) => r\.samples\[c\]\);/.test(worker) && /ranked\(pool,/.test(worker)
+		&& /overTime\(/.test(worker), 'the worker does not use the sample it kept');
 });
 
 test('a probabilistic run reaches the chart as a band', async () => {
@@ -9132,7 +9132,7 @@ test('the realisations can be sorted into categories and the displays screened t
 	assert(/const categories = categoriesOf\(project\);/.test(worker), 'the run does not apply the model’s categories');
 	assert(/if \(msg\.type === 'prob-categories'\)/.test(worker), 'categories cannot be changed after the run');
 	assert(/bandsOf\(result, percentiles, mask\)/.test(worker), 'the bands are not drawn over the kept realisations');
-	assert(/ranked\(r\.samples, values, stride, r\.iterations, a,\n\t\t\t\t\{ most: msg\.most \?\? 20, mask \}\)/.test(worker),
+	assert(/ranked\(pool, read, across, r\.iterations, a,\n\t\t\t\t\{ most: msg\.most \?\? 20, mask \}\)/.test(worker),
 		'What drove it ignores the screen');
 	assert(/sim\.categories = cats\.map/.test(app), 'the page does not save the categories');
 	assert(/realisations `\n\t\t\t\+ 'shown \(categories\)'/.test(app), 'the legend does not say the bands are screened');
@@ -9282,11 +9282,11 @@ test('the regression family and a first-order index join the two correlations', 
 	const { readFileSync } = await import('node:fs');
 	const worker = readFileSync(new URL('../src/worker/sim-worker.js', import.meta.url), 'utf8');
 	const dialog = readFileSync(new URL('../src/ui/sensdialog.js', import.meta.url), 'utf8');
-	assert(/regressionMeasures\(r\.samples, y, \{ translate, mask \}\)/.test(worker),
+	assert(/regressionMeasures\(pool, y, \{ translate, mask \}\)/.test(worker),
 		'the worker does not compute the family');
 	assert(/firstOrderIndex\(r\.samples\[row\.k\], y, \{ mask \}\)/.test(worker), 'no first-order index');
-	assert(/translate === 'rank' \? 'SRRC' : 'SRC'/.test(dialog)
-		&& /translate === 'rank' \? 'PRCC' : 'PCC'/.test(dialog), 'the columns are unnamed');
+	assert(/shownTranslate === 'rank' \? 'SRRC' : 'SRC'/.test(dialog)
+		&& /shownTranslate === 'rank' \? 'PRCC' : 'PCC'/.test(dialog), 'the columns are unnamed');
 	assert(/'Translate'/.test(dialog), 'no way to ask what the fit is fitted to');
 	// Only what the domain knows about, so a stray string is `none` rather
 	// than an unfitted regression.
@@ -32436,7 +32436,7 @@ test('the sensitivity table says what it was fitted to, and can be asked at the 
 	}
 	assert(!/Use ranks/.test(dialog), 'the tick box is still there');
 	// And the choice reaches the worker, which takes only what it knows.
-	assert(/onAsk\?\.\(\{ index: view\.index, at: atPeak \? 'peak' : view\.at, translate/.test(dialog),
+	assert(/onAsk\?\.\(\{ index: view\.index, at: question\(\), translate/.test(dialog),
 		'the dialog does not send the translation');
 	assert(/TRANSLATIONS\.has\(msg\.translate\) \? msg\.translate : 'none'/.test(worker),
 		'the worker takes any translation it is handed');
@@ -32447,8 +32447,13 @@ test('the sensitivity table says what it was fitted to, and can be asked at the 
 	assert(/function peakTime\(values, times, iterations, mask\)/.test(worker),
 		'there is no peak time');
 	assert(/msg\.at === 'peak'/.test(worker), 'the worker cannot be asked for it');
-	assert(/let atPeak = false;/.test(dialog) && /atPeak = pick\.value === 'peak';/.test(dialog),
-		'the dialog forgets that the peak was asked for');
+	assert(/let when = 'time';/.test(dialog)
+		&& /when === 'own' \? 'max' : when === 'mean' \? 'peak' : chosen/.test(dialog),
+		'the dialog forgets which of the three was asked for');
+	// Screening realisations out asks the dialog's own question again, not the
+	// last time whatever *At* says.
+	assert(/sensModal\.reask\(\)/.test(app) && !/openSensitivity\(null, state\.sensFor\.index\)/.test(app),
+		'a change of categories re-asks for the last time');
 	// It is the mean over realisations, not the largest single realisation.
 	const peak = /function peakTime[\s\S]*?\n\}/.exec(worker)?.[0] ?? '';
 	assert(/sum \+= v;/.test(peak) && /const mean = sum \/ n;/.test(peak),
@@ -32458,7 +32463,7 @@ test('the sensitivity table says what it was fitted to, and can be asked at the 
 
 	// The coefficient in units, beside the standardized one.
 	assert(/coef\(m\.b\?\.\[i\]\)/.test(dialog), 'the unstandardized coefficient is not shown');
-	assert(/b: rows\.map\(\(row\) => reg\.b\[row\.k\]\)/.test(worker), 'the worker does not send it');
+	assert(/b: rows\.map\(\(row\) => reg\.b\[posOf\.get\(row\.k\)\]\)/.test(worker), 'the worker does not send it');
 	// Drawn as a number and not as a bar: it is in units, and a bar against a
 	// scale of one would say nothing about any of them.
 	assert(/function coef\(v\)/.test(dialog), 'there is no formatter for it');
@@ -32474,7 +32479,7 @@ test('the sensitivity table says what it was fitted to, and can be asked at the 
 
 	// And the translation is passed all the way from the button, as is which
 	// measures stand beside the correlations.
-	assert(/function openSensitivity\(at = null, index = null, translate = 'none', family = 'regression'\)/.test(app),
+	assert(/function openSensitivity\(at = null, index = null, translate = 'none', family = 'regression', inputs = null\)/.test(app),
 		'app.js still speaks of ranks');
 });
 
@@ -34319,6 +34324,259 @@ test('the LU that keeps its pivots solves what the searching one does', async ()
 	let said = '';
 	try { D.form(2, new Float64Array(m).fill(0.5)); } catch (e) { said = e.message; }
 	assert(/singular at column/.test(said), `a singular matrix said ${JSON.stringify(said)}`);
+});
+
+test('what drove it can be asked about each realisation’s own peak', async () => {
+	// A decays into B and B drains away, so B rises and falls -- and when it
+	// peaks depends on the drawn rates, so the realisations peak at different
+	// times. `at: 'max'` reads each realisation's own peak.
+	const { runProbabilistic } = await import('../src/sim/probabilistic.js');
+	const { ranked } = await import('../src/domain/sensitivity.js');
+	const pdf = (params) => ({ kind: 'unif', params, values: null, trmin: null, trmax: null, inorder: true, pos: 0 });
+	const model = {
+		name: 'hump',
+		simulation: {
+			start_time: 0, end_time: 20, output_points: 41, spacing: 'linear',
+			solver: 'ndf', rtol: 1e-9, abstol: 1e-12, time_unit: 'year',
+		},
+		parameters: [
+			{ name: 'm', value: 2, index_lists: [], pdf: pdf({ min: 1, max: 3 }) },
+			{ name: 'k1', value: 1, index_lists: [], pdf: pdf({ min: 0.2, max: 2 }) },
+			{ name: 'k2', value: 0.5, index_lists: [], pdf: pdf({ min: 0.1, max: 1 }) },
+		],
+		compartments: [
+			{ name: 'A', initial: 'm', index_lists: [] },
+			{ name: 'B', initial: '0', index_lists: [] },
+		],
+		transfers: [
+			{ name: 'AB', from: 'A', to: 'B', rate: 'k1' },
+			{ name: 'Bout', from: 'B', to: null, rate: 'k2' },
+		],
+	};
+	const n = 60;
+	const harness = await simWorker();
+	const got = await harness.alone(async (ask) => {
+		const ran = await ask({ type: 'probabilistic', id: 61, project: structuredClone(model),
+			iterations: n, seed: 5, blocks: ['B'] });
+		const done = ran.find((m) => m.type === 'probabilistic-done');
+		if (!done) return { ran };
+		const b = done.payload.outputs.findIndex((o) => o.block === 'B');
+		const m = done.payload.outputs.findIndex((o) => o.block === 'm');
+		const first = async (msg) => (await ask(msg))[0];
+		return {
+			ran, done, b,
+			own: await first({ type: 'sensitivity', id: 61, index: b, at: 'max', family: 'distribution' }),
+			last: await first({ type: 'sensitivity', id: 61, index: b }),
+			mean: await first({ type: 'sensitivity', id: 61, index: b, at: 'peak' }),
+			flat: m >= 0 ? await first({ type: 'sensitivity', id: 61, index: m, at: 'max' }) : null,
+		};
+	});
+	assert(got.done, JSON.stringify(got.ran.filter((m) => m.type === 'error')));
+	const { own, last, mean } = got;
+	assert(own?.type === 'sensitivity', JSON.stringify(own));
+
+	// No one time: `at` is null, and it says when the peaks fell.
+	const t = got.done.payload.t;
+	assert(own.at === null, `own peak came back at ${own.at}`);
+	assert(own.peaks && own.peaks.low <= own.peaks.median && own.peaks.median <= own.peaks.high
+		&& own.peaks.low >= t[0] && own.peaks.high <= t[t.length - 1] && own.peaks.n === n,
+		JSON.stringify(own.peaks));
+	// They do fall at different times, which is what makes this a different question.
+	assert(own.peaks.high > own.peaks.low, 'every realisation peaked at the same time');
+	// The other two are a time: the last one, and where the mean peaks.
+	assert(last.at === t.length - 1 && last.peaks === null, `last: ${last.at}`);
+	assert(Number.isInteger(mean.at) && mean.at > 0 && mean.at < t.length - 1, `mean peak at ${mean.at}`);
+
+	// The table is the one the maxima give, worked out here from the same run.
+	const whole = runProbabilistic(structuredClone(model), { iterations: n, seed: 5, keep: (name) => name === 'B' });
+	const col = whole.outputs.findIndex((o) => o.block === 'B');
+	const T = whole.t.length;
+	const maxima = Float64Array.from({ length: n }, (_, i) => Math.max(...whole.values[col].subarray(i * T, (i + 1) * T)));
+	const want = ranked(whole.samples, maxima, 1, n, 0, { most: 20 });
+	const byK = new Map(own.rows.map((r) => [r.k, r]));
+	for (const w of want) {
+		const r = byK.get(w.k);
+		assert(r && Math.abs(r.spearman - w.spearman) < 1e-12 && Math.abs(r.pearson - w.pearson) < 1e-12,
+			`input ${whole.plan[w.k].name}: ${r?.spearman} against ${w.spearman}`);
+	}
+	// Every measure reads the maxima, including the ones asked for alongside.
+	assert(own.measures?.ok && own.distribution?.ok && own.distribution.used === n,
+		JSON.stringify({ m: own.measures?.ok, d: own.distribution?.used }));
+	// The height of B's peak is m times a function of the two rates; at the
+	// last time the rates matter far more, since k2 decides what is left.
+	const spearmanOf = (answer, name) => answer.rows.find((r) => whole.plan[r.k].name === name)?.spearman ?? 0;
+	assert(spearmanOf(own, 'm') > spearmanOf(last, 'm'),
+		`m: own peak ${spearmanOf(own, 'm')}, last time ${spearmanOf(last, 'm')}`);
+
+	// A varied parameter is one number per realisation: its own peak is that
+	// number, and it has no time.
+	if (got.flat) assert(got.flat.at === null && got.flat.peaks === null, JSON.stringify(got.flat.peaks));
+});
+
+test('what drove it can be narrowed to some inputs, and the distribution measures read translated', async () => {
+	const { runProbabilistic } = await import('../src/sim/probabilistic.js');
+	const { regressionMeasures } = await import('../src/domain/sensitivity.js');
+	const pdf = (params) => ({ kind: 'unif', params, values: null, trmin: null, trmax: null, inorder: true, pos: 0 });
+	const model = {
+		name: 'hump2',
+		simulation: {
+			start_time: 0, end_time: 20, output_points: 21, spacing: 'linear',
+			solver: 'ndf', rtol: 1e-9, abstol: 1e-12, time_unit: 'year',
+		},
+		parameters: [
+			{ name: 'm', value: 2, index_lists: [], pdf: pdf({ min: 1, max: 3 }) },
+			{ name: 'k1', value: 1, index_lists: [], pdf: pdf({ min: 0.2, max: 2 }) },
+			{ name: 'k2', value: 0.5, index_lists: [], pdf: pdf({ min: 0.1, max: 1 }) },
+		],
+		compartments: [
+			{ name: 'A', initial: 'm', index_lists: [] },
+			{ name: 'B', initial: '0', index_lists: [] },
+		],
+		transfers: [
+			{ name: 'AB', from: 'A', to: 'B', rate: 'k1' },
+			{ name: 'Bout', from: 'B', to: null, rate: 'k2' },
+		],
+	};
+	const n = 80;
+	const whole = runProbabilistic(structuredClone(model), { iterations: n, seed: 7, keep: (name) => name === 'B' });
+	const col = (name) => whole.plan.findIndex((e) => e.name === name);
+	const harness = await simWorker();
+	const got = await harness.alone(async (ask) => {
+		const ran = await ask({ type: 'probabilistic', id: 71, project: structuredClone(model),
+			iterations: n, seed: 7, blocks: ['B'] });
+		const done = ran.find((x) => x.type === 'probabilistic-done');
+		if (!done) return { ran };
+		const b = done.payload.outputs.findIndex((o) => o.block === 'B');
+		const first = async (msg) => (await ask(msg))[0];
+		const q = (extra) => first({ type: 'sensitivity', id: 71, index: b, at: 10, ...extra });
+		return {
+			done,
+			all: await q({}),
+			one: await q({ inputs: [col('m')] }),
+			two: await q({ inputs: [col('k1'), col('m'), 99, -1, col('m')], family: 'distribution' }),
+			none: await q({ family: 'distribution' }),
+			rank: await q({ family: 'distribution', translate: 'rank' }),
+			log: await q({ family: 'distribution', translate: 'log' }),
+			zero: await q({ family: 'distribution', translate: 'log', at: 0 }),
+		};
+	});
+	assert(got.done, 'the run did not finish');
+	const { all, one, two, none, rank, log, zero } = got;
+
+	// Every input the sample varies comes back to choose from.
+	assert(JSON.stringify(all.sampled.map((x) => x.name)) === JSON.stringify(whole.plan.map((e) => e.name))
+		&& all.using === 3, JSON.stringify(all.sampled));
+	// Narrowed to m: the table is m alone, and the regression is the one fitted
+	// to m alone, worked out here from the same run.
+	assert(one.using === 1 && one.rows.length === 1 && one.rows[0].k === col('m'), JSON.stringify(one.rows));
+	const T = whole.t.length;
+	const y = Float64Array.from({ length: n }, (_, i) => whole.values[whole.outputs.findIndex((o) => o.block === 'B')][i * T + 10]);
+	const alone = regressionMeasures([whole.samples[col('m')]], y, { translate: 'none' });
+	assert(Math.abs(one.measures.r2 - alone.r2) < 1e-12 && Math.abs(one.measures.src[0] - alone.src[0]) < 1e-12,
+		`r2 ${one.measures.r2} against ${alone.r2}`);
+	assert(one.measures.r2 < all.measures.r2, `one input explains ${one.measures.r2}, all ${all.measures.r2}`);
+	// Unknown and repeated columns are dropped; the distribution measures are
+	// over the two chosen, and discrepancy is a share among those two.
+	assert(two.using === 2 && two.rows.every((r) => r.k === col('m') || r.k === col('k1')), JSON.stringify(two.rows));
+	assert(Math.abs(two.distribution.rows.reduce((sum, r) => sum + r.discrepancy, 0) - 1) < 1e-9,
+		JSON.stringify(two.distribution.rows.map((r) => r.discrepancy)));
+
+	// Translated, the distribution measures that read values change and the
+	// ones that read order do not.
+	const byName = (answer) => new Map(answer.rows.map((r, j) => [whole.plan[r.k].name, answer.distribution.rows[j]]));
+	const plain = byName(none);
+	const ranks = byName(rank);
+	assert(none.distribution.translate === 'none' && rank.distribution.translate === 'rank', 'the translation is not said');
+	assert([...plain].some(([nm, d]) => Math.abs(d.easi - ranks.get(nm).easi) > 1e-6), 'EASI did not change on ranks');
+	for (const [nm, d] of plain) {
+		assert(d.delta === ranks.get(nm).delta && d.mi === ranks.get(nm).mi,
+			`${nm}: δ ${d.delta} / ${ranks.get(nm).delta}, MI ${d.mi} / ${ranks.get(nm).mi}`);
+	}
+	// RSA splits at the mean, the median and the geometric mean, said in the
+	// output's own units.
+	const sorted = [...y].sort((p, q) => p - q);
+	const median = (sorted[(n - 1) >> 1] + sorted[n >> 1]) / 2;
+	const geo = Math.exp(y.reduce((sum, v) => sum + Math.log(v), 0) / n);
+	const mean = y.reduce((sum, v) => sum + v, 0) / n;
+	assert(none.distribution.splitAt === 'mean' && Math.abs(none.distribution.threshold - mean) < 1e-9 * mean,
+		`mean ${none.distribution.threshold} against ${mean}`);
+	assert(rank.distribution.splitAt === 'median' && Math.abs(rank.distribution.threshold - median) < 1e-12 * median,
+		`median ${rank.distribution.threshold} against ${median}`);
+	assert(log.distribution.splitAt === 'geometric mean' && Math.abs(log.distribution.threshold - geo) < 1e-9 * geo,
+		`geometric mean ${log.distribution.threshold} against ${geo}`);
+	// A logarithm leaves out what is not positive, and says how many: at t = 0
+	// B is empty in every realisation.
+	assert(!zero.distribution.ok && zero.distribution.dropped === n, JSON.stringify(zero.distribution));
+});
+
+test('the distribution summary is asked the three questions What drove it is, and draws its own histogram', async () => {
+	const { runProbabilistic } = await import('../src/sim/probabilistic.js');
+	const { readFileSync } = await import('node:fs');
+	const pdf = (params) => ({ kind: 'unif', params, values: null, trmin: null, trmax: null, inorder: true, pos: 0 });
+	const model = {
+		name: 'hump3',
+		simulation: {
+			start_time: 0, end_time: 20, output_points: 41, spacing: 'linear',
+			solver: 'ndf', rtol: 1e-9, abstol: 1e-12, time_unit: 'year',
+		},
+		parameters: [
+			{ name: 'm', value: 2, index_lists: [], pdf: pdf({ min: 1, max: 3 }) },
+			{ name: 'k1', value: 1, index_lists: [], pdf: pdf({ min: 0.2, max: 2 }) },
+			{ name: 'k2', value: 0.5, index_lists: [], pdf: pdf({ min: 0.1, max: 1 }) },
+		],
+		compartments: [
+			{ name: 'A', initial: 'm', index_lists: [] },
+			{ name: 'B', initial: '0', index_lists: [] },
+		],
+		transfers: [
+			{ name: 'AB', from: 'A', to: 'B', rate: 'k1' },
+			{ name: 'Bout', from: 'B', to: null, rate: 'k2' },
+		],
+	};
+	const n = 50;
+	const harness = await simWorker();
+	const got = await harness.alone(async (ask) => {
+		const ran = await ask({ type: 'probabilistic', id: 81, project: structuredClone(model),
+			iterations: n, seed: 9, blocks: ['A', 'B'] });
+		const done = ran.find((x) => x.type === 'probabilistic-done');
+		if (!done) return { ran };
+		const b = done.payload.outputs.findIndex((o) => o.block === 'B');
+		const a = done.payload.outputs.findIndex((o) => o.block === 'A');
+		const first = async (msg) => (await ask(msg))[0];
+		return {
+			done, b, a,
+			own: await first({ type: 'prob-summary', id: 81, index: b, at: 'max' }),
+			mean: await first({ type: 'prob-summary', id: 81, index: b, at: 'peak' }),
+			sens: await first({ type: 'sensitivity', id: 81, index: b, at: 'peak' }),
+			last: await first({ type: 'prob-summary', id: 81, index: b }),
+			other: await first({ type: 'prob-summary', id: 81, index: a }),
+		};
+	});
+	assert(got.done, 'the run did not finish');
+	const t = got.done.payload.t;
+	// Each realisation's own peak: the sorted maxima, worked out here from the same run.
+	const whole = runProbabilistic(structuredClone(model), { iterations: n, seed: 9, keep: (name) => name === 'B' });
+	const T = whole.t.length;
+	const vb = whole.values[whole.outputs.findIndex((o) => o.block === 'B')];
+	const maxima = Array.from({ length: n }, (_, i) => Math.max(...vb.subarray(i * T, (i + 1) * T))).sort((p, q) => p - q);
+	assert(got.own.at === null && got.own.column.length === n
+		&& got.own.column.every((v, i) => v === maxima[i]), 'the column is not the realisations’ peaks');
+	assert(got.own.peaks && got.own.peaks.low < got.own.peaks.high, JSON.stringify(got.own.peaks));
+	assert(Math.abs(got.own.summary.max - maxima[n - 1]) < 1e-15, 'the summary is not of the peaks');
+	// Where it peaks on average is the time What drove it finds.
+	assert(got.mean.at === got.sens.at && got.mean.at > 0 && got.mean.at < t.length - 1,
+		`summary at ${got.mean.at}, What drove it at ${got.sens.at}`);
+	assert(got.last.at === t.length - 1, `the default is ${got.last.at}`);
+	// Another series is another column.
+	assert(got.other.column.some((v, i) => v !== got.last.column[i]), 'changing the series changed nothing');
+
+	// The histogram is drawn from the column on screen, on the axis chosen, so
+	// a change of series cannot leave it behind.
+	const dialog = readFileSync(new URL('../src/ui/distdialog.js', import.meta.url), 'utf8');
+	assert(/const hist = histogram\(col, null, scale\);/.test(dialog) && /paint\(canvas, col, hist, s\)/.test(dialog),
+		'the histogram is not made from the column shown');
+	assert(!/view\.hist\b/.test(dialog), 'the dialog still keeps a histogram of its own that an answer does not replace');
+	assert(/\['log', 'logarithmic',/.test(dialog) && /\['linear', 'linear',/.test(dialog), 'no choice of axis');
 });
 
 // =========================================================================

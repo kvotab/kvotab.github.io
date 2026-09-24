@@ -324,6 +324,8 @@ async function toggleShowCI() {
         await Plotly.addTraces(plotDiv, ciTraces);
       }
     }
+    // A band can reach past a log axis on auto range, or leave it too tall.
+    await snapLogRangeToDecades(plotDiv);
   } finally {
     if (shouldShowLoader) {
       hideChartLoading(chartContainer);
@@ -447,6 +449,7 @@ async function toggleShowSDOM() {
         await Plotly.addTraces(plotDiv, sdomTraces);
       }
     }
+    await snapLogRangeToDecades(plotDiv);
   } finally {
     if (shouldShowLoader) {
       hideChartLoading(chartContainer);
@@ -509,7 +512,8 @@ function toggleShowIteration() {
       });
 
       if (indices.length > 0) {
-        Plotly.restyle(plotDiv, { x: xUpdates, y: yUpdates }, indices);
+        Promise.resolve(Plotly.restyle(plotDiv, { x: xUpdates, y: yUpdates }, indices))
+          .then(() => snapLogRangeToDecades(plotDiv));
       }
     } else {
       // ── createRadionuclidesChart variant: full redraw with new iteration ──
@@ -556,9 +560,9 @@ function toggleShowIteration() {
     });
   });
 
-  if (iterTraces.length > 0) {
-    Plotly.addTraces(plotDiv, iterTraces);
-  }
+  // A realisation can reach past a log axis on auto range.
+  Promise.resolve(iterTraces.length > 0 ? Plotly.addTraces(plotDiv, iterTraces) : null)
+    .then(() => snapLogRangeToDecades(plotDiv));
 }
 
 /**

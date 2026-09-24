@@ -1602,8 +1602,10 @@ function acceptCategories(m) {
 	prob.bands = m.bands;
 	catModal?.update({ screen: m.screen, iterations: prob.iterations });
 	renderResults();
-	// What drove it, if it is up, is now about a different set of realisations.
-	if (sensModal && state.sensFor) openSensitivity(null, state.sensFor.index);
+	// What drove it, if it is up, is now about a different set of realisations:
+	// the same question again, as the dialog has it -- asked from here with no
+	// time, it came back for the last time whatever its *At* said.
+	if (sensModal && state.sensFor) sensModal.reask();
 }
 
 let catModal = null;
@@ -1671,7 +1673,10 @@ function openBands() {
 
 let distModal = null;
 
-/** One output at one time as a distribution. */
+/**
+ * One output as a distribution: at a time, where it peaks on average (`at:
+ * 'peak'`), or at each realisation's own peak (`at: 'max'`).
+ */
 function openDistribution(at = null, index = null) {
 	const prob = currentProb();
 	if (!prob) { flash('Run the model probabilistically first.', 'warn'); return; }
@@ -1694,8 +1699,8 @@ function acceptSummary(m) {
 	const answer = {
 		output: prob.outputs[m.index]?.label ?? '',
 		unit: prob.outputs[m.index]?.unit ?? '',
-		index: m.index, t: m.t, at: m.at,
-		summary: m.summary, histogram: m.histogram, column: m.column, of: m.of,
+		index: m.index, t: m.t, at: m.at, peaks: m.peaks ?? null,
+		summary: m.summary, column: m.column, of: m.of,
 	};
 	if (distModal) { distModal.update(answer); return; }
 	distModal = openDistributionDialog({
@@ -1969,7 +1974,7 @@ function acceptGsaTable(m) {
  * realisations of every kept series, which is the thing that was deliberately
  * not sent to the page.
  */
-function openSensitivity(at = null, index = null, translate = 'none', family = 'regression') {
+function openSensitivity(at = null, index = null, translate = 'none', family = 'regression', inputs = null) {
 	const prob = currentProb();
 	if (!prob) { flash('Run the model probabilistically first.', 'warn'); return; }
 	const target = sensitivityTarget(prob, state.results, state.selected, index);
@@ -1994,9 +1999,10 @@ function openSensitivity(at = null, index = null, translate = 'none', family = '
 		// below has always got this right; this is the same rule.
 		id: prob.runId,
 		index: which,
-		// A number, or the string `peak` -- "wherever this output is largest on
-		// average", which only the worker can work out because only the worker
-		// has the matrix.
+		// A number, the string `peak` -- "wherever this output is largest on
+		// average" -- or `max`, each realisation's own peak. Only the worker
+		// can work out the second and third, because only the worker has the
+		// matrix.
 		at: at ?? undefined,
 		most: 20,
 		translate,
@@ -2005,6 +2011,9 @@ function openSensitivity(at = null, index = null, translate = 'none', family = '
 		// information, RSA). The second is a bootstrap per input and is
 		// worked out only when asked for.
 		family,
+		// Which sampled inputs the analysis is over, as sample columns; all of
+		// them when absent.
+		inputs: Array.isArray(inputs) ? inputs : undefined,
 	});
 }
 
@@ -2036,11 +2045,14 @@ function acceptSensitivity(m) {
 		index: m.index,
 		t: m.t,
 		at: m.at,
+		peaks: m.peaks ?? null,
 		rows: m.rows,
 		curves: m.curves,
 		measures: m.measures ?? null,
 		distribution: m.distribution ?? null,
 		kept: m.kept ?? null,
+		sampled: m.sampled ?? [],
+		using: m.using ?? null,
 		iterations: prob?.iterations ?? 0,
 	};
 	if (sensModal) { sensModal.update(answer); return; }
@@ -2051,7 +2063,7 @@ function acceptSensitivity(m) {
 		// parameters, which are what it answers *with*.
 		outputs: (prob?.outputs ?? []).filter((o) => !o.varied).map((o) => o.label),
 		timeUnit: state.raw.simulation?.time_unit ?? 'year',
-		onAsk: ({ index, at, translate, family }) => openSensitivity(at, index, translate, family),
+		onAsk: ({ index, at, translate, family, inputs }) => openSensitivity(at, index, translate, family, inputs),
 		onClose: () => { sensModal = null; },
 	});
 }

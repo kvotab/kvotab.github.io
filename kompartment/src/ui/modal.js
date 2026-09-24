@@ -209,17 +209,22 @@ function resizable(dialog, grip, body) {
 		const r = dialog.getBoundingClientRect();
 		const startW = r.width;
 		const startH = body.getBoundingClientRect().height;
+		// The head, measured: it is taller with a subtitle, and a guess at it
+		// let the body be pulled past the bottom of the window.
+		const head = r.height - startH;
 		const x0 = ev.clientX;
 		const y0 = ev.clientY;
 		grip.setPointerCapture(ev.pointerId);
 		const move = (e) => {
 			const w = Math.max(320, Math.min(window.innerWidth - r.left - 8,
 				startW + (e.clientX - x0)));
-			const h = Math.max(120, Math.min(window.innerHeight - r.top - 80,
+			const h = Math.max(120, Math.min(window.innerHeight - r.top - head - 8,
 				startH + (e.clientY - y0)));
 			dialog.style.width = `${Math.round(w)}px`;
-			// The body's own maximum is a calc against the viewport; a dialog
-			// somebody has sized by hand is sized by hand.
+			// A dialog somebody has sized by hand is sized by hand: the cap on
+			// its height is a share of the window, and it used to stop the drag
+			// there, clipping whatever the body had been pulled out to.
+			dialog.style.maxHeight = 'none';
 			body.style.height = `${Math.round(h)}px`;
 			body.style.maxHeight = `${Math.round(h)}px`;
 		};

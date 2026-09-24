@@ -20,6 +20,7 @@
 
 import { el } from './parts.js';
 import { openModal } from './modal.js';
+import { renderDualTree, dualTreeState } from './dualtree.js';
 import { fmtTime } from '../domain/timeseries.js';
 
 /**
@@ -68,6 +69,27 @@ const FAMILIES = [
 		+ 'it: EASI’s first-order index, Borgonovo’s δ, mutual information and regional '
 		+ 'sensitivity, from GlobalSensitivity.jl, and PAWN and discrepancy from SALib. A '
 		+ 'bootstrap per input, so a few seconds on a large sample.'],
+];
+
+/**
+ * The three things *At* can mean, and what each one is for.
+ *
+ * `own` and `mean` are different questions, and the difference is the point
+ * of offering both. Where the output peaks on average is one time, and the
+ * table is every realisation's value then, which for a realisation that peaks
+ * much earlier or later is not its peak at all. Each realisation's own peak is
+ * the largest value it reaches whenever that is, so what drives the height of
+ * the peak is read apart from what drives its timing.
+ */
+const WHEN = [
+	['own', 'each realisation’s peak',
+		'The largest value each realisation reaches, whenever it reaches it — so one that peaks '
+		+ 'early and one that peaks late are compared by how high they get.'],
+	['mean', 'where it peaks on average',
+		'The one time at which this output is largest averaged over the realisations, and every '
+		+ 'realisation’s value then — not the peak of any one of them.'],
+	['time', 'a chosen time',
+		'Every realisation’s value at a time picked from the output grid; the last one to start with.'],
 ];
 
 /** A number for a sentence: four figures, or an exponent. */
@@ -127,8 +149,12 @@ function bar(v) {
  * -- a variance share lives on [0, 1], and Morris's μ* in the output's units.
  *
  * @param {{lo: number, hi: number, ticks: number[], label?: (v: number) => string}} [scale]
+ * @param {object} [extra]
+ * @param {(v: number) => string} [extra.time]  labels the time axis, when given
+ * @param {{at?: number, low?: number, high?: number}} [extra.mark]  the time the
+ *   table under the chart is for, as a line; with `low` and `high`, a band
  */
-export function paintCurves(canvas, t, curves, names, scale = null) {
+export function paintCurves(canvas, t, curves, names, scale = null, { time = null, mark = null } = {}) {
 	const ctx = canvas.getContext('2d');
 	if (!ctx) return;
 	const dpr = window.devicePixelRatio || 1;
@@ -182,6 +208,53 @@ export function paintCurves(canvas, t, curves, names, scale = null) {
 		ctx.fillText(label(v), pad.l - 4, y);
 	}
 
+	// The time axis, labelled: without it the reader could see that an input
+	// mattered and then stopped, but not when. Decades on a log axis, round
+	// steps on a linear one.
+	if (time) {
+		const at = [];
+		if (useLog) {
+			for (let e = Math.ceil(Math.log10(t0)); e <= Math.floor(Math.log10(tN)); e++) at.push(10 ** e);
+			while (at.length > 7) for (let i = at.length - 2; i > 0; i -= 2) at.splice(i, 1);
+		} else {
+			const raw = (tN - t0) / 5;
+			const mag = 10 ** Math.floor(Math.log10(raw));
+			const step = [1, 2, 5, 10].map((m) => m * mag).find((d) => d >= raw) ?? raw;
+			for (let v = Math.ceil(t0 / step) * step; v <= tN + step * 1e-9; v += step) at.push(v);
+		}
+		ctx.fillStyle = ink;
+		ctx.font = '9px system-ui, sans-serif';
+		ctx.textAlign = 'center';
+		ctx.textBaseline = 'top';
+		for (const v of at) ctx.fillText(time(v), Math.min(pad.l + pw - 10, Math.max(pad.l + 10, sx(v))), pad.t + ph + 3);
+	}
+	// Where the table is read: a line at its time, or for each realisation's
+	// own peak a band over where those peaks fall, with a line at the median.
+	if (mark) {
+		const inRange = (v) => Number.isFinite(v) && (!useLog || v > 0);
+		const accent = style.getPropertyValue('--text-primary').trim() || '#ccc';
+		if (inRange(mark.low) && inRange(mark.high)) {
+			const x0 = sx(Math.max(t0, mark.low));
+			const x1 = sx(Math.min(tN, mark.high));
+			ctx.globalAlpha = 0.12;
+			ctx.fillStyle = accent;
+			ctx.fillRect(x0, pad.t, Math.max(1, x1 - x0), ph);
+			ctx.globalAlpha = 1;
+		}
+		if (inRange(mark.at)) {
+			const x = Math.round(sx(Math.min(tN, Math.max(t0, mark.at)))) + 0.5;
+			ctx.strokeStyle = accent;
+			ctx.globalAlpha = 0.6;
+			ctx.setLineDash([3, 3]);
+			ctx.beginPath();
+			ctx.moveTo(x, pad.t);
+			ctx.lineTo(x, pad.t + ph);
+			ctx.stroke();
+			ctx.setLineDash([]);
+			ctx.globalAlpha = 1;
+		}
+	}
+
 	const colours = ['--series-1', '--series-2', '--series-3', '--series-4', '--series-5', '--series-6'];
 	curves.forEach((c, i) => {
 		const colour = style.getPropertyValue(colours[i % colours.length]).trim()
@@ -229,22 +302,31 @@ const MOST_OUTPUTS = 300;
  * @param {string[]} opts.outputs  every series the run kept, for the picker
  * @param {number} opts.index    which of those this is
  * @param {Float64Array} opts.t
- * @param {number} opts.at       the time the table is for
+ * @param {number|null} opts.at  the time the table is for, as an index; null when it
+ *   is each realisation's own peak
+ * @param {object|null} [opts.peaks] when those peaks fall: `{median, low, high}`
  * @param {Array} opts.rows      from the worker: name, where, pearson, spearman
  * @param {Array} opts.curves    the few that matter, over time
  * @param {number} opts.iterations
  * @param {string} opts.timeUnit
- * @param {(ask: {index: number, at: number}) => void} opts.onAsk  ask again
+ * @param {(ask: {index: number, at: number|'peak'|'max'}) => void} opts.onAsk  ask again
  * @param {() => void} [opts.onClose]
- * @returns {{update: (next: object) => void, close: () => void}}
+ * @returns {{update: (next: object) => void, reask: () => void, close: () => void}}
  */
 export function openSensitivityDialog({
 	output, outputs = [], index = 0, t, at, rows, curves, iterations, measures = null,
-	distribution = null, kept = null, timeUnit = 'year', onAsk, onClose,
+	distribution = null, kept = null, peaks = null, sampled = [], using = null, timeUnit = 'year', onAsk, onClose,
 }) {
 	// What is on screen. Replaced wholesale when an answer arrives, so the
 	// dialog is built from one object and there is no half-updated state.
-	let view = { output, outputs, index, t, at, rows, curves, iterations, measures, distribution, kept };
+	// `family` and `translate` are the ones *this answer* was worked out
+	// with, which the table is drawn from; the pickers show what was asked
+	// since, and until its answer arrives the table stays as it was rather than
+	// dropping to the two correlations for a moment.
+	let view = {
+		output, outputs, index, t, at, rows, curves, iterations, measures, distribution, kept, peaks,
+		sampled, using, family: 'regression', translate: 'none',
+	};
 	// What the regression family is fitted to: the values, their ranks (SRRC
 	// and PRCC), or their logarithms. See ../domain/sensitivity.js.
 	let translate = 'none';
@@ -252,11 +334,26 @@ export function openSensitivityDialog({
 	// or the ones that read the output's whole distribution -- EASI, δ, mutual
 	// information and RSA, from ../domain/gsa.js.
 	let family = 'regression';
-	// Whether the time was chosen or asked for as "wherever it peaks". Kept
-	// apart from `view.at`, which is always a resolved index: asking for the
-	// peak and then changing the output has to find the *new* output's peak,
-	// and sending the old one's index back would quietly pin it there.
-	let atPeak = false;
+	// Which question the table answers, of the three under *At* (see WHEN):
+	// each realisation's own peak, where the output peaks on average, or a
+	// chosen time. Kept apart from `view.at`, which is whatever time the last
+	// answer was for: asking for a peak and then changing the output has to
+	// find the *new* output's peak, and sending the old one's index back would
+	// quietly pin it there.
+	let when = 'time';
+	// The chosen time, as an index into the output grid: the last one to
+	// start with, and kept while another question is asked, so coming back to
+	// it comes back to the same time.
+	let chosen = Number.isInteger(at) ? at : Math.max(0, (t?.length ?? 1) - 1);
+	const question = () => (when === 'own' ? 'max' : when === 'mean' ? 'peak' : chosen);
+	// Which sampled inputs the analysis is over, as sample columns: null for
+	// all of them. Kept across changes of output and time -- it is a choice
+	// about the sample, not about one series.
+	let inputs = null;
+	const pickerUi = dualTreeState();
+	// What the question in flight was asked with, for `update` to file the
+	// answer under.
+	let asked = { family: 'regression', translate: 'none' };
 	// Set while the worker is being waited on, so the pickers cannot be used to
 	// queue up three questions whose answers arrive in any order.
 	let asking = false;
@@ -264,8 +361,56 @@ export function openSensitivityDialog({
 	const ask = (next) => {
 		if (asking) return;
 		asking = true;
+		asked = { family, translate };
 		modal.refresh();
-		onAsk?.({ index: view.index, at: atPeak ? 'peak' : view.at, translate, family, ...next });
+		onAsk?.({ index: view.index, at: question(), translate, family, inputs, ...next });
+	};
+
+	// The inputs, chosen in the two trees Save… uses: a sample can vary
+	// hundreds, and they are found by name and sub-system rather than ticked
+	// down a list. Applied on Apply, since each change is a new analysis and
+	// the distribution measures take seconds.
+	const pickInputs = () => {
+		const items = view.sampled.map((x) => ({
+			key: String(x.k),
+			// The tree reads dots as sub-systems, so an index value that has one
+			// keeps it out of the way with a one-dot leader, which looks the same.
+			name: `${x.name}${x.where.length ? `[${x.where.join(' · ').replaceAll('.', '\u2024')}]` : ''}`,
+			title: inputName(x),
+			kind: x.name.includes('@') ? 'lookup' : 'parameter',
+		}));
+		const picked = new Set((inputs ?? view.sampled.map((x) => x.k)).map(String));
+		const inner = openModal({
+			wide: true,
+			title: 'Inputs in the analysis',
+			subtitle: 'The table ranks these, the regression is fitted to these, and the distribution '
+				+ 'measures are of these.',
+			build(body) {
+				body.replaceChildren();
+				const box = el('div', { className: 'save-pick' });
+				const apply = el('button', { type: 'button', className: 'primary' }, 'Apply');
+				const note = el('span', { className: 'pdf-note' });
+				const settle = () => {
+					apply.disabled = picked.size === 0;
+					note.textContent = picked.size ? '' : 'Choose at least one.';
+				};
+				renderDualTree(box, {
+					items, chosen: picked, ui: pickerUi, titles: ['Left out', 'In the analysis'],
+					noun: 'input', onChange: settle,
+				});
+				body.append(box);
+				const cancel = el('button', { type: 'button', className: 'ghost' }, 'Cancel');
+				cancel.addEventListener('click', () => inner.close());
+				apply.addEventListener('click', () => {
+					inputs = picked.size === items.length ? null
+						: [...picked].map(Number).sort((p, q) => p - q);
+					inner.close();
+					ask({});
+				});
+				body.append(el('div', { className: 'pdf-foot' }, note, cancel, apply));
+				settle();
+			},
+		});
 	};
 
 	const modal = openModal({
@@ -306,6 +451,18 @@ export function openSensitivityDialog({
 
 			// --- over time first: which input matters is not one answer.
 			if (lines.length) {
+				// What the chart is, and where on it the table below is read.
+				const own = when === 'own' && view.at == null;
+				const mark = own
+					? (view.peaks ? { low: view.peaks.low, high: view.peaks.high, at: view.peaks.median } : null)
+					: Number.isInteger(view.at) ? { at: time[view.at] } : null;
+				body.append(el('p', { className: 'hint sens-caption' },
+					`The rank correlation of each of the ${lines.length === 1 ? 'input' : `${lines.length} inputs`} at the `
+					+ `top of the table with ${view.output}, at every output time: 1 is `
+					+ 'a rise with the input, −1 a fall, 0 nothing. '
+					+ (own && mark ? 'The shaded band is where the realisations peak (5th to 95th percentile), '
+						+ 'the dashed line the median — the table is of their peaks.'
+						: mark ? 'The dashed line is the time the table is for.' : '')));
 				const canvas = el('canvas', { className: 'sens-canvas' });
 				body.append(el('div', { className: 'sens-chart' }, canvas));
 				const key = el('div', { className: 'sens-key' });
@@ -316,35 +473,61 @@ export function openSensitivityDialog({
 				});
 				body.append(key);
 				requestAnimationFrame(() => paintCurves(canvas, time, lines,
-					lines.map((c) => inputName(table.find((r) => r.k === c.k)))));
+					lines.map((c) => inputName(table.find((r) => r.k === c.k))), null,
+					{ time: (v) => fmtTime(v), mark }));
 			}
 
-			// --- and the table, at one time.
-			const pick = el('select', { className: 'sens-time', disabled: asking });
-			// The time a reader actually means by "at the peak", and the one
-			// they cannot pick out of four hundred: wherever this output is
-			// largest averaged over the realisations. Which time that is comes
-			// back with the answer, so the entry says it.
-			pick.append(el('option', {
-				value: 'peak', selected: atPeak,
-				title: 'Wherever this output is largest averaged over the realisations — '
-					+ 'not the peak of any one of them.',
-			}, atPeak
-				? `where it peaks on average — ${fmtTime(time[view.at])} ${timeUnit}`
-				: 'where it peaks on average'));
-			for (let j = 0; j < time.length; j++) {
-				// Through the same formatter the chart and the table use: a log
-				// grid gives times like 5746.434968715976, and four hundred of
-				// those in a list is unreadable.
-				pick.append(el('option', { value: String(j), selected: !atPeak && j === view.at },
-					`${fmtTime(time[j])} ${timeUnit}`));
+			// --- and the table: at which time, or at whose peak.
+			const how = el('select', { className: 'sens-when', disabled: asking });
+			for (const [value, label, why] of WHEN) {
+				// Which time the average peaks at comes back with the answer,
+				// so the entry says it once it is known.
+				const text = value === 'mean' && when === 'mean' && Number.isInteger(view.at)
+					? `${label} — ${fmtTime(time[view.at])} ${timeUnit}` : label;
+				how.append(el('option', { value, selected: value === when, title: why }, text));
 			}
-			pick.addEventListener('change', () => {
-				atPeak = pick.value === 'peak';
-				ask({ at: atPeak ? 'peak' : Number(pick.value) });
-			});
+			how.addEventListener('change', () => { when = how.value; ask({}); });
+			const at = el('span', { className: 'sens-at' }, how);
+			if (when === 'time') {
+				const pick = el('select', { className: 'sens-time', disabled: asking, 'aria-label': 'Time' });
+				for (let j = 0; j < time.length; j++) {
+					// Through the same formatter the chart and the table use: a
+					// log grid gives times like 5746.434968715976, and four
+					// hundred of those in a list is unreadable.
+					pick.append(el('option', { value: String(j), selected: j === chosen },
+						`${fmtTime(time[j])} ${timeUnit}`));
+				}
+				pick.addEventListener('change', () => { chosen = Number(pick.value); ask({}); });
+				at.append(pick);
+			}
 			body.append(el('div', { className: 'pdf-row pdf-row-wide' },
-				el('label', {}, 'At'), pick));
+				el('label', {}, 'At'), at));
+			// A realisation's own peak has no one time, so the table says when
+			// they fell: the question behind it is often "and is that early or
+			// late?".
+			if (when === 'own' && view.at == null) {
+				const p = view.peaks;
+				body.append(el('p', { className: 'hint' }, p
+					? 'The largest value each realisation reaches, whenever it reaches it. They peak '
+						+ `between ${fmtTime(p.low)} and ${fmtTime(p.high)} ${timeUnit} (5th to 95th `
+						+ `percentile), at ${fmtTime(p.median)} ${timeUnit} in the median realisation.`
+					: 'The largest value each realisation reaches, whenever it reaches it.'));
+			}
+
+			// Which sampled inputs are in the analysis. All of them unless the
+			// reader narrows it: to the inputs a study is about, or without one
+			// that is known to dominate so the rest can be seen.
+			if (view.sampled.length > 1) {
+				const total = view.sampled.length;
+				const using = inputs ? inputs.length : total;
+				const choose = el('button', { type: 'button', className: 'ghost sens-inputs', disabled: asking,
+					title: 'Choose which of the sampled inputs the table ranks, the regression is fitted to and '
+						+ 'the distribution measures are worked out for.' },
+				using === total ? `all ${total.toLocaleString()} sampled inputs`
+					: `${using.toLocaleString()} of ${total.toLocaleString()} sampled inputs`);
+				choose.addEventListener('click', () => pickInputs());
+				body.append(el('div', { className: 'pdf-row' }, el('label', {}, 'Inputs'), choose));
+			}
 
 			const fam = el('select', { className: 'sens-family', disabled: asking });
 			for (const [value, label, why] of FAMILIES) {
@@ -353,31 +536,45 @@ export function openSensitivityDialog({
 			fam.addEventListener('change', () => { family = fam.value; ask({}); });
 			body.append(el('div', { className: 'pdf-row' },
 				el('label', { title: 'Which measures stand beside the two correlations.' }, 'Measures'), fam));
-			const dist = family === 'distribution' ? view.distribution : null;
 
-			// The regression family beside the two correlations, when the worker
-			// could compute it, and what it was fitted to. On ranks SRC and PCC
-			// are SRRC and PRCC, which is what to read for the
-			// monotone-and-bent relationships here; on logs the coefficient is
-			// an elasticity.
-			const m = family === 'regression' ? view.measures : null;
-			const wide = !!(m && m.ok);
-			if (m) {
+			// What the output is read as, for either set of measures. It is
+			// offered where it changes something: every regression measure, and
+			// of the distribution measures EASI and where RSA splits.
+			if (family === 'distribution' || view.measures) {
 				const how = el('select', { className: 'sens-translate', disabled: asking });
 				for (const [value, label, why] of TRANSLATIONS) {
 					how.append(el('option', { value, selected: value === translate, title: why }, label));
 				}
 				how.addEventListener('change', () => { translate = how.value; ask({}); });
 				body.append(el('div', { className: 'pdf-row' },
-					el('label', { title: 'What the regression is fitted to. It does not change '
-						+ 'Spearman, which is already a rank correlation, and cannot change '
-						+ 'any measure that only cares about order.' },
+					el('label', { title: family === 'distribution'
+						? 'What the output is read as. It changes EASI, which is a share of the variance, and '
+							+ 'where RSA splits the realisations: at the mean, the geometric mean on logarithms '
+							+ 'and the median on ranks. δ, MI, PAWN and discrepancy depend on order alone and do '
+							+ 'not change — except that logarithms leave out realisations that are not positive.'
+						: 'What the regression is fitted to. It does not change Spearman, which is already a '
+							+ 'rank correlation, and cannot change any measure that only cares about order.' },
 					'Translate'), how));
+			}
+
+			// The table is drawn from the answer on screen, which may be of the
+			// other family while a new one is being worked out.
+			const dist = view.family === 'distribution' ? view.distribution : null;
+			const shownTranslate = view.translate;
+
+			// The regression family beside the two correlations, when the worker
+			// could compute it, and what it was fitted to. On ranks SRC and PCC
+			// are SRRC and PRCC, which is what to read for the
+			// monotone-and-bent relationships here; on logs the coefficient is
+			// an elasticity.
+			const m = view.family === 'regression' ? view.measures : null;
+			const wide = !!(m && m.ok);
+			if (m) {
 				// On its own line. In the row above it the sentence wrapped
 				// inside a column a third of the dialog wide, and the four
 				// lines it took left the rest of the row empty.
 				body.append(el('p', { className: `sens-r2${m.ok ? '' : ' is-bad'}` }, m.ok
-					? `R² = ${m.r2.toFixed(3)}${TRANSLATED[translate]} — the share of the spread `
+					? `R² = ${m.r2.toFixed(3)}${TRANSLATED[shownTranslate]} — the share of the spread `
 						+ 'a linear fit to every input explains.'
 						+ (m.dropped
 							? ` ${m.dropped.toLocaleString()} realisation`
@@ -388,18 +585,24 @@ export function openSensitivityDialog({
 						+ 'inputs that are the same numbers, or — on logs — too few realisations '
 						+ 'left once the non-positive ones were dropped.'));
 			}
-			if (family === 'distribution' && dist && !dist.ok) {
-				body.append(el('p', { className: 'sens-r2 is-bad' }, dist.flat
+			const leftOut = (k) => (k
+				? ` ${k.toLocaleString()} realisation${k === 1 ? '' : 's'} left out: a logarithm needs a `
+					+ 'positive number, and something there was not.'
+				: '');
+			if (dist && !dist.ok) {
+				body.append(el('p', { className: 'sens-r2 is-bad' }, (dist.flat
 					? 'The output is the same in every realisation here, so there is no distribution to compare.'
-					: `Only ${dist.used} realisations to read, which is too few for these measures.`));
+					: `Only ${dist.used} realisations to read, which is too few for these measures.`)
+					+ leftOut(dist.dropped)));
 			}
 			const shown = !!(dist && dist.ok);
 			if (shown) {
 				body.append(el('p', { className: 'sens-r2' },
-					`RSA splits the ${dist.used.toLocaleString()} realisations at the output’s mean, `
-					+ `${fmtValue(dist.threshold)}: ${dist.behavioural.toLocaleString()} above it. Ten dummy `
-					+ `inputs the model never saw reach a KS distance of ${dist.ksDummyMean.toFixed(3)} `
-					+ `± ${dist.ksDummySd.toFixed(3)} by chance alone.`));
+					`RSA splits the ${dist.used.toLocaleString()} realisations at the output’s `
+					+ `${dist.splitAt ?? 'mean'}, ${fmtValue(dist.threshold)}: ${dist.behavioural.toLocaleString()} `
+					+ `above it. Ten dummy inputs the model never saw reach a KS distance of `
+					+ `${dist.ksDummyMean.toFixed(3)} ± ${dist.ksDummySd.toFixed(3)} by chance alone.`
+					+ leftOut(dist.dropped)));
 			}
 			const box = el('div', { className: `sens-table${wide ? ' is-wide' : ''}${shown ? ' is-dist' : ''}` },
 				el('div', { className: 'sens-head' },
@@ -434,8 +637,8 @@ export function openSensitivityDialog({
 						el('span', { title: 'Standardized regression coefficient: this input’s own linear '
 							+ 'share of the output, given the others, in standard deviations. '
 							+ 'Comparable between inputs, which is why the table is ranked by it. '
-							+ 'On ranks: SRRC.' }, translate === 'rank' ? 'SRRC' : 'SRC'),
-						el('span', { title: translate === 'log'
+							+ 'On ranks: SRRC.' }, shownTranslate === 'rank' ? 'SRRC' : 'SRC'),
+						el('span', { title: shownTranslate === 'log'
 							? 'The coefficient in units: the elasticity, a percentage in the output '
 								+ 'per percentage in this input, with the others held.'
 							: 'The coefficient in units: how much the output moves per unit of this '
@@ -445,7 +648,7 @@ export function openSensitivityDialog({
 						className: 'sens-head-sym' }, 'b'),
 						el('span', { title: 'Partial correlation: the relationship left once the other '
 							+ 'inputs’ linear effects are removed from both. On ranks: PRCC.' },
-						translate === 'rank' ? 'PRCC' : 'PCC'),
+						shownTranslate === 'rank' ? 'PRCC' : 'PCC'),
 						el('span', { title: 'First-order index: the share of the output’s variance that '
 							+ 'knowing this input alone would remove, of any shape. Estimated by binning.' }, 'S₁'),
 					] : [])));
@@ -462,8 +665,8 @@ export function openSensitivityDialog({
 			});
 			if (!table.length) {
 				box.append(el('p', { className: 'hint' },
-					'Nothing correlates with this output at this time — either it does not '
-					+ 'vary here, or none of the sampled inputs reach it.'));
+					`Nothing correlates with this output ${when === 'own' ? 'at its peaks' : 'at this time'} — `
+					+ 'either it does not vary there, or none of the sampled inputs reach it.'));
 			}
 			body.append(box);
 
@@ -504,9 +707,19 @@ export function openSensitivityDialog({
 		close: () => modal.close(),
 		/** An answer arrived: show it here rather than in a dialog on top. */
 		update(next) {
-			view = { ...view, ...next };
+			view = { ...view, ...next, family: asked.family, translate: asked.translate };
 			asking = false;
 			modal.refresh();
+		},
+		/**
+		 * The same question again, as the dialog now puts it -- for when what
+		 * answers it has changed underneath, as screening realisations out
+		 * does. Asked from outside with no time, it came back for the last
+		 * time whatever *At* said.
+		 */
+		reask() {
+			asking = false;
+			ask({});
 		},
 	};
 }

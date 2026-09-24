@@ -3879,10 +3879,20 @@ table.matrix td {
 
 .modal-close:hover { color: var(--text-primary); background: var(--surface-sunken); }
 
+/* A column: the head takes what it needs and the body the rest, scrolling
+   inside it. The body used to be capped at the dialog's height less 62px, a
+   guess at the head; a title with a subtitle under it is taller than that, and
+   the bottom of the body -- its Close button with it -- went under the
+   dialog's clip, past where the body's scrollbar could reach. Only when open:
+   a closed dialog is display: none, and this would show it. */
+.modal[open] { display: flex; flex-direction: column; }
+.modal-head { flex: none; }
+
 .modal-body {
+	flex: 1 1 auto;
+	min-height: 0;
 	padding: 14px;
 	overflow-y: auto;
-	max-height: calc(min(84vh, 900px) - 62px);
 }
 
 /* Two columns where there is room: the point of the dialog is the space. */
@@ -7555,7 +7565,22 @@ input.ix-unit { width: 130px; padding: 2px 6px; font-size: 11.5px; }
 /* The two pickers at the head of *What drove it*: which series, and at which
    time. Both are long -- one option per kept series, one per output time --
    so they are capped in width and let their text run. */
-.sens-of, .sens-time { max-width: 100%; }
+.sens-of, .sens-time, .sens-when { max-width: 100%; }
+/* The button that says how many inputs are in, as wide as what it says. */
+.sens-inputs { justify-self: start; }
+/* *At* is two choices on one line: which question, and for a chosen time,
+   which time -- beside it rather than wrapped under it, where it took a row of
+   its own. Each as wide as it needs; on a narrow window they shrink rather
+   than wrap. Styled as the row's other selects, which it is one of. */
+.sens-at { display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; min-width: 0; }
+.sens-at > select {
+	flex: 0 1 auto;
+	width: auto;
+	min-width: 0;
+	padding: 2px 6px;
+	font-size: 11.5px;
+	line-height: 15px;
+}
 .sens-of { font-variant-numeric: tabular-nums; }
 
 .sens-key-item {
@@ -7618,7 +7643,6 @@ input.ix-unit { width: 130px; padding: 2px 6px; font-size: 11.5px; }
 .sens-fill.is-down { background: var(--bad, #e06c6c); }
 .sens-num { font-size: 10px; color: var(--text-secondary); text-align: right; }
 .sens-none { font-size: 10px; color: var(--text-muted); }
-.sens-time { width: 100%; }
 
 /* Six columns when the regression family is there: the two correlations, then
    SRC, PCC and S₁. Narrower bars, the same reading. */
