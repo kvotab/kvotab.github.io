@@ -67,6 +67,7 @@ exercise `domain/` and `sim/` directly, which is why they can be plain Node.
 | `src/domain/gsa.js`, `src/domain/salib.js`, `src/domain/fft.js`, `src/ui/gsadialog.js` | Global sensitivity analysis, ported from GlobalSensitivity.jl and SALib, and the FFT its spectral methods read |
 | `src/domain/categories.js` | Classifying and screening realisations |
 | `src/domain/distribution.js` | A distribution summary with a DKW band |
+| `src/domain/fit.js` | The parameter shapes fitted to a sample, by likelihood and by moments, and ranked |
 | `src/domain/massbalance.js` | The mass-balance audit, done with budget states the solver integrates |
 | `src/domain/versions.js` | Two models in, the differences out |
 | `src/domain/runlog.js` | What a run was, written into its results archive |
@@ -4651,6 +4652,30 @@ Dvoretzky–Kiefer–Wolfowitz band on the whole CDF, `ε = √(ln(2/α)/2n)`, w
 holds for any shape and says at a glance what a 99th percentile from a thousand
 draws is worth (±4.3%). DKW is the
 shape-free version of the same idea and needs no assumption a dose would break.
+
+**A fit is a shape the model can take.** `fit.js` fits only the kinds in
+`pdf.js`, so every result is an expression a parameter accepts, and the curve a
+fit is drawn and scored with is `densityAt` -- the one the specified
+distribution is drawn with. That function cuts a truncated curve exactly where
+the sampler does, because both ask `probabilityCuts`. Maximum likelihood is a
+closed form for the normal, the log-normal and the two uniforms. For the four
+triangles the likelihood is convex in the mode between two neighbouring
+realisations, so the best mode is always an order statistic, which leaves the
+two ends to search: a profile over the order statistics inside a Nelder–Mead
+over the ends' log distance past the extremes, on the sample standardised to
+[0, 1]. The double triangle's density jumps at its mode, so its profile also
+tries the mode a hair *below* each realisation. Without that candidate its
+"maximum" was less likely than the true parameters on a quantile sample, which
+is what the test checks. Moments are the values' own, not their logarithms'. A
+log shape's are Z's moment generating function at kL, carried as
+E[e^(−kL(1−Z))] so a spread of hundreds of decades neither overflows nor
+underflows; the peak comes from the skewness by bisection and the spread from
+the CV. The uniforms' likelihood ends are the sample's extremes, where A² is
+infinite by construction, so K–S and A² are taken over the realisations
+between them -- the conditional test, since given its ends the rest is a sample
+of the same curve. A curve over the histogram is n·f(x)·Δx, or n·f(x)·x·Δln x
+on a log axis, so it is in the bars' units either way. All eight shapes by
+likelihood take about 0.2 s for 10,000 realisations, run off the click.
 
 **A tornado is a design, and goes through the pool.** Three runs per
 variable, with the central one shared: `designFor(…, {tornado})` produces

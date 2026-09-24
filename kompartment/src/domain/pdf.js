@@ -623,6 +623,55 @@ function bareDensity(spec, x) {
 	}
 }
 
+/**
+ * The two probabilities a truncated curve is read between, as the sampler
+ * reads it (`valueAtProbability` in ./sample.js asks this): `trmin`/`trmax`
+ * through the CDF, `pmin`/`pmax` as they are, the tighter on each side. A cut
+ * the wrong way round -- Ecolego's `trmin=6.5,trmax=0.0` -- is no cut at all:
+ * `cut` is false then as it is for a curve with no truncation, and `reversed`
+ * says which of the two it was.
+ *
+ * @returns {{lo: number, hi: number, cut: boolean, reversed: boolean}}
+ */
+export function probabilityCuts(spec) {
+	let lo = 0;
+	let hi = 1;
+	if (spec.trmin != null) lo = Math.max(lo, cdfAt(spec, spec.trmin));
+	if (spec.trmax != null) hi = Math.min(hi, cdfAt(spec, spec.trmax));
+	if (spec.pmin != null) lo = Math.max(lo, spec.pmin);
+	if (spec.pmax != null) hi = Math.min(hi, spec.pmax);
+	if (!(hi > lo)) return { lo: 0, hi: 1, cut: false, reversed: true };
+	return { lo, hi, cut: lo > 0 || hi < 1, reversed: false };
+}
+
+/**
+ * The density at `x` of the distribution the sampler draws from: the curve,
+ * cut where its truncation cuts it and raised by the probability that is left
+ * so the area is one again. NaN for a list (`pg`), which has no density, and
+ * for a distribution that is not filled in.
+ *
+ * What the Distribution summary lays over a varied parameter's histogram, and
+ * what a fitted distribution is drawn and scored with -- one function, so the
+ * curve a fit is ranked by is the curve on the screen.
+ */
+export function densityAt(spec, x) {
+	if (!spec || !PDF_KINDS[spec.kind] || spec.kind === 'pg' || !complete(spec)) return NaN;
+	const f = bareDensity(spec, x);
+	const { lo, hi, cut } = probabilityCuts(spec);
+	if (!cut || f === 0) return f;
+	const F = cdfAt(spec, x);
+	return F < lo || F > hi ? 0 : f / (hi - lo);
+}
+
+/** The probability of at most `x`, truncation and all; NaN as `densityAt`. */
+export function cumulativeAt(spec, x) {
+	if (!spec || !PDF_KINDS[spec.kind] || spec.kind === 'pg' || !complete(spec)) return NaN;
+	const { lo, hi, cut } = probabilityCuts(spec);
+	const F = cdfAt(spec, x);
+	if (!cut) return F;
+	return Math.min(1, Math.max(0, (F - lo) / (hi - lo)));
+}
+
 /** Two quantiles to a log-normal: solve for mu and sigma through both points. */
 function quantileFit({ p1, x1, p2, x2 }) {
 	if (!(x1 > 0 && x2 > 0)) return null;

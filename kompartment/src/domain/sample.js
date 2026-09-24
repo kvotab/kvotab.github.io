@@ -22,7 +22,7 @@
  * (`SamplingMethod`), and for the same reason.
  */
 
-import { PDF_KINDS, complete, cdfAt, quantile, phi } from './pdf.js';
+import { PDF_KINDS, complete, cdfAt, quantile, phi, probabilityCuts } from './pdf.js';
 
 // Re-exported because this is where a caller looks for them: they are about
 // drawing from a distribution, and they live in ./pdf.js only because the
@@ -131,21 +131,17 @@ export function valueAtProbability(spec, u, at = 0) {
 	// between 0 and 1. Done here rather than by rejection: rejection has no
 	// bound on how many draws it takes, and on a distribution truncated to its
 	// own tail -- which real files contain -- that is a run that never starts.
-	let lo = 0;
-	let hi = 1;
-	if (spec.trmin != null) lo = Math.max(lo, cdfAt(spec, spec.trmin));
-	if (spec.trmax != null) hi = Math.min(hi, cdfAt(spec, spec.trmax));
+	//
 	// A truncation written as a pair of percentiles needs no CDF at all: the
 	// percentile *is* the probability this reads between, which is the whole
 	// reason a data set quotes it that way. Both forms apply where both are
-	// given, and the tighter one wins on each side.
-	if (spec.pmin != null) lo = Math.max(lo, spec.pmin);
-	if (spec.pmax != null) hi = Math.min(hi, spec.pmax);
-	// Ecolego writes `trmin=6.5,trmax=0.0` to mean "no truncation": the two the
-	// wrong way round. Taken as written it leaves nothing to draw from, so it
-	// is read as what it means. `pdfProblems` says so in the editor.
-	const cut = hi > lo;
-	if (!cut) { lo = 0; hi = 1; }
+	// given, and the tighter one wins on each side. Ecolego writes
+	// `trmin=6.5,trmax=0.0` to mean "no truncation": the two the wrong way
+	// round. Taken as written it leaves nothing to draw from, so it is read as
+	// what it means. `pdfProblems` says so in the editor. All of that is
+	// `probabilityCuts`, which the density the Distribution summary draws
+	// asks too, so the curve and the draws are cut in the same place.
+	const { lo, hi, reversed } = probabilityCuts(spec);
 	// Never exactly 0 or 1: the quantile of either is infinite for a curve
 	// with unbounded tails, and one infinite parameter ruins a whole run.
 	const q = Math.min(1 - 1e-12, Math.max(1e-12, lo + u * (hi - lo)));
@@ -153,7 +149,7 @@ export function valueAtProbability(spec, u, at = 0) {
 	// The trip through the CDF and back is good to a billionth, not exactly
 	// (see `probit`), and a truncation is a bound: a draw a billionth outside
 	// it is outside it.
-	if (!cut) return v;
+	if (reversed) return v;
 	if (spec.trmin != null && v < spec.trmin) return spec.trmin;
 	if (spec.trmax != null && v > spec.trmax) return spec.trmax;
 	return v;

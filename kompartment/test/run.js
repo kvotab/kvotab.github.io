@@ -34573,10 +34573,198 @@ test('the distribution summary is asked the three questions What drove it is, an
 	// The histogram is drawn from the column on screen, on the axis chosen, so
 	// a change of series cannot leave it behind.
 	const dialog = readFileSync(new URL('../src/ui/distdialog.js', import.meta.url), 'utf8');
-	assert(/const hist = histogram\(col, null, scale\);/.test(dialog) && /paint\(canvas, col, hist, s\)/.test(dialog),
+	assert(/const hist = histogram\(col, null, scale\);/.test(dialog) && /paint\(canvas, col, hist, s, curves\)/.test(dialog),
 		'the histogram is not made from the column shown');
 	assert(!/view\.hist\b/.test(dialog), 'the dialog still keeps a histogram of its own that an answer does not replace');
 	assert(/\['log', 'logarithmic',/.test(dialog) && /\['linear', 'linear',/.test(dialog), 'no choice of axis');
+});
+
+test('a varied parameter’s density is the one it was drawn from, cut where the draws are cut', async () => {
+	const { densityAt, cumulativeAt, probabilityCuts } = await import('../src/domain/pdf.js');
+	const { valueAtProbability } = await import('../src/domain/sample.js');
+	const base = { values: null, trmin: null, trmax: null, pmin: null, pmax: null, inorder: true, pos: 0 };
+	const specs = [
+		{ ...base, kind: 'norm', params: { mean: 5, sd: 2 }, trmin: 3, trmax: 9 },
+		{ ...base, kind: 'Logn4', params: { gm: 1e-3, gsd: 3 }, pmin: 0.05, pmax: 0.95 },
+		{ ...base, kind: 'logt', params: { min: 1e-4, max: 1, mode: 1e-2 }, trmax: 0.1 },
+		{ ...base, kind: 'triang', params: { min: 0, max: 4, mode: 1 } },
+		{ ...base, kind: 'logn', params: { mean: 2, sd: 3 } },
+	];
+	for (const sp of specs) {
+		// The area is one, truncation and all: trapezoids across the range the
+		// draws span, in log x where it is positive.
+		const lo = valueAtProbability(sp, 0);
+		const hi = valueAtProbability(sp, 1);
+		const log = lo > 0;
+		const N = 200000;
+		let area = 0;
+		let prev = null;
+		for (let i = 0; i <= N; i++) {
+			const x = log ? Math.exp(Math.log(lo) + (i / N) * (Math.log(hi) - Math.log(lo))) : lo + (i / N) * (hi - lo);
+			if (prev) area += ((densityAt(sp, x) + densityAt(sp, prev)) / 2) * (x - prev);
+			prev = x;
+		}
+		assert(Math.abs(area - 1) < 2e-3, `${sp.kind}: the area is ${area}`);
+		// The curve's cumulative is the draws': a uniform in, the same out.
+		for (const u of [0.1, 0.37, 0.5, 0.8, 0.99]) {
+			const x = valueAtProbability(sp, u);
+			assert(Math.abs(cumulativeAt(sp, x) - u) < 1e-6, `${sp.kind}: F(x(${u})) = ${cumulativeAt(sp, x)}`);
+		}
+		// Nothing where a truncation has cut.
+		if (sp.trmax != null) assert(densityAt(sp, sp.trmax * 1.01) === 0, `${sp.kind}: density past the cut`);
+	}
+	// A cut the wrong way round is no cut, for the curve as for the draws.
+	const rev = { ...base, kind: 'unif', params: { min: 0, max: 10 }, trmin: 6.5, trmax: 0 };
+	assert(probabilityCuts(rev).reversed && densityAt(rev, 8) === 0.1 && valueAtProbability(rev, 0.8) === 8,
+		'a reversed cut cut something');
+	// A list of values has no density.
+	assert(Number.isNaN(densityAt({ ...base, kind: 'pg', params: {}, values: [1, 2, 3] }, 2)), 'a list has a density');
+});
+
+test('distributions are fitted by likelihood and by moments, and ranked by a test', async () => {
+	const fit = await import('../src/domain/fit.js');
+	const { quantile, parsePDF } = await import('../src/domain/pdf.js');
+	// A sample that is the distribution's own quantiles: no noise to blur
+	// what a fit recovers.
+	const sampleOf = (spec, n) => Float64Array.from({ length: n }, (_, i) => quantile(spec, (i + 0.5) / n));
+	const momentsOf = (spec) => fit.sampleMoments(sampleOf(spec, 400000));
+	const near = (a, b, tol) => Math.abs(a - b) <= tol * Math.max(1, Math.abs(b));
+	const truths = [
+		{ kind: 'unif', params: { min: 2, max: 5 } },
+		{ kind: 'triang', params: { min: 1, max: 9, mode: 3 } },
+		{ kind: 'dtriang', params: { min: 1, max: 9, mode: 6 } },
+		{ kind: 'norm', params: { mean: 10, sd: 2 } },
+		{ kind: 'logu', params: { min: 1e-4, max: 1e-1 } },
+		{ kind: 'logt', params: { min: 1e-3, max: 10, mode: 0.1 } },
+		{ kind: 'logdt', params: { min: 1e-3, max: 10, mode: 0.5 } },
+		{ kind: 'Logn4', params: { gm: 3, gsd: 2.5 } },
+	];
+	for (const truth of truths) {
+		const family = truth.kind === 'Logn4' ? 'logn' : truth.kind;
+		const x = sampleOf(truth, 2000);
+		const k = fit.FIT_FAMILIES.find((f) => f.id === family).params;
+		// Moments: the fitted shape's mean and SD are the sample's, and its
+		// skewness too where it has a third number.
+		const mom = fit.fitFamily(family, x, 'mom');
+		const want = fit.sampleMoments(x);
+		// The log-normal by moments is written as its mean and SD; a grid of
+		// quantiles would miss the tail that carries them.
+		const got = mom.spec.kind === 'logn' ? { mean: mom.spec.params.mean, sd: mom.spec.params.sd } : momentsOf(mom.spec);
+		assert(near(got.mean, want.mean, 1e-4) && near(got.sd, want.sd, 1e-4)
+			&& (k < 3 || near(got.skew, want.skew, 1e-3)),
+		`${family} by moments: ${JSON.stringify(got)} against ${JSON.stringify(want)}`);
+		// Likelihood: at least as likely as the truth, and a local maximum.
+		const mle = fit.fitFamily(family, x, 'mle');
+		const ll = fit.scoreFit(x, mle.spec, k).ll;
+		assert(ll >= fit.scoreFit(x, truth, k).ll - 1e-6, `${family}: the fit is less likely than the truth`);
+		for (const key of Object.keys(mle.spec.params)) {
+			for (const f of [0.999, 1.001]) {
+				const moved = { ...mle.spec, params: { ...mle.spec.params, [key]: mle.spec.params[key] * f } };
+				const other = fit.scoreFit(x, moved, k).ll;
+				assert(!(other > ll + 1e-6), `${family}: moving ${key} by ${f} made it likelier (${other} > ${ll})`);
+			}
+		}
+		// And the shape the sample came from is the best fit of the eight.
+		const ranked = fit.rankFits(fit.fitAll(x, 'mle'), 'ad');
+		assert(ranked[0].family === family, `${family}: ranked first is ${ranked[0].family}`);
+		// What the table shows is an expression the model reads back.
+		const back = parsePDF(fit.fitText(mle.spec));
+		assert(back && back.kind === (mle.spec.kind === 'Logn4' ? 'Logn4' : mle.spec.kind)
+			&& Object.keys(mle.spec.params).every((p) => near(back.params[p], mle.spec.params[p], 1e-3)),
+		`${family}: ${fit.fitText(mle.spec)} reads back as ${JSON.stringify(back)}`);
+	}
+	// The closed forms: a normal's mean and population SD; a log-normal's in logs.
+	const z = Float64Array.from([1, 2, 4, 8, 16]);
+	const n1 = fit.fitFamily('norm', z, 'mle').spec.params;
+	assert(near(n1.mean, 6.2, 1e-12) && near(n1.sd, Math.sqrt(29.76), 1e-12), JSON.stringify(n1));
+	const l1 = fit.fitFamily('logn', z, 'mle').spec;
+	assert(l1.kind === 'Logn4' && near(l1.params.gm, 4, 1e-12) && near(l1.params.gsd, Math.exp(Math.LN2 * Math.SQRT2), 1e-12),
+		JSON.stringify(l1));
+	const m1 = fit.fitFamily('logn', z, 'mom').spec;
+	assert(m1.kind === 'logn' && near(m1.params.mean, 6.2, 1e-12), JSON.stringify(m1));
+	// The uniforms by likelihood end at the extremes, and the tests leave
+	// those two out rather than calling them impossible.
+	const u = fit.fitFamily('unif', z, 'mle');
+	assert(u.edges && u.spec.params.min === 1 && u.spec.params.max === 16, JSON.stringify(u));
+	const us = fit.scoreFit(z, u.spec, 2, { edges: true });
+	assert(us.tested === 3 && Number.isFinite(us.ad) && Number.isFinite(us.aic), JSON.stringify(us));
+	// By moments a uniform can miss a realisation: impossible under it, so A²
+	// and AIC are infinite -- and it ranks below every fit that is not.
+	const skewed = Float64Array.from([1, 1.1, 1.2, 1.3, 1.5, 2, 9]);
+	const um = fit.scoreFit(skewed, fit.fitFamily('unif', skewed, 'mom').spec, 2);
+	assert(um.ad === Infinity && um.aic === Infinity && Number.isFinite(um.ks) && um.outside === 1, JSON.stringify(um));
+	const order = fit.rankFits(fit.fitAll(skewed, 'mom'), 'ad').map((f) => f.family);
+	assert(order.indexOf('unif') > order.indexOf('logn'), order.join(' '));
+	// A log shape asks for positive values, and says so.
+	const zero = Float64Array.from([0, 1, 2, 3, 4, 5]);
+	assert(/above zero/.test(fit.fitFamily('logt', zero, 'mle').why ?? ''), 'a log shape fitted to a zero');
+	// The p-values at their textbook points: K–S's 1.358/√n and A²'s 2.492
+	// are the 5% critical values.
+	const n = 1e6;
+	assert(Math.abs(fit.ksPValue(1.3581 / (Math.sqrt(n) + 0.12 + 0.11 / Math.sqrt(n)), n) - 0.05) < 1e-3,
+		`K–S p ${fit.ksPValue(1.3581 / 1000.12, n)}`);
+	assert(Math.abs(fit.adPValue(2.492) - 0.05) < 1e-3 && Math.abs(fit.adPValue(3.857) - 0.01) < 1e-3,
+		`A² p ${fit.adPValue(2.492)}, ${fit.adPValue(3.857)}`);
+});
+
+test('the distribution summary of a varied parameter carries its distribution, and lays fits over it', async () => {
+	const { readFileSync } = await import('node:fs');
+	const pdf = (params) => ({ kind: 'unif', params, values: null, trmin: null, trmax: null, inorder: true, pos: 0 });
+	const model = {
+		name: 'decay2',
+		simulation: {
+			start_time: 0, end_time: 10, output_points: 11, spacing: 'linear',
+			solver: 'ndf', rtol: 1e-8, abstol: 1e-12, time_unit: 'year',
+		},
+		parameters: [
+			{ name: 'm', value: 2, index_lists: [], pdf: pdf({ min: 1, max: 3 }) },
+			{ name: 'k1', value: 1, index_lists: [], pdf: pdf({ min: 0.2, max: 2 }) },
+		],
+		compartments: [
+			{ name: 'A', initial: 'm', index_lists: [] },
+		],
+		transfers: [
+			{ name: 'Aout', from: 'A', to: null, rate: 'k1' },
+		],
+	};
+	const harness = await simWorker();
+	const got = await harness.alone(async (ask) => {
+		const ran = await ask({ type: 'probabilistic', id: 91, project: structuredClone(model), iterations: 40, seed: 3 });
+		const done = ran.find((x) => x.type === 'probabilistic-done');
+		if (!done) return { ran };
+		const outs = done.payload.outputs;
+		const k1 = outs.findIndex((o) => o.varied && o.block === 'k1');
+		const a = outs.findIndex((o) => !o.varied && o.block === 'A');
+		const first = async (msg) => (await ask(msg))[0];
+		return {
+			k1, a,
+			input: await first({ type: 'prob-summary', id: 91, index: k1 }),
+			kept: await first({ type: 'prob-summary', id: 91, index: a }),
+		};
+	});
+	assert(got.k1 >= 0 && got.a >= 0, `outputs k1 ${got.k1}, A ${got.a}`);
+	assert(got.input.spec?.kind === 'unif' && got.input.spec.params.min === 0.2 && got.input.spec.params.max === 2,
+		`the parameter came with ${JSON.stringify(got.input.spec)}`);
+	assert(got.input.column.every((v) => v >= 0.2 && v <= 2), 'the column is not the draws');
+	assert(got.kept.spec === null && got.kept.screened === false, `a kept series came with ${JSON.stringify(got.kept.spec)}`);
+
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	assert(/spec: m\.spec \?\? null, screened: !!m\.screened/.test(app), 'the page drops the distribution');
+	const dialog = readFileSync(new URL('../src/ui/distdialog.js', import.meta.url), 'utf8');
+	// The specified curve and the ticked fits go to the painter together, and
+	// a curve is the count a bar would expect under it, on either axis.
+	assert(/if \(specOk && showSpec\) \{\s*curves\.push\(\{ spec: view\.spec, \.\.\.SPEC_STYLE \}\)/.test(dialog)
+		&& dialog.indexOf('curves.push({ spec: view.spec') > dialog.indexOf('curves.push({ spec: f.spec'),
+	'the specified distribution is not drawn, or not on top of the fits');
+	assert(/if \(f\.why \|\| !shown\.has\(f\.family\)\) continue;\s*curves\.push\(\{ spec: f\.spec/.test(dialog),
+		'a ticked fit is not drawn');
+	assert(/n \* densityAt\(c\.spec, x\) \* \(hist\.log \? x : 1\) \* per/.test(dialog), 'the curve is not in counts per bin');
+	assert(/below: xs\.map\(\(x\) => cumulativeAt\(c\.spec, x\)\)/.test(dialog), 'no cumulative curve beside the sample’s');
+	// Fitted once per column and method, off the click, with the specified
+	// distribution scored beside the fits.
+	assert(/const fits = fitAll\(col, fitMethod\);/.test(dialog)
+		&& /scoreFit\(col, view\.spec, 0\)/.test(dialog)
+		&& /fitted\.column === view\.column && fitted\.method === fitMethod/.test(dialog), 'the fits are not kept per sample');
 });
 
 // =========================================================================

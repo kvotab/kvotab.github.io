@@ -1701,6 +1701,7 @@ function acceptSummary(m) {
 		unit: prob.outputs[m.index]?.unit ?? '',
 		index: m.index, t: m.t, at: m.at, peaks: m.peaks ?? null,
 		summary: m.summary, column: m.column, of: m.of,
+		spec: m.spec ?? null, screened: !!m.screened,
 	};
 	if (distModal) { distModal.update(answer); return; }
 	distModal = openDistributionDialog({

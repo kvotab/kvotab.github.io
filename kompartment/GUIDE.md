@@ -5967,6 +5967,26 @@ that is ±4.3%, which is worth knowing before quoting a 99th percentile. The
 bounds on the mean are the usual normal-approximation ones and are honest only
 when N is large; the band is honest always.
 
+The varied parameters are in the **Of** list too, and for one of those the
+chart carries the distribution it was drawn from as a dotted curve — truncation
+and all — so a glance says whether the draws are what was asked for. A list of
+values has no curve to draw.
+
+**Fit** fits every shape a parameter can have — uniform, triangular,
+double-triangular, normal, their log counterparts, and the log-normal — to the
+sample on screen, by **maximum likelihood** or the **method of moments**, and
+ranks the fits by **Anderson–Darling** (A², weighted towards the tails, where a
+dose limit is read), **Kolmogorov–Smirnov** (D, the largest gap between the
+cumulative curves) or **AIC**. Tick a row to draw it over the histogram and
+beside the cumulative curve; its expression, `logt(min=…,max=…,mode=…)`, can be
+copied straight into a parameter. The fits follow the sample: another output or
+another time is fitted again by the same method. When there is a specified
+distribution it is scored in the same table, and its p-values mean what they
+say. For a fitted distribution they are too large — the fit has already been
+tuned to the sample — so use them to rank, not to accept. A fit by moments can
+leave realisations outside its range. It then calls them impossible, and its
+A² and AIC are infinite.
+
 ## Tornado
 
 **Analyse ▾ → Tornado…** asks the model what a sample asks a sample: hold every

@@ -340,6 +340,9 @@ function percentilesFor(list) {
  */
 function withInputs(result) {
 	const flat = new Array(result.outputs.length).fill(0);
+	// Which column of the draws each series is, or -1 for a kept one: how the
+	// Distribution summary finds the distribution a parameter was drawn from.
+	const drawnFrom = new Array(result.outputs.length).fill(-1);
 	const failed = result.ran && result.ran.includes(0);
 	for (const { output, k } of result.inputs ?? []) {
 		const drawn = failed ? Float64Array.from(result.samples[k]) : result.samples[k];
@@ -347,8 +350,10 @@ function withInputs(result) {
 		result.outputs.push(output);
 		result.values.push(drawn);
 		flat.push(1);
+		drawnFrom.push(k);
 	}
 	result.flat = Uint8Array.from(flat);
+	result.drawnFrom = Int32Array.from(drawnFrom);
 	return result;
 }
 
@@ -1033,14 +1038,18 @@ self.onmessage = async (ev) => {
 				sorted = sortedColumn(values, stride, result.iterations, timeIn(result, k, at), mask);
 			}
 			const column = Float64Array.from(sorted);
-			// Which category each kept realisation is in, in the column's
-			// order, so the page can colour a histogram by it.
+			// A varied parameter carries the distribution it was drawn from,
+			// so the dialog can lay that curve over the histogram. `screened`
+			// says the categories have narrowed the realisations, which a
+			// sample need not follow the curve through.
+			const from = result.drawnFrom?.[k] ?? -1;
 			self.postMessage({
 				type: 'prob-summary', id: msg.id, index: k, at, peaks, t: result.t,
 				summary: describeSample(sorted),
-				histogram: histogram(sorted),
 				column,
 				of: result.iterations,
+				spec: from >= 0 ? result.plan[from]?.spec ?? null : null,
+				screened: !!mask,
 			}, [column.buffer]);
 		} catch (e) {
 			self.postMessage({ type: 'error', id: msg.id, name: e.name, message: e.message });
