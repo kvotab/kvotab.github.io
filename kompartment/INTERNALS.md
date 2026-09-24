@@ -81,7 +81,8 @@ exercise `domain/` and `sim/` directly, which is why they can be plain Node.
 | `src/ui/tree.js`, `src/ui/icons.js` | The block tree, and the glyph beside each name |
 | `src/ui/inspector.js` | The settings panel for whatever is selected |
 | `src/ui/indexlists.js` | Index lists, contaminants and decay data, in one panel |
-| `src/ui/endpoints.js` | Which blocks an export offers |
+| `src/ui/endpoints.js` | Which blocks a probabilistic run keeps |
+| `src/ui/savedialog.js`, `src/ui/dualtree.js` | Everything that can be written, in one dialog, and the two trees its lists are chosen in |
 | `src/ui/cores.js` | How many cores a sampled run is shared over, when the reader says |
 | `src/ui/help.js`, `src/ui/markdown.js`, `src/ui/helpfigures.js` | This documentation, read inside the application |
 | `css/app.css`, `css/theme-kvotab.css` | Every colour, as tokens, and a second palette for embedding |
@@ -524,10 +525,10 @@ tokens before they are read as numbers rather than after.
 the run writes a result series for those and for nothing else. This
 tool keeps every series a run produces -- they are worked out from the states
 on request, so holding them costs nothing until they are asked for -- so the
-list decides nothing about the run. It is still the modeller's own answer to
-"which of these three thousand blocks did I want?", which is exactly what an
-export needs, so it is read into `simulation.endpoints` and the endpoint export
-opens on it.
+list decides nothing about a deterministic run. It is still the modeller's own
+answer to "which of these three thousand blocks did I want?", which is exactly
+what a probabilistic run should keep, so it is read into `simulation.endpoints`
+and the endpoint picker opens on it.
 
 Two things about the file are worth knowing. **The ids repeat**: Ecolego writes
 one `<output>` per index of an endpoint, so model B lists 746 of
@@ -4515,10 +4516,21 @@ inventory, where by activity it would have been read as half.
 A status line is replaced by the next run and is the wrong place to keep an
 account of one. The run log is that account -- version, date, settings,
 warnings -- and `runlog.js` assembles it from what the worker already reports, so the log and the footer cannot disagree; the page shows it
-from a `log` button in the footer, and `Save with results…` writes it into
+from a `log` button in the footer, and Save → Model with results writes it into
 `results/meta.json` as lines, where a reopened archive shows it first under
 "as saved with the results" -- the run's own account, from the page that made
 it, ahead of anything the opening page can say.
+
+Two browser rules decide how the text leaves the page. `showSaveFilePicker` is
+only allowed inside a user gesture, so *Save as text…* and Save → Run log call
+`saveText` from the click itself, before anything awaits; a download is the
+fallback only where there is no such dialog, and the notice then says where the
+file went. And a modal `<dialog>` makes the rest of the document inert, so
+`copyText`'s fallback for a refused Clipboard API -- a hidden textarea,
+selected and copied -- puts the textarea inside the open dialog: appended to
+`body` it cannot be selected, and the copy silently takes nothing. Save → Run
+log makes the log once and hands the same string to the preview and to the
+file, since the log's second line is the time it was made.
 
 ## A ceiling on the decay chain
 

@@ -7654,6 +7654,31 @@ input.ix-unit { width: 130px; padding: 2px 6px; font-size: 11.5px; }
 .save-kind-why { display: block; font-size: 11px; color: var(--text-muted); margin-top: 1px; }
 .save-how { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
 .save-pick { min-width: 0; }
+/* --- two trees: what is not chosen, and what is -------------------------
+   The left panel's rows (`.trow`), in two frames of a height of their own --
+   a dialog gives a tree no height, and a tree with none is one row tall --
+   with the buttons that move things between them in a column down the middle. */
+.dual { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 8px; min-width: 0; }
+.dual-side { display: flex; flex-direction: column; min-width: 0; }
+.dual-head { display: flex; align-items: baseline; gap: 6px; margin-bottom: 4px; min-width: 0; }
+.dual-title { font-weight: 600; font-size: 12px; white-space: nowrap; }
+.dual-count {
+	margin-left: auto; font-size: 11px; color: var(--text-muted);
+	white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.dual-tools { display: flex; gap: 4px; margin-bottom: 4px; min-width: 0; }
+.dual-search { flex: 1 1 auto; min-width: 0; }
+.dual-kind { flex: 0 1 9em; min-width: 0; }
+.dual-tree { flex: none; height: 300px; }
+.dual-tree.is-drop { box-shadow: inset 0 0 0 2px var(--accent); }
+.dual-empty { margin: 10px 10px; }
+.dual-moves { display: flex; flex-direction: column; justify-content: center; gap: 6px; }
+.dual-move { min-width: 2.4em; padding: 3px 6px; font-size: 14px; line-height: 1; }
+.dual-foot {
+	display: inline-flex; align-items: center; gap: 5px; margin-top: 6px;
+	font-size: 11.5px; color: var(--text-secondary);
+}
+
 /* Which of a sample: the choice, and for one realisation its number. */
 .save-holds { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .save-holds select { flex: 1 1 auto; min-width: 0; }
@@ -8043,6 +8068,15 @@ input.ix-unit { width: 130px; padding: 2px 6px; font-size: 11.5px; }
 	border: 1px solid var(--border);
 	border-radius: var(--radius);
 }
+.runlog:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* Expanded to the window (`expandButton` in app.js): the dialog's body a column,
+   the text taking what the footer leaves. */
+.modal.modal-wide.is-expanded .modal-body { display: flex; flex-direction: column; }
+.modal.is-expanded .runlog { flex: 1 1 auto; min-height: 0; max-height: none; }
+
+/* In Save…, the log about to be written, in the room the format leaves. */
+.save-log { max-height: 46vh; margin: 0; }
 
 /* A disruptive event's actions: one row each -- what, on which block, what
    share -- and a button for one more. */

@@ -369,8 +369,8 @@ export function openProbabilisticDialog({
 
 			// What is kept, and where that is decided. The row is here even
 			// with no endpoints chosen yet: the tick box alone said how many
-			// there were and nothing said *which*, and the picker is under
-			// Export, which is nowhere near this dialog.
+			// there were and nothing said *which*, and the only other place
+			// the list is chosen is Save → Model with results.
 			{
 				const box = el('input', {
 					type: 'checkbox', checked: onlyEndpoints, disabled: !kept.length,

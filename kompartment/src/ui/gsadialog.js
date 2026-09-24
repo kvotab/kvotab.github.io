@@ -186,9 +186,12 @@ function scaleFor(columns, rank, curves) {
  * @param {number} opts.points    runs the design took
  * @param {object} opts.stats     the run's statistics, `gsa` among them
  * @param {string} opts.timeUnit
+ * @param {boolean} [opts.stale]  the model has changed since the runs were made
  * @param {(ask: {index: number, stat: string, at: number}) => void} opts.onAsk
  */
-export function openGsaResult({ outputs = [], t, answer, points, stats, timeUnit = 'year', onAsk, onClose }) {
+export function openGsaResult({
+	outputs = [], t, answer, points, stats, timeUnit = 'year', stale = false, onAsk, onClose,
+}) {
 	let view = { outputs, t, answer, points, stats };
 	let asking = false;
 	const ask = (next) => {
@@ -200,7 +203,8 @@ export function openGsaResult({ outputs = [], t, answer, points, stats, timeUnit
 	const modal = openModal({
 		wide: true,
 		title: () => `${GSA_METHODS[view.answer.method]?.short ?? 'Sensitivity'} for ${view.outputs[view.answer.index] ?? ''}`,
-		subtitle: () => `${view.points.toLocaleString()} runs — ${GSA_METHODS[view.answer.method]?.label ?? ''}`,
+		subtitle: () => `${view.points.toLocaleString()} runs — ${GSA_METHODS[view.answer.method]?.label ?? ''}`
+			+ (stale ? ' — of the model as it was before the latest edits' : ''),
 		onClose,
 		build: (body) => {
 			const a = view.answer;

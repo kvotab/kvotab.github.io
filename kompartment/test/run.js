@@ -3732,6 +3732,12 @@ test('a sensitivity design runs through the model, the pool and the worker', asy
 	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
 	assert(/label: 'Global sensitivity\\u2026'/.test(app) && /onPick: \(\) => openGsa\(\)/.test(app), 'the menu does not offer it');
 	assert(/'tornado', 'tornado-table', 'gsa', 'gsa-table',/.test(app), 'its replies are dropped once another run starts');
+	// And a result window that has been closed opens again from the runs
+	// already made, the way it opened the first time.
+	assert(/label: 'Global sensitivity result\\u2026', disabled: !state\.gsa,/.test(app)
+		&& /onPick: \(\) => showGsa\(\) \}/.test(app), 'a closed result cannot be opened again');
+	assert((app.match(/showGsa\(\);/g) ?? []).length === 1 && /function showGsa\(\) \{/.test(app),
+		'the first opening and a reopening are not the same code');
 	assert(/state\.gsa = null;\n\tstate\.gsaRunning = false;/.test(app), 'a new model keeps the old design');
 });
 
@@ -4790,7 +4796,7 @@ test('single-nuclide decay reproduces exp(-lambda t)', async () => {
 	}
 });
 
-test('a model brings its endpoint list, and an export can be chosen from it', async () => {
+test('a model brings its endpoint list, and a run can be told to keep it', async () => {
 	// Ecolego's endpoints: the blocks whose results it keeps. `JavaSimulator`
 	// writes a series for those and nothing else, which is why a result file
 	// of a three-thousand-block model holds two groups. This tool keeps every
@@ -4874,16 +4880,81 @@ test('a model brings its endpoint list, and an export can be chosen from it', as
 	assert(JSON.stringify(indicesFor(outputs, ['Dose'])) === '[2,3]', 'the wrong series would be saved');
 	assert(indicesFor(outputs, []).length === 0, 'nothing chosen is not everything');
 
-	// The probabilistic dialog offers it, and the export is a third file
-	// rather than overwriting either of the other two in a downloads folder.
+	// The probabilistic dialog offers it, and it chooses and nothing else:
+	// what a run keeps is decided before there is anything to save, and
+	// writing any of it to a file is Save….
 	const { readFileSync } = await import('node:fs');
 	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	const eps = readFileSync(new URL('../src/ui/endpoints.js', import.meta.url), 'utf8');
 	assert(/onChooseEndpoints: \(done\) => openEndpoints\(/.test(app), 'nothing offers it');
-	assert(/downloadCSV\(cols, '-endpoints'\)/.test(app)
-		&& /downloadHDF5\(cols, '-endpoints', handoff\)/.test(app),
-		'the chosen export would overwrite another');
+	assert(!/Save as CSV|Save as HDF5|Open in browser|onExport/.test(eps), 'the picker still offers files');
+	assert(/'Cancel'/.test(eps) && /'Done'/.test(eps), 'the picker cannot be finished or left');
+	assert(/renderDualTree\(box, \{/.test(eps) && /titles: \['Not kept', 'Endpoints'\]/.test(eps),
+		'the endpoints are not chosen between two trees');
 	assert(/if \(ed\.setEndpoints\(state\.raw, names\)\) \{/.test(app), 'the choice is not remembered');
 	assert(/modelChanged\(\{ layoutOnly: true \}\);/.test(app), 'remembering would re-run the model');
+});
+
+test('two trees choose between what is kept and what is not', async () => {
+	const { build } = await import('../src/ui/dualtree.js');
+	const { dualTreeState } = await import('../src/ui/dualtree.js');
+	// Qualified names make the sub-systems: `Near.Buffer.Out` is `Out` in
+	// `Buffer` in `Near`.
+	const items = [
+		{ key: 'Dose', name: 'Dose', kind: 'expression', count: 4 },
+		{ key: 'Near.Lake', name: 'Near.Lake', kind: 'compartment', count: 4 },
+		{ key: 'Near.Buffer.Out', name: 'Near.Buffer.Out', kind: 'transfer', count: 1 },
+		{ key: 'Near.Buffer.leach_out', name: 'Near.Buffer.leach_out', kind: 'transfer', count: 1 },
+		{ key: 'Near.Buffer.Kd', name: 'Near.Buffer.Kd', kind: 'parameter', count: 1 },
+		{ key: 'Far.Rock', name: 'Far.Rock', kind: 'compartment', count: 2 },
+	];
+	const ui = dualTreeState().sides[0];
+	const t = build(items, ui, false);
+	// Sub-systems first, by name, then the blocks at that level.
+	assert(t.root.systems.map((s) => s.name).join() === 'Far,Near', t.root.systems.map((s) => s.name).join());
+	assert(t.root.items.map((x) => x.leaf).join() === 'Dose', 'the top-level block is misplaced');
+	const near = t.root.systems[1];
+	assert(near.systems[0].name === 'Buffer' && near.items[0].leaf === 'Lake', 'nesting is wrong');
+	// A sub-system stands for every block in it, at every depth.
+	assert(JSON.stringify(t.cover.get('s\u0000Near')) === JSON.stringify(
+		['Near.Buffer.Kd', 'Near.Buffer.leach_out', 'Near.Buffer.Out', 'Near.Lake']),
+	JSON.stringify(t.cover.get('s\u0000Near')));
+	assert(t.root.deep.length === items.length, 'the tree lost something');
+
+	// What is shown is what moves: with the left panel's wildcard, a
+	// sub-system stands for its matches alone, and one with none is not there.
+	const found = build(items, { ...ui, query: '*_out' }, false);
+	assert(found.filtering, 'a search does not count as filtering');
+	assert(JSON.stringify(found.cover.get('s\u0000Near')) === '["Near.Buffer.leach_out"]',
+		JSON.stringify(found.cover.get('s\u0000Near')));
+	assert(!found.cover.has('s\u0000Far'), 'a sub-system with no match is still shown');
+	// A plain search is a substring, of the name or the qualified name.
+	assert(build(items, { ...ui, query: 'buffer' }, false).root.deep.length === 3, 'the qualified name is not searched');
+	// And the kind filter narrows the same way.
+	const comps = build(items, { ...ui, kind: 'compartment' }, false);
+	assert(JSON.stringify(comps.root.deep.sort()) === '["Far.Rock","Near.Lake"]', JSON.stringify(comps.root.deep));
+
+	// Grouped by type, a heading stands for its kind within its sub-system.
+	const grouped = build(items, ui, true);
+	assert(JSON.stringify(grouped.cover.get('g\u0000Near.Buffer\u0000transfer').sort())
+		=== '["Near.Buffer.Out","Near.Buffer.leach_out"]', 'a kind heading stands for the wrong blocks');
+
+	// The component: moved by drag, double-click, Enter, the menu and four
+	// buttons, and it redraws only itself.
+	const { readFileSync } = await import('node:fs');
+	const src = readFileSync(new URL('../src/ui/dualtree.js', import.meta.url), 'utf8');
+	for (const [what, re] of [
+		['dragging', /addEventListener\('dragstart'/], ['dropping', /addEventListener\('drop'/],
+		['double-clicking', /addEventListener\('dblclick'/], ['the menu', /openMenu\(\{/],
+		['Enter', /case 'Enter':/], ['the four buttons', /button\('›'[\s\S]*button\('»'[\s\S]*button\('‹'[\s\S]*button\('«'/],
+		['a range with shift', /ev\?\.shiftKey && u\.anchor/], ['⌘ or Ctrl', /ev\?\.metaKey \|\| ev\?\.ctrlKey/],
+	]) {
+		assert(re.test(src), `the trees cannot be used by ${what}`);
+	}
+	assert(!/modal\.refresh|handle\.refresh/.test(src), 'the trees rebuild the dialog around them');
+	// The Save dialog has them too, for every list it offers.
+	const save = readFileSync(new URL('../src/ui/savedialog.js', import.meta.url), 'utf8');
+	assert(/renderDualTree\(box, \{/.test(save) && !/renderPicker/.test(save), 'Save… still ticks boxes');
 });
 
 test('an imported model arrives knowing what it is', () => {
@@ -9113,6 +9184,44 @@ test('a run keeps a log of what it was, and a saved result carries it', async ()
 	assert(/log: runLogFor\(\)\.split\('\\n'\),/.test(app), 'the save does not carry the log');
 	assert(/storedLog\?\.length/.test(app) && /as saved with the results/.test(app), 'an opened result forgets its log');
 	assert(/log: Array\.isArray\(data\.meta\.log\) \? data\.meta\.log : null,/.test(worker), 'the worker drops the stored log');
+
+	// The log window: the text can fill the window, Copy takes all of it and
+	// says how much, and Save as text… asks where -- it used to drop the file
+	// into the downloads folder without a word, which read as doing nothing.
+	const css = readFileSync(new URL('css/app.css', root), 'utf8');
+	const saveDialog = readFileSync(new URL('src/ui/savedialog.js', root), 'utf8');
+	const fn = (name) => new RegExp(`\\n(?:async )?function ${name}\\([^)]*\\) \\{([\\s\\S]*?)\\n\\}`).exec(app)?.[1] ?? '';
+	const saveText = fn('saveText');
+	assert(/window\.showSaveFilePicker\(\{/.test(saveText) && /suggestedName: name,/.test(saveText),
+		'Save as text does not ask where');
+	assert(/e\?\.name === 'AbortError'\) return false;/.test(saveText), 'cancelling the save dialog saves anyway');
+	assert(/handle\.createWritable\(\)/.test(saveText) && /flash\(`Saved \$\{handle\.name\}\.`/.test(saveText),
+		'the file that was chosen is not written');
+	assert(/download\(name, text, 'text\/plain'\);[\s\S]*wherever this browser puts downloads/.test(saveText),
+		'where there is no save dialog, the download does not say where the file went');
+	const copyText = fn('copyText');
+	assert(/navigator\.clipboard\.writeText\(text\)/.test(copyText), 'Copy does not copy the text itself');
+	assert(/\(document\.querySelector\('dialog\[open\]'\) \?\? document\.body\)\.append\(area\)/.test(copyText)
+		&& /document\.execCommand\('copy'\)/.test(copyText),
+		'Copy has no way round a browser that refuses the Clipboard API');
+	assert(/all \$\{lines\} lines/.test(copyText), 'Copy does not say how much it copied');
+	const logWindow = fn('openRunLog');
+	assert(/logPre\(text\)/.test(logWindow) && /copyText\(text, 'the run log'\)/.test(logWindow)
+		&& /saveText\(`\$\{slug\(state\.raw\.name\)\}-run-log\.txt`, text, 'Run log'\)/.test(logWindow)
+		&& /expandButton\(\), copy, save, done/.test(logWindow), 'the log window lost Expand, Copy or Save as text');
+	const expand = fn('expandButton');
+	assert(/was = \{/.test(expand) && /classList\.add\('is-expanded'\)/.test(expand)
+		&& /classList\.remove\('is-expanded'\)/.test(expand), 'Expand does not put the dialog back');
+	assert(/\.modal\.is-expanded \.runlog \{[^}]*max-height: none;/.test(css), 'an expanded log keeps its short box');
+	// Save… → Run log shows what it will write, and writes that: one log,
+	// made once, rather than a file made a moment later with a later time on it.
+	assert(/what\.key === 'log' && log\)/.test(saveDialog) && /className: 'runlog save-log'/.test(saveDialog),
+		'Save… does not show the log');
+	const openSave = fn('openSave');
+	assert(/const log = r && !r\.detached \? runLogFor\(\) : '';/.test(openSave) && /\n\t\tlog,\n/.test(openSave)
+		&& /runSave\(\{ \.\.\.choice, log \}\)/.test(openSave), 'Save… shows one log and writes another');
+	assert(/kind === 'log'\) \{[\s\S]*?await saveText\(`\$\{slug\(state\.raw\.name\)\}-run-log\.txt`, log \|\| runLogFor\(\), 'Run log'\);/
+		.test(fn('runSave')), 'Save… → Run log does not ask where');
 });
 
 test('auto-run starts off', async () => {
@@ -33517,11 +33626,12 @@ test('ticking a parameter does not throw the list back to the top', async () => 
 	}
 
 	// The endpoint picker had this right already, and is the other place a
-	// tick must not rebuild.
+	// choice must not rebuild the dialog: its two trees redraw themselves, and
+	// what a move changes around them is the tally.
 	const eps = readFileSync(new URL('../src/ui/endpoints.js', import.meta.url), 'utf8');
-	const epHandler = /box\.addEventListener\('change', \(\) => \{([\s\S]*?)\n\t\t\t\t\}\);/.exec(eps)?.[1] ?? '';
-	assert(epHandler && !/modal\.refresh\(\)/.test(epHandler) && /retally\(\)/.test(epHandler),
-		'the endpoint picker rebuilds on a tick');
+	assert(/onChange: retally,/.test(eps), 'the endpoint picker does not tally a move');
+	const epTally = /const retally = \(\) => \{([\s\S]*?)\n\t\};/.exec(eps)?.[1] ?? '';
+	assert(epTally && !/modal\.refresh\(\)/.test(epTally), 'the endpoint picker rebuilds on a move');
 });
 
 test('a long generated function runs in parts and gives the same numbers', async () => {

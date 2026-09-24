@@ -1264,10 +1264,9 @@ function openProbabilistic() {
 		// browser: see ./cores.js.
 		cores: chosenCores(),
 		// Where the list itself is decided. The tick box says how many there
-		// are and this is the only thing on screen that says where they come
-		// from -- the picker is under Export, which is nowhere near here, and
-		// a reader who has just been offered "keep only the 12 endpoints" is
-		// entitled to ask which twelve.
+		// are and this is where they come from -- the picker opens from here
+		// and from nowhere else, and a reader who has just been offered "keep
+		// only the 12 endpoints" is entitled to ask which twelve.
 		onChooseEndpoints: (done) => openEndpoints(
 			() => done(ed.endpoints(state.raw), endpointSeriesCount())),
 		onRun: (choice) => startProbabilistic(choice),
@@ -1811,12 +1810,30 @@ function acceptGsa(m) {
 	if (k >= 0 && k !== m.answer.index) {
 		ensureWorker().postMessage({ type: 'gsa-table', id: m.id, index: k, stat: m.answer.stat, at: m.answer.at });
 	}
+	showGsa();
+}
+
+/**
+ * The last design's result, in its window.
+ *
+ * Opened when the runs come in, and again from Analyse ▾ → Global sensitivity
+ * result… after the window has been closed: the worker holds the runs until
+ * the next design or another model, so the table for any output and reading
+ * is still one question away rather than another thousand runs. On whatever
+ * output and reading it was last left at.
+ */
+function showGsa() {
+	const g = state.gsa;
+	if (!g) return;
 	if (gsaModal) gsaModal.close();
 	gsaModal = openGsaResult({
-		outputs: m.outputs.map((o) => o.label), t: m.t, answer: m.answer, points: m.points, stats: m.stats,
+		outputs: g.outputs.map((o) => o.label), t: g.t, answer: g.answer, points: g.points, stats: g.stats,
 		timeUnit: state.raw.simulation?.time_unit ?? 'year',
+		// Said rather than refused: the runs are still an answer about the
+		// model they were made of, and the reader may want exactly that.
+		stale: g.rev !== state.rev,
 		onAsk: ({ index, stat, at }) => ensureWorker().postMessage({
-			type: 'gsa-table', id: m.id, index, stat, at,
+			type: 'gsa-table', id: g.runId, index, stat, at,
 		}),
 		onClose: () => { gsaModal = null; },
 	});
@@ -3205,6 +3222,138 @@ function compareWithFile() {
 	});
 }
 
+/**
+ * A text file, asking where it should go: the operating system's own save
+ * dialog, as Save… asks for a model, and the browser's download only where
+ * there is no such dialog -- which is then said, since the file has gone
+ * somewhere the reader did not choose. The ellipsis on *Save as text…* is a
+ * promise that it will ask; a link-and-click download dropped the file into
+ * the downloads folder without a word, which read as the button doing nothing.
+ *
+ * Called from the click itself: the dialog may only be opened out of one.
+ */
+async function saveText(name, text, what = 'Text') {
+	if (typeof window.showSaveFilePicker === 'function') {
+		let handle = null;
+		try {
+			handle = await window.showSaveFilePicker({
+				suggestedName: name,
+				types: [{ description: what, accept: { 'text/plain': ['.txt'] } }],
+			});
+		} catch (e) {
+			// Cancelling is an answer: nothing is saved and nothing is said.
+			if (e?.name === 'AbortError') return false;
+			handle = null;
+		}
+		if (handle) {
+			try {
+				const to = await handle.createWritable();
+				await to.write(text);
+				await to.close();
+				flash(`Saved ${handle.name}.`, 'info');
+				return true;
+			} catch (e) {
+				showError({
+					name: 'Save', message: `Could not write the file: ${e.message}`,
+					hint: 'The folder may be read-only. Try again and pick another place.',
+				});
+				return false;
+			}
+		}
+	}
+	download(name, text, 'text/plain');
+	flash(`Saved ${name} to wherever this browser puts downloads — it has no "save as" `
+		+ 'dialog for a page to open.', 'info');
+	return true;
+}
+
+/**
+ * All of `text` onto the clipboard, and how much that was.
+ *
+ * Through the Clipboard API where the browser allows it, and where it refuses
+ * -- a frame without the permission, an older browser -- through a selection
+ * of a hidden text box, the older route. The box goes inside the open dialog:
+ * a modal dialog makes everything outside it inert, and an inert box can be
+ * neither selected nor copied from. Said either way, with the number of
+ * lines, so that "was that all of it" is answered; a failure used to be
+ * swallowed, and the reader then copied what was in view by hand.
+ */
+async function copyText(text, what) {
+	const lines = text.split('\n').length.toLocaleString();
+	try {
+		await navigator.clipboard.writeText(text);
+		flash(`Copied ${what} — all ${lines} lines.`, 'info');
+		return true;
+	} catch { /* refused; the older route below */ }
+	const area = el('textarea', { value: text, readOnly: true, 'aria-hidden': 'true' });
+	Object.assign(area.style, { position: 'fixed', left: '-9999px', top: '0', opacity: '0' });
+	(document.querySelector('dialog[open]') ?? document.body).append(area);
+	area.select();
+	let ok = false;
+	try { ok = document.execCommand('copy'); } catch { ok = false; }
+	area.remove();
+	if (ok) flash(`Copied ${what} — all ${lines} lines.`, 'info');
+	else flash('This browser would not copy it. Click in the text, press ⌘A (Ctrl+A) to select '
+		+ 'all of it, and copy that.', 'warn');
+	return ok;
+}
+
+/**
+ * A block of text to read in a dialog: all of it selectable at once. ⌘A (or
+ * Ctrl+A) inside it selects the text and not the page around it, which is
+ * what anybody copying a log by hand reaches for.
+ */
+function logPre(text) {
+	const pre = el('pre', { className: 'runlog', tabIndex: 0 }, text);
+	pre.addEventListener('keydown', (ev) => {
+		if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === 'a') {
+			ev.preventDefault();
+			const range = document.createRange();
+			range.selectNodeContents(pre);
+			const sel = window.getSelection();
+			sel.removeAllRanges();
+			sel.addRange(range);
+		}
+	});
+	return pre;
+}
+
+/**
+ * Fills the window with a dialog, and puts it back: for a log or a report
+ * that is longer than the box it opened in. The text grows with the dialog.
+ *
+ * The dialog is found from the button when it is pressed: the button is made
+ * while the dialog is being built, before there is a dialog to hand it.
+ */
+function expandButton() {
+	const b = el('button', { type: 'button', className: 'ghost', title: 'Fill the window with this, and back' }, 'Expand');
+	let was = null;
+	b.addEventListener('click', () => {
+		const d = b.closest('dialog');
+		if (!d) return;
+		const body = d.querySelector('.modal-body');
+		if (!was) {
+			was = {
+				left: d.style.left, top: d.style.top, width: d.style.width, maxHeight: d.style.maxHeight,
+				bodyHeight: body.style.height, bodyMax: body.style.maxHeight,
+			};
+			const head = Math.ceil(d.querySelector('.modal-head')?.getBoundingClientRect().height ?? 60);
+			Object.assign(d.style, { left: '16px', top: '16px', width: 'calc(100vw - 32px)', maxHeight: 'calc(100vh - 32px)' });
+			body.style.height = body.style.maxHeight = `calc(100vh - 34px - ${head}px)`;
+			d.classList.add('is-expanded');
+			b.textContent = 'Shrink';
+		} else {
+			Object.assign(d.style, { left: was.left, top: was.top, width: was.width, maxHeight: was.maxHeight });
+			body.style.height = was.bodyHeight;
+			body.style.maxHeight = was.bodyMax;
+			d.classList.remove('is-expanded');
+			b.textContent = 'Expand';
+			was = null;
+		}
+	});
+	return b;
+}
+
 /** The version report, as a dialog with the text in it. */
 function openVersionReport(diff, labels) {
 	const text = reportLines(diff, labels).join('\n');
@@ -3212,19 +3361,17 @@ function openVersionReport(diff, labels) {
 		title: 'Version report',
 		subtitle: diff.same ? 'No differences.' : `${versionSummary(diff)} — layout left out, comments counted`,
 		build: (body) => {
-			body.append(el('pre', { className: 'runlog' }, text));
+			body.append(logPre(text));
 			const copy = el('button', { type: 'button', className: 'ghost' }, 'Copy');
-			copy.addEventListener('click', async () => {
-				try { await navigator.clipboard.writeText(text); flash('Copied the report.', 'info'); } catch { /* the text is selectable */ }
-			});
+			copy.addEventListener('click', () => copyText(text, 'the report'));
 			const save = el('button', { type: 'button', className: 'ghost' }, 'Save as text\u2026');
-			save.addEventListener('click', () => download(`${slug(state.raw.name)}-versions.txt`, text, 'text/plain'));
+			save.addEventListener('click', () => saveText(`${slug(state.raw.name)}-versions.txt`, text, 'Version report'));
 			const done = el('button', { type: 'button', className: 'primary' }, 'Close');
 			done.addEventListener('click', () => modal.close());
 			body.append(el('div', { className: 'pdf-foot' },
 				el('span', { className: 'pdf-note' },
 					'A block is matched by name; one gone under one name and back under another, otherwise unchanged, is a rename.'),
-				copy, save, done));
+				expandButton(), copy, save, done));
 		},
 	});
 	modal.dialog.classList.add('modal-wide');
@@ -3237,19 +3384,16 @@ function openRunLog() {
 		title: 'Run log',
 		subtitle: 'What this run was, in words that survive it — kept with a saved result',
 		build: (body) => {
-			const pre = el('pre', { className: 'runlog' }, text);
-			body.append(pre);
+			body.append(logPre(text));
 			const copy = el('button', { type: 'button', className: 'ghost' }, 'Copy');
-			copy.addEventListener('click', async () => {
-				try { await navigator.clipboard.writeText(text); flash('Copied the run log.', 'info'); } catch { /* the text is selectable */ }
-			});
+			copy.addEventListener('click', () => copyText(text, 'the run log'));
 			const save = el('button', { type: 'button', className: 'ghost' }, 'Save as text…');
-			save.addEventListener('click', () => download(`${slug(state.raw.name)}-run-log.txt`, text, 'text/plain'));
+			save.addEventListener('click', () => saveText(`${slug(state.raw.name)}-run-log.txt`, text, 'Run log'));
 			const done = el('button', { type: 'button', className: 'primary' }, 'Close');
 			done.addEventListener('click', () => modal.close());
 			body.append(el('div', { className: 'pdf-foot' },
-				el('span', { className: 'pdf-note' }, 'Save with results… writes this into the archive as well.'),
-				copy, save, done));
+				el('span', { className: 'pdf-note' }, 'Save… → Model with results writes this into the archive as well.'),
+				expandButton(), copy, save, done));
 		},
 	});
 	modal.dialog.classList.add('modal-wide');
@@ -5443,6 +5587,12 @@ function renderSidebar() {
 							+ 'effects: an experiment of its own over the distributions, priced before it '
 							+ 'runs. Needs no sample.',
 						onPick: () => openGsa() },
+					{ label: 'Global sensitivity result\u2026', disabled: !state.gsa,
+						title: state.gsa
+							? 'The last design’s table again, from the runs already made — any output, '
+								+ 'any reading, nothing run again.'
+							: 'Needs a global sensitivity run.',
+						onPick: () => showGsa() },
 					{ label: 'Replay a realisation\u2026', disabled: !has,
 						title: has ? 'Run one realisation of the probabilistic run again as an '
 							+ 'ordinary run, every series of it.' : 'Needs a probabilistic run.',
@@ -7689,13 +7839,13 @@ function renderCode() {
 // --- files ---------------------------------------------------------------------
 
 /**
- * The third export: the blocks somebody picked.
+ * Which blocks a run keeps: the model's endpoints.
  *
  * The usual answer to "which of these three thousand blocks did I want?"
- * is its endpoint list, which this tool now reads out of the file. The dialog
+ * is its endpoint list, which this tool reads out of the file. The dialog
  * opens on that list when the model came with one, and what is chosen is saved
- * back to the model -- so the next export starts where the last one left off,
- * and the list travels with the project file.
+ * back to the model -- so the next run keeps the same, and the list travels
+ * with the project file. Choosing only: writing any of it to a file is Save….
  */
 async function openEndpoints(onSaved = null) {
 	const r = state.results;
@@ -7712,7 +7862,7 @@ async function openEndpoints(onSaved = null) {
 		return;
 	}
 	try {
-		const { openEndpointPicker, indicesFor } = await import('./endpoints.js');
+		const { openEndpointPicker } = await import('./endpoints.js');
 		openEndpointPicker({
 			outputs,
 			// No run, no output grid: the picker says the rate rather than
@@ -7721,7 +7871,7 @@ async function openEndpoints(onSaved = null) {
 			endpoints: ed.endpoints(state.raw),
 			// What the table is showing, as the fallback for a model that came
 			// with no list of its own.
-			shown: [...new Set(state.selected.map((i) => r.outputs[i]?.block).filter(Boolean))],
+			shown: r ? [...new Set(state.selected.map((i) => r.outputs[i]?.block).filter(Boolean))] : [],
 			onRemember: (names) => {
 				if (ed.setEndpoints(state.raw, names)) {
 					// Saved with the model and undoable, but not a reason to
@@ -7731,25 +7881,6 @@ async function openEndpoints(onSaved = null) {
 				// Told to whatever opened this, so a dialog underneath can
 				// show the new count rather than the one it opened with.
 				onSaved?.();
-			},
-			realisations: currentProb()?.iterations ?? 0,
-			// The files are the half that needs numbers, so they are offered
-			// only where there are some. Without them the dialog is the list
-			// and a Done.
-			// `holding` is what the picker was asked to write: the deterministic
-			// run, `mean`, `all`, or a realisation number.
-			onExport: !r ? null : (names, format, holding = 'deterministic') => {
-				const cols = indicesFor(r.outputs, names);
-				if (format === 'csv') { downloadCSV(cols, '-endpoints'); return; }
-				// Opened here, synchronously, while the click that asked for it
-				// is still the reason anything is happening.
-				const handoff = format === 'browser' ? openResultBrowser() : null;
-				if (format === 'browser' && !handoff) return;
-				if (holding === 'deterministic') {
-					downloadHDF5(cols, '-endpoints', handoff);
-					return;
-				}
-				downloadRealisations(cols, null, holding, handoff);
 			},
 		});
 	} catch (e) {
@@ -8043,7 +8174,7 @@ function openSave() {
 	const r = state.results;
 	const prob = currentProb();
 	const outs = r?.outputs ?? [];
-	// A block, not a series: tick `Dose` and every nuclide of it goes.
+	// A block, not a series: choose `Dose` and every nuclide of it goes.
 	const on = new Set(state.selected.map((i) => outs[i]?.block ?? outs[i]?.label));
 	const series = blocksOf(outs).map((b) => ({
 		key: b.name, name: b.name, kind: b.kind, unit: b.unit, count: b.count,
@@ -8063,6 +8194,7 @@ function openSave() {
 		});
 	}
 	const data = [...byBlock.values()];
+	const log = r && !r.detached ? runLogFor() : '';
 	openSaveDialog({
 		can: {
 			results: !!r && !r.detached,
@@ -8075,10 +8207,14 @@ function openSave() {
 		series,
 		data,
 		endpoints: ed.endpoints(state.raw),
+		// What Run log would write, shown as the log window shows it -- and
+		// what it then does write, rather than a log made again a moment later
+		// with a later time on it.
+		log,
 		chosen: state.saveChoice,
 		onSave: (choice) => {
 			state.saveChoice = { kind: choice.kind, format: choice.format, holds: choice.holds, which: choice.which };
-			runSave(choice);
+			runSave({ ...choice, log });
 		},
 	});
 }
@@ -8091,7 +8227,7 @@ function openSave() {
  * pop-up is allowed out of a user gesture and not out of a promise that
  * settles after one.
  */
-async function runSave({ kind, format, keys, open = false, holds = 'all', which = 1 }) {
+async function runSave({ kind, format, keys, open = false, holds = 'all', which = 1, log = null }) {
 	const handoff = open ? openResultBrowser() : null;
 	if (open && !handoff) return;
 	const r = state.results;
@@ -8103,7 +8239,7 @@ async function runSave({ kind, format, keys, open = false, holds = 'all', which 
 	const suffix = everything ? '-all' : '';
 	if (kind === 'model') { await saveFile(format); return; }
 	if (kind === 'archive') {
-		// Ticking here *is* choosing the endpoints: the list is a property of
+		// Choosing here *is* choosing the endpoints: the list is a property of
 		// the model, so it is written back before the file is, and a re-run
 		// keeps those. Only when it has actually changed -- an edit nobody
 		// made should not put a dot on Save.
@@ -8129,8 +8265,9 @@ async function runSave({ kind, format, keys, open = false, holds = 'all', which 
 	}
 	if (kind === 'data') { await exportData(handoff ? 'h5' : format, keys, handoff); return; }
 	if (kind === 'log') {
-		download(`${slug(state.raw.name)}-run-log.txt`, runLogFor(), 'text/plain');
-		flash('The run log was written out.', 'info');
+		// Asks where, as every other Save does; it used to download without a
+		// word and say only that the log had been written out.
+		await saveText(`${slug(state.raw.name)}-run-log.txt`, log || runLogFor(), 'Run log');
 	}
 }
 

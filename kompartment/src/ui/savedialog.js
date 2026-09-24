@@ -20,7 +20,7 @@
 
 import { el } from './parts.js';
 import { openModal } from './modal.js';
-import { renderPicker, pickerState } from './pick.js';
+import { renderDualTree, dualTreeState } from './dualtree.js';
 
 /**
  * What can be written, in the order a reader looks for them.
@@ -48,8 +48,8 @@ export const KINDS = [
 		key: 'archive',
 		label: 'Model with results',
 		blurb: 'The model and the run it produced, so it opens again without the solve. '
-			+ 'The ticked blocks are the model’s endpoints — what a run keeps, and what '
-			+ 'an export writes — and they are saved with it.',
+			+ 'The blocks under Endpoints are the model’s endpoints — what a probabilistic '
+			+ 'run keeps — and they are saved with it.',
 		// Only ZIP: a gzip holds one thing, and a run beside a model is two.
 		formats: [['data', 'ZIP', 'The model at the root, the run under results/']],
 		needs: 'fresh',
@@ -100,13 +100,13 @@ export const KINDS = [
 ];
 
 /**
- * Which of a sample a Realisations file is of, as the endpoints picker asks it.
+ * Which of a sample a Realisations file is of.
  *
  * One file cannot sensibly be all three. The runs, their mean and one named
  * run are different answers to "what happened", and for a skewed output -- a
  * dose -- they are not close: the mean of a thousand doses sits well above the
- * median. So it is asked. The fourth answer the picker offers, the
- * deterministic run, is Results here.
+ * median. So it is asked. The deterministic run is the fourth answer, and it
+ * is Results.
  */
 const HOLDS = [
 	['all', (n) => `All ${n} realisations`,
@@ -136,7 +136,8 @@ function refusal(kind, can) {
  * @param {object} opts.can        `{results, sample, iterations, stale, data, fileName}`
  * @param {Array} opts.series      pickable result blocks
  * @param {Array} opts.data        pickable parameters and lookup tables
- * @param {string[]} opts.endpoints the model's endpoint list, pre-ticked
+ * @param {string[]} opts.endpoints the model's endpoint list, under Endpoints to start with
+ * @param {string} [opts.log]      what Run log would write, to be shown before it is
  * @param {object} opts.chosen     `{kind, format, holds, which}` remembered between openings
  * @param {(choice) => void} opts.onSave  `{kind, format, keys, open, holds, which}`;
  *   `open` is the HDF5 Browser rather than the disk, and is called from the
@@ -144,7 +145,7 @@ function refusal(kind, can) {
  *   which of a sample a Realisations file is of
  */
 export function openSaveDialog({
-	can, series = [], data = [], endpoints = [], chosen = {}, onSave,
+	can, series = [], data = [], endpoints = [], log = '', chosen = {}, onSave,
 }) {
 	// The first thing that can actually be written, so the dialog does not
 	// open on a row it will refuse.
@@ -159,17 +160,24 @@ export function openSaveDialog({
 	let holds = HOLDS.some(([v]) => v === chosen.holds) ? chosen.holds : 'all';
 	let which = Math.min(iterations, Math.max(1, Math.round(Number(chosen.which)) || 1));
 
-	// One selection per list, kept while the dialog is open so switching
-	// between Results and Realisations does not lose the ticks.
+	// One choice per list, kept while the dialog is open so switching
+	// between Results and Realisations does not lose it -- and the two trees'
+	// searches, filters and open sub-systems with it.
 	const picks = {
-		series: { chosen: new Set(series.filter((s) => s.on).map((s) => s.key)), ui: pickerState() },
+		series: { chosen: new Set(series.filter((s) => s.on).map((s) => s.key)), ui: dualTreeState() },
 		// The endpoints the model already declares, or everything when it
 		// declares none -- which is what a run keeps today.
 		endpoints: {
 			chosen: new Set(endpoints.length ? endpoints : series.map((s) => s.key)),
-			ui: pickerState(),
+			ui: dualTreeState(),
 		},
-		data: { chosen: new Set(data.map((d) => d.key)), ui: pickerState() },
+		data: { chosen: new Set(data.map((d) => d.key)), ui: dualTreeState() },
+	};
+	// What the two sides are called, for each list.
+	const TITLES = {
+		series: ['Not in the file', 'In the file'],
+		endpoints: ['Not kept', 'Endpoints'],
+		data: ['Not in the file', 'In the file'],
 	};
 
 	let handle = null;
@@ -219,6 +227,14 @@ export function openSaveDialog({
 				if (why) right.append(el('p', { className: 'hint' }, why));
 			}
 
+			// The log itself, before it is saved, as the log window shows it:
+			// what is about to be written is the one thing worth seeing here.
+			if (what.key === 'log' && log) {
+				right.append(el('pre', { className: 'runlog save-log', tabIndex: 0 }, log));
+				right.append(el('p', { className: 'hint' },
+					`${log.split('\n').length.toLocaleString()} lines, all of which are saved.`));
+			}
+
 			if (what.holds) {
 				const n = iterations.toLocaleString();
 				const sel = el('select', { 'aria-label': 'What the file holds' });
@@ -245,9 +261,9 @@ export function openSaveDialog({
 				right.append(el('p', { className: 'hint' }, HOLDS.find(([v]) => v === holds)[2]));
 			}
 
-			let picked = null;
-			// Declared before the picker so a tick can reach them: the buttons
-			// are disabled while nothing is ticked, and a tick does not rebuild.
+			// Declared before the trees so a move can reach them: the buttons
+			// are disabled while nothing is chosen, and a move does not
+			// rebuild the dialog -- the trees redraw themselves.
 			const go = el('button', { type: 'button', className: 'primary' },
 				what.key === 'model' && can.fileName && format === 'json'
 					? `Save to ${can.fileName}` : 'Save…');
@@ -263,37 +279,50 @@ export function openSaveDialog({
 						+ 'what it is sent whichever format is chosen.',
 				}, 'Open in the HDF5 Browser')
 				: null;
+			const note = el('span', { className: 'pdf-note' });
+			const noteText = (none) => (none ? 'Nothing is chosen.'
+				: what.key === 'model' && can.fileName
+					? 'Where it was last saved. ⇧⌘S asks for somewhere else.'
+					: 'Asks where to put it.');
 			const able = (yes) => {
 				go.disabled = !yes;
 				if (open) open.disabled = !yes;
 			};
+			// Whether the list, where there is one, has anything in it.
+			const none = () => {
+				if (!what.picks) return false;
+				const items = what.picks === 'data' ? data : series;
+				return !items.some((it) => picks[what.picks].chosen.has(it.key));
+			};
+			const settle = () => {
+				able(!refusal(what, can) && !none());
+				note.textContent = noteText(none());
+			};
 			if (what.picks) {
 				const items = what.picks === 'data' ? data : series;
 				const box = el('div', { className: 'save-pick' });
-				picked = renderPicker(box, {
+				renderDualTree(box, {
 					items,
 					chosen: picks[what.picks].chosen,
 					ui: picks[what.picks].ui,
-					onChange: () => handle.refresh(),
-					onTick: (n) => able(!refusal(what, can) && n > 0),
+					titles: TITLES[what.picks],
 					noun: 'block',
+					onChange: settle,
 				});
 				right.append(box);
 				if (what.picks === 'endpoints') {
-					// What ticking one actually does, since it outlives the
+					// What choosing one actually does, since it outlives the
 					// file: an endpoint list is a property of the model.
 					right.append(el('p', { className: 'hint' },
-						'Saved with the model, so a re-run keeps these and an export offers '
-						+ 'them. The archive itself holds the whole run — every series is '
-						+ 'worked out from it again when the file opens.'));
+						'Saved with the model, so a re-run keeps these. The archive itself '
+						+ 'holds the whole run — every series is worked out from it again '
+						+ 'when the file opens.'));
 				}
 			}
 			cols.append(right);
 			body.append(cols);
 
 			// --- the buttons ----------------------------------------------
-			const nothing = what.picks && picked && picked.picked === 0;
-			able(!refusal(what, can) && !nothing);
 			const send = (toBrowser) => {
 				shut();
 				onSave({
@@ -314,13 +343,8 @@ export function openSaveDialog({
 				buttons.push(open);
 			}
 			buttons.push(go);
-			body.append(el('div', { className: 'pdf-foot' },
-				el('span', { className: 'pdf-note' },
-					nothing ? 'Nothing is ticked.'
-						: what.key === 'model' && can.fileName
-							? 'Where it was last saved. ⇧⌘S asks for somewhere else.'
-							: 'Asks where to put it.'),
-				...buttons));
+			body.append(el('div', { className: 'pdf-foot' }, note, ...buttons));
+			settle();
 		},
 	});
 	return handle;

@@ -1856,12 +1856,24 @@ Browser** beside *Save…*: the same file, handed to the
 disk. The browser reads HDF5 and nothing else, so that is what it is sent
 whichever format the dialog is on.
 
-Everything but the model and the archive is a list of named things, so the
-right-hand side is that list with a **search** over it, a filter by kind and by
-sub-system, and *All shown* / *None* acting on whatever the search matched —
-which is what makes "every far-field path" one gesture. A block brings every
-index of it: tick `Dose` and all four nuclides come. The line underneath says
-how many blocks are ticked and how many series that comes to.
+Results, Realisations and Data are lists of named things, and so is *Model with
+results*, whose list is the model's endpoints. For those the right-hand side is
+**two trees**: what is not in the file on the left, what is on the right. Each
+is laid out like the model tree in the left panel, sub-systems and all, with its
+own **search** (wildcards work: `C*_out`) and its own filter by kind; *Group by
+type* underneath puts a heading for each kind inside every sub-system.
+
+Blocks move from one tree to the other by **dragging**, by **double-clicking**,
+with **Enter**, from the **right-click menu**, or with the buttons between the
+trees: **›** and **‹** move what is selected, **»** and **«** move everything
+the search is showing, which is what makes "every far-field path" one gesture.
+Selecting works as it does in the left panel: click, ⌘-click (Ctrl-click) to add
+or remove one, shift-click for a range, ⌘A for everything shown. A selected
+sub-system brings every block in it that the tree is showing, so with the search
+set to `*_out` it moves only its `_out` blocks. A block brings every index of
+it: move `Dose` and all four nuclides come. The head of each tree says how many
+blocks it holds and how many series that comes to, and Save stays disabled
+while nothing is chosen.
 
 A row that cannot be written stays where it is and says why — *Nothing has run
 yet*, *This needs a probabilistic run*, *The model has changed since this run* —
@@ -2050,17 +2062,26 @@ run (states, steps, rejections, function evaluations, how df/dy was obtained,
 events and restarts), what was held at zero and for how long, the mass-balance
 audit when it is on, and — when a probabilistic run or a tornado stands — its
 seed, sampling, correlations, failures and categories. A replayed realisation says which it is and lists the
-value every input took. **Copy** and **Save as text…** do what they say.
+value every input took.
+
+The window scrolls through all of it; **Expand** fills the window with the log
+and **Shrink** puts it back. **Copy** puts the whole log on the clipboard,
+however little of it is in view, and says how many lines that was. **Save as
+text…** asks where to put the file, as saving a model does; Firefox and Safari
+have no such dialog, so there it goes wherever downloads go and the notice says
+so. **Save → Run log** shows the same text before writing it, and writes exactly
+what it showed.
 
 It is the audit trail: six months on, somebody asks which tolerance, and the
 status line that knew was replaced by the next run's.
-**Save with results…** writes the log into the archive (`results/meta.json`),
+**Save → Model with results** writes the log into the archive (`results/meta.json`),
 and a saved result opened later shows the log it was saved with first, under
 *as saved with the results*, before the account of the opening.
 
 ## Saving a run, and opening it again
 
-**Save with results (.zip)…** writes the model *and the run it produced*. Open
+**Save → Model with results** writes the model *and the run it produced* as one
+`.zip`. Open
 that file and the curves are there — the chart, the table, the CSV and the HDF5
 export, all of it — with nothing solved. On the largest assessment here a run is
 sixteen minutes in the solver and forty-three end to end, which is the whole
@@ -2392,7 +2413,7 @@ This is why a large model no longer needs the memory it did. Storing every
 series of a landscape model of 200,000 values over 500 times was 800 MB before
 a line was drawn; the states alone are a twelfth of that. The one thing that
 still costs what it always did is an export of every output — **Save →
-Results** with every block ticked, CSV or HDF5 — which asks for every column at
+Results** with every block in the file, CSV or HDF5 — which asks for every column at
 once, and says so while it works. See
 [Saving the results](#saving-the-results) for what each of them writes.
 
@@ -2402,8 +2423,8 @@ Right-click the **Table** for what it holds: **Export table to CSV**, **Export
 table to HDF5**, or **Open in the HDF5 Browser**, which hands the same HDF5 file
 to the reader without saving it. Everything else is in **Save…**: *Results*
 for any of the series, every output included, *Realisations* for a
-probabilistic run's sample, its mean or one realisation of it, and *Model with results*, whose ticks are the
-model's endpoints.
+probabilistic run's sample, its mean or one realisation of it, and *Model with results*, whose chosen
+blocks are the model's endpoints.
 
 ### Choosing endpoints
 
@@ -2425,18 +2446,24 @@ that is right for *looking* at a model and wrong for *saving* one. A run of
 model G has 831,314 series, which is 2.8 GB of HDF5 and more than
 a tab can build.
 
-So the endpoints are a list of the blocks the run produced, ticked: **Save →
-Model with results**, or **Choose…** beside *Keep only the endpoints* in
-Uncertainty → Probabilistic…, where the picker also writes the chosen blocks
-out. **The model's own endpoint list is what it opens on** when the file came with one, so
-the common case is one click; otherwise it opens on whatever the table is
-showing. Search by name or by kind (`parameter` narrows to parameters), and
-**All shown** and **None** act on every match rather than only the rows drawn.
-The line under the toolbar says what it comes to — *100 of 1485 blocks — 1,835
-series over 356 times, about 5 MB* — and moves as you tick.
+So the endpoints are chosen from the blocks the run produces, in two places:
+**Choose…** beside *Keep only the endpoints* in Uncertainty → Probabilistic…,
+and **Save → Model with results**. Both are the same two trees as the rest of
+Save… (see [Compressed model files](#compressed-model-files)), with *Not kept*
+on the left and *Endpoints* on the right. **The model's own endpoint list is what
+they open on** when the file came with one, so the common case is one click, and
+in the picker **The model's N** puts that list back after a change. A model with
+no list opens the picker on whatever the table is showing, and Save on every
+block, since that is what a run keeps without one. The line above the trees says what it comes
+to — *100 of 1485 blocks kept — 1,835 series over 356 times, about 5 MB a
+realisation* — and moves as blocks move.
 
-**An endpoint is a block**: tick `Dose` and every nuclide of it goes. Picking
-831,314 series one at a time is not something a dialog can offer.
+The picker only chooses. It writes no file and needs no run; **Done** saves the
+list with the model and **Cancel** leaves it as it was. Writing any of the
+endpoints out is **Save…**, after the run.
+
+**An endpoint is a block**: move `Dose` across and every nuclide of it goes.
+Picking 831,314 series one at a time is not something a dialog can offer.
 
 What you choose is **saved back to the model**, under `simulation.endpoints`,
 because an endpoint list is a property of the model rather than of one export,
@@ -5286,13 +5313,16 @@ assessment can be 831,314 series — and an assessment already knows which forty
 blocks it is about. That list is the model's **endpoints**, and the tick box in
 this dialog is whether to keep those and nothing else.
 
-**Choose blocks…** beside it is where the list itself is set: one row per block
-the run produced, ticked, with a search box. A block brings every index of it —
-tick `Dose` and all four nuclides of it are kept — because picking series one at
-a time is not a thing a dialog can offer. What you tick is saved with the model,
-so it travels with the project file and the next run starts where the last one
-left off. An imported `.eco` arrives with its own list, which is what the dialog
-opens on.
+**Choose blocks…** beside it is where the list itself is set: two trees, the
+blocks the run would produce on the left and the endpoints on the right, each
+with a search box — see [Choosing endpoints](#choosing-endpoints). A block
+brings every index of it — move `Dose` across and all four nuclides of it are
+kept — because picking series one at a time is not a thing a dialog can offer.
+**Done** saves the choice with the model, so it travels with the project file
+and the next run starts where the last one left off. An imported `.eco` arrives
+with its own list, which is what the dialog opens on. It is only a choice:
+nothing is written to a file there, and **Save…** writes the result once the
+run has been made.
 
 The same list is in **Save → Model with results**.
 
@@ -5552,15 +5582,12 @@ choice is saved with the model and redrawn at once from the realisations the
 worker still holds.
 
 **Saving a probabilistic result.** **Save → Realisations** asks what the file
-holds — every realisation, their mean, or one realisation by its number — and
-the endpoints picker (**Choose…** beside *Keep only the endpoints* in
-Uncertainty → Probabilistic…) asks the same in its **HDF5 holds** row once a
-probabilistic run stands behind the series, with the deterministic run as a
-fourth answer, which in Save… is *Results*:
+holds — every realisation, their mean, or one realisation by its number. The
+deterministic run is the fourth answer, and that is **Save → Results**:
 
 | | What is written |
 |---|---|
-| **The deterministic run** | The values the model holds, with no sampling. What this button has always written, and still the default. |
+| **The deterministic run** | The values the model holds, with no sampling: **Save → Results**. |
 | **The mean of N realisations** | One curve: the average of the runs at each time. |
 | **All N realisations** | The sample itself — one row per output time, one column per realisation. |
 | **One realisation** | One curve: that run, exactly as it was integrated. Give its number. |
@@ -5578,17 +5605,16 @@ The quick version: **Export table to HDF5** on the table's right-click menu
 for the curve, **Save → Realisations** for the sample, its mean or one run of it
 — and **Open in the HDF5 Browser**, on that menu and beside *Save…*, to send any
 of them straight to the reader without saving a file. The whole run is the usual thing to want there,
-which is **Save → Results** with every block ticked: a reader is opened to look
-around in, which is exactly when you want more than the four lines you happened
-to chart.
+which is **Save → Results** with every block in the file (**»** moves them all):
+a reader is opened to look around in, which is exactly when you want more than
+the four lines you happened to chart.
 
-**Or open it in the reader without saving it at all.** *Open in browser* in the
-endpoints picker — and **Open in the HDF5 Browser** on the table's menu and in
-Save… — opens the HDF5 Browser at kvotab.se in a new tab and hands it the file
-directly. No
-download, nothing to find in a downloads folder afterwards, and nothing left
-behind when the tab is closed. It writes whatever **HDF5 holds** is set to, so
-the realisations can go across the same way.
+**Or open it in the reader without saving it at all.** **Open in the HDF5
+Browser** — on the table's menu, and beside *Save…* for Results, Realisations
+and Data — opens the HDF5 Browser at kvotab.se in a new tab and hands it the
+file directly. No download, nothing to find in a downloads folder afterwards,
+and nothing left behind when the tab is closed. From Realisations it sends
+whatever *Holds* is set to, so the sample can go across the same way.
 
 A pop-up blocker will stop the tab opening; allow pop-ups for this page and try
 again. The reader also has to be told to accept files from wherever this page is
@@ -5610,11 +5636,6 @@ is 6.4 MB — and fifty series is 80. The values are written as float32, which
 halves that and is still far finer than a Monte Carlo sample of a thousand draws
 can justify. A mean or a single realisation is one curve, so those files are the
 size of an ordinary export — 26 kB against 1.2 MB for the same four series.
-
-What a model can say and this cannot yet do: **correlated sampling**. An
-assessment often ties two parameters together — model B correlates
-210 pairs — and this tool draws each one independently, so its spread is wider
-than Ecolego's. The import says so when a model carries a correlation matrix.
 
 ## Partial sampling: what one input is worth
 
@@ -5887,8 +5908,12 @@ through the same pool of cores, and **Cores** in the dialog is the same setting.
 
 The result is a table per output — **Of**, and the reading (peak, end, lowest,
 at a time) — with the ranking index over time for the inputs that lead it;
-changing either reads the runs again rather than making more. Which method, its
-settings and the seed are saved with the model, so the answer can be had again.
+changing either reads the runs again rather than making more. Closed the window?
+**Analyse ▾ → Global sensitivity result…** opens it again, on the output and
+reading it was left at: the runs are held until the next design or another
+model, and if the model has been edited since, the window says so. Which method,
+its settings and the seed are saved with the model, so the answer can be had
+again.
 
 **In probability, not in units.** Each design is drawn in the unit hypercube —
 a probability per input — and each point becomes a run through each input's
