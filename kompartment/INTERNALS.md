@@ -78,6 +78,9 @@ exercise `domain/` and `sim/` directly, which is why they can be plain Node.
 | `src/domain/layout.js` | Laying an imported diagram out, since a file's positions are not read |
 | `src/ui/app.js` | The shell: tabs, toolbar, settings, notices |
 | `src/ui/scenarios.js` | Which scenarios run beside the selected one, and how their lines share a chart |
+| `src/ui/infopanel.js` | The (i) beside a setting and the panel it opens: what a setting is, on demand |
+| `src/ui/siminfo.js` | What each simulation setting is, for that panel |
+| `src/ui/panelinfo.js`, `src/ui/blockinfo.js`, `src/ui/dialoginfo.js` | The same for the left panel's parts, each kind of block's settings window, and every dialog |
 | `src/ui/graph.js` | The diagram, in SVG |
 | `src/ui/matrix.js` | The transfer grid |
 | `src/ui/chart.js`, `src/ui/svgcanvas.js` | The chart on a canvas, and the same paint routine writing SVG |
@@ -5164,3 +5167,78 @@ The ported solvers of `src/ode/julia/` keep their own linear algebra:
 column-major storage, a complex LU for Radau's stages, and a sparse LU written
 against their own Jacobian cache. They read `refactor` as their sparse LU,
 since they have none that keeps its pivots.
+
+## An (i) instead of a tooltip
+
+The rows of the Simulation section explained themselves on hover, which is the
+one way an explanation cannot be read while acting on it: the tooltip goes the
+moment the pointer moves to the box, holds a sentence, cannot be reached from
+the keyboard and does not exist on a touch screen. They have an **(i)** after
+the name instead, opening one panel over the right-hand side of the window
+(`src/ui/infopanel.js`). Built to be used anywhere, so adding one to another
+panel is two calls:
+
+```js
+row.append(infoButton('insp:half_life', () => ({ kicker, title, lead, facts, sections })));
+// ...and, where that panel rebuilds itself, after it has:
+refreshInfo();
+```
+
+A topic is data -- a lead paragraph, a table of facts, sections of paragraphs,
+bullets or choices with the one in force marked -- and the panel decides how it
+looks. The strings may carry `code` in backticks and **emphasis** in double
+stars and nothing else: the panel is built from elements and text nodes, as the
+rest of the interface is, because a topic will quote block names and a name
+comes out of a file. A topic given as a function is worked out when the panel is
+drawn, and drawn again by `refreshInfo`, so what it says is the model as it
+stands: the simulation topics (`src/ui/siminfo.js`) read the solver chosen and
+quote its defaults, which come from `solverDefault` in `src/ode/solvers.js`
+beside the table of who reads what -- the numbers the solvers' own code uses,
+which a test holds them to.
+
+One panel at a time: another (i) replaces it, the same one closes it, as do the
+× and Escape. Escape only from the panel, an (i) or nowhere in particular --
+it puts a text box's value back and clears the tree's selection, and taking it
+from those would close a panel nobody was looking at -- and never past an open
+dialog. It sits between the header and the footer, read off them rather than
+written into the stylesheet, since the header wraps on a narrow window.
+
+**Where the (i)s are.** A row's is after its control, in a third grid column
+(`.field.has-info`, built by `infoRow` in `renderSidebar`), so every (i) down the
+panel is on one right-hand edge; a section heading's is the last thing in its
+summary (`section({info})` in `parts.js`), pushed right in the flex heading of
+`#sb-top` unless a count has already taken the push. The tree's is beside its
+search box, the Information view's is handed in through `hooks.info`, and a
+dialog's is `openModal({ info })`, beside the close button. Their topics are in
+`src/ui/panelinfo.js` (the sections and the tree, which says what is above it
+only when it is there), `src/ui/blockinfo.js` (one per kind of block, read from
+whichever block the window shows when the (i) is pressed) and
+`src/ui/dialoginfo.js` (`dialogInfo('save')` and the rest). By convention `info`
+is a dialog's first option, which is where the test that every dialog has one
+looks for it; the one exception is the one-box prompt for a shape's text.
+
+**Inside a dialog.** A modal dialog makes everything outside it inert, so an (i)
+in a dialog opens the panel *inside* the dialog -- still `position: fixed`, so
+still laid over the window rather than clipped by the dialog's own
+`overflow: hidden`. `place` puts it beside the dialog when there are 300 pixels
+to spare, and otherwise over the dialog's right-hand edge, starting below its
+title bar so that the (i) and the dialog's × stay in reach. The dialog's
+`cancel` handler closes the panel first when one is inside it and refuses the
+close, so Escape anywhere in the window closes what is in front; Chrome lets a
+page refuse a close request only once per user activation, and Escape is not
+one, so the next press closes the window even with nothing clicked between.
+
+**Read more in Help.** A topic's `more` is the heading of the Guide section that
+says the rest; `setInfoLinks` in `boot` makes the link close any dialog, switch
+to Help and go to `slug(more)`, and `goToHelp` asks again every tenth of a
+second, for five seconds, while the Guide is still loading. A test checks every
+topic's `more` against the Guide's headings, so renaming a heading there names
+the topics it strands.
+
+**Testing it in headless Chrome.** Chrome 153 headless on macOS, with the page
+focused (a tab made by `Target.createTarget`, or focus emulation on), hangs the
+browser within a few modal dialogs closed with a CDP Escape key -- on the third,
+on a twelve-line page with a bare `<dialog>` -- and closing with a click never
+does. Close dialogs with their × in a CDP script. A tab made by
+`/json/new` is not focused and does not hang, but it also never gets focus
+events, so what focus does is not tested there.

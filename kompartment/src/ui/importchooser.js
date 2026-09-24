@@ -16,6 +16,7 @@
 
 import { el } from './parts.js';
 import { openModal } from './modal.js';
+import { dialogInfo } from './dialoginfo.js';
 
 /**
  * @param {object} opts
@@ -27,6 +28,7 @@ export function openImportChooser({ name, holds, onPickAnother = null }) {
 	let handle = null;
 	const shut = () => handle?.close();
 	handle = openModal({
+		info: dialogInfo('import-chooser'),
 		title: `Import from ${name}`,
 		build(body) {
 			body.replaceChildren();

@@ -26,6 +26,7 @@ import {
 	PDF_KINDS, PDF_KIND_IDS, TRUNCATION, PERCENTILE_TRUNCATION, parsePDF, formatPDF, complete,
 	curveOf, describePDF, pdfProblems, supportOf,
 } from '../domain/pdf.js';
+import { dialogInfo } from './dialoginfo.js';
 
 /** A number as a person would type it back. */
 function fmt(v) {
@@ -218,6 +219,7 @@ export function openPDFEditor({
 	const redraw = () => { if (canvas) paint(canvas, draft); };
 
 	const modal = openModal({
+		info: dialogInfo('distribution-editor'),
 		title: `Distribution — ${title}`,
 		subtitle: subtitle || (unit ? `Every number below is in ${unit}` : ''),
 		build: (body) => {

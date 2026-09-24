@@ -26,6 +26,7 @@ import * as ed from '../domain/edit.js';
 import * as db from '../domain/decaydb.js';
 import { openModal, closeModal } from './modal.js';
 import { el } from './parts.js';
+import { dialogInfo } from './dialoginfo.js';
 
 /**
  * What the dialog is showing and what has been chosen.
@@ -73,6 +74,7 @@ export function openNuclidePicker(project, hooks = {}) {
 		inModel,
 	};
 	const modal = openModal({
+		info: dialogInfo('nuclides'),
 		title: () => 'Radionuclides from ICRP 107',
 		subtitle: () => `${db.allUnstable().length} radionuclides, `
 			+ 'their half-lives and their decay pairs — ICRP Publication 107. '

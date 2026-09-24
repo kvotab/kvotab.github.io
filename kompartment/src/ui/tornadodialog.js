@@ -23,6 +23,7 @@ import { howLong } from './probdialog.js';
 import { inputName } from './sensdialog.js';
 import { fmtStat } from './distdialog.js';
 import { coresRow } from './cores.js';
+import { dialogInfo } from './dialoginfo.js';
 
 /**
  * Prices the runs and asks which probabilities to swing to.
@@ -44,6 +45,7 @@ export function openTornadoSetup({
 	let high = Number(simulation.tornado_high ?? 0.95);
 	let onlyEndpoints = endpoints.length > 0;
 	const modal = openModal({
+		info: dialogInfo('tornado'),
 		title: 'Tornado',
 		subtitle: 'Each sampled input swung on its own, low and high, with the rest held',
 		build: (body) => {
@@ -118,6 +120,7 @@ export function openTornadoResult({ outputs = [], t, table, points, timeUnit = '
 		onAsk?.({ index: view.table.index, stat: view.table.stat, at: view.table.at, ...next });
 	};
 	const modal = openModal({
+		info: dialogInfo('tornado-result'),
 		wide: true,
 		title: () => `Tornado for ${view.outputs[view.table.index] ?? ''}`,
 		subtitle: () => `${view.points.toLocaleString()} runs — each input at its `

@@ -196,6 +196,9 @@ export function renderInfo(host, project, selection, hooks = {}) {
 	// to expand a section that is open by default does nothing at all, and a
 	// door to a room you are standing in is worse than no door.
 	box.querySelector('summary')?.append(nav);
+	// What this view is, behind an (i) at the end of its title bar, where the
+	// other sections of the panel keep theirs. See ./infopanel.js.
+	if (hooks.info) box.querySelector('summary')?.append(hooks.info());
 
 	// A sibling of the disclosure, not a child of it.
 	//

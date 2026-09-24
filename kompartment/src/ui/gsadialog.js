@@ -19,6 +19,7 @@ import { GSA_METHODS, GSA_METHOD_IDS, gsaOptions, gsaRuns, gsaRefusal } from '..
 import { howLong } from './probdialog.js';
 import { inputName, paintCurves } from './sensdialog.js';
 import { coresRow } from './cores.js';
+import { dialogInfo } from './dialoginfo.js';
 
 /**
  * @param {object} opts
@@ -46,6 +47,7 @@ export function openGsaSetup({
 	let onlyEndpoints = endpoints.length > 0;
 
 	const modal = openModal({
+		info: dialogInfo('gsa'),
 		wide: true,
 		title: 'Global sensitivity',
 		subtitle: 'An experiment over the distributions, designed for one question',
@@ -202,6 +204,7 @@ export function openGsaResult({
 		onAsk?.({ index: view.answer.index, stat: view.answer.stat, at: view.answer.at, ...next });
 	};
 	const modal = openModal({
+		info: dialogInfo('gsa-result'),
 		wide: true,
 		title: () => `${GSA_METHODS[view.answer.method]?.short ?? 'Sensitivity'} for ${view.outputs[view.answer.index] ?? ''}`,
 		subtitle: () => `${view.points.toLocaleString()} runs — ${GSA_METHODS[view.answer.method]?.label ?? ''}`

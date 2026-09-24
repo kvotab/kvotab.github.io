@@ -15,6 +15,7 @@
 
 import { el } from './parts.js';
 import { openModal } from './modal.js';
+import { dialogInfo } from './dialoginfo.js';
 
 const COLOURS = ['--series-1', '--series-2', '--series-3', '--series-4', '--series-5', '--series-6'];
 const FALLBACK = ['#4a9eff', '#f08c3a', '#54c08a', '#d96c8a', '#9b7fe0', '#d8c15a'];
@@ -112,6 +113,7 @@ export function openLocalSensitivityPicker({
 	let query = '';
 
 	const modal = openModal({
+		info: dialogInfo('dydp'),
 		wide: true,
 		title: 'Sensitivity to a parameter',
 		subtitle: 'dy/dp, integrated alongside the model rather than differenced from two runs',
@@ -243,6 +245,7 @@ export function openLocalSensitivityPicker({
 export function openLocalSensitivityResult({ t, chosen, states, timeUnit = 'year', stats }) {
 	let which = 0;
 	const modal = openModal({
+		info: dialogInfo('dydp-result'),
 		wide: true,
 		title: 'Sensitivity to a parameter',
 		subtitle: `${stats.states.toLocaleString()} states solved in `

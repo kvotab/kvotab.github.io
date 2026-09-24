@@ -18,6 +18,7 @@ import { el } from './parts.js';
 import { openModal } from './modal.js';
 import * as dt from '../domain/datatable.js';
 import { renderPicker, pickerState } from './pick.js';
+import { dialogInfo } from './dialoginfo.js';
 
 /**
  * @param {object} opts
@@ -58,6 +59,7 @@ export function openDataImport({ name, rows, problems = [], project, onApply }) 
 	let handle = null;
 	const shut = () => handle?.close();
 	handle = openModal({
+		info: dialogInfo('data-import'),
 		title: `Import data from ${name}`,
 		wide: true,
 		build(body) {

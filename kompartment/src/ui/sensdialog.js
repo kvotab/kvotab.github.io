@@ -22,6 +22,7 @@ import { el } from './parts.js';
 import { openModal } from './modal.js';
 import { renderDualTree, dualTreeState } from './dualtree.js';
 import { fmtTime } from '../domain/timeseries.js';
+import { dialogInfo } from './dialoginfo.js';
 
 /**
  * How one sampled input is named, index and all.
@@ -381,6 +382,7 @@ export function openSensitivityDialog({
 		}));
 		const picked = new Set((inputs ?? view.sampled.map((x) => x.k)).map(String));
 		const inner = openModal({
+			info: dialogInfo('analysis-inputs'),
 			wide: true,
 			title: 'Inputs in the analysis',
 			subtitle: 'The table ranks these, the regression is fitted to these, and the distribution '
@@ -414,6 +416,7 @@ export function openSensitivityDialog({
 	};
 
 	const modal = openModal({
+		info: dialogInfo('what-drove'),
 		wide: true,
 		title: () => `What drove ${view.output}`,
 		subtitle: () => `From ${(view.kept ?? view.iterations).toLocaleString()}`

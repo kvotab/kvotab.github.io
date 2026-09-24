@@ -145,6 +145,12 @@ export function renderHelp(host) {
 		el('span', { className: 'help-spacer' }),
 		el('span', { className: 'hint help-width-label' }, 'Width'), widths));
 	host.append(el('div', { className: 'help-split' }, toc, body));
+	if (stamp) {
+		host.append(el('div', { className: 'help-foot' },
+			el('span', { className: 'build-stamp' }, `Build ${stamp}`),
+			el('span', { className: 'hint' }, 'The date this copy was made. Older than you expected? '
+				+ 'Reload ignoring the cache: \u2318\u21e7R on a Mac, Ctrl\u21e7R elsewhere.')));
+	}
 
 	body.append(el('p', { className: 'hint' }, `Reading ${doc.file}…`));
 
@@ -192,6 +198,18 @@ export function renderHelp(host) {
 	});
 }
 
+/**
+ * Which build of the application this is, for the line at the foot of the tab.
+ * It used to stand in the footer beside every run's statistics, where it was
+ * read once a month and in the way the rest of the time; this is where anybody
+ * looking for what version they have looks.
+ */
+let stamp = null;
+
+export function setBuildStamp(build) {
+	stamp = build;
+}
+
 /** Opens the tab at a particular heading, for a link from elsewhere. */
 export function goToHelp(host, docId, headingId) {
 	state.doc = DOCS.some((d) => d.id === docId) ? docId : DOCS[0].id;
@@ -199,7 +217,14 @@ export function goToHelp(host, docId, headingId) {
 	if (host.dataset.doc !== state.doc) renderHelp(host);
 	if (!headingId) return;
 	const find = () => host.querySelector(`.help-doc #${CSS.escape(headingId)}`);
-	const jump = find();
-	if (jump) jump.scrollIntoView({ block: 'start' });
-	else setTimeout(() => find()?.scrollIntoView({ block: 'start' }), 300);
+	// The document may still be loading: the Guide is a large file, read on
+	// the first visit to the tab. Asked again every tenth of a second for as
+	// long as a slow connection could reasonably take, then given up.
+	let tries = 0;
+	const jump = () => {
+		const at = find();
+		if (at) { at.scrollIntoView({ block: 'start' }); return; }
+		if (++tries < 50) setTimeout(jump, 100);
+	};
+	jump();
 }

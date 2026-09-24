@@ -21,6 +21,7 @@ import { describePDF } from '../domain/pdf.js';
 import { estimate, MOST_BYTES, slotName } from '../sim/probabilistic.js';
 import { describeCorrelation } from '../domain/correlate.js';
 import { coresRow } from './cores.js';
+import { dialogInfo } from './dialoginfo.js';
 
 /** A duration a person would say out loud. */
 export function howLong(ms) {
@@ -104,6 +105,7 @@ export function openProbabilisticDialog({
 		.filter((name) => plan.filter((e) => e.name === name).length > 1);
 
 	const modal = openModal({
+		info: dialogInfo('probabilistic'),
 		wide: true,
 		title: 'Probabilistic run',
 		subtitle: 'The model integrated once per realisation, over its distributions',
@@ -518,6 +520,7 @@ export function openProbabilisticDialog({
 export function openReplayDialog({ iterations, seed, suggested = 1, onRun }) {
 	let which = Math.min(iterations, Math.max(1, Math.round(suggested)));
 	const modal = openModal({
+		info: dialogInfo('replay'),
 		title: 'Replay a realisation',
 		subtitle: `One of the ${iterations.toLocaleString()} realisations of seed ${seed}, `
 			+ 'run again as an ordinary run — every series of it, not only the ones the band kept',
@@ -583,6 +586,7 @@ export function openBandsDialog({ percentiles, showMean = false, onApply }) {
 	let text = bandsText(percentiles) || '5–95, 25–75';
 	let mean = !!showMean;
 	const modal = openModal({
+		info: dialogInfo('bands'),
 		title: 'Bands',
 		subtitle: 'Which percentiles the probabilistic bands are drawn at',
 		build: (body) => {

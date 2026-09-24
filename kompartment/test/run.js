@@ -5106,7 +5106,7 @@ test('every module loads, including the ones nothing here imports', async () => 
 });
 
 test('the build stamp is not older than the code it stamps', async () => {
-	// The README tells you to compare the footer's build stamp against your
+	// The README tells you to compare the build stamp against your
 	// last edit to spot a cached copy. That only works if the stamp is kept
 	// current -- and a stamp that is always behind cries wolf every time,
 	// which is worse than no stamp at all.
@@ -5142,7 +5142,7 @@ test('the build stamp is not older than the code it stamps', async () => {
 	const onDisk = new Date(newest).toISOString().slice(0, 10);
 	assert(stamped >= onDisk,
 		`BUILD says ${stamped} but a source file was changed on ${onDisk}. `
-		+ `Bump BUILD in src/ui/app.js, or the footer stamp reports every `
+		+ `Bump BUILD in src/ui/app.js, or the Help tab's stamp reports every `
 		+ `edited copy as stale and the README's advice stops working.`);
 });
 
@@ -6966,7 +6966,7 @@ test('a select and an input in the simulation panel are the same height', async 
 	// as a different kind of thing.
 	assert(body('.field.is-wide'), 'the wide row shape is gone');
 	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
-	const solver = /selField\('solver',([\s\S]*?)\n\t\t\}\),/.exec(app)?.[1] ?? '';
+	const solver = /selField\('solver',([\s\S]*?solverLabel\(id\)\]\))\),/.exec(app)?.[1] ?? '';
 	assert(solver, 'the solver field is gone');
 	assert(!/wide: true/.test(solver), 'the solver row is wide again');
 	// That column fits the three local names and not the longest SciPy one, and
@@ -10052,7 +10052,7 @@ test('auto-run keeps up with a slow solver instead of giving up on it', async ()
 	const run = /function runSimulation\(opts = \{\}\) \{([\s\S]*?)\n\tlet project;/.exec(app)?.[1];
 	assert(run && /if \(state\.running\) \{\s*\n\s*runWanted = true;/.test(run),
 		'a run refused because one is going is still dropped');
-	const running = /function setRunning\(on\) \{([\s\S]*?)\n\}/.exec(app)?.[1];
+	const running = /function setRunning\(on(?:, \{ keepStatus = false \} = \{\})?\) \{([\s\S]*?)\n\}/.exec(app)?.[1];
 	// Both ways of asking are honoured: the timer's when auto-run is on, and
 	// a Run pressed during the run when it is off -- which used to be
 	// forgotten the moment the run ended.
@@ -31586,14 +31586,15 @@ test('a switch shows the setting it controls, whichever way the setting defaults
 
 	// The two written into the panel by hand say which way they default...
 	for (const [key, absentIsOn] of [['non_negative', true], ['mass_balance', false]]) {
-		const decl = new RegExp(`boolField\\('${key}', \\{([\\s\\S]{0,60})`).exec(app);
+		// With its options, or with none when the default needs none said.
+		const decl = new RegExp(`boolField\\('${key}'(\\)|, \\{[\\s\\S]{0,60})`).exec(app);
 		assert(decl, `${key} has no switch`);
 		assert(/on: false/.test(decl[1]) === !absentIsOn, `${key}: the switch and the setting disagree`);
 	}
 	// ...and a solver setting says it in the one table that describes it.
 	assert(SOLVER_OPTION_INFO.auto_abstol.kind === 'switch' && SOLVER_OPTION_INFO.auto_abstol.on === false,
 		JSON.stringify(SOLVER_OPTION_INFO.auto_abstol));
-	assert(/box\.append\(boolField\(key, \{ on: info\.on, title \}\)\);/.test(app),
+	assert(/box\.append\(boolField\(key, \{ on: info\.on \}\)\);/.test(app),
 		'the dynamic block no longer takes the default from the table');
 	// What each switch claims is what a Project actually does.
 	for (const [key, absentIsOn] of [['non_negative', true], ['mass_balance', false], ['auto_abstol', false]]) {
@@ -35103,6 +35104,259 @@ test('a part that reads another material by name builds with that one switched o
 	let threw = null;
 	try { split.buildPart({ ...json, transfers: [{ ...json.transfers[0], rate: 'Coef[Nowhere]' }] }, { Project, buildSystem }); } catch (e) { threw = e.message; }
 	assert(threw && !/disabled/.test(threw), threw);
+});
+
+test('a run clears the last one’s numbers and says when it started and for how long', async () => {
+	const { fmtElapsed, clockOf } = await import('../src/ui/app.js');
+	assert(fmtElapsed(0) === '0 s' && fmtElapsed(42.9) === '42 s', fmtElapsed(42.9));
+	assert(fmtElapsed(65) === '1 min 05 s' && fmtElapsed(3599) === '59 min 59 s', fmtElapsed(65));
+	assert(fmtElapsed(3725) === '1 h 02 min', fmtElapsed(3725));
+	assert(clockOf(new Date(2026, 8, 24, 9, 5, 7)) === '09:05:07', clockOf(new Date(2026, 8, 24, 9, 5, 7)));
+	const { readFileSync } = await import('node:fs');
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+	// Cleared the moment a run starts, the clock started; put back after a run
+	// that brought nothing of its own, if the results on screen are still the
+	// model's; and kept for a scenario added beside results that are current.
+	assert(/if \(!keepStatus\) \{\n\t\t\tclearStatus\(\);\n\t\t\tstatusOwed = true;\n\t\t\}\n\t\tstartRunClock\(\);/.test(app),
+		'a run does not clear the last one’s numbers');
+	assert(/stopRunClock\(\);\n\t\/\/[\s\S]{0,400}if \(statusOwed\) \{\n\t\tstatusOwed = false;\n\t\tif \(state\.results && state\.results\.rev === state\.rev && !state\.results\.detached\) setStatus\(state\.results\);/.test(app),
+		'the line is not put back after a run that brought no results');
+	assert(/setRunning\(true, \{ keepStatus: true \}\);/.test(app), 'a scenario added beside results clears their line');
+	assert(/<span id="run-clock" class="mono"><\/span>/.test(html) && /id="run-progress" class="foot-progress">[\s\S]{0,200}run-clock/.test(html),
+		'the clock is not in the progress slot, which keeps its space');
+});
+
+test('an empty solver setting says what it comes to, and the solvers agree', async () => {
+	const { solverDefault, solverOptions, SOLVER_OPTION_INFO, PORTED_IDS } = await import('../src/ode/solvers.js');
+	const { readFileSync } = await import('node:fs');
+	const src = (p) => readFileSync(new URL(`../src/ode/${p}`, import.meta.url), 'utf8');
+	// Every setting every solver reads has a default to show.
+	for (const id of ['ndf', 'ros23', 'dp45', ...PORTED_IDS]) {
+		for (const key of solverOptions(id)) {
+			const d = solverDefault(key, id, { span: 1000 });
+			assert(d && d.text, `${id}.${key} has no default`);
+			assert(SOLVER_OPTION_INFO[key].kind !== 'number' || d.value !== undefined, `${id}.${key}`);
+		}
+	}
+	// The two that differ between solvers, and the numbers the code uses.
+	assert(solverDefault('max_step', 'ndf', { span: 1000 }).value === 100
+		&& solverDefault('max_step', 'dp45', { span: 1000 }).value === 100
+		&& solverDefault('max_step', 'fbdf', { span: 1000 }).value === Infinity, 'the longest step');
+	assert(/const hmax = o\.hmax > 0 \? Math\.min\(o\.hmax, span\) : 0\.1 \* span;/.test(src('solvers/ndf.js'))
+		&& /const hmax = opts\.hmax > 0 \? Math\.min\(opts\.hmax, span\) : 0\.1 \* span;/.test(src('core/onestep.js'))
+		&& /dtmax: Infinity,/.test(src('julia/core/integrator.js')), 'the code’s longest step moved');
+	assert(solverDefault('error_norm', 'ndf').value === 'max' && solverDefault('error_norm', 'fbdf').value === 'rms'
+		&& /const rms = \(o\.errorNorm \?\? 'max'\) === 'rms';/.test(src('solvers/ndf.js'))
+		&& /norm: 'rms',/.test(src('julia/core/integrator.js')), 'the error norm');
+	assert(solverDefault('max_steps', 'ndf').value === 1e6 && /const maxSteps = o\.maxSteps \?\? 1e6;/.test(src('solvers/ndf.js')),
+		'ndf’s step budget');
+	assert(solverDefault('max_steps', 'dp45').value === 1e7 && /defaultMaxSteps: 1e7,/.test(src('solvers/dormand-prince.js')),
+		'dp45’s step budget');
+	assert(solverDefault('max_steps', 'ros23').value === 1e6 && /defaultMaxSteps: 1e6,/.test(src('solvers/rosenbrock23.js')),
+		'ros23’s step budget');
+	assert(solverDefault('max_steps', 'fbdf').value === 1e7 && /maxiters: 1e7,/.test(src('julia/core/integrator.js')),
+		'the ported step budget');
+	assert(solverDefault('max_jac_age', 'fbdf').value === 20 && /maxJacAge: 20,/.test(src('julia/core/integrator.js')),
+		'Jacobian reuse');
+	assert(solverDefault('newton_kappa', 'fbdf').value === 1e-3 && /const DEFAULT_KAPPA = 1e-3;/.test(src('julia/core/newton.js'))
+		&& solverDefault('newton_kappa', 'radau5').value === 0.01 && /this\.kappa = opts\.kappa \?\? 0\.01;/.test(src('julia/solvers/radau.js')),
+		'the Newton tolerance');
+	assert(/const MAX_BELOW_TOLERANCE = 20;/.test(src('solvers/ndf.js')) && /20 failed error tests/.test(solverDefault('below_tol_run', 'ndf').text)
+		&& solverDefault('below_tol_run', 'fbdf').value === 0 && /belowTolRun: 0,/.test(src('julia/core/integrator.js')),
+		'steps at the floor');
+	assert(solverDefault('max_order', 'ndf').value === 5 && /export const MAX_ORDER = 5;/.test(src('solvers/ndf.js')),
+		'the order cap');
+
+	// And the sidebar shows it: greyed in an empty box, named in a choice's auto.
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	assert(/box\.append\(numField\(key, unit, \{ placeholder: autoPlaceholder\(d\) \}\)\);/.test(app),
+		'an empty box does not say what it comes to');
+	assert(/\['', `auto\$\{d\.value != null && d\.value !== 'auto' \? ` \(\$\{name\(d\.value\)\}\)` : ''\}`\]/.test(app),
+		'a choice left to the solver does not say what it is');
+});
+
+test('every row of the Simulation section has an (i), and every (i) has something to say', async () => {
+	const { simTopic } = await import('../src/ui/siminfo.js');
+	const { SOLVER_OPTION_INFO, solverDefault, solverLabel } = await import('../src/ode/solvers.js');
+	const { readFileSync } = await import('node:fs');
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	// The keys the sidebar asks for: the fields name theirs, and the other rows
+	// say theirs to `infoRow` or `info`.
+	const keys = new Set([
+		...[...app.matchAll(/(?:numField|boolField|selField)\('([a-z_]+)'/g)].map((m) => m[1]),
+		...[...app.matchAll(/infoRow\([^;]*?, '([a-z_]+)'\)/g)].map((m) => m[1]),
+		...[...app.matchAll(/\binfo\('([a-z_]+)'\)/g)].map((m) => m[1]),
+		...[...app.matchAll(/, edit\), '([a-z_]+)'\)/g)].map((m) => m[1]),
+		...Object.keys(SOLVER_OPTION_INFO),
+	]);
+	for (const k of ['start_time', 'rtol', 'spacing', 'saved_times', 'scenario', 'run_together', 'split',
+		'advanced', 'analyse', 'what_drove']) assert(keys.has(k), `the sidebar does not ask for '${k}'`);
+	const sim = { start_time: 0, end_time: 1e6, time_unit: 'year', solver: 'ndf', rtol: 1e-6 };
+	for (const solver of ['ndf', 'fbdf', 'dp45']) {
+		const ctx = { sim: { ...sim, solver }, solver, solverLabel, scenarios: ['A', 'B'], scenario: 'A' };
+		for (const key of keys) {
+			const t = simTopic(key, ctx);
+			assert(t && t.title && t.lead, `${solver}: '${key}' has nothing to say`);
+			if (SOLVER_OPTION_INFO[key]) {
+				// What an empty box means is the solver's own default, in words.
+				const empty = t.facts.find(([label]) => /means$/.test(label))?.[1] ?? '';
+				const d = solverDefault(key, solver, { span: 1e6 });
+				assert(empty.includes(d.text) || empty.includes(String(d.value)) || (d.value === Infinity && /no limit/.test(empty)),
+					`${solver}: '${key}' says empty means '${empty}', the solver says '${d.text}'`);
+			}
+		}
+	}
+	// The choices mark the one in force.
+	const spacing = simTopic('spacing', { sim: { spacing: 'linear' }, solver: 'ndf' });
+	assert(spacing.sections[0].choices.filter((c) => c[2]).map((c) => c[0]).join() === 'Linear', 'the chosen spacing');
+	// No tooltip is left on these rows where the (i) replaced it.
+	for (const gone of ['The unit every time in the model is in: the span above', 'Relative tolerance (rtol): the error',
+		'Point at a choice in the list for']) {
+		assert(!app.includes(gone), `a tooltip is still there: ${gone}`);
+	}
+});
+
+test('the tree’s Expand all and Collapse sit beside the Add tabs, which stay on the tree’s edge', async () => {
+	const { readFileSync } = await import('node:fs');
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	const tree = readFileSync(new URL('../src/ui/tree.js', import.meta.url), 'utf8');
+	assert(/const tools = treeTools\(state\.raw, state\.tree, \(\) => renderRail\(\), treeFilter\(\)\);\n\tif \(tools\) row\.append\(tools\);/.test(app),
+		'the buttons are not in the row of tabs');
+	assert(!/host\.append\(bar\)/.test(tree), 'the tree still draws a row of its own between the tabs and the box');
+	assert(/export function treeTools\(project, state, redraw, filter = null\)/.test(tree), 'no treeTools');
+});
+
+test('every (i) outside the Simulation section has something to say, and its link lands on a Guide heading', async () => {
+	const { panelTopic } = await import('../src/ui/panelinfo.js');
+	const { blockTopic } = await import('../src/ui/blockinfo.js');
+	const { dialogInfo, DIALOG_TOPICS } = await import('../src/ui/dialoginfo.js');
+	const { parseMarkdown, slug } = await import('../src/ui/markdown.js');
+	const { KIND_ICON } = await import('../src/ui/icons.js');
+	const { readFileSync } = await import('node:fs');
+	// The ids the Help tab gives the Guide's headings. A topic's "Read more"
+	// is followed to `slug(more)`, so a heading renamed in the Guide strands
+	// every topic that names it -- the link would open the tab at the top.
+	const guide = readFileSync(new URL('../GUIDE.md', import.meta.url), 'utf8');
+	const ids = new Set(parseMarkdown(guide).filter((b) => b.type === 'heading').map((b) => b.id));
+	const strings = (t) => [t.title, ...[t.lead].flat(), ...(t.facts ?? []).flat(),
+		...(t.sections ?? []).flatMap((x) => [x.heading, ...[x.text].flat(), ...(x.list ?? []), ...(x.choices ?? []).flat()])]
+		.filter((x) => typeof x === 'string');
+	const check = (where, t) => {
+		assert(t && t.title && t.lead, `${where} has nothing to say`);
+		assert(t.more && ids.has(slug(t.more)), `${where}: “Read more” names ${JSON.stringify(t.more)}, which is no heading in the Guide`);
+		// Markup that does not pair shows its stars and backticks to the reader.
+		for (const x of strings(t)) {
+			assert((x.match(/\*\*/g) ?? []).length % 2 === 0, `${where}: an unpaired ** in ${x}`);
+			assert((x.match(/`/g) ?? []).length % 2 === 0, `${where}: an unpaired backtick in ${x}`);
+		}
+	};
+	for (const key of ['model', 'simulation', 'tree', 'information']) {
+		for (const ctx of [{}, { systems: true, sample: true }]) check(`panel:${key}`, panelTopic(key, ctx));
+	}
+	// The tree's says what is above it only when it is there.
+	const bare = JSON.stringify(panelTopic('tree', {}));
+	const full = JSON.stringify(panelTopic('tree', { systems: true, sample: true }));
+	assert(!bare.includes('Expand all') && full.includes('Expand all'), 'Expand all described with no sub-systems');
+	assert(!bare.includes('**Probabilistic**') && full.includes('**Probabilistic**'), 'the Probabilistic filter described with no sample');
+	// Every kind of block the panels draw has a settings window, and so a
+	// topic -- all but the sub-system and the transport, which is a sub-system
+	// standing for a chain: its parts are blocks, with their own kinds' windows.
+	for (const kind of Object.keys(KIND_ICON).filter((k) => k !== 'system' && k !== 'transport')) {
+		check(`block:${kind}`, blockTopic(kind));
+	}
+	assert(blockTopic('nonsense') === null, 'a kind there is not has a topic');
+	for (const id of DIALOG_TOPICS) {
+		const info = dialogInfo(id);
+		assert(info.key === `dialog:${id}` && info.topic().kicker === 'Dialog', id);
+		check(`dialog:${id}`, info.topic());
+	}
+	assert(dialogInfo('nonsense') === null, 'a dialog there is not has a topic');
+});
+
+test('every dialog has an (i) in its title bar, and every dialog topic a dialog to be in', async () => {
+	const { DIALOG_TOPICS } = await import('../src/ui/dialoginfo.js');
+	const { readFileSync, readdirSync } = await import('node:fs');
+	const dir = new URL('../src/ui/', import.meta.url);
+	const used = new Set();
+	const without = [];
+	for (const f of readdirSync(dir).filter((n) => n.endsWith('.js') && n !== 'modal.js')) {
+		const src = readFileSync(new URL(f, dir), 'utf8');
+		// `info` is the first option, after any comment about it: where it can
+		// be seen to be there, and where this can find it.
+		for (const m of src.matchAll(/openModal\(\{([\s\S]{0,700})/g)) {
+			const opts = m[1].split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n').trim();
+			const id = /^info: dialogInfo\('([a-z-]+)'\)/.exec(opts)?.[1];
+			if (id) used.add(id);
+			else if (!/^info: \{\n\s*key: 'dialog:block',/.test(opts)) without.push(`${f}: ${opts.split('\n')[0]}`);
+		}
+		if (f !== 'dialoginfo.js' && /dialogInfo\(/.test(src)) {
+			assert(/^import \{ dialogInfo \} from '\.\/dialoginfo\.js';$/m.test(src), `${f} does not import dialogInfo`);
+		}
+	}
+	// The one without: the box that asks for a shape's text, which is one
+	// text box and a subtitle that says all there is to say about it.
+	assert(without.length === 1 && /^app\.js: title: question,/.test(without[0]), `dialogs with no (i): ${without.join('; ')}`);
+	for (const id of DIALOG_TOPICS) assert(used.has(id), `the topic '${id}' is in no dialog`);
+	for (const id of used) assert(DIALOG_TOPICS.includes(id), `a dialog asks for '${id}', which has no topic`);
+});
+
+test('the left panel’s sections, the tree, the Information view and every row have their (i) on the right', async () => {
+	const { readFileSync } = await import('node:fs');
+	const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+	const app = read('../src/ui/app.js');
+	const parts = read('../src/ui/parts.js');
+	const info = read('../src/ui/info.js');
+	const modal = read('../src/ui/modal.js');
+	const help = read('../src/ui/help.js');
+	const css = read('../css/app.css');
+	// A row is its name, its control, and the (i) after both: right of the
+	// box, in a column of its own that the section headings share.
+	assert(/const infoRow = \(cls, label, control, key\) => el\('div', \{ className: `\$\{cls\} has-info` \},\n\t+label, control, info\(key\)\);/.test(app),
+		'the (i) is not after the control');
+	assert(/\.field\.has-info \{ grid-template-columns: minmax\(0, var\(--sim-name\)\) minmax\(0, 1fr\) 17px; \}/.test(css), 'no column for the (i)');
+	// A heading is a flex row in #sb-top: the (i) is pushed right, or follows
+	// the count that was.
+	assert(/\.panel-section > summary > \.info-btn \{ margin-left: auto; align-self: center; \}\n\.panel-section > summary > \.panel-section-badge \+ \.info-btn \{ margin-left: 6px; \}/.test(css),
+		'a section’s (i) is not on the right-hand edge');
+	assert(!/const head = \(/.test(app), 'the (i) before the name is back');
+	// The Model and Simulation sections, the tree and the Information view.
+	assert(/section\('model', 'Model', undefined, '', null,\n\t+infoButton\('panel:model', \(\) => panelTopic\('model'\)\)\);/.test(app), 'Model has no (i)');
+	assert(/'', null, infoButton\('panel:simulation', \(\) => panelTopic\('simulation'\)\)\);/.test(app), 'Simulation has no (i)');
+	assert(/export function section\(\{\n\tid = '', title, badge = '', badgeTitle = '', open = true, onToggle = null, info = null,\n\}\)/.test(parts),
+		'a section cannot take an (i)');
+	assert(/el\('div', \{ className: 'search-row' \}, input,\n\t+infoButton\('panel:tree', \(\) => panelTopic\('tree', \{\n\t+systems: /.test(app),
+		'the tree has no (i) beside its search');
+	assert(/info: \(\) => infoButton\('panel:information', \(\) => panelTopic\('information'\)\),/.test(app)
+		&& /if \(hooks\.info\) box\.querySelector\('summary'\)\?\.append\(hooks\.info\(\)\);/.test(info), 'the Information view has no (i)');
+	// A dialog's, beside its close button.
+	assert(/const about = info\?\.key \? infoButton\(info\.key, info\.topic\) : null;/.test(modal)
+		&& /el\('div', \{ className: 'modal-heading' \}, heading, sub\), about, close\);/.test(modal), 'a dialog has no (i) in its title bar');
+	// Escape in a dialog closes the panel inside it first, and the dialog on
+	// the next press, wherever in the dialog the keyboard is.
+	assert(/if \(dialog\.querySelector\(':scope > \.info-panel'\)\) \{\n\t\t\tev\.preventDefault\(\);\n\t\t\tcloseInfo\(\);\n\t\t\treturn;\n\t\t\}\n\t\tdrop\(\);/.test(modal),
+		'Escape closes the dialog under an open panel');
+	// "Read more in Help" goes to the heading, past any dialog, and waits for a
+	// Guide that is still loading.
+	assert(/setInfoLinks\(\(heading\) => \{\n\t\tcloseAllModals\(\);\n\t\tselectTab\('help'\);\n\t\tgoToHelp\(\$\('#panel-help'\), 'guide', headingId\(heading\)\);\n\t\}\);/.test(app),
+		'the links go nowhere');
+	assert(/if \(\+\+tries < 50\) setTimeout\(jump, 100\);/.test(help), 'a link followed before the Guide has loaded is lost');
+	assert(!/className: 'ghost info-more'/.test(read('../src/ui/infopanel.js')), 'the panel’s link borrows the Information view’s class');
+});
+
+test('the build stamp is at the foot of the Help tab, and the footer is the run’s alone', async () => {
+	const { readFileSync } = await import('node:fs');
+	const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+	const app = read('../src/ui/app.js');
+	const help = read('../src/ui/help.js');
+	const css = read('../css/app.css');
+	assert(!/buildStamp/.test(app), 'the footer still draws the stamp');
+	assert(/function clearStatus\(\) \{\n\t\$\('#status'\)\?\.replaceChildren\(\);\n\}/.test(app), 'the footer is not left empty between runs');
+	assert(/setBuildStamp\(BUILD\);/.test(app), 'the Help tab is not told the build');
+	assert(/host\.append\(el\('div', \{ className: 'help-foot' \},\n\t+el\('span', \{ className: 'build-stamp' \}, `Build \$\{stamp\}`\)/.test(help),
+		'the Help tab has no stamp');
+	assert(/#panel-help \{\n\tgrid-template-rows: auto minmax\(0, 1fr\) auto;/.test(css), 'the Help tab has no row for it');
+	assert(!/^\.build-stamp \{ margin-left: auto/m.test(css), 'the footer’s rule for it is still there');
 });
 
 // =========================================================================

@@ -31,6 +31,7 @@ import {
 	SHAPE_TEXT_SIZES, SHAPE_TEXT_FONTS, SHAPE_TEXT_ALIGNS,
 	SHAPE_MIN, SHAPE_MAX,
 } from '../domain/edit.js';
+import { dialogInfo } from './dialoginfo.js';
 
 const FONT_LABEL = {
 	sans: 'the interface face', scribble: 'handwriting',
@@ -126,6 +127,7 @@ export function openShapeSettings({ read, count, onChange }) {
 	};
 
 	modal = openModal({
+		info: dialogInfo('shape'),
 		title: () => {
 			const sh = read();
 			const name = FIGURES[sh?.figure]?.label ?? 'Shape';

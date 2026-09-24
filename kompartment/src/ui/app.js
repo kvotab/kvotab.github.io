@@ -90,9 +90,14 @@ import { outputsOf } from '../sim/runner.js';
 import { samplingPlan, slotName, groupOf } from '../sim/probabilistic.js';
 import { renderMatrix, markSelection } from './matrix.js';
 import { UndoStack } from './undo.js';
-import { renderBlockTree } from './tree.js';
+import { renderBlockTree, treeTools } from './tree.js';
+import { infoButton, refreshInfo, setInfoLinks } from './infopanel.js';
+import { simTopic, fmtSetting } from './siminfo.js';
+import { panelTopic } from './panelinfo.js';
+import { blockTopic } from './blockinfo.js';
+import { slug as headingId } from './markdown.js';
 import { renderInfo } from './info.js';
-import { renderHelp } from './help.js';
+import { renderHelp, goToHelp, setBuildStamp } from './help.js';
 import { renderHistograms, MOST_PANELS } from './histview.js';
 import { renderScatter } from './scatterview.js';
 // A block's title carries its symbol, which is elements rather than text.
@@ -103,7 +108,6 @@ import { fmtTime } from './summary.js';
 import { fillStartValues } from './startvalue.js';
 import { baseName, parentOf, isWithin } from '../domain/systems.js';
 import {
-	SOLVER_INFO,
 	SOLVER_IDS,
 	DEFAULT_SOLVER,
 	solverLabel,
@@ -111,11 +115,13 @@ import {
 	solverOptions,
 	solverIgnores,
 	solverIsRemote,
+	solverDefault,
 } from '../ode/solvers.js';
+import { dialogInfo } from './dialoginfo.js';
 
 /**
- * Bumped whenever the app changes. Shown in the footer so that a stale cached
- * copy can be spotted immediately -- browsers hold on to JavaScript modules,
+ * Bumped whenever the app changes. Shown at the foot of the Help tab so that a
+ * stale cached copy can be spotted -- browsers hold on to JavaScript modules,
  * and a Worker keeps its own module cache on top of the page's, which has
  * caused more than one "the code says otherwise" puzzle. Serve with serve.py,
  * which disables caching.
@@ -1481,8 +1487,9 @@ function chooseScenario(name, on) {
 		} else if (!state.running && state.results && state.results.rev === state.rev
 			&& !state.results.detached && state.results.replayed == null) {
 			// A run of its own, beside the results already on screen and
-			// under their id, so that it is drawn with them.
-			setRunning(true);
+			// under their id, so that it is drawn with them -- which leaves
+			// the status line about them standing.
+			setRunning(true, { keepStatus: true });
 			queueScenario(name);
 			const entry = state.scenarioRuns.get(name);
 			if (entry) { entry.runId = state.results.runId; entry.rev = state.results.rev; }
@@ -2604,7 +2611,13 @@ function cancelSimulation() {
 	flash(wasAuto ? 'Stopped, and auto-run switched off.' : 'Stopped.', 'info');
 }
 
-function setRunning(on) {
+/**
+ * @param {boolean} on
+ * @param {{keepStatus?: boolean}} [opts]  `keepStatus` for a run that adds to
+ *   the results on screen rather than replacing them -- a scenario ticked
+ *   beside results that are current -- whose status line is still true
+ */
+function setRunning(on, { keepStatus = false } = {}) {
 	state.running = on;
 	if (!on) state.primaryBusy = false;
 	// A pool is one run's: the next says what it is on for itself.
@@ -2614,7 +2627,28 @@ function setRunning(on) {
 	// The progress slot in the footer keeps its space and only appears, so the
 	// status line beside it never shifts when a run starts.
 	$('#run-progress').classList.toggle('is-on', on);
-	if (on) { setProgress(0); return; }
+	if (on) {
+		// The last run's numbers go the moment another starts: left up, the
+		// steps and the solve time beside a bar that is moving read as this
+		// run's. What replaces them is the clock -- when this one started and
+		// how long it has been going.
+		if (!keepStatus) {
+			clearStatus();
+			statusOwed = true;
+		}
+		startRunClock();
+		setProgress(0);
+		return;
+	}
+	stopRunClock();
+	// A run that brought no results of its own -- a sample, a tornado, a Stop
+	// -- leaves the line blank; the results on screen are still the ones it
+	// described, so it is put back. Not when the model has moved since: those
+	// results are stale, and the line would describe a model no longer here.
+	if (statusOwed) {
+		statusOwed = false;
+		if (state.results && state.results.rev === state.rev && !state.results.detached) setStatus(state.results);
+	}
 	// Here rather than in `acceptResults`, so that a run which failed or was
 	// stopped still lets the edits made during it have their turn. Only if
 	// they left the model dirty: what the run that just finished computed may
@@ -3912,6 +3946,7 @@ function expandButton() {
 function openVersionReport(diff, labels) {
 	const text = reportLines(diff, labels).join('\n');
 	const modal = openModal({
+		info: dialogInfo('version-report'),
 		title: 'Version report',
 		subtitle: diff.same ? 'No differences.' : `${versionSummary(diff)} — layout left out, comments counted`,
 		build: (body) => {
@@ -3935,6 +3970,7 @@ function openRunLog() {
 	const text = runLogFor();
 	if (!text) { flash('Run the model first.', 'warn'); return; }
 	const modal = openModal({
+		info: dialogInfo('run-log'),
 		title: 'Run log',
 		subtitle: 'What this run was, in words that survive it — kept with a saved result',
 		build: (body) => {
@@ -3954,23 +3990,8 @@ function openRunLog() {
 }
 
 /**
- * The build stamp, which is the one thing on that line not about the run.
- *
- * Made here rather than written out where it is wanted, because it is wanted
- * in three places -- boot, the end of a run, and the reset between models --
- * and a title this long kept in three copies is a title that stops agreeing
- * with itself.
- */
-function buildStamp() {
-	return el('span', {
-		className: 'stat build-stamp',
-		title: 'Build of the loaded code. If this looks old, the browser is serving '
-			+ 'a cached copy — serve with serve.py, which disables caching.',
-	}, `build ${BUILD}`);
-}
-
-/**
- * The footer's line with nothing on it but the build.
+ * The footer's line, emptied. (The build stamp that used to stand on it is at
+ * the foot of the Help tab: see `setBuildStamp` in ./help.js.)
  *
  * `#status` is a run's account of itself, so it belongs to the results and
  * goes when they do. Only `setStatus` ever wrote it, so New -- and Open, and
@@ -3980,10 +4001,67 @@ function buildStamp() {
  * them still opened that run's log, which is worse than the numbers.
  */
 function clearStatus() {
-	$('#status')?.replaceChildren(buildStamp());
+	$('#status')?.replaceChildren();
+}
+
+/**
+ * The status line was cleared for a run and nothing has written it since.
+ * See `setRunning`.
+ */
+let statusOwed = false;
+
+/**
+ * When the run going now started, and the timer that keeps its clock moving.
+ *
+ * Wall-clock time, beside the bar: the bar says how far the run has got in the
+ * model's time, and this how long it has taken so far -- which on a model of
+ * minutes is the number somebody waiting for it wants.
+ */
+const runClock = { started: 0, timer: 0 };
+
+function startRunClock() {
+	runClock.started = Date.now();
+	clearInterval(runClock.timer);
+	runClock.timer = setInterval(paintRunClock, 1000);
+	paintRunClock();
+}
+
+function stopRunClock() {
+	clearInterval(runClock.timer);
+	runClock.timer = 0;
+	runClock.started = 0;
+	paintRunClock();
+}
+
+function paintRunClock() {
+	const node = $('#run-clock');
+	if (!node) return;
+	node.textContent = runClock.started
+		? `started ${clockOf(new Date(runClock.started))} \u00b7 ${fmtElapsed((Date.now() - runClock.started) / 1000)}`
+		: '';
+}
+
+/** A time of day as the footer shows it: 14:05:09, whatever the locale. */
+export function clockOf(when) {
+	const two = (n) => String(n).padStart(2, '0');
+	return `${two(when.getHours())}:${two(when.getMinutes())}:${two(when.getSeconds())}`;
+}
+
+/**
+ * How long something has been going, to the second: `42 s`, `3 min 05 s`,
+ * `1 h 02 min` -- the seconds dropped once there are hours, since a clock that
+ * says 1 h 02 min 17 s is asking to be watched.
+ */
+export function fmtElapsed(seconds) {
+	const s = Math.max(0, Math.floor(seconds));
+	if (s < 60) return `${s} s`;
+	const two = (n) => String(n).padStart(2, '0');
+	if (s < 3600) return `${Math.floor(s / 60)} min ${two(s % 60)} s`;
+	return `${Math.floor(s / 3600)} h ${two(Math.floor((s % 3600) / 60))} min`;
 }
 
 function setStatus(p) {
+	statusOwed = false;
 	const s = p.stats;
 	// A model with no compartments was not integrated at all: its blocks were
 	// evaluated over the output grid. Reporting a solver, a step count and a
@@ -4026,8 +4104,9 @@ function setStatus(p) {
 		// projected system rather than what the equations say, and a flat
 		// line at zero with nothing beside it reads as a result.
 		['held at zero', heldSummary(p.heldAtZero)],
-		// "compile", not "build": the footer also carries a build stamp, and two
-		// different things labelled the same way is worse than a longer word.
+		// "compile", not "build": "build" is the program's own stamp, at the
+		// foot of the Help tab and in the run log, and two different things
+		// labelled the same way is worse than a longer word.
 		['compile', `${p.timing.buildMs.toFixed(1)} ms`],
 		// Said differently when the solve did not happen. The number is real --
 		// it is how long these states took when they were solved for -- but
@@ -4111,7 +4190,6 @@ function setStatus(p) {
 		+ 'written into a results archive too.' }, 'log');
 	log.addEventListener('click', openRunLog);
 	host.append(log);
-	host.append(buildStamp());
 }
 
 // --- selection ---------------------------------------------------------------
@@ -4647,6 +4725,7 @@ function renderInfoCard() {
 		onContextMenu: blockMenu,
 		onBack: () => stepTrail(-1),
 		onForward: () => stepTrail(1),
+		info: () => infoButton('panel:information', () => panelTopic('information')),
 		canBack: state.trail.at > 0,
 		canForward: state.trail.at >= 0 && state.trail.at < state.trail.seen.length - 1,
 	});
@@ -4752,6 +4831,10 @@ const QUICK_ADD = [
  */
 function addTabs() {
 	const row = el('div', { className: 'tree-tabs' });
+	// Expand all and Collapse at the left, where the row has room: between
+	// this row and the tree they parted the tabs from the edge they stand on.
+	const tools = treeTools(state.raw, state.tree, () => renderRail(), treeFilter());
+	if (tools) row.append(tools);
 	row.append(el('span', { className: 'tree-tabs-what' }, 'Add'));
 	for (const spec of QUICK_ADD) {
 		const add = el('button', {
@@ -4906,7 +4989,14 @@ function renderSearch() {
 			renderRail();
 		}
 	});
-	host.append(input);
+	// The tree's (i), to the right of the search box as every other (i) is to
+	// the right of its field: what the search, the filters, the Add tabs and
+	// the rows below can do. See ./panelinfo.js.
+	host.append(el('div', { className: 'search-row' }, input,
+		infoButton('panel:tree', () => panelTopic('tree', {
+			systems: ed.systems(state.raw).length > 0,
+			sample: !!sampleHolds(),
+		}))));
 
 	// One line: what the filter is set to, and how much it leaves.
 	const total = ed.allBlocks(state.raw).length;
@@ -5408,6 +5498,13 @@ function openBlockSettings(name) {
 	if (!name || !ed.findBlock(state.raw, name)) return;
 	state.settingsFor = name;
 	openModal({
+		// What this kind of block is and what its window holds: see
+		// ./blockinfo.js. Read when the (i) is pressed, from whichever block
+		// the window is about by then.
+		info: {
+			key: 'dialog:block',
+			topic: () => blockTopic(ed.findBlock(state.raw, state.settingsFor)?.kind),
+		},
 		// The name it answers to in an equation, and -- when it has one --
 		// what it is shown as, in brackets after it. The two are different
 		// strings on purpose: `Water` is what the model is written in and
@@ -5575,12 +5672,13 @@ const SECTION_OPEN = {
  * of the panel, so anything held only in the markup would be lost on the next
  * keystroke.
  */
-function section(id, title, badge, badgeTitle = '', defaultOpen = null) {
+function section(id, title, badge, badgeTitle = '', defaultOpen = null, info = null) {
 	return part({
 		id,
 		title,
 		badge,
 		badgeTitle,
+		info,
 		open: sectionOpen(id, defaultOpen),
 		// Re-rendered on opening, because a section that is closed does not
 		// build its rows at all -- a model with a thousand transfers would pay
@@ -5614,7 +5712,8 @@ function openSection(id) {
  * cannot pull the caret out from under the typist.
  */
 function renderModelGroup(raw) {
-	const group = section('model', 'Model');
+	const group = section('model', 'Model', undefined, '', null,
+		infoButton('panel:model', () => panelTopic('model')));
 
 	const name = el('input', {
 		type: 'text', id: 'model-name', className: 'stack-input',
@@ -5765,6 +5864,18 @@ function sbRestore(was) {
 	try { field.setSelectionRange(was.at[0], was.at[1]); } catch { /* not one */ }
 }
 
+/**
+ * What an empty box of a solver setting shows, greyed: `auto: 1e6`, `auto:
+ * none`, `auto: estimated`. The number where there is one; a word where the
+ * solver works it out during the run.
+ */
+function autoPlaceholder(d) {
+	if (d.value === Infinity) return 'auto: no limit';
+	if (typeof d.value === 'number') return `auto: ${fmtSetting(d.value)}`;
+	if (d.value == null) return d.short ? `auto: ${d.short}` : 'auto';
+	return `auto: ${d.value}`;
+}
+
 function renderSidebar() {
 	const raw = state.raw;
 	// `#sb-top`, not `#sidebar`: the tree and the Information card are the
@@ -5780,7 +5891,8 @@ function renderSidebar() {
 	// what solves it.
 	const group = section('simulation', 'Simulation',
 		`${fmtTime(sim.start_time)}–${fmtTime(sim.end_time)} ${sim.time_unit ?? 'year'}`
-		+ ` \u00b7 ${solverLabel(sim.solver ?? DEFAULT_SOLVER)}`);
+		+ ` \u00b7 ${solverLabel(sim.solver ?? DEFAULT_SOLVER)}`,
+		'', null, infoButton('panel:simulation', () => panelTopic('simulation')));
 
 	// Which settings the scan is currently objecting to, so the field that is
 	// wrong is the field that is marked -- the same signal a broken equation
@@ -5789,12 +5901,36 @@ function renderSidebar() {
 		state.problems.filter((p) => p.kind === 'simulation').map((p) => [p.key, p.message]),
 	);
 
-	const numField = (key, unit, { title = '' } = {}) => {
+	// The (i) beside each row, and what it opens: see ./infopanel.js and
+	// ./siminfo.js. Instead of the tooltips these rows had -- the panel says
+	// what a tooltip could, and the defaults it could not. Worked out when the
+	// panel is drawn, so what it says is the model as it stands then.
+	const simCtx = () => ({
+		sim: state.raw?.simulation ?? {},
+		solver: state.raw?.simulation?.solver ?? DEFAULT_SOLVER,
+		solverLabel,
+		scenarios: ed.scenarioNames(state.raw),
+		scenario: ed.activeScenario(state.raw),
+		series: ed.outputSeries(state.raw).map((spec) => ed.describeSeries(
+			spec, Number(state.raw.simulation?.start_time ?? 0), Number(state.raw.simulation?.end_time ?? 0),
+		)),
+	});
+	const info = (key) => infoButton(`sim:${key}`, () => simTopic(key, simCtx()));
+	// A row: its name, its control, and its (i) after the control, in a column
+	// of its own down the right-hand edge of the panel -- the same column the
+	// section headings keep theirs in, so every (i) is in one line.
+	const infoRow = (cls, label, control, key) => el('div', { className: `${cls} has-info` },
+		label, control, info(key));
+
+	const numField = (key, unit, { placeholder = '' } = {}) => {
 		const label = SIM_LABELS[key] ?? key;
 		const wrong = simProblem.get(key);
 		const input = el('input', {
 			type: 'text', value: String(sim[key] ?? ''), spellcheck: false,
-			title: wrong ?? title,
+			// What an empty box comes to, greyed in it: the question an
+			// empty box asks.
+			placeholder,
+			...(wrong ? { title: wrong } : {}),
 		});
 		if (wrong) input.classList.add('is-invalid');
 		// What sbRestore finds it by after the rebuild this field's own commit
@@ -5815,12 +5951,8 @@ function renderSidebar() {
 				flash(`'${input.value}' — ${label.toLowerCase()} has to be a number`, 'warn');
 			}
 		});
-		// On the row, so pointing at the name explains it as well as pointing
-		// at the box: the name column clips a long label with an ellipsis, and
-		// the name is where anyone looks for what a setting is.
-		return el('div', { className: 'field', title: title || '' },
-			el('label', {}, label, unit ? el('span', { className: 'unit' }, ` ${unit}`) : ''),
-			input);
+		return infoRow('field', el('label', {}, label, unit ? el('span', { className: 'unit' }, ` ${unit}`) : ''),
+			input, key);
 	};
 
 	/**
@@ -5836,11 +5968,12 @@ function renderSidebar() {
 	// off unless a model asks, and `sim[key] !== false` read those as ticked
 	// while the run had them off -- a switch that lied about the setting it
 	// controls, for as long as the mass-balance audit has existed.
-	const boolField = (key, { title = '', on = true, disabled = '' } = {}) => {
+	const boolField = (key, { on = true, disabled = '' } = {}) => {
 		const label = SIM_LABELS[key] ?? key;
 		const checked = on ? sim[key] !== false : sim[key] === true;
 		const box = el('input', {
-			type: 'checkbox', checked, disabled: !!disabled, title: disabled || title,
+			type: 'checkbox', checked, disabled: !!disabled,
+			...(disabled ? { title: disabled } : {}),
 		});
 		box.dataset.sim = key;
 		box.addEventListener('change', () => {
@@ -5851,15 +5984,14 @@ function renderSidebar() {
 		// column: a switch needs 13px of value column, and `Cannot go negative`
 		// does not fit in what is left. It reads as a phrase with a box after
 		// it, which is what it is.
-		return el('div', { className: 'field is-wide', title: disabled || title || '' },
-			el('label', { title }, label), box);
+		return infoRow('field is-wide', el('label', {}, label), box, key);
 	};
 
 	// `describe` gives each option a tooltip; `wide` gives the control the room
 	// instead of the label, for a choice whose names are longer than a number.
-	const selField = (key, options, { describe = null, wide = false, title = '' } = {}) => {
+	const selField = (key, options, { wide = false } = {}) => {
 		const label = SIM_LABELS[key] ?? key;
-		const sel = el('select', { title });
+		const sel = el('select', {});
 		const wrong = simProblem.get(key);
 		if (wrong) { sel.classList.add('is-invalid'); sel.title = wrong; }
 		// Found by sbRestore after the rebuild this select's own commit
@@ -5867,18 +5999,13 @@ function renderSidebar() {
 		// without it the second arrow key goes to the page instead.
 		sel.dataset.sim = key;
 		for (const [v, t] of options) {
-			const opt = el('option', { value: v, selected: (sim[key] ?? '') === v }, t);
-			if (describe) opt.title = describe(v);
-			sel.append(opt);
+			sel.append(el('option', { value: v, selected: (sim[key] ?? '') === v }, t));
 		}
-		if (describe) sel.title = describe(sel.value);
 		sel.addEventListener('change', () => {
 			raw.simulation = { ...raw.simulation, [key]: sel.value };
-			if (describe) sel.title = describe(sel.value);
 			modelChanged({ solveOnly: SOLVE_ONLY_SETTINGS.has(key) });
 		});
-		return el('div', { className: wide ? 'field is-wide' : 'field' },
-			el('label', { title: title || '' }, label), sel);
+		return infoRow(wide ? 'field is-wide' : 'field', el('label', {}, label), sel, key);
 	};
 
 	/**
@@ -5911,11 +6038,9 @@ function renderSidebar() {
 				+ 'times you asked for, and every step the solver took between them. '
 				+ 'Ecolego’s “Produce additional output”.'],
 		];
-		for (const [v, label, why] of options) {
-			sel.append(el('option', { value: v, selected: sim.spacing === v, title: why },
-				label));
+		for (const [v, label] of options) {
+			sel.append(el('option', { value: v, selected: sim.spacing === v }, label));
 		}
-		sel.title = options.find((o) => o[0] === sim.spacing)?.[2] ?? '';
 		sel.addEventListener('change', () => {
 			try {
 				ed.setSpacing(raw, sel.value);
@@ -5925,9 +6050,7 @@ function renderSidebar() {
 				if (sel.value === 'series' || sel.value === 'both') openSavedTimes();
 			} catch (e) { flash(e.message, 'warn'); }
 		});
-		return el('div', { className: 'field' },
-			el('label', { title: 'How the times the result is reported at are chosen. Point at a '
-				+ 'choice in the list for what it does.' }, SIM_LABELS.spacing), sel);
+		return infoRow('field', el('label', {}, SIM_LABELS.spacing), sel, 'spacing');
 	};
 
 	/**
@@ -5947,20 +6070,11 @@ function renderSidebar() {
 		const button = el('button', {
 			type: 'button',
 			className: `sb-summary${outside.size ? ' is-warned' : ''}`,
-			title: [
-				`${series.length} series, combined:`,
-				...series.map((spec, i) => `  \u00b7 ${ed.describeSeries(
-					spec, Number(sim.start_time ?? 0), Number(sim.end_time ?? 0),
-				)}${outside.has(i) ? ' \u2014 entirely outside the run, so it saves nothing' : ''}`),
-				'',
-				'Click to edit them.',
-			].join('\n'),
 		}, `${times.length} time${times.length === 1 ? '' : 's'}, ${series.length} series`
 			+ (sim.spacing === 'both' ? ' + steps' : '')
 			+ (outside.size ? ` \u2014 ${outside.size} outside the run` : ''));
 		button.addEventListener('click', openSavedTimes);
-		return el('div', { className: 'field' },
-			el('label', {}, 'Saved times'), button);
+		return infoRow('field', el('label', {}, 'Saved times'), button, 'saved_times');
 	};
 
 	// Which scenario is live. The usual arrangement is one simulation per
@@ -5976,8 +6090,6 @@ function renderSidebar() {
 		for (const name of scenarios) {
 			sel.append(el('option', { value: name, selected: name === active }, name));
 		}
-		sel.title = `1 of ${scenarios.length} scenarios. Every block indexed by `
-			+ 'the scenario list is read at this one';
 		sel.addEventListener('change', () => {
 			ed.setScenario(raw, sel.value);
 			modelChanged();
@@ -5997,10 +6109,8 @@ function renderSidebar() {
 		// different width from every other control in the group. `Scenario`
 		// fits the shared name column, so it shares it -- one edge down the
 		// panel, the way the buttons below do.
-		group.append(el('div', { className: 'field' },
-			el('label', {}, 'Scenario',
-				el('span', { className: 'unit' }, ' \u00b7 '), edit),
-			sel));
+		group.append(infoRow('field', el('label', {}, 'Scenario',
+			el('span', { className: 'unit' }, ' \u00b7 '), edit), sel, 'scenario'));
 		// Which run beside it: every scenario as a chip, ticked to run with
 		// the selected one, each in a worker of its own, and be drawn with it.
 		// The selected one is always on -- it is the run -- and is changed
@@ -6031,12 +6141,7 @@ function renderSidebar() {
 				if (!isActive) chip.addEventListener('click', () => chooseScenario(name, !on));
 				box.append(chip);
 			}
-			group.append(el('div', { className: 'field field-chips' },
-				el('label', {
-					title: 'Scenarios to run together with the selected one, each on a core of '
-						+ 'its own. The chart and the table show every selected output once per '
-						+ 'scenario, and an export writes them all.',
-				}, 'Run'), box));
+			group.append(infoRow('field field-chips', el('label', {}, 'Run'), box, 'run_together'));
 		}
 	}
 
@@ -6044,127 +6149,62 @@ function renderSidebar() {
 		// `Start`, not `Start time`: the unit suffix beside it already says
 		// what kind of quantity it is, and in a column this narrow the word
 		// `time` costs 23px on two rows to repeat the section's own title.
-		numField('start_time', sim.time_unit ?? 'year', {
-			title: 'When the run starts, in the time unit below. The initial amounts are the '
-				+ 'state at this time.',
-		}),
-		numField('end_time', sim.time_unit ?? 'year', {
-			title: 'When the run ends, in the time unit below.',
-		}),
+		// What each of these is -- what the row used to say on hover, and
+		// what an empty box comes to -- is in ./siminfo.js, behind the (i).
+		numField('start_time', sim.time_unit ?? 'year'),
+		numField('end_time', sim.time_unit ?? 'year'),
 		// Only where it means something: a list of series carries its own
 		// counts, and the solver's own steps are however many it takes.
 		...(['series', 'solver', 'both'].includes(sim.spacing)
-			? [] : [numField('output_points', '', {
-				title: 'How many times the result is reported at, spaced as the time spacing '
-					+ 'says. More points make a finer chart and table; they do not change the '
-					+ 'solution, which the tolerances control.',
-			})]),
+			? [] : [numField('output_points', '')]),
 		spacingField(),
 		...(sim.spacing === 'series' || sim.spacing === 'both'
 			? [savedTimesField()] : []),
 		selField('time_unit', [
 			['year', 'Years'], ['day', 'Days'], ['hour', 'Hours'],
 			['minute', 'Minutes'], ['second', 'Seconds'],
-		], {
-			title: 'The unit every time in the model is in: the span above, every rate per '
-				+ 'unit time, every half-life. Changing it re-derives the unit of every flux.',
-		}),
+		]),
 		// Labelled by what the solver is for, not by which method it
-		// is; the id stays in the tooltip and in the project file. In the same
-		// column as everything above it: a control that starts further left
-		// than the eight fields around it reads as a different kind of thing,
-		// and the longest name -- "stiff, var. order" -- fits the value column
-		// at the panel's default width.
+		// is; the id stays in the information panel and in the project file.
+		// In the same column as everything above it: a control that starts
+		// further left than the eight fields around it reads as a different
+		// kind of thing, and the longest name -- "stiff, var. order" -- fits
+		// the value column at the panel's default width.
 		// A solver that needs a download is marked in the list rather than only
-		// in its tooltip: it is the one choice here with a consequence outside
-		// the model -- it will not run on a machine with no network.
+		// in its description: it is the one choice here with a consequence
+		// outside the model -- it will not run on a machine with no network.
 		selField('solver',
 			// The arrow leads rather than trails. In the column the other eight
 			// fields use there is room for the three local solvers and none for
 			// the longest SciPy name, and a select clips its tail -- so an arrow
 			// at the end is the first thing lost, which is the one part of the
-			// label that must not be. The full name is in the tooltip, and the
-			// open list is not clipped at all.
-			SOLVER_IDS.map((id) => [id, (solverIsRemote(id) ? '\u2193 ' : '') + solverLabel(id)]),
-			{
-				title: 'Which integrator solves the model. Point at a choice in the list for '
-					+ 'what it is for; the settings it reads beyond the two tolerances are under '
-					+ 'Advanced settings, below.',
-				describe: (id) => `${id} — ${SOLVER_INFO[id]?.blurb ?? ''}`
-					+ (solverIsRemote(id)
-						? '\n\nDownloads a Python runtime (about 22 MB) the first time it '
-							+ 'is used, then keeps it for the rest of the session. Needs a '
-							+ 'network connection; the other solvers do not.'
-						: ''),
-			}),
-		numField('rtol', '', {
-			title: 'Relative tolerance (rtol): the error a step may make, as a fraction of each '
-				+ 'quantity\u2019s own size. 1e-6 is about six significant digits; tighter is '
-				+ 'slower and more accurate.',
-		}),
-		numField('abstol', '', {
-			title: 'Absolute tolerance (atol): the error allowed on a quantity near zero, in its '
-				+ 'own units. Below it a quantity is not controlled, so set it below the smallest '
-				+ 'amount that matters.',
-		}),
+			// label that must not be. The open list is not clipped at all.
+			SOLVER_IDS.map((id) => [id, (solverIsRemote(id) ? '\u2193 ' : '') + solverLabel(id)])),
+		numField('rtol', ''),
+		numField('abstol', ''),
 		// Below the tolerances because it belongs with them: all three are
 		// about how the solve is allowed to behave rather than about what the
 		// model says. The file's `saturation-enabled`, in the one form this tool
 		// carries.
-		boolField('non_negative', {
-			title: 'The switch over every compartment\u2019s own '
-				+ '\u2018cannot go negative\u2019.\n\n'
-				+ 'On, each compartment decides for itself, which is the default '
-				+ 'and what every compartment says unless it was changed.\n'
-				+ 'Off, nothing is held at zero anywhere in the model and the '
-				+ 'equations are integrated as written \u2014 negative '
-				+ 'inventories and all. The per-compartment settings are left '
-				+ 'untouched and simply not consulted, so turning it back on '
-				+ 'restores exactly what the model said.\n\n'
-				+ 'Ecolego calls it \u2018Enable saturation\u2019 and defaults '
-				+ 'it off; this tool defaults it on, because the floor is the '
-				+ 'only part of saturation it carries.',
-		}),
-		boolField('mass_balance', {
-			on: false,
-			title: 'Audit the bookkeeping of the run.\n\n'
-				+ 'On, the run carries a budget per radionuclide of what came in from '
-				+ 'outside, went out, was lost to decay, gained by ingrowth, or moved '
-				+ 'by an explicit dy/dt term, and the status line says whether the '
-				+ 'inventories account for it at every output time. They should, to '
-				+ 'within the solver\u2019s tolerance; a residual well above it is a '
-				+ 'compartment held at zero while its equations pushed it below, or an '
-				+ 'amount the model moved that nothing accounts for.\n\n'
-				+ 'Off by default: it adds states to the vector and the run gives up '
-				+ 'the analytic Jacobian, so it is a check to run, not a way to run.',
-		}),
+		boolField('non_negative'),
+		boolField('mass_balance', { on: false }),
 		// Whether a model that falls apart into independent parts -- a decay
 		// chain each, on an assessment -- is solved a part per core. With the
 		// solve settings because it is one: each part takes its own steps.
-		selField('split', SPLIT_MODES.map(([v, label]) => [v, label]), {
-			title: 'Solve a model that falls apart into independent parts — a decay chain '
-				+ 'each, on most assessments — one part per core, each at its own steps. '
-				+ 'The parts agree with the whole model to within the tolerance, not to the '
-				+ 'last digit. Point at a choice in the list for what it does; the status line '
-				+ 'says when a run was split, and the log says why or why not.',
-			describe: (v) => SPLIT_MODES.find(([k]) => k === (v || 'auto'))?.[2] ?? '',
-		}),
+		selField('split', SPLIT_MODES.map(([v, label]) => [v, label])),
 	);
 	// dy/dp needs no distributions -- it is a derivative at the values the
 	// model holds -- so it is offered whatever the model carries.
 	{
 		const dydp = el('button', { type: 'button', className: 'ghost sb-action sb-dydp' },
 			'Sensitivity\u2026');
-		dydp.title = 'How much each block moves when one parameter moves, '
-			+ 'integrated alongside the model. Exact, and needs no distributions.';
 		dydp.addEventListener('click', openLocalSensitivity);
 		// `field`, not `field is-wide`: the wide variant sizes its label column
 		// to the label, which put each of these buttons at a different x and a
 		// different width from the settings above them. The plain one shares
 		// the column the inputs use, so the three buttons and every input in
 		// this group are one edge down the panel.
-		group.append(el('div', { className: 'field' },
-			el('label', {}, 'dy/dp'), dydp));
+		group.append(infoRow('field', el('label', {}, 'dy/dp'), dydp, 'dydp'));
 	}
 	// The other direction: not what this model gives, but what the inputs
 	// would have to be for it to give something. Offered whenever there is a
@@ -6172,10 +6212,8 @@ function renderSidebar() {
 	{
 		const fit = el('button', { type: 'button', className: 'ghost sb-action sb-opt' },
 			'Optimise\u2026');
-		fit.title = 'Solve for the parameter values that put chosen endpoints at chosen '
-			+ 'values, between bounds you set. Nothing is changed until you ask for it.';
 		fit.addEventListener('click', openOptimise);
-		group.append(el('div', { className: 'field' }, el('label', {}, 'Calibration'), fit));
+		group.append(infoRow('field', el('label', {}, 'Calibration'), fit, 'calibration'));
 	}
 	// Only where there is something to sample. A model with no distribution
 	// would run a thousand identical realisations, and offering that is worse
@@ -6183,23 +6221,16 @@ function renderSidebar() {
 	if (ed.hasDistributions(raw)) {
 		const go = el('button', { type: 'button', className: 'ghost sb-action sb-prob' },
 			'Probabilistic\u2026');
-		go.title = 'Integrate the model once per realisation, drawing each '
-			+ 'distributed parameter from its distribution. Says what it will cost '
-			+ 'before it starts.';
 		go.addEventListener('click', openProbabilistic);
-		const row = el('div', { className: 'field' },
-			el('label', {}, 'Uncertainty'), go);
+		const row = infoRow('field', el('label', {}, 'Uncertainty'), go, 'uncertainty');
 		group.append(row);
 		// Only once there is a sample to read: sensitivity here is computed
 		// from the realisations already drawn, not from further runs.
 		if (currentProb()) {
 			const why = el('button', { type: 'button', className: 'ghost sb-action sb-why' },
 				'What drove it\u2026');
-			why.title = 'Which sampled inputs the line on the chart depends on, '
-				+ 'from the realisations already run.';
 			why.addEventListener('click', () => openSensitivity());
-			group.append(el('div', { className: 'field' },
-				el('label', {}, ''), why));
+			group.append(infoRow('field', el('label', {}, ''), why, 'what_drove'));
 		}
 		// The rest of what a sample can be asked, and the runs that need no
 		// sample. A menu rather than five more buttons: the panel is 306
@@ -6208,8 +6239,6 @@ function renderSidebar() {
 		const more = el('button', {
 			type: 'button', className: 'ghost sb-action sb-more', 'aria-haspopup': 'menu',
 		}, 'Analyse \u25be');
-		more.title = 'Distribution summary, categories of realisation, the bands, a tornado, '
-			+ 'and replaying one realisation.';
 		more.addEventListener('click', (ev) => {
 			const has = !!currentProb();
 			const at = ev.currentTarget.getBoundingClientRect();
@@ -6252,7 +6281,7 @@ function renderSidebar() {
 				],
 			});
 		});
-		group.append(el('div', { className: 'field' }, el('label', {}, ''), more));
+		group.append(infoRow('field', el('label', {}, ''), more, 'analyse'));
 	}
 	// --- the solver's own settings ------------------------------------------
 	//
@@ -6268,24 +6297,32 @@ function renderSidebar() {
 		const dropped = solverIgnores(id);
 		if (keys.length || dropped.length) {
 			const box = el('div', { className: 'sim-solver-opts' });
+			// What an empty box comes to for this solver and this run, so that
+			// an empty box answers its own question: greyed in a number box,
+			// and named in the `auto` of a choice. See solverDefault in
+			// ../ode/solvers.js.
+			const span = Number(sim.end_time ?? 0) - Number(sim.start_time ?? 0);
 			for (const key of keys) {
 				const info = SOLVER_OPTION_INFO[key];
-				const title = `${info.label} — ${info.blurb}`;
+				const d = solverDefault(key, id, { span });
 				if (info.kind === 'switch') {
-					box.append(boolField(key, { on: info.on, title }));
+					box.append(boolField(key, { on: info.on }));
 				} else if (info.kind === 'choice') {
+					const name = (v) => {
+						const c = info.choices.find((x) => String(Array.isArray(x) ? x[0] : x) === String(v));
+						return c == null ? String(v) : Array.isArray(c) ? c[1] : String(c);
+					};
 					box.append(selField(key, [
-						// Unset is the solver's own, which for every one of
-						// these is the right default and the honest label for
-						// an empty box.
-						['', 'the solver\u2019s own'],
+						// Unset is the solver's own, named: `auto (max)` says
+						// both that nothing was chosen and what that means.
+						['', `auto${d.value != null && d.value !== 'auto' ? ` (${name(d.value)})` : ''}`],
 						// A choice is a value, or a value and what to call it:
 						// `numeric` is shown as `finite differences`.
 						...info.choices.map((c) => (Array.isArray(c) ? [String(c[0]), c[1]] : [String(c), String(c)])),
-					], { title }));
+					]));
 				} else {
 					const unit = info.unit === true ? (sim.time_unit ?? 'year') : (info.unit || '');
-					box.append(numField(key, unit, { title }));
+					box.append(numField(key, unit, { placeholder: autoPlaceholder(d) }));
 				}
 			}
 			// Inside the fold, under the settings it is about, as facsimile.html
@@ -6305,11 +6342,7 @@ function renderSidebar() {
 			// `Advanced settings`, as facsimile.html and rtm.html call theirs: the
 			// same settings go by the same names in all three.
 			const fold = el('details', { className: 'sim-opts', open: sectionOpen('solver-opts', false) },
-				el('summary', { title: keys.length
-					? `The settings ${solverLabel(id)} reads, beyond the `
-						+ 'tolerances above. Empty means the solver\u2019s own choice.'
-					: `${solverLabel(id)} reads no settings beyond the tolerances above.` },
-				'Advanced settings'),
+				el('summary', {}, el('span', {}, 'Advanced settings'), info('advanced')),
 				box);
 			fold.addEventListener('toggle', () => { state.sbSections['solver-opts'] = fold.open; });
 			group.append(fold);
@@ -6327,6 +6360,9 @@ function renderSidebar() {
 	// block is opened, which is the settings dialog.
 
 	sbRestore(caret);
+	// The information panel, if it is open on one of these rows, says what
+	// the row says now.
+	refreshInfo();
 }
 
 // --- results ------------------------------------------------------------------
@@ -10824,6 +10860,15 @@ function selectTab(name) {
 
 export function boot() {
 	clearStatus();
+	// Which build this is, at the foot of the Help tab.
+	setBuildStamp(BUILD);
+	// A topic's "Read more in Help" goes to its section of the Guide: any
+	// dialog over the page first, since the Help tab is under it.
+	setInfoLinks((heading) => {
+		closeAllModals();
+		selectTab('help');
+		goToHelp($('#panel-help'), 'guide', headingId(heading));
+	});
 	wireFlash();
 	wireRailSplit();
 	wirePaneSplits();

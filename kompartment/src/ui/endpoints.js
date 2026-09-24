@@ -35,6 +35,7 @@
 import { el } from './parts.js';
 import { openModal } from './modal.js';
 import { renderDualTree, dualTreeState } from './dualtree.js';
+import { dialogInfo } from './dialoginfo.js';
 
 /** A size estimate, from the numbers alone. */
 function size(bytes) {
@@ -147,6 +148,7 @@ export function openEndpointPicker({
 	};
 
 	const modal = openModal({
+		info: dialogInfo('endpoints'),
 		wide: true,
 		title: 'Which endpoints to keep',
 		subtitle: 'An endpoint keeps every index of its block. Saved with the model, '

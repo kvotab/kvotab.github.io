@@ -13,6 +13,7 @@
  */
 
 import { el } from './parts.js';
+import { infoButton, closeInfo } from './infopanel.js';
 
 /**
  * The dialogs on screen, innermost last.
@@ -97,6 +98,8 @@ export function dismissOnBackdrop(dialog, close) {
  * @param {(body: HTMLElement) => void} opts.build fills the scrolling body
  * @param {() => void} [opts.onClose]
  * @param {boolean} [opts.wide] for a dialog that is panes rather than a form
+ * @param {{key: string, topic: object|(() => object)}|null} [opts.info]  what the
+ *   dialog is for, behind an (i) in its title bar -- see ./dialoginfo.js
  * @returns {{close: Function, refresh: Function, dialog: HTMLDialogElement}}
  */
 /** The controls a form is made of, in document order. */
@@ -240,7 +243,7 @@ function resizable(dialog, grip, body) {
 	});
 }
 
-export function openModal({ title, subtitle, build, onClose, wide = false }) {
+export function openModal({ title, subtitle, build, onClose, wide = false, info = null }) {
 	// Where the keyboard was: a dialog opened with Enter on a diagram node
 	// hands the focus back to that node when it closes, rather than dropping
 	// it on the body so that the next Tab starts from the top of the page.
@@ -258,8 +261,12 @@ export function openModal({ title, subtitle, build, onClose, wide = false }) {
 	// `wide` is for a dialog that is two panes rather than a form: the form
 	// width is chosen so that a column of fields reads well, and a chooser
 	// with a plan beside it needs the room instead.
+	// What the dialog is for, behind an (i) beside the close button: see
+	// ./infopanel.js, which opens its panel inside this dialog so that the
+	// dialog's inertness does not reach it.
+	const about = info?.key ? infoButton(info.key, info.topic) : null;
 	const head = el('div', { className: 'modal-head' },
-		el('div', { className: 'modal-heading' }, heading, sub), close);
+		el('div', { className: 'modal-heading' }, heading, sub), about, close);
 	head.title = 'Drag to move this window';
 	// The corner to pull. A native `resize` on the dialog is the obvious way
 	// and cannot be used: `resize` needs `overflow` other than `visible`, and
@@ -321,6 +328,17 @@ export function openModal({ title, subtitle, build, onClose, wide = false }) {
 	dialog.addEventListener('cancel', (ev) => {
 		if (stack[stack.length - 1]?.dialog !== dialog || !claimEscape()) {
 			ev.preventDefault();
+			return;
+		}
+		// The panel an (i) in here opened is in front of the window, so it is
+		// what this press closes, wherever in the window the keyboard is; the
+		// window goes on the next. (Chrome lets a page refuse a close request
+		// only once per user activation, and pressing Escape is not one, so
+		// the second press closes the window even when nothing was clicked in
+		// between -- which is what it should do anyway.)
+		if (dialog.querySelector(':scope > .info-panel')) {
+			ev.preventDefault();
+			closeInfo();
 			return;
 		}
 		drop();

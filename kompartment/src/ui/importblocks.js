@@ -24,6 +24,7 @@ import { buildSystem } from '../sim/builder.js';
 import { openModal, closeModal } from './modal.js';
 import { blockIcon } from './icons.js';
 import { parentOf, isWithin } from '../domain/systems.js';
+import { dialogInfo } from './dialoginfo.js';
 
 /**
  * The same node builder the rest of the interface uses, with one difference:
@@ -124,6 +125,7 @@ export function openImportDialog(opts) {
 	if (all.length && all.length <= 12) for (const n of all) ui.picked.add(n);
 
 	openModal({
+		info: dialogInfo('import-blocks'),
 		wide: true,
 		title: () => 'Import blocks',
 		subtitle: () => `${ui.fileName} · ${plural(all.length, 'block')}`

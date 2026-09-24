@@ -300,6 +300,77 @@ export const SOLVER_OPTIONS = Object.assign(Object.create(null), {
 	rodas5p: ROSENBROCK,
 });
 
+/** The methods ported from DifferentialEquations.jl, which share one integrator. */
+export const PORTED_IDS = ['rodas5p', 'radau5', 'fbdf', 'qndf', 'kencarp4', 'trbdf2'];
+
+/**
+ * What a setting left empty comes to for solver `id`: the value the solver uses
+ * when the model does not say, and the same in words.
+ *
+ * Read off the solvers' own code, and kept beside the table of who reads what
+ * for the same reason that table is here: an empty box is only honest if what
+ * it stands for is written down somewhere that goes stale with the code. The
+ * two that are not one number everywhere are the ones worth knowing: the
+ * longest step is a tenth of the run for this tool's own solvers and has no
+ * limit in the ported ones, and the error norm is the maximum in ndf and the
+ * root mean square in the ported ones.
+ *
+ * @param {string} key  a key of SOLVER_OPTION_INFO
+ * @param {string} id   the solver
+ * @param {{span?: number|null}} [ctx]  the run's length, in the model's time
+ *   unit, for a default that is a share of it
+ * @returns {{value: number|string|boolean|null, text: string, short?: string}}
+ *   `value` is null where the solver works it out during the run, and `short`
+ *   then says it in a word or two, for a box too narrow for `text`
+ */
+export function solverDefault(key, id, { span = null } = {}) {
+	const ported = PORTED_IDS.includes(id);
+	switch (key) {
+		case 'bdf':
+		case 'norm_control':
+		case 'auto_abstol':
+			return { value: false, text: 'off' };
+		case 'max_step':
+			if (ported) return { value: Infinity, text: 'no limit' };
+			return {
+				value: Number.isFinite(span) && span > 0 ? span / 10 : null,
+				text: 'a tenth of the run',
+			};
+		case 'initial_step':
+			return { value: null, text: 'chosen by the solver from the derivative at the start', short: 'estimated' };
+		case 'max_steps': {
+			const n = id === 'dp45' || ported ? 1e7 : 1e6;
+			return { value: n, text: n === 1e7 ? 'ten million steps' : 'a million steps' };
+		}
+		case 'max_order':
+			return { value: 5, text: '5, the highest the formulas have' };
+		case 'min_order':
+			return { value: 1, text: '1' };
+		case 'error_norm':
+			return id === 'ndf'
+				? { value: 'max', text: 'max \u2014 the worst-resolved component decides' }
+				: { value: 'rms', text: 'rms \u2014 the root mean square over the components' };
+		case 'stagnation_tol':
+			return { value: 0, text: '0 \u2014 a correction that has stopped shrinking is never accepted' };
+		case 'newton_kappa':
+			return id === 'radau5'
+				? { value: 0.01, text: '0.01, Radau\u2019s own' }
+				: { value: 1e-3, text: '0.001' };
+		case 'max_jac_age':
+			return { value: 20, text: '20 steps' };
+		case 'below_tol_run':
+			return id === 'ndf'
+				? { value: null, text: 'up to 20 failed error tests in a row, and no failed Newton iteration', short: '20 error tests' }
+				: { value: 0, text: '0 \u2014 the solver stops instead' };
+		case 'matrix':
+			return { value: 'auto', text: 'auto \u2014 measures the fill of the matrix and chooses' };
+		case 'jacobian':
+			return { value: 'analytic', text: 'analytic, where the model can be differentiated; differenced where it cannot' };
+		default:
+			return { value: null, text: 'the solver\u2019s own choice' };
+	}
+}
+
 /** The settings `id` reads, in the order the interface should show them. */
 export function solverOptions(id) {
 	const keys = SOLVER_OPTIONS[id] ?? [];

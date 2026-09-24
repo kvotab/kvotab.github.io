@@ -245,11 +245,11 @@
 /* One thing in this tool's own footer belongs to the page once the page is
    there: whose site this is, which the page's own footer says. The rest of the
    line stays -- the statistics, because solver, states, steps and timings are
-   about the run and nothing on the page can say them, and the build stamp,
-   because it is what keeps the line from being an empty bar above the page's
-   footer before anything has been run. It also answers the question it was
-   put there for at the moment it is asked, which is when something looks
-   wrong and the first suspect is a cached copy of the code. */
+   about the run and nothing on the page can say them, and the bar itself while
+   it is still empty, because a run's progress and then its statistics arrive
+   on it, and a footer that appeared with them would move every panel in the
+   window up by its height the moment Run was pressed. (The build stamp that
+   used to fill it is at the foot of the Help tab.) */
 :root[data-chrome="kvotab"] .foot-link { display: none; }
 
 /* And the light/dark switch, for the same reason: the page has one in its

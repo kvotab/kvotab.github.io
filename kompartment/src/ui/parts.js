@@ -52,7 +52,7 @@ export const el = (tag, props = {}, ...kids) => {
  * @returns {HTMLDetailsElement} append the body to it
  */
 export function section({
-	id = '', title, badge = '', badgeTitle = '', open = true, onToggle = null,
+	id = '', title, badge = '', badgeTitle = '', open = true, onToggle = null, info = null,
 }) {
 	const box = el('details', { className: 'panel-section', open: !!open });
 	if (id) box.dataset.section = id;
@@ -73,6 +73,10 @@ export function section({
 		el('span', { className: 'panel-section-title' }, title),
 		badge
 			? el('span', { className: 'panel-section-badge', title: badgeTitle }, badge)
-			: null));
+			: null,
+		// What the section holds, behind an (i) at the end of the heading:
+		// see ./infopanel.js. Its click is its own and does not fold the
+		// section.
+		info));
 	return box;
 }

@@ -16,6 +16,7 @@
 import { openModal, refreshModal } from './modal.js';
 import * as ed from '../domain/edit.js';
 import { el } from './parts.js';
+import { dialogInfo } from './dialoginfo.js';
 
 const KIND_LABEL = {
 	log: 'Logarithmic',
@@ -41,6 +42,7 @@ export function openOutputTimes(project, hooks) {
 	const changed = () => { hooks.onChange?.(); refreshModal(); };
 
 	openModal({
+		info: dialogInfo('saved-times'),
 		title: 'Saved time points',
 		subtitle: (project.simulation?.spacing === 'both'
 			? 'Every series is combined into one set of times — sorted, without '

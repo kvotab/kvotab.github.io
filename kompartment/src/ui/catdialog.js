@@ -17,6 +17,7 @@ import { el } from './parts.js';
 import { openModal } from './modal.js';
 import { fmtTime } from '../domain/timeseries.js';
 import { STATS, STAT_LABEL, OPS, categoryProblems } from '../domain/categories.js';
+import { dialogInfo } from './dialoginfo.js';
 
 /**
  * @param {object} opts
@@ -39,6 +40,7 @@ export function openCategoriesDialog({
 	const changed = () => { onChange?.(cats.map((c) => ({ ...c }))); modal.refresh(); };
 
 	const modal = openModal({
+		info: dialogInfo('categories'),
 		wide: true,
 		title: 'Categories of realisation',
 		subtitle: 'Sort the realisations by what they did, then show only the ones you mean',

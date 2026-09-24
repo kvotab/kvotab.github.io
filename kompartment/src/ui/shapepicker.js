@@ -17,6 +17,7 @@ import {
 	FIGURES, FIGURE_GROUPS, ROLES, figureParts, figureSize,
 } from './figures.js';
 import { el } from './parts.js';
+import { dialogInfo } from './dialoginfo.js';
 
 const NS = 'http://www.w3.org/2000/svg';
 
@@ -70,6 +71,7 @@ export function openShapePicker({ onPick }) {
 	let query = '';
 
 	openModal({
+		info: dialogInfo('shape-picker'),
 		title: 'Add a shape',
 		subtitle: 'Drawn behind the blocks, and saved with the model. '
 			+ 'Nothing in the model reads it.',

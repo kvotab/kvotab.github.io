@@ -22,6 +22,7 @@ import { el } from './parts.js';
 import { openModal } from './modal.js';
 import { renderDualTree, dualTreeState } from './dualtree.js';
 import { canBeEndpoint } from '../domain/edit.js';
+import { dialogInfo } from './dialoginfo.js';
 
 /**
  * What can be written, in the order a reader looks for them.
@@ -188,6 +189,7 @@ export function openSaveDialog({
 	let handle = null;
 	const shut = () => handle?.close();
 	handle = openModal({
+		info: dialogInfo('save'),
 		title: 'Save',
 		wide: true,
 		build(body) {

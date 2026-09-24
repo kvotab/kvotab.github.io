@@ -25,6 +25,7 @@ import { openModal } from './modal.js';
 import { renderPicker, pickerState } from './pick.js';
 import { METHODS, SCALES, SPACES } from '../domain/optimise.js';
 import { WHENS } from '../sim/calibrate.js';
+import { dialogInfo } from './dialoginfo.js';
 
 const fmt = (v) => {
 	if (v == null || !Number.isFinite(v)) return '—';
@@ -49,6 +50,7 @@ function addFrom(items, { title, noun, chosen, onDone }) {
 	const ui = pickerState();
 	let handle = null;
 	handle = openModal({
+		info: dialogInfo('optimise-add'),
 		title,
 		wide: true,
 		build(body) {
@@ -121,6 +123,7 @@ export function openOptimiseDialog({
 	});
 
 	handle = openModal({
+		info: dialogInfo('optimise'),
 		title: 'Optimise',
 		wide: true,
 		build(body) {

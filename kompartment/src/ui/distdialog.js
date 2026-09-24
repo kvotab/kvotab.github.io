@@ -31,6 +31,7 @@ import { densityAt, cumulativeAt, valueCuts, formatPDF } from '../domain/pdf.js'
 import {
 	FIT_METHODS, FIT_TESTS, FIT_MIN_SAMPLE, fitAll, rankFits, scoreFit, fitText,
 } from '../domain/fit.js';
+import { dialogInfo } from './dialoginfo.js';
 
 /**
  * The three things *At* can mean, as in What drove it: each realisation's own
@@ -442,6 +443,7 @@ export function openDistributionDialog({
 	};
 
 	const modal = openModal({
+		info: dialogInfo('distribution'),
 		wide: true,
 		title: () => `Distribution of ${view.output}`,
 		subtitle: () => `${view.summary.n.toLocaleString()} of ${view.of.toLocaleString()} realisations`

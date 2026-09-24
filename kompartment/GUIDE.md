@@ -50,9 +50,9 @@ hold — and a Worker keeps its own module cache on top of the page's. Edited co
 then keeps running, and the app reports things the source no longer says.
 `serve.py` sends `no-store`, so a plain refresh always picks up your edits.
 
-The footer shows a **build** stamp. If it looks older than your last edit, you
-are looking at a cached copy: hard-reload once (**Cmd+Shift+R**), and switch to
-`serve.py` so it cannot happen again. (A test keeps the stamp honest — it fails
+The foot of the **Help** tab shows a **build** stamp. If it looks older than
+your last edit, you are looking at a cached copy: hard-reload once
+(**Cmd+Shift+R**), and switch to `serve.py` so it cannot happen again. (A test keeps the stamp honest — it fails
 if a source file is newer than the stamp, so it cannot quietly start crying
 wolf.)
 
@@ -231,6 +231,15 @@ seconds before a single step is taken, and the first step can be seconds more.
 The bar goes indeterminate and says *Building the model…*, then *Solving…*,
 then starts counting. Before, it said nothing through both and looked like a
 page that had stopped.
+
+**A run clears the last one's numbers and keeps its own clock.** The moment a
+run starts, the statistics of the previous one leave the status line — left up
+beside a moving bar they read as this run's — and beside the bar is the clock:
+`started 14:32:05 · 1 min 05 s`, wall-clock time, updated every second. When the
+run is in, its own numbers take their place. A run that brings no results of its
+own — a probabilistic sample, a tornado, a Stop — puts the last run's back if
+they are still the model's, and leaves the line empty if the model has moved
+since.
 
 **The progress bar counts output points, not time.** A fraction of the span is
 a poor account of how far a stiff run has got: the first per cent of the model
@@ -1946,8 +1955,32 @@ model that comes back out is identical to the one that went in.
 Under **SIMULATION**, below the tolerances, is a fold called **Advanced
 settings**, as in facsimile.html and rtm.html, holding the settings **that the
 chosen solver actually reads**, and nothing else. Leave one empty and the solver
-chooses for itself, which is almost always right. Every setting in the panel —
-these and the ones above them — explains itself when you point at its name.
+chooses for itself, which is almost always right — and **the box says what that
+choice is**, greyed: `auto: 1e6` for the step budget, `auto: 100000` for the
+longest step, `auto: estimated` for the first; a choice left alone reads
+`auto (max)`. They are this solver's own numbers for this run: the longest step
+is a tenth of the run for `ndf`, `ros23` and `dp45` and has no limit in the
+ported solvers, and the error norm is the maximum in `ndf` and the root mean
+square in the ported ones.
+
+Every row of the Simulation section — these and the ones above them — has a
+small **(i)** at its right-hand end, after the box. It opens a panel over the
+right-hand side of the window saying what the setting does, what the box holds
+now, what empty means and what number that comes to, what the choices are (the
+one in force marked), and where the setting is kept in the model file. The panel
+stays open while you edit and follows the model: choose another solver and the
+defaults it lists are that solver's. Another (i) replaces it; the same (i), the
+× in its corner or Escape closes it.
+
+The same (i) is at the end of the **MODEL**, **SIMULATION** and **INFORMATION**
+headings, saying what the section holds; beside the tree's search box, saying
+what the search, the filters, the **Add** tabs and the rows themselves can do;
+and in the title bar of every settings window and dialog, saying what it is for
+and what each of its parts does — a block's window describes that kind of block.
+Opened from a window, the panel stands beside it, or over its edge below its
+title bar where there is no room, and Escape closes the panel first and the
+window on the next press. Every panel ends with **Read more in Help**, which
+opens this Guide at the section that says the rest.
 
 The same settings go by the same names in all three pages, where the name fits
 the sidebar's column, and the NDF reads the ones facsimile's NDF reads. Norm

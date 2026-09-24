@@ -120,8 +120,9 @@ export function renderBlockTree(host, project, selection, hooks = {}, filter = n
 		host.replaceChildren();
 
 		const root = ed.blockTree(project, filter ?? {}, { group: state.group });
-		const bar = tools(project, state, draw, root);
-		if (bar) host.append(bar);
+		// Expand all and Collapse are not drawn here: they sit in the row of
+		// Add tabs above the tree (`treeTools`), because anything put between
+		// that row and this box parts the tabs from the edge they stand on.
 		if (!root.deep) {
 			// Inside the tree's own frame, not loose under the toolbar. The
 			// panel is a bordered area with a background, and a model with
@@ -621,35 +622,47 @@ function wireDrop(node, spec) {
  * search above -- the two are the same kind of control, each saying how the
  * list below is to be arranged, and they read as a pair rather than as one
  * setting in the search and another in the tree.
+ *
+ * Built for the row of Add tabs on the tree's top edge (see `addTabs` in
+ * ./app.js), at its left, where that row has room. They were a row of their
+ * own between the tabs and the tree, which lifted the tabs off the edge they
+ * are drawn to stand on as soon as a model had a sub-system.
+ *
+ * @param {object} project
+ * @param {{open: Set<string>, group: boolean}} state  the tree's view, as
+ *   `renderBlockTree` is handed it
+ * @param {() => void} redraw  draws the tree again
+ * @param {object|null} [filter]  the tree's filter, for the group headings
+ *   Expand all opens when the tree is grouped by kind
+ * @returns {HTMLElement|null} null when there is nothing to expand
  */
-function tools(project, state, draw, root) {
-	const bar = el('div', { className: 'tree-tools' });
+export function treeTools(project, state, redraw, filter = null) {
 	const paths = ed.systems(project);
-	// Nothing to expand and nothing else in the bar: no bar.
+	// Nothing to expand: no buttons.
 	if (!paths.length) return null;
-	{
-		const all = el('button', {
-			className: 'ghost tree-btn', type: 'button',
-			title: 'Open every sub-system',
-		}, 'Expand all');
-		all.addEventListener('click', () => {
-			state.open = new Set(['', ...paths]);
-			if (state.group) {
-				const add = (n) => {
-					for (const b of n.blocks) state.open.add(groupKey(n.path, b.collection));
-					n.systems.forEach(add);
-				};
-				add(root);
-			}
-			draw();
-		});
-		const none = el('button', {
-			className: 'ghost tree-btn', type: 'button',
-			title: 'Close every sub-system',
-		}, 'Collapse');
-		none.addEventListener('click', () => { state.open = new Set(); draw(); });
-		bar.append(all, none);
-	}
+	const bar = el('span', { className: 'tree-tools' });
+	const all = el('button', {
+		className: 'ghost tree-btn', type: 'button',
+		title: 'Open every sub-system',
+	}, 'Expand all');
+	all.addEventListener('click', () => {
+		state.open = new Set(['', ...paths]);
+		if (state.group) {
+			const root = ed.blockTree(project, filter ?? {}, { group: true });
+			const add = (n) => {
+				for (const b of n.blocks) state.open.add(groupKey(n.path, b.collection));
+				n.systems.forEach(add);
+			};
+			add(root);
+		}
+		redraw();
+	});
+	const none = el('button', {
+		className: 'ghost tree-btn', type: 'button',
+		title: 'Close every sub-system',
+	}, 'Collapse');
+	none.addEventListener('click', () => { state.open = new Set(); redraw(); });
+	bar.append(all, none);
 	return bar;
 }
 

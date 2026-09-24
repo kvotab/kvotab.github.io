@@ -19,6 +19,7 @@ import { el } from './parts.js';
 import { openModal } from './modal.js';
 import { QUERIES, runQuery, referenceGraph } from '../domain/queries.js';
 import { statuses, enabled as qaEnabled } from '../domain/qa.js';
+import { dialogInfo } from './dialoginfo.js';
 
 /** The order they are offered in: the two that walk references first. */
 const ORDER = [
@@ -66,6 +67,7 @@ export function openQueryDialog({
 	};
 
 	const modal = openModal({
+		info: dialogInfo('query'),
 		wide: true,
 		title: 'Ask the model',
 		subtitle: 'Questions a name cannot answer — what reads this, what this needs, '
