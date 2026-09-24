@@ -27726,6 +27726,131 @@ test('HDF5, written by hand, reads back as HDF5', async () => {
 	assert(refused === 3, `${refused} of 3 refused`);
 });
 
+test('a value that cannot change over the run is written once, and says so', async () => {
+	const { resultTree } = await import('../src/io/resultfile.js');
+	const { writeHDF5 } = await import('../src/io/hdf5.js');
+	const { readHDF5, at } = await import('./hdf5-read.js');
+	const ed = await import('../src/domain/edit.js');
+	const pdf = (params) => ({ kind: 'unif', params, values: null, trmin: null, trmax: null, inorder: true, pos: 0 });
+	const model = {
+		name: 'Still and moving',
+		index_lists: [{ name: 'Radionuclides', for_contaminants: true, indices: [
+			{ name: 'Cs-137', enabled: true }, { name: 'H-3', enabled: true }] }],
+		simulation: {
+			start_time: 0, end_time: 100, time_unit: 'year', spacing: 'linear', output_points: 11,
+			solver: 'ndf', rtol: 1e-8, abstol: 1e-12,
+		},
+		compartments: [
+			{ name: 'Lake', initial: '100', unit: 'Bq', index_lists: ['Radionuclides'] },
+			// Stays at nothing, and is still a quantity that moves.
+			{ name: 'Empty', initial: '0', unit: 'Bq', index_lists: [] },
+		],
+		parameters: [{ name: 'k', value: 0.02, unit: '1/year', index_lists: [], pdf: pdf({ min: 0.01, max: 0.03 }) }],
+		expressions: [
+			{ name: 'twoK', equation: '2 * k', unit: '1/year', index_lists: [] },
+			{ name: 'ramp', equation: 'time * k', unit: '', index_lists: [] },
+		],
+		transfers: [{ name: 'out', from: 'Lake', to: null, rate: 'k', index_lists: ['Radionuclides'] }],
+		derived: [
+			{ name: 'peakRamp', kind: 'max', of: 'ramp' },
+			{ name: 'area', kind: 'integral', of: 'ramp' },
+		],
+	};
+	const r = run(model);
+	const outs = r.outputs();
+	const byLabel = (label) => outs.findIndex((o) => o.label === label);
+	// What the model says cannot change: a parameter, an expression of
+	// parameters alone, a rate written as one, the peak of a series. What can:
+	// a state -- even one that stays at nothing -- anything that reads the
+	// clock, and a running integral.
+	const still = outs.filter((o) => o.timeDependent === false).map((o) => o.label).sort();
+	assert(JSON.stringify(still) === JSON.stringify(['k', 'out [Cs-137]', 'out [H-3]', 'peakRamp', 'twoK']),
+		JSON.stringify(still));
+	for (const o of outs) {
+		if (o.timeDependent !== false) continue;
+		const v = r.series(o);
+		assert(v.every((x) => x === v[0]), `${o.label} is marked constant and is not`);
+	}
+
+	// Written once, and said to be: one value where a series would be eleven.
+	const tree = resultTree({
+		t: r.t, outputs: outs, column: (i) => r.series(outs[i]),
+		which: outs.map((_, i) => i), project: model, indexLists: ed.indexLists(model),
+	});
+	const file = readHDF5(writeHDF5(tree));
+	for (const [path, want] of [['k', 0.02], ['twoK', 0.04], ['peakRamp', 2]]) {
+		const d = at(file, path);
+		assert(d && d.values.length === 1 && d.attrs.time_dependent === 'FALSE', `${path}: ${JSON.stringify(d?.attrs)}`);
+		close(d.values[0], want, 1e-12, path);
+	}
+	const rate = at(file, 'out');
+	assert(rate.attrs.time_dependent === 'FALSE', `the group of a constant rate: ${JSON.stringify(rate.attrs)}`);
+	assert(at(file, 'out/Cs-137').values.length === 1, 'a constant rate is written at every time');
+	for (const path of ['ramp', 'Empty', 'area', 'Lake/Cs-137']) {
+		const d = at(file, path);
+		assert(d.values.length === r.t.length && d.attrs.time_dependent === 'TRUE', `${path}: ${JSON.stringify(d.attrs)}`);
+	}
+	assert(at(file, 'Lake').attrs.time_dependent === 'TRUE', 'the nuclides of a state are not drawn together');
+
+	// In a file of realisations: one value per realisation, a column rather than
+	// a matrix -- whether the caller hands over the row or the whole matrix.
+	const iterations = 4;
+	const T = r.t.length;
+	const spread = (row) => { const m = new Float32Array(T * iterations); for (let j = 0; j < T; j++) m.set(row, j * iterations); return m; };
+	const kRow = Float32Array.from([0.011, 0.016, 0.022, 0.029]);
+	const matrices = new Map([
+		[byLabel('k'), kRow],
+		[byLabel('twoK'), spread(kRow.map((x) => 2 * x))],
+		[byLabel('ramp'), spread(Float32Array.from([1, 2, 3, 4]))],
+	]);
+	const probFile = readHDF5(writeHDF5(resultTree({
+		t: r.t, outputs: outs, column: (i) => r.series(outs[i]),
+		which: [byLabel('k'), byLabel('twoK'), byLabel('ramp'), byLabel('peakRamp')], project: model,
+		realisations: { iterations, matrixFor: (i) => matrices.get(i) ?? null },
+	})));
+	for (const [path, want] of [['k', kRow], ['twoK', kRow.map((x) => 2 * x)]]) {
+		const d = at(probFile, path);
+		assert(d.dims.length === 1 && d.dims[0] === iterations && d.attrs.time_dependent === 'FALSE'
+			&& d.attrs.probabilistic === 'TRUE', `${path}: ${JSON.stringify({ dims: d.dims, attrs: d.attrs })}`);
+		for (let i = 0; i < iterations; i++) close(d.values[i], want[i], 1e-6, `${path} realisation ${i}`);
+	}
+	const ramp = at(probFile, 'ramp');
+	assert(ramp.dims.join() === `${T},${iterations}` && ramp.attrs.time_dependent === 'TRUE', JSON.stringify(ramp.dims));
+	// Not in the run: the model's one value, and not probabilistic.
+	const peak = at(probFile, 'peakRamp');
+	assert(peak.values.length === 1 && peak.attrs.time_dependent === 'FALSE' && peak.attrs.probabilistic === 'FALSE',
+		JSON.stringify(peak.attrs));
+
+	// The worker hands a file one row per realisation for these, and the table
+	// of every realisation still the whole matrix.
+	const harness = await simWorker();
+	const got = await harness.alone(async (ask) => {
+		const done = (await ask({ type: 'probabilistic', id: 61, project: structuredClone(model), iterations: 8, seed: 2 }))
+			.find((m) => m.type === 'probabilistic-done');
+		const ks = ['k', 'twoK', 'ramp'].map((label) => done.payload.outputs.findIndex((o) => o.label === label));
+		return {
+			done, ks,
+			compact: (await ask({ type: 'prob-matrix', id: 61, indices: ks, want: 'all', compact: true }))[0],
+			whole: (await ask({ type: 'prob-matrix', id: 61, indices: ks, want: 'all' }))[0],
+		};
+	});
+	const times = got.done.payload.t.length;
+	assert(got.done.payload.outputs[got.ks[0]].timeDependent === false
+		&& got.done.payload.outputs[got.ks[1]].timeDependent === false
+		&& got.done.payload.outputs[got.ks[2]].timeDependent !== false, 'the descriptors do not say which cannot change');
+	assert(got.compact.matrices.map((m) => m.length).join() === `8,8,${times * 8}`,
+		got.compact.matrices.map((m) => m.length).join());
+	assert(got.whole.matrices.every((m) => m.length === times * 8), 'the table of every realisation lost its rows');
+	for (let i = 0; i < 8; i++) close(got.compact.matrices[1][i], 2 * got.compact.matrices[0][i], 1e-6, `twoK in realisation ${i}`);
+
+	// And the page asks for that shape when it writes a file, and prices it so.
+	const { readFileSync } = await import('node:fs');
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	assert(/askProbMatrices\(pairs\.map\(\(p\) => p\.k\), all \? 'all' : mean \? 'mean' : one, \{ compact: true \}\)/.test(app),
+		'Save → Realisations asks for the whole matrix of a constant');
+	assert(/r\.outputs\[p\.i\]\?\.timeDependent === false \? 1 : r\.t\.length/.test(app), 'the size is priced at every time');
+});
+
 test('a run is written in the shape the result browser reads', async () => {
 	const { resultTree } = await import('../src/io/resultfile.js');
 	const { writeHDF5 } = await import('../src/io/hdf5.js');

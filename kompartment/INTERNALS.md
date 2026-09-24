@@ -2912,6 +2912,25 @@ where libhdf5 inserts each one again. Booleans are the string `TRUE` or
 what every reader of them tests for; an enumeration would be two more datatype
 classes for one bit.
 
+**What is written once.** A series whose value cannot change over the run is
+one value in the file and says `time_dependent = FALSE`. In a file of
+realisations it is one value per realisation, a column of *n*. Which series
+these are is decided from the model by `timeDependentOf` in
+`src/sim/runner.js`, never from the numbers:
+
+- a slot of `P`, which is a parameter or a point of a lookup table;
+- an algebraic slot the builder works out once for the run (`slotClass` 0),
+  except the kinds whose value is a history: the recorders, triggers and
+  events;
+- a derived value that is one number for the run (`isSeries` false in
+  `src/domain/derived.js`).
+
+A state is always time-dependent, even one that stays at zero. Judged by its
+numbers, a dose that has not arrived yet would be written as one zero, and
+drop out of its nuclides' chart. The descriptor carries `timeDependent: false`.
+`prob-matrix` with `compact` returns such a series as one row of realisations,
+so a file of a thousand varied parameters is not first built at every time.
+
 **How it was checked.** Every structure was decoded out of a file libhdf5 had
 written before it was written here, which is how the awkward details were
 settled rather than guessed — that a variable-length string's parent type is an
@@ -2924,11 +2943,12 @@ the other way round: files this writes are opened with `h5py`, `h5ls` and
 libhdf5, so `test/hdf5-read.js` reads them back — verifying both checksums and
 refusing anything outside the subset the writer produces.
 
-**What is not written**: chunking, compression, more than one dimension,
-references, enumerations, compound types, external links, and anything
-probabilistic. `/time` carries a `probabilistic` attribute saying `FALSE`,
-because the browser reads that to decide whether the time axis is a matrix with
-one row per iteration, and this tool runs one.
+**What is not written**: chunking, compression, references, enumerations,
+compound types and external links. A file of realisations has one
+two-dimensional dataset per series, times by realisations. `/time` carries a
+`probabilistic` attribute saying `FALSE`, because the browser reads that to
+decide whether the time axis is a matrix with one row per iteration. Every
+realisation here is reported on the one output grid, so it never is.
 
 ## Solver naming
 

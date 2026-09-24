@@ -9,7 +9,7 @@
 import { Project } from '../domain/project.js';
 import { switchTimes } from '../domain/switchtimes.js';
 import {
-	derivedBlocks, reduce as reduceDerived, derivedUnit as derivedUnitFor,
+	derivedBlocks, reduce as reduceDerived, derivedUnit as derivedUnitFor, isSeries as derivedIsSeries,
 } from '../domain/derived.js';
 import { buildSystem, tupleByList, describeTuple, BuildError } from './builder.js';
 import { julia } from '../ode/julia-solvers.js';
@@ -834,10 +834,11 @@ export function describeEntry(layout, entry, kind, source) {
 	// A waste package's inventories are in the inventory unit while the
 	// block's own unit is its release's, so the entry may say its own.
 	const unit = entry.unit ?? entry.block?.unit ?? '';
+	const still = (offset) => (timeDependentOf(layout, kind, source, offset) ? {} : { timeDependent: false });
 	if (!dims.length) {
 		return [{
 			kind, block: entry.name, nuclide: null, index: null, dims: [],
-			label: entry.name, unit, source, offset: entry.base,
+			label: entry.name, unit, source, offset: entry.base, ...still(entry.base),
 		}];
 	}
 	const md = materialDim(layout, dims);
@@ -863,10 +864,33 @@ export function describeEntry(layout, entry, kind, source) {
 			// comes to at the start, under the boxes as well.
 			unit: unit || (material && kind !== 'trigger'
 				? materialUnits?.get(material) ?? '' : ''),
-			source, offset: entry.base + off,
+			source, offset: entry.base + off, ...still(entry.base + off),
 		});
 	}
 	return out;
+}
+
+/**
+ * The kinds whose value is a history -- what the run did before now -- and so
+ * never a constant of the run, whatever they read: the recorders, a trigger
+ * and a disruptive event.
+ */
+const HISTORY_KINDS = new Set(['min_max', 'running_mean', 'snapshot', 'delay', 'trigger', 'event']);
+
+/**
+ * Whether a series can change over the run. Not for a parameter or a table
+ * point, each a slot of `P`, nor for an expression the builder works out once
+ * for the run (`slotClass` 0: it reads neither the clock nor the state). A
+ * state always can, even one that happens to stay where it started: it is a
+ * quantity that moves, and a chart of its siblings is where it belongs. A
+ * result file writes a series that cannot as one value, not as the same number
+ * at every output time (see ../io/resultfile.js); a descriptor says so with
+ * `timeDependent: false`, and says nothing otherwise.
+ */
+export function timeDependentOf(layout, kind, source, offset) {
+	if (source === 'P') return false;
+	if (source === 'X' && !HISTORY_KINDS.has(kind)) return layout.slotClass?.[offset] !== 0;
+	return true;
 }
 
 /**
@@ -919,7 +943,7 @@ export function lookupPointOutputs(layout) {
 			index: [...names, at], dims: [...dims, POINT_LIST],
 			label: `${pt.name} [${[...names, at].join(', ')}]`,
 			unit: pt.unit || (material ? materialUnits?.get(material) ?? '' : ''),
-			source: 'P', offset: pt.slot,
+			source: 'P', offset: pt.slot, timeDependent: false,
 		});
 	}
 	return out;
@@ -1027,6 +1051,10 @@ export function outputsOf(system, project) {
 				derived: { kind: d.kind, of: d.of, at: Number(d.at), period: Number(d.period) },
 				dims: [],
 				index: null,
+				// The peak, the year it peaked, the value at one time: one
+				// number for the run, drawn as a flat line. The integral and the
+				// per-period ones are curves.
+				...(derivedIsSeries(d.kind) ? {} : { timeDependent: false }),
 			});
 			known.add(String(d.name));
 		}

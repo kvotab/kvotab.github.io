@@ -2133,12 +2133,15 @@ function acceptProbMatrix(m) {
 	wait.resolve(m.gone ? null : m);
 }
 
-function askProbMatrices(indices, want = 'all') {
+function askProbMatrices(indices, want = 'all', { compact = false } = {}) {
 	const id = currentProb()?.runId;
 	if (id == null) return Promise.resolve(null);
 	return new Promise((resolve) => {
 		probMatrixWait = { id, resolve };
-		ensureWorker().postMessage({ type: 'prob-matrix', id, indices, want });
+		// `compact`: a series that cannot change over the run comes back as one
+		// row, the value in each realisation, rather than that row at every
+		// time -- which is what a file wants of it (../io/resultfile.js).
+		ensureWorker().postMessage({ type: 'prob-matrix', id, indices, want, compact });
 	});
 }
 
@@ -8796,7 +8799,10 @@ async function downloadRealisations(idx = null, suffix = null, want = 'all', han
 	// many values as a deterministic export has. Asked about before anything is
 	// allocated -- and only for the matrix, since a mean or a single run is the
 	// size of an ordinary export.
-	const bytes = all ? pairs.length * r.t.length * prob.iterations * 4 : 0;
+	const bytes = all
+		? pairs.reduce((sum, p) => sum
+			+ (r.outputs[p.i]?.timeDependent === false ? 1 : r.t.length) * prob.iterations * 4, 0)
+		: 0;
 	if (bytes > HUGE_EXPORT) {
 		const go = window.confirm(
 			`${pairs.length.toLocaleString()} series × ${prob.iterations.toLocaleString()} `
@@ -8813,7 +8819,7 @@ async function downloadRealisations(idx = null, suffix = null, want = 'all', han
 		: `Working out the ${named}…`, 'info');
 	let reply;
 	try {
-		reply = await askProbMatrices(pairs.map((p) => p.k), all ? 'all' : mean ? 'mean' : one);
+		reply = await askProbMatrices(pairs.map((p) => p.k), all ? 'all' : mean ? 'mean' : one, { compact: true });
 	} catch (e) {
 		flash(`Could not read the realisations: ${e.message}`, 'warn');
 		return;

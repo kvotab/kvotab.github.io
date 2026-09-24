@@ -288,6 +288,9 @@ function donePayload(results, outputs) {
 			dims: o.dims ?? [], index: o.index ?? null,
 			label: o.label, unit: o.unit,
 			constant: results.constantOf(o),
+			// One that cannot change over the run is written to a result file
+			// as one value: see `timeDependentOf` in ../sim/runner.js.
+			...(o.timeDependent === false ? { timeDependent: false } : {}),
 		})),
 		columns: [],
 		stats: results.stats,
@@ -703,6 +706,7 @@ function describeOutputs(result) {
 		dims: o.dims ?? [], index: o.index ?? null,
 		label: o.label, unit: o.unit,
 		...(result.flat?.[k] ? { varied: true } : {}),
+		...(o.timeDependent === false ? { timeDependent: false } : {}),
 	}));
 }
 
@@ -1467,14 +1471,25 @@ self.onmessage = async (ev) => {
 				? -1
 				: Math.min(iterations - 1, Math.max(0, Math.round(Number(want)) || 0));
 			// A varied parameter goes out in the shape every other series does,
-			// its one value per realisation at every time: the file is read by
-			// tools that know nothing of how it was held here.
+			// its one value per realisation at every time: the table of every
+			// realisation reads it so. A file does not want that for anything
+			// that cannot change over the run (`compact`): one row, the value
+			// each realisation had, which is what it writes -- see
+			// ../io/resultfile.js.
 			const flat = (k) => !!result.flat?.[k];
+			const still = (k) => flat(k) || result.outputs[k]?.timeDependent === false;
+			const row = (k) => {
+				const v = result.values[k];
+				const stride = strideOf(result, k);
+				const out = new Float32Array(iterations);
+				for (let i = 0; i < iterations; i++) out[i] = v[i * stride];
+				return out;
+			};
 			let matrices;
 			if (want === 'all') {
-				matrices = indices.map((k) => (flat(k)
-					? acrossTimes(result.values[k], times, iterations)
-					: timeMajor(result.values[k], times, iterations)));
+				matrices = indices.map((k) => (msg.compact && still(k) ? row(k)
+					: flat(k) ? acrossTimes(result.values[k], times, iterations)
+						: timeMajor(result.values[k], times, iterations)));
 			} else if (want === 'mean') {
 				matrices = indices.map((k) => (flat(k)
 					? spread(meanOf(result.values[k], 1, iterations), times)
@@ -1694,6 +1709,7 @@ self.onmessage = async (ev) => {
 				dims: o.dims ?? [], index: o.index ?? null,
 				label: o.label, unit: o.unit,
 				constant: results.constantOf(o),
+				...(o.timeDependent === false ? { timeDependent: false } : {}),
 			})),
 			columns: [],
 			stats: results.stats,

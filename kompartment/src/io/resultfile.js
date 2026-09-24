@@ -29,6 +29,16 @@
  * Attributes carry everything a reader of the file might otherwise have to
  * guess: what a series is measured in, which block it came from, what kind of
  * block that was, and -- on the root -- which model, which solver and when.
+ *
+ * **A value that cannot change over the run is one value**, not the same
+ * number at every output time: a parameter, a table's point, an expression of
+ * parameters alone, the peak of a series. Its dataset holds that number -- and
+ * in a file of realisations one number per realisation -- and says
+ * `time_dependent = 'FALSE'`, so a reader does not draw a flat line of it
+ * against `/time` and nobody stores it four hundred times over. Which values
+ * those are is the model's to say, not the numbers': a compartment that stays
+ * at nothing is still a quantity that moves, and is still drawn with its
+ * nuclides. See `timeDependentOf` in ../sim/runner.js.
  */
 
 import { F64, F32, STR, group, dataset, put } from './hdf5.js';
@@ -134,7 +144,8 @@ function stamp(when) {
  * @param {{iterations: number, matrixFor: (i: number) => (Float32Array|null)}}
  *   [options.realisations]  every run of a probabilistic result, rather than
  *   one curve: `matrixFor` returns `times × iterations` values for a series,
- *   flat and time-major, or null for a series that was not part of the run
+ *   flat and time-major -- or just `iterations` of them for one that cannot
+ *   change over the run -- or null for a series that was not part of the run
  * @param {{iterations: number, of: 'mean'|number}} [options.sample]  where one
  *   curve came from, when it is not the deterministic run but the mean of a
  *   probabilistic one or a single named realisation out of it. The values
@@ -224,13 +235,20 @@ export function resultTree({
 		// Seven significant figures is already far more than the sample means.
 		// Ecolego writes its own series as float32 for the same reason.
 		const matrix = realisations ? realisations.matrixFor(i) : null;
+		// A value that cannot change over the run is written once: one number,
+		// or one per realisation -- the first row of a matrix a caller may
+		// still hand over whole.
+		const still = o.timeDependent === false;
+		const n = realisations?.iterations ?? 0;
+		let values;
+		if (matrix) values = still && matrix.length > n ? matrix.subarray(0, n) : matrix;
 		// Not copied when it is already what the writer wants: a run of fifty
 		// thousand series is a hundred and forty megabytes, and copying each
 		// one to find out it was already a Float64Array doubles that.
-		const values = matrix ?? asDoubles(column(i));
+		else values = still ? Float64Array.of(column(i)[0]) : asDoubles(column(i));
 		const node = dataset(values, matrix ? F32 : F64, {
 			unit: o.unit || '',
-			time_dependent: true,
+			time_dependent: !still,
 			probabilistic: !!matrix,
 			...(matrix ? { n_iter: realisations.iterations } : {}),
 			...(sample && !matrix ? {
@@ -244,7 +262,7 @@ export function resultTree({
 			// this series to CSV or to a spreadsheet.
 			index: [o.label],
 			created_time: created,
-		}, matrix ? [t.length, realisations.iterations] : null);
+		}, matrix && !still ? [t.length, realisations.iterations] : null);
 		place(root, path, node);
 		if (!leafDim) continue;
 		const holder = path.slice(0, -1).reduce((at, part) => at?.children?.get(part), root);
@@ -255,7 +273,7 @@ export function resultTree({
 		holder.attrs = {
 			...holder.attrs,
 			IndexLists: [leafDim],
-			time_dependent: true,
+			time_dependent: !still,
 			probabilistic: !!matrix,
 			unit: holder.attrs?.unit === undefined || holder.attrs.unit === (o.unit || '')
 				? (o.unit || '')

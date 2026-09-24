@@ -2511,7 +2511,26 @@ The shape is the one the assessment tools read, taken from real files:
      Cs-137                  one dataset per member
      H-3
 /NearField/Flux              a block with no indices, as a dataset
+/k                           a value that cannot change over the run, once
+     @time_dependent = 'FALSE'
 ```
+
+**A value that cannot change over the run is written once**, not as the same
+number at every output time, and says `time_dependent = 'FALSE'`. These are:
+
+- a parameter;
+- a point of a lookup table;
+- an expression of parameters alone, such as `2 * k` or a transfer rate written
+  as one;
+- a derived value that is one number for the run, such as a peak or the time of
+  a peak.
+
+In a file of realisations each of these is one value per realisation: a column
+of *n* rather than a matrix of times by *n*. The result browser draws that as a
+histogram, and Import… takes it back as a sample. Which values these are is the
+model's to say, not the numbers'. A compartment that stays empty, or a flux that
+is zero until a release arrives, is still a quantity that moves. It is written at
+every time, with its nuclides.
 
 A sub-system is a group, so `bio.Soil` is at `/bio/Soil`; a block indexed by
 two lists nests, `/Dose/<area>/<nuclide>`, with the nuclide as the leaf — which
@@ -5692,7 +5711,9 @@ kvotab.se opens it as one: it draws the mean of the runs, will put a confidence
 band around it, and can pick out a single realisation — none of which would be
 possible from a file holding only quantiles, which is why the runs themselves
 are what is stored. Series that were not part of the probabilistic run keep
-their single curve in the same file and say so.
+their single curve in the same file and say so. A value that cannot change over
+the run is one value per realisation rather than a matrix, and says
+`time_dependent = 'FALSE'`: see [Saving the results](#saving-the-results).
 
 **Only the sample is a large file, and it says so before it writes one.** A
 realisation matrix is as many times the size of a series as there were
