@@ -24,7 +24,7 @@
 
 import * as ed from '../domain/edit.js';
 import { parentOf, scopeChain, isWithin } from '../domain/systems.js';
-import { blockIcon } from './icons.js';
+import { blockIcon, sampleMark } from './icons.js';
 import { symbolNodes, symbolText } from './symbol.js';
 import { hasSymbol } from '../domain/symbol.js';
 import { summarise } from './summary.js';
@@ -32,6 +32,15 @@ import { el } from './parts.js';
 
 /** The last block the tree scrolled to, so it only chases a *new* selection. */
 let lastRevealed = null;
+
+/** What each of the sample's marks says, on hover. */
+const SAMPLE_TITLE = {
+	kept: 'An endpoint the probabilistic run kept: every realisation of it is held, '
+		+ 'so a chart of it is a band.',
+	varied: 'A parameter the probabilistic run varied: the value each realisation drew '
+		+ 'is held, so a chart of it is its spread.',
+	inside: 'Holds blocks the probabilistic run has realisations of.',
+};
 
 /** A kind heading is a node too, and needs a key of its own to be opened by. */
 const groupKey = (path, collection) => `${path} :: ${collection}`;
@@ -75,6 +84,18 @@ export function renderBlockTree(host, project, selection, hooks = {}, filter = n
 	const current = hooks.currentSystem ?? '';
 
 	const pickedNames = hooks.picked ?? (selection?.name ? [selection.name] : []);
+
+	// What the sample on screen holds -- `kept` or `varied` by block -- and the
+	// sub-systems that hold any of it, so a folded one says so: on a model of
+	// fifty sub-systems the marked blocks are otherwise found by opening them
+	// one at a time. The top level is left out, since it holds everything.
+	const sampled = hooks.sample ?? null;
+	const holding = new Set();
+	if (sampled) {
+		for (const name of sampled.keys()) {
+			for (const s of scopeChain(parentOf(name))) if (s) holding.add(s);
+		}
+	}
 
 	// A block selected elsewhere -- clicked on the diagram, or landed on by
 	// the search -- is revealed wherever it lives. The tree follows the canvas
@@ -200,6 +221,17 @@ export function renderBlockTree(host, project, selection, hooks = {}, filter = n
 				label.append(' (', el('span', { className: 'tname-symbol' }, ...symbolNodes(spec.symbol)), ')');
 			}
 			node.append(twisty, blockIcon(spec.kind), label);
+			// What the sample holds of it: the same glyph the chart's chips and
+			// the table's heads wear. A sub-system gets a dot for what is
+			// inside it.
+			if (spec.sample) {
+				node.append(el('span', {
+					className: `tsample is-${spec.sample}`,
+					title: SAMPLE_TITLE[spec.sample],
+					'aria-label': spec.sample === 'inside'
+						? 'holds blocks with realisations' : `${spec.sample} by the probabilistic run`,
+				}, spec.sample === 'inside' ? '' : sampleMark(spec.sample)));
+			}
 			// What is wrong here, or inside here: the same mark the diagram
 			// wears, so a fault can be found by walking the tree as well as by
 			// opening sub-systems one by one.
@@ -260,6 +292,7 @@ export function renderBlockTree(host, project, selection, hooks = {}, filter = n
 		const addBlock = (b, depth) => {
 			if (!room()) { hidden += 1; return; }
 			const selected = picked.has(b.name);
+			const held = sampled?.get(b.name) ?? null;
 			order.push(b);
 			const r = row(depth, {
 				key: `b:${b.name}`,
@@ -268,8 +301,10 @@ export function renderBlockTree(host, project, selection, hooks = {}, filter = n
 				name: b.block.name,
 				symbol: hasSymbol(b.block) ? b.block.symbol : null,
 				sub: summarise(b.collection, b.block),
+				sample: held,
 				cls: `trow-block${selected ? ' is-selected' : ''}`
-					+ `${ed.isEffectivelyEnabled(project, b.block) ? '' : ' is-disabled'}`,
+					+ `${ed.isEffectivelyEnabled(project, b.block) ? '' : ' is-disabled'}`
+					+ `${held ? ` has-sample is-${held}` : ''}`,
 				selectable: true,
 				onPick: (ev) => choose(b, ev, order, pickedNames, hooks),
 				onOpen2: () => hooks.onOpenSettings?.(b.name),
@@ -302,7 +337,8 @@ export function renderBlockTree(host, project, selection, hooks = {}, filter = n
 			if (selected) r.setAttribute('aria-selected', 'true');
 			if (b.name === selection?.name) r.classList.add('is-primary');
 			r.title = `${b.name} — ${(ed.roleLabel(project, b.block) ?? b.kind).replace(/_/g, ' ').toLowerCase()}`
-				+ (hasSymbol(b.block) ? `, shown as ${symbolText(b.block.symbol)}` : '');
+				+ (hasSymbol(b.block) ? `, shown as ${symbolText(b.block.symbol)}` : '')
+				+ (held ? `\n${SAMPLE_TITLE[held]}` : '');
 		};
 
 		const addChildren = (node, depth) => {
@@ -356,6 +392,7 @@ export function renderBlockTree(host, project, selection, hooks = {}, filter = n
 				expandable: node.deep > 0 || node.systems.length > 0,
 				open,
 				selectable: !!node.path,
+				sample: node.path && holding.has(node.path) ? 'inside' : null,
 				cls: `trow-system${node.path === current ? ' is-current' : ''}`
 					+ `${selected ? ' is-selected' : ''}`
 					+ `${node.path && !ed.isSystemEnabled(project, node.path) ? ' is-disabled' : ''}`,

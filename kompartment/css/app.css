@@ -115,6 +115,13 @@
 	--shape-purple: #6a53c9;
 	--shape-brown: #8a5a34;
 
+	/* What a probabilistic run has realisations of -- the endpoints it kept
+	   and the parameters it varied -- as the tree, the chart's chips and the
+	   table's heads mark it. A hue of its own: the accent is the selection,
+	   amber and red are warnings and faults, and this is none of those. Read
+	   through the shape token, so each theme's step of it comes along. */
+	--sample: var(--shape-purple);
+
 	--radius: 6px;
 	--mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 	--sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
@@ -2814,6 +2821,52 @@ dialog #flash {
 	background: var(--warn-fill);
 	color: var(--warn-glyph);
 }
+
+/* --- what a sample holds -------------------------------------------------
+   The endpoints a probabilistic run kept (a band) and the parameters it
+   varied (a bell), marked alike in the tree, the chart's chips and the
+   table's heads: see `sampleMark` in icons.js. */
+.smark {
+	--smark: var(--sample);
+	flex: none;
+	display: inline-block;
+	vertical-align: -1px;
+	overflow: visible;
+}
+.smark-fill { fill: color-mix(in oklab, var(--smark) 30%, transparent); stroke: none; }
+.smark-line {
+	fill: none;
+	stroke: var(--smark);
+	stroke-width: 1.3;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+
+/* In the tree: the glyph after the name, and a bar down the row's edge, so
+   the marked rows can be picked out of a list of a thousand at a glance. */
+.trow .tsample { flex: none; display: inline-flex; align-items: center; }
+.trow.has-sample { box-shadow: inset 2px 0 0 var(--sample); }
+
+/* A sub-system holding some of them: a dot, since what it holds is mixed. */
+.trow .tsample.is-inside {
+	width: 6px;
+	height: 6px;
+	margin-left: 1px;
+	border-radius: 50%;
+	background: var(--sample);
+}
+
+/* On a chart chip, after the label, with the border in the same hue. */
+.pick.has-sample { border-color: color-mix(in oklab, var(--sample) 45%, var(--border)); }
+.pick.has-sample[aria-pressed="true"] { border-color: var(--sample); }
+
+/* The Probabilistic chip, in the tree's search line and over the chart: the
+   glyph turns to the chip's ink once it is on, so it shows on the accent. */
+.search-chip-sample { display: inline-flex; align-items: center; gap: 4px; }
+.search-chip.is-on .smark { --smark: currentColor; }
+
+/* In a table head, after the name. */
+th.has-sample .smark { margin-left: 5px; }
 
 /* The faults inside a sub-system, listed on its page. */
 .info-fault { padding: 2px 0; overflow-wrap: anywhere; }
@@ -6144,10 +6197,17 @@ table.ix-table input { width: 130px; padding: 2px 6px; font-size: 11.5px; }
 
 .search-line {
 	display: flex;
+	flex-wrap: wrap;
 	align-items: center;
-	gap: 6px;
+	gap: 4px 6px;
 	min-width: 0;
 }
+
+/* Each control keeps its label on one line, and the line wraps between them
+   instead: with a sample on screen the Probabilistic chip joins the row, and
+   squeezed into 306 pixels "Group by type" broke over three lines and Clear
+   was cut off at the edge. */
+.search-line > * { flex: none; white-space: nowrap; }
 
 /* Add one of the three, as tabs on the top edge of the tree.
 

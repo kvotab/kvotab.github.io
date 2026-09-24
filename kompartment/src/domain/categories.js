@@ -137,11 +137,14 @@ export function classify(categories, run) {
 		if (k < 0 && c.output) missing.push(c.output);
 		return k;
 	});
+	// A varied parameter is one value per realisation rather than a curve
+	// (`flat`), so its peak, its end and its value at any time are that value.
+	const stride = (k) => (run.flat?.[k] ? 1 : times);
 	for (let i = 0; i < iterations; i++) {
 		for (let c = 0; c < categories.length; c++) {
 			const k = column[c];
 			if (k < 0) continue;
-			const v = statisticOf(values[k], times, i, categories[c].stat, categories[c].at);
+			const v = statisticOf(values[k], stride(k), i, categories[c].stat, categories[c].at);
 			if (meets(v, categories[c])) { member[i] = c; break; }
 		}
 		counts[member[i]]++;

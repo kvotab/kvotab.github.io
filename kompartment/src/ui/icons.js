@@ -227,3 +227,32 @@ export function blockIcon(kind, { title = null } = {}) {
 	}
 	return g;
 }
+
+/**
+ * What a probabilistic run holds of a block, as a glyph: a band for a series
+ * it kept -- the median through its spread, the way the chart draws one -- and
+ * a bell for a parameter it varied, which is a distribution the realisations
+ * were drawn from rather than a curve over time.
+ *
+ * The tree, the chart's chips and the table's heads wear the same one, so a
+ * block marked in one place is recognisably the same block in the others.
+ *
+ * @param {'kept'|'varied'} which
+ * @returns {SVGSVGElement} 14 by 10
+ */
+export function sampleMark(which) {
+	const g = svg('svg', {
+		class: `smark smark-${which === 'varied' ? 'varied' : 'kept'}`,
+		viewBox: '0 0 14 10',
+		width: 14,
+		height: 10,
+		'aria-hidden': 'true',
+		focusable: 'false',
+	});
+	const [fill, line] = which === 'varied'
+		? ['M1 9 C4.5 9 5 1.5 7 1.5 C9 1.5 9.5 9 13 9 Z', 'M1 9 C4.5 9 5 1.5 7 1.5 C9 1.5 9.5 9 13 9']
+		: ['M1 6.5 C5 5.5 8 2.5 13 1 L13 5 C8 6.5 5 8.5 1 9.5 Z', 'M1 8 C5 7 8 4.5 13 3'];
+	g.append(svg('path', { class: 'smark-fill', d: fill }));
+	g.append(svg('path', { class: 'smark-line', d: line }));
+	return g;
+}

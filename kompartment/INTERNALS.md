@@ -4656,6 +4656,41 @@ answered in full.
 outermost faintest, and the mean when asked, as a dashed series -- the chart
 needed one new idea, `dashed`, and no other.
 
+## A varied parameter is kept as its draws
+
+`runProbabilistic` leaves every parameter out of the matrix (`source === 'P'`)
+and returns `inputs`: the output each varied parameter is, and the column of
+`samples` that holds it. A parameter is a slot of `P` that the design writes
+once per realisation, so in realisation *i* it is `samples[k][i]` exactly. Held
+as a curve it would be that number at every output time, which is `times` times
+the memory for nothing: gigabytes against megabytes on an assessment with a
+thousand varied values. A tornado or a sensitivity design has no `inputs`,
+since its points are not realisations. `ran` says which realisations
+integrated, and the pool stitches both like `samples`.
+
+The worker's `withInputs` appends them after the kept series. Each is a series
+whose values are one number per realisation, marked in `result.flat` and as
+`varied` in the descriptors the page gets. Appending leaves every kept index
+where it was, so *What drove it* and the tables number what they always did.
+A realisation that did not integrate is NaN in them, as in a kept series.
+
+Everything that reads a series goes through `strideOf` and `timeIn`: the bands,
+the summaries and histograms, the scatter's points, the categories and the
+sensitivity reply. A flat band is sent as one number per statistic
+(`flat: true`), and the page's `bandOf` spreads it over the times when a line
+of it is drawn. `prob-matrix` spreads the draws back over the times too
+(`acrossTimes`), so a result file has the shape every other series has.
+
+An endpoint is never a parameter (`canBeEndpoint` in ../domain/edit.js).
+`endpoints()` skips any in the stored list and leaves the list as the file had
+it. The picker and Save's endpoint tree do not offer parameters. The page
+compares a Done against the effective list, so dropping the file's parameters
+is never an edit on its own.
+
+`sampleContents` on the page says what a sample holds, by block and by label.
+The tree's marks and its Probabilistic chip read it, and so do the chart's
+chips, their filter (`among` in `filterOutputs`) and the Table's heads.
+
 ## Known limitations
 
 Each of these is a decision rather than an oversight, and each says what it

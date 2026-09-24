@@ -158,6 +158,10 @@ export function stitch(parts, iterations) {
 		for (const part of ordered) whole.set(part.samples[k], part.from);
 		samples.push(whole);
 	}
+	// Which realisations integrated. A part that does not say is taken to
+	// have run all of its own.
+	const ran = new Uint8Array(iterations).fill(1);
+	for (const part of ordered) if (part.ran) ran.set(part.ran, part.from);
 
 	let failed = 0;
 	const trouble = [];
@@ -178,6 +182,10 @@ export function stitch(parts, iterations) {
 		values,
 		plan: first.plan,
 		samples,
+		// The same in every slice: which outputs the varied parameters are is a
+		// fact about the model, not about the realisations a slice ran.
+		inputs: first.inputs ?? [],
+		ran,
 		iterations,
 		stats: { ...first.stats, failed, trouble, ms, workers: ordered.length },
 	};

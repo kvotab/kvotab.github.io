@@ -123,10 +123,15 @@ export function swatchAttrs(i) {
  * either. A line indexed by none of a group's lists fails the constraint, as
  * before.
  *
+ * `among`, where it is given, is one constraint more: only the lines it
+ * names, by label. It is how *Probabilistic* narrows the chips to what a
+ * sample holds.
+ *
  * @param {Array<{kind: string, label: string, dims?: string[], index?: string[]}>} outputs
  * @param {{query?: string, kinds?: Set<string>, indices?: Map<string, Set<string>>,
- *          groups?: Map<string, string[]>}} filter `indices` is keyed by list, or by
- *   group where `groups` names the lists a key stands for
+ *          groups?: Map<string, string[]>, among?: {has: (label: string) => boolean}|null}} filter
+ *   `indices` is keyed by list, or by group where `groups` names the lists a key
+ *   stands for
  * @param {(label: string) => boolean} matches the name matcher for `query`
  * @returns {number[]} the indices of the outputs that pass, in order
  */
@@ -134,8 +139,10 @@ export function filterOutputs(outputs, filter, matches) {
 	const kinds = filter.kinds ?? new Set();
 	const indices = filter.indices ?? new Map();
 	const groups = filter.groups ?? new Map();
+	const among = filter.among ?? null;
 	const out = [];
 	outputs.forEach((o, i) => {
+		if (among && !among.has(o.label)) return;
 		if (kinds.size && !kinds.has(o.kind)) return;
 		for (const [key, chosen] of indices) {
 			if (!chosen.size) continue;

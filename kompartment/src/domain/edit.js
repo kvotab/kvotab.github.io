@@ -7770,18 +7770,36 @@ export function clearBlockSize(project, blockName) {
  * and were being dropped on the way back in, so a choice of them did not
  * survive reopening the picker. A name counts when a real block is at the
  * front of it, at a boundary.
+ *
+ * **A parameter is not one** (`canBeEndpoint`). An Ecolego list often names
+ * parameters, and they are left in the file as it said them and skipped here.
  */
 export function endpoints(project) {
 	const list = project?.simulation?.endpoints;
 	if (!Array.isArray(list)) return [];
-	const known = new Set(allBlocks(project).map((b) => qualifiedName(b)));
+	const kindOf = new Map(allBlocks(project).map((b) => [qualifiedName(b), b.kind]));
 	const derived = (name) => {
 		for (const cut of [name.lastIndexOf(' '), name.lastIndexOf('.')]) {
-			if (cut > 0 && known.has(name.slice(0, cut))) return true;
+			if (cut > 0 && kindOf.has(name.slice(0, cut))) return true;
 		}
 		return false;
 	};
-	return list.map((n) => String(n)).filter((n) => known.has(n) || derived(n));
+	return list.map((n) => String(n))
+		.filter((n) => (kindOf.has(n) ? canBeEndpoint(kindOf.get(n)) : derived(n)));
+}
+
+/**
+ * Whether a block of this kind can be an endpoint: anything but a parameter.
+ *
+ * An endpoint is a result a run is asked to keep, and a parameter is not a
+ * result: it is a constant, one number in a deterministic run and in a
+ * probabilistic one the number each realisation drew -- which that run keeps
+ * of every parameter it varies whatever the list says (see `inputs` in
+ * ../sim/probabilistic.js). Offering them made the list mostly inputs on an
+ * imported assessment, and priced a run for thousands of flat curves.
+ */
+export function canBeEndpoint(kind) {
+	return kind !== 'parameter';
 }
 
 /**

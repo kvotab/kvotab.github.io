@@ -153,18 +153,27 @@ function simWorker() {
 		await import('../src/worker/sim-worker.js');
 		assert(handler, 'the worker did not install a handler');
 		let queue = Promise.resolve();
+		const direct = async (msg) => {
+			const got = [];
+			listeners.set(msg.id, (m) => got.push(m));
+			try { await handler({ data: msg }); } finally { listeners.delete(msg.id); }
+			return got;
+		};
+		const turn = (fn) => {
+			const next = queue.then(fn);
+			queue = next.catch(() => {});
+			return next;
+		};
 		return {
 			/** Posts `msg` and resolves with every reply under its id. */
-			ask(msg) {
-				const turn = queue.then(async () => {
-					const got = [];
-					listeners.set(msg.id, (m) => got.push(m));
-					try { await handler({ data: msg }); } finally { listeners.delete(msg.id); }
-					return got;
-				});
-				queue = turn.catch(() => {});
-				return turn;
-			},
+			ask: (msg) => turn(() => direct(msg)),
+			/**
+			 * Several questions with nothing else between them, `fn` asking
+			 * them through the `ask` it is handed. The worker holds one sample,
+			 * so two tests that each run one and then ask about it would, run
+			 * together, each find the other's.
+			 */
+			alone: (fn) => turn(() => fn(direct)),
 		};
 	})();
 	return workerHarness;
@@ -3760,9 +3769,14 @@ test('*What drove it* can read the whole distribution, not only a line through i
 	};
 	const { readFileSync } = await import('node:fs');
 	const harness = await simWorker();
-	const ran = await harness.ask({ type: 'probabilistic', id: 31, project: model, iterations: 300, seed: 4 });
+	// The run and the questions about it in one turn: the worker holds one
+	// sample, and another test's would otherwise take its place in between.
+	const [ran, asked, plain] = await harness.alone(async (ask) => [
+		await ask({ type: 'probabilistic', id: 31, project: model, iterations: 300, seed: 4 }),
+		await ask({ type: 'sensitivity', id: 31, index: 0, at: 0, family: 'distribution' }),
+		await ask({ type: 'sensitivity', id: 31, index: 0, at: 0 }),
+	]);
 	assert(ran.some((m) => m.type === 'probabilistic-done'), JSON.stringify(ran.filter((m) => m.type === 'error')));
-	const asked = await harness.ask({ type: 'sensitivity', id: 31, index: 0, at: 0, family: 'distribution' });
 	const reply = asked.find((m) => m.type === 'sensitivity');
 	const d = reply?.distribution;
 	assert(d?.ok && d.rows.length === 2, JSON.stringify(reply));
@@ -3780,10 +3794,180 @@ test('*What drove it* can read the whole distribution, not only a line through i
 	assert(/deltaMoment\(x, scores,/.test(worker) && /mutualInformation\(averageRanks\(x\), yRanks,/.test(worker),
 		'δ or mutual information is read on the values');
 	// Asked for only when wanted: the default is the regression family.
-	const plain = await harness.ask({ type: 'sensitivity', id: 31, index: 0, at: 0 });
 	assert(plain[0].distribution === null, 'the bootstrap ran without being asked for');
 	const dialog = readFileSync(new URL('../src/ui/sensdialog.js', import.meta.url), 'utf8');
 	assert(/\['distribution', 'Distribution: EASI, δ, MI, RSA',/.test(dialog), 'the dialog does not offer them');
+});
+
+test('a sample keeps the parameters it varies as their draws, and no parameter is an endpoint', async () => {
+	const { runProbabilistic, quantiles } = await import('../src/sim/probabilistic.js');
+	const { stitch, slices } = await import('../src/worker/prob-pool.js');
+	const { readFileSync } = await import('node:fs');
+	const read = (f) => readFileSync(new URL(f, import.meta.url), 'utf8');
+	const pdf = (params) => ({ kind: 'unif', params, values: null, trmin: null, trmax: null, inorder: true, pos: 0 });
+	// A holds k * m for the whole run: two varied inputs and one that is not.
+	const model = {
+		name: 'draws',
+		simulation: {
+			start_time: 0, end_time: 1, output_points: 4, spacing: 'linear',
+			solver: 'ndf', rtol: 1e-10, abstol: 1e-14, time_unit: 'year',
+			endpoints: ['A', 'k', 'fixed'],
+		},
+		parameters: [
+			{ name: 'k', value: 1, index_lists: [], pdf: pdf({ min: 0.5, max: 2 }) },
+			{ name: 'm', value: 2, index_lists: [], pdf: pdf({ min: 1, max: 3 }) },
+			{ name: 'fixed', value: 2, index_lists: [] },
+		],
+		compartments: [{ name: 'A', initial: 'k * m', index_lists: [] }],
+		transfers: [],
+	};
+	const n = 40;
+
+	// No parameter is in the matrix, whatever is kept -- a parameter is one
+	// number per realisation, and a curve of it is that number at every time.
+	const whole = runProbabilistic(structuredClone(model), { iterations: n, seed: 3 });
+	assert(whole.outputs.length > 0 && whole.outputs.every((o) => o.kind !== 'parameter'),
+		JSON.stringify(whole.outputs.map((o) => o.label)));
+	// The ones that vary come back as draws: which output each is, and which
+	// column of the samples holds it. `fixed` does not vary and is not there.
+	assert(JSON.stringify(whole.inputs.map((x) => x.output.block)) === '["k","m"]',
+		JSON.stringify(whole.inputs.map((x) => x.output.label)));
+	for (const { output, k } of whole.inputs) assert(whole.plan[k].name === output.block, output.label);
+	assert(whole.ran.length === n && whole.ran.every((v) => v === 1), 'a realisation is said to have failed');
+	// Whatever `keep` says, and only what varies: a partial run holds m.
+	const none = runProbabilistic(structuredClone(model), { iterations: 10, seed: 3, keep: () => false });
+	assert(none.outputs.length === 0 && none.inputs.length === 2, 'keeping nothing lost the inputs');
+	const partial = runProbabilistic(structuredClone(model), { iterations: 10, seed: 3, varied: ['k'] });
+	assert(JSON.stringify(partial.inputs.map((x) => x.output.block)) === '["k"]', 'a held input is kept');
+	// A tornado's points are not realisations of anything.
+	const swung = runProbabilistic(structuredClone(model), { tornado: { low: 0.1, high: 0.9 } });
+	assert(swung.inputs.length === 0, 'a tornado keeps its inputs as a sample');
+	// Shared out over workers it says the same.
+	const joined = stitch(slices(n, 3).map((range) =>
+		runProbabilistic(structuredClone(model), { iterations: n, seed: 3, range })), n);
+	assert(JSON.stringify(joined.inputs.map((x) => x.k)) === JSON.stringify(whole.inputs.map((x) => x.k))
+		&& joined.ran.length === n && joined.ran.every((v) => v === 1), 'the slices lost the inputs');
+
+	// The worker puts them after the kept series, one number per realisation.
+	// The run and every question about it in one turn: see `alone`.
+	const drawsOf = (name) => whole.samples[whole.plan.findIndex((e) => e.name === name)];
+	const kDraws = drawsOf('k');
+	const mDraws = drawsOf('m');
+	const sorted = [...kDraws].sort((a, b) => a - b);
+	const middle = sorted[n / 2];
+	const harness = await simWorker();
+	const got = await harness.alone(async (ask) => {
+		const ran = await ask({ type: 'probabilistic', id: 51, project: structuredClone(model),
+			iterations: n, seed: 3, blocks: ['A'] });
+		const done = ran.find((m) => m.type === 'probabilistic-done');
+		if (!done) return { ran };
+		const k = done.payload.outputs.findIndex((o) => o.block === 'k');
+		const a = done.payload.outputs.findIndex((o) => o.block === 'A');
+		const first = async (msg) => (await ask(msg))[0];
+		return {
+			ran, done,
+			summary: await first({ type: 'prob-summary', id: 51, index: k, at: 2 }),
+			points: await first({ type: 'prob-points', id: 51, x: k, ys: [a], at: 2 }),
+			all: await first({ type: 'prob-matrix', id: 51, indices: [k], want: 'all' }),
+			one: await first({ type: 'prob-matrix', id: 51, indices: [k], want: 5 }),
+			mean: await first({ type: 'prob-matrix', id: 51, indices: [k], want: 'mean' }),
+			// "At the peak" of a parameter first and a curve second is the curve's.
+			hist: await first({ type: 'prob-hist', id: 51, indices: [k, a], at: 'peak' }),
+			// A category can be of one.
+			cats: await first({ type: 'prob-categories', id: 51, categories: [{
+				label: 'high k', output: done.payload.outputs[k].label, stat: 'max', op: '>=',
+				value: middle, include: true,
+			}] }),
+		};
+	});
+	const { done } = got;
+	assert(done, JSON.stringify(got.ran.filter((m) => m.type === 'error')));
+	const outs = done.payload.outputs;
+	assert(JSON.stringify(outs.map((o) => [o.block, !!o.varied])) === '[["A",false],["k",true],["m",true]]',
+		JSON.stringify(outs.map((o) => [o.label, o.varied])));
+	const at = (name) => outs.findIndex((o) => o.block === name);
+	const times = done.payload.t.length;
+	// Its band is one number per statistic -- the quantiles of the draws.
+	const band = done.payload.bands[at('k')];
+	const want = quantiles(kDraws, 1, n, done.payload.quantiles);
+	assert(band.flat === true && band.q.every((y, j) => y.length === 1 && y[0] === want[j].y[0]),
+		JSON.stringify(band.q));
+	assert(!done.payload.bands[at('A')].flat && done.payload.bands[at('A')].q[0].length === times,
+		'a kept series lost its curve');
+	// Every question about it is answered from the draws.
+	assert(got.summary.column.length === n && got.summary.column.every((v, i) => v === sorted[i]),
+		'the summary is not of the draws');
+	for (let i = 0; i < n; i++) {
+		assert(got.points.x.values[i] === kDraws[i], `realisation ${i} is not paired with its own draw`);
+		close(got.points.ys[0].values[i], kDraws[i] * mDraws[i], 1e-8, `A in realisation ${i}`);
+	}
+	assert(got.all.matrices[0].length === times * n, 'the matrix is not a row per time');
+	for (let j = 0; j < times; j++) {
+		for (let i = 0; i < n; i++) {
+			assert(got.all.matrices[0][j * n + i] === Math.fround(kDraws[i]), `row ${j}, column ${i}`);
+		}
+	}
+	assert(got.one.matrices[0].length === times && got.one.matrices[0].every((v) => v === kDraws[5]),
+		'one realisation is not its draw');
+	close(got.mean.matrices[0][times - 1], kDraws.reduce((sum, v) => sum + v, 0) / n, 1e-12, 'the mean of the draws');
+	assert(got.hist.items.length === 2 && got.hist.at >= 0 && got.hist.at < times, JSON.stringify(got.hist.at));
+	assert(got.cats.screen?.counts?.[0] === kDraws.filter((v) => v >= middle).length, JSON.stringify(got.cats.screen));
+
+	// On the page: a flat band is spread over the times when it is drawn.
+	const app = await import('../src/ui/app.js');
+	const prob = { t: done.payload.t, bands: done.payload.bands, outputs: outs };
+	const spread = app.bandOf(prob, at('k'));
+	assert(spread.q.every((y, j) => y.length === times && y.every((v) => v === want[j].y[0]))
+		&& spread.sd.n.length === times && spread.med.errLo.length === times, 'the band is not spread over the times');
+	assert(app.bandOf(prob, at('A')) === done.payload.bands[at('A')], 'a curve was copied');
+	// What a sample holds, by block and by line -- a far-field path's results
+	// counting for the path.
+	const held = app.sampleContents({ outputs: [...outs, { block: 'Rock held', label: 'Rock held' }] },
+		['A', 'k', 'm', 'fixed', 'Rock']);
+	assert(JSON.stringify([...held.blocks]) === '[["A","kept"],["k","varied"],["m","varied"],["Rock","kept"]]',
+		JSON.stringify([...held.blocks]));
+	// *What drove it* is about the kept series; a distribution can be of an input.
+	assert(app.sensitivityTarget(prob, null, [], null)?.index === 0, 'What drove it of nothing');
+	assert(app.sensitivityTarget(prob, { outputs: [{ label: outs[at('k')].label }] }, [0]).fellBack,
+		'What drove it is about an input');
+	assert(app.sensitivityTarget(prob, { outputs: [{ label: outs[at('k')].label }] }, [0], null, true).index === at('k'),
+		'a distribution cannot be of an input');
+	// The chart's filter narrows to what the sample holds.
+	const { filterOutputs } = await import('../src/ui/chart.js');
+	const every = () => true;
+	const lines = [{ kind: 'compartment', label: 'A' }, { kind: 'parameter', label: 'k' }, { kind: 'parameter', label: 'fixed' }];
+	assert(JSON.stringify(filterOutputs(lines, { among: new Set(['A', 'k']) }, every)) === '[0,1]', 'among is ignored');
+	assert(filterOutputs(lines, {}, every).length === 3, 'no among is a filter');
+
+	// No parameter is an endpoint: skipped in the model's list, which keeps
+	// what the file said, and never offered.
+	const ed = await import('../src/domain/edit.js');
+	assert(JSON.stringify(ed.endpoints(model)) === '["A"]' && model.simulation.endpoints.length === 3,
+		JSON.stringify(ed.endpoints(model)));
+	assert(!ed.canBeEndpoint('parameter') && ed.canBeEndpoint('lookup') && ed.canBeEndpoint('expression'));
+	const page = read('../src/ui/app.js');
+	assert(/outputs: outputs\.filter\(\(o\) => ed\.canBeEndpoint\(o\.kind\)\),/.test(page), 'the picker offers parameters');
+	assert(/series: \(outputsNow\(\) \?\? \[\]\)\.filter\(\(o\) => ed\.canBeEndpoint\(o\.kind\)\)\.length,/.test(page),
+		'the dialog prices parameters as curves');
+	assert(/const candidates = series\.filter\(\(s\) => canBeEndpoint\(s\.kind\)\);/.test(read('../src/ui/savedialog.js')),
+		'Save offers parameters as endpoints');
+	assert(/const same = names\.length === was\.size && names\.every\(\(n\) => was\.has\(n\)\);/.test(page),
+		'Done on the same list is an edit');
+	assert(/'hint prob-inputs'/.test(read('../src/ui/probdialog.js')), 'the dialog does not say the inputs are kept');
+	// What the sample holds is marked in the tree, on the chart's chips and in
+	// the table's heads, and the tree and the chips can be narrowed to it.
+	const tree = read('../src/ui/tree.js');
+	assert(/sample: sampleHolds\(\)\?\.blocks \?\? null,/.test(page) && /className: `tsample is-\$\{spec\.sample\}`/.test(tree)
+		&& /has-sample is-\$\{held\}/.test(tree) && /holding\.has\(node\.path\) \? 'inside' : null/.test(tree),
+		'the tree does not mark what the sample holds');
+	assert(/sampleMark\('kept'\), 'Probabilistic'\);/.test(page) && /state\.search\.sample = !on;/.test(page)
+		&& /function treeFilter\(\) \{/.test(page) && /\}, treeFilter\(\), state\.tree\);/.test(page),
+		'the tree cannot be narrowed to the sample');
+	assert(/chipRow\('sample', \[chip\]\)/.test(page) && /among: held\?\.labels \?\? null/.test(page)
+		&& /className: `pick\$\{which \? ` has-sample is-\$\{which\}` : ''\}`/.test(page),
+		'the chips do not mark or filter what the sample holds');
+	assert(/className: `has-sample is-\$\{mark\}`/.test(page), 'the table does not mark its columns');
+	assert(/--sample: var\(--shape-purple\);/.test(read('../css/app.css')), 'no colour for the mark');
 });
 
 test('the reader can say how many cores, and the run says how many it is on', async () => {
@@ -4891,7 +5075,7 @@ test('a model brings its endpoint list, and a run can be told to keep it', async
 	assert(/'Cancel'/.test(eps) && /'Done'/.test(eps), 'the picker cannot be finished or left');
 	assert(/renderDualTree\(box, \{/.test(eps) && /titles: \['Not kept', 'Endpoints'\]/.test(eps),
 		'the endpoints are not chosen between two trees');
-	assert(/if \(ed\.setEndpoints\(state\.raw, names\)\) \{/.test(app), 'the choice is not remembered');
+	assert(/if \(!same && ed\.setEndpoints\(state\.raw, names\)\) \{/.test(app), 'the choice is not remembered');
 	assert(/modelChanged\(\{ layoutOnly: true \}\);/.test(app), 'remembering would re-run the model');
 });
 
@@ -8695,7 +8879,7 @@ test('the realisations can be sorted into categories and the displays screened t
 	assert(/const categories = categoriesOf\(project\);/.test(worker), 'the run does not apply the model’s categories');
 	assert(/if \(msg\.type === 'prob-categories'\)/.test(worker), 'categories cannot be changed after the run');
 	assert(/bandsOf\(result, percentiles, mask\)/.test(worker), 'the bands are not drawn over the kept realisations');
-	assert(/ranked\(r\.samples, values, times, r\.iterations, at,\n\t\t\t\t\{ most: msg\.most \?\? 20, mask \}\)/.test(worker),
+	assert(/ranked\(r\.samples, values, stride, r\.iterations, a,\n\t\t\t\t\{ most: msg\.most \?\? 20, mask \}\)/.test(worker),
 		'What drove it ignores the screen');
 	assert(/sim\.categories = cats\.map/.test(app), 'the page does not save the categories');
 	assert(/realisations `\n\t\t\t\+ 'shown \(categories\)'/.test(app), 'the legend does not say the bands are screened');
@@ -10964,7 +11148,7 @@ test('the canvas menu is about a place, and the tree can be pasted into', async 
 		'the editor does not answer it');
 	// Wired on the tree and not on the Information card, which carries a
 	// hook of the same name for the block it is describing.
-	const treeCall = /renderBlockTree\(\$\('#blocklist'\)[\s\S]*?\}, state\.search, state\.tree\);/
+	const treeCall = /renderBlockTree\(\$\('#blocklist'\)[\s\S]*?\}, treeFilter\(\), state\.tree\);/
 		.exec(app)?.[0] ?? '';
 	assert(/onPlaceMenu:/.test(treeCall), 'the hook is not on the tree');
 });
@@ -32167,7 +32351,7 @@ test('a scatter pairs the realisations, and its line is fitted to what is drawn'
 		'screened realisations are plotted');
 	// One list of rows for every column, so a point never pairs one
 	// realisation's x with another's y.
-	assert(/const rows = \[\];/.test(points) && /rows\[j\] \* times \+ at/.test(points),
+	assert(/const rows = \[\];/.test(points) && /values\[rows\[j\] \* stride \+ a\]/.test(points),
 		'the columns are not taken over the same realisations');
 
 	// The reply carries the sample's id, so it has to be on the list that
@@ -32600,7 +32784,7 @@ test('the Table can be any of the runs a sample holds, and the whole matrix of o
 	// The median and the mean are already on the page, in the bands. Only a
 	// single realisation and the whole matrix need the worker, which is where
 	// the realisations are.
-	assert(/if \(which === 'mean'\) return prob\.bands\[k\]\.mean;/.test(app),
+	assert(/if \(which === 'mean'\) return bandOf\(prob, k\)\.mean;/.test(app),
 		'the mean over time is fetched when the page already has it');
 	assert(/askProbMatrices\(want, String\(state\.tableReal\)\)/.test(app),
 		'one realisation cannot be read out of the sample');

@@ -21,6 +21,7 @@
 import { el } from './parts.js';
 import { openModal } from './modal.js';
 import { renderDualTree, dualTreeState } from './dualtree.js';
+import { canBeEndpoint } from '../domain/edit.js';
 
 /**
  * What can be written, in the order a reader looks for them.
@@ -160,6 +161,10 @@ export function openSaveDialog({
 	let holds = HOLDS.some(([v]) => v === chosen.holds) ? chosen.holds : 'all';
 	let which = Math.min(iterations, Math.max(1, Math.round(Number(chosen.which)) || 1));
 
+	// What an endpoint can be chosen from: every series but a parameter's
+	// (`canBeEndpoint`).
+	const candidates = series.filter((s) => canBeEndpoint(s.kind));
+	const itemsOf = (list) => (list === 'data' ? data : list === 'endpoints' ? candidates : series);
 	// One choice per list, kept while the dialog is open so switching
 	// between Results and Realisations does not lose it -- and the two trees'
 	// searches, filters and open sub-systems with it.
@@ -168,7 +173,7 @@ export function openSaveDialog({
 		// The endpoints the model already declares, or everything when it
 		// declares none -- which is what a run keeps today.
 		endpoints: {
-			chosen: new Set(endpoints.length ? endpoints : series.map((s) => s.key)),
+			chosen: new Set(endpoints.length ? endpoints : candidates.map((s) => s.key)),
 			ui: dualTreeState(),
 		},
 		data: { chosen: new Set(data.map((d) => d.key)), ui: dualTreeState() },
@@ -291,18 +296,16 @@ export function openSaveDialog({
 			// Whether the list, where there is one, has anything in it.
 			const none = () => {
 				if (!what.picks) return false;
-				const items = what.picks === 'data' ? data : series;
-				return !items.some((it) => picks[what.picks].chosen.has(it.key));
+				return !itemsOf(what.picks).some((it) => picks[what.picks].chosen.has(it.key));
 			};
 			const settle = () => {
 				able(!refusal(what, can) && !none());
 				note.textContent = noteText(none());
 			};
 			if (what.picks) {
-				const items = what.picks === 'data' ? data : series;
 				const box = el('div', { className: 'save-pick' });
 				renderDualTree(box, {
-					items,
+					items: itemsOf(what.picks),
 					chosen: picks[what.picks].chosen,
 					ui: picks[what.picks].ui,
 					titles: TITLES[what.picks],

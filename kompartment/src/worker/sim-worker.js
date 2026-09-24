@@ -321,19 +321,82 @@ function percentilesFor(list) {
 }
 
 /**
+ * The varied parameters, put back beside the series the run kept.
+ *
+ * A parameter is one number per realisation -- the value the design set -- so
+ * the run does not keep it as a curve (see `inputs` in ../sim/probabilistic.js).
+ * It is added here as a series whose values are that column of draws:
+ * `iterations` long rather than `iterations * times`, marked in `flat`, and
+ * read at a single time by everything here that reads a series (`strideOf`).
+ * A realisation that did not integrate is NaN in it, as it is in every kept
+ * series, so the two are statistics over the same runs.
+ *
+ * After the kept series, so that their indices do not move: *What drove it*
+ * and everything else that numbers them keeps its numbers.
+ */
+function withInputs(result) {
+	const flat = new Array(result.outputs.length).fill(0);
+	const failed = result.ran && result.ran.includes(0);
+	for (const { output, k } of result.inputs ?? []) {
+		const drawn = failed ? Float64Array.from(result.samples[k]) : result.samples[k];
+		if (failed) for (let i = 0; i < drawn.length; i++) if (!result.ran[i]) drawn[i] = NaN;
+		result.outputs.push(output);
+		result.values.push(drawn);
+		flat.push(1);
+	}
+	result.flat = Uint8Array.from(flat);
+	return result;
+}
+
+/**
+ * How far apart one realisation's values are in series `k`: a time's worth,
+ * or one for a varied parameter, which has a single value per realisation.
+ */
+function strideOf(result, k) {
+	return result.flat?.[k] ? 1 : result.t.length;
+}
+
+/** Which time to read series `k` at: the one asked, or its only one. */
+function timeIn(result, k, at) {
+	return result.flat?.[k] ? 0 : at;
+}
+
+/** One number per statistic, as a curve over `times`. */
+function spread(v, times) {
+	return v.length === times ? v : new Float64Array(times).fill(v[0]);
+}
+
+/**
+ * A varied parameter's draws as a result file's matrix -- `timeMajor`'s shape,
+ * a row per time with the realisations fastest, float32 -- which is the same
+ * row at every time.
+ */
+function acrossTimes(values, times, iterations) {
+	const row = Float32Array.from(values.subarray(0, iterations));
+	const out = new Float32Array(times * iterations);
+	for (let j = 0; j < times; j++) out.set(row, j * iterations);
+	return out;
+}
+
+/**
  * The bands, the mean and the two spreads for every kept series, over the
  * realisations in `mask` -- all of them when it is null.
  *
  * Both lines the chart offers carry their own pair of intervals, because
  * neither's can be made out of the other's: `sd` is about the mean and
  * `med` about the median, and the chart draws whichever the reader's line is.
+ *
+ * A varied parameter's are one number each, marked `flat`, and are spread
+ * across the times on the page when a series is drawn: a band per time for
+ * it would be the same number at every time, for each of what can be a
+ * thousand inputs.
  */
 function bandsOf(result, percentiles, mask) {
-	const times = result.t.length;
-	return result.values.map((v) => {
+	return result.values.map((v, k) => {
+		const times = strideOf(result, k);
 		const qs = quantiles(v, times, result.iterations, percentiles, mask);
 		const mean = meanOf(v, times, result.iterations, mask);
-		return {
+		const band = {
 			q: qs.map((b) => b.y),
 			mean,
 			sd: sdOf(v, times, result.iterations, mean, mask),
@@ -342,6 +405,8 @@ function bandsOf(result, percentiles, mask) {
 			// `sd.n` is the same set of realisations.
 			med: medianSpread(v, times, result.iterations, 1.959964, mask),
 		};
+		if (result.flat?.[k]) band.flat = true;
+		return band;
 	});
 }
 
@@ -604,12 +669,17 @@ function distributionMeasures(r, values, times, at, rows, mask) {
 	};
 }
 
-/** The outputs of a design result, as the page wants them described. */
+/**
+ * The outputs of a design result, as the page wants them described. `varied`
+ * marks a parameter the run varied, which is read from the draws (see
+ * `withInputs`), from a series the run kept.
+ */
 function describeOutputs(result) {
-	return result.outputs.map((o) => ({
+	return result.outputs.map((o, k) => ({
 		kind: o.kind, block: o.block, nuclide: o.nuclide,
 		dims: o.dims ?? [], index: o.index ?? null,
 		label: o.label, unit: o.unit,
+		...(result.flat?.[k] ? { varied: true } : {}),
 	}));
 }
 
@@ -690,7 +760,7 @@ self.onmessage = async (ev) => {
 			});
 			// Transferred, not copied: a slice is the matrix this worker holds
 			// and there is no reason for two of it to exist while it crosses.
-			const buffers = [...r.values, ...r.samples].map((a) => a.buffer);
+			const buffers = [...r.values, ...r.samples, r.ran].map((a) => a.buffer);
 			self.postMessage({
 				type: 'prob-slice-done',
 				id,
@@ -699,6 +769,8 @@ self.onmessage = async (ev) => {
 					outputs: r.outputs,
 					values: r.values,
 					samples: r.samples,
+					inputs: r.inputs,
+					ran: r.ran,
 					plan: r.plan,
 					from: r.from,
 					to: r.to,
@@ -719,8 +791,10 @@ self.onmessage = async (ev) => {
 		const { id, project } = msg;
 		try {
 			self.postMessage({ type: 'loading', id, stage: 'building' });
-			const result = await runDesign(msg);
-			if (!result) return;
+			const designed = await runDesign(msg);
+			if (!designed) return;
+			// The varied parameters with the kept series, whatever was kept.
+			const result = withInputs(designed);
 
 			// The bands, not the matrix: a thousand realisations of a hundred
 			// series is 280 MB and the page draws five curves from it. The
@@ -842,7 +916,8 @@ self.onmessage = async (ev) => {
 			if (!values) return;
 			const times = result.t.length;
 			const at = Math.min(times - 1, Math.max(0, Number(msg.at ?? times - 1)));
-			const sorted = sortedColumn(values, times, result.iterations, at, mask);
+			const sorted = sortedColumn(values, strideOf(result, k), result.iterations,
+				timeIn(result, k, at), mask);
 			const column = Float64Array.from(sorted);
 			// Which category each kept realisation is in, in the column's
 			// order, so the page can colour a histogram by it.
@@ -876,16 +951,21 @@ self.onmessage = async (ev) => {
 		try {
 			const { result, mask } = lastProb;
 			const times = result.t.length;
+			// "At the peak" is the peak of a curve, and a varied parameter has
+			// none: it is the first series asked about that has one.
+			const curve = (msg.indices ?? [0]).map(Number)
+				.find((k) => result.values[k] && !result.flat?.[k]);
 			const at = msg.at === 'peak'
-				? peakTime(result.values[Number(msg.indices?.[0] ?? 0)] ?? new Float64Array(0),
-					times, result.iterations, mask)
+				? (curve === undefined ? times - 1
+					: peakTime(result.values[curve], times, result.iterations, mask))
 				: Math.min(times - 1, Math.max(0, Number(msg.at ?? times - 1)));
 			const items = [];
 			for (const raw of msg.indices ?? []) {
 				const k = Number(raw);
 				const values = result.values[k];
 				if (!values) continue;
-				const sorted = sortedColumn(values, times, result.iterations, at, mask);
+				const sorted = sortedColumn(values, strideOf(result, k), result.iterations,
+					timeIn(result, k, at), mask);
 				items.push({
 					index: k,
 					summary: describeSample(sorted),
@@ -930,11 +1010,14 @@ self.onmessage = async (ev) => {
 				if (mask && !mask[i]) continue;
 				rows.push(i);
 			}
-			const take = (k) => {
-				const values = result.values[Number(k)];
+			const take = (raw) => {
+				const k = Number(raw);
+				const values = result.values[k];
 				if (!values) return null;
+				const stride = strideOf(result, k);
+				const a = timeIn(result, k, at);
 				const out = new Float64Array(rows.length);
-				for (let j = 0; j < rows.length; j++) out[j] = values[rows[j] * times + at];
+				for (let j = 0; j < rows.length; j++) out[j] = values[rows[j] * stride + a];
 				return out;
 			};
 			const x = take(msg.x);
@@ -1258,6 +1341,10 @@ self.onmessage = async (ev) => {
 			const values = r.values[k];
 			if (!values) return;
 			const times = r.t.length;
+			// A varied parameter is read at its one time, and its curves are
+			// that one number across the times. The page does not ask about
+			// one -- they are not in the dialog's list -- but a stale index can.
+			const stride = strideOf(r, k);
 			const { mask } = lastProb;
 			// `at: 'peak'` is "wherever this output is largest on average",
 			// which is the time a reader means by "at the peak" and could not
@@ -1265,16 +1352,17 @@ self.onmessage = async (ev) => {
 			// matrix is here: the mean over the realisations at each time, and
 			// the time that maximises it.
 			const at = msg.at === 'peak'
-				? peakTime(values, times, r.iterations, mask)
+				? peakTime(values, stride, r.iterations, mask)
 				: Math.min(times - 1, Math.max(0, Number(msg.at ?? times - 1)));
-			const rows = ranked(r.samples, values, times, r.iterations, at,
+			const a = timeIn(r, k, at);
+			const rows = ranked(r.samples, values, stride, r.iterations, a,
 				{ most: msg.most ?? 20, mask });
 			// The over-time shape for the few that matter, which is the chart
 			// Ecolego draws: an input that governs the first century and not
 			// the next ten thousand years is a thing one number cannot say.
 			const curves = rows.slice(0, 6).map((row) => ({
 				k: row.k,
-				y: overTime(r.samples[row.k], values, times, r.iterations, { mask }),
+				y: spread(overTime(r.samples[row.k], values, stride, r.iterations, { mask }), times),
 			}));
 			// The regression family and the first-order index, at this time.
 			// One inverse of a (K+1)-wide matrix; on the largest sample here
@@ -1284,7 +1372,7 @@ self.onmessage = async (ev) => {
 			let measures = null;
 			if (r.samples.length <= 3000) {
 				const y = new Float64Array(r.iterations);
-				for (let i = 0; i < r.iterations; i++) y[i] = values[i * times + at];
+				for (let i = 0; i < r.iterations; i++) y[i] = values[i * stride + a];
 				const translate = TRANSLATIONS.has(msg.translate) ? msg.translate : 'none';
 				const reg = regressionMeasures(r.samples, y, { translate, mask });
 				measures = {
@@ -1297,7 +1385,7 @@ self.onmessage = async (ev) => {
 				};
 			}
 			const distribution = msg.family === 'distribution'
-				? distributionMeasures(r, values, times, at, rows, mask) : null;
+				? distributionMeasures(r, values, stride, a, rows, mask) : null;
 			self.postMessage({
 				type: 'sensitivity',
 				id: msg.id,
@@ -1355,14 +1443,23 @@ self.onmessage = async (ev) => {
 			const one = want === 'all' || want === 'mean'
 				? -1
 				: Math.min(iterations - 1, Math.max(0, Math.round(Number(want)) || 0));
+			// A varied parameter goes out in the shape every other series does,
+			// its one value per realisation at every time: the file is read by
+			// tools that know nothing of how it was held here.
+			const flat = (k) => !!result.flat?.[k];
 			let matrices;
 			if (want === 'all') {
-				matrices = indices.map((k) => timeMajor(result.values[k], times, iterations));
+				matrices = indices.map((k) => (flat(k)
+					? acrossTimes(result.values[k], times, iterations)
+					: timeMajor(result.values[k], times, iterations)));
 			} else if (want === 'mean') {
-				matrices = indices.map((k) => meanOf(result.values[k], times, iterations));
+				matrices = indices.map((k) => (flat(k)
+					? spread(meanOf(result.values[k], 1, iterations), times)
+					: meanOf(result.values[k], times, iterations)));
 			} else {
-				matrices = indices.map(
-					(k) => Float64Array.from(result.values[k].subarray(one * times, (one + 1) * times)));
+				matrices = indices.map((k) => (flat(k)
+					? new Float64Array(times).fill(result.values[k][one])
+					: Float64Array.from(result.values[k].subarray(one * times, (one + 1) * times))));
 			}
 			self.postMessage(
 				{ type: 'prob-matrix', id: msg.id, indices, matrices, times, iterations,

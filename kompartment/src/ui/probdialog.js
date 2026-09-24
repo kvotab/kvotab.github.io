@@ -133,6 +133,14 @@ export function openProbabilisticDialog({
 			// --- what it would do, before what to set.
 			const kinds = new Map();
 			for (const e of plan) kinds.set(e.kind ?? e.spec?.kind, (kinds.get(e.kind ?? e.spec?.kind) ?? 0) + 1);
+			// The parameters that vary, which the run keeps whatever else it
+			// keeps: as the value each realisation drew rather than as curves,
+			// so they cost next to nothing (see `inputs` in
+			// ../sim/probabilistic.js). A point of a lookup table is not one --
+			// the table is kept as its curve, when it is kept at all.
+			const inputBlocks = new Set(plan
+				.filter((e) => !String(e.name).includes('@') && (!varied || varied.has(slotName(e))))
+				.map((e) => e.name));
 			const summary = el('div', { className: 'prob-summary' },
 				el('p', {},
 					el('b', {}, `${plan.length.toLocaleString()} value${plan.length === 1 ? '' : 's'}`),
@@ -151,6 +159,14 @@ export function openProbabilisticDialog({
 					el('b', {}, asFile.text),
 					' — they are saved as float32, which is half what the run holds and '
 					+ 'still finer than a sample of this size can justify.'),
+				inputBlocks.size
+					? el('p', { className: 'hint prob-inputs' },
+						el('b', {}, `The ${inputBlocks.size.toLocaleString()} parameter`
+							+ `${inputBlocks.size === 1 ? '' : 's'} it varies`),
+						`${inputBlocks.size === 1 ? ' is' : ' are'} kept whatever else is, as the `
+						+ 'value each realisation drew, and can be charted, tabled and saved beside '
+						+ 'the series.')
+					: null,
 				// A model set to the solver's own points is the one case where
 				// a sample cannot report what a single run reports, and it is
 				// worth saying before the run rather than leaving the reader to

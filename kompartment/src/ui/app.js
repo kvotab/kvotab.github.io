@@ -38,7 +38,7 @@ import {
 	renderInspector,
 } from './inspector.js';
 import { section as part, el } from './parts.js';
-import { blockIcon } from './icons.js';
+import { blockIcon, sampleMark } from './icons.js';
 import { openMenu } from './menu.js';
 import { openModal, refreshModal, closeModal, closeAllModals } from './modal.js';
 import { openProbabilisticDialog, openReplayDialog, openBandsDialog, bandPairs } from './probdialog.js';
@@ -316,7 +316,9 @@ const state = {
 	// nothing reads -- pinned over the list. It narrows rather than replaces,
 	// so the name box and the kind chips still work on top of it. `onlyLabel`
 	// is what to call it on screen, since a set of names is not self-describing.
-	search: { query: '', kinds: new Set(), only: null, onlyLabel: '' },
+	// `sample` is the Probabilistic chip: only what the sample on screen holds,
+	// on top of the rest, and nothing at all while there is no sample.
+	search: { query: '', kinds: new Set(), only: null, onlyLabel: '', sample: false },
 	// Where the Information view has been, so following a reference can be
 	// undone. Every selection is recorded, wherever it came from, which is
 	// what a navigation history does.
@@ -335,8 +337,9 @@ const state = {
 	// the model's, so it is not saved and changing it marks nothing stale.
 	matrixOpen: new Set(),
 	// The same idea for the chart's series picker: a name pattern, the kinds
-	// of output, and one set of allowed indices per index list.
-	pick: { query: '', kinds: new Set(), indices: new Map() },
+	// of output, one set of allowed indices per index list, and the same
+	// Probabilistic chip the tree has.
+	pick: { query: '', kinds: new Set(), indices: new Map(), sample: false },
 	// The file this model was last written to, and the revision it was written
 	// at. Together they are what makes Save mean *save* rather than *save a
 	// copy somewhere*: with a file in hand the button writes to it and says
@@ -719,6 +722,96 @@ function currentProb() {
 }
 
 /**
+ * Series `k`'s band, over the sample's times.
+ *
+ * A varied parameter's arrives as one number per statistic -- `flat`, see
+ * `bandsOf` in ../worker/sim-worker.js -- and is spread across the times the
+ * first time something draws it, then kept with the band: a chart of three
+ * parameters has no use for the other thousand spread out.
+ */
+export function bandOf(prob, k) {
+	const band = prob?.bands?.[k] ?? null;
+	if (!band?.flat) return band;
+	if (!band.spread) {
+		const times = prob.t?.length ?? 1;
+		const along = (v) => {
+			if (!v || v.length === times) return v;
+			const out = new v.constructor(times);
+			out.fill(v[0]);
+			return out;
+		};
+		band.spread = {
+			flat: true,
+			q: band.q.map(along),
+			mean: along(band.mean),
+			sd: band.sd ? { sd: along(band.sd.sd), n: along(band.sd.n) } : band.sd,
+			med: band.med ? {
+				errLo: along(band.med.errLo), errHi: along(band.med.errHi),
+				bodyLo: along(band.med.bodyLo), bodyHi: along(band.med.bodyHi),
+			} : band.med,
+		};
+	}
+	return band.spread;
+}
+
+/**
+ * What a sample holds, by block and by series.
+ *
+ * `blocks` maps a block's qualified name to `kept` -- an endpoint the run kept
+ * the realisations of -- or `varied` -- a parameter it varied, held as the
+ * values drawn; `labels` does the same by series label. A far-field path's
+ * results are named by the run (`Rock held`, `Rock.gravel1`) rather than after
+ * a block, and count for the block at the front of the name: the rule
+ * `ed.endpoints` reads a list by.
+ *
+ * @param {{outputs: Array<{block?: string, label: string, varied?: boolean}>}} prob
+ * @param {Iterable<string>} names  the model's blocks, by qualified name
+ */
+export function sampleContents(prob, names) {
+	const known = new Set(names);
+	const blockOf = (name) => {
+		if (known.has(name)) return name;
+		for (const cut of [name.lastIndexOf(' '), name.lastIndexOf('.')]) {
+			if (cut > 0 && known.has(name.slice(0, cut))) return name.slice(0, cut);
+		}
+		return null;
+	};
+	const blocks = new Map();
+	const labels = new Map();
+	for (const o of prob?.outputs ?? []) {
+		const which = o.varied ? 'varied' : 'kept';
+		labels.set(o.label, which);
+		const b = blockOf(o.block ?? o.label ?? '');
+		if (b && !blocks.has(b)) blocks.set(b, which);
+	}
+	return { blocks, labels };
+}
+
+/** `sampleContents` of the sample on screen, worked out once per sample; null with none. */
+let sampleHeld = null;
+function sampleHolds() {
+	const prob = currentProb();
+	if (!prob) return null;
+	if (sampleHeld?.prob !== prob) {
+		sampleHeld = { prob, ...sampleContents(prob, ed.allBlocks(state.raw).map((b) => ed.qualifiedName(b))) };
+	}
+	return sampleHeld;
+}
+
+/**
+ * The tree's filter as it stands: the search, and -- with the Probabilistic
+ * chip on and a sample to be about -- only the blocks the sample holds, on top
+ * of a pinned answer where there is one. With no sample the chip is not
+ * there and asks for nothing.
+ */
+function treeFilter() {
+	const f = state.search;
+	const held = f.sample ? sampleHolds() : null;
+	if (!held) return f;
+	return { ...f, only: f.only ? f.only.filter((n) => held.blocks.has(n)) : [...held.blocks.keys()] };
+}
+
+/**
  * The rule `currentProb` applies, on its own so it can be tested.
  *
  * Against the **model**, first: a sample is a sample of the distributions it
@@ -761,15 +854,22 @@ export function probIsCurrent(prob, results, rev, running = false) {
  * wrong one now that the dialog opens with a picker: the answer the reader
  * wanted is one control away rather than three steps back.
  *
+ * A varied parameter is not one of the series asked about unless `inputs`
+ * says so: *What drove it* of an input is that input, and its list would be
+ * every input over again. A distribution of one is worth seeing, so that
+ * dialog does ask. They come after the kept series (`withInputs` in
+ * ../worker/sim-worker.js), so leaving them out leaves every index as it was.
+ *
  * @param {object} prob        the probabilistic result
  * @param {object|null} results  the deterministic results, for the labels
  * @param {number[]} selected  which of those are charted
  * @param {number|null} index  an explicit choice, from the picker
+ * @param {boolean} [inputs]   whether a varied parameter can be the answer
  * @returns {{index: number, fellBack: boolean}|null} null when there is
  *   nothing to ask about at all
  */
-export function sensitivityTarget(prob, results, selected = [], index = null) {
-	const kept = prob?.outputs ?? [];
+export function sensitivityTarget(prob, results, selected = [], index = null, inputs = false) {
+	const kept = (prob?.outputs ?? []).filter((o) => inputs || !o.varied);
 	if (!kept.length) return null;
 	if (index != null) {
 		// Clamped rather than trusted: the picker is built from this same list,
@@ -1238,8 +1338,10 @@ function openProbabilistic() {
 		simulation: state.raw.simulation ?? {},
 		// What one run produces, from the run that has already happened where
 		// there is one: this is a question about the model, not about the
-		// distributions, so a deterministic result answers it exactly.
-		series: outputsNow()?.length ?? 0,
+		// distributions, so a deterministic result answers it exactly. Less
+		// the parameters, which a sample never holds as curves: the ones it
+		// varies are kept as their draws, and the rest do not vary.
+		series: (outputsNow() ?? []).filter((o) => ed.canBeEndpoint(o.kind)).length,
 		// The times, though, are the grid's and not that run's: every
 		// realisation is reported on the grid (runProbabilistic), and a run
 		// that also keeps the solver's own points has many more. Counting
@@ -1321,6 +1423,9 @@ function startProbabilistic(choice) {
 	setRunning(true);
 	setLoadingStage('building');
 	clearError();
+	// The tree's marks are about the sample being replaced, and go while the
+	// new one is drawn.
+	renderRail();
 	w.postMessage({
 		type: 'probabilistic',
 		id: state.runId,
@@ -1399,8 +1504,10 @@ function acceptProbabilistic(payload, runId) {
 		+ `${stats.failed ? `, ${stats.failed} of them failed` : ''}.`, 'info');
 	renderResults();
 	// The panel too: *What drove it* appears only once there is a sample to
-	// read, and the panel is not otherwise rebuilt by a run.
+	// read, and the panel is not otherwise rebuilt by a run. And the tree,
+	// which marks what the sample holds and has a filter for it.
 	renderSidebar();
+	renderRail();
 	renderStaleness();
 	// A band is drawn *over* the series the chart knows about, and the chart
 	// knows about them from an ordinary run: the labels, the units, the index
@@ -1462,6 +1569,8 @@ function discardProb() {
 	flash('The realisations were discarded.', 'info');
 	renderResults();
 	renderSidebar();
+	// The tree's marks and its Probabilistic chip were about the sample.
+	renderRail();
 	renderStaleness();
 }
 
@@ -1561,7 +1670,7 @@ let distModal = null;
 function openDistribution(at = null, index = null) {
 	const prob = currentProb();
 	if (!prob) { flash('Run the model probabilistically first.', 'warn'); return; }
-	const target = sensitivityTarget(prob, state.results, state.selected, index);
+	const target = sensitivityTarget(prob, state.results, state.selected, index, true);
 	if (!target) { flash('The probabilistic run kept no series to summarise.', 'warn'); return; }
 	state.distFor = { index: target.index };
 	ensureWorker().postMessage({
@@ -1933,8 +2042,9 @@ function acceptSensitivity(m) {
 	sensModal = openSensitivityDialog({
 		...answer,
 		// Only what the run kept: those are the series it can answer for, and
-		// the picker should not offer one it would refuse.
-		outputs: (prob?.outputs ?? []).map((o) => o.label),
+		// the picker should not offer one it would refuse. Not the varied
+		// parameters, which are what it answers *with*.
+		outputs: (prob?.outputs ?? []).filter((o) => !o.varied).map((o) => o.label),
 		timeUnit: state.raw.simulation?.time_unit ?? 'year',
 		onAsk: ({ index, at, translate, family }) => openSensitivity(at, index, translate, family),
 		onClose: () => { sensModal = null; },
@@ -4122,6 +4232,10 @@ function renderRail({ tree = true } = {}) {
 	renderBlockTree($('#blocklist'), state.raw, state.selection, {
 		onSelect: setSelection,
 		marks: state.marks,
+		// What the sample on screen holds, so the tree can say which blocks a
+		// chart of them will draw as a spread: the endpoints the run kept and
+		// the parameters it varied.
+		sample: sampleHolds()?.blocks ?? null,
 		onOpenSystem: (path) => { graph?.setSystem(path); selectTab('build'); },
 		currentSystem: graph?.currentSystem ?? '',
 		picked: state.picked,
@@ -4132,7 +4246,7 @@ function renderRail({ tree = true } = {}) {
 		onPlaceMenu: (system, ev) => graph?.openPasteMenu(system, ev.clientX, ev.clientY),
 		onMoveTo: (names, system) => graph?.moveInto(names, system),
 		onDelete: () => graph?.deleteSelected(),
-	}, state.search, state.tree);
+	}, treeFilter(), state.tree);
 	applySearchToGraph();
 }
 
@@ -4329,9 +4443,11 @@ function renderSearch() {
 
 	// One line: what the filter is set to, and how much it leaves.
 	const total = ed.allBlocks(state.raw).length;
-	const shown = ed.searchBlocks(state.raw, state.search).length;
+	const filter = treeFilter();
+	const shown = ed.searchBlocks(state.raw, filter).length;
 	const chosen = state.search.kinds.size;
-	const filtering = !!state.search.query.trim() || chosen > 0 || !!state.search.only;
+	const filtering = !!state.search.query.trim() || chosen > 0 || !!filter.only;
+	const held = sampleHolds();
 
 	const line = el('div', { className: 'search-line' });
 
@@ -4364,6 +4480,26 @@ function renderSearch() {
 	ask.addEventListener('click', () => openQuery());
 	line.append(ask);
 
+	// Only what the sample holds: the endpoints the probabilistic run kept and
+	// the parameters it varied, which the tree marks. There while a sample is
+	// on screen and gone with it, when it would be a filter for nothing.
+	if (held) {
+		const on = !!state.search.sample;
+		const only = el('button', {
+			className: `search-chip search-chip-sample${on ? ' is-on' : ''}`,
+			type: 'button',
+			'aria-pressed': on ? 'true' : 'false',
+			title: `Show only the ${held.blocks.size.toLocaleString()} blocks the probabilistic `
+				+ 'run has realisations of: the endpoints it kept and the parameters it varied.',
+		}, sampleMark('kept'), 'Probabilistic');
+		only.dataset.chip = 'sample';
+		only.addEventListener('click', () => {
+			state.search.sample = !on;
+			renderRail();
+		});
+		line.append(only);
+	}
+
 	const toggle = el('button', {
 		className: `search-toggle${kindsOpen ? ' is-open' : ''}`,
 		type: 'button',
@@ -4393,6 +4529,7 @@ function renderSearch() {
 			state.search.kinds.clear();
 			state.search.only = null;
 			state.search.onlyLabel = '';
+			state.search.sample = false;
 			renderRail();
 			renderSearch();
 		});
@@ -4853,10 +4990,10 @@ function openBlockSettings(name) {
 /** Matches are marked on the diagram too, and the rest recede. */
 function applySearchToGraph() {
 	if (!graph) return;
-	const filtering = !!state.search.query.trim() || state.search.kinds.size > 0
-		|| !!state.search.only;
+	const filter = treeFilter();
+	const filtering = !!filter.query.trim() || filter.kinds.size > 0 || !!filter.only;
 	graph.setSearch(filtering
-		? new Set(ed.searchBlocks(state.raw, state.search).map((b) => b.name))
+		? new Set(ed.searchBlocks(state.raw, filter).map((b) => b.name))
 		: null);
 }
 
@@ -6182,15 +6319,19 @@ function pickedOutputs() {
 	const outs = state.results.outputs;
 	// The rule itself is in ./chart.js, where it can be tested without a
 	// browser -- see `filterOutputs` there for what it is and what it used to
-	// get wrong.
-	return filterOutputs(outs, state.pick, ed.nameMatcher(state.pick.query))
+	// get wrong. *Probabilistic* is a constraint only while there is a sample
+	// for it to be about.
+	const held = state.pick.sample ? sampleHolds() : null;
+	return filterOutputs(outs, { ...state.pick, among: held?.labels ?? null },
+		ed.nameMatcher(state.pick.query))
 		.map((i) => ({ o: outs[i], i }));
 }
 
 function pickFiltering() {
 	const f = state.pick;
 	return !!f.query.trim() || f.kinds.size > 0
-		|| [...f.indices.values()].some((s) => s.size > 0);
+		|| [...f.indices.values()].some((s) => s.size > 0)
+		|| (!!f.sample && !!sampleHolds());
 }
 
 /** The search box, the kind chips and one row of chips per index list. */
@@ -6221,6 +6362,29 @@ function renderPickFilter() {
 	const chipRow = (label, chips) => el('div', { className: 'pick-filter-row' },
 		el('span', { className: 'pick-filter-label' }, label),
 		el('div', { className: 'search-kinds' }, chips));
+
+	// Only what the sample holds -- the series the probabilistic run kept and
+	// the parameters it varied, whose chips carry its mark -- the same chip
+	// the block tree has. First, because after a sample it is the question
+	// the rest are asked within.
+	const held = sampleHolds();
+	if (held) {
+		const on = !!f.sample;
+		const n = outs.filter((o) => held.labels.has(o.label)).length;
+		const chip = el('button', {
+			className: `search-chip search-chip-sample${on ? ' is-on' : ''}`, type: 'button',
+			'aria-pressed': on ? 'true' : 'false',
+			title: `Only the ${n.toLocaleString()} lines the probabilistic run has realisations `
+				+ 'of: the series it kept and the parameters it varied.',
+		}, sampleMark('kept'), `Probabilistic (${n.toLocaleString()})`);
+		chip.dataset.chip = 'sample';
+		chip.addEventListener('click', () => {
+			f.sample = !on;
+			state.pickChips = MAX_PICK_CHIPS;
+			renderPicker();
+		});
+		host.append(chipRow('sample', [chip]));
+	}
 
 	// Kinds, in the order the outputs come in.
 	const kinds = [...new Set(outs.map((o) => o.kind))];
@@ -6357,6 +6521,7 @@ function clearPickFilter() {
 	state.pick.query = '';
 	state.pick.kinds.clear();
 	for (const s of state.pick.indices.values()) s.clear();
+	state.pick.sample = false;
 	renderPicker();
 }
 
@@ -6510,16 +6675,22 @@ function renderPicker() {
 			...all.slice(0, room),
 			...all.slice(room).filter(({ i }) => state.selected.includes(i)),
 		];
+	// Which lines the sample holds, so a chip says before it is clicked whether
+	// it will draw a spread or a single curve.
+	const held = sampleHolds()?.labels ?? null;
 	shown.forEach(({ o, i }) => {
 		const pos = state.selected.indexOf(i);
 		const on = pos >= 0;
 		const full = !on && state.selected.length >= MAX_SERIES;
+		const which = held?.get(o.label) ?? null;
 		const b = el('button', {
-			className: 'pick', type: 'button', disabled: full,
+			className: `pick${which ? ` has-sample is-${which}` : ''}`, type: 'button', disabled: full,
 			title: full
 				? `A chart shows at most ${MAX_SERIES} series; clear one first.`
-				: `${o.label}${o.unit ? ` (${o.unit})` : ''}`,
-		}, el('span', { className: 'series-swatch dot' }), o.label);
+				: `${o.label}${o.unit ? ` (${o.unit})` : ''}`
+					+ (which === 'varied' ? ' — varied by the probabilistic run'
+						: which ? ' — kept by the probabilistic run' : ''),
+		}, el('span', { className: 'series-swatch dot' }), o.label, which ? sampleMark(which) : null);
 		b.setAttribute('aria-pressed', String(on));
 		if (on) {
 			const { color, set } = seriesStyle(pos);
@@ -6585,6 +6756,9 @@ function allConstant() {
 		// the moment this is decided it is still a placeholder.
 		const k = at.get(outs[i]?.label);
 		if (k === undefined || mid < 0) return false;
+		// A varied parameter is one value per realisation, so it is flat by
+		// what it is rather than by looking.
+		if (prob.bands?.[k]?.flat) return true;
 		return flat(prob.bands?.[k]?.q?.[mid]);
 	});
 }
@@ -7099,7 +7273,7 @@ function renderChart() {
 		const own = { label, values: column(r, i), unit: r.outputs[i].unit, slot: pos };
 		const k = probAt?.get(label);
 		if (k === undefined) return [own];
-		const band = prob.bands[k];
+		const band = bandOf(prob, k);
 		const q = prob.quantiles;
 		const at = (p2) => onRun(band.q[q.indexOf(p2)]);
 		const mean = onRun(band.mean);
@@ -7606,10 +7780,10 @@ function drawTable() {
 	const probAt = prob ? new Map(prob.outputs.map((o, k) => [o.label, k])) : null;
 	const fromSample = (i, k) => {
 		if (k === undefined) return null;
-		if (which === 'mean') return prob.bands[k].mean;
+		if (which === 'mean') return bandOf(prob, k).mean;
 		if (which === 'median') {
 			const j = prob.quantiles.indexOf(0.5);
-			return j < 0 ? null : prob.bands[k].q[j];
+			return j < 0 ? null : bandOf(prob, k).q[j];
 		}
 		return fetched?.cols?.get(k) ?? null;
 	};
@@ -7623,9 +7797,19 @@ function drawTable() {
 	});
 	const times = which === 'run' ? r.t : (prob?.t ?? r.t);
 	const table = el('table');
+	// Which columns the sample holds, marked as the chart's chips and the
+	// tree mark them: whichever run the rows are of, these are the ones the
+	// other readings of the sample can show.
+	const held = sampleHolds()?.labels ?? null;
 	table.append(el('thead', {}, el('tr', {},
 		el('th', {}, `Time (${state.raw.simulation?.time_unit ?? 'year'})`),
-		...outs.map((o) => el('th', {}, o.unit ? `${o.label} (${o.unit})` : o.label)))));
+		...outs.map((o) => {
+			const mark = held?.get(o.label) ?? null;
+			return el('th', mark ? {
+				className: `has-sample is-${mark}`,
+				title: mark === 'varied' ? 'Varied by the probabilistic run' : 'Kept by the probabilistic run',
+			} : {}, o.unit ? `${o.label} (${o.unit})` : o.label, mark ? sampleMark(mark) : null);
+		}))));
 	const body = el('tbody');
 	const rows = Math.min(times.length, state.tableRows ?? TABLE_ROWS);
 	for (let i = 0; i < rows; i++) {
@@ -7864,7 +8048,10 @@ async function openEndpoints(onSaved = null) {
 	try {
 		const { openEndpointPicker } = await import('./endpoints.js');
 		openEndpointPicker({
-			outputs,
+			// Never a parameter: a probabilistic run keeps the ones it varies
+			// whatever this says, and the rest are one number in every
+			// realisation. See `canBeEndpoint`.
+			outputs: outputs.filter((o) => ed.canBeEndpoint(o.kind)),
 			// No run, no output grid: the picker says the rate rather than
 			// pricing a file nobody is writing yet.
 			times: r ? r.t.length : 0,
@@ -7873,7 +8060,14 @@ async function openEndpoints(onSaved = null) {
 			// with no list of its own.
 			shown: r ? [...new Set(state.selected.map((i) => r.outputs[i]?.block).filter(Boolean))] : [],
 			onRemember: (names) => {
-				if (ed.setEndpoints(state.raw, names)) {
+				// The same blocks are not an edit, in whatever order. Compared
+				// with what the model's list comes to rather than with the
+				// file's, which may still name parameters -- and writing it
+				// back only to drop those would put a dot on Save for a Done
+				// that changed nothing.
+				const was = new Set(ed.endpoints(state.raw));
+				const same = names.length === was.size && names.every((n) => was.has(n));
+				if (!same && ed.setEndpoints(state.raw, names)) {
 					// Saved with the model and undoable, but not a reason to
 					// re-run: which series are written changes no number.
 					modelChanged({ layoutOnly: true });
@@ -9826,6 +10020,7 @@ function setModel(raw, source) {
 	state.pick.query = '';
 	state.pick.kinds.clear();
 	state.pick.indices.clear();
+	state.pick.sample = false;
 	state.pickOpen = null;
 	state.pickChips = MAX_PICK_CHIPS;
 	state.tableRows = TABLE_ROWS;

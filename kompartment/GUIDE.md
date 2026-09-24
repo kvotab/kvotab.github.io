@@ -571,6 +571,11 @@ is indexed by `Wetland` and not by `Object`, so it fails the constraint outright
 clears the chart; **Clear filter** puts the list back. Filtering never changes
 what is charted on its own — it changes what you can reach.
 
+After a probabilistic run the filter has one chip more, **Probabilistic**. It
+lists only the lines the sample holds: the endpoints it kept and the parameters
+it varied. Their chips are marked, as the tree marks their blocks. See [A
+probabilistic run](#a-probabilistic-run).
+
 The whole filter is one wrapping row, so on a wide window it costs a single
 line and the chart keeps the rest. The layout follows the window in both
 directions: the chart redraws at whatever width it is given, and the side
@@ -2464,6 +2469,11 @@ endpoints out is **Save…**, after the run.
 
 **An endpoint is a block**: move `Dose` across and every nuclide of it goes.
 Picking 831,314 series one at a time is not something a dialog can offer.
+
+**An endpoint is never a parameter.** Parameters are not offered. A parameter
+named in the model's list is skipped, and the list is otherwise left as the file
+had it. A probabilistic run keeps every parameter it varies anyway, as the value
+each realisation drew. See [A probabilistic run](#a-probabilistic-run).
 
 What you choose is **saved back to the model**, under `simulation.endpoints`,
 because an endpoint list is a property of the model rather than of one export,
@@ -5325,6 +5335,37 @@ nothing is written to a file there, and **Save…** writes the result once the
 run has been made.
 
 The same list is in **Save → Model with results**.
+
+**A parameter is not an endpoint, and the ones that vary are always kept.** A
+parameter is a constant: one number in an ordinary run, and in a probabilistic
+one the number each realisation drew. So the picker does not offer parameters,
+and a parameter named in an imported list is skipped. The list itself is left
+as the file had it. An Ecolego list often names dozens of them, and every one
+would have been a flat line held once per realisation at every output time.
+Instead every parameter the run varies is kept whatever the list says, as the
+value each realisation drew. It is drawn as a band on the chart (flat, since it
+does not change with time) and as a histogram in the distribution view. It is
+also a column in the Table, an axis for a scatter against an endpoint, a matrix
+in **Save → Realisations**, and something a category can be written on. The
+dialog says how many there are. A parameter that does not vary is the same
+number in every realisation, which the ordinary run already shows. The varied
+ones cost next to nothing: a thousand realisations of a thousand varied values
+is 8 MB, where the same held as curves over 400 output times would be over
+three gigabytes.
+
+**Which blocks the sample holds.** After a probabilistic run the tree in the
+left panel marks what the sample holds:
+
+- a band beside an endpoint it kept;
+- a bell beside a parameter it varied;
+- a dot on every sub-system holding one of them.
+
+Each marked row also has a bar down its edge. The chart's chips and the Table's
+column heads wear the same marks. **Probabilistic** in the search line above the
+tree shows only the marked blocks. The same chip in the chart's filter lists only
+the lines the sample holds, with a count. It is the quickest way to the lines
+that will be drawn as a spread rather than as a single curve. The marks and both
+chips go with the sample: discard it, or edit the model, and they are gone.
 
 **It needs no run.** The blocks it offers come from the model — what a run
 *would* report is a function of the layout, and the layout exists as soon as

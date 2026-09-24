@@ -28,7 +28,8 @@
  * the model's endpoints, or a chosen few -- and for those keeps every
  * realisation, because quantiles need them. What that costs is said before it
  * is spent (`estimate`), and refused rather than attempted when it cannot be
- * held.
+ * held. The parameters it varies are kept too, and always, but as the values
+ * drawn rather than as curves: see `inputs` in `runProbabilistic`.
  */
 
 import { sampleOccurrences } from '../domain/disruption.js';
@@ -147,11 +148,15 @@ export function samplingPlan(project, system) {
  *                                     `slotName` spells them.
  * @param {{low: number, high: number}} [opts.tornado]  a one-at-a-time design
  *                                     instead of a sample: see `designFor`
- * @param {(name: string) => boolean} [opts.keep]  which series to hold on to
+ * @param {(name: string) => boolean} [opts.keep]  which series to hold on to;
+ *                                     never a parameter, see `inputs`
  * @param {(done: number, total: number) => void} [opts.onProgress]
  * @param {{aborted: boolean}} [opts.signal]
- * @returns {{t: Float64Array, outputs: Array, draws: Float64Array,
- *   values: Float64Array[], plan: Array, iterations: number, stats: object}}
+ * @returns {{t: Float64Array, outputs: Array, values: Float64Array[], plan: Array,
+ *   samples: Float64Array[], inputs: Array<{output: object, k: number}>,
+ *   ran: Uint8Array, iterations: number, stats: object}} where `inputs` are
+ *   the varied parameters, each read from `samples[k]`, and `ran` is 1 for
+ *   each realisation that integrated
  */
 /**
  * What every realisation of a run will set, before any of them is integrated.
@@ -513,9 +518,26 @@ export function runProbabilistic(input, opts = {}) {
 	// solver's own steps are different in each one.
 	const first = run(project, { system, signal: opts.signal, onGrid: true });
 	const outputs = first.outputs();
-	const wanted = opts.keep
-		? outputs.map((o, k) => k).filter((k) => opts.keep(outputs[k].block ?? outputs[k].label ?? '', outputs[k]))
-		: outputs.map((o, k) => k);
+	// **No parameter is in the matrix.** A parameter is a constant, so in each
+	// realisation it is the one number the design set -- which `samples`
+	// already holds -- and kept as a curve it would be that number at every
+	// output time: thirty parameters over forty nuclides are 1,200 series,
+	// nearly 4 GB for a thousand realisations on 400 times, against 10 MB as
+	// draws. So they are left out whatever `keep` says, and the ones that vary
+	// are handed back as `inputs`: which output each is and which column of
+	// the draws is its value. One that does not vary is the same number in
+	// every realisation, which the deterministic run already says.
+	const wanted = outputs.map((o, k) => k).filter((k) => outputs[k].source !== 'P'
+		&& (!opts.keep || opts.keep(outputs[k].block ?? outputs[k].label ?? '', outputs[k])));
+	// Not for a tornado or a sensitivity design: their points are not
+	// realisations of anything, and their tables are read off the outputs.
+	const column = new Map();
+	if (!design.stats.tornado && !design.stats.gsa) {
+		plan.forEach((e, k) => { if (design.varies(e)) column.set(e.slot, k); });
+	}
+	const inputs = outputs
+		.filter((o) => o.source === 'P' && column.has(o.offset))
+		.map((o) => ({ output: o, k: column.get(o.offset) }));
 	// The grid the realisations share is the one the model asked for. A run's
 	// own time axis can carry more: a corner the solver landed on -- a package
 	// failure at a time, a disruptive event's occurrence -- is an output point
@@ -576,6 +598,10 @@ export function runProbabilistic(input, opts = {}) {
 
 	let failed = 0;
 	const trouble = [];
+	// Which realisations integrated, 1 each, so that what is read from the
+	// draws rather than the matrix -- a varied parameter -- can leave out the
+	// ones that failed, as every kept series does with its NaN.
+	const ran = new Uint8Array(span).fill(1);
 	for (let i = from + 1; i < to; i++) {
 		if (opts.signal?.aborted) break;
 		apply(i);
@@ -592,6 +618,7 @@ export function runProbabilistic(input, opts = {}) {
 			// 734th realisation" means something to the reader and "the 22nd
 			// of worker three" does not.
 			if (trouble.length < 5) trouble.push(`realisation ${i + 1}: ${e.message}`);
+			ran[i - from] = 0;
 			const at = (i - from) * times;
 			for (let w = 0; w < wanted.length; w++) values[w].fill(NaN, at, at + times);
 		}
@@ -604,6 +631,8 @@ export function runProbabilistic(input, opts = {}) {
 		values,
 		plan,
 		samples,
+		inputs,
+		ran,
 		iterations,
 		// Which realisations these are, so a caller sharing the job out can put
 		// them back in order.
