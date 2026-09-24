@@ -64,7 +64,7 @@ exercise `domain/` and `sim/` directly, which is why they can be plain Node.
 | `src/domain/queries.js`, `src/ui/querydialog.js` | Searching the model's parameters |
 | `src/domain/qa.js` | Parameter approvals, computed from the dependency graph |
 | `src/domain/correlate.js` | Correlated sampling, by Iman and Conover's permutation |
-| `src/domain/gsa.js`, `src/domain/fft.js`, `src/ui/gsadialog.js` | Global sensitivity analysis, ported from GlobalSensitivity.jl, and the FFT its spectral methods read |
+| `src/domain/gsa.js`, `src/domain/salib.js`, `src/domain/fft.js`, `src/ui/gsadialog.js` | Global sensitivity analysis, ported from GlobalSensitivity.jl and SALib, and the FFT its spectral methods read |
 | `src/domain/categories.js` | Classifying and screening realisations |
 | `src/domain/distribution.js` | A distribution summary with a DKW band |
 | `src/domain/massbalance.js` | The mass-balance audit, done with budget states the solver integrates |
@@ -4681,15 +4681,68 @@ sensitivity reply. A flat band is sent as one number per statistic
 of it is drawn. `prob-matrix` spreads the draws back over the times too
 (`acrossTimes`), so a result file has the shape every other series has.
 
-An endpoint is never a parameter (`canBeEndpoint` in ../domain/edit.js).
-`endpoints()` skips any in the stored list and leaves the list as the file had
-it. The picker and Save's endpoint tree do not offer parameters. The page
-compares a Done against the effective list, so dropping the file's parameters
-is never an edit on its own.
+A lookup table is an input the same way. Each of its points that carries a
+spread is a slot of `P`, and `lookupPointOutputs` in ../sim/runner.js makes
+that slot a series of its own, `SRF [@8700]`, the time as one more index along
+the pseudo-list `POINT_LIST`. It is a constant in an ordinary run and reaches
+`inputs` like a parameter's series. The table's curve is not in the matrix
+either: `wanted` leaves out every kind `canBeEndpoint` refuses.
+
+An endpoint is never an input (`canBeEndpoint` in ../domain/edit.js): not a
+parameter, not a lookup table. `endpoints()` skips any in the stored list and
+leaves the list as the file had it. The picker and Save's endpoint tree do not
+offer them. The page compares a Done against the effective list, so dropping
+the file's inputs is never an edit on its own.
+
+`implicitInputs` in ../domain/uncertainty.js lists what else varies, for the
+probabilistic dialog's *What will be sampled*: the disruptive events that draw
+their occurrences, and the waste packages' failure laws, which are not drawn.
+Each realisation follows the expected failure curve. That was the reader's
+choice when asked, against drawing each package's failure time, which would be
+a solver restart per package.
 
 `sampleContents` on the page says what a sample holds, by block and by label.
 The tree's marks and its Probabilistic chip read it, and so do the chart's
 chips, their filter (`among` in `filterOutputs`) and the Table's heads.
+
+## What SALib adds
+
+../domain/salib.js ports what SALib 1.6.0 has that GlobalSensitivity.jl does
+not:
+
+- PAWN and discrepancy, which read any sample and sit in *What drove it*'s
+  distribution family.
+- The radial one-at-a-time design, with its elementary effects and Jansen's
+  total index.
+- Morris's trajectories with Ruano's local search for the optimal ones.
+- SALib's bootstrap intervals on μ*, the Sobol indices and ν.
+- The fractional factorial's interactions, and RBD-FAST's bias correction.
+
+The designed ones go through the same registry in ../domain/gsa.js
+(`GSA_METHODS`, `buildDesign`, `gsaTable`) as the GlobalSensitivity.jl ports.
+The intervals are drawn from a stream of the run's seed, so a table read again
+gives the same interval, and never for the curves over time, which read only
+the rank.
+
+`test/fixtures/salib-reference.json`, from `scripts/gen-salib-ref.py`, gives
+each case SALib's own sample or design, outputs and numpy's resample indices,
+so the test compares the arithmetic. To regenerate it: a virtualenv with
+`pip install SALib==1.6.0`, then `python scripts/gen-salib-ref.py`.
+
+The deviations are listed at the top of the module. The two that matter:
+
+- Numpy's `arange` gives PAWN one slice edge too many for some slice counts, at
+  a quantile above one, and SALib then stops. The port's edges are `i/S`.
+- SALib's interval on Jansen's Sₜ indexes the differences with a (resamples ×
+  inputs) array, which is not a bootstrap. The port resamples the base points
+  and checks that against the same computation in the script.
+
+Morris's optimal selection holds its distances in single precision, as SALib
+does, so ties break where SALib breaks them. Four candidate sets agree.
+
+Not ported: SALib's HDMR, which SALib is retiring for enhanced HDMR. That one
+needs D-MORPH regression, an SVD and an F-test, which the tool does not yet
+have.
 
 ## Known limitations
 

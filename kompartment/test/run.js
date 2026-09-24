@@ -3403,6 +3403,205 @@ test('a probabilistic run gives the same answer however many cores run it', asyn
 		'a model that builds in milliseconds was not shared out');
 });
 
+test('the methods from SALib give SALib’s numbers on the same samples', async () => {
+	const S = await import('../src/domain/salib.js');
+	const g = await import('../src/domain/gsa.js');
+	const { readFileSync } = await import('node:fs');
+	// Made by scripts/gen-salib-ref.py from SALib 1.6.0: every case hands both
+	// sides the same numbers -- the sample or the design, the outputs, and
+	// numpy's own resamples replayed -- so what is compared is the arithmetic.
+	const ref = JSON.parse(readFileSync(new URL('./fixtures/salib-reference.json', import.meta.url), 'utf8'));
+	assert(ref.version === '1.6.0', ref.version);
+	const dec = (s) => { const b = Buffer.from(s, 'base64'); return new Float64Array(b.buffer, b.byteOffset, b.length / 8).slice(); };
+	const deci = (s) => { const b = Buffer.from(s, 'base64'); return new Int32Array(b.buffer, b.byteOffset, b.length / 4).slice(); };
+	const close = (name, got, want, tol = 1e-10) => {
+		const G = Array.from(got);
+		const W = Array.from(want);
+		assert(G.length === W.length, `${name}: ${G.length} values against ${W.length}`);
+		for (let i = 0; i < W.length; i++) {
+			if (Number.isNaN(G[i]) && Number.isNaN(W[i])) continue;
+			const diff = Math.abs(G[i] - W[i]);
+			const err = W[i] === 0 ? diff : Math.min(diff, diff / Math.abs(W[i]));
+			assert(err <= tol, `${name}[${i}]: ${G[i]} against SALib's ${W[i]}`);
+		}
+	};
+
+	// The Kolmogorov-Smirnov distance, ties included.
+	for (const c of ref.ks) close('ks', [S.ksStatistic(dec(c.a), dec(c.b))], [c.statistic], 1e-15);
+
+	// PAWN and discrepancy on one sample.
+	const X = ref.sample.X.map(dec);
+	const Y = dec(ref.sample.Y);
+	for (const c of ref.pawn) {
+		const got = X.map((x) => S.pawn(x, Y, { slides: c.S }));
+		for (const [key, ours] of [['minimum', 'minimum'], ['mean', 'mean'], ['median', 'median'], ['maximum', 'maximum'], ['CV', 'cv'], ['stdev', 'stdev']]) {
+			close(`pawn S=${c.S} ${key}`, got.map((r) => r[ours]), dec(c[key]), 1e-12);
+		}
+	}
+	for (const [method, want] of Object.entries(ref.discrepancy)) {
+		close(`discrepancy ${method}`, S.discrepancyShares(X, Y, method).shares, dec(want), 1e-11);
+	}
+	// Why a sample's is read on ranks, the output's too: a skewed output
+	// scaled by its extremes -- SALib's way -- sits at the bottom of the square
+	// for nearly every point, and the input driving it looks like the others.
+	const skew = Float64Array.from(X[0], (v, i) => Math.exp(12 * v) + X[1][i]);
+	const byValue = S.discrepancyShares(X, skew).shares;
+	const byRank = S.discrepancyShares(X.map(S.rankProbabilities), S.rankProbabilities(skew)).shares;
+	assert(Math.max(...byValue) - Math.min(...byValue) < 0.01 && byRank[0] > 0.9,
+		`by value ${Array.from(byValue)}, by rank ${Array.from(byRank)}`);
+	assert(/discrepancyShares\(spread\.map\(\(c\) => rankProbabilities\(c\.x\)\), rankProbabilities\(y\), 'WD'\)/
+		.test(readFileSync(new URL('../src/worker/sim-worker.js', import.meta.url), 'utf8')), 'the output is read by value');
+
+	// The radial design, rebuilt from its base and perturbation points, and
+	// both of its readings.
+	const Rd = ref.radial;
+	const d = S.radialDesign(3, Rd.base.map(dec), Rd.step.map(dec));
+	const yr = dec(Rd.y);
+	assert(d.runs === yr.length, `${d.runs} runs against ${yr.length}`);
+	const ri = S.radialIndices(yr, d, { resamples: 100, indices: deci(Rd.indices) });
+	close('radial μ', ri.mu, dec(Rd.mu));
+	close('radial μ*', ri.muStar, dec(Rd.mu_star));
+	close('radial σ', ri.sigma, dec(Rd.sigma));
+	close('radial μ* interval', ri.muStarCi, dec(Rd.mu_star_conf), 1e-9);
+	close('radial Sₜ', ri.ST, dec(Rd.ST));
+	close('radial Sₜ interval', ri.STci, dec(Rd.ST_conf_resampled), 1e-9);
+
+	// Morris: SALib's optimal selection among its own candidates, then the
+	// analysis of the trajectories kept, and the interval on μ*.
+	const M = ref.morris;
+	const trajectories = (flat, K) => {
+		const rows = flat.length / K;
+		const out = [];
+		for (let t = 0; t < rows / (K + 1); t++) {
+			out.push(Array.from({ length: K + 1 }, (_, s) => Array.from(flat.subarray((t * (K + 1) + s) * K, (t * (K + 1) + s + 1) * K))));
+		}
+		return out;
+	};
+	assert(JSON.stringify(S.optimalTrajectories(trajectories(dec(M.candidates), M.K), 6)) === JSON.stringify(M.chosen),
+		`chose ${S.optimalTrajectories(trajectories(dec(M.candidates), M.K), 6)} where SALib chose ${M.chosen}`);
+	for (const c of ref.optimal) {
+		const got = S.optimalTrajectories(trajectories(dec(c.candidates), c.K), c.k);
+		assert(JSON.stringify(got) === JSON.stringify(c.chosen), `of ${c.N}: ${got} where SALib chose ${c.chosen}`);
+	}
+	const Xm = M.X.map(dec);
+	const mi = g.morrisIndices(dec(M.y), { K: M.K, trajectories: 6, points: M.K + 1, u: Xm });
+	close('morris μ', mi.mean, dec(M.mu));
+	close('morris μ*', mi.meanStar, dec(M.mu_star));
+	close('morris σ', mi.variance.map(Math.sqrt), dec(M.sigma));
+	const idx = M.indices.map(deci);
+	close('morris μ* interval', S.muStarInterval(mi.effects, { resamples: 100, indices: (k) => idx[k] }), dec(M.mu_star_conf), 1e-9);
+
+	// Sobol's bootstrap interval, pairs and all, on the tool's own layout.
+	const So = ref.sobol;
+	const sb = S.sobolBootstrap(dec(So.y), { K: So.K, n: So.n, second: true }, { resamples: 50, indices: deci(So.indices) });
+	close('sobol S1 interval', sb.S1ci, dec(So.S1_conf), 1e-9);
+	close('sobol ST interval', sb.STci, dec(So.ST_conf), 1e-9);
+	const S2 = dec(So.S2_conf);
+	for (let j = 0; j < So.K; j++) {
+		for (let k = j + 1; k < So.K; k++) close(`sobol S2 interval ${j}${k}`, [sb.S2ci[j * So.K + k]], [S2[j * So.K + k]], 1e-9);
+	}
+
+	// The fractional factorial: SALib's design is the tool's, and its main
+	// and interaction effects come out the same.
+	const F = ref.ff;
+	const fd = g.ffDesign(F.K);
+	const Xf = F.X.map(dec);
+	for (let k = 0; k < F.K; k++) {
+		for (let r = 0; r < fd.rows; r++) {
+			assert((Xf[k][r] > 0.5 ? 1 : -1) === Math.sign(fd.signs[r][k]), `the design differs at row ${r}, input ${k}`);
+		}
+	}
+	const yf = dec(F.y);
+	close('ff main effects', g.ffIndices(yf, fd).main, dec(F.ME), 1e-12);
+	const pairs = S.ffInteractions(yf, fd);
+	for (const p of F.pairs) {
+		const got = pairs.find((q) => q.a === Math.min(p.a, p.b) && q.b === Math.max(p.a, p.b));
+		close(`ff interaction ${p.a}${p.b}`, [got?.value ?? NaN], [p.value], 1e-12);
+	}
+
+	// RBD-FAST's bias correction, and DGSM's spread and interval.
+	for (const c of ref.unskew) close('unskew', [S.unskew(c.S1, c.M, c.N)], [c.value], 1e-15);
+	const Dg = ref.dgsm;
+	const gd = dec(Dg.g);
+	const di = Dg.indices.map(deci);
+	const dsp = S.dgsmSpread(gd, 3, Dg.N, { resamples: 50, indices: (k) => di[k] });
+	close('dgsm ν', Array.from({ length: 3 }, (_, k) => { let s = 0; for (let i = 0; i < Dg.N; i++) s += gd[i * 3 + k] ** 2; return s / Dg.N; }), dec(Dg.vi), 1e-12);
+	close('dgsm ν spread', dsp.sd, dec(Dg.vi_std), 1e-11);
+	close('dgsm ν interval', dsp.ci, dec(Dg.dgsm_conf), 1e-9);
+
+	// The tool's own trajectories: each input moves once, half the levels,
+	// and stays on the grid.
+	let n = 0;
+	const next = () => { n = (n * 9301 + 49297) % 233280; return n / 233280; };
+	const td = S.morrisTrajectoryDesign(5, { trajectories: 7, levels: 4, candidates: 20, next });
+	assert(td.trajectories === 7 && td.runs === 7 * 6, JSON.stringify({ t: td.trajectories, runs: td.runs }));
+	for (let t = 0; t < 7; t++) {
+		const moved = new Array(5).fill(0);
+		for (let s = 0; s < 5; s++) {
+			const changed = [];
+			for (let k = 0; k < 5; k++) {
+				const a = td.u[k][t * 6 + s];
+				const b = td.u[k][t * 6 + s + 1];
+				if (a !== b) { changed.push(k); assert(Math.abs(Math.abs(b - a) - 0.5) < 1e-12, `a step of ${b - a}`); }
+				assert([0.125, 0.375, 0.625, 0.875].includes(b), `off the levels: ${b}`);
+			}
+			assert(changed.length === 1, `step ${s} of trajectory ${t} moved ${changed.length} inputs`);
+			moved[changed[0]]++;
+		}
+		assert(moved.every((m) => m === 1), `trajectory ${t} moved ${moved}`);
+	}
+	// And the ranks as probabilities discrepancy is read on.
+	assert(JSON.stringify(Array.from(S.rankProbabilities([3, 1, 2, 2]))) === JSON.stringify([0.875, 0.125, 0.5, 0.5]),
+		JSON.stringify(Array.from(S.rankProbabilities([3, 1, 2, 2]))));
+
+	// Through the tool's own registry: each method's design from a seed, its
+	// runs as priced, the columns SALib adds, and the intervals drawn from a
+	// stream of the seed -- so the same table asked for twice is the same.
+	const { streamFor, uniforms } = await import('../src/domain/sample.js');
+	const keys = ['a', 'b', 'c'];
+	const ishiU = (u) => {
+		const x = u.map((v) => -Math.PI + 2 * Math.PI * v);
+		return Math.sin(x[0]) + 7 * Math.sin(x[1]) ** 2 + 0.1 * x[2] ** 4 * Math.sin(x[0]);
+	};
+	const cases = [
+		['radial', { samples: 60 }, ['ST', 'STci', 'meanStar', 'meanStarCi', 'mean', 'sd']],
+		['morris', { design: 'trajectories', trajectories: 8, levels: 4, candidates: 30 }, ['meanStar', 'meanStarCi', 'mean', 'sd']],
+		['morris', { trajectories: 6, points: 8 }, ['meanStar', 'meanStarCi']],
+		['sobol', { samples: 128 }, ['S1', 'ST', 'S1ci', 'STci']],
+		['ff', { pairs: true }, ['main']],
+		['rbdfast', { samples: 256 }, ['S1', 'S1c']],
+		['dgsm', { samples: 40 }, ['asq', 'asqCi', 'asqSd']],
+	];
+	for (const [method, options, want] of cases) {
+		const dd = g.buildDesign(method, keys, options, { seed: 3, streamFor, uniforms });
+		assert(dd.runs === g.gsaRuns(method, 3, options), `${method}: ${dd.runs} runs, priced at ${g.gsaRuns(method, 3, options)}`);
+		const yy = new Float64Array(dd.runs);
+		for (let i = 0; i < dd.runs; i++) yy[i] = ishiU(dd.u.map((c) => c[i]));
+		const t1 = g.gsaTable(dd, yy, { next: streamFor(3, '#gsa#bootstrap') });
+		const t2 = g.gsaTable(dd, yy, { next: streamFor(3, '#gsa#bootstrap') });
+		assert(JSON.stringify(t1.rows) === JSON.stringify(t2.rows), `${method}: the same table came out different`);
+		const keysOf = t1.columns.map(([key]) => key);
+		for (const key of want) {
+			assert(keysOf.includes(key), `${method}: no ${key} column in ${keysOf}`);
+			assert(t1.rows.every((row) => Number.isFinite(row.values[key])), `${method}: ${key} is not a number for every input`);
+		}
+		if (method === 'ff') assert(t1.pairs?.length === 3 && t1.pairs.every((q) => Number.isFinite(q.value)), 'no interactions');
+		// On Ishigami x₂ has the most variance alone (S₁ 0.44) and x₁ the most
+		// in all (Sₜ 0.56 to x₂'s 0.44); x₃ is never first either way.
+		if (method === 'rbdfast') assert(t1.rows[0].k === 1, `RBD-FAST ranks input ${t1.rows[0].k} first`);
+		if (method === 'radial' || method === 'sobol') {
+			assert([0, 1].includes(t1.rows[0].k), `${method} ranks input ${t1.rows[0].k} first`);
+		}
+	}
+	// Without resamples there is no interval, and the curves over time never
+	// ask for one.
+	const plain = g.buildDesign('radial', keys, { samples: 20, resamples: 0 }, { seed: 3, streamFor, uniforms });
+	assert(!g.gsaTable(plain, new Float64Array(plain.runs).map((_, i) => i % 7)).columns.some(([key]) => key === 'STci'),
+		'an interval was offered with no resamples');
+	assert(/gsaTable\(design, y, \{ intervals: false \}\)/.test(readFileSync(new URL('../src/domain/gsa.js', import.meta.url), 'utf8')),
+		'the curves over time draw bootstraps');
+});
+
 test('the global sensitivity methods give GlobalSensitivity.jl’s numbers on the same designs', async () => {
 	const g = await import('../src/domain/gsa.js');
 	const { readFileSync } = await import('node:fs');
@@ -3796,7 +3995,12 @@ test('*What drove it* can read the whole distribution, not only a line through i
 	// Asked for only when wanted: the default is the regression family.
 	assert(plain[0].distribution === null, 'the bootstrap ran without being asked for');
 	const dialog = readFileSync(new URL('../src/ui/sensdialog.js', import.meta.url), 'utf8');
-	assert(/\['distribution', 'Distribution: EASI, δ, MI, RSA',/.test(dialog), 'the dialog does not offer them');
+	assert(/\['distribution', 'Distribution: EASI, δ, MI, RSA, PAWN, discrepancy',/.test(dialog), 'the dialog does not offer them');
+	// SALib's two that read a sample, beside them: c drives the output and
+	// idle does not, and both measures say so.
+	assert(c.pawn > 0.3 && idle.pawn < c.pawn / 2, `PAWN: c ${c.pawn}, idle ${idle.pawn}`);
+	assert(c.discrepancy > idle.discrepancy && Math.abs(c.discrepancy + idle.discrepancy - 1) < 1e-12
+		&& d.discrepancyOver === 'all', `discrepancy: c ${c.discrepancy}, idle ${idle.discrepancy}, over ${d.discrepancyOver}`);
 });
 
 test('a sample keeps the parameters it varies as their draws, and no parameter is an endpoint', async () => {
@@ -3944,7 +4148,56 @@ test('a sample keeps the parameters it varies as their draws, and no parameter i
 	const ed = await import('../src/domain/edit.js');
 	assert(JSON.stringify(ed.endpoints(model)) === '["A"]' && model.simulation.endpoints.length === 3,
 		JSON.stringify(ed.endpoints(model)));
-	assert(!ed.canBeEndpoint('parameter') && ed.canBeEndpoint('lookup') && ed.canBeEndpoint('expression'));
+	assert(!ed.canBeEndpoint('parameter') && !ed.canBeEndpoint('lookup') && ed.canBeEndpoint('expression')
+		&& ed.canBeEndpoint('compartment'), 'an input can be an endpoint');
+
+	// A lookup table is an input as a parameter is, and each of its points
+	// that carries a spread is one value per realisation -- the time it sits
+	// at one more index. `SRF` varies at years 0 and 8,700 and not at 5,000.
+	const { run } = await import('../src/sim/runner.js');
+	const { Project } = await import('../src/domain/project.js');
+	const { POINT_LIST } = await import('../src/sim/runner.js');
+	const tri = (min, max, mode) => ({ kind: 'triang', params: { min, max, mode }, values: null,
+		trmin: null, trmax: null, pmin: null, pmax: null, group: null, inorder: true, pos: 0 });
+	const table = {
+		name: 'srf',
+		simulation: { start_time: 0, end_time: 10000, output_points: 5, spacing: 'linear', solver: 'ndf', time_unit: 'year' },
+		lookups: [{ name: 'SRF', unit: 'unitless', interpolation: 'linear',
+			points: [[0, 455, tri(62, 1911, 455)], [5000, 100], [8700, 17, tri(1, 23, 17)]] }],
+		parameters: [{ name: 'k', default: 1, unit: '1/year' }],
+		compartments: [{ name: 'A', initial: '1', unit: 'Bq', dydt: '-k*A/SRF' }],
+		expressions: [{ name: 'peek', equation: 'SRF', unit: 'unitless' }],
+	};
+	const det = run(new Project(structuredClone(table)));
+	const points = det.outputs().filter((o) => o.kind === 'lookup' && o.source === 'P');
+	assert(JSON.stringify(points.map((o) => o.label)) === '["SRF [@0]","SRF [@8700]"]',
+		JSON.stringify(points.map((o) => o.label)));
+	assert(points.every((o) => o.block === 'SRF' && o.dims.at(-1) === POINT_LIST)
+		&& det.constantOf(points[0]) === 455 && det.constantOf(points[1]) === 17, JSON.stringify(points));
+	const drawn = runProbabilistic(structuredClone(table), { iterations: 20, seed: 2 });
+	assert(!drawn.outputs.some((o) => o.kind === 'lookup'), 'a table is kept as a curve');
+	assert(drawn.outputs.some((o) => o.label === 'peek'), 'what reads the table is not kept');
+	assert(JSON.stringify(drawn.inputs.map((x) => `${x.output.label}=${drawn.plan[x.k].name}`))
+		=== '["SRF [@0]=SRF@0","SRF [@8700]=SRF@8700"]', JSON.stringify(drawn.inputs.map((x) => x.output.label)));
+	for (const { output, k } of drawn.inputs) {
+		const lo = output.label.endsWith('@0]') ? 62 : 1;
+		const hi = output.label.endsWith('@0]') ? 1911 : 23;
+		assert(drawn.samples[k].every((v) => v >= lo && v <= hi), `${output.label} left its own range`);
+	}
+
+	// What varies without being a parameter's is listed, and said whether it is
+	// drawn: a random event's occurrences are, a waste package's way of
+	// failing is not -- every realisation follows its expected curve.
+	const { implicitInputs } = await import('../src/domain/uncertainty.js');
+	const canisters = JSON.parse(read('../examples/waste-packages.json'));
+	assert(JSON.stringify(implicitInputs(canisters).map((x) => [x.name, x.kind, x.drawn])) ===
+		'[["Quake","event",true],["Canisters","waste_package",false]]', JSON.stringify(implicitInputs(canisters)));
+	assert(/^Weibull, scale canister_life, shape 2, from t_first_failure · 4500 packages$/
+		.test(implicitInputs(canisters)[1].what), implicitInputs(canisters)[1].what);
+	const dialog = read('../src/ui/probdialog.js');
+	assert(/implicit: implicitInputs\(state\.raw\),/.test(read('../src/ui/app.js'))
+		&& /if \(plan\.length \|\| implicit\.length\) \{/.test(dialog) && /not drawn: every realisation follows/.test(dialog),
+		'the dialog does not list what varies besides the parameters');
 	const page = read('../src/ui/app.js');
 	assert(/outputs: outputs\.filter\(\(o\) => ed\.canBeEndpoint\(o\.kind\)\),/.test(page), 'the picker offers parameters');
 	assert(/series: \(outputsNow\(\) \?\? \[\]\)\.filter\(\(o\) => ed\.canBeEndpoint\(o\.kind\)\)\.length,/.test(page),

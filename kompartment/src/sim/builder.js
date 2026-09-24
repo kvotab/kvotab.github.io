@@ -2476,9 +2476,12 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 			})),
 			budget: budgetLayout,
 			// The points of a lookup table that carry their own distribution.
-			// `../domain/sample.js` walks these beside `parameters`.
+			// `../domain/sample.js` walks these beside `parameters`, and
+			// `outputsOf` in ./runner.js makes a series of each, which is why
+			// the table's lists and unit come too.
 			lookupPoints: pointLayout.map((pt) => ({
 				name: pt.name, index: pt.index, at: pt.at, slot: pt.slot, spec: pt.spec,
+				dims: pt.dims, unit: pt.block?.unit ?? '',
 			})),
 			events: disruptionLayout.map((D) => ({
 				name: D.q, index: D.index, timing: D.timing, sampled: D.block.sampled !== false,

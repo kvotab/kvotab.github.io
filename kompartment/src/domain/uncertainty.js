@@ -39,8 +39,10 @@
  * `UNCERTAIN_EXCLUDES` names them so the panels agree about it.
  */
 
-import { addParameter, uniqueName, findBlock, blockNames } from './edit.js';
+import { addParameter, uniqueName, findBlock, blockNames, isEffectivelyEnabled } from './edit.js';
 import { qualifiedName, systemOf, resolveReference } from './systems.js';
+import { timingOf, describeDisruption } from './disruption.js';
+import { failureOf, describeFailure } from './wastepackage.js';
 
 /**
  * The block properties that are a choice among distributions, not a number.
@@ -170,4 +172,41 @@ export function clearUncertainty(project, block, key, { referencesTo } = {}) {
 		return true;
 	}
 	return true;
+}
+
+/**
+ * What else a probabilistic run varies, or could be taken to vary, besides the
+ * parameters and table points it draws: for the list of what will be sampled,
+ * which otherwise left a reader looking at a Weibull in a block's settings
+ * and wondering where it went.
+ *
+ * A disruptive event at random draws its occurrences in each realisation
+ * (`drawn`). A waste package's way of failing does not: it is a distribution
+ * over the packages within one run -- see the note on the mode selectors
+ * above -- and every realisation follows the expected curve, the fraction
+ * failed by each time. Its scale and shape can be given a spread of their own
+ * (`makeUncertain`), and those are then parameters, drawn like any other.
+ * A block that is switched off takes no part, and is not listed.
+ *
+ * @returns {Array<{name: string, kind: 'event'|'waste_package', what: string, drawn: boolean}>}
+ */
+export function implicitInputs(project) {
+	const out = [];
+	const on = (b) => isEffectivelyEnabled(project, b);
+	for (const e of project?.events ?? []) {
+		if (timingOf(e) !== 'poisson' || e.sampled === false || !on(e)) continue;
+		out.push({ name: qualifiedName(e), kind: 'event', what: describeDisruption(e), drawn: true });
+	}
+	for (const w of project?.waste_packages ?? []) {
+		const f = failureOf(w);
+		// Never failing is no law, and failing all at one time is a time: an
+		// equation, which is a parameter's to vary when it names one.
+		if (f === 'never' || f === 'at' || !on(w)) continue;
+		const count = String(w.packages ?? '').trim();
+		out.push({
+			name: qualifiedName(w), kind: 'waste_package', drawn: false,
+			what: `${describeFailure(w)}${count ? ` · ${count} packages` : ''}`,
+		});
+	}
+	return out;
 }

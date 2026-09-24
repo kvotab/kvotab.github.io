@@ -28,15 +28,16 @@
  * the model's endpoints, or a chosen few -- and for those keeps every
  * realisation, because quantiles need them. What that costs is said before it
  * is spent (`estimate`), and refused rather than attempted when it cannot be
- * held. The parameters it varies are kept too, and always, but as the values
- * drawn rather than as curves: see `inputs` in `runProbabilistic`.
+ * held. The inputs it varies -- parameters, and the points of lookup tables
+ * that carry a spread -- are kept too, and always, but as the values drawn
+ * rather than as curves: see `inputs` in `runProbabilistic`.
  */
 
 import { sampleOccurrences } from '../domain/disruption.js';
 import { Project } from '../domain/project.js';
 import { buildSystem, tupleByList } from './builder.js';
 import { run } from './runner.js';
-import { effectiveValue } from '../domain/edit.js';
+import { effectiveValue, canBeEndpoint } from '../domain/edit.js';
 import { streamFor, uniforms, valueAtProbability, distributedSlots } from '../domain/sample.js';
 import { correlationPairs, imanConover } from '../domain/correlate.js';
 import { buildDesign, cholesky } from '../domain/gsa.js';
@@ -149,14 +150,14 @@ export function samplingPlan(project, system) {
  * @param {{low: number, high: number}} [opts.tornado]  a one-at-a-time design
  *                                     instead of a sample: see `designFor`
  * @param {(name: string) => boolean} [opts.keep]  which series to hold on to;
- *                                     never a parameter, see `inputs`
+ *                                     never an input, see `inputs`
  * @param {(done: number, total: number) => void} [opts.onProgress]
  * @param {{aborted: boolean}} [opts.signal]
  * @returns {{t: Float64Array, outputs: Array, values: Float64Array[], plan: Array,
  *   samples: Float64Array[], inputs: Array<{output: object, k: number}>,
  *   ran: Uint8Array, iterations: number, stats: object}} where `inputs` are
- *   the varied parameters, each read from `samples[k]`, and `ran` is 1 for
- *   each realisation that integrated
+ *   the varied parameters and table points, each read from `samples[k]`, and
+ *   `ran` is 1 for each realisation that integrated
  */
 /**
  * What every realisation of a run will set, before any of them is integrated.
@@ -518,16 +519,20 @@ export function runProbabilistic(input, opts = {}) {
 	// solver's own steps are different in each one.
 	const first = run(project, { system, signal: opts.signal, onGrid: true });
 	const outputs = first.outputs();
-	// **No parameter is in the matrix.** A parameter is a constant, so in each
-	// realisation it is the one number the design set -- which `samples`
-	// already holds -- and kept as a curve it would be that number at every
-	// output time: thirty parameters over forty nuclides are 1,200 series,
-	// nearly 4 GB for a thousand realisations on 400 times, against 10 MB as
-	// draws. So they are left out whatever `keep` says, and the ones that vary
-	// are handed back as `inputs`: which output each is and which column of
-	// the draws is its value. One that does not vary is the same number in
-	// every realisation, which the deterministic run already says.
-	const wanted = outputs.map((o, k) => k).filter((k) => outputs[k].source !== 'P'
+	// **No input is in the matrix** -- no parameter and no lookup table
+	// (`canBeEndpoint`). A parameter is a constant, so in each realisation it
+	// is the one number the design set -- which `samples` already holds -- and
+	// kept as a curve it would be that number at every output time: thirty
+	// parameters over forty nuclides are 1,200 series, nearly 4 GB for a
+	// thousand realisations on 400 times, against 10 MB as draws. A table is
+	// the same at each point that carries a spread, and its curve between the
+	// points follows from them. So they are left out whatever `keep` says, and
+	// the ones that vary are handed back as `inputs`: which output each is and
+	// which column of the draws is its value (a table's point has an output of
+	// its own for this; see `lookupPointOutputs` in ./runner.js). One that
+	// does not vary is the same in every realisation, which the deterministic
+	// run already says.
+	const wanted = outputs.map((o, k) => k).filter((k) => canBeEndpoint(outputs[k].kind)
 		&& (!opts.keep || opts.keep(outputs[k].block ?? outputs[k].label ?? '', outputs[k])));
 	// Not for a tornado or a sensitivity design: their points are not
 	// realisations of anything, and their tables are read off the outputs.

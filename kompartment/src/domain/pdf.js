@@ -671,6 +671,24 @@ export function probit(p) {
 	return x;
 }
 
+/**
+ * The standard normal's inverse CDF, to full precision: `probit` and two
+ * Newton steps on the accurate CDF. Acklam's approximation is good to 1e-9,
+ * and a step squares that.
+ */
+export function normalQuantile(p) {
+	if (!(p > 0)) return -Infinity;
+	if (!(p < 1)) return Infinity;
+	let x = probit(p);
+	for (let i = 0; i < 2; i++) {
+		const e = phi(x) - p;
+		const d = Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI);
+		if (!(d > 0)) break;
+		x -= e / d;
+	}
+	return x;
+}
+
 /** Where the curve is worth drawing between. */
 /**
  * Both truncations as the values they cut at, for a kind that can say.

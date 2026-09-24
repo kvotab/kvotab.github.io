@@ -67,31 +67,29 @@
  * Each estimator is otherwise the same arithmetic, and ../../test/run.js
  * checks them against GlobalSensitivity.jl's own results on the same designs
  * and data (`test/fixtures/gsa-reference.json`, from `scripts/gen-gsa-ref.jl`).
+ *
+ * **And what SALib adds**, from ./salib.js, which the registry below offers
+ * beside them: the radial one-at-a-time design, Morris's own trajectories with
+ * the optimal selection, bootstrap intervals on μ*, the Sobol indices and ν,
+ * the fractional factorial's interactions and RBD-FAST's bias correction --
+ * and, for a plain sample, PAWN and discrepancy.
  */
 
 import { rfft, irfft, powerSpectrum, dct2 } from './fft.js';
-import { phi, probit } from './pdf.js';
+import { phi, normalQuantile } from './pdf.js';
+import {
+	radialDesign, radialIndices, morrisTrajectoryDesign, muStarInterval, sobolBootstrap,
+	ffInteractions, unskew, dgsmSpread,
+} from './salib.js';
 
 /* -------------------------------------------------------------------------
  * The small things every method needs, done the way Julia's Statistics does
  * them, so that the same data give the same numbers.
  * ---------------------------------------------------------------------- */
 
-/** The standard normal's inverse CDF, to full precision. */
-export function normalQuantile(p) {
-	if (!(p > 0)) return -Infinity;
-	if (!(p < 1)) return Infinity;
-	let x = probit(p);
-	// One Newton step on the accurate CDF: Acklam's approximation is good to
-	// 1e-9, and a step squares that.
-	for (let i = 0; i < 2; i++) {
-		const e = phi(x) - p;
-		const d = Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI);
-		if (!(d > 0)) break;
-		x -= e / d;
-	}
-	return x;
-}
+// The standard normal's inverse CDF, to full precision, lives with the
+// distributions and is exported from here too for what already reads it here.
+export { normalQuantile };
 
 function mean(a, from = 0, to = a.length) {
 	let s = 0;
@@ -270,7 +268,9 @@ export function morrisDesign(K, { trajectories = 10, points = 10, levels = 100, 
 
 /**
  * @returns {{mean: Float64Array, meanStar: Float64Array, variance: Float64Array,
- *   count: Int32Array}} per input; an input no step moved has a count of 0
+ *   count: Int32Array, effects: number[][]}} per input; an input no step moved
+ *   has a count of 0. `effects` are the elementary effects themselves, in the
+ *   order the design made them, for an interval on μ* (see ./salib.js).
  */
 export function morrisIndices(y, design, { relative = false } = {}) {
 	const { K, trajectories, points, u } = design;
@@ -295,7 +295,7 @@ export function morrisIndices(y, design, { relative = false } = {}) {
 	}
 	const out = {
 		mean: new Float64Array(K), meanStar: new Float64Array(K),
-		variance: new Float64Array(K), count: new Int32Array(K),
+		variance: new Float64Array(K), count: new Int32Array(K), effects,
 	};
 	for (let k = 0; k < K; k++) {
 		const e = effects[k];
@@ -1415,10 +1415,14 @@ export const GSA_METHODS = {
 			+ 'much an input matters, μ which way, σ how much its effect depends on where it is '
 			+ 'taken — a curve or an interaction. Cheap: a screening method, for many inputs.',
 		options: [
-			['trajectories', 'Trajectories', 10, 'int', 'How many random walks.'],
-			['points', 'Walk length', 10, 'int', 'Runs in each walk; each step after the first is one elementary effect.'],
-			['levels', 'Levels', 100, 'int', 'How many levels each input’s probability is cut into; a step moves one level.'],
+			['design', 'Design', 'walks', 'choice', 'How the runs are laid out: GlobalSensitivity.jl’s random walks, or Morris’s own trajectories as SALib samples them, each moving every input once by half its range.',
+				[['walks', 'Random walks'], ['trajectories', 'Trajectories (SALib)']]],
+			['trajectories', 'Trajectories', 10, 'int', 'How many walks, or trajectories.'],
+			['points', 'Walk length', 10, 'int', 'Walks only: runs in each; each step after the first is one elementary effect. A trajectory is K + 1 runs.'],
+			['levels', 'Levels', 100, 'int', 'How many levels each input’s probability is cut into. A walk moves one level a step; a trajectory, half of them.'],
+			['candidates', 'Candidates', 0, 'int', 'Trajectories only: draw this many and keep the most spread out — Campolongo’s optimal trajectories, by Ruano’s local search. 0 keeps every one drawn.'],
 			['relative', 'Relative', false, 'switch', 'Each effect divided by the output, so it is a proportion rather than in the output’s units.'],
+			['resamples', 'Bootstrap', 100, 'int', 'Resamples for SALib’s interval on μ*; 0 for none.'],
 		],
 	},
 	sobol: {
@@ -1433,6 +1437,7 @@ export const GSA_METHODS = {
 			['blocks', 'Blocks', 1, 'int', 'Repeat the design this many times and give an interval from the spread between them.'],
 			['estimator', 'Sₜ estimator', 'jansen1999', 'choice', 'How Sₜ is estimated from the samples.',
 				[['jansen1999', 'Jansen 1999'], ['sobol2007', 'Sobol 2007'], ['homma1996', 'Homma and Saltelli 1996'], ['janon2014', 'Janon 2014']]],
+			['resamples', 'Bootstrap', 100, 'int', 'With one block: resamples for SALib’s bootstrap interval on each index, from the one design. 0 for none.'],
 		],
 	},
 	efast: {
@@ -1465,6 +1470,7 @@ export const GSA_METHODS = {
 		options: [
 			['low', 'Low level', 0.05, 'number', 'The probability each input’s low level is at.'],
 			['high', 'High level', 0.95, 'number', 'The probability each input’s high level is at.'],
+			['pairs', 'Pairs', false, 'switch', 'Every pair’s two-way interaction effect too, from the same runs (SALib’s). In this design each is aliased with others: what is measured for a pair is its sum with the pairs aliased with it.'],
 		],
 	},
 	dgsm: {
@@ -1476,6 +1482,18 @@ export const GSA_METHODS = {
 			['samples', 'Points', 100, 'int', 'Where the derivatives are taken.'],
 			['step', 'Step', 0.001, 'number', 'The finite-difference step, in probability.'],
 			['crossed', 'Cross terms', false, 'switch', 'Every pair’s second derivative too, K(K − 1)/2 more runs a point.'],
+			['resamples', 'Bootstrap', 100, 'int', 'Resamples for SALib’s interval on ν; 0 for none.'],
+		],
+	},
+	radial: {
+		label: 'Radial one-at-a-time',
+		short: 'Radial',
+		blurb: 'Campolongo, Saltelli and Cariboni’s design: base points spread over the whole space, each '
+			+ 'moved one input at a time towards a second point. Elementary effects to screen with, as '
+			+ 'Morris’s, and Jansen’s total index from the same runs — N(K + 1) of them.',
+		options: [
+			['samples', 'Base points', 100, 'int', 'How many; each costs K + 1 runs.'],
+			['resamples', 'Bootstrap', 100, 'int', 'Resamples for the intervals on μ* and Sₜ; 0 for none.'],
 		],
 	},
 	shapley: {
@@ -1522,7 +1540,8 @@ const factorial = (n) => (n <= 1 ? 1 : n * factorial(n - 1));
 export function gsaRuns(method, K, options = {}) {
 	const o = gsaOptions(method, K, options);
 	switch (method) {
-		case 'morris': return o.trajectories * o.points;
+		case 'morris': return o.trajectories * (o.design === 'trajectories' ? K + 1 : o.points);
+		case 'radial': return o.samples * (K + 1);
 		case 'sobol': return sobolRuns(K, o.samples, { second: o.second, blocks: o.blocks });
 		case 'efast': return K * efastSamples(o.samples, o.harmonics);
 		case 'rbdfast': return o.samples;
@@ -1547,6 +1566,12 @@ export function gsaRefusal(method, K, options = {}) {
 			if (!positive(o.trajectories) || !(o.points >= 2) || !(o.levels >= 2)) {
 				return 'Morris needs at least one trajectory of two points, over at least two levels.';
 			}
+			if (o.design === 'trajectories' && o.candidates > 0 && o.candidates < o.trajectories) {
+				return 'Fewer candidates than trajectories to keep; 0 keeps every one drawn.';
+			}
+			break;
+		case 'radial':
+			if (!(o.samples >= 2)) return 'The radial design needs at least two base points.';
 			break;
 		case 'sobol':
 			if (!(o.samples >= 2) || !positive(o.blocks)) return 'Sobol needs at least two samples and one block.';
@@ -1597,7 +1622,13 @@ export function buildDesign(method, keys, options, { seed = 1, corr = null, stre
 	let d;
 	switch (method) {
 		case 'morris':
-			d = morrisDesign(K, { ...o, next: streamFor(seed, '#gsa#morris') });
+			d = o.design === 'trajectories'
+				? morrisTrajectoryDesign(K, { ...o, next: streamFor(seed, '#gsa#morris') })
+				: morrisDesign(K, { ...o, next: streamFor(seed, '#gsa#morris') });
+			break;
+		case 'radial':
+			d = radialDesign(K, keys.map((key) => col(`${key}#radial#base`, o.samples)),
+				keys.map((key) => col(`${key}#radial#step`, o.samples)));
 			break;
 		case 'sobol':
 			d = sobolDesign(K, o.samples, {
@@ -1632,6 +1663,9 @@ export function buildDesign(method, keys, options, { seed = 1, corr = null, stre
 			throw new Error(`There is no method called ${method}.`);
 	}
 	d.options = o;
+	// What the intervals are drawn from, so that reading the table again gives
+	// the same one: see `gsaTable`.
+	d.seed = seed;
 	return d;
 }
 
@@ -1648,9 +1682,21 @@ function columnsFor(design) {
 			rank: 'meanStar',
 			columns: [
 				['meanStar', 'μ*', 'value', 'The mean of the elementary effects’ magnitudes: how much this input matters, whichever way.'],
+				...(o.resamples > 1 ? [['meanStarCi', '± μ*', 'value', 'Half-width of the 95 % interval on μ*, SALib’s: this input’s effects resampled.']] : []),
 				['mean', 'μ', 'value', 'The mean elementary effect: its sign says which way the output moves as the input rises.'],
 				['sd', 'σ', 'value', 'The spread of the elementary effects: large where the effect depends on where it is taken — a curve, or an interaction.'],
 				['count', 'n', 'count', 'How many elementary effects this input has.'],
+			],
+		};
+		case 'radial': return {
+			rank: 'ST',
+			columns: [
+				['ST', 'Sₜ', 'index', 'Total index, by Jansen’s estimator: the share of the variance this input has a hand in.'],
+				...(o.resamples > 1 ? [['STci', '± Sₜ', 'value', 'Half-width of the 95 % interval on Sₜ, from the base points resampled.']] : []),
+				['meanStar', 'μ*', 'value', 'The mean magnitude of the elementary effects, as Morris’s, from points spread over the whole space.'],
+				...(o.resamples > 1 ? [['meanStarCi', '± μ*', 'value', 'Half-width of the 95 % interval on μ*, SALib’s.']] : []),
+				['mean', 'μ', 'value', 'The mean elementary effect: which way the output moves.'],
+				['sd', 'σ', 'value', 'The spread of the elementary effects.'],
 			],
 		};
 		case 'sobol': return {
@@ -1661,6 +1707,9 @@ function columnsFor(design) {
 				...(o.blocks > 1 ? [
 					['S1ci', '± S₁', 'value', 'Half-width of the interval on S₁, from the spread between blocks.'],
 					['STci', '± Sₜ', 'value', 'Half-width of the interval on Sₜ.'],
+				] : o.resamples > 1 ? [
+					['S1ci', '± S₁', 'value', 'Half-width of the 95 % interval on S₁, SALib’s: the runs of the one design resampled.'],
+					['STci', '± Sₜ', 'value', 'Half-width of the 95 % interval on Sₜ, likewise.'],
 				] : []),
 			],
 		};
@@ -1673,7 +1722,10 @@ function columnsFor(design) {
 		};
 		case 'rbdfast': return {
 			rank: 'S1',
-			columns: [['S1', 'S₁', 'index', 'First-order index, from the first harmonics along this input’s order.']],
+			columns: [
+				['S1', 'S₁', 'index', 'First-order index, from the first harmonics along this input’s order.'],
+				['S1c', 'S₁ corrected', 'index', 'The same with Tissot and Prieur’s correction for the bias a random design leaves in it, which SALib applies.'],
+			],
 		};
 		case 'ff': return {
 			rank: 'absMain',
@@ -1687,6 +1739,8 @@ function columnsFor(design) {
 			columns: [
 				['bound', 'Sₜ ≤', 'index', 'Upper bound on the total Sobol index: ν / (π² Var y). An input with a small bound is safely unimportant.'],
 				['asq', 'ν', 'value', 'The mean squared derivative, per unit probability squared.'],
+				...(o.resamples > 1 ? [['asqCi', '± ν', 'value', 'Half-width of the 95 % interval on ν, SALib’s: the points resampled.']] : []),
+				['asqSd', 'sd', 'value', 'The spread of the squared derivative across the points, SALib’s vi_std.'],
 				['a', 'mean', 'value', 'The mean derivative: which way the output moves.'],
 				['absa', '|mean|', 'value', 'The mean of the derivative’s magnitude.'],
 				['sigma', 'σ', 'value', 'GlobalSensitivity.jl’s sigma: the mean of u(1 − u)/2 times the squared derivative.'],
@@ -1707,12 +1761,17 @@ function columnsFor(design) {
 /**
  * One method's answer for one output, as rows.
  *
+ * The intervals SALib adds are bootstraps, drawn from `next`: a stream of the
+ * run's seed, so reading the table again gives the same one. `intervals:
+ * false` leaves them out, for the curve over time, which reads only the rank.
+ *
  * @param {object} design  from `buildDesign`
  * @param {Float64Array} y  the output at every design point
+ * @param {{next?: () => number, intervals?: boolean}} [o]
  * @returns {{columns, rank, rows: Array<{k: number, values: object}>, pairs: Array|null,
  *   failed: number, variance: number}}
  */
-export function gsaTable(design, y) {
+export function gsaTable(design, y, { next = Math.random, intervals = true } = {}) {
 	const { K } = design;
 	const failed = y.reduce((s, v) => s + (Number.isFinite(v) ? 0 : 1), 0);
 	// An output that came out the same in every run has no spread to share
@@ -1732,15 +1791,36 @@ export function gsaTable(design, y) {
 				set('mean', r.mean);
 				set('sd', r.variance.map(Math.sqrt));
 				set('count', r.count);
+				if (o.resamples > 1) {
+					set('meanStarCi', intervals
+						? muStarInterval(r.effects, { resamples: o.resamples, next })
+						: new Float64Array(K).fill(NaN));
+				}
 				for (let k = 0; k < K; k++) {
 					if (!r.count[k]) for (const c of ['meanStar', 'mean', 'sd']) rows[k].values[c] = NaN;
 				}
+				break;
+			}
+			case 'radial': {
+				const r = radialIndices(y, design, { resamples: intervals ? o.resamples : 0, next });
+				set('ST', r.ST);
+				set('meanStar', r.muStar);
+				set('mean', r.mu);
+				set('sd', r.sigma);
+				if (o.resamples > 1) { set('STci', r.STci); set('meanStarCi', r.muStarCi); }
 				break;
 			}
 			case 'sobol': {
 				const r = sobolIndices(y, { K, n: design.n, second: design.second, blocks: design.blocks, estimator: o.estimator });
 				set('S1', r.S1);
 				set('ST', r.ST);
+				// With one design, SALib's bootstrap gives the interval blocks would.
+				if (!r.S1ci && o.resamples > 1 && intervals) {
+					const b = sobolBootstrap(y, design, { resamples: o.resamples, next });
+					r.S1ci = b.S1ci;
+					r.STci = b.STci;
+					r.S2ci = b.S2ci;
+				}
 				if (r.S1ci) { set('S1ci', r.S1ci); set('STci', r.STci); }
 				if (r.S2) {
 					pairs = [];
@@ -1759,19 +1839,27 @@ export function gsaTable(design, y) {
 				set('ST', r.ST);
 				break;
 			}
-			case 'rbdfast':
-				set('S1', rbdFastIndices(y, design, { harmonics: o.harmonics }));
+			case 'rbdfast': {
+				const S1 = rbdFastIndices(y, design, { harmonics: o.harmonics });
+				set('S1', S1);
+				set('S1c', S1.map((v) => unskew(v, o.harmonics, design.N)));
 				break;
+			}
 			case 'ff': {
 				const r = ffIndices(y, design);
 				set('main', r.main);
 				set('squared', r.squared);
 				set('absMain', r.main.map(Math.abs));
+				if (o.pairs) pairs = ffInteractions(y, design).sort((p, q) => Math.abs(q.value) - Math.abs(p.value));
 				break;
 			}
 			case 'dgsm': {
 				const r = dgsmIndices(y, design);
 				for (const key of ['bound', 'asq', 'a', 'absa', 'sigma', 'tao']) set(key, r[key]);
+				const spreadOf = dgsmSpread(dgsmDerivatives(y, design).g, K, design.N,
+					{ resamples: intervals ? o.resamples : 0, next });
+				set('asqSd', spreadOf.sd);
+				if (o.resamples > 1) set('asqCi', spreadOf.ci);
 				if (r.crossed) {
 					pairs = [];
 					for (let a = 0; a < K; a++) {
@@ -1803,7 +1891,7 @@ export function gsaTable(design, y) {
 
 /** The number a method is ranked by, for one input -- what its curve over time is of. */
 export function gsaMain(design, y) {
-	const t = gsaTable(design, y);
+	const t = gsaTable(design, y, { intervals: false });
 	const out = new Float64Array(design.K).fill(NaN);
 	for (const r of t.rows) out[r.k] = r.values[t.rank];
 	return out;

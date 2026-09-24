@@ -172,6 +172,23 @@ export function failureOf(block) {
 	return FAILURES.includes(f) ? f : 'never';
 }
 
+/**
+ * How a block's packages fail, in a line: the law and its settings as the
+ * model writes them, e.g. `Weibull, scale canister_life, shape 2, from
+ * t_first_failure`. Null for one that never fails.
+ */
+export function describeFailure(block) {
+	const say = (k) => String(block?.[k] ?? '').trim() || '?';
+	switch (failureOf(block)) {
+		case 'at': return `all at ${say('fail_at')}`;
+		case 'uniform': return `evenly from ${say('fail_from')} to ${say('fail_to')}`;
+		case 'exponential': return `exponential, rate ${say('fail_rate')}, from ${say('fail_start')}`;
+		case 'weibull':
+			return `Weibull, scale ${say('fail_scale')}, shape ${say('fail_shape')}, from ${say('fail_start')}`;
+		default: return null;
+	}
+}
+
 /** The settings whose values are times the solver should land on exactly. */
 export function failureTimeKeys(failure) {
 	return {

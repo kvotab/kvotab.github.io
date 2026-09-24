@@ -48,6 +48,7 @@ import { openCategoriesDialog } from './catdialog.js';
 import { openTornadoSetup, openTornadoResult } from './tornadodialog.js';
 import { openGsaSetup, openGsaResult } from './gsadialog.js';
 import { categoriesOf } from '../domain/categories.js';
+import { implicitInputs } from '../domain/uncertainty.js';
 import { runLogLines, probabilisticLogLines, runLogText } from '../domain/runlog.js';
 import { compareModels, reportLines, summary as versionSummary } from '../domain/versions.js';
 import { describeAudit } from '../domain/massbalance.js';
@@ -1371,6 +1372,10 @@ function openProbabilistic() {
 		// only the 12 endpoints" is entitled to ask which twelve.
 		onChooseEndpoints: (done) => openEndpoints(
 			() => done(ed.endpoints(state.raw), endpointSeriesCount())),
+		// What varies besides the parameters and table points, for the list of
+		// what will be sampled: the events that draw their occurrences, and the
+		// waste packages' ways of failing, which do not.
+		implicit: implicitInputs(state.raw),
 		onRun: (choice) => startProbabilistic(choice),
 	});
 }
@@ -5720,9 +5725,9 @@ function renderSidebar() {
 							+ 'with the rest held: which inputs move this output at all. Needs no sample.',
 						onPick: () => openTornado() },
 					{ label: 'Global sensitivity\u2026',
-						title: 'Morris, Sobol, eFAST, RBD-FAST, a fractional factorial, DGSM or Shapley '
-							+ 'effects: an experiment of its own over the distributions, priced before it '
-							+ 'runs. Needs no sample.',
+						title: 'Morris, Sobol, eFAST, RBD-FAST, a fractional factorial, DGSM, the radial '
+							+ 'design or Shapley effects: an experiment of its own over the distributions, '
+							+ 'priced before it runs. Needs no sample.',
 						onPick: () => openGsa() },
 					{ label: 'Global sensitivity result\u2026', disabled: !state.gsa,
 						title: state.gsa

@@ -2470,10 +2470,11 @@ endpoints out is **Save…**, after the run.
 **An endpoint is a block**: move `Dose` across and every nuclide of it goes.
 Picking 831,314 series one at a time is not something a dialog can offer.
 
-**An endpoint is never a parameter.** Parameters are not offered. A parameter
-named in the model's list is skipped, and the list is otherwise left as the file
-had it. A probabilistic run keeps every parameter it varies anyway, as the value
-each realisation drew. See [A probabilistic run](#a-probabilistic-run).
+**An endpoint is never an input**: not a parameter, and not a lookup table.
+Neither is offered. One named in the model's list is skipped, and the list is
+otherwise left as the file had it. A probabilistic run keeps every input it
+varies anyway, as the value each realisation drew. See [A probabilistic
+run](#a-probabilistic-run).
 
 What you choose is **saved back to the model**, under `simulation.endpoints`,
 because an endpoint list is a property of the model rather than of one export,
@@ -5353,6 +5354,27 @@ ones cost next to nothing: a thousand realisations of a thousand varied values
 is 8 MB, where the same held as curves over 400 output times would be over
 three gigabytes.
 
+**A lookup table is an input in the same way.** It is not an endpoint, and its
+curve is not held per realisation. Each point of it that carries a spread is
+kept instead, as the value drawn there. That point is a series of its own, with
+the time it sits at as one more index: `SRF [@0]` and `SRF [@8700]` for the
+table `SRF` at years 0 and 8,700, and `SRF [Cs-137, @8700]` for an indexed
+one. In the ordinary run each is the value the model holds. After a sample each
+has the spread of what was drawn, and the chart's index filter offers the
+times under **Time point**. Between the points the curve is interpolated in
+every realisation as always, so an expression that reads the table is where to
+look for it over time.
+
+**What will be sampled** lists every input that is drawn: the parameters and
+table points, and every disruptive event at random, whose occurrences are
+drawn for each realisation. It also lists what is a distribution without being
+drawn: a waste package's way of failing. A Weibull in a block's *Packages fail*
+is a spread over the packages within one run, not over realisations. Every
+realisation follows its expected curve, the fraction failed by each time, and
+the list says so rather than leaving it to be looked for. To vary a failure
+law between realisations, give its scale or shape a spread of its own: that
+makes it a parameter, drawn like any other.
+
 **Which blocks the sample holds.** After a probabilistic run the tree in the
 left panel marks what the sample holds:
 
@@ -5561,7 +5583,9 @@ one spread of two.
 
 Each such point is a sampled input of its own, named for the time it sits at —
 `SRF@0`, `SRF@8700` — and appears that way in *What drove it* and in the
-Probabilistic dialog's plan. Between them the curve is interpolated as always,
+Probabilistic dialog's plan. On the chart and in the table it is the series
+`SRF [@0]`, the time as one more index: see [A probabilistic
+run](#a-probabilistic-run). Between them the curve is interpolated as always,
 so a realisation is a whole table drawn from the point spreads. Put them in the
 same **group** and the curve keeps its shape while scaling as one; leave them
 ungrouped and each point moves on its own.
@@ -5758,8 +5782,8 @@ for. Either one asks the sample again and answers in place: the coefficients
 are a pass over realisations that are already in memory, so changing them costs
 nothing and no dialog stacks up behind.
 
-**Measures ▸ Distribution** puts four more beside the rank correlation, the half
-of GlobalSensitivity.jl that reads any sample: **EASI**'s first-order index,
+**Measures ▸ Distribution** puts six more beside the rank correlation. Four are
+the half of GlobalSensitivity.jl that reads any sample: **EASI**'s first-order index,
 the share of the variance an input explains alone, of any shape; Borgonovo's
 **δ**, how far knowing the input moves the output's whole distribution rather
 than only its variance; **mutual information**, in bits, above what shuffling
@@ -5772,6 +5796,19 @@ read on scores (normal scores of the output, ranks), which changes neither of
 them: a dose that spans thirty decades has no density estimate on a linear
 grid, and on the values δ came out in the hundreds of thousands. δ is a
 bootstrap per input, so this takes a few seconds on a large sample.
+
+The other two are from SALib. **PAWN** holds the input to each of ten slices
+of its range and measures how far the output's distribution moves, by the
+Kolmogorov-Smirnov distance to the whole; the column is the median over the
+slices. **Discrepancy** is how unevenly the input's scatter against the output
+fills the square: an input the output does not depend on scatters the points
+evenly, one it does piles them along a curve. It is read on ranks, the input's
+and the output's, which are even whatever the distributions: a dose over
+decades scaled onto the square by its extremes, as SALib scales it, sits at the
+bottom for nearly every realisation, and every input came out with the same
+share. It is shown as the input's share of the total over every input that
+varies. On a sample too large for that to be quick
+it is the share among the inputs listed, and the column's tooltip says so.
 
 *Of* can only offer what the run **kept**. If *Keep only the N endpoints* was
 ticked when it ran, that is the endpoint list and nothing else — ask about a
@@ -5927,17 +5964,19 @@ percentiles swung to are saved with the model.
 ## Global sensitivity
 
 **Analyse ▾ → Global sensitivity…** runs the designed methods of SciML's
-[GlobalSensitivity.jl](https://github.com/SciML/GlobalSensitivity.jl), each an
-experiment of its own over the model's distributions:
+[GlobalSensitivity.jl](https://github.com/SciML/GlobalSensitivity.jl), and what
+the Python library [SALib](https://github.com/SALib/SALib) adds to them. Each
+is an experiment of its own over the model's distributions:
 
 | Method | What it gives | Runs for K inputs |
 |---|---|---|
-| **Morris** | μ∗ (how much an input matters), μ (which way), σ (how much that depends on where it is taken — a curve or an interaction) | trajectories × points, 100 by default |
-| **Sobol** | S₁, the share of the variance an input explains alone, and Sₜ, the share it has a hand in; optionally every pair's S₂, and intervals from repeated blocks | (K + 2) × samples; (2K + 2) with pairs |
+| **Morris** | μ∗ (how much an input matters) with its interval, μ (which way), σ (how much that depends on where it is taken — a curve or an interaction). Two designs: GlobalSensitivity.jl's random walks, or Morris's own trajectories as SALib samples them, each moving every input once. For trajectories, *Candidates* draws more than are kept and keeps the most spread out: Campolongo's optimal trajectories | walks: trajectories × points; trajectories: trajectories × (K + 1) |
+| **Sobol** | S₁, the share of the variance an input explains alone, and Sₜ, the share it has a hand in; optionally every pair's S₂. Intervals from repeated blocks, or from SALib's bootstrap of the one design | (K + 2) × samples; (2K + 2) with pairs |
 | **eFAST** | S₁ and Sₜ from the spectrum along one curve per input | K × points per curve |
-| **RBD-FAST** | S₁, from one curve for every input at once | samples, whatever K is |
-| **Fractional factorial** | main effects, each input at a low or a high percentile | 2 × the next power of two above K |
-| **DGSM** | derivatives with respect to each input; ν, their mean square, bounds Sₜ from above | (K + 1) × points |
+| **RBD-FAST** | S₁, from one curve for every input at once, and the same corrected for the bias a random design leaves in it | samples, whatever K is |
+| **Fractional factorial** | main effects, each input at a low or a high percentile, and with *Pairs* every pair's two-way interaction | 2 × the next power of two above K |
+| **DGSM** | derivatives with respect to each input; ν, their mean square, bounds Sₜ from above, with its interval and the spread of the squared derivative | (K + 1) × points |
+| **Radial** | Campolongo, Saltelli and Cariboni's radial design: base points spread over the whole space, each moved one input at a time. Jansen's Sₜ and elementary effects (μ∗, μ, σ) from the same runs, both with intervals | (K + 1) × base points |
 | **Shapley** | each input's fair share of the variance; they add up to one even when inputs are correlated | variance runs + orders × (K − 1) × outer × inner |
 
 The dialog says what a design will cost before it runs — from the run you have
@@ -5966,12 +6005,21 @@ moving together. The model's other correlations are honoured by Shapley
 effects, through a Gaussian copula; the other methods assume independent
 inputs, as their designs do, and say so.
 
-Every estimator is GlobalSensitivity.jl's own arithmetic, and the tests hold
-them to its results on the same designs and data (see INTERNALS.md). Where this
-tool differs it does so on purpose: the designs come from the tool's seeded
-streams rather than Julia's generator, eFAST's points per curve are raised to a
-number its harmonics fit under, DGSM differentiates by finite differences, and
-two slips in GlobalSensitivity.jl are not carried over.
+Every estimator is GlobalSensitivity.jl's own arithmetic or SALib's, and the
+tests hold them to those libraries' results on the same designs and data (see
+INTERNALS.md). Where this tool differs it does so on purpose:
+
+- The designs and the bootstrap resamples come from the tool's seeded streams,
+  not Julia's or numpy's generator. The same seed gives the same intervals
+  every time the table is read.
+- eFAST's points per curve are raised to a number its harmonics fit under, and
+  DGSM differentiates by finite differences.
+- Two slips in GlobalSensitivity.jl, and SALib's interval on Jansen's Sₜ (which
+  is not a bootstrap of anything), are not carried over.
+- Morris's trajectories use the middles of their levels, as the walks do,
+  rather than a grid that includes both ends of an unbounded distribution.
+
+SALib's HDMR is not here yet.
 
 ## Replaying one realisation
 

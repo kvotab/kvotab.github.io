@@ -7771,8 +7771,9 @@ export function clearBlockSize(project, blockName) {
  * survive reopening the picker. A name counts when a real block is at the
  * front of it, at a boundary.
  *
- * **A parameter is not one** (`canBeEndpoint`). An Ecolego list often names
- * parameters, and they are left in the file as it said them and skipped here.
+ * **A parameter is not one, nor a lookup table** (`canBeEndpoint`). An
+ * Ecolego list often names parameters, and they are left in the file as it
+ * said them and skipped here.
  */
 export function endpoints(project) {
 	const list = project?.simulation?.endpoints;
@@ -7789,17 +7790,21 @@ export function endpoints(project) {
 }
 
 /**
- * Whether a block of this kind can be an endpoint: anything but a parameter.
+ * Whether a block of this kind can be an endpoint: anything but an input --
+ * a parameter or a lookup table.
  *
- * An endpoint is a result a run is asked to keep, and a parameter is not a
- * result: it is a constant, one number in a deterministic run and in a
- * probabilistic one the number each realisation drew -- which that run keeps
- * of every parameter it varies whatever the list says (see `inputs` in
- * ../sim/probabilistic.js). Offering them made the list mostly inputs on an
- * imported assessment, and priced a run for thousands of flat curves.
+ * An endpoint is a result a run is asked to keep, and an input is not a
+ * result. A parameter is a constant: one number in a deterministic run, and
+ * in a probabilistic one the number each realisation drew. A lookup table is
+ * the same thing at a list of times: each point that carries a spread is drawn
+ * once per realisation, like one index of a parameter. A probabilistic run
+ * keeps every input it varies as its draws, whatever the list says (see
+ * `inputs` in ../sim/probabilistic.js). Offering them made the list mostly
+ * inputs on an imported assessment, and priced a run for thousands of curves
+ * that are one number each.
  */
 export function canBeEndpoint(kind) {
-	return kind !== 'parameter';
+	return kind !== 'parameter' && kind !== 'lookup';
 }
 
 /**

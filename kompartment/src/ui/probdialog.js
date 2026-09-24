@@ -57,10 +57,15 @@ export function howLong(ms) {
  * @param {(choice: object) => void} opts.onRun
  * @param {(() => void)|null} [opts.onDiscard] throws away the sample already
  *   held, where there is one. Null when there is not.
+ * @param {Array<{name: string, what: string, drawn: boolean}>} [opts.implicit]
+ *   what else varies, or could be taken to: the disruptive events that draw
+ *   their occurrences, and the failure laws of waste packages, which do not
+ *   -- see `implicitInputs` in ../domain/uncertainty.js
  */
 export function openProbabilisticDialog({
 	plan, simulation, series, times, lastSolveMs = null, endpoints = [],
 	endpointSeries = null, workers = 1, cores = null, onChooseEndpoints = null, onDiscard = null, onRun,
+	implicit = [],
 }) {
 	let chosenCores = cores;
 	// A local copy of the list and of what it comes to in series, because the
@@ -133,20 +138,37 @@ export function openProbabilisticDialog({
 			// --- what it would do, before what to set.
 			const kinds = new Map();
 			for (const e of plan) kinds.set(e.kind ?? e.spec?.kind, (kinds.get(e.kind ?? e.spec?.kind) ?? 0) + 1);
-			// The parameters that vary, which the run keeps whatever else it
-			// keeps: as the value each realisation drew rather than as curves,
-			// so they cost next to nothing (see `inputs` in
-			// ../sim/probabilistic.js). A point of a lookup table is not one --
-			// the table is kept as its curve, when it is kept at all.
-			const inputBlocks = new Set(plan
-				.filter((e) => !String(e.name).includes('@') && (!varied || varied.has(slotName(e))))
-				.map((e) => e.name));
+			// The inputs that vary, which the run keeps whatever else it keeps:
+			// as the value each realisation drew rather than as curves, so they
+			// cost next to nothing (see `inputs` in ../sim/probabilistic.js). A
+			// lookup table is one at each of its points that varies, which the
+			// plan names `Table@time`.
+			const varying = plan.filter((e) => !varied || varied.has(slotName(e)));
+			const tableOf = (name) => (String(name).includes('@')
+				? String(name).slice(0, String(name).lastIndexOf('@')) : null);
+			const inputParams = new Set(varying.filter((e) => !tableOf(e.name)).map((e) => e.name));
+			const inputTables = new Set(varying.map((e) => tableOf(e.name)).filter(Boolean));
+			const inputCount = inputParams.size + inputTables.size;
+			const counted = (n, one, many) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
+			const inputWords = [
+				inputParams.size ? counted(inputParams.size, 'parameter', 'parameters') : null,
+				inputTables.size ? counted(inputTables.size, 'lookup table', 'lookup tables') : null,
+			].filter(Boolean).join(' and ');
+			// The disruptive events whose occurrences each realisation draws.
+			const drawnEvents = implicit.filter((x) => x.drawn).length;
 			const summary = el('div', { className: 'prob-summary' },
-				el('p', {},
-					el('b', {}, `${plan.length.toLocaleString()} value${plan.length === 1 ? '' : 's'}`),
-					` drawn per realisation, from `,
-					[...kinds].map(([k, v]) => `${v} ${k}`).join(', '),
-					'.'),
+				plan.length
+					? el('p', {},
+						el('b', {}, `${plan.length.toLocaleString()} value${plan.length === 1 ? '' : 's'}`),
+						` drawn per realisation, from `,
+						[...kinds].map(([k, v]) => `${v} ${k}`).join(', '),
+						drawnEvents
+							? `, and the occurrences of ${counted(drawnEvents, 'disruptive event', 'disruptive events')}.`
+							: '.')
+					// A model whose only dice are its random events has no value
+					// to draw, and said "0 values drawn … from ." for it.
+					: el('p', {}, 'No value is drawn from a distribution: each realisation draws the '
+						+ `occurrences of ${counted(drawnEvents, 'disruptive event', 'disruptive events')}.`),
 				el('p', {},
 					el('b', {}, `${iterations.toLocaleString()} realisation${iterations === 1 ? '' : 's'}`),
 					` of `,
@@ -159,13 +181,13 @@ export function openProbabilisticDialog({
 					el('b', {}, asFile.text),
 					' — they are saved as float32, which is half what the run holds and '
 					+ 'still finer than a sample of this size can justify.'),
-				inputBlocks.size
+				inputCount
 					? el('p', { className: 'hint prob-inputs' },
-						el('b', {}, `The ${inputBlocks.size.toLocaleString()} parameter`
-							+ `${inputBlocks.size === 1 ? '' : 's'} it varies`),
-						`${inputBlocks.size === 1 ? ' is' : ' are'} kept whatever else is, as the `
-						+ 'value each realisation drew, and can be charted, tabled and saved beside '
-						+ 'the series.')
+						el('b', {}, `The ${inputWords} it varies`),
+						`${inputCount === 1 ? ' is' : ' are'} kept whatever else is, as the value each `
+						+ 'realisation drew'
+						+ (inputTables.size ? ' — a table at each time point that varies, like an index —' : '')
+						+ ' and can be charted, tabled and saved beside the series.')
 					: null,
 				// A model set to the solver's own points is the one case where
 				// a sample cannot report what a single run reports, and it is
@@ -421,7 +443,7 @@ export function openProbabilisticDialog({
 			}
 
 			// --- what will be sampled, so it can be checked.
-			if (plan.length) {
+			if (plan.length || implicit.length) {
 				const list = el('div', { className: 'prob-list' });
 				for (const e of plan.slice(0, 12)) {
 					const where = Object.values(e.index ?? {});
@@ -432,6 +454,20 @@ export function openProbabilisticDialog({
 				if (plan.length > 12) {
 					list.append(el('div', { className: 'prob-more' },
 						`and ${(plan.length - 12).toLocaleString()} more`));
+				}
+				// And what is a distribution without being a parameter's: a
+				// random event's occurrences, drawn for each realisation, and a
+				// waste package's way of failing, which is not -- it is a spread
+				// over the packages within one run, and every realisation follows
+				// its expected curve. Listed so that a Weibull in a block's
+				// settings is accounted for rather than looked for.
+				for (const x of implicit) {
+					list.append(el('div', { className: `prob-item prob-implicit${x.drawn ? '' : ' is-not-drawn'}` },
+						el('code', {}, x.name),
+						el('span', {}, x.drawn
+							? `${x.what} — its occurrences, drawn for each realisation`
+							: `${x.what} — not drawn: every realisation follows the expected failure `
+								+ 'curve. A spread on its scale or shape is a parameter that is.')));
 				}
 				body.append(el('details', { className: 'prob-plan' },
 					el('summary', {}, 'What will be sampled'), list));

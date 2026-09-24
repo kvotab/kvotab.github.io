@@ -7531,6 +7531,12 @@ input.ix-unit { width: 130px; padding: 2px 6px; font-size: 11.5px; }
 .prob-item > span { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .prob-more { padding: 4px 7px; font-size: 11px; color: var(--text-muted); }
 
+/* What varies without being a parameter's, after the plan: wrapped rather than
+   cut, since the sentence is the point of listing it, and a law that is not
+   drawn set apart from what is. */
+.prob-implicit > span { white-space: normal; }
+.prob-implicit.is-not-drawn > code { color: var(--text-muted); }
+
 
 /* --- what drove the spread ---------------------------------------------- */
 
@@ -7625,11 +7631,12 @@ input.ix-unit { width: 130px; padding: 2px 6px; font-size: 11.5px; }
 }
 .sens-table.is-wide .sens-bar { grid-template-columns: minmax(0, 1fr) 36px; gap: 4px; }
 
-/* The distribution measures: Spearman, then EASI, δ and RSA as bars and the
-   mutual information, in bits, as a number. */
+/* The distribution measures: Spearman, then EASI, δ and RSA as bars, the
+   mutual information, in bits, as a number, and PAWN and the discrepancy
+   share as bars again. */
 .sens-table.is-dist .sens-head, .sens-table.is-dist .sens-row {
 	grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1fr)
-		minmax(0, 1fr) minmax(0, 0.7fr) minmax(0, 1fr);
+		minmax(0, 1fr) minmax(0, 0.7fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);
 	gap: 6px;
 }
 .sens-table.is-dist .sens-bar { grid-template-columns: minmax(0, 1fr) 36px; gap: 4px; }

@@ -63,10 +63,11 @@ const FAMILIES = [
 	['regression', 'Regression: SRC, PCC, S₁',
 		'One regression of the output on every input at once, which separates inputs the output '
 		+ 'merely tracks together, and a first-order index by binning.'],
-	['distribution', 'Distribution: EASI, δ, MI, RSA',
+	['distribution', 'Distribution: EASI, δ, MI, RSA, PAWN, discrepancy',
 		'Measures that read the output’s whole distribution rather than a straight line through '
 		+ 'it: EASI’s first-order index, Borgonovo’s δ, mutual information and regional '
-		+ 'sensitivity. A bootstrap per input, so a few seconds on a large sample.'],
+		+ 'sensitivity, from GlobalSensitivity.jl, and PAWN and discrepancy from SALib. A '
+		+ 'bootstrap per input, so a few seconds on a large sample.'],
 ];
 
 /** A number for a sentence: four figures, or an exponent. */
@@ -419,6 +420,15 @@ export function openSensitivityDialog({
 						el('span', { title: 'Regional sensitivity: the Kolmogorov-Smirnov distance between this '
 							+ 'input’s values in the realisations above the output’s mean and in those '
 							+ 'below. Compare with the dummies above.' }, 'RSA KS'),
+						el('span', { title: 'PAWN (Pianosi and Wagener), as SALib has it: hold this input to '
+							+ 'each of ten slices of its range and measure how far the output’s distribution '
+							+ 'moves, by the Kolmogorov-Smirnov distance to the whole; the median over the '
+							+ 'slices. 0 to 1.' }, 'PAWN'),
+						el('span', { title: 'Discrepancy (Puy, Roy and Saltelli), as SALib has it: how far this '
+							+ 'input’s scatter against the output is from covering the square evenly, read on '
+							+ 'the ranks of both, as a share of the total over '
+							+ (dist.discrepancyOver === 'all' ? 'every input that varies.' : 'the inputs listed '
+								+ '— over all of them would take too long on a sample this size.') }, 'Discr.'),
 					] : [el('span', { title: 'Linear correlation.' }, 'Pearson')]),
 					...(wide ? [
 						el('span', { title: 'Standardized regression coefficient: this input’s own linear '
@@ -445,7 +455,8 @@ export function openSensitivityDialog({
 					el('code', { title: inputName(r) }, inputName(r)),
 					bar(r.spearman),
 					...(shown
-						? [bar(d?.easi ?? NaN), bar(d?.delta ?? NaN), coef(d?.miS ?? NaN), bar(d?.ks ?? NaN)]
+						? [bar(d?.easi ?? NaN), bar(d?.delta ?? NaN), coef(d?.miS ?? NaN), bar(d?.ks ?? NaN),
+							bar(d?.pawn ?? NaN), bar(d?.discrepancy ?? NaN)]
 						: [bar(r.pearson)]),
 					...(wide ? [bar(m.src[i]), coef(m.b?.[i]), bar(m.pcc[i]), bar(m.s1[i])] : [])));
 			});
@@ -462,7 +473,9 @@ export function openSensitivityDialog({
 					+ 'and δ one that moves the spread or the tail rather than the mean; mutual '
 					+ 'information is what knowing the input tells about the output, in bits, above '
 					+ 'what chance gives; RSA is how differently the input is distributed in the '
-					+ 'realisations above the mean and below it. GlobalSensitivity.jl’s estimators, '
+					+ 'realisations above the mean and below it. PAWN is how far holding the input to a '
+					+ 'slice moves the output’s distribution, and discrepancy how unevenly its scatter '
+					+ 'against the output fills the square. GlobalSensitivity.jl’s estimators and SALib’s, '
 					+ 'from the same realisations.'
 				: 'Ranked by the rank correlation, which finds any monotone relationship; '
 				+ 'Pearson beside it finds only a straight-line one. Where the two '

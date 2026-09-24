@@ -2,7 +2,8 @@
  * Global sensitivity: choosing a method and reading its answer.
  *
  * The methods are ../domain/gsa.js's -- GlobalSensitivity.jl's designed ones,
- * each an experiment of its own over the model's distributions. The setup
+ * and what SALib adds to them (../domain/salib.js), each an experiment of its
+ * own over the model's distributions. The setup
  * dialog prices the design before anything runs, since the methods differ by
  * orders of magnitude in what they cost: a fractional factorial of fifteen
  * inputs is 32 runs and Sobol's indices with a thousand samples are 17,000.
@@ -273,7 +274,9 @@ export function openGsaResult({
 			body.append(box);
 
 			if (a.pairs?.length) {
-				const pairLabel = a.method === 'dgsm' ? 'mean squared mixed derivative' : 'S₂, the interaction';
+				const pairLabel = a.method === 'dgsm' ? 'mean squared mixed derivative'
+					: a.method === 'ff' ? 'two-way interaction effect, each summed with the pairs aliased with it'
+						: 'S₂, the interaction';
 				const list = el('div', { className: 'gsa-pairs' },
 					el('p', { className: 'hint' }, `The pairs, by ${pairLabel}:`),
 					...a.pairs.slice(0, 10).map((p) => el('div', { className: 'gsa-pair' },

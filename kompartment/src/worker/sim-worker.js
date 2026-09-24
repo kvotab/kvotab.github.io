@@ -35,6 +35,7 @@ import {
 	gsaTable, gsaMain, easi, deltaMoment, mutualInformation, rsa, normalScores, averageRanks,
 } from '../domain/gsa.js';
 import { streamFor, uniforms } from '../domain/sample.js';
+import { pawn, discrepancyShares, rankProbabilities } from '../domain/salib.js';
 import { sortedColumn, describeSample, histogram } from '../domain/distribution.js';
 import { calibrate, variablesOf } from '../sim/calibrate.js';
 import { runSensitivity, elasticity } from '../sim/localsens.js';
@@ -569,7 +570,9 @@ function gsaAnswer(result, index, stat, at) {
 	const design = result.gsaDesign;
 	const y = new Float64Array(n);
 	for (let i = 0; i < n; i++) y[i] = statisticOf(values, times, i, stat, at);
-	const table = gsaTable(design, y);
+	// The intervals SALib adds are bootstraps, drawn from a stream of the
+	// run's seed: the same question asked again gets the same interval.
+	const table = gsaTable(design, y, { next: streamFor(result.stats?.seed ?? 1, '#gsa#bootstrap') });
 	const factors = result.stats.gsa?.factors ?? [];
 	const name = (f) => {
 		const e = result.plan[factors[f]?.members?.[0]];
@@ -647,6 +650,22 @@ function distributionMeasures(r, values, times, at, rows, mask) {
 	const split = rsa(columns, y, { dummies });
 	const scores = normalScores(y);
 	const yRanks = averageRanks(y);
+	// SALib's two that read any sample. PAWN is per input. Discrepancy is a
+	// share, of the total over every input that varies -- which costs the
+	// square of the sample for each of them, so past a budget it is the share
+	// among the inputs listed instead, and says so. Both of its axes are
+	// ranks: the output scaled onto [0, 1] by its extremes, as SALib scales
+	// it, puts a dose that spans decades at the bottom of the square for
+	// nearly every realisation, and every input's share came out the same.
+	const varying = (col) => { for (let i = 1; i < col.length; i++) if (col[i] !== col[0]) return true; return false; };
+	const everyInput = r.samples.length * n * n <= 4e8;
+	const pool = everyInput
+		? r.samples.map((col, k) => ({ k, x: Float64Array.from(use, (i) => col[i]) }))
+		: rows.map((row, j) => ({ k: row.k, x: columns[j] }));
+	const spread = pool.filter((c) => varying(c.x));
+	const shares = spread.length
+		? discrepancyShares(spread.map((c) => rankProbabilities(c.x)), rankProbabilities(y), 'WD').shares : [];
+	const shareOf = new Map(spread.map((c, j) => [c.k, shares[j]]));
 	const out = rows.map((row, j) => {
 		const x = columns[j];
 		let varies = false;
@@ -655,17 +674,21 @@ function distributionMeasures(r, values, times, at, rows, mask) {
 		const name = r.plan[row.k] ? `${r.plan[row.k].name}#${row.k}` : String(row.k);
 		const d = deltaMoment(x, scores, { boots: 100, next: streamFor(seed, `${name}#delta`) });
 		const m = mutualInformation(averageRanks(x), yRanks, { boots: 100, next: streamFor(seed, `${name}#mi`) });
+		const pw = pawn(x, y, { slides: 10 });
 		return {
 			easi: easi(x, y).s1c,
 			delta: d.adjusted, deltaLow: d.low, deltaHigh: d.high,
 			mi: m.mi, miBound: m.bound, miS: m.s,
 			ks: split.scores[j],
+			pawn: pw.median, pawnMax: pw.maximum,
+			discrepancy: shareOf.get(row.k) ?? NaN,
 		};
 	});
 	return {
 		ok: true, used: n, rows: out,
 		threshold: split.threshold, behavioural: split.behavioural,
 		ksDummyMean: split.dummyMean, ksDummySd: split.dummySd,
+		discrepancyOver: everyInput ? 'all' : 'listed',
 	};
 }
 

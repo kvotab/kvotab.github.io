@@ -829,7 +829,7 @@ function solveWithEvents(system, solver, grid, y0, opts) {
  * @param {'y'|'X'|'P'} source which row array holds it
  */
 export function describeEntry(layout, entry, kind, source) {
-	const { indexSpace, materialList, materialUnits } = layout;
+	const { indexSpace, materialUnits } = layout;
 	const dims = entry.dims ?? [];
 	// A waste package's inventories are in the inventory unit while the
 	// block's own unit is its release's, so the entry may say its own.
@@ -840,17 +840,7 @@ export function describeEntry(layout, entry, kind, source) {
 			label: entry.name, unit, source, offset: entry.base,
 		}];
 	}
-	// Which of a block's dimensions the materials are. Not one list for the
-	// whole model: a model carries a catalogue and the radionuclide sub-set of
-	// it, and two compartments may be indexed by different ones. Asking for one
-	// name gave `nuclide: null` for every series of every block indexed by the
-	// other, which is what a chart filters on.
-	const materialRoot = materialList ? indexSpace.get(materialList).rootName : null;
-	const md = dims.find((d) => {
-		if (!materialRoot || !indexSpace.has(d)) return false;
-		const l = indexSpace.get(d);
-		return !l.mapping && l.rootName === materialRoot;
-	}) ?? null;
+	const md = materialDim(layout, dims);
 	const out = [];
 	for (let off = 0; off < entry.width; off++) {
 		const names = indexSpace.tupleAt(dims, off);
@@ -874,6 +864,62 @@ export function describeEntry(layout, entry, kind, source) {
 			unit: unit || (material && kind !== 'trigger'
 				? materialUnits?.get(material) ?? '' : ''),
 			source, offset: entry.base + off,
+		});
+	}
+	return out;
+}
+
+/**
+ * Which of a block's dimensions the materials are, or null.
+ *
+ * Not one list for the whole model: a model carries a catalogue and the
+ * radionuclide sub-set of it, and two compartments may be indexed by different
+ * ones. Asking for one name gave `nuclide: null` for every series of every
+ * block indexed by the other, which is what a chart filters on.
+ */
+function materialDim(layout, dims) {
+	const { indexSpace, materialList } = layout;
+	const materialRoot = materialList ? indexSpace.get(materialList).rootName : null;
+	return dims.find((d) => {
+		if (!materialRoot || !indexSpace.has(d)) return false;
+		const l = indexSpace.get(d);
+		return !l.mapping && l.rootName === materialRoot;
+	}) ?? null;
+}
+
+/**
+ * The list a lookup table's point is indexed along, beside the table's own
+ * lists: the time the point sits at. Not one of the model's index lists -- a
+ * name for the chart's index filter to offer the times under.
+ */
+export const POINT_LIST = 'Time point';
+
+/**
+ * A series for each point of a lookup table that carries a distribution.
+ *
+ * Such a point is an input a probabilistic run draws once per realisation, a
+ * slot of `P` as a parameter's value is, so it is described the way a
+ * parameter's series is: a constant over the run, read from that slot. The
+ * time it sits at is one more index (`POINT_LIST`): `SRF [@8700]` is the table
+ * `SRF` at year 8,700, and `SRF [Cs-137, @8700]` the same at Cs-137. That is
+ * how a sample keeps what it drew there (`inputs` in ./probabilistic.js). A
+ * point without a distribution is the table and nothing more, and has none.
+ */
+export function lookupPointOutputs(layout) {
+	const { materialUnits } = layout;
+	const out = [];
+	for (const pt of layout.lookupPoints ?? []) {
+		const dims = pt.dims ?? [];
+		const names = dims.map((d) => pt.index?.[d]);
+		const md = materialDim(layout, dims);
+		const material = md ? pt.index?.[md] ?? null : null;
+		const at = `@${pt.at}`;
+		out.push({
+			kind: 'lookup', block: pt.name, nuclide: material,
+			index: [...names, at], dims: [...dims, POINT_LIST],
+			label: `${pt.name} [${[...names, at].join(', ')}]`,
+			unit: pt.unit || (material ? materialUnits?.get(material) ?? '' : ''),
+			source: 'P', offset: pt.slot,
 		});
 	}
 	return out;
@@ -950,6 +996,9 @@ export function outputsOf(system, project) {
 	// says whether the flux is following the constant or the inventory, and
 	// a limit drawn beside a dose says whether the dose crosses it.
 	for (const p of parameters ?? []) expand(p, 'parameter', 'P');
+	// And the points of lookup tables that carry a spread, each a constant of
+	// its own like a parameter -- see `lookupPointOutputs`.
+	for (const o of lookupPointOutputs(system.layout)) out.push(o);
 
 	// And the numbers read off the finished curves: the peak, the year it
 	// peaked, the total. They are outputs like any other -- one more line
