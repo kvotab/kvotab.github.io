@@ -8630,11 +8630,12 @@ test('a solver setting does not rebuild the views made of blocks', async () => {
 	const { readFileSync } = await import('node:fs');
 	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
 
-	// Short on purpose, and each of the four affects only the solve.
+	// Short on purpose, and each of the five affects only the solve -- the
+	// fifth, `split`, only how it is divided between cores.
 	const list = /const SOLVE_ONLY_SETTINGS = new Set\(\[([^\]]*)\]\)/.exec(app)?.[1];
 	assert(list, 'SOLVE_ONLY_SETTINGS is gone');
 	const keys = [...list.matchAll(/'([^']+)'/g)].map((m) => m[1]).sort();
-	assert(keys.join() === 'abstol,non_negative,rtol,solver', keys.join());
+	assert(keys.join() === 'abstol,non_negative,rtol,solver,split', keys.join());
 	// The ones that must *not* be in it, each because it changes what is
 	// drawn: the time unit re-derives every flux unit, the scenario changes
 	// which value an indexed block reads, and the span moves the saved-times
@@ -16603,6 +16604,47 @@ test('a per-element value is read from a per-nuclide block', () => {
 	// It compiles to a table lookup, not a branch.
 	const b = buildSystem(new Project(model));
 	assert(/P\[MAPS\[\d+\]\[n0\]\]/.test(b.source.algebraic), b.source.algebraic);
+});
+
+test('switching off every isotope of an element leaves its per-element entries dormant', async () => {
+	// Strontium's one isotope switched off took its element out of the derived
+	// list, so the entry keyed by `Sr` named an index the list did not have and
+	// the model refused to load -- found when a split switched off every
+	// material but its own. Kept, switched off, the entry lies dormant as an
+	// entry for any switched-off index does, and the run is the other
+	// element's.
+	const ed = await import('../src/domain/edit.js');
+	const model = {
+		name: 'kd-off',
+		simulation: { start_time: 0, end_time: 10, output_points: 3, spacing: 'linear' },
+		nuclides: ['Cs-137', 'Cs-135', 'Sr-90'],
+		half_lives: { 'Cs-135': 2.3e6 },
+		parameters: [{
+			name: 'Kd', index_lists: ['Elements'], value: 0,
+			entries: [
+				{ index: { Elements: 'Cs' }, value: 10 },
+				{ index: { Elements: 'Sr' }, value: 3 },
+			],
+		}],
+		compartments: [{ name: 'Soil', initial: '1', handle_decay: false }],
+		expressions: [{ name: 'Retard', equation: '1 + Kd' }],
+	};
+	ed.materialiseShorthand(model);
+	const list = model.index_lists.find((l) => l.for_contaminants);
+	ed.setIndexEnabled(model, list.name, 'Sr-90', false);
+	const p = new Project(model);
+	const elements = p.indexSpace.get('Elements');
+	assert(elements.names.has('Sr') && !elements.positionOf.has('Sr') && elements.size === 1,
+		`Sr is ${elements.names.has('Sr') ? '' : 'not '}a member and ${elements.positionOf.has('Sr') ? 'on' : 'off'}`);
+	const r = run(model);
+	const retard = r.outputs().filter((o) => o.block === 'Retard');
+	assert(retard.length === 2 && retard.every((o) => o.index[0].startsWith('Cs-')), retard.map((o) => o.label).join());
+	close(r.series(retard[0])[0], 11, 0, 'caesium still reads its own value');
+	// Back on, the entry is live again.
+	ed.setIndexEnabled(model, list.name, 'Sr-90', true);
+	const back = run(model);
+	close(back.series(back.outputs().find((o) => o.block === 'Retard' && o.index[0] === 'Sr-90'))[0], 4, 0,
+		'strontium’s entry came back with it');
 });
 
 test('elementOf takes the symbol off every spelling the corpus uses', () => {
@@ -28004,7 +28046,9 @@ test('a run is written in the shape the result browser reads', async () => {
 	assert(/function confirmHugeExport\(series, times\) \{/.test(app), 'nothing checks the size');
 	assert(/const bytes = series \* times \* 8;\n\tif \(bytes <= HUGE_EXPORT\) return true;/.test(app),
 		'the estimate is not what the export costs');
-	assert((app.match(/if \(!confirmHugeExport\(cols\.length, r\.t\.length\)\) return;/g) ?? []).length === 2,
+	// Counted over every scenario run beside the selected one, since each
+	// adds a column per series to the file.
+	assert((app.match(/if \(!confirmHugeExport\(cols\.length \* \(beside\.length \+ 1\), r\.t\.length\)\) return;/g) ?? []).length === 2,
 		'only one of the two exports asks');
 	assert(/const HUGE_EXPORT = 512 \* 1024 \* 1024;/.test(app), 'no threshold');
 });
@@ -34765,6 +34809,300 @@ test('the distribution summary of a varied parameter carries its distribution, a
 	assert(/const fits = fitAll\(col, fitMethod\);/.test(dialog)
 		&& /scoreFit\(col, view\.spec, 0\)/.test(dialog)
 		&& /fitted\.column === view\.column && fitted\.method === fitMethod/.test(dialog), 'the fits are not kept per sample');
+});
+
+test('scenarios run beside the selected one: which, and how their lines share a chart', async () => {
+	const sc = await import('../src/ui/scenarios.js');
+	const ed = await import('../src/domain/edit.js');
+	const { readFileSync } = await import('node:fs');
+	const raw = JSON.parse(readFileSync(new URL('../examples/scenarios.json', import.meta.url), 'utf8'));
+
+	// The selected one always runs, the others in the model's order, and a name
+	// the model does not have is left out rather than run.
+	assert(sc.scenariosToRun(raw, []).join() === 'Present', sc.scenariosToRun(raw, []).join());
+	assert(sc.scenariosToRun(raw, ['Drier', 'Nowhere']).join() === 'Present,Drier',
+		sc.scenariosToRun(raw, ['Drier', 'Nowhere']).join());
+	assert(sc.otherScenarios(raw, ['Drier', 'Present']).join() === 'Drier', 'the selected one ran beside itself');
+	const moved = structuredClone(raw);
+	ed.setScenario(moved, 'Drier');
+	assert(sc.scenariosToRun(moved, ['Present']).join() === 'Present,Drier', 'the order is not the model’s');
+	assert(sc.otherScenarios(moved, ['Present']).join() === 'Present', 'the other side of the swap');
+
+	// A scenario's model is a copy with it selected, and nothing else changed.
+	const warm = sc.scenarioModel(raw, 'Warmer and wetter');
+	assert(warm.scenario === 'Warmer and wetter' && raw.scenario === 'Present', 'the model itself was changed');
+	assert(JSON.stringify({ ...warm, scenario: raw.scenario }) === JSON.stringify(raw), 'more than the scenario changed');
+
+	// As many at once as the reader's cores, or the machine's less one.
+	assert(sc.runsAtOnce(3, 8) === 3 && sc.runsAtOnce(null, 8) === 7 && sc.runsAtOnce(null, 1) === 1
+		&& sc.runsAtOnce(null, null) === 3, 'how many run at once');
+
+	// Two outputs: each keeps its colour in every scenario, and each scenario
+	// beside the selected one wears a pattern of its own.
+	const primary = [{ label: 'Soil', values: [1], slot: 0 }, { label: 'Lake', values: [2], slot: 1 }];
+	const lines = (name, at) => ({
+		name, at, lines: [{ pos: 0, label: 'Soil', values: [3] }, { pos: 1, label: 'Lake', values: [4] }],
+	});
+	const two = sc.withScenarios(primary, { active: 'Present', others: [lines('Drier', 2)], outputs: 2, max: 32 });
+	assert(two.series.map((x) => x.label).join('|')
+		=== 'Soil · Present|Lake · Present|Soil · Drier|Lake · Drier',
+	two.series.map((x) => x.label).join('|'));
+	// `Drier` is the third scenario run, and keeps the third pattern whether or
+	// not the second is drawn.
+	assert(two.series[2].slot === 0 && two.series[3].slot === 1 && two.series[2].set === 2
+		&& two.series[3].set === 2, JSON.stringify(two.series.slice(2)));
+	// One output: the scenarios are the only difference, so each takes a colour.
+	const one = sc.withScenarios([primary[0]], {
+		active: 'Present', others: [{ name: 'Drier', at: 2, lines: [lines('Drier', 2).lines[0]] }],
+		outputs: 1, max: 32,
+	});
+	assert(one.series[0].slot === 0 && one.series[0].set === undefined && one.series[1].slot === 2
+		&& one.series[1].set === undefined, JSON.stringify(one.series));
+	// A median and a mean per output keep their patterns, and a scenario beside
+	// them takes the next one.
+	const sampled = sc.withScenarios([{ ...primary[0], set: 0 }, { ...primary[0], set: 1 }], {
+		active: 'Present', others: [{ name: 'Drier', at: 1, lines: [lines('Drier', 1).lines[0]] }],
+		outputs: 1, perOutput: 2, max: 32,
+	});
+	assert(sampled.series[2].set === 2 && sampled.series[2].slot === 0, JSON.stringify(sampled.series[2]));
+	// What does not fit is counted rather than drawn.
+	const full = sc.withScenarios(primary, { active: 'Present', others: [lines('Drier', 1)], outputs: 2, max: 3 });
+	assert(full.series.length === 3 && full.dropped === 1, `${full.series.length} drawn, ${full.dropped} dropped`);
+	// Nobody beside it: the chart as it was, names and all.
+	assert(sc.withScenarios(primary, { active: 'Present', others: [], outputs: 2, max: 32 }).series === primary,
+		'a chart of one scenario was relabelled');
+});
+
+test('the page runs the chosen scenarios in workers of their own and draws them with the selected one', async () => {
+	const { readFileSync } = await import('node:fs');
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	// Started with the selected scenario's run, not after it, and dropped for a
+	// preview, which is not the model at its own values.
+	assert(/if \(opts\.substitute\) stopScenarios\(\{ all: true \}\);\n\t\telse startScenarios\(\);/.test(app),
+		'the scenarios do not start with the run');
+	// Each in a simulation worker of its own, asked what the selected one is asked.
+	assert(/const w = new Worker\(new URL\('\.\.\/worker\/sim-worker\.js', import\.meta\.url\), \{ type: 'module' \}\);\n\tw\.onmessage = \(ev\) => acceptScenarioMessage\(entry, ev\.data\);/.test(app),
+		'a scenario has no worker of its own');
+	assert(/type: entry\.reuse \? 're-evaluate' : 'run', id: entry\.runId, project: entry\.project,/.test(app),
+		'a scenario is not re-evaluated when its states are still right');
+	// Its columns are asked of the worker that holds them.
+	assert(/\(ask\.r\.worker \?\? ensureWorker\(\)\)\.postMessage\(\{ type: 'columns', id: ask\.r\.runId, indices: ask\.indices \}\);/.test(app),
+		'a scenario’s series are asked of the wrong worker');
+	// The run is not over until the last is in, and Stop stops them all.
+	assert(/state\.primaryBusy = false;\n\tpumpScenarios\(\);\n\tfinishIfDone\(\);/.test(app),
+		'the selected scenario ends the run while the others are still going');
+	assert(/stopScenarios\(\);\n\tif \(worker\) \{\n\t\tconst going = worker;/.test(app), 'Stop leaves the scenarios running');
+	// Drawn only beside results of the same model revision, and not through a
+	// sample's median.
+	assert(/if \(!e\?\.r \|\| e\.r\.rev !== r\.rev\) continue;/.test(app), 'a scenario of another revision is drawn');
+	assert(/if \(!\(keys\.length === 1 && keys\[0\] === 'single'\)\) return \[\];/.test(app),
+		'a deterministic scenario is drawn beside a median');
+	// And the files carry every scenario, the legend's hidden ones too.
+	assert((app.match(/const spec = beside\.length \? scenarioColumns\(cols, \{ hidden: false \}\) : null;/g) ?? []).length === 2,
+		'an export leaves the scenarios out');
+});
+
+test('a model splits into jobs by material, each builds on its own, and the parts add up to the whole', async () => {
+	const split = await import('../src/sim/split.js');
+	const { Results } = await import('../src/sim/runner.js');
+	const { readFileSync } = await import('node:fs');
+	const load = (file) => JSON.parse(readFileSync(new URL(`../examples/${file}`, import.meta.url), 'utf8'));
+
+	// Four independent nuclides are four jobs of one nuclide each; a decay
+	// chain stays together; a model the partition declines, or one with no
+	// materials to divide by, or one that is a single part, is not split.
+	const bio = new Project(load('biosphere.json'));
+	const bioSys = buildSystem(bio);
+	const bioJobs = split.splitJobs(bioSys);
+	assert(bioJobs.ok && bioJobs.jobs.length === 4 && bioJobs.jobs.every((j) => j.materials.length === 1),
+		JSON.stringify(bioJobs.jobs ?? bioJobs.why));
+	const land = split.splitJobs(buildSystem(new Project(load('landscape.json'))));
+	assert(land.ok && land.jobs.some((j) => j.materials.includes('Ra-226') && j.materials.includes('Pb-210')),
+		'a decay chain was split across jobs');
+	assert(/snapshot/.test(split.splitJobs(buildSystem(new Project(load('recorders.json')))).why ?? ''),
+		'a snapshot did not stop the split');
+	assert(/no materials/.test(split.splitJobs(buildSystem(new Project(load('scenarios.json')))).why ?? ''),
+		'a model with no materials was split');
+	assert(/one part/.test(split.splitJobs(buildSystem(new Project(load('decay-chain.json')))).why ?? ''),
+		'a single chain was split');
+
+	// Every state is owned by exactly one job, and the materials follow the
+	// states: a compartment's value per nuclide is that nuclide's.
+	const mats = split.stateMaterials(bioSys.layout);
+	for (let i = 0; i < bioSys.layout.nstate; i++) {
+		const j = bioJobs.owner[i];
+		assert(j >= 0 && bioJobs.jobs[j].materials.includes(mats[i]),
+			`state ${i} (${bioJobs.keys[i]}) is not with its material ${mats[i]}`);
+	}
+	// A far field's states have names as well, one per cell.
+	const farKeys = split.stateKeys(buildSystem(new Project(load('farfield.json'))).layout);
+	assert(farKeys && new Set(farKeys).size === farKeys.length && farKeys.some((k) => /#\d+$/.test(k)),
+		'a far field’s states are not named apart');
+
+	// A job builds with only its materials switched on, and its derivative is
+	// the whole model's on the states it holds -- to the last bit, at the
+	// start and at a state that is not the start.
+	const json = bio.toJSON();
+	const whole = new Map(bioJobs.keys.map((k, i) => [k, i]));
+	for (const job of bioJobs.jobs) {
+		const part = split.partModel(json, job.materials);
+		assert(!(part.nuclides ?? []).some((n) => !job.materials.includes(n)), 'a material was left on');
+		const sys = buildSystem(new Project(part));
+		const keys = split.stateKeys(sys.layout);
+		assert(keys.every((k) => whole.has(k)), 'a part has a state the whole does not');
+		const yWhole = Float64Array.from({ length: bioSys.layout.nstate }, (_, i) => 1e6 * (1 + (i % 7)));
+		const yPart = Float64Array.from(keys, (k) => yWhole[whole.get(k)]);
+		const dWhole = new Float64Array(bioSys.layout.nstate);
+		const dPart = new Float64Array(sys.layout.nstate);
+		bioSys.dydt(1000, yWhole, dWhole);
+		sys.dydt(1000, yPart, dPart);
+		keys.forEach((k, j) => {
+			assert(dPart[j] === dWhole[whole.get(k)], `${job.materials}: d${k}/dt ${dPart[j]} against ${dWhole[whole.get(k)]}`);
+		});
+	}
+
+	// Solved part by part and filed back by name, the run is the whole
+	// model's to within what the tolerance allows -- every output, on the
+	// same times.
+	for (const file of ['biosphere.json', 'landscape.json', 'waste-packages.json']) {
+		const raw = load(file);
+		const project = new Project(raw);
+		const system = buildSystem(project);
+		const plan = split.planSplit(system, project, { mode: 'on', workers: 8, nest: true });
+		assert(plan.use, `${file}: ${plan.why}`);
+		const pj = project.toJSON();
+		const outcomes = plan.jobs.map((job) => {
+			const r = run(new Project(split.partModel(pj, job.materials)), { onGrid: true });
+			const np = r.system.layout.nstate;
+			const y = new Float64Array(r.t.length * np);
+			r.y.forEach((row, i) => y.set(row, i * np));
+			return { t: r.t, y, np, keys: split.stateKeys(r.system.layout), stats: r.stats, held: r.stats.held ?? null };
+		});
+		const { t, rows, stats } = split.assembleParts(plan, outcomes);
+		const parted = new Results({ project, system, solution: { t, y: rows, stats }, timing: {} });
+		const ref = run(new Project(raw));
+		assert(ref.t.length === t.length && ref.t.every((v, i) => v === t[i]), `${file}: not the whole run’s times`);
+		const a = ref.seriesMany(ref.outputs());
+		const b = parted.seriesMany(parted.outputs());
+		let worst = 0;
+		a.forEach((col, k) => {
+			const peak = Math.max(...Array.from(col, Math.abs)) || 1;
+			for (let i = 0; i < col.length; i++) worst = Math.max(worst, Math.abs(col[i] - b[k][i]) / peak);
+		});
+		assert(worst < 2e-4, `${file}: the parts differ from the whole by ${worst.toExponential(2)} of a peak`);
+		assert(stats.nsteps > 0 && stats.solver, JSON.stringify(stats));
+	}
+
+	// And what does not add up is refused, for the caller to solve whole.
+	const one = { t: [0, 1], y: new Float64Array(2 * 16), np: 16, keys: bioJobs.keys, stats: {} };
+	let threw = null;
+	try { split.assembleParts(bioJobs, [one, { ...one, t: [0, 2] }, one, one]); } catch (e) { threw = e.message; }
+	assert(/different output times/.test(threw ?? ''), threw);
+	threw = null;
+	try {
+		split.assembleParts(bioJobs, bioJobs.jobs.map(() => ({ ...one, keys: bioJobs.keys.map((k) => `x${k}`) })));
+	} catch (e) { threw = e.message; }
+	assert(/no part carried/.test(threw ?? ''), threw);
+});
+
+test('whether to split is a setting, with an automatic choice that says why', async () => {
+	const split = await import('../src/sim/split.js');
+	const { readFileSync } = await import('node:fs');
+	const load = (file) => JSON.parse(readFileSync(new URL(`../examples/${file}`, import.meta.url), 'utf8'));
+	const bio = new Project(load('biosphere.json'));
+	const sys = buildSystem(bio);
+	const plan = (opts) => split.planSplit(sys, bio, { workers: 4, nest: true, ...opts });
+
+	assert(!plan({ mode: 'off' }).use && /switched off/.test(plan({ mode: 'off' }).why), 'off did not stay off');
+	const on = plan({ mode: 'on' });
+	assert(on.use && on.bins.length === 4 && on.bins.flat().length === 4, JSON.stringify(on.bins));
+	// Refused whatever the setting where it cannot work.
+	assert(/one core/.test(plan({ mode: 'on', workers: 1 }).why), 'split on one core');
+	assert(/worker from a worker/.test(plan({ mode: 'on', nest: false }).why), 'split with no nested workers');
+	assert(/Python runtime/.test(plan({ mode: 'on', scipy: true }).why), 'split under SciPy');
+	const far = new Project(load('farfield.json'));
+	assert(/solver’s own steps/.test(split.planSplit(buildSystem(far), far, { mode: 'on', workers: 4, nest: true }).why),
+		'split with the solver’s own steps as the output');
+	// Auto: a small model it has not timed is left whole; a timed one is split
+	// when the prediction clears the margin, and not when a split was measured
+	// not to pay.
+	assert(!plan({ mode: 'auto' }).use && /too few/.test(plan({ mode: 'auto' }).why), plan({ mode: 'auto' }).why);
+	assert(!plan({ mode: 'auto', known: { solveMs: 200 } }).use, 'a short solve was split');
+	const long = plan({ mode: 'auto', known: { solveMs: 60000 }, buildMs: 100 });
+	assert(long.use && long.predicted > split.AUTO_GAIN && /faster on 4 cores/.test(long.why), long.why);
+	assert(!plan({ mode: 'auto', known: { solveMs: 60000, gain: 1.1 } }).use, 'a split measured not to pay was split again');
+	// ...and one measured to pay is split again, on the measurement rather than
+	// the prediction, which is only an estimate of it.
+	const paid = plan({ mode: 'auto', known: { solveMs: 900, gain: 2.1 } });
+	assert(paid.use && /measured at 2\.1/.test(paid.why), paid.why);
+	// One core of four jobs' work: the longest jobs first onto the least loaded.
+	assert(JSON.stringify(split.packJobs([5, 3, 3, 2, 1], 2)) === JSON.stringify([[0, 3], [1, 2, 4]]),
+		JSON.stringify(split.packJobs([5, 3, 3, 2, 1], 2)));
+
+	// The setting is part of what a run is of, so changing it solves again.
+	const fp = readFileSync(new URL('../src/domain/fingerprint.js', import.meta.url), 'utf8');
+	assert(/'split',\n\];/.test(fp), 'the split setting is not in the fingerprint');
+	// The worker decides from the built system, hands a failed split back to
+	// the whole model, and says in the run's statistics what it did.
+	const worker = readFileSync(new URL('../src/worker/sim-worker.js', import.meta.url), 'utf8');
+	assert(/const plan = planSplit\(system, whole, \{/.test(worker), 'the worker does not plan');
+	assert(/plan\.why = `tried, and solved whole instead: \$\{e\.message \?\? e\}`;/.test(worker),
+		'a split that fails is not solved whole');
+	assert(/if \(msg\.type === 'part-run'\) \{/.test(worker) && /onGrid: true,/.test(worker), 'no worker takes a part');
+	assert(/split: \{\n\t\t\t\tused: !!plan\.use, mode: plan\.mode, why: plan\.why,/.test(worker), 'the run does not say');
+});
+
+test('a part that reads another material by name builds with that one switched on', async () => {
+	// A rate every nuclide reads at caesium: `Coef[Cs-137]`. A constant, so it
+	// joins nothing and caesium and strontium are two parts -- but strontium's
+	// build has caesium switched off, and a pin to an index that is off does
+	// not build. It is switched back on there, integrated for nothing, and the
+	// states kept are each job's own.
+	const split = await import('../src/sim/split.js');
+	const { Results } = await import('../src/sim/runner.js');
+	const model = {
+		name: 'pinned',
+		simulation: {
+			start_time: 0, end_time: 100, output_points: 11, spacing: 'linear',
+			solver: 'ndf', rtol: 1e-9, abstol: 1e-14,
+		},
+		nuclides: ['Cs-137', 'Sr-90'],
+		parameters: [{
+			name: 'Coef', index_lists: ['Radionuclides'], value: 0.01,
+			entries: [{ index: { Radionuclides: 'Cs-137' }, value: 0.05 }],
+		}],
+		compartments: [{ name: 'A', initial: '1' }, { name: 'B', initial: '0' }],
+		transfers: [{ name: 'AB', from: 'A', to: 'B', rate: 'Coef[Cs-137]' }],
+	};
+	const project = new Project(model);
+	const system = buildSystem(project);
+	const plan = split.planSplit(system, project, { mode: 'on', workers: 2, nest: true });
+	assert(plan.use && plan.jobs.length === 2, plan.why);
+	const json = project.toJSON();
+	const outcomes = plan.jobs.map((job) => {
+		const built = split.buildPart(split.partModel(json, job.materials), { Project, buildSystem });
+		if (job.materials.includes('Sr-90')) {
+			assert(built.pinned.join() === 'Cs-137', `pinned ${built.pinned.join() || 'nothing'}`);
+		}
+		const r = run(built.project, { system: built.system, onGrid: true });
+		const np = built.system.layout.nstate;
+		const y = new Float64Array(r.t.length * np);
+		r.y.forEach((row, i) => y.set(row, i * np));
+		return { t: r.t, y, np, keys: split.stateKeys(built.system.layout), stats: r.stats };
+	});
+	const { t, rows, stats } = split.assembleParts(plan, outcomes);
+	const parted = new Results({ project, system, solution: { t, y: rows, stats }, timing: {} });
+	const whole = run(model);
+	const outs = whole.outputs().filter((o) => o.kind === 'compartment');
+	for (const o of outs) {
+		const a = whole.series(o);
+		const b = parted.series(parted.outputs().find((x) => x.label === o.label));
+		for (let i = 0; i < a.length; i++) close(b[i], a[i], 1e-6, `${o.label} at ${t[i]}`);
+	}
+	// A pin to something that is not a material is not second-guessed.
+	let threw = null;
+	try { split.buildPart({ ...json, transfers: [{ ...json.transfers[0], rate: 'Coef[Nowhere]' }] }, { Project, buildSystem }); } catch (e) { threw = e.message; }
+	assert(threw && !/disabled/.test(threw), threw);
 });
 
 // =========================================================================

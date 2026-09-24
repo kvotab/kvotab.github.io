@@ -795,18 +795,29 @@ export function deriveElements(lists) {
 	// coefficient is right for both. A name that is not a nuclide's is its own
 	// element: there is nothing else it could belong to.
 	const names = [];
+	const dormant = [];
 	const pairs = [];
 	for (const raw of material.indices ?? []) {
 		const nuclide = typeof raw === 'string' ? raw : raw?.name;
-		// A disabled nuclide takes no part in the simulation, so neither does
-		// its element -- unless another isotope of it is still on.
-		if (typeof raw === 'object' && raw?.enabled === false) continue;
 		const el = elementOf(nuclide) ?? nuclide;
 		if (!el) continue;
+		// A disabled nuclide takes no part in the simulation, so neither does
+		// its element -- unless another isotope of it is still on.
+		if (typeof raw === 'object' && raw?.enabled === false) {
+			if (!dormant.includes(el)) dormant.push(el);
+			continue;
+		}
 		if (!names.includes(el)) names.push(el);
 		pairs.push({ from: el, to: nuclide });
 	}
-	if (!names.length) return all;
+	// An element whose every isotope is off is kept, switched off, rather than
+	// dropped: an entry keyed by it -- a diffusivity per element -- is then
+	// dormant, as an entry for a switched-off index is everywhere else, where
+	// dropped it was an entry naming an index the list did not have, and the
+	// model refused to load the moment an element's one isotope was turned off.
+	// Last, so the positions of the ones that are on do not move.
+	const off = dormant.filter((el) => !names.includes(el));
+	if (!names.length && !off.length) return all;
 
 	return [...all, {
 		name: ELEMENT_LIST,
@@ -814,7 +825,10 @@ export function deriveElements(lists) {
 		derived: true,
 		comment: `One index per element of ${material.name}, kept in step with it.`,
 		mapping: { to: material.name, pairs },
-		indices: names.map((n) => ({ name: n, enabled: true })),
+		indices: [
+			...names.map((n) => ({ name: n, enabled: true })),
+			...off.map((n) => ({ name: n, enabled: false })),
+		],
 	}];
 }
 

@@ -43,6 +43,7 @@ import { checkJacobian, jacobianPattern } from '../sim/jaccheck.js';
 import { isScipySolver, loadScipy, scipyReady } from '../ode/scipy.js';
 import { SolverError } from '../ode/solvers/dormand-prince.js';
 import { layoutSignature, datasetEntries, restoreResults } from '../io/dataset.js';
+import { planSplit, partModel, assembleParts, stateKeys, jobCost, buildPart } from '../sim/split.js';
 
 let cancelled = false;
 
@@ -244,6 +245,126 @@ function startSlice(msg, keep, slice, on) {
 			to: slice.to,
 		});
 	});
+}
+
+/**
+ * What whole runs of each model layout have cost here, for deciding whether
+ * the next one is worth splitting: layout signature -> `{solveMs, gain}`,
+ * `solveMs` the whole model's solve (measured, or estimated from a split run)
+ * and `gain` what splitting it was measured to buy, once it has been. See
+ * `planSplit` in ../sim/split.js.
+ */
+const splitMemory = new Map();
+
+/**
+ * How many cores a run may use for its parts: the page's share for it where
+ * it says -- several scenarios running at once divide the machine between
+ * them -- otherwise every core but one, which this worker keeps.
+ */
+function splitWorkers(msg) {
+	if (msg.workers === 1) return 1;
+	const machine = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 2;
+	const n = Number.isInteger(msg.cores) && msg.cores >= 1 ? msg.cores : Math.max(1, machine - 1);
+	return msg.workers ? Math.min(n, msg.workers) : n;
+}
+
+/**
+ * A worker for a run's parts, which takes its jobs one after another.
+ *
+ * Held in `pool` like a slice's, so a Stop terminates it and the job it was
+ * doing is answered with STOPPED rather than waited on for ever.
+ */
+function partWorker() {
+	const worker = new Worker(new URL('./sim-worker.js', import.meta.url), { type: 'module' });
+	const member = { worker, abort: () => {} };
+	pool.add(member);
+	let waiting = null;
+	worker.onmessage = (ev) => waiting?.(ev.data);
+	worker.onerror = (e) => waiting?.({ type: 'part-error', name: 'Error', message: e.message ?? 'a worker failed' });
+	return {
+		job: (payload, onProgress) => new Promise((resolve, reject) => {
+			member.abort = reject;
+			waiting = (m) => {
+				if (m.type === 'part-progress') { onProgress?.(m.fraction, m.at); return; }
+				waiting = null;
+				if (m.type === 'part-done') resolve(m);
+				else reject(Object.assign(new Error(m.message ?? 'a part failed'), { name: m.name ?? 'Error' }));
+			};
+			worker.postMessage({ type: 'part-run', ...payload });
+		}),
+		close: () => {
+			pool.delete(member);
+			try { worker.terminate(); } catch { /* done with it either way */ }
+		},
+	};
+}
+
+/**
+ * The whole model, solved in its parts at once, as one run.
+ *
+ * Each bin of the plan is a worker taking its jobs in turn; each job is the
+ * model with only its materials switched on (`partModel`). What comes back is
+ * the job's states on the output grid, named, and they are filed into the
+ * whole model's vector by name -- the states each job *owns*, since a state
+ * that is not per material is in every job's build and is taken from one.
+ * The result is a `Results` of the whole model's own system, so every series
+ * is worked out from it exactly as from a run that was not split.
+ *
+ * Throws if anything does not add up -- a part that failed, parts reported on
+ * different times, a state no part owned -- and the caller solves the whole
+ * model instead.
+ */
+async function runSplit({ id, whole, system, plan }) {
+	// The model once, as text, for every job: a worker parses its own copy and
+	// switches the other materials off in it. Copying the model per job here
+	// instead was a second of a large assessment's run spent before the last
+	// worker had anything to do.
+	const text = JSON.stringify(whole.toJSON());
+	const n = system.layout.nstate;
+	const progress = plan.jobs.map(() => ({ fraction: 0, at: -Infinity }));
+	let lastPost = 0;
+	const report = () => {
+		const now = Date.now();
+		if (now - lastPost < 80) return;
+		lastPost = now;
+		const fraction = progress.reduce((sum, p) => sum + p.fraction, 0) / progress.length;
+		// The slowest part's clock: the run is as far along as its last part.
+		const at = Math.min(...progress.map((p) => p.at));
+		self.postMessage({ type: 'progress', id, fraction, ...(Number.isFinite(at) ? { at } : {}) });
+	};
+	const started = Date.now();
+	const outcome = new Array(plan.jobs.length);
+	const workers = plan.bins.map(() => partWorker());
+	try {
+		await Promise.all(plan.bins.map(async (bin, b) => {
+			for (const j of bin) {
+				if (cancelled) throw STOPPED;
+				outcome[j] = await workers[b].job({ id, text, materials: plan.jobs[j].materials },
+					(fraction, at) => { progress[j] = { fraction, at: at ?? progress[j].at }; report(); });
+				progress[j] = { fraction: 1, at: Infinity };
+				report();
+			}
+		}));
+	} finally {
+		for (const w of workers) w.close();
+	}
+	const wallMs = Date.now() - started;
+	const { t, rows, stats } = assembleParts(plan, outcome);
+	const jobs = plan.jobs.map((job, j) => ({
+		materials: job.materials, states: job.states,
+		nsteps: outcome[j].stats?.nsteps ?? null,
+		buildMs: outcome[j].timing?.buildMs ?? null,
+		solveMs: outcome[j].timing?.solveMs ?? null,
+	}));
+	return {
+		solution: { t, y: rows, stats },
+		wallMs,
+		jobs,
+		// What one core would have taken for the whole model, as the slowest
+		// part stretched to the whole: each part's solve over its share of a
+		// derivative call. Kept for deciding the next run.
+		wholeMs: Math.max(...jobs.map((jb) => (jb.solveMs ?? 0) / jobCost(jb.states, n))),
+	};
 }
 
 // Async only because of the one thing that is: a SciPy run needs a Python
@@ -1779,6 +1900,52 @@ self.onmessage = async (ev) => {
 		return;
 	}
 
+	// One part of a run another worker is splitting: the model with only this
+	// job's materials switched on, solved on the output grid. What goes back
+	// is its states, named, for the other worker to file into the whole.
+	if (msg.type === 'part-run') {
+		cancelled = false;
+		try {
+			let lastPost = 0;
+			// Built with any material its equations pin switched back on; see
+			// `buildPart`.
+			const built = Date.now();
+			const model = msg.text != null
+				? partModel(JSON.parse(msg.text), msg.materials ?? [], { copy: false })
+				: msg.project;
+			const { project: part, system: partSystem } = buildPart(model, { Project, buildSystem });
+			const buildMs = Date.now() - built;
+			const results = run(part, {
+				system: partSystem,
+				onGrid: true,
+				signal: { get aborted() { return cancelled; } },
+				onProgress: (fraction, at) => {
+					const now = Date.now();
+					if (now - lastPost > 80) {
+						lastPost = now;
+						self.postMessage({ type: 'part-progress', fraction, at });
+					}
+				},
+			});
+			const layout = results.system.layout;
+			const keys = stateKeys(layout);
+			if (!keys) throw new Error('two states of this part share a name');
+			const np = layout.nstate;
+			const T = results.t.length;
+			const y = new Float64Array(T * np);
+			for (let i = 0; i < T; i++) y.set(results.y[i], i * np);
+			const t = Float64Array.from(results.t);
+			const held = results.stats.held ? Float64Array.from(results.stats.held) : null;
+			const { held: _held, ...stats } = results.stats;
+			self.postMessage({
+				type: 'part-done', t, y, np, keys, held, stats, timing: { ...results.timing, buildMs },
+			}, [t.buffer, y.buffer, ...(held ? [held.buffer] : [])]);
+		} catch (e) {
+			self.postMessage({ type: 'part-error', name: e.name ?? 'Error', message: e.message ?? String(e) });
+		}
+		return;
+	}
+
 	if (msg.type !== 'run') return;
 
 	cancelled = false;
@@ -1803,22 +1970,84 @@ self.onmessage = async (ev) => {
 		// because a bar at 0% and a page that has gone quiet look the same
 		// from the outside. The first progress report clears it.
 		self.postMessage({ type: 'loading', id, stage: 'building' });
-		let lastPost = 0;
-		const results = run(project, {
-			signal: { get aborted() { return cancelled; } },
-			// The build is over and the solver has begun. Until the first step
-			// lands there is still nothing to put a number on -- on a stiff
-			// model of ten thousand states that can be another few seconds --
-			// so the bar stays indeterminate and only the word changes.
-			onStage: (stage) => self.postMessage({ type: 'loading', id, stage }),
-			onProgress: (fraction, at) => {
-				const now = Date.now();
-				if (now - lastPost > 80) {
-					lastPost = now;
-					self.postMessage({ type: 'progress', id, fraction, at });
-				}
-			},
+		// Built here rather than inside `run`, because whether to solve it in
+		// parts is read off the built system: its Jacobian says where the
+		// parts are. A run that is not split is handed the same system, so
+		// nothing is built twice.
+		const buildStarted = Date.now();
+		const whole = new Project(project);
+		const system = buildSystem(whole);
+		const buildMs = Date.now() - buildStarted;
+		const signature = layoutSignature(system);
+		const known = splitMemory.get(signature) ?? null;
+		const plan = planSplit(system, whole, {
+			mode: whole.simulation.split ?? 'auto',
+			workers: splitWorkers(msg),
+			nest: canNest(),
+			scipy: isScipySolver(whole.simulation.solver),
+			buildMs,
+			known,
 		});
+		let results = null;
+		if (plan.use) {
+			self.postMessage({ type: 'loading', id, stage: 'solving' });
+			try {
+				const split = await runSplit({ id, whole, system, plan });
+				results = new Results({
+					project: whole, system, solution: split.solution,
+					timing: { buildMs, solveMs: split.wallMs, totalMs: Date.now() - buildStarted },
+				});
+				plan.jobs = split.jobs;
+				plan.wallMs = split.wallMs;
+				const wholeMs = known?.solveMs ?? split.wholeMs;
+				plan.gain = split.wallMs > 0 ? wholeMs / split.wallMs : null;
+				splitMemory.set(signature, { solveMs: wholeMs, gain: plan.gain });
+			} catch (e) {
+				// Stopped is stopped; anything else is a split that did not add
+				// up, and the whole model is solved instead -- the answer
+				// matters more than the route to it.
+				if (cancelled || e === STOPPED) throw new SolverError('Simulation aborted', 0);
+				plan.use = false;
+				plan.why = `tried, and solved whole instead: ${e.message ?? e}`;
+			}
+		}
+		if (!results) {
+			let lastPost = 0;
+			results = run(whole, {
+				system,
+				signal: { get aborted() { return cancelled; } },
+				// The build is over and the solver has begun. Until the first
+				// step lands there is still nothing to put a number on -- on a
+				// stiff model of ten thousand states that can be another few
+				// seconds -- so the bar stays indeterminate and only the word
+				// changes.
+				onStage: (stage) => self.postMessage({ type: 'loading', id, stage }),
+				onProgress: (fraction, at) => {
+					const now = Date.now();
+					if (now - lastPost > 80) {
+						lastPost = now;
+						self.postMessage({ type: 'progress', id, fraction, at });
+					}
+				},
+			});
+			// `run` timed a build it did not do: the system was handed in.
+			results.timing = { ...results.timing, buildMs, totalMs: (results.timing?.totalMs ?? 0) + buildMs };
+			splitMemory.set(signature, { ...(known ?? {}), solveMs: results.timing.solveMs });
+		}
+		// What the run was, split or not and why, for the status line and the
+		// log. Not the plan's arrays: the page needs the account, not the
+		// bookkeeping.
+		results.stats = {
+			...results.stats,
+			split: {
+				used: !!plan.use, mode: plan.mode, why: plan.why,
+				predicted: plan.predicted ?? null,
+				...(plan.use ? {
+					parts: plan.parts, workers: plan.bins.length, jobs: plan.jobs,
+					wallMs: plan.wallMs, gain: plan.gain ?? null,
+				} : {}),
+			},
+		};
 
 		// What crosses to the page is the list of outputs, not their series:
 		// those are worked out here when the page asks for the ones it is
@@ -1856,7 +2085,9 @@ self.onmessage = async (ev) => {
 		// `workersFor`.
 		lastCost = {
 			buildMs: results.timing?.buildMs ?? null,
-			solveMs: results.timing?.solveMs ?? null,
+			// A realisation is solved whole, so a split run's own time is not
+			// what one costs: the whole model's estimate is.
+			solveMs: plan.use ? splitMemory.get(signature)?.solveMs ?? null : results.timing?.solveMs ?? null,
 		};
 
 		self.postMessage({ type: 'done', id, payload });

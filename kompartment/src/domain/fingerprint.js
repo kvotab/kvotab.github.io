@@ -75,6 +75,10 @@ const SOLVE_SETTINGS = [
 	'mass_balance',
 	// This one changes the error test itself, so it changes the trajectory.
 	'auto_abstol',
+	// Solving the model in independent parts gives each part steps of its own,
+	// which agrees with the whole to within the tolerance and not to the last
+	// digit. See ../sim/partition.js.
+	'split',
 ];
 
 /**

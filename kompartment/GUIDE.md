@@ -2057,6 +2057,53 @@ solver's step-size control the curves are the plain run's to within the
 tolerance rather than to the bit. That is why it is off by default, and saved
 with the model as `simulation.mass_balance`.
 
+## Solving a model in parts
+
+**Split into parts** under SIMULATION decides whether a model that falls apart
+into independent parts is solved a part per core. Most assessments do: each
+decay chain is a system of its own, joined to no other by any transfer, rate
+or expression. The parts are found from the model's own Jacobian, so nothing
+has to be declared; a chain stays together, and so do nuclides of one element
+that share a solubility limit.
+
+- **auto** (the default) splits when it expects the split to be clearly
+  faster on this machine. A model it has not yet timed is split only from 2,000
+  states up, and only when its largest part is small enough to promise at least
+  1.6× over the cores there are. Once it has timed a whole solve it splits when
+  that solve took more than 1.5 s and the parts are expected to be at least
+  1.2× faster. Once it has split a model, what the split was measured to gain
+  decides the next run.
+- **always** splits whenever the model can be split, even when that is slower.
+- **never** solves the whole model as one system.
+
+Each part is the model with every other material switched off. It is solved on
+the output grid at its own steps, and its states are filed back into the whole
+model by name. So everything after the solve is exactly as for a whole run:
+every series, the table, the exports, the dataset. The run takes as long as
+its slowest part and its build; the others run beside it.
+
+**The parts agree with a whole solve to within the tolerance, not to the last
+digit.** Each part takes the steps its own states need rather than the steps
+the stiffest state anywhere needs, which is the point. The setting is part of
+what a run is of, so changing it solves again.
+
+The status line says `split 4 parts on 4 cores` when a run was split, and its
+tooltip lists the parts with their steps and times; the run log says why a run
+was or was not split. A model is solved whole, whatever the setting, when:
+
+- it carries a delay, a snapshot or a discrete event, whose reach the Jacobian
+  does not show, so a split could not be proven safe;
+- its results are reported at the solver's own steps, which would differ in
+  every part — choose a list of times under *Time spacing*;
+- it uses a SciPy solver;
+- it has no materials to divide it by, or it is one part;
+- the browser cannot start a worker from a worker, or the run has one core.
+
+With several scenarios running together, the cores are shared between them,
+so several scenarios each divided into parts do not ask for more threads than
+the machine has. A split that does not add up — a part that fails, parts that
+come back on different times — is solved whole instead, and the log says so.
+
 ## The run log
 
 Every run keeps a log — **log** at the right of the status line opens it — of
@@ -4605,9 +4652,11 @@ So a target indexed by `Scenarios × A × B`, reduced to `A`, is reduced over
 ## Scenarios
 
 An index list marked `for_scenarios` is not an axis of the model but a set of
-alternative futures. The usual arrangement is one simulation per scenario;
-**this tool runs one at a time** — pick it under **Simulation** in the left
-panel, and every block indexed by that list is read at the index you picked.
+alternative futures. The usual arrangement is one simulation per scenario. Here
+the **Scenario** under **Simulation** in the left panel is the one the model is
+built at — every block indexed by that list is read at the index you picked —
+and the others can be run beside it (see *Running several scenarios together*
+below).
 
 That is exactly what one run of a per-scenario sweep does: with a scenario
 selected, a scenario-dependent block is treated *as if
@@ -4646,9 +4695,45 @@ all-scenarios list and takes the matching index by name or through the
 mapping. If the active scenario is not in a sub-set a block is indexed by,
 that block has no value for it and falls back to its default.
 
-What is *not* here is running them all: no scenario sweep, no per-scenario
-simulation settings, and no comparison chart. One at a time, chosen in the
-panel. `examples/scenarios.json` is the same model under three futures.
+`examples/scenarios.json` is the same model under three futures.
+
+### Running several scenarios together
+
+Under the **Scenario** select, **Run** shows every scenario as a chip. The
+selected one is always on: it is the run. Tick others and each is run beside
+it, as a run of its own — the same model with that scenario selected — in a
+worker of its own, so on a machine with the cores they take about as long
+together as the slowest of them alone. Nothing about one scenario's run depends
+on another's, so each is exactly what running it alone would give.
+
+Ticking a scenario while the results on screen are current runs just that one;
+unticking one throws its run away. After an edit, **Run** runs them all, and a
+scenario whose integrating part did not change keeps its states and only has
+the algebra worked out again, as the selected one does. **Stop** stops them all.
+How many run at once follows the **Cores** setting of the probabilistic dialog:
+the number chosen there, or every core but one.
+
+The results are shown together:
+
+- **The chart** draws every selected output once per scenario, labelled
+  `Soil · Drier`. An output keeps its colour in every scenario and each scenario
+  wears a line pattern of its own; with a single output selected, each scenario
+  takes a colour instead. The legend has a switch per scenario to hide its lines.
+  While a probabilistic sample is on the chart the line is its median, and the
+  scenarios' deterministic runs are not drawn beside it — choose *this model's
+  own run* as the line to see them.
+- **The table** has a column per output per scenario, side by side.
+- **CSV and HDF5** exports write every scenario, hidden or not: CSV as a column
+  per output per scenario, HDF5 with the scenario list as one more index of each
+  series, so the file holds a group per scenario under each block.
+
+The status line says how many scenarios are in, and the run log lists each
+with its steps and solve time. Everything else — a probabilistic run, a
+tornado, a sensitivity, a results archive saved with the model — is of the
+selected scenario, as before. A scenario that reports the solver's own steps
+has them read onto the selected scenario's times along a straight line. Which
+scenarios are ticked belongs to the page, not the file: it changes no number of
+any of them.
 
 ## Numbers read off a finished curve
 

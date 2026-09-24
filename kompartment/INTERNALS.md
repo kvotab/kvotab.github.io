@@ -30,6 +30,7 @@ exercise `domain/` and `sim/` directly, which is why they can be plain Node.
 | `src/sim/runner.js` | Drives a solve and back-fills the algebraic outputs |
 | `src/sim/history.js` | The buffers a delay, a min/max, a running mean and a snapshot need |
 | `src/sim/partition.js` | Cutting a model into parts that cannot see each other |
+| `src/sim/split.js` | Whether to solve those parts on several cores, and putting the parts back together |
 | `src/sim/localsens.js` | dy/dp for a chosen parameter, by forward sensitivities |
 | `src/sim/probabilistic.js` | Latin hypercube sampling and the statistics over realisations |
 | `src/ode/solvers/ndf.js` | The NDF/BDF formulas (Shampine & Reichelt 1997; Hairer & Wanner 1996, ch. V). One of the five shared-core files: see *One solver core for three pages* |
@@ -76,6 +77,7 @@ exercise `domain/` and `sim/` directly, which is why they can be plain Node.
 | `src/domain/symbol.js` | Sub- and superscripts in a block's display name |
 | `src/domain/layout.js` | Laying an imported diagram out, since a file's positions are not read |
 | `src/ui/app.js` | The shell: tabs, toolbar, settings, notices |
+| `src/ui/scenarios.js` | Which scenarios run beside the selected one, and how their lines share a chart |
 | `src/ui/graph.js` | The diagram, in SVG |
 | `src/ui/matrix.js` | The transfer grid |
 | `src/ui/chart.js`, `src/ui/svgcanvas.js` | The chart on a canvas, and the same paint routine writing SVG |
@@ -977,9 +979,29 @@ one comparison model with ten of them and one running-water model
 with two, whose two scenarios give visibly different answers (`q_s` 7.5 against
 7.6, and everything downstream with it).
 
-What is deliberately absent is the *sweep*: no run-all-scenarios mode, no
-per-scenario `SimulationSettings`, no comparison output. Those are the parts
-that make it a batch facility rather than a modelling one.
+**Several at once, since.** The page runs the scenarios ticked beside the
+selected one (`src/ui/scenarios.js` holds the rules, `app.js` the running) as
+runs of their own: the model with another scenario selected, each posted to a
+page-level simulation worker of its own. Not children of the selected
+scenario's worker -- a worker's children cannot be reached by the page, their
+progress would wait on the parent's synchronous solve, and a browser that will
+not nest workers would lose the feature. As page workers they report straight
+back, are stopped by terminating them, and each keeps its own `last`: a
+scenario's results live where they were computed, exactly as the selected one's
+do, and a chart asks each scenario's worker for its columns (`r.worker` on the
+result set routes `sendColumnAsk`). The same messages the selected one is sent
+-- `run`, `re-evaluate`, `columns` -- so a scenario whose integrating part has
+not changed is only re-evaluated, with its own integration key.
+
+Three rules keep them honest. A scenario's lines are drawn only beside results
+of the same model revision (`shownScenarioRuns`), so a run in flight never mixes
+two models on one chart. They are not drawn through a probabilistic sample,
+whose line is a median; the table and the exports, which are of the runs, still
+carry them. And the whole of what Run started is one run to the interface:
+`running` stays set until the last scenario is in (`primaryBusy` is the
+selected scenario's share), Stop terminates them all, and how many go at once
+follows the Cores setting, `runsAtOnce` of it. What remains deliberately absent
+is per-scenario *settings* -- every scenario runs with the model's.
 
 ## Disabled blocks
 
@@ -3744,6 +3766,70 @@ measured to be right and because the question will be asked again. What is
 missing is a model where the sums come out the other way -- one whose cost sits
 in the factorisation rather than the derivative, which is what the state-step
 saving is a saving of.
+
+## Solving the parts at once
+
+The section above measured splitting as a way to do *less arithmetic*, and it
+does not: a part's derivative costs far more than its share of the states,
+because the algebra is not per material. That was the question for one core.
+On several, what a run costs is the time until its **slowest** part is in, and
+the parts' extra arithmetic is spent on cores that were idle. Model A's
+largest part is 18.5% of its states and 28% of a derivative call: with a core
+per part the run waits on about a quarter of the whole model's work per step,
+plus a build per part. So the split is built after all -- `src/sim/split.js`,
+decided per run by a setting, `simulation.split` (auto, always, never).
+
+**The coordinator builds the whole model**, as it must: the parts are read off
+its Jacobian, and its system is what every series is worked out from after the
+solve. `splitJobs` turns the partition into *jobs*, sets of materials, because
+a part is built by switching every other material off: parts that share a
+material are merged, and a part with no material at all rides with the smallest
+job, since switching materials off does not remove it -- it is in every job's
+build and is taken from one. Each job goes to a worker as the model's text and
+a list of materials; the worker switches the others off (`partModel`), builds,
+solves on the output grid, and sends its states back named (`stateKeys`: block,
+index, and for a far field the cell). `assembleParts` files every state from
+the job that owns it into the whole model's vector, and the result is a
+`Results` of the whole model's own system -- nothing downstream knows it was
+split. The check above, that a part's derivative is the whole model's on its
+states to zero difference, is now a test, on every job of the bundled
+four-nuclide model.
+
+**Two things the real models taught it.** An equation may pin a material by
+name -- a coefficient read at carbon-14 for every nuclide, `k[C-14]` -- and a
+job with carbon-14 switched off does not build. The pin is safe to honour -- what it reads cannot
+depend on a state, or the two jobs would be one part -- so `buildPart` switches
+the pinned material back on in that job's build and tries again; its states are
+integrated there for nothing and not kept. And switching off the only isotope
+of an element dropped the element from the derived list, so an entry keyed by
+it named an index the list did not have and the model refused to load -- which
+switching that isotope off in the Index lists tab did too, before any of this.
+`deriveElements` now keeps such an element, switched off, and its entries lie
+dormant like any other switched-off index's.
+
+**Refused, whatever the setting**, where the partition cannot be trusted (a
+delay, a snapshot or an event, as above), where the output is the solver's own
+steps (every part's differ), for the SciPy solvers, for one core, and where
+nested workers are not available. **Refused after the fact** -- solved whole
+instead, and the log says why -- when the parts come back on different times
+(a part whose blocks carry a switch time the others do not) or a state is not
+carried by any part. A disruptive event's jumps are not in the Jacobian, and
+need not be: a jump moves a share of a state into the same index of another
+block, or a package failure into the block the release is already transferred
+to, so it joins nothing the derivative does not.
+
+**Auto** predicts with the measured shape of the cost: a job pays `0.12 +
+0.88 × its share of the states` of a whole derivative call and of a whole build,
+jobs are packed onto the cores largest first, and each worker costs a start.
+What it assumes -- that the largest part needs every step the whole model takes
+-- is the pessimistic end: a part answers to its own states, and on the
+assessments it has been measured on it needed markedly fewer, so splits ran
+well ahead of the prediction. The thresholds reflect that: from 2,000 states and
+a 1.6× promise before a model has been timed, 1.2× and a 1.5 s solve after, and
+once a model has been split what the split measured decides (`splitMemory` in
+the worker, per layout signature). The parts agree with a whole solve to
+within the tolerance, not to the last digit, so the setting is in the
+integration fingerprint.
 
 ## A global switch over the floor
 

@@ -49,7 +49,7 @@ import { openTornadoSetup, openTornadoResult } from './tornadodialog.js';
 import { openGsaSetup, openGsaResult } from './gsadialog.js';
 import { categoriesOf } from '../domain/categories.js';
 import { implicitInputs } from '../domain/uncertainty.js';
-import { runLogLines, probabilisticLogLines, runLogText } from '../domain/runlog.js';
+import { runLogLines, probabilisticLogLines, runLogText, scenarioLogLines } from '../domain/runlog.js';
 import { compareModels, reportLines, summary as versionSummary } from '../domain/versions.js';
 import { describeAudit } from '../domain/massbalance.js';
 import { openLocalSensitivityPicker, openLocalSensitivityResult } from './localsensdialog.js';
@@ -59,7 +59,11 @@ import { openHandoff, handoffName } from './handoff.js';
 import * as autosave from './autosave.js';
 import * as shared from './clipboard.js';
 import { workersFor } from '../worker/prob-pool.js';
-import { chosenCores, chooseCores, poolNote } from './cores.js';
+import { SPLIT_MODES } from '../sim/split.js';
+import { chosenCores, chooseCores, poolNote, machineCores } from './cores.js';
+import {
+	scenariosToRun, otherScenarios, scenarioModel, scenarioLabel, runsAtOnce, withScenarios,
+} from './scenarios.js';
 import { openQueryDialog } from './querydialog.js';
 import * as dt from '../domain/datatable.js';
 import { openDataImport } from './dataimport.js';
@@ -207,6 +211,7 @@ const SIM_LABELS = {
 	// the space to say which it is.
 	non_negative: 'Cannot go negative enabled',
 	mass_balance: 'Mass balance',
+	split: 'Split into parts',
 };
 
 // ...and the solver's own settings, from the one table that says what they
@@ -229,7 +234,7 @@ for (const [key, info] of Object.entries(SOLVER_OPTION_INFO)) SIM_LABELS[key] = 
  * what is shown, whatever panel they are typed into, and they take the full
  * path like any other.
  */
-const SOLVE_ONLY_SETTINGS = new Set(['solver', 'rtol', 'abstol', 'non_negative']);
+const SOLVE_ONLY_SETTINGS = new Set(['solver', 'rtol', 'abstol', 'non_negative', 'split']);
 
 /**
  * Where a problem that is not about a block sends you.
@@ -266,6 +271,24 @@ const state = {
 	yLog: true,
 	running: false,
 	runId: 0,
+	// The selected scenario's own run is in flight. `running` covers the
+	// whole of what Run started, which with scenarios beside it lasts until
+	// the slowest of them is in; this is the one part of it the worker in
+	// `ensureWorker` is doing.
+	primaryBusy: false,
+	// The scenarios chosen to run beside the selected one, by name, and their
+	// runs -- name -> entry, see `startScenario`. Page state rather than the
+	// model's: which futures are compared changes no number of any of them,
+	// so it is not written into the file. `hiddenScenarios` are the ones whose
+	// lines the chart's legend has switched off.
+	scenarioChoice: [],
+	scenarioRuns: new Map(),
+	hiddenScenarios: new Set(),
+	// How far the selected scenario's run has got, and its clock, as
+	// `setProgress` last read them; `paintProgress` combines it with the
+	// scenarios beside it.
+	primaryFraction: 0,
+	primaryAt: null,
 	// How many cores the sampled run going now is on, from the worker's
 	// `pool` message: `{workers, asked, why}`, or null. See ./cores.js.
 	pool: null,
@@ -969,9 +992,13 @@ function ensureWorker() {
 		if (m.type === 'local-sensitivity') { acceptLocalSensitivity(m); return; }
 		if (m.type === 'columns') { acceptColumns(m); return; }
 		if (m.type === 'dataset') { datasetWaiting?.(m); return; }
-		if (m.type === 'error') { setRunning(false); showError(m); }
+		// The selected scenario failing is the model failing: the scenarios
+		// beside it are the same model, and are stopped rather than left to
+		// fail one by one.
+		if (m.type === 'error') { stopScenarios(); setRunning(false); showError(m); }
 	};
 	worker.onerror = (e) => {
+		stopScenarios();
 		setRunning(false);
 		showError({ name: 'WorkerError', message: e.message ?? 'The simulation worker failed.' });
 		// A worker that has failed is not one to post the next run to: left
@@ -1132,6 +1159,7 @@ function runSimulation(opts = {}) {
 	}
 	clearError();
 	setRunning(true);
+	state.primaryBusy = true;
 	state.runId += 1;
 	// Which model this run is of. Stamped onto the results when they arrive.
 	state.runRev = state.rev;
@@ -1155,11 +1183,337 @@ function runSimulation(opts = {}) {
 			type: reuse ? 're-evaluate' : 'run',
 			id: state.runId,
 			project: project.toJSON(),
+			// The cores this run may split its model over, if it does: see
+			// `splitShare`.
+			cores: splitShare(),
+			workers: workerLimit(),
 		});
+		// And the scenarios chosen to run beside this one, each in a worker of
+		// its own. Not for a preview: that is this scenario at values the model
+		// does not hold, and a line of another scenario at the values it does
+		// would be drawn beside it as if the two were comparable.
+		if (opts.substitute) stopScenarios({ all: true });
+		else startScenarios();
 	} else {
 		state.reusing = false;
+		// One thread, so one run: the scenarios beside it need workers.
+		if (otherScenarios(state.raw, state.scenarioChoice).length && !runSimulation.saidMainThread) {
+			runSimulation.saidMainThread = true;
+			flash('Only the selected scenario runs here: running several at once needs '
+				+ 'the browser\u2019s workers, which this page is not using.', 'warn');
+		}
 		runOnMainThread(project, state.runId);
 	}
+}
+
+// --- scenarios run together ------------------------------------------------------
+
+/**
+ * The runs of the scenarios beside the selected one that belong with the
+ * results on screen: finished, of the model revision those results are of, and
+ * -- unless `hidden` is false -- not switched off in the legend. In the
+ * model's scenario order. None beside a replayed realisation or a preview,
+ * which are not the model at its own values, while every scenario's run is.
+ */
+function shownScenarioRuns({ hidden = true } = {}) {
+	const r = state.results;
+	if (!r || r.replayed != null || state.preview) return [];
+	const out = [];
+	for (const name of otherScenarios(state.raw, state.scenarioChoice)) {
+		const e = state.scenarioRuns.get(name);
+		if (!e?.r || e.r.rev !== r.rev) continue;
+		if (hidden && state.hiddenScenarios.has(name)) continue;
+		out.push(e);
+	}
+	return out;
+}
+
+/**
+ * The scenario runs the chart draws: those of `shownScenarioRuns`, while the
+ * chart's line is the model's own run. Through a sample the line is a median
+ * or a mean of realisations, and a scenario's deterministic run beside it
+ * would be a different kind of number drawn as if it were the same one; the
+ * table and the exports, which are of the runs, still carry them.
+ */
+function chartScenarioRuns(opts = {}) {
+	if (currentProb()) {
+		const keys = linesOn().map((l) => l.key);
+		if (!(keys.length === 1 && keys[0] === 'single')) return [];
+	}
+	return shownScenarioRuns(opts);
+}
+
+/** The runs of the scenarios chosen beside the selected one, in the model's order. */
+function scenarioRunsNow() {
+	return otherScenarios(state.raw, state.scenarioChoice)
+		.map((name) => state.scenarioRuns.get(name) ?? { name, r: null });
+}
+
+/** Whether a scenario beside the selected one is running, or waiting to. */
+function scenariosBusy() {
+	for (const e of state.scenarioRuns.values()) if (e.running || e.queued) return true;
+	return false;
+}
+
+/**
+ * A worker of its own for one scenario, answering to that scenario's entry.
+ *
+ * The same simulation worker the selected scenario runs in, asked the same
+ * things -- `run`, `re-evaluate`, `columns` -- so a scenario's results are
+ * held and read exactly as the selected one's are, in the worker that made
+ * them.
+ */
+function scenarioWorker(entry) {
+	const w = new Worker(new URL('../worker/sim-worker.js', import.meta.url), { type: 'module' });
+	w.onmessage = (ev) => acceptScenarioMessage(entry, ev.data);
+	w.onerror = (e) => {
+		if (entry.worker === w) entry.worker = null;
+		if (entry.r) entry.r.detached = true;
+		try { w.terminate(); } catch { /* it has failed; this is tidying */ }
+		failScenario(entry, e.message ?? 'its worker failed');
+	};
+	return w;
+}
+
+function acceptScenarioMessage(entry, m) {
+	// A scenario that has been dropped since its worker was asked.
+	if (state.scenarioRuns.get(entry.name) !== entry) return;
+	if (m.type === 'columns') { acceptScenarioColumns(entry, m); return; }
+	if (m.id !== entry.runId) return;
+	if (m.type === 'loading') { entry.stage = m.stage; paintProgress(); return; }
+	if (m.type === 'progress') {
+		entry.fraction = gridFraction(entry, m.fraction, m.at);
+		paintProgress();
+		return;
+	}
+	if (m.type === 'done') { acceptScenario(entry, m.payload); return; }
+	if (m.type === 'reused') {
+		// Refused, as `acceptReuseRefused` is for the selected scenario: the
+		// states moved after all, so it is solved.
+		if (m.ok) return;
+		entry.key = null;
+		entry.nextKey = null;
+		entry.worker?.postMessage({
+			type: 'run', id: entry.runId, project: entry.project,
+			cores: splitShare(), workers: workerLimit(),
+		});
+		return;
+	}
+	if (m.type === 'error') failScenario(entry, m.message ?? 'it failed');
+}
+
+/**
+ * Queues every chosen scenario for the run that has just started, and lets go
+ * of the ones no longer chosen.
+ */
+function startScenarios() {
+	const want = otherScenarios(state.raw, state.scenarioChoice);
+	for (const name of [...state.scenarioRuns.keys()]) if (!want.includes(name)) dropScenario(name);
+	for (const name of want) queueScenario(name);
+	pumpScenarios();
+}
+
+/**
+ * Makes scenario `name` ready to run as part of the run now in progress.
+ *
+ * Worked out again or solved again, like the selected scenario: a scenario
+ * whose integrating part has not changed since its last run keeps its states
+ * and has only the algebra over them worked out afresh (`re-evaluate`), which
+ * its worker checks before it trusts.
+ */
+function queueScenario(name) {
+	let entry = state.scenarioRuns.get(name);
+	if (!entry) {
+		entry = { name, worker: null, r: null, key: null };
+		state.scenarioRuns.set(name, entry);
+	}
+	// A run of it still going is of a model that has since changed, and a
+	// solve is not interrupted by a message: the worker goes with it.
+	if (entry.running && entry.worker) {
+		try { entry.worker.terminate(); } catch { /* gone already */ }
+		entry.worker = null;
+		if (entry.r) entry.r.detached = true;
+	}
+	let project;
+	try {
+		project = new Project(scenarioModel(state.raw, name));
+	} catch (e) {
+		entry.queued = false;
+		entry.running = false;
+		entry.error = e.message ?? String(e);
+		return;
+	}
+	const key = integrationKeyNow(project);
+	entry.project = project.toJSON();
+	entry.nextKey = key;
+	entry.reuse = !!key && key === entry.key && !!entry.r && !entry.r.detached && !!entry.worker;
+	entry.runId = state.runId;
+	entry.rev = state.runRev;
+	entry.queued = true;
+	entry.running = false;
+	entry.fraction = 0;
+	entry.gridAt = 0;
+	entry.stage = null;
+	entry.error = null;
+}
+
+/**
+ * Starts as many of the waiting scenarios as there are cores for. The
+ * selected scenario counts while it is running; the rest start as others
+ * finish. See `runsAtOnce`.
+ */
+function pumpScenarios() {
+	const most = runsAtOnce(chosenCores(), machineCores());
+	let going = (state.primaryBusy ? 1 : 0)
+		+ [...state.scenarioRuns.values()].filter((e) => e.running).length;
+	for (const name of otherScenarios(state.raw, state.scenarioChoice)) {
+		if (going >= most) break;
+		const entry = state.scenarioRuns.get(name);
+		if (!entry?.queued) continue;
+		entry.queued = false;
+		entry.running = true;
+		going++;
+		try {
+			entry.worker ??= scenarioWorker(entry);
+		} catch (e) {
+			failScenario(entry, e.message ?? String(e));
+			continue;
+		}
+		entry.worker.postMessage({
+			type: entry.reuse ? 're-evaluate' : 'run', id: entry.runId, project: entry.project,
+			cores: splitShare(), workers: workerLimit(),
+		});
+	}
+}
+
+/**
+ * How many cores one run may split its model over: the cores a run of the
+ * page may have, shared between the runs going at once -- the selected
+ * scenario and those beside it -- so that several scenarios each divided into
+ * parts do not ask for more threads than the machine has. See `splitWorkers`
+ * in ../worker/sim-worker.js, which reads it.
+ */
+function splitShare() {
+	const most = runsAtOnce(chosenCores(), machineCores());
+	const runs = Math.min(most, 1 + otherScenarios(state.raw, state.scenarioChoice).length);
+	return Math.max(1, Math.floor(most / Math.max(1, runs)));
+}
+
+/** A scenario's run is in. */
+function acceptScenario(entry, payload) {
+	entry.running = false;
+	entry.key = entry.nextKey ?? null;
+	entry.error = null;
+	entry.r = {
+		...payload, columns: [], rev: entry.rev, runId: entry.runId,
+		scenario: entry.name, worker: entry.worker,
+	};
+	pumpScenarios();
+	finishIfDone();
+	renderPicker();
+	renderChart();
+	renderTable();
+	refreshStatus();
+}
+
+/** A scenario's run failed. Said, and the rest carry on without it. */
+function failScenario(entry, why) {
+	entry.running = false;
+	entry.queued = false;
+	entry.error = why;
+	flash(`The scenario \u2018${entry.name}\u2019 did not run: ${why}`, 'warn');
+	pumpScenarios();
+	finishIfDone();
+	refreshStatus();
+}
+
+/** Lets go of one scenario's run: its worker, and the results it held. */
+function dropScenario(name) {
+	const e = state.scenarioRuns.get(name);
+	if (!e) return;
+	state.scenarioRuns.delete(name);
+	try { e.worker?.terminate(); } catch { /* gone already */ }
+}
+
+/**
+ * Stops the scenarios still running or waiting -- Stop, or the selected
+ * scenario failing, which says the model does not run. The ones already in
+ * are kept, unless `all`.
+ */
+function stopScenarios({ all = false } = {}) {
+	for (const [name, e] of [...state.scenarioRuns]) {
+		if (all || e.running || e.queued) dropScenario(name);
+	}
+}
+
+/** Ends the run once the selected scenario and every one beside it are in. */
+function finishIfDone() {
+	if (state.running && !state.primaryBusy && !scenariosBusy()) {
+		setRunning(false);
+		renderStaleness();
+		return;
+	}
+	paintProgress();
+}
+
+/**
+ * The reader has ticked or unticked a scenario to run beside the selected one.
+ *
+ * Unticked, its run goes. Ticked, it is run now if the results on screen are
+ * of the model as it stands, so the comparison is there without running the
+ * others again; otherwise it waits for the next run, which is due anyway.
+ */
+function chooseScenario(name, on) {
+	const was = new Set(state.scenarioChoice);
+	if (on) was.add(name); else was.delete(name);
+	state.scenarioChoice = scenariosToRun(state.raw, was);
+	if (!on) {
+		dropScenario(name);
+		state.hiddenScenarios.delete(name);
+		finishIfDone();
+	} else if (workerAvailable() && !state.preview) {
+		const batch = state.running && (state.primaryBusy || scenariosBusy());
+		if (batch && state.runRev === state.rev) {
+			// Into the run that is going: the model has not moved since it
+			// started, so this scenario is of the same model as the rest.
+			queueScenario(name);
+			pumpScenarios();
+		} else if (!state.running && state.results && state.results.rev === state.rev
+			&& !state.results.detached && state.results.replayed == null) {
+			// A run of its own, beside the results already on screen and
+			// under their id, so that it is drawn with them.
+			setRunning(true);
+			queueScenario(name);
+			const entry = state.scenarioRuns.get(name);
+			if (entry) { entry.runId = state.results.runId; entry.rev = state.results.rev; }
+			pumpScenarios();
+			finishIfDone();
+		}
+		// Otherwise the run that is owed -- the model has changed since the
+		// results on screen -- takes it with the rest.
+	}
+	renderSidebar();
+	// Back to the chip, which the rebuild replaced: the keyboard would
+	// otherwise be dropped on the page after every press.
+	[...document.querySelectorAll('#sidebar [data-scenario-run]')]
+		.find((b) => b.dataset.scenarioRun === name)?.focus();
+	renderChart();
+	renderTable();
+	refreshStatus();
+}
+
+/**
+ * The share of a scenario's run that is done, read off the output grid the
+ * way the selected scenario's is: points reached, not model time. See
+ * `setProgress`.
+ */
+function gridFraction(entry, fraction, at) {
+	const grid = state.grid;
+	if (grid && grid.length > 2 && at != null && Number.isFinite(at)) {
+		while (entry.gridAt < grid.length && grid[entry.gridAt] <= at) entry.gridAt++;
+		return entry.gridAt / grid.length;
+	}
+	return Math.max(0, Math.min(1, fraction));
 }
 
 /**
@@ -1251,9 +1605,19 @@ function acceptResults(payload, replayed = null, storedLog = null) {
 	renderResults();
 	setStatus(payload);
 	clearError();
-	setRunning(false);
+	// In, but the run is not over while a scenario beside it is still going:
+	// that one's slot passes to a scenario waiting for a core, and the
+	// interface stays in its running state until the last is in.
+	state.primaryBusy = false;
+	pumpScenarios();
+	finishIfDone();
 	updateDirtyBadge();
 	renderStaleness();
+}
+
+/** The status line again, for a scenario that has come in beside the results. */
+function refreshStatus() {
+	if (state.results) setStatus(state.results);
 }
 
 /**
@@ -1472,6 +1836,7 @@ function acceptReuseRefused(m) {
 	state.integrationKey = null;
 	ensureWorker().postMessage({
 		type: 'run', id: state.runId, rev: state.rev, project: state.project.toJSON(),
+		cores: splitShare(), workers: workerLimit(),
 	});
 }
 
@@ -2197,6 +2562,10 @@ function cancelSimulation() {
 	// terminate whether it answered or not. A deterministic run never answers,
 	// because it is one long synchronous call -- which is why terminating
 	// exists at all -- and the wait is short enough to be invisible.
+	// The scenarios running beside it go the same way, and at once: each is
+	// one long synchronous solve in a worker of its own, which nothing but
+	// terminating reaches.
+	stopScenarios();
 	if (worker) {
 		const going = worker;
 		worker = null;
@@ -2237,6 +2606,7 @@ function cancelSimulation() {
 
 function setRunning(on) {
 	state.running = on;
+	if (!on) state.primaryBusy = false;
 	// A pool is one run's: the next says what it is on for itself.
 	state.pool = null;
 	$('#run').disabled = on;
@@ -2280,16 +2650,51 @@ function setProgress(fraction, at = null) {
 	if (grid && grid.length > 2 && at != null && Number.isFinite(at)) {
 		while (state.gridAt < grid.length && grid[state.gridAt] <= at) state.gridAt++;
 	}
-	const f = grid && grid.length > 2 && at != null && Number.isFinite(at)
+	state.primaryFraction = grid && grid.length > 2 && at != null && Number.isFinite(at)
 		? state.gridAt / grid.length
 		: Math.max(0, Math.min(1, fraction));
+	state.primaryAt = at;
+	paintProgress();
+}
+
+/**
+ * The bar, and the words beside it.
+ *
+ * One run: how far it has got, and its clock. With scenarios running beside
+ * it, the share of the whole that is done -- a run that is in counts in full --
+ * and how many are in, since one clock would be one scenario's.
+ */
+function paintProgress() {
+	const bar = $('#progress');
+	const text = $('#progress-pct');
+	if (!bar || !text) return;
+	const batch = [...state.scenarioRuns.values()].filter((e) => e.runId === state.runId
+		|| e.running || e.queued);
+	let f = state.primaryFraction ?? 0;
+	let at = state.primaryAt ?? null;
+	let also = '';
+	if (batch.length) {
+		// The selected scenario's building phase keeps the bar indeterminate
+		// while it lasts, as it does alone; once it is in, the bar is the
+		// batch's.
+		if (!state.primaryBusy && bar.hasAttribute('data-loading')) bar.removeAttribute('data-loading');
+		if (bar.hasAttribute('data-loading')) return;
+		const shares = [state.primaryBusy ? f : 1,
+			...batch.map((e) => (e.running || e.queued ? (e.fraction ?? 0) : 1))];
+		f = shares.reduce((a, b) => a + b, 0) / shares.length;
+		const done = (state.primaryBusy ? 0 : 1) + batch.filter((e) => !e.running && !e.queued).length;
+		also = ` \u00b7 ${done} of ${shares.length} scenarios`;
+		at = null;
+	} else if (bar.hasAttribute('data-loading')) {
+		bar.removeAttribute('data-loading');
+	}
 	bar.value = f;
 	const unit = state.raw?.simulation?.time_unit ?? '';
 	const pool = poolNote(state.pool);
 	// Padded, and in tabular figures, so the digits do not jog the bar.
-	const text = $('#progress-pct');
 	text.textContent = `${String(Math.round(f * 100)).padStart(3, ' ')}%`
 		+ (at == null || !Number.isFinite(at) ? '' : ` · ${fmtClock(at)}${unit ? ` ${unit}` : ''}`)
+		+ also
 		+ (pool.text ? ` · ${pool.text}` : '');
 	text.title = pool.title;
 }
@@ -3273,6 +3678,23 @@ function jacobianDetail(p) {
 }
 
 /** The footer's word on what the constraint held: the worst few, by share of steps. */
+/** What a split run was, for the status line's tooltip. */
+function splitDetail(split) {
+	if (!split) return '';
+	if (!split.used) return `Not split: ${split.why}.`;
+	const lines = [`Solved in ${split.jobs.length} independent parts on ${split.workers} cores, `
+		+ `each at its own steps: ${split.why}.`];
+	if (split.gain) lines.push(`About ${split.gain.toFixed(1)}\u00d7 the speed of a whole solve, by this machine\u2019s estimate.`);
+	lines.push('');
+	for (const j of split.jobs.slice(0, 12)) {
+		lines.push(`${j.materials.slice(0, 6).join(', ')}${j.materials.length > 6 ? `, and ${j.materials.length - 6} more` : ''}`
+			+ ` \u2014 ${j.states.toLocaleString()} states, ${j.nsteps ?? '?'} steps, ${Math.round(j.solveMs ?? 0)} ms`);
+	}
+	if (split.jobs.length > 12) lines.push(`and ${split.jobs.length - 12} more parts`);
+	lines.push('', 'The parts agree with a whole solve to within the tolerance, not to the last digit.');
+	return lines.join('\n');
+}
+
 function heldSummary(held) {
 	if (!held?.length) return null;
 	const pct = (h) => `${Math.max(1, Math.round(h.fraction * 100))}%`;
@@ -3316,6 +3738,7 @@ function runLogFor() {
 		parts.push('--- as saved with the results ---', ...r.storedLog, '', '--- on opening ---');
 	}
 	parts.push(...runLogLines({ project: state.raw, payload: r, replayed: r.replayed ?? null, build: BUILD }));
+	parts.push(...scenarioLogLines(ed.activeScenario(state.raw), scenarioRunsNow()));
 	parts.push(...probabilisticLogLines(currentProb()));
 	if (state.tornado && state.tornado.rev === state.rev) {
 		parts.push(...probabilisticLogLines({
@@ -3616,6 +4039,14 @@ function setStatus(p) {
 				? `not repeated — the states were already right`
 				: `${p.timing.solveMs.toFixed(0)} ms`],
 	].filter(([, v]) => v != null);
+	// Solved in parts, or asked to be and not: the one it matters to see. An
+	// automatic choice not to split is not news, and the log has it.
+	const split = s.split;
+	if (split?.used) {
+		parts.push(['split', `${split.jobs.length} parts on ${split.workers} core${split.workers === 1 ? '' : 's'}`]);
+	} else if (split && split.mode === 'on') {
+		parts.push(['split', 'not possible']);
+	}
 	// The audit, when the run carried it: whether the books close, and by how
 	// much they do not.
 	if (p.massBalance) {
@@ -3651,11 +4082,26 @@ function setStatus(p) {
 			span.classList.add('stat-held');
 			span.title = heldDetail(p.heldAtZero);
 		}
+		if (k === 'split') {
+			span.classList.add('stat-split');
+			span.title = splitDetail(split);
+		}
 		if (k === 'mass balance') {
 			span.classList.add('stat-balance');
 			if (!p.massBalance.closed) span.classList.add('is-open');
 			span.title = balanceDetail(p.massBalance);
 		}
+		host.append(span);
+	}
+	// The scenarios run beside the selected one, whose numbers the rest of
+	// this line is: how many are in, and what each came to on pointing.
+	const runs = scenarioRunsNow();
+	if (runs.length) {
+		const current = runs.filter((e) => e.r && e.r.rev === state.results?.rev && !e.running && !e.queued);
+		const span = el('span', { className: 'stat stat-scenarios' }, 'scenarios ',
+			el('b', {}, `${current.length + 1} of ${runs.length + 1}`));
+		span.title = scenarioLogLines(ed.activeScenario(state.raw), runs).slice(2)
+			.map((l) => l.trim()).join('\n');
 		host.append(span);
 	}
 	// The log: everything this line says and more, as text that can be kept.
@@ -5555,6 +6001,43 @@ function renderSidebar() {
 			el('label', {}, 'Scenario',
 				el('span', { className: 'unit' }, ' \u00b7 '), edit),
 			sel));
+		// Which run beside it: every scenario as a chip, ticked to run with
+		// the selected one, each in a worker of its own, and be drawn with it.
+		// The selected one is always on -- it is the run -- and is changed
+		// above rather than here.
+		if (scenarios.length > 1) {
+			const running = scenariosToRun(raw, state.scenarioChoice);
+			const box = el('div', { className: 'search-kinds sb-scenarios' });
+			for (const name of scenarios) {
+				const isActive = name === active;
+				const on = running.includes(name);
+				const entry = state.scenarioRuns.get(name);
+				const status = isActive
+					? 'the selected scenario, which always runs; choose another under Scenario'
+					: !on ? 'not run \u2014 click to run it beside the selected one'
+						: entry?.error ? `did not run: ${entry.error}`
+							: entry?.running ? 'running'
+								: entry?.queued ? 'waiting for a core'
+									: entry?.r ? 'run \u2014 click to stop running it'
+										: 'runs with the next run';
+				const chip = el('button', {
+					type: 'button',
+					className: `search-chip${on ? ' is-on' : ''}${isActive ? ' is-fixed' : ''}`
+						+ `${entry?.error && on && !isActive ? ' is-failed' : ''}`,
+					title: `${name}: ${status}`,
+				}, name);
+				chip.setAttribute('aria-pressed', String(on));
+				chip.dataset.scenarioRun = name;
+				if (!isActive) chip.addEventListener('click', () => chooseScenario(name, !on));
+				box.append(chip);
+			}
+			group.append(el('div', { className: 'field field-chips' },
+				el('label', {
+					title: 'Scenarios to run together with the selected one, each on a core of '
+						+ 'its own. The chart and the table show every selected output once per '
+						+ 'scenario, and an export writes them all.',
+				}, 'Run'), box));
+		}
 	}
 
 	group.append(
@@ -5654,6 +6137,17 @@ function renderSidebar() {
 				+ 'amount the model moved that nothing accounts for.\n\n'
 				+ 'Off by default: it adds states to the vector and the run gives up '
 				+ 'the analytic Jacobian, so it is a check to run, not a way to run.',
+		}),
+		// Whether a model that falls apart into independent parts -- a decay
+		// chain each, on an assessment -- is solved a part per core. With the
+		// solve settings because it is one: each part takes its own steps.
+		selField('split', SPLIT_MODES.map(([v, label]) => [v, label]), {
+			title: 'Solve a model that falls apart into independent parts — a decay chain '
+				+ 'each, on most assessments — one part per core, each at its own steps. '
+				+ 'The parts agree with the whole model to within the tolerance, not to the '
+				+ 'last digit. Point at a choice in the list for what it does; the status line '
+				+ 'says when a run was split, and the log says why or why not.',
+			describe: (v) => SPLIT_MODES.find(([k]) => k === (v || 'auto'))?.[2] ?? '',
 		}),
 	);
 	// dy/dp needs no distributions -- it is a derivative at the values the
@@ -5937,7 +6431,7 @@ function sendColumnAsk() {
 		const ask = columnAsk;
 		columnAsk = null;
 		if (!ask) return;
-		if (ask.r !== state.results || ask.r.detached) {
+		if (!resultsLive(ask.r) || ask.r.detached) {
 			// Not asked after all. Unmarked rather than left marked: `asked` is
 			// what stops the same column being requested twice, and a batch
 			// that was dropped before it was sent would otherwise be asked for
@@ -5947,8 +6441,28 @@ function sendColumnAsk() {
 			return;
 		}
 		// Under the id of the run these results came from: see acceptResults.
-		ensureWorker().postMessage({ type: 'columns', id: ask.r.runId, indices: ask.indices });
+		// To the worker that holds them, which for a scenario beside the
+		// selected one is that scenario's own.
+		(ask.r.worker ?? ensureWorker()).postMessage({ type: 'columns', id: ask.r.runId, indices: ask.indices });
 	}
+}
+
+/** Whether these are results the page still shows: the selected scenario's, or one beside it. */
+function resultsLive(r) {
+	if (r === state.results) return true;
+	for (const e of state.scenarioRuns.values()) if (e.r === r) return true;
+	return false;
+}
+
+/** A scenario's worker answering for its columns: filed on its results, and drawn. */
+function acceptScenarioColumns(entry, m) {
+	const r = entry.r;
+	if (!r || m.id !== r.runId) return;
+	m.indices.forEach((i, k) => { r.columns[i] = m.columns[k]; });
+	renderChart();
+	renderTable();
+	for (const done of r.onColumns ?? []) done();
+	r.onColumns = [];
 }
 
 /** The worker's answer: filed, and whatever was waiting on it drawn again. */
@@ -6199,7 +6713,10 @@ function renderRunKind() {
 				+ 'since the solver’s own points differ in every realisation');
 		}
 	} else {
-		words.push('One deterministic run');
+		const beside = shownScenarioRuns({ hidden: false });
+		words.push(beside.length
+			? `${beside.length + 1} scenarios, a deterministic run of each`
+			: 'One deterministic run');
 		if (r.outputs?.length) {
 			words.push(`${r.outputs.length.toLocaleString()} series over `
 				+ `${r.t.length.toLocaleString()} times`);
@@ -7370,9 +7887,52 @@ function renderChart() {
 			};
 		});
 	});
-	const units = new Set(series.map((s) => s.unit).filter(Boolean));
+	// The scenarios run beside the selected one: every selected output again,
+	// once per scenario, matched by label -- a scenario is the same model and
+	// reports the same outputs -- and read onto this run's times, which they
+	// share unless the model reports the solver's own steps. See withScenarios
+	// in ./scenarios.js for how the lines share the colours.
+	const beside = chartScenarioRuns();
+	const runOrder = scenariosToRun(state.raw, state.scenarioChoice);
+	const activeName = ed.activeScenario(state.raw);
+	let dropped = 0;
+	let drawnSeries = series;
+	if (beside.length || (chartScenarioRuns({ hidden: false }).length
+		&& state.hiddenScenarios.has(activeName))) {
+		const others = beside.map((e) => {
+			const byLabel = new Map(e.r.outputs.map((o, j) => [o.label, j]));
+			const onto = ontoAxis(e.r.t, r.t);
+			return {
+				name: e.name,
+				at: Math.max(1, runOrder.indexOf(e.name)),
+				lines: state.selected.map((i, pos) => {
+					const j = byLabel.get(r.outputs[i].label);
+					if (j === undefined) return null;
+					const col = column(e.r, j);
+					return {
+						pos, label: r.outputs[i].label, unit: e.r.outputs[j].unit,
+						// Still on its way: left as the NaN it is rather than
+						// read onto another axis, which would make it a new
+						// array nothing recognises as waiting.
+						values: col === e.r.pending ? col : onto(col),
+					};
+				}).filter(Boolean),
+			};
+		});
+		({ series: drawnSeries, dropped } = withScenarios(
+			state.hiddenScenarios.has(activeName) ? [] : series, {
+				active: activeName, others, outputs: state.selected.length,
+				perOutput: lines.length, max: MAX_SERIES,
+			}));
+	}
+	const pendingCols = new Set([r.pending, ...beside.map((e) => e.r.pending)]);
+	const units = new Set(drawnSeries.map((s) => s.unit).filter(Boolean));
 	const yLabel = units.size === 1 ? [...units][0] : '';
 	const notes = [];
+	if (dropped) {
+		notes.push(`${dropped} scenario line${dropped === 1 ? '' : 's'} left out: a chart holds `
+			+ `${MAX_SERIES}. Select fewer outputs, or hide a scenario in the legend.`);
+	}
 	if (units.size > 1) {
 		notes.push(`Mixed units on one axis (${[...units].join(', ')}) — `
 			+ 'values are not comparable.');
@@ -7391,7 +7951,7 @@ function renderChart() {
 		// A series still on its way from the worker is NaN throughout, which
 		// is not the same as zero throughout; it gets its note, if it earns
 		// one, when it arrives.
-		const nothing = series.filter((s) => s.values !== r.pending && !anyPositive(s.values));
+		const nothing = drawnSeries.filter((s) => !pendingCols.has(s.values) && !anyPositive(s.values));
 		if (nothing.length) {
 			notes.push(nothing.length === 1
 				? `${nothing[0].label} is zero or negative throughout, which a `
@@ -7405,7 +7965,7 @@ function renderChart() {
 	$('#unitwarn').hidden = !notes.length;
 	$('#unitwarn').textContent = notes.join(' ');
 	chart.setScales({ xLog: state.xLog, yLog: state.yLog });
-	chart.setData(r.t, series, {
+	chart.setData(r.t, drawnSeries, {
 		xLabel: `Time (${state.raw.simulation?.time_unit ?? 'year'})`, yLabel,
 	});
 	// Coming back from one of the other two pictures, the chart's container
@@ -7418,7 +7978,9 @@ function renderChart() {
 
 	const lg = $('#legend');
 	lg.replaceChildren();
-	lg.hidden = series.length < 2 && !prob?.screen;
+	const toggles = scenarioToggles();
+	lg.hidden = drawnSeries.length < 2 && !prob?.screen && !toggles;
+	if (toggles) lg.append(toggles);
 	// What the bands are over, when it is not every realisation: a band drawn
 	// over the categories somebody chose to keep has to say so where the band
 	// is, or it reads as the run.
@@ -7427,7 +7989,7 @@ function renderChart() {
 			`${prob.screen.kept.toLocaleString()} of ${prob.iterations.toLocaleString()} realisations `
 			+ 'shown (categories)'));
 	}
-	series.forEach((s, i) => {
+	drawnSeries.forEach((s, i) => {
 		const { color, set } = styleOf(s, i);
 		const swatch = el('span', { className: 'series-swatch legend-swatch' });
 		// Both channels, because past the eighth line the hue alone is
@@ -7436,6 +7998,81 @@ function renderChart() {
 		swatch.style.setProperty('--swatch', `var(--series-${color + 1})`);
 		lg.append(el('span', { className: 'legend-item' }, swatch, s.label));
 	});
+}
+
+/**
+ * The legend's switches for the scenarios, when more than one is on the
+ * chart: one per scenario run, pressed while its lines are drawn. The table
+ * follows them, so the two say the same thing.
+ */
+function scenarioToggles() {
+	if (!state.results) return null;
+	const all = chartScenarioRuns({ hidden: false });
+	if (!all.length) return null;
+	const names = [ed.activeScenario(state.raw), ...all.map((e) => e.name)];
+	const box = el('span', { className: 'legend-scenarios' },
+		el('span', { className: 'legend-scenarios-label' }, 'Scenarios'));
+	for (const name of names) {
+		const on = !state.hiddenScenarios.has(name);
+		const b = el('button', {
+			type: 'button', className: `search-chip legend-scenario${on ? ' is-on' : ''}`,
+			title: on ? `Hide the lines of ${name}` : `Show the lines of ${name}`,
+		}, name);
+		b.setAttribute('aria-pressed', String(on));
+		b.addEventListener('click', () => {
+			if (on) state.hiddenScenarios.add(name); else state.hiddenScenarios.delete(name);
+			renderChart();
+			renderTable();
+		});
+		box.append(b);
+	}
+	return box;
+}
+
+/**
+ * The columns of a table or an export over the scenarios: each output's
+ * column in the selected scenario, then in each scenario beside it, read onto
+ * the selected one's times. With no scenario beside it, the columns as they
+ * were, under their own names.
+ *
+ * @param {number[]} idx  outputs of the selected scenario's run
+ * @param {{hidden?: boolean}} [opts]  leave out the scenarios switched off in
+ *   the legend, as the table does; an export writes every one
+ * @returns {Array<{label: string, unit: string, output: object, values: () => ArrayLike<number>,
+ *   r: object, i: number}>}
+ */
+function scenarioColumns(idx, { hidden = true } = {}) {
+	const r = state.results;
+	const beside = shownScenarioRuns({ hidden });
+	const active = ed.activeScenario(state.raw);
+	const showActive = !(hidden && beside.length && state.hiddenScenarios.has(active));
+	const named = beside.length > 0;
+	const lookups = beside.map((e) => ({
+		e, byLabel: new Map(e.r.outputs.map((o, j) => [o.label, j])), onto: ontoAxis(e.r.t, r.t),
+	}));
+	const out = [];
+	for (const i of idx) {
+		const o = r.outputs[i];
+		if (showActive || !named) {
+			out.push({
+				label: named ? scenarioLabel(o.label, active) : o.label, unit: o.unit ?? '',
+				output: o, r, i, scenario: named ? active : null, values: () => column(r, i),
+			});
+		}
+		for (const { e, byLabel, onto } of lookups) {
+			const j = byLabel.get(o.label);
+			if (j === undefined) continue;
+			out.push({
+				label: scenarioLabel(o.label, e.name), unit: e.r.outputs[j].unit ?? '',
+				output: e.r.outputs[j], r: e.r, i: j, scenario: e.name,
+				values: () => {
+					const col = column(e.r, j);
+					return col === e.r.pending ? col : onto(col);
+				},
+			});
+		}
+	}
+	return out;
 }
 
 /**
@@ -7822,24 +8459,38 @@ function drawTable() {
 	// tree mark them: whichever run the rows are of, these are the ones the
 	// other readings of the sample can show.
 	const held = sampleHolds()?.labels ?? null;
-	table.append(el('thead', {}, el('tr', {},
-		el('th', {}, `Time (${state.raw.simulation?.time_unit ?? 'year'})`),
-		...outs.map((o) => {
+	// The deterministic runs, with a column per output per scenario where
+	// scenarios are run beside the selected one -- grouped by output, so the
+	// numbers to compare are side by side.
+	const byScenario = which === 'run' && shownScenarioRuns({ hidden: false }).length
+		? scenarioColumns(state.selected) : null;
+	const heads = byScenario
+		? byScenario.map((c) => el('th', {}, c.unit ? `${c.label} (${c.unit})` : c.label))
+		: outs.map((o) => {
 			const mark = held?.get(o.label) ?? null;
 			return el('th', mark ? {
 				className: `has-sample is-${mark}`,
 				title: mark === 'varied' ? 'Varied by the probabilistic run' : 'Kept by the probabilistic run',
 			} : {}, o.unit ? `${o.label} (${o.unit})` : o.label, mark ? sampleMark(mark) : null);
-		}))));
+		});
+	const shown = byScenario ? byScenario.map((c) => c.values()) : cols;
+	table.append(el('thead', {}, el('tr', {},
+		el('th', {}, `Time (${state.raw.simulation?.time_unit ?? 'year'})`), ...heads)));
 	const body = el('tbody');
 	const rows = Math.min(times.length, state.tableRows ?? TABLE_ROWS);
 	for (let i = 0; i < rows; i++) {
 		body.append(el('tr', {},
 			el('td', {}, fmtValue(times[i])),
-			...cols.map((c) => el('td', {}, i < c.length ? fmtValue(c[i]) : '—'))));
+			...shown.map((c) => el('td', {}, i < c.length ? fmtValue(c[i]) : '—'))));
 	}
 	table.append(body);
 	wrap.append(table);
+	if (byScenario && byScenario.some((c) => c.r !== r) && shownScenarioRuns({ hidden: false })
+		.some((e) => !sameTimes(e.r.t, r.t))) {
+		wrap.append(el('p', { className: 'hint table-hint' },
+			'The scenarios took their own solver steps, so theirs are read onto these times '
+			+ 'along a straight line between their own points.'));
+	}
 	if (cols.some((c) => !c.length)) {
 		wrap.append(el('p', { className: 'hint table-hint' },
 			'A dash is a series the run did not keep realisations of — see '
@@ -8649,22 +9300,31 @@ async function downloadCSV(idx = null, suffix = '') {
 		? state.selected
 		: r.outputs.map((_, i) => i));
 	if (!cols.length) { flash('Nothing to export.', 'warn'); return; }
-	if (!confirmHugeExport(cols.length, r.t.length)) return;
+	// Every scenario run beside the selected one goes too, a column per
+	// output per scenario -- whether or not the legend is showing it: a file
+	// is not a view.
+	const beside = shownScenarioRuns({ hidden: false });
+	if (!confirmHugeExport(cols.length * (beside.length + 1), r.t.length)) return;
 	// The series live in the worker until asked for; an export of every
 	// output asks for all of them at once, which is one pass over the rows
 	// there and one message back.
 	if (cols.some((i) => !r.columns[i] && r.outputs[i].constant == null && !r.local)) {
 		flash(`Working out ${cols.length} column${cols.length === 1 ? '' : 's'}…`, 'info');
 	}
-	await ensureColumns(r, cols);
+	const spec = beside.length ? scenarioColumns(cols, { hidden: false }) : null;
+	await Promise.all([ensureColumns(r, cols), ...beside.map((e) => ensureColumns(e.r,
+		spec.filter((c) => c.r === e.r).map((c) => c.i)))]);
 	if (state.results !== r) return;
-	const lines = [['time', ...cols.map((i) => csvCell(r.outputs[i].label))].join(',')];
+	const heads = spec ? spec.map((c) => csvCell(c.label)) : cols.map((i) => csvCell(r.outputs[i].label));
+	const vals = spec ? spec.map((c) => c.values()) : cols.map((j) => column(r, j));
+	const lines = [['time', ...heads].join(',')];
 	for (let i = 0; i < r.t.length; i++) {
-		lines.push([r.t[i], ...cols.map((j) => column(r, j)[i])].join(','));
+		lines.push([r.t[i], ...vals.map((v) => v[i])].join(','));
 	}
 	download(`${slug(state.raw.name)}${suffix}.csv`, lines.join('\n'), 'text/csv');
-	flash(`Exported ${cols.length} column${cols.length === 1 ? '' : 's'} and `
-		+ `${r.t.length} row${r.t.length === 1 ? '' : 's'}.${exportCaveat()}`, 'info');
+	flash(`Exported ${vals.length} column${vals.length === 1 ? '' : 's'}`
+		+ (spec ? ` (${beside.length + 1} scenarios)` : '')
+		+ ` and ${r.t.length} row${r.t.length === 1 ? '' : 's'}.${exportCaveat()}`, 'info');
 }
 
 /**
@@ -8726,28 +9386,51 @@ async function downloadHDF5(idx = null, suffix = '', handoff = null) {
 		? state.selected
 		: r.outputs.map((_, i) => i));
 	if (!cols.length) { flash('Nothing to export.', 'warn'); return; }
-	if (!confirmHugeExport(cols.length, r.t.length)) return;
+	const beside = shownScenarioRuns({ hidden: false });
+	if (!confirmHugeExport(cols.length * (beside.length + 1), r.t.length)) return;
 	if (cols.some((i) => !r.columns[i] && r.outputs[i].constant == null && !r.local)) {
 		flash(`Working out ${cols.length} series…`, 'info');
 	}
-	await ensureColumns(r, cols);
+	const spec = beside.length ? scenarioColumns(cols, { hidden: false }) : null;
+	await Promise.all([ensureColumns(r, cols), ...beside.map((e) => ensureColumns(e.r,
+		spec.filter((c) => c.r === e.r).map((c) => c.i)))]);
 	if (state.results !== r) return;
+	// Scenarios beside the selected one: each series once per scenario, with
+	// the scenario list as one more index of it, so the file holds a group per
+	// scenario under each block the way it holds one per nuclide -- which is
+	// the shape a result with a scenario dimension has in Ecolego's files.
+	let outputs = r.outputs;
+	let which = cols;
+	let columnOf = (i) => column(r, i);
+	if (spec) {
+		const list = ed.scenarioList(state.raw)?.name ?? 'Scenarios';
+		outputs = spec.map((c) => ({
+			...c.output,
+			dims: [...(c.output.dims ?? []), list],
+			index: [...(c.output.index ?? []), c.scenario],
+			label: c.label,
+		}));
+		const vals = spec.map((c) => c.values());
+		which = spec.map((_, k) => k);
+		columnOf = (k) => vals[k];
+	}
 	try {
 		const [{ writeHDF5 }, { resultTree }] = await Promise.all([
 			import('../io/hdf5.js'), import('../io/resultfile.js'),
 		]);
 		const bytes = writeHDF5(resultTree({
 			t: r.t,
-			outputs: r.outputs,
-			column: (i) => column(r, i),
-			which: cols,
+			outputs,
+			column: columnOf,
+			which,
 			project: state.raw,
 			indexLists: ed.indexLists(state.raw),
 		}));
 		const { size, where } = await deliver(
 			bytes, handoffName(slug(state.raw.name), suffix), handoff);
-		flash(`Exported ${cols.length} series and ${r.t.length} times, `
-			+ `${size}${where}.${exportCaveat()}`, 'info');
+		flash(`Exported ${which.length} series`
+			+ (spec ? ` (${beside.length + 1} scenarios)` : '')
+			+ ` and ${r.t.length} times, ${size}${where}.${exportCaveat()}`, 'info');
 	} catch (e) {
 		handoff?.cancel();
 		flash(`Could not write the HDF5 file: ${e.message}`, 'warn');
@@ -10014,6 +10697,12 @@ function setModel(raw, source) {
 	state.selected = [];
 	state.prevLabels = null;
 	state.selection = null;
+	// The scenarios run beside the last model's, and their workers: a
+	// different model has its own scenarios, if any, and runs none of them
+	// until asked.
+	stopScenarios({ all: true });
+	state.scenarioChoice = [];
+	state.hiddenScenarios.clear();
 	// The bands, and the sample they were drawn from. `currentProb` would
 	// refuse them anyway once the revision moves, but a model that is *gone*
 	// should not leave a megabyte of another model's realisations behind it,

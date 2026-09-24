@@ -85,6 +85,17 @@ export function runLogLines({ project, payload, replayed = null, build = '', at 
 				: `  df/dy: differenced${j.reason ? ` — ${j.reason}` : ''}`);
 		}
 	}
+	const split = s.split;
+	if (split?.used) {
+		out.push(`  split: ${split.jobs.length} independent parts on ${split.workers} cores (${split.mode}) — ${split.why}`);
+		for (const j of split.jobs) {
+			out.push(`    ${j.materials.join(', ')}: ${j.states} states, ${j.nsteps ?? '?'} steps, `
+				+ `compile ${Number(j.buildMs ?? 0).toFixed(1)} ms, solve ${Number(j.solveMs ?? 0).toFixed(0)} ms`);
+		}
+		if (split.gain) out.push(`    about ${split.gain.toFixed(1)}× a whole solve, by this machine's estimate`);
+	} else if (split) {
+		out.push(`  not split (${split.mode}): ${split.why}`);
+	}
 	out.push(`  output points: ${payload?.t?.length ?? '?'}`);
 	out.push(`  series: ${payload?.outputs?.length ?? '?'}`);
 	out.push(`  compile: ${Number(t.buildMs ?? 0).toFixed(1)} ms, solve: ${t.reused ? 'not repeated (states reused)' : `${Number(t.solveMs ?? 0).toFixed(0)} ms`}`);
@@ -100,6 +111,32 @@ export function runLogLines({ project, payload, replayed = null, build = '', at 
 	if (payload?.massBalance) {
 		out.push('');
 		out.push(...describeAudit(payload.massBalance, { timeUnit: project?.simulation?.time_unit ?? '' }));
+	}
+	return out;
+}
+
+/**
+ * The scenarios run beside the selected one, appended under its log: which,
+ * and what each run came to. The lines above are the selected scenario's.
+ *
+ * @param {string|null} active  the selected scenario
+ * @param {Array<{name: string, r?: object|null, error?: string|null, running?: boolean,
+ *   queued?: boolean}>} runs  the others, in the model's order
+ */
+export function scenarioLogLines(active, runs) {
+	if (!runs?.length) return [];
+	const out = ['', 'scenarios run together'];
+	out.push(`  ${active} — the selected scenario, the run described above`);
+	for (const e of runs) {
+		if (e.error) { out.push(`  ${e.name} — did not run: ${e.error}`); continue; }
+		if (e.running || e.queued) { out.push(`  ${e.name} — still running`); continue; }
+		const s = e.r?.stats ?? {};
+		const t = e.r?.timing ?? {};
+		out.push(e.r
+			? `  ${e.name} — ${s.nsteps ?? '?'} steps, compile ${Number(t.buildMs ?? 0).toFixed(1)} ms, `
+				+ `solve ${t.reused ? 'not repeated (states reused)' : `${Number(t.solveMs ?? 0).toFixed(0)} ms`}`
+				+ (s.split?.used ? `, in ${s.split.jobs.length} parts on ${s.split.workers} cores` : '')
+			: `  ${e.name} — not run yet`);
 	}
 	return out;
 }

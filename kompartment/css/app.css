@@ -6365,6 +6365,25 @@ table.ix-table input { width: 130px; padding: 2px 6px; font-size: 11.5px; }
 
 .search-chip:disabled { opacity: 0.35; }
 
+/* The scenarios run together, in the Simulation section: a chip per scenario,
+   on for the ones that run. The selected scenario is always on and changed in
+   the select above, so it is not a button that does anything; one that failed
+   says so in its outline. */
+.field.field-chips { align-items: start; }
+.sb-scenarios { min-width: 0; }
+.sb-scenarios .search-chip.is-fixed { cursor: default; }
+.sb-scenarios .search-chip.is-failed { box-shadow: inset 0 0 0 1.5px var(--danger); }
+
+/* The legend's switches for the scenarios on the chart. */
+.legend-scenarios {
+	display: inline-flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 3px;
+	margin-right: 10px;
+}
+.legend-scenarios-label { font-size: 10.5px; color: var(--text-muted); margin-right: 2px; }
+
 .search-status {
 	margin-left: auto;
 	font-size: 10.5px;
