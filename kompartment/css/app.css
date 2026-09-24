@@ -7565,6 +7565,34 @@ input.ix-unit { width: 130px; padding: 2px 6px; font-size: 11.5px; }
 }
 .sens-table.is-wide .sens-bar { grid-template-columns: minmax(0, 1fr) 36px; gap: 4px; }
 
+/* The distribution measures: Spearman, then EASI, δ and RSA as bars and the
+   mutual information, in bits, as a number. */
+.sens-table.is-dist .sens-head, .sens-table.is-dist .sens-row {
+	grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1fr)
+		minmax(0, 1fr) minmax(0, 0.7fr) minmax(0, 1fr);
+	gap: 6px;
+}
+.sens-table.is-dist .sens-bar { grid-template-columns: minmax(0, 1fr) 36px; gap: 4px; }
+
+/* A global sensitivity table: the name, then however many columns the method
+   has -- two for eFAST, six for DGSM -- set by the dialog as --gsa-cols. */
+.gsa-table .sens-head, .gsa-table .sens-row {
+	grid-template-columns: minmax(0, 1.3fr) repeat(var(--gsa-cols, 2), minmax(0, 1fr));
+	gap: 6px;
+}
+.gsa-table .sens-bar { grid-template-columns: minmax(0, 1fr) 36px; gap: 4px; }
+/* Over the numbers, which are right-aligned, the heading is too. */
+.gsa-table .sens-head .is-num { text-align: right; }
+.gsa-pairs { margin-top: 8px; }
+.gsa-pair {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	gap: 10px;
+	font-size: 11px;
+	padding: 2px 8px;
+}
+.gsa-pair > code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* --- what produced what is on screen, and the two pictures of it --------- */
 
 /* A standing fact about the view rather than news, so it is quiet and in the
@@ -7879,6 +7907,9 @@ input.ix-unit { width: 130px; padding: 2px 6px; font-size: 11.5px; }
 /* The other headings are acronyms and read as capitals; `b` is a symbol and
    `B` is a different thing. */
 .sens-head-sym { text-transform: none; font-style: italic; }
+/* So are the Greek ones, and upright: capitals turned δ into Δ and μ* into
+   something that reads as M*, and σ, ν and τ into three other letters. */
+.sens-head-greek { text-transform: none; }
 
 /* The coefficient in units. Right-aligned, because a column of numbers of
    different magnitudes is read down its last digit. */
@@ -8020,8 +8051,8 @@ input.ix-unit { width: 130px; padding: 2px 6px; font-size: 11.5px; }
 .dis-add { align-self: flex-start; }
 
 /* The solver's own settings: a fold, because which of them exist depends on
-   the solver and most runs never touch one. The line under it names the ones
-   the chosen solver does not read -- see `solverIgnores`. */
+   the solver and most runs never touch one. The last line in it names the
+   ones the chosen solver does not read -- see `solverIgnores`. */
 .sim-opts > summary { cursor: pointer; color: var(--ink-dim, #666); font-size: 0.92em; padding: 2px 0; }
 .sim-opts[open] > summary { margin-bottom: 2px; }
 .sim-solver-opts { display: flex; flex-direction: column; gap: 2px; }

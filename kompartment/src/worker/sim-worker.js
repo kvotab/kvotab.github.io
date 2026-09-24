@@ -31,6 +31,10 @@ import { runProbabilistic, runRealization, designFor, quantiles, meanOf, medianS
 import { runPool, workersFor } from './prob-pool.js';
 import { ranked, overTime, regressionMeasures, firstOrderIndex } from '../domain/sensitivity.js';
 import { categoriesOf, classify, includeMask, statisticOf } from '../domain/categories.js';
+import {
+	gsaTable, gsaMain, easi, deltaMoment, mutualInformation, rsa, normalScores, averageRanks,
+} from '../domain/gsa.js';
+import { streamFor, uniforms } from '../domain/sample.js';
 import { sortedColumn, describeSample, histogram } from '../domain/distribution.js';
 import { calibrate, variablesOf } from '../sim/calibrate.js';
 import { runSensitivity, elasticity } from '../sim/localsens.js';
@@ -73,6 +77,9 @@ let lastProb = null;
 
 /** The last tornado, so its table can be read for another output. */
 let lastTornado = null;
+
+/** The last sensitivity design and its runs, likewise. */
+let lastGsa = null;
 
 /**
  * The tornado read for one output: what each swung input did to it.
@@ -164,16 +171,28 @@ function canNest() {
 	return nesting;
 }
 
-/** How many workers this run should use. */
+/**
+ * How many workers this run should use, and why when it is fewer than asked.
+ *
+ * `msg.cores` is the reader's number from the dialog, `msg.workers` the
+ * address's ceiling; with neither, the arithmetic in `workersFor` decides.
+ */
 function poolSize(msg) {
-	if (msg.workers === 1 || !canNest()) return 1;
-	return workersFor({
-		iterations: Math.max(1, Math.round(msg.iterations ?? 100)),
+	const iterations = Math.max(1, Math.round(msg.iterations ?? 100));
+	const asked = msg.cores ?? null;
+	if (msg.workers === 1) return { workers: 1, asked, why: 'address' };
+	if (!canNest()) return { workers: 1, asked, why: 'nesting' };
+	const workers = workersFor({
+		iterations,
 		cores: (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 1,
 		buildMs: lastCost.buildMs,
 		solveMs: lastCost.solveMs,
 		want: msg.workers ?? null,
+		exact: asked,
 	});
+	const why = asked == null ? 'auto'
+		: workers < asked ? (workers >= iterations ? 'work' : 'cap') : null;
+	return { workers, asked, why };
 }
 
 /**
@@ -219,6 +238,7 @@ function startSlice(msg, keep, slice, on) {
 			blocks: keep ? [...keep] : null,
 			varied: msg.varied ?? null,
 			tornado: msg.tornado ?? null,
+			gsa: msg.gsa ?? null,
 			from: slice.from,
 			to: slice.to,
 		});
@@ -427,15 +447,26 @@ async function runDesign(msg) {
 	};
 	// A tornado's size is decided by the plan, not by a count the page
 	// could know, so the pool is sized for it once the plan is known: one
-	// build here tells us how many points there are.
+	// build here tells us how many points there are. A sensitivity design
+	// likewise, and its design is kept: the analysis reads it, and it is the
+	// one every slice draws for itself from the same seed.
 	let iterations = msg.iterations;
-	if (msg.tornado) {
+	let gsaDesign = null;
+	if (msg.tornado || msg.gsa) {
 		const p = new Project(project);
-		iterations = designFor(p, buildSystem(p), { tornado: msg.tornado, varied: msg.varied ?? null }).iterations;
+		const d = designFor(p, buildSystem(p), {
+			tornado: msg.tornado ?? null, gsa: msg.gsa ?? null, varied: msg.varied ?? null, seed: msg.seed,
+		});
+		iterations = d.iterations;
+		gsaDesign = d.gsaDesign ?? null;
 	}
 	const shaped = { ...msg, iterations, keep: keep ? (name) => keep.has(name) : null };
+	// Said before anything is built, so the footer can say how many cores the
+	// run is on from its first moment rather than only once it has finished.
+	const pool = poolSize(shaped);
+	self.postMessage({ type: 'pool', id, ...pool, iterations });
 	return runPool(shaped, {
-		workers: poolSize(shaped),
+		workers: pool.workers,
 		onProgress,
 		signal: { get aborted() { return cancelled; } },
 		runSlice: (slice, on) => startSlice(shaped, keep, slice, on),
@@ -445,11 +476,132 @@ async function runDesign(msg) {
 			latin: only.latin !== false,
 			varied: only.varied ?? null,
 			tornado: only.tornado ?? null,
+			gsa: only.gsa ?? null,
 			keep: only.keep,
 			signal: only.signal,
 			onProgress: only.onProgress,
 		}),
+	}).then((result) => {
+		if (result && gsaDesign) result.gsaDesign = gsaDesign;
+		return result;
 	});
+}
+
+/**
+ * One sensitivity method's table for one output, and the ranking index over
+ * time for the inputs that lead it.
+ *
+ * The output at a design point is the same statistic a tornado reads -- the
+ * peak, the final value, the lowest, or the value at a time -- and the table is
+ * of that; the curves are of the value at every output time, which is what
+ * says that an input governs the first century and not the rest.
+ */
+function gsaAnswer(result, index, stat, at) {
+	const k = Math.min(result.values.length - 1, Math.max(0, Number(index) || 0));
+	const values = result.values[k];
+	const times = result.t.length;
+	const n = result.iterations;
+	const design = result.gsaDesign;
+	const y = new Float64Array(n);
+	for (let i = 0; i < n; i++) y[i] = statisticOf(values, times, i, stat, at);
+	const table = gsaTable(design, y);
+	const factors = result.stats.gsa?.factors ?? [];
+	const name = (f) => {
+		const e = result.plan[factors[f]?.members?.[0]];
+		const group = factors[f]?.group;
+		return group
+			? { name: group, where: [], members: factors[f].members.map((m) => result.plan[m]?.name) }
+			: { name: e?.name ?? `input ${f + 1}`, where: Object.values(e?.index ?? {}) };
+	};
+	const rows = table.rows.map((r) => ({ ...r, ...name(r.k) }));
+	const lead = rows.filter((r) => Number.isFinite(r.values[table.rank])).slice(0, 6).map((r) => r.k);
+	let curves = [];
+	if (!table.failed && !table.flat && lead.length) {
+		const series = lead.map(() => new Float64Array(times).fill(NaN));
+		const yt = new Float64Array(n);
+		for (let j = 0; j < times; j++) {
+			let spread = false;
+			for (let i = 0; i < n; i++) {
+				yt[i] = values[i * times + j];
+				if (i && yt[i] !== yt[0]) spread = true;
+			}
+			// A time at which nothing has reached the output yet has nothing
+			// to attribute, and every index there would be 0/0.
+			if (!spread) continue;
+			const main = gsaMain(design, yt);
+			lead.forEach((f, s) => { series[s][j] = main[f]; });
+		}
+		curves = lead.map((f, s) => ({ k: f, y: series[s] }));
+	}
+	return {
+		index: k, stat, at,
+		method: table.method, columns: table.columns, rank: table.rank,
+		rows, pairs: table.pairs?.slice(0, 20).map((p) => ({ ...p, a: name(p.a), b: name(p.b) })) ?? null,
+		failed: table.failed, flat: table.flat, curves,
+	};
+}
+
+/**
+ * The measures from GlobalSensitivity.jl that read any sample, for the inputs
+ * a *What drove it* table lists: EASI's first-order index, Borgonovo's δ,
+ * mutual information and RSA's Kolmogorov-Smirnov distance, with ten dummy
+ * inputs for how large a distance chance alone gives. The same realisations as
+ * the rest of the table -- the categories shown, the ones that ran.
+ *
+ * **δ and mutual information are read on scores, not values.** Neither
+ * changes under a strictly monotone transformation -- δ of the output, mutual
+ * information of either side -- so they are estimated where their estimators
+ * work: δ on the output's normal scores, mutual information on ranks. On the
+ * values themselves they do not: a dose that spans thirty decades across the
+ * realisations has no kernel density estimate on a linear grid of 2048 points
+ * (one class of them was a spike a millionth of the grid's spacing wide, and
+ * δ came out at 449,816), and equal-width bins put nearly all of it in the
+ * first. GlobalSensitivity.jl reads the values, and gives those numbers. EASI
+ * is a share of the variance, which is not invariant, and reads the values;
+ * RSA reads only the inputs' order.
+ *
+ * Their random numbers -- δ's bootstrap, the shuffles behind the chance level
+ * of mutual information, the dummies -- come from streams of the run's seed,
+ * so asking twice gives the same answer.
+ */
+function distributionMeasures(r, values, times, at, rows, mask) {
+	const use = [];
+	for (let i = 0; i < r.iterations; i++) {
+		if (mask && !mask[i]) continue;
+		if (Number.isFinite(values[i * times + at])) use.push(i);
+	}
+	const y = Float64Array.from(use, (i) => values[i * times + at]);
+	const n = y.length;
+	if (n < 20) return { ok: false, used: n, rows: [] };
+	let flat = true;
+	for (let i = 1; i < n && flat; i++) if (y[i] !== y[0]) flat = false;
+	if (flat) return { ok: false, used: n, flat: true, rows: [] };
+	const seed = r.stats?.seed ?? 1;
+	const dummies = Array.from({ length: 10 }, (_, d) => uniforms(n, streamFor(seed, `#rsa#dummy#${d}`)));
+	const columns = rows.map((row) => Float64Array.from(use, (i) => r.samples[row.k][i]));
+	const split = rsa(columns, y, { dummies });
+	const scores = normalScores(y);
+	const yRanks = averageRanks(y);
+	const out = rows.map((row, j) => {
+		const x = columns[j];
+		let varies = false;
+		for (let i = 1; i < n && !varies; i++) if (x[i] !== x[0]) varies = true;
+		if (!varies) return null;
+		const name = r.plan[row.k] ? `${r.plan[row.k].name}#${row.k}` : String(row.k);
+		const d = deltaMoment(x, scores, { boots: 100, next: streamFor(seed, `${name}#delta`) });
+		const m = mutualInformation(averageRanks(x), yRanks, { boots: 100, next: streamFor(seed, `${name}#mi`) });
+		return {
+			easi: easi(x, y).s1c,
+			delta: d.adjusted, deltaLow: d.low, deltaHigh: d.high,
+			mi: m.mi, miBound: m.bound, miS: m.s,
+			ks: split.scores[j],
+		};
+	});
+	return {
+		ok: true, used: n, rows: out,
+		threshold: split.threshold, behavioural: split.behavioural,
+		ksDummyMean: split.dummyMean, ksDummySd: split.dummySd,
+	};
 }
 
 /** The outputs of a design result, as the page wants them described. */
@@ -524,6 +676,7 @@ self.onmessage = async (ev) => {
 				latin: msg.latin !== false,
 				varied: msg.varied ?? null,
 				tornado: msg.tornado ?? null,
+				gsa: msg.gsa ?? null,
 				keep: keep ? (name) => keep.has(name) : null,
 				range: { from: msg.from, to: msg.to },
 				signal: { get aborted() { return cancelled; } },
@@ -870,6 +1023,54 @@ self.onmessage = async (ev) => {
 		return;
 	}
 
+	// A global sensitivity design: the same pool and the same Stop as a
+	// tornado, and a table read out of the runs, which can be asked again for
+	// another output or another reading without running anything.
+	if (msg.type === 'gsa') {
+		cancelled = false;
+		const { id } = msg;
+		try {
+			self.postMessage({ type: 'loading', id, stage: 'building' });
+			const result = await runDesign({ ...msg });
+			if (!result) return;
+			lastGsa = { id, result };
+			// Opened on the line the chart shows, when the design kept it, so
+			// the dialog does not arrive on one output and move to another.
+			const wanted = msg.wantLabel ? result.outputs.findIndex((o) => o.label === msg.wantLabel) : -1;
+			self.postMessage({
+				type: 'gsa', id,
+				outputs: describeOutputs(result),
+				t: result.t,
+				points: result.iterations,
+				stats: result.stats,
+				answer: gsaAnswer(result, wanted >= 0 ? wanted : (msg.index ?? 0), msg.stat ?? 'max', msg.at ?? 0),
+			});
+		} catch (e) {
+			if (e === STOPPED || cancelled) return;
+			self.postMessage({
+				type: 'error', id, name: e.name ?? 'Error',
+				message: e.message ?? String(e), hint: e.hint ?? null,
+			});
+		}
+		return;
+	}
+
+	if (msg.type === 'gsa-table') {
+		if (!lastGsa || lastGsa.id !== msg.id) {
+			self.postMessage({ type: 'gsa-table', id: msg.id, gone: true });
+			return;
+		}
+		try {
+			self.postMessage({
+				type: 'gsa-table', id: msg.id,
+				answer: gsaAnswer(lastGsa.result, msg.index ?? 0, msg.stat ?? 'max', msg.at ?? 0),
+			});
+		} catch (e) {
+			self.postMessage({ type: 'error', id: msg.id, name: e.name, message: e.message });
+		}
+		return;
+	}
+
 	if (msg.type === 'tornado-table') {
 		if (!lastTornado || lastTornado.id !== msg.id) {
 			self.postMessage({ type: 'tornado-table', id: msg.id, gone: true });
@@ -1095,6 +1296,8 @@ self.onmessage = async (ev) => {
 					s1: rows.map((row) => firstOrderIndex(r.samples[row.k], y, { mask })),
 				};
 			}
+			const distribution = msg.family === 'distribution'
+				? distributionMeasures(r, values, times, at, rows, mask) : null;
 			self.postMessage({
 				type: 'sensitivity',
 				id: msg.id,
@@ -1108,6 +1311,7 @@ self.onmessage = async (ev) => {
 				})),
 				curves,
 				measures,
+				distribution,
 				kept: kept(mask, r.iterations),
 			});
 		} catch (e) {

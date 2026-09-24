@@ -20,6 +20,7 @@ import { openModal } from './modal.js';
 import { describePDF } from '../domain/pdf.js';
 import { estimate, MOST_BYTES, slotName } from '../sim/probabilistic.js';
 import { describeCorrelation } from '../domain/correlate.js';
+import { coresRow } from './cores.js';
 
 /** A duration a person would say out loud. */
 export function howLong(ms) {
@@ -49,6 +50,8 @@ export function howLong(ms) {
  *   come to -- an endpoint is a block, and a block indexed by four nuclides is
  *   four series
  * @param {number} [opts.workers]  how many cores the run will be shared over
+ *   when the tool decides
+ * @param {number|null} [opts.cores] the reader's own number, or null for that
  * @param {((done: (names: string[]) => void) => void)|null} [opts.onChooseEndpoints]
  *   opens the picker that decides the list, and calls back with the new one
  * @param {(choice: object) => void} opts.onRun
@@ -57,8 +60,9 @@ export function howLong(ms) {
  */
 export function openProbabilisticDialog({
 	plan, simulation, series, times, lastSolveMs = null, endpoints = [],
-	endpointSeries = null, workers = 1, onChooseEndpoints = null, onDiscard = null, onRun,
+	endpointSeries = null, workers = 1, cores = null, onChooseEndpoints = null, onDiscard = null, onRun,
 }) {
+	let chosenCores = cores;
 	// A local copy of the list and of what it comes to in series, because the
 	// picker below can change both while this dialog is open and the estimate
 	// on screen has to follow. An endpoint is a block; a block indexed by four
@@ -122,7 +126,7 @@ export function openProbabilisticDialog({
 			// -- the browser decides what it can start, and a machine with
 			// other work on it will not give all of them -- but it is the
 			// number the estimate is made with, so it is the number to show.
-			const cores = Math.max(1, Math.min(workers, iterations));
+			const cores = Math.max(1, Math.min(chosenCores ?? workers, iterations));
 			const total = perRun ? (perRun * iterations) / cores : null;
 			const tooBig = size.bytes > MOST_BYTES;
 
@@ -223,6 +227,10 @@ export function openProbabilisticDialog({
 			}
 			how.addEventListener('change', () => { latin = how.value === 'latin'; });
 			body.append(el('div', { className: 'pdf-row' }, el('label', {}, 'Sampling'), how));
+			body.append(coresRow({
+				auto: workers, value: chosenCores,
+				onChange: (n) => { chosenCores = n; modal.refresh(); },
+			}));
 
 			// --- a partial run: vary some of them, hold the rest.
 			//
@@ -420,6 +428,7 @@ export function openProbabilisticDialog({
 				modal.close();
 				onRun({
 					iterations, seed, latin,
+					cores: chosenCores,
 					blocks: onlyEndpoints && kept.length ? kept : null,
 					varied: varied ? [...varied] : null,
 					correlations: showCorrelations ? correlations.map((c) => ({ ...c })) : [],

@@ -51,7 +51,7 @@ export const RESULT_BROWSER = 'https://kvotab.se/rb.html';
  * taken as written, so a link to `index.html?rb=https://somewhere.else/x` made
  * the page open that address, hand it `window.opener`, and post the reader's
  * complete result file to it -- a whole assessment's realisations, on one
- * click of *Open in the HDF5 browser*, with nothing on screen to say where it
+ * click of *Open in the HDF5 Browser*, with nothing on screen to say where it
  * had gone. `?model=` has always been checked against the list of examples;
  * this is the same check, and it belongs here rather than at the call site
  * because `browserURL` is what everything asks.

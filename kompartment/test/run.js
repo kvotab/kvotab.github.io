@@ -127,6 +127,49 @@ function assert(cond, msg) {
 	if (!cond) throw new Error(msg ?? 'assertion failed');
 }
 
+/**
+ * The simulation worker, run in this process, for the tests that talk to it.
+ *
+ * One `self` for all of them, installed once and never taken away. The module
+ * is evaluated once, and its handler reads `self` whenever it posts -- so a
+ * test that put its own `self` in place and removed it afterwards took it away
+ * from any other test whose question was still being answered, and async
+ * tests here run at the same time. Questions are asked one at a time, and each
+ * gets the replies that carry its id.
+ */
+let workerHarness = null;
+function simWorker() {
+	workerHarness ??= (async () => {
+		const listeners = new Map();
+		let handler = null;
+		Object.defineProperty(globalThis, 'self', {
+			configurable: true,
+			value: {
+				postMessage: (m) => listeners.get(m?.id)?.(m),
+				set onmessage(fn) { handler = fn; },
+				get onmessage() { return handler; },
+			},
+		});
+		await import('../src/worker/sim-worker.js');
+		assert(handler, 'the worker did not install a handler');
+		let queue = Promise.resolve();
+		return {
+			/** Posts `msg` and resolves with every reply under its id. */
+			ask(msg) {
+				const turn = queue.then(async () => {
+					const got = [];
+					listeners.set(msg.id, (m) => got.push(m));
+					try { await handler({ data: msg }); } finally { listeners.delete(msg.id); }
+					return got;
+				});
+				queue = turn.catch(() => {});
+				return turn;
+			},
+		};
+	})();
+	return workerHarness;
+}
+
 function close(actual, expected, tol, what = '') {
 	const err = Math.abs(expected) > 0
 		? Math.abs(actual - expected) / Math.abs(expected)
@@ -3326,6 +3369,16 @@ test('a probabilistic run gives the same answer however many cores run it', asyn
 	assert(workersFor({ iterations: 3, cores: 8 }) === 1, 'three realisations went to eight workers');
 	assert(workersFor({ iterations: 1000, cores: 999 }) === MOST_WORKERS, 'the cap did not hold');
 	assert(workersFor({ iterations: 1000, cores: 8, want: 2 }) === 2, 'an explicit count was ignored');
+	// A number the reader chose is used as it stands, not second-guessed by
+	// the build arithmetic below, and may be more than the machine admits to:
+	// some browsers round `hardwareConcurrency` down on purpose. Bounded only
+	// by the cap and by the realisations.
+	assert(workersFor({ iterations: 1000, cores: 8, exact: 12 }) === 12, 'a chosen count was not used');
+	assert(workersFor({ iterations: 1000, cores: 8, buildMs: 60000, solveMs: 5, exact: 6 }) === 6,
+		'a chosen count was overruled by the cost of building');
+	assert(workersFor({ iterations: 5, cores: 8, exact: 12 }) === 5, 'more workers than realisations');
+	assert(workersFor({ iterations: 1000, cores: 8, exact: 99 }) === MOST_WORKERS,
+		'the cap did not hold for a chosen count');
 
 	// Every worker rebuilds the model, so fanning out has to be worth the
 	// builds it adds. A minute to build and five milliseconds to solve is the
@@ -3335,6 +3388,436 @@ test('a probabilistic run gives the same answer however many cores run it', asyn
 		'a model whose build dwarfs its solve was shared out anyway');
 	assert(workersFor({ iterations: 1000, cores: 8, buildMs: 6, solveMs: 20 }) === 7,
 		'a model that builds in milliseconds was not shared out');
+});
+
+test('the global sensitivity methods give GlobalSensitivity.jl’s numbers on the same designs', async () => {
+	const g = await import('../src/domain/gsa.js');
+	const { readFileSync } = await import('node:fs');
+	// Made by scripts/gen-gsa-ref.jl from GlobalSensitivity.jl 2.12.8: every
+	// case hands both sides the same numbers -- the design or the sample, the
+	// outputs, and the method's own random draws replayed -- so what is
+	// compared is the arithmetic. Arrays are base64 of Float64 bytes.
+	const ref = JSON.parse(readFileSync(new URL('./fixtures/gsa-reference.json', import.meta.url), 'utf8'));
+	assert(ref.version === '2.12.8', ref.version);
+	const dec = (s) => { const b = Buffer.from(s, 'base64'); return new Float64Array(b.buffer, b.byteOffset, b.length / 8).slice(); };
+	const close = (name, got, want, tol = 1e-9) => {
+		const G = Array.from(got);
+		const W = Array.from(want);
+		assert(G.length === W.length, `${name}: ${G.length} values against ${W.length}`);
+		for (let i = 0; i < W.length; i++) {
+			if (Number.isNaN(G[i]) && Number.isNaN(W[i])) continue;
+			const diff = Math.abs(G[i] - W[i]);
+			const err = W[i] === 0 ? diff : Math.min(diff, diff / Math.abs(W[i]));
+			assert(err <= tol, `${name}[${i}]: ${G[i]} against GlobalSensitivity.jl's ${W[i]}`);
+		}
+	};
+	const ishi = (x) => Math.sin(x[0]) + 7 * Math.sin(x[1]) ** 2 + 0.1 * x[2] ** 4 * Math.sin(x[0]);
+	const outputs = (d, f) => {
+		const y = new Float64Array(d.runs);
+		for (let i = 0; i < d.runs; i++) y[i] = f(d.u.map((c) => c[i]));
+		return y;
+	};
+
+	// Sobol: the design laid out as fuse_designs lays it -- the outputs over
+	// it are the ones Julia recorded -- and every estimator of Sₜ, with pairs.
+	const S = ref.sobol;
+	const A = S.A.map(dec);
+	const B = S.B.map(dec);
+	const d = g.sobolDesign(S.d, S.n, { second: true, draw: (k, w) => (w === 'A' ? A[k] : B[k]) });
+	const y = dec(S.y);
+	close('sobol design', outputs(d, ishi), y, 1e-12);
+	for (const [est, want] of Object.entries(S.estimators)) {
+		const r = g.sobolIndices(y, { K: S.d, n: S.n, second: true, estimator: est });
+		close(`sobol ${est} S1`, r.S1, dec(want.S1));
+		close(`sobol ${est} ST`, r.ST, dec(want.ST));
+		const rows = want.S2.map(dec);
+		close(`sobol ${est} S2`, r.S2, rows.flatMap((row) => Array.from(row)));
+	}
+	const Bk = S.blocks;
+	const A2 = Bk.A.map(dec);
+	const B2 = Bk.B.map(dec);
+	const d2 = g.sobolDesign(S.d, S.n, {
+		blocks: 2, draw: (k, w, b) => (w === 'A' ? A2[k] : B2[k]).slice(b * S.n, (b + 1) * S.n),
+	});
+	const y2 = dec(Bk.y);
+	close('sobol blocks design', outputs(d2, ishi), y2, 1e-12);
+	const r2 = g.sobolIndices(y2, { K: S.d, n: S.n, blocks: 2 });
+	close('sobol blocks S1', r2.S1, dec(Bk.S1));
+	close('sobol blocks ST', r2.ST, dec(Bk.ST));
+	close('sobol blocks S1 interval', r2.S1ci, dec(Bk.S1ci), 1e-7);
+	close('sobol blocks ST interval', r2.STci, dec(Bk.STci), 1e-7);
+
+	// eFAST from its phases, and RBD-FAST from its permutations: the designs
+	// are rebuilt here and the outputs over them must be Julia's.
+	const toBox = (u) => u.map((v) => -Math.PI + 2 * Math.PI * v);
+	const lin5 = (x) => x[0] + 2 * x[1] + 3 * x[2] + 0.5 * x[3] + 0.1 * x[4] * x[0];
+	for (const c of ref.efast) {
+		const de = g.efastDesign(c.K, c.N, { phases: Array.from(dec(c.phases)) });
+		const ye = dec(c.y);
+		close(`efast ${c.K} design`, outputs(de, (u) => (c.K === 3 ? ishi : lin5)(toBox(u))), ye, 1e-9);
+		const r = g.efastIndices(ye, de);
+		close(`efast ${c.K} S1`, r.S1, dec(c.S1));
+		close(`efast ${c.K} ST`, r.ST, dec(c.ST));
+	}
+	for (const c of ref.rbdfast) {
+		const dr = g.rbdFastDesign(c.K, c.N, { perms: c.perms });
+		const yr = dec(c.y);
+		close(`rbd-fast ${c.N} design`, outputs(dr, (u) => ishi(toBox(u))), yr, 1e-12);
+		close(`rbd-fast ${c.N} S1`, g.rbdFastIndices(yr, dr), dec(c.S1));
+	}
+
+	// Morris over its own recorded walks, plain and relative.
+	for (const which of ['plain', 'relative']) {
+		const c = ref.morris[which];
+		const r = g.morrisIndices(dec(c.y), {
+			K: 4, trajectories: ref.morris.trajectories, points: ref.morris.points, u: c.u.map(dec),
+		}, { relative: which === 'relative' });
+		close(`morris ${which} mean`, r.mean, dec(c.mean));
+		close(`morris ${which} μ*`, r.meanStar, dec(c.meanStar));
+		close(`morris ${which} variance`, r.variance, dec(c.variance));
+	}
+
+	// The fractional factorial, design and all.
+	const df = g.ffDesign(ref.ff.K, { low: ref.ff.low, high: ref.ff.high });
+	const rf = g.ffIndices(outputs(df, (x) => 3 * x[0] - 2 * x[1] + x[2] * x[3] + 0.5 * x[4]), df);
+	close('ff main effects', rf.main, dec(ref.ff.main).slice(0, ref.ff.K));
+	close('ff squared', rf.squared, dec(ref.ff.squared).slice(0, ref.ff.K));
+
+	// DGSM's statistics from exact derivatives, as automatic differentiation
+	// gives them there.
+	const X = ref.dgsm.x.map(dec);
+	const N = X[0].length;
+	const grad = new Float64Array(N * 3);
+	const H = new Float64Array(N * 9);
+	for (let i = 0; i < N; i++) {
+		grad[i * 3] = 1 + X[1][i] ** 2;
+		grad[i * 3 + 1] = 2 + 2 * X[0][i] * X[1][i];
+		grad[i * 3 + 2] = 6;
+		H[i * 9 + 1] = H[i * 9 + 3] = 2 * X[1][i];
+		H[i * 9 + 4] = 2 * X[0][i];
+	}
+	const rd = g.dgsmStatistics(grad, X, { H });
+	for (const k of ['a', 'absa', 'asq', 'sigma', 'tao']) close(`dgsm ${k}`, rd[k], dec(ref.dgsm[k]));
+	const off = (a) => Array.from(a).map((v, i) => (Math.floor(i / 3) === i % 3 ? 0 : v));
+	const flat = (rows) => off(rows.map(dec).flatMap((row) => Array.from(row)));
+	close('dgsm crossed', off(rd.crossed.mean), flat(ref.dgsm.crossed));
+	close('dgsm crossed squared', off(rd.crossed.sq), flat(ref.dgsm.crossedsq));
+
+	// Shapley over all 3! orders, which are deterministic.
+	const c = ref.shapley;
+	const rs = g.shapleyIndices(dec(c.y), { K: c.K, orders: g.permutationsOf(c.K), nVar: c.nVar, nOuter: c.nOuter, nInner: c.nInner });
+	close('shapley effects', rs.effects, dec(c.effects));
+	close('shapley standard errors', rs.stdErr, dec(c.stdErr));
+
+	// From a sample: δ with the bootstrap replayed -- which checks the kernel
+	// density estimate and its spline, KernelDensity.jl's -- EASI both ways
+	// and at an odd length, RSA, and mutual information with its shuffles.
+	const XD = ref.delta.x.map(dec);
+	const YD = dec(ref.delta.y);
+	const delta = XD.map((x, k) => g.deltaMoment(x, YD, { resamples: ref.delta.resamples[k] }));
+	close('delta', delta.map((v) => v.delta), dec(ref.delta.delta), 1e-8);
+	close('delta adjusted', delta.map((v) => v.adjusted), dec(ref.delta.adjusted), 1e-8);
+	close('delta interval', delta.map((v) => v.low), dec(ref.delta.low), 1e-7);
+	const XE = ref.easi.x.map(dec);
+	const YE = dec(ref.easi.y);
+	close('easi', XE.map((x) => g.easi(x, YE).s1), dec(ref.easi.S1));
+	close('easi corrected', XE.map((x) => g.easi(x, YE).s1c), dec(ref.easi.S1c));
+	close('easi dct', XE.map((x) => g.easi(x, YE, { dct: true }).s1), dec(ref.easi.dctS1));
+	const XO = ref.easi.odd.x.map(dec);
+	close('easi odd', XO.map((x) => g.easi(x, dec(ref.easi.odd.y)).s1), dec(ref.easi.odd.S1));
+	const XR = ref.rsa.x.map(dec);
+	const rr = g.rsa(XR.slice(0, ref.rsa.K), dec(ref.rsa.y), { dummies: XR.slice(ref.rsa.K) });
+	close('rsa', rr.scores, dec(ref.rsa.S));
+	close('rsa dummies', [rr.dummyMean], [ref.rsa.dummyMean]);
+	// GlobalSensitivity.jl's spread of the dummies leaves the first one out
+	// (`+ 1 + 1`); this takes all of them, and agrees with it on the rest.
+	const rest = g.rsa(XR.slice(ref.rsa.K + 1), dec(ref.rsa.y), {}).scores;
+	const m = rest.reduce((s, v) => s + v, 0) / rest.length;
+	close('rsa dummies, as Julia takes them',
+		[Math.sqrt(rest.reduce((s, v) => s + (v - m) ** 2, 0) / (rest.length - 1))], [ref.rsa.dummySdSkippingFirst]);
+	const XM = ref.mi.x.map(dec);
+	const mi = XM.map((x, k) => g.mutualInformation(x, dec(ref.mi.y), { shuffles: ref.mi.shuffles[k] }));
+	close('mutual information', mi.map((v) => v.mi), dec(ref.mi.mi));
+	close('mutual information, chance level', mi.map((v) => v.bound), dec(ref.mi.bounds));
+});
+
+test('the FFT is the DFT at every length', async () => {
+	const { fft, rfft, irfft, dct2 } = await import('../src/domain/fft.js');
+	const next = (await import('../src/domain/sample.js')).rng(3);
+	for (const n of [1, 2, 3, 5, 8, 16, 17, 100, 257, 1000]) {
+		const x = Array.from({ length: n }, () => next() - 0.5);
+		const { re, im } = rfft(x);
+		assert(re.length === Math.floor(n / 2) + 1, `rfft of ${n} is ${re.length} long`);
+		for (let k = 0; k < re.length; k++) {
+			let a = 0;
+			let b = 0;
+			for (let j = 0; j < n; j++) {
+				a += x[j] * Math.cos((2 * Math.PI * k * j) / n);
+				b -= x[j] * Math.sin((2 * Math.PI * k * j) / n);
+			}
+			assert(Math.abs(re[k] - a) < 1e-11 * n && Math.abs(im[k] - b) < 1e-11 * n,
+				`n = ${n}, k = ${k}: ${re[k]} ${im[k]} against ${a} ${b}`);
+		}
+		const back = irfft({ re, im }, n);
+		for (let j = 0; j < n; j++) assert(Math.abs(back[j] - x[j]) < 1e-12, `irfft does not undo rfft at ${n}`);
+		// A complex vector through and back.
+		const cr = Float64Array.from(x);
+		const ci = Float64Array.from(x, (v) => v / 3);
+		fft(cr, ci, -1);
+		fft(cr, ci, 1);
+		for (let j = 0; j < n; j++) assert(Math.abs(cr[j] / n - x[j]) < 1e-12, `the inverse is not the inverse at ${n}`);
+		// Parseval for the orthonormal DCT.
+		const X = dct2(x);
+		const e1 = x.reduce((s, v) => s + v * v, 0);
+		const e2 = X.reduce((s, v) => s + v * v, 0);
+		assert(Math.abs(e1 - e2) < 1e-12 * n, `the DCT is not orthonormal at ${n}`);
+	}
+});
+
+test('each designed method finds what a function with a known answer has', async () => {
+	const g = await import('../src/domain/gsa.js');
+	const { streamFor, uniforms } = await import('../src/domain/sample.js');
+	const ctx = { seed: 5, streamFor, uniforms };
+	const outputs = (d, f) => {
+		const y = new Float64Array(d.runs);
+		for (let i = 0; i < d.runs; i++) y[i] = f(d.u.map((c) => c[i]));
+		return y;
+	};
+	const at = (t, key) => [0, 1, 2].map((k) => t.rows.find((r) => r.k === k).values[key]);
+	const near = (got, want, tol, what) => got.forEach((v, i) => assert(Math.abs(v - want[i]) < tol,
+		`${what}: ${got.map((x) => x.toFixed(4))} against ${want}`));
+
+	// Ishigami on [-π, π]³, whose indices are known in closed form:
+	// S₁ = .3139 .4424 0 and Sₜ = .5576 .4424 .2437.
+	const ishi = (u) => {
+		const x = u.map((v) => -Math.PI + 2 * Math.PI * v);
+		return Math.sin(x[0]) + 7 * Math.sin(x[1]) ** 2 + 0.1 * x[2] ** 4 * Math.sin(x[0]);
+	};
+	const S1 = [0.3139, 0.4424, 0];
+	const ST = [0.5576, 0.4424, 0.2437];
+	const sob = g.buildDesign('sobol', ['a', 'b', 'c'], { samples: 8000 }, ctx);
+	const ts = g.gsaTable(sob, outputs(sob, ishi));
+	near(at(ts, 'S1'), S1, 0.03, 'Sobol S₁');
+	near(at(ts, 'ST'), ST, 0.03, 'Sobol Sₜ');
+	const ef = g.buildDesign('efast', ['a', 'b', 'c'], { samples: 2000 }, ctx);
+	const te = g.gsaTable(ef, outputs(ef, ishi));
+	near(at(te, 'S1'), S1, 0.02, 'eFAST S₁');
+	near(at(te, 'ST'), ST, 0.05, 'eFAST Sₜ');
+	const rb = g.buildDesign('rbdfast', ['a', 'b', 'c'], { samples: 4000 }, ctx);
+	near(at(g.gsaTable(rb, outputs(rb, ishi)), 'S1'), S1, 0.03, 'RBD-FAST S₁');
+	// The eFAST design is raised to a length its harmonics fit under. 65, the
+	// usual 4M² + 1, puts the fourth harmonic on the Nyquist frequency, which
+	// the spectrum it is read from stops short of.
+	assert(g.efastSamples(1001) === 1002 && g.efastSamples(1000) === 1000 && g.efastSamples(10) === 66,
+		`the number of points per curve is not adjusted: ${g.efastSamples(1001)} ${g.efastSamples(10)}`);
+
+	// Linear in probability, y = u₁ + 2u₂ + 3u₃: an elementary effect is the
+	// coefficient exactly, the main effect of levels 5 % and 95 % is 0.45
+	// times it, and ν is its square.
+	const lin = (u) => u[0] + 2 * u[1] + 3 * u[2];
+	const mo = g.buildDesign('morris', ['a', 'b', 'c'], { trajectories: 20 }, ctx);
+	const tm = g.gsaTable(mo, outputs(mo, lin));
+	near(at(tm, 'meanStar'), [1, 2, 3], 1e-9, 'Morris μ*');
+	near(at(tm, 'sd'), [0, 0, 0], 1e-9, 'Morris σ');
+	const ff = g.buildDesign('ff', ['a', 'b', 'c'], {}, ctx);
+	near(at(g.gsaTable(ff, outputs(ff, lin)), 'main'), [0.45, 0.9, 1.35], 1e-12, 'fractional factorial');
+	const dg = g.buildDesign('dgsm', ['a', 'b', 'c'], { samples: 50 }, ctx);
+	near(at(g.gsaTable(dg, outputs(dg, lin)), 'asq'), [1, 4, 9], 1e-6, 'DGSM ν');
+
+	// Shapley: independent, the shares of the variance, 1 : 4 : 9 of 14; and
+	// with a Gaussian copula, y = z₁ + z₂ + z₃ with ρ = .5 between the first
+	// two, where symmetry puts them at .375 each and the third at .25.
+	const sh = g.buildDesign('shapley', ['a', 'b', 'c'], { perms: 0, nVar: 4000, nOuter: 400 }, ctx);
+	near(at(g.gsaTable(sh, outputs(sh, lin)), 'effect'), [1 / 14, 4 / 14, 9 / 14], 0.04, 'Shapley');
+	const corr = Float64Array.from([1, 0.5, 0, 0.5, 1, 0, 0, 0, 1]);
+	const sc = g.buildDesign('shapley', ['a', 'b', 'c'], { perms: 0, nVar: 4000, nOuter: 400 }, { ...ctx, corr });
+	const z = (u) => g.normalQuantile(u[0]) + g.normalQuantile(u[1]) + g.normalQuantile(u[2]);
+	const tc = g.gsaTable(sc, outputs(sc, z));
+	near(at(tc, 'effect'), [0.375, 0.375, 0.25], 0.04, 'Shapley, correlated');
+	// They add up to one by construction, correlated or not.
+	near([at(tc, 'effect').reduce((s, v) => s + v, 0)], [1], 1e-9, 'Shapley total');
+
+	// What each costs is known before it runs, and says so where it cannot.
+	for (const id of g.GSA_METHOD_IDS) {
+		const d0 = g.buildDesign(id, ['a', 'b', 'c', 'd'], {}, ctx);
+		assert(d0.runs === g.gsaRuns(id, 4, {}), `${id}: ${d0.runs} runs, priced at ${g.gsaRuns(id, 4, {})}`);
+		assert(d0.u.every((col) => col.length === d0.runs && col.every((v) => v > 0 && v < 1)),
+			`${id} draws outside probability`);
+	}
+	assert(g.gsaRefusal('shapley', 12, { perms: 0 })?.includes('12!'), 'all orders of twelve inputs was accepted');
+	assert(g.gsaRefusal('ff', 3, { low: 0.9, high: 0.1 }), 'levels the wrong way round were accepted');
+
+	// The same seed gives the same design, and an input keeps its columns
+	// whatever other inputs join it.
+	const one = g.buildDesign('sobol', ['a', 'b'], { samples: 50 }, ctx);
+	const two = g.buildDesign('sobol', ['a', 'b', 'c'], { samples: 50 }, ctx);
+	assert(one.u[0].slice(0, 100).every((v, i) => v === two.u[0][i]), 'adding an input moved another’s draws');
+});
+
+test('a sensitivity design runs through the model, the pool and the worker', async () => {
+	const { runProbabilistic, designFor } = await import('../src/sim/probabilistic.js');
+	const { slices, stitch } = await import('../src/worker/prob-pool.js');
+	const { buildSystem } = await import('../src/sim/builder.js');
+	const { Project } = await import('../src/domain/project.js');
+	const { gsaRuns } = await import('../src/domain/gsa.js');
+	const pdf = (kind, params, extra = {}) => ({ kind, params, values: null, trmin: null, trmax: null, inorder: true, pos: 0, ...extra });
+	// Two inputs in a correlation group, which is one factor; a list read in
+	// order, which a design reads by probability; and an input held by a
+	// partial run.
+	const model = {
+		name: 'designed',
+		simulation: {
+			start_time: 0, end_time: 5, output_points: 4, spacing: 'linear',
+			solver: 'ndf', rtol: 1e-9, abstol: 1e-13, time_unit: 'year',
+		},
+		parameters: [
+			{ name: 'k', value: 0.3, index_lists: [], pdf: pdf('unif', { min: 0.1, max: 0.5 }) },
+			{ name: 'g1', value: 1, index_lists: [], pdf: pdf('unif', { min: 0.5, max: 1.5 }, { group: 'G' }) },
+			{ name: 'g2', value: 1, index_lists: [], pdf: pdf('unif', { min: 1, max: 3 }, { group: 'G' }) },
+			{ name: 'list', value: 1, index_lists: [], pdf: { kind: 'pg', params: {}, values: [0.5, 1, 2], inorder: true, pos: 0 } },
+			{ name: 'held', value: 2, index_lists: [], pdf: pdf('unif', { min: 1, max: 3 }) },
+		],
+		compartments: [{ name: 'A', initial: '10 * g2', index_lists: [] }],
+		transfers: [{ name: 'out', from: 'A', to: null, rate: 'k * g1 * list * held' }],
+	};
+	const partial = ['k', 'g1', 'g2', 'list'];
+	const opts = { gsa: { method: 'sobol', options: { samples: 16 } }, seed: 2, varied: partial };
+	const p = new Project(structuredClone(model));
+	const design = designFor(p, buildSystem(p), opts);
+	const factors = design.stats.gsa.factors;
+	assert(factors.length === 3 && factors.some((f) => f.group === 'G' && f.members.length === 2),
+		JSON.stringify(factors));
+	assert(design.iterations === gsaRuns('sobol', 3, { samples: 16 }), `${design.iterations} runs`);
+	const whole = runProbabilistic(structuredClone(model), opts);
+	const at = (name) => whole.plan.findIndex((e) => e.name === name);
+	// The group moves as one: the same probability, so the same rank.
+	const g1 = whole.samples[at('g1')];
+	const g2 = whole.samples[at('g2')];
+	for (let i = 0; i < whole.iterations; i++) {
+		assert(Math.abs((g1[i] - 0.5) - (g2[i] - 1) / 2) < 1e-9, `the group came apart at point ${i}`);
+	}
+	assert(whole.samples[at('held')].every((v) => v === 2), 'the held input moved');
+	assert(new Set(whole.samples[at('list')]).size === 3, 'the list was not read by probability');
+	// And shared out over workers it is the same run, to the last bit.
+	const cut = slices(whole.iterations, 3);
+	const joined = stitch(cut.map((range) => runProbabilistic(structuredClone(model), { ...opts, range })), whole.iterations);
+	assert(whole.values.every((v, s) => v.every((x, i) => x === joined.values[s][i])), 'three workers gave another answer');
+
+	// The worker's side: the runs, a table, and the table again for another
+	// reading -- and an answer for a design it no longer holds.
+	const worker = await simWorker();
+	const posted = await worker.ask({ type: 'gsa', id: 21, project: structuredClone(model), seed: 2, varied: partial,
+		gsa: { method: 'morris', options: { trajectories: 4, points: 5 } }, index: 0, stat: 'final', at: 0 });
+	const pool = posted.find((m) => m.type === 'pool');
+	assert(pool?.iterations === 20, JSON.stringify(pool));
+	const done = posted.find((m) => m.type === 'gsa');
+	assert(done, JSON.stringify(posted.filter((m) => m.type === 'error')));
+	assert(done.points === 20 && done.answer.rank === 'meanStar' && done.answer.rows.length === 3,
+		JSON.stringify(done.answer));
+	assert(done.answer.rows.some((r) => r.name === 'G' && r.members.length === 2), 'the group is not named as one');
+	assert(done.answer.curves.length > 0 && done.answer.curves[0].y.length === 4, 'no curves over time');
+	const again = await worker.ask({ type: 'gsa-table', id: 21, index: 0, stat: 'at', at: 1 });
+	assert(again[0]?.type === 'gsa-table' && again[0].answer.stat === 'at' && again[0].answer.at === 1,
+		JSON.stringify(again[0]));
+	const gone = await worker.ask({ type: 'gsa-table', id: 22, index: 0 });
+	assert(gone[0]?.gone === true, 'a question about another design went unanswered');
+
+	// The page asks for it from the Analyse menu, keeps the answers that
+	// arrive under the design's own id, and forgets it with the model.
+	const { readFileSync } = await import('node:fs');
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	assert(/label: 'Global sensitivity\\u2026'/.test(app) && /onPick: \(\) => openGsa\(\)/.test(app), 'the menu does not offer it');
+	assert(/'tornado', 'tornado-table', 'gsa', 'gsa-table',/.test(app), 'its replies are dropped once another run starts');
+	assert(/state\.gsa = null;\n\tstate\.gsaRunning = false;/.test(app), 'a new model keeps the old design');
+});
+
+test('*What drove it* can read the whole distribution, not only a line through it', async () => {
+	const pdf = (params) => ({ kind: 'unif', params, values: null, trmin: null, trmax: null, inorder: true, pos: 0 });
+	// y depends on `c` through a curve that peaks in the middle of its range:
+	// no correlation at all, and plainly not nothing.
+	const model = {
+		name: 'bent',
+		simulation: {
+			start_time: 0, end_time: 1, output_points: 3, spacing: 'linear',
+			solver: 'ndf', rtol: 1e-9, abstol: 1e-13, time_unit: 'year',
+		},
+		parameters: [
+			{ name: 'c', value: 0, index_lists: [], pdf: pdf({ min: -1, max: 1 }) },
+			{ name: 'idle', value: 0, index_lists: [], pdf: pdf({ min: 0, max: 1 }) },
+		],
+		compartments: [{ name: 'A', initial: '1 + 3 * (1 - c * c)', index_lists: [] }],
+		transfers: [],
+	};
+	const { readFileSync } = await import('node:fs');
+	const harness = await simWorker();
+	const ran = await harness.ask({ type: 'probabilistic', id: 31, project: model, iterations: 300, seed: 4 });
+	assert(ran.some((m) => m.type === 'probabilistic-done'), JSON.stringify(ran.filter((m) => m.type === 'error')));
+	const asked = await harness.ask({ type: 'sensitivity', id: 31, index: 0, at: 0, family: 'distribution' });
+	const reply = asked.find((m) => m.type === 'sensitivity');
+	const d = reply?.distribution;
+	assert(d?.ok && d.rows.length === 2, JSON.stringify(reply));
+	const c = d.rows[reply.rows.findIndex((r) => r.name === 'c')];
+	const idle = d.rows[reply.rows.findIndex((r) => r.name === 'idle')];
+	assert(c.easi > 0.9 && c.delta > 0.3 && c.miS > 0.5, `c: ${JSON.stringify(c)}`);
+	assert(Math.abs(idle.easi) < 0.05 && idle.miS < 0.1, `idle: ${JSON.stringify(idle)}`);
+	assert(c.ks > d.ksDummyMean + 3 * d.ksDummySd && idle.ks < d.ksDummyMean + 3 * d.ksDummySd,
+		`RSA: c ${c.ks}, idle ${idle.ks}, dummies ${d.ksDummyMean} ± ${d.ksDummySd}`);
+	// The correlations see nothing in c -- which is the point of having both.
+	assert(Math.abs(reply.rows.find((r) => r.name === 'c').spearman) < 0.15, 'the example is not bent');
+	// δ and mutual information are read on scores, where their estimators
+	// work: on a dose spanning thirty decades the values gave a δ of 449,816.
+	const worker = readFileSync(new URL('../src/worker/sim-worker.js', import.meta.url), 'utf8');
+	assert(/deltaMoment\(x, scores,/.test(worker) && /mutualInformation\(averageRanks\(x\), yRanks,/.test(worker),
+		'δ or mutual information is read on the values');
+	// Asked for only when wanted: the default is the regression family.
+	const plain = await harness.ask({ type: 'sensitivity', id: 31, index: 0, at: 0 });
+	assert(plain[0].distribution === null, 'the bootstrap ran without being asked for');
+	const dialog = readFileSync(new URL('../src/ui/sensdialog.js', import.meta.url), 'utf8');
+	assert(/\['distribution', 'Distribution: EASI, δ, MI, RSA',/.test(dialog), 'the dialog does not offer them');
+});
+
+test('the reader can say how many cores, and the run says how many it is on', async () => {
+	const { readFileSync } = await import('node:fs');
+	const read = (f) => readFileSync(new URL(f, import.meta.url), 'utf8');
+	const { chosenCores, chooseCores, poolNote } = await import('../src/ui/cores.js');
+	const { MOST_WORKERS } = await import('../src/worker/prob-pool.js');
+
+	// Kept in this browser rather than in the model -- it is about the
+	// machine -- and held in memory where storage refuses, which in Node it
+	// does, as it does in a private window.
+	const before = chosenCores();
+	chooseCores(5);
+	assert(chosenCores() === 5, 'the choice was not kept');
+	chooseCores(99);
+	assert(chosenCores() === MOST_WORKERS, 'past the cap');
+	chooseCores(0);
+	assert(chosenCores() === null, 'nonsense is not auto');
+	chooseCores(before);
+
+	// What the footer says beside the bar, and why when it is not what was
+	// asked for.
+	assert(poolNote(null).text === '', 'a run with no pool mentions cores');
+	assert(poolNote({ workers: 7, asked: null, why: 'auto' }).text === '7 cores');
+	assert(poolNote({ workers: 1, asked: null, why: 'nesting' }).text === '1 core');
+	const short = poolNote({ workers: 3, asked: 8, why: 'work' }).title;
+	assert(/3 cores of the 8 asked for/.test(short) && /no more than there are runs/.test(short), short);
+
+	// The worker says how many before it builds anything, so the footer can
+	// say it from the first moment of the run; the page shows it for the
+	// length of the run and forgets it at the end.
+	const worker = read('../src/worker/sim-worker.js');
+	assert(/self\.postMessage\(\{ type: 'pool', id, \.\.\.pool, iterations \}\);/.test(worker),
+		'the worker does not say how many cores the run is on');
+	assert(/exact: asked,/.test(worker), 'the reader\u2019s number does not reach the arithmetic');
+	const app = read('../src/ui/app.js');
+	assert(/if \(m\.type === 'pool'\) \{ acceptPool\(m\); return; \}/.test(app), 'the page ignores it');
+	assert(/\+ \(pool\.text \? ` · \$\{pool\.text\}` : ''\);/.test(app), 'the footer does not show it');
+	assert((app.match(/cores: chosenCores\(\),/g) ?? []).length >= 4,
+		'a sampled run is posted without the reader\u2019s number');
+	for (const dialog of ['../src/ui/probdialog.js', '../src/ui/tornadodialog.js']) {
+		const src = read(dialog);
+		assert(/coresRow\(\{/.test(src) && /cores: chosenCores[,\s]/.test(src), `${dialog} does not ask`);
+	}
 });
 
 test('*What drove it* is about the series you pick, not only the one charted', async () => {
@@ -3386,28 +3869,10 @@ test('the worker answers a question about a sample it no longer holds', async ()
 	// Two halves, and this is the worker's: an answer, even when the answer is
 	// no. The page's half is `id: prob.runId`, which the test above covers
 	// through `messageIsCurrent`.
-	const posted = [];
-	const previous = Object.getOwnPropertyDescriptor(globalThis, 'self');
-	let handler = null;
-	Object.defineProperty(globalThis, 'self', {
-		configurable: true,
-		value: {
-			postMessage: (m) => posted.push(m),
-			set onmessage(fn) { handler = fn; },
-			get onmessage() { return handler; },
-		},
-	});
-	try {
-		await import('../src/worker/sim-worker.js');
-		assert(handler, 'the worker did not install a handler');
-		await handler({ data: { type: 'sensitivity', id: 7, index: 0 } });
-		assert(posted.length === 1, `the worker said nothing at all (${posted.length} messages)`);
-		assert(posted[0].type === 'sensitivity' && posted[0].id === 7 && posted[0].gone === true,
-			JSON.stringify(posted[0]));
-	} finally {
-		if (previous) Object.defineProperty(globalThis, 'self', previous);
-		else delete globalThis.self;
-	}
+	const posted = await (await simWorker()).ask({ type: 'sensitivity', id: 7, index: 0 });
+	assert(posted.length === 1, `the worker said nothing at all (${posted.length} messages)`);
+	assert(posted[0].type === 'sensitivity' && posted[0].id === 7 && posted[0].gone === true,
+		JSON.stringify(posted[0]));
 });
 
 test('the integration fingerprint covers the transport machinery', async () => {
@@ -4399,11 +4864,11 @@ test('a model brings its endpoint list, and an export can be chosen from it', as
 	assert(JSON.stringify(indicesFor(outputs, ['Dose'])) === '[2,3]', 'the wrong series would be saved');
 	assert(indicesFor(outputs, []).length === 0, 'nothing chosen is not everything');
 
-	// The table's menu offers it, and the export is a third file rather than
-	// overwriting either of the other two in a downloads folder.
+	// The probabilistic dialog offers it, and the export is a third file
+	// rather than overwriting either of the other two in a downloads folder.
 	const { readFileSync } = await import('node:fs');
 	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
-	assert(/label: 'Choose endpoints to save…',/.test(app), 'the menu does not offer it');
+	assert(/onChooseEndpoints: \(done\) => openEndpoints\(/.test(app), 'nothing offers it');
 	assert(/downloadCSV\(cols, '-endpoints'\)/.test(app)
 		&& /downloadHDF5\(cols, '-endpoints', handoff\)/.test(app),
 		'the chosen export would overwrite another');
@@ -26821,11 +27286,18 @@ test('a run is written in the shape the result browser reads', async () => {
 	const names = paths(readHDF5(writeHDF5(slashy))).filter((p) => p.includes('kg'));
 	assert(names.length === 2 && !names.some((p) => p.includes('kg/m2')), JSON.stringify(names));
 
-	// And the table's menu offers it beside the CSV it is an answer to.
+	// And the table's menu offers it beside the CSV it is an answer to, and
+	// the HDF5 Browser beside both: those three, and nothing else. Every
+	// other file -- the whole run, the realisations -- is in Save….
 	const { readFileSync } = await import('node:fs');
 	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
-	assert(/label: 'Export table to HDF5',/.test(app), 'the table cannot export HDF5');
-	assert(/label: 'Export every output to HDF5',/.test(app), 'only the selection can be exported');
+	const menu = app.slice(app.indexOf('function tableMenu(ev) {'));
+	const offered = [...menu.slice(0, menu.indexOf('\n}\n')).matchAll(/label: '([^']*)'/g)].map((m) => m[1]);
+	assert(JSON.stringify(offered)
+		=== JSON.stringify(['Export table to CSV', 'Export table to HDF5', 'Open in the HDF5 Browser']),
+	JSON.stringify(offered));
+	const saving = readFileSync(new URL('../src/ui/savedialog.js', import.meta.url), 'utf8');
+	assert(/key: 'results',[\s\S]*?picks: 'series',/.test(saving), 'only the selection can be exported');
 	assert(/async function downloadHDF5\(idx = null, suffix = '', handoff = null\) \{/.test(app),
 		'nothing writes the file, or it cannot be sent anywhere but disk');
 	assert(/import\('\.\.\/io\/hdf5\.js'\), import\('\.\.\/io\/resultfile\.js'\)/.test(app),
@@ -30366,6 +30838,12 @@ test('a switch shows the setting it controls, whichever way the setting defaults
 	assert(solverIgnores('ros23').includes('letting the absolute tolerance follow the solution'));
 	assert(/const keys = solverOptions\(id\);/.test(app), 'the panel no longer asks which settings apply');
 	assert(/does not read \$\{list\}/.test(app), 'the dropped settings are not named');
+	// Named inside Advanced settings, under the ones shown, as facsimile.html
+	// and rtm.html have it; and the fold is drawn for a solver that reads none.
+	assert(/box\.append\(el\('p', \{ className: 'sim-dropped' \}/.test(app),
+		'the note about the dropped settings is outside the fold again');
+	assert(/if \(keys\.length \|\| dropped\.length\) \{/.test(app),
+		'a solver that reads none of the settings has no fold to say so in');
 	// And the claim it is greyed out for is true: the solvers that honour it
 	// take fewer steps with it on, and the ones that do not are unmoved.
 	const { readFileSync: read2 } = await import('node:fs');
@@ -31313,8 +31791,9 @@ test('the sensitivity table says what it was fitted to, and can be asked at the 
 	assert(/margin: 2px 0 0/.test(r2) && !/margin-left/.test(r2),
 		`the R² line is still inline: ${r2}`);
 
-	// And the translation is passed all the way from the button.
-	assert(/function openSensitivity\(at = null, index = null, translate = 'none'\)/.test(app),
+	// And the translation is passed all the way from the button, as is which
+	// measures stand beside the correlations.
+	assert(/function openSensitivity\(at = null, index = null, translate = 'none', family = 'regression'\)/.test(app),
 		'app.js still speaks of ranks');
 });
 
@@ -31885,6 +32364,8 @@ test('the product is named in one spelling, and storage keys are not part of it'
 		'the clipboard key was renamed with the product');
 	assert(read('src/ui/help.js').includes("const WIDTH_KEY = 'boxflow.help.width';"),
 		'the help width key was renamed with the product');
+	assert(read('src/ui/cores.js').includes("const KEY = 'kompartment.cores';"),
+		'the cores key was renamed — every browser forgets what it was told');
 });
 
 test('a sample of a model that reports the solver’s own points is run on the grid', async () => {

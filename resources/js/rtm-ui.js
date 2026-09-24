@@ -472,17 +472,18 @@
 
   async function run() {
     if (state.running) return;
-    /*
-      A compile is scheduled a moment after the last keystroke, and run()
-      compiles anyway. Leaving the scheduled one to fire meant it landed after
-      the run had finished and replaced "Done in 0.6 s ..." with "Compiled:
-      ...", which reads as though nothing had been run at all.
-    */
-    clearTimeout(compileTimer);
     let solver;
     try { solver = solverPayload(); } catch (e) { setStatus(e.message, 'error'); return; }
     const refusal = methodRefusal(solver.method);
     if (refusal) { setStatus(refusal, 'error'); return; }
+    /*
+      A compile is scheduled a moment after the last keystroke, and run()
+      compiles anyway. Leaving the scheduled one to fire meant it landed after
+      the run had finished and replaced "Done in 0.6 s ..." with "Compiled:
+      ...", which reads as though nothing had been run at all. Cancelled here
+      rather than first, so that a run refused above leaves it to fire.
+    */
+    clearTimeout(compileTimer);
     if (!(await compile())) return;
 
     // What this run was given, kept for the HDF5 file: the panel can be

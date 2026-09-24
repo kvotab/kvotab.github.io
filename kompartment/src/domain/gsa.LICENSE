@@ -1,0 +1,40 @@
+./gsa.js is a JavaScript port of the global sensitivity analysis methods of
+GlobalSensitivity.jl, https://github.com/SciML/GlobalSensitivity.jl (v2.12.8),
+and of the parts of three packages those methods rely on: the kernel density
+estimate of KernelDensity.jl, https://github.com/JuliaStats/KernelDensity.jl,
+the quadratic B-spline of Interpolations.jl,
+https://github.com/JuliaMath/Interpolations.jl, through which that estimate is
+read, and the histogram binning of ComplexityMeasures.jl,
+https://github.com/JuliaDynamics/ComplexityMeasures.jl. All four are licensed
+under the MIT "Expat" License, and so is the port. Their notices follow.
+
+GlobalSensitivity.jl:
+  Copyright (c) 2020 Vaibhavdixit02 <vaibhavyashdixit@gmail.com>
+
+KernelDensity.jl:
+  Copyright (c) 2014: Simon Byrne.
+
+Interpolations.jl:
+  Copyright (c) 2022: Mark Kittisopikul, Tomas Aschan, Tim Holy, and
+  Interpolations.jl contributors.
+
+ComplexityMeasures.jl:
+  Copyright (c) 2019 JuliaDynamics, Kristian Agasøster Haaga, George Datseris
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

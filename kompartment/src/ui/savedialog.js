@@ -28,7 +28,9 @@ import { renderPicker, pickerState } from './pick.js';
  * `picks` says which list the right-hand side shows: `series` for a run's
  * outputs, `data` for the parameters and lookup tables, nothing for a whole
  * model. `needs` is what has to be true, and the dialog turns it into a
- * sentence rather than a grey row.
+ * sentence rather than a grey row. `browser` is whether the same file can go
+ * straight to the HDF5 Browser instead of the disk; it reads HDF5 and nothing
+ * else, so that is the file it gets whichever format is chosen.
  */
 export const KINDS = [
 	{
@@ -62,6 +64,7 @@ export const KINDS = [
 		],
 		needs: 'results',
 		picks: 'series',
+		browser: true,
 	},
 	{
 		key: 'realisations',
@@ -71,6 +74,7 @@ export const KINDS = [
 		formats: [['hdf5', 'HDF5', 'One matrix per series']],
 		needs: 'sample',
 		picks: 'series',
+		browser: true,
 	},
 	{
 		key: 'data',
@@ -82,6 +86,7 @@ export const KINDS = [
 			['h5', 'HDF5', 'One dataset per value, and the group path is the id'],
 		],
 		picks: 'data',
+		browser: true,
 	},
 	{
 		key: 'log',
@@ -113,7 +118,9 @@ function refusal(kind, can) {
  * @param {Array} opts.data        pickable parameters and lookup tables
  * @param {string[]} opts.endpoints the model's endpoint list, pre-ticked
  * @param {object} opts.chosen     `{kind, format}` remembered between openings
- * @param {(choice) => void} opts.onSave
+ * @param {(choice) => void} opts.onSave  `{kind, format, keys, open}`; `open`
+ *   is the HDF5 Browser rather than the disk, and is called from the click
+ *   itself, so that the tab can be opened there
  */
 export function openSaveDialog({
 	can, series = [], data = [], endpoints = [], chosen = {}, onSave,
@@ -187,11 +194,27 @@ export function openSaveDialog({
 			}
 
 			let picked = null;
-			// Declared before the picker so a tick can reach it: the button is
-			// disabled while nothing is ticked, and a tick does not rebuild.
+			// Declared before the picker so a tick can reach them: the buttons
+			// are disabled while nothing is ticked, and a tick does not rebuild.
 			const go = el('button', { type: 'button', className: 'primary' },
 				what.key === 'model' && can.fileName && format === 'json'
 					? `Save to ${can.fileName}` : 'Save…');
+			// The same file into the reader instead of onto the disk. Beside
+			// Save rather than a format of its own: it is somewhere to send the
+			// file, not another kind of file.
+			const open = what.browser
+				? el('button', {
+					type: 'button',
+					className: 'ghost save-open',
+					title: 'Opens the HDF5 Browser at kvotab.se in a new tab and hands it this '
+						+ 'file directly, without saving it first. It reads HDF5, so that is '
+						+ 'what it is sent whichever format is chosen.',
+				}, 'Open in the HDF5 Browser')
+				: null;
+			const able = (yes) => {
+				go.disabled = !yes;
+				if (open) open.disabled = !yes;
+			};
 			if (what.picks) {
 				const items = what.picks === 'data' ? data : series;
 				const box = el('div', { className: 'save-pick' });
@@ -200,7 +223,7 @@ export function openSaveDialog({
 					chosen: picks[what.picks].chosen,
 					ui: picks[what.picks].ui,
 					onChange: () => handle.refresh(),
-					onTick: (n) => { go.disabled = !!refusal(what, can) || !n; },
+					onTick: (n) => able(!refusal(what, can) && n > 0),
 					noun: 'block',
 				});
 				right.append(box);
@@ -216,26 +239,34 @@ export function openSaveDialog({
 			cols.append(right);
 			body.append(cols);
 
-			// --- the one button --------------------------------------------
+			// --- the buttons ----------------------------------------------
 			const nothing = what.picks && picked && picked.picked === 0;
-			go.disabled = !!refusal(what, can) || !!nothing;
-			go.addEventListener('click', () => {
+			able(!refusal(what, can) && !nothing);
+			const send = (toBrowser) => {
 				shut();
 				onSave({
 					kind: what.key,
 					format,
 					keys: what.picks ? [...picks[what.picks].chosen] : null,
+					open: toBrowser,
 				});
-			});
+			};
+			go.addEventListener('click', () => send(false));
 			const cancel = el('button', { type: 'button', className: 'ghost' }, 'Cancel');
 			cancel.addEventListener('click', () => shut());
+			const buttons = [cancel];
+			if (open) {
+				open.addEventListener('click', () => send(true));
+				buttons.push(open);
+			}
+			buttons.push(go);
 			body.append(el('div', { className: 'pdf-foot' },
 				el('span', { className: 'pdf-note' },
 					nothing ? 'Nothing is ticked.'
 						: what.key === 'model' && can.fileName
 							? 'Where it was last saved. ⇧⌘S asks for somewhere else.'
 							: 'Asks where to put it.'),
-				cancel, go));
+				...buttons));
 		},
 	});
 	return handle;

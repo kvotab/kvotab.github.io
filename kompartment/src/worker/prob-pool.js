@@ -70,10 +70,21 @@ export const STARTUP_MS = 60;
  * @param {number} [o.cores]      what the machine reports
  * @param {number} [o.buildMs]    what one build took, if a run has happened
  * @param {number} [o.solveMs]    what one integration took, if a run has happened
- * @param {number} [o.want]       an explicit number, from the dialog
+ * @param {number} [o.want]       a ceiling, from `?workers=`: the arithmetic
+ *   below still applies under it
+ * @param {number} [o.exact]      the number the reader chose in the dialog:
+ *   that many, bounded only by the cap and by the realisations
  * @returns {number} 1 means "do it here", which is always allowed
  */
-export function workersFor({ iterations, cores, buildMs = null, solveMs = null, want = null }) {
+export function workersFor({ iterations, cores, buildMs = null, solveMs = null, want = null, exact = null }) {
+	// Chosen, not worked out: someone who asks for eight cores on a model that
+	// builds slowly has been told what that costs, and may know better than
+	// `hardwareConcurrency`, which some browsers round down on purpose. Never
+	// more workers than realisations, though -- a worker with nothing to
+	// integrate is a build for nothing -- and never past the cap.
+	if (exact != null && Number.isFinite(Number(exact))) {
+		return Math.max(1, Math.min(MOST_WORKERS, Math.floor(Number(exact)), Math.floor(iterations)));
+	}
 	const machine = Math.max(1, Math.floor(Number(cores) || 1));
 	// One core for the page. On a single-core machine that leaves one, which
 	// is the serial path and correct.

@@ -323,14 +323,16 @@ async def main():
             await page.ev("(() => { const b = document.getElementById('facBdf'); b.checked = true;"
                           " b.dispatchEvent(new Event('change', { bubbles: true })); })()")
             check('and with it on, the NDF shows the same settings', await page.ev(shown), builtin)
-            # A change of setting recompiles 150 ms later, and the status line
-            # already says so from the change before. Waited out, as a reader
-            # would, or that compile's line lands after the run's.
-            await asyncio.sleep(1)
+            # Run at once: a change of setting schedules a recompile 150 ms
+            # later, and the run has to cancel it. Left to fire, it queued
+            # behind the run and its "Model compiled" replaced the "Done".
             await click(page, '#facRun')
             check('the NDF runs with the BDF formulas', await settle(
                 page, "document.getElementById('facStatus').textContent.slice(0, 4)",
                 'Done', tries=240), 'Done')
+            await asyncio.sleep(0.6)
+            check('and no recompile after it says otherwise', await page.ev(
+                "document.getElementById('facStatus').textContent.slice(0, 4)"), 'Done')
             check('and says it ran the BDF formulas', await settle(
                 page, "document.getElementById('facStats').textContent.startsWith('BDF')",
                 True), True)

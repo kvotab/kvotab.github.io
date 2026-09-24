@@ -53,6 +53,29 @@ const TRANSLATIONS = [
 		+ 'zero or negative are left out, and the line below says how many.'],
 ];
 
+/**
+ * The measures beside the correlations, and what each set is for.
+ *
+ * The second set is ../domain/gsa.js's reading of a plain sample -- the half
+ * of GlobalSensitivity.jl that needs no design of its own.
+ */
+const FAMILIES = [
+	['regression', 'Regression: SRC, PCC, S₁',
+		'One regression of the output on every input at once, which separates inputs the output '
+		+ 'merely tracks together, and a first-order index by binning.'],
+	['distribution', 'Distribution: EASI, δ, MI, RSA',
+		'Measures that read the output’s whole distribution rather than a straight line through '
+		+ 'it: EASI’s first-order index, Borgonovo’s δ, mutual information and regional '
+		+ 'sensitivity. A bootstrap per input, so a few seconds on a large sample.'],
+];
+
+/** A number for a sentence: four figures, or an exponent. */
+function fmtValue(v) {
+	if (!Number.isFinite(v)) return '—';
+	const a = Math.abs(v);
+	return a !== 0 && (a >= 1e5 || a < 1e-3) ? v.toExponential(3) : String(Number(v.toPrecision(4)));
+}
+
 /** What to append to `R²` so the number says what it is of. */
 const TRANSLATED = { none: '', rank: ' on ranks', log: ' on logarithms' };
 
@@ -96,8 +119,15 @@ function bar(v) {
 	return box;
 }
 
-/** The little multi-line chart of coefficients against time. */
-function paintCurves(canvas, t, curves, names) {
+/**
+ * The little multi-line chart of coefficients against time.
+ *
+ * `scale` is the vertical axis: a correlation's [-1, 1] unless told otherwise
+ * -- a variance share lives on [0, 1], and Morris's μ* in the output's units.
+ *
+ * @param {{lo: number, hi: number, ticks: number[], label?: (v: number) => string}} [scale]
+ */
+export function paintCurves(canvas, t, curves, names, scale = null) {
 	const ctx = canvas.getContext('2d');
 	if (!ctx) return;
 	const dpr = window.devicePixelRatio || 1;
@@ -112,7 +142,12 @@ function paintCurves(canvas, t, curves, names) {
 	const style = getComputedStyle(canvas);
 	const ink = style.getPropertyValue('--text-muted').trim() || '#888';
 	const faint = style.getPropertyValue('--border').trim() || '#333';
-	const pad = { l: 30, r: 8, t: 8, b: 16 };
+	const { lo, hi, ticks, label = String } = scale ?? { lo: -1, hi: 1, ticks: [1, 0.5, 0, -0.5, -1] };
+	// Room for the widest tick label: a coefficient's is `-0.5`, a value in
+	// the output's units can be `8.21e+14`.
+	ctx.font = '9px system-ui, sans-serif';
+	const widest = Math.max(...ticks.map((v) => ctx.measureText(label(v)).width));
+	const pad = { l: Math.max(30, Math.ceil(widest) + 8), r: 8, t: 8, b: 16 };
 	const pw = w - pad.l - pad.r;
 	const ph = h - pad.t - pad.b;
 
@@ -127,11 +162,11 @@ function paintCurves(canvas, t, curves, names) {
 		: (x - t0) / (tN - t0)) * pw;
 	// Always the whole range: a coefficient lives in [-1, 1] and rescaling it
 	// would make a weak correlation look like a strong one.
-	const sy = (v) => pad.t + ((1 - v) / 2) * ph;
+	const sy = (v) => pad.t + ((hi - v) / (hi - lo)) * ph;
 
 	ctx.strokeStyle = faint;
 	ctx.lineWidth = 1;
-	for (const v of [1, 0.5, 0, -0.5, -1]) {
+	for (const v of ticks) {
 		const y = sy(v);
 		ctx.globalAlpha = v === 0 ? 0.9 : 0.35;
 		ctx.beginPath();
@@ -143,7 +178,7 @@ function paintCurves(canvas, t, curves, names) {
 		ctx.font = '9px system-ui, sans-serif';
 		ctx.textAlign = 'right';
 		ctx.textBaseline = 'middle';
-		ctx.fillText(String(v), pad.l - 4, y);
+		ctx.fillText(label(v), pad.l - 4, y);
 	}
 
 	const colours = ['--series-1', '--series-2', '--series-3', '--series-4', '--series-5', '--series-6'];
@@ -204,14 +239,18 @@ const MOST_OUTPUTS = 300;
  */
 export function openSensitivityDialog({
 	output, outputs = [], index = 0, t, at, rows, curves, iterations, measures = null,
-	kept = null, timeUnit = 'year', onAsk, onClose,
+	distribution = null, kept = null, timeUnit = 'year', onAsk, onClose,
 }) {
 	// What is on screen. Replaced wholesale when an answer arrives, so the
 	// dialog is built from one object and there is no half-updated state.
-	let view = { output, outputs, index, t, at, rows, curves, iterations, measures, kept };
+	let view = { output, outputs, index, t, at, rows, curves, iterations, measures, distribution, kept };
 	// What the regression family is fitted to: the values, their ranks (SRRC
 	// and PRCC), or their logarithms. See ../domain/sensitivity.js.
 	let translate = 'none';
+	// Which measures stand beside the correlations: the regression family,
+	// or the ones that read the output's whole distribution -- EASI, δ, mutual
+	// information and RSA, from ../domain/gsa.js.
+	let family = 'regression';
 	// Whether the time was chosen or asked for as "wherever it peaks". Kept
 	// apart from `view.at`, which is always a resolved index: asking for the
 	// peak and then changing the output has to find the *new* output's peak,
@@ -225,7 +264,7 @@ export function openSensitivityDialog({
 		if (asking) return;
 		asking = true;
 		modal.refresh();
-		onAsk?.({ index: view.index, at: atPeak ? 'peak' : view.at, translate, ...next });
+		onAsk?.({ index: view.index, at: atPeak ? 'peak' : view.at, translate, family, ...next });
 	};
 
 	const modal = openModal({
@@ -306,12 +345,21 @@ export function openSensitivityDialog({
 			body.append(el('div', { className: 'pdf-row pdf-row-wide' },
 				el('label', {}, 'At'), pick));
 
+			const fam = el('select', { className: 'sens-family', disabled: asking });
+			for (const [value, label, why] of FAMILIES) {
+				fam.append(el('option', { value, selected: value === family, title: why }, label));
+			}
+			fam.addEventListener('change', () => { family = fam.value; ask({}); });
+			body.append(el('div', { className: 'pdf-row' },
+				el('label', { title: 'Which measures stand beside the two correlations.' }, 'Measures'), fam));
+			const dist = family === 'distribution' ? view.distribution : null;
+
 			// The regression family beside the two correlations, when the worker
 			// could compute it, and what it was fitted to. On ranks SRC and PCC
 			// are SRRC and PRCC, which is what to read for the
 			// monotone-and-bent relationships here; on logs the coefficient is
 			// an elasticity.
-			const m = view.measures;
+			const m = family === 'regression' ? view.measures : null;
 			const wide = !!(m && m.ok);
 			if (m) {
 				const how = el('select', { className: 'sens-translate', disabled: asking });
@@ -339,11 +387,39 @@ export function openSensitivityDialog({
 						+ 'inputs that are the same numbers, or — on logs — too few realisations '
 						+ 'left once the non-positive ones were dropped.'));
 			}
-			const box = el('div', { className: `sens-table${wide ? ' is-wide' : ''}` },
+			if (family === 'distribution' && dist && !dist.ok) {
+				body.append(el('p', { className: 'sens-r2 is-bad' }, dist.flat
+					? 'The output is the same in every realisation here, so there is no distribution to compare.'
+					: `Only ${dist.used} realisations to read, which is too few for these measures.`));
+			}
+			const shown = !!(dist && dist.ok);
+			if (shown) {
+				body.append(el('p', { className: 'sens-r2' },
+					`RSA splits the ${dist.used.toLocaleString()} realisations at the output’s mean, `
+					+ `${fmtValue(dist.threshold)}: ${dist.behavioural.toLocaleString()} above it. Ten dummy `
+					+ `inputs the model never saw reach a KS distance of ${dist.ksDummyMean.toFixed(3)} `
+					+ `± ${dist.ksDummySd.toFixed(3)} by chance alone.`));
+			}
+			const box = el('div', { className: `sens-table${wide ? ' is-wide' : ''}${shown ? ' is-dist' : ''}` },
 				el('div', { className: 'sens-head' },
 					el('span', {}, 'Input'),
 					el('span', { title: 'Rank correlation: any monotone relationship.' }, 'Spearman'),
-					el('span', { title: 'Linear correlation.' }, 'Pearson'),
+					...(shown ? [
+						el('span', { title: 'EASI’s first-order index (Plischke), corrected for the bias a '
+							+ 'random sample leaves in it: the share of the variance this input explains '
+							+ 'alone, of any shape, from the spectrum along its sorted values.' }, 'EASI S₁'),
+						el('span', { title: 'Borgonovo’s moment-independent δ, bias-adjusted by bootstrap: '
+							+ 'how far knowing this input moves the output’s whole distribution, not only '
+							+ 'its variance. 0 to 1. Estimated on the output’s normal scores, which leaves δ '
+							+ 'unchanged and gives the density estimate something it can resolve.',
+						className: 'sens-head-greek' }, 'δ'),
+						el('span', { title: 'Mutual information, in bits, less what shuffling the output gives '
+							+ 'at its 95th percentile: what is left is what chance does not explain. On ranks, '
+							+ 'which leave it unchanged and give every histogram bin its share.' }, 'MI'),
+						el('span', { title: 'Regional sensitivity: the Kolmogorov-Smirnov distance between this '
+							+ 'input’s values in the realisations above the output’s mean and in those '
+							+ 'below. Compare with the dummies above.' }, 'RSA KS'),
+					] : [el('span', { title: 'Linear correlation.' }, 'Pearson')]),
 					...(wide ? [
 						el('span', { title: 'Standardized regression coefficient: this input’s own linear '
 							+ 'share of the output, given the others, in standard deviations. '
@@ -364,10 +440,13 @@ export function openSensitivityDialog({
 							+ 'knowing this input alone would remove, of any shape. Estimated by binning.' }, 'S₁'),
 					] : [])));
 			table.forEach((r, i) => {
+				const d = shown ? dist.rows[i] : null;
 				box.append(el('div', { className: 'sens-row' },
 					el('code', { title: inputName(r) }, inputName(r)),
 					bar(r.spearman),
-					bar(r.pearson),
+					...(shown
+						? [bar(d?.easi ?? NaN), bar(d?.delta ?? NaN), coef(d?.miS ?? NaN), bar(d?.ks ?? NaN)]
+						: [bar(r.pearson)]),
 					...(wide ? [bar(m.src[i]), coef(m.b?.[i]), bar(m.pcc[i]), bar(m.s1[i])] : [])));
 			});
 			if (!table.length) {
@@ -377,8 +456,15 @@ export function openSensitivityDialog({
 			}
 			body.append(box);
 
-			body.append(el('p', { className: 'sens-note' },
-				'Ranked by the rank correlation, which finds any monotone relationship; '
+			body.append(el('p', { className: 'sens-note' }, shown
+				? 'Ranked by the rank correlation. EASI’s S₁ and δ find a relationship of any shape — '
+					+ 'one that peaks in the middle of an input’s range and correlates with nothing — '
+					+ 'and δ one that moves the spread or the tail rather than the mean; mutual '
+					+ 'information is what knowing the input tells about the output, in bits, above '
+					+ 'what chance gives; RSA is how differently the input is distributed in the '
+					+ 'realisations above the mean and below it. GlobalSensitivity.jl’s estimators, '
+					+ 'from the same realisations.'
+				: 'Ranked by the rank correlation, which finds any monotone relationship; '
 				+ 'Pearson beside it finds only a straight-line one. Where the two '
 				+ 'disagree the relationship is curved — which for a log-scaled input '
 				+ 'driving a dose is the normal case, not a warning.'

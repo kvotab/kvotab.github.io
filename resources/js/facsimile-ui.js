@@ -757,12 +757,16 @@
    * While a run is going the worker is busy with it -- it has one thread, and
    * a message sent now would sit in its queue until the run ended, or be
    * thrown away with it when the reader pressed Stop. So the wish is held and
-   * granted when the run is over.
+   * granted when the run is over, and so is one that comes due after a run
+   * has begun.
    */
   function scheduleCompile(delay = 400) {
     if (state.running) { compileWanted = true; return; }
     clearTimeout(compileTimer);
-    compileTimer = setTimeout(() => { compile().catch((e) => reportFailure('compile', e)); }, delay);
+    compileTimer = setTimeout(() => {
+      if (state.running) { compileWanted = true; return; }
+      compile().catch((e) => reportFailure('compile', e));
+    }, delay);
   }
 
   /** Whether a tab's pane is the one on screen. */
@@ -1162,6 +1166,11 @@
     try { solver = solverPayload(); } catch (e) { setStatus(e.message, 'error'); return; }
     const refusal = methodRefusal(solver.method);
     if (refusal) { setStatus(refusal, 'error'); return; }
+    // The run compiles the text itself, so a compile still waiting on its
+    // timer -- a setting changed a moment ago -- has nothing left to do. Left
+    // to fire, it queued behind the run in the worker and its "Model
+    // compiled" replaced the run's "Done".
+    clearTimeout(compileTimer);
     if (!(await compile({ reveal: true }))) return;
     // The text as it was run. It can be edited while the run is going, or
     // replaced by opening a file, and what is recorded about this run --

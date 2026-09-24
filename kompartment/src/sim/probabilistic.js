@@ -38,6 +38,7 @@ import { run } from './runner.js';
 import { effectiveValue } from '../domain/edit.js';
 import { streamFor, uniforms, valueAtProbability, distributedSlots } from '../domain/sample.js';
 import { correlationPairs, imanConover } from '../domain/correlate.js';
+import { buildDesign, cholesky } from '../domain/gsa.js';
 
 /**
  * What one distributed slot is called, for the stream that draws it.
@@ -171,9 +172,10 @@ export function designFor(project, system, opts = {}) {
 	// A model with no distributed parameter can still have dice: a disruptive
 	// event that draws its occurrences makes every realisation a different run.
 	const dice = (system.layout.events ?? []).some((D) => D.timing === 'poisson' && D.sampled);
-	if (!plan.length && !(dice && !opts.tornado)) {
+	if (!plan.length && !(dice && !opts.tornado && !opts.gsa)) {
 		throw new Error('No parameter in this model has a distribution' + (dice
-			? ', and a tornado swings parameters; the disruptive events are what varies here, and they need a probabilistic run.'
+			? `, and a ${opts.tornado ? 'tornado swings' : 'sensitivity design varies'} parameters; the disruptive `
+				+ 'events are what varies here, and they need a probabilistic run.'
 			: ', so every realisation would be the same run. Give a parameter one first — the '
 			+ 'curve at the end of its row in the left panel — or add a disruptive event that draws its occurrences.'));
 	}
@@ -215,6 +217,10 @@ export function designFor(project, system, opts = {}) {
 			stats: { seed, latin: false, sampled: plan.length, tornado: { low, high, swung } },
 		};
 	}
+
+	// --- a global sensitivity design: an experiment of its own, drawn in
+	// probability space -- see ../domain/gsa.js -- and run the way a sample is.
+	if (opts.gsa) return gsaDesignFor(project, plan, names, best, varies, seed, opts.gsa);
 
 	const iterations = Math.max(1, Math.round(opts.iterations ?? 100));
 
@@ -279,6 +285,91 @@ export function designFor(project, system, opts = {}) {
 }
 
 /**
+ * The inputs a sensitivity design varies, and the design over them.
+ *
+ * **A factor is what one column of the design moves.** An input in a
+ * correlation group is one draw used in several places, so the group is one
+ * factor and its members share the column: a design that moved them apart
+ * would be asking about a model the data set does not describe. Everything
+ * else that varies is a factor of its own; what a partial run holds is held.
+ *
+ * **Correlations between factors reach Shapley only.** Its effects are defined
+ * for correlated inputs and it draws them from a Gaussian copula with the
+ * model's rank correlations (a Spearman ρ is a Pearson 2 sin(πρ/6) between
+ * normal scores). The other methods assume independent inputs -- their
+ * designs are built on it -- and sample the factors independently, which the
+ * statistics say.
+ *
+ * A list read in order (`pg`, `inorder`) hands out its values by realisation
+ * number, which a design point is not; here it is read by probability, as an
+ * unordered list is.
+ */
+function gsaDesignFor(project, plan, names, best, varies, seed, gsa) {
+	const factors = [];
+	const byKey = new Map();
+	plan.forEach((e, k) => {
+		if (!varies(e)) return;
+		const key = groupOf(e) ?? names[k];
+		let f = byKey.get(key);
+		if (!f) {
+			f = { key, group: groupOf(e), members: [] };
+			byKey.set(key, f);
+			factors.push(f);
+		}
+		f.members.push(k);
+	});
+	if (!factors.length) throw new Error('Every sampled input is held, so a sensitivity design has nothing to vary.');
+	const factorOf = new Int32Array(plan.length).fill(-1);
+	factors.forEach((f, j) => { for (const k of f.members) factorOf[k] = j; });
+
+	const { pairs, problems } = correlationPairs(project, names);
+	const between = pairs.filter((pr) => factorOf[pr.a] >= 0 && factorOf[pr.b] >= 0
+		&& factorOf[pr.a] !== factorOf[pr.b]);
+	let corr = null;
+	let shrunk = 0;
+	if (gsa.method === 'shapley' && between.length) {
+		const K = factors.length;
+		const R = new Float64Array(K * K);
+		for (let j = 0; j < K; j++) R[j * K + j] = 1;
+		for (const pr of between) {
+			const a = factorOf[pr.a];
+			const b = factorOf[pr.b];
+			const r = 2 * Math.sin((Math.PI * pr.r) / 6);
+			R[a * K + b] = r;
+			R[b * K + a] = r;
+		}
+		// Correlations given pair by pair need not be consistent with each
+		// other. Shrunk towards independence until they are, and said.
+		for (let lambda = 0; lambda < 1; lambda += 0.05) {
+			const S = R.map((v, i) => (i % (K + 1) === 0 ? 1 : (1 - lambda) * v));
+			if (cholesky(S, K)) { corr = S; shrunk = lambda; break; }
+		}
+	}
+	const design = buildDesign(gsa.method, factors.map((f) => f.key), gsa.options ?? {},
+		{ seed, corr, streamFor, uniforms });
+	const drawn = plan.map((e) => (e.spec?.kind === 'pg' && e.spec.inorder !== false
+		? { ...e.spec, inorder: false } : e.spec));
+	const valueFor = (k, i) => (factorOf[k] < 0
+		? best[k]
+		: valueAtProbability(drawn[k], design.u[factorOf[k]][i], i));
+	return {
+		plan, names, best, varies, iterations: design.runs, valueFor, seed, gsaDesign: design,
+		stats: {
+			seed, latin: false, sampled: plan.length,
+			gsa: {
+				method: gsa.method,
+				options: design.options,
+				factors: factors.map((f) => ({ key: f.key, group: f.group, members: f.members })),
+				correlated: between.length,
+				correlationsUsed: !!corr,
+				correlationShrunk: shrunk,
+				correlationProblems: problems,
+			},
+		},
+	};
+}
+
+/**
  * Sets one design point into the system, ready to run.
  *
  * @returns {number[]} the values set, one per input of the plan
@@ -296,8 +387,10 @@ export function applyPoint(system, design, i) {
 	// again from these. Without this the run is silently the last one's.
 	system.evaluateInvariant();
 	// A tornado has no dice: its points are the model's values swung one at a
-	// time, and a random event keeps its expected-value form throughout.
-	drawDisruptions(system, design.seed ?? 1, i, { sample: !design.stats?.tornado });
+	// time, and a random event keeps its expected-value form throughout. Nor
+	// has a sensitivity design, whose points are its factors' and nothing
+	// else's: an event's dice would be noise in every index.
+	drawDisruptions(system, design.seed ?? 1, i, { sample: !design.stats?.tornado && !design.stats?.gsa });
 	return out;
 }
 
@@ -454,10 +547,11 @@ export function runProbabilistic(input, opts = {}) {
 
 	const size = estimate({ series: wanted.length, times, iterations });
 	if (size.bytes > MOST_BYTES) {
-		throw new Error(`${iterations} ${design.stats.tornado ? 'runs' : 'realisations'} of `
+		const designed = design.stats.tornado || design.stats.gsa;
+		throw new Error(`${iterations} ${designed ? 'runs' : 'realisations'} of `
 			+ `${wanted.length.toLocaleString()} series over ${times} times is ${size.text}, `
-			+ 'which is more than a tab can hold. Choose fewer endpoints, or fewer '
-			+ `${design.stats.tornado ? 'inputs' : 'realisations'}.`);
+			+ 'which is more than a tab can hold. Choose fewer endpoints, or '
+			+ `${design.stats.tornado ? 'fewer inputs' : design.stats.gsa ? 'a smaller design' : 'fewer realisations'}.`);
 	}
 
 	// One array per kept series, laid out realisation-major: `[i * times + j]`

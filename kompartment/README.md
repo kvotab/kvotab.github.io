@@ -86,7 +86,10 @@ for the numerical differentiation formulas and the Rosenbrock pair, Dormand &
 Prince (1980) for the explicit pair, Hairer & Wanner (1996) for the step-size
 and order strategies, Gilbert–Peierls for the sparse LU. `src/ode/julia/` is a
 port of six stiff solvers from [OrdinaryDiffEq.jl][sciml], which is MIT
-licensed; its notice is in `src/ode/julia/LICENSE`. The far-field pathway
+licensed; its notice is in `src/ode/julia/LICENSE`. `src/domain/gsa.js` is a
+port of the methods of [GlobalSensitivity.jl][gsa], with the parts of
+KernelDensity.jl, Interpolations.jl and ComplexityMeasures.jl they use, all MIT
+licensed; the notices are in `src/domain/gsa.LICENSE`. The far-field pathway
 follows the formulation in *SKB TR-19-06* Appendix B, with Chapter 3 of
 *TR-90-01* behind it.
 
@@ -97,3 +100,4 @@ tool so that existing models can be opened here. It is an independent work,
 and is not affiliated with or endorsed by that tool's publisher.
 
 [sciml]: https://github.com/SciML/OrdinaryDiffEq.jl
+[gsa]: https://github.com/SciML/GlobalSensitivity.jl

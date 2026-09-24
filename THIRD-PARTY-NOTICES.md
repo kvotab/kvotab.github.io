@@ -16,6 +16,7 @@ others. Each item keeps its own licence.
 | [math.js](https://mathjs.org/) | Apache-2.0 | `vendors/js/LICENSE-math.js.txt` |
 | [FileSaver.js](https://github.com/eligrey/FileSaver.js) | MIT | `vendors/js/FileSaver.min.js` |
 | [OrdinaryDiffEq.jl](https://github.com/SciML/OrdinaryDiffEq.jl) (ported to JavaScript) | MIT | `resources/js/ode/julia/LICENSE`, `kompartment/src/ode/julia/LICENSE` |
+| [GlobalSensitivity.jl](https://github.com/SciML/GlobalSensitivity.jl) (ported to JavaScript), with the parts of [KernelDensity.jl](https://github.com/JuliaStats/KernelDensity.jl), [Interpolations.jl](https://github.com/JuliaMath/Interpolations.jl) and [ComplexityMeasures.jl](https://github.com/JuliaDynamics/ComplexityMeasures.jl) its methods use | MIT | `kompartment/src/domain/gsa.LICENSE` |
 | Coordinate conversions by Arnold Andreasson (`gausskruger.js`, `lat_lon_conv.js`, `latlong.js`, `map.js`) | MIT | headers in the files |
 | Error-function coefficients in `resources/js/erf.js` | Boost Software License 1.0 (John Maddock) | header in the file |
 | CALERF (`resources/js/erf.f`, `erf.js`) | public domain (W. J. Cody, Netlib SPECFUN) | header in the file |

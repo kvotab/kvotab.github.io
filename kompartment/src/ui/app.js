@@ -46,6 +46,7 @@ import { openSensitivityDialog } from './sensdialog.js';
 import { openDistributionDialog } from './distdialog.js';
 import { openCategoriesDialog } from './catdialog.js';
 import { openTornadoSetup, openTornadoResult } from './tornadodialog.js';
+import { openGsaSetup, openGsaResult } from './gsadialog.js';
 import { categoriesOf } from '../domain/categories.js';
 import { runLogLines, probabilisticLogLines, runLogText } from '../domain/runlog.js';
 import { compareModels, reportLines, summary as versionSummary } from '../domain/versions.js';
@@ -57,6 +58,7 @@ import { openHandoff, handoffName } from './handoff.js';
 import * as autosave from './autosave.js';
 import * as shared from './clipboard.js';
 import { workersFor } from '../worker/prob-pool.js';
+import { chosenCores, chooseCores, poolNote } from './cores.js';
 import { openQueryDialog } from './querydialog.js';
 import * as dt from '../domain/datatable.js';
 import { openDataImport } from './dataimport.js';
@@ -80,7 +82,7 @@ import { buildSystem } from '../sim/builder.js';
 // What a run *would* report, from the layout alone -- so the endpoint picker
 // can offer its list before the model has been run.
 import { outputsOf } from '../sim/runner.js';
-import { samplingPlan } from '../sim/probabilistic.js';
+import { samplingPlan, slotName, groupOf } from '../sim/probabilistic.js';
 import { renderMatrix, markSelection } from './matrix.js';
 import { UndoStack } from './undo.js';
 import { renderBlockTree } from './tree.js';
@@ -263,6 +265,9 @@ const state = {
 	yLog: true,
 	running: false,
 	runId: 0,
+	// How many cores the sampled run going now is on, from the worker's
+	// `pool` message: `{workers, asked, why}`, or null. See ./cores.js.
+	pool: null,
 	dirty: false,
 	// Off until it is asked for. It is the switch that makes a keystroke start
 	// a solve, and on an imported assessment of fifty thousand states that is
@@ -276,6 +281,10 @@ const state = {
 	tornado: null,
 	tornadoRunning: false,
 	tornadoRev: null,
+	// And the last global sensitivity design, the same way.
+	gsa: null,
+	gsaRunning: false,
+	gsaRev: null,
 	distFor: null,
 	// The output times of the run in progress, and how many of them it has
 	// reached: what the progress bar counts. See `setProgress`.
@@ -808,7 +817,7 @@ const OWN_ID_REPLIES = new Set(['optimise', 'optimise-progress', 'variables']);
 
 const PROB_REPLIES = new Set([
 	'prob-matrix', 'prob-bands', 'prob-categories', 'prob-summary', 'prob-hist',
-	'prob-points', 'sensitivity', 'tornado', 'tornado-table',
+	'prob-points', 'sensitivity', 'tornado', 'tornado-table', 'gsa', 'gsa-table',
 ]);
 
 function ensureWorker() {
@@ -820,6 +829,7 @@ function ensureWorker() {
 		const m = ev.data;
 		if (!messageIsCurrent(m, state.runId)) return;
 		if (m.type === 'loading') { setLoadingStage(m.stage, m.detail); return; }
+		if (m.type === 'pool') { acceptPool(m); return; }
 		if (m.type === 'progress') {
 			// The Jacobian check reports its progress too, and it is not a run:
 			// it has no chart to fill and no footer statistics, so it draws its
@@ -838,6 +848,8 @@ function ensureWorker() {
 		if (m.type === 'prob-summary') { acceptSummary(m); return; }
 		if (m.type === 'tornado') { acceptTornado(m); return; }
 		if (m.type === 'tornado-table') { acceptTornadoTable(m); return; }
+		if (m.type === 'gsa') { acceptGsa(m); return; }
+		if (m.type === 'gsa-table') { acceptGsaTable(m); return; }
 		if (m.type === 'probabilistic-done') { acceptProbabilistic(m.payload, m.id); return; }
 		if (m.type === 'prob-matrix') { acceptProbMatrix(m); return; }
 		if (m.type === 'variables') { acceptVariables(m); return; }
@@ -1248,6 +1260,9 @@ function openProbabilistic() {
 			iterations: Math.max(1, Math.round(state.raw.simulation?.iterations ?? 1000)),
 			cores: navigator.hardwareConcurrency || 1,
 		}),
+		// And the reader's own number, where they have given one. Per
+		// browser: see ./cores.js.
+		cores: chosenCores(),
 		// Where the list itself is decided. The tick box says how many there
 		// are and this is the only thing on screen that says where they come
 		// from -- the picker is under Export, which is nowhere near here, and
@@ -1302,6 +1317,7 @@ function startProbabilistic(choice) {
 		moved = true;
 	}
 	if (moved) modelChanged({ layoutOnly: true });
+	chooseCores(choice.cores ?? null);
 	state.probRunning = true;
 	setRunning(true);
 	setLoadingStage('building');
@@ -1321,6 +1337,9 @@ function startProbabilistic(choice) {
 		// and for the case where a browser will nest workers but should not.
 		// Left to the worker otherwise, which knows what the last build cost.
 		workers: workerLimit(),
+		// The reader's number from the dialog, which the worker uses as it
+		// stands; null leaves it to the worker.
+		cores: chosenCores(),
 	});
 }
 
@@ -1377,7 +1396,7 @@ function acceptProbabilistic(payload, runId) {
 	const { stats } = payload;
 	flash(`${payload.iterations.toLocaleString()} realisations in `
 		+ `${(stats.ms / 1000).toFixed(1)} s`
-		+ (stats.workers > 1 ? ` over ${stats.workers} cores` : '')
+		+ (stats.workers > 1 ? ` over ${stats.workers} cores` : ' on one core')
 		+ `${stats.failed ? `, ${stats.failed} of them failed` : ''}.`, 'info');
 	renderResults();
 	// The panel too: *What drove it* appears only once there is a sample to
@@ -1627,9 +1646,11 @@ function openTornado() {
 		plan,
 		lastSolveMs: state.lastSolveMs || null,
 		workers: workersFor({ iterations: 2 * plan.length + 1, cores: navigator.hardwareConcurrency || 1 }),
+		cores: chosenCores(),
 		endpoints: ed.endpoints(state.raw),
 		simulation: state.raw.simulation ?? {},
 		onRun: (choice) => {
+			chooseCores(choice.cores ?? null);
 			const sim = state.raw.simulation ?? (state.raw.simulation = {});
 			if (sim.tornado_low !== choice.low || sim.tornado_high !== choice.high) {
 				sim.tornado_low = choice.low;
@@ -1653,6 +1674,7 @@ function openTornado() {
 				varied: state.raw.simulation?.partial ?? null,
 				index: 0, stat: 'max', at: 0, wantLabel: first,
 				workers: workerLimit(),
+				cores: chosenCores(),
 			});
 		},
 	});
@@ -1667,7 +1689,7 @@ function acceptTornado(m) {
 	const k = first ? m.outputs.findIndex((o) => o.label === first) : -1;
 	state.tornado = { ...m, runId: m.id, rev: state.tornadoRev ?? state.rev };
 	flash(`Tornado: ${m.points.toLocaleString()} runs in ${(m.stats.ms / 1000).toFixed(1)} s`
-		+ (m.stats.workers > 1 ? ` over ${m.stats.workers} cores` : '') + '.', 'info');
+		+ (m.stats.workers > 1 ? ` over ${m.stats.workers} cores` : ' on one core') + '.', 'info');
 	if (k >= 0 && k !== m.table.index) {
 		ensureWorker().postMessage({ type: 'tornado-table', id: m.id, index: k, stat: m.table.stat, at: m.table.at });
 	}
@@ -1694,6 +1716,119 @@ function acceptTornadoTable(m) {
 	torModal?.update({ table: m.table });
 }
 
+let gsaModal = null;
+
+/**
+ * A global sensitivity design: choose the method, price it, run it through
+ * the pool. See ../domain/gsa.js for the methods and ./gsadialog.js for the
+ * two dialogs.
+ */
+function openGsa() {
+	if (state.running) { flash('A run is already going. Stop it first.', 'warn'); return; }
+	let plan;
+	try {
+		plan = samplingPlan(new Project(structuredClone(state.raw)));
+	} catch (e) {
+		showError({ name: e.name ?? 'Error', message: e.message, blockName: e.blockName ?? null });
+		return;
+	}
+	if (!plan.length) { flash('No parameter in this model has a distribution to vary.', 'warn'); return; }
+	// What the design will vary, counted the way the worker will count it: a
+	// correlation group is one input, and a partial run's held inputs are not
+	// inputs at all. See `gsaDesignFor` in ../sim/probabilistic.js.
+	const partial = state.raw.simulation?.partial;
+	const varied = Array.isArray(partial) ? new Set(partial) : null;
+	const keys = new Map();
+	const factorOf = new Map();
+	plan.forEach((e) => {
+		const name = slotName(e);
+		if (varied && !varied.has(name)) return;
+		const group = groupOf(e);
+		const key = group ?? name;
+		keys.set(key, group != null);
+		factorOf.set(name, key);
+	});
+	const inputs = keys.size;
+	const grouped = [...keys.values()].filter(Boolean).length;
+	const correlated = (state.raw.simulation?.correlations ?? []).filter((c) => {
+		const a = factorOf.get(String(c?.a));
+		const b = factorOf.get(String(c?.b));
+		return c?.group != null || (a != null && b != null && a !== b);
+	}).length;
+	openGsaSetup({
+		inputs, grouped, correlated,
+		lastSolveMs: state.lastSolveMs || null,
+		workers: workersFor({ iterations: 1000, cores: navigator.hardwareConcurrency || 1 }),
+		cores: chosenCores(),
+		endpoints: ed.endpoints(state.raw),
+		simulation: state.raw.simulation ?? {},
+		onRun: (choice) => {
+			chooseCores(choice.cores ?? null);
+			// Remembered with the model, as the tornado's percentiles are: which
+			// method, with what, and from which seed is what makes the answer
+			// one that can be had again. It changes no number in the model.
+			const sim = state.raw.simulation ?? (state.raw.simulation = {});
+			const record = { method: choice.method, options: choice.options, seed: choice.seed };
+			if (JSON.stringify(sim.gsa ?? null) !== JSON.stringify(record)) {
+				sim.gsa = record;
+				modelChanged({ layoutOnly: true });
+			}
+			const w = ensureWorker();
+			state.runId += 1;
+			state.gsaRev = state.rev;
+			state.gsaRunning = true;
+			setRunning(true);
+			setLoadingStage('building');
+			clearError();
+			// The output the table opens on: the chart's first line, as the
+			// tornado does.
+			const first = state.selected.length ? state.results?.outputs[state.selected[0]]?.label : null;
+			w.postMessage({
+				type: 'gsa', id: state.runId, project: structuredClone(state.raw),
+				gsa: { method: choice.method, options: choice.options },
+				seed: choice.seed,
+				blocks: choice.blocks,
+				varied: state.raw.simulation?.partial ?? null,
+				index: 0, stat: 'max', at: 0, wantLabel: first,
+				workers: workerLimit(),
+				cores: chosenCores(),
+			});
+		},
+	});
+}
+
+function acceptGsa(m) {
+	state.gsaRunning = false;
+	setRunning(false);
+	if (m.id !== state.runId) return;
+	const first = state.selected.length ? state.results?.outputs[state.selected[0]]?.label : null;
+	const k = first ? m.outputs.findIndex((o) => o.label === first) : -1;
+	state.gsa = { ...m, runId: m.id, rev: state.gsaRev ?? state.rev };
+	const failed = m.stats.failed ? `, ${m.stats.failed} of them failed` : '';
+	flash(`Sensitivity: ${m.points.toLocaleString()} runs in ${(m.stats.ms / 1000).toFixed(1)} s`
+		+ (m.stats.workers > 1 ? ` over ${m.stats.workers} cores` : ' on one core') + `${failed}.`,
+	m.stats.failed ? 'warn' : 'info');
+	if (k >= 0 && k !== m.answer.index) {
+		ensureWorker().postMessage({ type: 'gsa-table', id: m.id, index: k, stat: m.answer.stat, at: m.answer.at });
+	}
+	if (gsaModal) gsaModal.close();
+	gsaModal = openGsaResult({
+		outputs: m.outputs.map((o) => o.label), t: m.t, answer: m.answer, points: m.points, stats: m.stats,
+		timeUnit: state.raw.simulation?.time_unit ?? 'year',
+		onAsk: ({ index, stat, at }) => ensureWorker().postMessage({
+			type: 'gsa-table', id: m.id, index, stat, at,
+		}),
+		onClose: () => { gsaModal = null; },
+	});
+}
+
+function acceptGsaTable(m) {
+	if (!state.gsa || m.id !== state.gsa.runId) return;
+	if (m.gone) { gsaModal?.close(); flash('The sensitivity runs are no longer held.', 'warn'); return; }
+	state.gsa.answer = m.answer;
+	gsaModal?.update({ answer: m.answer });
+}
+
 /**
  * Asks the worker which inputs drove the series being looked at.
  *
@@ -1703,7 +1838,7 @@ function acceptTornadoTable(m) {
  * realisations of every kept series, which is the thing that was deliberately
  * not sent to the page.
  */
-function openSensitivity(at = null, index = null, translate = 'none') {
+function openSensitivity(at = null, index = null, translate = 'none', family = 'regression') {
 	const prob = currentProb();
 	if (!prob) { flash('Run the model probabilistically first.', 'warn'); return; }
 	const target = sensitivityTarget(prob, state.results, state.selected, index);
@@ -1734,6 +1869,11 @@ function openSensitivity(at = null, index = null, translate = 'none') {
 		at: at ?? undefined,
 		most: 20,
 		translate,
+		// Which measures beside the correlations: the regression family, or
+		// the ones that read the whole distribution (EASI, δ, mutual
+		// information, RSA). The second is a bootstrap per input and is
+		// worked out only when asked for.
+		family,
 	});
 }
 
@@ -1768,6 +1908,7 @@ function acceptSensitivity(m) {
 		rows: m.rows,
 		curves: m.curves,
 		measures: m.measures ?? null,
+		distribution: m.distribution ?? null,
 		kept: m.kept ?? null,
 		iterations: prob?.iterations ?? 0,
 	};
@@ -1778,7 +1919,7 @@ function acceptSensitivity(m) {
 		// the picker should not offer one it would refuse.
 		outputs: (prob?.outputs ?? []).map((o) => o.label),
 		timeUnit: state.raw.simulation?.time_unit ?? 'year',
-		onAsk: ({ index, at, translate }) => openSensitivity(at, index, translate),
+		onAsk: ({ index, at, translate, family }) => openSensitivity(at, index, translate, family),
 		onClose: () => { sensModal = null; },
 	});
 }
@@ -1948,6 +2089,8 @@ function cancelSimulation() {
 
 function setRunning(on) {
 	state.running = on;
+	// A pool is one run's: the next says what it is on for itself.
+	state.pool = null;
 	$('#run').disabled = on;
 	$('#cancel').hidden = !on;
 	// The progress slot in the footer keeps its space and only appears, so the
@@ -1994,9 +2137,27 @@ function setProgress(fraction, at = null) {
 		: Math.max(0, Math.min(1, fraction));
 	bar.value = f;
 	const unit = state.raw?.simulation?.time_unit ?? '';
+	const pool = poolNote(state.pool);
 	// Padded, and in tabular figures, so the digits do not jog the bar.
-	$('#progress-pct').textContent = `${String(Math.round(f * 100)).padStart(3, ' ')}%`
-		+ (at == null || !Number.isFinite(at) ? '' : ` · ${fmtClock(at)}${unit ? ` ${unit}` : ''}`);
+	const text = $('#progress-pct');
+	text.textContent = `${String(Math.round(f * 100)).padStart(3, ' ')}%`
+		+ (at == null || !Number.isFinite(at) ? '' : ` · ${fmtClock(at)}${unit ? ` ${unit}` : ''}`)
+		+ (pool.text ? ` · ${pool.text}` : '');
+	text.title = pool.title;
+}
+
+/**
+ * How many cores a sampled run is on, from the worker, before it builds.
+ *
+ * Shown for the length of the run, beside the bar, so a reader who chose a
+ * number sees it met -- or, in the tooltip, why it was not.
+ */
+function acceptPool(m) {
+	state.pool = { workers: m.workers, asked: m.asked ?? null, why: m.why ?? null };
+	const bar = $('#progress');
+	const stage = bar.getAttribute('data-loading');
+	if (stage) setLoadingStage(stage);
+	else setProgress(bar.value ?? 0);
 }
 
 /**
@@ -2048,8 +2209,9 @@ function setLoadingStage(stage, detail) {
 	// A <progress> with no value is the indeterminate one.
 	bar.removeAttribute('value');
 	bar.setAttribute('data-loading', stage);
-	text.textContent = LOADING_STAGE[stage] ?? String(stage);
-	if (detail) text.title = detail;
+	const pool = poolNote(state.pool);
+	text.textContent = (LOADING_STAGE[stage] ?? String(stage)) + (pool.text ? ` · ${pool.text}` : '');
+	text.title = detail || pool.title;
 }
 
 /**
@@ -5276,6 +5438,11 @@ function renderSidebar() {
 						title: 'Every sampled input swung on its own to a low and a high percentile '
 							+ 'with the rest held: which inputs move this output at all. Needs no sample.',
 						onPick: () => openTornado() },
+					{ label: 'Global sensitivity\u2026',
+						title: 'Morris, Sobol, eFAST, RBD-FAST, a fractional factorial, DGSM or Shapley '
+							+ 'effects: an experiment of its own over the distributions, priced before it '
+							+ 'runs. Needs no sample.',
+						onPick: () => openGsa() },
 					{ label: 'Replay a realisation\u2026', disabled: !has,
 						title: has ? 'Run one realisation of the probabilistic run again as an '
 							+ 'ordinary run, every series of it.' : 'Needs a probabilistic run.',
@@ -5296,7 +5463,8 @@ function renderSidebar() {
 	{
 		const id = sim.solver ?? DEFAULT_SOLVER;
 		const keys = solverOptions(id);
-		if (keys.length) {
+		const dropped = solverIgnores(id);
+		if (keys.length || dropped.length) {
 			const box = el('div', { className: 'sim-solver-opts' });
 			for (const key of keys) {
 				const info = SOLVER_OPTION_INFO[key];
@@ -5318,27 +5486,31 @@ function renderSidebar() {
 					box.append(numField(key, unit, { title }));
 				}
 			}
+			// Inside the fold, under the settings it is about, as facsimile.html
+			// and rtm.html have it. A solver that reads none of them (SciPy's)
+			// still gets the fold, holding only this.
+			if (dropped.length) {
+				const last = dropped.length > 1 ? ` and ${dropped[dropped.length - 1]}` : '';
+				const list = dropped.length > 1
+					? dropped.slice(0, -1).join(', ') + last : dropped[0];
+				box.append(el('p', { className: 'sim-dropped' },
+					`${solverLabel(id)} does not read ${list}, so `
+					+ `${dropped.length === 1 ? 'it is' : 'they are'} not shown.`));
+			}
 			// The fold is remembered the way every other section here is: the
 			// panel rebuilds on each edit, so a fold that did not would close
 			// itself the moment one of its own fields was typed in.
 			// `Advanced settings`, as facsimile.html and rtm.html call theirs: the
 			// same settings go by the same names in all three.
 			const fold = el('details', { className: 'sim-opts', open: sectionOpen('solver-opts', false) },
-				el('summary', { title: `The settings ${solverLabel(id)} reads, beyond the `
-					+ 'tolerances above. Empty means the solver\u2019s own choice.' },
+				el('summary', { title: keys.length
+					? `The settings ${solverLabel(id)} reads, beyond the `
+						+ 'tolerances above. Empty means the solver\u2019s own choice.'
+					: `${solverLabel(id)} reads no settings beyond the tolerances above.` },
 				'Advanced settings'),
 				box);
 			fold.addEventListener('toggle', () => { state.sbSections['solver-opts'] = fold.open; });
 			group.append(fold);
-		}
-		const dropped = solverIgnores(id);
-		if (dropped.length) {
-			const last = dropped.length > 1 ? ` and ${dropped[dropped.length - 1]}` : '';
-			const list = dropped.length > 1
-				? dropped.slice(0, -1).join(', ') + last : dropped[0];
-			group.append(el('p', { className: 'sim-dropped' },
-				`${solverLabel(id)} does not read ${list}, so `
-				+ `${dropped.length === 1 ? 'it is' : 'they are'} not shown.`));
 		}
 	}
 
@@ -7516,12 +7688,6 @@ function renderCode() {
 
 // --- files ---------------------------------------------------------------------
 
-/** What the menu says beside *Choose endpoints…*. */
-function endpointHint() {
-	const n = ed.endpoints(state.raw).length;
-	return n ? `${n} chosen` : 'none chosen yet';
-}
-
 /**
  * The third export: the blocks somebody picked.
  *
@@ -7644,18 +7810,23 @@ function download(name, body, type) {
  * Every parameter and every lookup table, with whatever distribution each
  * carries -- not only the distributed half, so the file that comes out is one
  * this can read back as a complete picture rather than as a patch.
+ *
+ * With `handoff` the HDF5 tree goes to the HDF5 Browser rather than the disk,
+ * as the results do; see `deliver`.
  */
-async function exportData(as, keys = null) {
+async function exportData(as, keys = null, handoff = null) {
 	const want = keys ? new Set(keys) : null;
 	const nameOf = (row) => (row.block
 		? (row.block.system ? `${row.block.system}.${row.block.name}` : row.block.name)
 		: row.id);
 	const rows = dt.collect(state.raw).filter((row) => !want || want.has(nameOf(row)));
 	if (!rows.length) {
+		handoff?.cancel();
 		flash('This model has no parameters or lookup tables to write out.', 'warn');
 		return;
 	}
 	const base = slug(state.raw.name);
+	let where = '';
 	try {
 		if (as === 'xlsx') {
 			const bytes = await writeDataWorkbook(rows, { name: base.slice(0, 31) || 'data' });
@@ -7663,16 +7834,17 @@ async function exportData(as, keys = null) {
 				'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
 		} else {
 			const bytes = writeDataHDF5(rows, { root: state.raw.name || 'model' });
-			download(`${base}-data.h5`, bytes, 'application/x-hdf5');
+			({ where } = await deliver(bytes, `${base}-data.h5`, handoff));
 		}
 	} catch (e) {
+		handoff?.cancel();
 		showError({ name: e.name ?? 'Error', message: e.message, blockName: null });
 		flash(`The data could not be written: ${e.message}`, 'warn');
 		return;
 	}
 	const tables = new Set(rows.filter((r) => r.time != null).map((r) => r.id)).size;
 	flash(`${rows.length.toLocaleString()} rows written`
-		+ (tables ? `, including ${tables.toLocaleString()} lookup tables` : '') + '.', 'info');
+		+ (tables ? `, including ${tables.toLocaleString()} lookup tables` : '') + `${where}.`, 'info');
 }
 
 /**
@@ -7907,8 +8079,17 @@ function openSave() {
 	});
 }
 
-/** What the dialog asked for, done. */
-async function runSave({ kind, format, keys }) {
+/**
+ * What the dialog asked for, done.
+ *
+ * `open` sends the file to the HDF5 Browser instead of the disk. The tab is
+ * opened before anything here awaits: this runs inside the click, and a
+ * pop-up is allowed out of a user gesture and not out of a promise that
+ * settles after one.
+ */
+async function runSave({ kind, format, keys, open = false }) {
+	const handoff = open ? openResultBrowser() : null;
+	if (open && !handoff) return;
 	const r = state.results;
 	const outs = r?.outputs ?? [];
 	// Back from blocks to the series they stand for, which is what every
@@ -7931,12 +8112,13 @@ async function runSave({ kind, format, keys }) {
 		return;
 	}
 	if (kind === 'results') {
-		if (format === 'csv') await downloadCSV(idx, suffix);
-		else await downloadHDF5(idx, suffix);
+		// The browser reads HDF5, whichever format the dialog was left on.
+		if (format === 'csv' && !handoff) await downloadCSV(idx, suffix);
+		else await downloadHDF5(idx, suffix, handoff);
 		return;
 	}
-	if (kind === 'realisations') { await downloadRealisations(idx, '-realisations'); return; }
-	if (kind === 'data') { await exportData(format, keys); return; }
+	if (kind === 'realisations') { await downloadRealisations(idx, '-realisations', 'all', handoff); return; }
+	if (kind === 'data') { await exportData(handoff ? 'h5' : format, keys, handoff); return; }
 	if (kind === 'log') {
 		download(`${slug(state.raw.name)}-run-log.txt`, runLogFor(), 'text/plain');
 		flash('The run log was written out.', 'info');
@@ -8140,7 +8322,7 @@ async function deliver(bytes, name, handoff) {
 		return { size, where: '' };
 	}
 	await handoff.send(name, bytes);
-	return { size, where: ' — open in the result browser' };
+	return { size, where: ' — open in the HDF5 Browser' };
 }
 
 /**
@@ -8153,7 +8335,7 @@ async function deliver(bytes, name, handoff) {
 function openResultBrowser() {
 	const handoff = openHandoff();
 	if (!handoff) {
-		flash('The result browser could not be opened — allow pop-ups for this page '
+		flash('The HDF5 Browser could not be opened — allow pop-ups for this page '
 			+ 'and try again.', 'warn');
 	}
 	return handoff;
@@ -8468,7 +8650,9 @@ function tableMenu(ev) {
 	const r = state.results;
 	if (!r) return;
 	const shown = state.selected.length;
-	const total = r.outputs.length;
+	// What the table holds, three ways, and nothing else: every other file --
+	// every output, the realisations, the endpoints -- is in Save…, which says
+	// what each one is.
 	openMenu({
 		x: ev.clientX,
 		y: ev.clientY,
@@ -8481,86 +8665,24 @@ function tableMenu(ev) {
 				onPick: () => downloadCSV(state.selected.slice(), ''),
 			},
 			{
-				label: 'Export every output to CSV',
-				hint: `${total} columns`,
-				disabled: total === shown,
-				title: total === shown ? 'The table already holds all of them' : '',
-				onPick: () => downloadCSV(r.outputs.map((_, i) => i), '-all'),
-			},
-			{ separator: true },
-			{
 				label: 'Export table to HDF5',
 				hint: `${shown} series`,
 				disabled: !shown,
 				title: 'A .h5 file in the shape Ecolego writes: the times in /time, '
 					+ 'the index lists in /IndexLists, and one dataset per series '
-					+ 'under its block. The result browser at kvotab.se reads it.',
+					+ 'under its block. The HDF5 Browser at kvotab.se reads it.',
 				onPick: () => downloadHDF5(state.selected.slice(), ''),
 			},
 			{
-				label: 'Export every output to HDF5',
-				hint: `${total} series`,
-				disabled: total === shown,
-				title: total === shown ? 'The table already holds all of them' : '',
-				onPick: () => downloadHDF5(r.outputs.map((_, i) => i), '-all'),
-			},
-			// Only where there is a sample to write. The two above write the
-			// curve; this writes the runs it was drawn from.
-			...(currentProb() ? [
-				{ separator: true },
-				{
-					label: 'Export realisations to HDF5',
-					hint: `${shown} × ${currentProb().iterations.toLocaleString()}`,
-					disabled: !shown,
-					title: 'Every run of the probabilistic simulation, not the curve '
-						+ 'through them: one row per output time and one column per '
-						+ 'realisation, which is the shape Ecolego writes. The result '
-						+ 'browser draws the mean of it and a confidence band around it.',
-					onPick: () => downloadRealisations(state.selected.slice(), '-realisations'),
-				},
-			] : []),
-			{
-				label: 'Open in the HDF5 browser',
+				label: 'Open in the HDF5 Browser',
 				hint: `${shown} series`,
 				disabled: !shown,
-				title: 'Opens the result browser at kvotab.se and hands it these series '
+				title: 'Opens the HDF5 Browser at kvotab.se and hands it these series '
 					+ 'directly, without saving a file first.',
 				onPick: () => {
 					const handoff = openResultBrowser();
 					if (handoff) downloadHDF5(state.selected.slice(), '', handoff);
 				},
-			},
-			{
-				// The same pairing the two exports above have: what is on the
-				// table, and everything the run produced. A reader is opened to
-				// look around in, which is exactly when the whole run is what
-				// you want rather than the four lines you happened to chart.
-				label: 'Open every output in the HDF5 browser',
-				hint: `${total} series`,
-				disabled: total === shown,
-				title: total === shown
-					? 'The table already holds all of them'
-					: 'Opens the result browser and hands it the whole run, not only '
-						+ 'what the table is showing.',
-				onPick: () => {
-					const handoff = openResultBrowser();
-					if (handoff) downloadHDF5(r.outputs.map((_, i) => i), '-all', handoff);
-				},
-			},
-			{ separator: true },
-			{
-				label: 'Choose endpoints to save…',
-				hint: endpointHint(),
-				title: 'Pick which blocks to save, the way Ecolego’s endpoint list '
-					+ 'does. A block brings every index of it, and the choice is '
-					+ 'remembered as this model’s endpoints.',
-				onPick: () => openEndpoints(),
-			},
-			{ separator: true },
-			{
-				label: 'Choose which lines to show',
-				title: 'The picker above the chart decides what the table holds',
-				onPick: () => selectTab('chart'),
 			},
 		],
 	});
@@ -9540,6 +9662,8 @@ function setModel(raw, source) {
 	state.sensFor = null;
 	state.tornado = null;
 	state.tornadoRunning = false;
+	state.gsa = null;
+	state.gsaRunning = false;
 	// The fingerprint of the last run's model: a different file is never a
 	// re-evaluation of this one, whatever the two happen to hash to.
 	state.integrationKey = null;

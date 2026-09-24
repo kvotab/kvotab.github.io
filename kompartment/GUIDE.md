@@ -862,7 +862,7 @@ Eight views over one model, all editing the same object:
 | **Matrix** | The transfer grid, laid out the way a Jacobian is drawn: **the blocks are on the diagonal and the flows between them are off it**. A cell is what leaves the name on the diagonal along its row and arrives at the name down its column — so the diagonal is a staircase of names and the grid needs no header band, in either direction. Each filled cell carries the elbow that traces its route: above the diagonal it turns down, below it turns up, which is also how a feedback loop shows itself at a glance. **Sub-systems fold**: see below. Everything in it that stands for a block behaves like one: a click selects it and a double-click opens its settings, on the diagonal and off it alike. Click an empty cell to add a transfer; a pair may hold several and their fluxes add. A block on the diagonal, and a transfer off it, wears the colour it was given on the diagram, with its label picked from that colour rather than from the theme — a model of any size is read by its colours as much as by its names, and two views showing it in different colours made this one a separate thing to learn. A far-field pathway sits on the diagonal like any other block. **The world outside the model gets a row and a column of its own**, at the end and outside the hierarchy — its row is what comes in, its column what leaves — and only when something actually crosses that boundary, since an empty pair in every closed model is furniture. It is the one view that puts every source term and every outflow together, the diagram having drawn each of them beside its own block. Built when this tab is opened rather than on every edit, and a selection that moves within one model moves the highlight rather than rebuilding the grid: it is (compartments + paths + 1) squared. |
 | **Index lists** | The model's dimensions. One pane lists them, the other is the one you are editing: its name, what it is defined from, its indices, and — for the radionuclide list — half-lives and decay chains. Everything about a list is made and unmade here. |
 | **Chart** | Results over time, log-log by default. A search box, kind chips and one selector per index list narrow the line picker above it, which matters as soon as a model is two-dimensional — `landscape.json` has 63 lines to choose eight from. Drag a rectangle over the chart to zoom, scroll to zoom about the pointer, shift-drag or middle-drag to pan, double-click to show everything. Right-click it for the two scales, the zoom, the drag mode, **Save as picture ▸ SVG · PNG · JPEG**, and the numbers as CSV. |
-| **Table** | The same numbers, for reading and copying. Built when this tab is opened rather than on every run, and two thousand rows at a time with a button for the next two thousand: a run may hold a hundred thousand output times, and a row of the table is a DOM element per column. The CSV export is not bounded by that — it streams the whole run. Right-click it to export **as CSV** or **as HDF5**: the table as it stands, every output the run produced, or the endpoints you pick. See [Saving the results](#saving-the-results). |
+| **Table** | The same numbers, for reading and copying. Built when this tab is opened rather than on every run, and two thousand rows at a time with a button for the next two thousand: a run may hold a hundred thousand output times, and a row of the table is a DOM element per column. The CSV export is not bounded by that — it streams the whole run. Right-click it for the table as it stands **as CSV** or **as HDF5**, or to **Open in the HDF5 Browser**; every other file the run can make is in **Save…**. See [Saving the results](#saving-the-results). |
 | **JSON** | The project file itself. |
 | **Generated code** | Two views of what the builder made. *Derivative code* is the function compiled from the equations — in the three passes it runs as: what reads neither the clock nor the state, worked out once when the model is built; what reads only the clock, once per instant; and the rest, on every call. *Jacobian* is the matrix of its partial derivatives, drawn as its sparsity pattern and checked against finite differences — see [Looking at the Jacobian](#looking-at-the-jacobian). |
 | **Help** | This file, and `INTERNALS.md`, read here — with a table of contents down the side. Set apart from the others because it is not a view of the model. |
@@ -1850,6 +1850,12 @@ memory stick.
 | **Data** | parameters and lookup tables — Excel or HDF5 |
 | **Run log** | what the solver did, as text |
 
+**Results**, **Every realisation** and **Data** have **Open in the HDF5
+Browser** beside *Save…*: the same file, handed to the
+[HDF5 Browser](https://kvotab.se/rb.html) in a new tab instead of written to
+disk. The browser reads HDF5 and nothing else, so that is what it is sent
+whichever format the dialog is on.
+
 Everything but the model and the archive is a list of named things, so the
 right-hand side is that list with a **search** over it, a filter by kind and by
 sub-system, and *All shown* / *None* acting on whatever the search matched —
@@ -1949,12 +1955,13 @@ NDF's Newton has its own convergence test and keeps a Jacobian until it stalls:
 | **Jacobian** | generated from the equations, or differenced through the same pattern (*finite differences*): the check to run when the generated one is in doubt | every stiff solver |
 | **Absolute tolerance follows the solution** | see below | `ndf`, the vendored methods |
 
-**What the chosen solver does not read is named rather than hidden.** Under the
-fold there is a line — *"stiff, Rosenbrock 5 does not read the maximum order,
-the minimum order, norm control, the stall tolerance, the Newton tolerance and
-how long a Jacobian is reused, so they are not shown"* — because a knob that
-silently does nothing is worse than a missing one: nothing on screen would tell
-you which it was. A Rosenbrock method is linearly implicit, so there is no Newton
+**What the chosen solver does not read is named rather than hidden.** At the
+foot of Advanced settings there is a line — *"stiff, Rosenbrock 5 does not read
+the BDF switch, the maximum order, the minimum order, norm control, the stall
+tolerance, the Newton tolerance and how long a Jacobian is reused, so they are
+not shown"* — because a knob that silently does nothing is worse than a missing
+one: nothing on screen would tell you which it was. The SciPy solvers read none
+of these settings, and their fold holds only that line. A Rosenbrock method is linearly implicit, so there is no Newton
 iteration to give a tolerance to, and it re-forms its Jacobian every step by
 definition, so there is no age to set.
 
@@ -2384,15 +2391,19 @@ so asking about an earlier row afterwards answers as of that row.
 This is why a large model no longer needs the memory it did. Storing every
 series of a landscape model of 200,000 values over 500 times was 800 MB before
 a line was drawn; the states alone are a twelfth of that. The one thing that
-still costs what it always did is *Export every output*, CSV or HDF5, which
-asks for every column at once — and says so while it works. See
+still costs what it always did is an export of every output — **Save →
+Results** with every block ticked, CSV or HDF5 — which asks for every column at
+once, and says so while it works. See
 [Saving the results](#saving-the-results) for what each of them writes.
 
 ## Saving the results
 
-Right-click the **Table**. Three ways to choose what goes in the file — the
-table as it stands, every output the run produced, or **Choose endpoints to
-save…** — and two formats for each.
+Right-click the **Table** for what it holds: **Export table to CSV**, **Export
+table to HDF5**, or **Open in the HDF5 Browser**, which hands the same HDF5 file
+to the reader without saving it. Everything else is in **Save…**: *Results*
+for any of the series, every output included, *Every realisation* for a
+probabilistic run's sample, and *Model with results*, whose ticks are the
+model's endpoints.
 
 ### Choosing endpoints
 
@@ -2414,8 +2425,10 @@ that is right for *looking* at a model and wrong for *saving* one. A run of
 model G has 831,314 series, which is 2.8 GB of HDF5 and more than
 a tab can build.
 
-So the third export is a list of the blocks the run produced, ticked. **The
-model's own endpoint list is what it opens on** when the file came with one, so
+So the endpoints are a list of the blocks the run produced, ticked: **Save →
+Model with results**, or **Choose…** beside *Keep only the endpoints* in
+Uncertainty → Probabilistic…, where the picker also writes the chosen blocks
+out. **The model's own endpoint list is what it opens on** when the file came with one, so
 the common case is one click; otherwise it opens on whatever the table is
 showing. Search by name or by kind (`parameter` narrows to parameters), and
 **All shown** and **None** act on every match rather than only the rows drawn.
@@ -2432,7 +2445,7 @@ anybody. It is an ordinary edit: undoable, and written into the project file.
 It changes no number, so it does not re-run anything.
 
 An export of more than half a gigabyte of numbers asks before it starts,
-whichever of the three it is: the file is built in memory before the browser is
+whichever it is: the file is built in memory before the browser is
 handed it, so the question is not patience but whether the tab can hold it.
 
 **CSV** is one row per output time and one column per series, with the time
@@ -5223,8 +5236,18 @@ of it is left to arrive now.
 **It uses the machine's cores.** A thousand realisations are a thousand
 independent integrations, and they are shared over as many workers as there are
 cores, less one — that one is left for the interface, so the page keeps
-answering while it runs. The notice at the end says how many were used, and the
+answering while it runs. The footer says how many cores the run is on beside
+the progress bar, from the moment it starts building — hover it for why, when
+that is fewer than you asked for — the notice at the end says it again, and the
 estimate before it starts is divided by them.
+
+**Cores** in the dialog sets the number yourself: *auto*, which says what it
+comes to, or 1 to 16. A number is used as it stands — fewer to keep the machine
+free for something else, or more where the browser reports fewer cores than
+there are, which some do on purpose — bounded only by the number of
+realisations. It is remembered in this browser rather than in the model, since
+it is a fact about the machine and changes no number, and the tornado and the
+sensitivity designs use it too.
 
 The answer does not depend on how many cores there are: the same model with the
 same seed gives *identical* numbers on one core and on sixteen, to the last
@@ -5235,10 +5258,10 @@ put back in realisation order rather than in the order they arrive. There is a
 test.
 
 Two cases run on one thread instead, and both are deliberate: a browser that
-will not let a worker start workers (Safari before 16.4), and a model whose
-*build* dwarfs its solve — every worker builds the model for itself, so a
-handful of realisations of a model that takes a minute to build is slower on
-eight cores than on one. `?workers=1` in the address forces the single-threaded
+will not let a worker start workers (Safari before 16.4), whatever **Cores**
+says; and, on *auto*, a model whose *build* dwarfs its solve — every worker
+builds the model for itself, so a handful of realisations of a model that takes
+a minute to build is slower on eight cores than on one. `?workers=1` in the address forces the single-threaded
 path, and `?workers=4` caps it, which is the way to measure what it is worth on
 your own machine and to leave room for other work.
 
@@ -5271,8 +5294,7 @@ so it travels with the project file and the next run starts where the last one
 left off. An imported `.eco` arrives with its own list, which is what the dialog
 opens on.
 
-The same picker is reached from **Save → Model with results**, and on the Table tab's
-right-click menu where it also writes the chosen blocks out as CSV or HDF5.
+The same list is in **Save → Model with results**.
 
 **It needs no run.** The blocks it offers come from the model — what a run
 *would* report is a function of the layout, and the layout exists as soon as
@@ -5529,7 +5551,8 @@ sits well above the median, which is exactly why it is worth seeing both. The
 choice is saved with the model and redrawn at once from the realisations the
 worker still holds.
 
-**Saving a probabilistic result.** *Choose endpoints to save…* has a **HDF5
+**Saving a probabilistic result.** The endpoints picker — **Choose…** beside
+*Keep only the endpoints* in Uncertainty → Probabilistic… — has a **HDF5
 holds** row once a probabilistic run stands behind the series, with four things
 the file can be:
 
@@ -5549,16 +5572,18 @@ and single-realisation files carry `realisation` and `n_iter` attributes, and
 the deterministic one carries neither. CSV always writes the deterministic
 values, and says so.
 
-Right-click the table for the quick version: **Export table to HDF5** for the
-curve, **Export realisations to HDF5** for the sample — and **Open in the HDF5
-browser** or **Open every output in the HDF5 browser** to send either straight
-to the reader without saving a file. The whole run is the usual thing to want
-there: a reader is opened to look around in, which is exactly when you want
-more than the four lines you happened to chart.
+The quick version: **Export table to HDF5** on the table's right-click menu
+for the curve, **Save → Every realisation** for the sample — and **Open in the
+HDF5 Browser**, on that menu and beside *Save…*, to send either straight to the
+reader without saving a file. The whole run is the usual thing to want there,
+which is **Save → Results** with every block ticked: a reader is opened to look
+around in, which is exactly when you want more than the four lines you happened
+to chart.
 
 **Or open it in the reader without saving it at all.** *Open in browser* in the
-endpoints picker — and **Open in the HDF5 browser** on the table's menu — opens
-the result browser at kvotab.se in a new tab and hands it the file directly. No
+endpoints picker — and **Open in the HDF5 Browser** on the table's menu and in
+Save… — opens the HDF5 Browser at kvotab.se in a new tab and hands it the file
+directly. No
 download, nothing to find in a downloads folder afterwards, and nothing left
 behind when the tab is closed. It writes whatever **HDF5 holds** is set to, so
 the realisations can go across the same way.
@@ -5669,11 +5694,26 @@ for. Either one asks the sample again and answers in place: the coefficients
 are a pass over realisations that are already in memory, so changing them costs
 nothing and no dialog stacks up behind.
 
+**Measures ▸ Distribution** puts four more beside the rank correlation, the half
+of GlobalSensitivity.jl that reads any sample: **EASI**'s first-order index,
+the share of the variance an input explains alone, of any shape; Borgonovo's
+**δ**, how far knowing the input moves the output's whole distribution rather
+than only its variance; **mutual information**, in bits, above what shuffling
+the output gives by chance; and **RSA**, the Kolmogorov-Smirnov distance
+between the input's values in the realisations above the output's mean and in
+those below, with ten dummy inputs the model never saw to show what chance
+alone reaches. Where the correlations say nothing — an output that peaks in the
+middle of an input's range — these still see it. δ and mutual information are
+read on scores (normal scores of the output, ranks), which changes neither of
+them: a dose that spans thirty decades has no density estimate on a linear
+grid, and on the values δ came out in the hundreds of thousands. δ is a
+bootstrap per input, so this takes a few seconds on a large sample.
+
 *Of* can only offer what the run **kept**. If *Keep only the N endpoints* was
 ticked when it ran, that is the endpoint list and nothing else — ask about a
 line outside it and this opens on the first endpoint instead and says so. To
 widen the choice, run again with the box clear, or add the line to the endpoint
-list (**Choose endpoints to save…**, in the table's right-click menu). On a
+list (**Choose…** beside *Keep only the endpoints* in Probabilistic…). On a
 model with more series than the list will hold, chart the one you want and open
 this again.
 
@@ -5819,6 +5859,51 @@ It needs no sample, finds no interactions, and is the chart to draw when the
 distributions are not yet trusted enough to sample from — or when the question
 is which of six hundred inputs to bother giving a distribution at all. The
 percentiles swung to are saved with the model.
+
+## Global sensitivity
+
+**Analyse ▾ → Global sensitivity…** runs the designed methods of SciML's
+[GlobalSensitivity.jl](https://github.com/SciML/GlobalSensitivity.jl), each an
+experiment of its own over the model's distributions:
+
+| Method | What it gives | Runs for K inputs |
+|---|---|---|
+| **Morris** | μ∗ (how much an input matters), μ (which way), σ (how much that depends on where it is taken — a curve or an interaction) | trajectories × points, 100 by default |
+| **Sobol** | S₁, the share of the variance an input explains alone, and Sₜ, the share it has a hand in; optionally every pair's S₂, and intervals from repeated blocks | (K + 2) × samples; (2K + 2) with pairs |
+| **eFAST** | S₁ and Sₜ from the spectrum along one curve per input | K × points per curve |
+| **RBD-FAST** | S₁, from one curve for every input at once | samples, whatever K is |
+| **Fractional factorial** | main effects, each input at a low or a high percentile | 2 × the next power of two above K |
+| **DGSM** | derivatives with respect to each input; ν, their mean square, bounds Sₜ from above | (K + 1) × points |
+| **Shapley** | each input's fair share of the variance; they add up to one even when inputs are correlated | variance runs + orders × (K − 1) × outer × inner |
+
+The dialog says what a design will cost before it runs — from the run you have
+already made, as the probabilistic dialog does — because the methods differ by
+orders of magnitude: a fractional factorial of fifteen inputs is 32 runs, and
+Sobol's indices with a thousand samples are 17,000. Screen with Morris or the
+factorial, then spend Sobol's runs on the inputs that survive. The runs go
+through the same pool of cores, and **Cores** in the dialog is the same setting.
+
+The result is a table per output — **Of**, and the reading (peak, end, lowest,
+at a time) — with the ranking index over time for the inputs that lead it;
+changing either reads the runs again rather than making more. Which method, its
+settings and the seed are saved with the model, so the answer can be had again.
+
+**In probability, not in units.** Each design is drawn in the unit hypercube —
+a probability per input — and each point becomes a run through each input's
+own inverse CDF, the way a Latin hypercube sample does. So the methods work for
+every distribution, including unbounded ones, and an elementary effect or a
+derivative is per unit of probability: the inputs are comparable with each
+other whatever their units. A correlation group is one input, its members
+moving together. The model's other correlations are honoured by Shapley
+effects, through a Gaussian copula; the other methods assume independent
+inputs, as their designs do, and say so.
+
+Every estimator is GlobalSensitivity.jl's own arithmetic, and the tests hold
+them to its results on the same designs and data (see INTERNALS.md). Where this
+tool differs it does so on purpose: the designs come from the tool's seeded
+streams rather than Julia's generator, eFAST's points per curve are raised to a
+number its harmonics fit under, DGSM differentiates by finite differences, and
+two slips in GlobalSensitivity.jl are not carried over.
 
 ## Replaying one realisation
 

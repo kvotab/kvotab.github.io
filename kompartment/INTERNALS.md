@@ -64,6 +64,7 @@ exercise `domain/` and `sim/` directly, which is why they can be plain Node.
 | `src/domain/queries.js`, `src/ui/querydialog.js` | Searching the model's parameters |
 | `src/domain/qa.js` | Parameter approvals, computed from the dependency graph |
 | `src/domain/correlate.js` | Correlated sampling, by Iman and Conover's permutation |
+| `src/domain/gsa.js`, `src/domain/fft.js`, `src/ui/gsadialog.js` | Global sensitivity analysis, ported from GlobalSensitivity.jl, and the FFT its spectral methods read |
 | `src/domain/categories.js` | Classifying and screening realisations |
 | `src/domain/distribution.js` | A distribution summary with a DKW band |
 | `src/domain/massbalance.js` | The mass-balance audit, done with budget states the solver integrates |
@@ -81,6 +82,7 @@ exercise `domain/` and `sim/` directly, which is why they can be plain Node.
 | `src/ui/inspector.js` | The settings panel for whatever is selected |
 | `src/ui/indexlists.js` | Index lists, contaminants and decay data, in one panel |
 | `src/ui/endpoints.js` | Which blocks an export offers |
+| `src/ui/cores.js` | How many cores a sampled run is shared over, when the reader says |
 | `src/ui/help.js`, `src/ui/markdown.js`, `src/ui/helpfigures.js` | This documentation, read inside the application |
 | `css/app.css`, `css/theme-kvotab.css` | Every colour, as tokens, and a second palette for embedding |
 | `src/ui/undo.js` | Undo and redo, from snapshots |
@@ -3161,6 +3163,15 @@ returns 1 where it does not pay: a model that takes a minute to build and five
 milliseconds to solve is slower on eight cores than on one. It also returns 1
 where the browser will not nest Workers, which it finds out by trying.
 
+**A number the reader chose** (*Cores* in the Probabilistic and Tornado
+dialogs, `src/ui/cores.js`) goes to the worker as `cores` and to `workersFor`
+as `exact`: used as it stands, bounded by `MOST_WORKERS` and the number of
+realisations, and not second-guessed by the build arithmetic. It is kept in
+`localStorage` (`kompartment.cores`), not in the model: it changes no number. The
+coordinator posts `{type: 'pool', workers, asked, why}` once it has sized the
+pool and before anything is built, and the footer shows the count beside the
+bar for the rest of the run, with `why` in its tooltip.
+
 **Stopping.** Terminating the coordinator would leave its children holding a
 core and a matrix each with nothing able to talk to them. A `cancel` message
 *does* reach the coordinator during a pool run — it is awaiting messages, not
@@ -3171,7 +3182,65 @@ which is why terminating exists at all.
 
 **Not done.** The pool is sized per run and torn down after it; a long session
 pays the start-up each time. Ecolego's own `<max-n-processors>` setting is not
-read from the file — `?workers=` is the only way to cap it by hand.
+read from the file; *Cores* sets the number by hand, and `?workers=` caps it.
+
+## Global sensitivity, from GlobalSensitivity.jl
+
+`src/domain/gsa.js` is a port of GlobalSensitivity.jl 2.12.8's methods: the
+designed ones (Morris, Sobol, eFAST, RBD-FAST, fractional factorial, DGSM,
+Shapley) and the ones that read a sample (EASI, δ, RSA, mutual information).
+Its regression method is not ported: it fits without an intercept and ranks by
+`sortperm`, and `src/domain/sensitivity.js` already does SRC, PCC and their
+rank forms properly.
+
+**How it was checked.** `scripts/gen-gsa-ref.jl` runs GlobalSensitivity.jl on
+fixed designs and data -- Ishigami, linear and product test functions, so
+nothing in it is anybody's data -- and writes what it gets, with every random
+draw the methods make of their own replayed from the same RNG (eFAST's phases,
+RBD-FAST's permutations, δ's bootstrap indices, the MI shuffles), to
+`test/fixtures/gsa-reference.json`, arrays as base64 of their Float64 bytes.
+The test rebuilds each design here, requires the outputs over it to be Julia's
+to 1e-12, and each estimator to agree to 1e-9 (1e-7 for the intervals, whose
+normal quantile is computed differently). The worst difference on the day it
+was written was 8e-13. Designs that Julia draws from its own generator (Morris's
+walks, Shapley's samples) are compared through their recorded points; the
+methods are also held to known answers -- Ishigami's closed-form indices,
+exact effects on linear functions, Shapley effects of a correlated Gaussian
+model -- because a design here is drawn from the tool's streams, not Julia's.
+To regenerate: a Julia environment with GlobalSensitivity 2.12.8, StableRNGs,
+JSON3, Distributions and Copulas, then `julia --project=… scripts/gen-gsa-ref.jl`.
+
+**Probability space.** Every design is in the unit hypercube; `gsaDesignFor` in
+`src/sim/probabilistic.js` maps a point through each input's
+`valueAtProbability`, as a Latin hypercube sample is mapped. A correlation
+group is one factor, its members sharing the column; a partial run's held
+inputs are not factors; a `pg` list read in order is read by probability; no
+disruptive event draws dice (a design point is its factors' and nothing
+else's). The correlations reach Shapley only, as a Gaussian copula of the
+normal scores with ρ = 2 sin(πρₛ/6), shrunk towards independence by the least
+that makes the pairs a valid matrix.
+
+**The deliberate differences** are listed at the top of `gsa.js`: seeded
+streams instead of Julia's RNG and Sobol sequences; Morris's levels at the
+middles of the probability slices and no candidate trajectories (all spreads
+are equal in probability space); eFAST's points per curve raised to where the
+harmonics fit (Julia indexes past its spectrum for, e.g., 65 or 1001); DGSM by
+finite differences in probability; a one-input factorial; RSA's dummy spread
+over all dummies; and δ's density of a tied class at the whole output's
+bandwidth. Two things GlobalSensitivity.jl does not guard against are handled
+by the caller rather than the port: *What drove it* reads δ on the output's
+normal scores and mutual information on ranks, which leaves both unchanged and
+keeps their estimators working on an output spanning thirty decades (on the
+values, δ was 449,816). And its fractional factorial writes the levels into an
+integer matrix, so a level of 0.2 is an `InexactError` there; the reference
+case uses integer levels.
+
+**Where it runs.** The worker's `gsa` message is `runDesign` with a design: the
+coordinator builds the model once, as for a tornado, to learn the plan, sizes
+the pool from the design's run count, and keeps the design for the analysis;
+each slice draws the same design from the same seed. `gsa-table` reads the
+runs for another output or reading. The page asks with `wantLabel` so the
+answer arrives for the line on the chart.
 
 ## An empty dimension
 

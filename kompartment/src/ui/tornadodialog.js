@@ -22,6 +22,7 @@ import { STATS, STAT_LABEL } from '../domain/categories.js';
 import { howLong } from './probdialog.js';
 import { inputName } from './sensdialog.js';
 import { fmtStat } from './distdialog.js';
+import { coresRow } from './cores.js';
 
 /**
  * Prices the runs and asks which probabilities to swing to.
@@ -29,12 +30,16 @@ import { fmtStat } from './distdialog.js';
  * @param {object} opts
  * @param {Array} opts.plan            what would be swung, from `samplingPlan`
  * @param {number|null} opts.lastSolveMs
- * @param {number} opts.workers
+ * @param {number} opts.workers          how many cores when the tool decides
+ * @param {number|null} [opts.cores]     the reader's own number, or null for that
  * @param {string[]} opts.endpoints
  * @param {object} opts.simulation
- * @param {(choice: {low: number, high: number, blocks: string[]|null}) => void} opts.onRun
+ * @param {(choice: {low: number, high: number, blocks: string[]|null, cores: number|null}) => void} opts.onRun
  */
-export function openTornadoSetup({ plan, lastSolveMs = null, workers = 1, endpoints = [], simulation = {}, onRun }) {
+export function openTornadoSetup({
+	plan, lastSolveMs = null, workers = 1, cores: chosen = null, endpoints = [], simulation = {}, onRun,
+}) {
+	let chosenCores = chosen;
 	let low = Number(simulation.tornado_low ?? 0.05);
 	let high = Number(simulation.tornado_high ?? 0.95);
 	let onlyEndpoints = endpoints.length > 0;
@@ -43,7 +48,7 @@ export function openTornadoSetup({ plan, lastSolveMs = null, workers = 1, endpoi
 		subtitle: 'Each sampled input swung on its own, low and high, with the rest held',
 		build: (body) => {
 			const runs = 2 * plan.length + 1;
-			const cores = Math.max(1, Math.min(workers, runs));
+			const cores = Math.max(1, Math.min(chosenCores ?? workers, runs));
 			const total = lastSolveMs ? (lastSolveMs * runs) / cores : null;
 			body.append(el('div', { className: 'prob-summary' },
 				el('p', {}, el('b', {}, `${runs.toLocaleString()} runs`),
@@ -65,6 +70,10 @@ export function openTornadoSetup({ plan, lastSolveMs = null, workers = 1, endpoi
 			};
 			body.append(pctRow('Low percentile', () => low, (v) => { low = v; }));
 			body.append(pctRow('High percentile', () => high, (v) => { high = v; }));
+			body.append(coresRow({
+				auto: workers, value: chosenCores,
+				onChange: (n) => { chosenCores = n; modal.refresh(); },
+			}));
 			if (endpoints.length) {
 				const box = el('input', { type: 'checkbox', checked: onlyEndpoints });
 				box.addEventListener('change', () => { onlyEndpoints = box.checked; });
@@ -73,7 +82,10 @@ export function openTornadoSetup({ plan, lastSolveMs = null, workers = 1, endpoi
 						`Keep only the ${endpoints.length} endpoints`), box));
 			}
 			const go = el('button', { type: 'button', className: 'primary', disabled: !(high > low) }, 'Run');
-			go.addEventListener('click', () => { modal.close(); onRun({ low, high, blocks: onlyEndpoints ? endpoints : null }); });
+			go.addEventListener('click', () => {
+				modal.close();
+				onRun({ low, high, blocks: onlyEndpoints ? endpoints : null, cores: chosenCores });
+			});
 			const cancel = el('button', { type: 'button', className: 'ghost' }, 'Cancel');
 			cancel.addEventListener('click', () => modal.close());
 			body.append(el('div', { className: 'pdf-foot' },
