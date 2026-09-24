@@ -1439,6 +1439,33 @@ function resetInfoPanel() {
 }
 
 /**
+ * Listen for a Plotly event on the chart in place of the listener registered
+ * before under the same `key`, so that setting a chart up twice leaves one.
+ *
+ * Every chart builder sets the chart up once Plotly.newPlot has finished, and
+ * newPlot drops the last chart's listeners. But a click that lands before the
+ * drawing has finished starts the next drawing, and the earlier one, finishing
+ * late, then sets up the chart that has already replaced it. With a plain `on`
+ * each of those added its listeners again: fifteen quick ctrl-clicks left
+ * thirty on plotly_relayout, and Plotly warned of a leak.
+ *
+ * @param {HTMLElement} plotDiv - The Plotly chart DOM element
+ * @param {string} event - The Plotly event, e.g. 'plotly_relayout'
+ * @param {string} key - Who listens; one listener per key
+ * @param {Function} handler
+ */
+function onPlotEvent(plotDiv, event, key, handler) {
+  const held = plotDiv.__listeners || (plotDiv.__listeners = {});
+  const previous = held[key];
+  // newPlot may have dropped it already; removing it again does nothing.
+  if (previous && typeof plotDiv.removeListener === 'function') {
+    plotDiv.removeListener(previous.event, previous.handler);
+  }
+  held[key] = { event, handler };
+  plotDiv.on(event, handler);
+}
+
+/**
  * Assign legendrank to traces so that in the legend they are grouped by
  * line width (thick first, thin second) and within each group sorted by
  * the maximum Y value in descending order.

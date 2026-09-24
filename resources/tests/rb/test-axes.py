@@ -167,6 +167,10 @@ async def main():
     async with websockets.connect(ver['webSocketDebuggerUrl'],
                                   max_size=200 * 1024 * 1024) as bws:
         tid, page = await open_page(bws, settle=7)
+        # The presets live in the browser profile, which every test here
+        # shares, and this one edits and deletes them. It puts back what it
+        # found, or the next characterise.py lists one preset fewer.
+        stored = await page.ev("localStorage.getItem('chartPresets')")
         try:
             await page.ev("localStorage.removeItem('chartPresets'); populatePresetDropdown(); true")
             check('overlay file built and loaded', await page.ev(BUILD), ['overlay.h5'])
@@ -309,6 +313,8 @@ async def main():
 
             check('no console errors throughout', page.logs[:3], [])
         finally:
+            await page.ev("(v => { if (v === null) localStorage.removeItem('chartPresets');"
+                          " else localStorage.setItem('chartPresets', v); return true; })(%s)" % json.dumps(stored))
             await bws.send(json.dumps({'id': 98, 'method': 'Target.closeTarget',
                                        'params': {'targetId': tid}}))
 

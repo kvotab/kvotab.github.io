@@ -120,16 +120,17 @@ function refreshDynamicLegend() {
 /**
  * Set up dynamic legend filtering on zoom/pan events.
  * Attaches a plotly_relayout listener that updates legend visibility
- * based on which traces have data points in the current viewport.
- * 
+ * based on which traces have data points in the current viewport, and only
+ * one however often the chart is set up (see onPlotEvent).
+ *
  * This helps reduce legend clutter when zoomed in on charts with many traces.
  * A status indicator shows "Showing X/Y traces" when filtering is active.
- * 
+ *
  * @param {HTMLElement} plotDiv - The Plotly chart DOM element
  * @returns {void}
  */
 function setupDynamicLegend(plotDiv) {
-  plotDiv.on('plotly_relayout', function(eventData) {
+  onPlotEvent(plotDiv, 'plotly_relayout', 'dynamicLegend', function(eventData) {
     if (!dynamicLegendEnabled) return;
     if (window._dynamicLegendUpdating) return;
     

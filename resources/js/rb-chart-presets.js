@@ -704,9 +704,10 @@ function snapLogRangeToDecades(plotDiv) {
  * - Manual zoom/pan → switch to "Custom *"
  * - Autoscale (double-click or button) → switch to "Auto range"
  * Programmatic relayouts are ignored via _suppressPresetSync flag.
+ * One listener however often the chart is set up (see onPlotEvent).
  */
 function setupPresetRelayoutSync(plotDiv) {
-  plotDiv.on('plotly_relayout', function(eventData) {
+  onPlotEvent(plotDiv, 'plotly_relayout', 'presetSync', function(eventData) {
     if (_suppressPresetSync) return;
     if (!eventData) return;
 

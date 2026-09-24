@@ -71,6 +71,13 @@ async def open_page(bws, url='http://127.0.0.1:8765/rb.html', settle=6):
     await send('DOM.enable')
     await send('Network.enable')
     await send('Network.setCacheDisabled', {'cacheDisabled': True})
+    # A desktop viewport, whatever window the browser was started with. Some
+    # checks point the mouse at the middle of the chart, and Chrome 153's
+    # default headless window, 756 x 469, puts that below the viewport, where a
+    # pointer event reaches nothing: test-axes.py then failed all five of its
+    # tooltip checks with the page working as it should.
+    await send('Emulation.setDeviceMetricsOverride',
+               {'width': 1400, 'height': 1000, 'deviceScaleFactor': 1, 'mobile': False})
     await send('Page.navigate', {'url': url})
     await asyncio.sleep(settle)
     return tid, Page(ws, send, ev, logs)

@@ -22,6 +22,13 @@ the span they do on a linear axis and on a log one (which drops t = 0), and
 answers a hover wherever they do. The files are built in the page with h5wasm,
 so nothing binary is committed for this.
 
+Each click redraws the chart, so this is also where clicking faster than the
+chart is drawn showed up. Every drawing sets the chart up when it finishes,
+and one that finishes late sets up the chart that has already replaced it.
+That added the relayout listeners once more per click, until Plotly warned of
+a leak. Now the listeners replace their earlier copies, and fifteen quick
+clicks leave exactly what one click does.
+
 Start the server and the browser as in README.md, then
 
     python3 resources/tests/rb/test-constants.py
@@ -154,6 +161,13 @@ def spans(chart, n=3):
     return ([e or [None] * 3 for e in chart['extent']] + [[None] * 3] * n)[:n]
 
 
+# How many listeners the chart has on plotly_relayout.
+LISTENERS = """(() => {
+  const ev = document.getElementById('plotlyChart')._ev;
+  return ev ? ev.listeners('plotly_relayout').length : null;
+})()"""
+
+
 def by_name(chart, name, band=None):
     # A trace that is not there fails the checks on it, rather than the script.
     return next((t for t in chart['traces'] if t['name'] == name and t['band'] == band), MISSING)
@@ -169,9 +183,8 @@ async def main():
             check('the constants file is built and loaded', await page.ev("__build('constants.h5')"), ['constants.h5'])
 
             # --- a series and the values beside it, by ctrl-click -------------
-            # At a person's pace: each click redraws the chart, and clicks that
-            # land before the last drawing has finished each leave their own
-            # relayout listeners on the next one, which Plotly warns about.
+            # At a person's pace, each chart drawn before the next click. Clicks
+            # faster than that are the next section but one.
             await page.ev("""(async () => {
               for (const p of ['flux', 'k', 'c0', 'label', 'table', 'broken']) {
                 selectDataset('/geosphere/' + p, { ctrlKey: true, stopPropagation() {} });
@@ -209,6 +222,24 @@ async def main():
                   [e[:2] for e in lines[1:]], [lines[0][:2]] * 2)
             check('  and are drawn at all', all(e[0] is not None and e[1] - e[0] > 100 for e in lines), True)
             await page.ev("document.querySelector('#xScaleToggle button[data-value=linear]').click(); __wait(800)")
+
+            # --- clicks faster than the chart is drawn ------------------------
+            # Every click starts a drawing before the last has finished; the
+            # selection goes on, off and on again, fifteen drawings in all.
+            paced = await page.ev(LISTENERS)
+            await page.ev("""(async () => {
+              selectDataset('/geosphere/flux');
+              await __wait(1200);
+              for (let i = 0; i < 3; i++)
+                for (const p of ['k', 'c0', 'label', 'table', 'broken'])
+                  selectDataset('/geosphere/' + p, { ctrlKey: true, stopPropagation() {} });
+              await __wait(2500);
+            })()""")
+            c = await page.ev('__chart()')
+            check('clicks faster than the chart is drawn end on the last one\'s chart',
+                  [t['name'] for t in c['traces']], ['flux', 'k', 'c0'])
+            check('  with the relayout listeners one click leaves, no more', await page.ev(LISTENERS), paced)
+            check('  which is some', (paced or 0) > 0, True)
 
             # --- without a series there is still no time chart ---------------
             await page.ev("__select([{ path: '/geosphere/k', fileKey: 'constants.h5' }, { path: '/geosphere/c0', fileKey: 'constants.h5' }])")

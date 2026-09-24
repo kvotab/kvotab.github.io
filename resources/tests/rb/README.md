@@ -11,13 +11,13 @@ Serve the site and start Chrome with remote debugging:
     python3 -m http.server 8765 --bind 127.0.0.1
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
       --headless=new --remote-debugging-port=9222 --no-first-run \
-      --window-size=1400,1000 \
       --user-data-dir=/tmp/rbtest --disable-gpu about:blank
 
-The window size matters. `test-axes.py` points the mouse at the middle of the
-chart, and without `--window-size` Chrome 153 opens a headless window of
-756 × 469, which puts that point below the viewport. Every tooltip check then
-reads nothing, and five checks fail with the page working as it should.
+The size of Chrome's window does not matter: `open_page` in `driver.py` gives
+every page a 1400 × 1000 viewport. It used to matter. `test-axes.py` points the
+mouse at the middle of the chart, and Chrome 153's default headless window,
+756 × 469, put that point below the viewport. Every tooltip check then read
+nothing, and five checks failed with the page working as it should.
 
 Then, from this directory:
 
@@ -109,7 +109,10 @@ unchanged leaves the selection alone, editing the *selected* preset keeps it
 selected and moves the chart, editing any other preset moves nothing, and
 closing the dialog re-applies nothing. The file with the overlay is built in
 the page with h5wasm, as `handoff-demo.html` does, so no data file is
-committed for it.
+committed for it. The presets are kept in the browser profile, which every
+test here shares, and this test edits and deletes them. It puts back what it
+found when it finishes; it used to leave "release" deleted, and the next
+`characterise.py` then listed one preset fewer.
 
     python3 test-axes.py
 
@@ -140,6 +143,14 @@ not numbers are not drawn. The test checks that on screen the flat lines span
 exactly what the series do, on a linear axis and on a log one (which drops
 t = 0). It builds its three files in the page with h5wasm.
 
+It also clicks faster than the chart is drawn. Every chart builder sets the
+chart up once `Plotly.newPlot` has finished, and a drawing that finishes after
+the next click has replaced it sets up the chart that replaced it. That used to
+add its relayout listeners again, until fifteen quick clicks left thirty and
+Plotly warned of a leak. Now `onPlotEvent` in `rb-utils.js` replaces a
+listener's earlier copy, and the test checks that fifteen quick clicks leave
+what one click does.
+
     python3 test-constants.py
 
 ## Nothing here needs a committed data file
@@ -168,12 +179,6 @@ Lazy tree loading races the search filter: the background expansion that pulls
 matching paths into the DOM may or may not have finished when the counts are
 taken, so hidden rows swing by about fifty and match counts by one. The swing
 is not ±1, despite what this section used to claim.
-
-`/dialogs/presetOptions` moves when `test-axes.py` ran in the same Chrome
-profile between the two runs. It deletes the "release" preset and leaves it
-deleted, so the second run lists one preset fewer. Clear `chartPresets` from
-localStorage, or start Chrome with a fresh `--user-data-dir`, before each
-characterisation.
 
 Treat a diff confined to `/search/**` as inconclusive rather than clean — if it
 matters, run the unchanged code twice and compare those two runs, which
