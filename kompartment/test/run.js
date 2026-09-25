@@ -35327,6 +35327,37 @@ test('a run clears the last one’s numbers and says when it started and for how
 		'the clock is not in the progress slot, which keeps its space');
 });
 
+test('a sampled run says how long it has left, from the pace of its realisations since the first', async () => {
+	const { timeLeft, fmtLeft } = await import('../src/ui/app.js');
+	// Ten realisations a second since the first report, 900 to go: 90 s, less
+	// the time since the latest report, and never below nothing.
+	const e = { t0: 0, done0: 8, tLast: 10000, done: 108, of: 1008 };
+	assert(timeLeft(e, 10000) === 90000 && timeLeft(e, 15000) === 85000, `${timeLeft(e, 10000)} ${timeLeft(e, 15000)}`);
+	assert(timeLeft(e, 200000) === 0, 'the countdown went below nothing');
+	// Nothing said on too little evidence: under two seconds, or fewer than
+	// two realisations since the first.
+	assert(timeLeft({ ...e, tLast: 1500 }, 1500) === null && timeLeft({ ...e, done: 9 }, 10000) === null);
+	assert(timeLeft({ ...e, done: 1008 }, 10000) === 0, 'a finished run has time left');
+	// Rounded as far as an estimate deserves, and up.
+	const cases = [[4000, 'a few seconds'], [9900, 'about 10 s'], [10200, 'about 10 s'], [33000, 'about 35 s'], [59900, 'about 1 min'], [200000, 'about 3 min 20 s'],
+		[175000, 'about 3 min'], [599000, 'about 10 min'], [1500000, 'about 25 min'], [3599000, 'about 1 h 00 min'],
+		[7260000, 'about 2 h 05 min']];
+	for (const [ms, want] of cases) assert(fmtLeft(ms) === want, `${ms} ms: ${fmtLeft(ms)}, not ${want}`);
+	// Fed by the worker's count, which it sends with every report of a sampled
+	// run, a tornado and a sensitivity design alike; kept per run; gone when
+	// the run is; and in the clock beside the bar, with the count by the bar.
+	const { readFileSync } = await import('node:fs');
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	const worker = readFileSync(new URL('../src/worker/sim-worker.js', import.meta.url), 'utf8');
+	assert(/type: 'progress', id, fraction: done \/ total, at: null,\n\t\t\t\trealisation: done, of: total,/.test(worker), 'the worker no longer sends the count');
+	assert(/if \(m\.of\) noteRealisations\(m\.realisation, m\.of\);\n\t\t\tsetProgress\(m\.fraction, m\.at\);/.test(app), 'the count is not taken');
+	assert(/if \(!e \|\| e\.run !== state\.runId\) \{\n\t\trunClock\.eta = \{ run: state\.runId, t0: now, done0: done, tLast: now, done, of \};/.test(app),
+		'the pace is not measured from the first realisation of this run');
+	assert(/runClock\.started = 0;\n\trunClock\.eta = null;/.test(app), 'an estimate outlives its run');
+	assert(/\+ \(left == null \? '' : finishing \? ' \\u00b7 all in, finishing' : ` \\u00b7 \$\{fmtLeft\(left\)\} left`\);/.test(app),
+		'the clock does not say the time left, or that the realisations are in and being put together');
+});
+
 test('an empty solver setting says what it comes to, and the solvers agree', async () => {
 	const { solverDefault, solverOptions, SOLVER_OPTION_INFO, PORTED_IDS } = await import('../src/ode/solvers.js');
 	const { readFileSync } = await import('node:fs');

@@ -976,6 +976,9 @@ function ensureWorker() {
 				if (state.tab === 'code' && generated.view === 'jacobian') renderJacobian();
 				return;
 			}
+			// A sampled run says how many of how many realisations are in,
+			// which is what the time it has left is worked out from.
+			if (m.of) noteRealisations(m.realisation, m.of);
 			setProgress(m.fraction, m.at);
 			return;
 		}
@@ -2735,9 +2738,16 @@ function paintProgress() {
 	bar.value = f;
 	const unit = state.raw?.simulation?.time_unit ?? '';
 	const pool = poolNote(state.pool);
+	// A sampled run's count as well: of eight thousand realisations one per
+	// cent is eighty, and the count is what the time left is worked out from.
+	const e = runClock.eta?.run === state.runId ? runClock.eta : null;
+	const count = e && !batch.length
+		? ` · ${e.done.toLocaleString('en-US').replace(/,/g, '\u2009')} of ${e.of.toLocaleString('en-US').replace(/,/g, '\u2009')}`
+		: '';
 	// Padded, and in tabular figures, so the digits do not jog the bar.
 	text.textContent = `${String(Math.round(f * 100)).padStart(3, ' ')}%`
 		+ (at == null || !Number.isFinite(at) ? '' : ` · ${fmtClock(at)}${unit ? ` ${unit}` : ''}`)
+		+ count
 		+ also
 		+ (pool.text ? ` · ${pool.text}` : '');
 	text.title = pool.title;
@@ -4139,7 +4149,7 @@ let statusOwed = false;
  * model's time, and this how long it has taken so far -- which on a model of
  * minutes is the number somebody waiting for it wants.
  */
-const runClock = { started: 0, timer: 0 };
+const runClock = { started: 0, timer: 0, eta: null };
 
 function startRunClock() {
 	runClock.started = Date.now();
@@ -4152,15 +4162,117 @@ function stopRunClock() {
 	clearInterval(runClock.timer);
 	runClock.timer = 0;
 	runClock.started = 0;
+	runClock.eta = null;
 	paintRunClock();
 }
 
 function paintRunClock() {
 	const node = $('#run-clock');
 	if (!node) return;
-	node.textContent = runClock.started
-		? `started ${clockOf(new Date(runClock.started))} \u00b7 ${fmtElapsed((Date.now() - runClock.started) / 1000)}`
-		: '';
+	if (!runClock.started) {
+		node.textContent = '';
+		node.title = '';
+		return;
+	}
+	const now = Date.now();
+	const left = etaLeft(now);
+	const e = runClock.eta;
+	// Every realisation in, and the run not yet over: it is putting them
+	// together, which on a large sample is seconds in its own right, and "a
+	// few seconds left" through all of it would be a clock that had stopped.
+	const finishing = left === 0 && e && e.done >= e.of;
+	node.textContent = `started ${clockOf(new Date(runClock.started))} \u00b7 ${fmtElapsed((now - runClock.started) / 1000)}`
+		+ (left == null ? '' : finishing ? ' \u00b7 all in, finishing' : ` \u00b7 ${fmtLeft(left)} left`);
+	node.title = left == null ? ''
+		: finishing ? `All ${e.of.toLocaleString('en-US')} are in, and are being put together.`
+			: `Expected to finish at about ${clockOf(new Date(now + left))}: ${e.done.toLocaleString('en-US')} `
+				+ `of ${e.of.toLocaleString('en-US')} are in, at the pace they have come in since the first, `
+				+ `${fmtElapsed((e.tLast - e.t0) / 1000)} ago. An estimate, and a better one the longer the run `
+				+ 'has gone on; putting them together at the end is not in it.';
+}
+
+/**
+ * How much of the time a sampled run has had, at the least, before it says how
+ * long it has left: an estimate from a second of evidence swings by a factor
+ * of two with every report.
+ */
+const ETA_MIN_MS = 2000;
+
+/**
+ * A sampled run's count of realisations in, as the worker reports it, for the
+ * time it has left.
+ *
+ * The pace is measured from the first realisation to finish, not from the
+ * press of Run: everything before it -- building the model, starting the
+ * cores, the first integration on each -- is paid once, and counting it as the
+ * pace of the rest made the first minutes of an estimate far too long. And it
+ * is the average since then rather than the latest step, so that a burst of
+ * realisations landing together -- eight cores finishing their first at once
+ * -- does not swing it. A tornado and a sensitivity design report the same
+ * way, and are estimated the same way.
+ */
+function noteRealisations(done, of) {
+	if (!Number.isFinite(done) || !Number.isFinite(of) || of <= 0) return;
+	const now = Date.now();
+	const e = runClock.eta;
+	if (!e || e.run !== state.runId) {
+		runClock.eta = { run: state.runId, t0: now, done0: done, tLast: now, done, of };
+	} else {
+		e.tLast = now;
+		e.done = done;
+		e.of = of;
+	}
+	paintRunClock();
+}
+
+/**
+ * Milliseconds the sampled run has left, or null while there is too little to
+ * go on. Counted down between the worker's reports -- the clock is repainted
+ * every second, and a realisation can take longer than that -- and never below
+ * nothing.
+ */
+function etaLeft(now = Date.now()) {
+	const e = runClock.eta;
+	if (!e || e.run !== state.runId) return null;
+	return timeLeft(e, now);
+}
+
+/**
+ * The arithmetic of it, on its own: `e` is `{t0, done0, tLast, done, of}` --
+ * when the first report came and what it said, when the latest came and what
+ * it said, and how many there are in all.
+ */
+export function timeLeft(e, now) {
+	const spent = e.tLast - e.t0;
+	const since = e.done - e.done0;
+	if (spent < ETA_MIN_MS || since < 2) return null;
+	if (e.done >= e.of) return 0;
+	return Math.max(0, ((e.of - e.done) * spent) / since - (now - e.tLast));
+}
+
+/**
+ * Time left, rounded as far as an estimate deserves: `a few seconds`,
+ * `about 35 s`, `about 3 min 20 s`, `about 14 min`, `about 2 h 05 min`.
+ * Seconds to the nearest five; minutes and hours rounded up, so that it does
+ * not say a minute when there are ninety seconds.
+ */
+export function fmtLeft(ms) {
+	const s = ms / 1000;
+	if (s < 5) return 'a few seconds';
+	// Each step decided after rounding, so that 59.9 s reads as a minute
+	// rather than as `60 s`, and 59.9 min as an hour.
+	const fives = Math.max(5, Math.round(s / 5) * 5);
+	if (fives < 60) return `about ${fives} s`;
+	const tens = Math.ceil(s / 10) * 10;
+	if (tens < 600) {
+		const m = Math.floor(tens / 60);
+		const r = tens % 60;
+		return `about ${m} min${r ? ` ${String(r).padStart(2, '0')} s` : ''}`;
+	}
+	const mins = Math.ceil(s / 60);
+	if (mins < 60) return `about ${mins} min`;
+	const five = Math.ceil(s / 300) * 5;
+	return `about ${Math.floor(five / 60)} h ${String(five % 60).padStart(2, '0')} min`;
 }
 
 /** A time of day as the footer shows it: 14:05:09, whatever the locale. */

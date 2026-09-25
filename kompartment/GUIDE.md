@@ -5519,6 +5519,21 @@ the progress bar, from the moment it starts building — hover it for why, when
 that is fewer than you asked for — the notice at the end says it again, and the
 estimate before it starts is divided by them.
 
+**It says how long it has left.** Beside the percentage is the count of
+realisations in — `15% · 1 234 of 8 150` — and in the clock, once a couple of
+seconds of realisations have come in, the time left:
+`started 14:32:05 · 3 min 05 s · about 12 min left`. The pace is measured from
+the first realisation to finish, not from the press of Run, since building the
+model and starting the cores is paid once and would make the early estimates
+far too long. It is the average since then, so a batch of cores finishing
+together does not swing it. Between reports the estimate counts down. Hover the
+clock for the time of day the run is expected to finish. Once every realisation
+is in, the clock says *all in, finishing* while they are put together, which on a
+large sample takes seconds of its own and is not in the estimate. The tornado
+and the sensitivity designs are estimated the same way. It is an estimate: it
+improves as the run goes on, and a model whose realisations differ widely in
+cost, or a machine busy with something else, can still surprise it near the end.
+
 **Cores** in the dialog sets the number yourself: *auto*, which says what it
 comes to, or any number from 1 to the cores the machine has. A number is used
 as it stands — fewer to keep the machine free for something else, or all of
