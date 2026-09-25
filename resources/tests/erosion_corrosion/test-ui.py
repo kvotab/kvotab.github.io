@@ -3,12 +3,17 @@
 
 test-model.js proves the arithmetic. This proves the wiring: that the page
 loads without a script error, that the panel is built from the catalogue,
-that a built-in example loads, runs and puts the documented numbers in the
-summary, that every tab draws, that a parameter change re-runs, and that a
-dropped CSV of unknown shape is refused with a message rather than a
-silence.
+that SKB's code test case, dropped on the panel with the SR-Site settings,
+runs and puts the documented numbers in the summary, that every tab draws,
+that a parameter change re-runs, and that a dropped CSV of unknown shape is
+refused with a message rather than a silence.
 
-Start the server and the browser as in ../rb/README.md, then
+The test file is SKB's and not in the repository: the checks that need it
+drop the local copy that make-local-fixtures.py writes, and are skipped
+without it.
+
+Start the server and the browser as in ../rb/README.md (other ports with
+EC_HTTP_PORT and EC_CDP_PORT), then
 
     python3 resources/tests/erosion_corrosion/test-ui.py
 
@@ -16,12 +21,23 @@ Exit status is 0 when every check passes.
 """
 import asyncio
 import json
+import os
 import sys
 import urllib.request
 
 import websockets
 
-URL = 'http://127.0.0.1:8765/erosion_corrosion.html'
+HTTP = int(os.environ.get('EC_HTTP_PORT', '8765'))
+CDP = int(os.environ.get('EC_CDP_PORT', '9222'))
+URL = f'http://127.0.0.1:{HTTP}/erosion_corrosion.html'
+CASE = './resources/tests/erosion_corrosion/local/TestCaseHydro_2_0.csv'
+# Drops the local copy of the test file on the panel, under the given name.
+DROP_CASE = """(async (name) => {
+  const text = await (await fetch(%s)).text();
+  const f = new File([text], name, { type: 'text/csv' });
+  const dt = new DataTransfer(); dt.items.add(f);
+  document.querySelector('.ec').dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
+})(%%s)""" % json.dumps(CASE)
 
 failures = []
 checks = 0
@@ -89,7 +105,7 @@ async def status_starts(page, prefix):
 
 
 async def main():
-    ver = json.load(urllib.request.urlopen('http://127.0.0.1:9222/json/version'))
+    ver = json.load(urllib.request.urlopen(f'http://127.0.0.1:{CDP}/json/version'))
     async with websockets.connect(ver['webSocketDebuggerUrl'], max_size=200 * 1024 * 1024) as bws:
         page = Page(bws)
         asyncio.create_task(page.pump())
@@ -119,112 +135,118 @@ async def main():
                   await page.ev("document.getElementById('ecHsNote').textContent.startsWith('46 values')"), True)
 
             # --- the code test case ----------------------------------------
-            await page.ev("(() => { const s = document.getElementById('ecExample'); s.value = 'test';"
-                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
-            check('the test example loads and runs', await status_starts(page, 'Done'), True)
-            check('with the SR-Site settings applied',
-                  await page.ev("ECPage.getState().params.buffModel + ':' + ECPage.getState().params.fTDilute + ':' + ECPage.getState().hs.table"),
-                  'OldKTH:0.25:HSTest')
-            check('the buffer-model control shows it',
-                  await page.ev("document.querySelector('select[data-key=\"buffModel\"]').value"), 'OldKTH')
-            check('and is marked as changed from the default',
-                  await page.ev("document.querySelector('.ec-row[data-key=\"buffModel\"]').classList.contains('changed')"), True)
-            key = await page.ev("JSON.stringify(ECPage.getState().result.results[0].key)")
-            k = json.loads(key)
-            check('35 failure times', k['nFailRows'], 35)
-            check('17 rejected', k['nReject'], 17)
-            check('corrected mean 3.5', k['meanFailedCorrected'], 3.5)
-            check('four advective positions', k['nAdvAtLim'], 4)
-            check('the file list shows one realisation with 6017 holes',
-                  await page.ev("document.querySelector('#ecFiles .ec-file-meta').textContent.includes('6,017 holes')"), True)
-            check('the summary cards show the corrected mean',
-                  await page.ev("document.querySelector('#ecSummary .ec-card-value').textContent"), '3.5')
-            check('the key-output table has a row per key output',
-                  await page.ev("document.querySelectorAll('#ecSummary table.ec-key tbody tr').length"), 17)
-            check('the status says 35 failure times',
-                  await page.ev("document.getElementById('ecStatus').textContent.includes('35 failure times')"), True)
+            # SKB's test file (SKBdoc 1895160) is not part of the page: set the
+            # SR-Site settings on the panel and drop the local copy.
+            have_case = await page.ev(f"fetch({json.dumps(CASE)}, {{ method: 'HEAD' }}).then((r) => r.ok, () => false)")
+            if not have_case:
+                print('skip  the code test case and everything that needs hydro data: no local copy of the test file'
+                      ' (python3 resources/tests/erosion_corrosion/make-local-fixtures.py <folder>)')
+            else:
+                await page.ev("(() => { const s = document.querySelector('select[data-key=\"buffModel\"]'); s.value = 'OldKTH';"
+                              " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+                await page.ev("(() => { const el = document.querySelector('input[data-key=\"fTDilute\"]'); el.value = '0.25';"
+                              " el.dispatchEvent(new Event('change', { bubbles: true })); })()")
+                await page.ev("(() => { const s = document.getElementById('ecHsTable'); s.value = 'HSTest';"
+                              " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+                await page.ev(DROP_CASE % json.dumps('TestCaseHydro_2_0.csv'))
+                check('the dropped test case runs', await status_starts(page, 'Done'), True)
+                check('with the SR-Site settings applied',
+                      await page.ev("ECPage.getState().params.buffModel + ':' + ECPage.getState().params.fTDilute + ':' + ECPage.getState().hs.table"),
+                      'OldKTH:0.25:HSTest')
+                check('the buffer-model control shows it',
+                      await page.ev("document.querySelector('select[data-key=\"buffModel\"]').value"), 'OldKTH')
+                check('and is marked as changed from the default',
+                      await page.ev("document.querySelector('.ec-row[data-key=\"buffModel\"]').classList.contains('changed')"), True)
+                key = await page.ev("JSON.stringify(ECPage.getState().result.results[0].key)")
+                k = json.loads(key)
+                check('35 failure times', k['nFailRows'], 35)
+                check('17 rejected', k['nReject'], 17)
+                check('corrected mean 3.5', k['meanFailedCorrected'], 3.5)
+                check('four advective positions', k['nAdvAtLim'], 4)
+                check('the file list shows one realisation with 6017 holes',
+                      await page.ev("document.querySelector('#ecFiles .ec-file-meta').textContent.includes('6,017 holes')"), True)
+                check('the summary cards show the corrected mean',
+                      await page.ev("document.querySelector('#ecSummary .ec-card-value').textContent"), '3.5')
+                check('the key-output table has a row per key output',
+                      await page.ev("document.querySelectorAll('#ecSummary table.ec-key tbody tr').length"), 17)
+                check('the status says 35 failure times',
+                      await page.ev("document.getElementById('ecStatus').textContent.includes('35 failure times')"), True)
 
-            # --- the failure table ------------------------------------------
-            await page.ev("document.querySelector('[data-tab=\"failures\"]').click()")
-            await asyncio.sleep(0.5)
-            check('the failure table has 35 rows', await page.ev("document.querySelectorAll('#ecFailTable tbody tr').length"), 35)
-            check('the first row is hole 1 at 850,000 years',
-                  await page.ev("(() => { const c = document.querySelectorAll('#ecFailTable tbody tr')[0].children; return c[1].textContent + '@' + c[2].textContent; })()"),
-                  '1@850,000')
-            await page.ev("document.querySelector('#ecFailTable th[data-key=\"tFail\"]').click()")
-            await asyncio.sleep(0.3)
-            check('sorting by tFail puts 85,000 first',
-                  await page.ev("document.querySelectorAll('#ecFailTable tbody tr')[0].children[2].textContent"), '85,000')
+                # --- the failure table ------------------------------------------
+                await page.ev("document.querySelector('[data-tab=\"failures\"]').click()")
+                await asyncio.sleep(0.5)
+                check('the failure table has 35 rows', await page.ev("document.querySelectorAll('#ecFailTable tbody tr').length"), 35)
+                check('the first row is hole 1 at 850,000 years',
+                      await page.ev("(() => { const c = document.querySelectorAll('#ecFailTable tbody tr')[0].children; return c[1].textContent + '@' + c[2].textContent; })()"),
+                      '1@850,000')
+                await page.ev("document.querySelector('#ecFailTable th[data-key=\"tFail\"]').click()")
+                await asyncio.sleep(0.3)
+                check('sorting by tFail puts 85,000 first',
+                      await page.ev("document.querySelectorAll('#ecFailTable tbody tr')[0].children[2].textContent"), '85,000')
 
-            # --- the charts --------------------------------------------------
-            await page.ev("document.querySelector('[data-tab=\"time\"]').click()")
-            await asyncio.sleep(1.5)
-            check('the time chart has three traces',
-                  await page.ev("(() => { const d = document.getElementById('ecChartTime'); return d.data ? d.data.length : 'none'; })()"), 3)
-            check('and its failed-canister curve ends at the corrected mean',
-                  await page.ev("(() => { const y = document.getElementById('ecChartTime').data[0].y; return Math.abs(y[y.length - 1] - 3.5) < 1e-9; })()"), True)
-            await page.ev("document.querySelector('[data-tab=\"distributions\"]').click()")
-            await asyncio.sleep(1.5)
-            check('the Qeq distribution draws four curves plus a line',
-                  await page.ev("(() => { const d = document.getElementById('ecChartDist'); return d.data ? d.data.length : 'none'; })()"), 5)
-            await page.ev("(() => { const s = document.getElementById('ecDistWhich'); s.value = 'erosion';"
-                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
-            await asyncio.sleep(1.2)
-            check('switching to the erosion plot draws two curves and two lines',
-                  await page.ev("(() => { const d = document.getElementById('ecChartDist'); return d.data ? d.data.length : 'none'; })()"), 4)
-            check('with the SR-Site model named in the title',
-                  await page.ev("document.getElementById('ecChartDist').layout.title.text.includes('SR-Site')"), True)
+                # --- the charts --------------------------------------------------
+                await page.ev("document.querySelector('[data-tab=\"time\"]').click()")
+                await asyncio.sleep(1.5)
+                check('the time chart has three traces',
+                      await page.ev("(() => { const d = document.getElementById('ecChartTime'); return d.data ? d.data.length : 'none'; })()"), 3)
+                check('and its failed-canister curve ends at the corrected mean',
+                      await page.ev("(() => { const y = document.getElementById('ecChartTime').data[0].y; return Math.abs(y[y.length - 1] - 3.5) < 1e-9; })()"), True)
+                await page.ev("document.querySelector('[data-tab=\"distributions\"]').click()")
+                await asyncio.sleep(1.5)
+                check('the Qeq distribution draws four curves plus a line',
+                      await page.ev("(() => { const d = document.getElementById('ecChartDist'); return d.data ? d.data.length : 'none'; })()"), 5)
+                await page.ev("(() => { const s = document.getElementById('ecDistWhich'); s.value = 'erosion';"
+                              " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+                await asyncio.sleep(1.2)
+                check('switching to the erosion plot draws two curves and two lines',
+                      await page.ev("(() => { const d = document.getElementById('ecChartDist'); return d.data ? d.data.length : 'none'; })()"), 4)
+                check('with the SR-Site model named in the title',
+                      await page.ev("document.getElementById('ecChartDist').layout.title.text.includes('SR-Site')"), True)
 
-            # --- the per-hole table -----------------------------------------
-            await page.ev("document.querySelector('[data-tab=\"holes\"]').click()")
-            await asyncio.sleep(0.8)
-            check('the hole table shows the first 300 of 6017',
-                  await page.ev("document.getElementById('ecHoleNote').textContent"), 'Showing 300 of 6,017 holes; the CSV has them all.')
-            await page.ev("(() => { const s = document.getElementById('ecHoleFilter'); s.value = 'rejected';"
-                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
-            await asyncio.sleep(0.5)
-            check('filtering to rejected holes gives 17 rows',
-                  await page.ev("document.querySelectorAll('#ecHoleTable tbody tr').length"), 17)
-            check('the first of them names FPC as the reason',
-                  await page.ev("(() => { const tds = document.querySelectorAll('#ecHoleTable tbody tr')[0].children; return tds[0].textContent + ':' + tds[18].textContent; })()"), '11:FPC')
+                # --- the per-hole table -----------------------------------------
+                await page.ev("document.querySelector('[data-tab=\"holes\"]').click()")
+                await asyncio.sleep(0.8)
+                check('the hole table shows the first 300 of 6017',
+                      await page.ev("document.getElementById('ecHoleNote').textContent"), 'Showing 300 of 6,017 holes; the CSV has them all.')
+                await page.ev("(() => { const s = document.getElementById('ecHoleFilter'); s.value = 'rejected';"
+                              " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+                await asyncio.sleep(0.5)
+                check('filtering to rejected holes gives 17 rows',
+                      await page.ev("document.querySelectorAll('#ecHoleTable tbody tr').length"), 17)
+                check('the first of them names FPC as the reason',
+                      await page.ev("(() => { const tds = document.querySelectorAll('#ecHoleTable tbody tr')[0].children; return tds[0].textContent + ':' + tds[18].textContent; })()"), '11:FPC')
 
-            # --- a parameter change re-runs ---------------------------------
-            await page.ev("(() => { const el = document.querySelector('input[data-key=\"tFailFilteringLim\"]'); el.value = '100000';"
-                          " el.dispatchEvent(new Event('change', { bubbles: true })); })()")
-            await asyncio.sleep(1.0)
-            # Hole 2 fails at 85,000 to 94,000 years: all ten rows survive a
-            # 100,000-year limit, and the documented "1 canister at 100,000
-            # years" is those ten over the ten sulphide values.
-            check('an assessment time of 100,000 years leaves the ten rows of hole 2',
-                  await page.ev("ECPage.getState().result.results[0].key.nFailRows"), 10)
-            check('and the status says so',
-                  await page.ev("document.getElementById('ecStatus').textContent.includes('10 failure times in the table')"), True)
-            await page.ev("document.querySelector('[data-on-click=\"ec:resetParams\"]').click()")
-            await asyncio.sleep(1.0)
-            check('reset puts every parameter back',
-                  await page.ev("ECModel.PARAMS.every((d) => ECPage.getState().params[d.key] === d.def)"), True)
-            # With the PSAR defaults (NewKTH, 50 % dilute) holes 3 and 4 become
-            # advective at 39,277 and 70,672 years, so the table grows to 38 rows.
-            check('and the run follows (NewKTH, 0.5 dilute, HSTest: 38 rows)',
-                  await page.ev("ECPage.getState().result.results[0].key.nFailRows"), 38)
+                # --- a parameter change re-runs ---------------------------------
+                await page.ev("(() => { const el = document.querySelector('input[data-key=\"tFailFilteringLim\"]'); el.value = '100000';"
+                              " el.dispatchEvent(new Event('change', { bubbles: true })); })()")
+                await asyncio.sleep(1.0)
+                # Hole 2 fails at 85,000 to 94,000 years: all ten rows survive a
+                # 100,000-year limit, and the documented "1 canister at 100,000
+                # years" is those ten over the ten sulphide values.
+                check('an assessment time of 100,000 years leaves the ten rows of hole 2',
+                      await page.ev("ECPage.getState().result.results[0].key.nFailRows"), 10)
+                check('and the status says so',
+                      await page.ev("document.getElementById('ecStatus').textContent.includes('10 failure times in the table')"), True)
+                await page.ev("document.querySelector('[data-on-click=\"ec:resetParams\"]').click()")
+                await asyncio.sleep(1.0)
+                check('reset puts every parameter back',
+                      await page.ev("ECModel.PARAMS.every((d) => ECPage.getState().params[d.key] === d.def)"), True)
+                # With the PSAR defaults (NewKTH, 50 % dilute) holes 3 and 4 become
+                # advective at 39,277 and 70,672 years, so the table grows to 38 rows.
+                check('and the run follows (NewKTH, 0.5 dilute, HSTest: 38 rows)',
+                      await page.ev("ECPage.getState().result.results[0].key.nFailRows"), 38)
 
-            # --- a second realisation, and pooling -------------------------
-            await page.ev("""(async () => {
-              const text = await (await fetch('./resources/data/erosion_corrosion/TestCaseHydro_2_0.csv')).text();
-              const f = new File([text], 'copy.csv', { type: 'text/csv' });
-              const dt = new DataTransfer(); dt.items.add(f);
-              const root = document.querySelector('.ec');
-              root.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
-            })()""")
-            await asyncio.sleep(2.5)
-            check('a dropped file becomes a second realisation',
-                  await page.ev("ECPage.getState().result ? ECPage.getState().result.results.length : 0"), 2)
-            check('the status says two realisations',
-                  await page.ev("document.getElementById('ecStatus').textContent.includes('2 realisations')"), True)
-            await page.ev("document.querySelector('[data-tab=\"summary\"]').click()")
-            await asyncio.sleep(0.5)
-            check('the key-output table gains min, mean and max columns',
-                  await page.ev("document.querySelectorAll('#ecSummary table.ec-key thead th').length"), 6)
+                # --- a second realisation, and pooling -------------------------
+                await page.ev(DROP_CASE % json.dumps('copy.csv'))
+                await asyncio.sleep(2.5)
+                check('a dropped file becomes a second realisation',
+                      await page.ev("ECPage.getState().result ? ECPage.getState().result.results.length : 0"), 2)
+                check('the status says two realisations',
+                      await page.ev("document.getElementById('ecStatus').textContent.includes('2 realisations')"), True)
+                await page.ev("document.querySelector('[data-tab=\"summary\"]').click()")
+                await asyncio.sleep(0.5)
+                check('the key-output table gains min, mean and max columns',
+                      await page.ev("document.querySelectorAll('#ecSummary table.ec-key thead th').length"), 6)
 
             # --- refusals ----------------------------------------------------
             await page.ev("""(() => {
@@ -235,8 +257,8 @@ async def main():
             await asyncio.sleep(1.0)
             check('a file that is not a hydro table is refused by name',
                   await page.ev("document.getElementById('ecStatus').textContent.startsWith('junk.csv: Not a hydro table')"), True)
-            check('and the two real realisations are untouched',
-                  await page.ev("ECPage.getState().hydro.length"), 2)
+            check('and the loaded realisations are untouched',
+                  await page.ev("ECPage.getState().hydro.length"), 2 if have_case else 0)
 
             # --- case file round trip ---------------------------------------
             await page.ev("""(() => {

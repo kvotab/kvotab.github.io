@@ -26,3 +26,6 @@ __pycache__/
 
 # SR-Site and PSAR data for resources/tests/simplefunctions (make-local-fixtures.py); not public
 resources/tests/simplefunctions/local/
+
+# SKB's code test case for resources/tests/erosion_corrosion (make-local-fixtures.py); not ours to publish
+resources/tests/erosion_corrosion/local/

@@ -22,7 +22,7 @@
                         '#' comment lines, a '# POINT XS YS ...' header and
                         whitespace-separated rows.
      Excel              an .xlsx whose first fitting sheet is such a table
-                        (TestCaseHydro_2_0.xlsx, the Corr/Uncorr workbooks).
+                        (the Corr/Uncorr workbooks).
                         Needs JSZip on the page.
      DarcyTools         the performance-measure tables of the Hydro-SÄK work
                         (Kemakta): a 'Name' column, ten particle rows per

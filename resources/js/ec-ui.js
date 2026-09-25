@@ -22,21 +22,7 @@
   const esc = (s) => (typeof kvotEscapeHtml === 'function' ? kvotEscapeHtml(s) : String(s ?? ''));
   const STORAGE_KEY = 'kvot-ec-v1';
   const DEFAULT_WIDTH = 340;
-  const DATA_DIR = './resources/data/erosion_corrosion/';
   const NEVER = ECModel.NEVER;
-
-  /* ---------------------------------------------------------------------
-     The built-in examples
-     --------------------------------------------------------------------- */
-  const EXAMPLES = {
-    test: {
-      file: 'TestCaseHydro_2_0.csv',
-      label: 'Code test case (TestCaseHydro_2_0, SKBdoc 1895160)',
-      hs: 'HSTest',
-      settings: { buffModel: 'OldKTH', fTDilute: 0.25 },
-      about: 'The 6017-row test file of the code documentation. With the SR-Site settings (OldKTH, 25 % dilute, HSTest) it must give 35 failure times: 10 each for holes 1–3 and 5 for hole 4, and 17 rejected holes. Those settings were applied.',
-    },
-  };
 
   /* ---------------------------------------------------------------------
      State
@@ -54,7 +40,6 @@
     dist: { which: 'qeq', real: 'all' },
     holes: { filter: 'all', search: '', real: 0, limit: 300 },
     sort: { failures: { key: 'index', asc: true }, holes: { key: 'id', asc: true } },
-    lastExample: '',
     result: null,              // {results, table, summary}
     lastError: null,
   };
@@ -64,7 +49,7 @@
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
         params: state.params, hs: state.hs, totalHoles: state.totalHoles, tab: state.tab,
         sideWidth: state.sideWidth, sections: state.sections, autoRun: state.autoRun,
-        dist: state.dist, holes: { filter: state.holes.filter, real: state.holes.real }, lastExample: state.lastExample,
+        dist: state.dist, holes: { filter: state.holes.filter, real: state.holes.real },
       }));
     } catch (e) { /* storage unavailable */ }
   }
@@ -87,7 +72,6 @@
       if (typeof s.autoRun === 'boolean') state.autoRun = s.autoRun;
       if (s.dist && typeof s.dist === 'object') Object.assign(state.dist, s.dist);
       if (s.holes && typeof s.holes === 'object') Object.assign(state.holes, s.holes);
-      if (typeof s.lastExample === 'string') state.lastExample = s.lastExample;
     } catch (e) { /* a corrupt entry: start fresh */ }
   }
 
@@ -305,7 +289,6 @@
         errors.push(`${file.name}: ${e.message}`);
       }
     }
-    state.lastExample = '';
     renderHydroList();
     if (errors.length) {
       setStatus(errors.join(' '), 'error');
@@ -313,39 +296,6 @@
     }
     if (added) scheduleRun(0);
     saveState();
-  }
-
-  async function loadExample(key) {
-    const ex = EXAMPLES[key];
-    if (!ex) return;
-    setStatus(`Loading ${ex.file}…`);
-    let text;
-    try {
-      const res = await fetch(DATA_DIR + ex.file);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      text = await res.text();
-    } catch (e) {
-      setStatus(`The example could not be fetched (${e.message}). Under file:// a browser refuses to read local files this way; open the page over http, or drop the file from resources/data/erosion_corrosion/ onto the panel.`, 'error');
-      return;
-    }
-    let table;
-    try {
-      table = ECHydro.parseText(text, ex.file, hydroOptions());
-    } catch (e) { setStatus(`${ex.file}: ${e.message}`, 'error'); return; }
-    applyInflow(table);
-    state.hydro = [{ name: ex.file, table, source: text }];
-    state.lastExample = key;
-    // The example's settings, so that the numbers the help quotes come out.
-    Object.assign(state.params, ex.settings);
-    state.hs.table = ex.hs;
-    writeParamControls();
-    writeHsControls();
-    renderHydroList();
-    $('ecExample').value = key;
-    saveState();
-    run();
-    $('ecExampleAbout').textContent = ex.about;
-    $('ecExampleAbout').hidden = false;
   }
 
   function applyInflow(table) {
@@ -380,7 +330,6 @@
         + `<span class="ec-file-meta">${esc(meta.join(' · '))}</span>${warns}</li>`;
     }).join('');
     $('ecHydroCount').textContent = state.hydro.length ? `${state.hydro.length} realisation${state.hydro.length > 1 ? 's' : ''}` : '';
-    if (!state.hydro.length) { $('ecExampleAbout').hidden = true; }
   }
 
   /* ---------------------------------------------------------------------
@@ -398,7 +347,7 @@
     state.lastError = null;
     if (!state.hydro.length) {
       state.result = null;
-      setStatus('Load hydro data: open a file, drop one on the panel, or pick a built-in example.');
+      setStatus('Load hydro data: open a file, or drop one on the panel.');
       renderTab();
       return;
     }
@@ -455,7 +404,7 @@
   function renderSummary() {
     const host = $('ecSummary');
     if (!state.result) {
-      host.innerHTML = `<p class="ec-empty">${state.lastError ? esc(state.lastError) : 'No results yet: load hydro data on the left. The two built-in examples are the code test case and the PSAR base case.'}</p>`;
+      host.innerHTML = `<p class="ec-empty">${state.lastError ? esc(state.lastError) : 'No results yet: load hydro data on the left.'}</p>`;
       return;
     }
     const { results, summary } = state.result;
@@ -968,16 +917,13 @@
     'ec:hsChanged': () => { readHsControls(); saveState(); scheduleRun(); },
     'ec:openFiles': () => $('ecFile').click(),
     'ec:filesChosen': (ev, el) => { addHydroFiles(el.files); el.value = ''; },
-    'ec:chooseExample': (ev, el) => { if (el.value) loadExample(el.value); },
     'ec:removeHydro': (ev, el) => {
       state.hydro.splice(Number(el.dataset.index), 1);
-      state.lastExample = '';
-      $('ecExample').value = '';
       renderHydroList();
       saveState();
       run();
     },
-    'ec:clearHydro': () => { state.hydro = []; state.lastExample = ''; $('ecExample').value = ''; renderHydroList(); saveState(); run(); },
+    'ec:clearHydro': () => { state.hydro = []; renderHydroList(); saveState(); run(); },
     'ec:hydroOptionChanged': (ev, el) => { state.totalHoles = el.value.trim(); saveState(); reparseHydro(); },
     'ec:openInflow': () => $('ecInflowFile').click(),
     'ec:inflowChosen': async (ev, el) => {
@@ -1048,17 +994,11 @@
   showTab(['failures', 'time', 'distributions', 'holes', 'help'].includes(state.tab) ? state.tab : 'summary');
   window.addEventListener('resize', resizePlots);
   document.documentElement.addEventListener('kvot-theme-change', () => renderTab());
-  if (state.lastExample && EXAMPLES[state.lastExample]) {
-    // The example is fetched again rather than kept: it is small and always current.
-    loadExample(state.lastExample);
-  } else {
-    run();
-  }
+  run();
 
   window.ECPage = Object.freeze({
     getState: () => state,
     run,
-    loadExample,
     fmt,
   });
 }());

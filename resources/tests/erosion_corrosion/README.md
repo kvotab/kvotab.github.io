@@ -2,12 +2,20 @@
 
 Two of them. `test-model.js` is the arithmetic and the file readers and needs
 only Node; `test-ui.py` is the page and needs the server and browser of
-`../rb/README.md`.
+`../rb/README.md` (other ports with `EC_HTTP_PORT` and `EC_CDP_PORT`).
 
     node resources/tests/erosion_corrosion/test-model.js [--verbose]
     python3 resources/tests/erosion_corrosion/test-ui.py
 
 Both exit 0 when every check passes.
+
+SKB's code test case is not in the repository (it is theirs, not ours to
+publish). With `TestCaseHydro_2_0.xlsx` (SKBdoc 1895160) on the machine,
+
+    python3 resources/tests/erosion_corrosion/make-local-fixtures.py <folder>
+
+writes `local/TestCaseHydro_2_0.csv` (git-ignored), and both tests then run
+the checks that need it; without it they skip them and say so.
 
 ## What test-model.js checks, and against what
 
@@ -30,8 +38,8 @@ document gives the erosion rates of TR-16-11's figure 4-5 at four velocities
 and the loss and sedimentation rates of its figure 4-7 at five apertures;
 those are held to 4 % and 2 %, which is what reading a log plot allows.
 
-The file is here as `resources/data/erosion_corrosion/TestCaseHydro_2_0.csv`,
-the ten columns the model reads, converted from the xlsx.
+The tests read it as `local/TestCaseHydro_2_0.csv`: the ten columns the
+model reads, from sheet Test of the xlsx.
 
 **Several realisations.** The test file is read twice over to check the pooling
 of realisations: the rows carry the realisation number, the summary is the
@@ -70,15 +78,14 @@ their own quantiles, and the custom-text parser.
 ## What test-ui.py checks
 
 The wiring: that the page loads without a script error and builds one control
-per catalogue parameter; that choosing the code test case applies the SR-Site
-settings, runs, and puts 35 rows, 17 rejected and a corrected mean of 3.5 in
-the state, the summary cards and the status line; that the failure table has
-the rows in the documented order and sorts; that the time chart's failed-
-canister curve ends at the corrected mean and the distribution plots draw and
-switch; that the per-hole table pages and filters to the 17 rejected holes
-with FPC named on the first; that a parameter change re-runs and reset puts
-everything back; that the base case gives the workbook's cached numbers; that
-a dropped second file becomes a second realisation with min/mean/max columns;
-that a file which is not a hydro table is refused by name without disturbing
-the loaded ones; and that a dropped case file applies its settings and names
-its unknown key.
+per catalogue parameter; that the code test case, dropped on the panel after
+the SR-Site settings are set on it, runs and puts 35 rows, 17 rejected and a
+corrected mean of 3.5 in the state, the summary cards and the status line;
+that the failure table has the rows in the documented order and sorts; that
+the time chart's failed-canister curve ends at the corrected mean and the
+distribution plots draw and switch; that the per-hole table pages and filters
+to the 17 rejected holes with FPC named on the first; that a parameter change
+re-runs and reset puts everything back; that a dropped second file becomes a
+second realisation with min/mean/max columns; that a file which is not a
+hydro table is refused by name without disturbing the loaded ones; and that
+a dropped case file applies its settings and names its unknown key.

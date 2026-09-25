@@ -5,7 +5,7 @@
    Three independent references:
 
    1. The code documentation, SKBdoc 1895157 section 5: a hydro test file
-      (TestCaseHydro_2_0, here as CSV) built so that the answers can be
+      (TestCaseHydro_2_0, SKBdoc 1895160) built so that the answers can be
       checked by hand -- 35 failure times at stated values, 17 rejected
       holes for stated reasons, the key outputs of sheet "Info", and the
       erosion and sedimentation rates of TR-16-11 read off its figures.
@@ -13,6 +13,10 @@
    2. Closed forms for the special functions and for single holes.
 
        node resources/tests/erosion_corrosion/test-model.js [--verbose]
+
+   The test file is SKB's and not in the repository: make-local-fixtures.py
+   writes a copy into ./local/ (git-ignored); without it the checks that
+   need it are skipped, and say so.
 
    Exit status is 0 when every check passes.
    ========================================================================== */
@@ -42,8 +46,13 @@ function close(label, got, want, rtol, atol = 0) {
   check(label, ok, `${got} vs ${want} (${(err / Math.max(Math.abs(want), 1e-300)).toExponential(2)} relative, allowed ${rtol})`);
 }
 
-const dataDir = path.join(__dirname, '..', '..', 'data', 'erosion_corrosion');
-const readHydro = (file) => ECHydro.parseText(fs.readFileSync(path.join(dataDir, file), 'utf8'), file);
+// SKB's code test case, from the local copy that make-local-fixtures.py writes.
+const testCaseFile = path.join(__dirname, 'local', 'TestCaseHydro_2_0.csv');
+const haveTestCase = fs.existsSync(testCaseFile);
+const readTestCase = () => ECHydro.parseText(fs.readFileSync(testCaseFile, 'utf8'), 'TestCaseHydro_2_0.csv');
+function skipped(what) {
+  console.log(`skip  ${what}: no local copy of the test file (python3 make-local-fixtures.py <folder>)`);
+}
 
 /* ======================================================================
    1. Special functions
@@ -126,8 +135,9 @@ console.log('\n--- catalogue ---');
    4. The code documentation's test case (SKBdoc 1895157, section 5)
    ====================================================================== */
 console.log('\n--- TestCaseHydro_2_0 with the SR-Site settings ---');
-{
-  const hydro = readHydro('TestCaseHydro_2_0.csv');
+if (!haveTestCase) skipped('the code test case');
+else {
+  const hydro = readTestCase();
   check('the test file has 6017 positions', hydro.n === 6017, String(hydro.n));
   check('and no warnings', hydro.warnings.length === 0, hydro.warnings.join(' | '));
   // "SR-Site default settings": the OldKTH erosion model with ftDilute 0.25.
@@ -195,8 +205,9 @@ console.log('\n--- TestCaseHydro_2_0 with the SR-Site settings ---');
    5. The TR-16-11 models on the test file (SKBdoc 1895157, section 5.7)
    ====================================================================== */
 console.log('\n--- TR-16-11 erosion and sedimentation on the test file ---');
-{
-  const hydro = readHydro('TestCaseHydro_2_0.csv');
+if (!haveTestCase) skipped('the TR-16-11 rates on the test file');
+else {
+  const hydro = readTestCase();
   // "ion concentration 2 mM, force RRSS disabled": and no effective DR.
   const p = { ...ECModel.defaults(), buffModel: 'NewKTH', cIon: 2, forceRrss: false, effectiveDR: false, jExp: 1000 };
   const r = ECModel.evaluate(hydro, ECHS.HS_TEST, p);
@@ -320,8 +331,9 @@ console.log('\n--- single holes ---');
    8. Several realisations, distributions, the time history
    ====================================================================== */
 console.log('\n--- realisations and series ---');
-{
-  const hydro = readHydro('TestCaseHydro_2_0.csv');
+if (!haveTestCase) skipped('the realisations, distributions and time history of the test file');
+else {
+  const hydro = readTestCase();
   const p = { ...ECModel.defaults(), buffModel: 'OldKTH', fTDilute: 0.25 };
   const many = ECModel.evaluateMany([hydro, hydro], ECHS.HS_TEST, p);
   const one = ECModel.evaluate(hydro, ECHS.HS_TEST, p);
@@ -346,13 +358,6 @@ console.log('\n--- realisations and series ---');
   // The corrosion rate for advective conditions is 1e6·C·dCan/CorrHoleFact·Qeq
   const i0 = Array.from(one.columns.qeqEb).findIndex((x) => x > 0);
   close('CorrAdv = 1e6·[HS]·dCan·Qeq/CorrHoleFact', d.corrAdv.series[0].values[i0], 1e6 * 1e-5 * 0.047 / one.key.corrHoleFact * one.columns.qeqEb[i0], 1e-14);
-  // ECDF
-  const e = ECModel.ecdf(Float64Array.from([0, 0, 1, 2, 3, 4]));
-  check('ecdf drops zeros and keeps their share', e.zeroFraction === 2 / 6 && e.x[0] === 1 && Math.abs(e.y[0] - 3 / 6) < 1e-15 && e.y[e.y.length - 1] === 1);
-  check('ecdf is monotone', e.x.every((x, i) => i === 0 || x >= e.x[i - 1]) && e.y.every((y, i) => i === 0 || y >= e.y[i - 1]));
-  const big = ECModel.ecdf(Float64Array.from({ length: 10000 }, (_, i) => i + 1), 100);
-  check('ecdf thins long arrays and ends at the maximum', big.x.length <= 102 && big.x[big.x.length - 1] === 10000 && big.y[big.y.length - 1] === 1);
-
   const th = ECModel.timeHistory([one], 41, 100);
   check('time history spans 100 yr to the assessment time', th.t[0] === 100 && Math.abs(th.t[40] - 1e6) < 1e-6);
   check('advective count reaches the key output', th.nAdv[40] === one.key.nAdvAtLim, `${th.nAdv[40]} vs ${one.key.nAdvAtLim}`);
@@ -364,6 +369,14 @@ console.log('\n--- realisations and series ---');
   check('never below zero or above dCan', rem.every((x) => x >= 0 && x <= 0.047));
   const gone = Array.from(rem).filter((x) => x === 0).length;
   check('holes corroded through at 1e6 at the highest sulphide = the highest-sulphide count', gone === one.key.nFailedHighestHs, `${gone} vs ${one.key.nFailedHighestHs}`);
+}
+{
+  // ECDF
+  const e = ECModel.ecdf(Float64Array.from([0, 0, 1, 2, 3, 4]));
+  check('ecdf drops zeros and keeps their share', e.zeroFraction === 2 / 6 && e.x[0] === 1 && Math.abs(e.y[0] - 3 / 6) < 1e-15 && e.y[e.y.length - 1] === 1);
+  check('ecdf is monotone', e.x.every((x, i) => i === 0 || x >= e.x[i - 1]) && e.y.every((y, i) => i === 0 || y >= e.y[i - 1]));
+  const big = ECModel.ecdf(Float64Array.from({ length: 10000 }, (_, i) => i + 1), 100);
+  check('ecdf thins long arrays and ends at the maximum', big.x.length <= 102 && big.x[big.x.length - 1] === 10000 && big.y[big.y.length - 1] === 1);
 }
 
 /* ======================================================================

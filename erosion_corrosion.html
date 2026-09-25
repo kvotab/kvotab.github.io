@@ -46,14 +46,6 @@
               <button type="button" class="ec-btn secondary small" data-on-click="ec:openFiles">Open…</button>
             </div>
             <input type="file" id="ecFile" multiple accept=".csv,.txt,.ptb,.dtpm,.dat,.xlsx,.xlsm,.json" hidden data-on-change="ec:filesChosen">
-            <div class="ec-row">
-              <label>Built-in example<span class="ec-name">fetched from resources/data/erosion_corrosion/</span></label>
-              <select id="ecExample" data-on-change="ec:chooseExample">
-                <option value="">— choose —</option>
-                <option value="test">Code test case (TestCaseHydro_2_0, SKBdoc 1895160)</option>
-              </select>
-            </div>
-            <p class="ec-muted" id="ecExampleAbout" hidden></p>
             <ul class="ec-files" id="ecFiles"></ul>
             <div class="ec-actions">
               <button type="button" class="ec-btn secondary small" data-on-click="ec:clearHydro">Remove all</button>
@@ -320,7 +312,7 @@
             <tbody>
               <tr><th>ConnectFlow CSV</th><td>A header row and one row per hole, as the SR-Site and PSAR deliveries (<code>*_pline_merged.csv</code> and the like) and as Excel writes the workbook’s hydro sheets. Needed: <code>POINT</code> or <code>NPOINT</code>, <code>OKFLAG</code>, <code>U0</code>, <code>QEQ</code>, <code>TW</code>, <code>F</code>, <code>TRAPP</code>, <code>FPC</code>, <code>EFPC</code>, <code>FLEN</code>; the other columns are ignored. Comma, semicolon or tab separated; a decimal comma is understood when the file has no decimal points.</td></tr>
               <tr><th>ConnectFlow PTB</th><td>The parameter-table file the CSVs were made from: <code>#</code> comment lines, a <code># POINT XS YS …</code> header and space-separated rows.</td></tr>
-              <tr><th>Excel</th><td>An <code>.xlsx</code> whose first fitting sheet is such a table — <code>TestCaseHydro_2_0.xlsx</code>, or the Corr/Uncorr workbooks.</td></tr>
+              <tr><th>Excel</th><td>An <code>.xlsx</code> whose first fitting sheet is such a table, as the Corr/Uncorr workbooks.</td></tr>
               <tr><th>DarcyTools</th><td>The performance-measure tables of the Hydro-SÄK work: a <code>Name</code> column with several particle rows per hole (the first is taken), <code>U [m/year]</code>, <code>Qeq (ECPM) [m3/year]</code>, <code>tw [year]</code>, <code>F [year/m]</code>, and either <code>Aperture [m]</code>, <code>Utot [m/year]</code> and T/F flags <code>Collected</code>, <code>ZFMC</code>, <code>FPC</code>, <code>EFPC-5</code> (the <code>.dtpm</code> form, with a <code>Total DHs:</code> line above the header) or <code>iFPC</code>, <code>iEFPC</code>, <code>Porosity (ECPM)</code> and <code>Number of fractures in contact</code>, from which the aperture is 8·porosity/fractures and <i>U</i><sub>0</sub> is scaled by 8/<i>w</i> — exactly as the 2.0 and 2.4 Python ports read them. These tables have no fracture length, so the length and T/L criteria reject nothing, and they list only the holes with particles: give the layout size so the normalisation counts the rest.</td></tr>
             </tbody>
           </table>
@@ -338,18 +330,17 @@
             is any text with numbers in it.</p>
 
           <h3>Checking it</h3>
-          <p>The code documentation ships a hydro test file built to be checked by hand. Choose the built-in
-            <em>Code test case</em>: with the SR-Site settings it applies (OldKTH, 25 % dilute, HSTest), the
-            failure table must hold 35 rows — ten for hole 1 at 850,000 to 940,000 years, ten for hole 2 at
-            85,000 to 94,000, ten for hole 3 at 900,000 to 990,000 and five for hole 4 at 950,000 to 990,000 —
-            with 17 holes rejected (11 by FPC, 12–16 and 25–33 by EFPC, 17 by fracture length, 18 by T/L), a
-            corrected mean of 3.5, one failure by 100,000 years and four advective positions. The
-            <em>PSAR base case</em> with the PSAR defaults must give 612 rejected holes, 41 advective positions
-            at one million years, three at 100,000, four failure times, a corrected mean of 0.0827632 and an
-            earliest failure at 189,441.71 years — the numbers cached in the workbook itself. All of that, the
-            TR-16-11 rates read off that report’s figures 4-5 and 4-7, the Python port’s failure tables in six
-            configurations, and the readers for every file format are exercised by
-            <code>resources/tests/erosion_corrosion/test-model.js</code>.</p>
+          <p>The code documentation comes with a hydro test file built to be checked by hand (TestCaseHydro_2_0,
+            SKBdoc 1895160). It is SKB’s and not part of this page: open your copy here with the SR-Site settings
+            (OldKTH, 25 % dilute, HSTest), and the failure table and the key outputs are the ones SKBdoc 1895157
+            documents. When the page was built it was also checked against the PSAR base case, where the PSAR
+            defaults give 612 rejected holes, 41 advective positions at one million years, three at 100,000,
+            four failure times, a corrected mean of 0.0827632 and an earliest failure at 189,441.71 years — the
+            numbers cached in the workbook itself — and against the Python port’s failure tables in six
+            configurations. <code>resources/tests/erosion_corrosion/test-model.js</code> exercises the test case
+            and the TR-16-11 rates read off that report’s figures 4-5 and 4-7 (given a local copy of the test
+            file), the closed forms, single holes through every model and option, and the readers for every
+            file format.</p>
           <p>Two places where the sources differ from each other, and what this page does: the workbook’s VBA
             Lambert W stops at a residual of 10<sup>−3</sup> while the Python port uses SciPy’s — this page
             solves to machine precision, which matters only with “force rRSS” off; and the Python port’s
@@ -407,8 +398,8 @@
   -->
   <script src="./resources/js/ec-model.js?v=20260921"></script>
   <script src="./resources/js/ec-hsdata.js?v=20260921"></script>
-  <script src="./resources/js/ec-hydro.js?v=20260921"></script>
+  <script src="./resources/js/ec-hydro.js?v=20260926"></script>
   <script src="./resources/js/xlsxwrite.js?v=20260902"></script>
-  <script src="./resources/js/ec-ui.js?v=20260921"></script>
+  <script src="./resources/js/ec-ui.js?v=20260926"></script>
 </body>
 </html>
