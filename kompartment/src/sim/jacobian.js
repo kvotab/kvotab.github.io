@@ -38,6 +38,7 @@ import { resolveReference } from '../domain/systems.js';
 import { FARF_EQUATION_KEYS } from '../domain/farfield.js';
 import { hazardCode } from '../domain/wastepackage.js';
 import { colourColumns } from '../ode/core/sparse.js';
+import { DEFAULT_SOLVER } from '../ode/solvers.js';
 
 /**
  * How many temporaries the tangent function may hoist.
@@ -111,6 +112,20 @@ const MAX_PATTERN_PASSES = 12;
  * rather than an import.
  */
 const inComment = (text) => String(text).replace(/[\r\n\u2028\u2029]+/g, ' ');
+
+/**
+ * The solvers the mass-balance audit's rows can be left at the diagonal for:
+ * see `buildJacobian`. The NDF iterates, and differences -- when asked to, or
+ * at a point where the generated matrix is not finite -- through the groups
+ * made here, which keep the budgets apart (`budgetsApart`). dp45 forms no
+ * matrix, and the SciPy methods take only a generated one.
+ *
+ * Every other solver gets the rows whole. The Rosenbrocks need them, and the
+ * ported methods colour the pattern for themselves when they difference, which
+ * puts each budget in with states that feed it. A solver added later and not
+ * named here is right from the start, and only slower.
+ */
+const DIAGONAL_BUDGET_IDS = new Set(['ndf', 'dp45', 'scipy_bdf', 'scipy_radau', 'scipy_lsoda']);
 
 class Refused extends Error {
 	constructor(message) {
@@ -242,18 +257,37 @@ export function buildJacobian(b) {
 	// across the limit.
 	//
 	// The mass-balance audit appends budget states that accumulate every
-	// flux, and those rows are not in the pattern below. Differencing is the
-	// honest answer for an audit run, which is a run made to check the model,
-	// not to be fast.
-	if (b.project?.simulation?.mass_balance) {
-		return {
-			available: false,
-			reason: 'The mass-balance audit is on, which adds budget states the generator '
-				+ 'does not differentiate. The solver works out df/dy by differencing instead.',
-		};
-	}
+	// flux. They used to take the analytic matrix away from the whole run --
+	// "differencing is the honest answer for an audit run" -- and on a model
+	// of nine thousand states that was no answer at all: with no pattern to
+	// difference through, the solver needed the matrix dense, 0.7 GB, and
+	// refused.
+	//
+	// Nothing reads a budget state. It is an integral kept to be looked at,
+	// so its column is empty and it appears in no row but its own, and the
+	// rest of the matrix is exact without it. Its own row is the sum of the
+	// fluxes it accumulates -- and whether that row is needed depends on the
+	// solver. A Newton iteration (NDF, BDF, Radau, the ESDIRKs) converges to
+	// the same solution with the budget rows left at their diagonal: the
+	// budgets depend on the model and not the other way round, so each
+	// iteration sets them from the state it has, and they settle one
+	// iteration behind it. A Rosenbrock method puts the matrix into the
+	// formula itself, and a missing row is a lower-order budget -- an audit
+	// that no longer closes. So for those the rows are generated whole, at
+	// the price of a colouring made much wider by rows that reach every state
+	// of a nuclide.
+	//
+	// "At their diagonal" means an exact zero there, and differencing has to
+	// keep it one: a budget differenced alongside the states that feed it
+	// reads their fluxes as its own slope, and a Newton iteration with that on
+	// the diagonal settles slowly or not at all. See DIAGONAL_BUDGET_IDS for
+	// the solvers that can be promised the zero.
+	const budget = !!(b.budget && b.budgetFamily);
+	b.fullBudget = budget && !DIAGONAL_BUDGET_IDS.has(b.project?.simulation?.solver ?? DEFAULT_SOLVER);
 	try {
-		return generate(b);
+		const made = generate(b);
+		if (budget && made.available !== false) made.budgetRows = b.fullBudget ? 'exact' : 'diagonal';
+		return made;
 	} catch (e) {
 		if (e instanceof NoDerivative || e instanceof Refused) {
 			return { available: false, reason: e.message };
@@ -306,7 +340,10 @@ function generate(b) {
 	const pattern = toCSC(cols, nstate);
 
 	// --- one seed per colour --------------------------------------------------
-	const groups = colourColumns(pattern);
+	const groups = budgetsApart(colourColumns(pattern), b);
+	// The budgets' own group, when they have one: their columns are zero, and
+	// the tangent function need not be run to say so.
+	const apart = b.budget && !b.fullBudget ? groups[groups.length - 1] : null;
 
 	// --- the tangent function -------------------------------------------------
 	// The column sets go with it: a couple of the rules below have to know
@@ -354,6 +391,12 @@ function generate(b) {
 	const evaluate = (t, y) => {
 		ctx.t = t;
 		for (const group of groups) {
+			if (group === apart) {
+				for (const j of group) {
+					for (let k = colPtr[j]; k < colPtr[j + 1]; k++) values[k] = 0;
+				}
+				continue;
+			}
 			for (const j of group) seed[j] = 1;
 			rawJvp(FUNCTIONS, ctx, y, seed, dout, P, X, dX, DEC, MAPS, TAB, MEM, FARF);
 			for (const j of group) {
@@ -716,6 +759,10 @@ function patternSource(b, opts = {}) {
 	}
 
 	const rowLines = [];
+	// The audit's rows, whole, for a solver that needs them: see
+	// `buildJacobian`. Placed exactly where the derivative writes them, by the
+	// derivative's own arithmetic.
+	const BF = b.fullBudget && !wantParams ? b.budgetFamily : null;
 	for (const t of project.transfers) {
 		const alg = algByName.get(t.qname ?? t.name);
 		const src = t.from ? stateByName.get(t.from) : null;
@@ -746,6 +793,10 @@ function patternSource(b, opts = {}) {
 			if (src) rowLines.push(`${indent}\t\tPAT(rs, c);`);
 			if (tgt || path) rowLines.push(`${indent}\t\tPAT(rt, c);`);
 			rowLines.push(`${indent}\t}`);
+			for (const r of BF ? budgetRowsOfTransfer(BF, t, src, tgt, alg.dims, vars) : []) {
+				if (t.multiply_by_donor && src) rowLines.push(`${indent}\tPAT(${r.row}, rs);`);
+				rowLines.push(`${indent}\tfor (const c of cols) PAT(${r.row}, c);`);
+			}
 			rowLines.push(`${indent}}`);
 		});
 	}
@@ -762,6 +813,10 @@ function patternSource(b, opts = {}) {
 			rowLines.push(`${indent}{`);
 			rowLines.push(`${indent}\tconst r = ${row};`);
 			rowLines.push(`${indent}\tfor (const c of SX[${alg.base} + ${offExpr}]) PAT(r, c);`);
+			if (BF && tgt) {
+				rowLines.push(`${indent}\tfor (const c of SX[${alg.base} + ${offExpr}]) `
+					+ `PAT(${BF.budgetAt('in', BF.endpointFamily(tgt, alg.dims, vars))}, c);`);
+			}
 			rowLines.push(`${indent}}`);
 		});
 	}
@@ -775,6 +830,10 @@ function patternSource(b, opts = {}) {
 		emitLoop(rowLines, space, slot.dims, '\t', (vars, offExpr, indent) => {
 			rowLines.push(`${indent}for (const c of SX[${slot.base} + ${offExpr}]) `
 				+ `PAT(${st.base} + ${offExpr}, c);`);
+			if (BF) {
+				rowLines.push(`${indent}for (const c of SX[${slot.base} + ${offExpr}]) `
+					+ `PAT(${BF.budgetAt('explicit', BF.endpointFamily(st, slot.dims, vars))}, c);`);
+			}
 		});
 	}
 
@@ -793,6 +852,14 @@ function patternSource(b, opts = {}) {
 			rowLines.push(`\t\tfor (const c of SX[${W.hazardSlot.base}]) { PAT(${P}, c); PAT(${M}, c); }`);
 			rowLines.push(`\t\tfor (const c of SX[${W.releaseSlot.base + off}]) PAT(${M}, c);`);
 			rowLines.push('\t}');
+		}
+		// A release delivered nowhere audited has left: the derivative adds it
+		// to the budget's `out`.
+		if (BF && !releaseCarried(project, stateByName, W)) {
+			emitLoop(rowLines, space, W.intact.dims, '\t', (vars, offExpr, indent) => {
+				rowLines.push(`${indent}for (const c of SX[${W.releaseSlot.base} + ${offExpr}]) `
+					+ `PAT(${BF.budgetAt('out', BF.familyExpr(W.intact.dims, vars))}, c);`);
+			});
 		}
 	}
 
@@ -813,6 +880,15 @@ function patternSource(b, opts = {}) {
 					rowLines.push(`\tfor (const c of SX[${D.lambdaSlot.base}]) PAT(${r}, c);`);
 					rowLines.push(`\tfor (const c of SX[${D.shares[k].base}]) PAT(${r}, c);`);
 				}
+			}
+			// A move out of the model is the budget's `out`.
+			if (BF && !B) {
+				emitLoop(rowLines, space, A.dims, '\t', (vars, offExpr, indent) => {
+					const r = BF.budgetAt('out', BF.familyExpr(A.dims, vars));
+					rowLines.push(`${indent}PAT(${r}, ${A.base} + ${offExpr});`);
+					rowLines.push(`${indent}for (const c of SX[${D.lambdaSlot.base}]) PAT(${r}, c);`);
+					rowLines.push(`${indent}for (const c of SX[${D.shares[k].base}]) PAT(${r}, c);`);
+				});
 			}
 		});
 	}
@@ -846,18 +922,74 @@ function patternSource(b, opts = {}) {
 			rowLines.push(`${indent}\tconst si = ${s.base} + ${offExpr};`);
 			rowLines.push(`${indent}\tconst D = DEC[${s.slot}];`);
 			rowLines.push(`${indent}\tPAT(si, si);`);
+			if (BF) rowLines.push(`${indent}\tPAT(${BF.budgetAt('decay', BF.familyExpr(s.dims, vars))}, si);`);
 			rowLines.push(`${indent}\tconst o = D.ioff[${nm}], c = D.icnt[${nm}];`);
 			rowLines.push(`${indent}\tfor (let q = 0; q < c; q++) {`);
 			rowLines.push(`${indent}\t\tPAT(si, si + (D.ipar[o + q] - ${nm}) * ${strideM});`);
+			if (BF) {
+				rowLines.push(`${indent}\t\tPAT(${BF.budgetAt('ingrowth', BF.familyExpr(s.dims, vars))}, `
+					+ `si + (D.ipar[o + q] - ${nm}) * ${strideM});`);
+			}
 			rowLines.push(`${indent}\t}`);
 			rowLines.push(`${indent}}`);
 		});
 	}
 
+	// The sub-set tables the budget rows are addressed through, declared
+	// before anything uses them -- and after everything above has asked.
+	if (BF) rowLines.unshift(...BF.mapsSource());
+
 	return {
 		algSource: algLines.join('\n') || '\t// nothing algebraic',
 		rowSource: rowLines.join('\n') || '\t// no connections',
 	};
+}
+
+/**
+ * The colouring, with the audit's budgets taken out into one group of their
+ * own when their rows are left at the diagonal.
+ *
+ * A budget column holds only its diagonal, which shares a row with no other
+ * column, so the colouring is free to put it in any group -- and does, with
+ * the first. Differenced there, the quotient in its row is the flux of every
+ * state in the group that feeds it, and that lands on the diagonal. In a
+ * group of budgets only, the perturbation moves nothing, since nothing reads
+ * a budget, and every quotient is exactly zero. One more evaluation when the
+ * matrix is differenced; none when it is generated.
+ */
+function budgetsApart(groups, b) {
+	if (!b.budget || b.fullBudget) return groups;
+	const from = b.budget.base;
+	const to = from + b.budget.terms.length * b.budget.nfam;
+	const rest = groups.map((g) => g.filter((j) => j < from || j >= to)).filter((g) => g.length > 0);
+	rest.push(Int32Array.from({ length: to - from }, (_, i) => from + i));
+	return rest;
+}
+
+/**
+ * The budget rows a transfer's flux lands in, as the derivative writes them:
+ * out of the model from its donor's family, into it at its recipient's, and
+ * between two families when it crosses from one to another -- a
+ * per-nuclide compartment draining into one indexed by nothing. `sign` is
+ * the sign the flux carries into that row. A transfer out of a waste package
+ * is a move between audited inventories, not an arrival.
+ */
+function budgetRowsOfTransfer(BF, t, src, tgt, dims, vars) {
+	const fS = src ? BF.endpointFamily(src, dims, vars) : null;
+	const fT = tgt ? BF.endpointFamily(tgt, dims, vars) : null;
+	const rows = [];
+	if (src && !tgt) rows.push({ row: BF.budgetAt('out', fS), sign: '+' });
+	if (!src && tgt && !BF.wasteNames.has(t.from)) rows.push({ row: BF.budgetAt('in', fT), sign: '+' });
+	if (src && tgt && fS !== fT) {
+		rows.push({ row: BF.budgetAt('between', fS), sign: '-' });
+		rows.push({ row: BF.budgetAt('between', fT), sign: '+' });
+	}
+	return rows;
+}
+
+/** Whether a waste package's release is delivered into an audited compartment. */
+function releaseCarried(project, stateByName, W) {
+	return project.transfers.some((t) => t.from === W.q && t.to != null && stateByName.has(t.to));
 }
 
 // --- the tangent function ---------------------------------------------------
@@ -1201,6 +1333,12 @@ function jvpSourceFor(b, opts = {}) {
 
 	lines.push('// --- derivative assembly, differentiated ---');
 	lines.push('\tdout.fill(0);');
+	// The audit's rows, whole, for a solver that needs them: see
+	// `buildJacobian`. The tables they are addressed through go here once
+	// everything below has asked for them.
+	const BF = b.fullBudget && alongState ? b.budgetFamily : null;
+	const tablesAt = lines.length;
+	lines.push('');
 
 	let fluxSeq = 0;
 	for (const t of project.transfers) {
@@ -1232,6 +1370,9 @@ function jvpSourceFor(b, opts = {}) {
 				const inlet = farfInletExpr(space, alg.dims, vars, path, t.name, mapIndex);
 				lines.push(`${indent}dout[${inlet}] += ${f};`);
 			}
+			for (const r of BF ? budgetRowsOfTransfer(BF, t, src, tgt, alg.dims, vars) : []) {
+				lines.push(`${indent}dout[${r.row}] ${r.sign}= ${f};`);
+			}
 		});
 	}
 
@@ -1245,6 +1386,10 @@ function jvpSourceFor(b, opts = {}) {
 				? stateOffsetExpr(space, alg.dims, vars, tgt, s.name, mapIndex)
 				: farfInletExpr(space, alg.dims, vars, path, s.name, mapIndex);
 			lines.push(`${indent}dout[${target}] += dX[${alg.base} + ${offExpr}];`);
+			if (BF && tgt) {
+				lines.push(`${indent}dout[${BF.budgetAt('in', BF.endpointFamily(tgt, alg.dims, vars))}] `
+					+ `+= dX[${alg.base} + ${offExpr}];`);
+			}
 		});
 	}
 
@@ -1255,6 +1400,10 @@ function jvpSourceFor(b, opts = {}) {
 		lines.push(`\t// dy/dt term of ${inComment(st.name)}`);
 		emitLoop(lines, space, slot.dims, '\t', (vars, offExpr, indent) => {
 			lines.push(`${indent}dout[${st.base} + ${offExpr}] += dX[${slot.base} + ${offExpr}];`);
+			if (BF) {
+				lines.push(`${indent}dout[${BF.budgetAt('explicit', BF.endpointFamily(st, slot.dims, vars))}] `
+					+ `+= dX[${slot.base} + ${offExpr}];`);
+			}
 		});
 	}
 
@@ -1271,6 +1420,12 @@ function jvpSourceFor(b, opts = {}) {
 			lines.push(`\t\tdout[${P}] -= dfail;`);
 			lines.push(`\t\tdout[${M}] += dfail - dX[${W.releaseSlot.base + off}];`);
 			lines.push('\t}');
+		}
+		if (BF && !releaseCarried(project, stateByName, W)) {
+			emitLoop(lines, space, W.intact.dims, '\t', (vars, offExpr, indent) => {
+				lines.push(`${indent}dout[${BF.budgetAt('out', BF.familyExpr(W.intact.dims, vars))}] `
+					+ `+= dX[${W.releaseSlot.base} + ${offExpr}];`);
+			});
 		}
 	}
 
@@ -1292,6 +1447,14 @@ function jvpSourceFor(b, opts = {}) {
 				lines.push(`\t\tdout[${A.base + off}] -= dm;`);
 				if (B) lines.push(`\t\tdout[${B.base + off}] += dm;`);
 				lines.push('\t}');
+			}
+			// Out of the model: the budget's `out`, with the same tangent.
+			if (BF && !B) {
+				emitLoop(lines, space, A.dims, '\t', (vars, offExpr, indent) => {
+					lines.push(`${indent}dout[${BF.budgetAt('out', BF.familyExpr(A.dims, vars))}] += `
+						+ `X[${D.lambdaSlot.base}] * (X[${share.base}] * v[${A.base} + ${offExpr}]`
+						+ `${dShare ? ` + ${dShare} * y[${A.base} + ${offExpr}]` : ''});`);
+				});
 			}
 		});
 	}
@@ -1328,16 +1491,22 @@ function jvpSourceFor(b, opts = {}) {
 			lines.push(`${indent}\tconst si = ${s.base} + ${offExpr};`);
 			lines.push(`${indent}\tconst D = DEC[${s.slot}];`);
 			lines.push(`${indent}\tdout[si] -= D.lam[${nm}] * v[si];`);
+			if (BF) lines.push(`${indent}\tdout[${BF.budgetAt('decay', BF.familyExpr(s.dims, vars))}] += D.lam[${nm}] * v[si];`);
 			lines.push(`${indent}\tconst o = D.ioff[${nm}], c = D.icnt[${nm}];`);
 			lines.push(`${indent}\tfor (let q = 0; q < c; q++) {`);
 			lines.push(
 				`${indent}\t\tdout[si] += D.icoef[o + q] * `
 				+ `v[si + (D.ipar[o + q] - ${nm}) * ${strideM}];`,
 			);
+			if (BF) {
+				lines.push(`${indent}\t\tdout[${BF.budgetAt('ingrowth', BF.familyExpr(s.dims, vars))}] += `
+					+ `D.icoef[o + q] * v[si + (D.ipar[o + q] - ${nm}) * ${strideM}];`);
+			}
 			lines.push(`${indent}\t}`);
 			lines.push(`${indent}}`);
 		});
 	}
+	if (BF) lines[tablesAt] = BF.mapsSource().join('\n');
 
 	lines.push('\treturn dout;');
 	// The check above runs while the algebraic slots are emitted, which is

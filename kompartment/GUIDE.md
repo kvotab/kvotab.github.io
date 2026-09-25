@@ -923,6 +923,15 @@ is the point of the arrangement: with a model of any size the tree is hundreds
 of rows long, and a panel that scrolled meant reading a block's equation and
 then losing it to reach the next block in the tree.
 
+**Information can have a window of its own.** The **⧉** beside its name takes
+the view out of the panel into a window that floats over the page. Drag it by
+its title bar and pull its bottom-right corner to size it; while it is out, the
+tree has the whole height of the panel. It goes on following the selection, and
+its buttons go with it into the window's title bar. It stays open when another
+model is opened. Its × puts it back, as does Escape with the keyboard in it.
+Unlike the panel's widths, the window is remembered in this browser: where it
+was, how big, and whether it was out.
+
 **The panel is resizable, and folds away.** A grip runs down its inside edge:
 drag it to take width from the middle or give it back,
 double-click it for the panel's usual width, or focus it and use the arrow keys
@@ -2076,7 +2085,7 @@ nothing quietly.
 
 ## The mass-balance audit
 
-**Mass balance** under SIMULATION is a check to run, not a way to run. Switch it
+**Mass balance**, under SIMULATION in Advanced settings, is a check to run, not a way to run. Switch it
 on and the run carries a budget for every radionuclide (and one for the
 compartments that are not indexed by one): what came **in** from outside, went
 **out**, was lost to **decay**, gained by **ingrowth**, moved by an **explicit**
@@ -2109,15 +2118,24 @@ it is for.
 It is a check of the bookkeeping, not a conservation law: in becquerels the
 total is not conserved, since decay changes activity by the ratio of the
 half-lives, and the audit does not pretend otherwise. It costs `6 × (nuclides +
-1)` extra states and the analytic Jacobian — the run works out df/dy by
-differencing while it is on — and because the budgets take part in the
-solver's step-size control the curves are the plain run's to within the
-tolerance rather than to the bit. That is why it is off by default, and saved
-with the model as `simulation.mass_balance`.
+1)` extra states, and because the budgets take part in the solver's step-size
+control the curves are the plain run's to within the tolerance rather than to
+the bit. That is why it is off by default, and saved with the model as
+`simulation.mass_balance`.
+
+The analytic Jacobian stays. Nothing in the model reads a budget, so the solver
+needs a budget's row of df/dy only as far as its method uses it. The NDF solver
+(the default) gets only the diagonal of those rows: its Newton iteration reaches
+the same answer without the rest, and the audit adds nothing to its matrices.
+The two Rosenbrock solvers put the matrix into their formula, and the ported
+solvers colour it for themselves when they difference it, so those get the rows
+whole. A radionuclide's rows reach every compartment it is in, so each matrix
+they form takes more evaluations of the model. The Generated code tab says
+which a run had.
 
 ## Solving a model in parts
 
-**Split into parts** under SIMULATION decides whether a model that falls apart
+**Split into parts**, under SIMULATION in Advanced settings, decides whether a model that falls apart
 into independent parts is solved a part per core. Most assessments do: each
 decay chain is a system of its own, joined to no other by any transfer, rate
 or expression. The parts are found from the model's own Jacobian, so nothing
@@ -2843,8 +2861,8 @@ hidden — a rate with the wrong sign, a transfer draining something that was
 never filled. Turning the flag off shows the negative inventory the equations
 actually produce, which is the thing you need to see.
 
-**And there is one switch over all of them.** *Cannot go negative enabled*
-under **Simulation** is the model's master switch: on, every compartment decides for
+**And there is one switch over all of them.** *Cannot go negative enabled*,
+under **Simulation** in Advanced settings, is the model's master switch: on, every compartment decides for
 itself, which is the default and what a model does unless somebody changed it;
 off, nothing is held at zero anywhere and the equations are integrated as
 written. The per-compartment settings are left exactly as they are and simply

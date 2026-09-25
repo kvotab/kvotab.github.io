@@ -57,12 +57,12 @@ export function panelTopic(key, ctx = {}) {
 					+ 'and the times the results are reported at.',
 					'**Solver**, **Rel. tolerance** and **Abs. tolerance** — what integrates the model '
 					+ 'and how accurately.',
-					'**Cannot go negative enabled**, **Mass balance** and **Split into parts** — three '
-					+ 'switches on how the solve behaves.',
 					'**dy/dp**, **Calibration** and **Uncertainty** — a sensitivity integrated with the '
 					+ 'model, solving for inputs, and the probabilistic run with what can be asked of it.',
-					'**Advanced settings** — what the chosen solver reads beyond the tolerances. An empty '
-					+ 'box there shows, greyed, what the solver will use.',
+					'**Advanced settings**, folded — first **Cannot go negative enabled**, **Mass balance** '
+					+ 'and **Split into parts**, three switches on how any solver behaves; then what the '
+					+ 'chosen solver reads beyond the tolerances, where an empty box shows, greyed, what the '
+					+ 'solver will use.',
 				],
 			}, {
 				text: 'Every row has its own (i), on the right, saying what it does and what an empty box '
@@ -139,11 +139,15 @@ export function panelTopic(key, ctx = {}) {
 			}, {
 				heading: 'Its title bar',
 				list: [
-					'**←** and **→** go back and forward through the blocks you have followed links to, '
-					+ 'as a browser does through pages.',
+					'**⧉**, beside the name, takes the view out into a window of its own, which can be '
+					+ 'moved by its title bar and sized by its corner. The tree has the whole panel while '
+					+ 'it is out; closing the window puts the view back. The window is remembered in this '
+					+ 'browser.',
 					'**Edit…** opens the block’s settings — as double-clicking it does, on the diagram, '
 					+ 'in the tree, or on its name here.',
 					'**Open** shows a sub-system on the diagram, and **Up** the one around it.',
+					'**←** and **→** go back and forward through the blocks you have followed links to, '
+					+ 'as a browser does through pages.',
 				],
 			}, {
 				text: 'Right-click the name for the block’s menu. Folded, the view gives its share of the '

@@ -1141,6 +1141,7 @@ export class Results {
 				density: j.density,
 				sparse: !!this.stats.sparse,
 				fill: this.stats.fill ?? null,
+				...(j.budgetRows ? { budgetRows: j.budgetRows } : {}),
 			};
 		}
 		return {
@@ -1151,6 +1152,10 @@ export class Results {
 			density: j.density,
 			sparse: !!this.stats.sparse,
 			fill: this.stats.fill ?? null,
+			// With the mass-balance audit on: whether its budgets' rows were
+			// generated whole ('exact') or left at the diagonal, which is
+			// all a Newton iteration needs of them ('diagonal').
+			...(j.budgetRows ? { budgetRows: j.budgetRows } : {}),
 		};
 	}
 

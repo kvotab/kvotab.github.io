@@ -232,6 +232,12 @@ function compareAt(system, t, y, labels, opts) {
 	// definition and there is nothing to read. Forming it cost four seconds a
 	// state on a 55,728-state model and was used for nothing.
 
+	// The audit's rows are left at their diagonal on purpose for a solver that
+	// iterates (see `buildJacobian` in ./jacobian.js), so what a difference
+	// finds there is neither a missing entry nor a wrong one.
+	const budget = system.jacobian.budgetRows === 'diagonal' ? system.layout.budget : null;
+	const audit = (i) => !!budget && i >= budget.base && i < budget.base + budget.terms.length * budget.nfam;
+
 	const f0 = new Float64Array(n);
 	const plus = new Float64Array(n);
 	const minus = new Float64Array(n);
@@ -302,7 +308,7 @@ function compareAt(system, t, y, labels, opts) {
 		for (const j of cols) work[j] = y[j];
 		for (let i = 0; i < n; i++) {
 			const j = owner[i];
-			if (j < 0) continue;
+			if (j < 0 || audit(i)) continue;
 			judge(i, j, analytic[i], (plus[i] - f0[i]) / step[j], step[j]);
 		}
 		opts.onProgress?.();
@@ -324,7 +330,7 @@ function compareAt(system, t, y, labels, opts) {
 		inPattern.fill(0);
 		for (let k = colPtr[j]; k < colPtr[j + 1]; k++) inPattern[rowIdx[k]] = 1;
 		for (let i = 0; i < n; i++) {
-			if (inPattern[i]) continue;              // pass one judged those
+			if (inPattern[i] || audit(i)) continue;  // pass one judged those
 			const d = (plus[i] - f0[i]) / h;
 			if (!Number.isFinite(d) || d === 0) continue;
 			if (!(Math.abs(d) * h > 1e-8 * Math.abs(f0[i]))) continue;

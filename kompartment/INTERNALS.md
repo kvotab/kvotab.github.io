@@ -1956,12 +1956,52 @@ created). `closed` is therefore judged against `20 × rtol`, not round-off. It i
 in becquerels the total is not conserved, and the check is of the bookkeeping,
 not of physics.
 
-Three prices, all on purpose and said in the switch's tooltip: the vector
-grows by `6 × (nuclides + 1)` states; `buildJacobian` declines — the budget
-rows are not in the pattern; and the budgets take part in the step-size
+Two prices, both on purpose and said in the switch's (i): the vector grows by
+`6 × (nuclides + 1)` states, and the budgets take part in the step-size
 control, so the trajectory is the plain run's to within the tolerance rather
 than to the bit (1.3 × 10⁻⁸ relative on the test model under dp45). An audit
-run is a check, not a way to run. `mass_balance` is in the fingerprint's solve settings, since a run
+run is a check, not a way to run.
+
+It used to have a third: `buildJacobian` declined, since the budget rows were
+not in the pattern. On a model of 9,392 states that was no price but a refusal.
+With no pattern, the solver needed the iteration matrix dense (0.7 GB) and
+would not start. It keeps the Jacobian now, and how much of the budgets it
+carries depends on the solver (`DIAGONAL_BUDGET_IDS` in
+`src/sim/jacobian.js`; `jacobian.budgetRows` says which).
+
+- **`'diagonal'`**: ndf, dp45 and the SciPy methods. Nothing reads a budget,
+  so a budget's column is empty and the rest of the matrix is exact without its
+  row. A Newton iteration with the row left at the diagonal still converges to
+  the same solution, because the budgets are set from the state each iteration
+  and settle one behind it. The diagonal has to be the exact zero it is,
+  though, including when the matrix is differenced (on request, or at a point
+  where the generated one is not finite). A budget column shares no row with
+  anything, so the colouring would put it in any group. Differenced there, its
+  diagonal reads the fluxes of the states beside it, and a Newton iteration
+  with that on the diagonal settles slowly or not at all. So `budgetsApart`
+  takes the budgets into one group of their own, which differences to exactly
+  zero, and `evaluate` skips it.
+- **`'exact'`**: everything else. A Rosenbrock puts J into the formula, so a
+  missing row is a lower-order budget. The ported methods colour the pattern
+  themselves when they difference, and their colouring cannot be told to keep
+  the budgets apart. `patternSource` and `jvpSourceFor` then emit the budget
+  rows (`budgetRowsOfTransfer`, and the in/explicit/waste/event/decay/ingrowth
+  sites), each row reaching every state of its family, so the colouring widens
+  to about the largest family.
+
+`checkJacobian` skips `'diagonal'` budget rows, where differences see entries the
+pattern leaves out on purpose.
+
+Turning the audit on also exposed a bug in the ported package's
+`reverseCuthillMcKee` (`src/ode/julia/core/linalg.js`, the same bytes as
+`resources/js/ode/julia/`). It started each component at the least degree from
+the scan position and moved on by one whether or not the component reached
+that position, so two isolated vertices after a connected block were enough for
+it to return zeros in place of the vertices it had walked past. The sparse LU
+through that order reported the matrix singular, and every ported method
+stalled at t = 0. It now orders what the loop left. Where the loop left nothing,
+which is every case it got right, the order is bit-identical (4,000 random
+patterns: 3,065 unchanged, 935 formerly broken). `mass_balance` is in the fingerprint's solve settings, since a run
 without it is not a run with it. The result travels as `payload.massBalance`
 from `Results.massBalance()`, is a status-line item (`mass balance: closes
 (9e-11)` / `open by 3.2e-4`, with every family in the tooltip) and is written
@@ -4894,11 +4934,11 @@ have.
 Each of these is a decision rather than an oversight, and each says what it
 costs and what it would take to lift.
 
-**The analytic Jacobian is optional, and the fallback is dense.** Three things
-decline it: the *mass-balance audit*, which appends budget states that are not
-in the pattern; a function with no derivative rule, or one reached with a live
+**The analytic Jacobian is optional, and the fallback is dense.** Two things
+decline it: a function with no derivative rule, or one reached with a live
 argument; and a model large enough to pass the tangent generator's ceiling of
-250,000 statements. (An availability used to be a fourth; see *Availability*.) Without the pattern there is nothing for `src/ode/core/sparse.js`
+250,000 statements. (An availability and the mass-balance audit used to be two
+more; see *Availability* and *Mass-balance audit*.) Without the pattern there is nothing for `src/ode/core/sparse.js`
 to factorise either, so those runs difference `df/dy` and factorise it densely —
 comfortable to a few hundred states and slow past a thousand. Each refusal
 names itself in the run's statistics rather than happening quietly.
@@ -5286,6 +5326,20 @@ opening another. Each window holds its own block name, moved on by a rename
 made in it; `state.settingsFor` is only the window last used, for the undo
 history's labels. Each window's (i) is keyed by the window
 (`dialog:block:<id>`), since two windows can be about two kinds of block.
+
+The Information view uses the same machinery for a window of its own (`popInfo`
+in src/ui/app.js), opened by the **⧉** in its title bar. `renderInfoCard`
+renders into the window's body while `infoWin` is set, and into `#info`
+otherwise. With `hooks.bar`, `renderInfo` (src/ui/info.js) skips the fold and
+puts its buttons in a slot in the window's head, ahead of its (i).
+`#sidebar.is-info-out` hides `#info` and the divider, so the tree takes the
+rail. Two options were added to `openModal` for it. `className` is applied
+before the first layout. `keep` has `closeAllModals` leave the window open, so a
+newly opened model is shown in it rather than closing it. The scroll position
+is kept across a rebuild while the same thing is shown. The place, the size and
+whether it was out are stored in `localStorage` under `kompartment.infoWindow`
+(read and written in try/catch, and saved on every `pointerup` on the window),
+and the first model on screen reopens the window if it was out.
 
 ## A pipe's place, per canvas
 

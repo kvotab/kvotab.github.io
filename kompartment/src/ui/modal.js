@@ -270,8 +270,15 @@ function raise(dialog) {
  *   another. Escape closes the one with the keyboard in it, pressing one
  *   brings it to the front, and each new one opens a step down and right of
  *   the last so none hides another.
+ * @param {string} [opts.className] classes of the caller's own on the dialog,
+ *   there before it is first laid out
+ * @param {boolean} [opts.keep] left open by `closeAllModals`: a window that
+ *   shows whatever model is open, rather than editing the one that was
  */
-export function openModal({ title, subtitle, build, onClose, wide = false, info = null, floating = false }) {
+export function openModal({
+	title, subtitle, build, onClose, wide = false, info = null, floating = false,
+	className = '', keep = false,
+}) {
 	// Where the keyboard was: a dialog opened with Enter on a diagram node
 	// hands the focus back to that node when it closes, rather than dropping
 	// it on the body so that the next Tab starts from the top of the page.
@@ -301,8 +308,9 @@ export function openModal({ title, subtitle, build, onClose, wide = false, info 
 	// the dialog clips its own rounded corners with `overflow: hidden`, which
 	// puts the browser's grip under the clip and out of reach.
 	const grip = el('div', { className: 'modal-grip', title: 'Drag to resize' });
-	const dialog = el('dialog', { className: `modal${wide ? ' modal-wide' : ''}${floating ? ' is-floating' : ''}` },
-		head, body, grip);
+	const dialog = el('dialog', {
+		className: `modal${wide ? ' modal-wide' : ''}${floating ? ' is-floating' : ''}${className ? ` ${className}` : ''}`,
+	}, head, body, grip);
 
 	const refresh = () => {
 		// A string, or the nodes a title is made of: a block's title carries
@@ -432,7 +440,7 @@ export function openModal({ title, subtitle, build, onClose, wide = false, info 
 	resizable(dialog, grip, body);
 
 	const handle = {
-		dialog, refresh, floating,
+		dialog, refresh, floating, keep, head, body,
 		close: () => { drop(); dialog.close(); },
 		// In front, with the keyboard in it: for a caller asked to open a
 		// window that is open already.
@@ -468,9 +476,13 @@ export function closeModal() {
 	stack[stack.length - 1]?.close();
 }
 
-/** Closes all of them: a new model has nothing to do with the old one's forms. */
+/**
+ * Closes all of them: a new model has nothing to do with the old one's forms.
+ * A window opened with `keep` stays, and is refreshed for the model that
+ * replaced them.
+ */
 export function closeAllModals() {
-	while (stack.length) stack[stack.length - 1].close();
+	for (const h of stack.filter((m) => !m.keep).reverse()) h.close();
 }
 
 export function modalIsOpen() {

@@ -257,6 +257,38 @@ function buildSparse(n, rand) {
   console.log(`      fill: ${plain.fill} unordered, ${ordered.fill} with RCM, ${n * n} dense`);
 }
 
+/* Several components, the vertices of least degree after a connected block.
+   The ordering used to start each component at the least degree from its
+   scan position and move on by one either way, so here it took the six
+   isolated vertices one per step, walked past the chain, and returned zeros
+   where the chain should have been: not a permutation, and the factorisation
+   through it reported the matrix singular. */
+{
+  const m = 12;
+  const rows = []; const cols = []; const vals = [];
+  for (let i = 0; i < m; i++) {
+    rows.push(i); cols.push(i); vals.push(3 + i);
+    if (i < 5) {
+      rows.push(i + 1); cols.push(i); vals.push(-1);
+      rows.push(i); cols.push(i + 1); vals.push(-0.5);
+    }
+  }
+  const B = cscFromTriplets(m, rows, cols, vals);
+  const q = reverseCuthillMcKee(m, B.colPtr, B.rowIdx);
+  check('RCM is a permutation with isolated vertices after a connected block',
+        new Set(q).size === m && Math.min(...q) === 0 && Math.max(...q) === m - 1, Array.from(q).join(','));
+  const lu = new SparseLU(m, B.colPtr, B.rowIdx, q);
+  check('and the factorisation through it succeeds', lu.factor(B.colPtr, B.rowIdx, B.values));
+  const b = Float64Array.from({ length: m }, (_, i) => 1 + (i % 4));
+  const x = Float64Array.from(b);
+  lu.solve(x);
+  const Bx = new Float64Array(m);
+  B.apply(x, Bx);
+  let worst = 0;
+  for (let i = 0; i < m; i++) worst = Math.max(worst, Math.abs(Bx[i] - b[i]));
+  check('and solves the system', worst < 1e-12, `residual ${worst.toExponential(2)}`);
+}
+
 /* --- norms ---------------------------------------------------------------- */
 {
   const w = new Float64Array(4);

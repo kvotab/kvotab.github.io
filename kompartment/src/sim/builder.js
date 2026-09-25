@@ -2407,6 +2407,18 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 		// Where the run starts, for the probe that decides whether the
 		// matrix is made of numbers there. See refuseNonFinite.
 		initialState,
+		// The mass-balance audit's states, and the arithmetic that says which
+		// of them a flux lands in -- the derivative's own, so that a budget
+		// row of the matrix is the row the derivative writes. The sub-set
+		// tables it reads are emitted from the same list, after the
+		// generator has asked for whatever it needs. See `buildJacobian`.
+		budget: budgetLayout,
+		budgetFamily: budgetLayout ? {
+			familyExpr, endpointFamily, budgetAt,
+			wasteNames: new Set(wasteByName.keys()),
+			mapsSource: () => budgetMaps.map((m, j) => `\tconst BMAP${j} = [${
+				Array.from(m.table ?? [], (v) => (v < 0 ? budgetLayout.nfam - 1 : v)).join(', ')}];`),
+		} : null,
 		runtime: {
 			P, X, DEC, MAPS, TAB, MEM, FARF, ctx,
 		},

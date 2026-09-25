@@ -434,12 +434,12 @@ export function reverseCuthillMcKee(n, colPtr, rowIdx) {
   const seen = new Uint8Array(n);
   let w = 0;
   const nbrs = [];
-  for (let s = 0; s < n; s++) {
-    if (seen[s]) continue;
-    // Start each component at a vertex of least degree.
-    let root = s;
+  // One component, breadth first from the vertex of least degree at or after
+  // `from`, each vertex's neighbours taken in increasing degree.
+  const component = (from) => {
+    let root = from;
     let best = Infinity;
-    for (let v = s; v < n; v++) {
+    for (let v = from; v < n; v++) {
       if (seen[v]) continue;
       const d = start[v + 1] - start[v];
       if (d < best) { best = d; root = v; }
@@ -457,6 +457,23 @@ export function reverseCuthillMcKee(n, colPtr, rowIdx) {
       nbrs.sort((a, b) => (start[a + 1] - start[a]) - (start[b + 1] - start[b]));
       for (const u of nbrs) order[w++] = u;
     }
+  };
+  for (let s = 0; s < n; s++) {
+    if (seen[s]) continue;
+    component(s);
+  }
+  // That loop moves past s whether or not the component it started reached s
+  // -- the root is the least degree from s on, which need not be s -- so it
+  // can pass vertices that no later component contains. The order then came
+  // back short and padded with zeros: not a permutation, and a factorisation
+  // through it reported the matrix singular or pivoted on garbage. Two
+  // isolated vertices after a connected block were enough, and a Kompartment
+  // model with its mass-balance audit on has dozens. Whatever it left is
+  // ordered here; from s on nothing is unseen, so nothing is passed again.
+  // Where it left nothing -- every case it got right -- the order is the one
+  // it always gave.
+  for (let s = 0; s < n && w < n; s++) {
+    while (!seen[s]) component(s);
   }
   // Reversed: Cuthill-McKee reversed has strictly no more fill, usually less.
   const rcm = new Int32Array(n);

@@ -3825,6 +3825,8 @@ function jacobianDetail(p) {
 			? 'constant, so it is built once for the whole run'
 			: 're-evaluated when the Newton iteration stalls',
 	];
+	if (j.budgetRows === 'diagonal') bits.push('the mass-balance budgets\u2019 rows at their diagonal, which is all a Newton iteration needs');
+	if (j.budgetRows === 'exact') bits.push('the mass-balance budgets\u2019 rows generated whole, which this solver needs');
 	if (p.stats.sparse) bits.push(`factorised sparsely, fill ${p.stats.fill}`);
 	else bits.push('factorised densely: at this size that is the faster of the two');
 	return `Generated from the equations. ${bits.join('. ')}.`;
@@ -4812,6 +4814,12 @@ function wirePaneSplits() {
  * from being rebuilt when the values arrive.
  */
 function renderInfoCard() {
+	// Out in its window again if it was when this browser last had the page:
+	// once, with the first model on screen, since the window shows one.
+	if (!infoRestored && state.raw) {
+		infoRestored = true;
+		if (readInfoWindow()?.out && !infoWin) { popInfo(); return; }
+	}
 	// With nothing selected while the diagram is inside a sub-system, the
 	// view reads that sub-system: it is what is in front of you, and the
 	// whole model is one click up. `implied` lets the view say so, and offer
@@ -4821,7 +4829,15 @@ function renderInfoCard() {
 		?? (here && ed.systems(state.raw).includes(here)
 			? { kind: 'system', name: here, implied: true }
 			: null);
-	renderInfo($('#info'), state.raw, shown, {
+	// In its window, when it is out (`popInfo`): the window's body, and its
+	// buttons in the window's title bar. An edit rebuilds the view, so the
+	// place it was scrolled to is kept while it goes on showing the same
+	// thing -- a window read halfway down a block's equations should not jump
+	// to the top at every keystroke.
+	const win = infoWin?.body ? infoWin : null;
+	const key = shown ? `${shown.kind}:${shown.name}` : '';
+	const top = win && win.shown === key ? win.body.scrollTop : 0;
+	renderInfo(win ? win.body : $('#info'), state.raw, shown, {
 		atStart: startValueFor,
 		marks: state.marks,
 		// Scanned once per edit by `rescanProblems`; the card reads that
@@ -4844,10 +4860,101 @@ function renderInfoCard() {
 		onContextMenu: blockMenu,
 		onBack: () => stepTrail(-1),
 		onForward: () => stepTrail(1),
-		info: () => infoButton('panel:information', () => panelTopic('information')),
+		info: win ? null : () => infoButton('panel:information', () => panelTopic('information')),
+		bar: win ? win.bar : null,
+		onPopOut: win ? null : () => popInfo(),
 		canBack: state.trail.at > 0,
 		canForward: state.trail.at >= 0 && state.trail.at < state.trail.seen.length - 1,
 	});
+	if (win) {
+		win.body.scrollTop = top;
+		win.shown = key;
+	}
+}
+
+/**
+ * The Information view in a window of its own, for as long as it is out.
+ *
+ * A floating window like a block's settings (see `openModal`): moved by its
+ * title bar, sized by its corner, in front when pressed, and the page usable
+ * around it -- so it can sit over the canvas, or beside it on a second screen's
+ * worth of window, while the tree has the whole of the rail. Kept open when
+ * another model is opened, because it shows whatever model is in front of it.
+ * Its × or Escape puts the view back in the rail.
+ *
+ * Where it was, how big, and whether it was out are remembered in this
+ * browser (`kompartment.infoWindow`), as a convenience and nothing more:
+ * without storage it opens beside the rail every time.
+ */
+const INFO_WINDOW_KEY = 'kompartment.infoWindow';
+let infoWin = null;
+let infoRestored = false;
+
+function readInfoWindow() {
+	try {
+		const v = JSON.parse(localStorage.getItem(INFO_WINDOW_KEY) ?? 'null');
+		return v && typeof v === 'object' ? v : null;
+	} catch { return null; }
+}
+
+function writeInfoWindow(v) {
+	try { localStorage.setItem(INFO_WINDOW_KEY, JSON.stringify(v)); } catch { /* not kept: fine */ }
+}
+
+function popInfo() {
+	if (infoWin) { infoWin.handle?.focus(); return; }
+	const bar = el('div', { className: 'info-window-bar' });
+	const win = { bar, body: null, handle: null, shown: null };
+	infoWin = win;
+	$('#sidebar')?.classList.add('is-info-out');
+	$('#info')?.replaceChildren();
+	const handle = openModal({
+		// The view's own topic, as its (i) in the rail has it.
+		info: { key: 'panel:information', topic: () => panelTopic('information') },
+		title: 'Information',
+		floating: true,
+		keep: true,
+		className: 'is-info-window',
+		build: (body) => { win.body = body; renderInfoCard(); },
+		onClose: () => {
+			writeInfoWindow({ ...boxOf(handle), out: false });
+			if (infoWin === win) infoWin = null;
+			$('#sidebar')?.classList.remove('is-info-out');
+			renderInfoCard();
+		},
+	});
+	win.handle = handle;
+	// The view's own buttons in the window's title bar, before its (i): where
+	// they are in the rail.
+	handle.head.insertBefore(bar, handle.head.querySelector('.info-btn') ?? handle.head.lastChild);
+	handle.dialog.querySelector('.modal-close').title = 'Put Information back in the panel (Esc)';
+
+	// Where it was last, kept on the screen; the first time, beside the rail.
+	const saved = readInfoWindow();
+	const rail = $('#sidebar')?.getBoundingClientRect();
+	const w = Math.round(Math.min(window.innerWidth - 16, Math.max(320, saved?.width ?? 400)));
+	const h = Math.round(Math.min(window.innerHeight - 120, Math.max(120, saved?.height ?? window.innerHeight * 0.6)));
+	handle.dialog.style.width = `${w}px`;
+	handle.dialog.style.maxHeight = 'none';
+	handle.body.style.height = `${h}px`;
+	handle.body.style.maxHeight = `${h}px`;
+	const x = saved?.left ?? (rail ? rail.right + 16 : 40);
+	const y = saved?.top ?? (rail ? rail.top + 8 : 80);
+	handle.dialog.style.left = `${Math.round(Math.min(window.innerWidth - 80, Math.max(0, x)))}px`;
+	handle.dialog.style.top = `${Math.round(Math.min(window.innerHeight - 60, Math.max(0, y)))}px`;
+	// Kept as it is left after every move and resize, so a reload finds it
+	// where it was even if it was never closed.
+	handle.dialog.addEventListener('pointerup', () => writeInfoWindow({ ...boxOf(handle), out: true }));
+	writeInfoWindow({ ...boxOf(handle), out: true });
+}
+
+/** A window's place and size, as `popInfo` puts them back. */
+function boxOf(handle) {
+	const r = handle.dialog.getBoundingClientRect();
+	const b = handle.body.getBoundingClientRect();
+	return r.width > 0
+		? { left: Math.round(r.left), top: Math.round(r.top), width: Math.round(r.width), height: Math.round(b.height) }
+		: { ...(readInfoWindow() ?? {}) };
 }
 
 function renderRail({ tree = true } = {}) {
@@ -6371,16 +6478,9 @@ function renderSidebar() {
 			SOLVER_IDS.map((id) => [id, (solverIsRemote(id) ? '\u2193 ' : '') + solverLabel(id)])),
 		numField('rtol', ''),
 		numField('abstol', ''),
-		// Below the tolerances because it belongs with them: all three are
-		// about how the solve is allowed to behave rather than about what the
-		// model says. The file's `saturation-enabled`, in the one form this tool
-		// carries.
-		boolField('non_negative'),
-		boolField('mass_balance', { on: false }),
-		// Whether a model that falls apart into independent parts -- a decay
-		// chain each, on an assessment -- is solved a part per core. With the
-		// solve settings because it is one: each part takes its own steps.
-		selField('split', SPLIT_MODES.map(([v, label]) => [v, label])),
+		// Cannot go negative, Mass balance and Split into parts are under
+		// Advanced settings, below: switches on how any solve behaves, set
+		// once and left.
 	);
 	// dy/dp needs no distributions -- it is a derivative at the values the
 	// model holds -- so it is offered whatever the model carries.
@@ -6484,8 +6584,20 @@ function renderSidebar() {
 		const id = sim.solver ?? DEFAULT_SOLVER;
 		const keys = solverOptions(id);
 		const dropped = solverIgnores(id);
-		if (keys.length || dropped.length) {
-			const box = el('div', { className: 'sim-solver-opts' });
+		{
+			// First the three every solver honours: how the solve is allowed to
+			// behave rather than what the model says, each set once and left --
+			// which is why they are folded away with the rest. Cannot go
+			// negative is the file's `saturation-enabled`, in the one form this
+			// tool carries; Split into parts solves a model that falls apart
+			// into independent parts -- a decay chain each, on an assessment --
+			// a part per core, each at its own steps.
+			const box = el('div', { className: 'sim-solver-opts' },
+				boolField('non_negative'),
+				boolField('mass_balance', { on: false }),
+				selField('split', SPLIT_MODES.map(([v, label]) => [v, label])));
+			// Then the chosen solver's own, under a line that says so.
+			if (keys.length) box.append(el('p', { className: 'sim-opts-head' }, 'The solver\u2019s own settings'));
 			// What an empty box comes to for this solver and this run, so that
 			// an empty box answers its own question: greyed in a number box,
 			// and named in the `auto` of a choice. See solverDefault in
@@ -6516,7 +6628,7 @@ function renderSidebar() {
 			}
 			// Inside the fold, under the settings it is about, as facsimile.html
 			// and rtm.html have it. A solver that reads none of them (SciPy's)
-			// still gets the fold, holding only this.
+			// has this under the three switches, and no heading over nothing.
 			if (dropped.length) {
 				const last = dropped.length > 1 ? ` and ${dropped[dropped.length - 1]}` : '';
 				const list = dropped.length > 1
@@ -8903,11 +9015,19 @@ function renderCode() {
 		src.dydt,
 	);
 	if (src.jacobian) {
+		const rows = state.results.jacobian?.budgetRows;
 		parts.push(
 			'',
 			'// ===== J * v, the Jacobian by forward-mode differentiation =======',
 			'// Seeded once per colour group, which is how the whole of df/dy is',
 			'// recovered in a handful of passes instead of one per state.',
+			...(rows === 'diagonal' ? [
+				'// The mass-balance audit\'s budget rows are left at their diagonal:',
+				'// nothing reads a budget, and a Newton iteration needs no more.',
+			] : rows === 'exact' ? [
+				'// The mass-balance audit\'s budget rows are generated whole: this',
+				'// solver puts the matrix into its formula, or colours it itself.',
+			] : []),
 			src.jacobian,
 		);
 	} else if (state.results.jacobian?.reason) {

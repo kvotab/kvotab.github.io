@@ -5887,6 +5887,26 @@ table.ix-table input { width: 130px; padding: 2px 6px; font-size: 11.5px; }
 /* The Information view's (i), after its buttons at the end of its title bar. */
 .info-nav + .info-btn { margin-left: 4px; align-self: center; }
 
+/* Out into a window of its own, beside the view's name. */
+.info-pop {
+	margin-left: 4px;
+	padding: 0 5px;
+	font-size: 12px;
+	line-height: 1.4;
+}
+
+/* Out in its window (`popInfo`), the view leaves the rail to the tree. */
+#sidebar.is-info-out > #info,
+#sidebar.is-info-out > #rail-split { display: none; }
+
+/* The window: one column, the window's body the thing that scrolls, and the
+   view's buttons in its title bar ahead of its (i), where they are in the
+   rail. The body's own rule and padding were for the card's frame. */
+.modal.is-info-window .modal-body { display: block; padding: 0; }
+.modal.is-info-window .info-body { border-top: none; overflow: visible; padding: 10px 12px 16px; }
+.modal-head > .info-window-bar { margin-left: auto; align-self: center; display: flex; }
+.modal-head > .info-window-bar + .info-btn { margin-left: 4px; }
+
 .info-arrow {
 	padding: 0 6px;
 	font-size: 11px;
@@ -8599,15 +8619,15 @@ input.ix-unit { width: 130px; padding: 2px 6px; font-size: 11.5px; }
 .dis-action { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 .dis-action select { max-width: 11em; }
 .dis-share { width: 5em; font-family: var(--mono, monospace); }
-.dis-label { color: var(--ink-dim, #666); font-size: 0.9em; }
-.dis-arrow { color: var(--ink-dim, #666); }
+.dis-label { color: var(--text-muted); font-size: 0.9em; }
+.dis-arrow { color: var(--text-muted); }
 .dis-remove { padding: 0 6px; }
 .dis-add { align-self: flex-start; }
 
 /* The solver's own settings: a fold, because which of them exist depends on
    the solver and most runs never touch one. The last line in it names the
    ones the chosen solver does not read -- see `solverIgnores`. */
-.sim-opts > summary { cursor: pointer; color: var(--ink-dim, #666); font-size: 0.92em; padding: 2px 0; }
+.sim-opts > summary { cursor: pointer; color: var(--text-muted); font-size: 0.92em; padding: 2px 0; }
 /* Its (i) in the column the rows keep theirs in: the right-hand edge. Placed
    rather than laid out, because a summary that is made a flex row loses the
    disclosure triangle the browser draws for it. */
@@ -8615,8 +8635,14 @@ input.ix-unit { width: 130px; padding: 2px 6px; font-size: 11.5px; }
 .sim-opts > summary .info-btn { position: absolute; right: 0; top: 50%; transform: translateY(-50%); }
 .sim-opts[open] > summary { margin-bottom: 2px; }
 .sim-solver-opts { display: flex; flex-direction: column; gap: 2px; }
+/* Between the three switches every solver honours and the chosen solver's
+   own settings: a caption on a hairline, quieter than the rows it divides. */
+.sim-opts-head {
+	margin: 6px 0 0; padding-top: 5px; border-top: 1px solid var(--border);
+	color: var(--text-muted); font-size: 0.86em;
+}
 .sim-dropped {
-	margin: 2px 0 0; color: var(--ink-dim, #666); font-size: 0.86em; line-height: 1.35;
+	margin: 2px 0 0; color: var(--text-muted); font-size: 0.86em; line-height: 1.35;
 }
 
 /* A shape's label, in as many lines as it takes. */

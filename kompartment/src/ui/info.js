@@ -110,7 +110,10 @@ const DEFINING = {
  * @param {object} project
  * @param {{kind: string, name: string}|null} selection
  * @param {{onSelect?: Function, onOpenSystem?: Function, onBack?: Function,
- *          onForward?: Function, canBack?: boolean, canForward?: boolean}} hooks
+ *          onForward?: Function, canBack?: boolean, canForward?: boolean,
+ *          bar?: HTMLElement, onPopOut?: Function}} hooks  `bar`, when the
+ *   view is in a window of its own: where its buttons go, in the window's
+ *   title bar. `onPopOut`, when it is in the rail: puts it in one.
  */
 export function renderInfo(host, project, selection, hooks = {}) {
 	// The pane, kept separately because `host` is reassigned to the card's
@@ -120,22 +123,31 @@ export function renderInfo(host, project, selection, hooks = {}) {
 	const pane = host;
 	pane.replaceChildren();
 
-	// Collapsible and remembered for the session, like the rail's other
-	// sections: this is a view you show when you want it, which is how Ecolego
-	// treats it too. The class lets the rail give the space back to the tree
-	// when it is closed, since a card that is only a title bar should not go
-	// on holding half the panel.
-	const box = part({
-		id: 'information',
-		title: 'Information',
-		open,
-		// Rendered again rather than just hidden, so that opening a card that
-		// was closed when the view was built fills it: it used to come back
-		// empty, since the body is only written when the card is open.
-		onToggle: (on) => { open = on; renderInfo(pane, project, selection, hooks); },
-	});
-	pane.classList.toggle('is-closed', !open);
-	pane.append(box);
+	// In a window of its own the window's title bar is the card's: there is
+	// no fold to make, and the buttons go where the caller says.
+	const windowed = !!hooks.bar;
+	let bar = hooks.bar ?? null;
+	if (windowed) {
+		bar.replaceChildren();
+	} else {
+		// Collapsible and remembered for the session, like the rail's other
+		// sections: this is a view you show when you want it, which is how Ecolego
+		// treats it too. The class lets the rail give the space back to the tree
+		// when it is closed, since a card that is only a title bar should not go
+		// on holding half the panel.
+		const box = part({
+			id: 'information',
+			title: 'Information',
+			open,
+			// Rendered again rather than just hidden, so that opening a card that
+			// was closed when the view was built fills it: it used to come back
+			// empty, since the body is only written when the card is open.
+			onToggle: (on) => { open = on; renderInfo(pane, project, selection, hooks); },
+		});
+		pane.classList.toggle('is-closed', !open);
+		pane.append(box);
+		bar = box.querySelector('summary');
+	}
 
 	// Back and forward live in the title bar, not in the body: they are the
 	// panel's own controls rather than something about the block, and a card
@@ -154,10 +166,6 @@ export function renderInfo(host, project, selection, hooks = {}) {
 		b.addEventListener('click', (ev) => { ev.preventDefault(); ev.stopPropagation(); go?.(); });
 		return b;
 	};
-	nav.append(
-		arrow('←', 'Back to the block you were reading', hooks.canBack, hooks.onBack),
-		arrow('→', 'Forward again', hooks.canForward, hooks.onForward),
-	);
 
 	// The way through to the editor. This panel reads a block; everything a
 	// block can be given is in the dialog, and with no property form in the
@@ -195,10 +203,32 @@ export function renderInfo(host, project, selection, hooks = {}) {
 	// panel, which is on screen the whole time. A button whose only effect is
 	// to expand a section that is open by default does nothing at all, and a
 	// door to a room you are standing in is worse than no door.
-	box.querySelector('summary')?.append(nav);
+	//
+	// Back and forward come after it, last before the (i): they are the ones
+	// pressed again and again, and at the end of the bar they stay where they
+	// are while the door beside them comes and goes with the selection.
+	nav.append(
+		arrow('←', 'Back to the block you were reading', hooks.canBack, hooks.onBack),
+		arrow('→', 'Forward again', hooks.canForward, hooks.onForward),
+	);
+	// Out into a window of its own, from beside the view's name: it is about
+	// the whole view rather than about the block in it. See `popInfo` in
+	// ./app.js.
+	if (!windowed && hooks.onPopOut) {
+		const out = el('button', {
+			className: 'ghost info-pop', type: 'button',
+			title: 'Open Information in a window of its own, which can be moved and resized. '
+				+ 'Closing the window puts it back here.',
+			'aria-label': 'Open Information in a window of its own',
+		}, '\u29c9');
+		out.addEventListener('click', (ev) => { ev.preventDefault(); ev.stopPropagation(); hooks.onPopOut(); });
+		bar.querySelector('.panel-section-title')?.after(out);
+	}
+	bar?.append(nav);
 	// What this view is, behind an (i) at the end of its title bar, where the
-	// other sections of the panel keep theirs. See ./infopanel.js.
-	if (hooks.info) box.querySelector('summary')?.append(hooks.info());
+	// other sections of the panel keep theirs. See ./infopanel.js. In a window
+	// the window has its own.
+	if (hooks.info && !windowed) bar?.append(hooks.info());
 
 	// A sibling of the disclosure, not a child of it.
 	//
@@ -210,9 +240,9 @@ export function renderInfo(host, project, selection, hooks = {}) {
 	// of the bottom of the card, and scrolled the rail instead of itself.
 	// Whether the card is open is a class and a `hidden` here rather than
 	// something the element does for us.
-	const body = el('div', { className: 'info-body', hidden: !open });
+	const body = el('div', { className: 'info-body', hidden: !windowed && !open });
 	pane.append(body);
-	if (!open) return;
+	if (!windowed && !open) return;
 	host = body;
 
 	// A sub-system is not a block, so there is nothing to look up -- but it is

@@ -1324,7 +1324,7 @@ test('a dialog opened over another comes back to it', async () => {
 	const modal = readFileSync(new URL('../src/ui/modal.js', import.meta.url), 'utf8');
 
 	assert(/const stack = \[\]/.test(modal), 'the modal stack is gone');
-	const openFn = /export function openModal\([\s\S]*?\n\}/.exec(modal)?.[0] ?? '';
+	const openFn = /export function openModal\([\s\S]*?\n\}\n/.exec(modal)?.[0] ?? '';
 	assert(openFn, 'openModal is gone');
 	assert(!/^\s*closeModal\(\);/m.test(openFn),
 		'opening a dialog closes the one underneath again');
@@ -30442,9 +30442,25 @@ test('the mass-balance audit closes on what the equations moved, and opens on a 
 			assert(Math.abs(p - q) <= 1e-6 * Math.max(1, Math.abs(p)), `Soil moved: ${p} vs ${q}`);
 		}
 	}
-	// It declines the analytic Jacobian, and it is in the fingerprint.
-	assert(r.jacobian.available === false && /mass-balance audit/.test(r.jacobian.reason), JSON.stringify(r.jacobian));
-	assert(plain.jacobian.available === true, 'the plain run lost its Jacobian');
+	// It keeps the analytic Jacobian, which it used to decline -- and a model
+	// of nine thousand states then had no pattern to difference through and
+	// was refused a dense one. The budgets are read by nothing, so a solver
+	// that iterates converges to the same solution with their rows left at
+	// the diagonal; a Rosenbrock puts the matrix into its formula, so for one
+	// the rows are generated whole.
+	assert(r.jacobian.available !== false && r.jacobian.budgetRows === 'diagonal', JSON.stringify(r.jacobian));
+	assert(plain.jacobian.available === true && plain.jacobian.budgetRows === undefined, 'the plain run lost its Jacobian');
+	{
+		// Whole: every entry of every row agrees with differences, the budgets' included.
+		const { worst, jacobian } = jacobianAgrees(model('ros23'));
+		assert(jacobian.budgetRows === 'exact' && worst < 1, `the audit's rows are off by ${worst}x the difference's noise`);
+		const ros = run(model('ros23'));
+		assert(ros.jacobian.available !== false && ros.massBalance().worst < 1e-10, `ros23 with its rows: ${ros.massBalance().worst}`);
+		// At the diagonal: the Jacobian check judges every other row, and agrees.
+		const { checkJacobian } = await import('../src/sim/jaccheck.js');
+		const checked = checkJacobian(model('ndf'));
+		assert(checked.verdict === 'agrees' && checked.missing === 0, `${checked.verdict}: ${checked.missing} missing`);
+	}
 	assert(integrationFingerprint(model('dp45', true)) !== integrationFingerprint(model('dp45', false)));
 
 	// The report.
@@ -30509,6 +30525,92 @@ test('the mass-balance audit closes on what the equations moved, and opens on a 
 	const { runLogLines } = await import('../src/domain/runlog.js');
 	const log = runLogLines({ project: held.project?.raw ?? { name: 'held', simulation: sim('ndf') }, payload: { stats: held.stats, timing: held.timing, t: held.t, outputs: [], heldAtZero: held.heldAtZero(), massBalance: ha }, build: 'test', at: new Date(0) }).join('\n');
 	assert(/mass-balance audit: on/.test(log) && /DOES NOT CLOSE/.test(log), log);
+});
+
+test('the audit\u2019s rows left at the diagonal stay exact when the matrix is differenced, and a solver that colours for itself gets them whole', async () => {
+	const { differenceJacobian: throughGroups, colourColumns } = await import('../src/ode/core/sparse.js');
+	const model = (solver, extra = {}) => ({
+		name: 'audit', simulation: {
+			time_unit: 'year', start_time: 0, end_time: 200, output_points: 40, spacing: 'linear',
+			solver, rtol: 1e-6, abstol: 1e-9, mass_balance: true, ...extra,
+		},
+		nuclides: ['Sr-90', 'Y-90', 'Cs-137'],
+		index_lists: [{ name: 'RN', for_contaminants: true, indices: [{ name: 'Sr-90' }, { name: 'Y-90' }, { name: 'Cs-137' }] }],
+		compartments: [
+			{ name: 'Soil', index_lists: ['RN'], initial: '0', entries: [{ index: 'Sr-90', initial: '1000' }, { index: 'Cs-137', initial: '500' }] },
+			{ name: 'Water', index_lists: ['RN'], initial: '0' },
+		],
+		parameters: [{ name: 'k', value: 0.05 }],
+		transfers: [
+			{ name: 'Leach', from: 'Soil', to: 'Water', rate: 'k' },
+			{ name: 'Out', from: 'Water', to: null, rate: 'k / 2' },
+		],
+		inflows: [], expressions: [], lookups: [],
+	});
+
+	// The NDF's matrix: the budgets are the last group, and alone in it.
+	const sys = buildSystem(new Project(model('ndf')));
+	const J = sys.jacobian;
+	const { base, nfam, terms } = sys.layout.budget;
+	const width = terms.length * nfam;
+	assert(J.budgetRows === 'diagonal' && colouringIsValid(J.pattern, J.groups), JSON.stringify({ rows: J.budgetRows }));
+	const last = J.groups[J.groups.length - 1];
+	assert(last.length === width && last[0] === base && last[width - 1] === base + width - 1, Array.from(last).join());
+	assert(J.groups.slice(0, -1).every((g) => g.every((c) => c < base)), 'a budget shares a group with a state');
+
+	// Differenced through those groups -- as the NDF does when it is asked to,
+	// or where the generated matrix is not finite -- a budget's diagonal is the
+	// exact zero it is, and every other entry is the generated one.
+	const n = sys.layout.nstate;
+	const y = Float64Array.from({ length: n }, (_, i) => 100 + 37 * i);
+	const f0 = new Float64Array(n);
+	sys.dydt(1, y, f0);
+	const f = (t, z, out) => { sys.dydt(t, z, out); return out; };
+	const threshold = new Float64Array(n).fill(1e-9);
+	const got = throughGroups(f, 1, y, f0, J.pattern, J.groups, threshold, new Float64Array(J.nnz));
+	const made = Float64Array.from(J.evaluate(1, y));
+	// Measured against the largest entry: a one-sided quotient carries the
+	// rounding of the whole row, and Y-90's decay makes that row large.
+	const scale = made.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
+	let worst = 0;
+	for (let c = 0; c < n; c++) {
+		for (let k = J.pattern.colPtr[c]; k < J.pattern.colPtr[c + 1]; k++) {
+			if (c >= base) assert(got[k] === 0 && made[k] === 0, `budget ${c}: ${got[k]} ${made[k]}`);
+			else worst = Math.max(worst, Math.abs(got[k] - made[k]) / scale);
+		}
+	}
+	assert(scale > 1 && worst < 1e-7, `differenced and generated differ by ${worst} of ${scale}`);
+	// ...where the colouring by itself puts them in with the states, and the
+	// diagonal reads the flux of whatever feeds it.
+	const plain = throughGroups(f, 1, y, f0, J.pattern, colourColumns(J.pattern), threshold, new Float64Array(J.nnz));
+	let read = 0;
+	for (let c = base; c < base + width; c++) {
+		for (let k = J.pattern.colPtr[c]; k < J.pattern.colPtr[c + 1]; k++) if (plain[k] !== 0) read++;
+	}
+	assert(read > 0, 'the plain colouring kept the budgets apart by itself, and this no longer shows why they are taken out');
+
+	// Run that way, the audit closes and the solution is the generated one's.
+	const gen = run(model('ndf'));
+	const fd = run(model('ndf', { jacobian: 'numeric' }));
+	assert(fd.jacobian.asked && fd.jacobian.budgetRows === 'diagonal', JSON.stringify(fd.jacobian));
+	assert(gen.massBalance().closed && fd.massBalance().closed, `${gen.massBalance().worst} ${fd.massBalance().worst}`);
+	const end = (r) => r.y[r.y.length - 1];
+	for (let i = 0; i < base; i++) {
+		assert(Math.abs(end(fd)[i] - end(gen)[i]) <= 1e-4 * Math.abs(end(gen)[i]) + 1e-6, `state ${i}: ${end(fd)[i]} vs ${end(gen)[i]}`);
+	}
+
+	// The ported methods colour the pattern for themselves, so they get the
+	// rows whole -- and those agree with differences in every entry.
+	for (const id of ['fbdf', 'radau5']) {
+		const { worst: off, jacobian } = jacobianAgrees(model(id));
+		assert(jacobian.budgetRows === 'exact' && off < 1, `${id}: ${jacobian.budgetRows}, off by ${off}x`);
+	}
+	const ported = run(model('fbdf', { jacobian: 'numeric' }));
+	assert(ported.jacobian.budgetRows === 'exact' && ported.massBalance().closed, `${JSON.stringify(ported.jacobian)} ${ported.massBalance().worst}`);
+	// A model that names no solver has the NDF's.
+	const unnamed = model('ndf');
+	delete unnamed.simulation.solver;
+	assert(buildSystem(new Project(unnamed)).jacobian.budgetRows === 'diagonal');
 });
 
 test('waste packages: the failure hazards match their closed forms, and the block is refused when it cannot fail', async () => {
@@ -30666,7 +30768,7 @@ test('waste packages integrate: failure, exposure and release match their closed
 	assert(outs.map((o) => `${o.label}|${o.unit}|${o.kind}`).join(' ') === 'Canisters intact [Cs-137]|Bq|waste_inventory Canisters intact [I-129]|Bq|waste_inventory Canisters exposed [Cs-137]|Bq|waste_inventory Canisters exposed [I-129]|Bq|waste_inventory Canisters [Cs-137]|Bq/year|waste_package Canisters [I-129]|Bq/year|waste_package', outs.map((o) => `${o.label}|${o.unit}|${o.kind}`).join(' '));
 	// The audit declines the analytic Jacobian; without it the block has one,
 	// and it agrees with finite differences.
-	assert(r.jacobian.available === false && /mass-balance audit/.test(r.jacobian.reason), JSON.stringify(r.jacobian));
+	assert(r.jacobian.available !== false && r.jacobian.budgetRows === 'diagonal', JSON.stringify(r.jacobian));
 	{
 		const plainModel = model({ failure: 'weibull', fail_start: '100', fail_scale: '800', fail_shape: '3' }, { mass_balance: false });
 		const { worst, jacobian } = jacobianAgrees(plainModel);
@@ -31650,11 +31752,16 @@ test('a switch shows the setting it controls, whichever way the setting defaults
 	assert(/const keys = solverOptions\(id\);/.test(app), 'the panel no longer asks which settings apply');
 	assert(/does not read \$\{list\}/.test(app), 'the dropped settings are not named');
 	// Named inside Advanced settings, under the ones shown, as facsimile.html
-	// and rtm.html have it; and the fold is drawn for a solver that reads none.
+	// and rtm.html have it; and the fold is drawn for a solver that reads none,
+	// since the three switches every solver honours are at its head.
 	assert(/box\.append\(el\('p', \{ className: 'sim-dropped' \}/.test(app),
 		'the note about the dropped settings is outside the fold again');
-	assert(/if \(keys\.length \|\| dropped\.length\) \{/.test(app),
-		'a solver that reads none of the settings has no fold to say so in');
+	assert(/const box = el\('div', \{ className: 'sim-solver-opts' \},\n\t+boolField\('non_negative'\),\n\t+boolField\('mass_balance', \{ on: false \}\),\n\t+selField\('split', /.test(app),
+		'Cannot go negative, Mass balance and Split into parts are not at the head of Advanced settings');
+	assert(!/if \(keys\.length \|\| dropped\.length\) \{/.test(app) && (app.match(/boolField\('non_negative'\)/g) ?? []).length === 1,
+		'the fold is drawn only for a solver with settings of its own again, or a switch is in two places');
+	assert(/if \(keys\.length\) box\.append\(el\('p', \{ className: 'sim-opts-head' \}/.test(app),
+		'no line between the three switches and the solver\u2019s own settings');
 	// And the claim it is greyed out for is true: the solvers that honour it
 	// take fewer steps with it on, and the ones that do not are unmoved.
 	const { readFileSync: read2 } = await import('node:fs');
@@ -35374,7 +35481,10 @@ test('every dialog has an (i) in its title bar, and every dialog topic a dialog 
 			const opts = m[1].split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n').trim();
 			const id = /^info: dialogInfo\('([a-z-]+)'\)/.exec(opts)?.[1];
 			if (id) used.add(id);
-			else if (!/^info: \{\n\s*key: `dialog:block:\$\{win\.id\}`,/.test(opts)) without.push(`${f}: ${opts.split('\n')[0]}`);
+			// A block's settings are keyed by the window, and the Information
+			// window has the view's own topic.
+			else if (!/^info: \{\n\s*key: `dialog:block:\$\{win\.id\}`,/.test(opts)
+				&& !/^info: \{ key: 'panel:information', topic: /.test(opts)) without.push(`${f}: ${opts.split('\n')[0]}`);
 		}
 		if (f !== 'dialoginfo.js' && /dialogInfo\(/.test(src)) {
 			assert(/^import \{ dialogInfo \} from '\.\/dialoginfo\.js';$/m.test(src), `${f} does not import dialogInfo`);
@@ -35413,8 +35523,11 @@ test('the left panel’s sections, the tree, the Information view and every row 
 		'a section cannot take an (i)');
 	assert(/el\('div', \{ className: 'search-row' \}, input,\n\t+infoButton\('panel:tree', \(\) => panelTopic\('tree', \{\n\t+systems: /.test(app),
 		'the tree has no (i) beside its search');
-	assert(/info: \(\) => infoButton\('panel:information', \(\) => panelTopic\('information'\)\),/.test(app)
-		&& /if \(hooks\.info\) box\.querySelector\('summary'\)\?\.append\(hooks\.info\(\)\);/.test(info), 'the Information view has no (i)');
+	assert(/info: win \? null : \(\) => infoButton\('panel:information', \(\) => panelTopic\('information'\)\),/.test(app)
+		&& /if \(hooks\.info && !windowed\) bar\?\.append\(hooks\.info\(\)\);/.test(info), 'the Information view has no (i)');
+	// Out in its window, the window's (i) is the view's: the same topic.
+	assert(/info: \{ key: 'panel:information', topic: \(\) => panelTopic\('information'\) \},\n\t\ttitle: 'Information',/.test(app),
+		'the Information window has no (i), or not the view\u2019s');
 	// A dialog's, beside its close button.
 	assert(/const about = info\?\.key \? infoButton\(info\.key, info\.topic\) : null;/.test(modal)
 		&& /el\('div', \{ className: 'modal-heading' \}, heading, sub\), about, close\);/.test(modal), 'a dialog has no (i) in its title bar');
@@ -35544,6 +35657,41 @@ test('several block settings windows can be open at once, each about its own blo
 	assert(!/state\.settingsFor = sel\.name;/.test(app) && /win\.name = sel\.name;/.test(app), 'a rename in one window moves them all');
 	// The notice and the copy fallback go into a modal dialog only.
 	assert(/document\.querySelector\('dialog:modal'\) \?\? footer/.test(app), 'the notice moves into a window');
+});
+
+test('Information pops out into a window of its own, and its arrows sit beside its (i)', async () => {
+	const { readFileSync } = await import('node:fs');
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	const info = readFileSync(new URL('../src/ui/info.js', import.meta.url), 'utf8');
+	const modal = readFileSync(new URL('../src/ui/modal.js', import.meta.url), 'utf8');
+	const css = readFileSync(new URL('../css/app.css', import.meta.url), 'utf8');
+	// The bar: Edit…, Open or Up first, then back and forward, then the (i) --
+	// so the arrows are beside the (i) whatever the door before them is.
+	const edit = info.indexOf("nav.append(action('Edit…',");
+	const arrows = info.indexOf("arrow('←', 'Back to the block you were reading'");
+	const icon = info.indexOf('if (hooks.info && !windowed) bar?.append(hooks.info());');
+	assert(edit > 0 && arrows > edit && icon > arrows, `the bar's order: door ${edit}, arrows ${arrows}, (i) ${icon}`);
+	assert(/bar\?\.append\(nav\);\n[^]*?if \(hooks\.info && !windowed\)/.test(info), 'the (i) is no longer after the buttons');
+	// The way out, beside the view's name, and the view drawn into a window's
+	// body with its buttons in the window's head.
+	assert(/bar\.querySelector\('\.panel-section-title'\)\?\.after\(out\);/.test(info), 'no pop-out button beside the name');
+	assert(/const windowed = !!hooks\.bar;/.test(info) && /hidden: !windowed && !open/.test(info), 'the view cannot be drawn in a window');
+	// The window: floating, kept across a newly opened model, its own class,
+	// and the rail given to the tree while it is out.
+	assert(/function popInfo\(\) \{/.test(app) && /floating: true,\n\t\tkeep: true,\n\t\tclassName: 'is-info-window',/.test(app), 'the window is not a kept floating one');
+	assert(/renderInfo\(win \? win\.body : \$\('#info'\), state\.raw, shown, \{/.test(app) && /bar: win \? win\.bar : null,/.test(app), 'the card is not drawn into the window');
+	assert(/\$\('#sidebar'\)\?\.classList\.add\('is-info-out'\);/.test(app) && /\$\('#sidebar'\)\?\.classList\.remove\('is-info-out'\);/.test(app));
+	assert(/#sidebar\.is-info-out > #info,\n#sidebar\.is-info-out > #rail-split \{ display: none; \}/.test(css), 'the rail keeps an empty card while it is out');
+	assert(/\.modal\.is-info-window \.modal-body \{ display: block; padding: 0; \}/.test(css), 'the window lays the view out in two columns');
+	// closeAllModals leaves a kept window, and a className is there before
+	// the first layout.
+	assert(/for \(const h of stack\.filter\(\(m\) => !m\.keep\)\.reverse\(\)\) h\.close\(\);/.test(modal), 'a new model closes the Information window');
+	assert(/\$\{className \? ` \$\{className\}` : ''\}/.test(modal));
+	// Remembered in this browser, and never at the cost of a page that works
+	// without storage.
+	assert(/const INFO_WINDOW_KEY = 'kompartment\.infoWindow';/.test(app));
+	assert(/function readInfoWindow\(\) \{\n\ttry \{/.test(app) && /function writeInfoWindow\(v\) \{\n\ttry \{ localStorage\.setItem/.test(app), 'storage read or written outside try');
+	assert(/if \(readInfoWindow\(\)\?\.out && !infoWin\) \{ popInfo\(\); return; \}/.test(app), 'a window left out is not reopened');
 });
 
 test('the transfer grid is square and zooms', async () => {

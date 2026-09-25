@@ -304,8 +304,11 @@ export function simTopic(key, ctx) {
 					+ 'says whether the books close. They should, to within the solver’s tolerance; a '
 					+ 'residual well above it is a compartment held at zero while its equations pushed it '
 					+ 'below, or an amount the model moved that nothing accounts for.',
-					'Off by default: it adds states to the vector and the run gives up the analytic '
-					+ 'Jacobian, so it is a check to run, not a way to run.',
+					'Off by default: it adds six states per radionuclide to the vector, so it is a check '
+					+ 'to run rather than a way to run. The analytic Jacobian is kept. Nothing reads a '
+					+ 'budget, so the NDF needs only the diagonal of their rows; the Rosenbrocks and the '
+					+ 'ported solvers have the rows generated whole, which widens every matrix they form. '
+					+ 'The Generated code tab says which.',
 				],
 			}],
 		};
@@ -453,13 +456,18 @@ function advancedTopic(ctx, { unit, span, label }) {
 	const keys = solverOptions(id);
 	const dropped = solverIgnores(id);
 	const sim = ctx.sim ?? {};
+	const split = sim.split ?? 'auto';
 	return {
 		kicker: KICKER,
 		title: 'Advanced settings',
-		lead: 'The settings the chosen solver reads beyond the tolerances. An empty box, or a choice '
-			+ 'left on auto, is the solver’s own choice — which is what these numbers are, for this '
-			+ 'solver and this run.',
-		facts: [['Solver', label(id)], ...keys.map((k) => {
+		lead: 'Three switches on how any solver behaves, then the settings the chosen solver reads '
+			+ 'beyond the tolerances. An empty box, or a choice left on auto, is the solver’s own '
+			+ 'choice — which is what these numbers are, for this solver and this run.',
+		facts: [
+			['Cannot go negative enabled', sim.non_negative === false ? 'off' : 'on'],
+			['Mass balance', sim.mass_balance === true ? 'on' : 'off'],
+			['Split into parts', SPLIT_MODES.find(([k]) => k === split)?.[1] ?? split],
+			['Solver', label(id)], ...keys.map((k) => {
 			const info = SOLVER_OPTION_INFO[k];
 			const d = solverDefault(k, id, { span });
 			const set = sim[k] != null && sim[k] !== '';
@@ -471,8 +479,8 @@ function advancedTopic(ctx, { unit, span, label }) {
 		})],
 		sections: [{
 			text: [
-				'Point at the (i) beside any of them for what it does. Leave them empty unless a run asks '
-				+ 'for it — a solver that stalls, a model whose answer moves when the tolerances do.',
+				'Point at the (i) beside any of them for what it does. Leave the solver’s own empty unless '
+				+ 'a run asks for it — a solver that stalls, a model whose answer moves when the tolerances do.',
 				dropped.length ? `This solver does not read ${prose(dropped)}, so they are not shown.` : '',
 			].filter(Boolean),
 		}],
