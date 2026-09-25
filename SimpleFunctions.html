@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <meta http-equiv="Content-Security-Policy" content="base-uri 'self'; object-src 'none'">
+  <title>Simple Functions — kvot ab</title>
+  <meta name="description" content="Radionuclide solubility limits by SKB’s Simple Functions, in your browser: the SR-Site and PSAR calculation of the solubility of 20 elements in the water of a failed canister, probabilistic over groundwater compositions and thermodynamic data, with the speciation, the controlling solids and the sensitivities.">
+  <link rel="canonical" href="https://kvotab.se/SimpleFunctions.html">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="kvot ab">
+  <meta property="og:title" content="Simple Functions — kvot ab">
+  <meta property="og:description" content="The Simple Functions solubility tool of SR-Site and the PSAR, reproduced in the browser: 20 radionuclides, Monte Carlo over groundwater and equilibrium constants, controlling phases, speciation and sensitivities.">
+  <meta property="og:url" content="https://kvotab.se/SimpleFunctions.html">
+  <meta property="og:image" content="https://kvotab.se/resources/images/kvot-logotype.png">
+  <meta name="twitter:card" content="summary">
+  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js" integrity="sha384-Hl48Kq2HifOWdXEjMsKo6qxqvRLTYqIGbvlENBmkHAxZKIGCXv43H6W1jA671RzC" crossorigin="anonymous"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" integrity="sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG" crossorigin="anonymous"></script>
+  <script>
+    // Set the theme before first paint so dark-mode visitors get no white flash.
+    (function () {
+      try {
+        var t = localStorage.getItem('kvot-theme');
+        if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* storage unavailable — site.js will apply the default */ }
+    })();
+  </script>
+  <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
+  <link rel="stylesheet" href="./resources/css/simplefunctions.css?v=20260925">
+  <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
+</head>
+<body>
+  <header></header>
+
+  <div class="content">
+    <div class="sf">
+      <!-- ===================== the settings column ===================== -->
+      <aside class="sf-side" id="sfSide">
+        <div class="sf-side-scroll">
+
+          <details class="sf-sec" id="sec-water" open>
+            <summary><span class="sf-sec-title">Groundwater</span><span class="sf-count" id="sfWaterCount"></span><span class="sf-info-slot" data-info-key="sec:water"></span></summary>
+            <p class="sf-about">A table of groundwater compositions, one per row: pH, total Ca (with Mg), Cl, Na, SO4 and Si, the ionic strength, and the free HCO3-, in mol/kg. Each realisation draws one row.</p>
+            <div class="sf-drop" id="sfDrop">Drop a CSV or Excel table here, or
+              <button type="button" class="sf-btn secondary small" data-on-click="sf:openWater">Open…</button>
+            </div>
+            <input type="file" id="sfWaterFile" accept=".csv,.txt,.tsv,.dat,.xlsx,.xlsm,.json" hidden data-on-change="sf:waterChosen">
+            <div class="sf-row">
+              <div class="sf-label-line"><label for="sfExample">Built-in example</label><span class="sf-info-slot" data-info-key="set:example"></span></div>
+              <select id="sfExample" data-on-change="sf:chooseExample">
+                <option value="">— choose —</option>
+                <option value="tr1061range">TR-10-61 waters in the tool’s range (6)</option>
+                <option value="tr1061">TR-10-61 reference waters (all 12, table A-1)</option>
+                <option value="tr1061ex">TR-10-61 example water (table 3-1)</option>
+              </select>
+            </div>
+            <ul class="sf-files" id="sfTableInfo"></ul>
+            <label class="sf-check" id="sfAddMgRow" hidden><input type="checkbox" id="sfAddMg" checked data-on-change="sf:addMgChanged"><span>Add Mg to Ca<span class="sf-desc">The Simple Functions have no Mg: [Ca]tot stands for Ca + Mg.</span></span></label>
+            <div class="sf-row">
+              <div class="sf-label-line"><label for="sfVersion">Redox and iron</label><span class="sf-info-slot" data-info-key="set:version"></span></div>
+              <select id="sfVersion" data-on-change="sf:optionChanged" data-key="version">
+                <option value="B">Version B: magnetite/goethite (SR-Site, PSAR)</option>
+                <option value="A">Version A: Eh and [Fe]tot from the table</option>
+              </select>
+            </div>
+          </details>
+
+          <details class="sf-sec" id="sec-sampling" open>
+            <summary><span class="sf-sec-title">Sampling</span><span class="sf-info-slot" data-info-key="sec:sampling"></span></summary>
+            <div class="sf-inline">
+              <div class="sf-row">
+                <div class="sf-label-line"><label for="sfN">Realisations</label><span class="sf-info-slot" data-info-key="set:n"></span></div>
+                <input id="sfN" type="text" inputmode="numeric" data-on-change="sf:runSettingChanged" data-key="n">
+              </div>
+              <div class="sf-row">
+                <div class="sf-label-line"><label for="sfSeed">Seed</label><span class="sf-info-slot" data-info-key="set:seed"></span></div>
+                <input id="sfSeed" type="text" inputmode="numeric" data-on-change="sf:runSettingChanged" data-key="seed">
+              </div>
+            </div>
+            <div class="sf-row">
+              <div class="sf-label-line"><label for="sfDraw">Groundwater draw</label><span class="sf-info-slot" data-info-key="set:draw"></span></div>
+              <select id="sfDraw" data-on-change="sf:runSettingChanged" data-key="draw">
+                <option value="randrep">at random, with replacement (SR-Site)</option>
+                <option value="randnorep">at random, without replacement</option>
+                <option value="inorder">in table order</option>
+                <option value="fixed">one water only</option>
+              </select>
+            </div>
+            <div class="sf-row" id="sfFixedRow" hidden>
+              <div class="sf-label-line"><label for="sfFixedWater">The water</label></div>
+              <select id="sfFixedWater" data-on-change="sf:runSettingChanged" data-key="fixedWater"></select>
+            </div>
+            <div class="sf-check-line"><label class="sf-check"><input type="checkbox" id="sfLhs" data-on-change="sf:runSettingChanged" data-key="lhs"><span>Latin hypercube</span></label><span class="sf-info-slot" data-info-key="set:lhs"></span></div>
+            <div class="sf-check-line"><label class="sf-check"><input type="checkbox" id="sfVaryTD" data-on-change="sf:runSettingChanged" data-key="varyTD"><span>Sample the equilibrium constants</span></label><span class="sf-info-slot" data-info-key="set:varyTD"></span></div>
+          </details>
+
+          <details class="sf-sec" id="sec-data">
+            <summary><span class="sf-sec-title">Thermodynamic data</span><span class="sf-count" id="sfDataCount"></span><span class="sf-info-slot" data-info-key="sec:data"></span></summary>
+            <p class="sf-about" id="sfDataLabel"></p>
+            <div class="sf-actions">
+              <button type="button" class="sf-btn secondary small" data-on-click="sf:tab" data-tab="data">Edit…</button>
+              <button type="button" class="sf-btn secondary small" data-on-click="sf:resetData">Reset to SR-Site</button>
+              <button type="button" class="sf-btn secondary small" data-on-click="sf:saveData">Save data</button>
+              <button type="button" class="sf-btn secondary small" data-on-click="sf:openData">Open data…</button>
+            </div>
+            <input type="file" id="sfDataFile" accept=".json" hidden data-on-change="sf:dataChosen">
+            <p class="sf-muted">The SR-Site workbooks as they calculated, unless you tick:</p>
+            <div class="sf-check-line"><label class="sf-check"><input type="checkbox" id="sfReactionTerms" data-on-change="sf:optionChanged" data-key="reactionTerms"><span>Every term from the reactions</span></label><span class="sf-info-slot" data-info-key="set:reactionTerms"></span></div>
+            <div class="sf-check-line"><label class="sf-check"><input type="checkbox" id="sfPoly" data-on-change="sf:optionChanged" data-key="polyStoichiometry"><span>Count a polynuclear complex by its metal atoms</span></label><span class="sf-info-slot" data-info-key="set:poly"></span></div>
+            <div class="sf-check-line"><label class="sf-check"><input type="checkbox" id="sfRaOH" data-on-change="sf:optionChanged" data-key="singleRaOH"><span>Sample Ra(OH)+ once</span></label><span class="sf-info-slot" data-info-key="set:raoh"></span></div>
+            <div class="sf-check-line"><label class="sf-check"><input type="checkbox" id="sfEh" data-on-change="sf:optionChanged" data-key="ehExact"><span>Eh with RT ln10/F = 0.05916 V</span></label><span class="sf-info-slot" data-info-key="set:eh"></span></div>
+            <div class="sf-check-line"><label class="sf-check"><input type="checkbox" id="sfAnalogue" data-on-change="sf:optionChanged" data-key="analogueDraws"><span>Cm drawn with the Am numbers</span></label><span class="sf-info-slot" data-info-key="set:analogue"></span></div>
+          </details>
+
+          <details class="sf-sec" id="sec-output">
+            <summary><span class="sf-sec-title">Output</span><span class="sf-info-slot" data-info-key="sec:output"></span></summary>
+            <div class="sf-row">
+              <div class="sf-label-line"><label for="sfUnits">Units</label></div>
+              <select id="sfUnits" data-on-change="sf:unitsChanged">
+                <option value="molkg">mol/kg water (as the tool and CSOL)</option>
+                <option value="molm3">mol/m³ (× 1000)</option>
+              </select>
+            </div>
+            <div class="sf-row">
+              <div class="sf-label-line"><label for="sfLimit">“Not solubility limited” above<span class="sf-unit">mol/kg</span></label><span class="sf-info-slot" data-info-key="set:limit"></span></div>
+              <input id="sfLimit" type="text" inputmode="decimal" data-on-change="sf:optionChanged" data-key="limit">
+            </div>
+          </details>
+        </div>
+
+        <div class="sf-side-foot">
+          <div class="sf-actions">
+            <button type="button" class="sf-btn" id="sfRun" data-on-click="sf:run">Run</button>
+            <button type="button" class="sf-btn secondary small" id="sfCancel" data-on-click="sf:cancel" hidden>Stop</button>
+            <button type="button" class="sf-btn secondary small" data-on-click="sf:saveCase">Save case</button>
+            <button type="button" class="sf-btn secondary small" data-on-click="sf:openCase">Open case…</button>
+            <input type="file" id="sfCaseFile" accept=".json" hidden data-on-change="sf:caseChosen">
+          </div>
+          <div class="sf-progress" id="sfProgress" hidden><div class="sf-progress-bar" id="sfProgressBar"></div></div>
+          <div class="sf-status" id="sfStatus" role="status" aria-live="polite">Loading…</div>
+        </div>
+      </aside>
+
+      <div class="sf-resize" id="sfResize" role="separator" aria-orientation="vertical" aria-label="Drag to resize the panel; double-click to reset"></div>
+
+      <!-- ========================= the work area ======================== -->
+      <main class="sf-main">
+        <div class="sf-tabs" role="tablist">
+          <button type="button" class="active" data-tab="summary" data-on-click="sf:tab">Summary</button>
+          <button type="button" data-tab="water" data-on-click="sf:tab">One water</button>
+          <button type="button" data-tab="dist" data-on-click="sf:tab">Distributions</button>
+          <button type="button" data-tab="sens" data-on-click="sf:tab">Sensitivity</button>
+          <button type="button" data-tab="sweep" data-on-click="sf:tab">Sweep</button>
+          <button type="button" data-tab="compare" data-on-click="sf:tab">Compare</button>
+          <button type="button" data-tab="data" data-on-click="sf:tab">Data</button>
+          <button type="button" data-tab="samples" data-on-click="sf:tab">Samples</button>
+          <button type="button" data-tab="help" data-on-click="sf:tab">Help</button>
+        </div>
+
+        <!-- ---- summary ---- -->
+        <section class="sf-pane sf-summary" data-pane="summary">
+          <div id="sfSummary"></div>
+        </section>
+
+        <!-- ---- one water ---- -->
+        <section class="sf-pane" data-pane="water" hidden>
+          <div class="sf-toolbar">
+            <label>Row <input type="number" id="sfWaterRow" min="1" step="1" style="width:78px" data-on-change="sf:waterPicked"></label>
+            <span class="sf-muted" id="sfWaterRowNote"></span>
+            <label class="sf-check inline"><input type="checkbox" id="sfWaterCustom" data-on-change="sf:waterCustomChanged"><span>edit the composition</span></label>
+            <span class="sf-info-slot" data-info-key="pane:water"></span>
+            <span class="sf-spacer"></span>
+            <button type="button" class="sf-btn secondary small" data-on-click="sf:waterCsv">CSV</button>
+          </div>
+          <div id="sfWaterForm" class="sf-water-form"></div>
+          <div id="sfWaterOut"></div>
+        </section>
+
+        <!-- ---- distributions ---- -->
+        <section class="sf-pane" data-pane="dist" hidden>
+          <div class="sf-toolbar">
+            <label>Element <select id="sfDistEl" data-on-change="sf:distChanged"></select></label>
+            <label>Show
+              <select id="sfDistKind" data-on-change="sf:distChanged">
+                <option value="hist">histogram</option>
+                <option value="cdf">cumulative (CDF)</option>
+                <option value="ccdf">exceedance (1 − CDF)</option>
+              </select>
+            </label>
+            <label class="sf-check inline"><input type="checkbox" id="sfDistPhase" data-on-change="sf:distChanged"><span>by controlling solid</span></label>
+            <label class="sf-check inline"><input type="checkbox" id="sfDistFit" data-on-change="sf:distChanged"><span>fitted distribution</span></label>
+            <label class="sf-check inline" id="sfDistRefRow" hidden><input type="checkbox" id="sfDistRef" checked data-on-change="sf:distChanged"><span>reference</span></label>
+            <span class="sf-info-slot" data-info-key="pane:dist"></span>
+          </div>
+          <div class="plot" id="sfChartDist" hidden></div>
+          <div id="sfDistNote"></div>
+          <p class="sf-empty" id="sfDistEmpty">Run the calculation to see the distributions.</p>
+        </section>
+
+        <!-- ---- sensitivity ---- -->
+        <section class="sf-pane" data-pane="sens" hidden>
+          <div class="sf-toolbar">
+            <label>Element <select id="sfSensEl" data-on-change="sf:sensChanged"></select></label>
+            <label>Show <select id="sfSensTop" data-on-change="sf:sensChanged"><option value="12">12 largest</option><option value="25">25 largest</option><option value="0">all</option></select></label>
+            <span class="sf-info-slot" data-info-key="pane:sens"></span>
+          </div>
+          <div class="plot" id="sfChartSens" hidden></div>
+          <div id="sfSensTable"></div>
+          <p class="sf-empty" id="sfSensEmpty">Run the calculation with the equilibrium constants sampled to see which of them, and which properties of the water, the solubility follows.</p>
+        </section>
+
+        <!-- ---- sweep ---- -->
+        <section class="sf-pane" data-pane="sweep" hidden>
+          <div class="sf-toolbar">
+            <label>Element <select id="sfSweepEl" data-on-change="sf:sweepChanged"></select></label>
+            <label>against <select id="sfSweepVar" data-on-change="sf:sweepVarChanged"></select></label>
+            <label>from <input type="text" id="sfSweepFrom" style="width:64px" data-on-change="sf:sweepChanged"></label>
+            <label>to <input type="text" id="sfSweepTo" style="width:64px" data-on-change="sf:sweepChanged"></label>
+            <span class="sf-info-slot" data-info-key="pane:sweep"></span>
+          </div>
+          <div class="plot" id="sfChartSweep"></div>
+          <p class="sf-muted" id="sfSweepNote"></p>
+        </section>
+
+        <!-- ---- compare ---- -->
+        <section class="sf-pane" data-pane="compare" hidden>
+          <div class="sf-toolbar">
+            <button type="button" class="sf-btn secondary small" data-on-click="sf:openRef">Open reference…</button>
+            <input type="file" id="sfRefFile" accept=".mat,.h5,.hdf5,.csv,.txt,.tsv,.xlsx" hidden data-on-change="sf:refChosen">
+            <label>Its units <select id="sfRefUnits" data-on-change="sf:compareChanged"><option value="molkg">mol/kg</option><option value="molm3">mol/m³</option></select></label>
+            <button type="button" class="sf-btn secondary small" data-on-click="sf:clearRef">Remove</button>
+            <span class="sf-info-slot" data-info-key="pane:compare"></span>
+            <span class="sf-muted" id="sfRefNote"></span>
+          </div>
+          <div id="sfCompareTable"></div>
+          <div class="plot tall" id="sfChartCompare" hidden></div>
+          <p class="sf-empty" id="sfCompareEmpty">Open a file of reference solubilities — a MATLAB CSOL file of SR-Site or the PSAR, an HDF5 file with one dataset per element, or a table with one column per element — and run the calculation, to compare the two element by element.</p>
+        </section>
+
+        <!-- ---- data ---- -->
+        <section class="sf-pane" data-pane="data" hidden>
+          <div class="sf-toolbar">
+            <label>Show <select id="sfDataEl" data-on-change="sf:dataElChanged"></select></label>
+            <button type="button" class="sf-btn secondary small" data-on-click="sf:addRow" data-kind="species" id="sfAddSpecies">Add species</button>
+            <button type="button" class="sf-btn secondary small" data-on-click="sf:addRow" data-kind="solid" id="sfAddSolid">Add solid</button>
+            <button type="button" class="sf-btn secondary small" data-on-click="sf:resetElement">Reset this element</button>
+            <span class="sf-info-slot" data-info-key="pane:data"></span>
+            <span class="sf-spacer"></span>
+            <button type="button" class="sf-btn secondary small" data-on-click="sf:dataCsv">CSV</button>
+          </div>
+          <div id="sfDataIssues"></div>
+          <div class="sf-table-wrap" id="sfDataTable"></div>
+        </section>
+
+        <!-- ---- samples ---- -->
+        <section class="sf-pane" data-pane="samples" hidden>
+          <div class="sf-toolbar">
+            <span class="sf-muted" id="sfSamplesNote">One row per realisation.</span>
+            <span class="sf-spacer"></span>
+            <button type="button" class="sf-btn secondary small" data-on-click="sf:samplesCsv">CSV</button>
+            <button type="button" class="sf-btn secondary small" data-on-click="sf:samplesExcel">Excel</button>
+            <button type="button" class="sf-btn secondary small" data-on-click="sf:samplesMat" title="A struct array CSOL(1×N), one field per element, as SR-Site and the PSAR stored it">MATLAB (CSOL)</button>
+            <button type="button" class="sf-btn secondary small" data-on-click="sf:samplesJson">JSON</button>
+            <button type="button" class="sf-btn secondary small" data-on-click="sf:inputsCsv">Sampled constants</button>
+            <span class="sf-info-slot" data-info-key="pane:samples"></span>
+          </div>
+          <div class="sf-table-wrap" id="sfSamplesTable"></div>
+          <p class="sf-empty" id="sfSamplesEmpty">Run the calculation to see the realisations.</p>
+        </section>
+
+        <!-- ---- help ---- -->
+        <section class="sf-pane sf-help" data-pane="help" hidden>
+          <h2>Radionuclide solubility by the Simple Functions</h2>
+          <p>When a canister has failed and water has come in, the concentration of a radionuclide in the water
+            inside is limited by the solubility of the least soluble solid it can form. The <em>Simple Functions</em>
+            of Grivé et al. (SKB TR-10-61) turn a groundwater composition into that limit for 20 elements — Sr, Ra,
+            Zr, Nb, Tc, Ni, Pd, Ag, Sn, Se, Th, Pa, U, Np, Pu, Am, Cm, Sm, Ho and Pb — from a small, fixed speciation
+            scheme per element and a few candidate solids chosen by expert judgement. SKB used them in SR-Site, as an
+            Excel workbook sampled with @Risk (SKBdoc 1282962), and in the PSAR: the equilibrium constants are sampled within their uncertainties and the groundwater is drawn from a table
+            of compositions, which gives a distribution of solubilities per element for the transport calculations.
+            This page is that calculation. Nothing is uploaded: the files you open stay in the browser.</p>
+
+          <h3 id="help-how">How a solubility is calculated</h3>
+          <h4>1. Activity corrections</h4>
+          <p>Every constant is corrected from I = 0 to the ionic strength of the water with the Oelkers &amp; Helgeson
+            form of the Davies equation (TR-10-61, equation 2), for a species of charge <i>z</i>:</p>
+          <p class="sf-eq">log γ<sub><i>z</i></sub> = −<i>z</i>²·0.5091√<i>I</i> / (1 + 1.5√<i>I</i>) − log(1 + 0.0180153 <i>I</i>) + 0.064 <i>I</i></p>
+          <p class="sf-eq">log <i>K</i>′ = log <i>K</i>° + Σ<sub>reactants</sub> ν log γ − Σ<sub>products</sub> ν log γ</p>
+          <p>Water and O<sub>2</sub>(g) count as neutral species in the sums, as they do in the workbooks, and the
+            pH is taken as −log[H<sup>+</sup>], with the H<sup>+</sup> activity coefficient carried in <i>K</i>′. The
+            correction is written here from each reaction as it stands (the Data tab shows it); the SR-Site workbooks
+            wrote it by hand, and where the two differ the workbook's is used unless you tick <em>every term from the
+            reactions</em> (see <a href="#help-srsite">below</a>).</p>
+
+          <h4>2. The water: free ligands and the redox state</h4>
+          <p>The input is the total Ca (Ca + Mg), Cl, Na, SO<sub>4</sub> and Si, the ionic strength and the
+            <em>free</em> HCO<sub>3</sub><sup>−</sup>. Carbonate follows from the bicarbonate, [CO<sub>3</sub><sup>2−</sup>] =
+            [HCO<sub>3</sub><sup>−</sup>] / (<i>K</i>′<sub>HCO3</sub>[H<sup>+</sup>]); free sulphate, calcium and sodium are
+            solved together from their mass balances over CaOH<sup>+</sup>, CaCO<sub>3</sub>, CaHCO<sub>3</sub><sup>+</sup>,
+            CaSO<sub>4</sub>, NaCO<sub>3</sub><sup>−</sup>, NaHCO<sub>3</sub>, NaSO<sub>4</sub><sup>−</sup>, HSO<sub>4</sub><sup>−</sup>,
+            FeSO<sub>4</sub> and FeHSO<sub>4</sub><sup>+</sup>; chloride is corrected for FeCl<sup>+</sup>. No carbonate is
+            reduced to methane and no sulphate to sulphide, and calcite is not allowed to precipitate: when the water is
+            oversaturated the Summary says so, as the workbook's warning did.</p>
+          <p><b>Version B</b> (SR-Site, the PSAR): the water inside the canister is taken to be in equilibrium with the
+            corrosion products of the cast-iron insert. The redox state is the magnetite/goethite boundary at the pH of
+            the water,</p>
+          <p class="sf-eq">Eh = (0.059/4)·(−4(−log<i>K</i><sub>mag</sub> − 3(−log<i>K</i><sub>goe</sub>)) + 83.1 − 4 pH)·1000 mV,
+            &nbsp; pe = Eh/59.16, &nbsp; pO<sub>2</sub> = 10<sup>−83.1 + 4 pH + 4 pe</sup></p>
+          <p>with log <i>K</i> = 5.49 for 3Fe<sup>2+</sup> + 3H<sub>2</sub>O + ½O<sub>2</sub> = Fe<sub>3</sub>O<sub>4</sub> + 6H<sup>+</sup>
+            and 8.75 for Fe<sup>2+</sup> + 1.5H<sub>2</sub>O + ¼O<sub>2</sub> = FeOOH + 2H<sup>+</sup> (TR-10-61, equations 14–17), and
+            [Fe<sup>2+</sup>] follows from goethite at that pO<sub>2</sub>. The constants in the Eh are those at I = 0 and
+            the one in [Fe<sup>2+</sup>] is corrected to the ionic strength, as in the workbooks; the 0.059 is theirs too
+            (RT ln10/F is 0.05916 V, an option).</p>
+          <p><b>Version A</b> (TR-10-61, section 3.1): the Eh and the total iron of the water are inputs, pO<sub>2</sub>
+            follows from the Eh, and [Fe<sup>2+</sup>] from the iron mass balance over FeOH<sup>+</sup>, Fe(OH)<sub>3</sub>,
+            Fe(OH)<sub>4</sub><sup>−</sup>, FeCO<sub>3</sub>, FeHCO<sub>3</sub><sup>+</sup>, FeSO<sub>4</sub>, FeHSO<sub>4</sub><sup>+</sup> and
+            FeCl<sup>+</sup>, solved together with the sulphate balance. The table needs columns for Eh (mV) and [Fe]tot.</p>
+
+          <h4>3. One element</h4>
+          <p>Each aqueous species <i>j</i> of the element is a complex of <i>n<sub>j</sub></i> atoms of its master species M
+            (UO<sub>2</sub><sup>2+</sup>, Np<sup>4+</sup>, SeO<sub>4</sub><sup>2−</sup>, …) with the ligands, so its concentration is
+            <i>K</i>′<sub>j</sub>[M]<sup><i>n<sub>j</sub></i></sup>Π[L]<sup>ν</sup>. Summing by nuclearity gives
+            Eq<sub>1</sub> = 1 + Σ<sub>monomers</sub>, Eq<sub>2</sub>, Eq<sub>3</sub>. Each candidate solid fixes the free
+            master species: for a solid that releases <i>m</i> atoms of M,</p>
+          <p class="sf-eq"><i>P</i> = [M] = (<i>K</i>′<sub>s</sub> Π[L]<sup>ν</sup>)<sup>1/<i>m</i></sup>, &nbsp;
+            <i>S</i> = <i>P</i>·Eq<sub>1</sub> + <i>P</i>²·Eq<sub>2</sub> + <i>P</i>³·Eq<sub>3</sub></p>
+          <p>and the solubility of the element is the lowest <i>S</i> over its candidate solids. The candidate that gives it is
+            the <em>controlling solid</em>. Above 0.01 mol/kg the workbooks labelled the element “not solubility limited”
+            (the concentration would then be set by the inventory, not by a solid); the value itself went into the
+            results all the same, and it does here, with the count of such realisations reported.</p>
+
+          <h3 id="help-uncertainty">Uncertainty</h3>
+          <p>Every constant with an uncertainty ΔlogK is sampled from a normal distribution with mean log<i>K</i>° and
+            standard deviation ΔlogK/2 (so ΔlogK is about a 95 % range), independently of the others, with a Latin hypercube
+            per constant when that box is ticked — as @Risk does. The groundwater of each realisation is drawn
+            from the table: at random with replacement, as SR-Site's RiskIntUniform, or without replacement, or in order,
+            or one water throughout. Unticking <em>sample the equilibrium constants</em> gives the variability from the
+            groundwater alone; choosing <em>one water only</em> gives that from the constants alone. Every constant has its
+            own random stream, keyed on its name, so changing one constant or adding a species does not change the draws of
+            the others, and the same seed gives the same numbers.</p>
+          <p><b>One water.</b> The tab gives the solubility of each element at the nominal constants, the solubility of every
+            candidate solid, the aqueous speciation at the controlling solid, and a linearised uncertainty:
+            σ<sub>log S</sub>² = Σ (∂log<i>S</i>/∂log<i>K</i><sub>i</sub>·σ<sub>i</sub>)² with σ<sub>i</sub> = ΔlogK<sub>i</sub>/2, the
+            derivatives taken by central differences through the whole calculation (the major-ion mass balances
+            included), and the share f<sub>Z</sub> of each constant (TR-10-61, equations 5–13). The ± shown is
+            2σ<sub>log S</sub>, the same confidence as the ΔlogK. <b>TR-10-61's tables quote a ± 2.3 times smaller</b>:
+            its workbooks take ΔK = K·ΔlogK where the propagation of a logarithmic range needs K·ln10·ΔlogK, and
+            report 0.434·ΔS/S. For the example of its table 3-2 this page gives the report's solubilities and controlling
+            solids exactly, and its ± after division by ln 10, except for Nb, Pa and Pd, whose workbook derivatives have
+            slips of their own.</p>
+
+          <h3 id="help-data">The thermodynamic data</h3>
+          <p>The dataset is the one of the SR-Site calculations: the reactions and constants of the SR-Site data report
+            (TR-10-52, tables 3-29 to 3-32) with the digits of the workbooks, and the plutonium correction of February 2011
+            (Pu(CO<sub>3</sub>)<sub>3</sub><sup>3−</sup> has ΔlogK = 1.4; the first workbooks had 10.6, which put the upper tail of
+            the plutonium solubility above 1 mol/kg). The Data tab lists every reaction with its constant, its uncertainty,
+            the activity term and the ligand dependence derived from it, and a check that it balances. Any of them can be
+            edited, species and solids added or removed, and a solid left out of the minimum; <em>Save data</em> writes
+            the dataset as JSON for <em>Open data…</em> to read back. A reaction is written with the master species of the
+            element, the solid (for a solid) and the basis species H<sup>+</sup>, H<sub>2</sub>O, O<sub>2</sub>(g),
+            CO<sub>3</sub><sup>2−</sup>, SO<sub>4</sub><sup>2−</sup>, Cl<sup>−</sup>, Ca<sup>2+</sup>, Na<sup>+</sup>, Fe<sup>2+</sup> and
+            H<sub>4</sub>SiO<sub>4</sub>, charges sign first (<code>Th+4</code>, <code>SO4-2</code>, <code>Fe(OH)4-</code>), and terms
+            separated by “ + ” with spaces.</p>
+
+          <h4 id="help-srsite">Where the SR-Site workbooks differ from their own reactions</h4>
+          <p>Writing every term out from the reactions and comparing with the workbooks cell by cell turned up these. They
+            are kept by default, so that the SR-Site and PSAR numbers come out; each has an option.</p>
+          <table class="sf-ref">
+            <tbody>
+              <tr><td>SmOHCO<sub>3</sub>(s)</td><td>The activity term leaves out the H<sup>+</sup> of the reaction: (−1, 0, −1, −1) for (−1, 1, −1, −1). At I = 0.1 the solubility of the solid that controls samarium in most waters is 0.10 log units high, 0.12 at I = 0.19.</td><td><em>every term from the reactions</em></td></tr>
+              <tr><td>NiCO<sub>3</sub>·5.5H<sub>2</sub>O(s)</td><td>The activity term leaves out the 5.5 H<sub>2</sub>O (0.03 log units at I = 0.1).</td><td><em>every term from the reactions</em></td></tr>
+              <tr><td>PaO<sub>2</sub>OH(aq)</td><td>+2 q<sub>0</sub> in the activity term where the reaction gives 0 (0.01 log units).</td><td><em>every term from the reactions</em></td></tr>
+              <tr><td>(UO<sub>2</sub>)<sub>2</sub>CO<sub>3</sub>(OH)<sub>3</sub><sup>−</sup></td><td>The dimer is multiplied by [CO<sub>3</sub><sup>2−</sup>]³ for its one carbonate. Negligible under the reducing conditions of Version B either way.</td><td><em>every term from the reactions</em></td></tr>
+              <tr><td>Dimers and trimers</td><td>(UO<sub>2</sub>)<sub>2</sub>… and (UO<sub>2</sub>)<sub>3</sub>… enter the total uranium once, not two and three times over.</td><td><em>count a polynuclear complex by its metal atoms</em></td></tr>
+              <tr><td>Ra(OH)<sup>+</sup></td><td>Sampled as three nested normals, RiskNormal(RiskNormal(RiskNormal(…))), which is one normal with √3 times the spread. Ra(OH)<sup>+</sup> never matters.</td><td><em>sample Ra(OH)+ once</em></td></tr>
+              <tr><td>Eh</td><td>0.059 V for RT ln10/F in the magnetite/goethite Eh, then 59.16 mV to go back to pe; pO<sub>2</sub> comes out 0.08 log units off.</td><td><em>Eh with 0.05916 V</em></td></tr>
+              <tr><td>Cm and Am</td><td>The curium constants are the americium constants by analogy, but are sampled independently: for one uncertain number the two elements get unrelated draws. Their own distributions are right; how they go together is not.</td><td><em>Cm drawn with the Am numbers</em></td></tr>
+              <tr><td>Fe(OH)<sub>4</sub><sup>−</sup></td><td>Written with 2.5 H<sub>2</sub>O, which does not balance; here with 3.5 H<sub>2</sub>O and the workbook's activity term. Only Version A uses it.</td><td></td></tr>
+            </tbody>
+          </table>
+          <p>Ticking the first four changes the SR-Site distributions by less than 0.03 log units for every element but Sm (about
+            0.09 lower); the fifth changes no distribution, only how Am and Cm go together.</p>
+
+          <h3 id="help-water">Groundwater tables</h3>
+          <p>One row per water, with a header row naming the columns. The names are recognised loosely: <code>pH</code>,
+            <code>[Ca]tot (m)</code> or <code>Ca</code>, <code>[Cl]tot (m)</code>, <code>[Na]tot (m)</code>,
+            <code>[SO4-2]tot (m)</code>, <code>[Si]tot (m)</code>, <code>IS (mol/kg)</code> or <code>I</code>,
+            <code>[HCO3-] (m)</code>, and for Version A <code>Eh (mV)</code> and <code>[Fe]tot (m)</code>; a column
+            <code>Mg</code> is added to Ca when that box is ticked. CSV, semicolon- or tab-separated text and Excel
+            workbooks are read; from a workbook the sheet called <em>Groundwater</em> is taken if there is one, otherwise
+            the first sheet with such a header, so the parameter workbook of the PSAR can be dropped as it is. Rows with
+            a missing value are left out and counted. Concentrations are mol/kg water; where one is not known the
+            workbooks asked for a very small number rather than zero (10<sup>−20</sup>).</p>
+          <p>The built-in examples are the reference waters of TR-10-61, table A-1 (from TR-06-09), with Mg apart, the
+            more reducing Eh where two are given, and 10<sup>−20</sup> for silicon, which the table does not give; and the
+            example water of its table 3-1. The Simple Functions were built for I ≤ 0.2 mol/kg, 25 °C, 6 &lt; pH &lt; 11
+            and −8 &lt; pe &lt; 14; waters outside are calculated and flagged.</p>
+
+          <h3 id="help-output">What comes out</h3>
+          <table class="sf-ref">
+            <tbody>
+              <tr><th>Summary</th><td>Per element the percentiles of log<sub>10</sub> of the solubility, the share of each controlling solid, and the share above the “not solubility limited” threshold; a box plot of all 20; the warnings of the workbooks (ionic strength above 0.2 m, calcite oversaturated) counted over the realisations. <em>Split the variability</em> runs the calculation twice more — the groundwater alone with the constants nominal, and the constants alone for the water of the One water tab — and sets the three spreads side by side, with the ratio of the groundwater's P95 − P5 to the constants'.</td></tr>
+              <tr><th>One water</th><td>A single composition at the nominal constants: the free ligands, Eh, pO<sub>2</sub> and [Fe<sup>2+</sup>]; per element every candidate solid, the speciation and the linearised uncertainty with the constants that carry it.</td></tr>
+              <tr><th>Distributions</th><td>Histogram, CDF or exceedance curve of one element or all, split by controlling solid if you like, with a fitted normal or skew-normal distribution of log<sub>10</sub> S (the Akaike criterion decides, as for fits to transport input) and the reference file overlaid.</td></tr>
+              <tr><th>Sensitivity</th><td>Spearman rank correlation of log S with every sampled constant and with the properties of the water drawn. A constant near ±1 carries the uncertainty; the water's pH, carbonate or sulphate near ±1 means the spread comes from the groundwater.</td></tr>
+              <tr><th>Sweep</th><td>The solubility of every candidate solid of an element, and their minimum, against one property of the water held at the composition of the One water tab — where the controlling solid changes, and how steeply.</td></tr>
+              <tr><th>Compare</th><td>A run against reference solubilities: percentiles side by side and the two-sample Kolmogorov–Smirnov distance per element, and the CDFs overlaid.</td></tr>
+              <tr><th>Samples</th><td>Every realisation: the water drawn and every element's solubility and controlling solid, as CSV, Excel, JSON or a MATLAB file holding the struct array CSOL(1×N) with one field per element, the layout the SR-Site and PSAR transport calculations read; and the sampled constants as CSV.</td></tr>
+            </tbody>
+          </table>
+
+          <h3 id="help-limits">What the method leaves out</h3>
+          <ul>
+            <li>The radionuclide does not act back on the water: pH and ligand concentrations are those of the groundwater
+              whatever dissolves. For elements that reach 10<sup>−3</sup>–10<sup>−2</sup> mol/kg (Ni, Sr in some waters) a
+              full equilibrium calculation would let the dissolution shift the pH and use up ligands.</li>
+            <li>In Version B, [Fe<sup>2+</sup>] is what goethite allows at the fixed pH and pO<sub>2</sub>. It goes as
+              10<sup>12−2pH</sup> roughly: 10<sup>−2</sup> mol/kg at pH 7, 10<sup>−1</sup> at pH 6.5. Such a water would
+              precipitate siderite, and its ionic strength is not updated for the iron; iron sulphate complexes then lower
+              the free sulphate (raising the Sr and Ra solubilities), and the Se solids, whose solubility falls with
+              [Fe<sup>2+</sup>], come out lower. The <em>One water</em> tab shows [Fe<sup>2+</sup>] and the Summary its
+              range.</li>
+            <li>Temperature is 25 °C throughout; TR-10-61 found up to two log units of difference at 0 and 100 °C.</li>
+            <li>Activity corrections are of the Davies type, meant for I ≤ 0.2 mol/kg; TR-10-61 found no significant
+              difference from SIT up to 1.9 mol/kg for U, Th, Se, Np and Ni.</li>
+            <li>Only the species that make up at least 10 % of an element in the range the scheme was built for are
+              present, and only the candidate solids chosen by expert judgement can form.</li>
+          </ul>
+
+          <h3 id="help-check">Checking it</h3>
+          <p>The arithmetic reproduces the cached results of the SR-Site workbooks (SKBdoc 1282962) for two groundwaters to
+            13 significant digits in every element, solid, ligand and activity coefficient; its distributions over the PSAR groundwater set are indistinguishable from the PSAR solubility data
+            by the two-sample Kolmogorov–Smirnov test for all 20 elements; and in Version A it reproduces the example of
+            TR-10-61 (table 3-2) — every solubility, every controlling solid and the ranking of the constants.
+            <code>node resources/tests/simplefunctions/test-model.js</code> runs the checks that need only public
+            data.</p>
+
+          <h3 id="help-refs">References</h3>
+          <table class="sf-ref">
+            <tbody>
+              <tr><td>TR-10-61</td><td>Grivé M, Domènech C, Montoya V, Garcia D, Duro L, 2010. Simple Functions Spreadsheet tool presentation. SKB TR-10-61, Svensk Kärnbränslehantering AB. The method, Versions A and B, the validation against PHREEQC and HYDRA-MEDUSA, the reference waters.</td></tr>
+              <tr><td>TR-10-52</td><td>SKB, 2010. Data report for the safety assessment SR-Site. SKB TR-10-52. Tables 3-29 to 3-32: the reactions and constants.</td></tr>
+              <tr><td>TR-10-50</td><td>SKB, 2010. Radionuclide transport report for the safety assessment SR-Site. SKB TR-10-50. Appendix F: the solubilities used.</td></tr>
+              <tr><td>R-10-50</td><td>Grivé M et al., 2010. Determination and assessment of the concentration limits to be used in SR-Can. Supplement to TR-06-32. The choice of solids.</td></tr>
+              <tr><td>TR-06-32</td><td>Duro L et al., 2006. Determination and assessment of the concentration limits to be used in SR-Can.</td></tr>
+              <tr><td>SKBdoc 1282962</td><td>The SR-Site Simple Functions calculations: workbooks, @Risk results and CSOL files per climate domain.</td></tr>
+              <tr><td>Oelkers &amp; Helgeson 1990</td><td>Triple-ion anions and polynuclear complexing in supercritical electrolyte solutions. Geochimica et Cosmochimica Acta 54, 727–738.</td></tr>
+            </tbody>
+          </table>
+          <div id="sfBuild" class="sf-build"></div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <footer></footer>
+
+  <script src="./resources/js/kvot-errors.js?v=20260921"></script>
+  <script src="./resources/js/kvot-safe.js?v=20260911"></script>
+  <script src="./resources/js/kvot-actions.js?v=20260902"></script>
+  <script src="./resources/js/kvot-icons.js?v=20260902"></script>
+  <script src="./resources/js/site.js?v=20260925"></script>
+  <script>
+    KVOT.renderHeader('Simple Functions');
+    KVOT.renderNav('SimpleFunctions.html');
+    KVOT.renderFooter();
+  </script>
+  <!--
+      sf-data      the SR-Site dataset and the TR-10-61 waters
+      sf-model     the calculation: reactions, the water, the elements, sampling, statistics
+      sf-io        reading groundwater tables and reference solubilities, writing MAT files
+      xlsxwrite    the Excel writer (needs JSZip, loaded above)
+      sf-ui        this page (the Monte Carlo runs in sf-worker.js)
+  -->
+  <script src="./resources/js/sf-data.js?v=20260925"></script>
+  <script src="./resources/js/sf-model.js?v=20260925"></script>
+  <script src="./resources/js/sf-io.js?v=20260925"></script>
+  <script src="./resources/js/xlsxwrite.js?v=20260902"></script>
+  <script src="./resources/js/sf-ui.js?v=20260925"></script>
+</body>
+</html>

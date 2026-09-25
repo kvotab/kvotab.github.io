@@ -34,21 +34,23 @@ __all__ = ['run', 'Project', 'ValidationError', 'build_system', 'BuildError', 'S
            'run_sensitivity', 'calibrate']
 
 
-def run(model, *, on_progress=None, **simulation):
+def run(model, *, on_progress=None, workers=None, compiled='auto', **simulation):
     """Runs a model -- a :class:`kompartment.Model`, a project dict, or the path
     of a model file -- and returns its :class:`Results`. Keyword arguments
-    override simulation settings for this run."""
+    override simulation settings for this run; ``workers`` caps the processes
+    a split run takes and ``compiled`` says whether it runs compiled (see
+    :func:`kompartment.engine.runner.run`)."""
     from pathlib import Path
     from ..model import Model
     if isinstance(model, (str, Path)):
         model = Model.load(model)
     if isinstance(model, Model):
-        return model.run(on_progress=on_progress, **simulation)
+        return model.run(on_progress=on_progress, workers=workers, compiled=compiled, **simulation)
     if isinstance(model, Project):
         if simulation:
             raise TypeError('simulation overrides need a model, not a loaded Project')
-        return _run(model, on_progress=on_progress)
+        return _run(model, on_progress=on_progress, workers=workers, compiled=compiled)
     data = dict(model)
     if simulation:
         data['simulation'] = {**(data.get('simulation') or {}), **simulation}
-    return _run(Project(data), on_progress=on_progress)
+    return _run(Project(data), on_progress=on_progress, workers=workers, compiled=compiled)

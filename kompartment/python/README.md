@@ -20,9 +20,10 @@ m.save('two-boxes.json')
 ```
 
 Reading, editing and writing need Python 3.9 or later and nothing else.
-Running a model needs numpy and SciPy; numba, when installed, makes small
-models several times quicker. Node.js is only needed for `Model.validate()`,
-which runs the application's own checks on a model.
+Running a model needs numpy and SciPy; numba, when installed, compiles the
+model and the solver's loop, which makes a small model tens of times quicker.
+Node.js is only needed for `Model.validate()`, which runs the application's
+own checks on a model.
 
 ## Installing
 
@@ -45,7 +46,7 @@ m = kp.Model.from_json(text)
 m = kp.Model.from_dict(data)                    # the dict is copied
 m = kp.Model.new('Name', 'What it is')
 
-m.save('out.json')                              # or .json.gz, or .zip
+m.save('out.json')                              # or .json.gz, or .zip -- or .eco, an Ecolego project
 text = m.to_json()
 data = m.to_dict()
 ```
@@ -289,6 +290,43 @@ runs = m.run_scenarios(workers=3)              # {scenario: Results}, one run pe
 system = m.build()                             # the built equations: system.dydt(t, y), system.layout
 ```
 
+### Solving in parts
+
+```python
+res = m.run(split='on')                        # each independent part in a process of its own
+from kompartment.engine.runner import run
+res = run(m.project(split='on'), workers=4)    # at most four processes
+res.stats['split']                             # whether it was split and why, each part's steps and times
+```
+
+A model that falls apart into parts that cannot reach each other -- each decay
+chain a system of its own, joined to no other -- can be solved a part per
+core, as the application's *Split into parts* does: `simulation.split` is
+`auto` (the default), `on` or `off`. The parts are read off the model's
+Jacobian. Each is the model with every other material switched off, solved on
+the output grid at its own steps in a process of its own, and its states are
+filed back into the whole model by name, so what comes back is the whole
+model's `Results`. It agrees with a whole solve to within the tolerance, not
+to the last digit, and does not depend on the number of processes. A model is
+solved whole, whatever the setting, where the application would solve it
+whole: a delay, a snapshot or a discrete event; output at the solver's own
+steps; no materials to divide by; one part; one core. So is a split that does
+not add up, and `stats['split']['why']` says so.
+
+`auto` is the application's rule with numbers measured here, since a process
+takes longer to start than a browser's worker. A model this process has not
+timed is split from 10,000 states, when its parts promise at least 2x over
+the cores there are. Once a whole solve has been timed, it is split when that
+solve took 1.5 s or more and the parts are expected to be at least 1.2x
+faster. Once it has been split, what the split was measured to gain decides.
+A made-up model of 16 independent chains, 28,800 states, took 8.5 s whole and
+2.9 s split on eight processes (2.1 s of solve against 7.5 s). A model of a
+few thousand states is quicker whole.
+
+The processes are started with `spawn` and load only this package, never the
+calling script, so a script needs no `if __name__ == '__main__':` guard for a
+run to be split. Each process keeps its numerical libraries to one thread.
+
 ### Probabilistic runs
 
 ```python
@@ -347,19 +385,86 @@ m.import_report.skipped                        # what could not come across, and
 m.import_report.warnings
 ```
 
+### Exporting to Ecolego
+
+```python
+m.save('project.eco')                          # an Ecolego 6 project
+out = m.to_eco()                               # or in memory: out.bytes, out.xml, out.report
+print(m.export_report.summary())               # what went out, and what could not
+m.export_report.skipped                        # left out, with the reason: no Ecolego equivalent
+m.export_report.rewritten                      # written as the Ecolego construct that says the same
+
+from kompartment.io.ecoexport import export_eco
+out = export_eco('model.json')                 # a path, a project dict or a Model
+```
+
+The application's *Save → Model → Ecolego project* and this give the same file
+for the same model, byte for byte: `model.xml`, an empty `views.xml` and
+`.version` in a ZIP whose entries are stored, dated 1980-01-01 unless
+`modified=` gives a date. The file is written as the importer reads a
+project, so `kp.Model.from_eco` gives back the model that went out, apart from
+what the report lists; the Guide's *Exporting to Ecolego* says what maps to
+what, what is written in another form (an inflow as a transfer from a source,
+a narrowed transfer with zeros outside its sub-set, an availability folded
+into the rate, a logarithmic output grid as its list of times) and what is
+left out (far-field paths, waste packages, events, summed fluxes, blocks on
+the `Compartments` and `Transfers` lists, the double-triangular
+distributions, correlations and the diagram).
+
 ### Speed
 
 The equations are compiled to numpy, statements of the same shape merged into
 one expression, and the derivative assembled as one sparse product in the
-application's order. On models of thousands of states a run takes about as
-long as the application's, or less (made-up landscapes, build and solve:
-2,010 states in 0.86 s against 0.71 s, 8,010 states in 2.8 s against 3.5 s),
-and nothing here is held to a browser tab's memory. A small model is slower
-per run -- two to six times on the bundled examples, with numba -- because
-the application's compiler removes the per-step overhead that Python keeps;
-the processes make up for it in a sampled run: 272 realisations of the
-biosphere example take 2.4 s on eight cores, and 2.5 s in the application on
-one.
+application's order. With numba installed a run goes further: the model's
+derivative is compiled to machine code, and so is the solver's loop -- the
+NDF, Rosenbrock (2,3) and Dormand-Prince, ported step for step
+(`kompartment.engine.compiled`) -- so that a run returns to Python only when
+it ends. A compiled run takes the same steps as the Python path to the last
+bit: the same states, statistics and failures. So it is the default
+(`compiled='auto'`); `m.run(compiled=False)` keeps to Python, and
+`compiled=True` insists, saying why when it cannot.
+
+```python
+res = m.run()
+res.stats['compiled']                          # True when the run was compiled
+res.stats.get('compiled_why')                  # and why not, when it was not
+```
+
+A model's first run compiles it, in a second or two (the solvers compile once
+per machine). After that, runs and other processes load it from the cache:
+`KOMPARTMENT_CACHE`, or the user's cache directory. Measured on a laptop,
+best of three runs:
+
+| Run | Python | Compiled |
+| --- | --- | --- |
+| four-compartment, NDF | 15 ms | 0.7 ms |
+| decay-chain, NDF | 105 ms | 1.6 ms |
+| biosphere, NDF | 26 ms | 1.4 ms |
+| landscape, NDF | 57 ms | 3.4 ms |
+| waste-packages, Dormand-Prince | 0.98 s | 20 ms |
+| farfield (1,266 states), NDF | 0.77 s | 0.47 s |
+| made-up decay chains, 2,000 states | 0.25 s | 0.14 s |
+| made-up decay chains, 16,000 states | 2.0 s | 1.4 s |
+| biosphere, Sobol design of 272 runs, one process | 12.6 s | 1.3 s |
+
+The application takes 2.5 s over the same Sobol design. On a large model the
+gain shrinks: most of the time goes to SuperLU's factorisations and solves,
+the same calls on both paths. The compiled loop calls back into Python for
+these, as it does for an analytic Jacobian and for progress. Rosenbrock
+gains two to three times on a model whose analytic Jacobian moves, since it
+asks for a Jacobian at every step, and that Jacobian is worked out in Python.
+
+Some runs stay on the Python path, and `compiled_why` says so:
+
+- a model with discrete events, or with a running mean, snapshot, delay or
+  trigger (a min/max is compiled);
+- `min_change_time`;
+- the SciPy and Julia-derived solvers;
+- a system of equations standing in for the model's own, as local
+  sensitivity integrates.
+
+Each worker process of a probabilistic run or a split run is compiled like
+any other.
 
 ## Where this differs from the application
 
@@ -375,10 +480,15 @@ In editing, nowhere that the parity tests can find. In a run:
   level.
 - The Julia-derived solvers factorise with SciPy's LUs; the solutions agree
   to round-off.
-- *Split into parts* (`simulation.split`) is not done here: a model is always
-  solved as one system, as the application does with the setting at *never*.
-  A split run in the application takes each part at its own steps, so the
-  two agree to within the tolerance.
+- *Split into parts* runs its parts in processes rather than workers, so
+  `auto` decides with numbers of its own (see *Solving in parts*). A run
+  with a SciPy solver is split here, where the application would have each
+  worker download a Python runtime; a run that is itself in a worker
+  process, such as a scenario of `run_scenarios(workers=3)`, is not. A
+  min/max or a running mean is taken from the part that owns what it reads.
+  One that reads more than one part (the peak of a total over nuclides) is
+  solved whole, where the application splits the model and reports the
+  total's value at each time as its peak.
 
 ## Tests
 
@@ -394,7 +504,18 @@ through `tests/node/engine.mjs` the application builds and solves every
 bundled example, and the layout of the equations, the derivative at random
 states, the step counts and every series are compared with the engine's; the
 other `test_*` files do it for the samplers, the sensitivity methods, the
-optimisers, the importer and the file formats. `tools/gen_data.mjs` writes the ICRP 107 table
+optimisers, the importer and the file formats. `test_eco_export.py` exports
+every bundled example and the made-up models of `test/eco-export-fixture.js`
+through `tests/node/eco_export.mjs` and here, and compares the archives byte
+for byte; then reads each export back with both importers, compares what
+comes back with the model that went out, and runs the two. `test_engine_split.py` compares
+the partition and the plan of a split run with the application's, and split
+runs with whole ones; `KOMPARTMENT_SPLIT_TIMING=1` adds a timing of a large
+made-up model, whole against split. `test_engine_compiled.py` runs the bundled
+examples and made-up models on the compiled path and the Python path, and
+asks for the same states, statistics and failures to the last bit, across the
+solvers' settings, the non-negative constraint, a min/max, sparse matrices
+and the solver's own steps as output. `tools/gen_data.mjs` writes the ICRP 107 table
 and the reserved names from the application's sources; `--check` says whether
 they are current.
 

@@ -61,6 +61,35 @@ def step_floor(t: float) -> float:
     return 16 * ulp(t)
 
 
+def floor_failure(t: float, nonfinite: bool) -> SolverError:
+    """No step size above the smallest allowed will do at ``t``."""
+    hmin = step_floor(t)
+    if nonfinite:
+        return SolverError('nonfinite', f'The state or its derivative became non-finite at t={t}, and no step size '
+                                        f'above the smallest allowed ({hmin}) gives a number.', t)
+    return SolverError('tolerance', f'Failure at t={t}: unable to meet the integration tolerances without reducing '
+                                    f'the step size below the smallest value allowed ({hmin}).', t)
+
+
+def steps_failure(max_steps: float, t: float) -> SolverError:
+    return SolverError('steps', f'Exceeded {int(max_steps)} steps at t={t}. Nothing this solver can do with '
+                                'the step size will finish this run.', t)
+
+
+def stall_failure(t: float, window: int, covered: float) -> SolverError:
+    return SolverError('stalled', f'The solver stopped making progress at t={t}: {window} accepted steps advanced '
+                                  f'the clock by less than {covered}, and the step size is no longer growing.', t)
+
+
+def error_nonfinite(t: float) -> SolverError:
+    return SolverError('nonfinite', f'The error estimate is not a number at t={t}: a tolerance or a state weight '
+                                    'is NaN.', t)
+
+
+def initial_nonfinite(t0: float, state: int) -> SolverError:
+    return SolverError('nonfinite', f'The state or its derivative is not a number at t={t0} (state {state}).', t0)
+
+
 def basis_at(s: float, k: int) -> List[float]:
     out = [1.0] * (k + 1)
     for j in range(1, k + 1):
@@ -329,8 +358,7 @@ def ndf(f: Callable[[float, np.ndarray], np.ndarray], tspan: Sequence[float], y0
     f0 = rhs(t0, table.y)
     bad = ~np.isfinite(table.y) | ~np.isfinite(f0)
     if bad.any():
-        raise SolverError('nonfinite', f'The state or its derivative is not a number at t={t0} '
-                                       f'(state {int(np.nonzero(bad)[0][0])}).', t0)
+        raise initial_nonfinite(t0, int(np.nonzero(bad)[0][0]))
     vl = vr = None
     if events is not None:
         vl = np.array(events.fun(t0, table.y), dtype=float)
@@ -487,14 +515,6 @@ def ndf(f: Callable[[float, np.ndarray], np.ndarray], tspan: Sequence[float], y0
         form_w()
         return True
 
-    def floor_failure(nonfinite: bool) -> SolverError:
-        hmin = step_floor(t)
-        if nonfinite:
-            return SolverError('nonfinite', f'The state or its derivative became non-finite at t={t}, and no step size '
-                                            f'above the smallest allowed ({hmin}) gives a number.', t)
-        return SolverError('tolerance', f'Failure at t={t}: unable to meet the integration tolerances without reducing '
-                                        f'the step size below the smallest value allowed ({hmin}).', t)
-
     while True:
         hmin = step_floor(t)
         step_size = min(hmax, max(hmin, abs(cur['h'])))
@@ -588,7 +608,7 @@ def ndf(f: Callable[[float, np.ndarray], np.ndarray], tspan: Sequence[float], y0
                     continue
                 if abs(h) <= hmin:
                     if outcome == 'nonfinite' or below_run >= floor_newton_run:
-                        raise fail(floor_failure(outcome == 'nonfinite'))
+                        raise fail(floor_failure(t, outcome == 'nonfinite'))
                     below_run += 1
                     stats['nbelowtol'] += 1
                     err = rtol
@@ -606,8 +626,7 @@ def ndf(f: Callable[[float, np.ndarray], np.ndarray], tspan: Sequence[float], y0
 
             err = error_const[k] * error_weight.of_error(d)
             if not math.isfinite(err):
-                raise fail(SolverError('nonfinite', f'The error estimate is not a number at t={t}: a tolerance or a '
-                                                    'state weight is NaN.', t))
+                raise fail(error_nonfinite(t))
             for_constraint = False
             if projected is not None:
                 neg = ynew[constrained]
@@ -625,7 +644,7 @@ def ndf(f: Callable[[float, np.ndarray], np.ndarray], tspan: Sequence[float], y0
                 continue
             if abs(h) <= hmin:
                 if below_run >= floor_run:
-                    raise fail(floor_failure(False))
+                    raise fail(floor_failure(t, False))
                 below_run += 1
                 stats['nbelowtol'] += 1
                 break
@@ -651,16 +670,12 @@ def ndf(f: Callable[[float, np.ndarray], np.ndarray], tspan: Sequence[float], y0
             trace.pop(0)
         step_fails = 0
         if stats['nsteps'] > max_steps:
-            raise fail(SolverError('steps', f'Exceeded {int(max_steps)} steps at t={t}. Nothing this solver can do with '
-                                            'the step size will finish this run.', t))
+            raise fail(steps_failure(max_steps, t))
         if stats['nsteps'] - stall_step >= stall_window:
             crawling = abs(tnew - stall_t) < span * STALL_SPAN_FRACTION
             not_growing = abs(cur['h']) <= 2 * stall_h
             if crawling and not_growing:
-                raise fail(SolverError('stalled', f'The solver stopped making progress at t={tnew}: {stall_window} '
-                                                  f'accepted steps advanced the clock by less than '
-                                                  f'{span * STALL_SPAN_FRACTION}, and the step size is no longer '
-                                                  'growing.', tnew))
+                raise fail(stall_failure(tnew, stall_window, span * STALL_SPAN_FRACTION))
             stall_step = stats['nsteps']
             stall_t = tnew
             stall_h = abs(cur['h'])

@@ -12,6 +12,10 @@
 //   run      { model, overrides }      -> the run's times and every output series
 //   atstart  { model, names }          -> valuesAtStart(...).of(name) for each name
 //   lu       { cases: [{n, a, colPtr, rowIdx, values, mass, b}] } -> the dense LU's factors and solution
+//   partition { model }                -> partitionOf(system): ok, refusal, count, of, sizes, largest
+//   plan     { model, opts: [...] }    -> stateKeys, stateMaterials and splitJobs of the built system,
+//                                        planSplit(system, project, o) for each o of opts, and the
+//                                        constants auto decides by
 //
 // Infinity and NaN travel as the strings 'Infinity', '-Infinity' and 'NaN'.
 
@@ -29,6 +33,8 @@ const { run } = await load('sim/runner.js');
 const prob = await load('sim/probabilistic.js');
 const { valuesAtStart } = await load('sim/atstart.js');
 const { LU } = await load('ode/core/linalg.js');
+const { partitionOf } = await load('sim/partition.js');
+const split = await load('sim/split.js');
 
 const req = JSON.parse(readFileSync(0, 'utf8'), (k, v) => (
 	v === 'Infinity' ? Infinity : v === '-Infinity' ? -Infinity : v === 'NaN' ? NaN : v));
@@ -216,6 +222,41 @@ switch (req.task) {
 				stats: { ...r.stats, ms: undefined },
 				quantiles: r.outputs.length
 					? prob.quantiles(r.values[0], r.t.length, r.iterations).map((q) => q.y) : null,
+			};
+		} catch (e) {
+			out = { error: e.message, kind: e.name, stack: e.stack };
+		}
+		break;
+	}
+	case 'partition': {
+		try {
+			const p = partitionOf(buildSystem(new Project(req.model)));
+			out = { ok: p.ok, refusal: p.refusal, count: p.count, of: p.of, sizes: p.sizes, largest: p.largest };
+		} catch (e) {
+			out = { error: e.message, kind: e.name, stack: e.stack };
+		}
+		break;
+	}
+	case 'plan': {
+		try {
+			const project = new Project(req.model);
+			const sys = buildSystem(project);
+			const jobs = split.splitJobs(sys);
+			const plans = (req.opts ?? [{}]).map((o) => {
+				const p = split.planSplit(sys, project, o);
+				return {
+					use: p.use, mode: p.mode, why: p.why, predicted: p.predicted ?? null,
+					jobs: p.jobs ?? null, owner: p.owner ?? null, bins: p.bins ?? null, parts: p.parts ?? null,
+				};
+			});
+			out = {
+				keys: split.stateKeys(sys.layout), materials: split.stateMaterials(sys.layout),
+				jobs: jobs.ok ? { ok: true, jobs: jobs.jobs, owner: jobs.owner, parts: jobs.parts } : { ok: false, why: jobs.why },
+				plans,
+				constants: {
+					SHARED_WORK: split.SHARED_WORK, START_MS: split.START_MS, AUTO_SOLVE_MS: split.AUTO_SOLVE_MS,
+					AUTO_STATES: split.AUTO_STATES, AUTO_GAIN: split.AUTO_GAIN, AUTO_GAIN_UNTIMED: split.AUTO_GAIN_UNTIMED,
+				},
 			};
 		} catch (e) {
 			out = { error: e.message, kind: e.name, stack: e.stack };

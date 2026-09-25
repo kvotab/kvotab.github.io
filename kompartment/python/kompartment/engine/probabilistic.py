@@ -314,7 +314,7 @@ def run_realization(model: Any, index: int, **opts: Any) -> Dict[str, Any]:
     design = design_for(project, system, **_design_options(opts))
     i = min(design.iterations - 1, max(0, int(round(float(index))) if index is not None else 0))
     values = apply_point(system, design, i)
-    results = run(project, system=system)
+    results = run(project, system=system, compiled=opts.get('compiled', 'auto'))
     return {'results': results, 'index': i, 'iterations': design.iterations,
             'values': [{'name': design.names[k], 'value': values[k],
                         'held': (not design.varies(e)) or (values[k] == design.best[k]
@@ -330,7 +330,7 @@ def run_probabilistic(model: Any, *, iterations: int = 100, seed: int = 1, latin
                       varied: Optional[Iterable[str]] = None, tornado: Optional[Dict[str, float]] = None,
                       gsa: Optional[Dict[str, Any]] = None, keep: Any = None, workers: int = 1,
                       on_progress: Optional[Callable[[int, int], Any]] = None, large: bool = False,
-                      range_: Optional[Sequence[int]] = None) -> 'ProbabilisticResults':
+                      range_: Optional[Sequence[int]] = None, compiled: Any = 'auto') -> 'ProbabilisticResults':
     """Runs ``iterations`` realisations and keeps the series asked for.
 
     ``keep``: which series to hold -- None for every endpoint (anything but an
@@ -339,17 +339,20 @@ def run_probabilistic(model: Any, *, iterations: int = 100, seed: int = 1, latin
     is drawn whole in each, so the answer does not depend on how many.
     ``tornado={'low': .05, 'high': .95}`` swings each input alone;
     ``gsa={'method': ..., 'options': {...}}`` runs a sensitivity design.
+    ``compiled`` is each run's, as :func:`kompartment.engine.runner.run`
+    takes it: the model compiles once, and every realisation runs compiled.
     """
     started = time.perf_counter()
     project = _as_project(model)
     raw = project.to_json() if workers > 1 else None
     if workers > 1:
         return _run_pool(raw, dict(iterations=iterations, seed=seed, latin=latin, varied=varied, tornado=tornado,
-                                   gsa=gsa, keep=keep, large=large), workers, on_progress, started)
+                                   gsa=gsa, keep=keep, large=large, compiled=compiled), workers, on_progress,
+                         started)
     system = build_system(project)
     design = design_for(project, system, seed=seed, iterations=iterations, latin=latin, varied=varied,
                         tornado=tornado, gsa=gsa)
-    return _run_slice(project, system, design, keep, range_, on_progress, large, started)
+    return _run_slice(project, system, design, keep, range_, on_progress, large, started, compiled)
 
 
 def _keep_fn(keep: Any) -> Optional[Callable[[str, Dict[str, Any]], bool]]:
@@ -362,7 +365,8 @@ def _keep_fn(keep: Any) -> Optional[Callable[[str, Dict[str, Any]], bool]]:
 
 
 def _run_slice(project: Project, system: Any, design: Design, keep: Any, range_: Optional[Sequence[int]],
-               on_progress: Optional[Callable[[int, int], Any]], large: bool, started: float) -> 'ProbabilisticResults':
+               on_progress: Optional[Callable[[int, int], Any]], large: bool, started: float,
+               compiled: Any = 'auto') -> 'ProbabilisticResults':
     plan, iterations = design.plan, design.iterations
     frm = max(0, min(iterations - 1, int(round(range_[0])) if range_ else 0))
     to = max(frm + 1, min(iterations, int(round(range_[1])) if range_ else iterations))
@@ -375,7 +379,7 @@ def _run_slice(project: Project, system: Any, design: Design, keep: Any, range_:
             samples[k, i - frm] = values[k] if values[k] is not None else math.nan
 
     apply(frm)
-    first = run(project, system=system, on_grid=True)
+    first = run(project, system=system, on_grid=True, compiled=compiled)
     outputs = first.outputs()
     keep_fn = _keep_fn(keep)
     wanted = [k for k, o in enumerate(outputs) if can_be_endpoint(o.get('kind'))
@@ -422,7 +426,7 @@ def _run_slice(project: Project, system: Any, design: Design, keep: Any, range_:
     for i in range(frm + 1, to):
         apply(i)
         try:
-            r = run(project, system=system, on_grid=True)
+            r = run(project, system=system, on_grid=True, compiled=compiled)
             take(i, r)
         except Exception as e:  # noqa: BLE001 - one realisation failing is reported, not fatal
             failed += 1
@@ -448,7 +452,7 @@ def _pool_slice(args: tuple) -> Dict[str, Any]:
     system = build_system(project)
     design = design_for(project, system, **_design_options(opts))
     res = _run_slice(project, system, design, opts.get('keep'), (lo, hi), None, opts.get('large', False),
-                     time.perf_counter())
+                     time.perf_counter(), opts.get('compiled', 'auto'))
     return res.data
 
 

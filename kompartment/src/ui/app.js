@@ -10244,6 +10244,17 @@ export async function modelFileFor(name, model = state.raw, { extra = null } = {
 	const lower = name.toLowerCase();
 	const inner = `${slug(model?.name)}.json`;
 
+	// An Ecolego project: the model written in another tool's terms, with a
+	// report of what those terms have no place for. See ../io/ecoexport.js.
+	if (lower.endsWith('.eco')) {
+		if (extra?.length) {
+			throw new Error(`A run cannot be saved inside an .eco project, and '${name}' is one.`);
+		}
+		const { exportEco } = await import('../io/ecoexport.js');
+		const { bytes, report } = await exportEco(model);
+		return { name, body: bytes, type: 'application/zip', report };
+	}
+
 	if (lower.endsWith('.zip')) {
 		const { zip } = await import('../io/zip.js');
 		// The model first and at the root, whatever else is in the archive:
@@ -10298,7 +10309,8 @@ async function saveFile(as = 'json') {
 	const name = as === 'zip' ? `${base}.zip`
 		: as === 'gz' ? `${base}.json.gz`
 			: as === 'data' ? `${base}-results.zip`
-				: `${base}.json`;
+				: as === 'eco' ? `${base}.eco`
+					: `${base}.json`;
 	const text = JSON.stringify(state.raw, null, 2);
 
 	// The run itself, fetched before the dialog opens: it is a round trip to
@@ -10361,6 +10373,12 @@ async function saveFile(as = 'json') {
 				const to = await handle.createWritable();
 				await to.write(file.body);
 				await to.close();
+				// An export is somebody else's file about this model, and what
+				// it could not hold is the first thing worth reading about it.
+				if (file.report) {
+					exportedFile(file, handle.name);
+					return;
+				}
 				// The file this model is now in. Saving with the results is a
 				// different file about the same model -- an archive, not the
 				// model -- so it is not the one Save writes to next time.
@@ -10378,6 +10396,10 @@ async function saveFile(as = 'json') {
 	}
 	const file = await modelFileFor(name, state.raw, { extra });
 	download(file.name, file.body, file.type);
+	if (file.report) {
+		exportedFile(file, file.name);
+		return;
+	}
 	// Downloaded rather than written: there is no file to write to again, but
 	// the model *has* been written out, and saying otherwise would leave the
 	// button claiming unsaved work on a browser that simply has no picker.
@@ -10466,6 +10488,11 @@ function saveTypes(as) {
 			description: 'Kompartment model and results (ZIP)',
 			accept: { 'application/zip': ['.zip'] },
 		}];
+	}
+	// An export is offered on its own for the same reason: picking `.json` in
+	// a dialog opened to export would write a model file, not an export.
+	if (as === 'eco') {
+		return [{ description: 'Ecolego project (.eco)', accept: { 'application/zip': ['.eco'] } }];
 	}
 	const order = as === 'zip' ? ['zip', 'json', 'gz']
 		: as === 'gz' ? ['gz', 'json', 'zip']
@@ -10901,6 +10928,81 @@ function showImportReport(report, fileName) {
 						+ 'whole').join(', ')}`
 					: '')
 				+ ': ' + report.disabled.join(', '))));
+	}
+
+	for (const w of report.warnings) {
+		box.append(el('p', { className: 'ir-warn' }, w));
+	}
+
+	box.hidden = false;
+	selectTab('build');
+}
+
+/**
+ * An export written: said, and its report shown.
+ *
+ * Not `noteSaved`: the model is not in that file -- it is in its own, and the
+ * export is a translation of it that leaves things out -- so the Save button
+ * keeps pointing where it pointed, and says there is unsaved work if there is.
+ */
+function exportedFile(file, fileName) {
+	const kB = Math.round(file.body.length / 1024).toLocaleString();
+	const lost = file.report.skipped.length;
+	flash(`Exported ${fileName} — ${kB} kB`
+		+ (lost ? `; ${lost} thing${lost === 1 ? '' : 's'} it has no place for, listed on the Build tab.` : '.'),
+	lost ? 'warn' : 'info');
+	showExportReport(file.report, fileName);
+}
+
+/**
+ * What an export could not carry, shown where an import's report is and in
+ * the same form: what went out, what was left out and why, what was written
+ * in another form, and anything else worth knowing before the file is used.
+ */
+function showExportReport(report, fileName) {
+	const box = $('#import-report');
+	box.replaceChildren();
+
+	const heading = el('div', { className: 'ir-head' }, el('b', {}, `Exported ${fileName}`));
+	const close = el('button', { className: 'ghost ir-close', type: 'button' }, 'Dismiss');
+	close.addEventListener('click', () => { box.hidden = true; });
+	heading.append(close);
+	box.append(heading);
+
+	box.append(el('p', { className: 'ir-counts' }, report.summary().split('\n')[0]));
+
+	if (report.skipped.length) {
+		const byType = new Map();
+		for (const sk of report.skipped) {
+			if (!byType.has(sk.type)) byType.set(sk.type, []);
+			byType.get(sk.type).push(sk);
+		}
+		const list = el('ul', { className: 'ir-list' });
+		for (const [type, items] of byType) {
+			list.append(el('li', {},
+				el('b', {}, `${items.length} ${type}`),
+				`: ${items.slice(0, 6).map((s) => `${s.name} (${s.why})`).join('; ')}${items.length > 6 ? '…' : ''}`));
+		}
+		box.append(
+			el('p', { className: 'ir-warn' },
+				'These have no place in the file and were left out. The model in it is '
+				+ 'not the whole of this one:'),
+			list,
+		);
+	}
+
+	if (report.rewritten.length) {
+		box.append(el('details', { className: 'ir-details' },
+			el('summary', {}, `${report.rewritten.length} thing(s) written in an equivalent form`),
+			el('ul', { className: 'ir-list' }, ...report.rewritten.map((r) => el('li', {},
+				el('b', {}, `${r.type} ${r.name}`), `: ${r.how}`)))));
+	}
+
+	if (report.renamed.length) {
+		box.append(el('details', { className: 'ir-details' },
+			el('summary', {}, `${report.renamed.length} renamed`),
+			el('p', { className: 'ir-hint' },
+				report.renamed.map((r) => `${r.from} → ${r.to}`).join(', '))));
 	}
 
 	for (const w of report.warnings) {

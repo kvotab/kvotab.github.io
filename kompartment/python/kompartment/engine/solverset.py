@@ -26,6 +26,23 @@ def non_finite_error(at: float) -> SolverError:
                                     'or rate that went first is where to look.', at)
 
 
+def variable_order_failure(e: SolverError, t0: float) -> SolverError:
+    """What ``variableOrder`` says when the NDF fails with ``e``."""
+    if e.code in ('aborted', 'span'):
+        return e
+    at = e.t if e.t is not None else t0
+    if e.code in ('stalled', 'steps'):
+        return SolverError(e.code, f'{e} Something is holding a state where it cannot go: most often a compartment '
+                                   'kept at zero by "cannot go negative" while its equations push it below. Turn '
+                                   'that setting off on the compartment to see what the model really does.', at)
+    if e.code == 'nonfinite':
+        return non_finite_error(at)
+    if e.code in ('singular', 'jacobian'):
+        return SolverError(e.code, str(e), at)
+    return SolverError(e.code, f'variableOrder failed: {e}. If the model is not stiff, dormandPrince may do better; '
+                               'if it is very stiff, try tightening the tolerances.', at)
+
+
 def variable_order(f: Callable[[float, np.ndarray], np.ndarray], tspan: Any, y0: np.ndarray,
                    opts: Dict[str, Any]) -> Dict[str, Any]:
     """The NDF (BDF with ``bdf``): ``variableOrder`` in the application."""
@@ -73,20 +90,10 @@ def variable_order(f: Callable[[float, np.ndarray], np.ndarray], tspan: Any, y0:
     try:
         result = ndf(fun, tspan, y0, **kw)
     except SolverError as e:
-        if e.code in ('aborted', 'span'):
+        failure = variable_order_failure(e, t0)
+        if failure is e:
             raise
-        at = e.t if e.t is not None else t0
-        if e.code in ('stalled', 'steps'):
-            raise SolverError(e.code, f'{e} Something is holding a state where it cannot go: most often a compartment '
-                                      'kept at zero by "cannot go negative" while its equations push it below. Turn '
-                                      'that setting off on the compartment to see what the model really does.',
-                              at) from None
-        if e.code == 'nonfinite':
-            raise non_finite_error(at) from None
-        if e.code in ('singular', 'jacobian'):
-            raise SolverError(e.code, str(e), at) from None
-        raise SolverError(e.code, f'variableOrder failed: {e}. If the model is not stiff, dormandPrince may do better; '
-                                  'if it is very stiff, try tightening the tolerances.', at) from None
+        raise failure from None
     if not len(result['t']) or not len(result['y']):
         raise SolverError('output', 'the variable-order solver produced no output', t0)
     s = result['stats']

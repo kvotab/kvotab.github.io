@@ -370,14 +370,31 @@ def _as_index(index: Any, width: int) -> np.ndarray:
     return np.full(width, int(index), dtype=np.int64) if np.ndim(index) == 0 else np.asarray(index, dtype=np.int64)
 
 
+NON_FINITE_AT_START = ('the generated Jacobian has a non-finite entry at the starting state (an exact derivative '
+                       'may be infinite where sqrt or log meets an empty compartment), and an infinite entry is '
+                       'not a matrix a solver can factorise')
+
+
 def analytic_jacobian(system: Any, pattern: Any) -> Optional[Dict[str, Any]]:
     """``{'available', 'constant', 'evaluate'}`` for the analytic Jacobian, or
     ``{'available': False, 'reason'}`` when the model has something it cannot
-    differentiate."""
+    differentiate -- or, as the application's ``refuseNonFinite`` has it, a
+    derivative that is infinite at the state and time the run starts from,
+    where the singularities live (the square root of an empty compartment)."""
     try:
-        return _Analytic(system, pattern).result()
+        made = _Analytic(system, pattern)
     except NoDerivative as e:
         return {'available': False, 'reason': f'no derivative rule for {e.what}'}
+    try:
+        with np.errstate(all='ignore'):
+            at_start = made.evaluate(system.start_time, system.initial_state())
+    except Exception:  # noqa: BLE001 - as the application: the model's arithmetic at the start says nothing here
+        at_start = ()
+    finally:
+        system._clock_at = math.nan
+    if at_start is None:
+        return {'available': False, 'reason': NON_FINITE_AT_START}
+    return made.result()
 
 
 class _Analytic:

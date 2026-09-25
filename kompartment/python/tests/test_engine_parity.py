@@ -128,6 +128,25 @@ class BuildParity(unittest.TestCase):
                     self.assertEqual(j['pattern'].nnz, js['nnz'])
                     self.assertEqual(len(j['groups']), js['colours'])
 
+    def test_a_jacobian_infinite_at_the_start_is_refused(self) -> None:
+        # The application's refuseNonFinite: d/dB of k*sqrt(B)*B at an empty B.
+        import kompartment as kp
+        m = kp.Model.new('Root')
+        m.simulation.update(end_time=10, output_points=5)
+        for name, initial in (('A', '1'), ('B', '0'), ('C', '0')):
+            m.add_compartment(name, initial=initial)
+        m.add_parameter('k', 0.1)
+        m.add_transfer('A', 'B', rate='k')
+        m.add_transfer('B', 'C', rate='k*sqrt(B)')
+        model = m.to_dict()
+        js = engine('jacobian', model=model)
+        j = build_system(Project(model)).jacobian
+        self.assertFalse(js['available'])
+        self.assertFalse(j['available'])
+        self.assertEqual(j['reason'], js['reason'])
+        self.assertEqual(j['pattern'].nnz, js['nnz'])
+        self.assertEqual(len(j['groups']), js['colours'])
+
     def test_the_derivative_is_the_applications(self) -> None:
         for name in EXAMPLES:
             model = example(name)

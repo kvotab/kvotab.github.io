@@ -121,7 +121,8 @@ def jumps_of(system: Any) -> List[Any]:
 
 
 def run(project: Any, system: Any = None, on_progress: Optional[Callable[[float, float], Any]] = None,
-        on_grid: bool = False, signal: Any = None, equations: Optional[Dict[str, Any]] = None) -> 'Results':
+        on_grid: bool = False, signal: Any = None, equations: Optional[Dict[str, Any]] = None,
+        workers: Optional[int] = None, compiled: Any = 'auto') -> 'Results':
     """Runs a project (a :class:`Project`, a model dict, or a :class:`kompartment.Model`).
 
     ``signal`` (an object with ``aborted``, a mapping, or a callable) stops the
@@ -132,10 +133,28 @@ def run(project: Any, system: Any = None, on_progress: Optional[Callable[[float,
     ``opts.equations``, and ``kompartment.engine.localsens`` its one user):
     ``{'dydt', 'y0', 'abstol', 'jacobian', 'solver', 'on_segment'}``, the first
     ``nstate`` entries of ``y0`` being the model's states.
+
+    A run that builds its own system is solved in its independent parts on
+    several processes when ``simulation.split`` says so and the plan agrees
+    (see :mod:`kompartment.engine.split`); ``workers`` caps the processes
+    (every core by default), and ``stats['split']`` says what was done.
+
+    ``compiled`` -- 'auto' (the default), True or False -- is whether the
+    solve runs on the compiled path (:mod:`kompartment.engine.compiled`): the
+    derivative and the solver's loop compiled with numba, the same steps as
+    the Python path to the last bit and several times quicker on a small
+    model. 'auto' takes it when the run allows (and numba is installed),
+    True insists (raising ``NotCompiled`` with the reason when it cannot),
+    False keeps to Python. ``stats['compiled']`` says which path ran, and
+    ``stats['compiled_why']`` why not, when it was not.
     """
     if not isinstance(project, Project):
         raw = project.to_dict() if hasattr(project, 'to_dict') else project
         project = Project(raw)
+    if system is None and equations is None:
+        from .split import run_whole_or_split
+        return run_whole_or_split(project, on_progress=on_progress, on_grid=on_grid, signal=signal, workers=workers,
+                                  compiled=compiled)
     t0 = time.perf_counter()
     system = system if system is not None else build_system(project)
     build_ms = (time.perf_counter() - t0) * 1000
@@ -253,6 +272,8 @@ def run(project: Any, system: Any = None, on_progress: Optional[Callable[[float,
     min_change = float(sim.get('min_change_time') or 0)
     f = eq['dydt'] if eq.get('dydt') is not None else system.rhs
     on_segment = eq.get('on_segment')
+    compiled_run, compiled_why = _compiled_run(compiled, system, solver_id, opts, min_change, steps is not None,
+                                               equations is not None)
 
     def solve_span(grid2: np.ndarray, start: np.ndarray) -> Dict[str, Any]:
         system.use_clock_interpolation(min_change, float(grid2[0]))
@@ -260,6 +281,8 @@ def run(project: Any, system: Any = None, on_progress: Optional[Callable[[float,
             on_segment(float(grid2[0]), min_change)
         if system.events is not None:
             return solve_with_events(system, f, solver, grid2, start, opts)
+        if compiled_run is not None:
+            return compiled_run(grid2, start)
         return solver(f, grid2, start, opts)
 
     try:
@@ -267,8 +290,47 @@ def run(project: Any, system: Any = None, on_progress: Optional[Callable[[float,
         # sets none of its own. A division by zero or an overflow is the
         # model's, reported by the solver as a non-finite state, not a warning.
         with np.errstate(all='ignore'):
-            solution = (solve_across_breaks(solve_span, span, y0, breaks, jump_at if jumps else None) if breaks
-                        else solve_span(span, y0))
+            if compiled_run is None:
+                solution = (solve_across_breaks(solve_span, span, y0, breaks, jump_at if jumps else None) if breaks
+                            else solve_span(span, y0))
+            else:
+                from .compiled.run import HistoryFull, UsePython, restart_state
+                tolerances = restart_state(abstol)
+                while True:
+                    compiled_run.start()
+                    try:
+                        solution = (solve_across_breaks(solve_span, span, y0, breaks, jump_at if jumps else None)
+                                    if breaks else solve_span(span, y0))
+                        break
+                    except (HistoryFull, UsePython) as e:
+                        # Made again from the start: with more room for the
+                        # histories, or on the Python path.
+                        compiled_run.finish()
+                        if isinstance(e, UsePython):
+                            if compiled is True:
+                                raise
+                            compiled_run, compiled_why = None, str(e)
+                        else:
+                            compiled_run.grow()
+                        if tolerances is not None:
+                            abstol[:] = tolerances
+                        jumped[0] = 0
+                        system.prime_recorders(float(grid[0]), y0)
+                        if compiled_run is None:
+                            solution = (solve_across_breaks(solve_span, span, y0, breaks, jump_at if jumps else None)
+                                        if breaks else solve_span(span, y0))
+                            break
+                    except BaseException:
+                        compiled_run.finish()
+                        raise
+                if compiled_run is not None:
+                    if steps is not None:
+                        compiled_run.steps_into(steps)
+                    compiled_run.finish()
+        if solution.get('stats') is not None:
+            solution['stats']['compiled'] = compiled_run is not None
+            if compiled_why and compiled_run is None:
+                solution['stats']['compiled_why'] = compiled_why
         if jumps and solution.get('stats') is not None:
             solution['stats']['jumps'] = jumped[0]
         if steps is not None:
@@ -289,6 +351,32 @@ def run(project: Any, system: Any = None, on_progress: Optional[Callable[[float,
     return Results(project, system, solution, {'build_ms': build_ms,
                                                'solve_ms': (time.perf_counter() - solve_start) * 1000,
                                                'total_ms': (time.perf_counter() - t0) * 1000})
+
+
+def _compiled_run(compiled: Any, system: Any, solver_id: str, opts: Dict[str, Any], min_change: float,
+                  solver_points: bool, equations: bool) -> Any:
+    """``(compiled solver, None)`` for a run that takes the compiled path,
+    ``(None, why not)`` for one that does not."""
+    if compiled is False or compiled is None:
+        return None, None
+    from .compiled import NotCompiled
+    try:
+        from .compiled.run import prepare
+    except ImportError as e:
+        if compiled is True:
+            raise NotCompiled(f'numba is not installed ({e})') from None
+        return None, f'numba is not installed ({e})'
+    try:
+        return prepare(system, solver_id, opts, min_change=min_change, solver_points=solver_points,
+                       equations=equations), None
+    except NotCompiled as e:
+        if compiled is True:
+            raise
+        return None, str(e)
+    except Exception as e:  # noqa: BLE001 - a model the compiler trips on: 'auto' runs it on the Python path
+        if compiled is True:
+            raise
+        return None, f'the compiler failed on it ({type(e).__name__}: {e})'
 
 
 def _jacobian_option(system: Any, sim: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -712,15 +800,46 @@ class Results:
                 cols[k][:] = Y[:, o['offset']]
         alg = [k for k in live if outputs[k]['source'] != 'y']
         if needs_x and alg:
-            for i in range(n):
-                X = self.system.evaluate_algebraic(float(self.t[i]), self.y[i])
-                for k in alg:
-                    o = outputs[k]
-                    if o.get('offsets') is not None:
-                        cols[k][i] = _sequential_sum(X[o['offsets']][None, :])[0]
-                    else:
-                        cols[k][i] = X[o['offset']]
+            # The slots asked for, at every output time, then whole columns of them.
+            need = sorted({int(off) for k in alg for off in (outputs[k]['offsets'] if outputs[k].get('offsets')
+                                                               is not None else [outputs[k]['offset']])})
+            column = {off: j for j, off in enumerate(need)}
+            XS = self._algebraic_rows(Y, np.asarray(need, dtype=np.int64))
+            for k in alg:
+                o = outputs[k]
+                if o.get('offsets') is not None:
+                    cols[k][:] = _sequential_sum(XS[:, [column[int(off)] for off in o['offsets']]])
+                else:
+                    cols[k][:] = XS[:, column[int(o['offset'])]]
         return cols
+
+    def _algebraic_rows(self, Y: np.ndarray, need: np.ndarray) -> np.ndarray:
+        """The algebraic slots ``need`` at every output time, a row per time:
+        through the compiled passes when the run was compiled (the Python
+        passes' numbers to the last bit, the histories read as the system
+        holds them), else the Python passes."""
+        n = self.t.size
+        out = np.zeros((n, need.size))
+        system = self.system
+        if self.stats.get('compiled') and n and not getattr(system, '_min_change', 0):
+            cm = getattr(system, '_compiled_model', None)
+            rows = getattr(cm, 'algebraic_rows', None)
+            if rows is not None:
+                try:
+                    cm.load()
+                    rows(np.ascontiguousarray(self.t, dtype=float), np.ascontiguousarray(Y, dtype=float), need, out,
+                         system.P, system.X, cm.W, cm.IW)
+                    return out
+                except Exception:  # noqa: BLE001 - the Python passes give the same numbers
+                    pass
+                finally:
+                    system._clock_at = math.nan
+        with np.errstate(all='ignore'):
+            for i in range(n):
+                system.at_instant(float(self.t[i]), self.y[i])
+                system._step(float(self.t[i]), self.y[i], system.X)
+                out[i] = system.X[need]
+        return out
 
     def _find(self, label: str) -> Dict[str, Any]:
         for o in self.outputs():

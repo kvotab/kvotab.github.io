@@ -543,14 +543,20 @@ async function deflateRaw(bytes) {
  * allowance is stored instead: stored data is outside it, being already in the
  * archive and bounded by it. The file is larger, and it opens.
  *
+ * `store` writes every entry stored. Deflate is the platform's, and platforms'
+ * encoders choose different bytes for the same data; stored entries are the
+ * same archive wherever it is made, which is what the .eco export wants
+ * (see ./ecoexport.js).
+ *
  * @param {Array<{name: string, bytes: Uint8Array}>} entries
- * @param {{modified?: Date, inflateLimit?: number}} [opts]  `inflateLimit` is
- *   the reader's allowance, `MAX_ARCHIVE_INFLATED` unless a test says otherwise
+ * @param {{modified?: Date, inflateLimit?: number, store?: boolean}} [opts]
+ *   `inflateLimit` is the reader's allowance, `MAX_ARCHIVE_INFLATED` unless a
+ *   test says otherwise
  * @returns {Promise<Uint8Array>}
  */
 export async function zip(entries, opts = {}) {
 	const when = dosTime(opts.modified ?? new Date(0));
-	const limit = opts.inflateLimit ?? MAX_ARCHIVE_INFLATED;
+	const limit = opts.store ? -1 : opts.inflateLimit ?? MAX_ARCHIVE_INFLATED;
 	const local = [];
 	const central = [];
 	let offset = 0;

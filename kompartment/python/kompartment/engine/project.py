@@ -1158,9 +1158,19 @@ class Project:
 
     def time_grid(self) -> np.ndarray:
         """The output times: one series over the run, or the combined list of series."""
-        from .timeseries import combine_series
         sim = self.simulation
-        start, end, points, spacing = sim['start_time'], sim['end_time'], sim.get('output_points'), sim['spacing']
+        key = (sim['start_time'], sim['end_time'], sim.get('output_points'), sim['spacing'],
+               _json(self.output_times) if self.output_times else None)
+        cached = getattr(self, '_grid', None)
+        if cached is None or cached[0] != key:
+            # Worked out once for the settings it is made of: a probabilistic
+            # run asks for it at every realisation.
+            cached = (key, self._time_grid(*key[:4]))
+            self._grid = cached
+        return cached[1].copy()
+
+    def _time_grid(self, start: float, end: float, points: Any, spacing: str) -> np.ndarray:
+        from .timeseries import combine_series
         if spacing == 'series' or (spacing == 'both' and self.output_times):
             return combine_series(self.output_times, start, end)
         n = max(2, int(math.floor(float(points) + 0.5)))

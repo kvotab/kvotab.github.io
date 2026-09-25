@@ -4113,6 +4113,105 @@ the result browser at kvotab.se reads both.
   every assessment model tested against. Reading them does not make **Run**
   probabilistic.
 
+### Exporting to Ecolego
+
+**Save… → Model → Ecolego project (.eco)** writes the model as an Ecolego 6
+project: a ZIP holding `model.xml`, an empty `views.xml` and a `.version`
+saying which format it is, laid out the way the importer above reads a project
+— the same element names, the same block types, the same spelling of every
+setting. It is meant to be opened in Ecolego; read back here, it is the model
+that went out, apart from what its report lists. An export is not a save: the
+model stays in its own file, and **Save** goes on writing there.
+
+Once the file is written, a report appears where an import's does: what went
+out, **what was left out and why**, what was written in an equivalent form,
+and anything else worth knowing before the file is used. The same model always
+gives the same bytes — the archive's entries are stored rather than
+compressed, so that the file does not depend on the browser that wrote it —
+and the Python package's `Model.save('model.eco')` writes exactly the same
+file.
+
+**What goes across as it is.**
+
+- Every block this tool shares with Ecolego becomes that Ecolego block:
+  compartments, transfers, parameters, expressions, lookup tables, index
+  operations, aggregates, min/max blocks, running means, snapshots, delays and
+  triggers (Ecolego's discrete events). A function becomes an expression with
+  arguments, which is how Ecolego writes one, and a transport's begin, end,
+  number, counter and operations become Ecolego's transport blocks.
+- Index lists, with their sub-sets and mappings. The catalogue of materials is
+  written under Ecolego's name for it, `Materials`, and it, the radionuclides,
+  the elements and the scenario list carry the markers Ecolego puts on its own
+  lists. Each material's unit and each nuclide's half-life go with them, and
+  the decay chain is written out pair by pair — the model's own pairs, or the
+  ones the database gives it.
+- Values per index. Ecolego keeps one row per index combination with every
+  column filled in, so a value set for `Cs-137` on a block indexed by nuclide
+  and object becomes one row per object, each holding every value that index
+  actually has.
+- Distributions, in Ecolego's spelling — `logt(min=…,max=…,mode=…)`, the kind
+  in `function=` — sub-systems with their nesting and their switches, switched
+  off blocks, units, comments, the run's span, time unit, tolerances and
+  endpoints, the probabilistic settings, and the **Cannot go negative** switch.
+
+**What is written in another form**, because Ecolego says the same thing its
+own way:
+
+- An **inflow** is a transfer from a *source*, and an open end of a transfer
+  runs into a *sink*: those are Ecolego's model boundary. Read back here, an
+  inflow comes back as a transfer from outside.
+- A transfer **narrowed** onto a sub-set is written over what its two ends
+  share, with a zero rate outside the sub-set: Ecolego keeps every transfer's
+  dimensions in step with its ends.
+- A transfer's **availability** — a solubility limit or Langmuir sorption — is
+  folded into its rate, `(rate) * if(Donor > 0, min((limit) / Donor, 1), 1)`,
+  which moves the same flux.
+- A **truncation at percentiles** of a distribution becomes the values those
+  percentiles fall at, which cut the curve in the same place.
+- A **logarithmic output grid** is written as the list of its times, since an
+  Ecolego geometric series from a start of zero begins at 1 and this grid
+  begins far below it. An even grid is Ecolego's linear series, and a list of
+  series goes as it is.
+- **The solver**: ndf, ros23 and dp45 are Ecolego's ODE15S, ODE23S and ODE45
+  and come back as themselves. The rest go out as the nearest Ecolego has —
+  radau5 as RADAU5, trbdf2 as ODE23TB — and the report says which; read back
+  here, those arrive as ndf or ros23.
+
+**What is left out, and named in the report.** Each has no Ecolego
+equivalent, and none is written in a form Ecolego would read as something
+else:
+
+- far-field pathways, waste packages and disruptive events;
+- a transfer that adds its flux up over *sum extra indices*, or whose
+  availability is shared over a group;
+- a block indexed by the `Compartments` or `Transfers` list, and an equation
+  that reads `_source_` or `_target_`;
+- a function with no parameters, which Ecolego would take for an expression;
+- the two double-triangular distributions, correlation groups, correlations,
+  and a distribution on one point of a lookup table (the point keeps its
+  value);
+- numbers read off finished curves, and the solver and analysis settings an
+  Ecolego project has no field for.
+
+The diagram — layout, shapes, colours — is not written either: it is this
+tool's own, and Ecolego lays a model out itself. The report says so in a line
+rather than counting it as a loss.
+
+A block that reads something left out goes with it, and the report says what
+it read, so the file never names a block it does not hold. Two settings are
+kept per index in the file and read back here per block: a trigger's
+direction, and **Cannot go negative** — the report says when a model sets
+either differently at different indices.
+
+**What has been checked, and what has not.** Every bundled example and a set
+of made-up models covering every block kind are exported, imported again and
+run, and give the same numbers as the model they came from. The file has not
+been opened in Ecolego itself: what the importer does not read — the empty
+diagram, the GUIDs, the `.version` flags, the source and sink blocks, a
+floor of `-1.0E300` for a compartment that may go negative — is written the way
+Ecolego's own files suggest, and is the first thing to look at if Ecolego
+refuses one.
+
 ## Copying blocks between two windows
 
 Copy in one tab, paste in another. The two can have different models open, and
@@ -6701,7 +6800,10 @@ It keeps the rules the editor keeps: a rename follows every equation, transfer
 end and value keyed by the name; a delete is refused while something still
 reads the block; a name that is taken or reserved is refused. A run agrees
 with this tool's to round-off, and a probabilistic run draws the very same
-samples. Results go out as the files this tool writes — CSV, HDF5, a model
+samples. *Split into parts* works there too, a part per process (see
+[Solving a model in parts](#solving-a-model-in-parts)); **auto** decides with
+numbers measured for processes, which take longer to start than this tool's
+workers. Results go out as the files this tool writes — CSV, HDF5, a model
 archive with the run beside it, which opens here with the run in place — and
 the data files of *Save data* go both ways. Calibration and local sensitivity
 are there too, and projects read in as in

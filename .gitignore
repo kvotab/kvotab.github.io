@@ -23,3 +23,6 @@ resources/tests/pdf/local-*
 # Python bytecode, produced whenever a test imports a helper as a module
 __pycache__/
 *.pyc
+
+# SR-Site and PSAR data for resources/tests/simplefunctions (make-local-fixtures.py); not public
+resources/tests/simplefunctions/local/

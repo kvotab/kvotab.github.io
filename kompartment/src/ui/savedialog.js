@@ -44,6 +44,9 @@ export const KINDS = [
 			['json', 'JSON', 'Readable, and what every other tool takes'],
 			['zip', 'ZIP', 'About a fifth of the size; double-clicks open on any desktop'],
 			['gz', 'gzip', 'The same, in the form a command line makes'],
+			// An export rather than a save: the model stays in its own file,
+			// and what the project could not hold is listed once it is written.
+			['eco', 'Ecolego project (.eco)', 'An Ecolego 6 project. What it has no place for is listed when it is saved'],
 		],
 	},
 	{
@@ -288,7 +291,7 @@ export function openSaveDialog({
 				: null;
 			const note = el('span', { className: 'pdf-note' });
 			const noteText = (none) => (none ? 'Nothing is chosen.'
-				: what.key === 'model' && can.fileName
+				: what.key === 'model' && can.fileName && format !== 'eco'
 					? 'Where it was last saved. ⇧⌘S asks for somewhere else.'
 					: 'Asks where to put it.');
 			const able = (yes) => {

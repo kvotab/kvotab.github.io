@@ -439,9 +439,14 @@ class FarfPath:
             self.seen[slot] = probe[slot]
 
     def release(self, y: np.ndarray, X: np.ndarray) -> None:
-        """The release out of the far end of every slot, into its slot of X."""
+        """The release out of the far end of every slot, into its slot of X:
+        each slot's weighted sum added up one cell at a time from zero, in the
+        cells' order, as the application adds it (``einsum`` may not)."""
         self.refresh(X)
-        X[self.release_slots] = np.einsum('ij,ij->i', self.rel_w, y[self.rel_idx])
+        q = np.zeros(self.slots)
+        for r in range(self.nrel):
+            q += self.rel_w[:, r] * y[self.rel_idx[:, r]]
+        X[self.release_slots] = q
 
     def transport_contributions(self, y: np.ndarray) -> np.ndarray:
         """The transport terms, ready for a weighted bincount over ``row_flat``."""

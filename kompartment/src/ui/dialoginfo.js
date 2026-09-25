@@ -192,7 +192,8 @@ const TOPICS = {
 		lead: 'Everything this model and its run can be written out as, in one place.',
 		sections: [{
 			list: [
-				'**Model** — the model itself, as a project file.',
+				'**Model** — the model itself, as a project file; or exported as an `.eco` project, with '
+				+ 'a list of what that file has no place for.',
 				'**Model with results** — the model and its run in one archive that opens again as it '
 				+ 'was; the chosen blocks become the model’s endpoints.',
 				'**Results** — any of the series, as CSV or HDF5.',

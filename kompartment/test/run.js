@@ -21569,6 +21569,476 @@ test('XML attributes have no prototype', () => {
 });
 
 // =========================================================================
+section('.eco export: the model as an Ecolego project');
+
+await (async () => {
+	const eco = await import('../src/io/ecoexport.js');
+	const fx = await import('./eco-export-fixture.js');
+	const { readFileSync, readdirSync } = await import('node:fs');
+	const examples = readdirSync(new URL('../examples/', import.meta.url))
+		.filter((f) => f.endsWith('.json')).sort()
+		.map((f) => [f, JSON.parse(readFileSync(new URL(`../examples/${f}`, import.meta.url), 'utf8'))]);
+	const models = [...examples, ...Object.entries(fx.EXPORT_MODELS)];
+
+	/** The solver the importer reads back from the name an export writes. */
+	const SOLVER_BACK = {
+		radau5: 'ndf', qndf: 'ndf', fbdf: 'ndf', trbdf2: 'ros23', rodas5p: 'ros23', kencarp4: 'ndf',
+		scipy_bdf: 'ndf', scipy_radau: 'ndf', scipy_lsoda: 'ndf',
+	};
+
+	/**
+	 * Exports, imports with the application's own importer, and says what
+	 * both mean -- leaving out what the report says it left out or wrote in
+	 * another form.
+	 */
+	const roundTrip = async (model) => {
+		const out = await eco.exportEco(model);
+		const back = await importEcoFile(out.bytes);
+		const exclude = [...out.report.skipped, ...out.report.rewritten].map((s) => s.name);
+		const want = fx.canonicalModel(model, { exclude });
+		want.simulation.solver = SOLVER_BACK[want.simulation.solver] ?? want.simulation.solver;
+		const got = fx.canonicalModel(back.project, { exclude, imported: true });
+		return { ...out, back, want, got };
+	};
+	const sameText = (got, want, what) => {
+		const a = JSON.stringify(got);
+		const b = JSON.stringify(want);
+		if (a === b) return;
+		let i = 0;
+		while (i < a.length && a[i] === b[i]) i++;
+		throw new Error(`${what} came back different, from character ${i}: `
+			+ `…${a.slice(Math.max(0, i - 60), i + 90)}… where it was …${b.slice(Math.max(0, i - 60), i + 90)}…`);
+	};
+	const xmlOf = (model) => parseXML(eco.exportModelXML(model).xml);
+	const components = (root) => [
+		...children(child(root, 'block-model'), 'component'),
+		...children(child(root, 'block-model'), 'connection'),
+	];
+	const byId = (root, id) => components(root).find((c) => childText(c, 'id') === id) ?? null;
+
+	test('every bundled example exports to an .eco that imports back as the same model', async () => {
+		for (const [file, model] of examples) {
+			const { want, got, report } = await roundTrip(model);
+			sameText(got, want, file);
+			// What went out is what was counted.
+			assert(report.counts.compartments === got.blocks.filter((b) => b.kind === 'compartments').length,
+				`${file}: ${report.counts.compartments} compartments counted`);
+		}
+		// And what could not go out is named, with the reason.
+		const named = async (file) => (await eco.exportEco(examples.find(([f]) => f === file)[1])).report;
+		const farfield = await named('farfield.json');
+		assert(farfield.skipped.some((s) => s.name === 'Rock' && /FARFCOMP/.test(s.why)), JSON.stringify(farfield.skipped));
+		assert(farfield.skipped.some((s) => s.name === 'Well_concentration' && /reads 'Rock'/.test(s.why)),
+			'what reads the path did not go with it');
+		const packages = await named('waste-packages.json');
+		for (const n of ['Canisters', 'Quake', 'Glaciation', 'Release']) {
+			assert(packages.skipped.some((s) => s.name === n), `${n} is not named: ${JSON.stringify(packages.skipped)}`);
+		}
+		const landscape = await named('landscape.json');
+		assert(landscape.skipped.some((s) => s.name === 'Discharge' && /adds its flux up over Object/.test(s.why)),
+			JSON.stringify(landscape.skipped));
+		assert(landscape.rewritten.some((s) => s.name === 'WetlandLoss' && /narrowed onto Wetland/.test(s.how)),
+			JSON.stringify(landscape.rewritten));
+	});
+
+	test('the made-up models round-trip too, apart from what the report lists', async () => {
+		for (const [name, model] of Object.entries(fx.EXPORT_MODELS)) {
+			const { want, got, report } = await roundTrip(model);
+			if (name === 'PER_INDEX_DIRECTION') {
+				// The file says so index by index; this tool's importer keeps
+				// the block's own direction, and the report says as much.
+				assert(report.warnings.some((w) => /'Either' fires in a different direction/.test(w)),
+					report.warnings.join('\n'));
+				want.blocks.find((b) => b.q === 'Either').grid['Sr-90'].direction = 'rising';
+			}
+			sameText(got, want, name);
+		}
+	});
+
+	test('a re-imported model runs to the same results as the model it came from', async () => {
+		for (const [name, source] of models) {
+			// Where the export wrote an equivalent -- an availability in the
+			// rate -- the solver takes a different path to the same answer, so
+			// that one is solved tightly and compared at the tolerance it was
+			// solved to. radau5 goes out as RADAU5 and comes back as ndf, so
+			// the comparison is of ndf with ndf.
+			const loose = name === 'NO_EQUIVALENT';
+			const model = loose
+				? { ...structuredClone(source), simulation: { ...source.simulation, solver: 'ndf', rtol: 1e-10, abstol: 1e-13 } }
+				: source;
+			const out = await eco.exportEco(model);
+			const back = await importEcoFile(out.bytes);
+			const a = run(fx.withoutBlocks(fx.openedModel(model), out.report.skipped.map((s) => s.name)));
+			const b = run(fx.openedModel(back.project));
+			assert(a.t.length === b.t.length, `${name}: ${a.t.length} output times against ${b.t.length}`);
+			for (let i = 0; i < a.t.length; i++) {
+				assert(Math.abs(a.t[i] - b.t[i]) <= 1e-12 * Math.abs(a.t[i]), `${name}: time ${i} is ${b.t[i]}, was ${a.t[i]}`);
+			}
+			const theirs = new Map(b.outputs().map((o) => [o.label, o]));
+			for (const o of a.outputs()) {
+				const p = theirs.get(o.label);
+				if (!p) {
+					// Only a lookup point's own distribution, which the report named.
+					assert(/@/.test(o.label), `${name}: ${o.label} did not come back`);
+					continue;
+				}
+				const x = a.series(o);
+				const y = b.series(p);
+				let scale = 0;
+				for (const v of x) scale = Math.max(scale, Math.abs(v));
+				const tol = (loose ? 1e-7 : 1e-12) * (scale || 1);
+				for (let i = 0; i < x.length; i++) {
+					assert(Math.abs(x[i] - y[i]) <= tol, `${name}: ${o.label} at ${a.t[i]} is ${y[i]}, was ${x[i]}`);
+				}
+			}
+		}
+	});
+
+	test('the archive is the three entries an Ecolego project holds, stored, and the same bytes every time', async () => {
+		const first = await eco.exportEco(fx.EVERY_KIND);
+		const again = await eco.exportEco(structuredClone(fx.EVERY_KIND));
+		assert(first.bytes.length === again.bytes.length && first.bytes.every((v, i) => v === again.bytes[i]),
+			'two exports of one model differ');
+		const entries = await unzip(first.bytes);
+		assert([...entries.keys()].join() === '.version,model.xml,views.xml', [...entries.keys()].join());
+		assert(entryText(entries.get('.version'))
+			=== 'version=6.5\ntrack-changes=false\node-required=true\nnuclidedb-required=true\n',
+		JSON.stringify(entryText(entries.get('.version'))));
+		assert(entryText(entries.get('model.xml')) === first.xml, 'model.xml is not the XML handed back');
+		assert(entryText(entries.get('views.xml')) === eco.VIEWS_XML, 'views.xml');
+		// Every entry stored, and dated 1980-01-01 at midnight whatever the
+		// time zone -- which is what makes the bytes the same everywhere.
+		const view = new DataView(first.bytes.buffer, first.bytes.byteOffset, first.bytes.byteLength);
+		let p = 0;
+		for (let k = 0; k < 3; k++) {
+			assert(view.getUint32(p, true) === 0x04034b50, `entry ${k} has no local header`);
+			assert(view.getUint16(p + 8, true) === 0, `entry ${k} is not stored`);
+			assert(view.getUint16(p + 10, true) === 0 && view.getUint16(p + 12, true) === ((1 << 5) | 1),
+				`entry ${k} is dated ${view.getUint16(p + 12, true)} ${view.getUint16(p + 10, true)}`);
+			p += 30 + view.getUint16(p + 26, true) + view.getUint32(p + 18, true);
+		}
+		// A model with nothing to integrate and no nuclides says it needs neither.
+		const algebra = await eco.exportEco({ name: 'Algebra', expressions: [{ name: 'x', equation: '1' }] });
+		assert(/ode-required=false\nnuclidedb-required=false/.test(entryText((await unzip(algebra.bytes)).get('.version'))),
+			'the flags do not follow the model');
+		// The importer reads the version the file claims.
+		const back = await importEcoFile(first.bytes);
+		assert(/written by Ecolego 6\.5/.test(back.project.description), back.project.description);
+		// A date asked for is the project's, and the entries'.
+		const dated = await eco.exportEco(fx.TRANSPORT, { modified: new Date(2024, 4, 17, 10, 30, 12) });
+		assert(/<modification-date>\d+<\/modification-date>/.test(dated.xml), 'no modification date');
+		const dv = new DataView(dated.bytes.buffer, dated.bytes.byteOffset);
+		assert(dv.getUint16(12, true) === (((2024 - 1980) << 9) | (5 << 5) | 17), 'the entries are not dated');
+	});
+
+	test('model.xml spells every block type, index list and setting as the importer reads them', () => {
+		const root = xmlOf(fx.EVERY_KIND);
+		assert(root.name === 'data-model', root.name);
+		assert(root.children.map((c) => c.name).join()
+			=== 'project-properties,material-model,index-list-model,nuclide-decay-model,hierarchy-model,'
+			+ 'block-model,simulation-settings,probabilistic-settings', root.children.map((c) => c.name).join());
+		const types = new Set(components(root).map((c) => c.attrs.type));
+		for (const t of ['parameter', 'compartment', 'expression', 'lookup-table', 'index-operation', 'aggregate',
+			'min-max', 'running-mean', 'snapshot', 'delay', 'discrete-event', 'transfer', 'source', 'sink']) {
+			assert(types.has(t), `no ${t} in ${[...types].join(', ')}`);
+		}
+		// Ids are qualified names, and a block names its sub-system by path.
+		const soil = byId(root, 'Near.Soil');
+		assert(soil && childText(soil, 'sub-system') === 'Near' && soil.attrs['index-lists'] === 'Radionuclides,Objects',
+			JSON.stringify(soil?.attrs));
+		assert(childText(byId(root, 'Near.Buffer.Deep'), 'handle-decay') === 'false', 'handle-decay');
+		// The catalogue under Ecolego's name, with its role; the radionuclides a
+		// sub-set of it; the elements a mapping onto it; a material's own unit.
+		const lists = new Map(children(child(root, 'index-list-model'), 'index-list').map((l) => [l.attrs.name, l]));
+		const role = (l) => children(l, 'property').find((p) => p.attrs.name === 'predefined-type');
+		assert(role(lists.get('Materials'))?.text === 'MATERIALS', 'the catalogue');
+		assert(role(lists.get('Materials')).attrs.type === 'se.facilia.ecolego.domain.EcolegoIndexList$PredefinedType',
+			role(lists.get('Materials')).attrs.type);
+		assert(role(lists.get('Radionuclides'))?.text === 'RADIONUCLIDES'
+			&& child(lists.get('Radionuclides'), 'sub-set')?.attrs.of === 'Materials', 'the radionuclides');
+		const elements = lists.get('Elements');
+		assert(role(elements)?.text === 'ELEMENTS' && child(elements, 'mapping')?.attrs.to === 'Materials', 'the elements');
+		assert(children(child(elements, 'mapping'), 'map').some((m) => m.attrs.from === 'Sr' && m.attrs.to === 'Sr-90'),
+			'Sr-90 is not mapped onto Sr');
+		assert(child(lists.get('Wet'), 'sub-set')?.attrs.of === 'Objects', 'a sub-set');
+		assert(children(child(lists.get('ObjRegion'), 'mapping'), 'map').map((m) => `${m.attrs.from}>${m.attrs.to}`).join()
+			=== 'Lake>North,Mire>South', 'a mapping');
+		assert(children(lists.get('Objects'), 'index').find((i) => i.attrs.name === 'Forest')?.attrs.enabled === 'false',
+			'a switched-off index');
+		const materials = child(root, 'material-model');
+		const carbon = children(materials, 'material').find((m) => m.attrs.name === 'Carbon');
+		assert(carbon && childText(carbon, 'unit') === 'kgC', 'a material and its unit');
+		const cs = children(materials, 'nuclide').find((m) => m.attrs.name === 'Cs-137');
+		assert(childText(cs, 'unit') === 'Bq' && childText(cs, 'z') === '55' && childText(cs, 'a') === '137', 'Cs-137');
+		assert(Number(childText(cs, 'half-life')) / 31557600 === HL('Cs-137'), childText(cs, 'half-life'));
+		const pair = child(child(root, 'nuclide-decay-model'), 'decay-pair');
+		assert(pair.attrs.parent === 'Sr-90' && pair.attrs.daughter === 'Y-90' && pair.attrs.rate === '1.0', JSON.stringify(pair.attrs));
+		// The description is the project's comment, and text the XML cannot
+		// hold as written comes through intact.
+		const props = child(root, 'project-properties');
+		assert(props.attrs.name === 'Every kind of block' && /\nSecond line/.test(children(props, 'property')[0].text),
+			'the name and description');
+		assert(childText(soil, 'comment') === fx.EVERY_KIND.compartments[0].comment, childText(soil, 'comment'));
+		// The root of the hierarchy is nameless, and every sub-system says where it is.
+		const blocks = children(child(root, 'hierarchy-model'), 'sub-system-block');
+		assert(!blocks[0].attrs.name && !child(blocks[0], 'id'), 'the root has a name or an id');
+		assert(blocks.slice(1).map((b) => `${childText(b, 'id')}<${childText(b, 'sub-system') ?? ''}`).join()
+			=== 'Near<,Near.Buffer<Near,Far<,Empty<', blocks.slice(1).map((b) => childText(b, 'id')).join());
+		// Every block carries a GUID, and no two are the same.
+		const guids = [...components(root), ...blocks].map((c) => childText(c, 'guid'));
+		assert(guids.every((g) => /^[0-9A-F]{8}-[0-9A-F]{4}-8[0-9A-F]{3}-[89AB][0-9A-F]{3}-[0-9A-F]{12}$/.test(g)), guids.join());
+		assert(new Set(guids).size === guids.length, 'two GUIDs are the same');
+	});
+
+	test('numbers are written as Java writes a double, and read back as the same double', () => {
+		const cases = [
+			[0, '0.0'], [-0, '-0.0'], [1, '1.0'], [1000, '1000.0'], [0.001, '0.001'], [1e-4, '1.0E-4'],
+			[1e7, '1.0E7'], [9999999, '9999999.0'], [123.456, '123.456'], [-2.5e-12, '-2.5E-12'],
+			[-792842341234.23404823434, '-7.92842341234234E11'], [Infinity, 'Infinity'], [-Infinity, '-Infinity'],
+			[NaN, 'NaN'], [0.1 + 0.2, '0.30000000000000004'], [1.7976931348623157e308, '1.7976931348623157E308'],
+		];
+		for (const [x, want] of cases) assert(eco.javaDouble(x) === want, `${x} -> ${eco.javaDouble(x)}, not ${want}`);
+		let seed = 12345;
+		const next = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+		for (let k = 0; k < 2000; k++) {
+			const x = (next() - 0.5) * 10 ** Math.round(next() * 40 - 20);
+			assert(Number(eco.javaDouble(x)) === x, `${x} does not survive: ${eco.javaDouble(x)}`);
+		}
+	});
+
+	test('a half-life in seconds reads back as exactly the years it was, wherever a double can', () => {
+		// Every half-life in the database, through the importer's division.
+		// Dividing by a year of seconds skips a representable number now and
+		// then -- a step of s is about 1.06 steps of s/SPY in half the binades --
+		// so for some there is no double that divides back to them at all. For
+		// those one step off is the best there is, and is what is written.
+		const bits = new Float64Array(1);
+		const words = new BigInt64Array(bits.buffer);
+		const nudged = (x, n) => { bits[0] = x; words[0] += BigInt(n); return bits[0]; };
+		let exact = 0;
+		let total = 0;
+		for (const years of Object.values(HALF_LIVES)) {
+			if (!Number.isFinite(years)) continue;
+			total++;
+			const s = eco.secondsFor(years);
+			if (s / 31557600 === years) { exact++; continue; }
+			let reachable = false;
+			for (let k = -64; k <= 64 && !reachable; k++) reachable = nudged(years * 31557600, k) / 31557600 === years;
+			assert(!reachable, `${years} years could have been written exactly`);
+			assert(Math.abs(s / 31557600 - years) <= Number.EPSILON * years, `${years} years is more than a step off`);
+		}
+		assert(exact > 0.9 * total, `only ${exact} of ${total} half-lives come back exactly`);
+	});
+
+	test('what an Ecolego project has no place for is left out and named, and so is what reads it', async () => {
+		const { report, xml } = await eco.exportEco(fx.NO_EQUIVALENT);
+		const skipped = new Map(report.skipped.map((s) => [`${s.type}:${s.name}`, s.why]));
+		for (const key of [
+			'far-field pathway:Path', 'waste package:Canisters', 'event:Quake', 'transfer:Discharge',
+			'transfer:Shared', 'transfer:ToPath', 'transfer:FromPackages', 'parameter:per_transfer',
+			'expression:Ends', 'function:Zero', 'expression:Calls_nothing', 'expression:Reads_path',
+			'expression:Reads_that', 'distribution:k', 'distribution:Kd', 'correlation group:grouped',
+			'distribution:Spread', 'derived numbers:1 number(s)', 'correlation:1 pair(s)',
+		]) {
+			assert(skipped.has(key), `${key} is not named: ${[...skipped.keys()].join(', ')}`);
+		}
+		assert(/Transfers/.test(skipped.get('parameter:per_transfer')), skipped.get('parameter:per_transfer'));
+		assert(/reads 'Reads_path'/.test(skipped.get('expression:Reads_that')), 'what reads a left-out block is named for it');
+		// None of them is in the file, not even as a dangling reference.
+		const root = parseXML(xml);
+		for (const id of ['Path', 'Canisters', 'Quake', 'Discharge', 'Shared', 'per_transfer', 'Zero', 'Reads_that']) {
+			assert(!byId(root, id), `${id} is in the file`);
+		}
+		assert(!/"Path"|Reads_path/.test(xml), 'something still names what is left out');
+		// And the settings with nowhere to go are named, and the diagram is a line rather than a loss.
+		assert(report.warnings.some((w) => /bdf, mass_balance/.test(w)), report.warnings.join('\n'));
+		assert(report.warnings.some((w) => /^The diagram is this tool’s own and is not written \(its layout\)/.test(w)),
+			report.warnings.join('\n'));
+		assert(!report.skipped.some((s) => s.type === 'presentation'), 'the diagram is counted as a loss');
+		assert(!report.ok && /Left out \d+ thing\(s\)/.test(report.summary()), report.summary());
+	});
+
+	test('an exact translation is written where there is one, and the report says which', async () => {
+		const { report, xml } = await eco.exportEco(fx.NO_EQUIVALENT);
+		const root = parseXML(xml);
+		const how = new Map(report.rewritten.map((s) => [s.name, s.how]));
+		// A narrowed flux: over what its ends share, nothing outside the sub-set.
+		const loss = byId(root, 'WetlandLoss');
+		assert(loss.attrs['index-lists'] === 'Radionuclides,Object' && /narrowed onto Wetland/.test(how.get('WetlandLoss')),
+			`${loss.attrs['index-lists']}: ${how.get('WetlandLoss')}`);
+		const rows = children(loss, 'entry').map((e) => `${e.attrs.index ?? ''}=${childText(e, 'transfer-equation')}`);
+		assert(rows.join(' ') === '=0 Cs-137,Lake=0.02 Cs-137,Mire=0.02 I-129,Lake=0.02 I-129,Mire=0.05', rows.join(' '));
+		// An availability, in the rate.
+		const leach = childText(child(byId(root, 'Leach'), 'entry'), 'transfer-equation');
+		assert(leach === '(0.001) * if(Vault > 0, min((limit) / Vault, 1), 1)', leach);
+		const sorb = childText(child(byId(root, 'Sorb'), 'entry'), 'transfer-equation');
+		assert(sorb === '(0.002) * (1 - if((Sediment + (1000)) == 0, 1, (Sediment + (10)) / (Sediment + (1000))))', sorb);
+		// A truncation at percentiles, as the values they fall at.
+		const cut = childText(child(child(byId(root, 'cut'), 'entry'), 'pdf'), 'pdf-value');
+		const q95 = 5 + 1 * 1.6448536269514722;
+		assert(new RegExp(`^norm\\(mean=5\\.0,sd=1\\.0,trmin=3\\.35[0-9]*,trmax=6\\.64[0-9]*\\)$`).test(cut), cut);
+		close(Number(/trmax=([^,)]+)/.exec(cut)[1]), q95, 1e-9, 'the 95th percentile');
+		assert(/percentiles/.test(how.get('cut')), how.get('cut'));
+		// The solver, and why.
+		assert(/RADAU5/.test(how.get('radau5')), JSON.stringify(report.rewritten));
+		// A source term and an open end.
+		const every = parseXML(eco.exportModelXML(fx.EVERY_KIND).xml);
+		const rain = byId(every, 'Rain');
+		assert(rain.name === 'connection' && byId(every, rain.attrs.source)?.attrs.type === 'source', 'an inflow');
+		assert(childText(child(rain, 'entry'), 'multiply-with-donor') === 'false', 'an inflow is an absolute flux');
+		assert(byId(every, byId(every, 'Out').attrs.target)?.attrs.type === 'sink', 'an open end');
+		assert(byId(every, 'Out_sink') && byId(every, 'Near.Buffer.Drain_sink'), 'the sink is named for its transfer, in its sub-system');
+		// Two ends on different lists are joined over what they share, as Ecolego writes it.
+		const carbon = byId(every, 'CarbonToLake');
+		assert(carbon.attrs.dimension === '1' && carbon.attrs['index-lists'] === '', JSON.stringify(carbon.attrs));
+	});
+
+	test('values per index become Ecolego rows, with every column filled in', () => {
+		const root = xmlOf(fx.EVERY_KIND);
+		const soil = byId(root, 'Near.Soil');
+		const rows = children(soil, 'entry').map((e) => [
+			e.attrs.index ?? '', childText(e, 'initial-condition'), childText(e, 'abs-tol') ?? '',
+			childText(e, 'lower-saturation'),
+		].join('/'));
+		// Cs-137 at the lake, every nuclide's Sr-90 row, and every object's Mire row:
+		// what the three entries reach, each with the value every column has there.
+		assert(rows.join(' ') === ['/0/1.0E-9/0.0', 'Cs-137,Lake/1e10/1.0E-9/0.0', 'Sr-90,Lake/2e9/1.0E-9/0.0',
+			'Sr-90,Mire/2e9/1.0E-6/0.0', 'Sr-90,Forest/2e9/1.0E-9/0.0', 'Cs-137,Mire/0/1.0E-6/0.0',
+			'Y-90,Mire/0/1.0E-6/0.0'].join(' '), rows.join(' '));
+		const store = byId(root, 'Far.Store');
+		assert(childText(child(store, 'entry'), 'lower-saturation') === '-1.0E300', 'a compartment that may go negative');
+		// A parameter row carries the block's distribution where it has none of its own.
+		const k = byId(root, 'Near.k_leach');
+		const pdfs = children(k, 'entry').map((e) => `${e.attrs.index ?? ''}:${child(e, 'pdf')?.attrs.function}`);
+		assert(pdfs.join(' ') === ':logt Lake:unif Mire:logt', pdfs.join(' '));
+	});
+
+	test('the output times and the solver go out as Ecolego settings', async () => {
+		const settings = (model) => child(xmlOf(model), 'simulation-settings');
+		// A logarithmic grid: its own times, since a geometric series from zero starts at 1.
+		const log = settings(fx.EVERY_KIND);
+		assert(childText(log, 'output-options') === 'Produce specified output only', childText(log, 'output-options'));
+		const custom = child(child(log, 'time-series-list'), 'time-series');
+		assert(custom.attrs.type === 'custom', custom.attrs.type);
+		const grid = Array.from(new Project(fx.openedModel(fx.EVERY_KIND)).timeGrid());
+		assert(childText(custom, 'values') === `[${grid.map(eco.javaDouble).join(', ')}]`, 'the times are not the grid');
+		// A list of series, with the simulation's own ends as Ecolego's "not set".
+		const series = children(child(settings(fx.SWITCHES), 'time-series-list'), 'time-series');
+		assert(series.map((s) => s.attrs.type).join() === 'linear,geometric,custom', series.map((s) => s.attrs.type).join());
+		assert(childText(series[0], 'time-series-start-time') === '-7.92842341234234E11'
+			&& childText(series[0], 'time-series-end-time') === '1000.0' && childText(series[0], 'n') === '5', 'a linear series');
+		assert(childText(settings(fx.SWITCHES), 'saturation-enabled') === 'false', 'the floor switched off');
+		assert(childText(settings(fx.SCENARIO_ONLY), 'output-options') === 'Produce additional output', 'both');
+		assert(childText(settings(fx.SCENARIO_ONLY), 'time-unit') === 'day', 'the time unit');
+		const solverOnly = settings({ ...fx.SCENARIO_ONLY, simulation: { ...fx.SCENARIO_ONLY.simulation, spacing: 'solver' } });
+		assert(childText(solverOnly, 'output-options') === 'Produce no additional output' && !child(solverOnly, 'time-series-list'),
+			'the solver’s own steps');
+		// Endpoints by id, and the probabilistic settings.
+		const every = xmlOf(fx.EVERY_KIND);
+		assert(children(child(child(every, 'simulation-settings'), 'outputs'), 'output').map((o) => o.attrs.id).join()
+			=== 'Near.Soil,Dose,Near.k_leach', 'the endpoints');
+		const prob = child(every, 'probabilistic-settings');
+		assert(childText(prob, 'no-simulations') === '250' && childText(prob, 'seed') === '7'
+			&& childText(prob, 'sampling') === 'Random', 'the probabilistic settings');
+		assert(children(child(prob, 'probabilistic-parameters'), 'selected-parameter').map((p) => p.text).join() === 'Near.k_leach,Kd',
+			'the varied parameters');
+		// Every solver goes out as one Ecolego has, and the importer knows it.
+		for (const id of SOLVER_IDS) {
+			const out = await eco.exportEco({ ...fx.SCENARIO_ONLY, simulation: { ...fx.SCENARIO_ONLY.simulation, solver: id } });
+			const name = childText(child(parseXML(out.xml), 'simulation-settings'), 'java-solver');
+			const back = await importEcoFile(out.bytes);
+			assert(back.project.simulation.solver === (SOLVER_BACK[id] ?? id), `${id} -> ${name} -> ${back.project.simulation.solver}`);
+			assert(['ndf', 'ros23', 'dp45'].includes(id) || out.report.rewritten.some((r) => r.type === 'solver' && r.name === id),
+				`${id} went out as ${name} without a word`);
+		}
+	});
+
+	test('distributions are written in Ecolego’s spelling, the kind in function=', () => {
+		const root = xmlOf(fx.EVERY_KIND);
+		const pdfOf = (id, index = null) => {
+			const entry = children(byId(root, id), 'entry').find((e) => (e.attrs.index ?? null) === index);
+			const pdf = child(entry, 'pdf');
+			return pdf ? `${pdf.attrs.function} ${childText(pdf, 'pdf-value')}` : null;
+		};
+		assert(pdfOf('Near.k_leach') === 'logt logt(min=0.001,max=0.1,mode=0.01)', pdfOf('Near.k_leach'));
+		assert(pdfOf('Kd', 'Cs-137') === 'Logn4 logn(gm=1.5,gsd=3.0,trmin=0.1,trmax=20.0)', pdfOf('Kd', 'Cs-137'));
+		assert(pdfOf('Kd', 'Sr-90') === 'norm norm(mean=0.02,sd=0.005,trmin=0.0)', pdfOf('Kd', 'Sr-90'));
+		assert(pdfOf('Kd', 'Y-90') === 'logn logn(mean=0.3,sd=0.1)', pdfOf('Kd', 'Y-90'));
+		assert(pdfOf('rho') === 'triang triang(min=1200.0,max=1800.0,mode=1500.0)', pdfOf('rho'));
+		assert(pdfOf('porosity') === 'logu logu(min=0.1,max=0.5)', pdfOf('porosity'));
+		assert(pdfOf('uptake') === 'logn5 logn(p1=0.05,x1=1.0E-6,p2=0.95,x2=5.0E-6)', pdfOf('uptake'));
+		assert(pdfOf('sampled') === 'pg pg(values=1.0;2.0;3.0;4.5,inorder=false,pos=2)', pdfOf('sampled'));
+		assert(pdfOf('half_filled') === 'logt logt(min,max,mode)', pdfOf('half_filled'));
+		assert(childText(child(byId(root, 'rho'), 'entry'), 'value') === '1500.0', 'a value');
+	});
+
+	test('the Save dialog offers an .eco project, and an export shows its report', async () => {
+		const { KINDS } = await import('../src/ui/savedialog.js');
+		assert(KINDS.find((k) => k.key === 'model').formats.some(([f]) => f === 'eco'), 'no .eco format');
+		const { modelFileFor, readModelFile } = await import('../src/ui/app.js');
+		const file = await modelFileFor('m.eco', fx.EVERY_KIND);
+		assert(file.type === 'application/zip' && file.body instanceof Uint8Array && file.report, 'not an export');
+		assert(file.report.summary().startsWith('Exported '), file.report.summary());
+		// And it opens as any .eco does.
+		const { project, report } = await readModelFile(new File([file.body], 'm.eco'));
+		assert(project.compartments.length === 5 && report, 'the export does not open');
+		// A run cannot ride along in one.
+		let said = '';
+		try { await modelFileFor('m.eco', fx.EVERY_KIND, { extra: [{ name: 'results/x', bytes: new Uint8Array(1) }] }); } catch (e) { said = e.message; }
+		assert(/cannot be saved inside an \.eco/.test(said), said);
+		const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+		assert(/if \(file\.report\) \{\n\t+exportedFile\(file, handle\.name\);/.test(app), 'the picker path does not show the report');
+		assert(/if \(file\.report\) \{\n\t+exportedFile\(file, file\.name\);/.test(app), 'the download path does not show the report');
+		assert(/function exportedFile\(file, fileName\) \{[\s\S]*?showExportReport\(file\.report, fileName\);/.test(app),
+			'the report is not shown');
+		assert(!/exportedFile[\s\S]{0,200}noteSaved/.test(/function exportedFile[\s\S]*?\n\}/.exec(app)[0]),
+			'an export became the model’s file');
+	});
+
+	test('an export and its report hold nothing the application does not know how to read', () => {
+		// The symbol table a nuclide's <z> is read off is the database's own.
+		assert(eco.exportModelXML({ nuclides: ['Og-294'] }).xml.includes('<z>118</z>'), 'the last element');
+		// Text Ecolego's XML cannot hold -- a control character -- is replaced, not written.
+		const odd = eco.exportModelXML({ name: 'A\u0001B', description: 'x ]]> y', expressions: [{ name: 'e', equation: '1', comment: 'a\u0002b' }] });
+		assert(!/[\u0001\u0002]/.test(odd.xml), 'a control character went out');
+		const back = importModelXML(odd.xml);
+		assert(back.project.expressions[0].comment === 'a\ufffdb', back.project.expressions[0].comment);
+		assert(back.project.description.startsWith('x ]]> y'), back.project.description);
+		// An invalid argument is said plainly.
+		let said = '';
+		try { eco.exportModelXML([1, 2]); } catch (e) { said = `${e.name}: ${e.message}`; }
+		assert(said === 'ExportError: A model is one JSON object.', said);
+	});
+
+	test('what this tool’s importer would read back under another name is said before it happens', async () => {
+		// The importer keeps index lists and what is at the top of the model in
+		// one set of names, and numbers a sub-system named after a function.
+		const clash = {
+			name: 'Clash', index_lists: [{ name: 'Region', indices: ['North, upper', 'South'] }], systems: ['max'],
+			parameters: [
+				{ name: 'Region', index_lists: ['Region'], value: 1, entries: [{ index: { Region: 'North, upper' }, value: 2 }] },
+				{ name: 'k', system: 'max', value: 2 },
+			],
+		};
+		const out = await eco.exportEco(clash);
+		assert(out.report.warnings.some((w) => /^'Region' \(index list, parameter\): an index list and something at the top/.test(w)),
+			out.report.warnings.join('\n'));
+		assert(out.report.warnings.some((w) => /^'max' is a sub-system named after a function/.test(w)), out.report.warnings.join('\n'));
+		const back = await importEcoFile(out.bytes);
+		assert(back.report.renamed.some((r) => r.from === 'Region' && r.to === 'Region_1'), JSON.stringify(back.report.renamed));
+		// An index whose name holds a comma is addressed by an id without one, and keeps its name.
+		const region = back.project.index_lists.find((l) => l.name === 'Region');
+		assert(region.indices[0].name === 'North, upper', JSON.stringify(region.indices));
+		assert(back.project.parameters.find((p) => p.name === 'Region_1').entries[0].index.Region === 'North, upper', 'the entry lost its index');
+		// The comments this tool writes on its own lists are not somebody's, and not reported as lost.
+		const landscape = await eco.exportEco(examples.find(([f]) => f === 'landscape.json')[1]);
+		assert(!landscape.report.warnings.some((w) => /comment/.test(w)), landscape.report.warnings.join('\n'));
+		const commented = await eco.exportEco({ index_lists: [{ name: 'Objects', comment: 'Mine', indices: ['A'] }] });
+		assert(commented.report.warnings.some((w) => /^1 index list comment\(s\) were left out/.test(w)), commented.report.warnings.join('\n'));
+	});
+})();
+
+// =========================================================================
 section('ZIP reading: lies and laziness');
 
 await (async () => {

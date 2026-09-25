@@ -55,13 +55,16 @@ def load(path: 'str') -> Model:
     return Model.load(path)
 
 
-def run(model, *, on_progress=None, **simulation):
+def run(model, *, on_progress=None, workers=None, compiled='auto', **simulation):
     """Runs a model -- a :class:`Model`, a project dict, or a model file's path --
     and returns its :class:`kompartment.engine.Results`. Keyword arguments
     override simulation settings for this run: ``kp.run('m.json', solver='ros23')``.
+    ``workers`` caps the processes a run solved in parts takes (every core by
+    default); ``compiled`` -- 'auto', True or False -- is whether it runs
+    compiled with numba.
     """
     from .engine import run as _run
-    return _run(model, on_progress=on_progress, **simulation)
+    return _run(model, on_progress=on_progress, workers=workers, compiled=compiled, **simulation)
 
 
 def load_results(source, *, project=None):

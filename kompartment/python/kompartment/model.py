@@ -499,6 +499,8 @@ class Model:
         self._system_lookup: Set[str] = set()
         #: What an import from another tool reported (see :meth:`from_eco`).
         self.import_report: Any = None
+        #: What the last export to another tool reported (see :meth:`to_eco`).
+        self.export_report: Any = None
         if normalise:
             self._normalise()
             self._sync_derived_units()
@@ -573,9 +575,33 @@ class Model:
         return dumps(self._raw, indent)
 
     def save(self, path: PathLike, indent: int = 2) -> Path:
-        """Writes the model: ``.json``, ``.json.gz`` or ``.zip`` by the ending."""
+        """Writes the model: ``.json``, ``.json.gz`` or ``.zip`` by the ending --
+        or ``.eco``, an Ecolego 6 project, as :meth:`to_eco` makes it; what that
+        left out is then in ``model.export_report``."""
+        if str(path).lower().endswith('.eco'):
+            p = Path(path)
+            p.write_bytes(self.to_eco().bytes)
+            return p
         self.settle()
         return write_model_file(path, self._raw, indent)
+
+    def to_eco(self, *, modified: Any = None) -> Any:
+        """The model as an Ecolego 6 project (``.eco``), as the application's
+        *Save* writes one: ``(bytes, xml, report)``, the archive, its
+        ``model.xml`` and what the export did.
+
+        The report says what an Ecolego project has no place for and was left
+        out (``skipped``), what was written as an equivalent Ecolego construct
+        (``rewritten``), what was renamed and what else is worth knowing; it is
+        also kept as ``model.export_report``. The same model gives the same
+        bytes as the application's export. ``modified`` (a datetime) is written
+        as the project's modification date and on the archive's entries. See
+        :mod:`kompartment.io.ecoexport`.
+        """
+        from .io.ecoexport import export_eco
+        out = export_eco(self, modified=modified)
+        self.export_report = out.report
+        return out
 
     def __repr__(self) -> str:
         counts = ', '.join(f'{len(self._raw.get(c) or [])} {c}' for c in COLLECTIONS if self._raw.get(c))
@@ -3793,15 +3819,21 @@ class Model:
         from .engine.builder import build_system
         return build_system(self.project(**simulation), jacobian=jacobian)
 
-    def run(self, *, on_progress: Any = None, **simulation: Any) -> Any:
+    def run(self, *, on_progress: Any = None, workers: Optional[int] = None, compiled: Any = 'auto',
+            **simulation: Any) -> Any:
         """Runs the model and returns its :class:`kompartment.engine.Results`.
 
         Keyword arguments override simulation settings for this run only --
         ``m.run(end_time=1e6, solver='ros23', rtol=1e-8)`` -- without changing
         the model. ``on_progress(fraction, t)`` is called as the run goes.
+        ``workers`` caps the processes of a run solved in parts
+        (``split='on'``; every core by default). ``compiled`` -- 'auto', True
+        or False -- is whether the solve runs compiled with numba (see
+        :func:`kompartment.engine.runner.run`): the same answer to the last
+        bit, several times sooner on a small model.
         """
         from .engine.runner import run
-        return run(self.project(**simulation), on_progress=on_progress)
+        return run(self.project(**simulation), on_progress=on_progress, workers=workers, compiled=compiled)
 
     def values_at_start(self, name: Optional[str] = None, **simulation: Any) -> Any:
         """What the equations work out to at the first instant of a run: for
