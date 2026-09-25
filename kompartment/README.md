@@ -56,8 +56,10 @@ Ten worked examples ship with it — open one from the Help tab or with
   project archive with the run beside it.
 - **A Python package** that reads a model into objects, edits it by the same
   rules as the editor — a rename follows every reference, a delete is refused
-  while something reads the block — and writes it back. See
-  [python/README.md](python/README.md).
+  while something reads the block — writes it back, and runs it outside the
+  browser with the same equations and solvers: deterministic, scenario,
+  probabilistic and sensitivity runs, calibration, and the same result files.
+  See [python/README.md](python/README.md).
 
 ## Documentation
 

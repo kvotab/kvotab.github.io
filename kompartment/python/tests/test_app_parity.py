@@ -233,10 +233,38 @@ class EditingAModel(unittest.TestCase):
                     self.assertIsNotNone(refused, f"the application refused this ({js['error']}); Python did not")
                     continue
                 self.assertIsNone(refused, f'Python refused what the application did: {refused}')
-                # The application can write a sub-system path twice after a rename
-                # (harmless: it reads the list as a set); this package writes it once.
-                if isinstance(js['model'].get('systems'), list):
-                    js['model']['systems'] = list(dict.fromkeys(js['model']['systems']))
+                self.assertEqual(differences(m.to_dict(), js['model']), [])
+
+    def test_a_transfers_availability_follows_a_rename_and_holds_off_a_delete(self):
+        raw = example('biosphere')
+        raw['parameters'].append({'name': 'Lim', 'value': 2})
+        raw['parameters'].append({'name': 'Cap', 'value': 5})
+        raw['transfers'][2]['availability'] = {'scheme': 'limit', 'limit': 'Lim * 2', 'top': 'Cap'}
+        js = app('edit', model=raw, ops=[['renameBlock', 'Lim', 'Solubility'], ['renameBlock', 'Cap', 'Capacity']])
+        m = kp.Model(raw)
+        m.rename_block('Lim', 'Solubility')
+        m.rename_block('Cap', 'Capacity')
+        self.assertEqual(m['Leaching'].raw['availability']['limit'], 'Solubility * 2')
+        self.assertEqual(differences(m.to_dict(), js['model']), [])
+        js = app('edit', model=js['model'], opened=True, ops=[['deleteBlock', 'Solubility']])
+        self.assertIn('error', js)
+        with self.assertRaises(kp.EditError):
+            m.delete_block('Solubility')
+
+    def test_a_sub_system_is_written_once_after_a_rename_move_or_delete(self):
+        base = {'name': 'Nested', 'systems': ['Outer', 'Outer.Inner', 'Y'],
+                'compartments': [{'name': 'A', 'system': 'Outer.Inner', 'initial': '1'},
+                                 {'name': 'B', 'system': 'Y', 'initial': '0'}]}
+        for what, ops, edit in [
+                ('rename', [['renameSystem', 'Outer', 'Top']], lambda m: m.rename_system('Outer', 'Top')),
+                ('move', [['moveSystem', 'Outer', 'Y']], lambda m: m.move_system('Outer', 'Y')),
+                ('dissolve', [['deleteSystem', 'Outer']], lambda m: m.delete_system('Outer'))]:
+            with self.subTest(edit=what):
+                js = app('edit', model=base, ops=ops)
+                m = kp.Model(base)
+                edit(m)
+                systems = js['model']['systems']
+                self.assertEqual(len(systems), len(set(systems)), systems)
                 self.assertEqual(differences(m.to_dict(), js['model']), [])
 
 

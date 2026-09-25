@@ -5,11 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "kompartment"
 version = "0.1.0"
-description = "Read, edit and write Kompartment models from Python"
+description = "Read, edit, write and run Kompartment models from Python"
 readme = "README.md"
 license = { text = "MIT" }
 authors = [{ name = "Kvot AB" }]
 requires-python = ">=3.9"
+# Reading, editing and writing models needs nothing but Python. Running them
+# needs numpy and SciPy: pip install "kompartment[run]". numba makes small
+# models several times quicker ("[fast]"); pandas is for Results.to_dataframe.
 dependencies = []
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -18,8 +21,13 @@ classifiers = [
     "Topic :: Scientific/Engineering",
 ]
 
-[tool.setuptools]
-packages = ["kompartment"]
+[project.optional-dependencies]
+run = ["numpy>=1.22", "scipy>=1.8"]
+fast = ["numpy>=1.22", "scipy>=1.8", "numba>=0.57"]
+all = ["numpy>=1.22", "scipy>=1.8", "numba>=0.57", "pandas>=1.4"]
+
+[tool.setuptools.packages.find]
+include = ["kompartment", "kompartment.*"]
 
 [tool.setuptools.package-data]
 kompartment = ["data/*.json", "_node/*.mjs"]

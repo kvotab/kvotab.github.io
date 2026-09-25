@@ -101,7 +101,7 @@ exercise `domain/` and `sim/` directly, which is why they can be plain Node.
 | `src/io/hdf5.js` | An HDF5 writer, in the shape the assessment tools read |
 | `src/io/resultfile.js`, `src/io/dataset.js` | Results files, and a project archive with its run beside it |
 | `src/worker/sim-worker.js`, `src/worker/prob-pool.js` | The solve, off the UI thread, and a pool over the cores |
-| `python/` | The Python package: a model file read into objects, edited by the same rules as `src/domain/edit.js`, and written back. Its tests run the editor beside it through Node and compare the files. See `python/README.md` |
+| `python/` | The Python package: a model file read into objects, edited by the same rules as `src/domain/edit.js`, and written back; and run: `kompartment/engine/` ports `src/sim/` (project, builder, runner, probabilistic, sensitivity, calibration) and `src/ode/` (NDF, Rosenbrock 2-3, Dormand-Prince, the Julia-derived solvers), `kompartment/stats/` the samplers and sensitivity methods, `kompartment/io/` the file formats. Equations compile to numpy with the derivative assembled in the builder's order, so the derivative is this tool's to the last bit (a far-field path's aside, whose coefficients go through exp and sqrt). Its tests run this tool's own code beside it through Node (`python/tests/node/*.mjs`) and compare. See `python/README.md` |
 
 ## Behaviours measured, not guessed
 

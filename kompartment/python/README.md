@@ -1,9 +1,11 @@
 # Kompartment for Python
 
-Read a Kompartment model into Python, edit it through documented methods, and
-write it back as a project file the application opens. For the models you would
-rather generate than draw: a chain of fifty compartments, a parameter table read
-from a spreadsheet, the same edit made to twenty variants of an assessment.
+Read a Kompartment model into Python, edit it through documented methods, write
+it back as a project file the application opens -- and run it, deterministically
+or probabilistically, without the browser. For the models you would rather
+generate than draw: a chain of fifty compartments, a parameter table read from
+a spreadsheet, the same edit made to twenty variants of an assessment, a
+thousand realisations on every core of a server.
 
 ```python
 import kompartment as kp
@@ -17,15 +19,20 @@ m.add_transfer('Soil', 'Well', rate='k')
 m.save('two-boxes.json')
 ```
 
-Python 3.9 or later, and nothing else. Node.js is only needed for
-`Model.validate()`, which runs the application's own checks on a model.
+Reading, editing and writing need Python 3.9 or later and nothing else.
+Running a model needs numpy and SciPy; numba, when installed, makes small
+models several times quicker. Node.js is only needed for `Model.validate()`,
+which runs the application's own checks on a model.
 
 ## Installing
 
 From this directory:
 
 ```sh
-pip install -e .
+pip install -e .            # read, edit, write
+pip install -e ".[run]"     # ... and run (numpy, SciPy)
+pip install -e ".[fast]"    # ... with numba
+pip install -e ".[all]"     # ... and pandas, for Results.to_dataframe
 ```
 
 or put this directory on `PYTHONPATH`. The package is `kompartment`.
@@ -245,13 +252,133 @@ from its two ends, a transport's from what it is connected to. The application
 brings these up to date after every edit. Here `m.settle()` does it, and it runs
 by itself whenever the model is written out or checked.
 
+## Running a model
+
+```python
+res = m.run()                                  # the model's own settings
+res = m.run(end_time=1e5, solver='ros23')      # any simulation setting, for this run
+res = kp.run('examples/biosphere.json')        # a path, a Model or a dict
+
+res.labels                                     # every series, named as the Chart names them
+res.t                                          # the output times
+res['Dose [I-129]']                            # one series, a numpy array
+res.select('Soil')                             # the descriptors of one block's series
+res.total('Soil')                              # summed over its indices
+res.max('Dose [I-129]')                        # {'t', 'value'}
+res.to_csv('run.csv')                          # the Table tab's CSV
+res.to_dataframe()                             # pandas, one column per series
+res.mass_balance()                             # the audit, when simulation.mass_balance is on
+print(res.summary())
+```
+
+A run is the application's run: the same model loaded the same way, built
+into the same equations in the same order, and solved by ports of the same
+solvers -- `ndf` (the default), `ros23`, `dp45`, the six Julia-derived methods
+(`fbdf`, `qndf`, `rodas5p`, `radau5`, `kencarp4`, `trbdf2`) and SciPy's `BDF`,
+`Radau` and `LSODA` (`scipy_bdf`, `scipy_radau`, `scipy_lsoda`), which here run
+natively rather than in a browser's Python. The derivative is the
+application's to the last bit on the bundled examples; a run agrees with the
+application's to round-off, and usually takes the same number of steps. It
+cannot always take exactly the same: each step size is chosen with a power,
+and JavaScript's `Math.pow` rounds differently from the C library's in the
+last place for about one argument in ten.
+
+```python
+m.values_at_start('Soil')                      # what the equations come to at the first instant
+runs = m.run_scenarios(workers=3)              # {scenario: Results}, one run per scenario
+system = m.build()                             # the built equations: system.dydt(t, y), system.layout
+```
+
+### Probabilistic runs
+
+```python
+p = m.run_probabilistic(1000, seed=1, workers=8, keep=['Dose'])
+p['Dose [I-129]']                              # (realisations, times)
+p.quantiles('Dose [I-129]')                    # 5th, 50th and 95th percentiles over time
+p.sample('Kd[I-129]')                          # the values one input took
+p.what_drove('Dose [I-129]', at='max')         # which inputs the spread came from
+
+m.run_probabilistic(tornado={'low': 0.05, 'high': 0.95})
+m.run_probabilistic(gsa={'method': 'sobol', 'options': {'samples': 512}})
+```
+
+The design is drawn whole in every process, from the same named streams the
+application draws from, so the samples are the application's and the answer
+does not depend on `workers`. With `workers` above 1 the realisations are
+shared between processes; a script that uses them needs the usual
+`if __name__ == '__main__':` guard on macOS and Windows.
+
+### Sensitivity and calibration
+
+```python
+s = m.local_sensitivity(['Kd[I-129]', 'geoTransit'])      # dy/dp integrated with the model, df/dp exact
+cal = m.calibrate(
+    targets=[{'output': 'Dose [I-129]', 'when': 'max', 'value': 1e-5}],
+    variables=[{'key': 'Kd[I-129]', 'lower': 1e-3, 'upper': 10, 'space': 'log'}],
+    method='nelder', apply=True)                           # apply=True writes the values found
+m.put_values([{'key': 'Kd[I-129]', 'value': 0.5}])         # the same by hand
+```
+
+### Result files and data files
+
+```python
+res.to_hdf5('run.h5')                          # the result file the assessment tools read
+res.save('run.zip')                            # the model with its run beside it
+res = kp.load_results('run.zip')               # ... opened again, here or in the application
+print(res.run_log())
+
+m.export_data('data.xlsx')                     # every parameter and lookup table, as rows
+m.export_data('data.h5', blocks=['Kd', 'Q'])   # or some of them, as HDF5
+report = m.import_data('data.xlsx')            # edited values, distributions, tables read back
+print(report)                                  # what it read, and what it could not match
+m.data_rows()                                  # the rows themselves
+```
+
+Each is the file the application writes: an HDF5 result file from the
+application's own numbers comes out the same byte for byte, an archive
+written here opens in the application with the run in place and one written
+there opens here, and the data files go both ways.
+
+### Importing
+
+```python
+m = kp.Model.from_eco('project.eco')           # an Ecolego project, assessment or model.xml
+m.import_report.skipped                        # what could not come across, and why
+m.import_report.warnings
+```
+
+### Speed
+
+The equations are compiled to numpy, statements of the same shape merged into
+one expression, and the derivative assembled as one sparse product in the
+application's order. On models of thousands of states a run takes about as
+long as the application's, or less (made-up landscapes, build and solve:
+2,010 states in 0.86 s against 0.71 s, 8,010 states in 2.8 s against 3.5 s),
+and nothing here is held to a browser tab's memory. A small model is slower
+per run -- two to six times on the bundled examples, with numba -- because
+the application's compiler removes the per-step overhead that Python keeps;
+the processes make up for it in a sampled run: 272 realisations of the
+biosphere example take 2.4 s on eight cores, and 2.5 s in the application on
+one.
+
 ## Where this differs from the application
 
-- A transfer's availability operands (`limit`, `top`, `bottom`) are followed
-  by a rename and counted as references by a delete. The application's editor
-  does not follow them yet.
-- A sub-system path is written once in `systems`. The application can write
-  one twice after a sub-system is renamed; both read the same.
+In editing, nowhere that the parity tests can find. In a run:
+
+- The iteration matrix is factorised by the application's own dense LU
+  (compiled with numba) or LAPACK up to 64 states and by SuperLU above,
+  where the application tries its own sparse LUs from 24 states up. The run
+  log's sparse flag and fill can differ; the solutions agree to round-off.
+- The numbers of a run agree with the application's to round-off rather
+  than to the last bit (see *Running a model*): step counts usually match
+  and can differ by a few per cent where an error estimate sits at rounding
+  level.
+- The Julia-derived solvers factorise with SciPy's LUs; the solutions agree
+  to round-off.
+- *Split into parts* (`simulation.split`) is not done here: a model is always
+  solved as one system, as the application does with the setting at *never*.
+  A split run in the application takes each part at its own steps, so the
+  two agree to within the tolerance.
 
 ## Tests
 
@@ -262,7 +389,12 @@ cd tests && python -m unittest
 With Node available, `test_app_parity.py` runs the application's own code
 beside this package — every bundled example opened, forty-odd edits, the decay
 chains, the review stamps, 2,200 numbers formatted — and compares the results as
-JSON text, key order included. `tools/gen_data.mjs` writes the ICRP 107 table
+JSON text, key order included. The `test_engine_*` files do the same for runs:
+through `tests/node/engine.mjs` the application builds and solves every
+bundled example, and the layout of the equations, the derivative at random
+states, the step counts and every series are compared with the engine's; the
+other `test_*` files do it for the samplers, the sensitivity methods, the
+optimisers, the importer and the file formats. `tools/gen_data.mjs` writes the ICRP 107 table
 and the reserved names from the application's sources; `--check` says whether
 they are current.
 

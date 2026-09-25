@@ -39,6 +39,7 @@ import copy
 import datetime as _dt
 import json
 import math
+import re
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence, Set, Tuple, Union
 
@@ -53,13 +54,13 @@ from .blocks import (
 )
 from .blocks import view as _view_of
 from .equations import references_in, rewrite_references, rewrite_written_indices
-from .errors import EditError
+from .errors import EditError, KompartmentError
 from .indexlists import (
     COMPARTMENT_LIST, ELEMENT_LIST, MATERIAL_LIST, NUCLIDE_LIST, TRANSFER_LIST, clashing_dimensions,
     clashing_dimensions_why, derive_elements, find_list, index_name, is_decay_dim, lineage,
     list_applies, list_applies_why, normalise_indices, shared_dims, split_material_roles,
 )
-from .jsonio import PathLike, dumps, js_number, read_model_file, write_model_file
+from .jsonio import PathLike, dumps, js_number, js_text, read_model_file, write_model_file
 from .keys import COLLECTIONS, migrate_keys
 from .names import (
     NAME_RE, RESERVED, base_name, is_valid_path, is_within, name_problem, parent_of, parts,
@@ -205,8 +206,9 @@ class _BlockList(dict):
 
     def __init__(self, model: Dict[str, Any], name: str, collection: str, what: str) -> None:
         super().__init__(name=name, derived=True, auto=collection,
-                         note=(f'One index per {what} in the model, derived from it: add a {what} '
-                               'and this list gains an index.'))
+                         note=(f'One index per {what} in the model \u2014 the {what}s are the '
+                               f'indices, so there is nothing to edit here. Add a {what} and '
+                               'this list gains an index; rename one and the index follows.'))
         self._model = model
         self._collection = collection
 
@@ -495,6 +497,8 @@ class Model:
         self._systems: Optional[List[str]] = None
         self._systems_fp: Any = None
         self._system_lookup: Set[str] = set()
+        #: What an import from another tool reported (see :meth:`from_eco`).
+        self.import_report: Any = None
         if normalise:
             self._normalise()
             self._sync_derived_units()
@@ -525,6 +529,24 @@ class Model:
     def from_dict(cls, data: Mapping[str, Any], *, normalise: bool = True) -> 'Model':
         """A model from a project dictionary, which is copied."""
         return cls(data, normalise=normalise)
+
+    @classmethod
+    def from_eco(cls, source: Any, *, file_name: Optional[str] = None, version: Optional[str] = None) -> 'Model':
+        """A model imported from an Ecolego project (``.eco``), assessment
+        (``.eas``) or bare ``model.xml``, as the application's *Import* reads
+        it: ``source`` is a path or the file's bytes.
+
+        What the import left out, renamed or switched off is in
+        ``model.import_report`` (``skipped``, ``renamed``, ``disabled``,
+        ``warnings``, ``counts``); read it before trusting the numbers.
+        Raises :class:`kompartment.importers.eco.EcoImportError` for a file
+        that cannot be read.
+        """
+        from .importers.eco import import_eco_file
+        project, report = import_eco_file(source, file_name=file_name, version=version)
+        m = cls(project)
+        m.import_report = report
+        return m
 
     def copy(self) -> 'Model':
         """An independent copy."""
@@ -3743,6 +3765,185 @@ class Model:
         from .check import check_model
         self.settle()
         return check_model(self)
+
+    # --- running ---------------------------------------------------------------
+
+    def _engine_dict(self, simulation: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        self.settle()
+        data = copy.deepcopy(self._raw)
+        if simulation:
+            data['simulation'] = {**(data.get('simulation') or {}), **simulation}
+        return data
+
+    def project(self, **simulation: Any) -> Any:
+        """The model loaded as the engine loads it (a
+        :class:`kompartment.engine.Project`): every block with its defaults
+        and dimensions, checked as the application checks a model it opens.
+        Keyword arguments override simulation settings for this load only.
+        Raises :class:`kompartment.engine.ValidationError` with the
+        application's message when the model would be refused."""
+        from .engine.project import Project
+        return Project(self._engine_dict(simulation))
+
+    def build(self, *, jacobian: bool = True, **simulation: Any) -> Any:
+        """The model built into equations (a :class:`kompartment.engine.System`):
+        the derivative, the algebraic values, the initial state and the
+        Jacobian, for work below the level of a run. Raises
+        :class:`kompartment.engine.BuildError` for a model that cannot be."""
+        from .engine.builder import build_system
+        return build_system(self.project(**simulation), jacobian=jacobian)
+
+    def run(self, *, on_progress: Any = None, **simulation: Any) -> Any:
+        """Runs the model and returns its :class:`kompartment.engine.Results`.
+
+        Keyword arguments override simulation settings for this run only --
+        ``m.run(end_time=1e6, solver='ros23', rtol=1e-8)`` -- without changing
+        the model. ``on_progress(fraction, t)`` is called as the run goes.
+        """
+        from .engine.runner import run
+        return run(self.project(**simulation), on_progress=on_progress)
+
+    def values_at_start(self, name: Optional[str] = None, **simulation: Any) -> Any:
+        """What the equations work out to at the first instant of a run: for
+        one block (``{'kind', 'dims', 'own': [{index, label, unit, value}],
+        'fields': {setting: [...]}}``), or an object answering ``of(name)``
+        for every block when no name is given."""
+        from .engine.atstart import values_at_start
+        v = values_at_start(self.project(**simulation))
+        return v.of(name) if name is not None else v
+
+    def run_scenarios(self, scenarios: Optional[Sequence[str]] = None, *, workers: int = 1,
+                      **simulation: Any) -> Dict[str, Any]:
+        """Runs the model once per scenario and returns ``{scenario: Results}``."""
+        from .engine.atstart import run_scenarios
+        return run_scenarios(self, scenarios, workers=workers, **simulation)
+
+    def run_probabilistic(self, iterations: int = 100, *, seed: int = 1, **opts: Any) -> Any:
+        """A probabilistic run over the model's distributions (see
+        :func:`kompartment.engine.probabilistic.run_probabilistic`): keep=,
+        latin=, varied=, workers=, tornado=, gsa=."""
+        from .engine.probabilistic import run_probabilistic
+        return run_probabilistic(self.project(), iterations=iterations, seed=seed, **opts)
+
+    def local_sensitivity(self, parameters: Sequence[str], *, most: Optional[int] = None,
+                          differenced: bool = False) -> Dict[str, Any]:
+        """How every state moves with each parameter named: ``dy/dp`` integrated
+        with the model (see :func:`kompartment.engine.localsens.run_sensitivity`).
+        ``parameters`` are slot labels, ``'k'`` or ``'Kd[I-129]'``. Returns
+        ``{'t', 'y', 'sens', 'chosen', 'states', 'stats'}``."""
+        from .engine.localsens import run_sensitivity
+        return run_sensitivity(self, parameters, most=most, differenced=differenced)
+
+    def calibrate(self, targets: Sequence[Mapping[str, Any]], variables: Sequence[Mapping[str, Any]], *,
+                  method: Optional[str] = None, max_evals: Optional[int] = None, seed: Optional[int] = None,
+                  on_progress: Optional[Callable[[Dict[str, Any]], Any]] = None,
+                  apply: bool = False) -> Dict[str, Any]:
+        """Searches for the parameter values that put endpoints where they are
+        asked to be (see :func:`kompartment.engine.calibrate.calibrate`).
+
+        ``targets``: ``{'output': label, 'when': 'end'|'max'|'time'|..., 'time',
+        'value', 'scale', 'weight'}``; ``variables``: ``{'key': slot label,
+        'lower', 'upper', 'space': 'linear'|'log', 'start'}``; ``method``
+        'nelder' (the default), 'lm' or 'de'. ``apply=True`` writes the values
+        found into this model, as :meth:`put_values` does. Returns the search's
+        result, ``result['values']`` holding each variable's ``was`` and
+        ``value`` and ``result['matched']`` whether every target was met.
+        """
+        from .engine.calibrate import calibrate
+        result = calibrate(self, targets=targets, variables=variables, method=method, max_evals=max_evals,
+                           seed=seed, on_progress=on_progress)
+        if apply:
+            self.put_values(result.get('values') or [])
+        return result
+
+    def data_rows(self, blocks: Optional[Iterable[str]] = None) -> List[Dict[str, Any]]:
+        """The model's data as rows, as *Save data* collects them: every
+        parameter and lookup table (or those of ``blocks``, by qualified
+        name), one row per value -- ``{'id', 'unit', 'time', 'value', 'pdf',
+        'note', 'kind', ...}``. See :func:`kompartment.datatable.collect`."""
+        from .datatable import collect
+        rows = collect(self._raw)
+        if blocks is None:
+            return rows
+        want = set(blocks)
+
+        def name_of(row: Mapping[str, Any]) -> str:
+            b = row.get('block')
+            if not b:
+                return str(row.get('id'))
+            return f"{b['system']}.{b['name']}" if b.get('system') else str(b.get('name'))
+
+        return [r for r in rows if name_of(r) in want]
+
+    def export_data(self, path: PathLike, blocks: Optional[Iterable[str]] = None) -> bytes:
+        """Writes the model's parameters and lookup tables to a spreadsheet
+        (``.xlsx``) or an HDF5 file (``.h5``, ``.hdf5``), as *Save data*
+        does; returns the bytes. The file can be edited and read back with
+        :meth:`import_data`, here or in the application."""
+        from .io.datafile import write_data_hdf5, write_data_workbook
+        from .jsonio import slug
+        rows = self.data_rows(blocks)
+        if not rows:
+            raise EditError('This model has no parameters or lookup tables to write out.')
+        suffix = Path(path).suffix.lower()
+        if suffix == '.xlsx':
+            data = write_data_workbook(rows, slug(self._raw.get('name'))[:31] or 'data')
+        elif suffix in ('.h5', '.hdf5'):
+            data = write_data_hdf5(rows, self._raw.get('name') or 'model')
+        else:
+            raise EditError(f"'{path}': data is written as .xlsx or .h5")
+        Path(path).write_bytes(data)
+        return data
+
+    def import_data(self, source: Any, *, create: bool = False) -> Any:
+        """Reads values, distributions and lookup tables from a spreadsheet
+        or an HDF5 data file into the model, as *Open data* does, and returns
+        the report (``values``, ``tables``, ``pdfs``, ``created``,
+        ``unmatched``, ``problems``...; ``str(report)`` says it in a
+        paragraph). An id nothing in the model matches is reported, or with
+        ``create=True`` becomes a new parameter or lookup table. ``source`` is
+        a path or the file's bytes (a spreadsheet or HDF5, told by its
+        content)."""
+        from .datatable import apply
+        from .io.datafile import read_data_hdf5, read_data_workbook
+        data = source if isinstance(source, (bytes, bytearray, memoryview)) else Path(source).read_bytes()
+        got = read_data_hdf5(data) if bytes(data[:8]) == b'\x89HDF\r\n\x1a\n' else read_data_workbook(data)
+        report = apply(self._raw, got['rows'], create=create)
+        report.problems[:0] = list(got.get('problems') or [])
+        self._invalidate()
+        self.settle()
+        return report
+
+    def put_values(self, values: Iterable[Mapping[str, Any]]) -> int:
+        """Writes ``{'key', 'value'}`` pairs into the model, ``key`` a slot
+        label as the sampler, the sensitivity and the optimiser spell it
+        (``'k'``, ``'Kd[I-129]'``): the block's own value, or its value at the
+        index the label names. Returns how many were written; a key naming no
+        block, a value that is not a finite number and a value the block
+        refuses are passed over (the application's *Update the parameters*)."""
+        n = 0
+        for v in values:
+            value = v.get('value')
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+                continue
+            m = re.match(r'^([^[]+)((?:\[[^\]]*\])*)$', str(v.get('key') if v.get('key') is not None else ''))
+            if not m:
+                continue
+            block = self.get(m.group(1))
+            if block is None:
+                continue
+            lists = list(block.raw.get('index_lists') or [])
+            parts = re.findall(r'\[([^\]]*)\]', m.group(2))
+            at = {lists[i]: part for i, part in enumerate(parts) if i < len(lists)}
+            try:
+                if at:
+                    block.set_value(js_text(value), at=at, key='value')
+                else:
+                    block.set_value(js_text(value), key='value')
+            except (KompartmentError, ValueError, KeyError, TypeError):
+                continue
+            n += 1
+        return n
 
     def validate(self, *, node: str = 'node', timeout: float = 300) -> List[str]:
         """Runs Kompartment's own checks on the model, through Node.js.

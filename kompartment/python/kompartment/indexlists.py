@@ -490,8 +490,9 @@ def derive_block_lists(lists: Sequence[RawList], model: Dict[str, Any]) -> List[
             'name': name,
             'derived': True,
             'auto': collection,
-            'note': (f'One index per {what} in the model, derived from it: add a {what} '
-                     'and this list gains an index.'),
+            'note': (f'One index per {what} in the model \u2014 the {what}s are the '
+                     f'indices, so there is nothing to edit here. Add a {what} and '
+                     'this list gains an index; rename one and the index follows.'),
             'indices': [{'name': n, 'enabled': True} for n in names],
         })
     return out

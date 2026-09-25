@@ -60,6 +60,27 @@ def js_number(x: Union[int, float]) -> str:
     return f"{sign}{mant}e{'+' if e >= 0 else '-'}{abs(e)}"
 
 
+def js_text(v: Any) -> str:
+    """What JavaScript's ``String(v)`` (and a template literal) makes of a
+    value a model's JSON can hold -- for messages that quote what was written."""
+    if v is None:
+        return 'null'
+    if isinstance(v, bool):
+        return 'true' if v else 'false'
+    if isinstance(v, (int, float)):
+        f = float(v)
+        if f != f:
+            return 'NaN'
+        if math.isinf(f):
+            return 'Infinity' if f > 0 else '-Infinity'
+        return js_number(v)
+    if isinstance(v, (list, tuple)):
+        return ','.join('' if x is None else js_text(x) for x in v)
+    if isinstance(v, dict):
+        return '[object Object]'
+    return str(v)
+
+
 def dumps(value: Any, indent: int = 2) -> str:
     """``value`` as JSON text, formatted as ``JSON.stringify(value, null, indent)``."""
     out: list = []

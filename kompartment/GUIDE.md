@@ -6676,10 +6676,12 @@ remembered in this browser.
 
 ### From Python
 
-A model can be written by a program as well as drawn. The `python/` directory
-beside this guide is a Python package that reads a project file into objects,
-edits it through methods — `add_compartment`, `add_transfer`, `rename_block`,
-`set_dimensions` and the rest — and writes it back as a file this tool opens:
+A model can be written by a program as well as drawn, and run by one. The
+`python/` directory beside this guide is a Python package that reads a project
+file into objects, edits it through methods — `add_compartment`, `add_transfer`,
+`rename_block`, `set_dimensions` and the rest — writes it back as a file this
+tool opens, and runs it outside the browser with the same equations and the
+same solvers:
 
 ```python
 import kompartment as kp
@@ -6688,13 +6690,24 @@ m = kp.Model.load('examples/biosphere.json')
 m['Soil'].set_value('5e9', at='I-129')
 m.rename_block('Soil', 'Topsoil')
 m.save('biosphere-edited.json')
+
+res = m.run()                                    # the run this tool would make
+res['Dose [I-129]']                              # one series, as an array
+res.to_hdf5('biosphere.h5')                      # the result file Save writes
+p = m.run_probabilistic(1000, workers=8)         # the same samples, on every core
 ```
 
 It keeps the rules the editor keeps: a rename follows every equation, transfer
 end and value keyed by the name; a delete is refused while something still
-reads the block; a name that is taken or reserved is refused. `validate()`
-checks a model with this tool's own code, through Node. Its README has the
-whole of it.
+reads the block; a name that is taken or reserved is refused. A run agrees
+with this tool's to round-off, and a probabilistic run draws the very same
+samples. Results go out as the files this tool writes — CSV, HDF5, a model
+archive with the run beside it, which opens here with the run in place — and
+the data files of *Save data* go both ways. Calibration and local sensitivity
+are there too, and projects read in as in
+[Importing Ecolego projects](#importing-ecolego-projects) come through
+`Model.from_eco`. `validate()` checks a model with this tool's own code,
+through Node. Its README has the whole of it.
 
 ## Bundled examples
 
