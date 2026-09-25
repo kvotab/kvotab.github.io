@@ -85,11 +85,22 @@ Passed as the third argument to `solve`.
 | `autoAbstol` | `false` | let `abstol` follow the solution upwards, per component |
 | `progress` | — | `(t, nsteps) => false` to stop |
 | `onAccepted` | — | `(t, u)` after each accepted step |
+| `onOutput` | — | `(t, u)` for each `saveat` time as it is saved, before that step's `onAccepted` |
 | `history` | — | solution before `t0`, so a multistep method starts at full order |
 
 On the problem: `jac(t, u, J)` fills the Jacobian in place, `jacPattern` gives
 its sparsity, `tgrad(t, u, dT)` gives ∂f/∂t, and `events` is
-`{ n, fun(t, u, out), direction, terminal, apply(t, u) }`.
+`{ n, fun(t, u, out), direction, enabled, terminal, apply(t, u) }`. `direction`
+is one number for every function or an array with one each: above 0 a rising
+crossing counts, below 0 a falling one, 0 either. `enabled`, if given, has an
+entry per function, and one whose entry is 0 is not looked at -- so a caller
+that switches an event off after it fires (FACSIMILE's WHEN) keeps it off. Of
+functions crossing in one step the earliest stops the run; each event on the
+solution names its function in `which` and every function crossing at that
+instant in `all`. The time and state handed back are the first found at which
+the function has crossed -- the far end of the root's bracket, within 1e-14 of
+the step -- so that a run restarted from them does not meet the same crossing
+again.
 
 ## Things worth knowing
 
@@ -152,6 +163,19 @@ and a return — and what DifferentialEquations.jl does.
 because accepting a step known to be inaccurate should be asked for, not
 assumed.
 
+A step that cannot be taken at all at the floor — a Newton iteration that will
+not converge there, a singular matrix — ends the run too, with
+`ConvergenceFailure`: a shorter step does not exist, and retrying the same one
+only runs the step budget out. An error estimate that is not a number is such a
+failure as well, never an accepted step.
+
+**Rows between steps come from each method's own polynomial**: FBDF's Lagrange
+interpolant through the new point and the history it stepped from, QNDF's
+backward differences, Rodas5P's dense output, RadauIIA5's collocation
+polynomial, and for the two ESDIRKs a cubic Hermite with the step's own end
+slope. They are read over the whole step, the event functions and the saved
+rows alike, before an event cuts it short.
+
 **No mass matrices.** These solve `u' = f(t, u)`. `M·u' = f` is a natural
 extension and is not implemented.
 
@@ -196,7 +220,7 @@ solvers/             one file per family, plus a generated tableau beside each
 
 ## Changes made for this application
 
-Three, all of them worth taking back upstream.
+Three, all of them worth taking back upstream; and the fixes listed after them.
 
 1. **`core/jacobian.js` — a `jac` may decline a point.** `userJac(t, u, J)`
    answering `false` now means "not this time", and the cache differences that
@@ -219,3 +243,75 @@ Three, all of them worth taking back upstream.
    that loop indefinitely. `KenCarp4` did this on
    `examples/recorders.json`; the other five methods happened to land on the
    lucky side of the same root.
+
+## Fixed on 2026-09-25
+
+Eight faults, each found in the application and each now with a check in
+`resources/tests/ode/julia/test-behaviour.mjs` that failed before the fix:
+
+1. **Events with a direction each, and a mask.** `direction` may be an array,
+   one per function; it used to be compared with 0 as a whole, and with two or
+   more entries that is never true, so no crossing was ever seen. Of functions
+   crossing in one step the earliest is now reported, not the lowest-numbered.
+   An `enabled` mask switches functions off; facsimile.html's adapter now
+   hands over the page's directions and its mask of events still switched on,
+   where it passed `direction: 1` -- a downward event was looked for as an
+   upward one, and one marked `once` fired again at every crossing.
+2. **FBDF and QNDF rows between steps.** They had no interpolant, and the
+   integrator's Hermite fallback read a slope at the far end of the step that
+   neither sets: it stayed zero, and every row between two steps was out by
+   about h·f. Each now interpolates its own polynomial.
+3. **Rows inside a step an event cut short** were read with the shortened step
+   and the event's state but the whole step's interpolant, at the wrong place.
+   They are now read over the whole step, before the event is applied.
+4. **`onOutput`**, a hook for each saved row, did not exist.
+5. **QNDF's differences** were rolled forward before the error test, so a
+   rejected step's solution entered them, and from the unclamped state where
+   non-negativity then clamped it. They are now rolled forward in `accepted`,
+   from the state the integrator kept. On Robertson that is 1215 steps with one
+   rejection where it was 1335 with twenty.
+6. **A run that could not go on.** RadauIIA5 extrapolated its starting guess
+   from the stages of the last attempt, failed or not; after a Newton that
+   diverged, each retry started from the wreck of the last and the step fell to
+   the floor for good (the Brusselator at the defaults, t = 13.7). It now
+   extrapolates from the last accepted step, as OrdinaryDiffEq does. A step
+   that could not be taken at the floor was retried until the step budget ran
+   out; it now ends the run with `ConvergenceFailure`. A non-finite candidate
+   is replaced by the last accepted state before anything reads it.
+7. **RadauIIA5's complex half** is refactorised whenever its Jacobian is
+   renewed, including for age, rather than only when the renewal was asked for.
+8. **NaN.** An error estimate that is not a number was accepted; it is now a
+   step that failed. The maximum norms skipped a NaN component; they now return
+   NaN, as the root-mean-square norm always did.
+
+Four more, found the same day on the pages that restart at every event:
+
+9. **FBDF from a jump late in a run.** Its first step, at a start or a
+   restart, predicted no change, so the predictor-corrector difference was h·f
+   and the error estimate O(h): with f large after a jump no step passed, down
+   to the smallest the clock can represent (packages failing at t = 5000,
+   refused at 1.5e-11). It now predicts by an Euler step, as QNDF and CVODE do
+   -- OrdinaryDiffEq's FBDF does not. And its history's times were the clock's
+   rounded readings: half an ulp of 5000 is 3 % of the shortest step there, and
+   the extrapolated predictor carried |f| times that into the error estimate.
+   The history is now kept as the steps themselves, from the newest point.
+   Each half alone still failed the model.
+10. **FBDF and a component at rest.** Its Lagrange formulas were summed as
+    Σ wⱼ·uⱼ, whose rounding is not zero for a constant, and with the weights
+    running to thousands after the step has grown (1e5 for the values four
+    steps back at order 5) a bookkeeping species that had stopped moved by
+    1e4 ulps; an event on it fired at every upward pass (50 times on
+    facsimile.html's canister presets). They are now summed as the
+    newest point plus weighted differences, which are zero for a constant.
+11. **The state at an event** was read at the middle of the root's bracket,
+    which may lie a hair short of the crossing; a caller that restarts there
+    could find the same crossing again a few ulps in, beyond the guard for a
+    root at the very start (Rodas5P, KenCarp4 and FBDF each did, on
+    `A = exp(-0.3 t)` falling through fixed levels). It is now the bracket's
+    far end, where the function has crossed, as the NDF reports it.
+12. **RadauIIA5 at a component clamped at zero.** Its starting guess carried
+    the last step's polynomial on below zero, where rates that read max(0, y)
+    are flat and the Jacobian is not; Newton crawled, every longer step was
+    taken for divergence, and the run ground on at one short step (facsimile's
+    canister presets: 400000 steps without finishing; now about 600). The guess
+    is now kept at or above zero for the components held there.

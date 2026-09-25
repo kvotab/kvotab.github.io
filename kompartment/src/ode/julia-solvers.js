@@ -38,7 +38,11 @@
  *   the output     this tool asks for a row per point of `tspan`; the package
  *                  calls that `saveat`.
  *   events         both are "a vector of functions whose sign change stops the
- *                  run", and every one of this tool's is terminal.
+ *                  run", with a direction for each, and every one of this
+ *                  tool's is terminal.
+ *   the recorders  the blocks that remember see every accepted step through
+ *                  `onAccepted`, and every requested time through `onOutput`,
+ *                  as they do with this tool's own solvers.
  *   failure        this tool throws a `SolverError`; the package returns a
  *                  retcode. A run that stopped at an event is not a failure.
  *
@@ -132,6 +136,7 @@ export function julia(id) {
 				n: opts.events.n,
 				// The same `(t, y, out)` this tool's own solvers are handed.
 				fun: (t, u, out) => opts.events.fun(t, u, out),
+				// One direction per function, which the package reads one by one.
 				direction: Array.from(opts.events.direction ?? []),
 				// Every discrete event in this tool is terminal: the solver
 				// stops at the crossing and the runner starts it again from
@@ -177,6 +182,11 @@ export function julia(id) {
 		if (opts.belowTolRun > 0) settings.belowTolRun = opts.belowTolRun;
 		if (opts.matrix) settings.matrix = opts.matrix;
 		if (opts.onAccepted) settings.onAccepted = opts.onAccepted;
+		// The requested times as well as the steps, for the blocks that
+		// remember: a step across a whole output interval would otherwise leave
+		// a min/max blind to the value the table reports at that time. Not
+		// passed on before, so with these six they saw the steps only.
+		if (opts.onOutput) settings.onOutput = opts.onOutput;
 		/*
 		  Where the run has got to, and the caller's chance to stop it.
 
@@ -236,16 +246,15 @@ export function julia(id) {
 			);
 		}
 
-		// The event that stopped the run, if one did. The package names the one
-		// index that fired; this tool's solvers hand back a list, because
-		// The bracketing search can find two crossings in one step -- so the one
-		// becomes a list of one.
+		// The event that stopped the run, if one did: every function that
+		// crossed at that instant (`all`), which is the list this tool's
+		// solvers hand back.
 		const fired = sol.events?.length ? sol.events[sol.events.length - 1] : null;
 		const stopped = fired
 			? {
 				t: fired.t,
 				y: Float64Array.from(fired.u),
-				which: Array.isArray(fired.which) ? fired.which : [fired.which],
+				which: fired.all ?? (Array.isArray(fired.which) ? fired.which : [fired.which]),
 			}
 			: null;
 

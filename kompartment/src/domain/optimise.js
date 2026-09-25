@@ -103,13 +103,25 @@ export const SPACES = {
 	},
 };
 
+/**
+ * `table[key]` when the table itself has that entry, and undefined otherwise.
+ *
+ * The key comes out of a file or a message, and on a plain object `toString`,
+ * `constructor` and the rest are found too -- inherited, truthy, and nothing
+ * like a scale, a space or a method, so `SCALES.toString.of` failed with a
+ * TypeError where an unknown name should have fallen back to the default.
+ */
+export function entryOf(table, key) {
+	return Object.hasOwn(table, key) ? table[key] : undefined;
+}
+
 /** The objective, from one set of endpoint readings. */
 export function objectiveOf(readings, targets) {
 	let sum = 0;
 	const residuals = [];
 	for (let i = 0; i < targets.length; i++) {
 		const t = targets[i];
-		const scale = SCALES[t.scale] ?? SCALES.relative;
+		const scale = entryOf(SCALES, t.scale) ?? SCALES.relative;
 		const w = Number.isFinite(t.weight) && t.weight > 0 ? t.weight : 1;
 		const r = scale.of(readings[i], Number(t.value));
 		// A residual that is not a number is a model that did not produce one
@@ -134,11 +146,20 @@ function clampAll(x, lower, upper) {
 /**
  * Wraps an objective so it is counted, stoppable and never asked twice for
  * the same point.
+ *
+ * `keep`, where given, is asked after each evaluation for whatever else of it
+ * the caller needs -- the residual vector Levenberg–Marquardt differences --
+ * and that is stored with the point and handed back by `kept()` after every
+ * call, the remembered ones included. Without it a point answered from memory
+ * came back with the value that belongs to it and the residuals of whatever
+ * was evaluated last, so a difference step that rounded onto a point already
+ * tried read another point's residuals as its own.
  */
-function budgeted(f, { maxEvals, onStep, signal }) {
+function budgeted(f, { maxEvals, onStep, signal, keep = null }) {
 	let evals = 0;
 	let best = Infinity;
 	let bestX = null;
+	let kept = null;
 	const seen = new Map();
 	const call = (x) => {
 		if (signal?.aborted) throw new OptimiseError('stopped');
@@ -147,17 +168,23 @@ function budgeted(f, { maxEvals, onStep, signal }) {
 		// that converged. Each of those is a whole integration.
 		const key = Array.from(x, (v) => v.toPrecision(12)).join(',');
 		const had = seen.get(key);
-		if (had !== undefined) return had;
+		if (had !== undefined) {
+			kept = had.kept;
+			return had.use;
+		}
 		evals += 1;
 		const fx = f(x);
 		const use = Number.isFinite(fx) ? fx : Infinity;
-		seen.set(key, use);
+		kept = keep ? keep() : null;
+		seen.set(key, { use, kept });
 		if (use < best) { best = use; bestX = Float64Array.from(x); }
 		onStep?.({ evals, fx: use, best, x: Float64Array.from(x), bestX });
 		return use;
 	};
 	return {
 		call,
+		/** What `keep` gave for the point the last call was about. */
+		kept: () => kept,
 		done: (reason) => ({
 			x: bestX ? Array.from(bestX) : null,
 			fx: best,
@@ -176,10 +203,15 @@ function budgeted(f, { maxEvals, onStep, signal }) {
  * value" has nothing to say about a variable whose value is zero.
  */
 export function nelderMead(f, start, {
-	lower, upper, maxEvals = 400, tol = 1e-8, onStep = null, signal = null,
+	lower, upper, maxEvals, tol, onStep = null, signal = null,
 } = {}) {
 	const n = start.length;
 	if (!n) throw new OptimiseError('Nothing to vary.');
+	// A default for an option left out *or given as null*: a destructuring
+	// default applies to the first only, and a budget of null compared as 0,
+	// so `maxEvals: null` stopped at the first evaluation with 'budget'.
+	maxEvals ??= 400;
+	tol ??= 1e-8;
 	const budget = budgeted(f, { maxEvals, onStep, signal });
 	const at = (x) => budget.call(clampAll(x, lower, upper));
 
@@ -261,10 +293,12 @@ export function nelderMead(f, start, {
  * a parameter of 1e-9 and one of 1e6 are both differenced sensibly.
  */
 export function levenbergMarquardt(residuals, start, {
-	lower, upper, maxEvals = 400, tol = 1e-10, onStep = null, signal = null,
+	lower, upper, maxEvals, tol, onStep = null, signal = null,
 } = {}) {
 	const n = start.length;
 	if (!n) throw new OptimiseError('Nothing to vary.');
+	maxEvals ??= 400;
+	tol ??= 1e-10;
 	let last = null;
 	const f = (x) => {
 		last = residuals(x);
@@ -272,10 +306,15 @@ export function levenbergMarquardt(residuals, start, {
 		for (const r of last) s += r * r;
 		return Number.isFinite(s) ? s : Infinity;
 	};
-	const budget = budgeted(f, { maxEvals, onStep, signal });
+	// The residuals are kept with the point they belong to, so a point the
+	// budget answers from memory comes back with its own.
+	const budget = budgeted(f, {
+		maxEvals, onStep, signal, keep: () => (last ? Float64Array.from(last) : null),
+	});
 	const evalAt = (x) => {
 		const fx = budget.call(clampAll(x, lower, upper));
-		return { fx, r: last ? Float64Array.from(last) : null };
+		const kept = budget.kept();
+		return { fx, r: kept ? Float64Array.from(kept) : null };
 	};
 
 	try {
@@ -290,9 +329,20 @@ export function levenbergMarquardt(residuals, start, {
 			const J = [];
 			for (let k = 0; k < n; k++) {
 				const span = upper[k] - lower[k];
-				const h = (span > 0 ? span : Math.abs(x[k]) + 1) * 1e-6;
+				// ...and never below what the budget can tell apart: it knows a
+				// point by twelve significant figures, so on a narrow range
+				// around a large value -- 0.02 either side of 1e6 -- a step of
+				// 1e-6 of the range is the same point, and the difference of a
+				// point with itself is a column of zeros.
+				const h = Math.max((span > 0 ? span : Math.abs(x[k]) + 1) * 1e-6, Math.abs(x[k]) * 1e-9);
 				const xp = Float64Array.from(x);
 				xp[k] = clamp(x[k] + h, lower[k], upper[k]);
+				// On the upper bound a forward step is clamped straight back
+				// onto the point, and the column came out zero: the damped
+				// step then never moved that variable, so one that started on
+				// its upper bound, or reached it, could not leave. Differenced
+				// backwards there instead. `step` carries the sign.
+				if (xp[k] === x[k]) xp[k] = clamp(x[k] - h, lower[k], upper[k]);
 				const step = xp[k] - x[k];
 				if (step === 0) { J.push(new Float64Array(m)); continue; }
 				const got = evalAt(xp);
@@ -392,11 +442,16 @@ function solve(A, b) {
  * ignored: a guess nobody trusts is still better than a uniform draw.
  */
 export function differentialEvolution(f, {
-	lower, upper, start = null, popSize = 0, maxEvals = 2000, seed = 1,
-	F = 0.7, CR = 0.9, onStep = null, signal = null,
+	lower, upper, start = null, popSize = 0, maxEvals, seed = 1,
+	F, CR, onStep = null, signal = null,
 } = {}) {
 	const n = lower.length;
 	if (!n) throw new OptimiseError('Nothing to vary.');
+	// Null is a default too, as for the other two: `F: null` crossed with a
+	// zero difference and `CR: null` took one coordinate from the mutant.
+	maxEvals ??= 2000;
+	F ??= 0.7;
+	CR ??= 0.9;
 	// Ten per variable is the usual advice, floored so a one-variable problem
 	// still has a population and capped so a ten-variable one still finishes.
 	const N = popSize > 3 ? popSize : Math.min(60, Math.max(8, 10 * n));

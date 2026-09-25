@@ -137,7 +137,7 @@ import {
 import {
 	DIS_EQUATION_KEYS, DIS_DEFAULTS, disruptionProblems, describeDisruption,
 } from './disruption.js';
-import { schemeOf, operandKeys } from './availability.js';
+import { schemeOf, operandKeys, OPERAND_KEYS } from './availability.js';
 
 export {
 	KINDS, SINGULAR, PLURAL, allBlocks, blockIndex, findBlock, blockNames,
@@ -1043,7 +1043,19 @@ function forEachEquation(project, fn) {
 		}
 	};
 
-	for (const t of project.transfers ?? []) both(t, 'rate');
+	for (const t of project.transfers ?? []) {
+		both(t, 'rate');
+		// A transfer's availability -- a solubility limit, or the two terms
+		// of an isotherm -- is part of its rate, and its operands are
+		// equations like the rate's own. Missed here, a rename left a limit
+		// naming a block that was no longer there.
+		const a = t.availability;
+		if (a && typeof a === 'object') {
+			for (const key of OPERAND_KEYS) {
+				if (typeof a[key] === 'string') visit(a, key, systemOf(t), t);
+			}
+		}
+	}
 	for (const s of project.inflows ?? []) both(s, 'rate');
 	for (const e of project.expressions ?? []) both(e, 'equation');
 	// A block that remembers writes equations too -- what it watches, how long
@@ -2424,6 +2436,17 @@ export function referencesToAny(project, names) {
 		note(t.from, q);
 		note(t.to, q);
 		noteEquation(t, 'rate', q, systemOf(t));
+		// Its availability's operands read the model as the rate does: a
+		// parameter that is a transfer's solubility limit cannot be deleted
+		// out from under it.
+		const a = t.availability;
+		if (a && typeof a === 'object') {
+			for (const key of OPERAND_KEYS) {
+				if (typeof a[key] === 'string') {
+					for (const r of resolved(a[key], systemOf(t))) note(r, q);
+				}
+			}
+		}
 	}
 	for (const s of project.inflows ?? []) {
 		const q = qualifiedName(s);
@@ -4883,6 +4906,11 @@ export function moveSystem(project, path, parent = '') {
  * with `path` becomes one that starts with `target`.
  */
 function relocateSystem(project, path, target) {
+	// The paths as they are before anything moves. Read afterwards, the list
+	// held the old paths the file declares *and* the new ones the moved
+	// blocks now imply, and both reparented to the same place: a rename of
+	// `Outer` wrote `Top` twice, and a move wrote `Y.X` twice.
+	const before = systems(project);
 	const moved = new Map();
 	for (const b of allBlocks(project)) {
 		if (!isWithin(systemOf(b), path)) continue;
@@ -4903,7 +4931,7 @@ function relocateSystem(project, path, target) {
 	for (const b of allBlocksLive(project)) {
 		if (isWithin(systemOf(b), path)) b.system = reparent(systemOf(b), path, target);
 	}
-	project.systems = systems(project).map((p) => reparent(p, path, target));
+	project.systems = [...new Set(before.map((p) => reparent(p, path, target)))];
 	if (tr.transportPaths(project).length) {
 		project.transports = tr.transportPaths(project).map((p) => reparent(p, path, target));
 	}
@@ -5043,7 +5071,9 @@ export function deleteSystem(project, path, { contents = 'move' } = {}) {
 	// `systemsOut` gave it when they were moved.
 	const keep = (p) => (p === path ? null
 		: isWithin(p, path) ? (systemsOut?.get(p) ?? null) : p);
-	project.systems = systems(project).map(keep).filter(Boolean);
+	// Once each: a nested path the file declares and the one its moved-out
+	// blocks now imply come out under the same name.
+	project.systems = [...new Set(systems(project).map(keep).filter(Boolean))];
 	// A transport is a sub-system with a role, and the role travels with it.
 	// Dropped instead, its Begin and End kept their parts while the chain
 	// they stand for did not exist: the model ran as two compartments rather

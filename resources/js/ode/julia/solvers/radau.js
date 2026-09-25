@@ -78,6 +78,13 @@ class RadauCache {
     this.cre = new Float64Array(n * n);
     this.cim = new Float64Array(n * n);
 
+    // The last accepted step's collocation polynomial, as divided differences
+    // of its stages (OrdinaryDiffEq's cont1..cont3): what the next step's
+    // starting guess is extrapolated from.
+    this.cont1 = new Float64Array(n);
+    this.cont2 = new Float64Array(n);
+    this.cont3 = new Float64Array(n);
+
     this.dtprev = 1;
     this.complexValid = false;
     this.complexDt = NaN;
@@ -167,8 +174,14 @@ class RadauCache {
     const needNew = integ.W.jacStale
       || !integ.W.haveFactor
       || this.status !== 'FastConvergence';
+    // The complex half is built from the same J as the real one, so whenever
+    // `form` renewed J -- asked to, or because the one it had was too old --
+    // it is rebuilt too. Keyed on the request alone, a J renewed for its age at
+    // an unchanged step left the complex half factorised from the old one.
+    const jacsBefore = integ.jacCache.njac;
     if (!integ.formW(dt / tab.gamma, true, needNew)) return false;
-    if (needNew || !this.complexValid || this.complexDt !== dt) {
+    const jacRenewed = integ.jacCache.njac !== jacsBefore;
+    if (needNew || jacRenewed || !this.complexValid || this.complexDt !== dt) {
       if (!this.formComplexW(integ, alphaDt, betaDt)) return false;
       this.complexValid = true;
       this.complexDt = dt;
@@ -180,25 +193,50 @@ class RadauCache {
       z1.fill(0); z2.fill(0); z3.fill(0);
       w1.fill(0); w2.fill(0); w3.fill(0);
     } else {
-      // Extrapolate the previous step's collocation polynomial onto this step.
-      // Much better than starting from zero, and it is most of why Radau needs
-      // only two or three Newton iterations on a smooth stretch.
+      // Extrapolate the last accepted step's collocation polynomial onto this
+      // step. Much better than starting from zero, and it is most of why Radau
+      // needs only two or three Newton iterations on a smooth stretch.
+      //
+      // The accepted step's, as OrdinaryDiffEq keeps it -- not the stages as
+      // they stand. After a rejected or failed attempt those are that
+      // attempt's, and after a Newton that diverged they are whatever it
+      // diverged to: each retry then extrapolated from the wreck of the last,
+      // the iterate grew by orders of magnitude per attempt, every shorter step
+      // failed at once, and the step fell to the floor and stayed there. The
+      // rtm page's own Brusselator example did that at t = 13.7.
+      const { cont1, cont2, cont3 } = this;
       const c1 = tab.c1;
       const c2 = tab.c2;
       const c1m1 = c1 - 1;
       const c2m1 = c2 - 1;
-      const c1mc2 = c1 - c2;
       const c3p = dt / this.dtprev;
       const c1p = c1 * c3p;
       const c2p = c2 * c3p;
       for (let i = 0; i < n; i++) {
-        const a1 = (z2[i] - z3[i]) / c2m1;
-        const tmp = (z1[i] - z2[i]) / c1mc2;
-        const a2 = (tmp - a1) / c1m1;
-        const a3 = a2 - (tmp - z1[i] / c1) / c2;
+        const a1 = cont1[i];
+        const a2 = cont2[i];
+        const a3 = cont3[i];
         z1[i] = c1p * (a1 + (c1p - c2m1) * (a2 + (c1p - c1m1) * a3));
         z2[i] = c2p * (a1 + (c2p - c2m1) * (a2 + (c2p - c1m1) * a3));
         z3[i] = c3p * (a1 + (c3p - c2m1) * (a2 + (c3p - c1m1) * a3));
+      }
+      // Kept at or above zero where the caller asked for that. The polynomial
+      // is the step's own, from before the integrator projected the step back
+      // to zero, and carried on from a component clamped there it goes on
+      // below zero. Where the rates read a species as max(0, y), as the
+      // facsimile and rtm models do, f is flat down there and J is not: the
+      // Newton sweeps then shrink the iterate by J/(J − γ/h) each, about 0.7
+      // at J = −1e3 and h = 0.01, and Radau took every step past 5e-3 for
+      // divergence and ground on at that step for good.
+      const nn = integ.nonNegative;
+      if (nn) {
+        for (let i = 0; i < n; i++) {
+          if (!nn[i]) continue;
+          const floor = -uprev[i];
+          if (z1[i] < floor) z1[i] = floor;
+          if (z2[i] < floor) z2[i] = floor;
+          if (z3[i] < floor) z3[i] = floor;
+        }
       }
       for (let i = 0; i < n; i++) {
         w1[i] = tab.TI11 * z1[i] + tab.TI12 * z2[i] + tab.TI13 * z3[i];
@@ -311,6 +349,22 @@ class RadauCache {
   accepted(integ, dtjust) {
     this.dtprev = dtjust;
     this.haveHistory = true;
+    // The polynomial the next starting guess is extrapolated from, taken now,
+    // while the stages are this accepted step's.
+    const { n, tab, z1, z2, z3, cont1, cont2, cont3 } = this;
+    const c1 = tab.c1;
+    const c2 = tab.c2;
+    const c1m1 = c1 - 1;
+    const c2m1 = c2 - 1;
+    const c1mc2 = c1 - c2;
+    for (let i = 0; i < n; i++) {
+      const a1 = (z2[i] - z3[i]) / c2m1;
+      const tmp = (z1[i] - z2[i]) / c1mc2;
+      const a2 = (tmp - a1) / c1m1;
+      cont1[i] = a1;
+      cont2[i] = a2;
+      cont3[i] = a2 - (tmp - z1[i] / c1) / c2;
+    }
   }
 
   /**

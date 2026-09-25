@@ -1570,7 +1570,13 @@ says more than 8301% does.
 
 **A parameter that came out on one of its bounds is called out**, because that
 is the search saying it wanted to go further and was not allowed. Widen the
-range, or take it that the model cannot reach the target from inside it.
+range, or take it that the model cannot reach the target from inside it. *On* a
+bound means within a thousandth of the range it was searched over, in the space
+it was searched in — the same at a bound of zero as anywhere else.
+
+A search can leave a bound it starts on: Levenberg–Marquardt takes its
+difference backwards where a forward step would leave the box. And **Stop**
+reports the best point found so far with its own readings, whatever the model.
 
 Then two buttons, which do two different things:
 
@@ -1592,8 +1598,8 @@ Both carry the same thing, spelled two ways.
 **The spreadsheet** is one row per value. A parameter is a row; a lookup table
 is one row per point with the point's time in the `Time` column, so the table
 is the rows sharing an `ID`. The columns are `ID`, `Unit`, `Time`, `Value`,
-`Type`, `Group`, `Min`, `Max`, `Mean`, `Std`, `GM`, `GSD`, `Pmin`, `Pmax` and
-`Reference` — plus `Subsystem`, `Name`, `Media`, `Position` and `Species`,
+`Type`, `Group`, `Min`, `Max`, `Mean`, `Std`, `GM`, `GSD`, `Pmin`, `Pmax`, `PDF`
+and `Reference` — plus `Subsystem`, `Name`, `Media`, `Position` and `Species`,
 which are **helpers rather than data**: in a hand-made sheet they are what the
 ID is pasted together from, so they are filled in on the way out and read on
 the way in only when `ID` itself is empty.
@@ -1607,6 +1613,25 @@ triangulars. The `Type` words are `unif`, `triang`, `dtriang`, `norm`, `logu`,
 `logt`, `logdt` and `logn`, spelled as skbrnt spells them, and in HDF5 the
 numbers carry skbrnt's names: `{"type": "dtriang", "a": …, "b": …, "m": …}`.
 
+**A distribution the columns cannot hold goes in `PDF`, whole** — a log-normal
+given by its mean and standard deviation, one given through two quantiles, a
+list of values, or a uniform or triangular with a truncation of its own, whose
+`Min` and `Max` are already its ends. `PDF` holds it written out the way a
+model file writes a distribution — `logn(mean=2,sd=0.5)`,
+`pg(values=1;2;3,inorder=true,pos=0)`, `unif(min=1,max=5,trmin=2)` — and `Type`
+is left empty. A row with no `Type` is read from its `PDF` column, with the
+row's `Group`, `Pmin`, `Pmax` and `Value` filling in whatever the expression
+leaves out. In HDF5 the `pdf` attribute holds the same expression where there
+is no word for the shape.
+Excel shows a cell of up to 32,767 characters, which is a list of about a
+thousand values; a longer sample is better exchanged as HDF5.
+
+**A blank cell is no value.** A cell of spaces is empty, not a zero — a `Time`
+of spaces is no time, and a `Value` of spaces leaves the value alone.
+
+**A row's `Unit` is its block's**, whichever index the row is for: a block has
+one unit, and every row of it in a file carries that one.
+
 **A row with both a `Time` and a `Type`** gives that point of the lookup table
 its own distribution. In HDF5 the same thing is a *list* of specs on the
 dataset, one per value, in the order the values are in.
@@ -1618,6 +1643,12 @@ says which rows it left alone for that reason.
 Datasets may be **chunked and compressed** — gzip, shuffle, or both, which is
 what most writers produce the moment anything is squeezed — and are read as
 they are.
+
+**What a file gets wrong is said, and the rest of it is read.** A lookup table
+whose `index` does not give one time per value (a separator at either end of it
+is not a time) and a dataset marked as a sample that holds text are left out; a
+`Type` that names no distribution leaves its row without one. Each is a line in
+the import's report.
 
 **The HDF5 tree** puts the ID in the path: `/model/Atmosphere/height/L1` is the
 id `Atmosphere.height.L1`. A parameter is a scalar dataset, a lookup table is a
@@ -1648,6 +1679,14 @@ one undo step.
 and left alone. On, it becomes a new block — but with no block to ask, there is
 no way to tell a name from an index, so the last segment is the name and the
 rest are sub-systems, which are made on the way.
+
+It does not make a block the model could not hold: one with a name the model
+already gives to a block or a sub-system — a compartment, say — a reserved word
+such as `exp`, or an id with no name in it at all. Nor does it make one its rows
+would leave empty: a table none of whose rows has both a time and a value, or
+two of whose rows are at one time, or a parameter whose value is a word that is
+neither a number nor a block. Each is a line in the report, and nothing is made
+for it.
 
 A segment a model cannot hold as a name is given one it can: `1BMA` starts with
 a digit and becomes `_1BMA`. The report says so once rather than per row, and
@@ -2115,6 +2154,11 @@ had mass put back that the equations took away, and the audit shows it as an
 open balance where the held-at-zero count only says it happened. That is what
 it is for.
 
+A radionuclide that never holds or moves more than the absolute tolerance of
+its compartments is not audited: the solver keeps a state to within that
+tolerance and promises nothing finer, so what such a budget holds is round-off
+from the rest of the model. Its line says so, and it is left out of the verdict.
+
 It is a check of the bookkeeping, not a conservation law: in becquerels the
 total is not conserved, since decay changes activity by the ratio of the
 half-lives, and the audit does not pretend otherwise. It costs `6 × (nuclides +
@@ -2252,6 +2296,12 @@ the results and says so rather than drawing plausible numbers under the wrong
 labels. Saving refuses too, if the model has changed since the run: that is the
 same dot the **Run** button is already showing, and a file pairing this model
 with last model's results would be a lie the layout check could not catch.
+
+**Every file it writes opens again.** Opening decompresses at most 256 MB of one
+archive — a guard against a file built to exhaust memory — and a large run can
+be more than that. Past that allowance the writer stores the rest of the
+archive instead of compressing it, since stored data is not decompressed: the
+file is larger than it could have been, and it opens.
 
 ## The tab remembers what you were working on
 
@@ -2424,8 +2474,9 @@ SciPy solvers they are a second opinion that works **offline**: the three
 marked ↓ download a Python runtime, these are just there.
 
 They take the same analytic Jacobian the built-in solvers take, stop at the
-same discrete events, and report the same statistics, so nothing else in the
-program knows the difference.
+same discrete events, hand the blocks that remember the same steps and the same
+requested times, and report the same statistics, so nothing else in the program
+knows the difference.
 
 [sciml]: https://docs.sciml.ai/DiffEqDocs/stable/
 
@@ -3095,9 +3146,11 @@ same tolerance and the same answer:
 | 1280 | — | 2.0 s | — | 19 s |
 
 A model using a function with no derivative rule — `factorial` of a state, say —
-declines the whole thing and falls back to differencing, rather than shipping a
-Jacobian that is right in most columns. The tooltip says so, and why, and it
-names the block, since one equation in four thousand can be what declines it.
+declines the values and falls back to differencing, rather than shipping a
+Jacobian that is right in most columns. The structure stays: the solver
+differences the matrix through the same pattern of non-zeros, so a large model
+still runs sparse. The tooltip says so, and why, and it names the block, since
+one equation in four thousand can be what declines it.
 
 **Nothing that cannot move is differentiated.** A quantity the model shows can
 never follow a compartment — a lookup table read at the clock, an expression
@@ -6343,7 +6396,31 @@ needs no distributions at all.
 Tick a few parameters and it integrates the model *and* its sensitivities in
 one solve. That is why it is a few and not six hundred: each parameter adds a
 whole copy of the state vector to the solve, and the dialog says what the total
-will be before you start.
+will be before you start. It shows its progress, and **Stop** stops it.
+
+**It is a run of the model.** The solve goes through the same machinery as a
+run: it restarts at the switch times, stops at the discrete events, feeds the
+blocks that remember, keeps each compartment's own *cannot go negative*, and
+takes the model's solver settings. It is always the NDF, whichever solver the
+model names — a Rosenbrock method needs the whole Jacobian of the combined
+system, which is not formed — and of the settings it takes those the NDF reads.
+
+**What it cannot carry, it refuses by name.** Three things put a term into
+`dy/dp` that the sensitivity equations do not have, and a run with one of them
+is refused rather than answered with a number that silently leaves it out:
+
+- **a jump in the state** — waste packages that fail all at once, a disruptive
+  event at a time;
+- **a block that remembers the path**, where the model's rates read it — a
+  min/max, a snapshot or a delay, or a running mean a discrete event starts,
+  stops or resets. One that only reports, which no rate reads, is fine;
+- **a parameter that places a corner** — asked for the sensitivity to a switch
+  time, or to when a failure window opens, which moves a discontinuity.
+
+**One line per state.** The result lists every compartment at every index as
+the chart names it — `Soil [I-129]` — with a waste package's two inventories
+and a disruptive event's count; a far-field path's cells and the other
+machinery of the solve are left out.
 
 **The answer is given as an elasticity**, not as dy/dp. The raw derivative
 carries the units of both the block and the parameter, so a sensitivity to a

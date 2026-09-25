@@ -64,6 +64,9 @@ const DEFAULT_KAPPA = 1e-3;
 /**
  * Scaled residual, as SciML's calculate_residuals: each component of the
  * increment measured against what a unit of error would be for that component.
+ * A component that is not a number makes it not a number, in either norm: the
+ * maximum used to skip one (`r > m` is never true of NaN), so an iterate with
+ * a NaN in it could be declared converged on its other components.
  */
 function residualNorm(dz, uprev, ustep, abstol, reltol, n, norm) {
   const scalarAtol = typeof abstol === 'number';
@@ -74,6 +77,7 @@ function residualNorm(dz, uprev, ustep, abstol, reltol, n, norm) {
       const w = a + reltol * Math.max(Math.abs(uprev[i]), Math.abs(ustep[i]));
       const r = Math.abs(dz[i]) / w;
       if (r > m) m = r;
+      else if (r !== r) return NaN;
     }
     return m;
   }

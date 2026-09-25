@@ -334,6 +334,14 @@
   }
 
   /**
+   * How many events one run may apply before something is clearly wrong: an
+   * event that stays on its zero after it is applied, or one that rounding
+   * carries back and forth across it, fires again at every restart and the
+   * run never ends. Kompartment's limit.
+   */
+  const MAX_EVENTS = 10000;
+
+  /**
    * Integrates a FacsimileModel-compiled model, restarting at each terminal
    * event after applying it.
    *
@@ -344,7 +352,9 @@
    *                         nonNegative (bool), matrix, jacobianMode ('analytic'|'numeric'),
    *                         maxOrder, onProgress(t, nsteps), maxPoints (how many
    *                         points to keep; the store is thinned to stay inside it),
-   *                         outputTimes (seconds; defaults to the model's <TIMES> section)
+   *                         outputTimes (seconds; defaults to the model's <TIMES> section),
+   *                         maxEvents (how many events a run may apply before it is
+   *                         stopped with an error; MAX_EVENTS unless given)
    * @returns {{t: Float64Array, y: Float64Array[], grid: object|null, events: object[], stats: object}}
    */
   function runModel(model, opts = {}) {
@@ -536,7 +546,13 @@
       : baseAtol;
     let t0 = 0, y = y0, info = null, stoppedBy = null;
     const started = Date.now();
-    for (let seg = 0; seg < 50; seg++) {
+    // What has been integrated so far, for a caller to show when a run fails.
+    const partial = () => ({
+      t: Float64Array.from(T), y: Y, events: eventLog,
+      grid: wanted ? { t: Float64Array.from(gridT), y: gridY } : null,
+    });
+    const maxEvents = opts.maxEvents ?? MAX_EVENTS;
+    for (let seg = 0; ; seg++) {
       total.segments++;
       let res;
       try {
@@ -557,10 +573,7 @@
         });
       } catch (e) {
         // Hand back what was integrated, so a failed run can still be looked at.
-        e.partial = {
-          t: Float64Array.from(T), y: Y, events: eventLog,
-          grid: wanted ? { t: Float64Array.from(gridT), y: gridY } : null,
-        };
+        e.partial = partial();
         throw e;
       }
       for (const key of ['nsteps', 'nfailed', 'nfevals', 'npds', 'ndecomps', 'nsolves', 'nbelowtol', 'negative', 'repivots', 'fallbacks']) total[key] += res.stats[key] || 0;
@@ -570,6 +583,18 @@
       fillGrid(res.t, res.y);
       if (T[T.length - 1] !== res.t) { T.push(res.t); Y.push(Float64Array.from(res.y)); }
       if (!res.stopped) break;
+      // At most maxEvents of them. This loop used to end after 50 segments,
+      // and a run that reached its fiftieth event came back as though it were
+      // complete: no error, and a table and chart that ended at that event.
+      if (eventLog.length >= maxEvents) {
+        const err = new SolverError('events',
+          `The run had applied ${maxEvents} events, the most one run may, when another fired at `
+          + `t = ${res.stopped.t} of ${tend}. An event that fires again at every restart would never `
+          + 'let it finish: look at what the last events in the log did. One that is meant to fire '
+          + 'one time only can be marked "once".', res.stopped.t);
+        err.partial = partial();
+        throw err;
+      }
       // Apply the event and continue from there.
       const which = res.stopped.which[0];
       if (!(res.stopped.t > t0)) {
@@ -618,5 +643,5 @@
     };
   }
 
-  return { ndf, runModel, consistentInitial, parseSpeciesTolerances, speciesAtol, SolverError, CSC, cscFromTriplets, SparseLU, DenseLU, RefactorLU, makeIterationMatrix, colourColumns, differenceJacobian, reverseCuthillMcKee, firstCrossing, crossingTolerance };
+  return { ndf, runModel, MAX_EVENTS, consistentInitial, parseSpeciesTolerances, speciesAtol, SolverError, CSC, cscFromTriplets, SparseLU, DenseLU, RefactorLU, makeIterationMatrix, colourColumns, differenceJacobian, reverseCuthillMcKee, firstCrossing, crossingTolerance };
 });

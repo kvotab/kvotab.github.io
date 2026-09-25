@@ -704,13 +704,17 @@ export function wrmsNorm(e, w) {
   return Math.sqrt(s / n);
 }
 
-/** The maximum-norm alternative: the worst-scaled component decides. */
+/**
+ * The maximum-norm alternative: the worst-scaled component decides. A component
+ * that is not a number makes the norm not a number, as it does the rms norm.
+ */
 export function wmaxNorm(e, w) {
   const n = e.length;
   let m = 0;
   for (let i = 0; i < n; i++) {
     const r = Math.abs(e[i] / w[i]);
     if (r > m) m = r;
+    else if (r !== r) return NaN;
   }
   return m;
 }

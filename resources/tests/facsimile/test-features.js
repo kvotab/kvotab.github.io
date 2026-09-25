@@ -594,6 +594,26 @@ AA = A
   r = run(build('S = 0.5 0.9, both, once, N = N + 1'));
   check('in a value list, once applies to each value separately', r.events.length, 2);
 
+  // The ported solvers are handed each event's own direction and the mask of
+  // the ones still switched on, as the NDF is. Before, they were handed
+  // `direction: 1` and no mask: a downward event was looked for as an upward
+  // one and never fired, and `once` fired again at every crossing. This model
+  // has nothing moving, so without a cap their steps would grow to span a
+  // rise and a fall together, which no sign test can see; the NDF's own cap
+  // is a tenth of the run, and a step of at most 1 isolates every crossing.
+  const OdeJuliaEvents = require(path.join(jsDir, 'facsimile-ode-julia.js'));
+  for (const id of Object.keys(OdeJuliaEvents.METHODS)) {
+    const solver = OdeJuliaEvents.solver(id);
+    const tol = id === 'julia_trbdf2' ? 1e-4 : 1e-7;
+    r = run(build('S - 0.5, once, N = N + 1'), { solver, hmax: 1 });
+    check(`${id}: once fires one time only`, r.events.length, 1);
+    near(`${id}: at the first crossing`, r.events[0] && r.events[0].t, Math.asin(0.5), tol);
+    r = run(build('S - 0.5, down, N = N + 1'), { solver, hmax: 1 });
+    // sin(t) falls through 0.5 at 5*pi/6 and every 2*pi after it.
+    check(`${id}: a downward event fires on the falls only`, r.events.length, 3);
+    near(`${id}: the first at 5 pi / 6`, r.events[0] && r.events[0].t, 5 * Math.PI / 6, tol);
+  }
+
   // A crossing pair inside one step is invisible to a sign test. This is not
   // a defect of the search but of how often it is asked, and capping the
   // step is the remedy -- worth a check because it is silent when it bites.
@@ -646,6 +666,117 @@ console.log('\n--- the Langmuir example ---');
   near('and the run stops at C = 0.05', res.events[3].t, ln(20), 1e-7);
   check('which is what ended it', !!res.stats.stoppedBy);
   near('and where the last point is', res.t[res.t.length - 1], ln(20), 1e-7);
+}
+
+/* ======================================================================
+   9. Many events, an event that comes to rest, and the far side of a
+      crossing
+   ====================================================================== */
+console.log('\n--- many events, and events at rest ---');
+{
+  const OdeJuliaMany = require(path.join(jsDir, 'facsimile-ode-julia.js'));
+  const solvers = [['ndf', 'ndf'],
+    ...Object.keys(OdeJuliaMany.METHODS).map((id) => [id, OdeJuliaMany.solver(id)])];
+
+  // sin(t) rises through 0.5 sixty-four times before t = 400. The driver used
+  // to stop after fifty and hand the run back as though it were complete, at
+  // t = 308.4, without a word.
+  const sine = FacsimileModel.compile(`
+<SETTINGS>
+N = 0
+<SPECIES>
+A B
+<INITIAL>
+A = 1
+<EQUATIONS>
+S = sin(t)
+Z = 0
+<REACTIONS>
+A = B, kf = 0.0
+<EVENTS>
+S - 0.5, N = N + 1
+`);
+  const sineRun = (o) => FacsimileODE.runModel(sine, { solver: 'ndf', tend: 400, rtol: 1e-8, atol: 1e-12, hmax: 1, ...o });
+  let r = sineRun({});
+  check('all 64 upward crossings of 0.5 before t = 400 fire', r.events.length, 64);
+  check('and the run reaches its end', r.t[r.t.length - 1], 400);
+  // Past the limit the run stops with an error that says so, and hands back
+  // what it did.
+  let err = null;
+  try { sineRun({ maxEvents: 20 }); } catch (e) { err = e; }
+  check('a run that needs more events than it may apply stops with an error that names the limit',
+    !!err && err.code === 'events' && err.message.includes('applied 20 events'));
+  check('and hands back the twenty it applied', err && err.partial ? err.partial.events.length : -1, 20);
+  check('the limit is ten thousand unless given', FacsimileODE.MAX_EVENTS, 10000);
+
+  // TOT counts a feed that an event switches off when TOT reaches 3.7, and
+  // after it TOT and the event's expression are at rest. FBDF moved them by
+  // rounding, 1e-10 back and forth, and the event fired again at every
+  // upward pass: fifty times, and then the cap above ended the run at
+  // t = 12.7 of 1e5. RadauIIA5 then ground to a halt at one short step: its
+  // starting guess went below zero, where the rates, which read max(0, A),
+  // are flat.
+  const feed = `
+<SETTINGS>
+R = 1
+LIMIT = 3.7
+<SPECIES>
+A B C D TOT
+<INITIAL>
+A = 0
+<EQUATIONS>
+Z = 0
+<REACTIONS>
+= A + TOT, rf = R
+A = B, kf = 1.0e3
+B = C, kf = 1.0e-2
+A + B = D, kf = 10
+C = , kf = 1.0e-4
+<EVENTS>
+TOT - LIMIT, R = 0
+`;
+  for (const [id, solver] of solvers) {
+    const m = FacsimileModel.compile(feed);
+    let res = null;
+    try {
+      res = FacsimileODE.runModel(m, { solver, tend: 1e5, rtol: 1e-6, atol: 1e-12, nonNegative: true });
+    } catch (e) {
+      check(`${id}: the feed model runs to its end`, e.message, 'no error');
+      continue;
+    }
+    check(`${id}: the feed is switched off once`, res.events.length, 1);
+    check(`${id}: and the run reaches its end`, res.t[res.t.length - 1], 1e5);
+    const g = new Float64Array(1);
+    const after = [];
+    for (let i = 0; i < res.t.length; i++) {
+      if (res.t[i] < res.events[0].t) continue;
+      m.eventValues(res.t[i], res.y[i], g);
+      after.push(g[0]);
+    }
+    check(`${id}: the event's expression does not move after it`, after.every((v) => v === after[0]));
+  }
+
+  // A = exp(-0.3 t) falls through exp(-0.03) at t = 0.1. Rodas5P and KenCarp4
+  // were handed back a state a hair short of the crossing, and found it again
+  // 4e-16 after the restart: the event fired twice.
+  const fall = FacsimileModel.compile(`
+<SETTINGS>
+N = 0
+<SPECIES>
+A B
+<INITIAL>
+A = 1
+<EQUATIONS>
+Z = 0
+<REACTIONS>
+A = B, kf = 0.3
+<EVENTS>
+A - 0.9704455335485082, down, N = N + 1
+`);
+  for (const [id, solver] of solvers) {
+    r = FacsimileODE.runModel(fall, { solver, tend: 10, rtol: 1e-8, atol: 1e-12 });
+    check(`${id}: a crossing fires once, however close to it the run restarts`, r.events.length, 1);
+  }
 }
 
 console.log(`\n${checks - failures.length} of ${checks} checks passed`);

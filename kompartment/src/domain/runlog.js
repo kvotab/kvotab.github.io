@@ -15,9 +15,16 @@
  */
 
 import { describeAudit } from './massbalance.js';
+import { inventoryUnit } from './units.js';
 
-/** One line per setting, in the order somebody reads them. */
-function settingsLines(sim = {}) {
+/**
+ * One line per setting, in the order somebody reads them.
+ *
+ * The decay unit is the model's rather than the simulation's -- it lives at the
+ * top of the file, beside the nuclides -- and was read from the simulation, so
+ * no log ever said it. It is always one of the two, `Bq` when unset.
+ */
+function settingsLines(sim = {}, project = null) {
 	const out = [];
 	const put = (label, v) => { if (v != null && v !== '') out.push(`  ${label}: ${v}`); };
 	put('time unit', sim.time_unit);
@@ -31,7 +38,7 @@ function settingsLines(sim = {}) {
 	put('cannot go negative', sim.non_negative === false ? 'off everywhere' : 'per compartment');
 	if (sim.mass_balance) put('mass-balance audit', 'on');
 	if (sim.auto_abstol) put('tolerance follows the solution', 'each component\u2019s absolute tolerance rises with it');
-	put('decay unit', sim.decay_unit);
+	put('decay unit', inventoryUnit(project ?? sim));
 	if (Number(sim.decay_ceiling) > 0) put('decay chains stop above', `${sim.decay_ceiling} years`);
 	return out;
 }
@@ -58,7 +65,7 @@ export function runLogLines({ project, payload, replayed = null, build = '', at 
 	if (project?.description) out.push(`  ${String(project.description).replace(/\s+/g, ' ').slice(0, 200)}`);
 	out.push('');
 	out.push('settings');
-	out.push(...settingsLines(project?.simulation));
+	out.push(...settingsLines(project?.simulation, project));
 	out.push('');
 	if (replayed) {
 		out.push(replayed.tornado

@@ -28,7 +28,9 @@ import { buildSystem } from './builder.js';
 import { run } from './runner.js';
 import { Project } from '../domain/project.js';
 import { parameterSlots, slotLabel } from './localsens.js';
-import { SPACES, METHODS, objectiveOf, OptimiseError } from '../domain/optimise.js';
+import {
+	SPACES, METHODS, objectiveOf, OptimiseError, entryOf,
+} from '../domain/optimise.js';
 
 /** Where a target is read: a time, the peak, or the end of the run. */
 export const WHENS = {
@@ -80,7 +82,10 @@ export function variablesOf(project) {
 		index: e.index,
 		slot: e.slot,
 		value: e.value,
-		unit: e.block?.unit ?? '',
+		// The slot's own, as the chart labels it: read off the slot rather
+		// than off a block the slot never carried, which left every unit
+		// empty.
+		unit: e.unit ?? '',
 	}));
 }
 
@@ -110,7 +115,8 @@ export function calibrate(input, opts = {}) {
 	const vars = wanted.map((v) => {
 		const found = byLabel.get(v.key);
 		if (!found) throw new OptimiseError(`'${v.key}' is not a parameter of this model.`);
-		const space = SPACES[v.space] ?? SPACES.linear;
+		// An own entry or the default: see `entryOf`.
+		const space = entryOf(SPACES, v.space) ?? SPACES.linear;
 		const lo = Number(v.lower);
 		const hi = Number(v.upper);
 		if (!(hi > lo)) throw new OptimiseError(`'${v.key}' has no range: ${lo} to ${hi}.`);
@@ -135,11 +141,15 @@ export function calibrate(input, opts = {}) {
 	const before = vars.map((v) => P[v.slot]);
 
 	let lastReadings = null;
-	const evaluate = (x) => {
+	// `final` is the report's own reading of the best point, which is not
+	// a step of the search and is not stopped: handed the signal, a run with
+	// nothing to integrate threw 'Cancelled' once it had finished, and a
+	// stopped search reported its best values beside NaN readings.
+	const evaluate = (x, final = false) => {
 		for (let i = 0; i < vars.length; i++) P[vars[i].slot] = vars[i].space.from(x[i]);
 		system.evaluateInvariant();
 		try {
-			const results = run(project, { system, signal: opts.signal, onGrid: true });
+			const results = run(project, { system, signal: final ? undefined : opts.signal, onGrid: true });
 			lastReadings = targets.map((t) => readingOf(results, t));
 		} catch {
 			// Not a failure of the optimisation: a corner of the box the
@@ -156,7 +166,7 @@ export function calibrate(input, opts = {}) {
 		residuals: (x) => evaluate(x).residuals,
 	};
 
-	const method = METHODS[opts.method] ?? METHODS.nelder;
+	const method = entryOf(METHODS, opts.method) ?? METHODS.nelder;
 	const out = method.run(ctx, {
 		lower: vars.map((v) => v.lower),
 		upper: vars.map((v) => v.upper),
@@ -181,7 +191,7 @@ export function calibrate(input, opts = {}) {
 	let readings = null;
 	let objective = out.fx;
 	if (out.x) {
-		const got = evaluate(out.x);
+		const got = evaluate(out.x, true);
 		readings = lastReadings;
 		objective = got.objective;
 	}
@@ -212,15 +222,17 @@ export function calibrate(input, opts = {}) {
 			const hi = v.space.from(v.upper);
 			// Within a thousandth of a bound is *on* it: the search wanted to
 			// go further and was not allowed, which is the one thing about an
-			// answer a reader has to be told.
-			const near = (a2, b2) => Math.abs(a2 - b2) <= Math.abs(b2) * 1e-3;
+			// answer a reader has to be told. A thousandth of the range the
+			// search moved over, in the space it moved in: measured against
+			// the bound itself, a bound of 0 was reached only at exactly 0.
+			const near = (u, bound) => Math.abs(u - bound) <= Math.abs(v.upper - v.lower) * 1e-3;
 			return {
 				key: v.key,
 				was: before[i],
 				value,
 				lower: lo,
 				upper: hi,
-				pinned: near(value, lo) ? 'lower' : (near(value, hi) ? 'upper' : null),
+				pinned: near(out.x[i], v.lower) ? 'lower' : (near(out.x[i], v.upper) ? 'upper' : null),
 			};
 		}) : [],
 		targets: targets.map((t, i) => ({

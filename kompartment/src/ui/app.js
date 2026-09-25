@@ -9955,14 +9955,19 @@ async function downloadRealisations(idx = null, suffix = null, want = 'all', han
 	// many values as a deterministic export has. Asked about before anything is
 	// allocated -- and only for the matrix, since a mean or a single run is the
 	// size of an ordinary export.
+	// The sample's own times. Every realisation is reported on the model's
+	// grid, which is not the run's own when that reports the solver's steps
+	// (the far field does): the file used to take the run's times, and the
+	// matrices did not fit them.
+	const times = prob.t;
 	const bytes = all
 		? pairs.reduce((sum, p) => sum
-			+ (r.outputs[p.i]?.timeDependent === false ? 1 : r.t.length) * prob.iterations * 4, 0)
+			+ (r.outputs[p.i]?.timeDependent === false ? 1 : times.length) * prob.iterations * 4, 0)
 		: 0;
 	if (bytes > HUGE_EXPORT) {
 		const go = window.confirm(
 			`${pairs.length.toLocaleString()} series × ${prob.iterations.toLocaleString()} `
-			+ `realisations × ${r.t.length.toLocaleString()} times is about `
+			+ `realisations × ${times.length.toLocaleString()} times is about `
 			+ `${(bytes / 1073741824).toFixed(1)} GB. It has to be built in memory before it `
 			+ 'can be saved. Export it anyway?\n\nFewer series, or a run with fewer '
 			+ 'realisations, is the way to a file that will open.');
@@ -9996,11 +10001,14 @@ async function downloadRealisations(idx = null, suffix = null, want = 'all', han
 			import('../io/hdf5.js'), import('../io/resultfile.js'),
 		]);
 		const bytesOut = writeHDF5(resultTree({
-			t: r.t,
+			t: times,
 			outputs: r.outputs,
 			// A mean or a single run is one curve like any other, so it arrives
 			// the way every other curve does. Only the matrix needs the shape.
-			column: (i) => (all ? column(r, i) : forOutput(i) ?? column(r, i)),
+			// Every series written is one the sample kept (`pairs`), so each has
+			// its curve on the sample's times; the run's own column is on the
+			// run's times and is never the one to fall back on.
+			column: (i) => forOutput(i) ?? new Float64Array(times.length).fill(NaN),
 			which: pairs.map((p) => p.i),
 			project: state.raw,
 			indexLists: ed.indexLists(state.raw),
@@ -10010,7 +10018,7 @@ async function downloadRealisations(idx = null, suffix = null, want = 'all', han
 		}));
 		const { size, where } = await deliver(
 			bytesOut, handoffName(slug(state.raw.name), fileSuffix), handoff);
-		flash(`Exported ${pairs.length} series over ${r.t.length} times — `
+		flash(`Exported ${pairs.length} series over ${times.length} times — `
 			+ (all
 				? `${reply.iterations.toLocaleString()} realisations each`
 				: mean

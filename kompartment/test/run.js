@@ -1895,6 +1895,209 @@ test('df/dp is differentiated, not differenced', async () => {
 });
 
 
+test('a sensitivity run reports its progress and stops when asked', async () => {
+	const { runSensitivity } = await import('../src/sim/localsens.js');
+	// Progress and Stop were handed to the solver as `onProgress` and `signal`,
+	// which it does not read -- it reads `onStep` -- so the dialog's bar never
+	// moved and Stop did nothing. The solve is a run of the model now, and a
+	// run has both.
+	const model = {
+		name: 'decay',
+		simulation: {
+			start_time: 0, end_time: 1e5, output_points: 11, spacing: 'linear',
+			solver: 'ndf', rtol: 1e-10, abstol: 1e-14, time_unit: 'year',
+		},
+		parameters: [{ name: 'k', value: 1e-4, unit: '1/year', index_lists: [] }],
+		compartments: [{ name: 'A', initial: '1', index_lists: [] }],
+		transfers: [{ name: 'out', from: 'A', to: null, rate: 'k', index_lists: [] }],
+	};
+	const heard = [];
+	runSensitivity(model, { parameters: ['k'], onProgress: (fraction, at) => heard.push([fraction, at]) });
+	assert(heard.length > 0, 'no progress was reported');
+	assert(heard.every(([f, at]) => f > 0 && f <= 1 && at > 0 && at <= 1e5),
+		`progress is not a fraction and a clock: ${JSON.stringify(heard.slice(0, 3))}`);
+	let asked = 0;
+	let said = '';
+	try {
+		runSensitivity(model, {
+			parameters: ['k'],
+			signal: { get aborted() { asked += 1; return asked > 1; } },
+		});
+	} catch (e) { said = e.message; }
+	assert(/aborted/i.test(said), `a stop was not answered: '${said || 'it ran to the end'}'`);
+});
+
+test('a sensitivity run floors each compartment as the model says', async () => {
+	const { runSensitivity } = await import('../src/sim/localsens.js');
+	// `A` loses a fixed 1/year and is allowed below zero, so A = 1 - q*t and
+	// dA/dq = -t exactly. A run has always honoured a compartment's own
+	// switch; the sensitivity held every compartment at zero regardless, and
+	// reported a flat line where the run went negative.
+	const model = {
+		name: 'draining',
+		simulation: {
+			start_time: 0, end_time: 3, output_points: 4, spacing: 'linear',
+			solver: 'ndf', rtol: 1e-10, abstol: 1e-12, time_unit: 'year',
+		},
+		parameters: [{ name: 'q', value: 1, unit: 'Bq/year', index_lists: [] }],
+		compartments: [{ name: 'A', initial: '1', non_negative: false, index_lists: [] }],
+		transfers: [{
+			name: 'out', from: 'A', to: null, rate: 'q', multiply_by_donor: false, index_lists: [],
+		}],
+	};
+	const r = runSensitivity(model, { parameters: ['q'] });
+	const plain = run(model);
+	for (let j = 0; j < r.t.length; j++) {
+		close(r.y[0][j], 1 - r.t[j], 1e-8, `A at ${r.t[j]}`);
+		close(r.y[0][j], plain.y[j][0], 1e-10, `the run's A at ${r.t[j]}`);
+		close(r.sens[0][0][j], -r.t[j], 1e-8, `dA/dq at ${r.t[j]}`);
+	}
+});
+
+test('a sensitivity run restarts where the run restarts, and keeps its settings', async () => {
+	const { runSensitivity } = await import('../src/sim/localsens.js');
+	// A thousandth of a year of source at year 5,000, declared as two switch
+	// times. The run restarts at both and integrates the pulse; a solver
+	// stepping across it in long strides never evaluates inside it -- which
+	// is what the sensitivity used to do, and so it reported A = 0 throughout
+	// where the run has A = e^(-k(t - 5000)) after year 5,000.
+	const pulse = {
+		name: 'pulse',
+		simulation: {
+			start_time: 0, end_time: 10000, output_points: 11, spacing: 'linear',
+			solver: 'ndf', rtol: 1e-8, abstol: 1e-12, time_unit: 'year',
+			switch_times: [5000, 5000.001],
+		},
+		parameters: [{ name: 'k', value: 1e-4, unit: '1/year', index_lists: [] }],
+		compartments: [{ name: 'A', initial: '0', index_lists: [] }],
+		inflows: [{
+			name: 'In', to: 'A', rate: 'if(time() >= 5000 && time() < 5000.001, 1000, 0)', index_lists: [],
+		}],
+		transfers: [{ name: 'out', from: 'A', to: null, rate: 'k', index_lists: [] }],
+	};
+	const r = runSensitivity(pulse, { parameters: ['k'] });
+	const plain = run(pulse);
+	assert(r.stats.restarts >= 2, `restarted ${r.stats.restarts} times`);
+	for (let j = 0; j < r.t.length; j++) close(r.y[0][j], plain.y[j][0], 1e-6, `A at ${r.t[j]}`);
+	// After the pulse A = e^(-k(t - 5000)), so dA/dk = -(t - 5000)*A.
+	const last = r.t.length - 1;
+	close(r.sens[0][0][last], -(r.t[last] - 5000.0005) * r.y[0][last], 1e-5, 'dA/dk at the end');
+
+	// And the model's own solver settings: a step limit the run obeys, and
+	// that the sensitivity ignored -- 20 steps over 1,000 years where the run,
+	// held to steps of 10, takes 106.
+	const limited = {
+		name: 'decay',
+		simulation: {
+			start_time: 0, end_time: 1000, output_points: 5, spacing: 'linear',
+			solver: 'ndf', rtol: 1e-4, abstol: 1e-9, time_unit: 'year', max_step: 10,
+		},
+		parameters: [{ name: 'k', value: 1e-3, unit: '1/year', index_lists: [] }],
+		compartments: [{ name: 'A', initial: '1', index_lists: [] }],
+		transfers: [{ name: 'out', from: 'A', to: null, rate: 'k', index_lists: [] }],
+	};
+	const s = runSensitivity(limited, { parameters: ['k'] });
+	assert(s.stats.nsteps >= 100, `${s.stats.nsteps} steps with a maximum step of 10 over 1,000 years`);
+});
+
+test('what the sensitivity equations cannot carry is refused, by name', async () => {
+	const { runSensitivity } = await import('../src/sim/localsens.js');
+	// Each of these puts a term into dy/dp that `J·S + df/dp` does not have.
+	// They were integrated anyway, and the answer silently left it out.
+	const base = () => ({
+		name: 'refusals',
+		simulation: {
+			start_time: 0, end_time: 100, output_points: 5, spacing: 'linear',
+			solver: 'ndf', rtol: 1e-8, abstol: 1e-12, time_unit: 'year',
+		},
+		parameters: [
+			{ name: 'k', value: 0.01, unit: '1/year', index_lists: [] },
+			{ name: 't_on', value: 40, unit: 'year', index_lists: [] },
+		],
+		compartments: [
+			{ name: 'A', initial: '1', index_lists: [] },
+			{ name: 'B', initial: '0', index_lists: [] },
+		],
+		transfers: [{ name: 'a2b', from: 'A', to: 'B', rate: 'k', index_lists: [] }],
+	});
+	const refused = (model, parameters, why, what) => {
+		let said = '';
+		try { runSensitivity(model, { parameters }); } catch (e) { said = e.message; }
+		assert(why.test(said), `${what}: expected ${why}, got '${said || 'an answer'}'`);
+	};
+	// A jump: a disruptive event at a time takes half of A out at t = 50.
+	const jump = base();
+	jump.events = [{
+		name: 'Flood', timing: 'at', at: '50', index_lists: [],
+		actions: [{ kind: 'move', from: 'A', to: null, fraction: '0.5' }],
+	}];
+	refused(jump, ['k'], /'Flood' makes the state jump at t=50/, 'a jump');
+	// A path the derivative reads: the rate follows the highest B has been.
+	const path = base();
+	path.min_maxes = [{ name: 'Top', target: 'B', operation: 'max', index_lists: [] }];
+	path.transfers[0].rate = 'k * (1 + Top)';
+	refused(path, ['k'], /'Top' remembers the path of the run/, 'a min/max the rates read');
+	// ...while one that only reports changes nothing, and is run.
+	const report = base();
+	report.min_maxes = [{ name: 'Top', target: 'B', operation: 'max', index_lists: [] }];
+	assert(runSensitivity(report, { parameters: ['k'] }).t.length === 5, 'a reporting min/max was refused');
+	// A corner: the source switches on at `t_on`, declared as a switch time.
+	const corner = base();
+	corner.simulation.switch_times = ['t_on'];
+	corner.inflows = [{ name: 'In', to: 'A', rate: 'if(time() >= t_on, 1, 0)', index_lists: [] }];
+	refused(corner, ['t_on'], /'t_on' places a corner of the run/, 'a switch time');
+	// ...and the same model is run for a parameter that does not move it --
+	// with the switch time as a row of its own, as the run reports it.
+	assert(runSensitivity(corner, { parameters: ['k'] }).t.length === run(corner).t.length,
+		'refused for the wrong parameter');
+});
+
+test('the sensitivity dialog gets one series per state, named as the chart names it', async () => {
+	const harness = await simWorker();
+	// Two nuclides through two compartments: four states in two blocks. `y`
+	// and `dy/dp` are per state, and the worker labelled them by block -- the
+	// Sink label on the Source's second nuclide -- and showed two of the four.
+	const model = {
+		name: 'two nuclides',
+		nuclides: ['I-129', 'Cl-36'],
+		index_lists: [{
+			name: 'Radionuclides', for_contaminants: true,
+			indices: [{ name: 'I-129', enabled: true }, { name: 'Cl-36', enabled: true }],
+		}],
+		simulation: {
+			start_time: 0, end_time: 1e6, output_points: 20, spacing: 'log',
+			solver: 'ndf', rtol: 1e-10, abstol: 1e-14, time_unit: 'year',
+		},
+		parameters: [
+			{ name: 'leach', unit: '1/year', value: '1e-5', index_lists: ['Radionuclides'] },
+			{ name: 'onward', unit: '1/year', value: '2e-5', index_lists: ['Radionuclides'] },
+		],
+		compartments: [
+			{ name: 'Source', initial: '1e13', index_lists: ['Radionuclides'] },
+			{ name: 'Sink', initial: '0', index_lists: ['Radionuclides'] },
+		],
+		transfers: [
+			{ name: 'out', from: 'Source', to: 'Sink', rate: 'leach', index_lists: ['Radionuclides'] },
+			{ name: 'away', from: 'Sink', to: null, rate: 'onward', index_lists: ['Radionuclides'] },
+		],
+	};
+	const replies = await harness.ask({
+		type: 'local-sensitivity', id: 91017, project: model, parameters: ['leach[I-129]'],
+	});
+	const got = replies.find((m) => m.type === 'local-sensitivity');
+	assert(got, `no answer: ${replies.map((m) => `${m.type} ${m.message ?? ''}`).join('; ')}`);
+	const names = got.states.map((s) => s.name);
+	assert(names.join() === 'Source [I-129],Source [Cl-36],Sink [I-129],Sink [Cl-36]', names.join());
+	const plain = run(model);
+	for (const s of got.states) {
+		const series = plain.series(plain.outputs().find((o) => o.label === s.name));
+		for (let j = 0; j < got.t.length; j++) close(s.y[j], series[j], 1e-6, `${s.name} at ${got.t[j]}`);
+	}
+	// leach[I-129] reaches the two I-129 states and nothing else.
+	const moved = got.states.filter((s) => s.sens[0].some((v) => v !== 0)).map((s) => s.name);
+	assert(moved.join() === 'Source [I-129],Sink [I-129]', moved.join());
+});
+
 test('an edit that cannot move the states does not re-solve them', async () => {
 	const { readFileSync } = await import('node:fs');
 
@@ -8791,6 +8994,38 @@ test('a run saves into the model file and opens again', async () => {
 	assert(D.readDataset(plain) === null, 'a plain compressed save reads as a run');
 });
 
+test('a saved run is described without a stray space, and every archive written opens again', async () => {
+	const D = await import('../src/io/dataset.js');
+	const { zip, unzip, MAX_ARCHIVE_INFLATED } = await import('../src/io/zip.js');
+
+	// The notice after opening a saved run: its words first, stamp or none.
+	const bare = D.describeDataset({ times: 3, states: 2, stats: { solver: 'ros23' } });
+	assert(bare === '3 output times over 2 states, ros23', JSON.stringify(bare));
+	const stamped = D.describeDataset({ stamp: '2026-01-02T03:04:05Z', times: 1, states: 1 });
+	assert(/^run /.test(stamped) && /, 1 output time over 1 state$/.test(stamped), JSON.stringify(stamped));
+
+	// The reader stops at MAX_ARCHIVE_INFLATED of deflated data for a whole
+	// archive, and a run saved with its model can be larger: Save wrote files
+	// that Open refused. What would take the deflated total past the reader's
+	// allowance is stored, so every archive written opens -- shown with a small
+	// allowance given to both, in place of a quarter of a gigabyte of test data.
+	assert(MAX_ARCHIVE_INFLATED === MAX_INFLATED, 'the writer and the reader do not share one allowance');
+	const parts = [1, 2, 3].map((k) => ({ name: `results/p${k}.f64`, bytes: new Uint8Array(40000).fill(k) }));
+	const archive = await zip(parts, { inflateLimit: 100000 });
+	const view = new DataView(archive.buffer, archive.byteOffset, archive.byteLength);
+	const methods = [];
+	for (let p = 0; view.getUint32(p, true) === 0x04034b50;) {
+		methods.push(view.getUint16(p + 8, true));
+		p += 30 + view.getUint16(p + 26, true) + view.getUint16(p + 28, true) + view.getUint32(p + 18, true);
+	}
+	assert(methods.join() === '8,8,0', `methods ${methods.join()}: the third entry passes the allowance`);
+	const back = await unzip(archive, { inflateLimit: 100000 });
+	for (const e of parts) {
+		const got = back.get(e.name);
+		assert(got?.length === e.bytes.length && got.every((b) => b === e.bytes[0]), `${e.name} did not come back`);
+	}
+});
+
 test('the run that is saved is the run of the model that is saved', async () => {
 	const { readFileSync } = await import('node:fs');
 	const root = new URL('..', import.meta.url);
@@ -9662,6 +9897,17 @@ test('a run keeps a log of what it was, and a saved result carries it', async ()
 		&& /runSave\(\{ \.\.\.choice, log \}\)/.test(openSave), 'Save… shows one log and writes another');
 	assert(/kind === 'log'\) \{[\s\S]*?await saveText\(`\$\{slug\(state\.raw\.name\)\}-run-log\.txt`, log \|\| runLogFor\(\), 'Run log'\);/
 		.test(fn('runSave')), 'Save… → Run log does not ask where');
+});
+
+test('the run log says the model’s decay unit', async () => {
+	const { runLogLines } = await import('../src/domain/runlog.js');
+	const sim = { time_unit: 'year', start_time: 0, end_time: 10, solver: 'ndf' };
+	const log = (project) => runLogLines({ project, payload: {}, at: new Date(0) });
+	// The model keeps it at the top, beside the nuclides; the log looked for it
+	// among the simulation settings, and so never said it.
+	const moles = log({ name: 'moles', decay_unit: 'mol', simulation: sim });
+	assert(moles.includes('  decay unit: mol'), moles.join('\n'));
+	assert(log({ name: 'unsaid', simulation: sim }).includes('  decay unit: Bq'), 'an unset decay unit is not Bq');
 });
 
 test('auto-run starts off', async () => {
@@ -11094,14 +11340,14 @@ test('a distribution that has never been set opens on the normal curve', async (
 	// normal curve is the shape somebody reaches for with a value and an
 	// uncertainty and nothing more, and its two fields are the ones that can be
 	// filled in without first deciding what kind of spread this is.
-	const draft = /let draft = spec\n\t\t\? JSON[\s\S]*?\n\t\t: \{\n\t\t\tkind: '([^']+)'/.exec(ed2)?.[1];
+	const draft = /let draft = spec(?: && kindInfo\(spec\.kind\))?\n\t\t\? JSON[\s\S]*?\n\t\t: \{\n\t\t\tkind: '([^']+)'/.exec(ed2)?.[1];
 	assert(draft === 'norm', `opens on '${draft}'`);
 	// And it is a real kind with the two fields the comment claims.
 	assert(PDF_KINDS.norm, 'norm is not a shape the editor knows');
 	assert(PDF_KINDS.norm.params.map((p) => p.key).join() === 'mean,sd',
 		PDF_KINDS.norm.params.map((p) => p.key).join());
 	// An existing distribution is untouched by this: it opens on its own shape.
-	assert(/let draft = spec\n\t\t\? JSON\.parse\(JSON\.stringify\(spec\)\)/.test(ed2),
+	assert(/let draft = spec(?: && kindInfo\(spec\.kind\))?\n\t\t\? JSON\.parse\(JSON\.stringify\(spec\)\)/.test(ed2),
 		'a distribution that exists is not opened on its own shape');
 });
 
@@ -12534,6 +12780,21 @@ test('a connection endpoint is an id first, a relative name second', () => {
 	// 'B' names nothing at the top level, so it is read relative to S.
 	assert(p.transfers[0].to === 'S.B', p.transfers[0].to);
 	assert(p.transfers[1].from === 'A' && p.transfers[1].to === 'S.B');
+});
+
+test('a sub-system renamed, moved or dissolved is written once in systems', () => {
+	// The list was read after the blocks had moved, when it held the old
+	// paths the file declares and the new ones the blocks imply, and both
+	// were reparented to the same place.
+	const renamed = { compartments: [{ name: 'A', system: 'Outer.Inner', initial: '1' }], systems: ['Outer', 'Outer.Inner'] };
+	ed.renameSystem(renamed, 'Outer', 'Top');
+	assert(JSON.stringify(renamed.systems) === '["Top","Top.Inner"]', JSON.stringify(renamed.systems));
+	const moved = { compartments: [{ name: 'A', system: 'X', initial: '1' }], systems: ['X', 'Y'] };
+	ed.moveSystem(moved, 'X', 'Y');
+	assert(JSON.stringify(moved.systems) === '["Y.X","Y"]', JSON.stringify(moved.systems));
+	const dissolved = { compartments: [{ name: 'A', system: 'Outer.Inner', initial: '1' }], systems: ['Outer', 'Outer.Inner'] };
+	ed.deleteSystem(dissolved, 'Outer');
+	assert(JSON.stringify(dissolved.systems) === '["Inner"]', JSON.stringify(dissolved.systems));
 });
 
 test('editing follows a rename through the hierarchy', () => {
@@ -17682,6 +17943,24 @@ test('a model with no compartments is evaluated rather than integrated', () => {
 		r.outputs().map((o) => o.kind).join(','));
 });
 
+test('a model with nothing to integrate has a row per time, as every run does', () => {
+	// The grid is a Float64Array, and its own `map` makes another -- of zeros,
+	// the empty rows cast to numbers -- so `results.y` was one number per time
+	// rather than one row, and whatever read it as rows, as a result file
+	// does, read numbers.
+	const r = run({
+		name: 'post',
+		simulation: { start_time: 0, end_time: 10, output_points: 6, spacing: 'linear' },
+		parameters: [{ name: 'DC', value: 2, per_nuclide: false, index_lists: [] }],
+		expressions: [{ name: 'Dose', equation: 'DC * time()', per_nuclide: false, index_lists: [] }],
+	});
+	assert(Array.isArray(r.y) && r.y.length === r.t.length,
+		`y is ${r.y?.constructor?.name} of ${r.y?.length} for ${r.t.length} times`);
+	assert(r.y.every((row) => row instanceof Float64Array && row.length === 0),
+		'a row is not an empty state vector');
+	close(r.series(r.outputs().find((o) => o.label === 'Dose'))[5], 20, 1e-12);
+});
+
 test('an evaluated model handles indices, lookups and reductions', () => {
 	// Everything a solved model's algebraic side can do, a post-processing
 	// model can do too -- it is the same generated function, called on a grid
@@ -18955,6 +19234,25 @@ test('renaming a transfer updates equations that reference its rate', () => {
 	ed.renameBlock(m, 'T', 'Leach');
 	assert(m.transfers[0].name === 'Leach');
 	assert(m.expressions[0].equation === 'Leach*A', `got ${m.expressions[0].equation}`);
+});
+
+test('a transfer’s availability follows a rename and holds off a delete', () => {
+	// The limit and the two isotherm terms are equations like the rate. A
+	// rename left them naming a block that was gone, and a delete of the
+	// parameter they read went through and broke the model.
+	const m = baseModel();
+	m.parameters.push({ name: 'Csat', value: 2 }, { name: 'Qmax', value: 5 });
+	m.transfers[0].availability = { scheme: 'limit', limit: 'Csat * 2', top: 'Qmax' };
+	ed.renameBlock(m, 'Csat', 'Solubility');
+	assert(m.transfers[0].availability.limit === 'Solubility * 2', m.transfers[0].availability.limit);
+	// An operand left from the other scheme follows too, ready for a switch back.
+	ed.renameBlock(m, 'Qmax', 'Capacity');
+	assert(m.transfers[0].availability.top === 'Capacity', m.transfers[0].availability.top);
+	assert(ed.referencesTo(m, 'Solubility').includes('T'), 'the limit is a reference');
+	let caught = null;
+	try { ed.deleteBlock(m, 'Solubility'); } catch (e) { caught = e; }
+	assert(caught && /still used by/.test(caught.message), caught?.message ?? 'deleted');
+	assert(m.parameters.some((p) => p.name === 'Solubility'), 'the parameter is still there');
 });
 
 test('renaming rejects duplicates and bad names', () => {
@@ -26123,6 +26421,87 @@ test('the list of block collections is written down once', () => {
 	}
 });
 
+test('a declined Jacobian keeps its pattern, and the solver differences through it', () => {
+	// A function with no derivative rule declines the values, not the
+	// structure. The solvers used to be handed nothing and difference the
+	// whole matrix densely -- on a model of nine thousand states, 0.7 GB and a
+	// refusal. Now they are handed the pattern, as for a numeric Jacobian.
+	const n = 40;
+	const model = (rate) => ({
+		name: 'declined', simulation: { start_time: 0, end_time: 10, output_points: 5, solver: 'ndf', rtol: 1e-6, abstol: 1e-12 },
+		compartments: Array.from({ length: n }, (_, i) => ({ name: `C${i}`, initial: i === 0 ? '100' : '0' })),
+		transfers: Array.from({ length: n - 1 }, (_, i) => ({ name: `T${i}`, from: `C${i}`, to: `C${i + 1}`, rate: i === 3 ? rate : '0.1' })),
+	});
+	const declined = run(model('0.1 * factorial(1 + 0 * C3)'));
+	const j = declined.system.jacobian;
+	assert(!j.available && /factorial/.test(j.reason), JSON.stringify({ available: j.available, reason: j.reason }));
+	assert(j.pattern && j.pattern.n === n && Array.isArray(j.groups) && j.nnz === j.pattern.nnz, 'the pattern is kept');
+	assert(declined.stats.sparse, 'the iteration matrix is sparse, so the pattern reached the solver');
+	assert(declined.jacobian.available === false && /factorial/.test(declined.jacobian.reason), 'and the run still says why');
+	// The same model with a rate that has a derivative: the same answer.
+	const exact = run(model('0.1'));
+	const a = declined.y[declined.y.length - 1];
+	const b = exact.y[exact.y.length - 1];
+	for (let i = 0; i < n; i++) assert(Math.abs(a[i] - b[i]) <= 1e-5 * Math.abs(b[i]) + 1e-12, `C${i}: ${a[i]} vs ${b[i]}`);
+});
+
+test('a generated Jacobian that answers null is differenced for SciPy, not handed over', async () => {
+	// The generated Jacobian answers null where an entry is not a number at
+	// the state asked about. The SciPy bridge passed that null to `set`, which
+	// threw, and the run stopped; every other solver differences through the
+	// pattern instead.
+	const { jacobianValues } = await import('../src/ode/scipy.js');
+	// dy0/dt = -2 y0 + y1, dy1/dt = -3 y1: the pattern and its true values.
+	const pattern = { n: 2, colPtr: Int32Array.from([0, 1, 3]), rowIdx: Int32Array.from([0, 0, 1]) };
+	const f = (t, y, out) => { out[0] = -2 * y[0] + y[1]; out[1] = -3 * y[1]; return out; };
+	const threshold = Float64Array.from([1e-3, 1e-3]);
+	const out = new Float64Array(3);
+	const spent = jacobianValues({ evaluate: () => null, pattern }, f, 0, Float64Array.from([1, 2]), out, { threshold });
+	assert(spent >= 2, `${spent} evaluations`);
+	const want = [-2, 1, -3];
+	for (let k = 0; k < 3; k++) assert(Math.abs(out[k] - want[k]) < 1e-6, `entry ${k}: ${out[k]}`);
+	// A derivative that only fills its argument is read from the argument.
+	const fills = (t, y, o) => { f(t, y, o); };
+	const again = new Float64Array(3);
+	jacobianValues({ evaluate: () => null, pattern }, fills, 0, Float64Array.from([1, 2]), again, { threshold });
+	assert(again.every((v, k) => Math.abs(v - want[k]) < 1e-6), Array.from(again).join());
+	// And a generated one that answers is used as it is, with nothing spent.
+	const given = new Float64Array(3);
+	assert(jacobianValues({ evaluate: () => Float64Array.from(want), pattern }, f, 0, Float64Array.from([1, 2]), given, { threshold }) === 0);
+	assert(given.join() === want.join());
+});
+
+test('a distribution kind named after an Object property is no kind, and nothing throws', async () => {
+	// `PDF_KINDS['constructor']` is Object's own: a kind read from a file as
+	// that passed every check and then threw on its missing parameters.
+	const { kindInfo, complete, formatPDF, parsePDF } = await import('../src/domain/pdf.js');
+	const { valueAtProbability } = await import('../src/domain/sample.js');
+	for (const kind of ['constructor', '__proto__', 'toString', 'hasOwnProperty', 'valueOf']) {
+		assert(kindInfo(kind) === null, kind);
+		const spec = { kind, params: { min: 1, max: 2 } };
+		assert(complete(spec) === false, `complete: ${kind}`);
+		assert(formatPDF(spec) === '', `formatPDF: ${kind}`);
+		assert(Number.isNaN(valueAtProbability(spec, 0.5)), `a draw from ${kind}`);
+		assert(parsePDF('unif(min=1,max=2)', kind)?.kind === 'unif', `the expression decides when the attribute is ${kind}`);
+	}
+	assert(kindInfo('unif') && kindInfo('pg') && kindInfo(undefined) === null, 'the real kinds are still found');
+});
+
+test('a realisations file is written on the sample’s own times, not the run’s', async () => {
+	// Every realisation is reported on the model's grid, and the run's own
+	// times differ from it when the run reports the solver's steps (the far
+	// field does). The export took the run's times, so the matrices did not
+	// fit them: the whole matrix failed and a mean or one run landed on the
+	// wrong times.
+	const { readFileSync } = await import('node:fs');
+	const src = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	const start = src.indexOf('async function downloadRealisations(');
+	const fn = src.slice(start, src.indexOf('\n}\n', start));
+	assert(start >= 0 && /const times = prob\.t;/.test(fn), 'the sample’s times are not the ones used');
+	assert(/t: times,/.test(fn) && !/t: r\.t/.test(fn), 'the file is still written on the run’s times');
+	assert(!/r\.t\.length/.test(fn), 'a size or a message still counts the run’s times');
+});
+
 test('a per-compartment tolerance reaches SciPy instead of failing it', async () => {
 	// `atol` crosses as a scalar, or as one number per state when any
 	// compartment set its own -- and the driver wrapped it in `float()`, which
@@ -27899,7 +28278,8 @@ test('a value that cannot change over the run is written once, and says so', asy
 	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
 	assert(/askProbMatrices\(pairs\.map\(\(p\) => p\.k\), all \? 'all' : mean \? 'mean' : one, \{ compact: true \}\)/.test(app),
 		'Save → Realisations asks for the whole matrix of a constant');
-	assert(/r\.outputs\[p\.i\]\?\.timeDependent === false \? 1 : r\.t\.length/.test(app), 'the size is priced at every time');
+	// At every one of the sample's own times, which are the ones the file is written on.
+	assert(/r\.outputs\[p\.i\]\?\.timeDependent === false \? 1 : times\.length/.test(app), 'the size is priced at every time');
 });
 
 test('a run is written in the shape the result browser reads', async () => {
@@ -28060,6 +28440,31 @@ test('a run is written in the shape the result browser reads', async () => {
 	assert((app.match(/if \(!confirmHugeExport\(cols\.length \* \(beside\.length \+ 1\), r\.t\.length\)\) return;/g) ?? []).length === 2,
 		'only one of the two exports asks');
 	assert(/const HUGE_EXPORT = 512 \* 1024 \* 1024;/.test(app), 'no threshold');
+});
+
+test('an index list of bare names is written by its names', async () => {
+	const { resultTree } = await import('../src/io/resultfile.js');
+	const { writeHDF5 } = await import('../src/io/hdf5.js');
+	const { readHDF5, at } = await import('./hdf5-read.js');
+	// A hand-written file may give a list's indices as bare strings, and each
+	// string is a name. Read as objects they were all `undefined`.
+	const tree = resultTree({
+		t: Float64Array.from([0, 1]), outputs: [{ label: 'a', block: 'A', unit: '' }],
+		column: () => Float64Array.from([1, 2]), which: [0], project: { name: 'bare' },
+		indexLists: [{ name: 'Climate', indices: ['Now', 'Warmer', { name: 'Off', enabled: false }, { name: 'On' }] }],
+		now: new Date(2026, 0, 1),
+	});
+	const names = at(readHDF5(writeHDF5(tree)), 'IndexLists/Climate').values;
+	assert(JSON.stringify(names) === '["Now","Warmer","On"]', JSON.stringify(names));
+	// The bundled example's scenario list is written so.
+	const { readFileSync } = await import('node:fs');
+	const raw = JSON.parse(readFileSync(new URL('../examples/scenarios.json', import.meta.url), 'utf8'));
+	const list = ed.indexLists(raw).find((l) => l.for_scenarios);
+	const file = readHDF5(writeHDF5(resultTree({
+		t: Float64Array.from([0]), outputs: [], column: () => null, which: [], project: raw, indexLists: [list],
+	})));
+	const scenarios = at(file, `IndexLists/${list.name}`).values;
+	assert(!scenarios.includes('undefined') && scenarios.length === list.indices.length, JSON.stringify(scenarios));
 });
 
 test('an initial condition may read an expression that calls a lookup table', () => {
@@ -30364,6 +30769,37 @@ test('the sidebar offers a version report against the file as opened or another 
 	assert(/reportLines\(/.test(rep) && /'Copy'/.test(rep) && /'Save as text(?:…|\\u2026)'/.test(rep), rep.slice(0, 300));
 });
 
+test('a family within its absolute tolerance is not audited, and says why', async () => {
+	// Round-off from the rest of the model, leaked into an empty family's
+	// budget, used to be a residual as large as the family itself -- a
+	// relative residual of 1, and an audit that did not close on a model that
+	// did. Below the solver's absolute tolerance there is nothing to judge.
+	const { audit, describeAudit, TERMS, budgetIndex } = await import('../src/domain/massbalance.js');
+	const budget = {
+		base: 2, nfam: 2, families: ['Sr-90', 'Cs-137'],
+		members: [{ name: 'Soil', base: 0, width: 2, famOf: [0, 1] }],
+	};
+	const row = (leak) => {
+		const y = new Float64Array(2 + TERMS.length * 2);
+		y[0] = 100;                                   // Sr-90 holds 100 throughout
+		y[budgetIndex(budget, 'in', 1)] = leak;       // Cs-137 holds nothing, its budget 1e-28
+		return y;
+	};
+	const t = [0, 1, 2];
+	const y = [row(0), row(1e-28), row(1e-28)];
+	const old = audit(budget, t, y, { rtol: 1e-6 });
+	assert(!old.closed && old.worstFamily === 'Cs-137', 'without a tolerance the leak is judged, as before');
+	const now = audit(budget, t, y, { rtol: 1e-6, abstol: 1e-9 });
+	assert(now.closed && now.worstFamily === 'Sr-90', JSON.stringify(now.families.map((f) => [f.name, f.relative])));
+	const cs = now.families[1];
+	assert(cs.idle && cs.unresolved && cs.floor === 1e-9 && cs.scale === 1e-28, JSON.stringify(cs));
+	assert(describeAudit(now).some((l) => /Cs-137: .*too little for the solver to resolve/.test(l)), describeAudit(now).join('\n'));
+	// Per state: a family whose own tolerance is finer than the leak is still audited.
+	const fine = audit(budget, t, y, { rtol: 1e-6, abstol: Float64Array.from([1e-9, 1e-30, ...new Array(12).fill(1e-9)]) });
+	assert(!fine.closed && !fine.families[1].idle, 'a family the solver resolves is judged');
+	assert(!now.families[0].idle && !now.families[0].unresolved, 'a family with something in it is judged');
+});
+
 test('the mass-balance audit closes on what the equations moved, and opens on a hold', async () => {
 	const { audit, describeAudit, TERMS, budgetIndex, closedBelow } = await import('../src/domain/massbalance.js');
 	const { buildJacobian } = await import('../src/sim/jacobian.js');
@@ -31672,6 +32108,145 @@ test('the adapter passes only the options it was given', async () => {
 	const runner = readFileSync(new URL('../src/sim/runner.js', import.meta.url), 'utf8');
 	for (const id of ['fbdf', 'qndf', 'rodas5p', 'radau5', 'kencarp4', 'trbdf2']) {
 		assert(new RegExp(`${id}: julia\\('${id}'\\)`).test(runner), `${id} is not wired to the runner`);
+	}
+});
+
+test('the ported methods stop at the first of two events, each in its own direction', async () => {
+	const { julia } = await import('../src/ode/julia-solvers.js');
+	// y = e^-t falls through 0.25 at ln 4; the clock rises through 0.5 first.
+	// The adapter hands the package one direction per function, and the package
+	// used to compare that array with 0 whole -- "-1,1" is not a number -- so
+	// with two or more events not one was ever located.
+	const f = (t, y, out) => { out[0] = -y[0]; return out; };
+	const events = {
+		n: 2, direction: Int8Array.from([-1, 1]),
+		fun: (t, y, out) => { out[0] = y[0] - 0.25; out[1] = t - 0.5; return out; },
+	};
+	const grid = Float64Array.from({ length: 11 }, (_, i) => i * 0.5);
+	for (const id of ['fbdf', 'qndf', 'rodas5p', 'radau5', 'kencarp4', 'trbdf2']) {
+		const s = julia(id)(f, grid, Float64Array.from([1]), { rtol: 1e-8, abstol: 1e-10, events });
+		assert(s.stopped && Math.abs(s.stopped.t - 0.5) < 1e-9 && s.stopped.which.join() === '1',
+			`${id}: ${JSON.stringify(s.stopped)}`);
+		// The clock may only fall now, and it rises: the first function decides.
+		const falling = { ...events, direction: Int8Array.from([-1, -1]) };
+		const s2 = julia(id)(f, grid, Float64Array.from([1]), { rtol: 1e-8, abstol: 1e-10, events: falling });
+		const tol = id === 'trbdf2' ? 1e-5 : 1e-6;
+		assert(s2.stopped && s2.stopped.which.join() === '0' && Math.abs(s2.stopped.t - Math.log(4)) < tol,
+			`${id}: ${JSON.stringify(s2.stopped)}`);
+	}
+});
+
+test('a model with two triggers fires both under every ported method', async () => {
+	// A drains at 5 % a year: through 5 at ln 2 / 0.05 and through 2.5 at twice
+	// that, each a trigger with a snapshot of the clock.
+	const raw = {
+		name: 'two triggers', simulation: { ...DEFAULT_SIMULATION, time_unit: 'year', start_time: 0,
+			end_time: 60, output_points: 13, spacing: 'linear', rtol: 1e-8, abstol: 1e-10 },
+		index_lists: [], expressions: [], inflows: [],
+		parameters: [{ name: 'k', value: 0.05, index_lists: [] }],
+		compartments: [{ name: 'A', initial: '10', index_lists: [] }, { name: 'B', initial: '0', index_lists: [] }],
+		transfers: [{ name: 'T', from: 'A', to: 'B', rate: 'k', index_lists: [] }],
+		triggers: [
+			{ name: 'Half', first: 'A', second: '5', direction: 'falling' },
+			{ name: 'Quarter', first: 'A', second: '2.5', direction: 'falling' },
+		],
+		snapshots: [
+			{ name: 'When_half', target: 'time', initial: '-1', unit: 'year', trigger: 'Half' },
+			{ name: 'When_quarter', target: 'time', initial: '-1', unit: 'year', trigger: 'Quarter' },
+		],
+	};
+	const half = Math.log(2) / 0.05;
+	for (const id of ['fbdf', 'qndf', 'rodas5p', 'radau5', 'kencarp4', 'trbdf2']) {
+		const m = structuredClone(raw);
+		m.simulation.solver = id;
+		const r = run(m);
+		const at = (label) => { const v = r.series(r.outputs().find((o) => o.label === label)); return v[v.length - 1]; };
+		assert(r.stats.events === 2, `${id}: ${r.stats.events} events fired`);
+		assert(Math.abs(at('When_half') - half) < 1e-4, `${id}: the first fired at ${at('When_half')}`);
+		assert(Math.abs(at('When_quarter') - 2 * half) < 1e-4, `${id}: the second fired at ${at('When_quarter')}`);
+	}
+});
+
+test('the ported FBDF and QNDF report the rows between their steps accurately', async () => {
+	// They have no interpolant in the integrator's sense, and a row between two
+	// steps came from a cubic Hermite whose slope at the far end they never set:
+	// it stayed zero, and those rows were out by about h·f. Now each reads its
+	// own polynomial -- FBDF the Lagrange one through its history, QNDF its
+	// backward differences -- and every method is held to the closed form.
+	const raw = {
+		name: 'rows', simulation: { ...DEFAULT_SIMULATION, time_unit: 'year', start_time: 0,
+			end_time: 100, output_points: 21, spacing: 'linear', rtol: 1e-8, abstol: 1e-10 },
+		index_lists: [], expressions: [], inflows: [],
+		parameters: [{ name: 'k', value: 0.05, index_lists: [] }],
+		compartments: [{ name: 'A', initial: '10', index_lists: [] }, { name: 'B', initial: '0', index_lists: [] }],
+		transfers: [{ name: 'T', from: 'A', to: 'B', rate: 'k', index_lists: [] }],
+	};
+	for (const id of ['fbdf', 'qndf', 'rodas5p', 'radau5', 'kencarp4', 'trbdf2']) {
+		const m = structuredClone(raw);
+		m.simulation.solver = id;
+		const r = run(m);
+		const a = r.series(r.outputs().find((o) => o.label === 'A'));
+		let worst = 0;
+		r.t.forEach((t, j) => { worst = Math.max(worst, Math.abs(a[j] / (10 * Math.exp(-0.05 * t)) - 1)); });
+		const tol = id === 'trbdf2' ? 1e-5 : 1e-6;
+		assert(worst < tol, `${id}: a row is out by ${worst} relative`);
+	}
+});
+
+test('the ported methods hand the requested times to the blocks that remember', async () => {
+	// `onOutput`, which the runner hands every solver so that a min/max sees the
+	// values the table reports, reached none of these six: the adapter did not
+	// pass it on, and a step across a whole output interval hid the extreme at
+	// that time from the recorders.
+	const { julia } = await import('../src/ode/julia-solvers.js');
+	const f = (t, y, out) => { out[0] = -y[0]; return out; };
+	const grid = Float64Array.from({ length: 11 }, (_, i) => i);
+	for (const id of ['fbdf', 'qndf', 'rodas5p', 'radau5', 'kencarp4', 'trbdf2']) {
+		const seen = [];
+		const s = julia(id)(f, grid, Float64Array.from([1]), {
+			rtol: 1e-6, abstol: 1e-9, onOutput: (t, y) => seen.push([t, y[0]]),
+		});
+		assert(seen.length === grid.length - 1 && seen.every(([t, v], j) => t === s.t[j + 1] && v === s.y[j + 1][0]),
+			`${id}: ${seen.length} requested times seen of ${grid.length - 1}`);
+	}
+});
+
+test('every method goes on from packages that all fail late in a run', async () => {
+	// Ten packages fail at t = 5000.123456789 and drop a tenth of their
+	// inventory into the buffer; the rock starts from nothing and fills at 1e10 a
+	// year, and at that time the clock is good to 9e-13. The ported FBDF stopped
+	// there: its first step predicted no change, so its error estimate was h·f
+	// and no step the clock could represent passed, and its history's times
+	// were the clock's rounded readings, 3 % out on the shortest steps, which
+	// the error estimate took for error.
+	const T = 5000.123456789;
+	const model = (solver, tol) => ({
+		name: 'jump', simulation: { ...DEFAULT_SIMULATION, start_time: 0, end_time: 20000, output_points: 50,
+			spacing: 'log', solver, rtol: tol, abstol: tol },
+		nuclides: ['Cs-135', 'I-129'],
+		index_lists: [{ name: 'RN', for_contaminants: true, indices: [{ name: 'Cs-135' }, { name: 'I-129' }] }],
+		compartments: [
+			{ name: 'Buffer', index_lists: ['RN'], initial: '0' },
+			{ name: 'Rock', index_lists: ['RN'], initial: '0' },
+			{ name: 'Well', index_lists: ['RN'], initial: '0' },
+		],
+		waste_packages: [{ name: 'Canisters', index_lists: ['RN'], failure: 'at', fail_at: String(T), packages: '10',
+			inventory: '1e12', irf: '0.1', degradation_rate: '1e-4' }],
+		transfers: [
+			{ name: 'Release', from: 'Canisters', to: 'Buffer', rate: 'Canisters', multiply_by_donor: false },
+			{ name: 'Out', from: 'Buffer', to: 'Rock', rate: '0.01' },
+			{ name: 'Up', from: 'Rock', to: 'Well', rate: '1e-3' },
+		],
+	});
+	const last = (r, label) => { const v = r.series(r.outputs().find((o) => o.label === label)); return v[v.length - 1]; };
+	const ref = run(model('rodas5p', 1e-10));
+	for (const id of ['ndf', 'fbdf', 'qndf', 'rodas5p', 'radau5', 'kencarp4', 'trbdf2']) {
+		let r;
+		try { r = run(model(id, 1e-6)); } catch (e) { assert(false, `${id}: ${e.message}`); }
+		// 3e-5 at worst when written, TRBDF2's, which is second order.
+		for (const label of ['Buffer [Cs-135]', 'Rock [I-129]', 'Well [Cs-135]']) {
+			close(last(r, label), last(ref, label), 1e-4, `${id}: ${label} at the end`);
+		}
 	}
 });
 
@@ -33730,6 +34305,137 @@ test('a data file read onto a model says what it did and what it could not', asy
 		'the file’s own id no longer finds what it made');
 });
 
+test('creating from a data file refuses what cannot be a block, and leaves nothing half made', async () => {
+	const DT = await import('../src/domain/datatable.js');
+	const m = {
+		name: 'refusals',
+		simulation: { start_time: 0, end_time: 10, output_points: 3, spacing: 'linear', time_unit: 'year' },
+		systems: ['Near'],
+		compartments: [{ name: 'Pond', initial: '0' }, { name: 'Cell', system: 'Near', initial: '0' }],
+		parameters: [{ name: 'k', value: '1' }],
+	};
+	const before = JSON.stringify(m);
+	const rep = DT.apply(m, [
+		{ id: 'Pond', value: 2 },
+		{ id: 'Near.Cell', value: 2 },
+		{ id: 'exp', value: 2 },
+		{ id: '...', value: 2 },
+		{ id: 'Near', value: 2 },
+		{ id: 'twice', time: 1, value: 1 },
+		{ id: 'twice', time: 1, value: 2 },
+		{ id: 'never', time: 1, value: null },
+		{ id: 'sampled', time: 1, value: 1, pdf: { kind: 'pg', params: {}, values: Float64Array.from([1, 2]) } },
+		{ id: 'sampled', time: 1, value: 2, pdf: { kind: 'pg', params: {}, values: Float64Array.from([3, 4]) } },
+	], { create: true });
+	// A parameter called after a compartment, a sub-system or a function is a
+	// model that will not build; an id of dots made a parameter called `p`; a
+	// table whose rows were refused stayed behind as a flat line, counted as
+	// made; and its samples were counted as read.
+	assert(rep.created === 0, `${rep.created} made: ${JSON.stringify([...m.parameters, ...(m.lookups ?? [])].map((b) => b.name))}`);
+	assert(JSON.stringify(m) === before, 'a refusal changed the model');
+	assert(rep.samples === 0 && rep.sampleValues === 0, `samples on a refused table counted: ${rep.samples}`);
+	for (const [id, why] of [
+		['Pond', /already used by another block\./], ['Near.Cell', /already used by another block in 'Near'/],
+		['exp', /reserved name/], ['...', /no name in it/], ['Near', /already used by a sub-system/],
+		['twice', /both at time 1/], ['never', /both a time and a value/], ['sampled', /both at time 1/],
+	]) {
+		assert(rep.problems.some((l) => l.startsWith(`${id}: `) && why.test(l)), `${id}: ${JSON.stringify(rep.problems)}`);
+	}
+	// What can be made still is, and a name it had to change is said once it is.
+	const ok = DT.apply(m, [{ id: '9lives.p', value: 3 }], { create: true });
+	assert(ok.created === 1 && ok.renamed.get('9lives') === '_9lives', JSON.stringify([...ok.renamed]));
+});
+
+test('reading a model’s data leaves the model as it was, blank is no value, and a row’s unit is its block’s', async () => {
+	const DT = await import('../src/domain/datatable.js');
+	const DF = await import('../src/io/datafile.js');
+	const model = {
+		name: 'bare lists',
+		index_lists: [{ name: 'Area', indices: ['North', { name: 'South' }, { name: 'West', enabled: false }] }],
+		parameters: [{ name: 'k', value: 1, unit: 'kg', index_lists: ['Area'] }],
+	};
+	const before = JSON.stringify(model);
+	const rows = DT.collect(model);
+	assert(JSON.stringify(model) === before, `collecting rewrote the model: ${JSON.stringify(model.index_lists)}`);
+	assert(rows.map((r) => r.id).join() === 'k._,k.North,k.South', rows.map((r) => r.id).join());
+
+	// One unit rule: a row's unit is its block's, whichever index it is for.
+	const m = structuredClone(model);
+	DT.apply(m, [{ id: 'k.North', value: 2, unit: 'g' }]);
+	assert(m.parameters[0].unit === 'g', `the unit is ${m.parameters[0].unit}`);
+
+	// A cell of spaces is not a zero.
+	const { rows: read } = DF.fromSheet([['ID', 'Time', 'Value'], ['k.North', '  ', ' ']]);
+	assert(read[0].time === null && read[0].value === null, JSON.stringify(read[0]));
+	const n = structuredClone(model);
+	const rep = DT.apply(n, [{ id: 'k.South', value: '   ' }]);
+	assert(rep.values === 0 && !n.parameters[0].entries && !rep.problems.length,
+		`a blank value was written: ${JSON.stringify(n.parameters[0])} ${JSON.stringify(rep.problems)}`);
+});
+
+test('a data file with a word every object has, times that do not pair, or text as a sample is read, and says so', async () => {
+	const DF = await import('../src/io/datafile.js');
+	const h5 = await import('../src/io/hdf5.js');
+	// A Type of `constructor` or `__proto__` found the object's own property
+	// and the read failed on it, taking the whole sheet: it is a row that is wrong.
+	const sheet = DF.fromSheet([['ID', 'Type', 'Value'], ['a', 'constructor', 1], ['b', '__proto__', 2], ['c', 'unif', 3]]);
+	assert(sheet.rows.length === 3 && sheet.problems.length === 2, JSON.stringify(sheet.problems));
+	assert(DF.pdfFromJSON('{"type": "constructor"}') === null, 'a word every object has read as a distribution');
+	assert(DF.usable({ kind: 'toString' }) === false && DF.usable({ kind: 'constructor' }) === false, 'usable() said yes');
+
+	const root = h5.group({});
+	h5.put(root, ['m', 'table'], h5.dataset(Float64Array.from([1, 2, 3]), h5.F64, { lookup_table: 'true', index: '0,5,10,' }));
+	h5.put(root, ['m', 'short'], h5.dataset(Float64Array.from([1, 2, 3]), h5.F64, { lookup_table: 'true', index: '0,5' }));
+	h5.put(root, ['m', 'words'], h5.dataset(['a', 'b'], h5.STR, { pdf: '{"type": "raw", "include_deterministic": true}' }));
+	h5.put(root, ['m', 'k'], h5.dataset(Float64Array.from([4]), h5.F64, { unit: 'kg' }));
+	const { rows, problems } = await DF.readDataHDF5(h5.writeHDF5(root));
+	// A trailing comma was a fourth time, of 0; the table no longer paired up
+	// and was read as its first value, with nothing said.
+	const table = rows.filter((r) => r.id === 'table');
+	assert(table.map((r) => r.time).join() === '0,5,10', `times ${table.map((r) => r.time).join()}`);
+	assert(!rows.some((r) => r.id === 'short')
+		&& problems.some((p) => /^\/m\/short: is a lookup table of 3 values and 2 times/.test(p)), JSON.stringify(problems));
+	assert(!rows.some((r) => r.id === 'words')
+		&& problems.some((p) => /^\/m\/words: is marked as a sample but holds text/.test(p)), JSON.stringify(problems));
+	assert(rows.some((r) => r.id === 'k' && r.value === 4), 'the rest of the file was not read');
+});
+
+test('every distribution goes out as a spreadsheet and as HDF5, and comes back', async () => {
+	const DF = await import('../src/io/datafile.js');
+	const P = await import('../src/domain/pdf.js');
+	// A log-normal by its mean or through two quantiles and a list of values
+	// have no word of their own, and went out as nothing; a truncated uniform
+	// or triangular lost its truncation in the spreadsheet. The PDF column --
+	// and in HDF5 the `pdf` attribute -- carries them as Ecolego writes them.
+	const specs = {
+		lognMean: P.parsePDF('logn(mean=2,sd=0.5,group=G1)'),
+		lognQuantiles: P.parsePDF('logn(p1=0.05,x1=1,p2=0.95,x2=30,trmax=25)'),
+		list: P.parsePDF('pg(values=1;2.5;4,inorder=false,pos=1)'),
+		cutUniform: P.parsePDF('unif(min=1,max=5,trmin=2,trmax=4)'),
+		cutTriangular: P.parsePDF('triang(min=0,max=10,mode=3,trmin=1)'),
+		normal: P.parsePDF('norm(mean=0,sd=1,trmin=-2,pmax=0.99)'),
+	};
+	const rows = [
+		...Object.entries(specs).map(([id, pdf]) => ({ id, unit: 'u', time: null, value: 1, pdf })),
+		{ id: 'table', unit: 'u', time: 0, value: 1, pdf: specs.list },
+		{ id: 'table', unit: 'u', time: 1, value: 2, pdf: specs.cutUniform },
+	];
+	const said = (s) => (s ? P.formatPDF(s) : '-');
+	for (const [what, got] of [
+		['xlsx', (await DF.readDataWorkbook(await DF.writeDataWorkbook(rows))).rows],
+		['h5', (await DF.readDataHDF5(DF.writeDataHDF5(rows))).rows],
+	]) {
+		for (const r of rows) {
+			const o = got.find((x) => x.id === r.id && (x.time ?? null) === r.time);
+			assert(o && said(o.pdf) === said(r.pdf), `${what}: ${r.id} came back as ${said(o?.pdf)}, went out as ${said(r.pdf)}`);
+		}
+	}
+	// A shape the columns hold still goes out in them.
+	const sheet = DF.toSheet([{ id: 'n', value: 1, pdf: specs.normal }]);
+	const at = (name) => sheet[1][DF.COLUMNS.indexOf(name)] ?? null;
+	assert(at('Type') === 'norm' && at('Min') === -2 && at('Pmax') === 0.99 && at('PDF') === null, JSON.stringify(sheet[1]));
+});
+
 test('HDF5 written the other way round reads here too', async () => {
 	const { readHDF5 } = await import('../src/io/hdf5read.js');
 	const DF = await import('../src/io/datafile.js');
@@ -34251,6 +34957,132 @@ test('an optimisation solves for a model’s own parameters and leaves the model
 		try { calibrate(model(), { ...opts, method: 'nelder' }); } catch (e) { said = e.message; }
 		assert(why.test(said), `expected ${why}, got '${said}'`);
 	}
+});
+
+test('Levenberg–Marquardt differences the point it asked for, and leaves an upper bound', async () => {
+	const O = await import('../src/domain/optimise.js');
+	// A least-squares fit started on its upper bound. A forward step there
+	// is clamped straight back onto the point, so that column was zero and
+	// the variable never moved: 8.65 where the fit is 0.0065.
+	const T = [0.5, 1, 2, 4, 8, 16];
+	const Y = [0.9, 1.5, 2.2, 2.9, 3.3, 3.6];
+	const mm = (x) => T.map((t, i) => (x[0] * t) / (x[1] + t) - Y[i]);
+	const box = { lower: [0, 0], upper: [10, 10] };
+	const inside = O.levenbergMarquardt(mm, [1, 1], box);
+	const bound = O.levenbergMarquardt(mm, [10, 1], box);
+	assert(bound.x[0] < 10, `it stayed on the bound: ${bound.x}`);
+	close(bound.fx, inside.fx, 1e-6, 'the fit from the bound');
+	// A variable of 1e6 on a range of 0.02. A step of 1e-6 of the range is the
+	// same point to the twelve figures the budget knows a point by, and the
+	// point answered from memory came back with the residuals of whatever had
+	// been evaluated last -- another point's, so the fit crawled to a wrong
+	// answer. It steps far enough to be told apart now, and a remembered point
+	// comes back with its own residuals.
+	const big = O.levenbergMarquardt((x) => [x[0] - 3, x[1] - 1000000.004], [1, 1000000], {
+		lower: [0, 999999.99], upper: [10, 1000000.01],
+	});
+	assert(Math.abs(big.x[1] - 1000000.004) < 1e-7 && big.fx < 1e-18, JSON.stringify(big));
+	assert(big.evals < 30, `${big.evals} evaluations`);
+});
+
+test('an optimiser option given as null takes its default', async () => {
+	const O = await import('../src/domain/optimise.js');
+	const rosen = (x) => 100 * (x[1] - x[0] * x[0]) ** 2 + (1 - x[0]) ** 2;
+	const parts = (x) => [10 * (x[1] - x[0] * x[0]), 1 - x[0]];
+	const box = { lower: [-2, -2], upper: [2, 2] };
+	// A destructuring default is for an option left out, and a budget of null
+	// compared as zero: no evaluation, 'budget', nothing back.
+	const nm = O.nelderMead(rosen, [-1.2, 1], { ...box, maxEvals: null, tol: null });
+	const nmDefault = O.nelderMead(rosen, [-1.2, 1], box);
+	assert(nm.evals === nmDefault.evals && nm.reason === nmDefault.reason, `${nm.evals} ${nm.reason}`);
+	const lm = O.levenbergMarquardt(parts, [-1.2, 1], { ...box, maxEvals: null, tol: null });
+	assert(lm.reason === 'converged' && lm.evals > 1, `${lm.evals} ${lm.reason}`);
+	const de = O.differentialEvolution(rosen, { ...box, seed: 5, maxEvals: 300, F: null, CR: null });
+	const deDefault = O.differentialEvolution(rosen, { ...box, seed: 5, maxEvals: 300 });
+	assert(JSON.stringify(de) === JSON.stringify(deDefault), 'a null F or CR is not the default');
+	assert(O.differentialEvolution(rosen, { ...box, seed: 5, maxEvals: null }).evals > 300,
+		'a null budget is not the default');
+});
+
+test('a scale, space or method named like a property every object has falls back', async () => {
+	const O = await import('../src/domain/optimise.js');
+	const { calibrate } = await import('../src/sim/calibrate.js');
+	// `SCALES['toString']` found the method every object inherits, and `.of`
+	// of it threw a TypeError where an unknown name falls back to the default.
+	for (const name of ['toString', 'constructor', '__proto__', 'valueOf']) {
+		const r = O.objectiveOf([2], [{ value: 1, scale: name }]);
+		assert(r.residuals[0] === 1, `${name}: ${JSON.stringify(r)}`);
+	}
+	const post = {
+		name: 'post',
+		simulation: { start_time: 0, end_time: 10, output_points: 3, spacing: 'linear' },
+		parameters: [{ name: 'd', value: 2, unit: '', index_lists: [] }],
+		expressions: [{ name: 'Dose', equation: 'd * 3', index_lists: [] }],
+	};
+	const out = calibrate(post, {
+		targets: [{ output: 'Dose', when: 'end', value: 9 }],
+		variables: [{ key: 'd', lower: 0.1, upper: 10, space: 'constructor' }],
+		method: 'toString', maxEvals: 60,
+	});
+	assert(out.ok && out.matched, JSON.stringify(out.targets));
+	assert(out.method === 'toString', out.method);
+});
+
+test('a calibration reports units, a stopped search’s best point, and a bound of zero', async () => {
+	const { calibrate, variablesOf } = await import('../src/sim/calibrate.js');
+	// Every unit came out empty: it was read off a block the slot never carried.
+	const decay = {
+		name: 'cal',
+		simulation: {
+			start_time: 0, end_time: 100, output_points: 11, spacing: 'linear',
+			solver: 'ndf', rtol: 1e-8, abstol: 1e-12, time_unit: 'year',
+		},
+		parameters: [
+			{ name: 'k', value: '0.05', unit: '1/year' },
+			{ name: 'A0', value: '1', unit: 'Bq' },
+		],
+		compartments: [{ name: 'A', initial: 'A0', unit: 'Bq', dydt: '-k*A' }],
+	};
+	const units = Object.fromEntries(variablesOf(decay).map((v) => [v.key, v.unit]));
+	assert(units.k === '1/year' && units.A0 === 'Bq', JSON.stringify(units));
+
+	// A model with nothing to integrate, stopped after four evaluations. The
+	// report reads the best point once more, and that reading was handed the
+	// Stop -- so the run, having finished, threw 'Cancelled' and the answer
+	// came back beside NaN readings.
+	const post = {
+		name: 'post',
+		simulation: { start_time: 0, end_time: 10, output_points: 3, spacing: 'linear' },
+		parameters: [{ name: 'd', value: 2, unit: '', index_lists: [] }],
+		expressions: [{ name: 'Dose', equation: 'd * 3', index_lists: [] }],
+	};
+	let seen = 0;
+	const stopped = calibrate(post, {
+		targets: [{ output: 'Dose', when: 'end', value: 9 }],
+		variables: [{ key: 'd', lower: 0.1, upper: 10 }],
+		method: 'nelder', maxEvals: 50,
+		signal: { get aborted() { return seen >= 4; } },
+		onProgress: () => { seen += 1; },
+	});
+	assert(stopped.reason === 'stopped', stopped.reason);
+	const got = stopped.targets[0].got;
+	assert(Number.isFinite(got) && Math.abs(got - 3 * stopped.values[0].value) < 1e-12,
+		`${got} for d = ${stopped.values[0].value}`);
+
+	// A bound of zero. `pinned` measured the distance against the bound
+	// itself, so a bound of 0 was reached only at exactly 0; it is a
+	// thousandth of the range searched now, the same at every bound.
+	const at = (value) => calibrate(post, {
+		targets: [{ output: 'Dose', when: 'end', value, scale: 'absolute' }],
+		variables: [{ key: 'd', lower: 0, upper: 10 }],
+		method: 'nelder', maxEvals: 200,
+	}).values[0];
+	const low = at(3e-4); // d = 1e-4, a hundred-thousandth of the range from 0
+	assert(low.pinned === 'lower' && low.value > 0, JSON.stringify(low));
+	const mid = at(9); // d = 3
+	assert(mid.pinned === null, JSON.stringify(mid));
+	const high = at(60); // d would be 20, and is held at 10
+	assert(high.pinned === 'upper', JSON.stringify(high));
 });
 
 test('an optimised answer can be tried without being taken', async () => {

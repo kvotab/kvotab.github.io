@@ -325,14 +325,17 @@ export function restoreResults({ project, system, data, Results }) {
 	});
 }
 
-/** One line saying what is in the file, for the notice after opening it. */
+/**
+ * One line saying what is in the file, for the notice after opening it. It
+ * began with a space, with a stamp or without, from the join of its two parts.
+ */
 export function describeDataset(meta) {
 	if (!meta) return '';
 	const when = meta.stamp ? new Date(meta.stamp) : null;
 	const ran = when && !Number.isNaN(when.getTime())
-		? ` run ${when.toLocaleString()},`
+		? `run ${when.toLocaleString()}, `
 		: '';
-	return `${ran} ${meta.times.toLocaleString()} output time`
+	return `${ran}${meta.times.toLocaleString()} output time`
 		+ `${meta.times === 1 ? '' : 's'} over `
 		+ `${meta.states.toLocaleString()} state${meta.states === 1 ? '' : 's'}`
 		+ (meta.stats?.solver ? `, ${meta.stats.solver}` : '');

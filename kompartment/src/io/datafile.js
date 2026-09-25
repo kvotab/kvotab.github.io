@@ -30,6 +30,11 @@
  *   Mean, Std the normal curve's two
  *   GM, GSD   the log-normal's two
  *   Pmin,Pmax truncation as percentiles of this curve rather than as values
+ *   PDF       the whole distribution as Ecolego writes it, `logn(mean=1,sd=2)`,
+ *             for one the columns above cannot hold: a kind with no word of
+ *             its own (a log-normal by its mean, one through two quantiles, a
+ *             list of values) or a truncation of a curve whose Min and Max are
+ *             its ends. Read where `Type` is empty.
  *
  * ---------------------------------------------------------------------------
  * THE HDF5 TREE
@@ -38,7 +43,9 @@
  * `Atmosphere.height.L1`. A parameter is a scalar dataset; a lookup table is a
  * dataset of its values carrying `lookup_table` and an `index` attribute
  * holding the times. Everything else about a row rides as attributes: `unit`,
- * and `pdf`, a JSON object in the same words the spreadsheet's columns use.
+ * and `pdf`, a JSON object in the same words the spreadsheet's columns use --
+ * or, for a distribution with no word, Ecolego's expression, which is what the
+ * PDF column holds.
  *
  * ---------------------------------------------------------------------------
  * AN UNDERSCORE IS THE DEFAULT
@@ -52,7 +59,7 @@
 import { readWorkbook, writeWorkbook } from './xlsx.js';
 import { writeHDF5, group, dataset, put, F64, STR } from './hdf5.js';
 import { readHDF5 } from './hdf5read.js';
-import { parsePDF, complete, PDF_KINDS } from '../domain/pdf.js';
+import { parsePDF, formatPDF, complete, PDF_KINDS } from '../domain/pdf.js';
 
 /** The segment that means "the block's own value, at no index". */
 export const DEFAULT_SEGMENT = '_';
@@ -152,19 +159,44 @@ export const SHAPES = {
 /** Back the other way: a spec's kind to the word a file uses for it. */
 const WORD = new Map(Object.entries(SHAPES).map(([word, s]) => [s.kind, word]));
 
+/**
+ * The shape a word names, or null. Asked of the object's own words only: a
+ * `Type` of `constructor` found `Object` and `__proto__` found the prototype,
+ * and the read failed on the missing parameters with a TypeError that took the
+ * whole file with it rather than saying which row was wrong.
+ */
+const shapeOf = (word) => (Object.hasOwn(SHAPES, word) ? SHAPES[word] : null);
+
+/**
+ * Whether the columns hold all of a spec: a kind with a word, and no
+ * truncation on a curve whose Min and Max are its own ends -- there is no
+ * column left for one there. Anything else goes out whole in the PDF column.
+ */
+function fitsColumns(spec) {
+	const shape = WORD.has(spec?.kind) ? SHAPES[WORD.get(spec.kind)] : null;
+	return !!shape && (shape.cut || (spec.trmin == null && spec.trmax == null));
+}
+
 export const COLUMNS = [
 	'ID', 'Unit', 'Subsystem', 'Name', 'Media', 'Position', 'Species',
 	'Time', 'Value', 'Type', 'Group',
-	'Min', 'Max', 'Mean', 'Std', 'GM', 'GSD', 'Pmin', 'Pmax',
+	'Min', 'Max', 'Mean', 'Std', 'GM', 'GSD', 'Pmin', 'Pmax', 'PDF',
 	'Reference',
 ];
 
 /** The helper columns, in the order a hand-made ID pastes them together. */
 const HELPERS = ['Subsystem', 'Name', 'Media', 'Position', 'Species'];
 
+/**
+ * A number where there is one, and null where there is none. Blank is no
+ * value: `Number('')` is 0, and a cell of spaces used to read as a zero.
+ */
 const num = (v) => {
 	if (v == null || v === '') return null;
-	const n = typeof v === 'number' ? v : Number(String(v).trim());
+	if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+	const text = String(v).trim();
+	if (text === '') return null;
+	const n = Number(text);
 	return Number.isFinite(n) ? n : null;
 };
 
@@ -192,8 +224,8 @@ const value = (v) => {
 /** A spec from a row of columns, or null where the row names no curve. */
 export function pdfFromColumns(at) {
 	const word = str(at('Type')).toLowerCase();
-	if (!word) return null;
-	const shape = SHAPES[word];
+	if (!word) return pdfFromExpression(at);
+	const shape = shapeOf(word);
 	if (!shape) return { bad: `'${at('Type')}' is not a distribution this reads` };
 	const spec = {
 		kind: shape.kind,
@@ -217,6 +249,23 @@ export function pdfFromColumns(at) {
 		spec.trmin = num(at('Min'));
 		spec.trmax = num(at('Max'));
 	}
+	return spec;
+}
+
+/**
+ * A spec from the PDF column, for a row with no `Type`: Ecolego's expression,
+ * with what the row says beside it where the expression does not -- a group,
+ * the percentile cuts, and a triangular's mode in `Value`, as the columns read.
+ */
+function pdfFromExpression(at) {
+	const text = str(at('PDF'));
+	if (!text) return null;
+	const spec = parsePDF(text);
+	if (!spec) return { bad: `'${text}' is not a distribution this reads` };
+	if (spec.group == null) spec.group = str(at('Group')) || null;
+	if (spec.pmin == null) spec.pmin = num(at('Pmin'));
+	if (spec.pmax == null) spec.pmax = num(at('Pmax'));
+	if ('mode' in spec.params && spec.params.mode == null) spec.params.mode = num(at('Value'));
 	return spec;
 }
 
@@ -265,6 +314,34 @@ export function pdfToJSON(spec) {
 }
 
 /**
+ * A spec as the `pdf` attribute holds it: the JSON object where its shape has
+ * a word, and Ecolego's expression otherwise -- a log-normal by its mean, one
+ * through two quantiles, a list of values -- which the reader takes as it
+ * takes any writer's expression. Null for what is not a distribution. A spec
+ * held as Ecolego's text is read first.
+ */
+export function pdfAttribute(spec) {
+	const s = typeof spec === 'string' ? parsePDF(spec) : spec;
+	if (!s) return null;
+	return pdfToJSON(s) ?? (expressionOf(s) || null);
+}
+
+/** Ecolego's expression for a spec of a kind there is, and '' for anything else. */
+const expressionOf = (s) => (Object.hasOwn(PDF_KINDS, s?.kind ?? '') ? formatPDF(s) : '');
+
+/**
+ * The columns a spec fills in on a sheet: the shape's own where they hold all
+ * of it, and the PDF column otherwise.
+ */
+function sheetColumns(spec) {
+	const s = typeof spec === 'string' ? parsePDF(spec) : spec;
+	if (!s) return {};
+	if (fitsColumns(s)) return columnsFromPDF(s);
+	const expr = expressionOf(s);
+	return expr ? { PDF: expr } : {};
+}
+
+/**
  * A list of specs, one per point, for a table whose points carry their own.
  *
  * The attribute is a JSON *array* then rather than an object, in the order the
@@ -297,7 +374,7 @@ export function pdfFromJSON(raw) {
 		if (!text.startsWith('{')) return parsePDF(text);
 		try { obj = JSON.parse(text); } catch { return null; }
 	}
-	const shape = SHAPES[String(obj.type ?? '').toLowerCase()];
+	const shape = shapeOf(String(obj?.type ?? '').toLowerCase());
 	if (!shape) return null;
 	const HDF_NAME = { min: 'a', max: 'b', sd: 'std', mode: 'm' };
 	const spec = {
@@ -346,7 +423,7 @@ export function toSheet(rows) {
 		set('Name', own || null);
 		if (r.time != null) set('Time', r.time);
 		if (r.value != null) set('Value', r.value);
-		for (const [k, v] of Object.entries(columnsFromPDF(r.pdf))) set(k, v);
+		for (const [k, v] of Object.entries(sheetColumns(r.pdf))) set(k, v);
 		if (r.note) set('Reference', r.note);
 		// Trailing nulls are dropped so a sheet of values is not twenty empty
 		// cells wide on every row.
@@ -448,8 +525,8 @@ export function toTree(rows, { root = 'model' } = {}) {
 			continue;
 		}
 		const attrs = { unit: r.unit ?? '' };
-		const pdf = pdfToJSON(r.pdf);
-		if (pdf) attrs.pdf = JSON.stringify(pdf);
+		const pdf = pdfAttribute(r.pdf);
+		if (pdf) attrs.pdf = typeof pdf === 'string' ? pdf : JSON.stringify(pdf);
 		if (r.note) attrs.reference = r.note;
 		// A value that is not a number goes out as text rather than as NaN:
 		// `GROUP1` is the answer, not a failure to parse one.
@@ -466,7 +543,7 @@ export function toTree(rows, { root = 'model' } = {}) {
 		};
 		// A list, one per point, in the order the values are in -- and only
 		// where some point actually carries one.
-		const specs = order.map((i) => pdfToJSON(t.pdfs[i]));
+		const specs = order.map((i) => pdfAttribute(t.pdfs[i]));
 		if (specs.some(Boolean)) attrs.pdf = JSON.stringify(specs);
 		if (t.row.note) attrs.reference = t.row.note;
 		put(tree, t.path, dataset(order.map((i) => t.values[i]), F64, attrs));
@@ -505,8 +582,18 @@ export async function readDataHDF5(bytes) {
 		const raw = rawOf(d.attrs?.pdf);
 		const sampled = !!raw || flagged(d.attrs?.probabilistic);
 
+		// A sample is numbers. Text marked as one -- or nothing at all -- is
+		// said and left out: read on, it failed on `subarray`, which only a
+		// typed array has, and took every other dataset of the file with it.
+		const notNumbers = () => `${d.path}: is marked as a sample but ${d.values.length
+			? 'holds text' : 'holds nothing'}, so it was not read.`;
+
 		// --- a matrix of realisations: one whole curve per column ----------
 		if (d.dims?.length === 2 && sampled) {
+			if (!ArrayBuffer.isView(d.values)) {
+				problems.push(notNumbers());
+				continue;
+			}
 			const [T, N] = d.dims;
 			const when = times && times.length === T ? times
 				: (clock && clock.length === T ? clock : null);
@@ -529,6 +616,10 @@ export async function readDataHDF5(bytes) {
 
 		// --- a column of realisations: one value each ----------------------
 		if (d.dims?.length === 1 && sampled && !isTable) {
+			if (!ArrayBuffer.isView(d.values)) {
+				problems.push(notNumbers());
+				continue;
+			}
 			// `include_deterministic` means the first value is the one the
 			// model runs at and the rest are the sample; without it the
 			// middle of the sample is the honest stand-in.
@@ -541,7 +632,17 @@ export async function readDataHDF5(bytes) {
 			});
 			continue;
 		}
-		if (isTable && times && times.length === d.values.length) {
+		if (isTable) {
+			// Times and values that do not pair up are not a table, and not a
+			// single value either: it was read as its first value, with
+			// nothing said, which is a number nobody wrote.
+			const n = d.values.length;
+			if (!times || times.length !== n) {
+				const m = times?.length ?? 0;
+				problems.push(`${d.path}: is a lookup table of ${n} value${n === 1 ? '' : 's'} and `
+					+ `${m} time${m === 1 ? '' : 's'}, so it was not read.`);
+				continue;
+			}
 			// One spec per point where the attribute is a list, and none where
 			// it is not: a table's points each have their own spread or none
 			// of them does.
@@ -568,11 +669,17 @@ export async function readDataHDF5(bytes) {
 function indexTimes(raw) {
 	if (raw == null) return null;
 	if (Array.isArray(raw) || ArrayBuffer.isView(raw)) return Array.from(raw, Number);
-	const parts = String(raw).split(/[,\s]+/).map((s) => Number(s)).filter((n) => Number.isFinite(n));
+	// Empty pieces are separators at either end, not times: `Number('')` is 0,
+	// and `0,5,10,` read as four times, which no longer paired with the three
+	// values, and the table fell through to a single number.
+	const parts = String(raw).split(/[,\s]+/).filter((s) => s !== '')
+		.map((s) => Number(s)).filter((n) => Number.isFinite(n));
 	return parts.length ? parts : null;
 }
 
 /** Whether a spec is worth writing: an empty one says less than nothing. */
 export function usable(spec) {
-	return !!spec && !!PDF_KINDS[spec.kind] && complete(spec);
+	// The object's own kinds only: `toString` is a property of every object,
+	// and `complete` then failed reading parameters off it.
+	return !!spec && Object.hasOwn(PDF_KINDS, spec.kind ?? '') && complete(spec);
 }

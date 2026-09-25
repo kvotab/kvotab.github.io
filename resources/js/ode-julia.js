@@ -728,13 +728,17 @@
     return Math.sqrt(s / n);
   }
 
-  /** The maximum-norm alternative: the worst-scaled component decides. */
+  /**
+   * The maximum-norm alternative: the worst-scaled component decides. A component
+   * that is not a number makes the norm not a number, as it does the rms norm.
+   */
   function wmaxNorm(e, w) {
     const n = e.length;
     let m = 0;
     for (let i = 0; i < n; i++) {
       const r = Math.abs(e[i] / w[i]);
       if (r > m) m = r;
+      else if (r !== r) return NaN;
     }
     return m;
   }
@@ -1197,6 +1201,9 @@
   /**
    * Scaled residual, as SciML's calculate_residuals: each component of the
    * increment measured against what a unit of error would be for that component.
+   * A component that is not a number makes it not a number, in either norm: the
+   * maximum used to skip one (`r > m` is never true of NaN), so an iterate with
+   * a NaN in it could be declared converged on its other components.
    */
   function residualNorm(dz, uprev, ustep, abstol, reltol, n, norm) {
     const scalarAtol = typeof abstol === 'number';
@@ -1207,6 +1214,7 @@
         const w = a + reltol * Math.max(Math.abs(uprev[i]), Math.abs(ustep[i]));
         const r = Math.abs(dz[i]) / w;
         if (r > m) m = r;
+        else if (r !== r) return NaN;
       }
       return m;
     }
@@ -1588,7 +1596,11 @@
                               rejected outright (a failed Newton, a singular W)
        cache.accepted(integ)  roll any history forward; optional
        cache.interpolate(integ, theta, out)   optional; without it, cubic
-                              Hermite through the two ends is used
+                              Hermite through the two ends is used. Read over
+                              the whole step just taken, θ = 0 at its start and
+                              θ = 1 at its end, and only before the history rolls
+                              forward: event location and the rows saved inside
+                              the step both come from it, and both happen first.
      ========================================================================== */
 
 
@@ -1625,7 +1637,12 @@
    *        1e-8 relative, which becomes the accuracy floor of a fifth-order
    *        method well before its step size does.
    * @param {{colPtr:Int32Array,rowIdx:Int32Array}} [opts.jacPattern]  sparsity of df/du
-   * @param {object} [opts.events]  { n, fun(t, u, out), direction, terminal, apply(t, u) }
+   * @param {object} [opts.events]  { n, fun(t, u, out), direction, enabled, terminal, apply(t, u) }.
+   *        `direction` is one number for every function or an array with one
+   *        per function: above 0 a rising crossing counts, below 0 a falling
+   *        one, 0 either. `enabled`, if given, has one entry per function, and a
+   *        function whose entry is 0 is not looked at: a caller that switches an
+   *        event off once it has fired -- FACSIMILE's WHEN -- keeps it off.
    */
   class ODEProblem {
     constructor(f, u0, tspan, opts = {}) {
@@ -1648,7 +1665,9 @@
       this.stats = stats;
       this.retcode = retcode;
       this.message = message || '';
-      this.events = [];           // { t, u, which } for each event that fired
+      this.events = [];           // { t, u, which, all } for each event that fired:
+                                  // `which` the first function, `all` every one
+                                  // that crossed at that instant
       this.interp = null;         // set when dense output was kept
     }
 
@@ -1701,6 +1720,9 @@
                             // moves on. For a caller that keeps the run itself;
                             // pair it with saveEverystep: false and nothing is
                             // stored twice.
+    onOutput: null,         // (t, u) for every saveat time as it is saved, in
+                            // order, before the onAccepted of the step it lies
+                            // in. `u` is a buffer the next row reuses.
 
     matrix: 'auto',
     norm: 'rms',
@@ -1834,7 +1856,14 @@
       return a + this.reltol * Math.max(Math.abs(this.uprev[i]), Math.abs(this.u[i]));
     }
 
-    /** ‖e‖ in the integrator's norm, weighted as above. */
+    /**
+     * ‖e‖ in the integrator's norm, weighted as above.
+     *
+     * A component that is not a number makes the norm not a number, in the
+     * maximum norm as in the root mean square. `r > m` alone is never true of
+     * NaN, which let a step whose error could not be measured pass on the
+     * components that could.
+     */
     errorNorm(e) {
       const n = this.n;
       if (this.opts.norm === 'max') {
@@ -1842,6 +1871,7 @@
         for (let i = 0; i < n; i++) {
           const r = Math.abs(e[i] / this.weight(i));
           if (r > m) m = r;
+          else if (r !== r) return NaN;
         }
         return m;
       }
@@ -1902,7 +1932,7 @@
   }
 
   /**
-   * Locate the first event crossing inside the step just taken.
+   * Locate the earliest event crossing inside the step just taken.
    *
    * The event functions are continuous and are looked at through the step's own
    * interpolant, so the crossing is found where the solution actually is rather
@@ -1913,20 +1943,77 @@
   function findEvent(integ, evalAt, gPrev, work) {
     const ev = integ.prob.events;
     if (!ev) return null;
-    const { gNow, utmp } = work;
-    const dir = ev.direction ?? 1;
+    const { gNow } = work;
 
     ev.fun(integ.t + integ.dt, integ.u, gNow);
-    let which = -1;
+    // Every function that crossed, each in the direction asked of it. The
+    // direction may be one number for all of them or one each; an array used to
+    // be compared with 0 as a whole, and with two or more entries that is never
+    // true, so no crossing was ever seen.
+    const crossed = [];
+    const { enabled } = ev;
     for (let i = 0; i < ev.n; i++) {
+      // A function switched off is not an event, however it moves.
+      if (enabled && !enabled[i]) continue;
       const a = gPrev[i];
       const b = gNow[i];
+      const dir = directionOf(ev, i);
       const rising = a < 0 && b >= 0;
       const falling = a > 0 && b <= 0;
-      if ((dir >= 0 && rising) || (dir <= 0 && falling)) { which = i; break; }
+      if ((dir >= 0 && rising) || (dir <= 0 && falling)) crossed.push(i);
     }
-    if (which < 0) return null;
+    if (!crossed.length) return null;
 
+    // Each located, and the earliest is what happened: two functions crossing in
+    // one step must not be reported in the order they are numbered, or the later
+    // one is found first and the earlier is behind the restart, never to fire.
+    // Those that cross together within the precision of the search are reported
+    // together, since a restart from the one would see the other at its start.
+    const found = [];
+    for (const which of crossed) {
+      const theta = locateRoot(integ, evalAt, ev, which, gPrev[which], work);
+      const tEvent = integ.t + theta * integ.dt;
+      if (rootAtStart(integ, tEvent)) continue;
+      found.push({ theta, t: tEvent, which });
+    }
+    if (!found.length) return null;
+    let first = found[0];
+    for (const f of found) if (f.theta < first.theta) first = f;
+    const together = Math.max(2e-14 * Math.abs(integ.dt),
+      16 * Number.EPSILON * Math.max(Math.abs(first.t), Math.abs(integ.dt)));
+    const group = found.filter((f) => Math.abs(f.t - first.t) <= together);
+    // The state handed back is where every one of them has crossed -- the far
+    // side of the latest -- so that a run restarted from it does not find the
+    // same crossings again a few ulps in.
+    let last = first;
+    for (const f of group) if (f.theta > last.theta) last = f;
+    const all = group.map((f) => f.which).sort((a, b) => a - b);
+    evalAt(last.theta, work.uEvent);
+    return { theta: last.theta, t: last.t, which: all[0], all };
+  }
+
+  /** The direction asked of event function `i`: one number for all, or one each. */
+  function directionOf(ev, i) {
+    const d = ev.direction;
+    if (d == null) return 1;
+    if (typeof d === 'number') return d;
+    const v = d[i];
+    return v == null ? 1 : v;
+  }
+
+  /**
+   * Where in the step, as θ, event function `which` crosses zero: bisection
+   * then Illinois on the step's interpolant, from `gStart` at θ = 0.
+   *
+   * The answer is the bracket's far end, the first θ found at which the
+   * function has crossed, as the NDF's search reports it -- not the middle of
+   * the bracket. From the middle, the state handed back could lie a hair short
+   * of the crossing: a caller that restarts there sees the function still on
+   * the near side, and its first step crosses again. Rodas5P and KenCarp4 fired
+   * `A - 0.9704455335485082, down`, with A = exp(-0.3 t), twice, 4e-16 apart.
+   */
+  function locateRoot(integ, evalAt, ev, which, gStart, work) {
+    const { gNow, utmp } = work;
     const g = (theta) => {
       evalAt(theta, utmp);
       ev.fun(integ.t + theta * integ.dt, utmp, gNow);
@@ -1935,7 +2022,7 @@
 
     let lo = 0;
     let hi = 1;
-    let flo = gPrev[which];
+    let flo = gStart;
     let fhi = g(1);
     // Illinois: the bracket is kept, and the stale end is halved so that the
     // secant cannot stall against it.
@@ -1948,10 +2035,14 @@
       if ((fmid < 0) === (flo < 0)) { lo = mid; flo = fmid; fhi *= 0.5; }
       else { hi = mid; fhi = fmid; flo *= 0.5; }
     }
-    const theta = 0.5 * (lo + hi);
-    const tEvent = integ.t + theta * integ.dt;
-    // A root at the instant the solve began is not a crossing.
-    //
+    return hi;
+  }
+
+  /**
+   * Whether a root found at `tEvent` is the instant the solve began, which is
+   * not a crossing.
+   */
+  function rootAtStart(integ, tEvent) {
     // A caller that stops at a terminal event and restarts from it -- which is
     // what a compartment model does, to apply whatever the event drives -- hands
     // back the state *at* the root, where g is zero to rounding. Whether that
@@ -1962,12 +2053,8 @@
     // `examples/recorders.json` where the other five methods happened to land on
     // the lucky side.
     const t0 = integ.prob.tspan[0];
-    if (Math.abs(tEvent - t0)
-      <= 16 * Number.EPSILON * Math.max(Math.abs(t0), Math.abs(integ.dt))) {
-      return null;
-    }
-    evalAt(theta, utmp);
-    return { theta, t: tEvent, which };
+    return Math.abs(tEvent - t0)
+      <= 16 * Number.EPSILON * Math.max(Math.abs(t0), Math.abs(integ.dt));
   }
 
   /**
@@ -2074,6 +2161,7 @@
       gNow: prob.events ? new Float64Array(prob.events.n) : null,
       gPrev: prob.events ? new Float64Array(prob.events.n) : null,
       utmp: new Float64Array(n),
+      uEvent: new Float64Array(n),
     };
 
     if (!opts.adaptive && !opts.dt) {
@@ -2152,6 +2240,17 @@
           message = 'The run was stopped from outside';
           break;
         }
+        // One that failed at the smallest step the clock can represent has
+        // nowhere left to go. Halving it only for the floor to bring it back ran
+        // the step budget out one futile attempt at a time -- ten million of
+        // them by default -- with the run standing still.
+        if (atFloor) {
+          retcode = ConvergenceFailure;
+          message = `The step could not be taken at t = ${integ.t} even at `
+            + `${Math.abs(integ.dt).toExponential(3)}, the smallest the clock can represent: `
+            + 'the equations of its stages could not be solved there';
+          break;
+        }
         // A step that failed for a reason other than accuracy -- a Newton that
         // would not converge, a singular W -- is not the controller's business:
         // halve it, and make sure the next attempt uses a fresh Jacobian.
@@ -2166,6 +2265,9 @@
         for (let i = 0; i < n; i++) if (!Number.isFinite(integ.u[i])) { bad = i; break; }
         if (bad >= 0) {
           integ.stats.nreject++;
+          // The candidate is no state at all; the last accepted one is, and a
+          // method that reads integ.u before writing it must not be handed this.
+          integ.u.set(integ.uprev);
           integ.dt *= 0.5;
           integ.W.markStale();
           if (Math.abs(integ.dt) < dtminAt(integ.t)) {
@@ -2177,7 +2279,31 @@
         }
       }
 
-      let accepted = !opts.adaptive || !(integ.EEst > 1);
+      // An error estimate that is not a number says nothing about the step --
+      // neither that it was good nor by how much to shrink it; handed to the
+      // controller it makes the next step NaN. `!(EEst > 1)` let it through as
+      // accepted. It is a step that failed outright, like the ones above.
+      if (opts.adaptive && Number.isNaN(integ.EEst)) {
+        integ.stats.nreject++;
+        integ.u.set(integ.uprev);
+        if (reportProgress(integ, opts) === false) {
+          retcode = Terminated;
+          message = 'The run was stopped from outside';
+          break;
+        }
+        if (atFloor) {
+          retcode = Unstable;
+          message = `The error estimate is not a number at t = ${integ.t}, even with a step of `
+            + `${Math.abs(integ.dt).toExponential(3)}, the smallest the clock can represent`;
+          break;
+        }
+        integ.dt *= 0.5;
+        integ.W.markStale();
+        integ.controller.reset();
+        continue;
+      }
+
+      let accepted = !opts.adaptive || integ.EEst <= 1;
 
       // A step at the smallest size the clock can represent, which has failed
       // its error test anyway. There is nothing left to try: a shorter step does
@@ -2225,43 +2351,55 @@
       }
 
       // --- the step is good -----------------------------------------------------
+      // What is read inside the step -- the event functions, the saved rows -- is
+      // read off the step's own interpolant over the whole step, θ = 0 to 1.
       const tnew = integ.t + integ.dt;
       const evalAt = (theta, out) => {
         if (integ.cache.interpolate) return integ.cache.interpolate(integ, theta, out);
         return hermite(theta, integ.dt, integ.uprev, integ.u, integ.fsalfirst, integ.fsallast, out);
       };
 
-      // An event inside the step cuts it short at the crossing.
       let ev = null;
       if (prob.events) {
-        if (!integ.cache.hasFsalLast) {
+        // f at the end of the step is what the Hermite fallback needs, and only
+        // it: a method with an interpolant of its own reads none.
+        if (!integ.cache.hasFsalLast && !integ.cache.interpolate) {
           integ.f(tnew, integ.u, integ.fsallast);
         }
         ev = findEvent(integ, evalAt, work.gPrev, work);
       }
 
-      if (ev) {
-        integ.dt = ev.t - integ.t;
-        integ.u.set(work.utmp);
-        integ.clamp(integ.u);
-      }
-
       integ.stats.naccept++;
       if (integ.nonNegative) integ.clamp(integ.u);
 
-      // saveat points that the step just passed, from its interpolant
+      // saveat points that the step passed -- up to the event, where one cuts it
+      // short -- each where it lies in the whole step. They are read before the
+      // event is applied: afterwards the end state and the step length are the
+      // event's, while the interpolant is still the whole step's, and a θ worked
+      // out against the shortened step read every row inside it at the wrong
+      // place.
       if (saveat) {
-        while (saveatAt < saveat.length && tdir * (saveat[saveatAt] - (integ.t + integ.dt)) <= 0) {
+        const tEnd = ev ? ev.t : tnew;
+        while (saveatAt < saveat.length && tdir * (saveat[saveatAt] - tEnd) <= 0) {
           const ts = saveat[saveatAt];
           if (tdir * (ts - integ.t) >= 0) {
             const theta = integ.dt === 0 ? 1 : (ts - integ.t) / integ.dt;
             evalAt(theta, work.utmp);
             if (integ.nonNegative) integ.clamp(work.utmp);
             remember(ts, work.utmp, true);
+            if (opts.onOutput) opts.onOutput(ts, work.utmp);
           }
           saveatAt++;
         }
       }
+
+      // An event inside the step cuts it short at the crossing.
+      if (ev) {
+        integ.dt = ev.t - integ.t;
+        integ.u.set(work.uEvent);
+        integ.clamp(integ.u);
+      }
+
       if (opts.saveEverystep && !saveat) remember(integ.t + integ.dt, integ.u, false);
       if (opts.onAccepted) opts.onAccepted(integ.t + integ.dt, integ.u);
       if (integ.autoAbstol) {
@@ -2294,7 +2432,7 @@
 
       if (prob.events) {
         if (ev) {
-          events.push({ t: integ.t, u: Float64Array.from(integ.u), which: ev.which });
+          events.push({ t: integ.t, u: Float64Array.from(integ.u), which: ev.which, all: ev.all });
           if (events.length >= opts.maxEvents) {
             retcode = Terminated;
             message = `Stopped after ${events.length} events`;
@@ -3010,7 +3148,15 @@
       this.dtpropose = null;
 
       const K = MAX_ORDER_LIMIT + 2;
-      this.ts = new Float64Array(K);                       // history times, ts[0] = t
+      // The history's times, measured from its newest point: ts[0] = 0 and ts[j]
+      // is minus the last j steps. Not the clock readings. Late in a run the
+      // clock rounds to a sizeable fraction of a short step -- half an ulp of
+      // 5000 is 4.5e-13, 3 % of the smallest step there -- and a polynomial
+      // through points at the rounded times is not the one the formula built:
+      // its slope is off by that fraction, and the predictor carries |f| times
+      // the rounding into the error estimate as though it were error. Summing
+      // the steps themselves keeps the spacing the formula used.
+      this.ts = new Float64Array(K);
       this.uHistory = Array.from({ length: K }, () => new Float64Array(n));
       this.nHistory = 0;
 
@@ -3043,7 +3189,7 @@
 
     init(integ) {
       integ.newton.method = COEFFICIENT_MULTISTEP;
-      this.ts[0] = integ.t;
+      this.ts[0] = 0;
       this.uHistory[0].set(integ.uprev);
       this.nHistory = 1;
       this.itersFromEvent = 0;
@@ -3057,7 +3203,7 @@
       if (h && h.t && h.t.length) {
         const m = Math.min(h.t.length, this.uHistory.length - 1);
         for (let j = 0; j < m; j++) {
-          this.ts[j + 1] = h.t[j];
+          this.ts[j + 1] = h.t[j] - integ.t;
           this.uHistory[j + 1].set(h.u[j]);
         }
         this.nHistory = m + 1;
@@ -3069,7 +3215,7 @@
 
     /** History is meaningless after a discontinuity: start again at order 1. */
     restart(integ) {
-      this.ts[0] = integ.t;
+      this.ts[0] = 0;
       this.uHistory[0].set(integ.uprev);
       this.nHistory = 1;
       this.itersFromEvent = 0;
@@ -3082,11 +3228,24 @@
       this.terkp1 = 0;
     }
 
-    /** The Lagrange interpolant of the history, in θ = (τ − t)/h, at θ = xi. */
+    /**
+     * The Lagrange interpolant of the history, in θ = (τ − t)/h, at θ = xi.
+     *
+     * Summed as the newest point plus weighted differences from it, which is the
+     * same polynomial -- the weights add up to one -- but not the same
+     * arithmetic. Σ wⱼ·uⱼ of a component that is not changing is its value only
+     * to rounding, and the weights here are large: after the step has grown
+     * five-fold the past points sit within one new step, and at order 5 the
+     * weights run to 2e3 for the predictor and to 1e5 for the value the formula
+     * reads four steps back. A bookkeeping species that had stopped changing
+     * then wandered by 1e4 ulps, and an event on it went on firing. Differences
+     * of a constant are zero.
+     */
     lagrange(xi, count, out) {
       const { thetas, uHistory, n } = this;
-      out.fill(0);
-      for (let j = 0; j < count; j++) {
+      const u0 = uHistory[0];
+      out.set(u0);
+      for (let j = 1; j < count; j++) {
         let w = 1;
         for (let m = 0; m < count; m++) {
           if (m === j) continue;
@@ -3094,7 +3253,7 @@
         }
         if (w === 0) continue;
         const uj = uHistory[j];
-        for (let i = 0; i < n; i++) out[i] += w * uj[i];
+        for (let i = 0; i < n; i++) out[i] += w * (uj[i] - u0[i]);
       }
       return out;
     }
@@ -3108,9 +3267,9 @@
       const dt = integ.dt;
       const count = Math.min(m, this.nHistory + 1);
       if (count < 2) return Infinity;
-      tsTmp[0] = integ.t + dt;
+      tsTmp[0] = dt;                           // the new point, from the newest old one
       for (let i = 0; i < count - 1; i++) tsTmp[i + 1] = ts[i];
-      fornbergWeights(tsTmp, count, integ.t + dt, count - 1, fdWeights, fdWork);
+      fornbergWeights(tsTmp, count, dt, count - 1, fdWeights, fdWork);
       const w0 = fdWeights[0];
       for (let i = 0; i < n; i++) terkTmp[i] = w0 * integ.u[i];
       for (let j = 1; j < count; j++) {
@@ -3133,7 +3292,7 @@
       const a = BDF_COEFFS[k];
       const gamma = 1 / a[0];
       const gammaDt = gamma * dt;
-      const tdt = t + dt;
+      const tdt = dt;                          // t + dt, on the history's own clock
 
       // W survives a change of step size here far better than it would for a
       // variable-coefficient BDF, which is the point of the method. A new
@@ -3144,7 +3303,7 @@
       if (!integ.formW(gammaDt, false, needNew)) return false;
 
       const count = Math.min(k + 1, this.nHistory);
-      for (let j = 0; j < count; j++) thetas[j] = (ts[j] - t) / dt;
+      for (let j = 0; j < count; j++) thetas[j] = ts[j] / dt;
 
       // The predictor, and the history resampled onto the fictitious uniform grid.
       const upred = this.upred;
@@ -3152,15 +3311,28 @@
         this.lagrange(1, count, upred);
         for (let i = 1; i < k; i++) this.lagrange(-i, count, corrector[i]);
       } else {
-        upred.set(uprev);
+        // The first step, at a start or a restart, with one point of history:
+        // predict by an Euler step from it, as QNDF, the NDF and CVODE do. The
+        // error estimate below is the predictor-corrector difference times BDF1's
+        // error constant, which is an estimate of the local error only if that
+        // difference is O(h²): from the Euler predictor it is h·(f(u) − f(uprev)).
+        // OrdinaryDiffEq predicts the last value itself, and then the difference
+        // is h·f -- O(h), with the whole derivative in it. After a jump f is large
+        // and the time is late, so that no representable step passed: a model
+        // whose packages failed at t = 5000 was refused at a step of 1.5e-11.
+        const f0 = integ.fsalfirst;
+        for (let i = 0; i < n; i++) upred[i] = uprev[i] + dt * f0[i];
         for (let i = 1; i < k; i++) corrector[i].set(uprev);
       }
 
-      // tmp collects everything on the left that is already known.
+      // tmp collects everything on the left that is already known:
+      // −(α₁·uₙ + Σ αₘ₊₁·ũₙ₋ₘ)/α₀, written with the α summing to zero as
+      // uₙ − Σ αₘ₊₁·(ũₙ₋ₘ − uₙ)/α₀, so that a component at rest stays exactly
+      // where it is (see lagrange).
       for (let i = 0; i < n; i++) {
-        let v = -a[1] * uprev[i];
-        for (let m = 1; m < k; m++) v -= a[m + 1] * corrector[m][i];
-        newton.tmp[i] = v * gamma;
+        let v = 0;
+        for (let m = 1; m < k; m++) v += a[m + 1] * (corrector[m][i] - uprev[i]);
+        newton.tmp[i] = uprev[i] - v * gamma;
       }
       newton.gamma = gamma;
       newton.c = 1;
@@ -3222,6 +3394,37 @@
       return true;
     }
 
+    /**
+     * u(t + θh) inside the step just taken, from the method's own polynomial:
+     * the Lagrange interpolant through the new point, at θ = 1, and the points
+     * of history the step was taken from -- k of them at order k, fewer while
+     * the history is shorter -- as OrdinaryDiffEq's FBDF interpolates. It gives
+     * the solver's own values at both ends of the step. Without it the
+     * integrator fell back on a cubic Hermite whose slope at the far end this
+     * method never sets, and every row between two steps was off by about h·f.
+     */
+    interpolate(integ, theta, out) {
+      const { n, thetas, uHistory } = this;
+      const m = Math.min(this.order, this.nHistory);
+      let w = 1;
+      for (let j = 0; j < m; j++) w *= (theta - thetas[j]) / (1 - thetas[j]);
+      // As in lagrange: the step's first point plus weighted differences from it.
+      const u = integ.u;
+      const u0 = uHistory[0];
+      for (let i = 0; i < n; i++) out[i] = u0[i] + w * (u[i] - u0[i]);
+      for (let a = 1; a < m; a++) {
+        let wa = (theta - 1) / (thetas[a] - 1);
+        for (let b = 0; b < m; b++) {
+          if (b === a) continue;
+          wa *= (theta - thetas[b]) / (thetas[a] - thetas[b]);
+        }
+        if (wa === 0) continue;
+        const ua = uHistory[a];
+        for (let i = 0; i < n; i++) out[i] += wa * (ua[i] - u0[i]);
+      }
+      return out;
+    }
+
     /** Choose the next order and step size from the four estimates. */
     decide(integ) {
       this.prevOrderPending = this.order;
@@ -3276,16 +3479,17 @@
       if (this.order !== this.prevOrder) this.qwait = this.order + 2;
       else if (this.qwait > 0) this.qwait--;
 
-      // Roll the history forward: the new point goes to the front.
+      // Roll the history forward: the new point goes to the front, and every
+      // older one is now a further step of the size just taken behind it.
       const K = this.uHistory.length;
       const last = this.uHistory[K - 1];
       for (let j = K - 1; j > 0; j--) {
         this.uHistory[j] = this.uHistory[j - 1];
-        this.ts[j] = this.ts[j - 1];
+        this.ts[j] = this.ts[j - 1] - dtjust;
       }
       this.uHistory[0] = last;
       this.uHistory[0].set(integ.u);
-      this.ts[0] = integ.t;
+      this.ts[0] = 0;
       if (this.nHistory < K) this.nHistory++;
 
       this.dtpropose = dtjust / q;
@@ -3448,6 +3652,12 @@
       this.u0 = new Float64Array(n);
       this.phi = new Float64Array(n);
       this.dd = new Float64Array(n);
+      // The candidate D[k] and D[k+2] the estimates for orders k∓1 are read
+      // from, and the interpolant's scratch.
+      this.Dk = new Float64Array(n);
+      this.Dk2 = new Float64Array(n);
+      this.phiWork = new Float64Array(QNDF_MAX_ORDER + 2);
+      this.dCol = new Float64Array(QNDF_MAX_ORDER + 2);
 
       const S = QNDF_MAX_ORDER;
       this.stride = S;
@@ -3637,7 +3847,45 @@
       const dd = this.dd;
       for (let i = 0; i < n; i++) dd[i] = u[i] - u0[i];
 
-      // D[k+2] = dd − D[k+1];  D[k+1] = dd;  then accumulate down.
+      // The three estimates are read off the differences as they will be once
+      // this step is taken -- D[k] + dd and dd − D[k+1] -- but D itself is left
+      // as the last accepted step made it. It is only rolled forward in
+      // `accepted`: updated here, a step the error test then threw away left D
+      // describing a solution that was never kept, and the next attempt started
+      // from that (OrdinaryDiffEq keeps a copy to restore; not writing it until
+      // the step is kept comes to the same).
+      const { Dk, Dk2 } = this;
+      integ.EEst = Math.abs(this.errorConstantAt(k)) * integ.errorNorm(dd);
+      if (k > 1) {
+        for (let i = 0; i < n; i++) Dk[i] = D[k][i] + dd[i];
+        this.EEst1 = Math.abs(this.errorConstantAt(k - 1)) * integ.errorNorm(Dk);
+      } else {
+        this.EEst1 = Infinity;
+      }
+      if (k < this.maxOrder) {
+        for (let i = 0; i < n; i++) Dk2[i] = dd[i] - D[k + 1][i];
+        this.EEst2 = Math.abs(this.errorConstantAt(k + 1)) * integ.errorNorm(Dk2);
+      } else {
+        this.EEst2 = Infinity;
+      }
+      this.errorOrder = k;
+      return true;
+    }
+
+    /**
+     * Roll the differences forward past the step just kept:
+     * D[k+2] = dd − D[k+1], D[k+1] = dd, then D[j] += D[j+1] down to 1.
+     *
+     * dd is taken from the state the integrator kept, which is the step's own
+     * unless non-negativity clamped part of it. From the unclamped one the
+     * history would describe values the solution never took, and the predictor
+     * of the next step would extrapolate them.
+     */
+    commit(integ) {
+      const { n, D, dd, u0 } = this;
+      const k = this.order;
+      const u = integ.u;
+      for (let i = 0; i < n; i++) dd[i] = u[i] - u0[i];
       for (let i = 0; i < n; i++) D[k + 2][i] = dd[i] - D[k + 1][i];
       D[k + 1].set(dd);
       for (let j = k; j >= 1; j--) {
@@ -3645,18 +3893,37 @@
         const b = D[j + 1];
         for (let i = 0; i < n; i++) a[i] += b[i];
       }
+    }
 
-      // The three estimates, read AFTER the update, as the method reads them: D[k]
-      // and D[k+2] are then the differences of the step just taken.
-      integ.EEst = Math.abs(this.errorConstantAt(k)) * integ.errorNorm(dd);
-      this.EEst1 = k > 1
-        ? Math.abs(this.errorConstantAt(k - 1)) * integ.errorNorm(D[k])
-        : Infinity;
-      this.EEst2 = k < this.maxOrder
-        ? Math.abs(this.errorConstantAt(k + 1)) * integ.errorNorm(D[k + 2])
-        : Infinity;
-      this.errorOrder = k;
-      return true;
+    /**
+     * u(t + θh) inside the step just taken, from the backward differences as
+     * they stand once it is kept: the Newton backward-difference polynomial
+     * through the new point on the step's uniform grid,
+     *
+     *     u(θ) = u + Σ(j=1..k) φj(θ − 1)·∇ʲu,   φ1(σ) = σ,  φj+1(σ) = φj(σ)·(σ + j)/(j + 1)
+     *
+     * which is how OrdinaryDiffEq's QNDF interpolates. It gives the solver's own
+     * values at both ends. Without it the integrator fell back on a cubic
+     * Hermite whose slope at the far end this method never sets, and every row
+     * between two steps was off by about h·f.
+     */
+    interpolate(integ, theta, out) {
+      const { n, D, u0, phiWork, dCol } = this;
+      const k = this.order;
+      const s = theta - 1;
+      let p = s;
+      phiWork[1] = p;
+      for (let j = 1; j < k; j++) { p = p * (s + j) / (j + 1); phiWork[j + 1] = p; }
+      const u = integ.u;
+      for (let i = 0; i < n; i++) {
+        // ∇ʲu after the step, from the kept state: dd, then D[j] + ∇ʲ⁺¹u down to 1.
+        let acc = u[i] - u0[i];
+        for (let j = k; j >= 1; j--) { acc = D[j][i] + acc; dCol[j] = acc; }
+        let v = u[i];
+        for (let j = 1; j <= k; j++) v += phiWork[j] * dCol[j];
+        out[i] = v;
+      }
+      return out;
     }
 
     /**
@@ -3664,6 +3931,7 @@
      * and k+1 would allow, and take the longest.
      */
     accepted(integ, dtjust) {
+      this.commit(integ);
       this.consfailcnt = 0;
       this.nconsteps++;
       const k = this.order;
@@ -3889,6 +4157,13 @@
       this.cre = new Float64Array(n * n);
       this.cim = new Float64Array(n * n);
 
+      // The last accepted step's collocation polynomial, as divided differences
+      // of its stages (OrdinaryDiffEq's cont1..cont3): what the next step's
+      // starting guess is extrapolated from.
+      this.cont1 = new Float64Array(n);
+      this.cont2 = new Float64Array(n);
+      this.cont3 = new Float64Array(n);
+
       this.dtprev = 1;
       this.complexValid = false;
       this.complexDt = NaN;
@@ -3978,8 +4253,14 @@
       const needNew = integ.W.jacStale
         || !integ.W.haveFactor
         || this.status !== 'FastConvergence';
+      // The complex half is built from the same J as the real one, so whenever
+      // `form` renewed J -- asked to, or because the one it had was too old --
+      // it is rebuilt too. Keyed on the request alone, a J renewed for its age at
+      // an unchanged step left the complex half factorised from the old one.
+      const jacsBefore = integ.jacCache.njac;
       if (!integ.formW(dt / tab.gamma, true, needNew)) return false;
-      if (needNew || !this.complexValid || this.complexDt !== dt) {
+      const jacRenewed = integ.jacCache.njac !== jacsBefore;
+      if (needNew || jacRenewed || !this.complexValid || this.complexDt !== dt) {
         if (!this.formComplexW(integ, alphaDt, betaDt)) return false;
         this.complexValid = true;
         this.complexDt = dt;
@@ -3991,25 +4272,50 @@
         z1.fill(0); z2.fill(0); z3.fill(0);
         w1.fill(0); w2.fill(0); w3.fill(0);
       } else {
-        // Extrapolate the previous step's collocation polynomial onto this step.
-        // Much better than starting from zero, and it is most of why Radau needs
-        // only two or three Newton iterations on a smooth stretch.
+        // Extrapolate the last accepted step's collocation polynomial onto this
+        // step. Much better than starting from zero, and it is most of why Radau
+        // needs only two or three Newton iterations on a smooth stretch.
+        //
+        // The accepted step's, as OrdinaryDiffEq keeps it -- not the stages as
+        // they stand. After a rejected or failed attempt those are that
+        // attempt's, and after a Newton that diverged they are whatever it
+        // diverged to: each retry then extrapolated from the wreck of the last,
+        // the iterate grew by orders of magnitude per attempt, every shorter step
+        // failed at once, and the step fell to the floor and stayed there. The
+        // rtm page's own Brusselator example did that at t = 13.7.
+        const { cont1, cont2, cont3 } = this;
         const c1 = tab.c1;
         const c2 = tab.c2;
         const c1m1 = c1 - 1;
         const c2m1 = c2 - 1;
-        const c1mc2 = c1 - c2;
         const c3p = dt / this.dtprev;
         const c1p = c1 * c3p;
         const c2p = c2 * c3p;
         for (let i = 0; i < n; i++) {
-          const a1 = (z2[i] - z3[i]) / c2m1;
-          const tmp = (z1[i] - z2[i]) / c1mc2;
-          const a2 = (tmp - a1) / c1m1;
-          const a3 = a2 - (tmp - z1[i] / c1) / c2;
+          const a1 = cont1[i];
+          const a2 = cont2[i];
+          const a3 = cont3[i];
           z1[i] = c1p * (a1 + (c1p - c2m1) * (a2 + (c1p - c1m1) * a3));
           z2[i] = c2p * (a1 + (c2p - c2m1) * (a2 + (c2p - c1m1) * a3));
           z3[i] = c3p * (a1 + (c3p - c2m1) * (a2 + (c3p - c1m1) * a3));
+        }
+        // Kept at or above zero where the caller asked for that. The polynomial
+        // is the step's own, from before the integrator projected the step back
+        // to zero, and carried on from a component clamped there it goes on
+        // below zero. Where the rates read a species as max(0, y), as the
+        // facsimile and rtm models do, f is flat down there and J is not: the
+        // Newton sweeps then shrink the iterate by J/(J − γ/h) each, about 0.7
+        // at J = −1e3 and h = 0.01, and Radau took every step past 5e-3 for
+        // divergence and ground on at that step for good.
+        const nn = integ.nonNegative;
+        if (nn) {
+          for (let i = 0; i < n; i++) {
+            if (!nn[i]) continue;
+            const floor = -uprev[i];
+            if (z1[i] < floor) z1[i] = floor;
+            if (z2[i] < floor) z2[i] = floor;
+            if (z3[i] < floor) z3[i] = floor;
+          }
         }
         for (let i = 0; i < n; i++) {
           w1[i] = tab.TI11 * z1[i] + tab.TI12 * z2[i] + tab.TI13 * z3[i];
@@ -4122,6 +4428,22 @@
     accepted(integ, dtjust) {
       this.dtprev = dtjust;
       this.haveHistory = true;
+      // The polynomial the next starting guess is extrapolated from, taken now,
+      // while the stages are this accepted step's.
+      const { n, tab, z1, z2, z3, cont1, cont2, cont3 } = this;
+      const c1 = tab.c1;
+      const c2 = tab.c2;
+      const c1m1 = c1 - 1;
+      const c2m1 = c2 - 1;
+      const c1mc2 = c1 - c2;
+      for (let i = 0; i < n; i++) {
+        const a1 = (z2[i] - z3[i]) / c2m1;
+        const tmp = (z1[i] - z2[i]) / c1mc2;
+        const a2 = (tmp - a1) / c1m1;
+        cont1[i] = a1;
+        cont2[i] = a2;
+        cont3[i] = a2 - (tmp - z1[i] / c1) / c2;
+      }
     }
 
     /**

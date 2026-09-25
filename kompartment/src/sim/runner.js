@@ -133,8 +133,36 @@ export function absoluteTolerance(project, layout) {
 }
 
 /**
+ * Every jump the state makes in a run of `system`: waste packages that fail all
+ * at one time, at the time their slot holds -- read now, since a probabilistic
+ * run moves the parameter behind it -- and a disruptive event's occurrences,
+ * drawn for this realisation or declared at a time, one jump per occurrence.
+ * `{ ...jump, at }`, in no particular order; `run` refuses a slot that does not
+ * come to a number, and ./localsens.js refuses a jump inside the run at all.
+ */
+export function jumpsOf(system) {
+	return (system.jumps ?? []).flatMap((j) => (j.slot != null
+		? [{ ...j, at: system.slotValue(j.slot) }]
+		: (j.times?.() ?? []).map((at) => ({ ...j, at }))));
+}
+
+/**
  * @param {object|Project} input  project JSON or a Project
  * @param {object} [opts] { onProgress(fraction), signal }
+ * @param {object} [opts.equations]  a system of equations standing over the
+ *   model's own, integrated by this run's machinery in its place -- the
+ *   switch-time restarts, the discrete events, the blocks that remember, the
+ *   model's solver settings, its floor on the inventories, the clock and the
+ *   progress and stop -- so that nothing about how a model is run has to be
+ *   written twice. The sensitivity equations of ./localsens.js are the one
+ *   user: the model's states and a copy of them per parameter. `{ dydt, y0,
+ *   abstol, jacobian, solver, onSegment }`: the right-hand side and where it
+ *   starts, whose first `nstate` entries are the model's own states; the
+ *   absolute tolerance of every entry; the Jacobian to hand the solver; the id
+ *   of the solver to use rather than the model's; and `onSegment(t, interval)`,
+ *   told where each segment starts and what the clock interpolation there is.
+ *   The floor applies to the model's own inventories only, which are the first
+ *   entries. A jump in the state is not carried: refuse one before asking.
  * @returns {Results}
  */
 export function run(input, opts = {}) {
@@ -157,7 +185,7 @@ export function run(input, opts = {}) {
 	opts.onStage?.('solving');
 
 	const grid = project.timeGrid();
-	const y0 = system.initialState();
+	const y0 = opts.equations?.y0 ?? system.initialState();
 
 	const { nstate, states } = system.layout;
 
@@ -194,7 +222,10 @@ export function run(input, opts = {}) {
 	// one is set. Turned off here, the per-compartment flags are left exactly
 	// as they are and simply not consulted, so turning it back on restores what
 	// the model said rather than whatever was last edited.
-	const nonNegative = new Array(nstate).fill(false);
+	// As long as the vector integrated, which is the state vector unless the
+	// caller brought equations of its own: theirs start with the model's
+	// states and nothing after those is an inventory.
+	const nonNegative = new Array(y0.length).fill(false);
 	if (project.simulation.non_negative !== false) {
 		for (const s of states) {
 			// The inventories inside waste packages are inventories: floored
@@ -209,7 +240,7 @@ export function run(input, opts = {}) {
 		}
 	}
 
-	const abstol = absoluteTolerance(project, system.layout);
+	const abstol = opts.equations?.abstol ?? absoluteTolerance(project, system.layout);
 
 	/**
 	 * The solver's own steps, when those are what is wanted.
@@ -303,7 +334,10 @@ export function run(input, opts = {}) {
 		const empty = new Float64Array(0);
 		solution = {
 			t: grid,
-			y: grid.map(() => empty),
+			// One row per time. `grid` is a Float64Array, and its own `map`
+			// makes another -- of zeros, the empty rows cast to numbers --
+			// which is what this was, not a list of rows.
+			y: Array.from(grid, () => empty),
 			stats: {
 				solver: null,
 				integrated: false,
@@ -328,7 +362,7 @@ export function run(input, opts = {}) {
 		return finish(solveStart);
 	}
 
-	const solverId = project.simulation.solver;
+	const solverId = opts.equations?.solver ?? project.simulation.solver;
 	const solver = solverFor(solverId);
 	if (!solver) {
 		// Two different failures wear the same face, and the fix for one is
@@ -369,10 +403,16 @@ export function run(input, opts = {}) {
 		// A number when nothing asked for otherwise, a per-state array when
 		// something did; every solver here takes either.
 		abstol,
-		// Generated from the equations; absent when the model uses a
-		// function with no derivative rule, in which case the solvers
-		// difference it as they always did.
-		jacobian: !system.jacobian?.available ? null
+		// Generated from the equations. Where the model uses a function with
+		// no derivative rule the values are declined, and the solvers
+		// difference the matrix through its pattern; only a model whose
+		// pattern could not be worked out leaves them to difference it whole.
+		jacobian: !system.jacobian?.available
+			// Declined values with the structure kept (see buildJacobian):
+			// differenced through the pattern, as a numeric Jacobian is.
+			? (system.jacobian?.pattern
+				? { pattern: system.jacobian.pattern, groups: system.jacobian.groups, constant: false, evaluate: () => null }
+				: null)
 			// Asked to difference it (`Jacobian: finite differences`): the
 			// generated pattern and its colouring, and never a value. Every
 			// solver here differences through the pattern when `evaluate`
@@ -445,6 +485,8 @@ export function run(input, opts = {}) {
 			}
 			: undefined,
 	};
+	// Equations of the caller's own come with a Jacobian of their own.
+	if (opts.equations) solverOpts.jacobian = opts.equations.jacobian;
 
 	// The times the model says it changes at. The solver is restarted at each
 	// of them rather than allowed to step across: see ../domain/switchtimes.js.
@@ -453,9 +495,7 @@ export function run(input, opts = {}) {
 	// not at the build: a probabilistic run moves the parameter behind it.
 	// ...and a disruptive event's occurrences, drawn for this realisation or
 	// declared at a time. One jump per occurrence.
-	const jumps = (system.jumps ?? []).flatMap((j) => (j.slot != null
-		? [{ ...j, at: system.slotValue(j.slot) }]
-		: (j.times?.() ?? []).map((at) => ({ ...j, at }))));
+	const jumps = jumpsOf(system);
 	for (const j of jumps) {
 		if (j.slot == null) continue; // drawn: a number by construction
 		// A slot that moves with the clock or the state holds *a* number after
@@ -487,11 +527,13 @@ export function run(input, opts = {}) {
 	// the start of each segment, so an interval never spans a corner the model
 	// declared -- see `useClockInterpolation` in ./builder.js.
 	const minChange = Number(project.simulation.min_change_time ?? 0);
+	const f = opts.equations?.dydt ?? system.dydt;
 	const solveSpan = (grid2, start) => {
 		system.useClockInterpolation?.(minChange, grid2[0]);
+		opts.equations?.onSegment?.(grid2[0], minChange);
 		return system.events
-			? solveWithEvents(system, solver, grid2, start, solverOpts)
-			: solver(system.dydt, grid2, start, solverOpts);
+			? solveWithEvents(system, f, solver, grid2, start, solverOpts)
+			: solver(f, grid2, start, solverOpts);
 	};
 
 	try {
@@ -742,7 +784,7 @@ const MAX_EVENTS = 10000;
  * solver that carried its step size and its difference table across one would
  * be extrapolating through a model that has changed.
  */
-function solveWithEvents(system, solver, grid, y0, opts) {
+function solveWithEvents(system, f, solver, grid, y0, opts) {
 	const events = system.events;
 	const last = grid[grid.length - 1];
 	const times = [];
@@ -773,7 +815,7 @@ function solveWithEvents(system, solver, grid, y0, opts) {
 			console.log(`  segment ${guard} at t=${t.toFixed(3)}  heap `
 				+ `${Math.round(m.heapUsed / 1048576)} MB  rows ${rows.length}`);
 		}
-		const seg = solver(system.dydt, span, y, opts);
+		const seg = solver(f, span, y, opts);
 
 		for (let i = 0; i < seg.t.length; i++) {
 			// The seam: the segment opens at the time the last one closed on,
@@ -1119,7 +1161,10 @@ export class Results {
 	 */
 	massBalance() {
 		const budget = this.system.layout.budget;
-		return budget ? auditBudget(budget, this.t, this.y, { rtol: this.project.simulation.rtol }) : null;
+		return budget ? auditBudget(budget, this.t, this.y, {
+			rtol: this.project.simulation.rtol,
+			abstol: absoluteTolerance(this.project, this.system.layout),
+		}) : null;
 	}
 
 	/**

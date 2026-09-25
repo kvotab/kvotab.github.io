@@ -32,7 +32,7 @@ export class ZipError extends Error {
  * because how much may come out of a file does not depend on how many pieces
  * it arrives in.
  */
-const MAX_ARCHIVE_INFLATED = MAX_INFLATED;
+export const MAX_ARCHIVE_INFLATED = MAX_INFLATED;
 
 /** What is left of one archive's decompression allowance. */
 class Budget {
@@ -115,9 +115,11 @@ const LFH_SIG = 0x04034b50;
 
 /**
  * @param {ArrayBuffer|Uint8Array} data
+ * @param {{inflateLimit?: number}} [opts]  what the whole archive may inflate
+ *   to; `MAX_ARCHIVE_INFLATED` unless a test says otherwise
  * @returns {Promise<Map<string, Uint8Array>>} entry name -> bytes
  */
-export async function unzip(data) {
+export async function unzip(data, opts = {}) {
 	const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
 	const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 
@@ -133,7 +135,7 @@ export async function unzip(data) {
 	const out = new ZipEntries();
 	// One allowance for the whole archive, spent by every entry that inflates
 	// -- including the ones that inflate later, on first access.
-	const budget = new Budget(MAX_ARCHIVE_INFLATED);
+	const budget = new Budget(opts.inflateLimit ?? MAX_ARCHIVE_INFLATED);
 	let p = cdOffset;
 
 	for (let i = 0; i < entryCount; i++) {
@@ -534,15 +536,25 @@ async function deflateRaw(bytes) {
  * and the local header is complete -- which is the shape the widest range of
  * readers, including this file's own, handles without special cases.
  *
+ * **What is written is what `unzip` will read back.** The reader stops at
+ * `MAX_ARCHIVE_INFLATED` of deflated data for the whole archive, and a run
+ * saved with its model can be larger than that -- so Save wrote archives that
+ * Open refused. An entry that would take the deflated total past the reader's
+ * allowance is stored instead: stored data is outside it, being already in the
+ * archive and bounded by it. The file is larger, and it opens.
+ *
  * @param {Array<{name: string, bytes: Uint8Array}>} entries
- * @param {{modified?: Date}} [opts]
+ * @param {{modified?: Date, inflateLimit?: number}} [opts]  `inflateLimit` is
+ *   the reader's allowance, `MAX_ARCHIVE_INFLATED` unless a test says otherwise
  * @returns {Promise<Uint8Array>}
  */
 export async function zip(entries, opts = {}) {
 	const when = dosTime(opts.modified ?? new Date(0));
+	const limit = opts.inflateLimit ?? MAX_ARCHIVE_INFLATED;
 	const local = [];
 	const central = [];
 	let offset = 0;
+	let inflated = 0;
 
 	for (const entry of entries) {
 		const name = new TextEncoder().encode(entry.name);
@@ -551,10 +563,14 @@ export async function zip(entries, opts = {}) {
 			throw new ZipError(`'${entry.name}' is ${raw.length} bytes, which needs ZIP64 `
 				+ 'and is more than this writer will produce.');
 		}
-		const packed = await deflateRaw(raw);
 		// Stored when deflate did not help, which happens for something already
-		// compressed and for the empty file.
+		// compressed and for the empty file -- and when the reader would not
+		// inflate this much more of one archive. Not compressed at all then:
+		// deflating a hundred megabytes to throw the answer away is time.
+		const fits = inflated + raw.length <= limit;
+		const packed = fits ? await deflateRaw(raw) : null;
 		const useDeflate = packed != null && packed.length < raw.length;
+		if (useDeflate) inflated += raw.length;
 		const data = useDeflate ? packed : raw;
 		const method = useDeflate ? 8 : 0;
 		const sum = crc32(raw);

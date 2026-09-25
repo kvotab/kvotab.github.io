@@ -8,6 +8,7 @@ node resources/tests/ode/test-build.mjs           # the bundles and Kompartment'
 node resources/tests/ode/julia/test-linalg.mjs    # julia/: see julia/README.md
 node resources/tests/ode/julia/test-order.mjs
 node resources/tests/ode/julia/test-stiff.mjs [--verbose]
+node resources/tests/ode/julia/test-behaviour.mjs
 ```
 
 `test-core` checks that the single-file build (`resources/js/ode-core.js`)

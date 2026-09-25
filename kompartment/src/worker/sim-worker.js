@@ -1534,31 +1534,40 @@ self.onmessage = async (ev) => {
 			const r = runSensitivity(project, {
 				parameters: msg.parameters,
 				signal: { get aborted() { return cancelled; } },
-				onProgress: (fraction) => {
+				// The run's clock comes with the fraction now that the solve is a
+				// run: see `equations` in ../sim/runner.js.
+				onProgress: (fraction, at) => {
 					const now = Date.now();
 					if (now - lastPost > 80) {
 						lastPost = now;
-						self.postMessage({ type: 'progress', id, fraction, at: null });
+						self.postMessage({ type: 'progress', id, fraction, at: at ?? null });
 					}
 				},
 			});
 			// Elasticities rather than raw derivatives: `dy/dp` carries the
 			// units of both and cannot be compared between two parameters, and
 			// comparing them is the whole question.
-			const which = msg.states && msg.states.length
-				? r.states.map((s, k) => k).filter((k) => msg.states.includes(r.states[k].name))
-				: r.states.map((s, k) => k);
+			//
+			// One per state, named as the chart names it. `r.y` and each block
+			// of `r.sens` are per *state* -- a row per nuclide of a compartment
+			// -- and this used to walk `r.states`, which is per *block*: on a
+			// model indexed by nuclide the Geosphere label went on the
+			// Repository's second nuclide, and most states were never shown.
+			// Machinery (a far-field path's cells, a running mean's integral,
+			// the mass balance) is left out, as the chart leaves it out.
+			const which = r.series.filter((s) => !s.hidden
+				&& (!msg.states?.length || msg.states.includes(s.label) || msg.states.includes(s.block)));
 			self.postMessage({
 				type: 'local-sensitivity',
 				id,
 				t: r.t,
 				chosen: r.chosen,
 				stats: r.stats,
-				states: which.map((k) => ({
-					name: r.states[k].name,
-					y: r.y[k],
-					sens: r.sens.map((block) => block[k]),
-					elasticity: r.sens.map((block, j) => elasticity(r.y[k], block[k], r.chosen[j].value)),
+				states: which.map((s) => ({
+					name: s.label,
+					y: r.y[s.offset],
+					sens: r.sens.map((block) => block[s.offset]),
+					elasticity: r.sens.map((block, j) => elasticity(r.y[s.offset], block[s.offset], r.chosen[j].value)),
 				})),
 			});
 		} catch (e) {

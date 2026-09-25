@@ -69,17 +69,19 @@ export function closedBelow(rtol) {
  *   compartment, `famOf` the family of each offset)
  * @param {ArrayLike<number>} t  the output times
  * @param {ArrayLike<ArrayLike<number>>} y  the states at each: `y[i][state]`
- * @param {{rtol?: number}} [opts]  the run's relative tolerance, which sets
- *   what counts as closed
+ * @param {{rtol?: number, abstol?: number|ArrayLike<number>}} [opts]  the
+ *   run's relative tolerance, which sets what counts as closed, and its
+ *   absolute tolerance (one number, or one per state), below which a family
+ *   is too small for the solver to resolve
  * @returns {{
  *   worst: number,
  *   at: number,
- *   families: Array<{name: string, idle: boolean, scale: number, worst: number,
- *     relative: number, at: number, final: object}>,
+ *   families: Array<{name: string, idle: boolean, unresolved: boolean, floor: number,
+ *     scale: number, worst: number, relative: number, at: number, final: object}>,
  *   total: {scale: number, worst: number, relative: number, at: number, final: object},
  * }}
  */
-export function audit(budget, t, y, { rtol } = {}) {
+export function audit(budget, t, y, { rtol, abstol } = {}) {
 	const n = t.length;
 	const F = budget.nfam;
 	const inventory = Array.from({ length: F }, () => new Float64Array(n));
@@ -112,6 +114,25 @@ export function audit(budget, t, y, { rtol } = {}) {
 	const scaleOf = (row, scale) => Math.max(scale, Math.abs(row.inventory), Math.abs(row.start),
 		row.in, row.out, row.decay, row.ingrowth, Math.abs(row.explicit), Math.abs(row.between));
 
+	// What the solver resolves. It keeps a state to within its absolute
+	// tolerance and makes no promise below that, so a family whose every
+	// amount stays inside the largest tolerance among its states has nothing
+	// the audit can check: its "residual" is round-off from the rest of the
+	// model -- 1e-28 leaked into an empty family's budget was a residual as
+	// large as the family, and read as a balance that does not close.
+	const floorOf = (f) => {
+		if (abstol == null) return 0;
+		if (typeof abstol === 'number') return Number.isFinite(abstol) && abstol > 0 ? abstol : 0;
+		let most = 0;
+		for (const m of budget.members) {
+			for (let off = 0; off < m.width; off++) {
+				const v = abstol[m.base + off];
+				if (m.famOf[off] === f && Number.isFinite(v) && v > most) most = v;
+			}
+		}
+		return most;
+	};
+
 	const families = [];
 	const totals = [];
 	for (let f = 0; f < F; f++) {
@@ -126,9 +147,10 @@ export function audit(budget, t, y, { rtol } = {}) {
 			last = row;
 			totals[i] = totals[i] ? addRows(totals[i], row) : row;
 		}
-		const idle = scale === 0;
+		const floor = floorOf(f);
+		const idle = scale === 0 || scale <= floor;
 		families.push({
-			name: budget.families[f], idle, scale,
+			name: budget.families[f], idle, unresolved: idle && scale > 0, floor, scale,
 			worst: idle ? 0 : worst, relative: idle ? 0 : worst / scale, at, final: last,
 		});
 	}
@@ -173,6 +195,11 @@ export function describeAudit(a, { timeUnit = '' } = {}) {
 			+ 'the equations moved that nothing accounts for');
 	}
 	for (const f of a.families) {
+		if (f.unresolved) {
+			out.push(`  ${f.name}: never more than ${num(f.scale)} held or moved, within the absolute tolerance `
+				+ `${num(f.floor)} -- too little for the solver to resolve, so not audited`);
+			continue;
+		}
 		if (f.idle) { out.push(`  ${f.name}: nothing held or moved`); continue; }
 		const r = f.final;
 		const parts = [`start ${num(r.start)}`, `+ in ${num(r.in)}`, `− out ${num(r.out)}`,

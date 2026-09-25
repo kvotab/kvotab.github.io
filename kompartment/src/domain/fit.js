@@ -37,7 +37,7 @@
  * exactly the case they are for.
  */
 
-import { PDF_KINDS, densityAt, cumulativeAt } from './pdf.js';
+import { kindInfo, densityAt, cumulativeAt } from './pdf.js';
 
 export const FIT_METHODS = [
 	['mle', 'maximum likelihood', 'The parameters under which this sample is the most probable.'],
@@ -558,7 +558,7 @@ export function rankFits(fits, test = 'ad') {
 
 /** A fitted spec as the model would take it, to four significant figures. */
 export function fitText(spec) {
-	const meta = PDF_KINDS[spec.kind];
+	const meta = kindInfo(spec.kind);
 	if (!meta) return '';
 	const fmt = (v) => String(Number(v.toPrecision(4)));
 	return `${meta.expr}(${meta.params.map((p) => `${p.key}=${fmt(spec.params[p.key])}`).join(',')})`;

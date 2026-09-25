@@ -19,7 +19,11 @@
                             rejected outright (a failed Newton, a singular W)
      cache.accepted(integ)  roll any history forward; optional
      cache.interpolate(integ, theta, out)   optional; without it, cubic
-                            Hermite through the two ends is used
+                            Hermite through the two ends is used. Read over
+                            the whole step just taken, θ = 0 at its start and
+                            θ = 1 at its end, and only before the history rolls
+                            forward: event location and the rows saved inside
+                            the step both come from it, and both happen first.
    ========================================================================== */
 
 import { JacobianCache, WFactorization } from './jacobian.js';
@@ -57,7 +61,12 @@ export class ODEError extends Error {
  *        1e-8 relative, which becomes the accuracy floor of a fifth-order
  *        method well before its step size does.
  * @param {{colPtr:Int32Array,rowIdx:Int32Array}} [opts.jacPattern]  sparsity of df/du
- * @param {object} [opts.events]  { n, fun(t, u, out), direction, terminal, apply(t, u) }
+ * @param {object} [opts.events]  { n, fun(t, u, out), direction, enabled, terminal, apply(t, u) }.
+ *        `direction` is one number for every function or an array with one
+ *        per function: above 0 a rising crossing counts, below 0 a falling
+ *        one, 0 either. `enabled`, if given, has one entry per function, and a
+ *        function whose entry is 0 is not looked at: a caller that switches an
+ *        event off once it has fired -- FACSIMILE's WHEN -- keeps it off.
  */
 export class ODEProblem {
   constructor(f, u0, tspan, opts = {}) {
@@ -80,7 +89,9 @@ export class ODESolution {
     this.stats = stats;
     this.retcode = retcode;
     this.message = message || '';
-    this.events = [];           // { t, u, which } for each event that fired
+    this.events = [];           // { t, u, which, all } for each event that fired:
+                                // `which` the first function, `all` every one
+                                // that crossed at that instant
     this.interp = null;         // set when dense output was kept
   }
 
@@ -133,6 +144,9 @@ const DEFAULTS = {
                           // moves on. For a caller that keeps the run itself;
                           // pair it with saveEverystep: false and nothing is
                           // stored twice.
+  onOutput: null,         // (t, u) for every saveat time as it is saved, in
+                          // order, before the onAccepted of the step it lies
+                          // in. `u` is a buffer the next row reuses.
 
   matrix: 'auto',
   norm: 'rms',
@@ -266,7 +280,14 @@ class Integrator {
     return a + this.reltol * Math.max(Math.abs(this.uprev[i]), Math.abs(this.u[i]));
   }
 
-  /** ‖e‖ in the integrator's norm, weighted as above. */
+  /**
+   * ‖e‖ in the integrator's norm, weighted as above.
+   *
+   * A component that is not a number makes the norm not a number, in the
+   * maximum norm as in the root mean square. `r > m` alone is never true of
+   * NaN, which let a step whose error could not be measured pass on the
+   * components that could.
+   */
   errorNorm(e) {
     const n = this.n;
     if (this.opts.norm === 'max') {
@@ -274,6 +295,7 @@ class Integrator {
       for (let i = 0; i < n; i++) {
         const r = Math.abs(e[i] / this.weight(i));
         if (r > m) m = r;
+        else if (r !== r) return NaN;
       }
       return m;
     }
@@ -334,7 +356,7 @@ function hermite(theta, dt, uprev, u, f0, f1, out) {
 }
 
 /**
- * Locate the first event crossing inside the step just taken.
+ * Locate the earliest event crossing inside the step just taken.
  *
  * The event functions are continuous and are looked at through the step's own
  * interpolant, so the crossing is found where the solution actually is rather
@@ -345,20 +367,77 @@ function hermite(theta, dt, uprev, u, f0, f1, out) {
 function findEvent(integ, evalAt, gPrev, work) {
   const ev = integ.prob.events;
   if (!ev) return null;
-  const { gNow, utmp } = work;
-  const dir = ev.direction ?? 1;
+  const { gNow } = work;
 
   ev.fun(integ.t + integ.dt, integ.u, gNow);
-  let which = -1;
+  // Every function that crossed, each in the direction asked of it. The
+  // direction may be one number for all of them or one each; an array used to
+  // be compared with 0 as a whole, and with two or more entries that is never
+  // true, so no crossing was ever seen.
+  const crossed = [];
+  const { enabled } = ev;
   for (let i = 0; i < ev.n; i++) {
+    // A function switched off is not an event, however it moves.
+    if (enabled && !enabled[i]) continue;
     const a = gPrev[i];
     const b = gNow[i];
+    const dir = directionOf(ev, i);
     const rising = a < 0 && b >= 0;
     const falling = a > 0 && b <= 0;
-    if ((dir >= 0 && rising) || (dir <= 0 && falling)) { which = i; break; }
+    if ((dir >= 0 && rising) || (dir <= 0 && falling)) crossed.push(i);
   }
-  if (which < 0) return null;
+  if (!crossed.length) return null;
 
+  // Each located, and the earliest is what happened: two functions crossing in
+  // one step must not be reported in the order they are numbered, or the later
+  // one is found first and the earlier is behind the restart, never to fire.
+  // Those that cross together within the precision of the search are reported
+  // together, since a restart from the one would see the other at its start.
+  const found = [];
+  for (const which of crossed) {
+    const theta = locateRoot(integ, evalAt, ev, which, gPrev[which], work);
+    const tEvent = integ.t + theta * integ.dt;
+    if (rootAtStart(integ, tEvent)) continue;
+    found.push({ theta, t: tEvent, which });
+  }
+  if (!found.length) return null;
+  let first = found[0];
+  for (const f of found) if (f.theta < first.theta) first = f;
+  const together = Math.max(2e-14 * Math.abs(integ.dt),
+    16 * Number.EPSILON * Math.max(Math.abs(first.t), Math.abs(integ.dt)));
+  const group = found.filter((f) => Math.abs(f.t - first.t) <= together);
+  // The state handed back is where every one of them has crossed -- the far
+  // side of the latest -- so that a run restarted from it does not find the
+  // same crossings again a few ulps in.
+  let last = first;
+  for (const f of group) if (f.theta > last.theta) last = f;
+  const all = group.map((f) => f.which).sort((a, b) => a - b);
+  evalAt(last.theta, work.uEvent);
+  return { theta: last.theta, t: last.t, which: all[0], all };
+}
+
+/** The direction asked of event function `i`: one number for all, or one each. */
+function directionOf(ev, i) {
+  const d = ev.direction;
+  if (d == null) return 1;
+  if (typeof d === 'number') return d;
+  const v = d[i];
+  return v == null ? 1 : v;
+}
+
+/**
+ * Where in the step, as θ, event function `which` crosses zero: bisection
+ * then Illinois on the step's interpolant, from `gStart` at θ = 0.
+ *
+ * The answer is the bracket's far end, the first θ found at which the
+ * function has crossed, as the NDF's search reports it -- not the middle of
+ * the bracket. From the middle, the state handed back could lie a hair short
+ * of the crossing: a caller that restarts there sees the function still on
+ * the near side, and its first step crosses again. Rodas5P and KenCarp4 fired
+ * `A - 0.9704455335485082, down`, with A = exp(-0.3 t), twice, 4e-16 apart.
+ */
+function locateRoot(integ, evalAt, ev, which, gStart, work) {
+  const { gNow, utmp } = work;
   const g = (theta) => {
     evalAt(theta, utmp);
     ev.fun(integ.t + theta * integ.dt, utmp, gNow);
@@ -367,7 +446,7 @@ function findEvent(integ, evalAt, gPrev, work) {
 
   let lo = 0;
   let hi = 1;
-  let flo = gPrev[which];
+  let flo = gStart;
   let fhi = g(1);
   // Illinois: the bracket is kept, and the stale end is halved so that the
   // secant cannot stall against it.
@@ -380,10 +459,14 @@ function findEvent(integ, evalAt, gPrev, work) {
     if ((fmid < 0) === (flo < 0)) { lo = mid; flo = fmid; fhi *= 0.5; }
     else { hi = mid; fhi = fmid; flo *= 0.5; }
   }
-  const theta = 0.5 * (lo + hi);
-  const tEvent = integ.t + theta * integ.dt;
-  // A root at the instant the solve began is not a crossing.
-  //
+  return hi;
+}
+
+/**
+ * Whether a root found at `tEvent` is the instant the solve began, which is
+ * not a crossing.
+ */
+function rootAtStart(integ, tEvent) {
   // A caller that stops at a terminal event and restarts from it -- which is
   // what a compartment model does, to apply whatever the event drives -- hands
   // back the state *at* the root, where g is zero to rounding. Whether that
@@ -394,12 +477,8 @@ function findEvent(integ, evalAt, gPrev, work) {
   // `examples/recorders.json` where the other five methods happened to land on
   // the lucky side.
   const t0 = integ.prob.tspan[0];
-  if (Math.abs(tEvent - t0)
-    <= 16 * Number.EPSILON * Math.max(Math.abs(t0), Math.abs(integ.dt))) {
-    return null;
-  }
-  evalAt(theta, utmp);
-  return { theta, t: tEvent, which };
+  return Math.abs(tEvent - t0)
+    <= 16 * Number.EPSILON * Math.max(Math.abs(t0), Math.abs(integ.dt));
 }
 
 /**
@@ -506,6 +585,7 @@ export function solve(prob, alg, options = {}) {
     gNow: prob.events ? new Float64Array(prob.events.n) : null,
     gPrev: prob.events ? new Float64Array(prob.events.n) : null,
     utmp: new Float64Array(n),
+    uEvent: new Float64Array(n),
   };
 
   if (!opts.adaptive && !opts.dt) {
@@ -584,6 +664,17 @@ export function solve(prob, alg, options = {}) {
         message = 'The run was stopped from outside';
         break;
       }
+      // One that failed at the smallest step the clock can represent has
+      // nowhere left to go. Halving it only for the floor to bring it back ran
+      // the step budget out one futile attempt at a time -- ten million of
+      // them by default -- with the run standing still.
+      if (atFloor) {
+        retcode = ConvergenceFailure;
+        message = `The step could not be taken at t = ${integ.t} even at `
+          + `${Math.abs(integ.dt).toExponential(3)}, the smallest the clock can represent: `
+          + 'the equations of its stages could not be solved there';
+        break;
+      }
       // A step that failed for a reason other than accuracy -- a Newton that
       // would not converge, a singular W -- is not the controller's business:
       // halve it, and make sure the next attempt uses a fresh Jacobian.
@@ -598,6 +689,9 @@ export function solve(prob, alg, options = {}) {
       for (let i = 0; i < n; i++) if (!Number.isFinite(integ.u[i])) { bad = i; break; }
       if (bad >= 0) {
         integ.stats.nreject++;
+        // The candidate is no state at all; the last accepted one is, and a
+        // method that reads integ.u before writing it must not be handed this.
+        integ.u.set(integ.uprev);
         integ.dt *= 0.5;
         integ.W.markStale();
         if (Math.abs(integ.dt) < dtminAt(integ.t)) {
@@ -609,7 +703,31 @@ export function solve(prob, alg, options = {}) {
       }
     }
 
-    let accepted = !opts.adaptive || !(integ.EEst > 1);
+    // An error estimate that is not a number says nothing about the step --
+    // neither that it was good nor by how much to shrink it; handed to the
+    // controller it makes the next step NaN. `!(EEst > 1)` let it through as
+    // accepted. It is a step that failed outright, like the ones above.
+    if (opts.adaptive && Number.isNaN(integ.EEst)) {
+      integ.stats.nreject++;
+      integ.u.set(integ.uprev);
+      if (reportProgress(integ, opts) === false) {
+        retcode = Terminated;
+        message = 'The run was stopped from outside';
+        break;
+      }
+      if (atFloor) {
+        retcode = Unstable;
+        message = `The error estimate is not a number at t = ${integ.t}, even with a step of `
+          + `${Math.abs(integ.dt).toExponential(3)}, the smallest the clock can represent`;
+        break;
+      }
+      integ.dt *= 0.5;
+      integ.W.markStale();
+      integ.controller.reset();
+      continue;
+    }
+
+    let accepted = !opts.adaptive || integ.EEst <= 1;
 
     // A step at the smallest size the clock can represent, which has failed
     // its error test anyway. There is nothing left to try: a shorter step does
@@ -657,43 +775,55 @@ export function solve(prob, alg, options = {}) {
     }
 
     // --- the step is good -----------------------------------------------------
+    // What is read inside the step -- the event functions, the saved rows -- is
+    // read off the step's own interpolant over the whole step, θ = 0 to 1.
     const tnew = integ.t + integ.dt;
     const evalAt = (theta, out) => {
       if (integ.cache.interpolate) return integ.cache.interpolate(integ, theta, out);
       return hermite(theta, integ.dt, integ.uprev, integ.u, integ.fsalfirst, integ.fsallast, out);
     };
 
-    // An event inside the step cuts it short at the crossing.
     let ev = null;
     if (prob.events) {
-      if (!integ.cache.hasFsalLast) {
+      // f at the end of the step is what the Hermite fallback needs, and only
+      // it: a method with an interpolant of its own reads none.
+      if (!integ.cache.hasFsalLast && !integ.cache.interpolate) {
         integ.f(tnew, integ.u, integ.fsallast);
       }
       ev = findEvent(integ, evalAt, work.gPrev, work);
     }
 
-    if (ev) {
-      integ.dt = ev.t - integ.t;
-      integ.u.set(work.utmp);
-      integ.clamp(integ.u);
-    }
-
     integ.stats.naccept++;
     if (integ.nonNegative) integ.clamp(integ.u);
 
-    // saveat points that the step just passed, from its interpolant
+    // saveat points that the step passed -- up to the event, where one cuts it
+    // short -- each where it lies in the whole step. They are read before the
+    // event is applied: afterwards the end state and the step length are the
+    // event's, while the interpolant is still the whole step's, and a θ worked
+    // out against the shortened step read every row inside it at the wrong
+    // place.
     if (saveat) {
-      while (saveatAt < saveat.length && tdir * (saveat[saveatAt] - (integ.t + integ.dt)) <= 0) {
+      const tEnd = ev ? ev.t : tnew;
+      while (saveatAt < saveat.length && tdir * (saveat[saveatAt] - tEnd) <= 0) {
         const ts = saveat[saveatAt];
         if (tdir * (ts - integ.t) >= 0) {
           const theta = integ.dt === 0 ? 1 : (ts - integ.t) / integ.dt;
           evalAt(theta, work.utmp);
           if (integ.nonNegative) integ.clamp(work.utmp);
           remember(ts, work.utmp, true);
+          if (opts.onOutput) opts.onOutput(ts, work.utmp);
         }
         saveatAt++;
       }
     }
+
+    // An event inside the step cuts it short at the crossing.
+    if (ev) {
+      integ.dt = ev.t - integ.t;
+      integ.u.set(work.uEvent);
+      integ.clamp(integ.u);
+    }
+
     if (opts.saveEverystep && !saveat) remember(integ.t + integ.dt, integ.u, false);
     if (opts.onAccepted) opts.onAccepted(integ.t + integ.dt, integ.u);
     if (integ.autoAbstol) {
@@ -726,7 +856,7 @@ export function solve(prob, alg, options = {}) {
 
     if (prob.events) {
       if (ev) {
-        events.push({ t: integ.t, u: Float64Array.from(integ.u), which: ev.which });
+        events.push({ t: integ.t, u: Float64Array.from(integ.u), which: ev.which, all: ev.all });
         if (events.length >= opts.maxEvents) {
           retcode = Terminated;
           message = `Stopped after ${events.length} events`;

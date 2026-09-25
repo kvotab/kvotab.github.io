@@ -1211,6 +1211,14 @@ the limit.
 The block that declines a model is now named in the reason as well, which is
 what turned a message about a function into a model that runs.
 
+A declined model keeps its pattern. The values are refused, not the structure:
+the pattern and its colouring are worked out before the tangent code is
+generated, `buildJacobian` returns them with the refusal
+(`b.differencingPattern`), and the runner hands them over with an `evaluate`
+that answers null -- the numeric-Jacobian path -- so the solvers difference
+the matrix through the pattern rather than densely. Before, a declined model of
+nine thousand states needed a dense matrix of 0.7 GB, and the solver refused it.
+
 ### The tangent function's temporaries, and a worker's stack
 
 A generated tangent function hoists its common subexpressions, and those used
@@ -2004,7 +2012,15 @@ through that order reported the matrix singular, and every ported method
 stalled at t = 0. It now orders what the loop left. Where the loop left nothing,
 which is every case it got right, the order is bit-identical (4,000 random
 patterns: 3,065 unchanged, 935 formerly broken). `mass_balance` is in the fingerprint's solve settings, since a run
-without it is not a run with it. The result travels as `payload.massBalance`
+without it is not a run with it.
+
+A family is judged against the largest amount it held or moved, and one that
+never exceeds the largest absolute tolerance among its states is not judged at
+all (`unresolved`, reported as such). It used to be idle only at exactly zero,
+and round-off from the rest of the model -- 1e-28, leaked into an empty
+family's budget under a differenced Jacobian -- was then a residual as large
+as the family: kencarp4 reported an audit that did not close on a model that
+did. The result travels as `payload.massBalance`
 from `Results.massBalance()`, is a status-line item (`mass balance: closes
 (9e-11)` / `open by 3.2e-4`, with every family in the tooltip) and is written
 into the run log, so it goes into a results archive with the rest.
@@ -2433,7 +2449,7 @@ README, which travelled with it, says how it was written and how it is checked
 (observed order of convergence at fixed steps, then the Hairer and Wanner stiff
 set against `scipy.integrate` Radau at rtol 1e-12).
 
-`src/ode/julia-solvers.js` is the adapter, and it exists because four things do
+`src/ode/julia-solvers.js` is the adapter, and it exists because five things do
 not line up:
 
 * **the Jacobian.** This tool hands over an *evaluator* that fills a values
@@ -2441,8 +2457,12 @@ not line up:
   matrix. Same pattern shape, so sparse is a `set` and dense is a scatter.
 * **the output.** This tool asks for a row per point of `tspan`; the package
   calls that `saveat`.
+* **the recorders.** The blocks that remember are handed every accepted step
+  (`onAccepted`) and every requested time (`onOutput`), as with this tool's own
+  solvers. The second was not passed on at first, so with these six a step
+  across an output interval hid the extreme at that time from a min/max.
 * **events.** Both are "a vector of functions whose sign change stops the run",
-  and every one of this tool's is terminal.
+  with a direction for each, and every one of this tool's is terminal.
 * **failure.** This tool throws a `SolverError`; the package returns a retcode.
   A run stopped at an event is not a failure.
 
@@ -2457,6 +2477,38 @@ where `g` is zero to rounding; on the unlucky side of that rounding the first
 step crosses it again, the event fires twice, and a duplicate row lands in the
 output. KenCarp4 did exactly that on `examples/recorders.json` where the other
 five landed on the lucky side.
+
+Eight faults were then fixed in the package on 2026-09-25, each listed at the
+end of its README with the check that failed before it: with two or more event
+functions none was ever located (the per-function direction array was compared
+with 0 as a whole); FBDF's and QNDF's rows between steps came from a Hermite
+whose far-end slope stayed zero, off by about h·f -- they now read their own
+polynomials; rows inside a step an event cut short were read at the wrong
+place; there was no hook for the saved rows; QNDF rolled its differences
+forward before the error test and from the unclamped state; RadauIIA5 took its
+starting guess from a failed attempt and, after a Newton that diverged, fell to
+the floor for good, while a step that failed at the floor was retried until the
+step budget ran out; RadauIIA5 kept a complex factorisation from a Jacobian
+renewed for age; and a NaN error estimate was accepted while the maximum norms
+skipped NaNs.
+
+Four more the same day, all about what happens at a restart. FBDF could not go
+on from packages that all fail late in a run: its first step predicted no
+change, so its error estimate was h·f and no step the clock could represent
+passed (the waste packages of a made-up model failing at t = 5000 were refused
+at 1.5e-11), and its history's times were the clock's rounded readings, 3 %
+out on the shortest steps there -- it now predicts by an Euler step and keeps
+its history as the steps themselves. FBDF moved a component at rest by
+rounding, its Lagrange weights reaching thousands once the step had grown, and
+an event on such a component fired at every upward pass; the sums are now
+differences from the newest point, which are zero for a constant. The state
+handed back at an event was read at the middle of the root's bracket, a hair
+short of the crossing now and then, and a run restarted there could meet the
+same crossing again a few ulps in, past the guard above -- it is now the
+bracket's far end, where the function has crossed, as `events.js` reports it.
+And RadauIIA5 carried its starting guess below zero from a component clamped
+there, where rates that read max(0, y) are flat; it now keeps the guess at or
+above zero where non-negativity was asked for.
 
 One trap in the adapter: the package merges what it is
 handed over its own defaults, so passing a key with the value `undefined`
@@ -2917,6 +2969,13 @@ opened by a build of this tool that predates the format opens the model and
 ignores `results/`. Nothing had to be versioned to make that true, and the
 `format` field in `meta.json` is there for the other direction -- a file from a
 newer build says so and leaves the model openable.
+
+**The writer keeps to the reader's allowance.** `unzip` refuses an archive
+whose deflated entries would expand past `MAX_ARCHIVE_INFLATED` (256 MB) in
+total, and a run of a large model is more than that, so Save used to write
+archives Open refused. `zip` now stores any entry that would take the deflated
+total past the same constant -- stored data is outside the reader's budget,
+being already in the file -- so what it writes is always what it reads.
 
 **Two things had to be carried that the reuse path refuses.** `integrationFingerprint`
 returns null for any model with a remembering block, and its comment records
@@ -4575,14 +4634,57 @@ between 1e-13 and 1e-5 of the state they are a sensitivity of, and the
 generated one takes fewer steps because the difference noise is gone from the
 term the step-size controller reads. On `four-compartment.json` — rates of
 1e-5 against inventories of 1e10, where a forward difference of `f` loses
-everything below the rounding of a number of order 1e9 — it is 462 steps
-against 2,528. On `recorders.json`, 531 against 773.
+everything below the rounding of a number of order 1e9 — it is 366 steps
+against 1,981 with all four rates (347 against 1,889 for `p12` alone; the
+other three are within two steps of each other either way). On `recorders.json`, 529 against 698 for
+`k_out[Cs-137]`. (Measured again when the sensitivity solve moved into the
+runner; the counts it replaced were older than that.)
 
 **The iteration matrix leaves out the second derivatives.** The true Jacobian of
 the augmented system carries `d(J·S)/dy` in the sensitivity blocks. Left out,
 exactly as CVODES leaves them out: they change how fast Newton converges and not
 what it converges *to*, so the matrix is the original `J` repeated down the
-diagonal and the answer is the same.
+diagonal and the answer is the same. That is also why it is always the NDF: a
+Rosenbrock method puts the Jacobian inside its formula, and an incomplete one
+changes its order rather than its speed.
+
+**It is solved as a run.** The augmented system used to go straight to
+`variableOrder` with its tolerances and nothing else -- no switch-time restarts,
+no discrete events, no recorders primed or fed, none of the model's solver
+settings, every compartment floored whatever its own switch said, and the
+dialog's progress and Stop handed over under names the solver does not read.
+A pulse a thousandth of a year wide between two switch times was stepped over
+entirely (A = 0 where the run has 0.61), a `max_step` of 10 over 1,000 years
+gave 20 steps where the run takes 106, and a compartment allowed below zero
+came out floored. Now `run` takes `equations` -- `{ dydt, y0, abstol,
+jacobian, solver, onSegment }`, a system standing over the model's own whose
+first `nstate` entries are the states -- and integrates it with everything a run
+does. The floor is sized by the vector, so it covers the states and nothing
+after them. `onSegment` tells the equations where each segment starts, because
+under `min_change_time` the clock slots are interpolated between two ends
+anchored there, and those ends were worked out from the parameter as it was:
+they are dropped around each difference. The tangents write the clock slots
+exactly at their instant, so after the generated `df/dp` the cache is told to
+work them out again. What that leaves is an approximation, and a known one:
+the states read the clock-only slots interpolated, while `J·S + df/dp` reads
+them at the exact instant -- a difference second order in the interval.
+Interpolating the tangents between the same two ends, as the values are, would
+close it; that has not been done.
+
+**What cannot be carried is refused** (`uncarried`), since each puts a term in
+`dy/dp` that `J·S + df/dp` does not have: a jump inside the run (`jumpsOf`); a
+min/max, snapshot or delay -- or a running mean an event switches -- that the
+derivative reads, found by walking `readsAlg` back from every transfer, source,
+dy/dt term, running-mean target and waste, event and far-field setting; and a
+chosen parameter that places a corner, found by moving the parameter's block a
+little and asking `switchTimes` again. A recorder no rate reads is a report and
+is run.
+
+**The dialog's series are per state.** `r.y` and each block of `r.sens` are one
+row per state; the worker used to walk `r.states`, which is one entry per
+*block*, so on a model indexed by nuclide the labels landed on the wrong rows
+and most states were never offered. `runSensitivity` returns `series`, a label
+per state as the chart gives it (`stateSeries`), and the worker reads that.
 
 Checked against exact derivatives rather than against itself. `A(t) = f·e^{-kt}`
 has `dA/dk = -t·f·e^{-kt}` and `dA/df = e^{-kt}`, and a two-compartment chain

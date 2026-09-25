@@ -23,7 +23,7 @@
 import { el } from './parts.js';
 import { openModal } from './modal.js';
 import {
-	PDF_KINDS, PDF_KIND_IDS, TRUNCATION, PERCENTILE_TRUNCATION, parsePDF, formatPDF, complete,
+	PDF_KINDS, PDF_KIND_IDS, TRUNCATION, PERCENTILE_TRUNCATION, parsePDF, formatPDF, complete, kindInfo,
 	curveOf, describePDF, pdfProblems, supportOf,
 } from '../domain/pdf.js';
 import { dialogInfo } from './dialoginfo.js';
@@ -207,7 +207,10 @@ export function openPDFEditor({
 	// spread this is. Log-triangular is the commonest in a finished assessment
 	// and a poor thing to be handed before any numbers are typed: three fields,
 	// all of them refused unless positive.
-	let draft = spec
+	// A spec of a kind this tool does not have -- one a file named, even
+	// `constructor` -- opens as a new draft rather than a dialog with no
+	// fields to draw.
+	let draft = spec && kindInfo(spec.kind)
 		? JSON.parse(JSON.stringify(spec))
 		: {
 			kind: 'norm', params: {}, values: null,
@@ -223,7 +226,7 @@ export function openPDFEditor({
 		title: `Distribution — ${title}`,
 		subtitle: subtitle || (unit ? `Every number below is in ${unit}` : ''),
 		build: (body) => {
-			const meta = PDF_KINDS[draft.kind];
+			const meta = kindInfo(draft.kind);
 
 			// --- which shape.
 			const kindSel = el('select', { className: 'pdf-kind' });
@@ -238,7 +241,7 @@ export function openPDFEditor({
 				// `mean` do not, and silently reinterpreting one as the other
 				// is how a distribution changes shape without anyone asking.
 				const kept = {};
-				const from = PDF_KINDS[draft.kind].params.map((p) => p.key);
+				const from = kindInfo(draft.kind).params.map((p) => p.key);
 				for (const p of PDF_KINDS[kindSel.value].params) {
 					if (from.includes(p.key)) kept[p.key] = draft.params[p.key];
 				}

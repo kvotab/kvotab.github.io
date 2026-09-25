@@ -111,7 +111,15 @@ class FBDFCache {
     this.dtpropose = null;
 
     const K = MAX_ORDER_LIMIT + 2;
-    this.ts = new Float64Array(K);                       // history times, ts[0] = t
+    // The history's times, measured from its newest point: ts[0] = 0 and ts[j]
+    // is minus the last j steps. Not the clock readings. Late in a run the
+    // clock rounds to a sizeable fraction of a short step -- half an ulp of
+    // 5000 is 4.5e-13, 3 % of the smallest step there -- and a polynomial
+    // through points at the rounded times is not the one the formula built:
+    // its slope is off by that fraction, and the predictor carries |f| times
+    // the rounding into the error estimate as though it were error. Summing
+    // the steps themselves keeps the spacing the formula used.
+    this.ts = new Float64Array(K);
     this.uHistory = Array.from({ length: K }, () => new Float64Array(n));
     this.nHistory = 0;
 
@@ -144,7 +152,7 @@ class FBDFCache {
 
   init(integ) {
     integ.newton.method = COEFFICIENT_MULTISTEP;
-    this.ts[0] = integ.t;
+    this.ts[0] = 0;
     this.uHistory[0].set(integ.uprev);
     this.nHistory = 1;
     this.itersFromEvent = 0;
@@ -158,7 +166,7 @@ class FBDFCache {
     if (h && h.t && h.t.length) {
       const m = Math.min(h.t.length, this.uHistory.length - 1);
       for (let j = 0; j < m; j++) {
-        this.ts[j + 1] = h.t[j];
+        this.ts[j + 1] = h.t[j] - integ.t;
         this.uHistory[j + 1].set(h.u[j]);
       }
       this.nHistory = m + 1;
@@ -170,7 +178,7 @@ class FBDFCache {
 
   /** History is meaningless after a discontinuity: start again at order 1. */
   restart(integ) {
-    this.ts[0] = integ.t;
+    this.ts[0] = 0;
     this.uHistory[0].set(integ.uprev);
     this.nHistory = 1;
     this.itersFromEvent = 0;
@@ -183,11 +191,24 @@ class FBDFCache {
     this.terkp1 = 0;
   }
 
-  /** The Lagrange interpolant of the history, in θ = (τ − t)/h, at θ = xi. */
+  /**
+   * The Lagrange interpolant of the history, in θ = (τ − t)/h, at θ = xi.
+   *
+   * Summed as the newest point plus weighted differences from it, which is the
+   * same polynomial -- the weights add up to one -- but not the same
+   * arithmetic. Σ wⱼ·uⱼ of a component that is not changing is its value only
+   * to rounding, and the weights here are large: after the step has grown
+   * five-fold the past points sit within one new step, and at order 5 the
+   * weights run to 2e3 for the predictor and to 1e5 for the value the formula
+   * reads four steps back. A bookkeeping species that had stopped changing
+   * then wandered by 1e4 ulps, and an event on it went on firing. Differences
+   * of a constant are zero.
+   */
   lagrange(xi, count, out) {
     const { thetas, uHistory, n } = this;
-    out.fill(0);
-    for (let j = 0; j < count; j++) {
+    const u0 = uHistory[0];
+    out.set(u0);
+    for (let j = 1; j < count; j++) {
       let w = 1;
       for (let m = 0; m < count; m++) {
         if (m === j) continue;
@@ -195,7 +216,7 @@ class FBDFCache {
       }
       if (w === 0) continue;
       const uj = uHistory[j];
-      for (let i = 0; i < n; i++) out[i] += w * uj[i];
+      for (let i = 0; i < n; i++) out[i] += w * (uj[i] - u0[i]);
     }
     return out;
   }
@@ -209,9 +230,9 @@ class FBDFCache {
     const dt = integ.dt;
     const count = Math.min(m, this.nHistory + 1);
     if (count < 2) return Infinity;
-    tsTmp[0] = integ.t + dt;
+    tsTmp[0] = dt;                           // the new point, from the newest old one
     for (let i = 0; i < count - 1; i++) tsTmp[i + 1] = ts[i];
-    fornbergWeights(tsTmp, count, integ.t + dt, count - 1, fdWeights, fdWork);
+    fornbergWeights(tsTmp, count, dt, count - 1, fdWeights, fdWork);
     const w0 = fdWeights[0];
     for (let i = 0; i < n; i++) terkTmp[i] = w0 * integ.u[i];
     for (let j = 1; j < count; j++) {
@@ -234,7 +255,7 @@ class FBDFCache {
     const a = BDF_COEFFS[k];
     const gamma = 1 / a[0];
     const gammaDt = gamma * dt;
-    const tdt = t + dt;
+    const tdt = dt;                          // t + dt, on the history's own clock
 
     // W survives a change of step size here far better than it would for a
     // variable-coefficient BDF, which is the point of the method. A new
@@ -245,7 +266,7 @@ class FBDFCache {
     if (!integ.formW(gammaDt, false, needNew)) return false;
 
     const count = Math.min(k + 1, this.nHistory);
-    for (let j = 0; j < count; j++) thetas[j] = (ts[j] - t) / dt;
+    for (let j = 0; j < count; j++) thetas[j] = ts[j] / dt;
 
     // The predictor, and the history resampled onto the fictitious uniform grid.
     const upred = this.upred;
@@ -253,15 +274,28 @@ class FBDFCache {
       this.lagrange(1, count, upred);
       for (let i = 1; i < k; i++) this.lagrange(-i, count, corrector[i]);
     } else {
-      upred.set(uprev);
+      // The first step, at a start or a restart, with one point of history:
+      // predict by an Euler step from it, as QNDF, the NDF and CVODE do. The
+      // error estimate below is the predictor-corrector difference times BDF1's
+      // error constant, which is an estimate of the local error only if that
+      // difference is O(h²): from the Euler predictor it is h·(f(u) − f(uprev)).
+      // OrdinaryDiffEq predicts the last value itself, and then the difference
+      // is h·f -- O(h), with the whole derivative in it. After a jump f is large
+      // and the time is late, so that no representable step passed: a model
+      // whose packages failed at t = 5000 was refused at a step of 1.5e-11.
+      const f0 = integ.fsalfirst;
+      for (let i = 0; i < n; i++) upred[i] = uprev[i] + dt * f0[i];
       for (let i = 1; i < k; i++) corrector[i].set(uprev);
     }
 
-    // tmp collects everything on the left that is already known.
+    // tmp collects everything on the left that is already known:
+    // −(α₁·uₙ + Σ αₘ₊₁·ũₙ₋ₘ)/α₀, written with the α summing to zero as
+    // uₙ − Σ αₘ₊₁·(ũₙ₋ₘ − uₙ)/α₀, so that a component at rest stays exactly
+    // where it is (see lagrange).
     for (let i = 0; i < n; i++) {
-      let v = -a[1] * uprev[i];
-      for (let m = 1; m < k; m++) v -= a[m + 1] * corrector[m][i];
-      newton.tmp[i] = v * gamma;
+      let v = 0;
+      for (let m = 1; m < k; m++) v += a[m + 1] * (corrector[m][i] - uprev[i]);
+      newton.tmp[i] = uprev[i] - v * gamma;
     }
     newton.gamma = gamma;
     newton.c = 1;
@@ -323,6 +357,37 @@ class FBDFCache {
     return true;
   }
 
+  /**
+   * u(t + θh) inside the step just taken, from the method's own polynomial:
+   * the Lagrange interpolant through the new point, at θ = 1, and the points
+   * of history the step was taken from -- k of them at order k, fewer while
+   * the history is shorter -- as OrdinaryDiffEq's FBDF interpolates. It gives
+   * the solver's own values at both ends of the step. Without it the
+   * integrator fell back on a cubic Hermite whose slope at the far end this
+   * method never sets, and every row between two steps was off by about h·f.
+   */
+  interpolate(integ, theta, out) {
+    const { n, thetas, uHistory } = this;
+    const m = Math.min(this.order, this.nHistory);
+    let w = 1;
+    for (let j = 0; j < m; j++) w *= (theta - thetas[j]) / (1 - thetas[j]);
+    // As in lagrange: the step's first point plus weighted differences from it.
+    const u = integ.u;
+    const u0 = uHistory[0];
+    for (let i = 0; i < n; i++) out[i] = u0[i] + w * (u[i] - u0[i]);
+    for (let a = 1; a < m; a++) {
+      let wa = (theta - 1) / (thetas[a] - 1);
+      for (let b = 0; b < m; b++) {
+        if (b === a) continue;
+        wa *= (theta - thetas[b]) / (thetas[a] - thetas[b]);
+      }
+      if (wa === 0) continue;
+      const ua = uHistory[a];
+      for (let i = 0; i < n; i++) out[i] += wa * (ua[i] - u0[i]);
+    }
+    return out;
+  }
+
   /** Choose the next order and step size from the four estimates. */
   decide(integ) {
     this.prevOrderPending = this.order;
@@ -377,16 +442,17 @@ class FBDFCache {
     if (this.order !== this.prevOrder) this.qwait = this.order + 2;
     else if (this.qwait > 0) this.qwait--;
 
-    // Roll the history forward: the new point goes to the front.
+    // Roll the history forward: the new point goes to the front, and every
+    // older one is now a further step of the size just taken behind it.
     const K = this.uHistory.length;
     const last = this.uHistory[K - 1];
     for (let j = K - 1; j > 0; j--) {
       this.uHistory[j] = this.uHistory[j - 1];
-      this.ts[j] = this.ts[j - 1];
+      this.ts[j] = this.ts[j - 1] - dtjust;
     }
     this.uHistory[0] = last;
     this.uHistory[0].set(integ.u);
-    this.ts[0] = integ.t;
+    this.ts[0] = 0;
     if (this.nHistory < K) this.nHistory++;
 
     this.dtpropose = dtjust / q;

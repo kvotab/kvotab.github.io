@@ -213,10 +213,17 @@ export function resultTree({
 		// A list reaches here in either of the two shapes the model uses: the
 		// derived one, whose indices can be switched off one at a time, or the
 		// shorthand a hand-written file may still be in. A member that is
-		// turned off is not in the run, so it is not in the file.
+		// turned off is not in the run, so it is not in the file. An index may
+		// also be the bare string a file wrote it as -- the scenario list of
+		// examples/scenarios.json is -- and that string is its name: read as an
+		// object it was `undefined`, and the file named every scenario so.
 		const members = (list.indices
-			? list.indices.filter((i) => i.enabled !== false).map((i) => i.name)
-			: list.elements ?? []).map((e) => String(e));
+			? list.indices
+				.filter((i) => i != null && (typeof i !== 'object' || i.enabled !== false))
+				.map((i) => (typeof i === 'object' ? i.name : i))
+			: list.elements ?? [])
+			.filter((e) => e != null)
+			.map((e) => String(e));
 		if (!members.length) continue;
 		place(root, ['IndexLists', linkName(list.name)],
 			dataset(members, STR, { name: list.name, members: members.length }));

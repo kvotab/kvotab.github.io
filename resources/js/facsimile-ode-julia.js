@@ -172,9 +172,20 @@
         {
           jac: bridged ? bridged.jac : null,
           jacPattern: bridged ? bridged.jacPattern : null,
-          // Terminal and upward-crossing, which is what this page's events are
-          // and what its driver expects to be handed back.
-          events: events ? { n: events.n, fun: events.fun, direction: 1, terminal: true } : null,
+          // Terminal, which is what this page's driver expects to be handed
+          // back, and with each event's own direction and the driver's mask of
+          // those still switched on. This passed `direction: 1` and no mask,
+          // so a downward event was looked for as an upward one and an event
+          // marked `once` fired again at every later crossing.
+          events: events
+            ? {
+              n: events.n,
+              fun: events.fun,
+              direction: events.direction ?? 1,
+              enabled: events.enabled ?? null,
+              terminal: true,
+            }
+            : null,
         },
       );
 
@@ -220,7 +231,7 @@
       return {
         t: ev ? ev.t : sol.t[sol.t.length - 1],
         y: yEnd,
-        stopped: ev ? { t: ev.t, y: yEnd, which: [ev.which] } : null,
+        stopped: ev ? { t: ev.t, y: yEnd, which: ev.all ?? [ev.which] } : null,
         stats: {
           nsteps: s.naccept,
           nfailed: s.nreject,

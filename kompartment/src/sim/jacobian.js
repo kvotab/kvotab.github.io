@@ -290,7 +290,19 @@ export function buildJacobian(b) {
 		return made;
 	} catch (e) {
 		if (e instanceof NoDerivative || e instanceof Refused) {
-			return { available: false, reason: e.message };
+			// The values are declined; the structure need not be. Where the
+			// pattern was worked out before the refusal -- it is, for every
+			// refusal of the tangent code -- the solvers are handed it and
+			// difference through it, as they do when a numeric Jacobian is
+			// asked for. Without it they differenced the whole matrix densely,
+			// which on a model of nine thousand states was 0.7 GB, and refused.
+			const kept = b.differencingPattern;
+			if (!kept) return { available: false, reason: e.message };
+			return {
+				available: false, reason: e.message, pattern: kept.pattern, groups: kept.groups,
+				nnz: kept.pattern.nnz, colours: kept.groups.length,
+				density: kept.pattern.nnz / Math.max(1, kept.pattern.n * kept.pattern.n),
+			};
 		}
 		throw e;
 	}
@@ -341,6 +353,9 @@ function generate(b) {
 
 	// --- one seed per colour --------------------------------------------------
 	const groups = budgetsApart(colourColumns(pattern), b);
+	// Kept where `buildJacobian` can find it if the tangent code below is
+	// refused: the structure stands whatever becomes of the values.
+	b.differencingPattern = { pattern, groups };
 	// The budgets' own group, when they have one: their columns are zero, and
 	// the tangent function need not be run to say so.
 	const apart = b.budget && !b.fullBudget ? groups[groups.length - 1] : null;

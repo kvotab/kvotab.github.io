@@ -45,6 +45,7 @@
  */
 
 import { SolverError } from './solvers/dormand-prince.js';
+import { colourColumns, differenceJacobian } from './core/sparse.js';
 
 /**
  * Pinned, not floating.
@@ -285,6 +286,45 @@ export async function loadScipy(opts = {}) {
 /** For tests: forget the interpreter so a fresh one can be brought up. */
 export function _resetScipy() { pyodide = null; loading = null; }
 
+/**
+ * The Jacobian's values at `(t, y)`, into `out` (the pattern's entries), for
+ * the SciPy methods: the generated one's -- or, where it answers null,
+ * differences through its pattern.
+ *
+ * A generated Jacobian answers null where an entry is not a number at this
+ * state: an exact derivative is infinite where sqrt or log meets an empty
+ * compartment. Every other solver here then differences the matrix through the
+ * pattern, and so does this. It used to hand the null to `set`, which threw,
+ * and the run stopped over a matrix the step could have done without.
+ *
+ * @param {object} jac  `{evaluate, pattern, groups?}`
+ * @param {(t, y, out) => Float64Array|void} f  the model's derivative, raw
+ * @param {{threshold: Float64Array, work?: object}} opts  `threshold` is
+ *   abstol/rtol per state, as the NDF's; `work` keeps the scratch between calls
+ * @returns {number} the derivative evaluations spent
+ */
+export function jacobianValues(jac, f, t, y, out, { threshold, work = {} }) {
+	const values = jac.evaluate(t, y);
+	if (values) {
+		out.set(values);
+		return 0;
+	}
+	const n = y.length;
+	work.groups ??= jac.groups ?? colourColumns(jac.pattern);
+	work.ytry ??= new Float64Array(n);
+	work.fd ??= new Float64Array(n);
+	work.del ??= new Float64Array(n);
+	work.f0 ??= new Float64Array(n);
+	work.y ??= new Float64Array(n);
+	// A copy of the state: `y` may be the buffer Python has just written, and
+	// the model's derivative writes into buffers of its own.
+	work.y.set(y);
+	const fill = (tt, yy, into) => f(tt, yy, into) ?? into;
+	const f0 = fill(t, work.y, work.f0);
+	differenceJacobian(fill, t, work.y, f0, jac.pattern, work.groups, threshold, out, work);
+	return 1 + work.groups.length;
+}
+
 // --- the solver --------------------------------------------------------------
 
 /**
@@ -430,11 +470,16 @@ export function scipySolver(id) {
 			? (t) => { opts.onAccepted(t, Float64Array.from(yStep.data)); }
 			: () => {};
 
+		// abstol/rtol per state, which the differencing increment is scaled
+		// by where the generated Jacobian has to be differenced after all.
+		const threshold = new Float64Array(neq);
+		for (let i = 0; i < neq; i++) {
+			const a = typeof opts.abstol === 'number' || opts.abstol == null ? (opts.abstol ?? 1e-6) : opts.abstol[i];
+			threshold[i] = a / (opts.rtol ?? 1e-3);
+		}
+		const jacWork = {};
 		const jsJac = jac
-			? (t) => {
-				const values = jac.evaluate(t, yIn.data);
-				jv.data.set(values);
-			}
+			? (t) => { nfevals += jacobianValues(jac, f, t, yIn.data, jv.data, { threshold, work: jacWork }); }
 			: () => {};
 
 		py.globals.set('js_rhs', jsRhs);

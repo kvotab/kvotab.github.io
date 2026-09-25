@@ -1,11 +1,12 @@
 # ode_julia — tests
 
-Three of them, and they answer three different questions.
+Four of them, and they answer four different questions.
 
 ```
 node resources/tests/ode/julia/test-linalg.mjs
 node resources/tests/ode/julia/test-order.mjs
 node resources/tests/ode/julia/test-stiff.mjs [--verbose]
+node resources/tests/ode/julia/test-behaviour.mjs
 node resources/tests/ode/test-build.mjs           # the bundles and Kompartment's copies are up to date
 ```
 
@@ -103,6 +104,25 @@ not return the solver's own answer even at the ends of the step.
 TRBDF2 runs at a looser tolerance than the rest and is held to ten times the
 slack, because it is second order and a pointwise comparison on a problem with
 sharp transients measures phase. See the README's note on its cliff.
+
+## Does the loop around a step do what it says?
+
+`test-behaviour` checks what happens around a step rather than inside one, on
+problems small enough to know the answer to: which event is found when several
+functions cross, each in its own direction; what the rows saved inside a step
+hold, between steps and in a step an event cut short; the `onOutput` hook; how
+a run ends when a step cannot be taken even at the floor; what a rejected step
+leaves in QNDF's differences; RadauIIA5's starting guess after a diverged
+Newton, and its complex factorisation after a Jacobian renewed for age; what
+becomes of a NaN in a norm or an error estimate; every method going on from a
+jump late in a run (packages failing at t = 5000.123456789, FBDF's first step
+and its history's clock); a component at rest staying exactly where it is,
+with an event on it firing once; the state at an event lying past the crossing,
+so that a restart does not find it again; and RadauIIA5 going on past a
+component held at zero where the rates are flat below it. Each of its twelve
+groups failed on the package as it was before 2026-09-25 (see the package
+README), and each of groups 9 to 12 fails on the package with only groups 1 to
+8 fixed.
 
 ## What the stiff set found
 

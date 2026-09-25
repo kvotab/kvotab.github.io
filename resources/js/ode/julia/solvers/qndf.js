@@ -105,6 +105,12 @@ class QNDFCache {
     this.u0 = new Float64Array(n);
     this.phi = new Float64Array(n);
     this.dd = new Float64Array(n);
+    // The candidate D[k] and D[k+2] the estimates for orders k∓1 are read
+    // from, and the interpolant's scratch.
+    this.Dk = new Float64Array(n);
+    this.Dk2 = new Float64Array(n);
+    this.phiWork = new Float64Array(QNDF_MAX_ORDER + 2);
+    this.dCol = new Float64Array(QNDF_MAX_ORDER + 2);
 
     const S = QNDF_MAX_ORDER;
     this.stride = S;
@@ -294,7 +300,45 @@ class QNDFCache {
     const dd = this.dd;
     for (let i = 0; i < n; i++) dd[i] = u[i] - u0[i];
 
-    // D[k+2] = dd − D[k+1];  D[k+1] = dd;  then accumulate down.
+    // The three estimates are read off the differences as they will be once
+    // this step is taken -- D[k] + dd and dd − D[k+1] -- but D itself is left
+    // as the last accepted step made it. It is only rolled forward in
+    // `accepted`: updated here, a step the error test then threw away left D
+    // describing a solution that was never kept, and the next attempt started
+    // from that (OrdinaryDiffEq keeps a copy to restore; not writing it until
+    // the step is kept comes to the same).
+    const { Dk, Dk2 } = this;
+    integ.EEst = Math.abs(this.errorConstantAt(k)) * integ.errorNorm(dd);
+    if (k > 1) {
+      for (let i = 0; i < n; i++) Dk[i] = D[k][i] + dd[i];
+      this.EEst1 = Math.abs(this.errorConstantAt(k - 1)) * integ.errorNorm(Dk);
+    } else {
+      this.EEst1 = Infinity;
+    }
+    if (k < this.maxOrder) {
+      for (let i = 0; i < n; i++) Dk2[i] = dd[i] - D[k + 1][i];
+      this.EEst2 = Math.abs(this.errorConstantAt(k + 1)) * integ.errorNorm(Dk2);
+    } else {
+      this.EEst2 = Infinity;
+    }
+    this.errorOrder = k;
+    return true;
+  }
+
+  /**
+   * Roll the differences forward past the step just kept:
+   * D[k+2] = dd − D[k+1], D[k+1] = dd, then D[j] += D[j+1] down to 1.
+   *
+   * dd is taken from the state the integrator kept, which is the step's own
+   * unless non-negativity clamped part of it. From the unclamped one the
+   * history would describe values the solution never took, and the predictor
+   * of the next step would extrapolate them.
+   */
+  commit(integ) {
+    const { n, D, dd, u0 } = this;
+    const k = this.order;
+    const u = integ.u;
+    for (let i = 0; i < n; i++) dd[i] = u[i] - u0[i];
     for (let i = 0; i < n; i++) D[k + 2][i] = dd[i] - D[k + 1][i];
     D[k + 1].set(dd);
     for (let j = k; j >= 1; j--) {
@@ -302,18 +346,37 @@ class QNDFCache {
       const b = D[j + 1];
       for (let i = 0; i < n; i++) a[i] += b[i];
     }
+  }
 
-    // The three estimates, read AFTER the update, as the method reads them: D[k]
-    // and D[k+2] are then the differences of the step just taken.
-    integ.EEst = Math.abs(this.errorConstantAt(k)) * integ.errorNorm(dd);
-    this.EEst1 = k > 1
-      ? Math.abs(this.errorConstantAt(k - 1)) * integ.errorNorm(D[k])
-      : Infinity;
-    this.EEst2 = k < this.maxOrder
-      ? Math.abs(this.errorConstantAt(k + 1)) * integ.errorNorm(D[k + 2])
-      : Infinity;
-    this.errorOrder = k;
-    return true;
+  /**
+   * u(t + θh) inside the step just taken, from the backward differences as
+   * they stand once it is kept: the Newton backward-difference polynomial
+   * through the new point on the step's uniform grid,
+   *
+   *     u(θ) = u + Σ(j=1..k) φj(θ − 1)·∇ʲu,   φ1(σ) = σ,  φj+1(σ) = φj(σ)·(σ + j)/(j + 1)
+   *
+   * which is how OrdinaryDiffEq's QNDF interpolates. It gives the solver's own
+   * values at both ends. Without it the integrator fell back on a cubic
+   * Hermite whose slope at the far end this method never sets, and every row
+   * between two steps was off by about h·f.
+   */
+  interpolate(integ, theta, out) {
+    const { n, D, u0, phiWork, dCol } = this;
+    const k = this.order;
+    const s = theta - 1;
+    let p = s;
+    phiWork[1] = p;
+    for (let j = 1; j < k; j++) { p = p * (s + j) / (j + 1); phiWork[j + 1] = p; }
+    const u = integ.u;
+    for (let i = 0; i < n; i++) {
+      // ∇ʲu after the step, from the kept state: dd, then D[j] + ∇ʲ⁺¹u down to 1.
+      let acc = u[i] - u0[i];
+      for (let j = k; j >= 1; j--) { acc = D[j][i] + acc; dCol[j] = acc; }
+      let v = u[i];
+      for (let j = 1; j <= k; j++) v += phiWork[j] * dCol[j];
+      out[i] = v;
+    }
+    return out;
   }
 
   /**
@@ -321,6 +384,7 @@ class QNDFCache {
    * and k+1 would allow, and take the longest.
    */
   accepted(integ, dtjust) {
+    this.commit(integ);
     this.consfailcnt = 0;
     this.nconsteps++;
     const k = this.order;

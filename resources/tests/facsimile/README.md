@@ -437,6 +437,19 @@ corrosion fluxes it reports are now multiples of the reactions' own named
 rates rather than a second copy of the rate laws, and that they still equal
 what those rate laws gave.
 
+A group after it is about runs with many events, and each check in it failed
+before 2026-09-25. A run may apply up to `FacsimileODE.MAX_EVENTS` (10000)
+events, and one that needs more stops with an error that says so and hands
+back what it did; the driver used to stop at the fiftieth and return the run
+as though it were complete, so `sin(t)` rising through 0.5 ended at t = 308
+of 400 with no word. A bookkeeping species fed until an event switches the
+feed off must fire that event once, under every solver, and stay exactly
+where it is after it: FBDF moved it by rounding and fired the event at every
+upward pass, and RadauIIA5 ground to a halt at one short step. And a crossing
+fires once however close to it the run restarts: two of the ported solvers
+restarted from a state a hair short of it and fired `A - 0.97..., down`
+twice.
+
 ## What keeps a run bounded
 
     node resources/tests/facsimile/test-limits.js

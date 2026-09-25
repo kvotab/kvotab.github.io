@@ -101,6 +101,15 @@ export function operandKeys(scheme) {
 }
 
 /**
+ * Every key an availability can hold an equation under, whichever scheme is
+ * chosen. A rename and a delete read all of them: an operand left behind when
+ * the scheme was switched from a limit to an isotherm is still an equation in
+ * the file, and it has to follow a rename to be right when the scheme is
+ * switched back.
+ */
+export const OPERAND_KEYS = ['limit', 'top', 'bottom'];
+
+/**
  * What a shared scheme adds up.
  *
  *   amount  the inventories as the model holds them -- becquerels, usually

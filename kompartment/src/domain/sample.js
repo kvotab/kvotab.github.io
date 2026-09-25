@@ -22,7 +22,7 @@
  * (`SamplingMethod`), and for the same reason.
  */
 
-import { PDF_KINDS, complete, cdfAt, quantile, phi, probabilityCuts } from './pdf.js';
+import { kindInfo, complete, cdfAt, quantile, phi, probabilityCuts } from './pdf.js';
 
 // Re-exported because this is where a caller looks for them: they are about
 // drawing from a distribution, and they live in ./pdf.js only because the
@@ -119,7 +119,7 @@ export function rng(seed = 1) {
  * @returns {number} NaN where the distribution is not filled in
  */
 export function valueAtProbability(spec, u, at = 0) {
-	if (!spec || !PDF_KINDS[spec.kind] || !complete(spec)) return NaN;
+	if (!spec || !kindInfo(spec.kind) || !complete(spec)) return NaN;
 	if (spec.kind === 'pg') {
 		const v = spec.values ?? [];
 		if (!v.length) return NaN;

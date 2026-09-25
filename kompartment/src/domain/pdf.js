@@ -64,6 +64,17 @@
 
 import { erfc } from '../parser/functions.js';
 
+/**
+ * A kind's description, or null: looked up by the kind's own name only. A
+ * kind read from a file is only a string, and `PDF_KINDS['constructor']` is
+ * Object's own -- truthy, with no `params` -- so a file naming it passed every
+ * check and then threw. Every lookup of a kind that came from outside goes
+ * through this.
+ */
+export function kindInfo(kind) {
+	return typeof kind === 'string' && Object.prototype.hasOwnProperty.call(PDF_KINDS, kind) ? PDF_KINDS[kind] : null;
+}
+
 /** What each kind is called where a person reads it, and what it takes. */
 export const PDF_KINDS = {
 	unif: {
@@ -285,7 +296,7 @@ export function parsePDF(expr, functionName = '') {
 	// else, or a spec typed by hand -- the argument names say which
 	// parameterisation of `logn` this is, and the expression name does for the
 	// rest.
-	let kind = PDF_KINDS[functionName] ? functionName : null;
+	let kind = kindInfo(functionName) ? functionName : null;
 	if (!kind) {
 		const has = (k) => args.has(k) || bare.includes(k);
 		if (name === 'logn') {
@@ -310,7 +321,7 @@ export function parsePDF(expr, functionName = '') {
 		inorder: args.get('inorder') !== 'false',
 		pos: num(args.get('pos')) ?? 0,
 	};
-	for (const p of PDF_KINDS[kind].params) spec.params[p.key] = num(args.get(p.key));
+	for (const p of kindInfo(kind).params) spec.params[p.key] = num(args.get(p.key));
 	if (kind === 'pg') {
 		const raw = args.get('values');
 		spec.values = raw
@@ -322,9 +333,9 @@ export function parsePDF(expr, functionName = '') {
 
 /** Whether every number this kind needs has been filled in. */
 export function complete(spec) {
-	if (!spec || !PDF_KINDS[spec.kind]) return false;
+	if (!spec || !kindInfo(spec.kind)) return false;
 	if (spec.kind === 'pg') return !!spec.values?.length;
-	return PDF_KINDS[spec.kind].params.every((p) => spec.params?.[p.key] != null);
+	return kindInfo(spec.kind).params.every((p) => spec.params?.[p.key] != null);
 }
 
 /**
@@ -334,8 +345,8 @@ export function complete(spec) {
  * numbers.
  */
 export function formatPDF(spec) {
-	if (!spec || !PDF_KINDS[spec.kind]) return '';
-	const meta = PDF_KINDS[spec.kind];
+	if (!spec || !kindInfo(spec.kind)) return '';
+	const meta = kindInfo(spec.kind);
 	const bits = [];
 	if (spec.kind === 'pg') {
 		bits.push(`values=${(spec.values ?? []).join(';')}`);
@@ -655,7 +666,7 @@ export function probabilityCuts(spec) {
  * curve a fit is ranked by is the curve on the screen.
  */
 export function densityAt(spec, x) {
-	if (!spec || !PDF_KINDS[spec.kind] || spec.kind === 'pg' || !complete(spec)) return NaN;
+	if (!spec || !kindInfo(spec.kind) || spec.kind === 'pg' || !complete(spec)) return NaN;
 	const f = bareDensity(spec, x);
 	const { lo, hi, cut } = probabilityCuts(spec);
 	if (!cut || f === 0) return f;
@@ -665,7 +676,7 @@ export function densityAt(spec, x) {
 
 /** The probability of at most `x`, truncation and all; NaN as `densityAt`. */
 export function cumulativeAt(spec, x) {
-	if (!spec || !PDF_KINDS[spec.kind] || spec.kind === 'pg' || !complete(spec)) return NaN;
+	if (!spec || !kindInfo(spec.kind) || spec.kind === 'pg' || !complete(spec)) return NaN;
 	const { lo, hi, cut } = probabilityCuts(spec);
 	const F = cdfAt(spec, x);
 	if (!cut) return F;
@@ -752,7 +763,7 @@ export function normalQuantile(p) {
  */
 export function valueCuts(spec, lo = -Infinity, hi = Infinity) {
 	const out = { lo: spec?.trmin ?? null, hi: spec?.trmax ?? null };
-	const can = spec && PDF_KINDS[spec.kind] && spec.kind !== 'pg' && complete(spec);
+	const can = spec && kindInfo(spec.kind) && spec.kind !== 'pg' && complete(spec);
 	const at = (p, fallback) => {
 		if (!can || !(p > 0) || !(p < 1)) return p === 0 ? fallback : (p === 1 ? fallback : null);
 		const v = quantile(spec, p);
@@ -828,7 +839,7 @@ export function curveOf(spec, { points = 240, bins = 32 } = {}) {
 	const span = supportOf(spec);
 	if (!span) return null;
 	const [lo, hi] = span;
-	const meta = PDF_KINDS[spec.kind];
+	const meta = kindInfo(spec.kind);
 
 	if (spec.kind === 'pg') {
 		const v = spec.values ?? [];
@@ -869,8 +880,8 @@ export function curveOf(spec, { points = 240, bins = 32 } = {}) {
 
 /** One line saying what this is, for a row that has no room for a chart. */
 export function describePDF(spec) {
-	if (!spec || !PDF_KINDS[spec.kind]) return '';
-	const meta = PDF_KINDS[spec.kind];
+	if (!spec || !kindInfo(spec.kind)) return '';
+	const meta = kindInfo(spec.kind);
 	if (!complete(spec)) return `${meta.label} — not filled in`;
 	const fmt = (v) => (Math.abs(v) >= 1e4 || (v !== 0 && Math.abs(v) < 1e-3)
 		? v.toExponential(2) : String(v));
@@ -905,8 +916,8 @@ export function describePDF(spec) {
  */
 export function pdfProblems(spec) {
 	const out = [];
-	if (!spec || !PDF_KINDS[spec.kind]) return out;
-	const meta = PDF_KINDS[spec.kind];
+	if (!spec || !kindInfo(spec.kind)) return out;
+	const meta = kindInfo(spec.kind);
 	const p = spec.params ?? {};
 	for (const d of meta.params) {
 		const v = p[d.key];
