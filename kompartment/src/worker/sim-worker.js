@@ -243,6 +243,9 @@ function startSlice(msg, keep, slice, on) {
 			gsa: msg.gsa ?? null,
 			from: slice.from,
 			to: slice.to,
+			// The reader's go-ahead for a sample past what every machine can
+			// give a tab: each slice checks the size of the whole design.
+			large: msg.large === true,
 		});
 	});
 }
@@ -720,6 +723,7 @@ async function runDesign(msg) {
 			iterations: only.iterations,
 			seed: only.seed,
 			latin: only.latin !== false,
+			large: only.large === true,
 			varied: only.varied ?? null,
 			tornado: only.tornado ?? null,
 			gsa: only.gsa ?? null,
@@ -973,6 +977,7 @@ self.onmessage = async (ev) => {
 				tornado: msg.tornado ?? null,
 				gsa: msg.gsa ?? null,
 				keep: keep ? (name) => keep.has(name) : null,
+				large: msg.large === true,
 				range: { from: msg.from, to: msg.to },
 				signal: { get aborted() { return cancelled; } },
 				onProgress: (done, total) => {

@@ -146,10 +146,18 @@ export function stitch(parts, iterations) {
 	const times = first.t.length;
 	const series = first.values.length;
 
+	// In the type the slices held -- float32 for a sample too large for double,
+	// see `holdPrecision` -- and each slice's array let go the moment it has
+	// been copied, so that a sample of a gigabyte is never held twice: the
+	// slices of a series are garbage as soon as its whole exists.
 	const values = [];
 	for (let w = 0; w < series; w++) {
-		const whole = new Float64Array(iterations * times);
-		for (const part of ordered) whole.set(part.values[w], part.from * times);
+		const Held = first.values[w].constructor;
+		const whole = new Held(iterations * times);
+		for (const part of ordered) {
+			whole.set(part.values[w], part.from * times);
+			part.values[w] = null;
+		}
 		values.push(whole);
 	}
 	const samples = [];
@@ -187,6 +195,7 @@ export function stitch(parts, iterations) {
 		inputs: first.inputs ?? [],
 		ran,
 		iterations,
+		precision: first.precision ?? 'double',
 		stats: { ...first.stats, failed, trouble, ms, workers: ordered.length },
 	};
 }
@@ -238,6 +247,7 @@ export function runHere(msg) {
 		iterations: msg.iterations,
 		seed: msg.seed,
 		latin: msg.latin !== false,
+		large: msg.large === true,
 		keep: msg.keep,
 		signal: msg.signal,
 		onProgress: msg.onProgress,

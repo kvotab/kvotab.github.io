@@ -18,7 +18,7 @@
 import { el } from './parts.js';
 import { openModal } from './modal.js';
 import { describePDF } from '../domain/pdf.js';
-import { estimate, MOST_BYTES, slotName } from '../sim/probabilistic.js';
+import { estimate, MOST_BYTES, MOST_BYTES_ASKED, holdPrecision, slotName } from '../sim/probabilistic.js';
 import { describeCorrelation } from '../domain/correlate.js';
 import { coresRow } from './cores.js';
 import { dialogInfo } from './dialoginfo.js';
@@ -93,6 +93,10 @@ export function openProbabilisticDialog({
 	// and an assessment already says which series it is about. So the endpoint
 	// list is the default where there is one.
 	let onlyEndpoints = endpoints.length > 0;
+	// The reader's go-ahead for a sample past what every machine can give a
+	// tab: see MOST_BYTES_ASKED. Asked only when it is needed, and not
+	// remembered -- it is about this run on this machine.
+	let large = false;
 	// Inputs that move together. The model's, edited here and saved with the
 	// run's other settings; see ../domain/correlate.js for what a pair and a
 	// group are.
@@ -118,7 +122,12 @@ export function openProbabilisticDialog({
 			const keeping = onlyEndpoints
 				? (keptSeries ?? Math.min(series, kept.length))
 				: series;
-			const size = estimate({ series: keeping, times, iterations });
+			// Held in double while that fits a tab, float32 past it: see
+			// `holdPrecision`. What it would have been in double is said too,
+			// since that is the number the reader was shown before.
+			const precision = holdPrecision({ series: keeping, times, iterations });
+			const size = estimate({ series: keeping, times, iterations, precision });
+			const inDouble = estimate({ series: keeping, times, iterations });
 			// What a *file* of it would be, which is the number that surprises
 			// people: the realisations are written as float32, so half what
 			// the run holds -- and still 2.8 GB for a large assessment.
@@ -135,7 +144,13 @@ export function openProbabilisticDialog({
 			// number the estimate is made with, so it is the number to show.
 			const cores = Math.max(1, Math.min(chosenCores ?? workers, iterations));
 			const total = perRun ? (perRun * iterations) / cores : null;
-			const tooBig = size.bytes > MOST_BYTES;
+			// Past what every machine can give a tab, the reader may say to go
+			// ahead; past what any machine should be asked for, not.
+			const tooBig = size.bytes > MOST_BYTES_ASKED;
+			const needsYes = !tooBig && size.bytes > MOST_BYTES;
+			// What the browser says the machine has, where it says: Chrome
+			// reports it rounded, and no more than 8 GB.
+			const memory = typeof navigator !== 'undefined' ? navigator.deviceMemory ?? null : null;
 
 			// --- what it would do, before what to set.
 			const kinds = new Map();
@@ -176,13 +191,23 @@ export function openProbabilisticDialog({
 					` of `,
 					el('b', {}, `${keeping.toLocaleString()} series`),
 					` over ${times.toLocaleString()} times — `,
-					el('b', { className: tooBig ? 'is-bad' : '' }, size.text),
+					el('b', { className: tooBig || (needsYes && !large) ? 'is-bad' : '' }, size.text),
 					' of results.'),
+				precision === 'float32'
+					? el('p', { className: 'hint' },
+						`Held as float32: in double precision it would be ${inDouble.text}, more `
+						+ 'than every machine can give a tab. Seven significant figures, which is what the '
+						+ 'realisation files are written in anyway and far finer than a sample resolves — a '
+						+ 'percentile read off a sample like this is uncertain in its second figure, not its '
+						+ 'seventh. What reads it — the bands, the table, What drove it — works in double.')
+					: null,
 				el('p', { className: 'hint' },
 					'Written out, every realisation of those is about ',
 					el('b', {}, asFile.text),
-					' — they are saved as float32, which is half what the run holds and '
-					+ 'still finer than a sample of this size can justify.'),
+					precision === 'float32'
+						? ' — as float32, as the run holds them.'
+						: ' — they are saved as float32, which is half what the run holds and '
+							+ 'still finer than a sample of this size can justify.'),
 				inputCount
 					? el('p', { className: 'hint prob-inputs' },
 						el('b', {}, `The ${inputWords} it varies`),
@@ -232,8 +257,24 @@ export function openProbabilisticDialog({
 
 			if (tooBig) {
 				body.append(el('p', { className: 'prob-warn' },
-					`That is more than a tab can hold. Keep fewer series — the model's `
+					`That is more than a tab can hold, even as float32. Keep fewer series — the model's `
 					+ `endpoints rather than everything — or ask for fewer realisations.`));
+			} else if (needsYes) {
+				// Past what every machine can give a tab, and within what one
+				// with the memory can: the reader knows which kind this is.
+				const yes = el('input', { type: 'checkbox', checked: large });
+				yes.addEventListener('change', () => { large = yes.checked; modal.refresh(); });
+				body.append(el('div', { className: 'prob-warn prob-large' },
+					el('p', {},
+						el('b', {}, `${size.text} is more than every machine can give a tab.`),
+						' On a computer with plenty of memory — 16 GB or more — it runs; on one without, '
+						+ 'the browser may close the tab partway through, and the run with it. '
+						+ (memory != null && memory < 8
+							? `This browser says the machine has about ${memory} GB, which is not enough. `
+							: '')
+						+ 'Fewer series or fewer realisations bring it under 1 GB.'),
+					el('label', { className: 'prob-large-yes' }, yes,
+						` Hold ${size.text} in this tab — this machine has the memory for it`)));
 			}
 
 			// --- the numbers.
@@ -476,7 +517,7 @@ export function openProbabilisticDialog({
 			}
 
 			const go = el('button', {
-				type: 'button', className: 'primary', disabled: tooBig,
+				type: 'button', className: 'primary', disabled: tooBig || (needsYes && !large),
 			}, 'Run');
 			go.addEventListener('click', () => {
 				modal.close();
@@ -486,6 +527,7 @@ export function openProbabilisticDialog({
 					blocks: onlyEndpoints && kept.length ? kept : null,
 					varied: varied ? [...varied] : null,
 					correlations: showCorrelations ? correlations.map((c) => ({ ...c })) : [],
+					large: needsYes && large,
 				});
 			});
 			const cancel = el('button', { type: 'button', className: 'ghost' }, 'Cancel');

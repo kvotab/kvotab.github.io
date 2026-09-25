@@ -99,8 +99,39 @@ export function estimate({ series, times, iterations, precision = 'double' }) {
 	};
 }
 
-/** Past this a probabilistic run is refused rather than attempted. */
+/**
+ * What every machine can be relied on to give a tab: a run that holds more
+ * than this is not started unless the reader says to go ahead.
+ */
 export const MOST_BYTES = 1073741824;
+
+/**
+ * What a run may hold once the reader has said to go ahead.
+ *
+ * Not a guess at what a tab can take: a worker in Chrome on a 64-bit machine
+ * allocated and filled 6 GB in arrays the size of one kept series without a
+ * complaint. It is what a machine with enough memory can be expected to
+ * spare for one tab, with room left for everything else the tab holds -- the
+ * slices in flight while a pool finishes, the model, the page. Past it a run
+ * is refused whatever the reader says.
+ */
+export const MOST_BYTES_ASKED = 4 * 1073741824;
+
+/**
+ * What the realisations are held in while the run and everything after it
+ * reads them: double while that fits in `MOST_BYTES`, float32 past it.
+ *
+ * Half the size, and seven significant figures -- which is what the
+ * realisation files are written in anyway, and far finer than a sample can
+ * resolve: a percentile read off ten thousand realisations is uncertain in
+ * its second figure, not its seventh. Everything that reads a sample widens
+ * what it reads to double before computing, so a quantile, a correlation or a
+ * histogram is worked out in double either way. Double is kept where it fits
+ * only so that a sample of ordinary size stays bit for bit what it was.
+ */
+export function holdPrecision({ series, times, iterations }) {
+	return estimate({ series, times, iterations }).bytes > MOST_BYTES ? 'float32' : 'double';
+}
 
 /**
  * The distributions a model would sample, without running anything.
@@ -572,12 +603,22 @@ export function runProbabilistic(input, opts = {}) {
 		return idx;
 	};
 
-	const size = estimate({ series: wanted.length, times, iterations });
-	if (size.bytes > MOST_BYTES) {
+	// Held in double while that fits a tab, and in float32 past it -- see
+	// `holdPrecision`. Past `MOST_BYTES` even so, only when the reader has
+	// said to go ahead (`opts.large`), and never past `MOST_BYTES_ASKED`.
+	const precision = holdPrecision({ series: wanted.length, times, iterations });
+	const size = estimate({ series: wanted.length, times, iterations, precision });
+	if (size.bytes > (opts.large ? MOST_BYTES_ASKED : MOST_BYTES)) {
 		const designed = design.stats.tornado || design.stats.gsa;
+		const askable = !opts.large && size.bytes <= MOST_BYTES_ASKED;
 		throw new Error(`${iterations} ${designed ? 'runs' : 'realisations'} of `
-			+ `${wanted.length.toLocaleString()} series over ${times} times is ${size.text}, `
-			+ 'which is more than a tab can hold. Choose fewer endpoints, or '
+			+ `${wanted.length.toLocaleString()} series over ${times} times is ${size.text}`
+			+ `${precision === 'float32' ? ' even held as float32' : ''}, `
+			+ (askable
+				? 'which is more than every machine can give a tab. The probabilistic dialog '
+					+ 'can be told to go ahead, on a machine with the memory for it; or choose '
+				: 'which is more than a tab can hold. Choose ')
+			+ 'fewer endpoints, or '
 			+ `${design.stats.tornado ? 'fewer inputs' : design.stats.gsa ? 'a smaller design' : 'fewer realisations'}.`);
 	}
 
@@ -585,7 +626,8 @@ export function runProbabilistic(input, opts = {}) {
 	// is realisation i at time j. That is the order they are written in and the
 	// order a quantile reads them in, so neither pass strides.
 	// Indexed from the start of the *slice*: `[(i - from) * times + j]`.
-	const values = wanted.map(() => new Float64Array(span * times));
+	const Held = precision === 'float32' ? Float32Array : Float64Array;
+	const values = wanted.map(() => new Held(span * times));
 	const take = (i, results) => {
 		const at = (i - from) * times;
 		const rows = rowsOf(results);
@@ -643,6 +685,8 @@ export function runProbabilistic(input, opts = {}) {
 		// them back in order.
 		from,
 		to,
+		// What the kept series are held in: see `holdPrecision`.
+		precision,
 		stats: {
 			failed,
 			trouble,

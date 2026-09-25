@@ -35583,6 +35583,60 @@ test('a fault found by building the model is marked on its block, and said in it
 	assert(plain.blockName === 'Tank' && plain.setting === null && plain.message === 'Tank: something', plain.message);
 });
 
+test('a sample too large for double is held as float32, and past a gigabyte runs only when the reader says so', async () => {
+	const { readFileSync } = await import('node:fs');
+	const { holdPrecision, estimate, MOST_BYTES, MOST_BYTES_ASKED, runProbabilistic } = await import('../src/sim/probabilistic.js');
+	const { stitch } = await import('../src/worker/prob-pool.js');
+	// Double while it fits a tab, float32 past it.
+	assert(holdPrecision({ series: 30, times: 200, iterations: 5000 }) === 'double');
+	assert(holdPrecision({ series: 150, times: 300, iterations: 10000 }) === 'float32');
+	assert(estimate({ series: 150, times: 300, iterations: 10000, precision: 'float32' }).bytes === 150 * 300 * 10000 * 4);
+	assert(MOST_BYTES === 2 ** 30 && MOST_BYTES_ASKED === 4 * 2 ** 30);
+	const model = {
+		name: 'big', nuclides: [],
+		simulation: { start_time: 0, end_time: 10, output_points: 100, spacing: 'linear', solver: 'ndf', rtol: 1e-6, abstol: 1e-9, time_unit: 'year' },
+		compartments: [{ name: 'A', initial: '1' }],
+		parameters: [{ name: 'k', value: 0.1, index_lists: [], pdf: { kind: 'unif', params: { min: 0.05, max: 0.15 }, values: null, trmin: null, trmax: null, inorder: true, pos: 0 } }],
+		transfers: [{ name: 'T', from: 'A', to: null, rate: 'k' }],
+		expressions: [], inflows: [], lookups: [],
+	};
+	// An ordinary sample stays in double, bit for bit what it was.
+	const small = runProbabilistic(model, { iterations: 8, seed: 3 });
+	assert(small.precision === 'double' && small.values.every((v) => v instanceof Float64Array), small.precision);
+	// Three million realisations of two series is 2.2 GB even as float32: past
+	// a gigabyte, so refused without the go-ahead -- which it names -- and run
+	// with it. A one-realisation slice, since the check is of the whole design
+	// and what is allocated is the slice.
+	let threw = null;
+	try { runProbabilistic(model, { iterations: 3e6, range: { from: 0, to: 1 } }); } catch (e) { threw = e; }
+	assert(threw && /even held as float32/.test(threw.message) && /can be told to go ahead/.test(threw.message), threw?.message);
+	const big = runProbabilistic(model, { iterations: 3e6, range: { from: 0, to: 1 }, large: true });
+	assert(big.precision === 'float32' && big.values.every((v) => v instanceof Float32Array && v.length === 100), big.precision);
+	// Past four gigabytes, not even with it.
+	threw = null;
+	try { runProbabilistic(model, { iterations: 6e6, range: { from: 0, to: 1 }, large: true }); } catch (e) { threw = e; }
+	assert(threw && /more than a tab can hold/.test(threw.message) && !/go ahead/.test(threw.message), threw?.message);
+	// The slices of a pool are stitched in the type they were held in, and let
+	// go as they are copied, so the sample is never held twice.
+	const part = (from, n, fill) => ({
+		from, to: from + n, t: new Float64Array(2), values: [new Float32Array(n * 2).fill(fill)], samples: [new Float64Array(n)],
+		ran: new Uint8Array(n).fill(1), precision: 'float32', stats: { failed: 0, trouble: [], ms: 1 }, outputs: [], plan: [], inputs: [],
+	});
+	const parts = [part(2, 2, 7), part(0, 2, 5)];
+	const whole = stitch(parts, 4);
+	assert(whole.values[0] instanceof Float32Array && [...whole.values[0]].join() === '5,5,5,5,7,7,7,7' && whole.precision === 'float32',
+		[...whole.values[0]].join());
+	assert(parts.every((p) => p.values[0] === null), 'a slice is held after its whole is built');
+	// The dialog asks, and the answer reaches every slice.
+	const dialog = readFileSync(new URL('../src/ui/probdialog.js', import.meta.url), 'utf8');
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	const worker = readFileSync(new URL('../src/worker/sim-worker.js', import.meta.url), 'utf8');
+	assert(/const needsYes = !tooBig && size\.bytes > MOST_BYTES;/.test(dialog) && /disabled: tooBig \|\| \(needsYes && !large\),/.test(dialog)
+		&& /large: needsYes && large,/.test(dialog), 'the dialog does not ask');
+	assert(/large: choice\.large === true,/.test(app), 'the answer does not leave the page');
+	assert((worker.match(/large: (msg|only)\.large === true,/g) ?? []).length === 3, 'a slice runs without the answer');
+});
+
 test('influences reach the blocks that read the model through settings, and show for none, all or the selection', async () => {
 	const { readFileSync } = await import('node:fs');
 	const m = JSON.parse(readFileSync(new URL('../examples/waste-packages.json', import.meta.url), 'utf8'));

@@ -5559,6 +5559,26 @@ run has been made.
 
 The same list is in **Save → Model with results**.
 
+**How much a sample holds, and past a gigabyte.** What the run keeps is every
+realisation of every kept series at every output time — the solves themselves
+are thrown away as each realisation finishes — and the dialog says what that
+comes to before anything runs. Five blocks on a 30-nuclide list are 150 series,
+and 10,000 realisations of those at 300 times is 3.4 GB in double precision. So
+a sample that would not fit in a gigabyte is **held as float32**: half the size,
+and seven significant figures, which is what the realisation files are written
+in anyway and far finer than a sample resolves — a percentile read off ten
+thousand realisations is uncertain in its second figure, not its seventh.
+Everything that reads the sample works in double. A sample that fits keeps
+double, so it stays bit for bit what it was.
+
+Past a gigabyte even as float32, the dialog asks: that is more than every
+machine can give a tab. On a computer with plenty of memory — 16 GB or more —
+it runs; on one without, the browser may close the tab partway through, and the
+run with it. Tick the box to go ahead, up to 4 GB; past that the run is
+refused, and fewer series or fewer realisations are the way. With several cores
+the workers' slices are put together one series at a time and let go as they
+are copied, so the sample is never held twice.
+
 **A parameter is not an endpoint, and the ones that vary are always kept.** A
 parameter is a constant: one number in an ordinary run, and in a probabilistic
 one the number each realisation drew. So the picker does not offer parameters,

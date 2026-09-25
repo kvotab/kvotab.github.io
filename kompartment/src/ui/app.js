@@ -1723,8 +1723,8 @@ function openProbabilistic() {
 		// The times, though, are the grid's and not that run's: every
 		// realisation is reported on the grid (runProbabilistic), and a run
 		// that also keeps the solver's own points has many more. Counting
-		// those put 8,150 realisations of a 16,720-state model at 7.7 GB where
-		// the run would hold 774 MB, and refused a run that fits.
+		// those put a large sample at ten times what the run would hold, and
+		// refused a run that fits.
 		times: timesOfModel().length,
 		lastSolveMs: state.lastSolveMs || null,
 		endpoints: ed.endpoints(state.raw),
@@ -1826,6 +1826,9 @@ function startProbabilistic(choice) {
 		// The reader's number from the dialog, which the worker uses as it
 		// stands; null leaves it to the worker.
 		cores: chosenCores(),
+		// Said in the dialog: hold a sample past what every machine can give
+		// a tab. See MOST_BYTES_ASKED in ../sim/probabilistic.js.
+		large: choice.large === true,
 	});
 }
 
