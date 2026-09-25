@@ -94,6 +94,7 @@ import { renderBlockTree, treeTools } from './tree.js';
 import { infoButton, refreshInfo, setInfoLinks } from './infopanel.js';
 import { simTopic, fmtSetting } from './siminfo.js';
 import { panelTopic } from './panelinfo.js';
+import { wireJsonEditor } from './jsoneditor.js';
 import { blockTopic } from './blockinfo.js';
 import { slug as headingId } from './markdown.js';
 import { renderInfo } from './info.js';
@@ -5869,6 +5870,8 @@ function renderIndexListsView() {
 	renderIndexLists($('#panel-indexlists'), state.raw, {
 		onChange: modelChanged,
 		onStatus: flash,
+		// What the pane is for, behind an (i) at the end of its heading.
+		info: () => infoButton('panel:indexlists', () => panelTopic('indexlists')),
 		// Imported on the click, not at boot: the ICRP 107 table is 117 KB of
 		// nuclide data, and a session that never opens this dialog should not
 		// pay for it.
@@ -10807,6 +10810,9 @@ const HUGE_JSON = 4e6;
 /** What the textarea holds, so coming back to the tab does not lay it out again. */
 const modelEditor = { rev: -1, text: null, opened: false };
 
+/** The box's colouring, its check and Apply's state: see ./jsoneditor.js. Wired at boot. */
+let jsonEd = null;
+
 function renderModelEditor({ force = false } = {}) {
 	const ta = $('#json');
 	const notice = $('#json-huge');
@@ -10828,15 +10834,20 @@ function renderModelEditor({ force = false } = {}) {
 	if (text.length <= HUGE_JSON || modelEditor.opened) {
 		if (notice) notice.hidden = true;
 		ta.hidden = false;
+		$('#json-box').hidden = false;
 		ta.value = text;
+		// The text is the model again: nothing edited, nothing to apply.
+		jsonEd?.reset();
 		return;
 	}
 
 	// Too large to lay out. Say what it is, and offer the two things somebody
 	// on this tab actually wants: to look at it, or to have the file.
 	ta.hidden = true;
+	$('#json-box').hidden = true;
 	ta.value = '';
-	if (!notice) { ta.hidden = false; ta.value = text; return; }
+	jsonEd?.reset();
+	if (!notice) { ta.hidden = false; $('#json-box').hidden = false; ta.value = text; jsonEd?.reset(); return; }
 	notice.hidden = false;
 	// A number rather than "several seconds": measured at about a quarter of a
 	// second per megabyte in this browser, which is the only figure anybody can
@@ -10914,10 +10925,13 @@ function applyModelEditor() {
 	// Scanned before it is run: a file may arrive with a broken equation in
 	// it, and the strip has to say so rather than the run failing twice.
 	rescanProblems();
-	// The button says "Apply & run", so it runs whatever the auto-run switch
-	// says -- as a press of Run does. Pressing a button labelled with the
-	// thing it does and having it not do it is worse than either rule.
-	runSimulation({ manual: true });
+	// Run as any other edit is: when auto-run is on, and only once all of the
+	// above has made the text the model. The button used to be "Apply & run"
+	// and ran whatever the switch said, which made the one way to edit the
+	// whole model at once the one edit that could not be made without paying
+	// for a solve.
+	if (state.autoRun) runSimulation();
+	else renderStaleness();
 }
 
 // --- loading ---------------------------------------------------------------
@@ -11416,6 +11430,20 @@ export function boot() {
 		renderRunKind();
 	});
 	$('#apply').addEventListener('click', applyModelEditor);
+	jsonEd = wireJsonEditor({
+		ta: $('#json'),
+		box: $('#json-box'),
+		hl: $('#json-hl'),
+		toggle: $('#json-syntax'),
+		status: $('#json-check'),
+		apply: $('#apply'),
+		baseline: () => modelEditor.text,
+		// What Apply would refuse, and nothing more: a model with a broken
+		// equation in it is still a model, and the strip says what is wrong
+		// with it once it is applied. See applyModelEditor.
+		validate: (parsed) => { new Project(ed.migrateKeys(parsed)); },
+	});
+	$('#json-tools').append(infoButton('panel:json', () => panelTopic('json')));
 	for (const b of document.querySelectorAll('[data-codeview]')) {
 		b.addEventListener('click', () => showGeneratedView(b.dataset.codeview));
 	}

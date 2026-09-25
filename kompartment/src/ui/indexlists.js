@@ -168,7 +168,9 @@ export function renderIndexLists(host, project, hooks = {}) {
 
 function renderSide(project, lists, hooks, pick) {
 	const side = el('div', { className: 'ix-side' });
-	side.append(el('h2', {}, 'Index lists'));
+	// What this pane is, behind an (i) at the end of its heading, where the
+	// sections of the left panel keep theirs. See ./infopanel.js.
+	side.append(el('h2', {}, el('span', {}, 'Index lists'), hooks.info?.() ?? null));
 
 	const nav = el('div', { className: 'ix-nav' });
 	for (const list of lists) {

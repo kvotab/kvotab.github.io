@@ -1,7 +1,9 @@
 /**
  * What each part of the left panel holds, for the information panel
  * (./infopanel.js): the Model and Simulation sections, the tree with its
- * search and filters, and the Information view.
+ * search and filters, and the Information view -- and the two tabs that are
+ * a pane of their own rather than a view of the diagram, Index lists and
+ * JSON.
  *
  * The rows of the Simulation section have topics of their own (./siminfo.js);
  * these are one level up -- what a section is for and what is in it, for
@@ -9,9 +11,10 @@
  */
 
 const KICKER = 'Left panel';
+const TAB = 'Tab';
 
 /**
- * @param {'model'|'simulation'|'tree'|'information'} key
+ * @param {'model'|'simulation'|'tree'|'information'|'indexlists'|'json'} key
  * @param {object} [ctx]
  * @param {boolean} [ctx.systems]  the model has sub-systems
  * @param {boolean} [ctx.sample]   a probabilistic run stands
@@ -154,6 +157,67 @@ export function panelTopic(key, ctx = {}) {
 					+ 'height back to the tree.',
 			}],
 			more: 'What it does',
+		};
+		case 'indexlists': return {
+			kicker: TAB,
+			title: 'Index lists',
+			lead: 'The dimensions blocks are indexed by — radionuclides, pathways, landscape '
+				+ 'objects, scenarios — and what each index carries.',
+			sections: [{
+				heading: 'On the left',
+				list: [
+					'Every list in the model, with how many of its indices are enabled and what kind '
+					+ 'of list it is. Click one to open it.',
+					'**+ Index list** adds a list of your own; **+ Scenarios** adds the list of '
+					+ 'alternative futures, one of which is live at a time.',
+				],
+			}, {
+				heading: 'A list',
+				list: [
+					'Its name, what it is defined as — a list of its own, a sub-set of another, or a '
+					+ 'mapping that groups another list’s indices — and the blocks indexed by it.',
+					'Its indices as chips. Click one to leave it out of the simulation and again to take '
+					+ 'it back; double-click to rename it everywhere it is used; × removes it.',
+					'The materials carry what each is measured in, and the radionuclides their '
+					+ 'half-lives, the unit decay is counted in and the chains they decay along.',
+				],
+			}, {
+				text: 'The materials and the radionuclides are built in: they keep their names and '
+					+ 'cannot be deleted, and a list worked out from the model says what it follows '
+					+ 'instead of offering anything to edit.',
+			}],
+			more: 'Index lists',
+		};
+		case 'json': return {
+			kicker: TAB,
+			title: 'JSON',
+			lead: 'The whole model as the text of its project file — to read, to search, or to change '
+				+ 'many things at once.',
+			sections: [{
+				heading: 'Applying an edit',
+				list: [
+					'**Apply** is offered once the text differs from the model, and replaces the model '
+					+ 'with it in one step, which Undo takes back.',
+					'With auto-run on, the run follows the Apply; with it off, nothing runs until you ask.',
+					'The text is written out again afterwards: units that are worked out are worked out, '
+					+ 'and shorthands are spelt in full, so what you see is what the model now holds.',
+				],
+			}, {
+				heading: 'Checked as you type',
+				text: 'A pause in typing checks the text. Where it is not JSON the line under the toolbar '
+					+ 'says where and what is wrong — a comma after the last item, a name without its '
+					+ 'quotes — and **Show me** puts the caret there. Where it is JSON but not a model '
+					+ 'this tool can read, it says why. Apply waits until either is put right.',
+			}, {
+				heading: 'Colour the syntax',
+				text: 'Names, strings, numbers and true, false and null each in a colour of their own. '
+					+ 'Only the lines in view are coloured, so it costs the same whatever the size of the '
+					+ 'model. The choice is remembered in this browser.',
+			}, {
+				text: 'A file of more than 4 MB is offered rather than shown, since laying out that much '
+					+ 'text in an editable box takes the browser seconds.',
+			}],
+			more: 'Editing it in the JSON tab',
 		};
 		default:
 			return null;

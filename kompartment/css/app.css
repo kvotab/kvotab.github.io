@@ -1791,7 +1791,106 @@ textarea { resize: none; min-height: 300px; }
 
 pre.code { overflow: auto; margin: 0; white-space: pre; }
 
-#panel-model { grid-template-rows: auto 1fr; gap: 8px; }
+/* The JSON tab: the toolbar, the check's line under it, and the box, which
+   takes the rest. Rows placed by hand, because the line comes and goes and
+   the box must stay in the row that stretches. */
+#panel-model { grid-template-rows: auto auto minmax(0, 1fr); gap: 0; }
+#panel-model > .toolbar { grid-row: 1; margin-bottom: 8px; }
+#panel-model > .json-check { grid-row: 2; }
+#panel-model > .json-huge,
+#panel-model > .json-box { grid-row: 3; }
+
+.json-syntax { color: var(--text-secondary); font-size: 12px; }
+
+/* What is wrong with the text, or that it reads and can be applied. */
+.json-check {
+	margin: 0 0 8px;
+	padding: 6px 10px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: var(--surface-2);
+	color: var(--text-secondary);
+	font-size: 12px;
+	line-height: 1.5;
+	overflow-wrap: anywhere;
+}
+.json-check[hidden] { display: none; }
+.json-check.is-bad {
+	border-color: var(--danger);
+	border-left-width: 3px;
+	background: var(--danger-bg);
+	color: var(--text-primary);
+}
+.json-check.is-bad b { color: var(--danger); font-weight: 650; }
+.json-go { margin-left: 4px; padding: 0 8px; font-size: 11.5px; }
+
+/* The two boxes, one over the other: the coloured copy of the lines in view
+   underneath, the textarea over it with its text made transparent. Every
+   metric that decides where a character lands is declared once, for both --
+   and the line height in whole pixels and the padding are `LINE` and `PAD` in
+   ./src/ui/jsoneditor.js, which places the copy by them. */
+.json-box { position: relative; display: flex; min-height: 300px; }
+.json-box[hidden] { display: none; }
+.json-box > textarea,
+.json-hl {
+	box-sizing: border-box;
+	margin: 0;
+	padding: 10px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	font-family: var(--mono);
+	font-size: 11.5px;
+	line-height: 18px;
+	letter-spacing: normal;
+	font-variant-ligatures: none;
+	tab-size: 2;
+	white-space: pre;
+}
+.json-box > textarea {
+	position: relative;
+	z-index: 1;
+	flex: 1 1 auto;
+	width: 100%;
+	height: 100%;
+	min-height: 0;
+	overflow: auto;
+}
+.json-hl {
+	position: absolute;
+	inset: 0;
+	z-index: 0;
+	display: none;
+	overflow: hidden;
+	background: var(--surface-sunken);
+	color: var(--text-primary);
+	pointer-events: none;
+}
+.json-hl > code { display: block; font: inherit; }
+.json-box.is-coloured .json-hl { display: block; }
+.json-box.is-coloured > textarea {
+	color: transparent;
+	background: transparent;
+	caret-color: var(--text-primary);
+}
+.json-box.is-coloured > textarea::selection {
+	background: color-mix(in oklab, var(--accent) 40%, transparent);
+	color: var(--text-primary);
+}
+
+/* The colours: the shape palette, carried towards the text colour so each
+   reads as text on either ground, and punctuation receding. */
+.jh-key { color: color-mix(in oklab, var(--shape-teal) 72%, var(--text-primary)); }
+.jh-str { color: color-mix(in oklab, var(--shape-green) 72%, var(--text-primary)); }
+.jh-num { color: color-mix(in oklab, var(--shape-amber) 72%, var(--text-primary)); }
+.jh-lit { color: color-mix(in oklab, var(--shape-purple) 72%, var(--text-primary)); }
+.jh-punct { color: var(--text-muted); }
+
+/* The line the check found fault with. */
+.jh-line.is-bad {
+	background: color-mix(in oklab, var(--danger) 16%, transparent);
+	text-decoration: underline wavy var(--danger);
+	text-decoration-skip-ink: none;
+}
 #panel-code { grid-template-rows: auto 1fr; gap: 8px; }
 
 .hint {
@@ -3670,7 +3769,10 @@ table.matrix {
 	font-size: 11.5px;
 	margin-bottom: 10px;
 	table-layout: fixed;
-	width: calc(var(--n, 1) * (var(--cell) + 1px));
+	/* A column is `--cell` wide with its border in it, as a row is tall: the
+	   cells are border-box. It was a pixel more, for a border counted twice,
+	   which made every square a pixel wider than it was tall. */
+	width: calc(var(--n, 1) * var(--cell));
 }
 
 table.matrix td,
@@ -3740,14 +3842,15 @@ table.matrix th.matrix-self { padding: 0; position: relative; }
 .matrix-block {
 	position: absolute;
 	inset: 2px;
+	display: flex;
 	border: 1px solid var(--matrix-edge, var(--border-strong));
 	border-radius: 4px;
 	background: var(--surface-2);
 	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.16);
 	font: inherit;
 	color: inherit;
-	text-align: left;
-	padding: 4px 8px;
+	text-align: center;
+	padding: 4px 6px;
 	cursor: pointer;
 	/* A square is taller than a line: the name wraps within it, breaking a
 	   long one wherever it must, and what is left over is cut. */
@@ -3756,6 +3859,12 @@ table.matrix th.matrix-self { padding: 0; position: relative; }
 	line-height: 1.25;
 	overflow: hidden;
 }
+
+/* The name, in the middle of its tile both ways. Auto margins rather than
+   centring the flex line: a name too long for the square then starts at the
+   top and is cut at the bottom, where centring would cut both ends and hide
+   its first word. */
+.matrix-label { margin: auto; min-width: 0; }
 
 /* Given a colour, the edge is that colour carried towards the label's ink:
    one shade, whichever way the fill leans. */
@@ -3798,14 +3907,18 @@ table.matrix th.matrix-self { padding: 0; position: relative; }
    which is the same distinction the diagram draws between a sub-system node
    and a compartment. */
 .matrix-system {
-	display: grid;
-	gap: 0 5px;
-	grid-template-columns: 10px minmax(0, 1fr);
-	align-content: center;
+	flex-direction: column;
+	align-items: center;
+	padding: 4px 14px;
 	border-radius: 2px;
 	border-color: var(--matrix-frame);
 	background: var(--surface-1);
 }
+
+/* Centred as a pair, and from the top when the pair is taller than the
+   square -- the same bargain as a block's name. */
+.matrix-system-name { margin-top: auto; max-width: 100%; }
+.matrix-system > :last-child { margin-bottom: auto; }
 
 .matrix-system-name {
 	font-weight: 650;
@@ -3816,7 +3929,7 @@ table.matrix th.matrix-self { padding: 0; position: relative; }
 }
 
 .matrix-system-held {
-	grid-column: 2;
+	max-width: 100%;
 	font-size: 9.5px;
 	color: var(--text-muted);
 	overflow: hidden;
@@ -3839,11 +3952,15 @@ table.matrix th.matrix-self { padding: 0; position: relative; }
 	background: var(--accent);
 }
 
-/* The one control that folds it: a caret in the corner, where a disclosure
-   lives everywhere else in this application. */
+/* The one control that folds it: a caret at the left edge, where a
+   disclosure lives everywhere else in this application -- placed there rather
+   than laid out, so the name is centred on the tile and not on what is left
+   of it beside the caret. */
 .matrix-fold {
-	grid-row: 1 / -1;
-	align-self: center;
+	position: absolute;
+	left: 5px;
+	top: 50%;
+	transform: translateY(-50%);
 	font-size: 9px;
 	line-height: 1;
 	color: var(--matrix-frame);
@@ -3873,6 +3990,7 @@ table.matrix th.matrix-self { padding: 0; position: relative; }
 .matrix-nowhere {
 	display: flex;
 	align-items: center;
+	justify-content: center;
 	background: var(--surface-sunken);
 	border-style: dashed;
 	cursor: default;
@@ -3890,6 +4008,7 @@ table.matrix th.matrix-self { padding: 0; position: relative; }
 }
 
 table.matrix td {
+	position: relative;
 	border-bottom: 1px solid var(--border);
 	border-right: 1px solid var(--border);
 	padding: 0;
@@ -3946,17 +4065,48 @@ table.matrix td {
 	flex: 1 1 auto;
 }
 
-.matrix-cell:hover { background: var(--surface-sunken); border: none; }
+.matrix-add:hover { background: var(--surface-sunken); }
 
-.matrix-has .matrix-cell { background: color-mix(in oklab, var(--accent) 9%, transparent); }
-
-/* On the button, not the cell: a cell may hold several transfers and only one
-   of them is selected. */
-.matrix-cell.is-selected {
-	background: color-mix(in oklab, var(--accent) 22%, transparent);
-	outline: 2px solid var(--accent);
-	outline-offset: -2px;
+/* A transfer, as a tile like the blocks on the diagonal: inset from the grid
+   lines by the same two pixels, rounded, edged and lifted a little off the
+   grid. Laid flat across its square it read as a shading of the cell rather
+   than as a thing in it. Tinted towards the accent, so the pattern of who
+   feeds whom still reads at a glance and at any zoom; a transfer given its
+   own colour on the diagram has that instead, edged as a painted block is. */
+.matrix-flow {
+	border: 1px solid var(--matrix-edge, var(--border-strong));
+	border-radius: 4px;
+	background: color-mix(in oklab, var(--accent) 10%, var(--surface-2));
+	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.16);
+	padding: 2px 5px;
 }
+
+.matrix-flow[style*="--own"] {
+	--matrix-edge: color-mix(in oklab, var(--own) 74%, var(--matrix-ink));
+}
+
+.matrix-flow:hover {
+	background: color-mix(in oklab, var(--accent) 16%, var(--surface-2));
+	border-color: var(--text-muted);
+	box-shadow: 0 2px 5px rgba(0, 0, 0, 0.22);
+}
+
+.matrix-flow[style*="--own"]:hover { border-color: var(--matrix-ink); }
+
+/* On the tile, not the cell: a cell may hold several transfers and only one
+   of them is selected. A ring, as on a block, since a painted tile's inline
+   fill beats any background set here. */
+.matrix-flow.is-selected {
+	background: color-mix(in oklab, var(--accent) 22%, var(--surface-2));
+	border-color: var(--accent);
+	box-shadow: 0 0 0 1px var(--accent), 0 2px 6px rgba(0, 0, 0, 0.25);
+}
+
+.matrix-flow[style*="--own"].is-selected { border-color: var(--select); }
+
+/* A count across a folded boundary rather than one transfer: the same tile,
+   dashed, as the diagram draws what stands in for several. */
+.matrix-summary { border-style: dashed; }
 
 .matrix-rate {
 	font-family: var(--mono);
@@ -3980,7 +4130,10 @@ table.matrix td {
 	white-space: nowrap;
 }
 
-/* The "+" is centred, unlike a transfer, which reads from its elbow outward. */
+/* The "+" is centred, unlike a transfer, which reads from its elbow outward.
+   Over the whole of an empty cell rather than in its flow: in the flow, a
+   button the height of the square made that row a pixel taller than a row
+   with no empty cell in it. */
 .matrix-add {
 	color: var(--text-muted);
 	font-size: 15px;
@@ -3988,31 +4141,66 @@ table.matrix td {
 	justify-content: center;
 }
 
+td > .matrix-add:not(.matrix-more) {
+	position: absolute;
+	inset: 0;
+	width: auto;
+	height: auto;
+}
+
 .matrix-empty:hover .matrix-add { opacity: 1; }
 
 .matrix-add:focus-visible { opacity: 1; }
 
 /* A pair may hold several transfers; they stack, newest last, with a short
-   row at the bottom for adding another -- sharing the square between them,
-   and scrolling inside it when there are more than it holds. */
+   row at the bottom for adding another -- sharing the square between them.
+   Placed over the whole cell rather than sized to it, as the diagonal's tile
+   is and for the same reason: a percentage height in a table cell resolves
+   against nothing, and a fixed one came out a pixel taller than the square,
+   so the tiles sat off-centre with their bottom gap cut. */
 .matrix-stack {
+	position: absolute;
+	inset: 0;
 	display: flex;
 	flex-direction: column;
-	height: var(--cell);
-	overflow-y: auto;
-}
-.matrix-stack > .matrix-cell { flex: 1 1 0; min-height: 26px; height: auto; }
-.matrix-stack > .matrix-more { flex: 0 0 16px; min-height: 16px; }
-
-.matrix-stack .matrix-cell + .matrix-cell {
-	border-top: 1px solid var(--border);
+	gap: 2px;
+	padding: 2px;
+	overflow: hidden;
 }
 
-.matrix-more { height: 16px; font-size: 12px; line-height: 1; }
+/* And scrolling inside it only when there are more than it holds: three or
+   more between one pair (`STACK_FITS` in ./src/ui/matrix.js). A thin bar,
+   since a square is a hundred pixels wide. Crowded, each tile keeps the height
+   its rate and name need, and the stack scrolls to show the rest. */
+.matrix-stack.is-crowded { overflow-y: auto; scrollbar-width: thin; }
+.matrix-stack > .matrix-cell { flex: 1 1 0; min-height: 34px; height: auto; }
 
-.matrix-has:hover .matrix-more { opacity: 0.7; }
+/* Another transfer between the same pair: a round button in the corner of the
+   square, over the tiles, shown when the square is pointed at. Clear of a
+   crowded stack's scrollbar. */
+.matrix-more {
+	position: absolute;
+	right: 5px;
+	bottom: 5px;
+	z-index: 1;
+	width: 18px;
+	height: 18px;
+	padding: 0;
+	border: 1px solid var(--border-strong);
+	border-radius: 50%;
+	background: var(--surface-1);
+	font-size: 13px;
+	line-height: 1;
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
 
-.matrix-more:hover { opacity: 1; background: var(--surface-sunken); }
+.is-crowded ~ .matrix-more { right: 15px; }
+
+.matrix-has:hover .matrix-more { opacity: 0.85; }
+
+.matrix-more:hover { opacity: 1; color: var(--text-primary); border-color: var(--accent); }
+
+.matrix-more:focus-visible { opacity: 1; }
 
 /* Where in the hierarchy the diagram is looking. Hidden for a model with no
    sub-systems, which is most of them. */
@@ -5159,6 +5347,9 @@ table.matrix td {
 }
 
 .ix-side > h2 {
+	display: flex;
+	align-items: center;
+	gap: 6px;
 	font-size: 11px;
 	font-weight: 700;
 	letter-spacing: 0.07em;
@@ -5166,6 +5357,9 @@ table.matrix td {
 	color: var(--text-muted);
 	margin: 0 0 2px;
 }
+
+/* Its (i), at the right-hand end, where the panel's headings keep theirs. */
+.ix-side > h2 > .info-btn { margin-left: auto; letter-spacing: normal; text-transform: none; }
 
 .ix-nav { display: grid; gap: 3px; }
 

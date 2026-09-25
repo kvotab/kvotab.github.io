@@ -24171,11 +24171,15 @@ test('opening a model honours the auto-run switch, and says so where the results
 	// a page doing something nobody asked for.
 	assert(/rescanProblems\(\);\n\t\/\/[\s\S]{0,400}?if \(state\.autoRun\) runSimulation\(\);\n\telse renderStaleness\(\);/.test(app),
 		'opening a model still runs it unconditionally');
-	// The JSON tab's button says "Apply & run", so it runs either way -- as a
-	// press of Run does, which is what `manual` means.
-	assert(/Apply &amp; run/.test(readFileSync(new URL('../index.html', import.meta.url), 'utf8')),
-		'the button no longer says what it does');
-	assert(/runSimulation\(\{ manual: true \}\);\n\}/.test(app), 'Apply does not run as a manual run');
+	// The JSON tab's Apply follows the switch as well, once the text is the
+	// model. It was "Apply & run" and ran either way, which made editing the
+	// whole model at once the one edit that could not be made without a solve.
+	const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+	assert(/<button id="apply" class="primary" type="button" disabled>Apply<\/button>/.test(html) && !/Apply &amp; run/.test(html),
+		'the button is not a plain Apply, offered only once there is something to apply');
+	const apply = /function applyModelEditor\(\) \{([\s\S]*?)\n\}/.exec(app)?.[1] ?? '';
+	assert(/\n\tif \(state\.autoRun\) runSimulation\(\);\n\telse renderStaleness\(\);$/.test(apply), 'Apply does not follow the auto-run switch');
+	assert(!/runSimulation\(\{ manual: true \}\)/.test(apply), 'Apply still runs whatever the switch says');
 	// And with the switch off, the place where results would be says why
 	// there are none and offers the one way to get them.
 	assert(/Auto-run is off, so nothing will \n?\s*'?\s*\+?\s*'?happen until you ask for it/.test(app),
@@ -24281,7 +24285,8 @@ test('a listed block shows its name first and what it is shown as in brackets', 
 		'the tree row does not lead with the name');
 	assert(/name: b\.block\.name,\s*\n\s*symbol: hasSymbol\(b\.block\) \? b\.block\.symbol : null,/.test(tree),
 		'the tree still hands the row the symbol as its name');
-	assert(/btn\.append\(' \(', el\('span', \{ className: 'matrix-symbol' \}, \.\.\.symbolNodes\(named\.symbol\)\), '\)'\);/.test(matrix),
+	// Into the tile's label, which is what the tile centres.
+	assert(/label\.append\(' \(', el\('span', \{ className: 'matrix-symbol' \}, \.\.\.symbolNodes\(named\.symbol\)\), '\)'\);/.test(matrix),
 		'the matrix tile has no symbol after the name');
 	assert(/shown\.textContent = block\.name;\s*\n\s*if \(hasSymbol\(block\)\) \{\s*\n\s*shown\.append\(' \(', el\('span', \{ className: 'info-symbol' \}/.test(info),
 		'the Information view title does not lead with the name');
@@ -26700,7 +26705,9 @@ test('the transfer grid puts the blocks on its diagonal', async () => {
 	assert(!/thead/.test(src), 'the grid still has a header band');
 	assert(!/matrix-corner/.test(src), 'the corner cell outlived the header band');
 	assert(/if \(i === j\) \{/.test(src), 'the diagonal is not treated as the block itself');
-	assert(/className: `matrix-self matrix-\$\{slot\.kind\}/.test(src),
+	// By `matrix-slot-<kind>`: `matrix-<kind>` made a block's cell
+	// `matrix-block`, the tile's class, and moved the diagonal off its grid.
+	assert(/className: `matrix-self matrix-slot-\$\{slot\.kind\}/.test(src),
 		'the diagonal cells are not marked');
 
 	// Direction is drawn, not left to a convention the reader has to hold:
@@ -35444,7 +35451,7 @@ test('every (i) outside the Simulation section has something to say, and its lin
 			assert((x.match(/`/g) ?? []).length % 2 === 0, `${where}: an unpaired backtick in ${x}`);
 		}
 	};
-	for (const key of ['model', 'simulation', 'tree', 'information']) {
+	for (const key of ['model', 'simulation', 'tree', 'information', 'indexlists', 'json']) {
 		for (const ctx of [{}, { systems: true, sample: true }]) check(`panel:${key}`, panelTopic(key, ctx));
 	}
 	// The tree's says what is above it only when it is there.
@@ -35694,12 +35701,116 @@ test('Information pops out into a window of its own, and its arrows sit beside i
 	assert(/if \(readInfoWindow\(\)\?\.out && !infoWin\) \{ popInfo\(\); return; \}/.test(app), 'a window left out is not reopened');
 });
 
+test('the JSON tab offers Apply only for an edit, says what is wrong as it is typed, and colours the lines in view', async () => {
+	const { jsonErrorAt, lineColumn, checkText, tokenise, LINE, PAD } = await import('../src/ui/jsoneditor.js');
+	const { readFileSync } = await import('node:fs');
+	// Where text stops being JSON, and what is wrong there, in words.
+	const at = (text) => {
+		const e = jsonErrorAt(text);
+		return e && { ...lineColumn(text, e.at), reason: e.reason };
+	};
+	assert(at('{"a": 1}') === null && at('{"a": [1, 2.5e-3, true, null, "x\\"y"]}') === null, 'valid JSON is faulted');
+	const cases = [
+		['{"a": 1,}', 1, 8, /comma after the last property/],
+		// A comma after the last item is the comma's fault: the caret goes on
+		// it, a line above the bracket in a file laid out an item a line.
+		['{\n  "b": [\n    1,\n    2,\n  ]\n}', 4, 6, /comma after the last item/],
+		['{a: 1}', 1, 2, /has to be in double quotes/],
+		["{'a': 1}", 1, 2, /double quotes in JSON, not single/],
+		['{"a": "open}', 1, 7, /not closed/],
+		['{"a": 1 "b": 2}', 1, 9, /comma is missing between two properties/],
+		['{"a": [1 2]}', 1, 10, /comma is missing between two items/],
+		['{"a": 1', 1, 8, /closing brace is missing/],
+		['{"a": 1} x', 1, 10, /after the end of the model/],
+		['', 1, 1, /empty/],
+		['{"a": 01}', 1, 8, /not a number/],
+		['{"a"  1}', 1, 7, /colon/],
+	];
+	for (const [text, line, column, reason] of cases) {
+		const got = at(text);
+		assert(got && got.line === line && got.column === column && reason.test(got.reason),
+			`${JSON.stringify(text)}: ${JSON.stringify(got)}`);
+		// And never where the browser would have read it.
+		let parses = true;
+		try { JSON.parse(text); } catch { parses = false; }
+		assert(!parses, `${JSON.stringify(text)} parses`);
+	}
+	// What Apply would refuse is said too, with the block it is about, and a
+	// text that is JSON but not an object is not a model.
+	const refused = checkText('{"a": 1}', () => { const e = new Error('no such list'); e.blockName = 'Soil'; throw e; });
+	assert(refused.kind === 'model' && refused.reason === 'no such list' && refused.block === 'Soil', JSON.stringify(refused));
+	assert(checkText('[1, 2]', null).kind === 'model' && checkText('{"a": 1}', () => {}) === null);
+	assert(checkText('{"a": 1,}', null).kind === 'syntax');
+
+	// The colours: names, strings, numbers, literals and punctuation apart.
+	const t = tokenise('  "rate": "k / 2", "value": -1.5e3, "on": true, "x": null,');
+	const kinds = t.filter(([c]) => c).map(([c, x]) => `${c}:${x}`).join(' ');
+	assert(kinds === 'jh-key:"rate" jh-punct:: jh-str:"k / 2" jh-punct:, jh-key:"value" jh-punct:: jh-num:-1.5e3 jh-punct:, '
+		+ 'jh-key:"on" jh-punct:: jh-lit:true jh-punct:, jh-key:"x" jh-punct:: jh-lit:null jh-punct:,', kinds);
+	assert(t.map(([, x]) => x).join('') === '  "rate": "k / 2", "value": -1.5e3, "on": true, "x": null,', 'a character is lost or added');
+	// A line being typed is coloured as far as it goes.
+	assert(tokenise('  "unfinish').map(([c]) => c).join() === ',jh-str');
+
+	// The copy is placed by whole-pixel line heights, the same in the script
+	// and the sheet: a fractional one drifts by tens of pixels down a file.
+	const css = readFileSync(new URL('../css/app.css', import.meta.url), 'utf8');
+	const both = /\.json-box > textarea,\n\.json-hl \{([\s\S]*?)\n\}/.exec(css)?.[1] ?? '';
+	assert(new RegExp(`line-height: ${LINE}px;`).test(both) && new RegExp(`padding: ${PAD}px;`).test(both) && Number.isInteger(LINE),
+		'the two boxes do not share the line height and padding the script places the copy by');
+	assert(/white-space: pre;/.test(both) && /tab-size: 2;/.test(both));
+	assert(/\.json-box\.is-coloured > textarea \{\n\tcolor: transparent;/.test(css));
+	const src = readFileSync(new URL('../src/ui/jsoneditor.js', import.meta.url), 'utf8');
+	// Only the lines in view, and never markup made from the file's text.
+	assert(/const first = Math\.max\(0, Math\.floor\(\(top - PAD\) \/ LINE\) - 2\);/.test(src) && /first \* LINE - top/.test(src),
+		'the copy is not placed by the lines in view');
+	assert(!/innerHTML/.test(src), 'the file\u2019s text is written as markup');
+	assert(/function syntaxOn\(\) \{\n\ttry \{/.test(src) && /function keepSyntax\(on\) \{\n\ttry \{/.test(src), 'storage outside a try');
+	// And the tab: the explanation that said nothing gone, the switch there,
+	// and Apply's state kept by the editor.
+	const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+	assert(!/The project file\. Blocks are/.test(html), 'the old note is still on the tab');
+	assert(/<input type="checkbox" id="json-syntax" checked> Colour the syntax/.test(html) && /<textarea id="json" spellcheck="false" wrap="off"/.test(html));
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	assert(/jsonEd = wireJsonEditor\(\{/.test(app) && /validate: \(parsed\) => \{ new Project\(ed\.migrateKeys\(parsed\)\); \},/.test(app),
+		'the check is not what Apply refuses');
+	assert((app.match(/jsonEd\?\.reset\(\);/g) ?? []).length >= 2, 'rewriting the text from the model does not reset the check');
+	assert(/\$\('#json-tools'\)\.append\(infoButton\('panel:json', \(\) => panelTopic\('json'\)\)\);/.test(app), 'the tab has no (i)');
+	assert(/info: \(\) => infoButton\('panel:indexlists', \(\) => panelTopic\('indexlists'\)\),/.test(app), 'Index lists has no (i)');
+});
+
+test('on the transfer grid a transfer is a tile, only a crowded square scrolls, and the diagonal sits on its grid', async () => {
+	const { readFileSync } = await import('node:fs');
+	const src = readFileSync(new URL('../src/ui/matrix.js', import.meta.url), 'utf8');
+	const css = readFileSync(new URL('../css/app.css', import.meta.url), 'utf8');
+	// A square scrolls only when it holds more than fit, and not whenever its
+	// content comes to a fraction of a pixel more than its box.
+	assert(/const STACK_FITS = 2;/.test(src) && /here\.length > STACK_FITS \? ' is-crowded' : ''/.test(src), 'no count of what fits');
+	assert(/\.matrix-stack \{\n\tposition: absolute;\n\tinset: 0;[\s\S]*?overflow: hidden;\n\}/.test(css), 'a square scrolls whenever it overflows');
+	assert(/\.matrix-stack\.is-crowded \{ overflow-y: auto; scrollbar-width: thin; \}/.test(css));
+	// A transfer is a tile, as a block is.
+	assert(/className: `matrix-cell matrix-flow\$\{/.test(src) && /className: 'matrix-cell matrix-flow matrix-summary'/.test(src));
+	const flow = /\.matrix-flow \{([\s\S]*?)\n\}/.exec(css)?.[1] ?? '';
+	assert(/border: 1px solid var\(--matrix-edge, var\(--border-strong\)\);/.test(flow) && /border-radius: 4px;/.test(flow) && /box-shadow:/.test(flow),
+		'a transfer is flat');
+	// The + for another transfer is in the cell's corner, not a row of the stack.
+	assert(/td\.append\(addButton\(\{ project, hooks, a, b, isPath, extra: here\.length \}\)\);/.test(src), 'the + is in the stack');
+	// A block's name is centred on its tile.
+	assert(/const label = el\('span', \{ className: 'matrix-label' \}, nameOf\(slot\)\);/.test(src) && /\.matrix-label \{ margin: auto; min-width: 0; \}/.test(css));
+	assert(/\.matrix-block \{[\s\S]*?text-align: center;/.test(css));
+	// The diagonal's cell is not called by the tile's class, which moved it.
+	assert(!/matrix-\$\{slot\.kind\}/.test(src) && /matrix-self matrix-slot-\$\{slot\.kind\}/.test(src));
+	// Every square the same, its border in it.
+	assert(/width: calc\(var\(--n, 1\) \* var\(--cell\)\);/.test(css), 'a column is wider than a row is tall');
+});
+
 test('the transfer grid is square and zooms', async () => {
 	const { readFileSync } = await import('node:fs');
 	const css = readFileSync(new URL('../css/app.css', import.meta.url), 'utf8');
 	const matrix = readFileSync(new URL('../src/ui/matrix.js', import.meta.url), 'utf8');
 	const { matrixZoom } = await import('../src/ui/matrix.js');
-	assert(/table\.matrix \{\n\t--cell: 96px;[\s\S]{0,200}table-layout: fixed;\n\twidth: calc\(var\(--n, 1\) \* \(var\(--cell\) \+ 1px\)\);/.test(css), 'the cells are not square');
+	// A column is `--cell` with its border in it, as a row is: measured 96 by
+	// 96 in the browser. It was a pixel wider, for a border counted twice.
+	assert(/table\.matrix \{\n\t--cell: 96px;[\s\S]{0,200}table-layout: fixed;[\s\S]{0,300}?\n\twidth: calc\(var\(--n, 1\) \* var\(--cell\)\);/.test(css), 'the cells are not square');
 	assert(/table\.matrix td,\ntable\.matrix th \{\n\twidth: var\(--cell\);\n\theight: var\(--cell\);/.test(css), 'the cells are not square');
 	assert(/table\.style\.setProperty\('--n', String\(slots\.length\)\);\n\ttable\.style\.zoom = String\(zoom\);/.test(matrix), 'the table is not sized or zoomed');
 	// Zoomed about the pointer with Ctrl or Cmd and the wheel, wired once per panel.

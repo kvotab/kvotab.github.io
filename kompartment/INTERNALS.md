@@ -80,13 +80,14 @@ exercise `domain/` and `sim/` directly, which is why they can be plain Node.
 | `src/ui/scenarios.js` | Which scenarios run beside the selected one, and how their lines share a chart |
 | `src/ui/infopanel.js` | The (i) beside a setting and the panel it opens: what a setting is, on demand |
 | `src/ui/siminfo.js` | What each simulation setting is, for that panel |
-| `src/ui/panelinfo.js`, `src/ui/blockinfo.js`, `src/ui/dialoginfo.js` | The same for the left panel's parts, each kind of block's settings window, and every dialog |
+| `src/ui/panelinfo.js`, `src/ui/blockinfo.js`, `src/ui/dialoginfo.js` | The same for the left panel's parts and the Index lists and JSON tabs, each kind of block's settings window, and every dialog |
 | `src/ui/graph.js` | The diagram, in SVG |
 | `src/ui/matrix.js` | The transfer grid |
 | `src/ui/chart.js`, `src/ui/svgcanvas.js` | The chart on a canvas, and the same paint routine writing SVG |
 | `src/ui/tree.js`, `src/ui/icons.js` | The block tree, and the glyph beside each name |
 | `src/ui/inspector.js` | The settings panel for whatever is selected |
 | `src/ui/indexlists.js` | Index lists, contaminants and decay data, in one panel |
+| `src/ui/jsoneditor.js` | The JSON tab's box: the coloured copy of the lines in view under the textarea, the check as you type (`jsonErrorAt` says where text stops being JSON, in words and the same in every browser), and whether Apply is offered |
 | `src/ui/endpoints.js` | Which blocks a probabilistic run keeps |
 | `src/ui/savedialog.js`, `src/ui/dualtree.js` | Everything that can be written, in one dialog, and the two trees its lists are chosen in |
 | `src/ui/cores.js` | How many cores a sampled run is shared over, when the reader says |

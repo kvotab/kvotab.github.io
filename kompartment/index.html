@@ -308,26 +308,29 @@
 					</div>
 
 					<div class="panel" id="panel-model" role="tabpanel">
-						<div class="toolbar">
-							<p class="hint">
-								The project file. Blocks are <code>compartments</code>,
-								<code>transfers</code>, <code>parameters</code>,
-								<code>expressions</code> and <code>sources</code>; a transfer rate
-								is multiplied by its donor compartment unless
-								<code>"multiply_by_donor": false</code>. A transfer or source
-								<code>unit</code> is derived from its donor and the time unit,
-								so it is rewritten rather than read.
-							</p>
+						<!-- Apply is offered once the text differs from the model, and
+						     waits while what is said under the toolbar stands: see
+						     ./src/ui/jsoneditor.js. What the tab is for is behind its
+						     (i), put at the end of the toolbar by the script. -->
+						<div class="toolbar" id="json-tools">
+							<button id="apply" class="primary" type="button" disabled>Apply</button>
+							<label class="json-syntax"><input type="checkbox" id="json-syntax" checked> Colour the syntax</label>
 							<span class="spacer"></span>
-							<button id="apply" class="primary" type="button">Apply &amp; run</button>
 						</div>
+						<p class="json-check" id="json-check" role="status" aria-live="polite" hidden></p>
 						<!-- Offered rather than laid out, past a size. A textarea of
 						     nine hundred thousand lines costs the browser five
 						     seconds of layout before anything can be typed in it,
 						     and a model that large is read here rather than
 						     edited. See renderModelEditor. -->
 						<p class="hint json-huge" id="json-huge" hidden></p>
-						<textarea id="json" spellcheck="false" aria-label="Project JSON"></textarea>
+						<!-- Two boxes, one over the other: the coloured copy of the
+						     lines in view, and the textarea itself with its text made
+						     transparent over it. -->
+						<div class="json-box" id="json-box">
+							<pre class="json-hl" id="json-hl" aria-hidden="true"><code></code></pre>
+							<textarea id="json" spellcheck="false" wrap="off" aria-label="Project JSON"></textarea>
+						</div>
 					</div>
 
 					<div class="panel" id="panel-help" role="tabpanel"></div>

@@ -396,10 +396,13 @@ export function renderMatrix(host, project, selection, hooks = {}, opts = {}) {
 				td.append(cellStack(here, {
 					project, selection, hooks, down, from: fullOf(r), to: fullOf(c),
 				}));
-				// Room for one more, where a pair can take one by hand.
+				// Room for one more, where a pair can take one by hand: a round
+				// button in the corner, over the tiles and shown on hover, so
+				// that a transfer fills its square as a block fills its own. In
+				// the cell rather than the stack, so it stays put when a
+				// crowded stack scrolls.
 				if (!impossible && !folded) {
-					td.querySelector('.matrix-stack')
-						.append(addButton({ project, hooks, a, b, isPath, extra: here.length }));
+					td.append(addButton({ project, hooks, a, b, isPath, extra: here.length }));
 				}
 			} else if (impossible) {
 				td.title = `A release from ${fullOf(r)} cannot be delivered straight `
@@ -442,8 +445,12 @@ export function renderMatrix(host, project, selection, hooks = {}, opts = {}) {
 /** The diagonal: a block, a folded sub-system, or an open one's header. */
 function diagonalCell(slot, ctx) {
 	const { project, selection, hooks, isPath, inside, frame, nameOf, fullOf } = ctx;
+	// `matrix-slot-<kind>`, not `matrix-<kind>`: a block's slot would then be
+	// `matrix-block`, the tile's own class, and the cell took the tile's
+	// border, corners and `inset: 2px` -- which on a cell that is
+	// `position: relative` moved the whole diagonal two pixels right and down.
 	const th = el('th', {
-		className: `matrix-self matrix-${slot.kind}${
+		className: `matrix-self matrix-slot-${slot.kind}${
 			slot.kind === 'outside' ? ' matrix-outside'
 				: slot.kind === 'block' && isPath.has(slot.name) ? ' matrix-path' : ''}`,
 		scope: 'row',
@@ -498,6 +505,10 @@ function diagonalCell(slot, ctx) {
 	// A block. A click selects it, a double-click opens its settings -- the
 	// same two gestures it answers on the diagram and in the tree.
 	const kind = isPath.has(slot.name) ? 'farfield' : 'compartment';
+	// The name in one element of its own, so the tile can centre it as one
+	// thing: loose, the name, the bracket and the symbol would each be a flex
+	// item and be laid out side by side as three.
+	const label = el('span', { className: 'matrix-label' }, nameOf(slot));
 	const btn = el('button', {
 		className: 'matrix-block', type: 'button',
 		title: `${fullOf(slot)} \u2014 its row is what flows out of it, its column `
@@ -505,11 +516,11 @@ function diagonalCell(slot, ctx) {
 				? ' A far-field path: a flux goes into its first fracture cell and '
 					+ 'its release comes out of its last.'
 				: ''}\nClick to select it, double-click to open its settings.`,
-	}, nameOf(slot));
+	}, label);
 	// What it is shown as, in brackets after its name, as the tree has it.
 	const named = ed.findBlock(project, slot.name)?.block;
 	if (named && hasSymbol(named)) {
-		btn.append(' (', el('span', { className: 'matrix-symbol' }, ...symbolNodes(named.symbol)), ')');
+		label.append(' (', el('span', { className: 'matrix-symbol' }, ...symbolNodes(named.symbol)), ')');
 	}
 	btn.dataset.name = slot.name;
 	if (selection?.name === slot.name) btn.classList.add('is-selected');
@@ -539,15 +550,26 @@ function paint(el2, color) {
 	el2.style.setProperty('--matrix-ink-dim', ink.dim);
 }
 
+/**
+ * How many transfers one square holds before it has to scroll: each needs its
+ * rate and its name, and the square keeps a short row for adding another.
+ * Two fit; a third is where it gets tight.
+ */
+const STACK_FITS = 2;
+
 /** The transfers in one cell, newest last. */
 function cellStack(here, { project, selection, hooks, down, from, to }) {
-	const stack = el('div', { className: 'matrix-stack' });
+	// Scrolling only when it has to. It used to whenever its content came to
+	// more than its box, which a fraction of a pixel of rounding is enough for
+	// -- a zoom left at 100.4% by the wheel reads as 100% -- and put a
+	// scrollbar beside squares with room to spare.
+	const stack = el('div', { className: `matrix-stack${here.length > STACK_FITS ? ' is-crowded' : ''}` });
 	for (const t of here) {
 		// A source has no `from` key at all; a transfer out of the model has
 		// one set to null.
 		const isSource = t.from === undefined || t._source;
 		const btn = el('button', {
-			className: `matrix-cell${
+			className: `matrix-cell matrix-flow${
 				selection?.name === qualifiedName(t) ? ' is-selected' : ''}`,
 			type: 'button',
 			title: `${qualifiedName(t)}: ${t.rate}\n${from} \u2192 ${to}\n`
@@ -589,7 +611,7 @@ function summaryCell(here, { hooks, down, from, to, open }) {
 	const shown = names.slice(0, 8);
 	const stack = el('div', { className: 'matrix-stack' });
 	const btn = el('button', {
-		className: 'matrix-cell matrix-summary', type: 'button',
+		className: 'matrix-cell matrix-flow matrix-summary', type: 'button',
 		title: `${here.length} fluxes from ${from} to ${to}:\n  ${shown.join('\n  ')}`
 			+ `${names.length > shown.length ? `\n  \u2026and ${names.length - shown.length} more` : ''}`
 			+ `\nClick to open ${open} and read them against the blocks they join.`,
