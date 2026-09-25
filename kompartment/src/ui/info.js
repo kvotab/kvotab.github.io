@@ -482,7 +482,7 @@ export function renderInfo(host, project, selection, hooks = {}) {
 				// Which of them may differ from one nuclide to the next, since
 				// that is the thing a reader cannot tell from the value.
 				perNuclide && (block.entries ?? []).some((e) => key in e)
-					? el('span', { className: 'info-dim' }, ' · and per nuclide below')
+					? el('span', { className: 'info-dim' }, ' · and per index below')
 					: null));
 		}
 		host.append(line('Outflow', ed.OUTFLOW_LABEL[block.o_b ?? 1] ?? String(block.o_b)));

@@ -35,9 +35,9 @@ import {
 import { TIME_UNITS, SECONDS_PER_YEAR, lambda } from '../domain/nuclides.js';
 import { TERMS as BUDGET_TERMS, UNINDEXED } from '../domain/massbalance.js';
 import {
-	WASTE_EQUATION_KEYS, WASTE_NUCLIDE_KEYS, FAILURE_KEYS, failureOf, hazardCode,
+	WASTE_EQUATION_KEYS, WASTE_NUCLIDE_KEYS, FAILURE_KEYS, failureOf, hazardCode, WASTE_LABEL,
 } from '../domain/wastepackage.js';
-import { TIMING_KEYS, timingOf, normaliseActions } from '../domain/disruption.js';
+import { TIMING_KEYS, timingOf, normaliseActions, DIS_LABEL } from '../domain/disruption.js';
 import {
 	REMEMBERING_KINDS, RECORDER_KINDS, EVENT_FIELDS, EVENT_ACTION,
 	DIRECTION_SIGN, RECORDER_COLLECTION, EQUATION_FIELDS,
@@ -59,10 +59,53 @@ import { parseUnit, scaleLiterals } from '../domain/unitcheck.js';
 
 export class BuildError extends Error {
 	constructor(message, blockName) {
-		super(blockName ? `${blockName}: ${message}` : message);
+		// A block's settings are compiled into slots named `Block#setting`, a
+		// name no equation can reach -- and so a name no reader has ever seen.
+		// An error about one used to be filed under it: nothing on the diagram
+		// or in the tree answers to `Canisters#degradation_rate`, so the fault
+		// marked no block at all, and its message spoke the builder's language
+		// ("add 'WT' to 'Canisters#degradation_rate'"). So it is filed under
+		// the block, with the setting kept beside it, and said in words.
+		const cut = typeof blockName === 'string' ? blockName.indexOf('#') : -1;
+		const owner = cut > 0 ? blockName.slice(0, cut) : blockName;
+		const said = inWords(message);
+		super(owner ? `${owner}: ${said}` : said);
 		this.name = 'BuildError';
-		this.blockName = blockName;
+		this.blockName = owner;
+		this.setting = cut > 0 ? blockName.slice(cut + 1) : null;
 	}
+}
+
+/** What the `#` slots are called where somebody reads about them. */
+const SLOT_WORDS = {
+	...Object.fromEntries(Object.entries(WASTE_LABEL).map(([k, v]) => [k, v.toLowerCase()])),
+	...Object.fromEntries(Object.entries(DIS_LABEL).map(([k, v]) => [k, `${v.toLowerCase()} setting`])),
+	dydt: 'dy/dt term',
+	// A transfer's availability: see ../domain/availability.js.
+	limit: 'availability limit',
+	top: 'availability numerator',
+	bottom: 'availability denominator',
+	hazard: 'failure hazard',
+	lambda: 'rate',
+	share: 'share',
+};
+
+/**
+ * A builder message with its `'Block#setting'` names said as the block and
+ * the setting: `Canisters’s matrix degradation rate`. "Add 'WT' to" one is
+ * advice about the block's own lists, and is said so.
+ */
+function inWords(message) {
+	const slot = (block, key) => {
+		// A far-field path's settings are symbols (`K<sub>d,f</sub>`), which
+		// a message cannot show; those, and anything else without words, are
+		// named by the key the file uses.
+		const words = SLOT_WORDS[key] ?? SLOT_WORDS[key.replace(/\d+$/, '')] ?? `setting ${key}`;
+		return `${block}\u2019s ${words}`;
+	};
+	return String(message ?? '')
+		.replace(/add '([^']+)' to '([^'#]+)#[^']*'/g, (all, dim, block) => `add '${dim}' to the lists ${block} is indexed by`)
+		.replace(/'([^'#\s]+)#([A-Za-z_]+\d*)'/g, (all, block, key) => slot(block, key));
 }
 
 /**
@@ -558,8 +601,8 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 	}
 
 	// Waste packages: every setting is an equation with a slot of its own --
-	// the inventory and the instant-release fraction per index, the failure
-	// and degradation settings one value per block -- named with a `#` so that
+	// the inventory, the instant-release fraction and the degradation rate
+	// per index, the failure settings one value per block -- named with a `#` so that
 	// no equation can reach them. Two more slots are worked out from those and
 	// from the two inventories: the hazard, and the block's own value, the
 	// release. `needs` puts each after the slots it reads in the evaluation
@@ -1561,7 +1604,7 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 			emitLoop(algLines, space, a.dims, '\t', (vars, offExpr, indent) => {
 				algLines.push(`${indent}X[${a.base} + ${offExpr}] = X[${W.hazardSlot.base}] * `
 					+ `y[${W.intact.base} + ${offExpr}] * X[${W.setting.irf.base} + ${offExpr}] + `
-					+ `X[${W.setting.degradation_rate.base}] * y[${W.exposed.base} + ${offExpr}];`);
+					+ `X[${W.setting.degradation_rate.base} + ${offExpr}] * y[${W.exposed.base} + ${offExpr}];`);
 			});
 			continue;
 		}

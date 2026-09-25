@@ -208,8 +208,9 @@ export function blockTopic(kind) {
 				'**Release** — the compartment or far-field path what is released goes to.',
 				'**Packages** — how many there are.',
 				'**Packages fail** — how: all at a time, or over time by a failure law.',
-				'The inventory and the instant-release fraction, per nuclide, are under **Values per index**; '
-				+ 'the waste form’s degradation rate is one value.',
+				'**Matrix degradation rate** — how fast the exposed waste form dissolves. The inventory, the '
+				+ 'instant-release fraction and the rate can each differ per index, under **Values per index**: '
+				+ 'per nuclide, or per waste type when the block is indexed by one.',
 				'**Handle decay and ingrowth** — whether the inventories decay inside the packages.',
 			],
 			{ diagram: 'a box marked with a canister', file: '`waste_packages`', more: 'Waste packages: the source term with its barriers' });

@@ -629,7 +629,7 @@ function patternSource(b, opts = {}) {
 				algLines.push(`\t\ts.add(${W.exposed.base + off});`);
 				algLines.push(`\t\tADD(s, SX[${W.hazardSlot.base}]);`);
 				algLines.push(`\t\tADD(s, SX[${W.setting.irf.base + off}]);`);
-				algLines.push(`\t\tADD(s, SX[${W.setting.degradation_rate.base}]);`);
+				algLines.push(`\t\tADD(s, SX[${W.setting.degradation_rate.base + off}]);`);
 				algLines.push('\t}');
 			}
 			continue;
@@ -1041,11 +1041,13 @@ function jvpSourceFor(b, opts = {}) {
 		if (a.kind === 'waste_package') {
 			const W = a.waste;
 			const haz = `X[${W.hazardSlot.base}]`;
-			const deg = `X[${W.setting.degradation_rate.base}]`;
-			const dDeg = b.SX?.[W.setting.degradation_rate.base]?.size ? `dX[${W.setting.degradation_rate.base}]` : null;
 			for (let off = 0; off < a.width; off++) {
 				const P = W.intact.base + off;
 				const M = W.exposed.base + off;
+				// A rate per index, like the fraction: see WASTE_NUCLIDE_KEYS.
+				const deg = `X[${W.setting.degradation_rate.base + off}]`;
+				const dDeg = b.SX?.[W.setting.degradation_rate.base + off]?.size
+					? `dX[${W.setting.degradation_rate.base + off}]` : null;
 				const irf = `X[${W.setting.irf.base + off}]`;
 				const dIrf = b.SX?.[W.setting.irf.base + off]?.size ? `dX[${W.setting.irf.base + off}]` : null;
 				lines.push(`\tX[${a.base + off}] = ${haz} * y[${P}] * ${irf} + ${deg} * y[${M}];`);

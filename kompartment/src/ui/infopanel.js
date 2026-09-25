@@ -350,8 +350,10 @@ function installClosers() {
 	installed = true;
 	document.addEventListener('keydown', (ev) => {
 		if (ev.key !== 'Escape' || !shown || ev.defaultPrevented) return;
-		// A dialog on top has the key: Escape closes the thing in front.
-		if (document.querySelector('dialog[open]')) return;
+		// A modal dialog on top has the key: Escape closes the thing in
+		// front. (A floating window is not on top of the page in that sense;
+		// it takes Escape itself when the keyboard is in it.)
+		if (document.querySelector('dialog:modal')) return;
 		// Only from the panel, its (i), or nowhere in particular: Escape in a
 		// text box puts its value back and in the tree clears the selection,
 		// and taking the key from them would close a panel nobody was

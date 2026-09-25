@@ -626,10 +626,12 @@ main > #workspace { grid-column: 3; }
    is a flex row rather than the grid above, so the (i) takes the push to the
    right itself -- unless a count is there before it, which has taken it
    already: two auto margins in one row share the space between them, and the
-   count would come to rest halfway. After a count the (i) keeps its distance.
-   In a heading on the grid, it is the fourth column's. */
+   count would come to rest halfway. After a count the (i) keeps its distance
+   -- in a closed section only: an open one hides its count, which is still
+   the (i)'s neighbour in the markup, and the (i) came to rest beside the
+   heading. In a heading on the grid, it is the fourth column's. */
 .panel-section > summary > .info-btn { margin-left: auto; align-self: center; }
-.panel-section > summary > .panel-section-badge + .info-btn { margin-left: 6px; }
+.panel-section:not([open]) > summary > .panel-section-badge + .info-btn { margin-left: 6px; }
 #sidebar > .panel-section > summary > .info-btn {
 	grid-column: 4;
 	justify-self: end;
@@ -3648,12 +3650,29 @@ textarea.is-suspect {
 
 #panel-matrix { align-content: start; overflow: auto; }
 
+/* Every cell one square, `--cell` on a side, so the grid reads as the matrix
+   it is -- the pattern of who feeds whom, the shape a Jacobian is drawn in --
+   rather than as a table whose columns are as wide as their longest rate.
+   What does not fit a square is cut, and is on its tooltip; the zoom above the
+   grid (`zoom` on the table, see ./src/ui/matrix.js) is how to read it. A
+   fixed layout, against a width of one square per slot (`--n`, set by the
+   code), because an automatic one sizes columns by their contents. */
 table.matrix {
+	--cell: 96px;
 	border-collapse: separate;
 	border-spacing: 0;
 	font-family: var(--sans);
 	font-size: 11.5px;
 	margin-bottom: 10px;
+	table-layout: fixed;
+	width: calc(var(--n, 1) * (var(--cell) + 1px));
+}
+
+table.matrix td,
+table.matrix th {
+	width: var(--cell);
+	height: var(--cell);
+	overflow: hidden;
 }
 
 table.matrix th {
@@ -3663,9 +3682,29 @@ table.matrix th {
 	font-weight: 650;
 	color: var(--text-primary);
 	padding: 5px 9px;
-	white-space: nowrap;
 	text-align: left;
 }
+
+/* The zoom: above the grid, and staying there while it scrolls both ways. */
+.matrix-zoom {
+	position: sticky;
+	top: 0;
+	left: 0;
+	z-index: 3;
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	width: max-content;
+	margin: 0 0 8px;
+	padding: 3px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: var(--surface-1);
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+.matrix-zoom button { min-width: 28px; padding: 2px 7px; }
+.matrix-zoom .matrix-zoom-level { min-width: 52px; font-family: var(--mono); font-size: 11px; }
+.matrix-zoom-hint { margin: 0 4px 0 6px; font-size: 10.5px; }
 
 /* The diagonal: the block itself, heading its row and its column at once.
    Not sticky -- there is no band to stick, which is the bargain this layout
@@ -3705,6 +3744,12 @@ table.matrix th.matrix-self { padding: 0; position: relative; }
 	text-align: left;
 	padding: 4px 8px;
 	cursor: pointer;
+	/* A square is taller than a line: the name wraps within it, breaking a
+	   long one wherever it must, and what is left over is cut. */
+	white-space: normal;
+	overflow-wrap: anywhere;
+	line-height: 1.25;
+	overflow: hidden;
 }
 
 /* Given a colour, the edge is that colour carried towards the label's ink:
@@ -3814,16 +3859,10 @@ table.matrix th.matrix-self { padding: 0; position: relative; }
 /* A cell that belongs to no pair at all -- a header against another header. */
 .matrix-void { background: var(--surface-sunken); }
 
-/* A tile is placed out of flow, so it contributes neither height nor width to
-   its cell and cannot ask for the room it needs. Two lines on a folded tile
-   want more than a transfer's 38px, and a sub-system's name wants more than
-   the 92px a column of transfers settles at -- `Geosphere` came out as
-   `Geosph…` beside a column that had space to spare. Given here instead,
-   and only where a grid has folded sub-systems on it. */
-table.matrix.has-groups td,
-table.matrix.has-groups th { height: 48px; }
-
-table.matrix.has-groups th.matrix-self { min-width: 148px; }
+/* A folded sub-system's two lines -- its name, what it holds -- wrap within
+   the square like a block's name does. */
+.matrix-system-name,
+.matrix-system-held { white-space: normal; overflow-wrap: anywhere; }
 
 /* Outside the model: a tile for consistency, but nothing to press. */
 .matrix-nowhere {
@@ -3850,8 +3889,6 @@ table.matrix td {
 	border-right: 1px solid var(--border);
 	padding: 0;
 	text-align: center;
-	min-width: 92px;
-	height: 38px;
 }
 
 /* A pair that cannot be joined: one far-field path's release delivered
@@ -3884,7 +3921,7 @@ table.matrix td {
 
 .matrix-cell {
 	width: 100%;
-	height: 38px;
+	height: var(--cell);
 	border: none;
 	border-radius: 0;
 	background: transparent;
@@ -3921,11 +3958,22 @@ table.matrix td {
 	font-size: 11px;
 	color: var(--matrix-ink, var(--text-primary));
 	overflow: hidden;
+	/* Up to three lines in a square of its own, one where it shares the
+	   square with others; the whole of it is on the tooltip. */
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 3;
+	overflow-wrap: anywhere;
+}
+.matrix-stack:has(> .matrix-cell + .matrix-cell:not(.matrix-add)) .matrix-rate { -webkit-line-clamp: 1; }
+
+.matrix-name {
+	font-size: 9.5px;
+	color: var(--matrix-ink-dim, var(--text-muted));
+	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
-
-.matrix-name { font-size: 9.5px; color: var(--matrix-ink-dim, var(--text-muted)); }
 
 /* The "+" is centred, unlike a transfer, which reads from its elbow outward. */
 .matrix-add {
@@ -3940,8 +3988,16 @@ table.matrix td {
 .matrix-add:focus-visible { opacity: 1; }
 
 /* A pair may hold several transfers; they stack, newest last, with a short
-   row at the bottom for adding another. */
-.matrix-stack { display: grid; }
+   row at the bottom for adding another -- sharing the square between them,
+   and scrolling inside it when there are more than it holds. */
+.matrix-stack {
+	display: flex;
+	flex-direction: column;
+	height: var(--cell);
+	overflow-y: auto;
+}
+.matrix-stack > .matrix-cell { flex: 1 1 0; min-height: 26px; height: auto; }
+.matrix-stack > .matrix-more { flex: 0 0 16px; min-height: 16px; }
 
 .matrix-stack .matrix-cell + .matrix-cell {
 	border-top: 1px solid var(--border);
@@ -4025,6 +4081,19 @@ table.matrix td {
 
 .modal::backdrop { background: rgba(0, 0, 0, 0.38); }
 
+/* A floating window (`openModal({ floating })`): not modal, so not in the top
+   layer and not centred by the browser -- placed like a modal one, over the
+   middle of the window, and then pinned there like one. Its z-index is set
+   by the code, in a band of its own. A stronger shadow, since there is no
+   backdrop to set it apart from the page it floats over. */
+.modal.is-floating {
+	position: fixed;
+	inset: 0;
+	margin: auto;
+	z-index: 30;
+	box-shadow: 0 18px 50px rgba(0, 0, 0, 0.34), 0 0 0 1px var(--border-strong);
+}
+
 /* Moved and sized by hand. The browser centres a dialog and re-centres it
    whenever its contents change, which is what made a window drift while it was
    being typed into; `openModal` pins it where it opened and these two are what
@@ -4105,6 +4174,23 @@ table.matrix td {
    a closed dialog is display: none, and this would show it. */
 .modal[open] { display: flex; flex-direction: column; }
 .modal-head { flex: none; }
+
+/* A block's own faults, at the top of its settings (`fillSettingsProblems`):
+   the strip's rows that name it, in the strip's colours. */
+.settings-problems { margin: 0 0 12px; }
+.settings-problems[hidden] { display: none; }
+.settings-problem {
+	margin: 0 0 6px;
+	padding: 7px 10px;
+	background: var(--danger-bg);
+	border: 1px solid var(--danger);
+	border-left-width: 3px;
+	border-radius: var(--radius);
+	font-size: 12px;
+	line-height: 1.45;
+	overflow-wrap: anywhere;
+}
+.settings-problem b { color: var(--danger); font-weight: 650; }
 
 .modal-body {
 	flex: 1 1 auto;

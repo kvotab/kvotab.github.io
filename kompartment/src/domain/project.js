@@ -183,9 +183,9 @@ const VALUE_KEYS = {
 	// ../sim/builder.js. The cell counts are not here -- they decide how many
 	// states there are before any equation is evaluated. See ./farfield.js.
 	farfield: FARF_EQUATION_KEYS,
-	// Waste packages: the inventory and the instant-release fraction are per
-	// nuclide; how the packages fail and how the waste form degrades hold one
-	// value each. See ./wastepackage.js.
+	// Waste packages: the inventory, the instant-release fraction and the
+	// degradation rate are per index; how the packages fail holds one value
+	// each. See ./wastepackage.js.
 	waste_package: WASTE_EQUATION_KEYS,
 	// Disruptive events: when, as equations. What they do is a list of
 	// actions, normalised in `_block`. See ./disruption.js.

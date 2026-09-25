@@ -243,7 +243,35 @@ function resizable(dialog, grip, body) {
 	});
 }
 
-export function openModal({ title, subtitle, build, onClose, wide = false, info = null }) {
+/**
+ * The floating windows, front last: see `openModal({ floating })`. Their
+ * stacking is kept here, in a band of its own (30 and up) under the menus,
+ * the notices and the pickers, because a window that is not modal is not in
+ * the top layer and has to be put in front by hand.
+ */
+const floaters = [];
+const FLOAT_Z = 30;
+
+/** Brings a floating window to the front of the others. */
+function raise(dialog) {
+	const at = floaters.indexOf(dialog);
+	if (at >= 0 && at === floaters.length - 1) return;
+	if (at >= 0) floaters.splice(at, 1);
+	floaters.push(dialog);
+	floaters.forEach((d, i) => d.style.setProperty('z-index', String(FLOAT_Z + i)));
+}
+
+/**
+ * @param {object} opts
+ * @param {boolean} [opts.floating] a window rather than a dialog: shown
+ *   without making the page inert, so the page -- and other floating windows
+ *   -- can be used while it is open. A block's settings are one: two of them
+ *   side by side is how a value is read off one block and typed into
+ *   another. Escape closes the one with the keyboard in it, pressing one
+ *   brings it to the front, and each new one opens a step down and right of
+ *   the last so none hides another.
+ */
+export function openModal({ title, subtitle, build, onClose, wide = false, info = null, floating = false }) {
 	// Where the keyboard was: a dialog opened with Enter on a diagram node
 	// hands the focus back to that node when it closes, rather than dropping
 	// it on the body so that the next Tab starts from the top of the page.
@@ -273,7 +301,7 @@ export function openModal({ title, subtitle, build, onClose, wide = false, info 
 	// the dialog clips its own rounded corners with `overflow: hidden`, which
 	// puts the browser's grip under the clip and out of reach.
 	const grip = el('div', { className: 'modal-grip', title: 'Drag to resize' });
-	const dialog = el('dialog', { className: `modal${wide ? ' modal-wide' : ''}` },
+	const dialog = el('dialog', { className: `modal${wide ? ' modal-wide' : ''}${floating ? ' is-floating' : ''}` },
 		head, body, grip);
 
 	const refresh = () => {
@@ -345,10 +373,30 @@ export function openModal({ title, subtitle, build, onClose, wide = false, info 
 	});
 
 	close.addEventListener('click', () => { drop(); dialog.close(); });
-	dismissOnBackdrop(dialog, () => { drop(); dialog.close(); });
+	// A floating window has no backdrop to press, and pressing the page beside
+	// it is using the page, not dismissing the window.
+	if (!floating) dismissOnBackdrop(dialog, () => { drop(); dialog.close(); });
+	if (floating) {
+		// Escape, which a window that is not modal does not get from the
+		// browser: the one with the keyboard in it closes -- a panel an (i) in
+		// it opened first, as in a modal one -- unless a field inside has
+		// taken the key for itself.
+		dialog.addEventListener('keydown', (ev) => {
+			if (ev.key !== 'Escape' || ev.defaultPrevented) return;
+			ev.preventDefault();
+			if (dialog.querySelector(':scope > .info-panel')) { closeInfo(); return; }
+			drop();
+			dialog.close();
+		});
+		// In front when pressed or tabbed into.
+		dialog.addEventListener('pointerdown', () => raise(dialog), true);
+		dialog.addEventListener('focusin', () => raise(dialog));
+	}
 	dialog.addEventListener('close', () => {
 		dialog.remove();
 		drop();
+		const f = floaters.indexOf(dialog);
+		if (f >= 0) floaters.splice(f, 1);
 		onClose?.();
 		// Only if nothing else has taken it meanwhile, and the opener is still
 		// on the page -- a block deleted from its own settings has no node to
@@ -360,29 +408,59 @@ export function openModal({ title, subtitle, build, onClose, wide = false, info 
 
 	document.body.append(dialog);
 	refresh();
-	dialog.showModal();
+	const before = floaters.length;
+	if (floating) {
+		dialog.show();
+		raise(dialog);
+	} else {
+		dialog.showModal();
+	}
 	// Where the browser put it becomes where it *is*, so that everything after
 	// -- a message appearing under a field, a section opening, a drag -- moves
 	// it only when something asks it to.
 	pin(dialog);
+	// A floating window opens a step down and right of the one before, so a
+	// second block's settings do not land exactly on the first's.
+	if (floating && before) {
+		const step = 28 * (before % 8);
+		const r = dialog.getBoundingClientRect();
+		const at = within(r.left + step, r.top + step, dialog);
+		dialog.style.left = `${Math.round(at.x)}px`;
+		dialog.style.top = `${Math.round(at.y)}px`;
+	}
 	draggable(dialog, head);
 	resizable(dialog, grip, body);
 
-	const handle = { dialog, refresh, close: () => { drop(); dialog.close(); } };
+	const handle = {
+		dialog, refresh, floating,
+		close: () => { drop(); dialog.close(); },
+		// In front, with the keyboard in it: for a caller asked to open a
+		// window that is open already.
+		focus: () => {
+			if (floating) raise(dialog);
+			(body.querySelector('input, select, textarea, button') ?? close).focus({ preventScroll: true });
+		},
+	};
 	stack.push(handle);
 	return handle;
 }
 
 /**
- * Refreshes the innermost dialog.
+ * Refreshes what can be seen of the dialogs: the innermost modal one, or,
+ * when a floating window is on top, every floating window -- each is an
+ * editor over the same model, and an edit made in one, or on the page beside
+ * them, may change what another should show.
  *
- * The one underneath is not rebuilt while something is over it: it is inert,
- * nobody is reading it, and it is refreshed when it comes back up -- by
+ * A dialog underneath a modal one is not rebuilt while it is under it: it is
+ * inert, nobody is reading it, and it is refreshed when it comes back up -- by
  * whatever edit the dialog above it made, which reaches `republish` like any
  * other.
  */
 export function refreshModal() {
-	stack[stack.length - 1]?.refresh();
+	const top = stack[stack.length - 1];
+	if (!top) return;
+	if (!top.floating) { top.refresh(); return; }
+	for (const h of stack) if (h.floating) h.refresh();
 }
 
 /** Closes the innermost dialog, which is the one a caller inside it means. */
@@ -397,4 +475,9 @@ export function closeAllModals() {
 
 export function modalIsOpen() {
 	return stack.length > 0;
+}
+
+/** Whether a dialog that makes the page inert is open -- not a floating window. */
+export function blockingModalIsOpen() {
+	return stack.some((h) => !h.floating);
 }

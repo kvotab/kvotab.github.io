@@ -2252,7 +2252,8 @@ to be kept in step; as one block it is a handful of settings.
   constants) and its tangent zero -- a failure setting that follows the state
   is *refused*, since the hazard's derivative in each closed form is not a
   thing to approximate; the release slot's columns are the two inventories
-  plus the hazard's, the IRF's and the degradation rate's, and its tangent is
+  plus the hazard's, the IRF's and the degradation rate's (the last two per
+  index, like the release), and its tangent is
   `h(v_P·irf + P·dirf) + d·v_M + dd·M` with the setting tangents present only
   when the pattern says they move; the two rows are `PAT(P,P)`, `PAT(M,P)`,
   the hazard's columns on both and the release's on M, with jvp
@@ -5242,3 +5243,75 @@ on a twelve-line page with a bare `<dialog>` -- and closing with a click never
 does. Close dialogs with their × in a CDP script. A tab made by
 `/json/new` is not focused and does not hang, but it also never gets focus
 events, so what focus does is not tested there.
+
+## Block settings as floating windows
+
+A block's settings open with `openModal({ floating: true })` (src/ui/modal.js):
+`dialog.show()` rather than `showModal()`, so the page is not made inert and a
+second block's settings can be opened beside the first. What a modal dialog
+gets from the browser, a floating one is given by hand:
+
+* **placing** -- `.modal.is-floating` is `position: fixed; inset: 0; margin:
+  auto`, which centres it as the top layer centres a modal one, and `pin` then
+  fixes it there; each new one is moved a step down and right of the last
+  (`28 * (open % 8)`), so none lands exactly on another;
+* **stacking** -- not in the top layer, so `raise` keeps the floating windows
+  in a band of their own (z-index 30 and up) under the pickers (40), the info
+  panel (45), the drop zone (50), menus and notices (60) and completion (90),
+  and brings one to the front on `pointerdown` (capture) and `focusin`;
+* **Escape** -- no close request reaches a dialog that is not modal, so a
+  `keydown` on the dialog closes it, after a panel an (i) in it opened, unless
+  a field has already taken the key (`defaultPrevented`).
+
+It has no backdrop, so `dismissOnBackdrop` is not attached. `refreshModal`
+refreshes the modal dialog on top when there is one (everything under it is
+inert), and otherwise every floating window, since each is an editor over the
+same model. Code that wanted "the open dialog" in order to escape a modal's
+inertness now asks for `dialog:modal`: the notice, the copy fallback's
+textarea, the info panel's document-level Escape.
+
+`openBlockSettings` keeps `settingsWindows`, block name to window: asked for a
+block whose window is open, it calls the handle's `focus()` instead of
+opening another. Each window holds its own block name, moved on by a rename
+made in it; `state.settingsFor` is only the window last used, for the undo
+history's labels. Each window's (i) is keyed by the window
+(`dialog:block:<id>`), since two windows can be about two kinds of block.
+
+## A pipe's place, per canvas
+
+A connection's bend is `layout['edge:<name>']`. A connection is drawn whole on
+the one canvas that sees both its ends, as themselves or as the sub-system
+nodes holding them, and on each deeper canvas as a line ending in a pipe
+(`_elsewhere` in `_renderEdges`). The pipe used to be placed by the same
+point, so dragging it inside a sub-system bent the line above, and the other
+way round. Now a pipe is `edge:<name>@<canvas>` (`waypointKey`,
+`parseEdgeKey` in src/domain/edit.js). `_renderEdges` notes which connections
+are pipes on the canvas it draws (`_pipesHere`), and `_wayView` gives the drags
+and Straighten the point that canvas owns. The keys follow a renamed block
+(`retargetLayout`) and a renamed or moved sub-system (`retargetLayoutAll`'s
+`canvasOf`); `pruneLayout` drops a pipe whose canvas has gone; and a moved end
+drops every canvas's point (`clearWaypoints`). A file written before this has
+only the one key, which is now the whole drawing's; its pipes start from their
+default places.
+
+## Faults found by building
+
+The problem scan builds a `Project`, not the system, so a fault only the
+builder can find -- an equation indexed by a list its slot cannot reach --
+used to surface only as a failed run: the strip had it, no block did, and it
+named the setting by its slot, `Canisters#degradation_rate`. Three changes:
+
+* `BuildError` files a `Block#setting` owner under the block (with `.setting`
+  kept) and says slot names in words (`inWords`, `SLOT_WORDS`): *Canisters's
+  matrix degradation rate*, and "add 'WT' to the lists Canisters is indexed
+  by";
+* the build behind the values at the start (`computeStartValues`), which is
+  the builder without df/dy and so fails where a run would, hands what it
+  caught to `noteBuildProblem`: a `buildProblem`, shown in the strip ("the
+  model will not build as it stands") but not refusing Run. `recheckBuild`
+  runs it again after every edit, or forgets the fault for a model whose build
+  is over `START_BUDGET`, where the run will say it;
+* `marksByName` marks the block that the run's problem or the build's names,
+  and `fillSettingsProblems` puts every problem naming a block at the top of
+  that block's settings -- filled in place, since a fault can arrive after the
+  window was drawn.

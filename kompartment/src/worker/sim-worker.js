@@ -942,7 +942,7 @@ self.onmessage = async (ev) => {
 			self.postMessage({ type: 'columns', id: msg.id, indices, columns },
 				columns.map((c) => c.buffer));
 		} catch (e) {
-			self.postMessage({ type: 'error', id: msg.id, name: e.name, message: e.message });
+			self.postMessage({ type: 'error', id: msg.id, name: e.name, message: e.message, blockName: e.blockName ?? null });
 		}
 		return;
 	}
@@ -1062,7 +1062,7 @@ self.onmessage = async (ev) => {
 			if (e === STOPPED || cancelled) return;
 			self.postMessage({
 				type: 'error', id, name: e.name ?? 'Error',
-				message: e.message ?? String(e), hint: e.hint ?? null,
+				message: e.message ?? String(e), blockName: e.blockName ?? null, hint: e.hint ?? null,
 			});
 		}
 		return;
@@ -1083,7 +1083,7 @@ self.onmessage = async (ev) => {
 				bands: bandsOf(lastProb.result, lastProb.percentiles, lastProb.mask),
 			});
 		} catch (e) {
-			self.postMessage({ type: 'error', id: msg.id, name: e.name, message: e.message });
+			self.postMessage({ type: 'error', id: msg.id, name: e.name, message: e.message, blockName: e.blockName ?? null });
 		}
 		return;
 	}
@@ -1121,7 +1121,7 @@ self.onmessage = async (ev) => {
 				bands: bandsOf(result, lastProb.percentiles, lastProb.mask),
 			});
 		} catch (e) {
-			self.postMessage({ type: 'error', id: msg.id, name: e.name, message: e.message });
+			self.postMessage({ type: 'error', id: msg.id, name: e.name, message: e.message, blockName: e.blockName ?? null });
 		}
 		return;
 	}
@@ -1173,7 +1173,7 @@ self.onmessage = async (ev) => {
 				screened: !!mask,
 			}, [column.buffer]);
 		} catch (e) {
-			self.postMessage({ type: 'error', id: msg.id, name: e.name, message: e.message });
+			self.postMessage({ type: 'error', id: msg.id, name: e.name, message: e.message, blockName: e.blockName ?? null });
 		}
 		return;
 	}
@@ -1224,7 +1224,7 @@ self.onmessage = async (ev) => {
 				type: 'prob-hist', id: msg.id, at, t: result.t, items, of: result.iterations,
 			});
 		} catch (e) {
-			self.postMessage({ type: 'error', id: msg.id, name: e.name, message: e.message });
+			self.postMessage({ type: 'error', id: msg.id, name: e.name, message: e.message, blockName: e.blockName ?? null });
 		}
 		return;
 	}
@@ -1279,7 +1279,7 @@ self.onmessage = async (ev) => {
 				x: { index: Number(msg.x), values: x }, ys, of: result.iterations,
 			}, move);
 		} catch (e) {
-			self.postMessage({ type: 'error', id: msg.id, name: e.name, message: e.message });
+			self.postMessage({ type: 'error', id: msg.id, name: e.name, message: e.message, blockName: e.blockName ?? null });
 		}
 		return;
 	}
@@ -1314,7 +1314,7 @@ self.onmessage = async (ev) => {
 			if (cancelled) return;
 			self.postMessage({
 				type: 'error', id, name: e.name ?? 'Error',
-				message: e.message ?? String(e), hint: e.hint ?? null,
+				message: e.message ?? String(e), blockName: e.blockName ?? null, hint: e.hint ?? null,
 			});
 		}
 		return;
@@ -1344,7 +1344,7 @@ self.onmessage = async (ev) => {
 			if (e === STOPPED || cancelled) return;
 			self.postMessage({
 				type: 'error', id, name: e.name ?? 'Error',
-				message: e.message ?? String(e), hint: e.hint ?? null,
+				message: e.message ?? String(e), blockName: e.blockName ?? null, hint: e.hint ?? null,
 			});
 		}
 		return;
@@ -1376,7 +1376,7 @@ self.onmessage = async (ev) => {
 			if (e === STOPPED || cancelled) return;
 			self.postMessage({
 				type: 'error', id, name: e.name ?? 'Error',
-				message: e.message ?? String(e), hint: e.hint ?? null,
+				message: e.message ?? String(e), blockName: e.blockName ?? null, hint: e.hint ?? null,
 			});
 		}
 		return;
@@ -1393,7 +1393,7 @@ self.onmessage = async (ev) => {
 				answer: gsaAnswer(lastGsa.result, msg.index ?? 0, msg.stat ?? 'max', msg.at ?? 0),
 			});
 		} catch (e) {
-			self.postMessage({ type: 'error', id: msg.id, name: e.name, message: e.message });
+			self.postMessage({ type: 'error', id: msg.id, name: e.name, message: e.message, blockName: e.blockName ?? null });
 		}
 		return;
 	}
@@ -1409,7 +1409,7 @@ self.onmessage = async (ev) => {
 				table: tornadoTable(lastTornado.result, msg.index ?? 0, msg.stat ?? 'max', msg.at ?? 0),
 			});
 		} catch (e) {
-			self.postMessage({ type: 'error', id: msg.id, name: e.name, message: e.message });
+			self.postMessage({ type: 'error', id: msg.id, name: e.name, message: e.message, blockName: e.blockName ?? null });
 		}
 		return;
 	}
@@ -1434,7 +1434,7 @@ self.onmessage = async (ev) => {
 		} catch (e) {
 			self.postMessage({
 				type: 'error', id, name: e.name ?? 'Error',
-				message: e.message ?? String(e), hint: e.hint ?? null,
+				message: e.message ?? String(e), blockName: e.blockName ?? null, hint: e.hint ?? null,
 			});
 		}
 		return;
@@ -1463,7 +1463,7 @@ self.onmessage = async (ev) => {
 		} catch (e) {
 			self.postMessage({
 				type: 'error', id, name: e.name ?? 'Error',
-				message: e.message ?? String(e), hint: e.hint ?? null,
+				message: e.message ?? String(e), blockName: e.blockName ?? null, hint: e.hint ?? null,
 			});
 		}
 		return;
@@ -1559,7 +1559,7 @@ self.onmessage = async (ev) => {
 		} catch (e) {
 			self.postMessage({
 				type: 'error', id, name: e.name ?? 'Error',
-				message: e.message ?? String(e), hint: e.hint ?? null,
+				message: e.message ?? String(e), blockName: e.blockName ?? null, hint: e.hint ?? null,
 			});
 		}
 		return;
@@ -1679,7 +1679,7 @@ self.onmessage = async (ev) => {
 				using: use.length,
 			});
 		} catch (e) {
-			self.postMessage({ type: 'error', id: msg.id, name: e.name, message: e.message });
+			self.postMessage({ type: 'error', id: msg.id, name: e.name, message: e.message, blockName: e.blockName ?? null });
 		}
 		return;
 	}
@@ -1754,7 +1754,7 @@ self.onmessage = async (ev) => {
 				matrices.map((m) => m.buffer),
 			);
 		} catch (e) {
-			self.postMessage({ type: 'error', id: msg.id, name: e.name, message: e.message });
+			self.postMessage({ type: 'error', id: msg.id, name: e.name, message: e.message, blockName: e.blockName ?? null });
 		}
 		return;
 	}
@@ -1840,7 +1840,7 @@ self.onmessage = async (ev) => {
 		} catch (e) {
 			self.postMessage({
 				type: 'error', id, name: e.name ?? 'Results',
-				message: e.message ?? String(e), blockName: null,
+				message: e.message ?? String(e), blockName: e.blockName ?? null, blockName: null,
 				hint: 'The model in the file opens on its own — press Open again '
 					+ 'and it will load without the stored run.',
 			});
@@ -1893,7 +1893,7 @@ self.onmessage = async (ev) => {
 			// would have got had it not tried to save the solve.
 			self.postMessage({
 				type: 'error', id, name: e.name ?? 'Error',
-				message: e.message ?? String(e), blockName: e.blockName ?? null,
+				message: e.message ?? String(e), blockName: e.blockName ?? null, blockName: e.blockName ?? null,
 				hint: e.hint ?? null,
 			});
 		}

@@ -40,7 +40,7 @@ import {
 import { section as part, el } from './parts.js';
 import { blockIcon, sampleMark } from './icons.js';
 import { openMenu } from './menu.js';
-import { openModal, refreshModal, closeModal, closeAllModals } from './modal.js';
+import { openModal, refreshModal, closeAllModals } from './modal.js';
 import { openProbabilisticDialog, openReplayDialog, openBandsDialog, bandPairs } from './probdialog.js';
 import { openSensitivityDialog } from './sensdialog.js';
 import { openDistributionDialog } from './distdialog.js';
@@ -126,7 +126,7 @@ import { dialogInfo } from './dialoginfo.js';
  * caused more than one "the code says otherwise" puzzle. Serve with serve.py,
  * which disables caching.
  */
-const BUILD = '2026-09-24';
+const BUILD = '2026-09-25';
 
 const EXAMPLES = [
 	{ file: 'four-compartment.json', title: 'Four-compartment test model' },
@@ -483,6 +483,8 @@ const state = {
 	// carrying a block from one model to another is the one thing this makes
 	// possible that nothing else does.
 	clipboard: null,
+	// A block's look, for Paste format: see `copyFormat`.
+	formatClip: null,
 	// When it was taken. Compared against the copy another tab shared, so the
 	// last thing copied *anywhere* is the thing that pastes -- see
 	// ./clipboard.js and `clipboardNow` below.
@@ -522,6 +524,10 @@ const state = {
 	// view mark it: by block name and by every sub-system above one.
 	marks: new Map(),
 	runProblem: null,
+	// What the build behind the values at the start found, when it would not
+	// build: the same fault a run would stop on, found without one. See
+	// `noteBuildProblem`.
+	buildProblem: null,
 
 	/**
 	 * A copy of every locked block, as it stood when the lock was last honoured.
@@ -2841,6 +2847,8 @@ function modelChanged(opts = {}) {
 		// still wrong is re-derived by `rescanProblems` on every edit; this one
 		// is found again by the next run if it is still there.
 		state.runProblem = null;
+		// And the build's, which is looked for again straight away.
+		recheckBuild();
 	}
 	republish(opts);
 	if (held.length) {
@@ -2908,8 +2916,13 @@ function rememberLocked() {
  */
 function republish(opts = {}) {
 	// The settings dialog is an editor over the same model: an edit made
-	// anywhere may change what it should be showing.
-	refreshModal();
+	// anywhere may change what it should be showing. Except an edit the dialog
+	// is in the middle of making with a control that must survive it: a colour
+	// picker reports every colour it passes over, and rebuilding the dialog
+	// under it destroyed the input the picker belonged to, which closed the
+	// picker at the first click. Those say `keepModal`, and ask for the
+	// refresh themselves once the picker is done.
+	if (!opts.keepModal) refreshModal();
 	// Re-scanned on every edit rather than only when something is typed into a
 	// field: a name change three blocks away can break an equation nobody is
 	// looking at, and a broken model has to say so wherever it is broken from.
@@ -3165,16 +3178,20 @@ async function computeStartValues() {
 	if (state.raw !== model || state.rev !== rev) return false;
 	// Timed from here, so what is measured is the work rather than the fetch.
 	const started = Date.now();
+	let fault = null;
 	try {
 		at = valuesAtStart(new Project(structuredClone(model)));
-	} catch {
-		// A model that will not build has no values, which is not a fault to
-		// report here: it is already the problem strip's, in more detail than
-		// a line under one box could give.
+	} catch (e) {
+		// A model that will not build has no values. Why is not something a
+		// line under one box can say -- but a fault the builder names is one
+		// the run would stop on, and the strip does not have it: see
+		// `noteBuildProblem`.
 		at = null;
+		fault = e;
 	}
 	startCost = { model, ms: Date.now() - started };
 	startValues = { model, rev, at };
+	noteBuildProblem(fault);
 	// Said once, when it gives up, because a line that quietly stops
 	// appearing reads as a fault rather than as a decision. What is measured
 	// is the whole thing -- the copy, the `Project`, the build, the
@@ -3229,6 +3246,14 @@ function marksByName() {
 	// name costs nothing and is how a warning is found once the list is gone.
 	for (const w of state.warnings) {
 		entries.push({ where: w.name, level: 'warning', message: w.message });
+	}
+	// And a fault found by building the model -- by the last run, or by the
+	// build behind the values at the start -- when it names a block. Those
+	// used to reach the strip and nothing else: a waste package whose rate
+	// would not compile looked like every other block on the diagram, in the
+	// tree and in its own settings, however long the strip said otherwise.
+	for (const p of [state.runProblem, state.buildProblem]) {
+		if (p?.where) entries.push({ where: p.where, level: 'error', message: `${p.what}: ${p.message}` });
 	}
 	// Carried up to every sub-system on the way down to the block, so a
 	// fault in `foo.bar.Expr` is a mark on `foo` at the top level, on
@@ -3380,19 +3405,108 @@ function showError({ name, message, blockName, hint }) {
 	// and "2 problems" for one mistake is worse than one, because it makes the
 	// reader look for a second one.
 	const already = state.problems.some((p) => p.message === message);
+	const before = state.runProblem?.where ?? null;
 	state.runProblem = already ? null : {
 		kind: 'run',
 		where: blockName ?? null,
 		what: name ?? 'Error',
 		message: hint ? `${message} — ${hint}` : message,
 	};
-	renderProblems();
+	// The marks only when a block is involved, coming or going: `remark`
+	// rebuilds the tree, and this runs on every failed run.
+	if (before || state.runProblem?.where) remark();
+	else renderProblems();
 	renderStaleness();
 }
 
 function clearError() {
+	// Called as every run starts, so the tree is rebuilt only when there was
+	// a block marked to take the mark off.
+	const before = state.runProblem?.where ?? null;
 	state.runProblem = null;
+	if (before) remark();
+	else renderProblems();
+}
+
+/**
+ * The marks drawn again, after a fault that is not the scan's arrived or
+ * went: a run's, or the one the build behind the values at the start found.
+ * The scan puts them out on every edit; these come between edits.
+ */
+function remark() {
+	state.marks = marksByName();
+	graph?.setProblems(state.marks);
+	renderRail();
 	renderProblems();
+	fillSettingsProblems();
+}
+
+/** Whether the build's fault is one the strip has not already got. */
+function buildProblemShown() {
+	const b = state.buildProblem;
+	if (!b) return false;
+	return !state.problems.some((p) => p.message === b.message) && state.runProblem?.message !== b.message;
+}
+
+/**
+ * What building the model for the values at the start found, filed as a
+ * problem.
+ *
+ * That build is the one a run makes -- the same builder, without df/dy -- so
+ * what stops it stops a run: an indexed setting on a slot with no such
+ * dimension, an index a block cannot reach. It used to be swallowed here on
+ * the grounds that the strip had it, which it did not: the strip builds a
+ * `Project`, not the system, and such a fault surfaced only as the run
+ * failing, long after the edit that caused it. Not a reason to refuse the
+ * Run button -- the run says the same thing if it is pressed -- but said at
+ * once, in the strip, on the block and in its settings.
+ */
+function noteBuildProblem(e) {
+	const next = e && (e.name === 'BuildError' || e.blockName) ? {
+		kind: 'build',
+		where: e.blockName ?? null,
+		what: 'will not build',
+		message: e.message,
+	} : null;
+	const was = state.buildProblem;
+	if ((was?.message ?? null) === (next?.message ?? null) && (was?.where ?? null) === (next?.where ?? null)) return;
+	state.buildProblem = next;
+	remark();
+}
+
+/**
+ * Looked for again after an edit, once the typing stops -- or forgotten now,
+ * for a model whose build costs too much to repeat on every edit, since what
+ * it says is about the model before the edit and the run will say it again.
+ */
+function recheckBuild() {
+	if (startCost.model === state.raw && startCost.ms > START_BUDGET) {
+		noteBuildProblem(null);
+		return;
+	}
+	scheduleStartValues();
+}
+
+/**
+ * A block's own faults, at the top of its settings: the ones in the strip
+ * that name it, the scan's and the last build's alike. Filled in place, like
+ * the values at the start, so that a fault found after the dialog was drawn
+ * does not rebuild it under the box being typed into.
+ */
+function fillSettingsProblems() {
+	for (const box of document.querySelectorAll('.settings-problems')) {
+		const name = box.dataset.block;
+		const mine = [
+			...state.problems,
+			...(state.runProblem ? [state.runProblem] : []),
+			...(buildProblemShown() ? [state.buildProblem] : []),
+		].filter((p) => p.where === name);
+		box.replaceChildren(...mine.map((p) => el('p', { className: 'settings-problem' },
+			el('b', {}, p.kind === 'run' ? 'The last run failed here. ' : p.kind === 'build' ? 'This will not build. ' : `${p.what}: `),
+			// The block's name is the dialog's title already.
+			String(p.message ?? '').startsWith(`${name}: `) ? p.message.slice(name.length + 2) : p.message)));
+		box.hidden = !mine.length;
+	}
 }
 
 /**
@@ -3412,7 +3526,8 @@ function clearError() {
 function renderProblems() {
 	const box = $('#error');
 	if (!box) return;
-	const all = [...state.problems, ...(state.runProblem ? [state.runProblem] : [])];
+	const all = [...state.problems, ...(state.runProblem ? [state.runProblem] : []),
+		...(buildProblemShown() ? [state.buildProblem] : [])];
 	// The warnings are marked on the diagram and in the tree -- amber, with a
 	// count carried up to every sub-system above them -- and until now that
 	// was the only place they were said at all: a badge on `NearField`, a
@@ -3460,7 +3575,7 @@ function renderProblems() {
 			el('span', { className: 'problems-what' },
 				state.problems.length
 					? 'the model will not run until this is fixed'
-					: 'from the last run'),
+					: state.runProblem ? 'from the last run' : 'the model will not build as it stands'),
 			// What else is in the list, when there is something else. The
 			// count above is of problems and says so, and a reader looking at
 			// nine rows under a heading that says three is owed the other six.
@@ -3649,7 +3764,8 @@ function notice() {
 	noticeEl ??= $('#flash');
 	const footer = $('#app > footer');
 	if (!noticeEl.isConnected) footer.append(noticeEl);
-	const home = document.querySelector('dialog[open]') ?? footer;
+	// A modal one: a floating window has no backdrop over the footer.
+	const home = document.querySelector('dialog:modal') ?? footer;
 	if (noticeEl.parentNode !== home) {
 		home.append(noticeEl);
 		// Registered after the dialog's own close handler, which is what
@@ -3875,7 +3991,7 @@ async function copyText(text, what) {
 	} catch { /* refused; the older route below */ }
 	const area = el('textarea', { value: text, readOnly: true, 'aria-hidden': 'true' });
 	Object.assign(area.style, { position: 'fixed', left: '-9999px', top: '0', opacity: '0' });
-	(document.querySelector('dialog[open]') ?? document.body).append(area);
+	(document.querySelector('dialog:modal') ?? document.body).append(area);
 	area.select();
 	let ok = false;
 	try { ok = document.execCommand('copy'); } catch { ok = false; }
@@ -5496,59 +5612,131 @@ function chartBlocks(names, mode) {
  */
 function openBlockSettings(name) {
 	if (!name || !ed.findBlock(state.raw, name)) return;
+	// One window per block: asked again for a block whose window is open, it
+	// comes to the front instead of opening a second copy of itself.
+	const open = settingsWindows.get(name);
+	if (open) {
+		open.handle.focus();
+		state.settingsFor = name;
+		return;
+	}
+	// Which block this window is about. Its own, since several can be open:
+	// a rename from inside it moves it on, and nothing else does.
+	const win = { name, handle: null, id: ++settingsWindowCount };
+	settingsWindows.set(name, win);
 	state.settingsFor = name;
-	openModal({
+	win.handle = openModal({
 		// What this kind of block is and what its window holds: see
 		// ./blockinfo.js. Read when the (i) is pressed, from whichever block
-		// the window is about by then.
+		// the window is about by then. Keyed by the window, since two windows
+		// can be about two kinds of block.
 		info: {
-			key: 'dialog:block',
-			topic: () => blockTopic(ed.findBlock(state.raw, state.settingsFor)?.kind),
+			key: `dialog:block:${win.id}`,
+			topic: () => blockTopic(ed.findBlock(state.raw, win.name)?.kind),
 		},
+		// A window, not a dialog: the page stays usable behind it, so a
+		// second block's settings can be opened beside the first -- which is
+		// how a value is read off one block and typed into another.
+		floating: true,
 		// The name it answers to in an equation, and -- when it has one --
 		// what it is shown as, in brackets after it. The two are different
 		// strings on purpose: `Water` is what the model is written in and
 		// `H₂O` is what the diagram says, and a dialog titled only with the
 		// second would be a dialog you could not find the block from.
 		title: () => {
-			const name = state.settingsFor ?? '';
-			const found = name ? ed.findBlock(state.raw, name) : null;
-			if (!found || !ed.hasSymbol(found.block)) return name;
-			return [name, ' (', ...symbolNodes(found.block.symbol), ')'];
+			const found = ed.findBlock(state.raw, win.name);
+			if (!found || !ed.hasSymbol(found.block)) return win.name;
+			return [win.name, ' (', ...symbolNodes(found.block.symbol), ')'];
 		},
 		subtitle: () => {
-			const found = ed.findBlock(state.raw, state.settingsFor);
+			const found = ed.findBlock(state.raw, win.name);
 			if (!found) return '';
 			const dims = ed.effectiveDims(state.raw, found.block);
 			return `${found.kind.replace(/_/g, ' ')}`
 				+ (dims.length ? ` \u00b7 indexed by ${dims.join(' \u00d7 ')}` : '');
 		},
 		build: (body) => {
-			const found = ed.findBlock(state.raw, state.settingsFor);
+			const found = ed.findBlock(state.raw, win.name);
 			if (!found) {
 				body.append(el('p', { className: 'hint' }, 'That block no longer exists.'));
 				return;
 			}
-			renderInspector(body, state.raw, { kind: found.kind, name: state.settingsFor }, {
+			renderInspector(body, state.raw, { kind: found.kind, name: win.name }, {
 				atStart: startValueFor,
-				onChange: modelChanged,
+				onChange: (opts) => { state.settingsFor = win.name; modelChanged(opts); },
 				onSelect: (sel) => {
-					// Renaming from inside the dialog changes what it is about;
-					// deleting from inside it closes the dialog.
-					if (!sel?.name) { closeModal(); setSelection(null); return; }
-					state.settingsFor = sel.name;
+					// Renaming from inside the window changes what it is
+					// about; deleting from inside it closes it.
+					if (!sel?.name) { win.handle?.close(); setSelection(null); return; }
+					if (sel.name !== win.name) {
+						settingsWindows.delete(win.name);
+						win.name = sel.name;
+						settingsWindows.set(win.name, win);
+					}
+					state.settingsFor = win.name;
 					setSelection(sel);
 					refreshModal();
 				},
 				onStatus: flash,
 				// Which lists a block is indexed by is a property of the block;
 				// what the lists are is not, so that edit happens on its own
-				// tab, and the dialog gets out of the way.
-				onOpenIndexList: (name) => { closeModal(); openIndexLists(name); },
+				// tab, and the window gets out of the way.
+				onOpenIndexList: (list) => { win.handle?.close(); openIndexLists(list); },
 			}, { brief: false });
+			// What is wrong with it, first: see fillSettingsProblems. Put in
+			// after the inspector, which clears the body it is given.
+			const faults = el('div', { className: 'settings-problems', role: 'alert' });
+			faults.dataset.block = win.name;
+			body.prepend(faults);
+			fillSettingsProblems();
 		},
-		onClose: () => { state.settingsFor = null; },
+		onClose: () => {
+			settingsWindows.delete(win.name);
+			if (state.settingsFor === win.name) state.settingsFor = [...settingsWindows.keys()].pop() ?? null;
+		},
 	});
+	// The window with the keyboard in it is the one an edit is named after in
+	// the undo history: see `modelChanged`.
+	win.handle.dialog.addEventListener('focusin', () => { state.settingsFor = win.name; });
+}
+
+/**
+ * The block settings windows that are open, by the block each is about. See
+ * `openBlockSettings`.
+ */
+const settingsWindows = new Map();
+let settingsWindowCount = 0;
+
+/**
+ * Copy format: how a block looks, kept for Paste format -- its colour and
+ * shape, or a connection's colour, weight and line style. The look only: the
+ * block clipboard is left alone, so a copy waiting to be pasted survives it.
+ * Kept across models, since a look belongs to no model in particular.
+ */
+function copyFormat(name) {
+	const format = ed.formatOf(state.raw, name);
+	if (!format) { flash(`${ed.baseName(name)} has no look of its own to copy.`, 'warn'); return; }
+	state.formatClip = format;
+	flash(`${ed.baseName(name)}\u2019s ${format.kind === 'node' ? 'colour and shape' : 'colour, weight and line style'} `
+		+ 'copied. Paste format — on a block\u2019s menu, or \u2325\u2318V — puts it on the blocks selected.', 'info');
+}
+
+/** Paste format: the copied look onto blocks, one step to undo. */
+function pasteFormat(names) {
+	const format = state.formatClip;
+	if (!format) { flash('Nothing copied yet: Copy format on a block first.', 'warn'); return; }
+	let changed;
+	try {
+		changed = ed.applyFormat(state.raw, names, format);
+	} catch (e) {
+		flash(e.message, 'warn');
+		return;
+	}
+	if (!changed.length) { flash(`They already look like ${ed.baseName(format.from)}.`, 'info'); return; }
+	// How a block is drawn changes no number.
+	modelChanged({ layoutOnly: true });
+	flash(`${changed.length === 1 ? ed.baseName(changed[0]) : `${changed.length} blocks`} now `
+		+ `${changed.length === 1 ? 'looks' : 'look'} like ${ed.baseName(format.from)}.`, 'info');
 }
 
 /** Matches are marked on the diagram too, and the rest recede. */
@@ -10810,6 +10998,11 @@ function setModel(raw, source) {
 	renderSaveButton();
 	// The pane may not have its final size yet on first paint.
 	requestAnimationFrame(() => graph?.fit());
+	// Built once, for the values at the start, which is also what finds the
+	// faults a scan cannot see: see `noteBuildProblem`. Scheduled, so the
+	// order against the scan below does not matter.
+	state.buildProblem = null;
+	recheckBuild();
 	// Same reason as `setModel`: a file, or an example, can arrive with
 	// something wrong in it, and the strip is where that is said.
 	rescanProblems();
@@ -10967,6 +11160,10 @@ export function boot() {
 		onCut: cutSelection,
 		onCopy: copySelection,
 		onPaste: pasteClipboard,
+		// And a block's look, with a clipboard of its own.
+		formatClipboard: () => state.formatClip,
+		onCopyFormat: copyFormat,
+		onPasteFormat: pasteFormat,
 		// The chart or the table, whichever is the tab in view -- they draw the
 		// same choice of series, so one action serves both and only the word
 		// changes. The diagram is on a different tab from either, so in
@@ -11279,11 +11476,6 @@ export function boot() {
 	else selectTab('build');
 
 	const wanted = params.get('model');
-	if (wanted === 'blank') {
-		setModel(structuredClone(BLANK), { label: 'New model' });
-		offerDraft(held);
-		return;
-	}
 
 	/*
 	  `?model=draft` is how the model gets out of the page's frame. The "full
@@ -11308,13 +11500,27 @@ export function boot() {
 			return;
 		}
 		flash('The model could not be carried over from the framed page — it was not '
-			+ 'being kept, so this is the usual starting point. Nothing is lost: the '
+			+ 'being kept, so this is a new model. Nothing is lost: the '
 			+ 'other page still has it.', 'warn');
 	}
 
-	const start = EXAMPLES.some((e) => e.file === wanted) ? wanted : EXAMPLES[0].file;
-	// Named before it arrives, so the picker does not show the first example on
-	// the way to a different one. setModel says it again when it lands.
+	// A new, empty model -- what New gives -- unless the address names one of
+	// the examples. The page is where a model is built, and opening it on one
+	// of ours meant clearing that away before starting; the examples are one
+	// choice away in the picker at the top. `?model=blank` still says the same
+	// thing, for the links that were written when it had to be asked for.
+	const start = EXAMPLES.some((e) => e.file === wanted) ? wanted : null;
+	if (!start) {
+		setModel(structuredClone(BLANK), { label: 'New model' });
+		if (wanted && wanted !== 'blank' && wanted !== 'draft') {
+			flash(`There is no example called “${wanted}”, so this is a new model. `
+				+ 'The examples are in the list at the top.', 'warn');
+		}
+		offerDraft(held);
+		return;
+	}
+	// Named before it arrives, so the picker does not show another example on
+	// the way to this one. setModel says it again when it lands.
 	noteModelSource({ example: start });
 	loadExample(start)
 		.catch((e) => {

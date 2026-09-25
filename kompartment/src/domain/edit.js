@@ -1410,17 +1410,20 @@ function forEachTarget(project, fn) {
 	}
 }
 
-/** Moves a block's diagram position, and any bend on its connection, with it. */
+/** Moves a block's diagram position, and any bend or pipe on its connection, with it. */
 function retargetLayout(project, oldName, newName) {
 	if (!project.layout || oldName === newName) return;
 	const layout = layoutOf(project);
-	for (const key of [oldName, EDGE_PREFIX + oldName]) {
+	// Its bend, and its pipe on every canvas: see `waypointKey`.
+	const keys = [oldName, ...Object.keys(layout).filter((k) => parseEdgeKey(k)?.name === oldName)];
+	for (const key of keys) {
 		// `hasOwnProperty`, not `in`: on a map that has not been through
 		// `layoutOf` yet, `'__proto__' in layout` is true of every object, and
 		// the two lines below then copied `Object.prototype` under the new
 		// name and wrote into it from there.
 		if (!Object.prototype.hasOwnProperty.call(layout, key)) continue;
-		const to = key.startsWith(EDGE_PREFIX) ? EDGE_PREFIX + newName : newName;
+		const edge = parseEdgeKey(key);
+		const to = edge ? waypointKey(newName, edge.view) : newName;
 		layout[to] = layout[key];
 		delete layout[key];
 	}
@@ -2993,9 +2996,12 @@ export function pruneLayout(project) {
 	}
 
 	for (const k of Object.keys(project.layout)) {
-		// Edge geometry is stored under an "edge:<name>" key.
-		const owner = k.startsWith(EDGE_PREFIX) ? k.slice(EDGE_PREFIX.length) : k;
-		if (!names.has(owner)) delete project.layout[k];
+		// Edge geometry is stored under an "edge:<name>" key, and a pipe's
+		// under "edge:<name>@<canvas>" -- which goes with the canvas too.
+		const edge = parseEdgeKey(k);
+		const owner = edge ? edge.name : k;
+		const canvasGone = edge?.view != null && edge.view !== '' && !names.has(edge.view);
+		if (!names.has(owner) || canvasGone) delete project.layout[k];
 	}
 	return project;
 }
@@ -3003,21 +3009,59 @@ export function pruneLayout(project) {
 /** Layout key prefix for a connection's waypoint. */
 export const EDGE_PREFIX = 'edge:';
 
-/** The bend point of a transfer or source, or null when it runs straight. */
-export function getWaypoint(project, name) {
-	return project.layout?.[EDGE_PREFIX + name] ?? null;
+/**
+ * The layout key of a connection's geometry, on one canvas.
+ *
+ * A connection is drawn whole on one canvas -- the one both its ends can be
+ * seen from, as themselves or as the sub-system nodes holding them -- and its
+ * bend there is `edge:<name>`, as it always was. On a deeper canvas one end is
+ * out of sight and the line ends in a pipe that says where it goes, put where
+ * the reader dragged it. The two used to be one point: dragging the pipe
+ * inside a sub-system bent the line on the canvas above, and bending that line
+ * moved the pipe. So a pipe is `edge:<name>@<canvas>`, one per canvas it is
+ * drawn on, and `view` is that canvas -- null for the whole drawing.
+ */
+export function waypointKey(name, view = null) {
+	return view == null ? EDGE_PREFIX + name : `${EDGE_PREFIX}${name}@${view}`;
 }
 
-export function setWaypoint(project, name, point) {
+/**
+ * What a layout key is about, if it is a connection's: the connection, and
+ * the canvas (`null` for the whole drawing). A name never holds `@`.
+ */
+export function parseEdgeKey(key) {
+	if (!String(key).startsWith(EDGE_PREFIX)) return null;
+	const rest = key.slice(EDGE_PREFIX.length);
+	const at = rest.indexOf('@');
+	return at < 0 ? { name: rest, view: null } : { name: rest.slice(0, at), view: rest.slice(at + 1) };
+}
+
+/** The bend point of a transfer or source on one canvas, or null when it runs straight. */
+export function getWaypoint(project, name, view = null) {
+	return project.layout?.[waypointKey(name, view)] ?? null;
+}
+
+export function setWaypoint(project, name, point, view = null) {
 	layoutOf(project);
+	const key = waypointKey(name, view);
 	if (point == null) {
-		delete project.layout[EDGE_PREFIX + name];
+		delete project.layout[key];
 		return;
 	}
-	project.layout[EDGE_PREFIX + name] = {
+	project.layout[key] = {
 		x: Math.round(point.x),
 		y: Math.round(point.y),
 	};
+}
+
+/**
+ * A connection's geometry dropped on every canvas it is drawn on: one of its
+ * ends has moved, and each bend and pipe was placed against the old ones.
+ */
+export function clearWaypoints(project, name) {
+	for (const key of Object.keys(project.layout ?? {})) {
+		if (parseEdgeKey(key)?.name === name) delete project.layout[key];
+	}
 }
 
 // --- index lists ------------------------------------------------------------
@@ -4013,8 +4057,9 @@ export const ENTRY_EXTRA = {
 		title: FARF_HELP[key],
 	})),
 	// Waste packages: the instant-release fraction is a property of the
-	// nuclide -- what is in the gap, not bound in the matrix -- so it too may
-	// differ from one to the next.
+	// nuclide -- what is in the gap, not bound in the matrix -- and the
+	// degradation rate the waste form's, which differs by waste type; so both
+	// may differ from one index to the next. See WASTE_NUCLIDE_KEYS.
 	waste_package: WASTE_NUCLIDE_KEYS.slice(1).map((key) => ({
 		key,
 		label: WASTE_LABEL[key],
@@ -4630,17 +4675,30 @@ function retargetAll(project, newNameOf, newSystemOf, alsoKnown = null) {
 	retargetBlockIndexes(project, moves);
 }
 
-/** Moves diagram positions and connection bends to follow renamed blocks. */
-function retargetLayoutAll(project, newNameOf) {
+/**
+ * Moves diagram positions and connection bends to follow renamed blocks.
+ *
+ * `canvasOf` says where a canvas went, for a pipe's key (`edge:<name>@<canvas>`,
+ * see `waypointKey`): a sub-system that is renamed or moved takes its canvas,
+ * and the pipes drawn on it, along. Without it a canvas is taken to be a block
+ * name like any other, which a sub-system path never is.
+ */
+function retargetLayoutAll(project, newNameOf, canvasOf = null) {
 	if (!project.layout) return;
 	// Prototype-free like everything `layoutOf` hands out: rebuilt as `{}`,
 	// this quietly undid that guarantee after every move.
 	const next = Object.create(null);
 	for (const [key, value] of Object.entries(project.layout)) {
-		const isEdge = key.startsWith(EDGE_PREFIX);
-		const name = isEdge ? key.slice(EDGE_PREFIX.length) : key;
-		const to = newNameOf(name) ?? name;
-		next[isEdge ? EDGE_PREFIX + to : to] = value;
+		const edge = parseEdgeKey(key);
+		if (edge) {
+			// The connection's name, and the canvas a pipe is on, which is a
+			// sub-system path and moves with a renamed or moved sub-system.
+			const view = edge.view == null || edge.view === '' ? edge.view
+				: canvasOf ? canvasOf(edge.view) : (newNameOf(edge.view) ?? edge.view);
+			next[waypointKey(newNameOf(edge.name) ?? edge.name, view)] = value;
+			continue;
+		}
+		next[newNameOf(key) ?? key] = value;
 	}
 	project.layout = next;
 }
@@ -4809,7 +4867,8 @@ function relocateSystem(project, path, target) {
 	retargetAll(project, (n) => moved.get(n) ?? null,
 		(system) => reparent(system, path, target),
 		new Set(moved.values()));
-	retargetLayoutAll(project, (n) => moved.get(n) ?? null);
+	retargetLayoutAll(project, (n) => moved.get(n) ?? null,
+		(canvas) => (isWithin(canvas, path) ? reparent(canvas, path, target) : canvas));
 
 	for (const b of allBlocksLive(project)) {
 		if (isWithin(systemOf(b), path)) b.system = reparent(systemOf(b), path, target);
@@ -5867,8 +5926,11 @@ export function deleteSelection(project, names) {
 		// inside them -- a connection's bend outlives `spliceBlock`, which
 		// only knows about the block's own entry.
 		for (const key of Object.keys(project.layout ?? {})) {
-			const named = key.startsWith(EDGE_PREFIX) ? key.slice(EDGE_PREFIX.length) : key;
-			if (chosen.some((c) => isWithin(named, c))) delete project.layout[key];
+			const edge = parseEdgeKey(key);
+			const named = edge ? edge.name : key;
+			// ...and a pipe drawn on one of the canvases that are going.
+			const on = edge?.view ?? null;
+			if (chosen.some((c) => isWithin(named, c) || (on && isWithin(on, c)))) delete project.layout[key];
 		}
 	}
 	return { removed, systems: chosen };
@@ -7709,6 +7771,70 @@ export function setBlockShape(project, blockName, shape) {
 	if (shape === defaultShapeFor(found.kind)) delete found.block.shape;
 	else found.block.shape = shape;
 	return found.block;
+}
+
+/**
+ * A block's format, for Copy format: how it looks, and nothing it does.
+ *
+ * A node's colour and shape; a connection's colour, weight and dash. The
+ * shape is the one it is drawn with, its kind's when it has none of its own:
+ * a shape is the same in every theme, and a parameter's hexagon pasted onto a
+ * compartment is what the reader saw and asked for. A colour it has not set
+ * is copied as not set -- `null` -- rather than as the colour it happens to be
+ * drawn in, because a kind's colour is the theme's and changes with it, and
+ * pasting it as a fixed value would pin the targets to one theme.
+ *
+ * @returns {{kind: 'node'|'line', from: string, color: string|null,
+ *   shape?: string|null, line_width?: number|null, dash?: string|null}|null}
+ */
+export function formatOf(project, name) {
+	const found = findBlock(project, name);
+	if (!found) return null;
+	if (NODE_KINDS.includes(found.kind)) {
+		return {
+			kind: 'node',
+			from: name,
+			color: found.block.color ?? null,
+			shape: blockShape(project, name, found.kind),
+		};
+	}
+	if (found.kind === 'transfer' || found.kind === 'inflow') {
+		const look = connectionLook(found.block);
+		return { kind: 'line', from: name, color: look.color, line_width: look.width, dash: look.dash };
+	}
+	return null;
+}
+
+/**
+ * Puts a copied format on blocks, as much of it as each can take: the colour
+ * on anything with one, the shape on a node, the weight and the dash on a
+ * connection. A node's shape copied onto a connection is not a shape it can
+ * have, and is left out rather than refused, so one paste onto a mixed
+ * selection does what it can for every block in it.
+ *
+ * @returns {string[]} the blocks it changed
+ */
+export function applyFormat(project, names, format) {
+	if (!format) return [];
+	const changed = [];
+	for (const name of names) {
+		const found = findBlock(project, name);
+		if (!found || name === format.from) continue;
+		const before = JSON.stringify([found.block.color, found.block.shape, found.block.line_width, found.block.dash]);
+		if (NODE_KINDS.includes(found.kind)) {
+			setBlockColor(project, name, format.color);
+			if (format.kind === 'node' && format.shape) setBlockShape(project, name, format.shape);
+		} else if (found.kind === 'transfer' || found.kind === 'inflow') {
+			setConnectionLook(project, name, format.kind === 'line'
+				? { color: format.color, line_width: format.line_width, dash: format.dash }
+				: { color: format.color });
+		} else {
+			continue;
+		}
+		const after = JSON.stringify([found.block.color, found.block.shape, found.block.line_width, found.block.dash]);
+		if (after !== before) changed.push(name);
+	}
+	return changed;
 }
 
 /** The size a block is drawn at: its own, or the default for its kind. */

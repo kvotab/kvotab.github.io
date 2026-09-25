@@ -100,16 +100,28 @@ export const FAILURE_KEYS = {
 	weibull: ['fail_start', 'fail_scale', 'fail_shape'],
 };
 
-/** The settings that are a property of the nuclide and so hold one value per nuclide. */
-export const WASTE_NUCLIDE_KEYS = ['inventory', 'irf'];
+/**
+ * The settings that hold a value per index of the block: per nuclide, and per
+ * anything else it is indexed by.
+ *
+ * The inventory and the instant-release fraction are properties of the
+ * nuclide. The degradation rate is the waste form's, and was one value for the
+ * block until a model indexed its packages by waste type -- fuel, and the
+ * metal parts beside it, dissolve at very different rates -- and found that an
+ * indexed rate was refused only when the model was compiled for a run. Held
+ * per index it takes either: one number (or one uncertain parameter) for
+ * every index, as before, or a rate per waste type or per nuclide. A rate per
+ * nuclide makes the release incongruent, which is the modeller's to decide.
+ */
+export const WASTE_NUCLIDE_KEYS = ['inventory', 'irf', 'degradation_rate'];
 
 /**
- * The settings that describe the packages and the waste form, and so hold one
- * value however many nuclides the block is indexed by: canisters do not fail
- * at one rate for caesium and another for iodine.
+ * The settings that describe how the packages fail, and so hold one value
+ * however many nuclides the block is indexed by: canisters do not fail at one
+ * rate for caesium and another for iodine.
  */
 export const WASTE_SINGLE_KEYS = [
-	'degradation_rate', 'fail_at', 'fail_from', 'fail_to', 'fail_start', 'fail_rate',
+	'fail_at', 'fail_from', 'fail_to', 'fail_start', 'fail_rate',
 	'fail_scale', 'fail_shape',
 ];
 
@@ -324,13 +336,23 @@ export function wasteProblems(project) {
 				});
 			}
 		}
-		const irf = num('irf');
-		if (irf != null && (irf < 0 || irf > 1)) {
-			out.push({ name, field: 'irf', message: 'The instant release fraction is between 0 and 1.' });
-		}
-		const d = num('degradation_rate');
-		if (d != null && d < 0) {
-			out.push({ name, field: 'degradation_rate', message: 'A degradation rate cannot be negative.' });
+		// The defaults, and every value per index: a fraction above 1 in the
+		// row for one nuclide is as wrong as one in the default.
+		const rows = [{ values: b, where: null }, ...(b.entries ?? []).map((e) => ({ values: e, where: e.index ?? null }))];
+		for (const { values, where } of rows) {
+			const at = (key) => {
+				const v = Number(String(values[key] ?? '').trim());
+				return String(values[key] ?? '').trim() !== '' && Number.isFinite(v) ? v : null;
+			};
+			const cell = where ? ` (at ${Object.values(where).join(' \u00b7 ')})` : '';
+			const irf = at('irf');
+			if (irf != null && (irf < 0 || irf > 1)) {
+				out.push({ name, field: 'irf', message: `The instant release fraction is between 0 and 1${cell}.` });
+			}
+			const d = at('degradation_rate');
+			if (d != null && d < 0) {
+				out.push({ name, field: 'degradation_rate', message: `A degradation rate cannot be negative${cell}.` });
+			}
 		}
 	}
 	return out;

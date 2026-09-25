@@ -1335,7 +1335,9 @@ test('a dialog opened over another comes back to it', async () => {
 	assert(/export function closeModal\(\) \{\s*stack\[stack\.length - 1\]\?\.close\(\);/.test(modal),
 		'closeModal no longer closes the innermost');
 	assert(/export function closeAllModals\(\)/.test(modal), 'there is no way to close them all');
-	assert(/stack\[stack\.length - 1\]\?\.refresh\(\)/.test(modal),
+	// The modal one on top, or -- with a floating window on top -- every
+	// floating window, since each is an editor over the same model.
+	assert(/const top = stack\[stack\.length - 1\];\n\tif \(!top\) return;\n\tif \(!top\.floating\) \{ top\.refresh\(\); return; \}\n\tfor \(const h of stack\) if \(h\.floating\) h\.refresh\(\);/.test(modal),
 		'a refresh no longer goes to the dialog on top');
 
 	// One Escape, one dialog. Chrome sends the close request to every open
@@ -9639,7 +9641,7 @@ test('a run keeps a log of what it was, and a saved result carries it', async ()
 		'where there is no save dialog, the download does not say where the file went');
 	const copyText = fn('copyText');
 	assert(/navigator\.clipboard\.writeText\(text\)/.test(copyText), 'Copy does not copy the text itself');
-	assert(/\(document\.querySelector\('dialog\[open\]'\) \?\? document\.body\)\.append\(area\)/.test(copyText)
+	assert(/\(document\.querySelector\('dialog:modal'\) \?\? document\.body\)\.append\(area\)/.test(copyText)
 		&& /document\.execCommand\('copy'\)/.test(copyText),
 		'Copy has no way round a browser that refuses the Clipboard API');
 	assert(/all \$\{lines\} lines/.test(copyText), 'Copy does not say how much it copied');
@@ -10953,7 +10955,7 @@ test('a loose end is a thing you can pick up, and a pipe says where it goes', as
 	// The bug that made the whole gesture look broken inside a sub-system: the
 	// layout is keyed by the qualified name everywhere, and this one read was
 	// by the bare one, so the waypoint was written and then never found.
-	assert(/getWaypoint\(this\.project, qualifiedName\(conn\)\)/.test(graph),
+	assert(/getWaypoint\(this\.project, qualifiedName\(conn\), conn\._elsewhere \? \(this\.system \?\? ''\) : null\)/.test(graph),
 		'the waypoint is read by a key nothing writes');
 	assert(!/getWaypoint\(this\.project, conn\.name\)/.test(graph),
 		'the bare-name read is back');
@@ -24667,9 +24669,9 @@ test('a block shown as something else says both in the title of its settings', a
 	// The name it answers to in an equation, and what it is shown as after it.
 	// A dialog titled only with the symbol is one you cannot find the block
 	// from -- the model is written in the name.
-	assert(/if \(!found \|\| !ed\.hasSymbol\(found\.block\)\) return name;/.test(title),
+	assert(/if \(!found \|\| !ed\.hasSymbol\(found\.block\)\) return win\.name;/.test(title),
 		'a block with no symbol gets brackets with nothing in them');
-	assert(/return \[name, ' \(', \.\.\.symbolNodes\(found\.block\.symbol\), '\)'\];/.test(title),
+	assert(/return \[win\.name, ' \(', \.\.\.symbolNodes\(found\.block\.symbol\), '\)'\];/.test(title),
 		'the symbol is not put in brackets after the name');
 	// Nodes, not text: a symbol is <sub> and <sup> elements, and it comes out
 	// of a file, so it is built rather than written as markup.
@@ -30555,7 +30557,7 @@ test('waste packages are a block kind: normalised by the project, added and conn
 	const { switchTimes } = await import('../src/domain/switchtimes.js');
 	const { integrationFingerprint } = await import('../src/domain/fingerprint.js');
 	assert(COLLECTIONS.includes('waste_packages') && SINGULAR.waste_packages === 'waste_package');
-	assert(ed.KIND_LABEL.waste_package === 'Waste packages' && ed.entryKeys('waste_package').join() === 'inventory,irf');
+	assert(ed.KIND_LABEL.waste_package === 'Waste packages' && ed.entryKeys('waste_package').join() === 'inventory,irf,degradation_rate');
 
 	const raw = {
 		simulation: { ...DEFAULT_SIMULATION, end_time: 10000, output_points: 5, spacing: 'linear', time_unit: 'year' },
@@ -30577,8 +30579,9 @@ test('waste packages are a block kind: normalised by the project, added and conn
 	assert(!('to' in w), 'the release is a transfer, not a field');
 	assert(w.unit === 'Bq/year', w.unit);
 	assert(w.fail_shape === '1' && w.fail_start === '0', 'defaults are filled in');
-	// Per-nuclide entries keep only what is per nuclide: a degradation rate is the waste form's.
-	assert(JSON.stringify(w.entries[0]) === '{"index":{"RN":"Sr-90"},"inventory":"2e12","irf":"0.1"}', JSON.stringify(w.entries[0]));
+	// Per-nuclide entries keep what may differ per index, which includes the
+	// degradation rate since a model indexed its packages by waste type.
+	assert(JSON.stringify(w.entries[0]) === '{"index":{"RN":"Sr-90"},"inventory":"2e12","irf":"0.1","degradation_rate":"9"}', JSON.stringify(w.entries[0]));
 	assert(p.toJSON().waste_packages.length === 1 && !('waste_packages' in new Project({ simulation: DEFAULT_SIMULATION }).toJSON()));
 	// The failure times are corners the solver lands on: the parameter, by
 	// name, and the number. Asked of the model as the editor holds it.
@@ -30752,6 +30755,89 @@ test('waste packages integrate: failure, exposure and release match their closed
 	// The budget state for `out` holds exactly what left.
 	const outState = budgetIndex(v.system.layout.budget, 'out', 0);
 	assert(near(v.y[k][outState], P0 - v.y[k][V.P.base] - v.y[k][V.M.base], 1e-9));
+});
+
+test('a waste package’s degradation rate may differ per index: values per index, an indexed parameter, a waste-type list', async () => {
+	const { wasteProblems } = await import('../src/domain/wastepackage.js');
+	const RN = { name: 'RN', for_contaminants: true, indices: [{ name: 'Cs-137' }, { name: 'I-129' }] };
+	const WT = { name: 'WT', indices: [{ name: 'fuel' }, { name: 'metal' }] };
+	const model = (waste, { lists = [RN], parameters = [], mass_balance = true } = {}) => ({
+		name: 'wp', nuclides: ['Cs-137', 'I-129'], index_lists: lists,
+		simulation: {
+			time_unit: 'year', start_time: 0, end_time: 2000, output_points: 41, spacing: 'linear',
+			solver: 'dp45', rtol: 1e-8, abstol: 1e-6, mass_balance,
+		},
+		compartments: [{ name: 'NearField', index_lists: waste.index_lists ?? ['RN'], initial: '0', handle_decay: false }],
+		parameters: [{ name: 'lambda_f', value: 1e-3, index_lists: [] }, ...parameters],
+		waste_packages: [{
+			name: 'Canisters', index_lists: ['RN'], inventory: '1e12', irf: '0.1', degradation_rate: '2e-3',
+			handle_decay: false, failure: 'exponential', fail_start: '500', fail_rate: 'lambda_f', ...waste,
+		}],
+		transfers: [{ name: 'Release', from: 'Canisters', to: 'NearField', rate: 'Canisters', multiply_by_donor: false }],
+		expressions: [], inflows: [], lookups: [],
+	});
+	// M = λ(1-irf)P0 (e^{-λτ} - e^{-dτ})/(d-λ), with the rate of that index.
+	const exposed = (d, tau) => 1e-3 * 0.9 * 1e12 * (Math.exp(-1e-3 * tau) - Math.exp(-d * tau)) / (d - 1e-3);
+	const near = (a, b, tol) => Math.abs(a / b - 1) < tol;
+	const check = (r, rates, what) => {
+		const L = r.system.layout;
+		const M = L.states.find((x) => x.name === 'Canisters exposed');
+		const n = r.t.length - 1;
+		const tau = r.t[n] - 500;
+		rates.forEach((d, i) => {
+			assert(near(r.y[n][M.base + i], exposed(d, tau), 1e-7),
+				`${what}: exposed [${i}] ${r.y[n][M.base + i]} vs ${exposed(d, tau)} at rate ${d}`);
+		});
+		// The release reads the rate of its own index.
+		const P = L.states.find((x) => x.name === 'Canisters intact');
+		const releases = r.outputs().filter((o) => o.kind === 'waste_package');
+		releases.forEach((o, i) => {
+			const expect = 1e-3 * r.y[n][P.base + i] * 0.1 + rates[i] * r.y[n][M.base + i];
+			assert(near(r.series(o)[n], expect, 1e-9), `${what}: release ${o.label} ${r.series(o)[n]} vs ${expect}`);
+		});
+		assert(r.massBalance().closed, `${what}: the audit does not close`);
+	};
+
+	// The degradation slot is as wide as the block.
+	const plain = run(model({}));
+	const slot = plain.system.layout.algebraic.find((a) => a.name === 'Canisters#degradation_rate');
+	assert(slot && slot.width === 2 && slot.dims.join() === 'RN', JSON.stringify(slot && { w: slot.width, d: slot.dims }));
+	// One number serves every index, as before.
+	check(plain, [2e-3, 2e-3], 'one rate');
+	// A value per index.
+	check(run(model({ entries: [{ index: { RN: 'I-129' }, degradation_rate: '5e-3' }] })), [2e-3, 5e-3], 'values per index');
+	// An indexed parameter, which was refused only when the model was compiled.
+	check(run(model({ degradation_rate: 'deg' }, {
+		parameters: [{ name: 'deg', index_lists: ['RN'], value: 2e-3, entries: [{ index: { RN: 'I-129' }, value: '4e-3' }] }],
+	})), [2e-3, 4e-3], 'an indexed parameter');
+	// A block indexed by waste type as well, reading a rate per waste type: the
+	// cells are RN-major, so [Cs fuel, Cs metal, I fuel, I metal].
+	check(run(model({ index_lists: ['RN', 'WT'], degradation_rate: 'deg_wt' }, {
+		lists: [RN, WT],
+		parameters: [{ name: 'deg_wt', index_lists: ['WT'], value: 1e-4, entries: [{ index: { WT: 'metal' }, value: '6e-3' }] }],
+	})), [1e-4, 6e-3, 1e-4, 6e-3], 'a rate per waste type');
+	// The analytic Jacobian follows the rate per index.
+	{
+		const { worst, jacobian } = jacobianAgrees(model({ entries: [{ index: { RN: 'I-129' }, degradation_rate: '5e-3' }] }, { mass_balance: false }));
+		assert(jacobian.available !== false && worst < 1, `the Jacobian is off by ${worst}x the difference's noise`);
+	}
+	// A negative rate is refused per index too, before the run.
+	const bad = model({ entries: [{ index: { RN: 'I-129' }, degradation_rate: '-1' }] });
+	const found = wasteProblems({ waste_packages: bad.waste_packages });
+	assert(found.some((p) => p.field === 'degradation_rate' && /negative \(at I-129\)/.test(p.message)), JSON.stringify(found));
+	// A rate indexed by a list the block does not have is still an error, and
+	// it names the block.
+	let threw = null;
+	try {
+		run(model({ degradation_rate: 'deg_wt' }, {
+			lists: [RN, WT], parameters: [{ name: 'deg_wt', index_lists: ['WT'], value: 1e-4 }],
+		}));
+	} catch (e) { threw = e; }
+	assert(threw && threw.blockName === 'Canisters' && threw.setting === 'degradation_rate',
+		`${threw?.name}: ${threw?.message} (${threw?.blockName})`);
+	// ...and says it in words rather than in the builder's slot names.
+	assert(!/#/.test(threw.message) && /Canisters\u2019s matrix degradation rate/.test(threw.message)
+		&& /add 'WT' to the lists Canisters is indexed by/.test(threw.message), threw.message);
 });
 
 test('waste packages are drawn, edited and described like the block they are, and the example runs', async () => {
@@ -32684,7 +32770,7 @@ test('a settings window stays where it is put, and can be moved and sized', asyn
 	// the field being typed into, by half a line in each direction. Pinned to
 	// where it opened, it grows downwards like anything else.
 	assert(/function pin\(dialog\)/.test(modal), 'the dialog is still centred by the browser');
-	assert(/dialog\.showModal\(\);\n\t\/\/[\s\S]{0,300}?\tpin\(dialog\);/.test(modal),
+	assert(/dialog\.showModal\(\);\n\t\}\n\t\/\/[\s\S]{0,300}?\tpin\(dialog\);/.test(modal),
 		'it is pinned before the browser has laid it out, which measures nothing');
 	assert(/\.modal\[style\*="top"\] \{ position: fixed; \}/.test(css),
 		'nothing takes the pinned coordinates');
@@ -35288,7 +35374,7 @@ test('every dialog has an (i) in its title bar, and every dialog topic a dialog 
 			const opts = m[1].split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n').trim();
 			const id = /^info: dialogInfo\('([a-z-]+)'\)/.exec(opts)?.[1];
 			if (id) used.add(id);
-			else if (!/^info: \{\n\s*key: 'dialog:block',/.test(opts)) without.push(`${f}: ${opts.split('\n')[0]}`);
+			else if (!/^info: \{\n\s*key: `dialog:block:\$\{win\.id\}`,/.test(opts)) without.push(`${f}: ${opts.split('\n')[0]}`);
 		}
 		if (f !== 'dialoginfo.js' && /dialogInfo\(/.test(src)) {
 			assert(/^import \{ dialogInfo \} from '\.\/dialoginfo\.js';$/m.test(src), `${f} does not import dialogInfo`);
@@ -35317,7 +35403,7 @@ test('the left panel’s sections, the tree, the Information view and every row 
 	assert(/\.field\.has-info \{ grid-template-columns: minmax\(0, var\(--sim-name\)\) minmax\(0, 1fr\) 17px; \}/.test(css), 'no column for the (i)');
 	// A heading is a flex row in #sb-top: the (i) is pushed right, or follows
 	// the count that was.
-	assert(/\.panel-section > summary > \.info-btn \{ margin-left: auto; align-self: center; \}\n\.panel-section > summary > \.panel-section-badge \+ \.info-btn \{ margin-left: 6px; \}/.test(css),
+	assert(/\.panel-section > summary > \.info-btn \{ margin-left: auto; align-self: center; \}\n\.panel-section:not\(\[open\]\) > summary > \.panel-section-badge \+ \.info-btn \{ margin-left: 6px; \}/.test(css),
 		'a section’s (i) is not on the right-hand edge');
 	assert(!/const head = \(/.test(app), 'the (i) before the name is back');
 	// The Model and Simulation sections, the tree and the Information view.
@@ -35342,6 +35428,180 @@ test('the left panel’s sections, the tree, the Information view and every row 
 		'the links go nowhere');
 	assert(/if \(\+\+tries < 50\) setTimeout\(jump, 100\);/.test(help), 'a link followed before the Guide has loaded is lost');
 	assert(!/className: 'ghost info-more'/.test(read('../src/ui/infopanel.js')), 'the panel’s link borrows the Information view’s class');
+});
+
+test('a pipe into another sub-system has a place of its own on each canvas, apart from the line’s bend', async () => {
+	const { readFileSync } = await import('node:fs');
+	const p = { name: 'm', simulation: DEFAULT_SIMULATION, compartments: [], transfers: [], inflows: [], expressions: [], parameters: [], lookups: [] };
+	ed.addSystem(p, { name: 'NF' });
+	ed.addCompartment(p, { name: 'A', system: 'NF' });
+	ed.addCompartment(p, { name: 'B' });
+	const T = ed.qualifiedName(ed.addTransfer(p, 'NF.A', 'B'));
+	// The bend of the whole drawing and the pipe on the NF canvas are two points.
+	ed.setWaypoint(p, T, { x: 10, y: 20 });
+	ed.setWaypoint(p, T, { x: 5, y: 6 }, 'NF');
+	assert(ed.getWaypoint(p, T).x === 10 && ed.getWaypoint(p, T, 'NF').x === 5, JSON.stringify(p.layout));
+	ed.setWaypoint(p, T, { x: 7, y: 8 }, 'NF');
+	assert(ed.getWaypoint(p, T).x === 10, 'moving the pipe moved the bend');
+	assert(JSON.stringify(ed.parseEdgeKey(`edge:${T}@NF`)) === JSON.stringify({ name: T, view: 'NF' })
+		&& ed.parseEdgeKey(`edge:${T}`).view === null && ed.parseEdgeKey(T) === null);
+	// Both follow a rename of the connection, and the pipe's canvas follows a
+	// rename of the sub-system it is drawn on.
+	ed.renameBlock(p, T, 'Flow');
+	ed.renameSystem(p, 'NF', 'Near');
+	const keys = Object.keys(p.layout).filter((k) => k.startsWith('edge:')).sort();
+	assert(keys.join() === 'edge:Near.Flow,edge:Near.Flow@Near', keys.join());
+	// A pipe on a canvas that is gone goes with it; one that stands stays.
+	p.layout['edge:Near.Flow@Gone'] = { x: 1, y: 1 };
+	ed.pruneLayout(p);
+	assert(!('edge:Near.Flow@Gone' in p.layout) && 'edge:Near.Flow@Near' in p.layout, Object.keys(p.layout).join());
+	// Moving an end drops every canvas's point.
+	ed.clearWaypoints(p, 'Near.Flow');
+	assert(!Object.keys(p.layout).some((k) => k.startsWith('edge:Near.Flow')), Object.keys(p.layout).join());
+	// And the diagram moves the point of the canvas it is showing.
+	const graph = readFileSync(new URL('../src/ui/graph.js', import.meta.url), 'utf8');
+	assert(/_wayView\(name\) \{\n\t\treturn this\._pipesHere\?\.has\(name\) \? \(this\.system \?\? ''\) : null;/.test(graph), 'no per-canvas view');
+	// Both drags -- the bend handle and the pipe itself -- write the point of
+	// the canvas they were started on.
+	assert((graph.match(/, this\.drag\.view\);/g) ?? []).length === 2, 'a drag writes the shared point');
+	assert(/ed\.clearWaypoints\(this\.project, name\);/.test(graph), 'a moved end leaves the pipes where they were');
+});
+
+test('Copy format and Paste format: a block’s look, taken from one and put on others', async () => {
+	const { readFileSync } = await import('node:fs');
+	const p = { name: 'm', simulation: DEFAULT_SIMULATION, compartments: [], transfers: [], inflows: [], expressions: [], parameters: [], lookups: [] };
+	ed.addCompartment(p, { name: 'A' });
+	ed.addCompartment(p, { name: 'B' });
+	ed.addCompartment(p, { name: 'C' });
+	ed.addParameter(p, { name: 'k', value: '1' });
+	const t1 = ed.qualifiedName(ed.addTransfer(p, 'A', 'B'));
+	const t2 = ed.qualifiedName(ed.addTransfer(p, 'B', 'C'));
+	ed.setBlockColor(p, 'A', '#aa3300');
+	ed.setBlockShape(p, 'A', 'hexagon');
+	const f = ed.formatOf(p, 'A');
+	assert(f.kind === 'node' && f.color === '#aa3300' && f.shape === 'hexagon' && f.from === 'A', JSON.stringify(f));
+	// Onto a node and a connection at once: the node takes both, the
+	// connection the colour, the source nothing.
+	const changed = ed.applyFormat(p, ['A', 'B', t1], f);
+	assert(changed.join() === `B,${t1}`, changed.join());
+	assert(ed.findBlock(p, 'B').block.color === '#aa3300' && ed.findBlock(p, 'B').block.shape === 'hexagon');
+	assert(ed.findBlock(p, t1).block.color === '#aa3300' && !('shape' in ed.findBlock(p, t1).block));
+	// A block with no colour of its own passes that on: the target goes back
+	// to its kind's colour, which follows the theme. Its shape is the one it
+	// is drawn with -- a parameter's hexagon, onto a compartment.
+	const plain = ed.formatOf(p, 'k');
+	assert(plain.color === null && plain.shape === 'hexagon', JSON.stringify(plain));
+	ed.applyFormat(p, ['B'], plain);
+	assert(!('color' in ed.findBlock(p, 'B').block), 'an unset colour was pasted as a colour');
+	// A line's weight and dash, onto another line.
+	ed.setConnectionLook(p, t1, { line_width: 2.6, dash: 'dashed' });
+	ed.applyFormat(p, [t2], ed.formatOf(p, t1));
+	const look = ed.connectionLook(ed.findBlock(p, t2).block);
+	assert(look.width === 2.6 && look.dash === 'dashed' && look.color === '#aa3300', JSON.stringify(look));
+	// Pasting what is already there changes nothing, and says so.
+	assert(ed.applyFormat(p, [t2], ed.formatOf(p, t1)).length === 0);
+	// Offered on the menus, and on ⌥⌘C and ⌥⌘V by the key's place.
+	const graph = readFileSync(new URL('../src/ui/graph.js', import.meta.url), 'utf8');
+	assert(/if \(mod && ev\.altKey && \(ev\.code === 'KeyC' \|\| ev\.code === 'KeyV'\)\) \{/.test(graph), 'no keys');
+	assert(graph.indexOf("ev.code === 'KeyC' || ev.code === 'KeyV'") < graph.indexOf("if (mod && (key === 'c' || key === 'x')) {"),
+		'the plain copy takes the keys first');
+	assert(/\.\.\.this\._formatItems\(names\),/.test(graph) && /\.\.\.this\._formatItems\(\[name\]\),/.test(graph), 'not on the menus');
+});
+
+test('the colour picker keeps the settings window standing while it is open', async () => {
+	const { readFileSync } = await import('node:fs');
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	const insp = readFileSync(new URL('../src/ui/inspector.js', import.meta.url), 'utf8');
+	// Rebuilding the window destroyed the input the picker belonged to, which
+	// closed the picker at the first click.
+	assert(/if \(!opts\.keepModal\) refreshModal\(\);/.test(app), 'every edit rebuilds the window');
+	assert((insp.match(/keepModal: true/g) ?? []).length === 2, 'a colour edit rebuilds the window');
+	assert(/swatch\.addEventListener\('input', throttled\(paint, 120\)\);/.test(insp)
+		&& /swatch\.addEventListener\('change', paint\);/.test(insp), 'the block colour');
+	assert(/swatch\.addEventListener\('input', throttled\(pick, 120\)\);/.test(insp)
+		&& /swatch\.addEventListener\('change', pick\);/.test(insp), 'the line colour');
+	assert(/function pickedColour\(swatch, clearButton, title = null\)/.test(insp), 'what the colour changes is not put right in place');
+});
+
+test('several block settings windows can be open at once, each about its own block', async () => {
+	const { readFileSync } = await import('node:fs');
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	const modal = readFileSync(new URL('../src/ui/modal.js', import.meta.url), 'utf8');
+	const css = readFileSync(new URL('../css/app.css', import.meta.url), 'utf8');
+	// A floating window leaves the page usable, has no backdrop to dismiss it,
+	// closes on Escape with the keyboard in it, comes to the front when used,
+	// and opens a step off the one before.
+	assert(/if \(floating\) \{\n\t\tdialog\.show\(\);\n\t\traise\(dialog\);\n\t\} else \{\n\t\tdialog\.showModal\(\);/.test(modal), 'not shown as a window');
+	assert(/if \(!floating\) dismissOnBackdrop\(/.test(modal), 'a window is dismissed by the page beside it');
+	assert(/if \(ev\.key !== 'Escape' \|\| ev\.defaultPrevented\) return;/.test(modal), 'Escape does not close a window');
+	assert(/dialog\.addEventListener\('pointerdown', \(\) => raise\(dialog\), true\);/.test(modal), 'a pressed window stays behind');
+	assert(/const step = 28 \* \(before % 8\);/.test(modal), 'windows open on top of each other');
+	assert(/\.modal\.is-floating \{\n\tposition: fixed;\n\tinset: 0;\n\tmargin: auto;\n\tz-index: 30;/.test(css), 'a window is not placed');
+	// The block's settings are one, keyed by the block, and asked again for
+	// an open one it comes to the front.
+	assert(/floating: true,/.test(app) && /const settingsWindows = new Map\(\);/.test(app), 'the settings are not a window');
+	assert(/const open = settingsWindows\.get\(name\);\n\tif \(open\) \{\n\t\topen\.handle\.focus\(\);/.test(app), 'a second copy of an open window');
+	assert(!/state\.settingsFor = sel\.name;/.test(app) && /win\.name = sel\.name;/.test(app), 'a rename in one window moves them all');
+	// The notice and the copy fallback go into a modal dialog only.
+	assert(/document\.querySelector\('dialog:modal'\) \?\? footer/.test(app), 'the notice moves into a window');
+});
+
+test('the transfer grid is square and zooms', async () => {
+	const { readFileSync } = await import('node:fs');
+	const css = readFileSync(new URL('../css/app.css', import.meta.url), 'utf8');
+	const matrix = readFileSync(new URL('../src/ui/matrix.js', import.meta.url), 'utf8');
+	const { matrixZoom } = await import('../src/ui/matrix.js');
+	assert(/table\.matrix \{\n\t--cell: 96px;[\s\S]{0,200}table-layout: fixed;\n\twidth: calc\(var\(--n, 1\) \* \(var\(--cell\) \+ 1px\)\);/.test(css), 'the cells are not square');
+	assert(/table\.matrix td,\ntable\.matrix th \{\n\twidth: var\(--cell\);\n\theight: var\(--cell\);/.test(css), 'the cells are not square');
+	assert(/table\.style\.setProperty\('--n', String\(slots\.length\)\);\n\ttable\.style\.zoom = String\(zoom\);/.test(matrix), 'the table is not sized or zoomed');
+	// Zoomed about the pointer with Ctrl or Cmd and the wheel, wired once per panel.
+	assert(/if \(!\(ev\.ctrlKey \|\| ev\.metaKey\) \|\| !host\.querySelector\('table\.matrix'\)\) return;/.test(matrix), 'no wheel zoom');
+	assert(/if \(wheeled\.has\(host\)\) return;/.test(matrix), 'a wheel listener per render');
+	assert(matrixZoom() === 1, `the zoom starts at ${matrixZoom()}`);
+});
+
+test('a fault found by building the model is marked on its block, and said in its settings', async () => {
+	const { readFileSync } = await import('node:fs');
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	assert(/for \(const p of \[state\.runProblem, state\.buildProblem\]\) \{\n\t\tif \(p\?\.where\) entries\.push/.test(app), 'a build fault marks no block');
+	assert(/startValues = \{ model, rev, at \};\n\tnoteBuildProblem\(fault\);/.test(app), 'the build for the values at the start keeps what it found to itself');
+	assert(/state\.runProblem = null;\n\t\t\/\/ And the build's, which is looked for again straight away\.\n\t\trecheckBuild\(\);/.test(app), 'a fixed fault stays');
+	assert(/const faults = el\('div', \{ className: 'settings-problems', role: 'alert' \}\);/.test(app)
+		&& /function fillSettingsProblems\(\)/.test(app), 'the settings say nothing of the block’s faults');
+	// Filed under the block, in words, whatever `#` slot it came from.
+	const { BuildError } = await import('../src/sim/builder.js');
+	for (const [slot, words] of [
+		['Tank#limit', 'Tank’s availability limit'],
+		['Rock#kd_f', 'Rock’s setting kd_f'],
+		['Quake#share0', 'Quake’s share'],
+		['Tank#dydt', 'Tank’s dy/dt term'],
+	]) {
+		const e = new BuildError(`'x' is indexed by 'RN', which '${slot}' is not indexed by`, slot);
+		assert(e.blockName === slot.split('#')[0] && e.message.includes(words) && !e.message.includes('#'), `${slot}: ${e.message}`);
+	}
+	const plain = new BuildError('something', 'Tank');
+	assert(plain.blockName === 'Tank' && plain.setting === null && plain.message === 'Tank: something', plain.message);
+});
+
+test('every function the shell hands out as a hook is one it defines', async () => {
+	// A hook named but not defined is a ReferenceError at boot, which nothing
+	// here runs: the editor simply did not start. It happened once -- a block
+	// of the file was rewritten and took two functions with it.
+	const { readFileSync } = await import('node:fs');
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	const named = new Set([...app.matchAll(/^\t+(?:on[A-Z]\w*|clipboard|formatClipboard): ([a-z][A-Za-z0-9_]*),$/gm)].map((m) => m[1]));
+	assert(named.size > 10, `only ${named.size} hooks found`);
+	const defined = (n) => new RegExp(`(?:^|\\n)(?:async )?function ${n}\\(|(?:^|\\n)(?:const|let) ${n} = |import \\{[^}]*\\b${n}\\b[^}]*\\} from`).test(app);
+	const missing = [...named].filter((n) => !['null', 'true', 'false', 'undefined'].includes(n) && !defined(n));
+	assert(!missing.length, `hooks with nothing behind them: ${missing.join(', ')}`);
+});
+
+test('the page opens on a new model unless the address names an example', async () => {
+	const { readFileSync } = await import('node:fs');
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	assert(/const start = EXAMPLES\.some\(\(e\) => e\.file === wanted\) \? wanted : null;\n\tif \(!start\) \{\n\t\tsetModel\(structuredClone\(BLANK\), \{ label: 'New model' \}\);/.test(app),
+		'the page opens on an example');
+	assert(!/EXAMPLES\[0\]\.file/.test(app), 'the first example is still the default');
 });
 
 test('the build stamp is at the foot of the Help tab, and the footer is the run’s alone', async () => {

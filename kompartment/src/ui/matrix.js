@@ -81,6 +81,115 @@ function colorOf(project, name) {
 	return color || null;
 }
 
+// --- zoom ------------------------------------------------------------------
+//
+// Every cell is the same square (`--cell` in app.css), so the grid reads as
+// the matrix it is -- a pattern whose shape says something about the model --
+// rather than as a table whose columns are as wide as their longest rate. A
+// square big enough to read a rate in is too big to see a landscape model's
+// pattern in, so the grid zooms: the buttons above it, or Ctrl (Cmd) and the
+// wheel -- a pinch on a trackpad -- about the pointer, as the diagram does.
+// By CSS `zoom` on the table, which scales its layout and not only its
+// picture, so the panel's scrollbars stay true.
+
+const ZOOM_MIN = 0.2;
+const ZOOM_MAX = 2.5;
+const ZOOM_STEP = 1.25;
+const ZOOM_KEY = 'kompartment.matrixZoom';
+
+/** The zoom, kept for the next visit: a view setting, so the browser's, not the model's. */
+let zoom = (() => {
+	try {
+		const z = Number(localStorage.getItem(ZOOM_KEY));
+		return Number.isFinite(z) && z > 0 ? clampZoom(z) : 1;
+	} catch {
+		return 1;
+	}
+})();
+
+function clampZoom(z) {
+	return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
+}
+
+/** The zoom the grid is drawn at. */
+export function matrixZoom() {
+	return zoom;
+}
+
+/**
+ * Zooms the grid in `host` to `next`, keeping the point at (`cx`, `cy`) --
+ * window coordinates -- where it is on screen; the middle of the view when no
+ * point is given, which is what the buttons mean.
+ */
+export function setMatrixZoom(host, next, cx = null, cy = null) {
+	const table = host.querySelector('table.matrix');
+	const z = clampZoom(next);
+	if (!table || z === zoom) { zoom = z; return; }
+	const r = host.getBoundingClientRect();
+	const px = (cx ?? r.left + host.clientWidth / 2) - r.left;
+	const py = (cy ?? r.top + host.clientHeight / 2) - r.top;
+	// Where the table starts in the scrolled content, and where the point is
+	// within it: the table is what scales, so the point scales about its
+	// corner.
+	const t = table.getBoundingClientRect();
+	const ox = t.left - r.left + host.scrollLeft;
+	const oy = t.top - r.top + host.scrollTop;
+	const k = z / zoom;
+	const inX = px + host.scrollLeft - ox;
+	const inY = py + host.scrollTop - oy;
+	zoom = z;
+	table.style.zoom = String(z);
+	host.scrollLeft = ox + inX * k - px;
+	host.scrollTop = oy + inY * k - py;
+	try { localStorage.setItem(ZOOM_KEY, String(z)); } catch { /* a convenience */ }
+	const level = host.querySelector('.matrix-zoom-level');
+	if (level) level.textContent = `${Math.round(z * 100)}%`;
+}
+
+/** The zoom that puts the whole grid in the panel, no larger than 100%. */
+function fitZoom(host) {
+	const table = host.querySelector('table.matrix');
+	if (!table) return zoom;
+	const t = table.getBoundingClientRect();
+	const bar = host.querySelector('.matrix-zoom')?.getBoundingClientRect().height ?? 0;
+	// The size at 100%: what is on screen, divided by the zoom it is drawn at.
+	const w = t.width / zoom;
+	const h = t.height / zoom;
+	if (!(w > 0 && h > 0)) return zoom;
+	return clampZoom(Math.min(1, (host.clientWidth - 24) / w, (host.clientHeight - bar - 24) / h));
+}
+
+/** The wheel, once per panel: the grid is drawn again on every edit, the panel is not. */
+const wheeled = new WeakSet();
+function wireWheel(host) {
+	if (wheeled.has(host)) return;
+	wheeled.add(host);
+	host.addEventListener('wheel', (ev) => {
+		// A plain wheel scrolls the grid; with Ctrl or Cmd -- and a pinch,
+		// which the browser reports as a wheel with Ctrl held -- it zooms,
+		// instead of zooming the whole page.
+		if (!(ev.ctrlKey || ev.metaKey) || !host.querySelector('table.matrix')) return;
+		ev.preventDefault();
+		const per = ev.deltaMode === 1 ? 0.05 : ev.deltaMode === 2 ? 1 : 0.0025;
+		setMatrixZoom(host, zoom * Math.exp(-ev.deltaY * per), ev.clientX, ev.clientY);
+	}, { passive: false });
+}
+
+/** The zoom's buttons, above the grid and staying there as it scrolls. */
+function zoomBar(host) {
+	const button = (text, title, act, cls = '') => {
+		const b = el('button', { type: 'button', className: `ghost ${cls}`.trim(), title, 'aria-label': title }, text);
+		b.addEventListener('click', act);
+		return b;
+	};
+	return el('div', { className: 'matrix-zoom', role: 'group', 'aria-label': 'Zoom' },
+		button('\u2212', 'Zoom out', () => setMatrixZoom(host, zoom / ZOOM_STEP)),
+		button(`${Math.round(zoom * 100)}%`, 'Back to 100%', () => setMatrixZoom(host, 1), 'matrix-zoom-level'),
+		button('+', 'Zoom in', () => setMatrixZoom(host, zoom * ZOOM_STEP)),
+		button('Fit', 'The whole grid in view', () => setMatrixZoom(host, fitZoom(host))),
+		el('span', { className: 'hint matrix-zoom-hint' }, 'or Ctrl/\u2318 and the wheel'));
+}
+
 /**
  * @param {HTMLElement} host
  * @param {object} project
@@ -168,6 +277,10 @@ export function renderMatrix(host, project, selection, hooks = {}, opts = {}) {
 	const table = el('table', {
 		className: `matrix${anyGroups ? ' has-groups' : ''}`,
 	});
+	// A fixed layout needs a width to be fixed against: every column one
+	// square, so the table is `--cell` times the number of slots.
+	table.style.setProperty('--n', String(slots.length));
+	table.style.zoom = String(zoom);
 	const body = el('tbody');
 
 	/** What a slot stands for when a flux lands on it; undefined for a label. */
@@ -302,7 +415,8 @@ export function renderMatrix(host, project, selection, hooks = {}, opts = {}) {
 		body.append(tr);
 	}
 	table.append(body);
-	host.append(table);
+	host.append(zoomBar(host), table);
+	wireWheel(host);
 
 	host.append(el('p', { className: 'hint' },
 		'The blocks are on the diagonal, the flows between them off it \u2014 the '

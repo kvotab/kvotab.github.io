@@ -1863,9 +1863,19 @@ export function renderInspector(host, project, selection, hooks = {}, opts = {})
 				() => block[key], (v) => { block[key] = v; },
 				{ field: key, hint: ed.WASTE_HELP[key], uncertain: true }));
 		}
-		host.append(equationField(ed.WASTE_LABEL.degradation_rate,
+		// Per index, like the fraction, so the value here is the default --
+		// and still one that may carry a spread: a dissolution rate is the
+		// commonest uncertain number in a source term, and a distribution on
+		// the default applies wherever no index has a value of its own.
+		host.append(equationField(dims.length ? `${ed.WASTE_LABEL.degradation_rate} (default)` : ed.WASTE_LABEL.degradation_rate,
 			() => block.degradation_rate, (v) => { block.degradation_rate = v; },
-			{ field: 'degradation_rate', hint: ed.WASTE_HELP.degradation_rate, uncertain: true }));
+			{
+				field: 'degradation_rate',
+				hint: ed.WASTE_HELP.degradation_rate + (dims.length
+					? ' Each index can have its own below — per waste type, say — or read an indexed parameter.'
+					: ''),
+				uncertain: true,
+			}));
 
 		const decaysAlong = ed.decayDimensionOf(project, block);
 		if (decaysAlong) {
@@ -2374,13 +2384,22 @@ function renderLineAppearance(project, block, hooks) {
 	// The theme's own edge colour as the starting point, so opening the picker
 	// on a line that has never been coloured does not suggest it is red.
 	const swatch = el('input', { type: 'color', value: look.color ?? '#8a8880' });
+	const clearColour = clear('colour', { color: null }, !!look.color);
 	// A colour picker reports every colour the pointer passes over on its way
 	// to the one that is chosen. `coalesce` makes the whole sweep one step to
-	// undo rather than two hundred; see undo.js.
-	swatch.addEventListener('input', throttled(() => set(
-		{ color: swatch.value }, { coalesce: `colour:${qname}` },
-	), 120));
-	row('colour', swatch, clear('colour', { color: null }, !!look.color));
+	// undo rather than two hundred; see undo.js. `keepModal` keeps the dialog
+	// from being rebuilt under the picker, which would close it -- see
+	// `republish` -- and `pickedColour` puts right in place the two things in
+	// the dialog a colour changes.
+	const pick = () => {
+		set({ color: swatch.value }, { coalesce: `colour:${qname}`, keepModal: true });
+		pickedColour(swatch, clearColour, 'Use the default colour');
+	};
+	swatch.addEventListener('input', throttled(pick, 120));
+	// And `change` the same way: where the picker is a panel that stays open,
+	// Chrome may send it for every colour chosen rather than once at the end.
+	swatch.addEventListener('change', pick);
+	row('colour', swatch, clearColour);
 
 	// --- weight ---
 	const width = el('select', {});
@@ -2408,6 +2427,19 @@ function renderLineAppearance(project, block, hooks) {
 	return section;
 }
 
+/**
+ * What choosing a colour changes in the dialog around the picker, put right
+ * in place because the dialog is not rebuilt while a picker is open: the x
+ * beside it, which now has a colour to clear, and the section's badge, which
+ * now says the block is not as its kind draws it.
+ */
+function pickedColour(swatch, clearButton, title = null) {
+	clearButton.disabled = false;
+	if (title) clearButton.title = title;
+	const badge = swatch.closest('.panel-section')?.querySelector(':scope > summary > .panel-section-badge');
+	if (badge) badge.textContent = 'custom';
+}
+
 function renderAppearance(project, block, kind, hooks) {
 	// Its own, because this is a separate function: the block's identity is
 	// its qualified name, not the name in the box.
@@ -2420,19 +2452,27 @@ function renderAppearance(project, block, kind, hooks) {
 		type: 'color',
 		value: block.color ?? DEFAULT_COLOR[kind] ?? '#dff0e0',
 	});
-	swatch.addEventListener('input', throttled(() => {
-		try {
-			ed.setBlockColor(project, qname, swatch.value);
-			// One step for the whole sweep of the picker, not one per colour
-			// it passes through on the way.
-			hooks.onChange?.({ layoutOnly: true, coalesce: `colour:${qname}` });
-		} catch (e) { hooks.onStatus?.(e.message, 'warn'); }
-	}, 120));
 	const clearColour = el('button', {
 		className: 'insp-appearance-reset', type: 'button',
 		title: block.color ? 'Use the default colour for this kind of block' : 'Default',
 		disabled: !block.color,
 	}, '×');
+	const paint = () => {
+		try {
+			ed.setBlockColor(project, qname, swatch.value);
+			// One step for the whole sweep of the picker, not one per colour
+			// it passes through on the way. And the dialog left standing,
+			// since rebuilding it under the picker closes the picker (see
+			// `republish`): what the colour changes in it is put right here.
+			hooks.onChange?.({ layoutOnly: true, coalesce: `colour:${qname}`, keepModal: true });
+			pickedColour(swatch, clearColour, 'Use the default colour for this kind of block');
+		} catch (e) { hooks.onStatus?.(e.message, 'warn'); }
+	};
+	swatch.addEventListener('input', throttled(paint, 120));
+	// Where the picker is a panel that stays open, Chrome may send `change`
+	// for every colour chosen rather than once at the end, so it is no
+	// different from `input`.
+	swatch.addEventListener('change', paint);
 	clearColour.addEventListener('click', () => {
 		ed.setBlockColor(project, qname, null);
 		hooks.onChange?.({ layoutOnly: true });

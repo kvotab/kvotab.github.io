@@ -983,17 +983,31 @@ export class GraphEditor {
 			};
 		};
 
+		// Which of them end in a pipe here, for the edits that move a bend or
+		// a pipe to know whose point they are moving: see `_wayView`.
+		this._pipesHere = new Set();
 		for (const t of this.project.transfers ?? []) {
 			const shown = place(t, 'transfer');
+			if (shown?._elsewhere) this._pipesHere.add(qualifiedName(t));
 			if (shown) this.edgeLayer.append(...this._renderConnection(shown, nodes, 'transfer'));
 		}
 		for (const s of this.project.inflows ?? []) {
 			const shown = place({ ...s, from: null }, 'inflow');
+			if (shown?._elsewhere) this._pipesHere.add(qualifiedName(s));
 			if (shown) this.edgeLayer.append(...this._renderConnection(shown, nodes, 'inflow'));
 		}
 		if (this.view.show_influences) {
 			for (const g of this._influences(nodes)) this.edgeLayer.append(g);
 		}
+	}
+
+	/**
+	 * Which of a connection's points this canvas moves: its own pipe's, when
+	 * it is drawn here as a pipe into another sub-system, or the bend of the
+	 * whole drawing. See `waypointKey` in ../domain/edit.js.
+	 */
+	_wayView(name) {
+		return this._pipesHere?.has(name) ? (this.system ?? '') : null;
 	}
 
 	_applyView() {
@@ -1613,7 +1627,10 @@ export class GraphEditor {
 		// terminal inside a sub-system was written under `edge:NearField.out`
 		// and looked for under `edge:out`, so it was stored and then ignored:
 		// the handle sprang back the moment the pointer was released.
-		const waypoint = ed.getWaypoint(this.project, qualifiedName(conn));
+		// And this canvas's own: a pipe into another sub-system has a place of
+		// its own on each canvas it is drawn on, and the line drawn whole on
+		// the canvas above keeps its bend apart from them. See `waypointKey`.
+		const waypoint = ed.getWaypoint(this.project, qualifiedName(conn), conn._elsewhere ? (this.system ?? '') : null);
 		let p0;
 		let p1;
 		let openEnd = null;
@@ -2317,13 +2334,14 @@ export class GraphEditor {
 
 		if (waypoint) {
 			const wname = waypoint.dataset.waypoint;
+			const view = this._wayView(wname);
 			// The bend as it stands, so Escape can put it back -- including
 			// the case of there being no bend, which `setWaypoint(null)` is.
-			const wasBend = ed.getWaypoint(this.project, wname);
+			const wasBend = ed.getWaypoint(this.project, wname, view);
 			this.drag = {
-				kind: 'waypoint', name: wname, moved: false,
+				kind: 'waypoint', name: wname, view, moved: false,
 				undo: () => ed.setWaypoint(this.project, wname,
-					wasBend ? { ...wasBend } : null),
+					wasBend ? { ...wasBend } : null, view),
 			};
 			this.root.setPointerCapture(ev.pointerId);
 			return;
@@ -2341,13 +2359,14 @@ export class GraphEditor {
 			const m = this._toModel(ev);
 			// The grab offset, so the mark stays where it was taken hold of
 			// instead of jumping its end point under the cursor.
-			const wasEnd = ed.getWaypoint(this.project, name);
+			const view = this._wayView(name);
+			const wasEnd = ed.getWaypoint(this.project, name, view);
 			this.drag = {
-				kind: 'terminal', name, moved: false,
+				kind: 'terminal', name, view, moved: false,
 				dx: geo ? geo.openEnd.x - m.x : 0,
 				dy: geo ? geo.openEnd.y - m.y : 0,
 				undo: () => ed.setWaypoint(this.project, name,
-					wasEnd ? { ...wasEnd } : null),
+					wasEnd ? { ...wasEnd } : null, view),
 			};
 			this.root.setPointerCapture(ev.pointerId);
 			return;
@@ -2585,7 +2604,7 @@ export class GraphEditor {
 		if (this.drag.kind === 'waypoint') {
 			this.drag.moved = true;
 			ed.setWaypoint(this.project, this.drag.name,
-				{ x: this._snap(m.x, ev), y: this._snap(m.y, ev) });
+				{ x: this._snap(m.x, ev), y: this._snap(m.y, ev) }, this.drag.view);
 			this._redrawEdges();
 			return;
 		}
@@ -2595,7 +2614,7 @@ export class GraphEditor {
 			ed.setWaypoint(this.project, this.drag.name, {
 				x: this._snap(m.x + this.drag.dx, ev),
 				y: this._snap(m.y + this.drag.dy, ev),
-			});
+			}, this.drag.view);
 			// The whole edge layer, not one path: the mark, its line and its
 			// label all follow, and the handles on the selected connection sit
 			// on geometry that has just changed.
@@ -2795,8 +2814,9 @@ export class GraphEditor {
 			}
 			try {
 				ed.setConnectionEnd(this.project, name, end, ok ? finalName : null);
-				// The old bend was placed against the old geometry.
-				ed.setWaypoint(this.project, name, null);
+				// The old bend, and every pipe, was placed against the old
+				// geometry.
+				ed.clearWaypoints(this.project, name);
 				this._changed();
 				this._select(name);
 				this.hooks.onStatus?.(
@@ -3538,6 +3558,50 @@ export class GraphEditor {
 	}
 
 	/**
+	 * Copy format and Paste format: how a block looks, taken from one and put
+	 * on others -- a node's colour and shape, a connection's colour, weight
+	 * and line style. See `formatOf` and `applyFormat` in ../domain/edit.js.
+	 *
+	 * A clipboard of its own, beside the blocks': taking a block's look is not
+	 * taking the block, and it must not throw away a copy waiting to be
+	 * pasted. Copy wants one block, since a look copied from three is three
+	 * looks; Paste takes the whole selection, and skips the block the format
+	 * came from.
+	 */
+	_formatItems(names) {
+		const clip = this.hooks.formatClipboard?.();
+		const single = names.length === 1 ? names[0] : null;
+		const source = single ? ed.formatOf(this.project, single) : null;
+		const targets = names.filter((n) => n !== clip?.from && ed.formatOf(this.project, n));
+		const items = [];
+		if (single) {
+			items.push({
+				label: 'Copy format',
+				hint: '\u2325\u2318C',
+				disabled: !source,
+				title: !source ? 'It has no look of its own to copy.'
+					: source.kind === 'node'
+						? 'Takes its colour and shape, to paste onto other blocks.'
+						: 'Takes its colour, weight and line style, to paste onto other connections.',
+				onPick: () => this.hooks.onCopyFormat?.(single),
+			});
+		}
+		const n = targets.length;
+		items.push({
+			label: n > 1 ? `Paste format onto ${n} blocks` : 'Paste format',
+			hint: '\u2325\u2318V',
+			disabled: !clip || !n,
+			title: !clip ? 'Nothing copied yet: Copy format on a block first.'
+				: !n ? `This is ${clip.from}, where the format came from.`
+					: `Gives ${n === 1 ? 'it' : 'them'} the look of ${clip.from}: `
+						+ (clip.kind === 'node' ? 'its colour and shape' : 'its colour, weight and line style')
+						+ ', as far as each can take it.',
+			onPick: () => this.hooks.onPasteFormat?.(targets),
+		});
+		return items;
+	}
+
+	/**
 	 * Paste, aimed at a particular sub-system.
 	 *
 	 * `at` is where the group's top-left corner lands, which only the canvas
@@ -3604,6 +3668,7 @@ export class GraphEditor {
 		const drawn = names.filter((n) => shown.has(n)).length;
 		return [
 			...this._copyItems(names),
+			...this._formatItems(names),
 			{ separator: true },
 			this._alignItem(drawn, (how) => this._alignPicked(names, how)),
 			this._moveItem(names, here),
@@ -4624,6 +4689,7 @@ export class GraphEditor {
 		const copies = [
 			...this._copyItems([name]),
 			...(isLink ? [] : [this._pasteItem(systemOf(block))]),
+			...this._formatItems([name]),
 		];
 
 		if (kind === 'compartment') {
@@ -4688,7 +4754,8 @@ export class GraphEditor {
 			// Where the line goes, beside where its ends go. Shown even with
 			// nothing to undo, so that a line someone has bent by accident has
 			// a visible way back rather than a gesture to remember.
-			const bent = !!ed.getWaypoint(this.project, name);
+			const view = this._wayView(name);
+			const bent = !!ed.getWaypoint(this.project, name, view);
 			const straighten = {
 				label: 'Straighten',
 				disabled: !bent,
@@ -4697,7 +4764,7 @@ export class GraphEditor {
 					: `${block.name} is already straight. Drag the handle at its `
 						+ `midpoint to bend it.`,
 				onPick: () => {
-					ed.setWaypoint(this.project, name, null);
+					ed.setWaypoint(this.project, name, null, view);
 					this._changed({ layoutOnly: true });
 					this.hooks.onStatus?.(`${name} straightened.`, 'info');
 				},
@@ -5093,6 +5160,24 @@ export class GraphEditor {
 				moved = true;
 			}
 			if (moved) this._changed({ layoutOnly: true });
+			return;
+		}
+		// Copy format and Paste format, on the keys the drawing programs and
+		// Google Docs use. By the key's place rather than its character:
+		// Option turns C into ç on a Mac. First, because with Ctrl for the
+		// Command key the plain copy below would take them.
+		if (mod && ev.altKey && (ev.code === 'KeyC' || ev.code === 'KeyV')) {
+			ev.preventDefault();
+			const names = [...this.picked];
+			if (ev.code === 'KeyC') {
+				if (names.length !== 1) {
+					this.hooks.onStatus?.('Copy format takes one block: select the one whose look you want.', 'warn');
+					return;
+				}
+				this.hooks.onCopyFormat?.(names[0]);
+			} else if (names.length) {
+				this.hooks.onPasteFormat?.(names);
+			}
 			return;
 		}
 		if (mod && (key === 'c' || key === 'x')) {
