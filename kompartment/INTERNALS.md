@@ -101,6 +101,7 @@ exercise `domain/` and `sim/` directly, which is why they can be plain Node.
 | `src/io/hdf5.js` | An HDF5 writer, in the shape the assessment tools read |
 | `src/io/resultfile.js`, `src/io/dataset.js` | Results files, and a project archive with its run beside it |
 | `src/worker/sim-worker.js`, `src/worker/prob-pool.js` | The solve, off the UI thread, and a pool over the cores |
+| `python/` | The Python package: a model file read into objects, edited by the same rules as `src/domain/edit.js`, and written back. Its tests run the editor beside it through Node and compare the files. See `python/README.md` |
 
 ## Behaviours measured, not guessed
 

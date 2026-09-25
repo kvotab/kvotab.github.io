@@ -54,6 +54,10 @@ Ten worked examples ship with it — open one from the Help tab or with
 - **Unit checking** on every equation, with SI prefixes and unit literals.
 - **Results** as CSV, as HDF5 in the shape the assessment tools read, or as a
   project archive with the run beside it.
+- **A Python package** that reads a model into objects, edits it by the same
+  rules as the editor — a rename follows every reference, a delete is refused
+  while something reads the block — and writes it back. See
+  [python/README.md](python/README.md).
 
 ## Documentation
 
@@ -61,6 +65,7 @@ Ten worked examples ship with it — open one from the Help tab or with
 |---|---|
 | [GUIDE.md](GUIDE.md) | The user guide. Start at *Your first model*. |
 | [INTERNALS.md](INTERNALS.md) | How it works. |
+| [python/README.md](python/README.md) | Working on a model from Python. |
 
 Both are readable inside the application, on the **Help** tab, with a width
 control for the reference tables.
@@ -70,6 +75,7 @@ control for the reference tables.
 ```sh
 node test/run.js
 node test/lint.js
+cd python/tests && python3 -m unittest
 ```
 
 The numerical tests check against closed-form solutions and published

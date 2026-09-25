@@ -6597,6 +6597,28 @@ while keeping its own undo, selection and caret. Only the lines in view are
 coloured, so it costs the same for a model of any size. The choice is
 remembered in this browser.
 
+### From Python
+
+A model can be written by a program as well as drawn. The `python/` directory
+beside this guide is a Python package that reads a project file into objects,
+edits it through methods — `add_compartment`, `add_transfer`, `rename_block`,
+`set_dimensions` and the rest — and writes it back as a file this tool opens:
+
+```python
+import kompartment as kp
+
+m = kp.Model.load('examples/biosphere.json')
+m['Soil'].set_value('5e9', at='I-129')
+m.rename_block('Soil', 'Topsoil')
+m.save('biosphere-edited.json')
+```
+
+It keeps the rules the editor keeps: a rename follows every equation, transfer
+end and value keyed by the name; a delete is refused while something still
+reads the block; a name that is taken or reserved is refused. `validate()`
+checks a model with this tool's own code, through Node. Its README has the
+whole of it.
+
 ## Bundled examples
 
 | File | What it shows |

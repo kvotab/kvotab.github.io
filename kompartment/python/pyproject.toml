@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kompartment"
+version = "0.1.0"
+description = "Read, edit and write Kompartment models from Python"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Kvot AB" }]
+requires-python = ">=3.9"
+dependencies = []
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering",
+]
+
+[tool.setuptools]
+packages = ["kompartment"]
+
+[tool.setuptools.package-data]
+kompartment = ["data/*.json", "_node/*.mjs"]
+
+[tool.ruff]
+line-length = 120
+
+[tool.pylint.format]
+max-line-length = 120
