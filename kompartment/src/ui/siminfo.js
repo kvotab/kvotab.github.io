@@ -185,12 +185,12 @@ export function simTopic(key, ctx) {
 					['Linear', 'Equal steps from start to end.', sim.spacing === 'linear'],
 					['Several series…', 'A list of series combined into one set of times: a logarithmic '
 						+ 'one for the run and an even one for its first year, say, plus any times written '
-						+ 'out by hand. Ecolego’s own TimeSeriesList.', sim.spacing === 'series'],
+						+ 'out by hand.', sim.spacing === 'series'],
 					['The solver’s own points', 'No grid: the result is reported at every step the '
-						+ 'solver takes, which are small where the answer moves and large where it does not. '
-						+ 'Ecolego’s default, “Produce no additional output”.', sim.spacing === 'solver'],
+						+ 'solver takes, which are small where the answer moves and large where it does not.',
+					sim.spacing === 'solver'],
 					['Series and the solver’s points', 'Both, merged: the times asked for and every step '
-						+ 'the solver took between them. Ecolego’s “Produce additional output”.',
+						+ 'the solver took between them.',
 					sim.spacing === 'both'],
 				],
 			}, {
@@ -283,10 +283,8 @@ export function simTopic(key, ctx) {
 					+ 'exactly what the model said.',
 				],
 			}, {
-				text: 'Ecolego calls it ‘Enable saturation’ and defaults it off; this tool defaults '
-					+ 'it on, because the floor is the only part of saturation it carries. A compartment '
-					+ 'held at zero is counted in the status line: it usually means a rate with the wrong '
-					+ 'sign rather than a result.',
+				text: 'A compartment held at zero is counted in the status line: it usually means a rate '
+					+ 'with the wrong sign rather than a result.',
 			}],
 		};
 		case 'mass_balance': return {

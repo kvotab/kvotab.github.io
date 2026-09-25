@@ -112,7 +112,7 @@ export const KINDS = [
  */
 const HOLDS = [
 	['all', (n) => `All ${n} realisations`,
-		'One row per output time and one column per realisation — the shape Ecolego writes. Large.'],
+		'One row per output time and one column per realisation. Large.'],
 	['mean', (n) => `The mean of ${n} realisations`,
 		'One curve per series: the average of the runs at each time.'],
 	['one', () => 'One realisation…',

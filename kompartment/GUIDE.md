@@ -665,12 +665,20 @@ sub-systems are open is a fact about the view, and a new model starts folded.
 
 - **expressions** — expression blocks (on by default)
 - **parameters** — parameter blocks (off by default; a large model has many)
-- **influences** — dotted arrows from what a block reads to the block that
-  reads it, coloured by the source. This covers **every equation a block
-  holds**, so a parameter feeding a transfer rate shows up, not just
-  expression-to-expression links — including a rate that only differs for one
-  index, a compartment's initial inventory and its dy/dt term, and a far-field
-  path's travel time. A **function** is read by being called, so it has an
+- **Influences** — dotted arrows from what a block reads to the block that
+  reads it, coloured by the source: **none**, **all** of them, or only those of
+  the blocks **selected** — every arrow into or out of whichever blocks are
+  selected, one or several, which on a model of any size is the set that can
+  actually be read; select another block and the arrows follow it. This covers
+  **every equation a block holds**, so a parameter feeding a transfer rate
+  shows up, not just expression-to-expression links — including a rate that
+  only differs for one index, a compartment's initial inventory and its dy/dt
+  term, a far-field path's travel time, a waste package's inventory, failure
+  settings and degradation rate, a transfer's availability limit, and an
+  event's time or rate and the share each action takes. An event's actions
+  also name blocks — the packages it fails, the compartments a share moves
+  between — and those are drawn into the event, as everything a block's
+  settings name is. A **function** is read by being called, so it has an
   arrow out to every block that calls it, wherever the call is written, and
   arrows in from whatever its body reads. It also covers the blocks a
   **reduction** names: an index operation or an aggregate has no equation, so
@@ -822,7 +830,7 @@ the inspector to select and edit it. **Del** removes the selection, and **⌘Z**
 puts it back. **Save…** writes the model as JSON and asks where to put it; it
 says **Save** after that and writes back to the same file, with **⌘S** for the
 same thing and a dot on the button while there is anything to write; **Open…**
-reads it back, or imports an Ecolego `.eco` project; **Import…** takes blocks *out of* one of those and into the model
+reads it back, or imports an `.eco` project (see [Importing Ecolego projects](#importing-ecolego-projects)); **Import…** takes blocks *out of* one of those and into the model
 already open.
 
 Run the test suite with Node 18 or later:
@@ -872,7 +880,7 @@ Eight views over one model, all editing the same object:
 
 | Tab | What it is |
 |---|---|
-| **Build** | The graph editor. Right-click for everything it can do — the empty-canvas menu adds blocks where you clicked and holds the view settings; a block's menu connects and deletes it. Drag from a compartment's right edge onto another to connect them; double-click anything to open its settings; right-click a connection for **Straighten**; drag to pan, Del to remove. The wheel zooms about wherever the pointer is — a mouse notch by about 7%, a trackpad smoothly, since the two report their scrolling in different units and the difference has to be read off `deltaMode` rather than taken at face value. Anywhere in the tab counts, not only over the canvas itself: there is a frame around it — the panel's padding, the breadcrumb above, the help line below — where a wheel doing nothing would read as a zoom that only works over blocks. Nothing in that tab scrolls, so there is nothing else a wheel there could mean, and a pointer outside the canvas zooms about the nearest point of it. Drag a sub-system onto another to move it in, contents and all. Shift-click, or shift-drag a box over them, to select several blocks — and sub-systems, which are nodes here like any other — at once; they then move together, drop into a sub-system together, and are deleted together, a selected sub-system taking everything inside it after a question. Ctrl/Cmd-A takes everything on the diagram. **Cut** (⌘X) and **Copy** (⌘C) are on every block's menu and on a selection's, and both wait for **Paste** (⌘V), which is on the canvas menu, on a sub-system, and on the block tree's rows — so a copy can be pasted into a different sub-system from the one it was taken from, or into a different model, and a cut moves the blocks there instead. **Copy format** (⌥⌘C) and **Paste format** (⌥⌘V) sit beside them, for how a block looks rather than what it is: a block's colour and shape, or a connection's colour, weight and line style, taken from one block and put on the selection — one block or several — as far as each can take it, in one step to undo. A colour the block has not set is copied as not set, so the blocks it lands on go back to their kinds' own colours, which follow the theme. A name already used where the copy lands gets a number, and **the connections come along**: a transfer is the arrow between two compartments, so it is copied when both of them are, and left behind when only one is. Every reference *inside* the copy follows the copy — a pasted expression reads the pasted parameter — and every reference *out* of it stays where it pointed. **A sub-system copies as a sub-system**: its own menu has Cut and Copy, and what they carry is its contents — every block in it at every depth, the sub-systems nested in it (empty ones included), and the arrows between them. Several of them, or sub-systems and blocks together, copy as one thing, and the connection rule is read across the whole of it: the arrow between two selected sub-systems comes along, and so does the one from a compartment on the canvas into a sub-system that is coming too. It pastes as a child of wherever you aim it, keeping every name it had, since what it lands in did not exist a moment ago; only its own name gets a number. What moves is the node on the parent's canvas — everything inside is drawn on the sub-system's own canvas and lands looking exactly as it did — and a paste onto a canvas the copy did not come from goes to a clear spot rather than on top of whatever was already there. An end that hangs outside the *view* is marked, and there are three different things it can be. A flow that crosses the model's own boundary gets a dashed cloud — the stock-and-flow convention for what lies beyond it — at whichever end is loose: past the arrowhead where the flow leaves, behind the start where a source term comes in, so the arrow always points the way the material moves. The exception is a source term that carries the **radionuclide dimension**, which wears the standard sign instead, a black trefoil on yellow: the cloud says where the material comes from and the sign says what it is. (The two are alternatives rather than one drawn on the other — a cloud is a wide, flat shape, and a trefoil inside one is a smudge at any size either of them can reasonably be.) **Show ▸ inflow icons** and **▸ outflow icons** turn each direction off separately, both on by default: a model of this kind has an outflow on nearly every compartment and two or three source terms, so the reason to hide the first — the same mark over and over — is not a reason to lose the few that say where the inventory enters. A cloud takes the colour its line was given, so a line styled on the **Appearance** rows is that colour to both its ends; the radiation sign does not, since it is recognised by its colours. And a flow whose far end is a real block in another sub-system gets a **pipe** instead: it has not left the model, it has gone *there*. Each of them is picked up and put down like a block: click to select the connection, drag to place the mark where you want it, right-click for **Straighten** to send it back to where it started. A pipe's place belongs to its canvas: dragging it inside a sub-system leaves the same line on the canvas above as it was, and bending that line leaves the pipe where it is. A pipe carries the name of the block at its far end and where that block lives (`Buffer · in NearField`, `Lake · top level`), points along the flow, and has the boundary it crosses drawn as a bar on the side facing the block on screen; double-click it to go there, with that block selected. **A flux that crosses the model's own boundary is drawn where its block is, and nowhere else**: a source term into a compartment inside `NearField` is on the `NearField` canvas, not on the top level as well pointing at the sub-system node. Such a connection has one end that means anything, so there is one canvas it belongs on — unlike a transfer between two real blocks, which still appears on each canvas that can say something about it. The grid is where they are gathered in one place instead. **Show ▸ Transfer labels** chooses what is written along each line — its `name`, its `rate`, or `none` — and sits beside **▸ influences**, the other thing drawn between blocks rather than as one. **Canvas ▸ Show grid** turns the lattice behind the canvas off, **▸ Snap to the grid** turns off landing on it — holding Alt during a drag does the opposite of whatever that setting says, for one placement without changing it — and **▸ Show help** turns off the line under the diagram, which costs the diagram the room. **Add shape…** and **Save as picture ▸** are the last section: the shapes drawn behind the model, and the diagram written out as SVG, PNG or JPEG. |
+| **Build** | The graph editor. Right-click for everything it can do — the empty-canvas menu adds blocks where you clicked and holds the view settings; a block's menu connects and deletes it. Drag from a compartment's right edge onto another to connect them; double-click anything to open its settings; right-click a connection for **Straighten**; drag to pan, Del to remove. The wheel zooms about wherever the pointer is — a mouse notch by about 7%, a trackpad smoothly, since the two report their scrolling in different units and the difference has to be read off `deltaMode` rather than taken at face value. Anywhere in the tab counts, not only over the canvas itself: there is a frame around it — the panel's padding, the breadcrumb above, the help line below — where a wheel doing nothing would read as a zoom that only works over blocks. Nothing in that tab scrolls, so there is nothing else a wheel there could mean, and a pointer outside the canvas zooms about the nearest point of it. Drag a sub-system onto another to move it in, contents and all. Shift-click, or shift-drag a box over them, to select several blocks — and sub-systems, which are nodes here like any other — at once; they then move together, drop into a sub-system together, and are deleted together, a selected sub-system taking everything inside it after a question. Ctrl/Cmd-A takes everything on the diagram. **Cut** (⌘X) and **Copy** (⌘C) are on every block's menu and on a selection's, and both wait for **Paste** (⌘V), which is on the canvas menu, on a sub-system, and on the block tree's rows — so a copy can be pasted into a different sub-system from the one it was taken from, or into a different model, and a cut moves the blocks there instead. **Copy format** (⌥⌘C) and **Paste format** (⌥⌘V) sit beside them, for how a block looks rather than what it is: a block's colour and shape, or a connection's colour, weight and line style, taken from one block and put on the selection — one block or several — as far as each can take it, in one step to undo. A colour the block has not set is copied as not set, so the blocks it lands on go back to their kinds' own colours, which follow the theme. A name already used where the copy lands gets a number, and **the connections come along**: a transfer is the arrow between two compartments, so it is copied when both of them are, and left behind when only one is. Every reference *inside* the copy follows the copy — a pasted expression reads the pasted parameter — and every reference *out* of it stays where it pointed. **A sub-system copies as a sub-system**: its own menu has Cut and Copy, and what they carry is its contents — every block in it at every depth, the sub-systems nested in it (empty ones included), and the arrows between them. Several of them, or sub-systems and blocks together, copy as one thing, and the connection rule is read across the whole of it: the arrow between two selected sub-systems comes along, and so does the one from a compartment on the canvas into a sub-system that is coming too. It pastes as a child of wherever you aim it, keeping every name it had, since what it lands in did not exist a moment ago; only its own name gets a number. What moves is the node on the parent's canvas — everything inside is drawn on the sub-system's own canvas and lands looking exactly as it did — and a paste onto a canvas the copy did not come from goes to a clear spot rather than on top of whatever was already there. An end that hangs outside the *view* is marked, and there are three different things it can be. A flow that crosses the model's own boundary gets a dashed cloud — the stock-and-flow convention for what lies beyond it — at whichever end is loose: past the arrowhead where the flow leaves, behind the start where a source term comes in, so the arrow always points the way the material moves. The exception is a source term that carries the **radionuclide dimension**, which wears the standard sign instead, a black trefoil on yellow: the cloud says where the material comes from and the sign says what it is. (The two are alternatives rather than one drawn on the other — a cloud is a wide, flat shape, and a trefoil inside one is a smudge at any size either of them can reasonably be.) **Show ▸ inflow icons** and **▸ outflow icons** turn each direction off separately, both on by default: a model of this kind has an outflow on nearly every compartment and two or three source terms, so the reason to hide the first — the same mark over and over — is not a reason to lose the few that say where the inventory enters. A cloud takes the colour its line was given, so a line styled on the **Appearance** rows is that colour to both its ends; the radiation sign does not, since it is recognised by its colours. And a flow whose far end is a real block in another sub-system gets a **pipe** instead: it has not left the model, it has gone *there*. Each of them is picked up and put down like a block: click to select the connection, drag to place the mark where you want it, right-click for **Straighten** to send it back to where it started. A pipe's place belongs to its canvas: dragging it inside a sub-system leaves the same line on the canvas above as it was, and bending that line leaves the pipe where it is. A pipe carries the name of the block at its far end and where that block lives (`Buffer · in NearField`, `Lake · top level`), points along the flow, and has the boundary it crosses drawn as a bar on the side facing the block on screen; double-click it to go there, with that block selected. **A flux that crosses the model's own boundary is drawn where its block is, and nowhere else**: a source term into a compartment inside `NearField` is on the `NearField` canvas, not on the top level as well pointing at the sub-system node. Such a connection has one end that means anything, so there is one canvas it belongs on — unlike a transfer between two real blocks, which still appears on each canvas that can say something about it. The grid is where they are gathered in one place instead. **Show ▸ Transfer labels** chooses what is written along each line — its `name`, its `rate`, or `none` — and sits beside **▸ Influences** — none, all, or those of the blocks selected — the other thing drawn between blocks rather than as one. **Canvas ▸ Show grid** turns the lattice behind the canvas off, **▸ Snap to the grid** turns off landing on it — holding Alt during a drag does the opposite of whatever that setting says, for one placement without changing it — and **▸ Show help** turns off the line under the diagram, which costs the diagram the room. **Add shape…** and **Save as picture ▸** are the last section: the shapes drawn behind the model, and the diagram written out as SVG, PNG or JPEG. |
 | **Matrix** | The transfer grid, laid out the way a Jacobian is drawn: **the blocks are on the diagonal and the flows between them are off it**. A cell is what leaves the name on the diagonal along its row and arrives at the name down its column — so the diagonal is a staircase of names and the grid needs no header band, in either direction. Each filled cell carries the elbow that traces its route: above the diagonal it turns down, below it turns up, which is also how a feedback loop shows itself at a glance. **Sub-systems fold**: see below. Everything in it that stands for a block behaves like one: a click selects it and a double-click opens its settings, on the diagonal and off it alike. Click an empty cell to add a transfer; a pair may hold several and their fluxes add. A block on the diagonal, and a transfer off it, wears the colour it was given on the diagram, with its label picked from that colour rather than from the theme — a model of any size is read by its colours as much as by its names, and two views showing it in different colours made this one a separate thing to learn. A far-field pathway sits on the diagonal like any other block. **The world outside the model gets a row and a column of its own**, at the end and outside the hierarchy — its row is what comes in, its column what leaves — and only when something actually crosses that boundary, since an empty pair in every closed model is furniture. It is the one view that puts every source term and every outflow together, the diagram having drawn each of them beside its own block. Built when this tab is opened rather than on every edit, and a selection that moves within one model moves the highlight rather than rebuilding the grid: it is (compartments + paths + 1) squared. **Every cell is the same square**, so the grid reads as a pattern — the shape a Jacobian is drawn in — rather than as a table whose columns are as wide as their longest rate; what does not fit a square is on its tooltip. The **zoom** above the grid — −, the percentage (back to 100%), +, and **Fit** for the whole grid in view — or Ctrl/⌘ and the wheel, or a pinch, scales it about the pointer, and the level is remembered in this browser. |
 | **Index lists** | The model's dimensions. One pane lists them, the other is the one you are editing: its name, what it is defined from, its indices, and — for the radionuclide list — half-lives and decay chains. Everything about a list is made and unmade here. |
 | **Chart** | Results over time, log-log by default. A search box, kind chips and one selector per index list narrow the line picker above it, which matters as soon as a model is two-dimensional — `landscape.json` has 63 lines to choose eight from. Drag a rectangle over the chart to zoom, scroll to zoom about the pointer, shift-drag or middle-drag to pan, double-click to show everything. Right-click it for the two scales, the zoom, the drag mode, **Save as picture ▸ SVG · PNG · JPEG**, and the numbers as CSV. |
@@ -1734,8 +1742,7 @@ Every block has an **Enabled** switch — under its name in the settings dialog,
 and as *Disable* / *Enable* on its right-click menu. Off, the block stays in the
 model with everything it has: its equations, its per-index values, its place on
 the diagram, where it is drawn faded and dashed. What changes is that it takes
-no part in the run. This is Ecolego's own switch, read from a project file's
-`<enabled>false</enabled>` and written as `"enabled": false`; a block that says
+no part in the run. It is written as `"enabled": false`; a block that says
 nothing is on.
 
 **It is how a model with a broken block in it still runs.** A block whose
@@ -1783,9 +1790,7 @@ The blocks keep their own switches untouched, so turning the sub-system back on
 returns it to exactly what it was, including any block that was off on its own
 account. A sub-system switched off inside another that is off cannot be
 switched on from its own menu — the item says which outer one to enable. A
-disabled sub-system arriving in an Ecolego file is carried as exactly that, in
-`"disabled_systems": ["NF"]`, rather than as its blocks switched off one by one,
-which is what this tool did before it had a switch to carry.
+disabled sub-system is kept as `"disabled_systems": ["NF"]`.
 
 **A transfer into a switched-off compartment is warned about.** Only a
 transfer's *donor* decides whether it runs — so one whose target is off keeps
@@ -1960,10 +1965,10 @@ A row the file does not have stays and says so. Nothing is changed until one of
 those buttons is pressed, and each of them asks again.
 
 **Opening.** **Open…** replaces the model. All three formats open, and so does a
-compressed Ecolego `.eco`. The format is read from the file's first four bytes rather than its
+compressed `.eco` project (see [Importing Ecolego projects](#importing-ecolego-projects)). The format is read from the file's first four bytes rather than its
 name, so a model somebody compressed and never renamed still opens, and so does
 a `.zip` that a mail system decided to call something else. A ZIP is looked
-*into*: one holding a `model.xml` is an Ecolego project, one holding a `.json`
+*into*: one holding a `model.xml` is an `.eco` project, one holding a `.json`
 is a model, and one holding neither says so rather than failing with a parse
 error about a byte nobody wrote.
 
@@ -2533,19 +2538,9 @@ blocks are the model's endpoints.
 
 ### Choosing endpoints
 
-An **endpoint** is a block whose result is kept, and a project file carries
-the list:
-
-```xml
-<outputs>
-  <output id="NearField&#46;waste_domain_length"/>
-  ...
-</outputs>
-```
-
-the run writes a series for those and for nothing else, which is why an
-Ecolego result file of a three-thousand-block model holds two groups: somebody
-decided what was worth keeping. This tool keeps everything — every series is
+An **endpoint** is a block whose result is kept, and a model can carry the
+list — `simulation.endpoints`, which an imported project brings with it (see
+[Importing Ecolego projects](#importing-ecolego-projects)). This tool keeps everything — every series is
 worked out from the states when asked for, so holding them costs nothing — and
 that is right for *looking* at a model and wrong for *saving* one. A run of
 model G has 831,314 series, which is 2.8 GB of HDF5 and more than
@@ -2591,9 +2586,9 @@ first. The header quotes any label that holds a comma or a quote, which every
 indexed output's does (`Soil[Cs-137, Lake]`), so a spreadsheet reads one column
 per series rather than splitting the label in two.
 
-**HDF5** is what Ecolego itself writes, and what the tools around it read — the
-result browser at [kvotab.se/rb.html](https://kvotab.se/rb.html) opens a `.h5`,
-walks its tree and draws every radionuclide of a block as one chart. A CSV
+**HDF5** is what the result browser at
+[kvotab.se/rb.html](https://kvotab.se/rb.html) reads: it opens a `.h5`, walks
+its tree and draws every radionuclide of a block as one chart. A CSV
 cannot say any of that: a column called `Soil [Cs-137, North]` is a name
 somebody has to take apart again, and nothing in the file says what the units
 are, which index list those nuclides came from, or what the time column is
@@ -2635,9 +2630,7 @@ a flux that is zero until a release arrives, is still a quantity that moves. It
 is written at every time, with its nuclides.
 
 A sub-system is a group, so `bio.Soil` is at `/bio/Soil`; a block indexed by
-two lists nests, `/Dose/<area>/<nuclide>`, with the nuclide as the leaf — which
-is where Ecolego puts it, a dose in one of its own files sitting at
-`/biosphere/1BLA/drained_mire/total/Cs-137`. Each series carries its unit, its
+two lists nests, `/Dose/<area>/<nuclide>`, with the nuclide as the leaf. Each series carries its unit, its
 kind, the block it came from and its full label; the root carries the model's
 name, when it was written, the time unit, the run's ends and which solver ran
 it. Between them there is enough in the file to read it a year later without
@@ -2661,7 +2654,7 @@ does not write.
 A safety assessment starts at zero and runs for a hundred thousand years, and
 **a single series cannot describe both ends of that**. Logarithmic spacing from
 a start of zero has to begin somewhere above zero — this tool begins at a
-millionth of the end time, Ecolego at 1 — so a release that is over in the
+millionth of the end time — so a release that is over in the
 first year happens *between the first two saved points*, and the chart shows a
 vertical line and nothing else.
 
@@ -2671,15 +2664,11 @@ vertical line and nothing else.
 |---|---|
 | **Logarithmic** | one geometric series over the run, from `output_points`. The shorthand every file of this tool's own uses, and what a result spanning decades is read in |
 | **Linear** | one even series over the run |
-| **Several series…** | a list of series, combined: a geometric one for the run, an even one for its first year, and any times written out by hand. Ecolego's `TimeSeriesList` |
+| **Several series…** | a list of series, combined: a geometric one for the run, an even one for its first year, and any times written out by hand |
 | **The solver's own points** | no grid at all — the result is reported at every step the solver took |
 | **Series and the solver's points** | both of those, merged |
 
-The last three are Ecolego's own three output modes, which its files carry in
-`<output-options>`: *Produce specified output only*, *Produce no additional
-output* (its **default**), and *Produce additional output*. `EOutputMode` in
-`JavaSimulatorNextGeneration` is where they are decided; `src/domain/timeseries.js`
-has the same generators.
+`src/domain/timeseries.js` makes the series.
 
 ### A list of series
 
@@ -2810,11 +2799,9 @@ cap or a floor — the *cannot go negative* switch is the only constraint the
 solvers apply, and a term that fights it produces the same hold-at-zero
 behaviour any other rate does.
 
-It comes across from a `.eco` file: `<differential-equation>` on an entry is
-read into `dydt`, at the block level or per index, and an empty one — which is
-what Ecolego writes on every entry that has none — is nothing. In a transport,
-Begin's term is every slice's except End's, and End keeps its own; see
-*Transports*.
+In a transport, Begin's term is every slice's except End's, and End keeps its
+own; see *Transports*. An imported project brings its terms with it: see
+[Importing Ecolego projects](#importing-ecolego-projects).
 
 ### A tolerance for one compartment
 
@@ -2871,14 +2858,9 @@ flags is not a question at all. It is also how you find out whether a flat line
 at zero is the constraint or the chemistry: run it once with the switch off,
 and the ones that dive were being held.
 
-A project file carries this setting too, under the name *Enable saturation*.
-It is read before the first compartment is looked at — off, the solver is
-handed no constraint at all. An imported file defaults it *off* and this tool
-defaults it *on*, because in a file it also gates an upper and lower saturation
-band that this tool does not carry, and here the floor is all there is. An
-imported model arrives with whatever it was saved with, and is told so when that turns
-the floor off: of the twelve real assessments tested against, eleven have it on
-and one assessment model has it off.
+The switch is read before the first compartment is looked at — off, the solver
+is handed no constraint at all. An imported model arrives with the setting it
+was saved with: see [Importing Ecolego projects](#importing-ecolego-projects).
 
 Only compartments get it. The blocks that remember carry integrals that may
 legitimately be negative — a running mean of a negative quantity is negative —
@@ -2915,24 +2897,17 @@ of it they read like stiffness.
 
 If a cap is part of the model rather than a guard against nonsense, express it
 as a rate term — a transfer whose rate falls to zero as the compartment fills —
-rather than as a hard bound. That is what Ecolego's own models do, and it is a
-model the solver can integrate instead of one it has to fight.
+rather than as a hard bound. It is a model the solver can integrate instead of
+one it has to fight.
 
 #### What happened to the saturation band
 
-Ecolego's Compartment carries `lower-saturation` and `upper-saturation`, and
-this tool used to carry them too. They are gone, because only `ros23` could
+A compartment used to carry a `lower-saturation` and an `upper-saturation`
+band. They are gone, because only `ros23` could
 honour them: `ndf` refused a model that set one and `dp45` would stall on
 it, so a band meant three different things depending on the solver — which is
-not a feature, it is a trap.
-
-Importing an `.eco` file maps what it can. A floor of zero with no ceiling says
-exactly what **cannot go negative** says, so it crosses silently; a negative
-floor is the file saying that compartment may go below zero, and crosses just
-as cleanly the other way. A real band — a positive floor, or a finite ceiling —
-has no equivalent here, so it is dropped and the import report says so, naming
-the block. An import that quietly relaxed a cap would give you a model that
-runs and is not the one in the file.
+not a feature, it is a trap. What an imported band becomes is in
+[Importing Ecolego projects](#importing-ecolego-projects).
 
 ### A second opinion: the SciPy solvers
 
@@ -3182,9 +3157,7 @@ can be them.
 
 A flux is indexed by **the indices its two ends have in common**, and that is
 not a setting. A transfer moves inventory out of one cell and into another, so
-it exists exactly where there are two such cells — and Ecolego says the same,
-keeping every transfer's dimension in step with both ends and offering no
-picker for it.
+it exists exactly where there are two such cells.
 
 So there is nothing to tick. A transfer between two compartments on the same
 list takes that list; between a compartment on `Contaminants` and one on
@@ -3198,7 +3171,7 @@ were intersected — rather than asking you to work it out:
 > (Contaminants ∩ Radionuclides).
 
 The boxes are still there, because **a narrower flux is a real thing to want**
-and one this tool can express where Ecolego cannot: a loss that only applies to
+and one this tool can express: a loss that only applies to
 the wetland objects is the same dimensions with one of them taken to a sub-set,
 and `examples/landscape.json` does exactly that. A narrowing you state is kept;
 a dimension that no longer follows from either end is replaced, since that is
@@ -3207,8 +3180,8 @@ what a stale one is.
 #### Ends of different dimension, and *sum extra indices*
 
 Two ends that do not correspond — a flux from `[Radionuclides, Object]` into
-`[Radionuclides]` — Ecolego refuses outright: the connection cannot be drawn.
-The reason is worth knowing, because the shape is not nonsense. There is no
+`[Radionuclides]` — make a shape that is not nonsense, and it is worth knowing
+why. There is no
 intersection to take, so the flux keeps the **union**, which is the only
 dimensions that can reach both ends at all; and reaching the narrower end then
 means every index of the extra dimension arriving in its one cell. Into a
@@ -3502,9 +3475,6 @@ list also holds is left alone on a rename, because a bracket says which *index*
 is meant and not which list, and an ambiguity is not something a rename should
 settle on its own.
 
-**These two lists are this tool's, not Ecolego's.** Ecolego has no such
-dimension: a model that uses one is a model this tool can run and Ecolego
-cannot read back. See INTERNALS.md.
 
 ### One dimension twice
 
@@ -3579,10 +3549,7 @@ indices.
 
 **A compartment holds an activity or an amount, and you say which.**
 `decay_unit` is `Bq` or `mol` for the whole model — *Inventory unit*, on the
-same page as the half-lives, which is where a project file keeps it too — as a
-unit on every nuclide rather than one on the model, which is how
-an .eco file carries the choice). `Bq` when a file does not say, which is
-Ecolego's default and what every nuclide in the corpus is in.
+same page as the half-lives. `Bq` when a file does not say.
 
 The one number it changes is the ingrowth coefficient, and it is the whole of
 the difference between the two quantities:
@@ -3603,7 +3570,7 @@ What must not happen is the two disagreeing: the coefficients differ by
 `T½(parent) / T½(daughter)`, which for U-238 into U-234 is a factor of 18,200.
 So changing the setting relabels the compartments that carried the other unit,
 and says which ones it left alone. Nothing is *converted* — the numbers in the
-model are read as being in whatever unit is chosen, as in Ecolego — and
+model are read as being in whatever unit is chosen — and
 `bq2mole(bq, half_life_years)` and `mole2bq(mole, half_life_years)` are there
 for an equation that has to cross over.
 
@@ -3678,8 +3645,8 @@ extracted from the decay-chain page at
 [kvotab.se/rdc.html](https://kvotab.se/rdc.html), which publishes the ICRP 107
 tables, and it is the only radionuclide data in this tool. It replaced what
 `src/domain/nuclides.js` used to hold: fifty half-lives and twenty-four decay
-pairs typed by hand, whose own note said the table was not Ecolego's database
-and that "any assessment work should import the real one". That table now
+pairs typed by hand, whose own note said the table was a stand-in and that
+"any assessment work should import the real one". That table now
 lives in the test suite instead, where an independent hand-typed source is
 worth having — it is what the computed chains are checked against.
 
@@ -3900,7 +3867,8 @@ stops at 256 MB of decompressed output for the whole archive, not per entry.
 
 A compartment's `<differential-equation>` — Ecolego's dy/dt column — comes
 across as its `dydt` term, at the block level and per index; see *An explicit
-dy/dt term*. It used to be dropped with a warning.
+dy/dt term*. An empty one, which is what Ecolego writes on every entry that has
+none, is nothing. It used to be dropped with a warning.
 
 **An imported model arrives knowing what it is.** It used to arrive with an
 empty description and a name of `model`, and a safety assessment of fifteen
@@ -3976,6 +3944,103 @@ them, 162 `.eco` projects and 49 `.eas` assessments. **136 import**; the other
 75 are the older Ecolego 4/5 `<sheet>` format and are refused with an
 explanation. Of the 136, **59 build and run** as they stand. See
 [INTERNALS.md](INTERNALS.md) for the full breakdown of what stops the rest.
+
+### Ecolego's names and defaults, and what differs here
+
+The rest of this Guide is written in this tool's own terms. Where an Ecolego
+file says the same thing under another name, or means something slightly
+different by it, it is said here.
+
+**Cannot go negative enabled** is Ecolego's *Enable saturation*. Ecolego
+defaults it *off* and this tool *on*, because in Ecolego it also gates an upper
+and a lower saturation band that this tool does not carry, and here the floor
+is all there is. An imported model arrives with whatever it was saved with,
+and is told so when that turns the floor off: of the twelve real assessments
+tested against, eleven have it on and one has it off. See
+[Keeping a compartment non-negative](#keeping-a-compartment-non-negative).
+
+**A compartment's saturation band** — Ecolego's `lower-saturation` and
+`upper-saturation` — is mapped where it can be. A floor of zero with no
+ceiling says exactly what **cannot go negative** says, so it crosses silently;
+a negative floor is the file saying that compartment may go below zero, and
+crosses just as cleanly the other way. A real band — a positive floor, or a
+finite ceiling — has no equivalent here, so it is dropped and the import
+report says so, naming the block: an import that quietly relaxed a cap would
+give you a model that runs and is not the one in the file. Ecolego's own
+models express a cap as a rate term, a transfer whose rate falls to zero as the
+compartment fills, which is what this tool asks for too.
+
+**Enabled** is Ecolego's own switch: a block's `<enabled>false</enabled>`
+arrives as `"enabled": false`, in the model and out of the run. A sub-system
+switched off in the file arrives switched off as a whole, in
+`disabled_systems`, rather than as its blocks switched off one by one. See
+[Disabling a block](#disabling-a-block).
+
+**When results are saved.** Ecolego's three output modes, which its files carry
+in `<output-options>`, are three of the choices under *Time spacing*:
+
+- *Produce specified output only* is **Several series…** — Ecolego's `TimeSeriesList`
+- *Produce no additional output*, Ecolego's default, is **The solver's own points**
+- *Produce additional output* is **Series and the solver's points**
+
+`EOutputMode` in Ecolego's `JavaSimulatorNextGeneration` is where they are
+decided. A logarithmic series from a start of zero begins at 1 in Ecolego, and
+here at a millionth of the end time. See
+[When results are saved](#when-results-are-saved).
+
+**Endpoints.** A project file carries the list of blocks whose results are
+kept:
+
+```xml
+<outputs>
+  <output id="NearField&#46;waste_domain_length"/>
+  ...
+</outputs>
+```
+
+Ecolego's run writes a series for those and for nothing else, which is why an
+Ecolego result file of a three-thousand-block model holds two groups: somebody
+decided what was worth keeping. The list arrives as `simulation.endpoints`,
+which is what the endpoint trees open on, and decides nothing about the run
+here, where every series is kept. A parameter named in it is skipped — a
+parameter is not an endpoint — and an Ecolego list often names dozens. See
+[Choosing endpoints](#choosing-endpoints).
+
+**Result files.** The HDF5 export is laid out as Ecolego lays out its own —
+a block indexed by two lists nests, with the nuclide as the leaf, as a dose in
+one of Ecolego's files sits at `/biosphere/1BLA/drained_mire/total/Cs-137` —
+and the realisation file from **Save → Realisations** has the shape Ecolego
+writes, one row per output time and one column per realisation. That is why
+the result browser at kvotab.se reads both.
+
+**Blocks and dimensions.**
+
+- A *group* is Ecolego's purely visual grouping and does not scope names, so
+  its blocks are read as belonging to the sub-system around it, which is what
+  the file's own ids say. The rest of the hierarchy comes across as it is: 66
+  of the 71 real models tested use sub-systems, up to five deep.
+- Ecolego too keeps every transfer's dimension in step with both ends and
+  offers no picker for it. A narrower flux — the same dimensions with one taken
+  to a sub-set — is something Ecolego cannot express, and two ends that do not
+  correspond, `[Radionuclides, Object]` into `[Radionuclides]`, it refuses
+  outright: the connection cannot be drawn. Here that is *sum extra indices*.
+  See [A transfer does not choose its dimensions](#a-transfer-does-not-choose-its-dimensions).
+- The **Compartments** and **Transfers** index lists are this tool's own.
+  Ecolego has no such dimension, so a model that uses one is a model this tool
+  can run and Ecolego cannot read back.
+- A lookup table's `linear` interpolation is Ecolego's *Interpolation-Use End
+  Values*.
+- An `.eco` file carries the **inventory unit** as a unit on every nuclide
+  rather than one on the model. `Bq` when it does not say is Ecolego's default,
+  and what every nuclide in the corpus is in; the numbers are read in whichever
+  unit is chosen, without conversion, as Ecolego reads them.
+- Ecolego keeps a **distribution** per entry too — a sorption coefficient has
+  one per nuclide per material — and an imported model arrives with them, in
+  the Distribution column of *Values per index*: model B carries 644.
+- Ecolego's probabilistic settings, `no-simulations`, `sampling` and `seed`,
+  arrive with the model — 1,000 realisations, Latin hypercube and a seed, in
+  every assessment model tested against. Reading them does not make **Run**
+  probabilistic.
 
 ## Copying blocks between two windows
 
@@ -4223,10 +4288,8 @@ are told that is what happened; a name already used by a *block* is refused,
 since the two cannot share an id. The tree on the right is the same hierarchy, and the inspector
 says which sub-system a block is in.
 
-Importing an `.eco` file brings its hierarchy with it: 66 of the 71 real models
-tested use sub-systems, up to five deep. A *group* is Ecolego's purely visual
-grouping and does not scope names, so its blocks are read as belonging to the
-sub-system around it, which is what the file's own ids say.
+An imported project brings its hierarchy with it: see
+[Importing Ecolego projects](#importing-ecolego-projects).
 
 ## Transports
 
@@ -4430,7 +4493,7 @@ machine:
 
 | `interpolation` | What it does | In the corpus |
 |---|---|---|
-| `linear` | straight lines between the points, held flat beyond the ends (the default; Ecolego's *Interpolation-Use End Values*) | 3261 |
+| `linear` | straight lines between the points, held flat beyond the ends (the default) | 3261 |
 | `below` | the value at or before the lookup point | 90 |
 | `extrapolate` | as `linear`, but the end segments are continued outwards | 31 |
 | `above` | the value at or after the lookup point | 0 |
@@ -4507,7 +4570,7 @@ body.
 signature — `ADV(u, d)` — with a longer dash round it than an expression, since
 nothing flows through one and it has no connect handle. What joins it to the
 rest of the model are the influence arrows: in from whatever its body reads,
-out to every equation that calls it. Turn those on with *Show ▸ influences*,
+out to every equation that calls it. Turn those on with *Show ▸ Influences*,
 and the functions themselves off again with *Show ▸ functions*.
 
 **The body reads the model.** Its parameters are extra names beside everything
@@ -5267,8 +5330,8 @@ biosphere: run it, then run it probabilistically and compare the staircase of
 
 ## Models with no compartments
 
-Not every model integrates anything. A great many Ecolego projects — 15 of the
-71 real ones tested here — have **no compartments at all**: they take a release
+Not every model integrates anything. A great many real projects — 15 of the
+71 tested here — have **no compartments at all**: they take a release
 computed elsewhere, or a measured series, and work out a concentration and a
 dose from it. There is nothing to solve, so nothing is solved: the blocks are
 evaluated over the output grid, in dependency order, with the same clock a
@@ -5302,7 +5365,7 @@ says it too, with a button that adds the first compartment.
 ## A distribution on a parameter
 
 A parameter in a real assessment is rarely just a number. It is a number *and*
-the distribution it was drawn from, and Ecolego keeps both — per index, because
+the distribution it was drawn from, and a model keeps both — per index, because
 a sorption coefficient has one distribution per nuclide per material, not one
 for the block. model B carries 644 of them; of the 302 model files
 tested against, 112 have at least one.
@@ -5470,10 +5533,10 @@ and takes 50 seconds for one integration, which is fourteen hours; that is
 worth knowing before pressing anything rather than after. A result that will
 not fit is refused rather than attempted.
 
-**The numbers come from the model.** Ecolego keeps its own `no-simulations`,
-`sampling` and `seed`, and an imported model arrives with all three — 1,000
-realisations, Latin hypercube and a seed, in every assessment model tested
-against. Reading them does *not* make **Run** probabilistic: Run stays the
+**The numbers come from the model**: how many realisations, how they are
+sampled and the seed are kept with it, and an imported model arrives with its
+own (see [Importing Ecolego projects](#importing-ecolego-projects)). Reading
+them does *not* make **Run** probabilistic: Run stays the
 deterministic run it has always been, and a probabilistic one is started from
 its own dialog.
 
@@ -5500,7 +5563,7 @@ The same list is in **Save → Model with results**.
 parameter is a constant: one number in an ordinary run, and in a probabilistic
 one the number each realisation drew. So the picker does not offer parameters,
 and a parameter named in an imported list is skipped. The list itself is left
-as the file had it. An Ecolego list often names dozens of them, and every one
+as the file had it. An imported list often names dozens of them, and every one
 would have been a flat line held once per realisation at every output time.
 Instead every parameter the run varies is kept whatever the list says, as the
 value each realisation drew. It is drawn as a band on the chart (flat, since it
@@ -5846,8 +5909,7 @@ served — it only accepts its own origin until it is told otherwise — so if t
 tab opens and nothing arrives, that is what to check. Use `?rb=<address>` to
 point it at a different copy of the reader.
 
-The realisation file is the shape Ecolego writes, and the result browser at
-kvotab.se opens it as one: it draws the mean of the runs, will put a confidence
+The result browser at kvotab.se opens the realisation file as one: it draws the mean of the runs, will put a confidence
 band around it, and can pick out a single realisation — none of which would be
 possible from a file holding only quantiles, which is why the runs themselves
 are what is stored. Series that were not part of the probabilistic run keep
@@ -6340,8 +6402,8 @@ Every block also takes `index_lists` (its dimensions) and `entries` (values per
 index combination).
 
 `simulation` also takes **`endpoints`**: the names of the blocks an export
-offers first, which is Ecolego's endpoint list and is read out of an imported
-model. It decides nothing about the run — every series is kept — only what the
+offers first, read out of an imported model when it carries a list. It decides
+nothing about the run — every series is kept — only what the
 endpoint export opens on. See [Choosing endpoints](#choosing-endpoints).
 
 ### Key names

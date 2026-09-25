@@ -6215,16 +6215,14 @@ function renderSidebar() {
 			['linear', 'Linear', 'Equal steps from start to end.'],
 			['series', 'Several series…', 'A list of series combined into one set of '
 				+ 'times: a logarithmic one for the run and an even one for its first '
-				+ 'year, say, plus any times written out by hand. Ecolego’s own '
-				+ 'TimeSeriesList.'],
+				+ 'year, say, plus any times written out by hand.'],
 			['solver', 'The solver’s own points', 'No grid: the result is reported at '
 				+ 'every step the solver takes. It already takes small steps where the '
 				+ 'answer is moving and large ones where it is not, which is the '
 				+ 'distribution a result wants — and nothing has to be chosen in '
-				+ 'advance. Ecolego’s own default: “Produce no additional output”.'],
+				+ 'advance.'],
 			['both', 'Series and the solver’s points', 'Both of the above, merged: the '
-				+ 'times you asked for, and every step the solver took between them. '
-				+ 'Ecolego’s “Produce additional output”.'],
+				+ 'times you asked for, and every step the solver took between them.'],
 		];
 		for (const [v, label] of options) {
 			sel.append(el('option', { value: v, selected: sim.spacing === v }, label));
@@ -9938,7 +9936,7 @@ function tableMenu(ev) {
 				label: 'Export table to HDF5',
 				hint: `${shown} series`,
 				disabled: !shown,
-				title: 'A .h5 file in the shape Ecolego writes: the times in /time, '
+				title: 'A .h5 file: the times in /time, '
 					+ 'the index lists in /IndexLists, and one dataset per series '
 					+ 'under its block. The HDF5 Browser at kvotab.se reads it.',
 				onPick: () => downloadHDF5(state.selected.slice(), ''),

@@ -137,6 +137,7 @@ import {
 import {
 	DIS_EQUATION_KEYS, DIS_DEFAULTS, disruptionProblems, describeDisruption,
 } from './disruption.js';
+import { schemeOf, operandKeys } from './availability.js';
 
 export {
 	KINDS, SINGULAR, PLURAL, allBlocks, blockIndex, findBlock, blockNames,
@@ -1746,6 +1747,35 @@ export function influences(project) {
 	}
 	for (const g of project.block_reductions ?? []) {
 		add(g, [...(g.targets ?? []), ...(g.entries ?? []).flatMap((e) => e.targets ?? [])]);
+	}
+
+	// The blocks that read the model through settings of their own rather
+	// than through one equation. Left out, they had no arrows at all: a
+	// parameter setting when the canisters fail was drawn as reading nothing
+	// and being read by nobody, which is the one thing on the diagram that
+	// was plainly not true. Every one is what the Used-by lists and the
+	// delete gate already count (see `referencesTo`), so the three agree.
+	//
+	// Waste packages: the inventory, the instant-release fraction, the
+	// degradation rate and the failure settings, all equations.
+	for (const key of WASTE_EQUATION_KEYS) fromEquations(project.waste_packages, key);
+	// An event: its time or its rate and window, each action's share -- and,
+	// by name, the blocks its actions act on: the packages it fails, the
+	// compartments a share moves between. Named in the event, so drawn into
+	// it, as everything a block's definition names is.
+	for (const key of DIS_EQUATION_KEYS) fromEquations(project.events, key);
+	for (const d of project.events ?? []) {
+		for (const a of d.actions ?? []) {
+			const named = ['block', 'from', 'to']
+				.map((k) => a[k]).filter((v) => typeof v === 'string' && v.trim()).map((v) => v.trim());
+			add(d, [...namesIn(a.fraction), ...named]);
+		}
+	}
+	// A transfer's availability -- a solubility limit, or the two terms of an
+	// isotherm -- is part of its rate.
+	for (const t of project.transfers ?? []) {
+		const scheme = schemeOf(t);
+		if (scheme) add(t, operandKeys(scheme).flatMap((k) => namesIn(scheme[k])));
 	}
 
 	return out;
@@ -4013,9 +4043,9 @@ export const ENTRY_EXTRA = {
 		// to be told how to say it -- without this the Information view read
 		// `distribution [object Object]`, which is what `String(spec)` gives.
 		describe: describePDF,
-		title: 'The distribution this value was drawn from. Ecolego keeps one per '
-			+ 'entry; this tool reads, shows and writes them. A run here is '
-			+ 'deterministic and uses the value beside it.',
+		title: 'The distribution this value was drawn from, one per entry, kept '
+			+ 'with the model. A run here is deterministic and uses the value '
+			+ 'beside it.',
 	}],
 	compartment: [{
 		// The extra term in this index's rate of change: an equation rather
@@ -8594,8 +8624,31 @@ export function setView(project, patch) {
 			+ `(${CONNECTION_LABELS.join(', ')})`,
 		);
 	}
+	if (patch.show_influences != null && typeof patch.show_influences !== 'boolean'
+		&& !INFLUENCE_MODES.includes(patch.show_influences)) {
+		throw new EditError(
+			`'${patch.show_influences}' is not a way of showing influences `
+			+ `(${INFLUENCE_MODES.join(', ')})`,
+		);
+	}
 	project.view = { ...view(project), ...patch };
 	return project.view;
+}
+
+/**
+ * Which influences the diagram draws: none, all of them, or only those of the
+ * blocks selected -- every arrow into or out of any of them, which on a model
+ * of any size is the one set that can be read.
+ *
+ * `show_influences` was a switch, and a file written then says `true` or
+ * `false`; those are all and none.
+ */
+export const INFLUENCE_MODES = ['none', 'all', 'selected'];
+
+export function influenceMode(project) {
+	const v = view(project).show_influences;
+	if (v === true) return 'all';
+	return INFLUENCE_MODES.includes(v) ? v : 'none';
 }
 
 /**

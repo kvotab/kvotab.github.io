@@ -350,7 +350,7 @@ export function scipySolver(id) {
 		// --- what SciPy cannot do, said out loud rather than ignored ---------
 		if (opts.events) {
 			throw new SolverError(
-				`${id} does not support discrete events. Ecolego's events are terminal `
+				`${id} does not support discrete events. This tool's events are terminal `
 				+ `and are located by its own event locator, including the rule that a `
 				+ `crossing at the instant a previous event fired is not a new one; `
 				+ `reproducing that on top of SciPy would risk a subtly different `

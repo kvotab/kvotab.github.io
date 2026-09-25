@@ -2097,7 +2097,7 @@ export function renderInspector(host, project, selection, hooks = {}, opts = {})
 				summed.length
 					? `${summed.map(say).join('; ')}. Off, the model is refused: a flux `
 						+ `whose ends do not correspond is more often a slip than a `
-						+ `decision, and Ecolego cannot express it at all.`
+						+ `decision.`
 					: 'Nothing to add up: both ends carry every dimension this '
 						+ `${kind} has. Untick it and nothing changes.`));
 		}

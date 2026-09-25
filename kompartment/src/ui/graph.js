@@ -430,8 +430,9 @@ export class GraphEditor {
 		this.hooks.onChange?.({ layoutOnly: true });
 	}
 
-	setShowInfluences(on) {
-		this.setViewOption({ show_influences: on });
+	/** `'none'`, `'all'` or `'selected'` -- see `influenceMode` -- or, as it used to be, on and off. */
+	setShowInfluences(mode) {
+		this.setViewOption({ show_influences: mode === true ? 'all' : mode === false ? 'none' : mode });
 	}
 
 	/**
@@ -996,7 +997,13 @@ export class GraphEditor {
 			if (shown?._elsewhere) this._pipesHere.add(qualifiedName(s));
 			if (shown) this.edgeLayer.append(...this._renderConnection(shown, nodes, 'inflow'));
 		}
-		if (this.view.show_influences) {
+		// All of them, or only those of the blocks selected. The second draws
+		// them all as well and lets the selection say which are seen: which
+		// that is changes with every click, and a click marks the canvas
+		// rather than drawing it again (see `_applySelection`).
+		const influence = ed.influenceMode(this.project);
+		this.root.classList.toggle('shows-chosen-influences', influence === 'selected');
+		if (influence !== 'none') {
 			for (const g of this._influences(nodes)) this.edgeLayer.append(g);
 		}
 	}
@@ -1197,6 +1204,14 @@ export class GraphEditor {
 		// is the question you have when you click a block.
 		for (const el of this.edgeLayer.querySelectorAll('[data-edge],[data-influence]')) {
 			el.classList.toggle('is-linked', !!name && this._touches(el, name));
+		}
+		// With influences shown for the selection only: every arrow into or
+		// out of any block selected -- all of several, not only the one the
+		// panels show -- and the canvas hides the rest.
+		const chosen = new Set(this.picked);
+		if (name) chosen.add(name);
+		for (const el of this.edgeLayer.querySelectorAll('[data-influence]')) {
+			el.classList.toggle('is-chosen', [...chosen].some((n) => this._touches(el, n)));
 		}
 		this._renderEdgeHandle();
 		this._renderNodeHandles();
@@ -4398,7 +4413,24 @@ export class GraphEditor {
 							onPick: () => this.setViewOption({ connection_label: mode }),
 						})),
 					},
-					toggle('show_influences', 'influences'),
+					// The arrows from what a block reads: none, all of them,
+					// or those of the blocks selected, which is the set a
+					// model of any size can be read in.
+					{
+						label: 'Influences',
+						hint: ed.influenceMode(this.project),
+						items: ed.INFLUENCE_MODES.map((mode) => ({
+							label: mode,
+							title: {
+								none: 'No influence arrows',
+								all: 'An arrow from every block a definition reads, to the block that reads it',
+								selected: 'Only the arrows into and out of the blocks selected — select one, or several',
+							}[mode],
+							checked: () => ed.influenceMode(this.project) === mode,
+							keepOpen: true,
+							onPick: () => this.setShowInfluences(mode),
+						})),
+					},
 					{ separator: true },
 					// Not a kind of block, and not the amber marks either --
 					// those stay whatever this says. It is the list under the

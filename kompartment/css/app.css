@@ -3323,6 +3323,11 @@ th.has-sample .smark { margin-left: 5px; }
 	opacity: 1;
 }
 
+/* Influences shown for the selection only (Show ▸ Influences ▸ selected): all
+   are drawn, and those touching no block selected are hidden -- so a click
+   changes which are seen without the diagram being drawn again. */
+.graph-svg.shows-chosen-influences .gedge-influence:not(.is-chosen) { display: none; }
+
 .gedge.is-linked .gedge-label { fill: var(--text-primary); }
 
 /* A connection whose rate will not parse. Dashed as well as red, so it is

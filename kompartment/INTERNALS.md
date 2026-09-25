@@ -230,6 +230,16 @@ Bugs caught this way and fixed, none of which showed up by hand:
   them -- got no arrow at all. Who reads whom is now `edit.influences`, a fact
   about the model rather than about the view, which is testable without a
   browser and is where the third kind of reader stopped being forgettable
+- and it still left out the blocks that read the model through settings of
+  their own: a waste package's inventory, failure settings and degradation
+  rate, an event's time, rate and action shares -- and the blocks its actions
+  name -- and a transfer's availability limit. `referencesTo` counted all of
+  them for the delete gate and the Used-by lists; `influences` now does too.
+  *Show ▸ Influences* is `none`, `all` or `selected` (`influenceMode`, which
+  reads the old `true` and `false` as all and none): with `selected` every
+  influence is drawn, and `_applySelection` marks with `is-chosen` those
+  touching any block picked, so a click changes which are seen without a
+  redraw; the canvas class `shows-chosen-influences` hides the rest
 - the per-index value grid addressed its block by local name, so editing one
   cell of a block inside a sub-system reported "no block named ..."
 - the explicit dark theme never defined `--node-fill-parameter`, so a parameter

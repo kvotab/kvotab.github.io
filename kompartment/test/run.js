@@ -10644,7 +10644,7 @@ test('the grid can be turned off, and so can snapping to it', async () => {
 	// Its three groups, in the order a reader narrows down: which blocks are
 	// drawn, what is drawn between them, and the one item here that is not on
 	// the diagram at all.
-	const order = ['show_sinks', 'Transfer labels', 'show_influences', 'show_warning_list']
+	const order = ['show_sinks', 'Transfer labels', "label: 'Influences'", 'show_warning_list']
 		.map((k) => show.indexOf(k));
 	assert(order.every((i, j) => i > 0 && (j === 0 || i > order[j - 1])),
 		`Show is out of order: ${order.join(', ')}`);
@@ -35581,6 +35581,75 @@ test('a fault found by building the model is marked on its block, and said in it
 	}
 	const plain = new BuildError('something', 'Tank');
 	assert(plain.blockName === 'Tank' && plain.setting === null && plain.message === 'Tank: something', plain.message);
+});
+
+test('influences reach the blocks that read the model through settings, and show for none, all or the selection', async () => {
+	const { readFileSync } = await import('node:fs');
+	const m = JSON.parse(readFileSync(new URL('../examples/waste-packages.json', import.meta.url), 'utf8'));
+	const links = ed.influences(m);
+	const into = (n) => links.filter((l) => l.to === n).map((l) => l.from).sort().join();
+	// A waste package reads its failure settings and degradation rate.
+	assert(into('Canisters') === 'canister_life,matrix_rate,t_first_failure', into('Canisters'));
+	// An event reads its rate, and names the packages it fails.
+	assert(into('Quake') === 'Canisters,quake_rate', into('Quake'));
+	// An action's share, and a transfer's availability limit.
+	const p = {
+		name: 'm', simulation: DEFAULT_SIMULATION,
+		compartments: [{ name: 'A' }, { name: 'B' }], expressions: [], inflows: [], lookups: [],
+		parameters: [{ name: 'share', value: 0.1 }, { name: 'sol', value: 1 }, { name: 'k', value: 1 }],
+		transfers: [{ name: 'T', from: 'A', to: 'B', rate: 'k', availability: { scheme: 'limit', limit: 'sol * 2' } }],
+		events: [{ name: 'Flood', timing: 'at', at: '10', actions: [{ kind: 'move', from: 'A', to: 'B', fraction: 'share' }] }],
+	};
+	const pl = ed.influences(p);
+	const intoP = (n) => pl.filter((l) => l.to === n).map((l) => l.from).sort().join();
+	assert(intoP('T') === 'k,sol', intoP('T'));
+	assert(intoP('Flood') === 'A,B,share', intoP('Flood'));
+	// Three ways of showing them, and the switch they used to be.
+	const v = (x) => ed.influenceMode({ view: { show_influences: x } });
+	assert(v(true) === 'all' && v(false) === 'none' && v('selected') === 'selected' && v(undefined) === 'none' && v('nonsense') === 'none');
+	let threw = null;
+	try { ed.setView({}, { show_influences: 'some' }); } catch (e) { threw = e; }
+	assert(threw && /not a way of showing influences/.test(threw.message), threw?.message);
+	assert(ed.setView({}, { show_influences: 'selected' }).show_influences === 'selected');
+	// The diagram: a menu of three, and the selection marks which are seen.
+	const graph = readFileSync(new URL('../src/ui/graph.js', import.meta.url), 'utf8');
+	const css = readFileSync(new URL('../css/app.css', import.meta.url), 'utf8');
+	assert(/label: 'Influences',\n\t+hint: ed\.influenceMode\(this\.project\),\n\t+items: ed\.INFLUENCE_MODES\.map/.test(graph), 'no menu of three');
+	assert(/this\.root\.classList\.toggle\('shows-chosen-influences', influence === 'selected'\);/.test(graph), 'the mode is not on the canvas');
+	assert(/const chosen = new Set\(this\.picked\);/.test(graph) && /el\.classList\.toggle\('is-chosen', \[\.\.\.chosen\]\.some\(\(n\) => this\._touches\(el, n\)\)\);/.test(graph),
+		'the selection does not say which are seen');
+	assert(/\.graph-svg\.shows-chosen-influences \.gedge-influence:not\(\.is-chosen\) \{ display: none; \}/.test(css), 'the others are not hidden');
+});
+
+test('Ecolego is compared with only where importing its files is described', async () => {
+	// What Ecolego calls a thing, what it defaults to, what it does
+	// differently: said once, in the Guide's section on importing its
+	// projects, and not in the (i) panels, the sidebar's hints or the rest of
+	// the Guide, which are written in this tool's own terms.
+	const { readFileSync } = await import('node:fs');
+	const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+	for (const f of ['siminfo.js', 'panelinfo.js', 'blockinfo.js', 'dialoginfo.js']) {
+		assert(!/ecolego/i.test(read(`../src/ui/${f}`)), `${f} compares with Ecolego`);
+	}
+	const { simTopic } = await import('../src/ui/siminfo.js');
+	const topic = JSON.stringify(simTopic('non_negative', { sim: {}, solver: 'ndf' }));
+	assert(!/saturation/i.test(topic), 'the Cannot go negative topic still explains Ecolego’s name for it');
+	const guide = read('../GUIDE.md').split('\n');
+	let inside = false;
+	const stray = [];
+	guide.forEach((line, i) => {
+		if (/^## /.test(line)) inside = /^## Importing Ecolego projects/.test(line);
+		const bare = line.replace(/\[Importing Ecolego projects\]\(#importing-ecolego-projects\)/g, '');
+		if (!inside && /ecolego/i.test(bare)) stray.push(`${i + 1}: ${line.slice(0, 80)}`);
+	});
+	assert(!stray.length, `Ecolego outside its import section:\n  ${stray.join('\n  ')}`);
+	const section = read('../GUIDE.md').split('## Importing Ecolego projects')[1].split('\n## ')[0];
+	assert(/\*\*Cannot go negative enabled\*\* is Ecolego's \*Enable saturation\*/.test(section), 'the saturation note did not land in the import section');
+	// What the interface says, not what its comments say to the next reader.
+	for (const hint of ['app.js', 'inspector.js', 'savedialog.js']) {
+		const said = read(`../src/ui/${hint}`).split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+		assert(!/Ecolego’s (own )?(TimeSeriesList|default|“Produce)|shape Ecolego writes|Ecolego cannot express/.test(said), `${hint} still compares with Ecolego`);
+	}
 });
 
 test('every function the shell hands out as a hook is one it defines', async () => {
