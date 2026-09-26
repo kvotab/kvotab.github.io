@@ -119,7 +119,7 @@ captured by stubbing `URL.createObjectURL`); the page's own out.ts dropped back
 compares to its rounding; a Kd edit on one uranium isotope moves the other,
 and so does a K_a edit, which shows in the side panel, the Summary's R_f column
 and the KA_ lines of the in.par written; a bad series line is refused; a shape
-builds a series; the (i) panel opens and closes; an example loads from the
+builds a series, and on a log rate axis that pulse, drawn as a release into the tube, is inside the axis with its steps to zero running off the bottom, and a release from t = 0 on log time is drawn from the chart's left edge (on the Input tab too, with no marker there); the (i) panel opens and closes; an example loads from the
 select; the tail case `tail-30-1` dropped as a case file runs to its release
 (its step input once gave zeros), without a warning, and the Summary shows its
 response carrying what leaves the tube by its last time. With the reference cases present, the chain case dropped on the page

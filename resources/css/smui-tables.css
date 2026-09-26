@@ -1,0 +1,122 @@
+/* ==========================================================================
+   SMUI.HTML: THE FORMULA EDITOR, THE TABLES DIALOGS, TABULATE,
+   RECODE, THE COLUMNS VIEWER, EXPLORE MISSING VALUES, THE PYTHON SCRIPT
+   (smui-formula.js, smui-p-tables.js). Colours are kvot.css's tokens and
+   the page's own (--sm-*), so both themes work.
+   ========================================================================== */
+
+/* ---- the formula editor ---------------------------------------------------- */
+.smf-dialog { width: min(1000px, 100%); }
+.smf-editor { display: grid; grid-template-columns: minmax(190px, 0.8fr) minmax(0, 2fr); gap: 14px; min-height: 360px; }
+.smf-editor h4 { margin: 8px 0 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-secondary); }
+.smf-editor h4:first-child { margin-top: 0; }
+.smf-side { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.smf-side input[type="search"], .smf-fnhead select, .smf-fnhead input { box-sizing: border-box; width: 100%; margin: 0 0 4px; padding: 3px 6px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--input-bg); color: var(--text-primary); font: inherit; font-size: 12px; }
+.smf-fnhead { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.smf-list { flex: 1 1 auto; min-height: 90px; max-height: 190px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); padding: 2px 0; }
+.smf-item { display: flex; align-items: center; gap: 6px; width: 100%; padding: 2px 8px; border: 0; background: none; color: var(--text-primary); font: inherit; font-size: 12px; text-align: left; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.smf-item:hover, .smf-item:focus-visible { background: var(--sm-sel-bg); outline: none; }
+.smf-main { display: flex; flex-direction: column; min-width: 0; }
+.smf-namerow { display: flex; align-items: center; gap: 8px; font-size: 12.5px; margin-bottom: 4px; }
+.smf-namerow input { flex: 1 1 auto; min-width: 0; padding: 3px 6px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--input-bg); color: var(--text-primary); font: inherit; }
+.smf-expr { box-sizing: border-box; width: 100%; min-height: 110px; padding: 7px 9px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--input-bg); color: var(--text-primary); font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; line-height: 1.45; resize: vertical; }
+.smf-expr:focus { outline: 2px solid var(--color-kvot-accent); outline-offset: -1px; }
+.smf-pad { display: flex; flex-wrap: wrap; gap: 3px; margin: 6px 0 2px; }
+.smf-pad .sm-btn { min-width: 30px; justify-content: center; font-family: ui-monospace, Menlo, Consolas, monospace; }
+.smf-help { min-height: 32px; margin: 4px 0 0; font-size: 11.5px; line-height: 1.45; color: var(--text-secondary); }
+.smf-help code { font-family: ui-monospace, Menlo, Consolas, monospace; color: var(--text-primary); background: var(--code-bg); padding: 0 3px; border-radius: 3px; }
+.smf-alias { color: var(--text-muted); }
+.smf-preview { min-height: 60px; max-height: 250px; overflow: auto; }
+.smf-rows { margin: 0; }
+.smf-error { padding: 6px 10px; border-left: 3px solid #c0392b; background: color-mix(in oklab, #c0392b 10%, transparent); font-size: 12px; }
+.smf-where { margin: 6px 0 0; white-space: pre-wrap; word-break: break-all; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+.smf-where mark { background: color-mix(in oklab, #c0392b 38%, transparent); color: var(--text-primary); border-radius: 2px; padding: 0 1px; }
+
+/* ---- the Tables dialogs -------------------------------------------------------- */
+.smt-cast .sm-role { grid-template-columns: 132px minmax(0, 1fr) 17px; }
+.smt-cast .sm-role .sm-btn { width: 132px; }
+.smt-extra { margin-top: 10px; }
+.smt-extra h4 { margin: 0 0 5px; font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-secondary); }
+.smt-statgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); gap: 2px 10px; font-size: 12px; }
+.smt-stat { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.smt-sortnote { margin-top: 8px; }
+.smt-dir { margin-left: auto; flex: none; width: 22px; height: 18px; padding: 0; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-surface); color: var(--text-primary); font-size: 10px; line-height: 1; cursor: pointer; }
+.smt-dir[aria-pressed="true"] { background: var(--sm-sel-strong); }
+.smt-form { display: flex; flex-direction: column; gap: 8px; font-size: 12.5px; }
+.smt-form h4 { margin: 4px 0 0; font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-secondary); }
+.smt-field label { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.smt-flabel { min-width: 150px; color: var(--text-primary); }
+.smt-form select, .smt-form input[type="text"] { padding: 3px 6px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--input-bg); color: var(--text-primary); font: inherit; max-width: 100%; }
+.smt-check { display: inline-flex; align-items: center; gap: 6px; margin-right: 14px; }
+.smt-tablelist { display: flex; flex-direction: column; gap: 3px; max-height: 180px; overflow-y: auto; padding: 4px 8px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); }
+.smt-pairbox { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.smt-pairbox select { max-width: 180px; }
+.smt-pairs { margin: 0; padding: 2px 0 0 18px; font-size: 12px; }
+.smt-pairs li { display: flex; gap: 10px; align-items: baseline; }
+
+/* ---- Tabulate ---------------------------------------------------------------------- */
+.smt-builder { display: grid; grid-template-columns: minmax(150px, 210px) minmax(0, 1fr); gap: 12px; margin: 2px 0 12px; padding: 10px; border: 1px solid var(--border-color); border-radius: 5px; background: var(--bg-surface); }
+.smt-builder h4 { margin: 0 0 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-secondary); }
+.smt-left { display: flex; flex-direction: column; min-width: 0; }
+.smt-cols { flex: 1 1 auto; max-height: 230px; overflow-y: auto; margin: 0 0 6px; padding: 2px 0; list-style: none; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); }
+.smt-cols li { display: flex; align-items: center; gap: 6px; padding: 2px 7px; cursor: grab; user-select: none; white-space: nowrap; font-size: 12px; }
+.smt-cols li .sm-colname { overflow: hidden; text-overflow: ellipsis; }
+.smt-cols li.is-selected { background: var(--sm-sel-bg); }
+.smt-cols li:focus-visible { outline: 2px solid var(--color-kvot-accent); outline-offset: -2px; }
+.smt-adders { display: flex; flex-wrap: wrap; gap: 4px; }
+.smt-right { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.smt-zone { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; min-height: 30px; padding: 4px 7px; border: 1px dashed var(--border-color); border-radius: 4px; background: var(--bg-primary); }
+.smt-zone.drop { border-color: var(--color-kvot-accent); outline: 2px solid var(--color-kvot-accent); outline-offset: -2px; }
+.smt-zonelabel { flex: none; min-width: 124px; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-secondary); }
+.smt-zonehint { font-size: 11.5px; font-style: italic; color: var(--text-muted); }
+.smt-chain { display: inline-flex; align-items: center; gap: 3px; padding: 1px; border-radius: 12px; }
+.smt-nest { color: var(--text-muted); font-size: 11px; }
+.smt-chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 3px 1px 8px; border: 1px solid var(--border-color); border-radius: 11px; background: var(--bg-surface); font-size: 12px; white-space: nowrap; }
+.smt-x { display: inline-flex; align-items: center; justify-content: center; width: 17px; height: 17px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--text-muted); font-size: 13px; line-height: 1; cursor: pointer; }
+.smt-x:hover, .smt-x:focus-visible { background: var(--sm-sel-bg); color: var(--text-primary); outline: none; }
+.smt-statbar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.smt-statbtn { padding: 2px 8px; border: 1px solid var(--border-color); border-radius: 11px; background: var(--bg-primary); color: var(--text-primary); font: inherit; font-size: 11.5px; cursor: pointer; }
+.smt-statbtn.is-on { background: var(--sm-sel-strong); border-color: var(--color-kvot-accent); font-weight: 600; }
+.smt-statbtn[disabled] { opacity: 0.45; cursor: default; }
+.smt-opts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 4px; font-size: 12px; }
+.smt-opts .sm-spacer { flex: 1 1 auto; }
+.smt-opts input[type="text"] { padding: 2px 5px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--input-bg); color: var(--text-primary); font: inherit; }
+.smt-result { overflow-x: auto; max-width: 100%; }
+.smt-table thead tr.smt-headrow th { text-align: center; font-weight: 600; border-bottom: 1px solid var(--border-color); }
+.smt-table thead tr.smt-headrow th.smt-group:not(:empty) { border-left: 1px solid color-mix(in oklab, var(--border-color) 70%, transparent); }
+.smt-table td.smt-rep { color: transparent; }
+.smt-table td.smt-rep::selection { color: var(--text-primary); }
+
+/* ---- the Columns Viewer and Explore Missing Values ---------------------------------------- */
+.smt-cvbar, .smt-mvbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 8px; }
+.smt-cv tbody tr { cursor: pointer; }
+.smt-cv tbody tr.is-picked td { background: var(--sm-sel-bg); }
+
+/* ---- Recode ------------------------------------------------------------------------------ */
+.smr-dialog { width: min(760px, 100%); }
+.smr { display: flex; flex-direction: column; gap: 8px; }
+.smr input[type="search"] { padding: 3px 6px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--input-bg); color: var(--text-primary); font: inherit; max-width: 280px; }
+.smr-actions { display: flex; flex-wrap: wrap; gap: 4px; }
+.smr-scroll { max-height: 48vh; overflow: auto; border: 1px solid var(--border-color); border-radius: 3px; }
+.smr-table { width: 100%; margin: 0; }
+.smr-table td { vertical-align: middle; }
+.smr-table tr.is-changed td:first-child { font-weight: 600; }
+.smr-new { box-sizing: border-box; width: 100%; min-width: 120px; padding: 2px 6px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--input-bg); color: var(--text-primary); font: inherit; }
+.smr-table tr.is-changed .smr-new { border-color: var(--color-kvot-accent); }
+.smr-out select, .smr-out input { padding: 3px 6px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--input-bg); color: var(--text-primary); font: inherit; }
+
+/* ---- the Python Script -------------------------------------------------------------------- */
+.smp-code { box-sizing: border-box; display: block; width: 100%; max-width: 900px; min-height: 200px; padding: 8px 10px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--code-bg); color: var(--text-primary); font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; line-height: 1.5; tab-size: 4; white-space: pre; overflow: auto; resize: vertical; }
+.smp-code:focus { outline: 2px solid var(--color-kvot-accent); outline-offset: -1px; }
+.smp-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0 4px; }
+.smp-out { max-width: 900px; }
+.smp-stdout, .smp-tb { margin: 4px 0 8px; padding: 8px 10px; max-height: 420px; overflow: auto; border: 1px solid var(--border-color); border-radius: 4px; background: var(--code-bg); font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11.5px; line-height: 1.45; white-space: pre; }
+.smp-tb { background: none; border: 0; padding: 4px 0 0; }
+.smp-result { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 6px 0; font-size: 12px; }
+
+@media (max-width: 760px) {
+  .smf-editor, .smt-builder { grid-template-columns: minmax(0, 1fr); }
+  .smf-list { max-height: 130px; }
+  .smt-zonelabel { min-width: 0; flex-basis: 100%; }
+  .smt-flabel { min-width: 0; }
+}

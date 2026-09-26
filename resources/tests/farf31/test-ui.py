@@ -266,6 +266,27 @@ async def main():
             await page.click('#f31Run')
             check('Run runs the edited case', await settle(page, DONE, True), True)
             check('the model got Ka', await page.ev("F31Page.getState().result.input.nuclides.map((n) => n.ka).join()"), '0.002,0.002,0')
+            # that pulse on a log rate axis: laid out to show it, its steps to zero running off the bottom
+            await page.ev("(() => { const s = F31Page.getState(); s.view.showInput = true; s.view.logY = true; F31Page.showTab('release'); return true; })()")
+            inp = await page.ev("""(() => { const el = document.getElementById('f31ChartRelease'); const t = el.data.find((d) => / into the tube$/.test(d.name)); const r = el.layout.yaxis.range;
+              if (!t) return null; const top = Math.log10(Math.max(...t.y)); return [t.y.length, top >= r[0] && top <= r[1], t.y.filter((v) => Math.log10(v) < r[0]).length]; })()""")
+            check('on a log axis a release into the tube shows, its zeros below the axis', inp, [4, True, 2])
+            await page.ev("(() => { const s = F31Page.getState(); s.view.showInput = false; F31Page.showTab('release'); return true; })()")
+            # a release from t = 0 on log time: drawn from the chart's left edge,
+            # not reduced to its last step (which was all that showed)
+            await page.ev("(() => { const t = document.getElementById('f31SeriesText'); t.value = '0 1e-4\\n30000 1e-4\\n30000 0'; t.dispatchEvent(new Event('change', { bubbles: true })); return true; })()")
+            await page.click('#f31Run')
+            check('a release from t = 0 runs', await settle(page, DONE, True), True)
+            units = await page.ev("F31Page.getState().view.units")
+            await page.ev("(() => { const s = F31Page.getState(); s.view.units = 'mol'; s.view.showInput = true; s.view.logX = true; s.view.logY = true; F31Page.showTab('release'); return true; })()")
+            t0 = await page.ev("""(() => { const n = F31Page.getState().srcSel + ' into the tube'; const t = document.getElementById('f31ChartRelease').data.find((d) => d.name === n);
+              return t ? [t.x.length, t.x[0] > 0 && t.x[0] < 30000, t.y[0], t.y[1]] : null; })()""")
+            check('on log time a release from t = 0 is drawn from the left edge', t0, [3, True, 1e-4, 1e-4])
+            await page.ev("(() => { const s = F31Page.getState(); s.view.showInput = false; s.view.inLogX = true; F31Page.showTab('input'); return true; })()")
+            t1 = await page.ev("""(() => { const n = F31Page.getState().srcSel; const t = document.getElementById('f31ChartInput').data.find((d) => d.name === n);
+              return t ? [t.x.length, t.x[0] > 0, t.y[0], t.marker.size[0]] : null; })()""")
+            check('and on the Input tab, with no marker at the edge', t1, [3, True, 1e-4, 0])
+            await page.ev(f"(() => {{ const s = F31Page.getState(); s.view.inLogX = false; s.view.units = '{units}'; F31Page.showTab('release'); return true; }})()")
             await page.ev("F31Page.showTab('summary')")
             check('the Summary shows Rf', await page.ev("(() => { const t = document.querySelector('#f31Summary table'); const h = Array.from(t.querySelectorAll('thead th')).map((x) => x.textContent); const k = h.indexOf('Rf'); return k >= 0 ? t.querySelector('tbody tr').children[k].textContent : null; })()"), '4')
 

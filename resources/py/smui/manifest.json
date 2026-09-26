@@ -1,0 +1,38 @@
+{
+  "comment": "The files the page's worker loads into Pyodide, and the analysis modules it imports. A module whose file is missing or fails to import is reported and skipped.",
+  "files": [
+    "__init__.py",
+    "registry.py",
+    "util.py",
+    "data.py",
+    "models.py",
+    "datasets.py",
+    "distribution.py",
+    "fit_y_by_x.py",
+    "fit_model.py",
+    "multivariate.py",
+    "timeseries.py",
+    "survival.py",
+    "nonlinear.py",
+    "quality.py",
+    "power.py",
+    "doe.py",
+    "graph.py",
+    "tables.py"
+  ],
+  "modules": [
+    "datasets",
+    "distribution",
+    "fit_y_by_x",
+    "fit_model",
+    "multivariate",
+    "timeseries",
+    "survival",
+    "nonlinear",
+    "quality",
+    "power",
+    "doe",
+    "graph",
+    "tables"
+  ]
+}

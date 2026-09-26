@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><base href="/"><title>smui engine probe</title></head>
+<body>
+<!-- The engine without the page: tests/smui/test-engine.py drives this. -->
+<script src="./resources/js/smui-util.js"></script>
+<script src="./resources/js/smui-table.js"></script>
+<script src="./resources/js/smui-io.js"></script>
+<script src="./resources/js/smui-engine.js"></script>
+<script>
+  window.probe = { status: [], result: null, error: null };
+  SM.engine.on('status', (e) => window.probe.status.push(`${e.state}: ${e.text}`));
+  SM.engine.start('probe' + Date.now());
+  window.runProbe = async () => {
+    const t = SM.io.example('students');
+    const out = {};
+    out.cont = await SM.engine.call('distribution.continuous', { column: 'height (cm)' }, t);
+    out.cat = await SM.engine.call('distribution.categorical', { column: 'sex' }, t);
+    t.setCell(0, 'height (cm)', 999);
+    out.changed = await SM.engine.call('distribution.continuous', { column: 'height (cm)', rows: t.includedRows() }, t);
+    try { await SM.engine.call('distribution.fit', { column: 'sex', dist: 'normal' }, t); } catch (e) { out.err = e.message; }
+    out.versions = SM.engine.versions; out.failed = SM.engine.failed; out.names = SM.engine.names.length; out.load = SM.engine.loadSeconds;
+    return out;
+  };
+</script>
+</body></html>

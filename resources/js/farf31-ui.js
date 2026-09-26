@@ -959,6 +959,35 @@
     return [top - 12, top];
   }
 
+  /**
+   * A release series as a log time axis can draw it. The axis cannot reach
+   * t = 0, so the part of the series before `x0` is not dropped (which left a
+   * release starting at 0 as nothing but its last step) but replaced by the
+   * series' own value at x0, where the line then starts. That added point is
+   * flagged, third element true. Points at or after x0 are kept as they are.
+   */
+  function fromLeftEdge(s, x0) {
+    const out = [];
+    let prev = null;
+    for (const p of s) {
+      if (p[0] < x0) { prev = p; continue; }
+      if (prev && !out.length && p[0] > x0) {
+        const [t0, v0] = prev, [t1, v1] = p;
+        out.push([x0, v0 + (v1 - v0) * (x0 - t0) / (t1 - t0), true]);
+      }
+      out.push(p);
+    }
+    return out;
+  }
+
+  /** Where a log time axis starts for release series: the earliest time drawn
+      otherwise, or two decades before the series' first time after 0. */
+  function leftEdge(series, others = Infinity) {
+    let first = Infinity;
+    for (const s of series) for (const [t] of s) if (t > 0 && t < first) first = t;
+    return Math.min(others, first / 100);
+  }
+
   function showPlot(plotId, emptyId, ok, emptyText) {
     $(plotId).hidden = !ok;
     $(emptyId).hidden = ok;
@@ -987,24 +1016,54 @@
       ys.forEach((v) => all.push(v));
       traces.push({ x: xs, y: ys, type: 'scatter', mode: 'lines', name: plain(name), line: { color: colorOf(i), width: 2 }, hovertemplate: `${plain(name)}<br>t = %{x:.4g} a<br>%{y:.4g} ${bq ? 'Bq/a' : 'mol/a'}<extra></extra>` });
     });
+    // The releases into the tube and a compared out.ts are on the chart too, so
+    // a log axis is laid out from their values as well as from the release.
+    const inputs = [];
     if (state.view.showInput) {
+      // on a log time axis a series that starts at t <= 0 is drawn from the
+      // chart's left edge: the earliest release or out.ts point drawn
+      let x0 = Infinity;
+      if (state.view.logX) {
+        let drawn = Infinity;
+        for (const tr of traces) for (const x of tr.x) if (x > 0 && x < drawn) drawn = x;
+        if (ref && state.view.showRef) for (const name of R.names) for (const p of ref.data[name.toUpperCase()] || []) if (p[0] > 0 && p[0] < drawn) drawn = p[0];
+        x0 = leftEdge(R.names.map((name) => R.input.series[name] || []), drawn);
+      }
       R.names.forEach((name, i) => {
         const s = R.input.series[name];
         if (!s) return;
         const f = bq ? M.bqPerMol(R.thalf[i]) : 1;
-        const xs = [], ys = [];
-        for (const [t, v] of s) if ((!state.view.logX || t > 0) && (!state.view.logY || v > 0)) { xs.push(t); ys.push(v * f); }
-        if (xs.length) traces.push({ x: xs, y: ys, type: 'scatter', mode: 'lines', name: `${plain(name)} into the tube`, line: { color: colorOf(i), width: 1.2, dash: 'dash' }, hovertemplate: `${plain(name)} in<br>t = %{x:.4g} a<br>%{y:.4g}<extra></extra>` });
+        const pts = (state.view.logX ? fromLeftEdge(s, x0) : s).map(([t, v]) => [t, v * f]);
+        if (!pts.some(([, v]) => v > 0)) return;
+        for (const [, v] of pts) if (v > 0) all.push(v);
+        inputs.push({ name, i, pts });
       });
     }
+    const refs = [];
     if (ref && state.view.showRef) {
       R.names.forEach((name, i) => {
         const pts = ref.data[name.toUpperCase()];
         if (!pts) return;
         const xs = [], ys = [];
         for (const p of pts) { const v = bq ? p[2] : p[1]; if ((!state.view.logY || v > 0) && (!state.view.logX || p[0] > 0)) { xs.push(p[0]); ys.push(v); } }
-        if (xs.length) traces.push({ x: xs, y: ys, type: 'scatter', mode: 'markers', name: `${plain(name)} (${plain(ref.name)})`, marker: { color: colorOf(i), size: 5, symbol: 'circle-open' }, hovertemplate: `${plain(ref.name)} ${plain(name)}<br>t = %{x:.4g} a<br>%{y:.4g}<extra></extra>` });
+        if (xs.length) { ys.forEach((v) => { if (v > 0) all.push(v); }); refs.push({ name, i, xs, ys }); }
       });
+    }
+    const range = state.view.logY ? logRange(all) : undefined;
+    // A log axis has no zero: a release into the tube that steps to or from
+    // zero is drawn a decade below the axis, so its edges run off the bottom
+    // rather than the pulse floating; hovering still reads the value itself.
+    const below = range ? 10 ** (range[0] - 1) : null;
+    for (const { name, i, pts } of inputs) {
+      const xs = [], ys = [], vals = [];
+      for (const [t, v] of pts) {
+        if (state.view.logY && !(v > 0)) { if (below == null) continue; ys.push(below); } else ys.push(v);
+        xs.push(t); vals.push(v);
+      }
+      traces.push({ x: xs, y: ys, customdata: vals, type: 'scatter', mode: 'lines', name: `${plain(name)} into the tube`, line: { color: colorOf(i), width: 1.2, dash: 'dash' }, hovertemplate: `${plain(name)} in<br>t = %{x:.4g} a<br>%{customdata:.4g}<extra></extra>` });
+    }
+    for (const { name, i, xs, ys } of refs) {
+      traces.push({ x: xs, y: ys, type: 'scatter', mode: 'markers', name: `${plain(name)} (${plain(ref.name)})`, marker: { color: colorOf(i), size: 5, symbol: 'circle-open' }, hovertemplate: `${plain(ref.name)} ${plain(name)}<br>t = %{x:.4g} a<br>%{y:.4g}<extra></extra>` });
     }
     if (!traces.length) {
       // in Bq/a a stable nuclide has no activity: say so rather than 'zero'
@@ -1018,7 +1077,7 @@
       xaxis: { title: 'time (a)', type: state.view.logX ? 'log' : 'linear', exponentformat: 'power', gridcolor: c.grid, linecolor: c.grid, zeroline: false },
       yaxis: { title: `release (${bq ? 'Bq/a' : 'mol/a'})`, type: state.view.logY ? 'log' : 'linear', exponentformat: 'power', gridcolor: c.grid, linecolor: c.grid, zeroline: false },
     });
-    if (state.view.logY) { const r = logRange(all); if (r) layout.yaxis.range = r; }
+    if (range) layout.yaxis.range = range;
     Plotly.react($('f31ChartRelease'), traces, layout, PLOT_CONFIG);
   }
 
@@ -1076,16 +1135,20 @@
     const traces = [];
     const logX = state.view.inLogX;
     $('f31InLogX').checked = logX;
+    const drawn = k.nuclides.filter((n) => n.source && k.series[n.name]);
+    // on log time a series starting at t <= 0 is drawn from the left edge,
+    // two decades before the first time after 0, with no marker there
+    const x0 = logX ? leftEdge(drawn.map((n) => k.series[n.name])) : 0;
     k.nuclides.forEach((n, i) => {
       if (!n.source || !k.series[n.name]) return;
-      const s = k.series[n.name].filter((p) => !logX || p[0] > 0);
-      traces.push({ x: s.map((p) => p[0]), y: s.map((p) => p[1]), type: 'scatter', mode: 'lines+markers', name: plain(n.name), line: { color: colorOf(i), width: n.name === state.srcSel ? 2.4 : 1.2 }, marker: { size: 4 }, hovertemplate: `${plain(n.name)}<br>t = %{x:.4g} a<br>%{y:.4g} mol/a<extra></extra>` });
+      const s = logX ? fromLeftEdge(k.series[n.name], x0) : k.series[n.name];
+      traces.push({ x: s.map((p) => p[0]), y: s.map((p) => p[1]), type: 'scatter', mode: 'lines+markers', name: plain(n.name), line: { color: colorOf(i), width: n.name === state.srcSel ? 2.4 : 1.2 }, marker: { size: s.map((p) => (p[2] ? 0 : 4)) }, hovertemplate: `${plain(n.name)}<br>t = %{x:.4g} a<br>%{y:.4g} mol/a<extra></extra>` });
     });
     showPlot('f31ChartInput', 'f31InputEmpty', true);
     const c = themeColors();
     Plotly.react($('f31ChartInput'), traces, baseLayout({
       margin: { l: 64, r: 12, t: 10, b: 44 },
-      xaxis: { title: logX ? 'time (a), points at t > 0' : 'time (a)', type: logX ? 'log' : 'linear', gridcolor: c.grid, linecolor: c.grid, zeroline: false, exponentformat: 'power' },
+      xaxis: { title: 'time (a)', type: logX ? 'log' : 'linear', gridcolor: c.grid, linecolor: c.grid, zeroline: false, exponentformat: 'power' },
       yaxis: { title: 'into the tube (mol/a)', gridcolor: c.grid, linecolor: c.grid, zeroline: false, exponentformat: 'power', rangemode: 'tozero' },
       legend: { orientation: 'h', y: -0.28, font: { size: 10 } },
     }), PLOT_CONFIG);

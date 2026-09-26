@@ -1,0 +1,132 @@
+/* ==========================================================================
+   SMUI.HTML: GRAPH (smui-p-graph.js)
+   Graph Builder's columns, element palette, drop zones and properties; the
+   axis pickers of Scatterplot 3D. Colours are kvot.css's tokens, so both
+   themes work; at phone width the builder stacks its parts.
+   ========================================================================== */
+
+/* ---- Graph Builder ---------------------------------------------------------- */
+.sm-gb { container: gb / inline-size; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.sm-gb-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.sm-gb-hint { flex: 1 1 260px; font-size: 11.5px; color: var(--text-muted); }
+.sm-gb-work { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 12px; align-items: start; }
+.sm-gb-left { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.sm-gb-center { min-width: 0; }
+.sm-gb-cols h4, .sm-gb-props h4 {
+  display: flex; align-items: center; gap: 6px; margin: 0 0 4px;
+  font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-secondary);
+}
+.sm-gb-cols .sm-grow { flex: 1 1 auto; }
+.sm-gb-cols .sm-count { font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--text-muted); }
+.sm-gb-filter {
+  width: 100%; box-sizing: border-box; margin: 0 0 4px; padding: 3px 6px;
+  border: 1px solid var(--border-color); border-radius: 3px; background: var(--input-bg); color: var(--text-primary); font: inherit; font-size: 12px;
+}
+.sm-gb-collist { max-height: 260px; overflow-y: auto; margin: 0; padding: 2px 0; list-style: none; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); }
+.sm-gb-collist li { display: flex; align-items: center; gap: 6px; padding: 3px 7px; font-size: 12px; white-space: nowrap; cursor: grab; user-select: none; }
+.sm-gb-collist li .sm-colname { overflow: hidden; text-overflow: ellipsis; }
+.sm-gb-collist li:hover { background: color-mix(in oklab, var(--sm-sel-bg) 45%, transparent); }
+.sm-gb-collist li.is-selected { background: var(--sm-sel-bg); }
+.sm-gb-collist li:focus-visible { outline: 2px solid var(--color-kvot-accent); outline-offset: -2px; }
+.sm-gb-collist .sm-gb-none { color: var(--text-muted); font-style: italic; cursor: default; }
+
+/* the element palette */
+.sm-gb-palette { display: flex; flex-wrap: wrap; gap: 3px; margin: 0 0 6px; }
+.sm-gb-el {
+  display: inline-flex; flex-direction: column; align-items: center; gap: 1px; width: 58px; padding: 3px 1px 2px;
+  border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-surface); color: var(--text-secondary);
+  font: inherit; font-size: 9.5px; line-height: 1.15; cursor: pointer;
+}
+.sm-gb-el:hover { border-color: var(--color-kvot-accent); color: var(--text-primary); }
+.sm-gb-el:focus-visible { outline: 2px solid var(--color-kvot-accent); outline-offset: 1px; }
+.sm-gb-el[aria-pressed="true"] { border-color: var(--color-kvot-accent); background: var(--sm-sel-bg); color: var(--text-primary); }
+.sm-gb-el[aria-disabled="true"] { opacity: 0.42; }
+.sm-gb-elname { text-align: center; white-space: normal; }
+
+/* the graph and the zones around it */
+.sm-gb-frame {
+  display: grid; gap: 4px; justify-content: start; align-items: stretch;
+  grid-template-columns: 30px auto 30px 150px;
+  grid-template-areas: ".  gx   .  side" "y  plot gy side" ".  x    .  side";
+}
+.sm-gb-z-groupX { grid-area: gx; }
+.sm-gb-z-y { grid-area: y; }
+.sm-gb-z-groupY { grid-area: gy; }
+.sm-gb-z-x { grid-area: x; }
+.sm-gb-plotwrap { grid-area: plot; position: relative; min-width: 260px; }
+.sm-gb-plotwrap .sm-plot.is-pending { position: absolute; left: 0; top: 0; visibility: hidden; }
+.sm-gb-side { grid-area: side; display: flex; flex-direction: column; gap: 4px; }
+.sm-gb-zone {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px; min-height: 26px; padding: 3px 5px; box-sizing: border-box;
+  border: 1px dashed var(--border-color); border-radius: 4px; background: color-mix(in oklab, var(--bg-surface) 70%, transparent);
+  color: var(--text-muted); font-size: 11px; cursor: pointer;
+}
+.sm-gb-zone:hover, .sm-gb.has-pick .sm-gb-zone, .sm-gb.is-dragging .sm-gb-zone { border-color: var(--color-kvot-accent); }
+.sm-gb-zone:focus-visible { outline: 2px solid var(--color-kvot-accent); outline-offset: 1px; }
+.sm-gb-zone.is-drop { border-style: solid; border-color: var(--color-kvot-accent); background: var(--sm-sel-bg); }
+.sm-gb-zone.is-vertical { writing-mode: vertical-rl; }
+.sm-gb-z-y.is-vertical { transform: rotate(180deg); }
+.sm-gb-zlabel { font-weight: 600; letter-spacing: 0.03em; }
+.sm-gb-zone:not(.is-empty) .sm-gb-zlabel { font-size: 10px; }
+.sm-gb-side .sm-gb-zone { justify-content: flex-start; }
+.sm-gb-side .sm-gb-zlabel { flex: 0 0 100%; }
+.sm-gb-chip {
+  display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 1px 7px; overflow: hidden;
+  border: 1px solid var(--border-color); border-radius: 10px; background: var(--bg-primary); color: var(--text-primary);
+  font: inherit; font-size: 11px; white-space: nowrap; cursor: pointer;
+}
+.sm-gb-chip .sm-colname { overflow: hidden; text-overflow: ellipsis; }
+.sm-gb-chip:hover, .sm-gb-chip.is-drop { border-color: var(--color-kvot-accent); }
+.sm-gb-chip:focus-visible { outline: 2px solid var(--color-kvot-accent); outline-offset: 1px; }
+.sm-gb-zmode { font-size: 10px; font-style: italic; }
+.sm-gb-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; box-sizing: border-box; max-width: 100%; padding: 16px;
+  border: 1px dashed var(--border-color); border-radius: 6px; color: var(--text-muted); text-align: center;
+}
+.sm-gb-empty p { margin: 4px 0; max-width: 420px; }
+.sm-gb-status { margin-top: 6px; }
+
+/* the properties of the elements */
+.sm-gb-props { display: flex; flex-direction: column; gap: 8px; }
+.sm-gb-prop { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 4px 8px 7px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-surface); min-width: 0; }
+.sm-gb-prop legend { display: flex; align-items: center; gap: 5px; padding: 0 4px; font-size: 12px; font-weight: 600; }
+.sm-gb-prop legend .sm-gb-icon { color: var(--text-secondary); }
+.sm-gb-rm { width: 18px; height: 18px; margin-left: 4px; padding: 0; border: 0; border-radius: 3px; background: none; color: var(--text-muted); font-size: 14px; line-height: 1; cursor: pointer; }
+.sm-gb-rm:hover { background: var(--sm-sel-bg); color: var(--text-primary); }
+.sm-gb-field { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; font-size: 11.5px; color: var(--text-secondary); }
+.sm-gb-field.is-check { display: flex; align-items: center; gap: 6px; }
+.sm-gb-field select, .sm-gb-field input[type="text"] { min-width: 0; padding: 2px 5px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--input-bg); color: var(--text-primary); font: inherit; font-size: 12px; }
+.sm-gb-logrow { display: flex; align-items: center; gap: 6px; }
+.sm-gb-logrow input[type="range"] { flex: 1 1 auto; min-width: 60px; accent-color: var(--color-kvot-accent); }
+.sm-gb-num { width: 64px; }
+.sm-gb-multi { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px 8px; }
+
+/* Done: the graph alone */
+.sm-gb-showcp { display: none; align-self: flex-start; font-size: 11.5px; }
+.sm-gb.is-done .sm-gb-showcp { display: inline; }
+.sm-gb.is-done .sm-gb-bar, .sm-gb.is-done .sm-gb-left, .sm-gb.is-done .sm-gb-palette, .sm-gb.is-done .sm-gb-zone { display: none; }
+.sm-gb.is-done .sm-gb-work { grid-template-columns: minmax(0, 1fr); }
+.sm-gb.is-done .sm-gb-frame { grid-template-columns: auto; grid-template-areas: "plot"; }
+
+/* phone width: the columns, then the graph with its zones, then the properties */
+@container gb (max-width: 700px) {
+  .sm-gb-work { grid-template-columns: minmax(0, 1fr); }
+  .sm-gb-left { display: contents; }
+  .sm-gb-cols { order: 1; }
+  .sm-gb-center { order: 2; }
+  .sm-gb-props { order: 3; }
+  .sm-gb-collist { max-height: 132px; }
+  .sm-gb-frame { grid-template-columns: minmax(0, 1fr); grid-template-areas: "gx" "plot" "x" "y" "gy" "side"; }
+  .sm-gb-zone.is-vertical { writing-mode: horizontal-tb; }
+  .sm-gb-z-y.is-vertical { transform: none; }
+  .sm-gb-side { flex-flow: row wrap; }
+  .sm-gb-side .sm-gb-zone { flex: 1 1 128px; }
+  .sm-gb-plotwrap { min-width: 0; overflow-x: auto; }
+  .sm-gb-hint { flex-basis: 100%; }
+}
+
+/* ---- the other graphs --------------------------------------------------------- */
+.sm-graph-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 2px 0 6px; font-size: 12px; }
+.sm-graph-pick label { display: inline-flex; align-items: center; gap: 5px; }
+.sm-graph-pick select { padding: 2px 5px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--input-bg); color: var(--text-primary); font: inherit; font-size: 12px; max-width: 220px; }
+.sm-graph-wide { max-width: 100%; overflow-x: auto; }

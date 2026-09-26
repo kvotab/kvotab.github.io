@@ -1,0 +1,83 @@
+/* smui.html: styles of smui-p-survival.js (Reliability and
+   Survival; Fit Curve and Nonlinear). Colours from kvot.css's tokens, so
+   both themes read. */
+
+/* A fit's outline carries its line colour as a mark before the title. */
+.sm-life-fit > .sm-ob-head h4::before,
+.sm-curve-fit > .sm-ob-head h3::before {
+  content: '';
+  display: inline-block;
+  width: 14px;
+  height: 3px;
+  margin: 0 7px 3px 0;
+  border-radius: 2px;
+  background: var(--fit-color, var(--text-muted));
+  vertical-align: middle;
+}
+
+/* Life Distribution: Compare Distributions */
+.sm-life-dists td { padding: 1px 9px; }
+.sm-life-dists td:not(.sm-l), .sm-life-dists th:not(.sm-l) { text-align: center; }
+.sm-life-dists input { margin: 0; accent-color: var(--color-kvot-accent); cursor: pointer; }
+.sm-life-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 3px;
+  margin-right: 7px;
+  border-radius: 2px;
+  vertical-align: middle;
+}
+.sm-life-swatch.is-np {
+  width: 6px;
+  height: 6px;
+  margin: 0 10px 1px 3px;
+  border-radius: 50%;
+  background: var(--text-primary);
+}
+.sm-life-calc { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 2px 0 8px; font-size: 12px; }
+.sm-life-calc label { display: inline-flex; align-items: center; gap: 7px; }
+.sm-life-calc input {
+  padding: 2px 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  background: var(--input-bg);
+  color: var(--text-primary);
+  font: inherit;
+  max-width: 100%;
+}
+
+/* Fit Curve and Nonlinear: the model's formula */
+.sm-curve-formula {
+  margin: 2px 0 6px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-width: 760px;
+}
+.sm-nl-status { margin: 2px 0 8px; font-size: 11.5px; color: var(--text-secondary); max-width: 760px; }
+.sm-nl-status.is-bad { color: #b0413e; font-weight: 600; }
+:root[data-theme="dark"] .sm-nl-status.is-bad { color: #ff8a7a; }
+
+/* Nonlinear's launch dialog: the model and its starting values */
+.sm-nl-extra { display: flex; flex-direction: column; gap: 9px; margin-top: 12px; }
+.sm-nl-label { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; color: var(--text-secondary); line-height: 1.4; }
+.sm-nl-model, .sm-nl-start {
+  padding: 4px 7px;
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  background: var(--input-bg);
+  color: var(--text-primary);
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12px;
+  min-width: 0;
+}
+.sm-nl-model { resize: vertical; min-height: 54px; }
+.sm-nl-startrow { display: flex; gap: 8px; align-items: center; }
+.sm-nl-startrow .sm-nl-start { flex: 1 1 auto; }
+.sm-nl-found { margin: 0; min-height: 1.2em; font-size: 11.5px; color: var(--text-secondary); }
+
+@media (max-width: 760px) {
+  .sm-life-calc { flex-direction: column; }
+  .sm-life-calc label { flex-wrap: wrap; }
+}

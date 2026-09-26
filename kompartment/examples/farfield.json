@@ -39,6 +39,12 @@
       "comment": "The volume the well draws, which dilutes what arrives."
     },
     {
+      "name": "well_volume",
+      "value": 1,
+      "unit": "m3",
+      "comment": "The water in the well that what arrives mixes into. The flow over it is how often that water is replaced: a thousand times a year, so the well's inventory is a steady state."
+    },
+    {
       "name": "Kd_matrix",
       "value": 0.001,
       "unit": "m3/kg",
@@ -162,10 +168,10 @@
       "name": "Drawn_off",
       "from": "Well",
       "to": null,
-      "rate": "well_flow / 1",
+      "rate": "well_flow / well_volume",
       "multiply_by_donor": true,
       "unit": "1/year",
-      "comment": "The well is flushed, so its inventory is a steady state rather than an accumulation."
+      "comment": "The well is flushed: each year its water is replaced well_flow / well_volume times, so its inventory is a steady state rather than an accumulation."
     }
   ],
   "expressions": [
@@ -215,6 +221,10 @@
     "well_flow": {
       "x": 740,
       "y": 260
+    },
+    "well_volume": {
+      "x": 740,
+      "y": 350
     },
     "Kd_matrix": {
       "x": 280,

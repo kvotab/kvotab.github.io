@@ -91,6 +91,11 @@ const KVOT = (() => {
       desc: 'Radionuclide solubility limits by SKB’s Simple Functions: the SR-Site and PSAR calculation for 20 elements in the water of a failed canister, Monte Carlo over groundwater compositions and equilibrium constants, with controlling solids, speciation and sensitivities.',
     },
     {
+      href: './smui.html',
+      label: 'User Interface for statsmodels',
+      desc: 'A statistics workbench in the working style of JMP, computed by statsmodels in the browser: a data table with modeling types and row states, Distribution, Fit Y by X, Fit Model, multivariate methods, time series, survival, quality and design of experiments, and Graph Builder, with linked graphs and the Python behind every result.',
+    },
+    {
       href: './arsredovisning.html',
       label: 'Digital årsredovisning',
       desc: 'Build a K2 annual report from a SIE file and check the iXBRL against what Bolagsverket looks at.',

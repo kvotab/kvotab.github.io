@@ -1,0 +1,59 @@
+/* smui.html: styles of smui-p-multivariate.js (Analyze >
+   Multivariate Methods, Clustering, Screening). Colours from kvot.css's
+   tokens so that both themes read; class prefix mv-. */
+
+/* bars inside report table cells (pairwise correlations, eigenvalues) */
+.sm-rt td.mv-barcell { position: relative; min-width: 104px; padding-top: 0; padding-bottom: 0; vertical-align: middle; }
+.mv-barbox { position: relative; display: block; width: 100px; height: 11px; }
+.mv-barbox.is-centered::before { content: ''; position: absolute; left: 50%; top: -2px; bottom: -2px; border-left: 1px solid var(--text-muted); opacity: 0.6; }
+.mv-bar { position: absolute; top: 1px; bottom: 1px; background: #8fa9c2; border-radius: 1px; }
+
+/* colour-mapped cells: the background comes from the script, the text
+   colour is chosen for contrast against it */
+.sm-rt td.mv-cm { font-weight: 600; }
+.sm-rt td.mv-dim { opacity: 0.32; }
+.sm-rt td.mv-blank { color: transparent; }
+.sm-rt td.mv-blank::selection { color: transparent; }
+.sm-rt td.mv-hit { color: #b0413e; font-weight: 600; }
+:root[data-theme="dark"] .sm-rt td.mv-hit { color: #ff8a7a; }
+
+/* small controls inside a report: component pickers, the number of
+   clusters, the explore-outliers settings */
+.mv-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 4px 0 8px; font-size: 12px; max-width: 900px; }
+.mv-control { display: inline-flex; align-items: center; gap: 6px; }
+.mv-control select, .mv-control input[type="text"], .mv-control input[type="number"] {
+  padding: 2px 5px; border: 1px solid var(--border-color); border-radius: 3px;
+  background: var(--input-bg); color: var(--text-primary); font: inherit; font-size: 12px; min-width: 0;
+}
+.mv-control input[type="range"] { width: min(260px, 50vw); accent-color: var(--color-kvot-accent); }
+.mv-control .mv-value { min-width: 2.5em; font-variant-numeric: tabular-nums; font-weight: 600; }
+
+/* Explore Outliers: the method buttons */
+.mv-methods { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; margin: 4px 0 10px; max-width: 920px; }
+.mv-methods .mv-method {
+  display: flex; flex-direction: column; gap: 3px; align-items: flex-start; text-align: left;
+  padding: 7px 10px; border: 1px solid var(--border-color); border-radius: 5px;
+  background: var(--bg-surface); color: var(--text-primary); font: inherit; font-size: 12px; cursor: pointer; line-height: 1.4;
+}
+.mv-methods .mv-method:hover { border-color: var(--color-kvot-accent); }
+.mv-methods .mv-method.is-on { border-color: var(--color-kvot-accent); box-shadow: inset 3px 0 0 var(--color-kvot-accent); }
+.mv-methods .mv-method span { color: var(--text-secondary); font-size: 11.5px; }
+.mv-methods h5 { margin: 0; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); grid-column: 1 / -1; }
+
+/* cluster legends: a swatch per cluster, clickable to select its rows */
+.mv-legend { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 2px 0 8px; font-size: 11.5px; max-width: 900px; }
+.mv-legend button {
+  display: inline-flex; align-items: center; gap: 5px; padding: 1px 6px; border: 1px solid transparent; border-radius: 3px;
+  background: none; color: var(--text-primary); font: inherit; cursor: pointer;
+}
+.mv-legend button:hover { border-color: var(--border-color); }
+.mv-legend .mv-swatch { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+
+/* Response Screening: the summary line */
+.mv-summary { display: flex; flex-wrap: wrap; gap: 4px 18px; margin: 2px 0 8px; font-size: 12px; color: var(--text-secondary); }
+.mv-summary strong { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+
+@media (max-width: 760px) {
+  .mv-methods { grid-template-columns: 1fr; }
+  .mv-control input[type="range"] { width: 60vw; }
+}

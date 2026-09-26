@@ -243,6 +243,13 @@
     });
   }
 
+  /* More topics after setup(), for parts of a page that register their own
+     (a plug-in, a dialog built later); the new slots are filled at once. */
+  function add(topics) {
+    Object.assign(state.topics, topics || {});
+    mount(document);
+  }
+
   function setup(opts = {}) {
     if (opts.topics) state.topics = Object.assign(Object.create(null), opts.topics);
     if (typeof opts.onMore === 'function') state.onMore = opts.onMore;
@@ -273,5 +280,5 @@
     return { topics: keys.length, slots: slots.length, buttons: document.querySelectorAll('.kvot-info-slot .info-btn').length, noTopic, brokenMore };
   }
 
-  root.KvotInfo = Object.freeze({ setup, mount, slot, open, close, refresh, audit, current: () => state.key });
+  root.KvotInfo = Object.freeze({ setup, add, mount, slot, open, close, refresh, audit, current: () => state.key });
 }(typeof self !== 'undefined' ? self : this));

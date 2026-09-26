@@ -1,0 +1,48 @@
+/* ==========================================================================
+   SMUI.HTML: ANALYZE > SPECIALIZED MODELING > TIME SERIES
+   The styles of smui-p-timeseries.js: the correlation tables with a bar in
+   each row (JMP's diagnostics chart), the Model Comparison table with its
+   Report and Graph boxes, the model outlines' colour mark, the lag plot's
+   control. Colours are kvot.css tokens or pairs that read in both themes.
+   ========================================================================== */
+
+.sm {
+  --sm-ts-bar: #6f93b8;
+  --sm-ts-band: #2f6ec7;
+}
+:root[data-theme="dark"] .sm {
+  --sm-ts-bar: #7fa6cf;
+  --sm-ts-band: #7cb2ff;
+}
+
+/* the diagnostics chart: Lag, value, a bar, then the tests */
+.sm-ts-col { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.sm-rt.sm-ts-corr td { padding-top: 0.5px; padding-bottom: 0.5px; }
+.sm-rt.sm-ts-corr td.sm-ts-barcell { padding: 0 6px; line-height: 0; }
+.sm-ts-bar { display: block; overflow: visible; }
+.sm-ts-bar .axis { stroke: var(--text-muted); stroke-width: 1; }
+.sm-ts-bar .bar { fill: var(--sm-ts-bar); }
+.sm-ts-bar .band { stroke: var(--sm-ts-band); stroke-width: 1.3; }
+
+/* Model Comparison */
+.sm-ts-scroll { max-width: 100%; overflow-x: auto; }
+.sm-rt.sm-ts-cmp td { vertical-align: middle; }
+.sm-rt.sm-ts-cmp input[type="checkbox"] { margin: 0; accent-color: var(--color-kvot-accent); }
+.sm-rt.sm-ts-cmp th.sm-ts-sort { cursor: pointer; }
+.sm-rt.sm-ts-cmp th[aria-sort="ascending"]::after { content: ' ▲'; font-size: 9px; color: var(--text-muted); }
+.sm-rt.sm-ts-cmp th[aria-sort="descending"]::after { content: ' ▼'; font-size: 9px; color: var(--text-muted); }
+.sm-rt.sm-ts-cmp td.sm-ts-err { color: #c0392b; white-space: normal; max-width: 360px; }
+:root[data-theme="dark"] .sm-rt.sm-ts-cmp td.sm-ts-err { color: #ff8a7a; }
+.sm-rt.sm-ts-cmp td.sm-ts-name { white-space: normal; min-width: 150px; max-width: 250px; }
+.sm-ts-swatch { display: inline-block; width: 10px; height: 10px; margin-right: 6px; border-radius: 2px; vertical-align: -1px; }
+
+/* a model's report carries its colour, as its lines do */
+.sm-ob.sm-ts-model > .sm-ob-head { border-left: 3px solid var(--ts-model-color, var(--border-color)); padding-left: 4px; }
+
+/* the lag plot's lag */
+.sm-ts-lagctl { display: flex; align-items: center; gap: 6px; margin: 0 0 6px; font-size: 12px; }
+.sm-ts-lagctl input { width: 3.2em; padding: 2px 5px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--input-bg); color: var(--text-primary); font: inherit; }
+
+@media (max-width: 760px) {
+  .sm-rt.sm-ts-corr td.sm-ts-barcell svg { width: 96px; }
+}
