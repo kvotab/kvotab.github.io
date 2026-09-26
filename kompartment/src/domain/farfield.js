@@ -59,8 +59,34 @@ export class FarfError extends Error {
 	}
 }
 
-/** How the downstream end of the path is closed. Ecolego's `OB`. */
-export const OUTFLOWS = [0, 1, 2, 3];
+/**
+ * How the downstream end of the path is closed. Ecolego's `OB` for 0 to 3;
+ * 4 is this tool's own.
+ *
+ * 4 is the outlet the analytical far-field models have: the rock does not stop
+ * where the release is measured, it goes on, and the concentration falls to
+ * zero only infinitely far downstream (FARF31's stream tube, TR 90-01). What
+ * leaves is the total flux, advection plus dispersion, across the plane at the
+ * end of the path. A finite grid cannot hold an infinite rock, so it holds a
+ * few cells of it past that plane -- `extraCells` says how many -- reads the
+ * flux at the plane, and closes the last of the extra cells by linear
+ * extrapolation. How few is a matter of how far upstream dispersion can
+ * reach, which is what `autoExtraCells` works out.
+ *
+ * The four conditions of the reference implementation close the path at the
+ * plane itself, and each is a different assumption about water nobody models:
+ * 1, the default there, is a closed (Danckwerts) outlet, and it releases
+ * 4a/(1+a)² of the semi-infinite rock's flux at a frequency where
+ * a = sqrt(1 + 4·T_w·g/P_e) -- about 3 % short at the peak of the bundled
+ * example, and far more for a nuclide the path holds back hard.
+ */
+export const OUTFLOWS = [0, 1, 2, 3, 4];
+
+/** The outflow condition that is the semi-infinite rock. */
+export const CONTINUES = 4;
+
+/** The order the choice is offered in: the one new paths get first. */
+export const OUTFLOW_ORDER = [4, 1, 0, 2, 3];
 
 /** What each outflow boundary condition assumes about the water downstream. */
 export const OUTFLOW_LABEL = {
@@ -68,6 +94,87 @@ export const OUTFLOW_LABEL = {
 	1: 'Same concentration as the last fracture cell',
 	2: 'Linear extrapolation from the last two cells',
 	3: 'Quadratic extrapolation from the last three cells',
+	4: 'The rock goes on past the release point, as in FARF31',
+};
+
+/**
+ * How the far-field block works the path out. Every setting that describes
+ * the path or the chemistry is the method's input rather than the method's
+ * own, so the two read the same block:
+ *
+ *   discretized      cells in the fracture and layers in the rock behind
+ *                    them, solved with the rest of the model; the cells, the
+ *                    layers and the outlet are its own settings;
+ *   semi-analytical  the path solved exactly in the Laplace domain, as FARF31
+ *                    solves it, and its unit responses convolved with the
+ *                    inflow as the run goes (./farfield-laplace.js and
+ *                    ../sim/farfield-laplace.js). No cells: one state per
+ *                    nuclide for what the path holds. The rock goes on past
+ *                    the release point, which is the outlet it solves; the
+ *                    settings have to be constant through a run.
+ *
+ * `usesCells` is what anything outside this module asks.
+ */
+export const FARF_METHODS = ['discretized', 'semi-analytical'];
+
+/** Each method, in words, for the choice. */
+export const METHOD_LABEL = {
+	discretized: 'On cells, with the rest of the model',
+	'semi-analytical': 'Semi-analytically, from its transfer function',
+};
+
+/** Whether a path is worked out on cells, which is what gives it states. */
+export function usesCells(block) {
+	const m = block?.method;
+	return m == null || m === '' || m === 'discretized';
+}
+
+/** Whether a path is worked out semi-analytically: no cells, a state per nuclide for what it holds. */
+export function isSemiAnalytic(block) {
+	return block?.method === 'semi-analytical';
+}
+
+/**
+ * How the flow-wetted surface is given. All three say the same thing:
+ *
+ *   F    the flow-related transport resistance, in [time]·m²/m³ -- what a
+ *        hydrogeological model supplies, with the travel time;
+ *   a_w  the wetted surface per unit volume of flowing water, in m²/m³;
+ *   δ    the fracture aperture, in m, for a fracture of two walls: a_w = 2/δ.
+ *
+ * and a_w = F/T_w links them. Whichever is given, the engines work out a_w
+ * (and its tangent) from it, and F, which is what the reference
+ * implementation reads, is a_w·T_w.
+ */
+export const SURFACES = ['f', 'aw', 'aperture'];
+
+/** The setting each way of giving the surface is written in. */
+export const SURFACE_KEY = { f: 'f', aw: 'aw', aperture: 'aperture' };
+
+/** Each way, in words, for the choice. */
+export const SURFACE_LABEL = {
+	f: 'F, the flow-related transport resistance',
+	aw: 'a_w, the wetted surface per volume of water',
+	aperture: 'δ, the fracture aperture',
+};
+
+/**
+ * How the rock matrix's layers are laid out.
+ *
+ *   matched    a geometric series whose first layer is worked out from the
+ *              path's own time scales, with each node placed so that the
+ *              layers' exchange with the fracture matches exact diffusion into
+ *              the rock -- see `matchedGrid`;
+ *   reference  the reference implementation's: ratio e from a first layer
+ *              that makes it so, nodes at the layers' centres. Kept exactly,
+ *              bit for bit, for the models built on it.
+ */
+export const GRIDS = ['matched', 'reference'];
+
+/** Each layout, in words, for the choice. */
+export const GRID_LABEL = {
+	matched: 'Matched to diffusion into the rock',
+	reference: 'As in SKB’s reference implementation',
 };
 
 /**
@@ -102,19 +209,47 @@ export const FARF_NUCLIDE_KEYS = ['kd_f', 'eps_m', 'kd_m', 'de_m'];
  * nuclide to the next: the water does not travel at one speed for caesium and
  * another for iodine.
  */
-export const FARF_SINGLE_KEYS = ['tw', 'f', 'rho_m', 'pe', 'pen_dep', 'pen_dep_0'];
+export const FARF_SINGLE_KEYS = ['tw', 'f', 'aw', 'aperture', 'rho_m', 'pe', 'pen_dep', 'pen_dep_0'];
 
 /**
  * Every setting that is written as an equation, in the order the panel shows
  * them: what carries the nuclide, then what retains it, then the rock.
+ *
+ * All three ways of giving the flow-wetted surface are here, because each is
+ * text the model keeps -- renamed with the blocks it names, listed where a
+ * reference is looked for -- whichever of them is in use. Only the one in use
+ * is worked out: see `activeEquationKeys`.
  */
 export const FARF_EQUATION_KEYS = [
-	'tw', 'f', 'kd_f', 'kd_m', 'de_m', 'eps_m', 'rho_m', 'pe',
+	'tw', 'f', 'aw', 'aperture', 'kd_f', 'kd_m', 'de_m', 'eps_m', 'rho_m', 'pe',
 	'pen_dep', 'pen_dep_0',
 ];
 
+/** How a path gives its flow-wetted surface: F unless it says otherwise. */
+export function surfaceOf(block) {
+	const s = block?.surface;
+	return SURFACES.includes(s) ? s : 'f';
+}
+
+/**
+ * The settings a path is worked out from: every equation but the two ways of
+ * giving the surface it does not use. What the builder gives a slot, in the
+ * order it gives them -- which, for a path that gives F, is the order it always
+ * was, so the slots of a model built before the choice existed are where they
+ * were.
+ */
+export function activeEquationKeys(block) {
+	const used = SURFACE_KEY[surfaceOf(block)];
+	return FARF_EQUATION_KEYS.filter(
+		(k) => !(Object.values(SURFACE_KEY).includes(k) && k !== used),
+	);
+}
+
 /** The structural settings: they decide how many states there are. */
 export const FARF_STRUCTURE_KEYS = ['n_f', 'n_m', 'o_b', 'n_b'];
+
+/** The settings that are a choice among words rather than a number. */
+export const FARF_CHOICE_KEYS = ['surface', 'grid', 'method'];
 
 /**
  * The short name each setting goes by in the literature, for a column header
@@ -131,6 +266,8 @@ export const FARF_STRUCTURE_KEYS = ['n_f', 'n_m', 'o_b', 'n_b'];
 export const FARF_LABEL = {
 	tw: 'T<sub>w</sub>',
 	f: 'F',
+	aw: 'a<sub>w</sub>',
+	aperture: 'δ',
 	kd_f: 'K<sub>d,f</sub>',
 	kd_m: 'K<sub>d,m</sub>',
 	de_m: 'D<sub>e,m</sub>',
@@ -160,6 +297,9 @@ export const FARF_TERM = {
 	n_m: 'Matrix layers',
 	n_b: 'Cells past the release point',
 	o_b: 'Water downstream of the path',
+	grid: 'Matrix layers laid out',
+	surface: 'Flow-wetted surface given as',
+	method: 'Worked out',
 };
 
 /**
@@ -173,6 +313,8 @@ export const FARF_TERM = {
 export const FARF_HELP = {
 	tw: 'The water travel time along the path, in [time]',
 	f: 'The flow-related transport resistance, in [time]·m²/m³',
+	aw: 'The flow-wetted surface per unit volume of flowing water, in m²/m³',
+	aperture: 'The fracture aperture, in m: two walls, so the wetted surface is 2/δ per m³ of water',
 	kd_f: 'Sorption on the fracture coating, in m³/m² (0 for none)',
 	kd_m: 'The partition coefficient in the rock matrix, in m³/kg',
 	de_m: 'The effective diffusivity in the rock matrix, in m²/[time]',
@@ -185,21 +327,30 @@ export const FARF_HELP = {
 	n_m: 'How many layers the rock matrix is divided into (at least 2)',
 	o_b: 'What is assumed about the water downstream of the path',
 	n_b: 'Extra fracture cells past the point the release is measured at',
+	grid: 'How the matrix layers are laid out',
+	surface: 'Which of F, the wetted surface or the aperture is given',
+	method: 'On cells with the rest of the model, or exactly from the path’s transfer function',
 	handle_decay: 'Adds −λC and ingrowth from parents in every cell of the path',
 	report_cells: 'Reports the inventory of every cell, not only the total',
 };
 
 /**
- * The smallest workable path, and the reference implementation's own defaults
- * for everything that has one: 20 x 20 cells, Pe 10, a penetration depth of
- * 12.5 m, granite porosity and density.
+ * What a new path starts with: the reference implementation's own numbers for
+ * everything that has one -- 20 × 20 cells, Pe 10, a penetration depth of
+ * 12.5 m, granite porosity and density -- and this tool's numerics for the
+ * two things that are numerics rather than physics: an outlet where the rock
+ * goes on past the release point, as the analytical models have it, and matrix
+ * layers matched to diffusion into the rock. A model saved before those two
+ * existed keeps what it had: see `FARF_LEGACY`.
  */
 export const FARF_DEFAULTS = {
-	tw: '100', f: '1e5',
+	method: 'discretized',
+	tw: '100', surface: 'f', f: '1e5',
 	kd_f: '0', kd_m: '0', de_m: '1e-4',
 	eps_m: '0.0018', rho_m: '2700', pe: '10',
 	pen_dep: '12.5', pen_dep_0: '',
-	n_f: 20, n_m: 20, o_b: 1, n_b: 0,
+	// Empty extra cells: as many as the outlet needs, worked out.
+	n_f: 20, n_m: 20, o_b: CONTINUES, n_b: '', grid: 'matched',
 	// The same switch a compartment has, and there for the same reason: to be
 	// able to compare against a path that does not decay.
 	handle_decay: true,
@@ -208,6 +359,25 @@ export const FARF_DEFAULTS = {
 	// the path holds, which is the other half of a mass balance.
 	report_cells: false,
 };
+
+/**
+ * What a setting a saved path does not mention means.
+ *
+ * Every path written before the outlet and the layer choices existed says
+ * nothing about either, and meant the reference implementation's: a closed
+ * outlet unless it said otherwise, no extra cells, layers at ratio e, and F
+ * given. Read that way it runs exactly as it did -- which is the point: a
+ * validated model is not re-validated by opening it. `migrateFarfieldDefaults`
+ * in ./keys.js writes these into the file's blocks on the way in, so that the
+ * editor and everything after it sees one explicit model.
+ */
+export const FARF_LEGACY = { o_b: 1, n_b: 0, grid: 'reference', surface: 'f', method: 'discretized' };
+
+/**
+ * What a new setting's equation is when the path gives none: the same
+ * geometry as the defaults, F = 1e5 over T_w = 100, said the other two ways.
+ */
+export const FARF_SURFACE_DEFAULTS = { f: '1e5', aw: '1000', aperture: '0.002' };
 
 /**
  * Dekker's zeroin, 1969, in the form the reports use -- written so
@@ -402,6 +572,206 @@ export function layerDepthsTangent(penDep, nm, aw, first, d, dPenDep, dAw, dFirs
 	return out;
 }
 
+/*
+ * THE MATCHED LAYERS.
+ *
+ * What the matrix does to the fracture is a boundary flux: the rock takes up
+ * Y(s)·c per unit wall area at frequency s, with
+ *
+ *     Y(s) = sqrt(D_e R_m s) · tanh(x0 · sqrt(R_m s / D_e)),     R_m = ε + ρ K_d
+ *
+ * (s + λ for a nuclide that decays), and that admittance is all the fracture
+ * ever sees of it. The layers are a ladder of capacities R_m·d_j joined by
+ * conductances D_e/h_j, and their admittance is a continued fraction in s. How
+ * well the two agree over the frequencies a release is made of is the whole
+ * accuracy of the matrix, and it was measured before anything here was chosen:
+ *
+ *   - Nodes at the layers' centres, h_j = (d_(j-1) + d_j)/2, under-state Y by
+ *     a constant fraction on a geometric grid: 0.4 % at a ratio of 1.3, 1 % at
+ *     1.5, 5.8 % at e. The reference implementation's automatic grid grows by
+ *     e, so its matrix takes up 5.8 % too little, and an error in the exponent
+ *     is multiplied by the exponent: the bundled example's peaks came out
+ *     6-10 % high, and its rising edge twice as high at a hundredth of the
+ *     peak.
+ *   - Nodes spaced by the geometric mean of the two layers they join,
+ *     h_j = sqrt(d_(j-1)·d_j), and the first at d_0/(1 + sqrt q) from the
+ *     wall, remove that bias outright -- the node position that zeroes it is
+ *     1/(1 + sqrt q) of the way into each layer, to every digit measured --
+ *     and what is left is a ripple, 1e-7 at a ratio of 1.35 and 1e-5 at 1.5
+ *     on the imaginary axis. This is the interlacing Ingerman, Druskin and
+ *     Knizhnerman's optimal grids have (CPAM 53, 2000): primal and dual steps
+ *     that approximate sqrt(s) spectrally rather than to second order.
+ *
+ * That leaves where the ladder starts and where it ends. It ends at the depth
+ * modelled, with the whole capacity in it, so the lowest frequencies are exact
+ * whatever the steps. It has to start thin enough to resolve the fastest
+ * frequency that still matters: `penetrationScale` below.
+ */
+
+/**
+ * How far down the path's transfer function may fall before a frequency stops
+ * mattering: e^-25, about 1.4e-11 of what went in.
+ */
+const ATTENUATION = 25;
+
+/**
+ * How many times thinner the first layer is than the shallowest depth the
+ * diffusion reaches at that frequency. The layers' admittance falls away from
+ * exact as 0.1·(d_0/L)² where the ladder begins, so 10 keeps it within 1e-3
+ * at the fastest frequency that matters and far closer below it.
+ */
+const RESOLVE = 10;
+
+/**
+ * The depth diffusion reaches into the rock at the fastest frequency the path
+ * lets through, for one nuclide, in m.
+ *
+ * With u = sqrt(s + λ) the fracture sees g = R_f·u² + a_w·sqrt(D_e R_m)·u (the
+ * matrix as a half-space, which it is at those frequencies), and the path's
+ * transfer function is exp((P_e/2)(1 - sqrt(1 + 4 T_w g/P_e))). It is down to
+ * e^-A where T_w·g = A(1 + A/P_e); the positive root of that quadratic in u
+ * is the fastest frequency, and the depth is sqrt(D_e/(R_m u²)). A nuclide
+ * whose own decay is faster than that is resolved at its decay constant
+ * instead: however strongly the path holds it back, it grows in along the way
+ * and its daughters see its profile.
+ *
+ * Nothing but square roots and the four operations, so the application and the
+ * Python engine agree on it to the last bit.
+ *
+ * @returns {number} the depth, or Infinity for a nuclide that does not enter
+ *   the rock (no diffusion, no capacity, no wetted surface)
+ */
+export function penetrationScale({ de, rm, lam = 0, rf = 1 }, { aw, tw, pe }) {
+	if (!(de > 0) || !(rm > 0) || !(aw > 0) || !Number.isFinite(aw)) return Infinity;
+	if (!(tw > 0) || !(pe > 0)) return Infinity;
+	const G = (ATTENUATION * (1 + ATTENUATION / pe)) / tw;
+	const A = aw * Math.sqrt(de * rm);
+	// The positive root of rf·u² + A·u - G = 0, in the form that does not
+	// cancel when A dominates.
+	const u = (2 * G) / (A + Math.sqrt(A * A + 4 * rf * G));
+	const u2 = Math.max(u * u, Number.isFinite(lam) && lam > 0 ? lam : 0);
+	if (!(u2 > 0) || !Number.isFinite(u2)) return Infinity;
+	return Math.sqrt(de / rm / u2);
+}
+
+/**
+ * The matched layers' first thickness, worked out: the shallowest of every
+ * nuclide's `penetrationScale`, divided by `RESOLVE` -- one grid for all of
+ * them, because a daughter grows in cell by cell from its parent and the two
+ * have to share the cells -- and never thicker than an even split of the
+ * depth, which is where the series stops growing at all.
+ *
+ * @param {object} p
+ * @param {number} p.penDep the depth modelled (m)
+ * @param {number} p.nm how many layers
+ * @param {number} p.aw the flow-wetted surface per unit volume of water
+ * @param {number} p.tw the water travel time
+ * @param {number} p.pe the Peclet number
+ * @param {Array<{de:number, rm:number, lam?:number, rf?:number}>} p.nucs every
+ *   nuclide travelling the path, with its decay constant and its retardation
+ *   in the fracture
+ */
+export function autoFirstLayer({ penDep, nm, aw, tw, pe, nucs }) {
+	let L = Infinity;
+	for (const n of nucs ?? []) {
+		const l = penetrationScale(n, { aw, tw, pe });
+		if (l < L) L = l;
+	}
+	const even = penDep / nm;
+	if (!(L < Infinity)) return even;
+	const d0 = L / RESOLVE;
+	return d0 < even ? d0 : even;
+}
+
+/**
+ * The matched layers: a geometric series from the first thickness to exactly
+ * the depth modelled, and the node spacings that make its exchange with the
+ * fracture match diffusion into the rock (see THE MATCHED LAYERS above).
+ *
+ * The first thickness is given, or worked out by `autoFirstLayer`. The ratio
+ * comes from the same root-finder the reference layers use, over a sum built
+ * by repeated multiplication rather than by powers -- so that both engines
+ * reach the same double.
+ *
+ * @returns {{kind: 'matched', d: Float64Array, h: Float64Array, q: number}}
+ *   d the thicknesses, h[0] the wall to the first node and h[j] node j-1 to
+ *   node j, q the ratio
+ */
+export function matchedGrid({ penDep, nm, first = null, aw, tw, pe, nucs = [] }) {
+	if (!(penDep > 0) || !Number.isFinite(penDep)) {
+		throw new FarfError(`The penetration depth must be a positive length (got ${penDep})`);
+	}
+	let d0 = first;
+	if (d0 == null || !Number.isFinite(d0) || d0 <= 0) {
+		d0 = autoFirstLayer({ penDep, nm, aw, tw, pe, nucs });
+	}
+	if (d0 * nm > penDep * (1 + 1e-12)) {
+		throw new FarfError(
+			`${nm} matrix layers starting at ${d0} m cannot add up to a penetration `
+			+ `depth of ${penDep} m: the layers grow with depth, so the first must be `
+			+ `smaller than ${penDep / nm} m. Use a thinner first layer, fewer layers, `
+			+ `a greater depth, or leave the first layer empty to have it worked out.`,
+		);
+	}
+	const d = new Float64Array(nm);
+	const h = new Float64Array(nm);
+	let q = 1;
+	if (nm === 1 || d0 * nm >= penDep * (1 - 1e-12)) {
+		// An even split: the series has nothing left to grow into.
+		d.fill(penDep / nm);
+	} else {
+		const total = (r) => {
+			let s = 0;
+			let t = d0;
+			for (let j = 0; j < nm; j++) { s += t; t *= r; }
+			return s - penDep;
+		};
+		let hi = 2;
+		while (total(hi) < 0 && hi < 1e300) hi *= 2;
+		q = zeroin(total, 1, hi);
+		d[0] = d0;
+		for (let j = 1; j < nm; j++) d[j] = d[j - 1] * q;
+	}
+	h[0] = d[0] / (1 + Math.sqrt(q));
+	for (let j = 1; j < nm; j++) h[j] = Math.sqrt(d[j - 1] * d[j]);
+	return { kind: 'matched', d, h, q };
+}
+
+/**
+ * The flow-wetted surface per unit volume of water, from whichever way the
+ * path gives it: F/T_w, a_w itself, or 2/δ for an aperture δ.
+ */
+export function wettedSurface(s) {
+	const how = SURFACES.includes(s.surface) ? s.surface : 'f';
+	if (how === 'aw') return s.aw;
+	if (how === 'aperture') return 2 / s.aperture;
+	return s.f / s.tw;
+}
+
+/** The tangent of `wettedSurface`, given the tangent of each setting. */
+export function wettedSurfaceTangent(s, ds) {
+	const how = SURFACES.includes(s.surface) ? s.surface : 'f';
+	if (how === 'aw') return ds.aw ?? 0;
+	if (how === 'aperture') return (-2 * (ds.aperture ?? 0)) / (s.aperture * s.aperture);
+	return (ds.f * s.tw - s.f * ds.tw) / (s.tw * s.tw);
+}
+
+/** Why a wetted surface cannot be used, said in the terms it was given in. */
+function surfaceProblem(s, aw) {
+	if (aw > 0 && Number.isFinite(aw)) return null;
+	const how = SURFACES.includes(s.surface) ? s.surface : 'f';
+	if (how === 'aw') {
+		return `The flow-wetted surface a_w must be positive: it is the wetted `
+			+ `surface per unit volume of water (got ${aw})`;
+	}
+	if (how === 'aperture') {
+		return `The fracture aperture must be a positive length: the wetted surface `
+			+ `is 2/δ per unit volume of water (got δ = ${s.aperture})`;
+	}
+	return `F/TW must be positive: it is the flow-wetted surface per unit volume of `
+		+ `water (got ${aw})`;
+}
+
 /**
  * One path's rates, for one nuclide: everything `get_jac_rn` is written in.
  *
@@ -413,9 +783,17 @@ export function layerDepthsTangent(penDep, nm, aw, first, d, dPenDep, dAw, dFirs
  * The dispersion rate is `adv_f*(N_F/Pe - 1/2)`, floored at zero: a chain of
  * N_F cells already disperses as if Pe were 2*N_F, so a coarser
  * discretisation than the Peclet number asks for gets no explicit dispersion
- * on top -- it is already there, numerically.
+ * on top -- it is already there, numerically. Above the floor that makes the
+ * fracture a central scheme, second order in the cell length, whose first two
+ * moments -- the mean travel time and the spread -- are exactly the continuous
+ * path's.
+ *
+ * `grid` is the matrix layout every nuclide of the path shares (see
+ * `pathGrid`). Left out, the reference layers are worked out from `s` itself,
+ * as they always were -- they depend on the path's settings alone -- or, for
+ * `s.grid === 'matched'`, a matched layout for this one nuclide.
  */
-export function coefficients(s) {
+export function coefficients(s, grid = null) {
 	const { nf, nm } = s;
 	if (!(s.pe > 0) || !Number.isFinite(s.pe)) {
 		throw new FarfError(
@@ -423,7 +801,12 @@ export function coefficients(s) {
 			+ `(got ${s.pe})`,
 		);
 	}
-	const aw = s.f / s.tw;
+	const aw = wettedSurface(s);
+	const bad = surfaceProblem(s, aw);
+	if (bad) throw new FarfError(bad);
+	if (!(s.tw > 0) || !Number.isFinite(s.tw)) {
+		throw new FarfError(`The travel time T_w must be positive (got ${s.tw})`);
+	}
 	const rM = s.eps_m + s.rho_m * s.kd_m;
 	if (!(rM > 0) || !Number.isFinite(rM)) {
 		// eps + rho*Kd is the matrix's capacity for the nuclide, and it divides
@@ -441,32 +824,63 @@ export function coefficients(s) {
 	const fDf = 1 / (1 + s.kd_f * aw);
 	const advF = (fDf * nf) / s.tw;
 	const dF = Math.max(0, advF * (nf / s.pe - 0.5));
-	const d = layerDepths(s.pen_dep, nm, aw, s.pen_dep_0);
+	const g = grid ?? (s.grid === 'matched'
+		? matchedGrid({
+			penDep: s.pen_dep, nm, first: s.pen_dep_0, aw, tw: s.tw, pe: s.pe,
+			nucs: [{ de: s.de_m, rm: rM, lam: s.lam ?? 0, rf: 1 + s.kd_f * aw }],
+		})
+		: { kind: 'reference', d: layerDepths(s.pen_dep, nm, aw, s.pen_dep_0), h: null });
+	const d = g.d;
+	const diffMMF = new Float64Array(Math.max(0, nm - 1));
+	const diffMMB = new Float64Array(Math.max(0, nm - 1));
+	let diffFM1;
+	let diffM1F;
+	if (g.kind === 'matched') {
+		// The same exchange, over the matched node spacings: h[0] from the
+		// wall to the first node, h[j+1] between node j and node j+1.
+		const h = g.h;
+		diffFM1 = (fDf * aw * s.de_m) / h[0];
+		diffM1F = s.de_m / (rM * d[0] * h[0]);
+		for (let j = 0; j < nm - 1; j++) {
+			diffMMF[j] = s.de_m / (rM * d[j] * h[j + 1]);
+			diffMMB[j] = s.de_m / (rM * d[j + 1] * h[j + 1]);
+		}
+		return {
+			aw, rM, fDf, advF, dF, d, h, grid: 'matched', diffFM1, diffM1F, diffMMF, diffMMB,
+		};
+	}
 
 	// Fracture -> first matrix layer, and back. The forward rate is a loss
 	// from the fracture's own water, so it carries `f_df` and the wetted area
 	// per unit volume; the backward one is a loss from a layer whose capacity
 	// is `r_m` times its pore volume. Their ratio is the equilibrium
 	// partitioning between the two, which is why neither may be simplified.
-	const diffFM1 = (fDf * 2 * aw * s.de_m) / d[0];
-	const diffM1F = (2 * s.de_m) / (rM * d[0] * d[0]);
+	diffFM1 = (fDf * 2 * aw * s.de_m) / d[0];
+	diffM1F = (2 * s.de_m) / (rM * d[0] * d[0]);
 
 	// Layer to layer: a conductance over the distance between two layer
 	// centres, divided by the losing layer's own capacity -- so the two
 	// directions differ whenever the layers do.
-	const diffMMF = new Float64Array(Math.max(0, nm - 1));
-	const diffMMB = new Float64Array(Math.max(0, nm - 1));
 	for (let j = 0; j < nm - 1; j++) {
 		diffMMF[j] = (2 * s.de_m) / (rM * d[j] * (d[j] + d[j + 1]));
 		diffMMB[j] = (2 * s.de_m) / (rM * d[j + 1] * (d[j + 1] + d[j]));
 	}
-	return { aw, rM, fDf, advF, dF, d, diffFM1, diffM1F, diffMMF, diffMMB };
+	return {
+		aw, rM, fDf, advF, dF, d, h: null, grid: 'reference', diffFM1, diffM1F, diffMMF, diffMMB,
+	};
 }
 
-/** The tangent of `coefficients`, given the tangent of each setting. */
+/**
+ * The tangent of `coefficients`, given the tangent of each setting.
+ *
+ * The matched layers are laid out once per run and held (see `pathGrid`), so
+ * their thicknesses have no tangent: only the rates written over them move.
+ * The reference layers follow the settings, and their tangent is
+ * `layerDepthsTangent`'s.
+ */
 export function coefficientsTangent(s, ds, c) {
 	const { nf, nm } = s;
-	const dAw = (ds.f * s.tw - s.f * ds.tw) / (s.tw * s.tw);
+	const dAw = wettedSurfaceTangent(s, ds);
 	const dRM = ds.eps_m + ds.rho_m * s.kd_m + s.rho_m * ds.kd_m;
 	const dFDf = -(ds.kd_f * c.aw + s.kd_f * dAw) * c.fDf * c.fDf;
 	const dAdvF = (nf * (dFDf * s.tw - c.fDf * ds.tw)) / (s.tw * s.tw);
@@ -474,6 +888,23 @@ export function coefficientsTangent(s, ds, c) {
 	const dDF = c.dF > 0
 		? dAdvF * shape + c.advF * (-(nf / (s.pe * s.pe)) * ds.pe)
 		: 0;
+	if (c.grid === 'matched') {
+		const { d, h } = c;
+		const dDiffFM1 = (dFDf * c.aw * s.de_m + c.fDf * dAw * s.de_m + c.fDf * c.aw * ds.de_m) / h[0];
+		// Products rather than logs, for the reason given below: a nuclide
+		// that does not diffuse at all has De = 0.
+		const dDiffM1F = ds.de_m / (c.rM * d[0] * h[0]) - c.diffM1F * (dRM / c.rM);
+		const dDiffMMF = new Float64Array(Math.max(0, nm - 1));
+		const dDiffMMB = new Float64Array(Math.max(0, nm - 1));
+		for (let j = 0; j < nm - 1; j++) {
+			dDiffMMF[j] = ds.de_m / (c.rM * d[j] * h[j + 1]) - c.diffMMF[j] * (dRM / c.rM);
+			dDiffMMB[j] = ds.de_m / (c.rM * d[j + 1] * h[j + 1]) - c.diffMMB[j] * (dRM / c.rM);
+		}
+		return {
+			aw: dAw, rM: dRM, fDf: dFDf, advF: dAdvF, dF: dDF, d: new Float64Array(nm),
+			diffFM1: dDiffFM1, diffM1F: dDiffM1F, diffMMF: dDiffMMF, diffMMB: dDiffMMB,
+		};
+	}
 	const dd = layerDepthsTangent(
 		s.pen_dep, nm, c.aw, s.pen_dep_0, c.d, ds.pen_dep, dAw, ds.pen_dep_0,
 	);
@@ -516,9 +947,125 @@ export function cellIndex(k, j, nm) {
 	return k * (nm + 1) + j;
 }
 
-/** How many cells one nuclide's path has, extra outflow cells included. */
-export function cellCount({ n_f: nf, n_m: nm, n_b: nb = 0 }) {
+/**
+ * How many cells of rock past the release point the semi-infinite outlet
+ * needs, worked out from the fracture cells and the Peclet number.
+ *
+ * Downstream of the release point the rock is the same rock, so the cells
+ * there are the path's own, and what they are for is the one thing a finite
+ * grid cannot say: how the water beyond the plane pushes back on it. That push
+ * is dispersion running upstream, and in the discrete path it dies away by a
+ * factor of
+ *
+ *     ρ = (2·N_F − P_e) / (2·N_F + P_e)
+ *
+ * per cell at the lowest frequencies, where it dies slowest (faster at every
+ * higher one). So the count is the fewest cells that bring ρ^N_B under a
+ * tenth -- the far end then closes by linear extrapolation, itself a second-
+ * order guess at the rock beyond, and a tenth of its error is left. Measured
+ * against the rock going on for ever, that is within 5e-4 in the logarithm of
+ * the transfer function at every frequency for 20 cells at P_e 10, which is
+ * well under what the 20 fracture cells themselves cost. Where 2·N_F ≤ P_e the
+ * fracture has no explicit dispersion left, nothing runs upstream at all, and
+ * no cell is needed.
+ *
+ * Worked out by repeated multiplication, so both engines count the same.
+ *
+ * The count decides how many states there are, which is settled before any
+ * equation is worked out -- so it needs a Peclet number that is a number. One
+ * written as an equation is taken as 10, the common value, and the panel says
+ * so; a path whose Peclet number is far from that can set the count itself.
+ */
+export function autoExtraCells(nf, pe) {
+	const n = Number(nf);
+	let p = Number(pe);
+	if (!Number.isInteger(n) || n < 1) return 0;
+	if (!(p > 0) || !Number.isFinite(p)) p = 10;
+	const rho = (2 * n - p) / (2 * n + p);
+	if (!(rho > 0)) return 0;
+	let k = 0;
+	let left = 1;
+	while (left > 0.1 && k < 10000) { left *= rho; k++; }
+	return k;
+}
+
+/** Whether a setting that is a count was left empty, which asks for it to be worked out. */
+const isEmpty = (v) => v == null || (typeof v === 'string' && v.trim() === '');
+
+/**
+ * How many extra cells a path has past its release point: the count it gives,
+ * or, left empty, none -- unless its outlet is the semi-infinite rock, which
+ * works the count out (`autoExtraCells`).
+ */
+export function extraCells(block) {
+	const nb = block?.n_b;
+	if (isEmpty(nb)) {
+		return Number(block?.o_b) === CONTINUES ? autoExtraCells(block?.n_f, block?.pe) : 0;
+	}
+	return Number(nb);
+}
+
+/**
+ * The structure the cells are built on: counts as numbers, and the
+ * semi-infinite outlet said as what it is on the grid -- extra cells past the
+ * release point, closed at the far end by linear extrapolation, with the
+ * release read at the plane between cell N_F and the first of them.
+ *
+ * `downstream` says the extra cells stand for rock past the release point,
+ * so what they hold has already been released: they are not in the path's
+ * inventory, and a release delivered to a compartment is not counted twice.
+ * With the reference implementation's outlets the extra cells are the path's
+ * own, read inside, as they always were.
+ *
+ * Idempotent: a structure that is already one comes back as it went in.
+ */
+export function effectiveStructure(block) {
+	const ob = Number(block?.o_b);
+	const nf = Number(block?.n_f);
+	const nm = Number(block?.n_m);
+	const nb = extraCells(block);
+	if (ob === CONTINUES) return { n_f: nf, n_m: nm, o_b: 2, n_b: nb, downstream: true };
+	return { n_f: nf, n_m: nm, o_b: ob, n_b: nb, downstream: !!block?.downstream };
+}
+
+/**
+ * How many cells one nuclide's path has, extra outflow cells included -- and
+ * none for a path worked out some other way than on cells (see `usesCells`),
+ * which is what the state count and the panel read.
+ */
+export function cellCount(block) {
+	// What a semi-analytical path holds, per nuclide, is one state.
+	if (isSemiAnalytic(block)) return 1;
+	if (!usesCells(block)) return 0;
+	const { n_f: nf, n_m: nm, n_b: nb } = effectiveStructure(block);
 	return (nf + nb) * (nm + 1);
+}
+
+/**
+ * The cells whose inventory is the path's: all of them, except the extra
+ * cells of a semi-infinite outlet, which stand for rock downstream of the
+ * release point.
+ */
+export function heldCells(block) {
+	if (isSemiAnalytic(block)) return 1;
+	if (!usesCells(block)) return 0;
+	const g = effectiveStructure(block);
+	const count = (g.downstream ? g.n_f : g.n_f + g.n_b) * (g.n_m + 1);
+	return count;
+}
+
+/**
+ * The matrix layout one path shares across every nuclide on it.
+ *
+ * The reference layers depend on the path's settings alone, and are worked out
+ * from them. The matched layers are worked out from every nuclide at once (see
+ * `autoFirstLayer`) -- so this is where the nuclides meet.
+ *
+ * @param {object} p  { grid, penDep, nm, first, aw, tw, pe, nucs }
+ */
+export function pathGrid(p) {
+	if (p.grid === 'matched') return matchedGrid(p);
+	return { kind: 'reference', d: layerDepths(p.penDep, p.nm, p.aw, p.first), h: null, q: NaN };
 }
 
 /**
@@ -530,8 +1077,8 @@ export function cellCount({ n_f: nf, n_m: nm, n_b: nb = 0 }) {
  *
  * @returns {{rows: Int32Array, cols: Int32Array, nnz: number}}
  */
-export function cellStructure(g) {
-	const { n_f: nf, n_m: nm, o_b: ob, n_b: nb = 0 } = g;
+export function cellStructure(block) {
+	const { n_f: nf, n_m: nm, o_b: ob, n_b: nb } = effectiveStructure(block);
 	const NF = nf + nb;
 	const rows = [];
 	const cols = [];
@@ -575,8 +1122,8 @@ export function cellStructure(g) {
  *
  * @param {Float64Array} out length `nnz`, written in place
  */
-export function cellValues(g, c, out) {
-	const { n_f: nf, n_m: nm, o_b: ob, n_b: nb = 0 } = g;
+export function cellValues(block, c, out) {
+	const { n_f: nf, n_m: nm, o_b: ob, n_b: nb } = effectiveStructure(block);
 	const NF = nf + nb;
 	const { advF, dF, diffFM1, diffM1F, diffMMF, diffMMB } = c;
 	out.fill(0);
@@ -645,12 +1192,14 @@ export function cellValues(g, c, out) {
  * face, ready to be handed to a compartment downstream.
  *
  * With extra outflow cells the face is *inside* the modelled domain, between
- * cell N_F and the first of the extra ones, and the reading is taken there.
+ * cell N_F and the first of the extra ones, and the reading is taken there --
+ * which, for the semi-infinite outlet, is the release point itself, with the
+ * rock beyond it in the extra cells.
  *
  * @returns {number[]} cell indices, paired with `releaseWeights`
  */
-export function releaseCells(g) {
-	const { n_f: nf, n_m: nm, n_b: nb = 0, o_b: ob } = g;
+export function releaseCells(block) {
+	const { n_f: nf, n_m: nm, n_b: nb, o_b: ob } = effectiveStructure(block);
 	const cell = (k) => cellIndex(k - 1, 0, nm); // k is 1-based, as in the reference
 	if (nb > 0) return [cell(nf), cell(nf + 1)];
 	if (ob === 2) return [cell(nf), cell(nf - 1)];
@@ -672,8 +1221,8 @@ export function releaseCells(g) {
  * reproduce it. Every other case (no extra cells, any outflow condition) is
  * the reference's own arithmetic, and conserves mass exactly.
  */
-export function releaseWeights(g, c, out) {
-	const { n_b: nb = 0, o_b: ob } = g;
+export function releaseWeights(block, c, out) {
+	const { n_b: nb, o_b: ob } = effectiveStructure(block);
 	const { advF, dF } = c;
 	if (nb > 0) { out[0] = advF + dF; out[1] = -dF; return out; }
 	if (ob === 0) { out[0] = advF + dF; return out; }
@@ -689,31 +1238,46 @@ export function releaseWeights(g, c, out) {
  *
  * @returns {string|null}
  */
-export function structureProblem(g) {
+export function structureProblem(block) {
+	// A semi-analytical path has no cells: the counts and the outlet are the
+	// cells' settings and are not read.
+	if (isSemiAnalytic(block)) {
+		return block.surface == null || block.surface === '' || SURFACES.includes(block.surface)
+			? null
+			: `surface must be one of ${SURFACES.join(', ')}`;
+	}
 	const int = (key, min) => {
-		const v = Number(g[key]);
+		const v = Number(block[key]);
 		if (!Number.isInteger(v)) return `${key} must be a whole number`;
 		if (v < min) return `${key} must be at least ${min}`;
 		return null;
 	};
-	return int('n_f', 1) ?? int('n_m', 2) ?? int('n_b', 0)
-		?? (OUTFLOWS.includes(Number(g.o_b))
+	// The extra cells may be left empty, which asks for them to be worked
+	// out (none, unless the outlet is the semi-infinite rock).
+	const problem = int('n_f', 1) ?? int('n_m', 2) ?? (isEmpty(block.n_b) ? null : int('n_b', 0))
+		?? (OUTFLOWS.includes(Number(block.o_b))
 			? null
 			: `o_b must be one of ${OUTFLOWS.join(', ')}`)
-		// The two extrapolating conditions read cells upstream of the last
-		// one, and the release is read upstream of that again.
-		?? (Number(g.o_b) === 2 && Number(g.n_f) + Number(g.n_b) < 2
-			? 'a linearly extrapolated outflow needs at least two fracture cells'
-			: null)
-		?? (Number(g.o_b) === 3 && Number(g.n_f) + Number(g.n_b) < 3
-			? 'a quadratically extrapolated outflow needs at least three fracture cells'
-			: null)
-		?? (Number(g.n_b) === 0 && Number(g.o_b) === 3 && Number(g.n_f) < 3
-			? 'reading the release under a quadratic outflow needs three fracture cells'
-			: null)
-		?? (Number(g.n_b) === 0 && Number(g.o_b) === 2 && Number(g.n_f) < 2
-			? 'reading the release under a linear outflow needs two fracture cells'
-			: null);
+		?? (block.method == null || block.method === '' || FARF_METHODS.includes(block.method)
+			? null
+			: `method must be one of ${FARF_METHODS.join(', ')}`)
+		?? (block.grid == null || block.grid === '' || GRIDS.includes(block.grid)
+			? null
+			: `grid must be one of ${GRIDS.join(', ')}`)
+		?? (block.surface == null || block.surface === '' || SURFACES.includes(block.surface)
+			? null
+			: `surface must be one of ${SURFACES.join(', ')}`);
+	if (problem) return problem;
+	// On the grid itself, the semi-infinite rock is a linear extrapolation at
+	// the far end of its extra cells.
+	const g = effectiveStructure(block);
+	// The two extrapolating conditions read cells upstream of the last
+	// one, and the release is read upstream of that again.
+	if (g.o_b === 2 && g.n_f + g.n_b < 2) return 'a linearly extrapolated outflow needs at least two fracture cells';
+	if (g.o_b === 3 && g.n_f + g.n_b < 3) return 'a quadratically extrapolated outflow needs at least three fracture cells';
+	if (g.n_b === 0 && g.o_b === 3 && g.n_f < 3) return 'reading the release under a quadratic outflow needs three fracture cells';
+	if (g.n_b === 0 && g.o_b === 2 && g.n_f < 2) return 'reading the release under a linear outflow needs two fracture cells';
+	return null;
 }
 
 /**
@@ -723,7 +1287,8 @@ export function structureProblem(g) {
  * disperses whether or not it is asked to: each cell adds `v·Δx/2`, which over
  * `N_F` cells along a path of unit length is the same as a Peclet number of
  * `2·N_F`. So a grid of five cells already spreads a front as a Peclet number
- * of 10 would.
+ * of 10 would. With the difference added back as explicit dispersion the
+ * scheme is central differencing, second order in the cell length.
  *
  * This is the number the `− ½` in `coefficients` is about: the dispersion the
  * model *adds* is the difference between what was asked for and what the grid
@@ -754,6 +1319,8 @@ export const gridPeclet = (nf) => 2 * Number(nf);
  * @returns {string|null} the warning, phrased as the rest of them are
  */
 export function dispersionWarning(g) {
+	// Worked out exactly, the path disperses as its Peclet number says.
+	if (isSemiAnalytic(g)) return null;
 	const nf = Number(g?.n_f);
 	const pe = Number(g?.pe);
 	if (!Number.isInteger(nf) || nf < 1) return null;
@@ -779,6 +1346,10 @@ export function dispersionWarning(g) {
 export function geometryProblem(block) {
 	const nm = Number(block.n_m);
 	const penDep = Number(block.pen_dep);
+	// Without layers the depth is the only geometry: the rock's own thickness.
+	if (isSemiAnalytic(block)) {
+		return Number.isFinite(penDep) && !(penDep > 0) ? 'the penetration depth must be a positive length' : null;
+	}
 	const first = block.pen_dep_0 === '' || block.pen_dep_0 == null
 		? null
 		: Number(block.pen_dep_0);
@@ -801,8 +1372,8 @@ export function geometryProblem(block) {
  * cell, `M3_1` the first matrix layer behind it. The reference
  * implementation's own names, from `calculate_inventory`.
  */
-export function cellNames(g) {
-	const { n_f: nf, n_m: nm, n_b: nb = 0 } = g;
+export function cellNames(block) {
+	const { n_f: nf, n_m: nm, n_b: nb } = effectiveStructure(block);
 	const names = new Array((nf + nb) * (nm + 1));
 	for (let k = 0; k < nf + nb; k++) {
 		names[cellIndex(k, 0, nm)] = `F${k + 1}`;

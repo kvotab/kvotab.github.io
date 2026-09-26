@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <meta http-equiv="Content-Security-Policy" content="base-uri 'self'; object-src 'none'">
+  <title>FARF31 — kvot ab</title>
+  <meta name="description" content="Far-field radionuclide transport along a stream tube, the model of SKB’s FARF31 in your browser: advection and dispersion, matrix diffusion into rock of finite depth with linear sorption, sorption on the fracture surfaces as an option, and radioactive chain decay, solved in the Laplace domain and convolved with the release you give.">
+  <link rel="canonical" href="https://kvotab.se/FARF31.html">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="kvot ab">
+  <meta property="og:title" content="FARF31 — kvot ab">
+  <meta property="og:description" content="The FARF31 far-field model in the browser: a stream tube with dispersion, matrix diffusion and sorption, decay chains of any length, FARF31’s input and output files read and written.">
+  <meta property="og:url" content="https://kvotab.se/FARF31.html">
+  <meta property="og:image" content="https://kvotab.se/resources/images/kvot-logotype.png">
+  <meta name="twitter:card" content="summary">
+  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js" integrity="sha384-Hl48Kq2HifOWdXEjMsKo6qxqvRLTYqIGbvlENBmkHAxZKIGCXv43H6W1jA671RzC" crossorigin="anonymous"></script>
+  <script>
+    // Set the theme before first paint so dark-mode visitors get no white flash.
+    (function () {
+      try {
+        var t = localStorage.getItem('kvot-theme');
+        if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* storage unavailable — site.js will apply the default */ }
+    })();
+  </script>
+  <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
+  <link rel="stylesheet" href="./resources/css/farf31.css?v=20260926d">
+  <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
+</head>
+<body>
+  <header></header>
+
+  <div class="content">
+    <div class="f31">
+      <!-- ===================== the settings column ===================== -->
+      <aside class="f31-side" id="f31Side">
+        <div class="f31-side-scroll">
+
+          <details class="f31-sec" id="sec-case" open>
+            <summary><span class="f31-sec-title">Case and files</span><span class="f31-count" id="f31CaseName"></span><span class="f31-info-slot" data-info-key="sec:case"></span></summary>
+            <div class="f31-drop" id="f31Drop">Drop FARF31’s in.dat, in.par, in.ts, casename31.prm, a case file (.json) or an out.ts to compare, or
+              <button type="button" class="f31-btn secondary small" data-on-click="f31:openFiles">Open…</button>
+            </div>
+            <input type="file" id="f31Files" multiple accept=".dat,.par,.ts,.prm,.json,.csv,.txt,.tsv,.response" hidden data-on-change="f31:filesChosen">
+            <div class="f31-row">
+              <div class="f31-label-line"><label for="f31Example">Built-in example</label><span class="f31-info-slot" data-info-key="set:example"></span></div>
+              <select id="f31Example" data-on-change="f31:chooseExample"></select>
+            </div>
+            <ul class="f31-files" id="f31FileList"></ul>
+            <div class="f31-row">
+              <div class="f31-label-line"><label for="f31Casename">Case name<span class="f31-unit">CASENAME</span></label><span class="f31-info-slot" data-info-key="set:casename"></span></div>
+              <input id="f31Casename" type="text" data-on-change="f31:caseField" data-key="casename">
+            </div>
+            <div class="f31-row">
+              <div class="f31-label-line"><label>Write FARF31’s files</label><span class="f31-info-slot" data-info-key="set:write"></span></div>
+              <div class="f31-actions">
+                <button type="button" class="f31-btn secondary small" data-on-click="f31:writeFile" data-kind="dat">in.dat</button>
+                <button type="button" class="f31-btn secondary small" data-on-click="f31:writeFile" data-kind="par">in.par</button>
+                <button type="button" class="f31-btn secondary small" data-on-click="f31:writeFile" data-kind="ts">in.ts</button>
+                <button type="button" class="f31-btn secondary small" data-on-click="f31:writeFile" data-kind="prm">.prm</button>
+              </div>
+            </div>
+          </details>
+
+          <details class="f31-sec" id="sec-tube" open>
+            <summary><span class="f31-sec-title">Stream tube</span><span class="f31-info-slot" data-info-key="sec:tube"></span></summary>
+            <div class="f31-inline">
+              <div class="f31-row">
+                <div class="f31-label-line"><label for="f31Tw">Travel time <i>t</i><sub>w</sub><span class="f31-unit">a</span></label><span class="f31-info-slot" data-info-key="set:tw"></span></div>
+                <input id="f31Tw" type="text" inputmode="decimal" data-on-change="f31:param" data-key="tw">
+              </div>
+              <div class="f31-row">
+                <div class="f31-label-line"><label for="f31Pe">Peclet number</label><span class="f31-info-slot" data-info-key="set:pe"></span></div>
+                <input id="f31Pe" type="text" inputmode="decimal" data-on-change="f31:param" data-key="Pe">
+              </div>
+            </div>
+            <div class="f31-row">
+              <div class="f31-label-line"><label for="f31AwMode">Flow-wetted surface given as</label><span class="f31-info-slot" data-info-key="set:aw"></span></div>
+              <select id="f31AwMode" data-on-change="f31:param" data-key="awMode">
+                <option value="aw">aw per volume of water (1/m)</option>
+                <option value="F">F-factor tw·aw (a/m)</option>
+              </select>
+            </div>
+            <div class="f31-row" id="f31AwRow">
+              <div class="f31-label-line"><label for="f31Aw"><i>a</i><sub>w</sub><span class="f31-unit">1/m</span></label><span class="f31-muted" id="f31AwNote"></span></div>
+              <input id="f31Aw" type="text" inputmode="decimal" data-on-change="f31:param" data-key="aw">
+            </div>
+            <div class="f31-row" id="f31FRow" hidden>
+              <div class="f31-label-line"><label for="f31F">F-factor <i>F</i><span class="f31-unit">a/m</span></label><span class="f31-muted" id="f31FNote"></span></div>
+              <input id="f31F" type="text" inputmode="decimal" data-on-change="f31:param" data-key="F">
+            </div>
+            <div class="f31-row">
+              <div class="f31-label-line"><span class="f31-label-text">Sorption on the fracture surfaces</span><span class="f31-info-slot" data-info-key="set:ka"></span></div>
+              <div class="f31-muted" id="f31KaNote"></div>
+              <button type="button" class="f31-btn secondary small" data-on-click="f31:tab" data-tab="input">Set Ka per element…</button>
+            </div>
+          </details>
+
+          <details class="f31-sec" id="sec-matrix" open>
+            <summary><span class="f31-sec-title">Rock matrix</span><span class="f31-info-slot" data-info-key="sec:matrix"></span></summary>
+            <div class="f31-inline">
+              <div class="f31-row">
+                <div class="f31-label-line"><label for="f31Eps">Porosity ε</label><span class="f31-info-slot" data-info-key="set:eps"></span></div>
+                <input id="f31Eps" type="text" inputmode="decimal" data-on-change="f31:param" data-key="eps">
+              </div>
+              <div class="f31-row">
+                <div class="f31-label-line"><label for="f31Rho">Density ρ<span class="f31-unit">kg/m³</span></label><span class="f31-info-slot" data-info-key="set:rho"></span></div>
+                <input id="f31Rho" type="text" inputmode="decimal" data-on-change="f31:param" data-key="rho">
+              </div>
+            </div>
+            <div class="f31-row">
+              <div class="f31-label-line"><label for="f31DeMode">Effective diffusivity</label><span class="f31-info-slot" data-info-key="set:de"></span></div>
+              <select id="f31DeMode" data-on-change="f31:param" data-key="diffusivity">
+                <option value="SINGLE">one value for all nuclides (SINGLE)</option>
+                <option value="ELEMENT_SPECIFIC">one per element (ELEMENT_SPECIFIC)</option>
+              </select>
+            </div>
+            <div class="f31-row" id="f31DeRow">
+              <div class="f31-label-line"><label for="f31De"><i>D</i><sub>e</sub><span class="f31-unit">m²/a</span></label><span class="f31-muted" id="f31DeNote"></span></div>
+              <input id="f31De" type="text" inputmode="decimal" data-on-change="f31:param" data-key="de">
+            </div>
+            <div class="f31-row">
+              <div class="f31-label-line"><label for="f31X0">Penetration depth <i>x</i><sub>0</sub><span class="f31-unit">m</span></label><span class="f31-info-slot" data-info-key="set:x0"></span></div>
+              <input id="f31X0" type="text" inputmode="decimal" data-on-change="f31:param" data-key="x0">
+            </div>
+            <div class="f31-check-line"><label class="f31-check"><input type="checkbox" id="f31X0Inf" data-on-change="f31:param" data-key="x0Inf"><span>Infinitely deep matrix</span></label></div>
+          </details>
+
+          <details class="f31-sec" id="sec-chain" open>
+            <summary><span class="f31-sec-title">Nuclides</span><span class="f31-count" id="f31NucCount"></span><span class="f31-info-slot" data-info-key="sec:chain"></span></summary>
+            <div id="f31ChainChips" class="f31-muted"></div>
+            <div class="f31-actions" style="margin-top:6px">
+              <button type="button" class="f31-btn secondary small" data-on-click="f31:tab" data-tab="input">Edit nuclides and releases…</button>
+            </div>
+          </details>
+
+          <details class="f31-sec" id="sec-num">
+            <summary><span class="f31-sec-title">Numerics and output</span><span class="f31-info-slot" data-info-key="sec:num"></span></summary>
+            <div class="f31-row">
+              <div class="f31-label-line"><label for="f31Method">Laplace inversion</label><span class="f31-info-slot" data-info-key="set:method"></span></div>
+              <select id="f31Method" data-on-change="f31:setting" data-key="method">
+                <option value="parabola">saddle-point contour (default)</option>
+                <option value="talbot">Talbot’s fixed contour</option>
+                <option value="dehoog">de Hoog on the Bromwich line</option>
+              </select>
+            </div>
+            <div class="f31-check-line"><label class="f31-check"><input type="checkbox" id="f31Check" data-on-change="f31:setting" data-key="check"><span>Check against a second method</span></label><span class="f31-info-slot" data-info-key="set:check"></span></div>
+            <div class="f31-check-line"><label class="f31-check"><input type="checkbox" id="f31AllResp" data-on-change="f31:setting" data-key="allResponses"><span>Unit responses of every pair in a chain</span></label><span class="f31-info-slot" data-info-key="set:allResponses"></span></div>
+            <div class="f31-inline">
+              <div class="f31-row">
+                <div class="f31-label-line"><label for="f31TStart">Output from<span class="f31-unit">a</span></label><span class="f31-info-slot" data-info-key="set:range"></span></div>
+                <input id="f31TStart" type="text" inputmode="decimal" placeholder="auto" data-on-change="f31:setting" data-key="tStart">
+              </div>
+              <div class="f31-row">
+                <div class="f31-label-line"><label for="f31TEnd">to<span class="f31-unit">a</span></label></div>
+                <input id="f31TEnd" type="text" inputmode="decimal" placeholder="auto" data-on-change="f31:setting" data-key="tEnd">
+              </div>
+            </div>
+            <div class="f31-inline">
+              <div class="f31-row">
+                <div class="f31-label-line"><label for="f31PerDecade">Points per decade</label><span class="f31-info-slot" data-info-key="set:grid"></span></div>
+                <input id="f31PerDecade" type="text" inputmode="numeric" placeholder="auto: 20" data-on-change="f31:setting" data-key="perDecade">
+              </div>
+              <div class="f31-row">
+                <div class="f31-label-line"><label for="f31Relint">RELINT</label></div>
+                <input id="f31Relint" type="text" inputmode="decimal" placeholder="auto: 1e-3" data-on-change="f31:setting" data-key="relint">
+              </div>
+            </div>
+            <div class="f31-inline">
+              <div class="f31-row">
+                <div class="f31-label-line"><label for="f31NpMax">At most, points</label></div>
+                <input id="f31NpMax" type="text" inputmode="numeric" placeholder="auto: 2500" data-on-change="f31:setting" data-key="npMax">
+              </div>
+              <div class="f31-row">
+                <div class="f31-label-line"><label for="f31BqMin">out.ts from<span class="f31-unit">Bq/a</span></label><span class="f31-info-slot" data-info-key="set:bqmin"></span></div>
+                <input id="f31BqMin" type="text" inputmode="decimal" placeholder="auto: 1e-3" data-on-change="f31:setting" data-key="bqMin">
+              </div>
+            </div>
+          </details>
+        </div>
+
+        <div class="f31-side-foot">
+          <div class="f31-actions">
+            <button type="button" class="f31-btn" id="f31Run" data-on-click="f31:run">Run</button>
+            <button type="button" class="f31-btn secondary small" id="f31Cancel" data-on-click="f31:cancel" hidden>Stop</button>
+            <button type="button" class="f31-btn secondary small" data-on-click="f31:saveCase">Save case</button>
+            <button type="button" class="f31-btn secondary small" data-on-click="f31:openFiles">Open…</button>
+          </div>
+          <div class="f31-progress" id="f31Progress" hidden><div class="f31-progress-bar" id="f31ProgressBar"></div></div>
+          <div class="f31-status" id="f31Status" role="status" aria-live="polite">Loading…</div>
+        </div>
+      </aside>
+
+      <div class="f31-resize" id="f31Resize" role="separator" aria-orientation="vertical" aria-label="Drag to resize the panel; double-click to reset"></div>
+
+      <!-- ========================= the work area ======================== -->
+      <main class="f31-main">
+        <div class="f31-tabs" role="tablist">
+          <button type="button" class="active" data-tab="release" data-on-click="f31:tab">Release</button>
+          <button type="button" data-tab="responses" data-on-click="f31:tab">Unit responses</button>
+          <button type="button" data-tab="table" data-on-click="f31:tab">Table</button>
+          <button type="button" data-tab="summary" data-on-click="f31:tab">Summary</button>
+          <button type="button" data-tab="input" data-on-click="f31:tab">Input</button>
+          <button type="button" data-tab="help" data-on-click="f31:tab">Help</button>
+        </div>
+
+        <!-- ---- release ---- -->
+        <section class="f31-pane" data-pane="release">
+          <div class="f31-toolbar">
+            <label>Rate <select id="f31Units" data-on-change="f31:view" data-key="units"><option value="mol">mol/a</option><option value="bq">Bq/a</option></select></label>
+            <label><input type="checkbox" id="f31LogX" data-on-change="f31:view" data-key="logX"> log time</label>
+            <label><input type="checkbox" id="f31LogY" data-on-change="f31:view" data-key="logY"> log rate</label>
+            <label><input type="checkbox" id="f31ShowIn" data-on-change="f31:view" data-key="showInput"> releases into the tube</label>
+            <label id="f31RefToggle" hidden><input type="checkbox" id="f31ShowRef" data-on-change="f31:view" data-key="showRef"> <span id="f31RefName">reference</span></label>
+            <span class="f31-info-slot" data-info-key="pane:release"></span>
+            <span class="f31-spacer"></span>
+            <button type="button" class="f31-btn secondary small" data-on-click="f31:download" data-kind="csv">CSV</button>
+            <button type="button" class="f31-btn secondary small" data-on-click="f31:download" data-kind="outts">out.ts</button>
+          </div>
+          <div class="plot" id="f31ChartRelease" hidden></div>
+          <p class="f31-empty" id="f31ReleaseEmpty">Run the model to draw the release from the stream tube.</p>
+          <ul class="f31-warnings" id="f31RefNote"></ul>
+        </section>
+
+        <!-- ---- unit responses ---- -->
+        <section class="f31-pane" data-pane="responses" hidden>
+          <div class="f31-toolbar">
+            <label><input type="checkbox" id="f31RLogX" data-on-change="f31:view" data-key="rLogX"> log time</label>
+            <label><input type="checkbox" id="f31RLogY" data-on-change="f31:view" data-key="rLogY"> log value</label>
+            <span class="f31-info-slot" data-info-key="pane:responses"></span>
+            <span class="f31-spacer"></span>
+            <button type="button" class="f31-btn secondary small" data-on-click="f31:download" data-kind="respcsv">CSV</button>
+            <button type="button" class="f31-btn secondary small" data-on-click="f31:download" data-kind="outresponse">out.response</button>
+          </div>
+          <div class="f31-pairs" id="f31Pairs"></div>
+          <div class="plot" id="f31ChartResp" hidden></div>
+          <p class="f31-empty" id="f31RespEmpty">Run the model to draw the unit response functions.</p>
+        </section>
+
+        <!-- ---- table ---- -->
+        <section class="f31-pane" data-pane="table" hidden>
+          <div class="f31-toolbar">
+            <label>Show <select id="f31TableUnits" data-on-change="f31:view" data-key="tableUnits"><option value="mol">mol/a</option><option value="bq">Bq/a</option><option value="both">mol/a and Bq/a</option></select></label>
+            <span class="f31-muted" id="f31TableNote"></span>
+            <span class="f31-info-slot" data-info-key="pane:table"></span>
+            <span class="f31-spacer"></span>
+            <button type="button" class="f31-btn secondary small" data-on-click="f31:download" data-kind="csv">CSV</button>
+            <button type="button" class="f31-btn secondary small" data-on-click="f31:download" data-kind="outts">out.ts</button>
+          </div>
+          <div class="f31-table-wrap" id="f31Table"></div>
+          <p class="f31-empty" id="f31TableEmpty">Run the model to get the table.</p>
+        </section>
+
+        <!-- ---- summary ---- -->
+        <section class="f31-pane f31-summary" data-pane="summary" hidden>
+          <div id="f31Summary"></div>
+        </section>
+
+        <!-- ---- input: nuclides and release series ---- -->
+        <section class="f31-pane" data-pane="input" hidden>
+          <div class="f31-input">
+            <h3><span class="f31-grow">Nuclides</span><span class="f31-info-slot" data-info-key="pane:nuclides"></span></h3>
+            <div class="f31-toolbar">
+              <button type="button" class="f31-btn secondary small" data-on-click="f31:addNuclide">Add a nuclide</button>
+              <label>Load a chain <select id="f31Preset" data-on-change="f31:preset" style="max-width:28rem"></select></label>
+            </div>
+            <div class="f31-table-wrap" id="f31NucTable"></div>
+            <p class="f31-muted" id="f31NucNote"></p>
+
+            <h3 style="margin-top:18px"><span class="f31-grow">Release into the stream tube</span><span class="f31-info-slot" data-info-key="pane:series"></span></h3>
+            <div class="f31-srcpick" id="f31SrcPick"></div>
+            <div class="f31-series" id="f31SeriesBox">
+              <div>
+                <label for="f31SeriesText" class="f31-muted">time (a) and rate (mol/a), one pair per line; typed or pasted</label>
+                <textarea id="f31SeriesText" spellcheck="false" data-on-change="f31:seriesText"></textarea>
+                <div class="f31-actions" style="margin-top:6px">
+                  <button type="button" class="f31-btn secondary small" data-on-click="f31:openSeries">Open a series…</button>
+                  <input type="file" id="f31SeriesFile" accept=".ts,.csv,.txt,.tsv,.dat" hidden data-on-change="f31:seriesFileChosen">
+                  <span class="f31-muted" id="f31SeriesNote"></span>
+                </div>
+                <div class="f31-shapes">
+                  <div class="f31-label-line"><b style="flex:1 1 auto;font-size:12px">Build from a shape</b><span class="f31-info-slot" data-info-key="set:shape"></span></div>
+                  <div class="f31-inline3">
+                    <div><label for="f31ShapeKind">Shape</label>
+                      <select id="f31ShapeKind" data-on-change="f31:shapeKind">
+                        <option value="constant">constant</option>
+                        <option value="pulse">pulse</option>
+                        <option value="exponential">exponential decline</option>
+                      </select></div>
+                    <div><label for="f31ShapeA" id="f31ShapeALabel">from (a)</label><input id="f31ShapeA" type="text" inputmode="decimal" value="0"></div>
+                    <div><label for="f31ShapeB" id="f31ShapeBLabel">to (a)</label><input id="f31ShapeB" type="text" inputmode="decimal" value="1e5"></div>
+                    <div><label for="f31ShapeC" id="f31ShapeCLabel">rate (mol/a)</label><input id="f31ShapeC" type="text" inputmode="decimal" value="1e-3"></div>
+                    <div id="f31ShapeDBox" hidden><label for="f31ShapeD" id="f31ShapeDLabel">half-time (a)</label><input id="f31ShapeD" type="text" inputmode="decimal" value="1e4"></div>
+                  </div>
+                  <div class="f31-actions" style="margin-top:6px">
+                    <button type="button" class="f31-btn secondary small" data-on-click="f31:shapeApply" data-mode="replace">Replace the series</button>
+                    <button type="button" class="f31-btn secondary small" data-on-click="f31:shapeApply" data-mode="add">Add to it</button>
+                  </div>
+                </div>
+              </div>
+              <div>
+                <label class="f31-muted"><input type="checkbox" id="f31InLogX" data-on-change="f31:view" data-key="inLogX"> log time</label>
+                <div class="plot short" id="f31ChartInput" hidden></div>
+                <p class="f31-empty" id="f31InputEmpty">No nuclide is marked as a source.</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ---- help ---- -->
+        <section class="f31-pane f31-help" data-pane="help" hidden>
+          <h2>FARF31: radionuclide migration along a stream tube</h2>
+          <p>This page calculates what SKB’s far-field code FARF31 calculates: the release of radionuclides from a stream tube in fractured rock, given the release into it. Water carries the nuclides along the tube with dispersion; they diffuse into the stagnant pore water of the rock matrix beside the flowing water, to a finite depth, and sorb there; and they decay, parents into daughters. The model is that of Norman and Kjellbert (SKB TR 90-01), with the element-specific diffusivities added for SR 97, as summarised in SKB R-04-51.</p>
+          <p>The page implements the model as published in TR 90-01 and R-04-51, with numerical methods of its own (see <a href="#help-differences">how the page differs</a>), and adds sorption on the fracture surfaces as an option. Everything runs in your browser: the files you open or drop are read there and are not sent anywhere.</p>
+
+          <h3 id="help-model">The model</h3>
+          <p>Assumptions (TR 90-01, chapters 2–3): stationary flow; transversal dispersion neglected; the longitudinal dispersion and the exchange between flowing and stagnant water replaced by averages over the tube’s cross-section, and constant along the tube; diffusion into the matrix one-dimensional, perpendicular to the flow, to a depth <i>x</i><sub>0</sub>; linear, reversible, instantaneous sorption in the matrix, and, as an option of the page, on the fracture surfaces (FARF31 has none there); decay chains without branches. The distance along the tube is measured as accumulated water travel time ζ, 0 ≤ ζ ≤ <i>t</i><sub>w</sub>, so the tube is described by <i>t</i><sub>w</sub> and a Peclet number rather than by lengths and velocities.</p>
+          <h4>In the flowing water</h4>
+          <p class="f31-eq"><i>R</i><sub>f,<i>i</i></sub> ∂<i>c<sub>i</sub></i>/∂<i>t</i> = −∂<i>c<sub>i</sub></i>/∂ζ + (<i>t</i><sub>w</sub>/Pe) ∂²<i>c<sub>i</sub></i>/∂ζ² + <i>a</i><sub>w</sub> <i>D</i><sub>e,<i>i</i></sub> ∂<i>c</i><sub>p,<i>i</i></sub>/∂<i>x</i>|<sub><i>x</i>=0</sub> − λ<sub><i>i</i></sub><i>R</i><sub>f,<i>i</i></sub><i>c<sub>i</sub></i> + λ<sub><i>i</i>−1</sub><i>R</i><sub>f,<i>i</i>−1</sub><i>c</i><sub><i>i</i>−1</sub>, &nbsp; <i>R</i><sub>f,<i>i</i></sub> = 1 + <i>K</i><sub>a,<i>i</i></sub><i>a</i><sub>w</sub></p>
+          <p><i>K</i><sub>a</sub> is the surface sorption coefficient of the element on the fracture walls: the amount sorbed per m² of wall over the concentration in the water (m³/m², that is m). The sorbed nuclides decay with the dissolved ones, and their daughters take up their own equilibrium. With <i>K</i><sub>a</sub> = 0, <i>R</i><sub>f</sub> = 1, this is the equation of TR 90-01 and R-04-51.</p>
+          <h4>In the rock matrix, 0 ≤ <i>x</i> ≤ <i>x</i><sub>0</sub></h4>
+          <p class="f31-eq"><i>R<sub>i</sub></i> ∂<i>c</i><sub>p,<i>i</i></sub>/∂<i>t</i> = <i>D</i><sub>e,<i>i</i></sub> ∂²<i>c</i><sub>p,<i>i</i></sub>/∂<i>x</i>² − <i>R<sub>i</sub></i>λ<sub><i>i</i></sub><i>c</i><sub>p,<i>i</i></sub> + <i>R</i><sub><i>i</i>−1</sub>λ<sub><i>i</i>−1</sub><i>c</i><sub>p,<i>i</i>−1</sub>, &nbsp; <i>R<sub>i</sub></i> = ε + <i>K</i><sub>d,<i>i</i></sub>ρ</p>
+          <h4>Conditions</h4>
+          <ul>
+            <li>Nothing in the tube or the rock at <i>t</i> = 0.</li>
+            <li><i>c</i><sub>p</sub> = <i>c</i> at the fracture wall (<i>x</i> = 0) and ∂<i>c</i><sub>p</sub>/∂<i>x</i> = 0 at <i>x</i> = <i>x</i><sub>0</sub>.</li>
+            <li>The inlet flux is given: <i>F</i><sub>in,<i>i</i></sub>(<i>t</i>) = <i>Q</i>(<i>c<sub>i</sub></i> − (<i>t</i><sub>w</sub>/Pe) ∂<i>c<sub>i</sub></i>/∂ζ) at ζ = 0, and <i>c<sub>i</sub></i> → 0 far downstream.</li>
+            <li>The output is the same flux at ζ = <i>t</i><sub>w</sub>. The flow <i>Q</i> cancels, and is not an input.</li>
+          </ul>
+          <p>The flow-wetted surface <i>a</i><sub>w</sub> is per volume of flowing water, so <i>t</i><sub>w</sub><i>a</i><sub>w</sub> is the F-factor (a/m), the quantity that governs the retention (R-04-51, section 2.3). ρ is 2700 kg/m³ in FARF31 unless its settings file gives another (RHOP).</p>
+
+          <h3 id="help-laplace">The solution in the Laplace domain</h3>
+          <p>Transformed in time (variable <i>s</i>), a single nuclide gives an ordinary differential equation in ζ whose decaying solution makes the transfer function from inlet flux to outlet flux</p>
+          <p class="f31-eq"><i>H</i>(<i>s</i>) = exp[(Pe/2)(1 − √(1 + 4<i>t</i><sub>w</sub><i>g</i>/Pe))], &nbsp; <i>g</i> = <i>R</i><sub>f</sub>(<i>s</i> + λ) + <i>a</i><sub>w</sub> √(<i>D</i><sub>e</sub><i>R</i>(<i>s</i> + λ)) tanh(<i>x</i><sub>0</sub>√(<i>R</i>(<i>s</i> + λ)/<i>D</i><sub>e</sub>)),</p>
+          <p>the transform of the unit response: the outlet flux after a unit pulse at the inlet. For a chain, the matrix equation couples each nuclide to its parent, and so to every ancestor: a parent that decays in the matrix produces a daughter there, which diffuses back. Written as vectors, with Λ the decay matrix (λ<sub><i>i</i></sub> on the diagonal, −λ<sub><i>i</i>−1</sub> below it) and <b>R</b>, <b>R</b><sub>f</sub>, <b>D</b><sub>e</sub> diagonal,</p>
+          <p class="f31-eq"><b>M</b> = <b>D</b><sub>e</sub><sup>−1</sup>(<i>s</i><b>I</b> + Λ)<b>R</b>, &nbsp; <b>G</b> = (<i>s</i><b>I</b> + Λ)<b>R</b><sub>f</sub> + <i>a</i><sub>w</sub><b>D</b><sub>e</sub> τ(<b>M</b>), &nbsp; <b>T</b>(<i>s</i>) = <i>H</i>(<b>G</b>), &nbsp; τ(<i>z</i>) = √<i>z</i> tanh(<i>x</i><sub>0</sub>√<i>z</i>),</p>
+          <p>where τ(<b>M</b>) and <i>H</i>(<b>G</b>) are functions of lower-triangular matrices. <i>T<sub>ij</sub></i> is the transform of the response of nuclide <i>i</i> to a unit pulse of nuclide <i>j</i>. TR 90-01 (Appendix C, Proposition 3) writes the same solution as sums over exponentials with recursively defined coefficients; its factors 1/(<i>F<sub>i</sub></i> − <i>F<sub>k</sub></i>) and 1/(<i>h<sub>i</sub></i>² − <i>h<sub>l</sub></i>²) are divided differences here. The page evaluates the matrix functions by Parlett’s recurrence when the diagonal is well separated, and otherwise by the sum over paths, with the divided differences of close points (the same element with close decay constants, U-238 and U-234 for one) taken from Taylor series about their centre, so that equal half-lives need no special treatment.</p>
+          <p>The singularities of <b>T</b> lie on the negative real axis: branch points at −λ for an infinitely deep matrix, poles of the tanh for a finite one, and the branch point of the square root in <i>H</i> (TR 90-01, Appendix C.2). An infinitely deep matrix and plug flow (Pe = ∞, when every nuclide exchanges with the matrix and the members of a chain share one <i>R</i><sub>f</sub>) are allowed.</p>
+
+          <h3 id="help-inversion">Numerical inversion</h3>
+          <h4>The saddle-point contour (default)</h4>
+          <p>For each response and time <i>t</i> the page finds the saddle point <i>s</i>* of e<sup><i>st</i></sup><i>T<sub>ij</sub></i>(<i>s</i>) on the real axis: the point where −d ln <i>T</i>/d<i>s</i>, the mean time of the exponentially tilted response, equals <i>t</i>. It integrates along the parabola through it, <i>s</i> = <i>s</i>* + i<i>y</i> − κ<i>y</i>², κ = ψ″(<i>s</i>*)/(2<i>t</i>), which is the path of steepest descent to second order — for advection and dispersion alone exactly, the integrand then being a Gaussian in <i>y</i> — with the trapezoidal rule, halving the step until two sums agree. The step also stays inside the strip of analyticity set by the nearest singularity <i>s</i><sub>0</sub>. The terms are then of the size of the answer, so the result is accurate relative to itself on the leading edge, where the transform behaves like a delay and fixed contours amplify rounding by many orders of magnitude, and at high Peclet numbers. Against closed forms it gives ten or more significant digits.</p>
+          <p>Three safeguards keep it so for responses with a sharp front and a long slow tail, and at high Peclet numbers. In the tail the saddle comes close to <i>s</i><sub>0</sub>, a branch point; the parabola's vertex then stays 1.5/<i>t</i> to the right of it and its focus on it, so that the path wraps the branch point as Hankel's contour does, at the scale on which e<sup><i>st</i></sup> changes. At the branch point of the fracture's own transform, where 1 + 4<i>t</i><sub>w</sub><i>g</i>/Pe = 0, the transform reaches e<sup>Pe/2</sup>, and it stays large near the real axis beyond it; the parabola is flattened until no member's transform grows along it, and flattened further should its terms, once fallen away, grow again; the step follows the fastest turning phase of any member's transform along the path. The real axis is sampled finely enough that the saddle of a broad response is placed within its own width, also when the singularity lies far out. Under plug flow, where a finite matrix puts a ridge beside every pole of tanh, two halvings in a row must agree. Where the path finds no clear way or its sums do not settle within their budget, the sample comes from de Hoog's method instead, when that agrees with itself at twice its terms.</p>
+          <h4>Talbot’s fixed contour</h4>
+          <p>The page’s alternative: <i>s</i> = <i>r</i>θ(cot θ + i), <i>r</i> = 2<i>M</i>/(5<i>t</i>) with <i>M</i> = 28 nodes (Abate and Valkó 2004), scaled out to the saddle point before a front. Six or seven digits in ordinary cases, fewer above a Peclet number of about 100, where the saddle-point contour is the one to use.</p>
+          <h4>De Hoog, Knight and Stokes</h4>
+          <p>The trapezoidal rule on the Bromwich line Re <i>s</i> = γ, accelerated by the quotient-difference continued fraction, with period 2 × 2<i>t</i> (de Hoog et al. 1982). It shares nothing with the contour methods and serves as the check: with the check ticked, a spread of samples of every response is recomputed by it (or by the saddle-point method when de Hoog is the chosen one) and the Summary gives the largest relative difference over values above 10<sup>−6</sup> of each response’s peak.</p>
+
+          <h3 id="help-convolution">Responses, convolution and the output</h3>
+          <p>Each response is sampled with its first and second derivatives (the transforms <i>sT</i> and <i>s</i>²<i>T</i> cost nothing extra), on a logarithmic grid refined until the quintic Hermite interpolant predicts every new midpoint to 2·10<sup>−8</sup> (with the default inversion; to what the alternatives deliver otherwise). Its range comes from the saddle-point estimate of ln <i>h</i>(<i>t</i>). The integral of the interpolant is the mass balance: it must equal <i>T<sub>ij</sub></i>(0), the fraction that leaves the tube, or the part of it that has left by the response's last time when the output ends before its tail does (the integral of <i>h</i> to that time, by de Hoog's method). The page checks every response against it; one that misses is computed again from earlier times on a finer grid, and if it still misses, the status line and the Summary say so and name it.</p>
+          <p>A release series is piecewise linear between its points and zero before the first and after the last; a time given twice is a step. The convolution of such a series with the interpolated response is done exactly: between the merged breakpoints of the two, the integrand is a polynomial of degree six, integrated by four-point Gauss–Legendre. The daughters’ own releases add to what their parents produce.</p>
+          <p>Unless given, the output runs from where the first response reaches 10<sup>−10</sup> of its peak after its release starts to where the last has fallen below 10<sup>−9</sup> of its peak after its release ends, as far as 10<sup>12</sup> a; when that limit cuts a release short, the Summary says so. The output grid is logarithmic (20 points per decade by default), with the input’s breakpoints and those moved by each response’s peak time, refined until linear interpolation between neighbours is within RELINT of every midpoint. Each peak is refined by a golden-section search. The activity is λ<i>N</i><sub>A</sub> per mole with FARF31’s constants, <i>N</i><sub>A</sub> = 6.022045·10<sup>23</sup> and a year of 365.2422 days.</p>
+          <p>A single nuclide or a short chain takes a fraction of a second. The cost grows with the number of responses (a chain of seven with a release of every member has 28) and with their length, since each is inverted at a few hundred times; such a case takes a few seconds, off the page’s main thread.</p>
+
+          <h3 id="help-inputs">What the inputs mean</h3>
+          <table class="f31-ref">
+            <thead><tr><th>Input</th><th>Unit</th><th>Meaning</th></tr></thead>
+            <tbody>
+              <tr><td><i>t</i><sub>w</sub> (TW)</td><td>a</td><td>Groundwater travel time along the tube. Below 0 the output is empty, as in FARF31 (a tube that does not exist in a realisation).</td></tr>
+              <tr><td>Pe (PECLET)</td><td>–</td><td>Peclet number of the tube, <i>v</i><i>L</i>/<i>D</i><sub>L</sub>; the dispersion term is (<i>t</i><sub>w</sub>/Pe)∂²<i>c</i>/∂ζ². <code>inf</code> for plug flow.</td></tr>
+              <tr><td><i>a</i><sub>w</sub> (ASPEC)</td><td>1/m</td><td>Flow-wetted surface per volume of flowing water: the area where the water meets the rock.</td></tr>
+              <tr><td><i>F</i> = <i>t</i><sub>w</sub><i>a</i><sub>w</sub> (F)</td><td>a/m</td><td>The F-factor, an alternative to <i>a</i><sub>w</sub>; in.par may give F in place of TW or ASPEC, and the page writes ASPEC = <i>F</i>/<i>t</i><sub>w</sub>.</td></tr>
+              <tr><td>ε (EPS)</td><td>–</td><td>Matrix porosity: the capacity for a non-sorbing nuclide, <i>R</i> = ε + <i>K</i><sub>d</sub>ρ.</td></tr>
+              <tr><td><i>D</i><sub>e</sub> (DE, DE_XX)</td><td>m²/a</td><td>Effective diffusivity of the matrix, one value or one per element. Note the unit: per year, not per second.</td></tr>
+              <tr><td><i>x</i><sub>0</sub> (PENDEP)</td><td>m</td><td>Maximum penetration depth into the matrix; half the distance to the next flowing fracture, or the depth of an altered layer.</td></tr>
+              <tr><td>ρ</td><td>kg/m³</td><td>Rock density: 2700 in FARF31 unless its casename31.prm sets RHOP.</td></tr>
+              <tr><td><i>K</i><sub>d</sub> (KDR_XX)</td><td>m³/kg</td><td>Distribution coefficient of the element in the matrix.</td></tr>
+              <tr><td><i>K</i><sub>a</sub> (KA_XX)</td><td>m</td><td>Surface sorption coefficient of the element on the fracture walls; <i>R</i><sub>f</sub> = 1 + <i>K</i><sub>a</sub><i>a</i><sub>w</sub> retards it in the flowing water. An option of the page, 0 unless given (FARF31 has no sorption on the fracture surfaces).</td></tr>
+              <tr><td><i>T</i><sub>½</sub> (in.dat)</td><td>a</td><td>Half-life. A nuclide with its daughter ticked decays into the next one in the list.</td></tr>
+              <tr><td>Release (in.ts)</td><td>mol/a</td><td>What enters the tube, per nuclide with its source ticked.</td></tr>
+            </tbody>
+          </table>
+          <p>XX in KDR_XX, KA_XX and DE_XX is the first two characters of the nuclide name, upper or lower case; for a one-letter element the first digit is part of it (U238 → U2, I129 → I1). Nuclides that share those characters share their <i>K</i><sub>d</sub>, <i>K</i><sub>a</sub> and <i>D</i><sub>e</sub>, and the Input tab keeps them together.</p>
+
+          <h3 id="help-files">Files</h3>
+          <p>Drop files anywhere on the page or use <b>Open…</b>; several at once is fine, and in.dat is read before in.par and in.ts. <code>#</code> starts a comment in all of them.</p>
+          <ul>
+            <li><b>in.dat</b>: <code>PRINT ON|OFF|DEBUG</code>, <code>CASENAME name</code>, <code>DIFFUSIVITY SINGLE|ELEMENT_SPECIFIC</code>, then one line per nuclide, <code>NAME THALF IDAUGH ISOURC</code>: half-life in years, IDAUGH = 1 when the next line is its daughter, ISOURC = 1 when in.ts has a series for it.</li>
+            <li><b>in.par</b>: <code>KEYWORD value</code> in any order: TW, PECLET, ASPEC, EPS, DE (with SINGLE), PENDEP, and per element KDR_XX and (with ELEMENT_SPECIFIC) DE_XX; F, the F-factor <i>t</i><sub>w</sub><i>a</i><sub>w</sub>, may take the place of TW or ASPEC. The page writes the element lines in the order the elements first appear in in.dat. KA_XX, the fracture’s surface sorption coefficient, is the page’s own keyword: an in.par with KA_ lines goes beyond FARF31’s format, so the page writes them only when some <i>K</i><sub>a</sub> is not zero, and reads <i>K</i><sub>a</sub> = 0 where they are absent.</li>
+            <li><b>in.ts</b>: for each source, in in.dat’s order, its name on a line of its own and then <code>time rate</code> lines. A CSV or text table with a header <code>time, name1, name2, …</code> is read as well, and a two-column table goes to the nuclide selected on the Input tab.</li>
+            <li><b>casename31.prm</b>: numerical settings. FARF31 picks its inversion routine from a line holding only BROMEX (its default), TALBOT or STEAMR, reads <code>KEYWORD value</code> lines such as NPMIN, NPMAX (at most 128 output points), RELINT, BQMIN and RHOP (the rock density), and skips lines it does not know. The page reads those — TALBOT as its fixed Talbot contour, BROMEX as de Hoog’s method, STEAMR as its default — and its own METHOD, TSTART and TEND lines, and lists anything else as not used. It writes BROMEX for FARF31, the page’s method on a METHOD line, and NPMIN and NPMAX only within FARF31’s limits.</li>
+            <li><b>out.ts</b> is written in FARF31’s layout: per nuclide, <code>time mol/a Bq/a</code>, each nuclide from where its rate first reaches BQMIN Bq/a. Dropping an out.ts (FARF31’s or the page’s) draws it over the release as markers and lists the differences at its times.</li>
+            <li><b>out.response</b>, FARF31’s PRINT DEBUG output: the unit responses per pair, each followed by its integral.</li>
+            <li>A <b>case</b> (.json) holds everything on the page; CSV holds the release table or the responses.</li>
+          </ul>
+
+          <h3 id="help-differences">How the page differs from the original program</h3>
+          <ul>
+            <li><b>Inversion.</b> FARF31 offers three routines (R-04-51, section 3.2): one based on Talbot’s contour (Talbot 1979, as described in TR 90-01 section 4.3, with constant parameters and a shift from the rightmost singularity), the Bromwich-line routine BROMEX (Gustafson 1991), its default, and Dahlquist’s “steamroller” (Dahlquist 1993). The page uses the saddle-point contour by default, a fixed Talbot contour and de Hoog’s method; see above.</li>
+            <li><b>Convolution.</b> FARF31 convolves the two time series with the trapezoidal rule on the union of their points (TR 90-01, section 4.4). The page integrates the interpolated response against the piecewise-linear release exactly.</li>
+            <li><b>Time grids.</b> FARF31 lays out its grids with the PROPER Time Series Manager (TR 90-01, sections 4.3 and 4.4: first upper bounds from the first two moments of the response and Chebyshev’s inequality, then a controlled interpolation error). The page refines its own grids adaptively (see above), so its times are not FARF31’s; compare at the same times, as dropping an out.ts does.</li>
+            <li><b>Chains.</b> The same model, written as matrix functions rather than as TR 90-01’s recursion; the two are the same solution (see <a href="#help-laplace">the Laplace domain</a>).</li>
+            <li><b>Additions.</b> Sorption on the fracture surfaces (<i>K</i><sub>a</sub>), the F-factor as an input, an infinitely deep matrix, plug flow, releases built from shapes, a second inversion method as a check, and the mass balance of every response.</li>
+          </ul>
+
+          <h3 id="help-check">How it was checked</h3>
+          <p>The model’s tests (resources/tests/farf31) compare it with closed forms — the inverse Gaussian of advection and dispersion without matrix interaction, the classical solution for matrix diffusion into an infinite matrix under plug flow, the Bateman solution for chains whose members move alike, each also with sorption on the fracture surfaces, the transmission <i>T</i>(0) and the mass balance — and with a separate high-precision implementation of TR 90-01’s recursion (mpmath, 40 digits and more; with the fracture term added for a case with <i>K</i><sub>a</sub>) on made-up cases, among them nine tubes with a sharp front and a long slow tail (Pe 30 to 300, a matrix that holds 0.1 to 10 times the water and fills over 250 travel times). The page agrees with the latter to about 10<sup>−10</sup> (10<sup>−8</sup> at worst) over values above 10<sup>−6</sup> of each peak, and every response's integral with <i>T</i>(0). Sharper fronts (Pe 1000 to 10 000), where the fracture's transform reaches e<sup>Pe/2</sup>, are checked against de Hoog's method. It also reproduces the outputs of the original program for made-up test cases.</p>
+
+          <h3 id="help-refs">References</h3>
+          <table class="f31-ref">
+            <tbody>
+              <tr><td>TR 90-01</td><td>Norman S, Kjellbert N, 1990. FARF31 – A far field radionuclide migration code for use with the PROPER package. SKB TR 90-01, Svensk Kärnbränslehantering AB. The model, the Laplace-domain solution for chains and its analytic continuation.</td></tr>
+              <tr><td>R-04-51</td><td>Elert M, Gylling B, Lindgren M, 2004. Assessment model validity document FARF31. SKB R-04-51. The equations in summary (section 3), the numerical methods, verification.</td></tr>
+              <tr><td>TR 82-05</td><td>Rasmuson A, Neretnieks I, 1982. Migration of radionuclides in fissured rock – results obtained from a model based on the concepts of hydrodynamic dispersion and matrix diffusion. SKB TR 82-05.</td></tr>
+              <tr><td>TR 83-48</td><td>Bengtsson A, Magnusson M, Neretnieks I, Rasmuson A, 1983. Model calculations of the migration of radionuclides from a repository for spent nuclear fuel. SKB TR 83-48.</td></tr>
+              <tr><td>TR 83-69</td><td>Neretnieks I, Rasmuson A, 1983. An approach to modelling radionuclide migration in a medium with strongly varying velocity and block sizes along the flow path. SKB TR 83-69. The travel-time coordinate.</td></tr>
+              <tr><td>TR 85-14</td><td>Rasmuson A, Neretnieks I, 1985. Radionuclide migration in strongly fissured zones – the sensitivity to some assumptions and parameters. SKB TR 85-14. The averaged dispersion term.</td></tr>
+              <tr><td>Neretnieks 1980</td><td>Neretnieks I, 1980. Diffusion in the rock matrix: an important factor in radionuclide retardation? Journal of Geophysical Research 85, 4379–4397.</td></tr>
+              <tr><td>Tang et al. 1981</td><td>Tang D H, Frind E O, Sudicky E A, 1981. Contaminant transport in fractured porous media: analytical solution for a single fracture. Water Resources Research 17, 555–564.</td></tr>
+              <tr><td>Sudicky and Frind 1982</td><td>Sudicky E A, Frind E O, 1982. Contaminant transport in fractured porous media: analytical solutions for a system of parallel fractures. Water Resources Research 18, 1634–1642.</td></tr>
+              <tr><td>TR 91-18</td><td>Gustafson S-Å, 1991. Numerical inversion of Laplace transforms using integration and convergence acceleration. SKB TR 91-18. The BROMEX routine of FARF31.</td></tr>
+              <tr><td>Dahlquist 1993</td><td>Dahlquist G, 1993. A multigrid extension of the FFT for the numerical inversion of Fourier and Laplace transforms. BIT 33, 85–112. The “steamroller”.</td></tr>
+              <tr><td>Talbot 1979</td><td>Talbot A, 1979. The accurate numerical inversion of Laplace transforms. Journal of the Institute of Mathematics and its Applications 23, 97–120.</td></tr>
+              <tr><td>de Hoog et al. 1982</td><td>de Hoog F R, Knight J H, Stokes A N, 1982. An improved method for numerical inversion of Laplace transforms. SIAM Journal on Scientific and Statistical Computing 3, 357–366.</td></tr>
+              <tr><td>Abate and Valkó 2004</td><td>Abate J, Valkó P P, 2004. Multi-precision Laplace transform inversion. International Journal for Numerical Methods in Engineering 60, 979–993.</td></tr>
+              <tr><td>Weideman and Trefethen 2007</td><td>Weideman J A C, Trefethen L N, 2007. Parabolic and hyperbolic contours for computing the Bromwich integral. Mathematics of Computation 76, 1341–1356.</td></tr>
+              <tr><td>Higham 2008</td><td>Higham N J, 2008. Functions of Matrices: Theory and Computation. SIAM. Parlett’s recurrence and divided differences for triangular matrices.</td></tr>
+              <tr><td>Bateman 1910</td><td>Bateman H, 1910. The solution of a system of differential equations occurring in the theory of radio-active transformations. Proceedings of the Cambridge Philosophical Society 15, 423–427.</td></tr>
+            </tbody>
+          </table>
+          <div id="f31Build" class="f31-build"></div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <footer></footer>
+
+  <script src="./resources/js/kvot-errors.js?v=20260921"></script>
+  <script src="./resources/js/kvot-safe.js?v=20260911"></script>
+  <script src="./resources/js/kvot-actions.js?v=20260902"></script>
+  <script src="./resources/js/kvot-icons.js?v=20260902"></script>
+  <script src="./resources/js/site.js?v=20260926"></script>
+  <script>
+    KVOT.renderHeader('FARF31');
+    KVOT.renderNav('FARF31.html');
+    KVOT.renderFooter();
+  </script>
+  <!--
+      farf31-model  the calculation: the Laplace-domain solution, inversion, convolution
+      farf31-io     FARF31's files (in.dat, in.par, in.ts, .prm, out.ts, out.response), CSV
+      farf31-data   decay-chain presets and made-up examples
+      farf31-ui     this page (the run goes to farf31-worker.js)
+  -->
+  <script src="./resources/js/farf31-model.js?v=20260926d"></script>
+  <script src="./resources/js/farf31-io.js?v=20260926d"></script>
+  <script src="./resources/js/farf31-data.js?v=20260926d"></script>
+  <script src="./resources/js/farf31-ui.js?v=20260926d"></script>
+</body>
+</html>

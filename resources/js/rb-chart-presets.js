@@ -115,7 +115,7 @@ function applyPresetById(id) {
     const xScale = getScaleValue('x');
     const yScale = getScaleValue('y');
     _suppressPresetSync = true;
-    return Plotly.relayout('plotlyChart', {
+    return Plotly.relayout('plotlyChart', forEveryPanel(document.getElementById('plotlyChart'), {
       'xaxis.autorange': true,
       'yaxis.autorange': true,
       'xaxis.dtick': xScale === 'log' ? 1 : null,
@@ -128,7 +128,7 @@ function applyPresetById(id) {
       'yaxis.minor.ticks': 'outside',
       'yaxis.minor.ticklen': 3,
       'yaxis.minor.showgrid': yScale === 'log'
-    }).then(() => { _suppressPresetSync = false; refreshDynamicLegend(); return snapLogRangeToDecades(document.getElementById('plotlyChart')); });
+    })).then(() => { _suppressPresetSync = false; refreshDynamicLegend(); return snapLogRangeToDecades(document.getElementById('plotlyChart')); });
   }
 
   const rangeOf = (lo, hi) => (lo != null && hi != null ? [lo, hi] : null);
@@ -196,7 +196,7 @@ function _applyAxisSettings(settings) {
   if (!Object.keys(update).length) return Promise.resolve();
 
   _suppressPresetSync = true;
-  return Plotly.relayout('plotlyChart', update).then(() => { _suppressPresetSync = false; refreshDynamicLegend(); return snapLogRangeToDecades(plotDiv); });
+  return Plotly.relayout('plotlyChart', forEveryPanel(plotDiv, update)).then(() => { _suppressPresetSync = false; refreshDynamicLegend(); return snapLogRangeToDecades(plotDiv); });
 }
 
 /** Capture the current chart view state as a preset object (without id/name). */
@@ -697,19 +697,51 @@ function logYRangeOfData(traces) {
 }
 
 /**
- * Whether the y axis still shows the auto range the last snap gave it. The
+ * Whether a y axis still shows the auto range the last snap gave it. The
  * snap has to turn Plotly's autorange off to set its range, but until a zoom,
  * a preset or the axes lock sets another, the axis is still on auto range, and
  * should follow the traces when they change: a CI band, a realisation, a total.
  *
  * @param {HTMLElement} plotDiv
+ * @param {string} [key] - Which y axis: 'yaxis', or a panel's 'yaxis2' and on
  * @returns {boolean}
  */
-function isAutoLogY(plotDiv) {
-  const held = plotDiv && plotDiv.__autoLogY;
-  const ax = plotDiv && plotDiv._fullLayout && plotDiv._fullLayout.yaxis;
+function isAutoLogY(plotDiv, key = 'yaxis') {
+  const held = plotDiv && plotDiv.__autoLogY && plotDiv.__autoLogY[key];
+  const ax = plotDiv && plotDiv._fullLayout && plotDiv._fullLayout[key];
   if (!held || !ax || ax.type !== 'log' || !ax.range || _axesLocked) return false;
   return Math.abs(ax.range[0] - held[0]) < 1e-9 && Math.abs(ax.range[1] - held[1]) < 1e-9;
+}
+
+/**
+ * The y axes that keep a range of their own, 'yaxis' first. A panel's axis
+ * that follows another (`matches`) is left to the one it follows.
+ *
+ * @param {Object} fullLayout
+ * @returns {string[]}
+ */
+function ownYAxes(fullLayout) {
+  return Object.keys(fullLayout)
+    .filter(k => /^yaxis\d*$/.test(k) && !fullLayout[k].matches)
+    .sort((a, b) => Number(a.slice(5) || 1) - Number(b.slice(5) || 1));
+}
+
+/**
+ * The traces drawn against y axis `key`, or against a panel's axis that
+ * follows it.
+ *
+ * @param {HTMLElement} plotDiv
+ * @param {string} key - 'yaxis', 'yaxis2', ...
+ * @returns {Object[]}
+ */
+function tracesOnYAxis(plotDiv, key) {
+  const fl = plotDiv._fullLayout;
+  const id = 'y' + key.slice(5);
+  const ids = new Set([id]);
+  for (const k of Object.keys(fl)) {
+    if (/^yaxis\d*$/.test(k) && fl[k].matches === id) ids.add('y' + k.slice(5));
+  }
+  return (plotDiv.data || []).filter(t => ids.has(t.yaxis || 'y'));
 }
 
 /**
@@ -732,15 +764,17 @@ function snapLogRangeToDecades(plotDiv) {
   var fl = plotDiv._fullLayout;
   if (!fl) return Promise.resolve();
   var update = {};
-  ['xaxis', 'yaxis'].forEach(function(axis) {
+  // Every y axis with a range of its own: one, or a panel's each when the
+  // groups drawn are in different units (renderRadionuclidePanels).
+  ['xaxis'].concat(ownYAxes(fl)).forEach(function(axis) {
     var ax = fl[axis];
     if (!ax || ax.type !== 'log') return;
     var r = ax.range;
     if (!r || r.length < 2) return;
     var target = null;
-    if (axis === 'yaxis' && (ax.autorange || isAutoLogY(plotDiv))) {
-      target = logYRangeOfData(plotDiv.data);
-      if (target) plotDiv.__autoLogY = target;
+    if (axis !== 'xaxis' && (ax.autorange || isAutoLogY(plotDiv, axis))) {
+      target = logYRangeOfData(tracesOnYAxis(plotDiv, axis));
+      if (target) plotDiv.__autoLogY = Object.assign({}, plotDiv.__autoLogY, { [axis]: target });
     }
     if (!target) {
       // Only snap auto-ranged axes; preserve explicit user/preset limits

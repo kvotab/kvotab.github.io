@@ -49,7 +49,14 @@ m = kp.Model.new('Name', 'What it is')
 m.save('out.json')                              # or .json.gz, or .zip -- or .eco, an Ecolego project
 text = m.to_json()
 data = m.to_dict()
+
+m.author = 'A. Modeller'                        # who wrote it: 'author' in the file
+m.created, m.saved                              # when it was made and last saved (UTC), or None
 ```
+
+`save` stamps the model as the application's Save does: `saved` is now, and
+`created` too for a model that has none; `Model.new` dates a model when it is
+made. An `.eco` is an export and is not stamped.
 
 Reading a file brings it into the shape Kompartment works on, as the application
 does when it opens one: older key spellings renamed, the two built-in material
@@ -406,10 +413,14 @@ project, so `kp.Model.from_eco` gives back the model that went out, apart from
 what the report lists; the Guide's *Exporting to Ecolego* says what maps to
 what, what is written in another form (an inflow as a transfer from a source,
 a narrowed transfer with zeros outside its sub-set, an availability folded
-into the rate, a logarithmic output grid as its list of times) and what is
-left out (far-field paths, waste packages, events, summed fluxes, blocks on
-the `Compartments` and `Transfers` lists, the double-triangular
-distributions, correlations and the diagram).
+into the rate, a logarithmic output grid as its list of times, a far-field
+path as a sub-system of its cells and the transfers between them) and what is
+left out (waste packages, events, a far-field path that is switched off,
+summed fluxes, blocks on the `Compartments` and `Transfers` lists, the
+double-triangular distributions, correlations and the diagram). A far-field
+path's layers are laid out by the package's engine, as a run lays them out
+at its start, so exporting one needs numpy. The model's author goes out as
+the project's.
 
 ### Speed
 
@@ -442,7 +453,7 @@ best of three runs:
 | biosphere, NDF | 26 ms | 1.4 ms |
 | landscape, NDF | 57 ms | 3.4 ms |
 | waste-packages, Dormand-Prince | 0.98 s | 20 ms |
-| farfield (1,266 states), NDF | 0.77 s | 0.47 s |
+| farfield (1,581 states), NDF | 0.99 s | 0.71 s |
 | made-up decay chains, 2,000 states | 0.25 s | 0.14 s |
 | made-up decay chains, 16,000 states | 2.0 s | 1.4 s |
 | biosphere, Sobol design of 272 runs, one process | 12.6 s | 1.3 s |
@@ -461,7 +472,13 @@ Some runs stay on the Python path, and `compiled_why` says so:
 - `min_change_time`;
 - the SciPy and Julia-derived solvers;
 - a system of equations standing in for the model's own, as local
-  sensitivity integrates.
+  sensitivity integrates;
+- a far-field path worked out semi-analytically (`method='semi-analytical'`):
+  its release is the recorded history of what flowed into it convolved with
+  the path's unit responses, which the compiled loop does not keep. The Python
+  path runs it as the application does, to rounding (the history is summed
+  with numpy); the example worked that way takes about 5 s, half of it working
+  the responses out, which later runs with the same settings reuse.
 
 Each worker process of a probabilistic run or a split run is compiled like
 any other.

@@ -49,11 +49,14 @@ import {
 import { buildJacobian, buildParamTangent } from './jacobian.js';
 import { userFunctions, FunctionError } from './functions.js';
 import { FarfPath } from './farfield.js';
+import { LaplaceFarfPath } from './farfield-laplace.js';
 import { expandTransports, TransportError } from './transport.js';
 import {
-	FARF_EQUATION_KEYS, FARF_NUCLIDE_KEYS, cellCount, structureProblem,
-	geometryProblem,
+	FARF_NUCLIDE_KEYS, cellCount, structureProblem, geometryProblem,
+	effectiveStructure, activeEquationKeys, surfaceOf, usesCells, FARF_METHODS, isSemiAnalytic,
+	FARF_LABEL, FarfError,
 } from '../domain/farfield.js';
+import { symbolText } from '../domain/symbol.js';
 import { resolveReference, systemOf, allBlocks } from '../domain/systems.js';
 import { parseUnit, scaleLiterals } from '../domain/unitcheck.js';
 
@@ -225,6 +228,12 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 	for (const b of project.farfields ?? []) {
 		const problem = structureProblem(b) ?? geometryProblem(b);
 		if (problem) throw new BuildError(problem, b.qname ?? b.name);
+		// On cells, or semi-analytically -- which has no cells, and holds one
+		// state per nuclide for what the path holds.
+		if (!usesCells(b) && !isSemiAnalytic(b)) {
+			throw new BuildError(`'${b.method}' is not a way this tool can work a path out `
+				+ `(${FARF_METHODS.join(', ')})`, b.qname ?? b.name);
+		}
 		const dims = dimsOf(b);
 		// Which of them the decay chain runs along. Indexed by nothing it
 		// transports one quantity with no decay and no ingrowth, since there
@@ -281,10 +290,11 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 			base: nstate, width: otherWidth * ncells * nnuc, dims, block: b,
 			kind: 'farfield', hidden: true,
 			farf: {
-				structure: {
-					n_f: b.n_f, n_m: b.n_m, o_b: b.o_b, n_b: b.n_b,
-				},
+				// The cells as the grid has them: the semi-infinite outlet is
+				// extra cells past the release point, closed by extrapolation.
+				structure: effectiveStructure(b),
 				nnuc, otherDims, otherWidth, ncells, mIdx, listName, dimOff, singleOff,
+				laplace: isSemiAnalytic(b),
 			},
 		};
 		stateLayout.push(entry);
@@ -681,7 +691,10 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 	const FARF = [];
 	for (const p of farfLayout) {
 		const settingBase = {};
-		for (const key of FARF_EQUATION_KEYS) {
+		// Every setting but the ways of giving the wetted surface the path
+		// does not use: those are kept as text, and never worked out.
+		const keys = activeEquationKeys(p.block);
+		for (const key of keys) {
 			// Chemistry is per nuclide; the path is not. A single-valued
 			// setting gets one slot whatever the block is indexed by, so
 			// `travel_time` cannot quietly differ between two nuclides
@@ -701,11 +714,39 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 		}
 		const rel = addAlgebraic(p.name, 'farfield', p.block, null);
 		// Computed after every setting, whatever the equations mention.
-		rel.needs = FARF_EQUATION_KEYS.map((key) => `${p.name}#${key}`);
+		rel.needs = keys.map((key) => `${p.name}#${key}`);
 		rel.farf = p;
 		rel.farfIndex = FARF.length;
 		p.algRelease = rel;
 		p.farfIndex = FARF.length;
+		if (p.farf.laplace) {
+			// The release reads what flows in at the same instant -- the step
+			// being taken carries it with a weight -- so it is worked out after
+			// every rate that delivers into the path. A rate that reads the
+			// release in turn is a loop with no state in it, refused below.
+			for (const t of project.transfers) {
+				if (t.to && !stateByName.has(t.to) && pathByName.get(t.to) === p) rel.needs.push(t.qname ?? t.name);
+			}
+			for (const src of project.inflows) {
+				if (!stateByName.has(src.to) && pathByName.get(src.to) === p) rel.needs.push(src.qname ?? src.name);
+			}
+			FARF.push(new LaplaceFarfPath({
+				base: p.base,
+				nnuc: p.farf.nnuc,
+				otherWidth: p.farf.otherWidth,
+				dimOff: p.farf.dimOff,
+				singleOff: p.farf.singleOff,
+				settingBase,
+				keys,
+				single: keys.filter((k) => !FARF_NUCLIDE_KEYS.includes(k)),
+				surface: surfaceOf(p.block),
+				releaseBase: rel.base,
+				span: Number(project.simulation.end_time) - Number(project.simulation.start_time),
+				names: p.farf.listName ? space.indexNames(p.farf.listName) : null,
+				blockName: p.name,
+			}));
+			continue;
+		}
 		FARF.push(new FarfPath({
 			structure: p.farf.structure,
 			base: p.base,
@@ -714,9 +755,12 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 			dimOff: p.farf.dimOff,
 			singleOff: p.farf.singleOff,
 			settingBase,
+			keys,
 			// Which settings hold one value: those are read at their own slot
 			// rather than at the nuclide's.
-			single: FARF_EQUATION_KEYS.filter((k) => !FARF_NUCLIDE_KEYS.includes(k)),
+			single: keys.filter((k) => !FARF_NUCLIDE_KEYS.includes(k)),
+			grid: p.block.grid === 'matched' ? 'matched' : 'reference',
+			surface: surfaceOf(p.block),
 			releaseBase: rel.base,
 		}));
 	}
@@ -772,6 +816,10 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 			entry.recorder = rec;
 		}
 	}
+	// A semi-analytical path remembers what flowed into it, and that travels
+	// with the recorders' histories when a run is saved: see
+	// ../sim/farfield-laplace.js. After them, so no recorder's slot moves.
+	for (const F of FARF) if (F.memory) MEM.push(...F.memory);
 
 	const algByName = new Map(algebraic.map((a) => [a.name, a]));
 
@@ -1069,7 +1117,25 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 		a.uniform = a.equations.every((e) => e === a.equations[0]);
 	}
 
-	orderAlgebraic(algebraic, algByName);
+	try {
+		orderAlgebraic(algebraic, algByName);
+	} catch (e) {
+		// A loop through a semi-analytical path's release has no state in it:
+		// the path's inflow at this instant reads the release, which reads the
+		// inflow. A path on cells breaks it with its cells; this one cannot.
+		const loop = e instanceof BuildError && /^Circular reference: (.*)\. /.exec(e.message);
+		const path = loop && farfLayout.find((p) => p.farf.laplace
+			&& loop[1].split(' -> ').includes(p.name));
+		if (path) {
+			throw new BuildError(
+				`'${path.local}' is worked out semi-analytically, and what flows into it reads `
+				+ `its own release at the same instant (${loop[1]}). Its release depends on what `
+				+ `flows in, so the two cannot be worked out one after the other: put a `
+				+ `compartment between them, or work the path out on cells.`, path.name,
+			);
+		}
+		throw e;
+	}
 
 	// --- reference resolution ---------------------------------------------
 	/**
@@ -1566,7 +1632,9 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 			// the settings computed just above. Runtime rather than generated
 			// code because the structure is the same for every nuclide and
 			// every index -- see ./farfield.js.
-			algLines.push(`\tFARF[${a.farfIndex}].release(y, X);`);
+			// The clock too: a semi-analytical release is a convolution up to
+			// it. A path on cells reads its cells and ignores it.
+			algLines.push(`\tFARF[${a.farfIndex}].release(y, X, ctx.t);`);
 			continue;
 		}
 		if (a.kind === 'waste_package:hazard') {
@@ -1839,6 +1907,58 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 					dLines.push(`${indent}out[${budgetAt('between', fT)}] += ${f};`);
 				}
 			}
+		});
+	}
+
+	// What flows into each semi-analytical path, worked out on its own: its
+	// release reads the inflow at the same instant (see
+	// ../sim/farfield-laplace.js), and the Jacobian reads its tangent and its
+	// columns. The same arithmetic and the same index machinery as the flux
+	// lines above, into the path's own vectors.
+	const laplaceLines = new Map();
+	const laplaceOf = (path) => {
+		if (!laplaceLines.has(path)) laplaceLines.set(path, { value: [], tangent: [], columns: [] });
+		return laplaceLines.get(path);
+	};
+	for (const t of project.transfers) {
+		const alg = algByName.get(t.qname ?? t.name);
+		const src = t.from ? stateByName.get(t.from) : null;
+		const tgt = t.to ? stateByName.get(t.to) : null;
+		const path = t.to && !tgt ? pathByName.get(t.to) : null;
+		if (!path?.farf.laplace) continue;
+		const L = laplaceOf(path);
+		const at = (vars) => `(${farfInletExpr(space, alg.dims, vars, path, t.name, mapIndex)}) - ${path.base}`;
+		const donor = (vars) => stateOffsetExpr(space, alg.dims, vars, src, t.name, mapIndex);
+		emitLoop(L.value, space, alg.dims, '\t', (vars, offExpr, indent) => {
+			const rate = `X[${alg.base} + ${offExpr}]`;
+			L.value.push(`${indent}IN[${at(vars)}] += ${t.multiply_by_donor ? `y[${donor(vars)}] * ` : ''}${rate};`);
+		});
+		emitLoop(L.tangent, space, alg.dims, '\t', (vars, offExpr, indent) => {
+			const r = `${alg.base} + ${offExpr}`;
+			L.tangent.push(t.multiply_by_donor
+				? `${indent}DIN[${at(vars)}] += v[${donor(vars)}] * X[${r}] + y[${donor(vars)}] * dX[${r}];`
+				: `${indent}DIN[${at(vars)}] += dX[${r}];`);
+		});
+		emitLoop(L.columns, space, alg.dims, '\t', (vars, offExpr, indent) => {
+			L.columns.push(`${indent}{ const C = COLS[${at(vars)}];`
+				+ `${t.multiply_by_donor ? ` C.add(${donor(vars)});` : ''}`
+				+ ` for (const c of SX[${alg.base} + ${offExpr}]) C.add(c); }`);
+		});
+	}
+	for (const src of project.inflows) {
+		const alg = algByName.get(src.qname ?? src.name);
+		const path = stateByName.get(src.to) ? null : pathByName.get(src.to);
+		if (!path?.farf.laplace) continue;
+		const L = laplaceOf(path);
+		const at = (vars) => `(${farfInletExpr(space, alg.dims, vars, path, src.name, mapIndex)}) - ${path.base}`;
+		emitLoop(L.value, space, alg.dims, '\t', (vars, offExpr, indent) => {
+			L.value.push(`${indent}IN[${at(vars)}] += X[${alg.base} + ${offExpr}];`);
+		});
+		emitLoop(L.tangent, space, alg.dims, '\t', (vars, offExpr, indent) => {
+			L.tangent.push(`${indent}DIN[${at(vars)}] += dX[${alg.base} + ${offExpr}];`);
+		});
+		emitLoop(L.columns, space, alg.dims, '\t', (vars, offExpr, indent) => {
+			L.columns.push(`${indent}for (const c of SX[${alg.base} + ${offExpr}]) COLS[${at(vars)}].add(c);`);
 		});
 	}
 
@@ -2119,6 +2239,14 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 		listName === materialList ? decay : project.decayModelFor(listName),
 		space.size(listName),
 	));
+	// A path's matched layers resolve the thinnest profile any of its
+	// nuclides has, and a nuclide that decays fast has a thin one.
+	for (const p of farfLayout) {
+		// A semi-analytical path solves the chain itself, so it takes the
+		// whole table: the ingrowth coefficients exactly as the cells use them.
+		FARF[p.farfIndex].setDecay(p.decaySlot == null ? null : DEC[p.decaySlot].lam,
+			p.decaySlot == null ? null : DEC[p.decaySlot]);
+	}
 
 	// --- assemble -------------------------------------------------------------
 	const ARGS = ['y', 'out', 'P', 'X', 'DEC', 'MAPS', 'TAB', 'MEM', 'FARF'];
@@ -2309,18 +2437,63 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 		return X;
 	};
 
+	// What flows into each semi-analytical path, compiled: see `laplaceLines`.
+	const laplacePaths = [];
+	for (const p of farfLayout) {
+		if (!p.farf.laplace) continue;
+		const L = laplaceLines.get(p) ?? { value: [], tangent: [], columns: [] };
+		const value = buildFunction(['y', 'X', 'IN', 'MAPS'], L.value.join('\n'), 'farfieldInflow');
+		const tangent = buildFunction(['y', 'v', 'X', 'dX', 'DIN', 'MAPS'], L.tangent.join('\n'), 'farfieldInflowTangent');
+		const columns = buildFunction(['SX', 'COLS', 'MAPS'], L.columns.join('\n'), 'farfieldInflowColumns');
+		const F = FARF[p.farfIndex];
+		F.setInflow({
+			value: (yv, Xv, IN) => value(FUNCTIONS, ctx, yv, Xv, IN, MAPS),
+			tangent: (yv, v, Xv, dXv, DIN) => tangent(FUNCTIONS, ctx, yv, v, Xv, dXv, DIN, MAPS),
+			columns: (SX, COLS) => columns(FUNCTIONS, ctx, SX, COLS, MAPS),
+		});
+		laplacePaths.push(F);
+	}
+
 	// Once, here, so that `X` holds them before any caller can look. Nothing
 	// after this writes them: `P` is fixed for the life of a build, `X` is
 	// allocated once and never cleared, and an event acts on a history rather
 	// than on a parameter.
 	evaluateInvariant();
 
+	// A semi-analytical path is solved from its settings once per run, so they
+	// have to be constants through one -- and whether it can be solved at all
+	// is known now, before anything runs.
+	for (const p of farfLayout) {
+		if (!p.farf.laplace) continue;
+		for (const key of activeEquationKeys(p.block)) {
+			const slot = algByName.get(`${p.name}#${key}`);
+			if (!slot || key === 'pen_dep_0') continue;
+			let cls = 0;
+			for (let off = 0; off < slot.width; off++) cls = Math.max(cls, slotClass[slot.base + off]);
+			if (cls === 0) continue;
+			const said = String(p.block[key] ?? '').trim();
+			throw new BuildError(
+				`'${p.local}' is worked out semi-analytically, which solves the path once `
+				+ `for the whole run, so its settings have to be constants -- and `
+				+ `${symbolText(FARF_LABEL[key] ?? key)} follows the ${cls === 1 ? 'clock' : 'state of the model'}`
+				+ `${said ? ` ('${said}')` : ''}. Give it a constant, or work the path out on cells, `
+				+ `which reads its settings as they change.`, p.name,
+			);
+		}
+		try {
+			FARF[p.farfIndex].prepare(X);
+		} catch (e) {
+			if (e instanceof FarfError) throw new BuildError(`'${p.local}' cannot be worked out semi-analytically: ${e.message}`, p.name);
+			throw e;
+		}
+	}
+
 	// --- what the solver has to tell the recorders -------------------------
 	const remembering = recorders.filter((r) => r.mem >= 0);
 
 	/** Puts every history back to the start of a run. */
 	const primeRecorders = (t0, y0) => {
-		if (!remembering.length) return;
+		if (!remembering.length && !laplacePaths.length) return;
 		// Cleared first, so the pass that works out the seeds reads an empty
 		// history rather than the one left by the previous run.
 		for (const r of MEM) r.prime(t0, 0);
@@ -2333,11 +2506,13 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 				MEM[rec.mem + off].prime(t0, values[seed.base + off]);
 			}
 		}
+		// A semi-analytical path starts its history with the inflow at t0.
+		for (const F of laplacePaths) F.prime(t0, y0, values);
 	};
 
 	/** Records a step the solver has accepted -- the accepted-step callback. */
 	const storeStep = (t, y) => {
-		if (!remembering.length) return;
+		if (!remembering.length && !laplacePaths.length) return;
 		const values = evaluateAlgebraic(t, y);
 		for (const rec of remembering) {
 			// A delay reports its target's past, so that is what it keeps; the
@@ -2348,7 +2523,19 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 				MEM[rec.mem + off].store(t, values[from.base + off]);
 			}
 		}
+		for (const F of laplacePaths) F.store(t, y, values);
 	};
+
+	/**
+	 * A segment starts at `t` from `y`: after a switch time the inflow into a
+	 * semi-analytical path may have stepped, and after a jump what it holds may
+	 * have, which is an amount delivered at once. Only those paths are told;
+	 * the recorders keep the value at the corner they always kept.
+	 */
+	const startSegment = laplacePaths.length ? (t, y) => {
+		const values = evaluateAlgebraic(t, y);
+		for (const F of laplacePaths) F.store(t, y, values);
+	} : null;
 
 	const events = eventSlots.length
 		? {
@@ -2500,14 +2687,26 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 		// the runner gives the solver so that they can.
 		recorders,
 		memory: MEM,
+		// The far-field paths' runtime objects, in the order of
+		// `layout.farfields`: what a semi-analytical path has worked out and
+		// recorded, for the run log and the tests.
+		paths: FARF,
 		primeRecorders,
-		storeStep: remembering.length ? storeStep : null,
+		storeStep: remembering.length || laplacePaths.length ? storeStep : null,
+		startSegment,
 		events,
 		// Running the slots that never move again, which a caller that changes a
 		// parameter has to do. It takes a clock and a state like every other
 		// pass, and ignores both by construction -- which is exactly what
 		// `test/run.js` checks, by handing it several of each.
 		evaluateInvariant,
+		/**
+		 * Starts a run for the far-field paths: their matched layers are laid
+		 * out again at its first instant and held to its end. The runner calls
+		 * this once per run, before anything is evaluated. See
+		 * `FarfPath.restart`.
+		 */
+		restartPaths: () => { for (const F of FARF) F.restart(); },
 		useClockInterpolation,
 		clockSlotCount: clockIdx.length,
 		/** The clock-only slots, worked out for `t` if they are not already. */

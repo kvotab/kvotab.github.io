@@ -18,6 +18,7 @@
 
 import { renameBuiltInLists, splitMaterialRoles } from './indexlists.js';
 import { COLLECTIONS } from './systems.js';
+import { FARF_LEGACY } from './farfield.js';
 
 const PROJECT = {
 	halfLives: 'half_lives',
@@ -172,6 +173,34 @@ export function migrateFarfieldTargets(raw) {
 	};
 }
 
+/**
+ * A far-field path's numerics, as a file written before they were a choice
+ * meant them.
+ *
+ * The outlet and the matrix layers of a path used to be the reference
+ * implementation's, and a file said nothing about the layers at all; a new
+ * path now starts with the semi-infinite outlet and the matched layers. So a
+ * path that does not say is given what it had -- written into the block, so
+ * that the editor, the JSON view and a file saved from them say it out loud
+ * from then on -- and a validated model runs exactly as it did. See
+ * `FARF_LEGACY` in ./farfield.js.
+ */
+export function migrateFarfieldDefaults(raw) {
+	if (!Array.isArray(raw?.farfields)) return raw;
+	let changed = false;
+	const farfields = raw.farfields.map((f) => {
+		if (!isObject(f)) return f;
+		const missing = Object.keys(FARF_LEGACY)
+			.filter((k) => !Object.prototype.hasOwnProperty.call(f, k));
+		if (!missing.length) return f;
+		changed = true;
+		const out = { ...f };
+		for (const k of missing) out[k] = FARF_LEGACY[k];
+		return out;
+	});
+	return changed ? { ...raw, farfields } : raw;
+}
+
 function isObject(v) {
 	return !!v && typeof v === 'object' && !Array.isArray(v);
 }
@@ -214,7 +243,7 @@ export function migrateKeys(raw) {
 	if (Array.isArray(out.index_lists)) {
 		out.index_lists = out.index_lists.map((l) => rename(l, INDEX_LIST));
 	}
-	out = splitMaterialRoles(renameBuiltInLists(migrateFarfieldTargets(out)));
+	out = splitMaterialRoles(renameBuiltInLists(migrateFarfieldDefaults(migrateFarfieldTargets(out))));
 
 	if (isObject(out.simulation)) {
 		out.simulation = rename(out.simulation, SIMULATION);

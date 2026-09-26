@@ -297,6 +297,10 @@ export function integrationFingerprint(project) {
 	for (const kind of REMEMBERING_KINDS) {
 		if ((project[RECORDER_COLLECTION[kind]] ?? []).length) return null;
 	}
+	// A path worked out semi-analytically remembers too: its release is a
+	// convolution over the inflow the run recorded, which a system built fresh
+	// has never seen.
+	if ((project.farfields ?? []).some((f) => f?.method === 'semi-analytical')) return null;
 
 	const inside = integratingBlocks(project);
 	const sim = project.simulation ?? {};

@@ -1,6 +1,6 @@
 {
   "name": "Fractured rock: a far-field path",
-  "description": "A waste vault leaks into a fracture in the host rock; the nuclides travel along it by advection, sorb on the fracture coating and diffuse into the pore water of the rock matrix beside it, and what survives the journey reaches a well. The rock is one FARFCOMP block — a dual-porosity transport model ported from SKB's own farf_comp, with 20 fracture cells and 20 matrix layers per nuclide behind it — and the whole thing is solved as one system with the two compartments.\n\nThe three nuclides are a decay chain, and they decay and grow into one another everywhere: in the vault, in every cell of the fracture, in every layer of the rock, and in the well. Th-230 hardly reaches the well as itself; almost all of what arrives grew in on the way.\n\nTry: the travel time TW and the flow resistance F are what a hydrogeological model supplies, so change them and watch the arrival move. Turn on \"Report every cell\" in the block's Discretisation section to chart the profile down the fracture and into the rock.",
+  "description": "A waste vault leaks into a fracture in the host rock; the nuclides travel along it by advection, sorb on the fracture coating and diffuse into the pore water of the rock matrix beside it, and what survives the journey reaches a well. The rock is one FARFCOMP block — a dual-porosity transport model ported from SKB's own farf_comp, with 20 fracture cells and 20 matrix layers per nuclide behind it, and the rock going on past the point the release is measured, as in FARF31 — and the whole thing is solved as one system with the two compartments.\n\nThe three nuclides are a decay chain, and they decay and grow into one another everywhere: in the vault, in every cell of the fracture, in every layer of the rock, and in the well. Th-230 hardly reaches the well as itself; almost all of what arrives grew in on the way.\n\nTry: the travel time TW and the flow resistance F are what a hydrogeological model supplies, so change them and watch the arrival move. Turn on \"Report every cell\" in the block's Discretisation section to chart the profile down the fracture and into the rock.",
   "simulation": {
     "start_time": 0,
     "end_time": 1000000,
@@ -115,6 +115,7 @@
         "Radionuclides"
       ],
       "tw": "50",
+      "surface": "f",
       "f": "1e5",
       "kd_f": "0",
       "kd_m": "Kd_matrix",
@@ -126,12 +127,13 @@
       "pen_dep_0": "",
       "n_f": 20,
       "n_m": 20,
-      "o_b": 1,
-      "n_b": 0,
+      "o_b": 4,
+      "n_b": "",
+      "grid": "matched",
       "handle_decay": true,
       "report_cells": false,
       "unit": "Bq/year",
-      "comment": "SKB's FARFCOMP. TW is the water travel time along the path and F the flow-related transport resistance; the rest is the rock and the chemistry. The first matrix layer is left empty, so it is worked out — which makes it 44 nanometres, and the path very stiff."
+      "comment": "SKB's FARFCOMP. TW is the water travel time along the path and F the flow-related transport resistance; the rest is the rock and the chemistry. The first matrix layer is left empty, so it is worked out from the path's own time scales — 3.6 mm here, growing by 1.44 to 12.5 m — and the rock goes on past the release point: five cells of it stand for the rock downstream, and what is in them has been released."
     }
   ],
   "transfers": [

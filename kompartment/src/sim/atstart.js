@@ -58,6 +58,13 @@ export function valuesAtStart(project, { system = null } = {}) {
 	// parameters are filled once when the system is built and never written
 	// again, so only the algebraic buffer above needs copying.
 	const rows = { y, X, P: sys.parameterValues };
+	// What the answers are read through, taken out of the system and the
+	// project here: the functions below outlive this call, and a closure that
+	// named either would keep the whole build alive with them -- its compiled
+	// code and its Jacobian, 108 MB on the largest imported assessment -- for
+	// the few values an editor asks about.
+	const layout = sys.layout;
+	const timeUnit = project.simulation.time_unit ?? '';
 
 	// One pass over the layout, keeping only what a name can be looked up by.
 	// The landscape models carry a quarter of a million values across three and
@@ -119,18 +126,18 @@ export function valuesAtStart(project, { system = null } = {}) {
 	 */
 	const unitOfField = (key, block, derived) => {
 		if (key === 'target' || key === 'initial') return derived;
-		if (key === 'delay') return project.simulation.time_unit ?? '';
+		if (key === 'delay') return timeUnit;
 		// A compartment's dy/dt term is a change in its own quantity per unit
 		// of time -- `EquationValidator` gives it `targetUnit/timeUnit`.
 		if (key === 'dydt') {
-			const t = project.simulation.time_unit;
+			const t = timeUnit;
 			return derived ? (t ? `${derived}/${t}` : derived) : '';
 		}
 		return '';
 	};
 
 	const read = (entry, where, kind, aux = null) => describeEntry(
-		sys.layout, entry, kind, SOURCE[where],
+		layout, entry, kind, SOURCE[where],
 	).map((d) => ({
 		index: d.index,
 		// `Peak_dose#target [Cs-137]` is the name of a slot, not of anything

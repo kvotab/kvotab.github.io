@@ -8,7 +8,9 @@ Three of them. `test-model.js` is the mathematics and needs only Node;
     python3 resources/tests/rtm/test-hdf5.py
     python3 resources/tests/rtm/test-ui.py
 
-All three exit 0 when every check passes.
+All three exit 0 when every check passes. `test-ui.py` expects the server on
+8765 and Chrome on 9222; when another session has those, start yours on other
+ports and name them, `RTM_HTTP_PORT=8811 RTM_CDP_PORT=9311 python3 …`.
 
 ## What test-model.js checks, and why those things
 
@@ -300,3 +302,16 @@ That last check was first written expecting the profile to be the shape of the
 source. It is not: √(D·t/R) is 2×10⁻⁴ m against a column of 10⁻⁴ m, so by 100 s
 the species is very nearly mixed and only the mean is pinned down. Writing it
 down wrong is how the check ended up testing something true.
+
+**The (i) beside each setting.** The settings, the two section headings and
+the five tab toolbars each have an (i) that opens a panel on the right
+(`resources/js/kvot-info.js`, the topics in `rtm-ui.js`), in place of the hover
+tooltips they had. The test asks `KvotInfo.audit()` for a slot without a topic
+or a "Read more in Help" whose heading is missing, counts an (i) in every one
+of the 27 slots, and checks that no `title` is left on the panel or a toolbar.
+Then the behaviour: an (i) opens the panel under its own title, between the
+header and the footer; the ×, the same (i) and an Escape key press each close
+it, the last giving the focus back; the (i) on a section heading leaves the
+section open; a topic with choices marks the chosen one and follows the
+setting while it is open; its Help link lands on its heading; and the (i)s of
+the panel line up at its right-hand edge.

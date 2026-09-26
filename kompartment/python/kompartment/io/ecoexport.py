@@ -18,15 +18,17 @@ reader reads it -- the archive's layout, the element and attribute names, the
 block types, the spelling of every enumeration -- so a model exported and read
 back is the model that went out, apart from what the report names. What
 Kompartment has and an Ecolego project has no place for is left out and said
-so (a far-field path, waste packages, events, a flux summed into an end of fewer
-dimensions, a block indexed by the model's own compartments or transfers, the
-distributions Ecolego lacks, ...), never written in a form Ecolego would read as
-something else. Where an exact translation into Ecolego's own constructs exists
-it is written, and the report says which: an inflow is a transfer from a
-source, a flux narrowed onto a sub-set is written over its ends' lists with a
-zero rate outside it, an availability is folded into the rate, a truncation at
-percentiles becomes the values they fall at, a logarithmic output grid its list
-of times.
+so (waste packages, events, a far-field path that is switched off, a flux summed
+into an end of fewer dimensions, a block indexed by the model's own compartments
+or transfers, the distributions Ecolego lacks, ...), never written in a form
+Ecolego would read as something else. Where an exact translation into Ecolego's
+own constructs exists it is written, and the report says which: an inflow is a
+transfer from a source, a flux narrowed onto a sub-set is written over its ends'
+lists with a zero rate outside it, an availability is folded into the rate, a
+truncation at percentiles becomes the values they fall at, a logarithmic output
+grid its list of times, and a far-field path a sub-system of its cells and the
+transfers between them -- its layers laid out by the package's engine
+(:mod:`kompartment.engine.pathlayout`), as a run lays them out at its start.
 
 **The same bytes as the application.** The archive is laid out as the
 application lays it out -- ``.version``, ``model.xml`` and ``views.xml`` at the
@@ -378,9 +380,12 @@ class ExportReport:
         if entry not in self.skipped:
             self.skipped.append(entry)
 
-    def rewrite(self, type_: str, name: str, how: str) -> None:
-        entry = {'type': type_, 'name': name, 'how': how}
-        if entry not in self.rewritten:
+    def rewrite(self, type_: str, name: str, how: str, into: Optional[str] = None) -> None:
+        """``into``, where it is given, is the sub-system the thing was written as."""
+        if not any(s['type'] == type_ and s['name'] == name and s['how'] == how for s in self.rewritten):
+            entry = {'type': type_, 'name': name, 'how': how}
+            if into is not None:
+                entry['into'] = into
             self.rewritten.append(entry)
 
     def rename(self, old: str, new: str) -> None:
@@ -538,6 +543,15 @@ class _Context:
         self.flux_plans: Dict[str, Dict[str, Any]] = {}
         self.boundaries: List[Dict[str, str]] = []
         self.paths: Optional[List[str]] = None
+        #: Far-field paths that go out as cells, what they are written as, and the
+        #: plans of the transfers between their cells (``farPaths`` and the rest).
+        self.far_paths: Dict[str, Dict[str, str]] = {}
+        self.generated: Dict[str, List[Dict[str, Any]]] = {
+            'parameters': [], 'compartments': [], 'expressions': [], 'block_reductions': [], 'transfers': []}
+        self.generated_plans: Dict[str, Dict[str, Any]] = {}
+        self.generated_systems: List[str] = []
+        self.layouts: Optional[Dict[str, Dict[str, Any]]] = None
+        self.used_names: Dict[str, set] = {}
         self.expanded_entries = 0
         self.dropped_entries = 0
         self.list_comments = 0
@@ -712,8 +726,9 @@ class _Context:
 
         for b in _list(raw.get('farfields')):
             if isinstance(b, dict):
-                skip(_qname_of(b), 'a far-field pathway (FARFCOMP) is a transport model of its own, which '
-                                   'Ecolego has no block for')
+                why = self.path_problem(b)
+                if why:
+                    skip(_qname_of(b), why)
         for b in _list(raw.get('waste_packages')):
             if isinstance(b, dict):
                 skip(_qname_of(b), 'waste packages and their barriers have no Ecolego block')
@@ -752,14 +767,46 @@ class _Context:
                 why = self.flux_problem(t, collection, compartment_names)
                 if why:
                     skip(q, why)
+        self.fall(skip)
 
+        # A far-field path's layers are laid out by a run, of the model as it
+        # goes out -- so after everything else that is left out has fallen.
+        if any(isinstance(b, dict) and _qname_of(b) not in self.skipped_blocks for b in _list(raw.get('farfields'))):
+            from ..engine.pathlayout import path_layouts
+            self.layouts = path_layouts(self.going_out())
+            fell = False
+            for b in _list(raw.get('farfields')):
+                if not isinstance(b, dict):
+                    continue
+                q = _qname_of(b)
+                if q in self.skipped_blocks:
+                    continue
+                layout = self.layouts.get(q)
+                why = ('it takes no part in a run -- its sub-system is switched off -- so it has no layers to lay out'
+                       if layout is None else f"its matrix layers cannot be laid out: {layout['error']}"
+                       if 'error' in layout else None)
+                if why:
+                    skip(q, why)
+                    fell = True
+            if fell:
+                self.fall(skip)
+
+        for q, why in self.skipped_blocks.items():
+            found = self.blocks.get(q)
+            report.skip(KIND_WORD.get(found['collection']) if found else 'block', q, why)
+        # The paths first: the transfers into and out of one are written to what it became.
+        self.plan_paths()
+        self.plan_fluxes()
+
+    def fall(self, skip: Any) -> None:
+        """Everything that reads what is left out, until nothing more falls."""
         while True:
             fell = False
-            for q, found in self.blocks.items():
+            for q, found in list(self.blocks.items()):
                 if q in self.skipped_blocks:
                     continue
                 collection, block = found['collection'], found['block']
-                if collection in ('farfields', 'waste_packages', 'events'):
+                if collection in ('waste_packages', 'events'):
                     continue
                 lost = self.reads_skipped(block, collection)
                 if lost:
@@ -775,10 +822,348 @@ class _Context:
             if not fell:
                 break
 
-        for q, why in self.skipped_blocks.items():
-            found = self.blocks.get(q)
-            report.skip(KIND_WORD.get(found['collection']) if found else 'block', q, why)
-        self.plan_fluxes()
+    def going_out(self) -> Dict[str, Any]:
+        """The model as it goes out: what is left out taken away, and the endpoints that named it."""
+        out = dict(self.raw)
+        for collection in ALL_COLLECTIONS:
+            if isinstance(out.get(collection), list):
+                out[collection] = [b for b in out[collection]
+                                   if not (isinstance(b, dict) and _qname_of(b) in self.skipped_blocks)]
+        sim = out.get('simulation')
+        if isinstance(sim, dict) and isinstance(sim.get('endpoints'), list):
+            out['simulation'] = {**sim, 'endpoints': [n for n in sim['endpoints'] if _str(n) not in self.skipped_blocks]}
+        return out
+
+    # --- far-field paths -------------------------------------------------------------------
+
+    def path_problem(self, b: Dict[str, Any]) -> Optional[str]:
+        """Why a far-field path cannot go out as cells, as far as the path itself says (``pathProblem``)."""
+        from ..engine.farfield import FARF_METHODS, is_semi_analytic, structure_problem, uses_cells
+        from ..engine.pathlayout import cell_equivalent
+        dims = _list(b.get('index_lists'))
+        auto = self.auto_dim_of(dims)
+        if auto is not None:
+            return (f"it is indexed by '{_str(auto)}', a list made of the model's own blocks, which Ecolego has "
+                    'no equivalent for')
+        if not uses_cells(b) and not is_semi_analytic(b):
+            return f"'{_str(b.get('method', _UNDEF))}' is not a way this tool works a path out ({', '.join(FARF_METHODS)})"
+        bad = structure_problem(cell_equivalent(b))
+        if bad:
+            return f'its cells cannot be laid out: {bad}'
+        if b.get('enabled') is False:
+            return ('it is switched off, and a path that takes no part in a run has no layers to lay out; switch it '
+                    'on to have it written')
+        return None
+
+    def names_in(self, system: str) -> set:
+        """Names taken in a sub-system: its blocks, its own sub-systems, and what has been added to it."""
+        if system not in self.used_names:
+            names = set()
+            for q in self.blocks:
+                if parent_of(q) == system:
+                    names.add(base_name(q))
+            for path in self.system_paths_list():
+                if parent_of(path) == system:
+                    names.add(base_name(path))
+            self.used_names[system] = names
+        return self.used_names[system]
+
+    def claim_name(self, system: str, base: str, avoid: Optional[set] = None) -> str:
+        """A name not yet taken in ``system``, as close to ``base`` as can be, and taken now."""
+        names = self.names_in(system)
+
+        def free(n: str) -> bool:
+            return n not in names and not (avoid is not None and n in avoid) and n not in RESERVED
+
+        name = base
+        k = 2
+        while not free(name):
+            name = f'{base}_{k}'
+            k += 1
+        names.add(name)
+        return name
+
+    def respell(self, text: Any, source: str, target: str) -> str:
+        """An equation written in ``source``, spelled so that it means the same from ``target``."""
+        src = _str(_or(text, ''))
+        try:
+            toks = tokenize(src)
+        except EquationSyntaxError:
+            return src
+        out = ''
+        at = 0
+        for k, t in enumerate(toks):
+            if t.type != 'ident':
+                continue
+            if k + 1 < len(toks) and toks[k + 1].type == 'lparen' and t.text in RESERVED:
+                continue
+            q = resolve_reference(t.text, source, self.known)
+            if q is None:
+                continue
+            spelled = self.reference_from(q, target)
+            if spelled == t.text:
+                continue
+            out += src[at:t.pos] + spelled
+            at = t.pos + len(t.text)
+        return out + src[at:]
+
+    def generate(self, collection: str, block: Dict[str, Any]) -> str:
+        """Adds a block that stands for part of a path, where every reference can find it."""
+        self.generated[collection].append(block)
+        q = _qname_of(block)
+        if q not in self.blocks:
+            self.blocks[q] = {'collection': collection, 'block': block, 'generated': True}
+        return q
+
+    def plan_paths(self) -> None:
+        for b in _list(self.raw.get('farfields')):
+            if not isinstance(b, dict) or _qname_of(b) in self.skipped_blocks:
+                continue
+            self.plan_path(b)
+        self.paths = None
+
+    def plan_path(self, b: Dict[str, Any]) -> None:
+        """One path, as what it is on the grid (``planPath``)."""
+        from ..engine.farfield import FARF_DEFAULTS, FARF_NUCLIDE_KEYS, FARF_SURFACE_DEFAULTS, effective_structure, \
+            is_semi_analytic, surface_of
+        from ..engine.pathlayout import cell_equivalent
+        q = _qname_of(b)
+        system = _str(_or(b.get('system', _UNDEF), ''))
+        layout = self.layouts[q]
+        cells = cell_equivalent(b)
+        g = effective_structure(cells)
+        nf, nm = g['n_f'], g['n_m']
+        NF = nf + g['n_b']
+        dims = list(_list(b.get('index_lists')))
+        other_dims = list(layout['other_dims'])
+        nuclide = next((d for d in dims if d not in other_dims), None)
+        matched = layout['grid'] == 'matched'
+        sim = self.raw.get('simulation') if isinstance(self.raw.get('simulation'), dict) else {}
+        time = sim.get('time_unit') if sim.get('time_unit') in ('second', 'minute', 'hour', 'day', 'year') else 'year'
+        per_time = f'1/{time}'
+
+        name = _str(b.get('name', _UNDEF))
+        sub = f"{system}.{self.claim_name(system, f'{name}_cells')}" if system else self.claim_name('', f'{name}_cells')
+        self.generated_systems.append(sub)
+        self.paths = None
+        self.used_names[sub] = set()
+        settings = _written_settings(b)
+        avoid: set = set()
+
+        def read(text: Any) -> None:
+            try:
+                toks = tokenize(_str(_or(text, '')))
+            except EquationSyntaxError:
+                return
+            for t in toks:
+                if t.type == 'ident':
+                    avoid.add(t.text)
+
+        for key in settings:
+            read(b.get(key, _UNDEF))
+            for e in _list(b.get('entries')):
+                if isinstance(e, dict) and key in e:
+                    read(e[key])
+
+        def local(base: str) -> str:
+            return self.claim_name(sub, base, avoid)
+
+        def at(n: str) -> str:
+            return f'{sub}.{n}'
+
+        surface = surface_of(b)
+        N: Dict[str, str] = {}
+        for key in settings:
+            N[key] = local(_SETTING_NAME[key])
+            given = b.get(key, _UNDEF)
+            default = given if not _nullish(given) else FARF_SURFACE_DEFAULTS.get(key, FARF_DEFAULTS.get(key, '0'))
+            entries = []
+            for e in _list(b.get('entries')):
+                if not isinstance(e, dict) or key not in e:
+                    continue
+                index = _entry_index(e.get('index', _UNDEF), dims, self.nuclide_list_name)
+                if index is None:
+                    continue
+                entries.append({'index': index, 'equation': self.respell(e[key], system, sub)})
+            block = {'name': N[key], 'system': sub,
+                     'index_lists': list(dims) if key in FARF_NUCLIDE_KEYS else list(other_dims),
+                     'equation': self.respell(default, system, sub)}
+            if entries:
+                block['entries'] = entries
+            block['comment'] = f"{_SETTING_COMMENT[key].replace('[time]', time)}. {q}'s own setting."
+            self.generate('expressions', block)
+
+        def expr(n: str, equation: str, over: Sequence[Any], **extra: Any) -> str:
+            return self.generate('expressions', {'name': n, 'system': sub, 'index_lists': list(over),
+                                                 'equation': equation, **extra})
+
+        aw = N['aw'] if surface == 'aw' else local('a_w')
+        if surface != 'aw':
+            expr(aw, f"2 / {N['aperture']}" if surface == 'aperture' else f"{N['f']} / {N['tw']}", other_dims,
+                 unit='m2/m3', comment='The flow-wetted surface per unit volume of flowing water.')
+        fdf = local('f_df')
+        expr(fdf, f"1 / (1 + {N['kd_f']} * {aw})", dims,
+             comment='The fraction dissolved in the fracture water rather than sorbed on its coating.')
+        rm = local('R_m')
+        expr(rm, f"{N['eps_m']} + {N['rho_m']} * {N['kd_m']}", dims,
+             comment='The matrix’s capacity for the nuclide: its porosity, and what sorbs.')
+        adv = local('adv')
+        expr(adv, f"{fdf} * {nf} / {N['tw']}", dims, unit=per_time,
+             comment=f'Advection from one fracture cell to the next: {nf} cells along the travel time.')
+        disp = local('disp')
+        expr(disp, f"max(0, {adv} * ({nf} / {N['pe']} - 0.5))", dims, unit=per_time,
+             comment=(f'Dispersion between neighbouring fracture cells. {nf} cells already disperse as a Peclet '
+                      f'number of {2 * nf} would, so this is what is added to that, and never less than nothing.'))
+
+        def geometry(prefix: str, pick: Any, what: str) -> List[str]:
+            names = []
+            for j in range(nm):
+                n = local(f'{prefix}_{j + 1}')
+                value = pick(layout['combos'][0])[j]
+                entries = [{'index': dict(c['index']), 'value': pick(c)[j]}
+                           for c in layout['combos'][1:] if pick(c)[j] != value]
+                block = {'name': n, 'system': sub, 'index_lists': list(other_dims), 'value': value, 'unit': 'm'}
+                if entries:
+                    block['entries'] = entries
+                if j == 0:
+                    block['comment'] = what
+                self.generate('parameters', block)
+                names.append(n)
+            return names
+
+        d = geometry('d', lambda c: c['d'], 'The matrix layers’ thicknesses, from the fracture wall inwards, as a '
+                     'run here lays them out at its start' + (', matched to diffusion into the rock' if matched else '')
+                     + '.')
+        h = geometry('h', lambda c: c['h'], 'The node spacings the matched layers exchange over: the wall to the '
+                     'first layer’s node, then node to node.') if matched else []
+        symbol_names = [adv, disp, local('k_fm'), local('k_mf')]
+        symbol_names += [local(f'k_{j + 1}_{j + 2}') for j in range(nm - 1)]
+        symbol_names += [local(f'k_{j + 2}_{j + 1}') for j in range(nm - 1)]
+        kfm, kmf = symbol_names[2], symbol_names[3]
+        de = N['de_m']
+
+        def layer_note(j: int) -> Dict[str, str]:
+            return ({'comment': 'Diffusion through the rock: from one matrix layer into the next one in, and, below, '
+                                'back out.'} if j == 0 else {})
+
+        if matched:
+            expr(kfm, f'{fdf} * {aw} * {de} / {h[0]}', dims, unit=per_time,
+                 comment='From a fracture cell into its first matrix layer.')
+            expr(kmf, f'{de} / ({rm} * {d[0]} * {h[0]})', dims, unit=per_time,
+                 comment='From the first matrix layer back into its fracture cell.')
+            for j in range(nm - 1):
+                expr(symbol_names[4 + j], f'{de} / ({rm} * {d[j]} * {h[j + 1]})', dims, unit=per_time, **layer_note(j))
+            for j in range(nm - 1):
+                expr(symbol_names[4 + nm - 1 + j], f'{de} / ({rm} * {d[j + 1]} * {h[j + 1]})', dims, unit=per_time)
+        else:
+            expr(kfm, f'{fdf} * 2 * {aw} * {de} / {d[0]}', dims, unit=per_time,
+                 comment='From a fracture cell into its first matrix layer.')
+            expr(kmf, f'2 * {de} / ({rm} * {d[0]} * {d[0]})', dims, unit=per_time,
+                 comment='From the first matrix layer back into its fracture cell.')
+            for j in range(nm - 1):
+                expr(symbol_names[4 + j], f'2 * {de} / ({rm} * {d[j]} * ({d[j]} + {d[j + 1]}))', dims, unit=per_time,
+                     **layer_note(j))
+            for j in range(nm - 1):
+                expr(symbol_names[4 + nm - 1 + j], f'2 * {de} / ({rm} * {d[j + 1]} * ({d[j + 1]} + {d[j]}))', dims,
+                     unit=per_time)
+
+        # The cells, in the path's own order: each fracture cell, then its layers.
+        decays = b.get('handle_decay') is not False and nuclide is not None
+        inventory = _inventory_unit(b.get('unit', _UNDEF), time) or (
+            ('mol' if self.raw.get('decay_unit') == 'mol' else 'Bq') if nuclide is not None else '')
+        cell_name: List[str] = [''] * (NF * (nm + 1))
+        for k in range(NF):
+            past = bool(g['downstream']) and k == nf
+            cell_name[k * (nm + 1)] = local(f'F{k + 1}')
+            block = {'name': cell_name[k * (nm + 1)], 'system': sub, 'index_lists': list(dims),
+                     'initial': '0', 'non_negative': False, 'handle_decay': decays}
+            if inventory:
+                block['unit'] = inventory
+            if k == 0:
+                block['comment'] = f'The first fracture cell of {q}: what flows into the path arrives here.'
+            elif past:
+                block['comment'] = (f"The first of the {g['n_b']} cells past the release point, which stand for the "
+                                    'rock downstream: what they hold has been released already.')
+            self.generate('compartments', block)
+            for j in range(1, nm + 1):
+                cell_name[k * (nm + 1) + j] = local(f'M{k + 1}_{j}')
+                block = {'name': cell_name[k * (nm + 1) + j], 'system': sub, 'index_lists': list(dims),
+                         'initial': '0', 'non_negative': False, 'handle_decay': decays}
+                if inventory:
+                    block['unit'] = inventory
+                self.generate('compartments', block)
+
+        # The rates between them, and out of the far end.
+        net = _path_network(cells)
+        outflow = local('Outflow')
+        outflow_id = at(outflow)
+        self.boundaries.append({'name': outflow, 'id': outflow_id, 'system': sub, 'type': 'sink'})
+        count = 0
+        for tr in net['transfers']:
+            source = cell_name[tr['from']]
+            target = outflow if tr['to'] is None else cell_name[tr['to']]
+            tname = local(f'{source}_to_{target}')
+            tq = self.generate('transfers', {
+                'name': tname, 'system': sub, 'from': at(source), 'to': None if tr['to'] is None else at(target),
+                'index_lists': list(dims), 'rate': _terms_text(tr['terms'], symbol_names), 'multiply_by_donor': True,
+                'unit': per_time})
+            plan = {'collection': 'transfers', 'from': at(source), 'to': None if tr['to'] is None else at(target),
+                    'dims': list(dims), 'file_dims': list(dims), 'intersection': False, 'narrowed': None,
+                    'availability': None}
+            if tr['to'] is None:
+                plan['sink'] = outflow_id
+            self.generated_plans[tq] = plan
+            count += 1
+
+        # The release, which is what the rest of the model reads the path as.
+        release = local('release')
+        unit = js_trim(_str(_or(b.get('unit', _UNDEF), '')))
+        rel = net['release']
+        extra: Dict[str, Any] = {'unit': unit} if unit else {}
+        extra['comment'] = (f"The flux across the release point, between {cell_name[rel[0]['cell']]} and "
+                            f"{cell_name[rel[1]['cell']]}." if g['n_b'] > 0
+                            else 'The flux out of the far end of the path, as its outflow condition reads it.')
+        expr(release, ''.join(_weighted(r['terms'], symbol_names, cell_name[r['cell']], i == 0)
+                              for i, r in enumerate(rel)), dims, **extra)
+        # What the path holds -- the other half of a mass balance with its release.
+        held = local('held')
+        block = {'name': held, 'system': sub, 'index_lists': list(dims), 'operation': 'sum',
+                 'targets': cell_name[:(nf if g['downstream'] else NF) * (nm + 1)]}
+        if inventory:
+            block['unit'] = inventory
+        block['comment'] = (f"What {q} holds: every cell{' up to the release point' if g['downstream'] and g['n_b'] else ''}"
+                            ', fracture and rock.')
+        self.generate('block_reductions', block)
+        block = {'name': name, 'system': system, 'index_lists': list(dims),
+                 'equation': self.reference_from(at(release), system)}
+        if unit:
+            block['unit'] = unit
+        comment = js_trim(_str(_or(b.get('comment', _UNDEF), '')))
+        if comment:
+            block['comment'] = comment
+        self.generate('expressions', block)
+
+        inlet = at(cell_name[0])
+        self.far_paths[q] = {'q': q, 'sub': sub, 'inlet': inlet}
+        ncells = NF * (nm + 1)
+        past = f" and {g['n_b']} past the release point" if g['n_b'] else ''
+        per = f', per {nuclide}' if nuclide is not None else ''
+        spacings = f', and the node spacings {h[0]} … {h[nm - 1]}' if matched else ''
+        downstream = (f". The {g['n_b']} cells past the release point stand for the rock downstream: what they hold "
+                      'has been released already, so a total over the sub-system counts it twice'
+                      if g['downstream'] and g['n_b'] else '')
+        self.report.rewrite(KIND_WORD['farfields'], q, (
+            f'written as the sub-system {sub}: {ncells} compartments -- {nf} fracture cells{past}, each with {nm} '
+            f'matrix layers behind it -- and the {count} transfers between them{per}. Its settings and the rates '
+            f'worked out from them are expressions there; its release is the expression {q}, and what it holds the '
+            f'aggregate {at(held)}. The layers are written as the thicknesses a run here lays out at its start '
+            f'({d[0]} … {d[nm - 1]}{spacings}, in m), which Ecolego keeps whatever the settings do during a run or '
+            f'from one realisation to the next{downstream}'), sub)
+        if is_semi_analytic(b):
+            self.report.warn(f"'{q}' is worked out semi-analytically here, from its transfer function, which Ecolego "
+                             f'has nothing like. It is written as the same path on cells -- {nf} × {nm}, with the rock '
+                             'going on past the release point -- which agrees with the exact answer only as closely '
+                             'as those cells do.')
 
     def resolve_end(self, ref: Any, conn: Any) -> Any:
         if _nullish(ref):
@@ -801,7 +1186,8 @@ class _Context:
         return False
 
     def equations_of(self, block: Dict[str, Any], collection: str) -> List[str]:
-        keys = EQUATION_KEYS.get(collection, ())
+        # A path's are the settings that go into the file as equations.
+        keys = _written_settings(block) if collection == 'farfields' else EQUATION_KEYS.get(collection, ())
         out: List[str] = []
 
         def take(holder: Any) -> None:
@@ -853,6 +1239,14 @@ class _Context:
             return None
         return _list(found['block'].get('index_lists'))
 
+    def is_path_end(self, ref: Any, conn: Any) -> bool:
+        """Whether a connection's end is a far-field path."""
+        if _nullish(ref):
+            return False
+        q = self.resolve_end(ref, conn)
+        found = self.blocks.get(q) if isinstance(q, str) else None
+        return bool(found) and found['collection'] == 'farfields'
+
     def flux_problem(self, t: Dict[str, Any], collection: str, compartments: set) -> Optional[str]:
         ends = ([None, t.get('to', _UNDEF)] if collection == 'inflows'
                 else [_or(t.get('from', _UNDEF), None), _or(t.get('to', _UNDEF), None)])
@@ -864,10 +1258,17 @@ class _Context:
                 continue
             found = self.blocks.get(q) if isinstance(q, str) else None
             if found and found['collection'] == 'farfields':
+                # Written as its cells, and so an end like any other.
+                if q not in self.skipped_blocks:
+                    continue
                 return f"its {what} is the far-field pathway '{_str(q)}', which is left out"
             if found and found['collection'] == 'waste_packages':
                 return f"its {what} is the waste package '{_str(q)}', which is left out"
             return f"its {what} '{_str(ref)}' is not a compartment of this model"
+        # What a transfer out of a path carries is its release, which takes
+        # nothing from the path: a flux from outside.
+        if self.is_path_end(ends[0], t):
+            ends = [None, ends[1]]
         if _nullish(ends[0]) and _nullish(ends[1]):
             return 'it has neither a donor nor a receiver'
         dims = _list(t.get('index_lists'))
@@ -910,22 +1311,9 @@ class _Context:
 
     def plan_fluxes(self) -> None:
         raw, report = self.raw, self.report
-        used_names: Dict[str, set] = {}
-
-        def taken(system: str) -> set:
-            if system not in used_names:
-                names = set()
-                for q in self.blocks:
-                    if parent_of(q) == system:
-                        names.add(base_name(q))
-                for path in self.system_paths_list():
-                    if parent_of(path) == system:
-                        names.add(base_name(path))
-                used_names[system] = names
-            return used_names[system]
 
         def boundary(name: Any, system: str, type_: str) -> str:
-            names = taken(system)
+            names = self.names_in(system)
             local = f'{_str(name)}_{type_}'
             n = 2
             while local in names:
@@ -948,6 +1336,21 @@ class _Context:
                 to_ref = _or(t.get('to', _UNDEF), None)
                 source = None if from_ref is None else self.resolve_end(from_ref, t)
                 target = None if to_ref is None else self.resolve_end(to_ref, t)
+                # A far-field path at either end: what flows into one arrives in
+                # its first fracture cell; what a transfer out of one carries is
+                # its release, which takes nothing from the path.
+                into = self.far_paths.get(target) if isinstance(target, str) else None
+                out_of = self.far_paths.get(source) if isinstance(source, str) else None
+                if into:
+                    report.rewrite(KIND_WORD[collection], q, f"it delivers into the far-field pathway '{_str(target)}', "
+                                   f"so it is written into that path's first fracture cell, {into['inlet']}")
+                    target = into['inlet']
+                if out_of:
+                    report.rewrite(KIND_WORD[collection], q, f"it carries the release of the far-field pathway "
+                                   f"'{_str(source)}', which takes nothing from the path: written as a transfer from "
+                                   'a source, at the same rate')
+                    from_ref = None
+                    source = None
                 dims = list(_list(t.get('index_lists')))
                 from_dims = self.end_dims(from_ref, t)
                 to_dims = self.end_dims(to_ref, t)
@@ -1055,6 +1458,9 @@ class _Context:
                 if _qname_of(b) in self.skipped_blocks:
                     continue
                 add(_get(b, 'system'))
+        # The sub-systems the far-field paths are written as.
+        for path in self.generated_systems:
+            add(path)
         self.paths = out
         return out
 
@@ -1083,6 +1489,11 @@ class _Context:
                 if not self.goes_out(b) or _truthy(b.get('system')):
                     continue
                 claim(_str(b.get('name', _UNDEF)), KIND_WORD[collection])
+            # A far-field path's release goes out as an expression of its name.
+            for b in self.generated.get(collection, []):
+                if _truthy(b.get('system')):
+                    continue
+                claim(_str(b.get('name', _UNDEF)), KIND_WORD[collection])
         if clashes:
             self.report.warn(f"{', '.join(clashes)}: an index list and something at the top of the model share a "
                              'name. This tool’s importer reads the two by one set of names, so reading the file back '
@@ -1097,11 +1508,14 @@ class _Context:
 
     def has_states(self) -> bool:
         return (any(self.goes_out(c) for c in _list(self.raw.get('compartments')))
-                or any(self.goes_out(c) for c in _list(self.raw.get('running_means'))))
+                or any(self.goes_out(c) for c in _list(self.raw.get('running_means')))
+                or bool(self.generated['compartments']))
 
     def counts(self) -> Dict[str, int]:
+        # What went out: the model's own blocks, and what its far-field paths were written as.
         def n(collection: str) -> int:
-            return sum(1 for b in _list(self.raw.get(collection)) if self.goes_out(b))
+            return (sum(1 for b in _list(self.raw.get(collection)) if self.goes_out(b))
+                    + len(self.generated.get(collection, [])))
         return {
             'index_lists': len(self.export_lists),
             'compartments': n('compartments'),
@@ -1120,6 +1534,152 @@ class _Context:
             'systems': len(self.system_paths_list()),
             'nuclides': len(self.nuclide_names),
         }
+
+
+# --- a far-field path on the grid --------------------------------------------------------
+
+#: What each setting of a path is called in the file (``SETTING_NAME``).
+_SETTING_NAME = {
+    'tw': 'TW', 'f': 'F', 'aw': 'a_w', 'aperture': 'delta', 'kd_f': 'Kd_f', 'kd_m': 'Kd_m', 'de_m': 'De_m',
+    'eps_m': 'eps_m', 'rho_m': 'rho_m', 'pe': 'Pe',
+}
+
+#: What each is, for its comment in the file (``SETTING_COMMENT``).
+_SETTING_COMMENT = {
+    'tw': 'The water travel time along the path, in [time]',
+    'f': 'The flow-related transport resistance, in [time]·m²/m³',
+    'aw': 'The flow-wetted surface per unit volume of flowing water, in m²/m³',
+    'aperture': 'The fracture aperture, in m: two walls, so the wetted surface is 2/δ per m³ of water',
+    'kd_f': 'Sorption on the fracture coating, in m³/m² (0 for none)',
+    'kd_m': 'The partition coefficient in the rock matrix, in m³/kg',
+    'de_m': 'The effective diffusivity in the rock matrix, in m²/[time]',
+    'eps_m': 'The porosity of the rock matrix',
+    'rho_m': 'The dry bulk density of the rock matrix, in kg/m³',
+    'pe': 'The Peclet number; dispersion is the travel time over it',
+}
+
+
+def _written_settings(b: Dict[str, Any]) -> List[str]:
+    """The settings of a path that go into the file as equations (``writtenSettings``)."""
+    from ..engine.farfield import active_equation_keys
+    return [k for k in active_equation_keys(b) if k not in ('pen_dep', 'pen_dep_0')]
+
+
+def _path_network(block: Dict[str, Any]) -> Dict[str, Any]:
+    """The transport matrix of a path, as transfers (``pathNetwork``): read off
+    the path's own ``cell_values`` and ``release_weights``, one rate at a time."""
+    import numpy as np
+    from ..engine.farfield import cell_structure, cell_values, effective_structure, release_cells, release_weights
+    g = effective_structure(block)
+    nm = g['n_m']
+    st = cell_structure(g)
+    rows, cols, nnz = [int(v) for v in st['rows']], [int(v) for v in st['cols']], st['nnz']
+    nsym = 4 + 2 * (nm - 1)
+
+    def unit(k: int) -> Dict[str, Any]:
+        c = {'advF': 0.0, 'dF': 0.0, 'diffFM1': 0.0, 'diffM1F': 0.0,
+             'diffMMF': np.zeros(nm - 1), 'diffMMB': np.zeros(nm - 1)}
+        if k == 0:
+            c['advF'] = 1.0
+        elif k == 1:
+            c['dF'] = 1.0
+        elif k == 2:
+            c['diffFM1'] = 1.0
+        elif k == 3:
+            c['diffM1F'] = 1.0
+        elif k < 4 + nm - 1:
+            c['diffMMF'][k - 4] = 1.0
+        else:
+            c['diffMMB'][k - 4 - (nm - 1)] = 1.0
+        return c
+
+    ncells = (g['n_f'] + g['n_b']) * (nm + 1)
+    entries: Dict[Tuple[int, int], Dict[str, Any]] = {}
+    diag = [[0.0] * nsym for _ in range(ncells)]
+    out = np.zeros(nnz)
+    rel = release_cells(g)
+    w = np.zeros(len(rel))
+    release = [{'cell': cell, 'share': [0.0] * nsym} for cell in rel]
+    for k in range(nsym):
+        c = unit(k)
+        cell_values(g, c, out)
+        for e in range(nnz):
+            v = float(out[e])
+            if v == 0:
+                continue
+            if rows[e] == cols[e]:
+                diag[cols[e]][k] += v
+                continue
+            key = (cols[e], rows[e])
+            if key not in entries:
+                entries[key] = {'from': cols[e], 'to': rows[e], 'share': [0.0] * nsym}
+            entries[key]['share'][k] += v
+        w[:] = 0.0
+        release_weights(g, c, w)
+        for i in range(len(rel)):
+            release[i]['share'][k] += float(w[i])
+
+    def terms(share: Sequence[float]) -> List[Tuple[int, float]]:
+        return [(k, v) for k, v in enumerate(share) if v != 0]
+
+    transfers: List[Dict[str, Any]] = []
+    seen: set = set()
+    for e in range(nnz):
+        if rows[e] == cols[e]:
+            continue
+        key = (cols[e], rows[e])
+        if key in seen:
+            continue
+        seen.add(key)
+        x = entries.get(key)
+        if x and any(v != 0 for v in x['share']):
+            transfers.append({'from': x['from'], 'to': x['to'], 'terms': terms(x['share'])})
+    handed = [[0.0] * nsym for _ in range(ncells)]
+    for x in entries.values():
+        for k in range(nsym):
+            handed[x['from']][k] += x['share'][k]
+    for cell in range(ncells):
+        lost = [-diag[cell][k] - handed[cell][k] for k in range(nsym)]
+        if any(v != 0 for v in lost):
+            transfers.append({'from': cell, 'to': None, 'terms': terms(lost)})
+    return {'transfers': transfers, 'release': [{'cell': r['cell'], 'terms': terms(r['share'])} for r in release]}
+
+
+def _coef(a: float) -> str:
+    """A whole number as a template literal writes it: ``3``, not ``3.0``."""
+    return js_number(a)
+
+
+def _terms_text(terms: Sequence[Tuple[int, float]], names: Sequence[str]) -> str:
+    """A sum of rates as an equation (``termsText``)."""
+    out = ''
+    for i, (k, v) in enumerate(terms):
+        a = abs(v)
+        body = names[k] if a == 1 else f'{_coef(a)} * {names[k]}'
+        if i == 0:
+            out += f'-{body}' if v < 0 else body
+        else:
+            out += f' - {body}' if v < 0 else f' + {body}'
+    return out
+
+
+def _weighted(terms: Sequence[Tuple[int, float]], names: Sequence[str], cell: str, first: bool) -> str:
+    """One cell's share of the release, as a term of a sum (``weighted``)."""
+    if len(terms) == 1:
+        k, v = terms[0]
+        a = abs(v)
+        body = f"{'' if a == 1 else f'{_coef(a)} * '}{names[k]} * {cell}"
+        if first:
+            return f'-{body}' if v < 0 else body
+        return f' - {body}' if v < 0 else f' + {body}'
+    return f"{'' if first else ' + '}({_terms_text(terms, names)}) * {cell}"
+
+
+def _inventory_unit(unit: Any, time: str) -> str:
+    """What a path's cells hold, from the unit of what it releases (``inventoryUnit``)."""
+    u = js_trim(_str(_or(unit, '')))
+    suffix = f'/{time}'
+    return js_trim(u[:-len(suffix)]) if u.endswith(suffix) else ''
 
 
 def _hashable(v: Any) -> Any:
@@ -1394,6 +1954,11 @@ def _write_project_properties(w: _XmlWriter, raw: Dict[str, Any], ctx: _Context,
     stamp = _epoch_ms(modified)
     if stamp is not None:
         w.text('modification-date', str(stamp))
+    # Who wrote it, as Ecolego keeps an author: a property beside the comment,
+    # and before it, as the files it writes have them.
+    author = _trim(_or(raw.get('author', _UNDEF), ''))
+    if author:
+        w.cdata('property', author, [('name', 'author'), ('type', 'string')])
     description = _trim(_or(raw.get('description', _UNDEF), ''))
     if description:
         w.cdata('property', description, [('name', 'comment'), ('type', 'string')])
@@ -1537,6 +2102,10 @@ def _write_blocks(w: _XmlWriter, ctx: _Context) -> None:
             if not isinstance(block, dict) or _qname_of(block) in ctx.skipped_blocks:
                 continue
             _write_component(w, ctx, block, collection)
+        # After the model's own: a path's cells follow the compartments, as its
+        # states follow theirs in a run.
+        for block in ctx.generated.get(collection, []):
+            _write_component(w, ctx, block, collection)
     for b in ctx.boundaries:
         w.open('component', [('name', b['name']), ('type', b['type']), ('dimension', '0'), ('index-lists', '')])
         w.text('id', b['id'])
@@ -1552,6 +2121,8 @@ def _write_blocks(w: _XmlWriter, ctx: _Context) -> None:
             plan = ctx.flux_plans.get(_qname_of(t))
             if plan:
                 _write_connection(w, ctx, t, plan)
+    for t in ctx.generated['transfers']:
+        _write_connection(w, ctx, t, ctx.generated_plans[_qname_of(t)])
     w.close('block-model')
     if ctx.expanded_entries:
         ctx.report.rewrite('values per index', f'{ctx.expanded_entries} block(s)', 'an entry that names only '

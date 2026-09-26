@@ -111,7 +111,10 @@ function product(choices) {
 export function canonicalModel(project, { exclude = [], imported = false } = {}) {
 	const raw = openedModel(project);
 	const P = new Project(structuredClone(raw));
-	const skip = new Set(exclude);
+	// A name left out takes whatever is inside it with it: a far-field path
+	// written as a sub-system of its cells is excluded by that sub-system.
+	const excluded = new Set(exclude);
+	const skip = { has: (q) => excluded.has(q) || [...excluded].some((x) => String(q).startsWith(`${x}.`)) };
 	const known = new Set();
 	for (const collection of [...Object.keys(SINGULAR), 'farfields', 'waste_packages', 'events']) {
 		for (const b of raw[collection] ?? []) known.add(b.system ? `${b.system}.${b.name}` : b.name);
@@ -230,6 +233,7 @@ export function canonicalModel(project, { exclude = [], imported = false } = {})
 	const byName = (a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
 	return {
 		name: String(raw.name ?? '').trim() || 'model',
+		author: String(raw.author ?? '').trim(),
 		description: imported ? withoutProvenance(raw.description) : String(raw.description ?? '').trim(),
 		lists: lists.slice().sort(byName).map((l) => ({
 			name: l.name,
@@ -242,7 +246,7 @@ export function canonicalModel(project, { exclude = [], imported = false } = {})
 		half_lives: catalogueNames.map((n) => [n, Number.isFinite(P.halfLives[n]) ? round(P.halfLives[n]) : null]),
 		chains: pairs.filter(([a, b]) => nuclides.has(a) && nuclides.has(b)).map(([a, b, r]) => [a, b, round(r)]),
 		scenario: P.scenario ?? null,
-		systems: systemPaths(raw).slice().sort(),
+		systems: systemPaths(raw).filter((p) => !skip.has(p)).sort(),
 		transports: (raw.transports ?? []).map(String).sort(),
 		disabled_systems: (raw.disabled_systems ?? []).map(String).sort(),
 		simulation: {
@@ -272,6 +276,7 @@ const logt = (min, max, mode, extra = {}) => ({
  */
 export const EVERY_KIND = {
 	name: 'Every kind of block',
+	author: 'A. Modeller',
 	description: 'A made-up model with one of everything an .eco file can hold.\nSecond line of the description.',
 	nuclides: ['Cs-137', 'Sr-90', 'Y-90'],
 	decay_unit: 'Bq',
@@ -498,15 +503,20 @@ export const NO_EQUIVALENT = {
 		{ name: 'Sediment', index_lists: ['Radionuclides'], initial: '0' },
 	],
 	expressions: [
-		{ name: 'Reads_path', index_lists: ['Radionuclides'], equation: 'Path * 2' },
+		{ name: 'Reads_path', index_lists: ['Radionuclides'], equation: 'Idle * 2' },
 		{ name: 'Reads_that', index_lists: ['Radionuclides'], equation: 'Reads_path + 1' },
 		{ name: 'Ends', index_lists: [], equation: 'per_transfer[_source_]' },
 		{ name: 'Calls_nothing', index_lists: [], equation: 'Zero() + 1' },
 	],
 	functions: [{ name: 'Zero', parameters: [], equation: '0' }],
 	lookups: [{ name: 'Spread', points: [[0, 1, { kind: 'unif', params: { min: 0.5, max: 1.5 }, values: null, trmin: null, trmax: null, inorder: true, pos: 0 }], [10, 2]] }],
-	farfields: [{ name: 'Path', index_lists: ['Radionuclides'], tw: '50', f: '1e5', kd_f: '0', kd_m: '0.01', de_m: '1e-6',
-		eps_m: '0.002', rho_m: '2700', pe: '10', pen_dep: '12.5', n_f: 10, n_m: 10, o_b: 1, n_b: 0 }],
+	farfields: [
+		// This one goes out, as its cells; the one switched off cannot be laid out, and does not.
+		{ name: 'Path', index_lists: ['Radionuclides'], tw: '50', f: '1e5', kd_f: '0', kd_m: '0.01', de_m: '1e-6',
+			eps_m: '0.002', rho_m: '2700', pe: '10', pen_dep: '12.5', n_f: 10, n_m: 10, o_b: 1, n_b: 0 },
+		{ name: 'Idle', enabled: false, index_lists: ['Radionuclides'], tw: '50', f: '1e5', kd_f: '0', kd_m: '0.01',
+			de_m: '1e-6', eps_m: '0.002', rho_m: '2700', pe: '10', pen_dep: '12.5', n_f: 10, n_m: 10, o_b: 1, n_b: 0 },
+	],
 	waste_packages: [{ name: 'Canisters', index_lists: ['Radionuclides'], packages: 10, inventory: '1e12', irf: '0.01',
 		degradation_rate: '1e-6', failure: 'never' }],
 	events: [{ name: 'Quake', timing: 'at', at: '500', sampled: false, actions: [{ kind: 'move', from: 'Vault', to: null, fraction: '0.5' }] }],
@@ -555,5 +565,59 @@ export const PER_INDEX_DIRECTION = {
 		entries: [{ index: { Radionuclides: 'Sr-90' }, direction: 'both' }] }],
 };
 
+/**
+ * Far-field paths, which go out as their cells: one in a sub-system, a path
+ * per object reading that sub-system's blocks and the model's, with a value
+ * per nuclide and layers matched to each object's travel time; and one at the
+ * top, given by its aperture, on the reference layers from a first layer of
+ * its own, with the closed outlet. Both feed from a compartment and deliver
+ * to one, and the second is read by an expression as well.
+ */
+export const FARFIELD_PATHS = {
+	name: 'Far-field paths',
+	nuclides: ['Pu-239', 'U-235'],
+	index_lists: [
+		{ name: 'Contaminants', for_contaminants: true, indices: [{ name: 'Pu-239', enabled: true }, { name: 'U-235', enabled: true }] },
+		{ name: 'Radionuclides', for_nuclides: true, sub_set_of: 'Contaminants', indices: [{ name: 'Pu-239', enabled: true }, { name: 'U-235', enabled: true }] },
+		{ name: 'Object', indices: [{ name: 'Lake', enabled: true }, { name: 'Mire', enabled: true }] },
+	],
+	systems: ['Geo'],
+	simulation: { start_time: 0, end_time: 100000, output_points: 40, spacing: 'log', solver: 'ndf', rtol: 1e-9, abstol: 1e-6, time_unit: 'year' },
+	parameters: [
+		{ name: 'TW_path', system: 'Geo', index_lists: ['Object'], value: 40, unit: 'year', entries: [{ index: { Object: 'Mire' }, value: 80 }] },
+		{ name: 'Kd', index_lists: ['Radionuclides'], value: 0.01, unit: 'm3/kg', entries: [{ index: { Radionuclides: 'U-235' }, value: 0.002 }] },
+		{ name: 'De', value: 3e-5, unit: 'm2/year' },
+	],
+	compartments: [
+		{ name: 'Source', index_lists: ['Radionuclides', 'Object'], initial: '1e9', unit: 'Bq' },
+		{ name: 'Well', system: 'Geo', index_lists: ['Radionuclides', 'Object'], initial: '0', unit: 'Bq' },
+		{ name: 'Store', index_lists: ['Radionuclides'], initial: '1e8', unit: 'Bq' },
+		{ name: 'Lake', index_lists: ['Radionuclides'], initial: '0', unit: 'Bq' },
+	],
+	expressions: [
+		{ name: 'F_scaled', system: 'Geo', index_lists: ['Object'], equation: '1e5 * TW_path / 40' },
+		{ name: 'Seen', index_lists: ['Radionuclides'], equation: 'Aperture_path * 1e-3' },
+	],
+	farfields: [
+		{ name: 'Rock', system: 'Geo', index_lists: ['Radionuclides', 'Object'], tw: 'TW_path', surface: 'f', f: 'F_scaled',
+			kd_f: '0', kd_m: 'Kd', de_m: 'De', eps_m: '0.005', rho_m: '2700', pe: '10', pen_dep: '5', pen_dep_0: '',
+			n_f: 8, n_m: 6, o_b: 4, n_b: '', grid: 'matched', handle_decay: true, unit: 'Bq/year',
+			comment: 'One path per object, and the rock goes on past the release point.',
+			entries: [{ index: { Radionuclides: 'U-235' }, eps_m: '0.004' }] },
+		{ name: 'Aperture_path', index_lists: ['Radionuclides'], tw: '20', surface: 'aperture', aperture: '0.002',
+			kd_f: '0.001', kd_m: 'Kd', de_m: 'De * 2', eps_m: '0.003', rho_m: '2650', pe: '20', pen_dep: '2', pen_dep_0: '0.001',
+			n_f: 6, n_m: 4, o_b: 1, n_b: 0, grid: 'reference', handle_decay: true, unit: 'Bq/year' },
+	],
+	transfers: [
+		{ name: 'Into_rock', from: 'Source', to: 'Geo.Rock', index_lists: ['Radionuclides', 'Object'], rate: '1e-4', unit: '1/year' },
+		{ name: 'Out_of_rock', system: 'Geo', from: 'Geo.Rock', to: 'Geo.Well', index_lists: ['Radionuclides', 'Object'],
+			rate: 'Rock', multiply_by_donor: false, unit: 'Bq/year' },
+		{ name: 'Into_aperture', from: 'Store', to: 'Aperture_path', index_lists: ['Radionuclides'], rate: '1e-3', unit: '1/year' },
+		{ name: 'Out_of_aperture', from: 'Aperture_path', to: 'Lake', index_lists: ['Radionuclides'], rate: 'Aperture_path',
+			multiply_by_donor: false, unit: 'Bq/year' },
+		{ name: 'Lake_out', from: 'Lake', to: null, index_lists: ['Radionuclides'], rate: '0.1', unit: '1/year' },
+	],
+};
+
 /** The made-up models, by name, for the tests and for the Python package's. */
-export const EXPORT_MODELS = { EVERY_KIND, TRANSPORT, SWITCHES, SCENARIO_ONLY, NO_EQUIVALENT, PER_INDEX_DIRECTION };
+export const EXPORT_MODELS = { EVERY_KIND, TRANSPORT, SWITCHES, SCENARIO_ONLY, NO_EQUIVALENT, PER_INDEX_DIRECTION, FARFIELD_PATHS };

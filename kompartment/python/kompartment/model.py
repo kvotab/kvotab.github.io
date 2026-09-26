@@ -46,11 +46,11 @@ from typing import Any, Callable, Dict, Iterable, Iterator, List, Mapping, Optio
 from . import decay as _decay
 from .blocks import (
     AGGREGATE_OPERATIONS, DIRECTIONS, EVENT_DEFAULTS, EVENT_EQUATION_KEYS, EXTREMES, FARF_DEFAULTS,
-    FARF_EQUATION_KEYS, FARF_NUCLIDE_KEYS, INTERPOLATIONS, KINDS, OPERATIONS, SINGULAR,
+    FARF_EQUATION_KEYS, FARF_NUCLIDE_KEYS, FARF_OPTIONAL_KEYS, INTERPOLATIONS, KINDS, OPERATIONS, SINGULAR,
     TRANSPORT_ARGUMENTS, TRANSPORT_OPERATIONS, WASTE_DEFAULTS, WASTE_EQUATION_KEYS, WASTE_NUCLIDE_KEYS,
     Block, BlockReduction, Compartment, Delay, Event, Expression, Farfield, Function, IndexReduction,
     Inflow, Lookup, MinMax, Parameter, RunningMean, Snapshot, Transfer, Trigger, WastePackage,
-    equation_text,
+    equation_text, farfield_cells,
 )
 from .blocks import view as _view_of
 from .equations import references_in, rewrite_references, rewrite_written_indices
@@ -127,13 +127,46 @@ DEFAULT_VIEW: Dict[str, Any] = {
 
 
 def _blank(name: str) -> Dict[str, Any]:
-    """A new model, as the application's *New* makes one."""
+    """A new model, as the application's *New* makes one: dated now."""
     return {
         'name': name,
         'description': '',
+        'created': _stamp(),
         'simulation': dict(SIM_DEFAULTS, end_time=1000),
         'parameters': [], 'compartments': [], 'transfers': [], 'expressions': [], 'inflows': [],
     }
+
+
+#: The top of a model file, in the order it is written (``HEADER_KEYS`` in
+#: ``src/domain/edit.js``); the rest follows in whatever order it already had.
+HEADER_KEYS = ('name', 'description', 'author', 'created', 'saved')
+
+
+def _stamp(when: Optional[_dt.datetime] = None) -> str:
+    """A time as the application writes one: ``toISOString``, UTC to the millisecond."""
+    at = (when or _dt.datetime.now(_dt.timezone.utc)).astimezone(_dt.timezone.utc)
+    return at.isoformat(timespec='milliseconds').replace('+00:00', 'Z')
+
+
+def _read_stamp(value: Any) -> Optional[_dt.datetime]:
+    """A stamp read back as a time (UTC), or None for one that is not a date and time."""
+    if not isinstance(value, str) or not re.match(r'^\d{4}-\d{2}-\d{2}T', value):
+        return None
+    try:
+        at = _dt.datetime.fromisoformat(value.replace('Z', '+00:00'))
+    except ValueError:
+        return None
+    return at if at.tzinfo else at.replace(tzinfo=_dt.timezone.utc)
+
+
+def _header_first(raw: Dict[str, Any]) -> None:
+    """Puts the header first, in place, as ``headerFirst`` does in the application."""
+    keys = list(raw)
+    want = [k for k in HEADER_KEYS if k in raw] + [k for k in keys if k not in HEADER_KEYS]
+    if want != keys:
+        items = [(k, raw[k]) for k in want]
+        raw.clear()
+        raw.update(items)
 
 
 def _js_string(v: Any) -> str:
@@ -577,12 +610,21 @@ class Model:
     def save(self, path: PathLike, indent: int = 2) -> Path:
         """Writes the model: ``.json``, ``.json.gz`` or ``.zip`` by the ending --
         or ``.eco``, an Ecolego 6 project, as :meth:`to_eco` makes it; what that
-        left out is then in ``model.export_report``."""
+        left out is then in ``model.export_report``.
+
+        A model file is stamped as the application's *Save* stamps one:
+        ``saved`` is now, and ``created`` too if the model has none (see
+        :attr:`created`). An ``.eco`` is an export, and is not."""
         if str(path).lower().endswith('.eco'):
             p = Path(path)
             p.write_bytes(self.to_eco().bytes)
             return p
         self.settle()
+        at = _stamp()
+        if _read_stamp(self._raw.get('created')) is None:
+            self._raw['created'] = at
+        self._raw['saved'] = at
+        _header_first(self._raw)
         return write_model_file(path, self._raw, indent)
 
     def to_eco(self, *, modified: Any = None) -> Any:
@@ -1113,6 +1155,33 @@ class Model:
     @description.setter
     def description(self, value: str) -> None:
         self._raw['description'] = str(value or '')
+
+    @property
+    def author(self) -> str:
+        """Who wrote the model, or ``''``. An Ecolego project's author comes in
+        as this, and goes out as it."""
+        return str(self._raw.get('author') or '').strip()
+
+    @author.setter
+    def author(self, value: str) -> None:
+        text = str(value or '').strip()
+        if text:
+            self._raw['author'] = text
+        else:
+            self._raw.pop('author', None)
+        _header_first(self._raw)
+
+    @property
+    def created(self) -> Optional[_dt.datetime]:
+        """When the model was made (UTC), or None: :meth:`new` dates it, and a
+        model made before the field existed is dated by its first save."""
+        return _read_stamp(self._raw.get('created'))
+
+    @property
+    def saved(self) -> Optional[_dt.datetime]:
+        """When the model was last saved (UTC), by this package or by the
+        application, or None."""
+        return _read_stamp(self._raw.get('saved'))
 
     @property
     def simulation(self) -> Simulation:
@@ -2698,23 +2767,23 @@ class Model:
     def add_farfield(self, name: Optional[str] = None, *, index_lists: Optional[Sequence[str]] = None,
                      system: str = '', comment: Optional[str] = None, position: Optional[XY] = None,
                      **settings: Any) -> Farfield:
-        """Adds a far-field path (FARFCOMP), indexed by the radionuclides, with
-        the reference implementation's defaults for every setting not given
-        (``tw``, ``f``, ``kd_f``, ``kd_m``, ``de_m``, ``eps_m``, ``rho_m``,
-        ``pe``, ``pen_dep``, ``pen_dep_0``, ``n_f``, ``n_m``, ``o_b``, ``n_b``,
-        ``handle_decay``, ``report_cells`` -- see :class:`Farfield`)."""
+        """Adds a far-field path (FARFCOMP), indexed by the radionuclides when the
+        model has them and by nothing otherwise (one quantity that does not
+        decay; ``index_lists`` may name any list, a chemical species list say),
+        with the defaults of a new path for every setting not given (``tw``,
+        ``surface``, ``f``, ``aw``, ``aperture``, ``kd_f``, ``kd_m``, ``de_m``,
+        ``eps_m``, ``rho_m``, ``pe``, ``pen_dep``, ``pen_dep_0``, ``n_f``,
+        ``n_m``, ``o_b``, ``n_b``, ``grid``, ``handle_decay``, ``report_cells``
+        -- see :class:`Farfield`)."""
         material = self.material_dimension()
-        if index_lists is None and not material:
-            raise EditError('A far-field path needs the model to have radionuclides: it holds one path per '
-                            'nuclide and lets them grow into one another.')
-        unknown = [k for k in settings if k not in FARF_DEFAULTS]
+        unknown = [k for k in settings if k not in FARF_DEFAULTS and k not in FARF_OPTIONAL_KEYS]
         if unknown:
             raise EditError(f"A far-field path has no setting {', '.join(map(repr, unknown))}")
         n = self._name_for('farfield', name, system)
         raw: Dict[str, Any] = {'name': n, **copy.deepcopy(FARF_DEFAULTS),
                                'unit': f"{self.decay_unit}/{self._time_unit()}",
                                'index_lists': self._check_dims('farfield', list(index_lists))
-                               if index_lists is not None else [material]}
+                               if index_lists is not None else ([material] if material else [])}
         if comment:
             raw['comment'] = comment
         draft = Farfield(self, raw)
@@ -3770,8 +3839,7 @@ class Model:
             for b in self._raw.get(collection) or []:
                 n += self.combination_count(self._effective_dims(b))
         for f in self._raw.get('farfields') or []:
-            cells = (int(f.get('n_f', 20)) + int(f.get('n_b', 0) or 0)) * (int(f.get('n_m', 20)) + 1)
-            n += cells * self.combination_count(self._effective_dims(f))
+            n += farfield_cells(f) * self.combination_count(self._effective_dims(f))
         for w in self._raw.get('waste_packages') or []:
             n += 2 * self.combination_count(self._effective_dims(w))
         n += len(self._raw.get('events') or [])

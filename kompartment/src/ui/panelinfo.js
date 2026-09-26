@@ -25,8 +25,8 @@ export function panelTopic(key, ctx = {}) {
 		case 'model': return {
 			kicker: KICKER,
 			title: 'Model',
-			lead: 'What the model is called and what it is: the two things the window’s header shows, '
-				+ 'and the file is saved under.',
+			lead: 'What the model is called, what it is and who wrote it: the name and description are what '
+				+ 'the window’s header shows, and the file is saved under the name.',
 			sections: [{
 				heading: 'What is here',
 				list: [
@@ -34,6 +34,9 @@ export function panelTopic(key, ctx = {}) {
 					+ 'Changing it changes no number, so nothing is run again.',
 					'**Description** — what the model is and where it came from, in plain text. The '
 					+ 'Information view shows it when nothing is selected, and a results file carries it.',
+					'**Author** — who wrote the model, saved in the file as `author`. The line under it says when '
+					+ 'the model was made and last saved: Save writes both into the file (`created`, `saved`), and '
+					+ 'neither counts as an edit.',
 					'**Track review** — record which definitions have been reviewed and approved, and '
 					+ 'notice when an approval lapses because the block, or something it is worked out from, '
 					+ 'has changed since. The tally under it lists the blocks a review has not signed off.',
@@ -142,10 +145,10 @@ export function panelTopic(key, ctx = {}) {
 			}, {
 				heading: 'Its title bar',
 				list: [
-					'**⧉**, beside the name, takes the view out into a window of its own, which can be '
-					+ 'moved by its title bar and sized by its corner. The tree has the whole panel while '
-					+ 'it is out; closing the window puts the view back. The window is remembered in this '
-					+ 'browser.',
+					'The box with an arrow leaving it, beside the name, takes the view out into a window '
+					+ 'of its own, which can be moved by its title bar and sized by its corner. The tree has '
+					+ 'the whole panel while it is out. The same box with the arrow coming back, where a '
+					+ 'window has its ×, puts the view back. The window is remembered in this browser.',
 					'**Edit…** opens the block’s settings — as double-clicking it does, on the diagram, '
 					+ 'in the tree, or on its name here.',
 					'**Open** shows a sub-system on the diagram, and **Up** the one around it.',

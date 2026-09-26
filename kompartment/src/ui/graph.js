@@ -1568,6 +1568,8 @@ export class GraphEditor {
 		// and what a reader needs from the diagram is that this box is a
 		// hundred cells of rock rather than one compartment.
 		if (n.kind === 'farfield') {
+			// ...or, worked out exactly, no cells at all.
+			if (n.block.method === 'semi-analytical') return 'semi-analytical';
 			return truncate(`${n.block.n_f ?? 20} x ${n.block.n_m ?? 20} cells`, 22);
 		}
 		// Waste packages say how they fail, which is the one thing about them
@@ -4221,13 +4223,15 @@ export class GraphEditor {
 						onPick: () => this._addTransportHere(at),
 					},
 					{
+						// A path needs no radionuclides: indexed by nothing it
+						// carries one quantity that does not decay, and its
+						// dimension box can make it a path per species.
 						label: 'Far-field pathway',
-						title: hasNuclides
-							? 'FARFCOMP: transport along a fracture in rock, with diffusion '
-								+ 'into the rock matrix. A source term goes into it and the '
-								+ 'release comes out the other side.'
-							: 'Needs the model to have radionuclides',
-						disabled: !hasNuclides,
+						title: 'FARFCOMP: transport along a fracture in rock, with diffusion '
+							+ 'into the rock matrix. A source term goes into it and the '
+							+ 'release comes out the other side.'
+							+ (hasNuclides ? '' : ' With no radionuclides in the model it carries '
+								+ 'one quantity that does not decay, until it is indexed by a list.'),
 						onPick: () => this._addNodeAt('farfield', at),
 					},
 					{

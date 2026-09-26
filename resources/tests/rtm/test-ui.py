@@ -6,7 +6,8 @@ compiles through the worker, that a run reaches the charts, that the two chart
 tabs draw what they claim to, and that a model which does not compile says so
 instead of failing silently.
 
-Start the server and the browser as in ../rb/README.md, then
+Start the server and the browser as in ../rb/README.md (on ports 8765 and
+9222, or on others named by RTM_HTTP_PORT and RTM_CDP_PORT), then
 
     python3 resources/tests/rtm/test-ui.py
 
@@ -15,11 +16,19 @@ Exit status is 0 when every check passes.
 import asyncio
 import json
 import math
+import os
 import re
 import sys
 import urllib.request
 
 import websockets
+
+HTTP = int(os.environ.get('RTM_HTTP_PORT', '8765'))
+CDP = int(os.environ.get('RTM_CDP_PORT', '9222'))
+
+# The (i) slots written into rtm.html: two section headings, twenty settings
+# of the Solver section and five tab toolbars.
+STATIC_SLOTS = 27
 
 PAINTED = """(() => {
   const c = document.getElementById('rtmJacCanvas');
@@ -35,7 +44,7 @@ PAINTED = """(() => {
   return 1 - bg / (c.width * c.height);
 })()"""
 
-URL = 'http://127.0.0.1:8765/rtm.html'
+URL = f'http://127.0.0.1:{HTTP}/rtm.html'
 
 failures = []
 checks = 0
@@ -119,7 +128,7 @@ async def set_text(page, text):
 
 
 async def main():
-    ver = json.load(urllib.request.urlopen('http://127.0.0.1:9222/json/version'))
+    ver = json.load(urllib.request.urlopen(f'http://127.0.0.1:{CDP}/json/version'))
     async with websockets.connect(ver['webSocketDebuggerUrl'], max_size=200 * 1024 * 1024) as bws:
         page = Page(bws)
         asyncio.create_task(page.pump())
@@ -149,6 +158,76 @@ async def main():
                 "document.querySelectorAll('#rtmSeries .rtm-item').length"), 36)
             check('and there is a cell to choose', await page.ev(
                 "document.getElementById('rtmCell').options.length"), 20)
+
+            # --- the (i) beside each setting, section and tab toolbar ----------
+            # kvot-info.js fills the slots of rtm.html from the topics in
+            # rtm-ui.js. They replace the hover tooltips the settings had, so
+            # none may be left on the panel or a toolbar.
+            audit = await page.ev("KvotInfo.audit()")
+            audit = audit if isinstance(audit, dict) else {'noTopic': audit, 'brokenMore': audit, 'buttons': 0, 'slots': -1}
+            check('every (i) slot has a topic', audit['noTopic'], [])
+            check('and every "Read more in Help" has its heading', audit['brokenMore'], [])
+            check(f'an (i) in every slot, at least the {STATIC_SLOTS} of the markup ({audit["buttons"]})',
+                  audit['buttons'] >= STATIC_SLOTS and audit['buttons'] == audit['slots'], True)
+            check('no hover tooltip is left on a setting or a toolbar', await page.ev(
+                "document.querySelectorAll('.rtm-side [title], .rtm-toolbar [title]').length"), 0)
+            await page.ev("document.querySelector('[data-info=\"set:rtol\"]').click()")
+            check('clicking an (i) opens the panel with its title', await page.ev(
+                "document.querySelector('#kvot-info-panel .info-panel-title').textContent"), 'Relative tolerance')
+            check('  and marks that (i) open', await page.ev(
+                "document.querySelector('[data-info=\"set:rtol\"]').getAttribute('aria-expanded')"), 'true')
+            check('  the panel lying between the header and the footer', await page.ev(
+                "(() => { const p = document.getElementById('kvot-info-panel').getBoundingClientRect();"
+                " const h = document.querySelector('header').getBoundingClientRect();"
+                " const f = document.querySelector('footer').getBoundingClientRect();"
+                " return Math.abs(p.top - h.bottom) <= 1 && Math.abs(p.bottom - f.top) <= 1; })()"), True)
+            await page.ev("document.querySelector('#kvot-info-panel .info-panel-close').click()")
+            check('its × closes it', await page.ev("!document.getElementById('kvot-info-panel')"), True)
+            await page.ev("document.querySelector('[data-info=\"sec:solver\"]').click()")
+            check('a section heading has one, and it leaves the section as it was', await page.ev(
+                "!!document.getElementById('kvot-info-panel') && document.getElementById('sec-solver').open"), True)
+            await page.ev("document.querySelector('[data-info=\"sec:solver\"]').click()")
+            check('the same (i) closes it again', await page.ev("!document.getElementById('kvot-info-panel')"), True)
+            # Escape from the panel, as a key press rather than a synthetic event.
+            await page.ev("document.querySelector('[data-info=\"pane:time\"]').click()")
+            for kind in ('rawKeyDown', 'keyUp'):
+                await page.call('Input.dispatchKeyEvent', {'type': kind, 'key': 'Escape', 'code': 'Escape',
+                                                           'windowsVirtualKeyCode': 27, 'nativeVirtualKeyCode': 27},
+                                session=page.sid)
+            await asyncio.sleep(0.3)
+            check('Escape closes it and gives the focus back to its (i)', await page.ev(
+                "!document.getElementById('kvot-info-panel') && document.activeElement.dataset.info"), 'pane:time')
+            # A topic with choices marks the current one, and follows the
+            # setting while it is open.
+            await page.ev("document.querySelector('[data-info=\"set:method\"]').click()")
+            check('a topic with choices marks the one chosen', await page.ev(
+                "document.querySelector('#kvot-info-panel .info-choices dt.is-current').textContent"), 'NDF')
+            await page.ev("""(() => { const m = document.getElementById('rtmMethod');
+              m.value = 'julia_fbdf'; m.dispatchEvent(new Event('change', { bubbles: true })); })()""")
+            check('  and follows a change while it is open', await page.ev(
+                "document.querySelector('#kvot-info-panel .info-choices dt.is-current').textContent"), 'FBDF')
+            await page.ev("""(() => { const m = document.getElementById('rtmMethod');
+              m.value = 'ndf'; m.dispatchEvent(new Event('change', { bubbles: true })); })()""")
+            # Its "Read more in Help" shows the Help, at the heading it names.
+            await page.ev("document.querySelector('#kvot-info-panel .info-panel-more').click()")
+            await asyncio.sleep(0.4)
+            check('"Read more in Help" opens the Help at its heading', await page.ev(
+                "(() => { const pane = document.querySelector('[data-pane=\"help\"]');"
+                " const r = pane.getBoundingClientRect();"
+                " const h = document.getElementById('help-solver').getBoundingClientRect();"
+                " return !pane.hidden && !document.getElementById('kvot-info-panel')"
+                " && h.top >= r.top - 1 && h.bottom <= r.bottom; })()"), True)
+            await page.ev("document.querySelector('[data-tab=\"time\"]').click()")
+            # The (i)s of the panel sit at the right-hand end of their lines,
+            # the section headings' among them, so they line up.
+            await page.ev("document.getElementById('rtmMore').click()")
+            await asyncio.sleep(0.3)
+            rights = await page.ev(
+                "[...document.querySelectorAll('.rtm-side .info-btn')].filter((b) => b.offsetParent)"
+                ".map((b) => Math.round(b.getBoundingClientRect().right))")
+            check(f'the (i)s of the panel line up at its right ({sorted(set(rights)) if isinstance(rights, list) else rights})',
+                  isinstance(rights, list) and len(rights) >= 15 and max(rights) - min(rights) <= 1, True)
+            await page.ev("document.getElementById('rtmMore').click()")
 
             # --- a transport run reaches both charts -------------------------
             await page.ev("document.getElementById('rtmRun').click()")

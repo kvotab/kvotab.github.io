@@ -260,10 +260,35 @@ function updateChartScales() {
     return;
   }
 
-  Plotly.relayout('plotlyChart', update).then(() => {
+  Plotly.relayout('plotlyChart', forEveryPanel(plotDiv, update)).then(() => {
     refreshDynamicLegend();
     snapLogRangeToDecades(document.getElementById('plotlyChart'));
   });
+}
+
+/**
+ * A relayout written for `xaxis` and `yaxis`, extended to the other axes of a
+ * chart drawn as panels (renderRadionuclidePanels): `xaxis2`, `yaxis2` and on.
+ * Those follow the first pair's range (`matches`), but not its type or ticks,
+ * and Plotly requires axes that match to have the same type. A range is left
+ * to the first pair: the axes that match follow it, and a panel with a unit
+ * of its own keeps its own.
+ *
+ * @param {HTMLElement} plotDiv
+ * @param {Object} update - Plotly.relayout keys; extended in place
+ * @returns {Object} the same update
+ */
+function forEveryPanel(plotDiv, update) {
+  const fl = plotDiv && plotDiv._fullLayout;
+  if (!fl) return update;
+  const more = Object.keys(fl).filter(k => /^[xy]axis\d+$/.test(k));
+  if (!more.length) return update;
+  for (const key of Object.keys(update)) {
+    const m = /^([xy])axis\.(.+)$/.exec(key);
+    if (!m || m[2].startsWith('range')) continue;
+    for (const ax of more) if (ax[0] === m[1]) update[`${ax}.${m[2]}`] = update[key];
+  }
+  return update;
 }
 
 /**

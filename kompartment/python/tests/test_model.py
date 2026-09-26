@@ -162,6 +162,43 @@ class Building(unittest.TestCase):
         with self.assertRaises(kp.EditError):
             m.add_transfer('Rock', 'Near')  # one release per path
 
+    def test_a_path_needs_no_radionuclides_and_starts_with_the_new_numerics(self):
+        # A model with no radionuclides has a path indexed by nothing, and it
+        # may be indexed by any list after that: a path per chemical species.
+        m = kp.Model.new()
+        m.simulation.update(end_time=1000, output_points=20, rtol=1e-9, abstol=1e-20)
+        path = m.add_farfield('Rock')
+        self.assertEqual(path.index_lists, [])
+        self.assertEqual((path.o_b, path.n_b, path.grid, path.surface), (4, '', 'matched', 'f'))
+        # How the wetted surface is given, and a count of extra cells worked out or given.
+        path.surface = 'aperture'
+        path.aperture = '1e-3'
+        path.n_b = 3
+        self.assertEqual(path.n_b, 3)
+        path.n_b = ''
+        self.assertEqual(path.n_b, '')
+        with self.assertRaises(kp.EditError):
+            path.surface = 'width'
+        with self.assertRaises(kp.EditError):
+            path.grid = 'fine'
+        m.add_compartment('Out')
+        m.add_inflow('Rock', rate='1')
+        m.set_release('Rock', 'Out')
+        self.assertEqual(m.check(), [])
+        res = m.run()
+        held = res.series('Rock held')
+        out = res.series('Out')
+        self.assertAlmostEqual(float(held[-1] + out[-1]), 1000.0, delta=1e-4)
+
+    def test_a_path_saved_before_the_new_numerics_keeps_its_own(self):
+        # A file that says nothing about the outlet or the layers meant the
+        # reference implementation's, and is read that way.
+        raw = {'name': 'old', 'nuclides': ['Cs-135'],
+               'farfields': [{'name': 'Rock', 'index_lists': ['Radionuclides'], 'tw': '50', 'f': '1e5'}]}
+        m = kp.Model(raw)
+        path = m['Rock']
+        self.assertEqual((path.o_b, path.n_b, path.grid, path.surface), (1, 0, 'reference', 'f'))
+
     def test_decay(self):
         m = kp.Model.new()
         m.add_nuclides(['U-238', 'U-234', 'Th-230'])

@@ -147,6 +147,114 @@ class BuildParity(unittest.TestCase):
         self.assertEqual(j['pattern'].nnz, js['nnz'])
         self.assertEqual(len(j['groups']), js['colours'])
 
+    def test_matrix_layers_as_the_application_lays_them(self) -> None:
+        # Many layers from a thin first one once overflowed q**j in the
+        # bracket search (a Python OverflowError where JavaScript has Infinity).
+        from kompartment.engine.farfield import layer_depths
+        cases = [[12.5, 20, 2000, None], [12.5, 160, 2000, 1e-5], [12.5, 200, 2000, 1e-6], [3, 400, 500, 1e-7]]
+        for (pen_dep, nm, aw, first), ref in zip(cases, engine('layer_depths', cases=cases)):
+            with self.subTest(layers=nm, first=first):
+                d = layer_depths(pen_dep, nm, aw, first)
+                self.assertEqual(d.size, nm)
+                self.assertLessEqual(float(np.max(np.abs(d / np.array(ref) - 1))), 4.5e-16)
+
+    def test_matched_layers_and_extra_cells_as_the_application_works_them_out(self) -> None:
+        # Square roots, the four operations and repeated multiplication only,
+        # so the two engines lay the matched layers out to the last bit. Made-up
+        # numbers: one nuclide, a chain with a fast-decaying member, a given
+        # first layer, and an even split.
+        from kompartment.engine.farfield import auto_extra_cells, coefficients, matched_grid
+        u = {'de': 3e-5, 'rm': 4.5, 'lam': 1e-10, 'rf': 1.0}
+        grids = [
+            {'penDep': 12.5, 'nm': 20, 'first': None, 'aw': 2000.0, 'tw': 50.0, 'pe': 10.0, 'nucs': [u]},
+            {'penDep': 5.0, 'nm': 20, 'first': None, 'aw': 400.0, 'tw': 20.0, 'pe': 30.0,
+             'nucs': [u, {'de': 4e-5, 'rm': 54.0, 'lam': 0.03, 'rf': 5.0}, {'de': 1e-4, 'rm': 1.0, 'lam': 70.0}]},
+            {'penDep': 12.5, 'nm': 40, 'first': 1e-4, 'aw': 2000.0, 'tw': 50.0, 'pe': 10.0, 'nucs': [u]},
+            {'penDep': 0.05, 'nm': 10, 'first': None, 'aw': 2000.0, 'tw': 50.0, 'pe': 10.0, 'nucs': [u]},
+            {'penDep': 12.5, 'nm': 20, 'first': 1.0, 'aw': 2000.0, 'tw': 50.0, 'pe': 10.0, 'nucs': [u]},
+        ]
+        extra = [[20, 10], [40, 10], [5, 10], [3, 10], [20, 'Pe'], [100, 2], [1, 10], [7, 13.5]]
+        base = {'nf': 20, 'nm': 12, 'tw': 50.0, 'f': 1e5, 'aw': 2000.0, 'aperture': 1e-3, 'kd_f': 0.01, 'kd_m': 0.002,
+                'de_m': 3e-5, 'eps_m': 0.004, 'rho_m': 2650.0, 'pe': 10.0, 'pen_dep': 8.0, 'pen_dep_0': None,
+                'lam': 1e-5}
+        rates = [dict(base, surface=sf, grid=gr) for sf in ('f', 'aw', 'aperture') for gr in ('matched', 'reference')]
+        js = engine('farfield_grids', grids=grids, extra=extra, rates=rates)
+        for g, ref in zip(grids, js['grids']):
+            with self.subTest(grid=g):
+                try:
+                    mine = matched_grid(g['penDep'], g['nm'], g['first'], g['aw'], g['tw'], g['pe'], g['nucs'])
+                except Exception as e:  # noqa: BLE001 - both engines refuse the same case
+                    self.assertIn('error', ref, str(e))
+                    continue
+                self.assertEqual(list(mine['d']), ref['d'])
+                self.assertEqual(list(mine['h']), ref['h'])
+                self.assertEqual(mine['q'], ref['q'])
+        self.assertEqual([auto_extra_cells(nf, pe) for nf, pe in extra], js['extra'])
+        for s, ref in zip(rates, js['rates']):
+            with self.subTest(surface=s['surface'], grid=s['grid']):
+                c = coefficients(dict(s))
+                for key in ('aw', 'advF', 'dF', 'fDf', 'diffFM1', 'diffM1F'):
+                    self.assertTrue(close(np.array([c[key]]), np.array([ref[key]]), 4.5e-16), key)
+                for key in ('diffMMF', 'diffMMB', 'd'):
+                    self.assertTrue(close(np.asarray(c[key]), np.array(ref[key]), 4.5e-16), key)
+                if s['grid'] == 'matched':
+                    self.assertEqual(list(c['d']), ref['d'])
+
+    def test_a_path_of_species_and_one_given_by_its_aperture_build_and_run_as_the_applications(self) -> None:
+        # A made-up model: a path per chemical species (a list that is not the
+        # radionuclides, so nothing decays) with the rock going on and matched
+        # layers, beside a nuclide path given by its aperture on the reference
+        # layers with a closed outlet.
+        model = {
+            'name': 'species',
+            'simulation': {'start_time': 0, 'end_time': 5e4, 'output_points': 60, 'spacing': 'log',
+                           'solver': 'ndf', 'rtol': 1e-8, 'abstol': 1e-18, 'time_unit': 'year'},
+            'nuclides': ['Cs-135'],
+            'index_lists': [{'name': 'Species', 'indices': ['A', 'B']}],
+            'compartments': [{'name': 'Out', 'initial': '0', 'index_lists': ['Species']},
+                             {'name': 'Well', 'initial': '0', 'index_lists': ['Radionuclides']}],
+            'inflows': [{'name': 'In', 'to': 'Rock', 'rate': '1', 'index_lists': ['Species']},
+                        {'name': 'In2', 'to': 'Slot', 'rate': '1', 'index_lists': ['Radionuclides']}],
+            'transfers': [{'name': 'Rel', 'from': 'Rock', 'to': 'Out', 'rate': 'Rock', 'multiply_by_donor': False,
+                           'index_lists': ['Species']},
+                          {'name': 'Rel2', 'from': 'Slot', 'to': 'Well', 'rate': 'Slot', 'multiply_by_donor': False,
+                           'index_lists': ['Radionuclides']}],
+            'farfields': [
+                {'name': 'Rock', 'index_lists': ['Species'], 'tw': '20', 'surface': 'aw', 'aw': '300',
+                 'kd_f': '0', 'kd_m': '1e-3', 'de_m': '2e-5', 'eps_m': '0.004', 'rho_m': '2650', 'pe': '10',
+                 'pen_dep': '3', 'pen_dep_0': '', 'n_f': 12, 'n_m': 10, 'o_b': 4, 'n_b': '', 'grid': 'matched',
+                 'entries': [{'index': {'Species': 'B'}, 'kd_m': '0.02', 'de_m': '5e-5'}]},
+                {'name': 'Slot', 'index_lists': ['Radionuclides'], 'tw': '30', 'surface': 'aperture',
+                 'aperture': '2e-3', 'kd_f': '1e-3', 'kd_m': '5e-3', 'de_m': '3e-5', 'eps_m': '0.004',
+                 'rho_m': '2650', 'pe': '8', 'pen_dep': '2', 'pen_dep_0': '1e-3', 'n_f': 8, 'n_m': 6, 'o_b': 1,
+                 'n_b': 0, 'grid': 'reference'},
+            ],
+        }
+        js = engine('layout', model=model)
+        s = build_system(Project(model), jacobian=False)
+        self.assertEqual((s.nstate, s.nalg), (js['nstate'], js['nalg']))
+        self.assertEqual([(e.name, e.base, e.width, e.kind) for e in s.layout.states],
+                         [(e['name'], e['base'], e['width'], e['kind']) for e in js['states']])
+        self.assertEqual([a.name for a in s.layout.algebraic], [a['name'] for a in js['algebraic']])
+        # 12 fracture cells and the extra ones at Pe 10 (3), 11 cells deep, per species.
+        self.assertEqual(s.layout.states[2].width, 2 * 15 * 11)
+        rng = np.random.default_rng(3)
+        points = [{'t': t, 'y': (rng.uniform(0, 1, s.nstate) * 10 ** rng.uniform(-3, 2, s.nstate)).tolist()}
+                  for t in (0.0, 10.0, 3e3)]
+        jd = engine('dydt', model=model, points=points)
+        for p, q in zip(points, jd['points']):
+            y = np.array(p['y'])
+            X = s.evaluate_algebraic(p['t'], y).copy()
+            self.assertTrue(close(X[:s.nalg], numbers(q['X'])[:s.nalg], 1e-12))
+            self.assertTrue(close(s.dydt(p['t'], y), numbers(q['dydt']), 1e-12))
+        jr = engine('run', model=model)
+        res = run(Project(model))
+        self.assertEqual([o['label'] for o in res.outputs()], jr['labels'])
+        for label, a, b in zip(jr['labels'], res.series_many(res.outputs()), jr['columns']):
+            b = numbers(b)
+            scale = np.max(np.abs(b)) if b.size else 0.0
+            self.assertLess(float(np.max(np.abs(a - b)) / scale) if scale > 0 else 0.0, 1e-6, label)
+
     def test_the_derivative_is_the_applications(self) -> None:
         for name in EXAMPLES:
             model = example(name)

@@ -26,6 +26,7 @@
 
 import { run, Results } from '../sim/runner.js';
 import { buildSystem } from '../sim/builder.js';
+import { valuesAtStart } from '../sim/atstart.js';
 import { Project } from '../domain/project.js';
 import { runProbabilistic, runRealization, designFor, quantiles, meanOf, medianSpread, timeMajor } from '../sim/probabilistic.js';
 import { runPool, workersFor } from './prob-pool.js';
@@ -43,7 +44,9 @@ import { checkJacobian, jacobianPattern } from '../sim/jaccheck.js';
 import { isScipySolver, loadScipy, scipyReady } from '../ode/scipy.js';
 import { SolverError } from '../ode/solvers/dormand-prince.js';
 import { layoutSignature, datasetEntries, restoreResults } from '../io/dataset.js';
-import { planSplit, partModel, assembleParts, stateKeys, jobCost, buildPart } from '../sim/split.js';
+import {
+	planSplit, partModel, assembleParts, stateKeys, jobCost, buildPart, binJobs, partWorkerCap, codeChars,
+} from '../sim/split.js';
 
 let cancelled = false;
 
@@ -305,26 +308,35 @@ function partWorker() {
 /**
  * The whole model, solved in its parts at once, as one run.
  *
- * Each bin of the plan is a worker taking its jobs in turn; each job is the
- * model with only its materials switched on (`partModel`). What comes back is
- * the job's states on the output grid, named, and they are filed into the
- * whole model's vector by name -- the states each job *owns*, since a state
- * that is not per material is in every job's build and is taken from one.
- * The result is a `Results` of the whole model's own system, so every series
- * is worked out from it exactly as from a run that was not split.
+ * Each bin of the plan is a worker, given one job: the model with only the
+ * bin's materials switched on (`partModel`, `binJobs`) -- built once, however
+ * many of the model's independent parts it holds. What comes back is the
+ * job's states on the output grid, named, and they are filed into the whole
+ * model's vector by name -- the states each bin *owns*, since a state that is
+ * not per material is in every build and is taken from one. The result is a
+ * `Results` of the whole model's own system, so every series is worked out
+ * from it exactly as from a run that was not split.
+ *
+ * A worker is closed as soon as its bin is in, which gives its memory back to
+ * the page while the others finish: every worker of a page shares one budget
+ * (see *MEMORY* in ../sim/split.js).
  *
  * Throws if anything does not add up -- a part that failed, parts reported on
  * different times, a state no part owned -- and the caller solves the whole
  * model instead.
  */
-async function runSplit({ id, whole, system, plan }) {
+async function runSplit(args) {
+	const { id, whole, system, plan } = args;
 	// The model once, as text, for every job: a worker parses its own copy and
 	// switches the other materials off in it. Copying the model per job here
 	// instead was a second of a large assessment's run spent before the last
-	// worker had anything to do.
-	const text = JSON.stringify(whole.toJSON());
+	// worker had anything to do. Taken out of `args`, so that dropping it
+	// below lets it go.
+	let modelText = args.text ?? JSON.stringify(whole.toJSON());
+	args.text = null;
 	const n = system.layout.nstate;
-	const progress = plan.jobs.map(() => ({ fraction: 0, at: -Infinity }));
+	const { jobs: work, owner } = binJobs(plan);
+	const progress = work.map(() => ({ fraction: 0, at: -Infinity }));
 	let lastPost = 0;
 	const report = () => {
 		const now = Date.now();
@@ -336,28 +348,33 @@ async function runSplit({ id, whole, system, plan }) {
 		self.postMessage({ type: 'progress', id, fraction, ...(Number.isFinite(at) ? { at } : {}) });
 	};
 	const started = Date.now();
-	const outcome = new Array(plan.jobs.length);
-	const workers = plan.bins.map(() => partWorker());
+	const outcome = new Array(work.length);
+	const workers = work.map(() => partWorker());
 	try {
-		await Promise.all(plan.bins.map(async (bin, b) => {
-			for (const j of bin) {
-				if (cancelled) throw STOPPED;
-				outcome[j] = await workers[b].job({ id, text, materials: plan.jobs[j].materials },
-					(fraction, at) => { progress[j] = { fraction, at: at ?? progress[j].at }; report(); });
-				progress[j] = { fraction: 1, at: Infinity };
-				report();
+		const going = work.map(async (job, b) => {
+			if (cancelled) throw STOPPED;
+			try {
+				outcome[b] = await workers[b].job({ id, text: modelText, materials: job.materials },
+					(fraction, at) => { progress[b] = { fraction, at: at ?? progress[b].at }; report(); });
+			} finally {
+				workers[b].close();
 			}
-		}));
+			progress[b] = { fraction: 1, at: Infinity };
+			report();
+		});
+		// Every worker has its copy now; the coordinator's is not needed again.
+		modelText = null;
+		await Promise.all(going);
 	} finally {
 		for (const w of workers) w.close();
 	}
 	const wallMs = Date.now() - started;
-	const { t, rows, stats } = assembleParts(plan, outcome);
-	const jobs = plan.jobs.map((job, j) => ({
+	const { t, rows, stats } = assembleParts({ keys: plan.keys, owner }, outcome);
+	const jobs = work.map((job, b) => ({
 		materials: job.materials, states: job.states,
-		nsteps: outcome[j].stats?.nsteps ?? null,
-		buildMs: outcome[j].timing?.buildMs ?? null,
-		solveMs: outcome[j].timing?.solveMs ?? null,
+		nsteps: outcome[b].stats?.nsteps ?? null,
+		buildMs: outcome[b].timing?.buildMs ?? null,
+		solveMs: outcome[b].timing?.solveMs ?? null,
 	}));
 	return {
 		solution: { t, y: rows, stats },
@@ -912,8 +929,42 @@ function describeOutputs(result) {
 	}));
 }
 
+/**
+ * What the model's equations come to at the start, for the editor: built and
+ * evaluated here rather than on the page, so that opening a large model does
+ * not stop the page while it builds -- two seconds on the largest imported
+ * assessment, several on a slower machine. The page asks for the blocks it is
+ * showing (`start-of`), and they are read out of this. See `valuesAtStart` in
+ * ../sim/atstart.js.
+ */
+let preview = null;
+
 self.onmessage = async (ev) => {
 	const msg = ev.data;
+
+	if (msg.type === 'start-values') {
+		// The last model's first: it is the one being replaced, and a large
+		// build is the memory the next one needs.
+		preview = null;
+		const started = Date.now();
+		let fault = null;
+		try {
+			const project = new Project(typeof msg.text === 'string' ? JSON.parse(msg.text) : msg.project);
+			msg.text = null;
+			preview = { id: msg.id, at: valuesAtStart(project) };
+		} catch (e) {
+			fault = { name: e?.name ?? 'Error', message: e?.message ?? String(e), blockName: e?.blockName ?? null };
+		}
+		self.postMessage({ type: 'start-values', id: msg.id, ms: Date.now() - started, fault });
+		return;
+	}
+
+	if (msg.type === 'start-of') {
+		const at = preview?.id === msg.id ? preview.at : null;
+		const answers = at ? (Array.isArray(msg.names) ? msg.names : []).map((n) => [n, at.of(String(n))]) : null;
+		self.postMessage({ type: 'start-of', id: msg.id, answers });
+		return;
+	}
 
 	if (msg.type === 'cancel') {
 		cancelled = true;
@@ -1924,10 +1975,19 @@ self.onmessage = async (ev) => {
 			// Built with any material its equations pin switched back on; see
 			// `buildPart`.
 			const built = Date.now();
-			const model = msg.text != null
+			let model = msg.text != null
 				? partModel(JSON.parse(msg.text), msg.materials ?? [], { copy: false })
 				: msg.project;
+			// Neither is needed once it has been read, and a part's worker
+			// shares the page's memory with every other: the text is the size
+			// of the model, and the model's build does not keep the parse.
+			msg.text = null;
+			msg.project = null;
 			const { project: part, system: partSystem } = buildPart(model, { Project, buildSystem });
+			model = null;
+			// The generated code's text is for the page's Code tab, which a
+			// part never shows.
+			partSystem.source = null;
 			const buildMs = Date.now() - built;
 			const results = run(part, {
 				system: partSystem,
@@ -1994,19 +2054,42 @@ self.onmessage = async (ev) => {
 		const buildMs = Date.now() - buildStarted;
 		const signature = layoutSignature(system);
 		const known = splitMemory.get(signature) ?? null;
-		const plan = planSplit(system, whole, {
+		const splitOptions = {
 			mode: whole.simulation.split ?? 'auto',
 			workers: splitWorkers(msg),
 			nest: canNest(),
 			scipy: isScipySolver(whole.simulation.solver),
 			buildMs,
 			known,
-		});
+		};
+		let plan = planSplit(system, whole, splitOptions);
+		// How many workers the memory allows, once there is a split to start:
+		// every worker holds the model's text and a build the size of the
+		// whole model's code, and they share the page's memory. Worked out
+		// from the text the workers would be sent, so only for a run that
+		// would split.
+		let splitText = null;
+		if (plan.use) {
+			splitText = JSON.stringify(whole.toJSON());
+			const cap = partWorkerCap({
+				modelChars: splitText.length,
+				codeChars: codeChars(system),
+				deviceMemory: typeof navigator !== 'undefined' ? navigator.deviceMemory ?? null : null,
+			});
+			if (cap.workers < plan.bins.length) {
+				plan = planSplit(system, whole, { ...splitOptions, memoryCap: cap.workers });
+				if (!plan.use) splitText = null;
+			}
+		}
 		let results = null;
 		if (plan.use) {
 			self.postMessage({ type: 'loading', id, stage: 'solving' });
 			try {
-				const split = await runSplit({ id, whole, system, plan });
+				// Handed over rather than kept: runSplit lets the text go once
+				// every worker has its copy.
+				const args = { id, whole, system, plan, text: splitText };
+				splitText = null;
+				const split = await runSplit(args);
 				results = new Results({
 					project: whole, system, solution: split.solution,
 					timing: { buildMs, solveMs: split.wallMs, totalMs: Date.now() - buildStarted },

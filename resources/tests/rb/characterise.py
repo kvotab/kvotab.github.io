@@ -3,9 +3,17 @@
 Drives the page through its whole feature surface and prints a deterministic
 fingerprint. Run before a refactor, run after, diff the two: any difference is
 a behaviour change.
+
+    python3 characterise.py <label>                   # files registered directly
+    python3 characterise.py <label> --open never      # opened through the file input, in memory
+    python3 characterise.py <label> --open always     # opened through the file input, lazily
+
+The last two open the fixtures as a reader does, with rb-lazy.js's switch set
+either way; see README.md for what may differ between them.
 """
 import asyncio
 import json
+import os
 import sys
 import urllib.request
 
@@ -359,13 +367,43 @@ STEPS = [
 ]
 
 
+FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fixtures')
+
+# `--open`: the files come in through the page's file input, as a reader's do,
+# and this is what is recorded of them once they are in.
+OPENED = """(async () => {
+  for (let i = 0; i < 200 && !(fileOrder.length === 2 && document.querySelectorAll('#tree .tree-item').length > 0
+       && !document.querySelector('.file-load-ticker.visible')); i++) await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 1500));
+  return {
+    order: fileOrder.slice(),
+    enabled: getEnabledFiles(),
+    tabs: [...document.querySelectorAll('.file-tab')].map(t => t.getAttribute('data-file')),
+    treeRows: document.querySelectorAll('#tree .tree-item').length,
+    searchVisible: document.querySelector('.search-container').classList.contains('visible'),
+    modeToggleShown: document.getElementById('treeModeContainer').style.display,
+    lazy: fileOrder.map(n => !!(loadedFiles[n] && loadedFiles[n].__lazy))
+  };
+})()"""
+
+
 async def main():
     label = sys.argv[1] if len(sys.argv) > 1 else 'baseline'
+    opened = sys.argv[sys.argv.index('--open') + 1] if '--open' in sys.argv else None
     ver = json.load(urllib.request.urlopen('http://127.0.0.1:9222/json/version'))
     async with websockets.connect(ver['webSocketDebuggerUrl'], max_size=300 * 1024 * 1024) as bws:
         tid, page = await open_page(bws, settle=8)
+        if opened:
+            await page.ev("localStorage.setItem('kvot-rb-lazy', %s); true" % json.dumps(opened))
         fingerprint = {}
         for name, expr in STEPS:
+            if opened and name == 'load.two.files':
+                doc = await page.send('DOM.getDocument', {})
+                node = await page.send('DOM.querySelector', {'nodeId': doc['result']['root']['nodeId'],
+                                                             'selector': '#fileInput'})
+                await page.send('DOM.setFileInputFiles', {'nodeId': node['result']['nodeId'], 'files': [
+                    os.path.join(FIXTURES, 'sample-a.h5'), os.path.join(FIXTURES, 'sample-b.h5')]})
+                expr = OPENED
             try:
                 value = await page.ev(expr, timeout=180)
             except Exception as exc:
@@ -384,6 +422,8 @@ async def main():
         print('\nwrote %s   console entries: %d' % (out, len(fingerprint['_console'])))
         for line in fingerprint['_console'][:8]:
             print('   ', line)
+        if opened:
+            await page.ev("localStorage.removeItem('kvot-rb-lazy'); true")
         await bws.send(json.dumps({'id': 99, 'method': 'Target.closeTarget', 'params': {'targetId': tid}}))
 
 asyncio.run(main())

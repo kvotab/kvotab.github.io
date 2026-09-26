@@ -87,6 +87,15 @@ def why_not_split(system: Any) -> Optional[str]:
         why = UNSEEN.get(rec.kind)
         if why:
             return f"'{rec.name}' is a {rec.kind.replace('_', ' ')}: {why}"
+    # A semi-analytical path's release is a convolution over what flowed into
+    # it during the run, and the series of a split run are worked out
+    # afterwards on the whole model's system, which never saw that history.
+    layout = getattr(system, 'layout', None)
+    for p in (layout.get('farfields') if layout is not None else None) or []:
+        if p.farf.laplace:
+            return (f"'{p.name}' is worked out semi-analytically: its release is a convolution over what flowed "
+                    'into it during the run, which the whole model the series are worked out on afterwards does '
+                    'not have')
     events = getattr(system, 'events', None)
     if events is not None and getattr(events, 'n', 0):
         many = 'an event' if events.n == 1 else f'{events.n} events'

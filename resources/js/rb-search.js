@@ -335,6 +335,19 @@ if (!window._searchExpansionState) window._searchExpansionState = { lastTerm: nu
  */
 async function asyncFindMatchingPaths(fileNode, regex, limit = 50) {
   const matches = [];
+  // A lazy file has every path already, and its groups need not be fetched
+  // to be searched (rb-lazy.js).
+  const lazy = lazyStateOf(fileNode);
+  if (lazy) {
+    for (const path of lazy.paths) {
+      const key = path.slice(path.lastIndexOf('/') + 1);
+      if (regex.test(key) || regex.test(path)) {
+        matches.push(path);
+        if (matches.length >= limit) break;
+      }
+    }
+    return matches;
+  }
   const stack = [{ node: fileNode, prefix: '' }];
   let processed = 0;
 

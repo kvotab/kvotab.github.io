@@ -94,7 +94,8 @@ export function runLogLines({ project, payload, replayed = null, build = '', at 
 	}
 	const split = s.split;
 	if (split?.used) {
-		out.push(`  split: ${split.jobs.length} independent parts on ${split.workers} cores (${split.mode}) — ${split.why}`);
+		out.push(`  split: ${split.parts ?? split.jobs.length} independent parts on ${split.workers} cores (${split.mode}) — ${split.why}`);
+		// One line per core: the parts it was given, solved together.
 		for (const j of split.jobs) {
 			out.push(`    ${j.materials.join(', ')}: ${j.states} states, ${j.nsteps ?? '?'} steps, `
 				+ `compile ${Number(j.buildMs ?? 0).toFixed(1)} ms, solve ${Number(j.solveMs ?? 0).toFixed(0)} ms`);
@@ -114,6 +115,15 @@ export function runLogLines({ project, payload, replayed = null, build = '', at 
 			out.push(`  ${h.label}: ${h.steps} steps, ${(100 * h.fraction).toFixed(1)}% of the run`);
 		}
 		if (held.length > 20) out.push(`  and ${held.length - 20} more`);
+	}
+	// A far-field path worked out semi-analytically whose unit response missed
+	// its mass balance: the run went on with it, and the log says so.
+	const farfield = s.farfield ?? [];
+	if (farfield.length) {
+		out.push('');
+		out.push(`semi-analytical far-field paths: ${farfield.length} unit response`
+			+ `${farfield.length === 1 ? '' : 's'} missed ${farfield.length === 1 ? 'its' : 'their'} mass balance`);
+		for (const w of farfield) out.push(`  ${w.block}: ${w.message}`);
 	}
 	if (payload?.massBalance) {
 		out.push('');
@@ -142,7 +152,7 @@ export function scenarioLogLines(active, runs) {
 		out.push(e.r
 			? `  ${e.name} — ${s.nsteps ?? '?'} steps, compile ${Number(t.buildMs ?? 0).toFixed(1)} ms, `
 				+ `solve ${t.reused ? 'not repeated (states reused)' : `${Number(t.solveMs ?? 0).toFixed(0)} ms`}`
-				+ (s.split?.used ? `, in ${s.split.jobs.length} parts on ${s.split.workers} cores` : '')
+				+ (s.split?.used ? `, in ${s.split.parts ?? s.split.jobs.length} parts on ${s.split.workers} cores` : '')
 			: `  ${e.name} — not run yet`);
 	}
 	return out;

@@ -4,7 +4,9 @@
    Wiring only. Finding citations is zoterify-parse.js, matching them
    zoterify-match.js, reading the library zoterify-zotero.js and editing the
    document zoterify-docx.js. This file keeps the state, runs the analysis,
-   records the choices made while reviewing, and saves.
+   records the choices made while reviewing, and saves. It also holds what
+   the (i) beside each section, setting and tab says (TOPICS, shown by
+   kvot-info.js).
 
    A choice is made for a reference -- "Smith & Jones 2020" -- and holds for
    every place the document cites it (the parser's ref.key).
@@ -160,6 +162,7 @@
     saveSettings();
     renderNames();
     renderNamesToAdd();
+    KvotInfo.refresh();
     setStatus(`${plural(lines.length, 'name')} added from the reference list. Press Analyse again to use ${lines.length === 1 ? 'it' : 'them'}.`, 'warn');
   }
 
@@ -290,6 +293,7 @@
     }
     setProgress(null);
     updateButtons();
+    KvotInfo.refresh();
   }
 
   function fillScope() {
@@ -989,14 +993,16 @@
     'zf:optionChanged': () => {
       readControls();
       saveSettings();
+      KvotInfo.refresh();
       if (state.run) setStatus('The changed setting takes effect when you press Analyse again; the choices made so far are then cleared.', 'warn');
     },
-    'zf:trackChanged': () => { readControls(); saveSettings(); },
-    'zf:namesTyped': () => renderNames(),
+    'zf:trackChanged': () => { readControls(); saveSettings(); KvotInfo.refresh(); },
+    'zf:namesTyped': () => { renderNames(); KvotInfo.refresh(); },
     'zf:namesChanged': () => {
       readControls();
       saveSettings();
       renderNamesToAdd();
+      KvotInfo.refresh();
       if (state.run) setStatus('The changed list takes effect when you press Analyse again; the choices made so far are then cleared.', 'warn');
     },
     'zf:addNames': () => addListedNames(),
@@ -1040,6 +1046,429 @@
   });
 
   /* ---------------------------------------------------------------------
+     The (i) beside each section, setting and tab (kvot-info.js)
+
+     What each one is, what its choices do, when to change it and where the
+     Help says more. A topic that is a function is read each time its panel
+     opens, so it marks the current choice; KvotInfo.refresh() redraws an
+     open one when a setting changes. Inline markup: `code` and **bold**.
+     --------------------------------------------------------------------- */
+  const more = (label, id) => ({ label, id });
+  const ticked = (id) => $(id).checked;
+  const LATER = 'A change takes effect at the next Analyse, which clears the choices made so far.';
+  const ON_SAVE = 'These settings apply when you save, without a new analysis.';
+
+  const TOPICS = {
+    'sec:doc': {
+      kicker: 'Section', title: 'Word document',
+      lead: 'The document whose citations are plain text. It is read here, in the browser, and never changed: saving gives you a copy.',
+      facts: [['Files', '.docx, .docm'], ['Largest', kvotFormatBytes(KVOT_FILE_SIZE_LIMITS.document)]],
+      sections: [
+        { heading: 'What is read', list: [
+          'The body text with its tables, the footnotes and the endnotes. Text boxes, headers and footers are not read.',
+          'The text as it reads with every tracked change accepted: deleted text is left out, inserted text counts. Other people’s revisions stay in the document as they are.',
+        ] },
+        { heading: 'The box under it', text: 'How many paragraphs the document has, in the text and in notes; how many tracked changes it already holds and whether Track Changes is on; and how many citations are already Zotero, EndNote or Mendeley fields.' },
+        { heading: 'Keep in mind', list: [
+          'A .doc, .odt, .rtf or PDF cannot be read: save it as .docx in Word first.',
+          'The document and the database can be dropped on the page together.',
+          'Opening another document clears the analysis and the choices made.',
+        ] },
+      ],
+      more: more('Working through a document', 'help-working'),
+    },
+
+    'sec:db': {
+      kicker: 'Section', title: 'Zotero library',
+      lead: 'Your Zotero database, read here with sql.js, SQLite compiled for the browser. The page only reads it: zotero.sqlite is not changed, and Zotero may stay open.',
+      facts: [['Files', 'zotero.sqlite, and zotero.sqlite-wal'], ['Largest', kvotFormatBytes(KVOT_FILE_SIZE_LIMITS.dataset)]],
+      sections: [
+        { heading: 'The -wal file', text: [
+          'While Zotero runs, its newest changes wait in `zotero.sqlite-wal`, in the same folder, and reach zotero.sqlite only now and then. Open the two together, or one after the other in either order: the page replays those changes, checking each page of them, and reads the library as Zotero shows it.',
+          'Without it, items added or changed since Zotero last copied its changes into zotero.sqlite are missing or out of date. The box under the drop zone says so.',
+        ] },
+        { heading: 'What is read', list: [
+          'Every item of My Library and of the group libraries: its creators, year, title and report number, and the data a Zotero citation carries.',
+          'Left out: attachments, notes, annotations, items in the bin and feed items.',
+        ] },
+        { heading: 'Keep in mind', text: 'Opening another database clears the analysis and the choices made. Nothing of the library is kept after you leave the page.' },
+      ],
+      more: more('Working through a document', 'help-working'),
+    },
+
+    'set:scope': () => {
+      const sel = $('zfScope');
+      const v = sel.value;
+      const chosen = sel.selectedOptions[0];
+      return {
+        kicker: 'Zotero library', title: 'Look for items in',
+        lead: 'The items each reference is matched against, and those the search box under a reference looks through.',
+        facts: state.db && state.db.sqldb && chosen ? [['Chosen', chosen.textContent]] : [],
+        sections: [
+          { choices: [
+            ['All libraries', 'Every item of My Library and of every group library in the database. The default.', v === ''],
+            ['One library', 'My Library alone, or one group library. Offered when the database has more than one.', v.startsWith('lib:')],
+            ['A collection', 'The items filed in it and in all its subcollections. The number after a collection counts only what is filed in it directly.', v.startsWith('col:')],
+          ] },
+          { heading: 'When to narrow it', text: 'A project’s collection leaves out namesakes the document does not cite, so there are fewer choices to make. But an item outside it is neither matched nor offered, and the search does not find it: a reference to it comes out as not found.' },
+          { heading: 'Keep in mind', list: [LATER, 'It is not remembered: each database opens at All libraries.'] },
+        ],
+      };
+    },
+
+    'sec:match': {
+      kicker: 'Section', title: 'Matching',
+      lead: 'How close an item must come before it is linked to a reference without asking you, and how far off its year may be for it to be offered.',
+      sections: [
+        { heading: 'How a reference is scored', list: [
+          '**Name** — the cited authors against the item’s creators, by Jaro–Winkler similarity of the names with accents folded: “Öhman” and “Ohman” are one name. A second cited author is compared with the second creator, and the number of names counts: “Smith & Jones” fits a two-author item better than a one- or five-author one, and “Smith et al.” does not fit a single author.',
+          '**Year** — the cited year against the item’s.',
+          '**Reference list** — when the document’s list has the entry a citation points to, how much of the item’s title is in it. A title found there settles a choice between namesakes.',
+        ] },
+        { text: 'Only the items whose first creator begins with the same letter as the first cited name are scored, and those whose name the cited one abbreviates (“IPCC”).' },
+        { heading: 'Found by number, not by name', text: 'A report number (“SKB TR-11-01”) or a designation (“SSMFS 2008:37”) is looked up in the items’ numbers and titles, whatever is set here. A work cited by a number that no item carries is only offered, never linked.' },
+        { text: LATER },
+      ],
+      more: more('Working through a document, step 2', 'help-analyse'),
+    },
+
+    'set:level': () => {
+      const L = ZFMatch.LEVELS;
+      const at = LEVEL_NAMES[Number($('zfLevel').value)] || 'balanced';
+      const row = (name) => [name[0].toUpperCase() + name.slice(1), `fit ${L[name].name.toFixed(2)} · ahead ${L[name].margin.toFixed(2)}`];
+      return {
+        kicker: 'Matching', title: 'How close a fit must be',
+        lead: 'The least name similarity at which an item fits a reference (fit), and how far the best item must be ahead of the next to be linked without asking (ahead).',
+        facts: [...LEVEL_NAMES.map(row), ['Default', 'balanced']],
+        sections: [
+          { choices: [
+            ['Lenient', 'Links more on its own and asks less. It takes a name written another way, “Smyth” for “Smith”, when no other item comes near.', at === 'lenient'],
+            ['Balanced', 'Right for most documents. Such a name is offered among the possible matches instead.', at === 'balanced'],
+            ['Strict', 'Asks whenever two items are near: for a library with many similar names, when you would rather decide yourself.', at === 'strict'],
+          ] },
+          { heading: 'What the numbers mean', text: [
+            'One cited name against an item with one creator: “Smith” and “Smyth” come to 0.89, “Andersson” and “Andersen” to 0.93, “Nilsson” and “Nilson” to 0.97.',
+            'An item that fits and has the cited year is linked when it is the only one, when it is ahead of the next by the margin, or when its title is in the reference-list entry and the other’s is not; otherwise the items that fit nearly as well are offered for you to choose. With no such item, one within the year tolerance is offered to confirm, and failing that, items up to 0.06 short of a fit, whatever their year, as possible matches.',
+          ] },
+        ],
+        more: more('Working through a document, step 2', 'help-analyse'),
+      };
+    },
+
+    'set:yearTolerance': () => {
+      const tol = Number($('zfYearTolerance').value);
+      return {
+        kicker: 'Matching', title: 'Offer items whose year is off by',
+        lead: 'When no item of the cited year fits the authors, an item this many years away is offered under “The year differs”, for you to confirm. It is never linked without asking.',
+        facts: [['Default', '1 year']],
+        sections: [
+          { choices: [
+            ['nothing', 'Only the cited year. An item of another year whose authors fit still comes up, among the possible matches.', tol === 0],
+            ['1 year', 'A year either way: a work cited by the year it was written and held in the library by the year it came out, or the other way round.', tol === 1],
+            ['2 years', 'Two years either way.', tol === 2],
+          ] },
+          { heading: 'Years that are not numbers', list: [
+            '“n.d.”, “u.å.” and “o.J.” fit an item without a date.',
+            '“in press”, “forthcoming”, “unpublished”, “i tryck” and the like fit an item without a date, or one dated from two years ago on.',
+          ] },
+          { heading: 'Also', text: 'The report number at the end of a reference-list entry (“SKB, 2011. … SKB TR-11-01, …”) is taken only for an item whose creators fit the entry and whose year is this close to it.' },
+        ],
+        more: more('Working through a document, step 2', 'help-analyse'),
+      };
+    },
+
+    'sec:names': {
+      kicker: 'Section', title: 'Abbreviated names',
+      lead: 'SKB’s reports cite some works by a name instead of an author and year — “the Data report”, “(Main report, Section 6.1)” — and list them under “References with abbreviated names”. A name has no author or year to match by, so this list says which work each one stands for.',
+      sections: [
+        { heading: 'What a listed name becomes', list: [
+          'In a parenthesis, “(Data report, Section 6.1)”, a reference like any other, with its locator.',
+          'In running text, “as the **Data report** shows”, a citation of its own: the name itself.',
+          'Either way the citation keeps the name as its text. No citation style prints the name, so the citation is marked for Zotero to leave its text as written; the work still goes into the bibliography.',
+        ] },
+        { heading: 'In running text', text: 'SKB writes the names in bold. A name in bold is taken when it begins as listed; one not in bold only when it is written exactly as listed and stands inside a sentence: not at the start of a line, where it may begin a title, nor after a qualifier such as “SR-Site”, which makes it another work’s name. A name in a heading, in a table of contents or alone on its line is never taken.' },
+        { heading: 'The document’s own list', text: 'A name entered under the document’s “References with abbreviated names” is found in a parenthesis without this list, but in running text only when it is listed here. After an analysis, **Add them** under the box copies the names not listed yet.' },
+      ],
+      more: more('Abbreviated names', 'help-names'),
+    },
+
+    'set:names': () => {
+      const read = ZFParse.readNameList($('zfNames').value);
+      return {
+        kicker: 'Abbreviated names', title: 'Names and the works they stand for',
+        lead: 'One per line: the name as it stands in the text, a colon or a tab, and the work it stands for — “Data report: SKB TR-10-52”.',
+        facts: [['Names read', read.names.length.toLocaleString('en')], ['Lines not read', read.problems.length ? read.problems.length.toLocaleString('en') : 'none'], ['Longest list', `${NAMES_MAX.toLocaleString('en')} characters`]],
+        sections: [
+          { heading: 'The work, after the colon', list: [
+            '`SKB TR-10-52` — an SKB report number, found in the items’ Report Number. Without “SKB”, `TR-10-52` is SKB’s report of that number if the library has it, otherwise any organisation’s.',
+            '`SSMFS 2008:37` — a designation, found in the items’ numbers and titles.',
+            '`ABCD2345` — a Zotero item key, eight capitals and digits, or a link that ends in `items/ABCD2345`.',
+            '`SKB 2010` — an author and year, matched as a citation would be. Several items of that author and year leave you a choice to make; a report number names one work.',
+            'Anything else — words of the title: the items that have all of them.',
+          ] },
+          { heading: 'Also read', list: [
+            'An entry pasted from “References with abbreviated names”, such as “Data report, 2010. Data report for the safety assessment SR-Site. SKB TR-10-52, …”: the name, and its report number or else its title and year.',
+            'A line that begins with # is a note, and is skipped.',
+          ] },
+          { heading: 'Keep in mind', list: [
+            'Under the box, each line as it was read, and each line that could not be, with the reason. A name listed twice: the first is used.',
+            `The list is kept in this browser for your next visit. ${LATER}`,
+          ] },
+        ],
+        more: more('Abbreviated names', 'help-names'),
+      };
+    },
+
+    'set:boldNames': () => {
+      const on = ticked('zfBoldNames');
+      return {
+        kicker: 'Abbreviated names', title: 'Write the names in bold',
+        lead: 'Whether the name in a citation by abbreviated name is made bold when the document is saved, as SKB writes such names.',
+        facts: [['Default', 'ticked']],
+        sections: [
+          { choices: [
+            ['Ticked', 'Each name is made bold where it stands, and only the name: in “(Data report, Section 3)” the brackets and the section keep their formatting. The summary comment counts the names that were not in bold and now are.', on],
+            ['Unticked', 'The names keep the formatting they had.', !on],
+          ] },
+          { text: 'It applies when you save; it changes nothing in the matching and needs no new analysis. With the changes tracked, rejecting one in Word takes the bold away with the citation.' },
+        ],
+        more: more('Citations by abbreviated name', 'help-names-kept'),
+      };
+    },
+
+    'sec:fields': {
+      kicker: 'Section', title: 'Citations that are already fields',
+      lead: 'A document may already hold citations inserted by a reference manager: Word fields whose code names the works they cite. The box under Word document counts them.',
+      sections: [
+        { heading: 'Recognised', list: ['Zotero — `ADDIN ZOTERO_ITEM`', 'EndNote — `ADDIN EN.CITE`, with its `EN.CITE.DATA`', 'Mendeley — `ADDIN CSL_CITATION`'] },
+        { heading: 'Left as they are', text: 'A citation field that is not converted is not read for citations, and a plain-text citation that runs into one is not replaced. A bibliography inserted by any of the three is never changed.' },
+        { text: LATER },
+      ],
+      more: more('When a citation is not written', 'help-refused'),
+    },
+
+    'set:recodeOther': () => {
+      const on = ticked('zfRecodeOther');
+      return {
+        kicker: 'Citations that are already fields', title: 'Convert EndNote and Mendeley citations to Zotero',
+        lead: 'Whether citations inserted with EndNote or Mendeley become Zotero citations too.',
+        facts: [['Default', 'ticked']],
+        sections: [
+          { choices: [
+            ['Ticked', 'The text each such citation shows is read like plain text and matched. When every reference in it is resolved, the whole field is replaced by a Zotero citation, its hidden EndNote data with it.', on],
+            ['Unticked', 'They are left as they are, and their text is not read.', !on],
+          ] },
+          { heading: 'Keep in mind', list: ['An EndNote or Mendeley bibliography in the document is not touched.', 'A citation field that runs over more than one paragraph is not converted.'] },
+        ],
+        more: more('When a citation is not written', 'help-refused'),
+      };
+    },
+
+    'set:recodeZotero': () => {
+      const on = ticked('zfRecodeZotero');
+      return {
+        kicker: 'Citations that are already fields', title: 'Match Zotero citations again as well',
+        lead: 'Whether the Zotero citations already in the document are matched against your library again.',
+        facts: [['Default', 'unticked']],
+        sections: [{ choices: [
+          ['Unticked', 'They are left as they are, and not read. The works they cite count as cited when the reference list is checked for entries nothing cites, and the Reference list tab lists them.', !on],
+          ['Ticked', 'Their text is read like plain text and matched, and each one whose references are all resolved is replaced by a new Zotero citation: for a document whose citations point at the items of another library, a colleague’s say, to link them to yours.', on],
+        ] }],
+      };
+    },
+
+    'sec:track': {
+      kicker: 'Section', title: 'Track changes',
+      lead: 'Each conversion is written as an editor would write it with Track Changes on: the old text struck through and the Zotero citation inserted, both by the author named here. Everything else in the document, other people’s revisions included, is left as it was.',
+      sections: [
+        { heading: 'In Word', list: [
+          'Review → Show Markup → Specific People shows the page’s changes alone.',
+          'Rejecting them gives back the text exactly as it was; accepting them leaves ordinary Zotero citations.',
+          '**Accept them before you press Refresh** in Zotero’s tab. Zotero turns Track Changes off while it edits citations, and tracked citations can confuse it.',
+        ] },
+        { text: ON_SAVE },
+      ],
+      more: more('Accept before you refresh', 'help-accept'),
+    },
+
+    'set:track': () => {
+      const on = ticked('zfTrack');
+      return {
+        kicker: 'Track changes', title: 'Record every conversion as a tracked change',
+        lead: 'Whether the page’s own changes carry revision marks.',
+        facts: [['Default', 'ticked']],
+        sections: [
+          { choices: [
+            ['Ticked', 'Each conversion is a tracked deletion of the old text and a tracked insertion of the Zotero citation, by the author named below. Each can be accepted or rejected in Word.', on],
+            ['Unticked', 'The citations are written in place with no revision marks: there is nothing to accept, and nothing to reject. Your original file, which the page does not change, is then the way back.', !on],
+          ] },
+          { text: 'Whether Track Changes stays on for your own editing is the last setting of this section.' },
+        ],
+        more: more('Accept before you refresh', 'help-accept'),
+      };
+    },
+
+    'set:author': {
+      kicker: 'Track changes', title: 'Author of the changes and comments',
+      lead: 'The name Word shows on the page’s tracked changes and comments.',
+      facts: [['Default', 'Zoterify'], ['Longest', '80 characters']],
+      sections: [{ list: [
+        'It is added to the document’s list of people, and the comments carry its initials: Z for Zoterify.',
+        'Keep Zoterify to pick the page’s changes out with Specific People in Word; put your own name to make them yours.',
+        'Left empty, it is Zoterify. The box is greyed out when no change is tracked and no comment written, as nothing then carries a name.',
+        'It applies when you save, without a new analysis.',
+      ] }],
+      more: more('Working through a document, step 4', 'help-review'),
+    },
+
+    'set:keepTracking': () => {
+      const on = ticked('zfKeepTracking');
+      return {
+        kicker: 'Track changes', title: 'Leave Track Changes switched on in the saved document',
+        lead: 'Word’s own switch, for the editing done after the page’s.',
+        facts: [['Default', 'ticked']],
+        sections: [
+          { choices: [
+            ['Ticked', 'Track Changes is on when the saved document opens, so the edits made in it are tracked as well.', on],
+            ['Unticked', 'Track Changes is off in the saved document, even if it was on in the one you opened.', !on],
+          ] },
+          { text: 'Whether the page’s own changes are tracked is the first setting of this section. The box under Word document says whether Track Changes is on in the document you opened.' },
+        ],
+        more: more('Accept before you refresh', 'help-accept'),
+      };
+    },
+
+    'sec:comments': {
+      kicker: 'Section', title: 'Comments in the document',
+      lead: 'Word comments that say what the page left as text and why, so that the reasons go with the document.',
+      sections: [{ list: [
+        'They are by the author named under Track changes, with its initials.',
+        'They are not tracked changes: rejecting the page’s changes leaves them.',
+        'Review → Delete → Delete All Comments in Document removes everyone’s. With Show Markup → Specific People set to the page’s author alone, Delete All Comments Shown removes only these.',
+        'Comments already in the document are kept.',
+        ON_SAVE,
+      ] }],
+      more: more('Comments in the document', 'help-comments'),
+    },
+
+    'set:comment': () => {
+      const on = ticked('zfComment');
+      return {
+        kicker: 'Comments in the document', title: 'Comment on each citation left as text',
+        lead: 'A citation is left as text when a reference in it was not found or not decided, or when it cannot be replaced safely.',
+        facts: [['Default', 'ticked']],
+        sections: [
+          { choices: [
+            ['Ticked', 'Each one gets a comment over exactly its text saying why: which of its references were not found in the library, turned down, unlinked, left to choose or given a year not confirmed; that the others in it were matched, since a citation is converted only when all its references are; or what stopped the replacement, such as a footnote reference inside it.', on],
+            ['Unticked', 'No comments on citations. The Resolved tab still lists the places left as text, with the reasons.', !on],
+          ] },
+          { text: 'A citation in a footnote or an endnote gets its comment on the note’s mark in the body text; the comment begins “In the footnote marked here” (or endnote) and quotes the citation.' },
+        ],
+        more: more('Comments in the document', 'help-comments'),
+      };
+    },
+
+    'set:summary': () => {
+      const on = ticked('zfSummaryComment');
+      return {
+        kicker: 'Comments in the document', title: 'Add a summary comment at the start of the document',
+        lead: 'One comment on the first paragraph that sums up the run.',
+        facts: [['Default', 'ticked']],
+        sections: [
+          { heading: 'What it says', list: [
+            'When, the database and the libraries or collection matched against, and the matching setting.',
+            'How many references and citations were found, and how many were converted.',
+            'How many citations were left as text and why, those by abbreviated name, and the Zotero citations left as they were.',
+            'The reference-list entries nothing cites, the first ten of them.',
+            'What is not read — text boxes, headers and footers — and, with the changes tracked, to accept them before Refresh.',
+          ] },
+          { choices: [
+            ['Ticked', 'Written at each save, by the author named under Track changes.', on],
+            ['Unticked', 'No summary. On the page, the report at the top of the Resolved tab and the Reference list tab say much the same.', !on],
+          ] },
+        ],
+        more: more('Comments in the document', 'help-comments'),
+      };
+    },
+
+    'act:run': {
+      kicker: 'Actions', title: 'Analyse, save, report',
+      lead: 'The three steps of a run. The line under the buttons says what happened and what to do next.',
+      sections: [
+        { heading: 'Analyse', text: 'Reads the document, finds every citation and the reference list, and matches each reference against the library. It is ready once both files are open. Each time it starts afresh and clears the choices made so far, so press it again after changing a matching setting or the list of names, before deciding.' },
+        { heading: 'Save document', text: 'Writes the resolved citations into a copy of the document, `name_zotero.docx`; your original is not changed. A citation is written only when every reference in it is resolved. Each save starts again from the document you opened, so you can decide more, change what applies on saving — Track changes, Comments, the bold — and save again.' },
+        { heading: 'Report as CSV', text: 'Every reference, where it stands and the item it resolves to, and after them the reference-list entries nothing cites: `name_zoterify.csv`, with the columns where, citation, reference, state, zotero key, zotero item and reference list entry.' },
+      ],
+      more: more('Working through a document, step 3', 'help-save'),
+    },
+
+    'pane:review': {
+      kicker: 'Tab', title: 'To review',
+      lead: 'The references that need a decision from you. Each is listed once, however often it is cited, and a decision holds for every place it stands.',
+      sections: [
+        { heading: 'The groups', list: [
+          '**Choose the item** — more than one item fits equally well: the same authors twice in a year, say.',
+          '**The year differs** — the authors fit an item of another year, within the tolerance set under Matching.',
+          '**Possible matches** — only looser fits, of any year.',
+          '**Not found** — nothing near, or you turned down what was offered or unlinked a match. Search the library, or leave it as text.',
+        ] },
+        { heading: 'Each reference', list: [
+          'The citation in its sentence; where it stands — ¶ 12 is the twelfth paragraph of the body text, counting headings, empty paragraphs and table cells — and how many times it is cited.',
+          'Your list’s entry for a listed name, and the reference-list entry the citation points to.',
+          'The items offered, each with how it was found — by report number, designation, item key or words, or by its title in the reference list — and its fit in per cent.',
+          '**Use** takes an item; **None of these** moves the reference to Not found, where **Undo** brings the offers back.',
+          'The search wants two characters or more and shows up to eight items. Every word must be in an item’s creators, year, title or number; a report number is looked up whole.',
+        ] },
+        { heading: 'The counts at the top', text: 'References cited counts every place a reference stands; resolved, to decide and not found count each reference once; uncited entries are the reference-list entries nothing cites. The number on the tab is to decide and not found together.' },
+        { heading: 'Keep in mind', text: 'The decisions are kept only while the page is open, and a new Analyse clears them.' },
+      ],
+      more: more('Working through a document, step 2', 'help-analyse'),
+    },
+
+    'pane:linked': {
+      kicker: 'Tab', title: 'Resolved',
+      lead: 'The references linked to a Zotero item, which a save writes. Each is listed once, with how often it is cited.',
+      sections: [
+        { heading: 'Columns', list: [
+          '**Reference** — as the page read it, with how many times it is cited, and whether it is an abbreviated name.',
+          '**Zotero item** — its creators, year, title and key, and its library when there are several.',
+          '**How** — matched by the page, chosen by you among the items offered, or picked by hand from a search.',
+          '**Fit** — how it was found and its fit in per cent, as on To review; empty for an item picked by hand.',
+        ] },
+        { heading: 'Changing your mind', text: '**Unlink** a match that is wrong: the reference goes to To review, under Not found, where **Restore** brings the match back. **Undo** takes back a choice or a pick.' },
+        { heading: 'After a save', text: 'A box at the top says what was written — how many references, in how many Zotero citations, by whom, and whether Track Changes is on — and lists the places left as text with the reason: a reference not resolved yet, or something in the text the page will not cut through, such as a footnote reference.' },
+      ],
+      more: more('When a citation is not written', 'help-refused'),
+    },
+
+    'pane:all': {
+      kicker: 'Tab', title: 'All citations',
+      lead: 'Every reference the page found, in document order, one row for each place it stands: to check that nothing was read as a citation that is not one, and that nothing was missed.',
+      sections: [
+        { list: [
+          '**Where** — ¶ and the number of the paragraph in the body text, counting headings and table cells; or footnote, endnote.',
+          '**Reference** — as the page read it: authors and year, a report number, a designation, a number in brackets or an abbreviated name; “not in bold” marks a listed name found without bold.',
+          '**State** — matched, chosen or picked by hand; choose, year differs or possible; not found, none of those or unlinked.',
+          '**Zotero item** — the item it resolves to or, until then, the best one offered.',
+        ] },
+        { text: 'Report as CSV holds the same rows, and the reference-list entries nothing cites.' },
+      ],
+      more: more('What is found', 'help-found'),
+    },
+
+    'pane:refs': {
+      kicker: 'Tab', title: 'Reference list',
+      lead: 'What the analysis made of the document’s reference list.',
+      sections: [{ list: [
+        '**The reference list** — where it begins and ends, and how many entries were read. Its paragraphs are not searched for citations; what comes after it, appendices say, is. When no list is recognised, every paragraph is searched.',
+        '**Entries nothing cites** — the entries no citation points to. An entry named in running text, “the Data report”, counts as cited, and so does one whose first author and year a Zotero citation already in the document cites.',
+        '**Zotero citations already in the document** — left as they are, each with the surname and year of every item it cites. None are listed when they are matched again, under Citations that are already fields.',
+      ] }],
+      more: more('The reference list', 'help-reflist'),
+    },
+  };
+
+  /* ---------------------------------------------------------------------
      Start
      --------------------------------------------------------------------- */
   loadSettings();
@@ -1049,6 +1478,7 @@
   initDrop();
   showTab(state.settings.tab);
   renderAll();
+  KvotInfo.setup({ topics: TOPICS, onMore: () => showTab('help') });
 
   window.ZFPage = Object.freeze({ getState: () => state, addFiles, analyse, save, resolve, statusOf });
 }());

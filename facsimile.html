@@ -28,7 +28,8 @@
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
-  <link rel="stylesheet" href="./resources/css/facsimile.css?v=20260923">
+  <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20260926">
+  <link rel="stylesheet" href="./resources/css/facsimile.css?v=20260926">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
 </head>
 <body>
@@ -48,42 +49,47 @@
           The sections are <details>: the open state is an attribute the page
           can read back and remember, and the keyboard and screen-reader
           behaviour comes with the element rather than being rebuilt on a div.
+
+          Each heading and each setting has an (i) at the right-hand edge,
+          which opens a panel of what it is and what its choices do; the
+          topics are in facsimile-ui.js (TOPICS) and the slots are filled by
+          kvot-info.js. They replace the hover tooltips these rows had.
         -->
         <div class="fac-side-scroll" id="facSideScroll">
           <details class="fac-sec" id="sec-scenario" open>
-            <summary>Scenario</summary>
+            <summary><span class="fac-sec-title">Scenario</span><span class="kvot-info-slot" data-info-key="sec:scenario"></span></summary>
             <div class="fac-preset">
-              <select id="facPreset" data-on-change="fac:choosePreset" title="Write the settings of one of the scenarios of the SKB study into the model text"></select>
+              <select id="facPreset" data-on-change="fac:choosePreset" aria-label="Scenario"></select>
               <div class="fac-preset-desc" id="facPresetDesc"></div>
               <div class="fac-preset-ref" id="facPresetRef" hidden></div>
             </div>
           </details>
 
           <details class="fac-sec" id="sec-file">
-            <summary>Model file</summary>
+            <summary><span class="fac-sec-title">Model file</span><span class="kvot-info-slot" data-info-key="sec:file"></span></summary>
             <div class="fac-actions">
-              <button type="button" class="fac-btn secondary small" data-on-click="fac:loadFile" title="Read a model file into the editor; dropping one on the page does the same">Open…</button>
+              <button type="button" class="fac-btn secondary small" data-on-click="fac:loadFile">Open…</button>
               <button type="button" class="fac-btn secondary small" data-on-click="fac:saveFile">Save as .fac</button>
-              <button type="button" class="fac-btn secondary small" data-on-click="fac:resetModel" title="Back to the built-in model text and the 13g settings">Reset</button>
+              <button type="button" class="fac-btn secondary small" data-on-click="fac:resetModel">Reset</button>
             </div>
             <p class="fac-muted">A .fac file dropped anywhere on the page opens too. The model text, the settings and the solver options are kept in this browser between visits. Nothing leaves your machine.</p>
           </details>
 
           <details class="fac-sec" id="sec-case" open>
-            <summary>Case settings</summary>
+            <summary><span class="fac-sec-title">Case settings</span><span class="kvot-info-slot" data-info-key="sec:case"></span></summary>
             <div id="facSettings"></div>
           </details>
 
           <details class="fac-sec" id="sec-solver" open>
-            <summary>Solver</summary>
+            <summary><span class="fac-sec-title">Solver</span><span class="kvot-info-slot" data-info-key="sec:solver"></span></summary>
             <!--
               The same settings as rtm.html's panel, by the same names and in the
               same order, since the two pages run the same solver; Kompartment's
-              Advanced settings use the same names where they fit. Each row
-              explains itself on hover.
+              Advanced settings use the same names where they fit. Each row has
+              an (i) that explains it.
             -->
-            <div class="fac-row" title="Which integrator solves the model. NDF is the default, and its BDF formulas switch under Advanced settings runs it with every &#954; set to zero; the Julia ports are methods of DifferentialEquations.jl, run in the page.">
-              <label>Method</label>
+            <div class="fac-row">
+              <label for="facMethod">Method</label>
               <select id="facMethod" data-on-change="fac:solverChanged">
                 <!-- With its BDF formulas switch, the same integrator with every κ zero. -->
                 <option value="ndf">NDF</option>
@@ -95,14 +101,17 @@
                 <option value="julia_rodas5p">Rodas5P (Julia port)</option>
                 <option value="julia_trbdf2">TRBDF2 (Julia port)</option>
               </select>
+              <span class="kvot-info-slot" data-info-key="set:method"></span>
             </div>
-            <div class="fac-row" data-solver-opt="rtol" title="Relative tolerance (rtol): the error a step may make, as a fraction of each quantity&#8217;s own size. 1e-5 is about five significant digits; tighter is slower and more accurate.">
-              <label>Relative tolerance<span class="fac-name">rtol</span></label>
+            <div class="fac-row" data-solver-opt="rtol">
+              <label for="facRtol">Relative tolerance<span class="fac-name">rtol</span></label>
               <input id="facRtol" type="text" value="1e-5" data-on-change="fac:solverChanged">
+              <span class="kvot-info-slot" data-info-key="set:rtol"></span>
             </div>
-            <div class="fac-row" data-solver-opt="atol" title="Absolute tolerance (atol): the error allowed on a concentration near zero, in mol/cm&#179;. Below it a species is not controlled, so set it below the smallest concentration that matters.">
-              <label>Absolute tolerance (mol/cm³)<span class="fac-name">atol</span></label>
+            <div class="fac-row" data-solver-opt="atol">
+              <label for="facAtol">Absolute tolerance (mol/cm³)<span class="fac-name">atol</span></label>
               <input id="facAtol" type="text" value="1e-30" data-on-change="fac:solverChanged">
+              <span class="kvot-info-slot" data-info-key="set:atol"></span>
             </div>
             <!--
               Everything below is the advanced half of the panel, folded away
@@ -116,78 +125,97 @@
                     data-on-click="fac:solverMore"
                     aria-expanded="false" aria-controls="facSolverAdvanced">Advanced settings</button>
             <div id="facSolverAdvanced" hidden>
-            <label class="fac-check" data-solver-opt="bdf" title="Run the plain backward differentiation formulas: the NDF with every &#954; set to zero. Usually a few more steps for the same answer; switch it on to see what those terms buy, or to match a result someone else worked out with BDF. On QNDF it gives QBDF."><input type="checkbox" id="facBdf" data-on-change="fac:solverChanged"> BDF formulas: every κ of the NDF zero</label>
-            <div class="fac-row" data-solver-opt="atolSpecies" title="Absolute tolerances for named species, one SPECIES VALUE a line; every species not listed keeps the absolute tolerance above.">
-              <label>Per-species absolute tolerance<span class="fac-name">one <code>SPECIES VALUE</code> a line; everything unlisted keeps the value above</span></label>
+            <!--
+              A tick box and its (i) are a line of their own, the (i) at the
+              right-hand end: the (i) is a button, and a button inside the
+              label would be a second control labelled by it. The line carries
+              data-solver-opt, so hiding a setting hides its (i) with it.
+            -->
+            <div class="fac-check-line" data-solver-opt="bdf"><label class="fac-check"><input type="checkbox" id="facBdf" data-on-change="fac:solverChanged"> BDF formulas: every κ of the NDF zero</label><span class="kvot-info-slot" data-info-key="set:bdf"></span></div>
+            <div class="fac-row" data-solver-opt="atolSpecies">
+              <label for="facAtolSpecies">Per-species absolute tolerance<span class="fac-name">one <code>SPECIES VALUE</code> a line; everything unlisted keeps the value above</span></label>
               <textarea id="facAtolSpecies" rows="3" spellcheck="false" placeholder="H2O 1e-12&#10;OH 1e-22" data-on-change="fac:solverChanged"></textarea>
+              <span class="kvot-info-slot" data-info-key="set:atolSpecies"></span>
             </div>
-            <div class="fac-row" data-solver-opt="norm" title="How the errors of the components are combined into the one number a step is accepted or refused on: max lets the worst-resolved component decide, rms averages over all of them, as CVODE does. The maximum is the stricter.">
-              <label>Error norm<span class="fac-name">max: the worst-resolved species decides · rms: averaged over all of them, as in CVODE</span></label>
+            <div class="fac-row" data-solver-opt="norm">
+              <label for="facNorm">Error norm<span class="fac-name">max: the worst-resolved species decides · rms: averaged over all of them, as in CVODE</span></label>
               <select id="facNorm" data-on-change="fac:solverChanged">
                 <option value="max">max</option>
                 <option value="rms">rms</option>
               </select>
+              <span class="kvot-info-slot" data-info-key="set:norm"></span>
             </div>
-            <div class="fac-row" data-solver-opt="maxOrder" title="The highest order the variable-order formulas may reach. Lower is steadier through a discontinuity and slower on a smooth stretch.">
-              <label>Maximum order<span class="fac-name">the variable-order methods: NDF, FBDF and QNDF</span></label>
+            <div class="fac-row" data-solver-opt="maxOrder">
+              <label for="facMaxOrder">Maximum order<span class="fac-name">the variable-order methods: NDF, FBDF and QNDF</span></label>
               <select id="facMaxOrder" data-on-change="fac:solverChanged">
                 <option>1</option><option>2</option><option>3</option><option>4</option><option selected>5</option>
               </select>
+              <span class="kvot-info-slot" data-info-key="set:maxOrder"></span>
             </div>
-            <div class="fac-row" data-solver-opt="minOrder" title="The lowest order to drop to. Raising it to the maximum gives a fixed-order method.">
-              <label>Minimum order<span class="fac-name">pin both to the same value to hold the order fixed</span></label>
+            <div class="fac-row" data-solver-opt="minOrder">
+              <label for="facMinOrder">Minimum order<span class="fac-name">pin both to the same value to hold the order fixed</span></label>
               <select id="facMinOrder" data-on-change="fac:solverChanged">
                 <option selected>1</option><option>2</option><option>3</option><option>4</option><option>5</option>
               </select>
+              <span class="kvot-info-slot" data-info-key="set:minOrder"></span>
             </div>
-            <div class="fac-row" data-solver-opt="hmax" title="The longest step the solver may take; 0 is a tenth of the run. Set it where a model changes faster than its output can show and the solver steps over the change &#8212; and to catch a trigger that moves faster than the solution (see the Help tab).">
-              <label>Maximum step (years)<span class="fac-name">0 = a tenth of the run</span></label>
+            <div class="fac-row" data-solver-opt="hmax">
+              <label for="facHmax">Maximum step (years)<span class="fac-name">0: a tenth of the run for the NDF, no limit for the ports</span></label>
               <input id="facHmax" type="text" value="0" data-on-change="fac:solverChanged">
+              <span class="kvot-info-slot" data-info-key="set:hmax"></span>
             </div>
-            <div class="fac-row" data-solver-opt="matrix" title="How I &#8722; hJ, the matrix every implicit step solves with, is factorised: a sparse LU that keeps its pivots from one factorisation to the next, a sparse LU that chooses them each time, or a dense LU. auto measures the fill and chooses, and is right almost always.">
-              <label>Iteration matrix<span class="fac-name">I − hJ; auto: chosen by the measured fill</span></label>
+            <div class="fac-row" data-solver-opt="matrix">
+              <label for="facMatrix">Iteration matrix<span class="fac-name">I − hJ; auto: chosen by the measured fill</span></label>
               <select id="facMatrix" data-on-change="fac:solverChanged">
                 <option value="auto">auto</option>
                 <option value="refactor">sparse LU, pivots kept</option>
                 <option value="sparse">sparse LU</option>
                 <option value="dense">dense LU</option>
               </select>
+              <span class="kvot-info-slot" data-info-key="set:matrix"></span>
             </div>
-            <div class="fac-row" data-solver-opt="jacobian" title="Where df/dy comes from: derived from the equations, which is exact, or by finite differences through the same pattern. Differencing is slower and less exact; it is the check to run when the analytic one is in doubt.">
-              <label>Jacobian<span class="fac-name">analytic from the equations, or differenced through its pattern</span></label>
+            <div class="fac-row" data-solver-opt="jacobian">
+              <label for="facJacobian">Jacobian<span class="fac-name">analytic from the equations, or differenced through its pattern</span></label>
               <select id="facJacobian" data-on-change="fac:solverChanged">
                 <option value="analytic">analytic, sparse</option>
                 <option value="numeric">finite differences</option>
               </select>
+              <span class="kvot-info-slot" data-info-key="set:jacobian"></span>
             </div>
-            <div class="fac-row" data-solver-opt="kappa" title="How tightly each stage&#8217;s Newton iteration must converge, as a fraction of the error tolerance (&#954;). Loose leaves a stage half-solved, which contaminates the error estimate read off those stages; 1e-3 was measured, not chosen.">
-              <label>Newton tolerance<span class="fac-name">κ: how closely each stage is solved, as a share of one tolerance</span></label>
+            <div class="fac-row" data-solver-opt="kappa">
+              <label for="facKappa">Newton tolerance<span class="fac-name">κ: how closely each stage is solved, as a share of one tolerance</span></label>
               <input id="facKappa" type="text" value="1e-3" data-on-change="fac:solverChanged">
+              <span class="kvot-info-slot" data-info-key="set:kappa"></span>
             </div>
-            <div class="fac-row" data-solver-opt="maxJacAge" title="How many steps a Jacobian may be reused before it is formed again; 1 forms it every step. Reusing it is most of what makes a stiff solver cheap on a large model; reusing it too long costs Newton iterations instead.">
-              <label>Jacobian reuse<span class="fac-name">steps, at most; 1 re-evaluates every step</span></label>
+            <div class="fac-row" data-solver-opt="maxJacAge">
+              <label for="facJacAge">Jacobian reuse<span class="fac-name">steps, at most; 1 re-evaluates every step</span></label>
               <input id="facJacAge" type="text" value="20" data-on-change="fac:solverChanged">
+              <span class="kvot-info-slot" data-info-key="set:maxJacAge"></span>
             </div>
-            <div class="fac-row" data-solver-opt="belowTolRun" title="How many steps that failed the error test at the smallest representable size may be accepted in a row. 0 stops instead, which is what the published methods do: accepting a step known to be inaccurate should be asked for.">
-              <label>Steps at the floor<span class="fac-name">failing steps accepted in a row when no shorter step exists; 0 stops and returns what it has</span></label>
+            <div class="fac-row" data-solver-opt="belowTolRun">
+              <label for="facBelowTol">Steps at the floor<span class="fac-name">failing steps accepted in a row when no shorter step exists; 0 stops and returns what it has</span></label>
               <input id="facBelowTol" type="text" value="5" data-on-change="fac:solverChanged">
+              <span class="kvot-info-slot" data-info-key="set:belowTolRun"></span>
             </div>
-            <div class="fac-row" data-solver-opt="maxSteps" title="How many steps the solver may take before it gives up and says so. A run that hits this has usually met something the model did not mean, rather than needing a larger budget.">
-              <label>Step budget<span class="fac-name">the run gives up past this, and hands back what it had</span></label>
+            <div class="fac-row" data-solver-opt="maxSteps">
+              <label for="facMaxSteps">Step budget<span class="fac-name">the run gives up past this, and hands back what it had</span></label>
               <input id="facMaxSteps" type="text" value="2000000" data-on-change="fac:solverChanged">
+              <span class="kvot-info-slot" data-info-key="set:maxSteps"></span>
             </div>
-            <div class="fac-row" data-solver-opt="stagnationTol" title="How large a Newton correction may be and still be accepted once it has stopped shrinking, as a fraction of the error tolerance; 0 never accepts one, which is this page&#8217;s default. Raise it to 0.5 only for a model whose rates cancel so heavily that the correction cannot shrink any further &#8212; constants of 1e16 against concentrations of 1e-9, as rtm.html&#8217;s networks have. On a model that does not need it, it costs accuracy.">
-              <label>Stall tolerance<span class="fac-name">a stalled Newton correction is taken when within this share of one tolerance; 0 never</span></label>
+            <div class="fac-row" data-solver-opt="stagnationTol">
+              <label for="facStagnation">Stall tolerance<span class="fac-name">a stalled Newton correction is taken when within this share of one tolerance; 0 never</span></label>
               <input id="facStagnation" type="text" value="0" data-on-change="fac:solverChanged">
+              <span class="kvot-info-slot" data-info-key="set:stagnationTol"></span>
             </div>
-            <div class="fac-row" title="How many points of the solution are kept. Past this the stored points are thinned as the run goes, so a long run still fits; the solution itself is not affected.">
-              <label>Points kept<span class="fac-name">thinned as it goes to stay inside this</span></label>
+            <div class="fac-row">
+              <label for="facMaxPoints">Points kept<span class="fac-name">thinned as it goes to stay inside this</span></label>
               <input id="facMaxPoints" type="text" value="20000" data-on-change="fac:solverChanged">
+              <span class="kvot-info-slot" data-info-key="set:maxPoints"></span>
             </div>
-            <label class="fac-check" data-solver-opt="autoAtol" title="Let each species&#8217; absolute tolerance rise with it, so it is judged against the largest it has ever been rather than a floor fixed before the run. Much cheaper where concentrations span many decades; it only ever loosens, so a species that peaked and fell is no longer controlled in its tail."><input type="checkbox" id="facAutoAtol" data-on-change="fac:solverChanged"> Absolute tolerance follows the solution</label>
-            <label class="fac-check" data-solver-opt="smoothEst" title="Filter the error estimate through I &#8722; hJ, as Shampine proposed, so that a stiff component cannot inflate it and force a needlessly small step."><input type="checkbox" id="facSmoothEst" checked data-on-change="fac:solverChanged"> Smooth the error estimate through I − hJ (Shampine)</label>
-            <label class="fac-check" data-solver-opt="clamp" title="Read every concentration in the rate laws as max(0, c), so a small negative excursion cannot drive a rate the wrong way. The solution itself may still dip below zero unless the next setting stops it."><input type="checkbox" id="facClamp" checked data-on-change="fac:solverChanged"> Read negative concentrations as zero in the rate laws</label>
-            <label class="fac-check" data-solver-opt="nonNegative" title="Keep every species at or above zero: the NDF damps the derivative so a species at zero cannot be pushed further down, counts a violation in the error test, and projects an accepted step back; the Julia ports only project."><input type="checkbox" id="facNonNeg" checked data-on-change="fac:solverChanged"> Keep every species non-negative</label>
+            <div class="fac-check-line" data-solver-opt="autoAtol"><label class="fac-check"><input type="checkbox" id="facAutoAtol" data-on-change="fac:solverChanged"> Absolute tolerance follows the solution</label><span class="kvot-info-slot" data-info-key="set:autoAtol"></span></div>
+            <div class="fac-check-line" data-solver-opt="smoothEst"><label class="fac-check"><input type="checkbox" id="facSmoothEst" checked data-on-change="fac:solverChanged"> Smooth the error estimate through I − hJ (Shampine)</label><span class="kvot-info-slot" data-info-key="set:smoothEst"></span></div>
+            <div class="fac-check-line" data-solver-opt="clamp"><label class="fac-check"><input type="checkbox" id="facClamp" checked data-on-change="fac:solverChanged"> Read negative concentrations as zero in the rate laws</label><span class="kvot-info-slot" data-info-key="set:clamp"></span></div>
+            <div class="fac-check-line" data-solver-opt="nonNegative"><label class="fac-check"><input type="checkbox" id="facNonNeg" checked data-on-change="fac:solverChanged"> Keep every species non-negative</label><span class="kvot-info-slot" data-info-key="set:nonNegative"></span></div>
             <!--
               Filled in by updateSolverOptions: which of the settings above the
               chosen method does not read. Said rather than silently hidden,
@@ -199,7 +227,7 @@
           </details>
 
           <details class="fac-sec" id="sec-run" open>
-            <summary>Last run</summary>
+            <summary><span class="fac-sec-title">Last run</span><span class="kvot-info-slot" data-info-key="sec:run"></span></summary>
             <div class="fac-stats" id="facStats">Nothing has been solved yet.</div>
           </details>
 
@@ -209,7 +237,7 @@
           <div class="fac-actions">
             <button type="button" class="fac-btn" id="facRun" data-on-click="fac:run">Run</button>
             <button type="button" class="fac-btn secondary" id="facStop" data-on-click="fac:stop" disabled>Stop</button>
-            <button type="button" class="fac-btn secondary" id="facVerify" data-on-click="fac:verify" title="Compare the analytic Jacobian with finite differences at a few states">Check Jacobian</button>
+            <button type="button" class="fac-btn secondary" id="facVerify" data-on-click="fac:verify">Check Jacobian</button>
           </div>
           <div class="fac-progress" id="facProgress" hidden><div></div></div>
           <div class="fac-status" id="facStatus">Loading…</div>
@@ -252,13 +280,12 @@
               whatever unit the axis is in; empty lets the data decide again.
             -->
             <label id="facXMinWrap">from
-              <input id="facXMin" type="text" value="1e-4" size="6" data-on-change="fac:redraw"
-                title="Earliest time shown, in the unit of the time axis. Leave empty to start at the first point of the run.">
+              <input id="facXMin" type="text" value="1e-4" size="6" data-on-change="fac:redraw">
               <span class="fac-muted" id="facXMinUnit">h</span>
             </label>
             <label><input type="checkbox" id="facLogY" checked data-on-change="fac:redraw"> log amounts</label>
-            <button type="button" class="fac-btn secondary small" id="facToHdf5" data-on-click="fac:toHdf5"
-              title="Write this run as an HDF5 file and open it in the HDF5 Browser, without it touching the disk">View in HDF5 Browser</button>
+            <button type="button" class="fac-btn secondary small" id="facToHdf5" data-on-click="fac:toHdf5">View in HDF5 Browser</button>
+            <span class="kvot-info-slot" data-info-key="pane:charts"></span>
             <span class="fac-muted" id="facChartNote">Run the model to draw the charts.</span>
           </div>
           <div class="fac-chart-grid">
@@ -274,6 +301,7 @@
                 <input type="text" id="facSeriesFilter" placeholder="filter names…" data-on-input="fac:filterSeries" style="width:140px">
                 <label><input type="checkbox" id="facCustomLog" checked data-on-change="fac:redrawCustom"> log y</label>
                 <button type="button" class="fac-btn secondary small" data-on-click="fac:clearSeries">clear</button>
+                <span class="kvot-info-slot" data-info-key="pane:series"></span>
               </div>
               <!--
                 What is ticked, above the list rather than buried in it: the
@@ -314,7 +342,8 @@
             </label>
             <button type="button" class="fac-btn secondary small" id="facCsvBtn" data-on-click="fac:downloadCsv">Download CSV (all steps)</button>
             <button type="button" class="fac-btn secondary small" data-on-click="fac:downloadXlsx">Download Excel</button>
-            <button type="button" class="fac-btn secondary small" data-on-click="fac:downloadHdf5" title="The same file the HDF5 Browser is handed">Download HDF5</button>
+            <button type="button" class="fac-btn secondary small" data-on-click="fac:downloadHdf5">Download HDF5</button>
+            <span class="kvot-info-slot" data-info-key="pane:table"></span>
             <span class="fac-muted" id="facTableNote"></span>
           </div>
           <div class="fac-table-wrap"><table class="fac-table" id="facTable"></table></div>
@@ -326,6 +355,7 @@
             <div class="fac-toolbar">
               <button type="button" class="fac-btn small" data-on-click="fac:applyModel">Apply changes</button>
               <label class="fac-check inline"><input type="checkbox" id="facSyntax" checked data-on-change="fac:syntaxToggle"> colour the syntax</label>
+              <span class="kvot-info-slot" data-info-key="pane:model"></span>
               <span class="fac-muted">Edit the settings, equations and reactions here; <em>Apply</em> compiles the text (it is also compiled before a run). The text is checked as you type, and a line you are still writing is reported quietly and never selected. Syntax is described under <em>Help</em>.</span>
             </div>
             <div class="fac-code-box" id="facCodeBox">
@@ -339,6 +369,10 @@
 
         <!-- jacobian -->
         <section class="fac-pane" id="pane-jacobian" hidden>
+          <div class="fac-toolbar">
+            <span class="fac-muted">The pattern of df/dy the model text compiles to. Point at a cell to see which entry it is.</span>
+            <span class="kvot-info-slot" data-info-key="pane:jacobian"></span>
+          </div>
           <div class="fac-jac">
             <div>
               <canvas id="facJacCanvas" width="504" height="504" data-on-click="fac:noop"></canvas>
@@ -360,6 +394,7 @@
                 <option value="init">init — the &lt;INITIAL&gt; section</option>
               </select>
             </label>
+            <span class="kvot-info-slot" data-info-key="pane:code"></span>
             <span class="fac-muted">The JavaScript generated from the model text. Temporaries are shared between the value and its derivatives. A long function is cut into parts, run one after another, because a browser will not optimise a function past a certain size.</span>
           </div>
           <pre class="fac-pre" id="facCode"></pre>
@@ -367,11 +402,11 @@
 
         <!-- help -->
         <section class="fac-pane fac-help" id="pane-help" hidden>
-          <h3>What this page does</h3>
+          <h3 id="help-about">What this page does</h3>
           <p>It integrates the gas-phase radiolysis and steel-corrosion model of an intact spent-fuel canister that was written in FACSIMILE for SKB (report TR-22-15) and later ported to Python. The reaction system, the constants and the case settings are a text file you can edit in the <em>Model</em> tab; the settings column shows the values from its <code>&lt;SETTINGS&gt;</code> section, and the <em>Scenario</em> list fills them with the cases of the study. Choosing one also says where that case is defined: cases 1–22 are Table 3-1 of <a href="https://www.skb.com/publication/2500612/TR-22-15.pdf" target="_blank" rel="noopener noreferrer">SKB TR-22-15</a>, with the section that presents its results; the rest are variants that come with the FACSIMILE model files rather than the report, and say so instead of borrowing a citation. The reference travels with the run into the HDF5 file and the spreadsheet.</p>
           <p>Everything runs in your browser. The text is compiled into JavaScript for the right-hand side and for its Jacobian, and the system of stiff ordinary differential equations is solved with a variable-order multistep method of orders 1–5 — the numerical differentiation formulas, or the plain backward differentiation formulas.</p>
 
-          <h3>The Jacobian</h3>
+          <h3 id="help-jacobian">The Jacobian</h3>
           <p>A stiff solver needs the matrix <code>df/dy</code> repeatedly. Instead of estimating it with finite differences (one evaluation of the whole model per species), it is derived from the equations when the text is compiled: every expression is emitted together with its derivative with respect to each species it depends on, so a rate constant that contains the third-body concentration <code>M</code> contributes to the columns of the six species in <code>M</code>, and a switch such as <code>ramp</code> contributes its true slope rather than the artefact a difference across its kink gives. Which entries can be non-zero is known before any number is computed, so the matrix is stored and factorised as a sparse matrix (compressed column storage, Gilbert–Peierls LU with a reverse Cuthill–McKee ordering). Whether the sparse factorisation is used is decided from its measured fill: for this model of 63 species the factor fills in to more than a third of the dense matrix, and a dense LU is then cheaper. The <em>Jacobian</em> tab shows the pattern, and <em>Check Jacobian</em> compares the analytic entries with finite differences.</p>
           <p>Two details of the Newton iteration matter for this model. The corrections are computed in variables scaled by <code>max(|y|, atol/rtol)</code>, because the concentrations span forty orders of magnitude and an unscaled factorisation gets the trace species wrong. And at least two Newton iterations are taken per step: the relative-humidity switch on the corrosion rate turns on over one part in 10<sup>7</sup> of the humidity, and a Jacobian formed one step earlier can damp the first correction by a factor 10<sup>6</sup> while the residual is far from zero.</p>
 
@@ -379,23 +414,23 @@
           <ul>
             <li>Rate constants are evaluated at the current temperature; FACSIMILE computed them once at the initial temperature.</li>
             <li>Constants carry more digits (Avogadro's number, the gas constants, 365.25 days per year).</li>
-            <li><strong>Liquid water is a setting</strong>, <code>H2OPAIR</code> in the case settings. At <em>0</em>, the default, liquid water is not a separate species: the state <code>H2O</code> holds all water and the part above the saturation concentration <code>H2OEQ</code> is liquid (the <code>@H2O = min(H2O, H2OEQ)</code> line), which asserts saturation directly. At <em>1</em> you get FACSIMILE's own treatment instead: a separate liquid species <code>H2OLIQ</code> and the fast pair it used, condensation first order in the vapour and evaporation zeroth order at <code>1E6·H2OEQ</code>, switched off once the liquid is gone. The two hold <code>H2O</code> at <code>H2OEQ</code> by different means and agree when the answer has converged — on the 500-year 13g case both give 65.94 g of water at <code>rtol</code> 10<sup>−8</sup> — but not before it has: at the tolerance this page starts with they read 65.93 g and 63.00 g, for the reason given under the solver comparison. Choosing a scenario puts <code>H2OPAIR</code> back to 0, because that is the model the published cases were run with.</li>
+            <li id="help-h2opair"><strong>Liquid water is a setting</strong>, <code>H2OPAIR</code> in the case settings. At <em>0</em>, the default, liquid water is not a separate species: the state <code>H2O</code> holds all water and the part above the saturation concentration <code>H2OEQ</code> is liquid (the <code>@H2O = min(H2O, H2OEQ)</code> line), which asserts saturation directly. At <em>1</em> you get FACSIMILE's own treatment instead: a separate liquid species <code>H2OLIQ</code> and the fast pair it used, condensation first order in the vapour and evaporation zeroth order at <code>1E6·H2OEQ</code>, switched off once the liquid is gone. The two hold <code>H2O</code> at <code>H2OEQ</code> by different means and agree when the answer has converged — on the 500-year 13g case both give 65.94 g of water at <code>rtol</code> 10<sup>−8</sup> — but not before it has: at the tolerance this page starts with they read 65.93 g and 63.00 g, for the reason given under the solver comparison. Choosing a scenario puts <code>H2OPAIR</code> back to 0, because that is the model the published cases were run with.</li>
             <li>A negative concentration is read as zero in the rate laws (the same as the Python port), and the solver projects a species that a step has left negative back onto zero.</li>
             <li>The gas density uses FACSIMILE's molar masses for NO<sub>2</sub> (44) and HNO<sub>2</sub> (45) so that the ppm outputs match the reports.</li>
           </ul>
           <p>Against the Python port the engine agrees to 0.1 % or better for the amounts of O<sub>2</sub>, H<sub>2</sub>, NH<sub>3</sub>, HNO<sub>3</sub>, HNO<sub>2</sub> and H<sub>2</sub>O<sub>2</sub> while oxygen is consumed and the gas chemistry develops. In the phase where corrosion is throttled by the humidity switch the two integrators follow the same water curve to within a few per cent, and both agree with the FACSIMILE run of case 13g on the water left after 500 years. A 500-year case takes one or two seconds here; the Python port needed minutes because it differenced its Jacobian.</p>
 
-          <h3>Which settings apply</h3>
+          <h3 id="help-apply">Which settings apply</h3>
           <p>The solver settings on the left are not all read by every method, and the ones that are not are hidden with a line underneath saying which. <em>Maximum</em> and <em>minimum order</em> mean nothing to a one-step method such as Rodas5P or KenCarp4 — only the multistep formulas have an order to cap. A Rosenbrock method has no nonlinear iteration to give a <em>Newton tolerance</em> to, and its Jacobian is part of the method rather than an optimisation, so it is re-formed every step and there is no age to set. RadauIIA5 measures its error against Hairer's own transformed tolerances, in a norm of its own.</p>
           <p>Three settings deserve a word because they are not all-or-nothing.</p>
           <ul>
-            <li><strong>Reading negatives as zero</strong> is not a solver setting at all. It changes the generated rate laws, so it is built into the derivative and the Jacobian that every solver is handed, and it applies to all of them identically.</li>
+            <li id="help-clamp"><strong>Reading negatives as zero</strong> is not a solver setting at all. It changes the generated rate laws, so it is built into the derivative and the Jacobian that every solver is handed, and it applies to all of them identically.</li>
             <li><strong>Keeping every species non-negative</strong> is three things at once, and the two families do different amounts of it. <em>NDF</em>, with its BDF formulas or without, does all three: it damps the derivative so that a species at zero cannot be pushed below it, folds the size of any violation into the error test, and projects the accepted step back. The <em>Julia ports</em> project only. The panel says which you are getting.</li>
-            <li><strong>The Newton tolerance</strong> κ is how closely each stage is solved, as a share of one unit of the integration tolerance. It is not a cosmetic knob: at 1/100, which is what SciML uses, the left-over iteration error in an ESDIRK's stages is enough to corrupt its embedded error estimate, and the step-size controller then acts on a corrupted number. The default here is 1/1000, which on the standard stiff test problems is both more accurate and cheaper.</li>
+            <li id="help-kappa"><strong>The Newton tolerance</strong> κ is how closely each stage is solved, as a share of one unit of the integration tolerance. It is not a cosmetic knob: at 1/100, which is what SciML uses, the left-over iteration error in an ESDIRK's stages is enough to corrupt its embedded error estimate, and the step-size controller then acts on a corrupted number. The default here is 1/1000, which on the standard stiff test problems is both more accurate and cheaper.</li>
           </ul>
           <p>What each method reads is declared in the code that hands the settings over, which is the only place the answer stays honest.</p>
 
-          <h3>The Julia ports</h3>
+          <h3 id="help-julia">The Julia ports</h3>
           <p>Six more solvers, ported into JavaScript from <a href="https://docs.sciml.ai/DiffEqDocs/stable/" target="_blank" rel="noopener noreferrer">DifferentialEquations.jl</a>: <em>FBDF</em>, <em>QNDF</em>, <em>Rodas5P</em>, <em>RadauIIA5</em>, <em>KenCarp4</em> and <em>TRBDF2</em>. They are a package of their own — the sources are under <code>resources/js/ode/julia/</code> with their own tests and README — and they are plain JavaScript: nothing is downloaded and they work offline exactly as the built-in NDF does.</p>
           <p><strong>Which does what.</strong> <em>QNDF</em> is the same method as this page's own <em>NDF</em> — the same numerical differentiation formulas, the same κ coefficients and the same backward-difference machinery — written by other people, so it is the most direct check there is on the built-in solver. Both have a <em>BDF formulas</em> switch under Advanced settings, which sets κ to zero throughout, and QNDF then runs as <em>QBDF</em>. That is what turns a numerical differentiation formula back into a plain backward differentiation formula, so running either with the switch on and off shows exactly what those terms are worth on a given problem. <em>FBDF</em> is a close relative: a multistep formula of variable order that reuses one matrix factorisation across many steps, which is what makes it cheap on a system this size. <em>RadauIIA5</em> is fully implicit and suffers the least from stiffness, so it is the one to believe when two others disagree. <em>KenCarp4</em> and <em>TRBDF2</em> are diagonally implicit and cheap at moderate and loose tolerances. <em>Rosenbrock</em> methods like <em>Rodas5P</em> take one linear solve per stage and no nonlinear iteration at all, so there is nothing that can fail to converge.</p>
           <p><strong>On this model, in particular.</strong> Every one of them that finishes agrees with <code>NDF</code> on the water left after 500 years — 65.935 g against 65.933 g — so the physics is not in question. What differs is the cost, and by a lot:</p>
@@ -412,7 +447,7 @@
           </table>
           <p><strong>Why the rejections.</strong> The absolute tolerance here is 10<sup>-30</sup> and the trace species sit forty orders of magnitude below the main ones, so the error test is asking for the impossible on components that hold nothing. This page's <code>NDF</code> gets through by accepting, up to five times in a row, a step at its smallest allowed size that has failed the error test anyway. <strong>That is a departure from the published method, not a feature of it</strong>: reaching the same point, a variable-order multistep code raises a tolerance-not-met error and returns the partial solution. Without the departure, three of the presets here stop early; with it, they finish, and the footer says in bold how many such steps were taken — across all thirty-nine presets the total is three. None of the ported methods has the escape, because none of them has it in Julia either. <em>FBDF</em> is the one that does not need it. <em>Rodas5P</em> and <em>RadauIIA5</em> need more than that and do not get through the case at 10<sup>-30</sup> at all; raise the absolute tolerance to 10<sup>-20</sup> and Rodas5P solves it in a few hundred steps. Loosening the absolute tolerance, or choosing the root-mean-square norm instead of the maximum, makes all of them far cheaper and is worth trying before concluding a method is unsuitable.</p>
 
-          <p><strong>Read the table for cost, not for accuracy.</strong> The water left after 500 years is not converged at the relative tolerance this page starts with. Run the 13g case at a sequence of tolerances and it goes:</p>
+          <p id="help-converged"><strong>Read the table for cost, not for accuracy.</strong> The water left after 500 years is not converged at the relative tolerance this page starts with. Run the 13g case at a sequence of tolerances and it goes:</p>
           <table class="fac-table-small">
             <thead><tr><th>rtol</th><th>10<sup>-4</sup></th><th>10<sup>-5</sup></th><th>10<sup>-6</sup></th><th>10<sup>-7</sup></th><th>10<sup>-8</sup></th><th>10<sup>-9</sup></th></tr></thead>
             <tbody>
@@ -422,7 +457,7 @@
           </table>
           <p>From 10<sup>-7</sup> downwards every method agrees on 65.94 g and stays there. Above it they scatter between 36 and 66 g, and not even monotonically — <em>NDF</em> is closer at 10<sup>-5</sup> than at 10<sup>-6</sup>. Water at 500 years sits on the far side of the corrosion switch and the relative humidity that drives it; small differences early decide which side of that threshold the run comes down on, and an agreement at a loose tolerance is partly luck. So the 65.933 g against 65.935 g above says the ported solvers and this one take the same path at the page's defaults, not that either figure is right to four significant digits. <strong>If the number matters, tighten the relative tolerance to 10<sup>-7</sup> and check it stops moving.</strong></p>
 
-          <h3>How much of a run is kept</h3>
+          <h3 id="help-kept">How much of a run is kept</h3>
           <p>The charts, the table and the exported files hold the solver's own steps, up to twenty thousand of them. Past that the run is thinned as it goes — every second point, then every fourth — so that a solver taking hundreds of thousands of steps cannot fill the machine's memory. The two ends of the run are always kept, and the footer says when it happened: <em>one in 32</em> beside the step count.</p>
 
           <h3>The model tab</h3>
@@ -431,7 +466,7 @@
           <h3>The panel on the left</h3>
           <p>Drag the edge between the panel and this area to give either more of the page; double-click it to put it back. Each heading folds away what is under it. The width and what is folded are remembered between visits. <em>Run</em>, <em>Stop</em> and <em>Check Jacobian</em> sit at the foot of the panel and stay there whatever is scrolled past them, with the status line beside them.</p>
 
-          <h3>The model file</h3>
+          <h3 id="help-model-file">The model file</h3>
           <p>A section starts with a line <code>&lt;NAME&gt;</code>. <code>#</code> starts a comment; FACSIMILE's <code>*</code> comment lines and trailing <code>;</code> are accepted. Names are case-sensitive; function names are not.</p>
           <table>
             <tr><th>Section</th><th>Lines</th></tr>
@@ -480,30 +515,30 @@ Y2 = , rf = 3.0E7*Y2*Y2</pre>
           <p>A worked example is in the repository at <code>resources/data/facsimile-langmuir.fac</code>: a gas consumed at a fixed rate with a surface whose coverage is in equilibrium with it at every instant. Open it with <em>Open…</em>, or drop it on the page. It uses all of this at once — an algebraic variable, a named rate, an output grid, an event value list and an event that stops the run — and everything in it has an exact answer to check against.</p>
           <p>There is an example of the trade-off in the built-in model already. Setting <em>H2OPAIR</em> to 1 holds water at saturation with FACSIMILE's evaporation and condensation pair at a rate constant of a million, which is the usual way of avoiding a constraint; the default substitutes the saturation expression at compile time instead. An algebraic variable is the third way, and imposes it exactly.</p>
 
-          <h3>Events at a list of values</h3>
+          <h3 id="help-events">Events at a list of values</h3>
           <p>An event trigger written as <code>expression = v1 v2 v3</code> fires wherever the expression passes each of those values, and takes the same forms as <code>&lt;TIMES&gt;</code>, so <code>TIMY = 0 + 50 * 10</code> is every fifty years for five hundred. Adding <code>once</code> makes an event fire one time only. Those two together are FACSIMILE's WHEN and WHENEVER: the same command, differing only in whether the clause survives its first firing. Restarting the integration at an event, which FACSIMILE asked for with RESTART, is what this page always does.</p>
           <p>One limitation is worth stating, because it is shared with FACSIMILE and with most solvers and is invisible when it bites. A crossing is found from the sign of the expression at the two ends of a step, and located by searching the solver's own interpolant between them. When the trigger moves faster than the solution does the step is long while the expression is not, and two things go wrong: an excursion that goes out and comes back inside one step has the same sign at both ends and is not seen at all, and a crossing that is seen can be located on an interpolant too coarse to place it, so the reported time is wrong. On <code>sin(t)</code> against 0.9, left to itself, the second crossing comes out at 3.01 where it belongs at 2.02. The remedy for both is the maximum step size under the advanced solver settings: capping it makes the solver look more often and interpolate over less.</p>
 
           <h3>Units</h3>
           <p>Time in seconds, concentrations in mol/cm³, temperature in K, energies in cal/mol; bimolecular rate constants in cm³ mol<sup>−1</sup> s<sup>−1</sup> (the literature values in cm³ molecule<sup>−1</sup> s<sup>−1</sup> are multiplied by <code>NA</code>). Dose rates are given in Gy/h and converted to the 100 eV cm<sup>−3</sup> s<sup>−1</sup> unit the G-values need.</p>
 
-          <h3>Solver settings</h3>
+          <h3 id="help-solver">Solver settings</h3>
           <ul>
-            <li><strong>Tolerances.</strong> The error of each species is compared with <code>rtol·max(|y|, atol/rtol)</code>. The Python port used <code>atol</code> = 10<sup>−100</sup> and below, i.e. purely relative control down to nothing; 10<sup>−30</sup> mol/cm³ leaves species below that unresolved, which is where the physics stops mattering.</li>
-            <li><strong>Per-species absolute tolerance.</strong> One <code>SPECIES VALUE</code> a line, for the species that should not be judged against the single number above; everything unlisted keeps it. Every solver on the menu reads it — the error test has always weighed each species separately, and this is the only part of that weight which was one number for all sixty-three. Two things are worth knowing before reaching for it. <em>It does nothing for a species that is never small.</em> The weight is <code>max(|y|, atol/rtol)</code>, so at <code>rtol</code> 10<sup>−5</sup> and <code>atol</code> 10<sup>−30</sup> anything above 10<sup>−25</sup> is judged relatively and its <code>atol</code> never enters: setting water's to 10<sup>−40</sup> or to 10<sup>−12</sup> gives the same 5888 steps, to the step. <em>And relaxing the fast trace species — the obvious thing to do — backfires here.</em> Taking the five ions <code>E</code>, <code>HP</code>, <code>O2M</code>, <code>H3OP</code> and <code>NOP</code> from 10<sup>−30</sup> to 10<sup>−20</sup> costs 71 335 steps against 5888, with the Jacobian re-formed 24 234 times against 698. Raising a tolerance past a species' own magnitude makes it invisible to the error test, the step controller then asks for steps the Newton iteration cannot solve, and the run spends itself failing to converge and cutting back. On this model the error test on the fast ions is what was keeping the step inside the Newton's reach. The cost climbs gently to about 10<sup>−22</sup> and then runs away.</li>
-            <li><strong>Let the absolute tolerance follow the solution upwards.</strong> After every accepted step, each species' absolute tolerance is raised to <code>rtol × |y|</code> if that is larger, and never lowered again. Each component is then judged against the largest it has ever been, rather than against a floor chosen before the run started. The case for it on a model like this one is direct: a radical that rose to 10<sup>-5</sup> and has since decayed to 10<sup>-40</sup> is otherwise still being held to an absolute tolerance of 10<sup>-30</sup>, thirty-five orders below anything it ever was, and the step size pays for it. The case against is that the tolerance only ever loosens, so a species that genuinely needs absolute accuracy after having once been large will not get it. It is off by default and it is worth trying, because what it does depends on the method: on the 500-year case it takes FBDF from 4943 steps to 2897 and gives the same answer, leaves <code>NDF</code> slightly worse at 6451 against 5888, and doubles QNDF's work. Across the built-in scenarios <code>NDF</code> takes fewer steps in total with it on, but one of them stops early.</li>
-            <li><strong>Accept failing steps at the floor.</strong> What to do when a step at the smallest size the clock can represent fails the error test anyway. There is nothing left to try: a shorter step does not exist. Set to <em>0</em> the run stops there and hands back what it had, which is what the published method does — it raises a tolerance-not-met error and returns — and what every solver in DifferentialEquations.jl does. Above 0, that many such steps in a row are accepted instead, and the footer reports how many were taken. The case for accepting is that the error test is not always asking a sensible question: after a restart from an interpolated state, a species with a lifetime of femtoseconds is off its steady state by more than the tolerance, and no step size mends that — the implicit step itself does. The case against is that you are accepting a step known to be inaccurate. The default here is 5, because at 0 three of the built-in scenarios stop early; across all thirty-nine, the escape is used three times in total.</li>
-            <li><strong>Error norm.</strong> How the error of one step is turned from a number per species into a single number to compare with the tolerance. <em>max</em> takes the largest, after each species is scaled by its own tolerance, so the worst-resolved one decides the step; that is what the numerical differentiation formulas were published with and what this page defaults to. <em>rms</em> takes the root mean square instead, which is what CVODE and SUNDIALS do. The difference is not small here: with one species out by exactly one unit of tolerance and the other sixty-two perfect, <em>max</em> reads 1 and rejects the step while <em>rms</em> reads 0.126 and accepts it — a factor of √63, about 8. So <em>rms</em> gives longer steps and a looser answer, and on a model whose trace species sit forty orders of magnitude below the main ones, it is the trace species that the choice is about.</li>
-            <li><strong>Method.</strong> <em>NDF</em> solves a 500-year case here in a second or two, and is the one to use. <em>BDF</em> is the same integrator with the κ terms switched off: a little more stable and a little less accurate per step, which on this model costs about 6 % more steps for the same answer, and is the honest control on what those terms buy. It gets through thirty-eight of the thirty-nine presets; the one it misses stops at the moment the water supply is cut off, where restarting from the interpolated state leaves a trace species further from its steady state than a plain BDF will tolerate. Letting the absolute tolerance follow the solution gets it through that one, in fewer steps than <em>NDF</em> takes. The Julia port of <em>FBDF</em> is about as quick and is an independent check that costs nothing. Any run reports its progress in simulated years as it goes, and <em>Stop</em> ends it at once.</li>
-            <li><strong>Iteration matrix.</strong> <em>auto</em> measures the fill of one sparse factorisation, then tries a <em>sparse LU that keeps its pivots</em> and uses it wherever it costs no more than the sparse or dense LU would. On this model it needs about 6,000 multiply-adds per factorisation, against 85,000 for the dense LU. It chooses its pivots from the values once, among entries at least a tenth of the largest in their column, in an order that keeps the factor small. Then it repeats the same eliminations on every later matrix, checking each pivot: it must be at least a hundredth of the largest entry below it. A pivot that fails is chosen again from that point on, and a matrix it cannot factor goes to the dense or sparse LU with partial pivoting. On this model, that makes each step about 30 % cheaper, and it is as accurate: measured against a run at a tolerance of 1e-9, the two give the same errors. The individual steps are not the same, because on this model a change at the level of round-off, from either factorisation, moves the step sequence by several hundred steps either way.</li>
+            <li id="help-tolerances"><strong>Tolerances.</strong> The error of each species is compared with <code>rtol·max(|y|, atol/rtol)</code>. The Python port used <code>atol</code> = 10<sup>−100</sup> and below, i.e. purely relative control down to nothing; 10<sup>−30</sup> mol/cm³ leaves species below that unresolved, which is where the physics stops mattering.</li>
+            <li id="help-atol-species"><strong>Per-species absolute tolerance.</strong> One <code>SPECIES VALUE</code> a line, for the species that should not be judged against the single number above; everything unlisted keeps it. Every solver on the menu reads it — the error test has always weighed each species separately, and this is the only part of that weight which was one number for all sixty-three. Two things are worth knowing before reaching for it. <em>It does nothing for a species that is never small.</em> The weight is <code>max(|y|, atol/rtol)</code>, so at <code>rtol</code> 10<sup>−5</sup> and <code>atol</code> 10<sup>−30</sup> anything above 10<sup>−25</sup> is judged relatively and its <code>atol</code> never enters: setting water's to 10<sup>−40</sup> or to 10<sup>−12</sup> gives the same 5888 steps, to the step. <em>And relaxing the fast trace species — the obvious thing to do — backfires here.</em> Taking the five ions <code>E</code>, <code>HP</code>, <code>O2M</code>, <code>H3OP</code> and <code>NOP</code> from 10<sup>−30</sup> to 10<sup>−20</sup> costs 71 335 steps against 5888, with the Jacobian re-formed 24 234 times against 698. Raising a tolerance past a species' own magnitude makes it invisible to the error test, the step controller then asks for steps the Newton iteration cannot solve, and the run spends itself failing to converge and cutting back. On this model the error test on the fast ions is what was keeping the step inside the Newton's reach. The cost climbs gently to about 10<sup>−22</sup> and then runs away.</li>
+            <li id="help-auto-atol"><strong>Let the absolute tolerance follow the solution upwards.</strong> After every accepted step, each species' absolute tolerance is raised to <code>rtol × |y|</code> if that is larger, and never lowered again. Each component is then judged against the largest it has ever been, rather than against a floor chosen before the run started. The case for it on a model like this one is direct: a radical that rose to 10<sup>-5</sup> and has since decayed to 10<sup>-40</sup> is otherwise still being held to an absolute tolerance of 10<sup>-30</sup>, thirty-five orders below anything it ever was, and the step size pays for it. The case against is that the tolerance only ever loosens, so a species that genuinely needs absolute accuracy after having once been large will not get it. It is off by default and it is worth trying, because what it does depends on the method: on the 500-year case it takes FBDF from 4943 steps to 2897 and gives the same answer, leaves <code>NDF</code> slightly worse at 6451 against 5888, and doubles QNDF's work. Across the built-in scenarios <code>NDF</code> takes fewer steps in total with it on, but one of them stops early.</li>
+            <li id="help-floor"><strong>Accept failing steps at the floor.</strong> What to do when a step at the smallest size the clock can represent fails the error test anyway. There is nothing left to try: a shorter step does not exist. Set to <em>0</em> the run stops there and hands back what it had, which is what the published method does — it raises a tolerance-not-met error and returns — and what every solver in DifferentialEquations.jl does. Above 0, that many such steps in a row are accepted instead, and the footer reports how many were taken. The case for accepting is that the error test is not always asking a sensible question: after a restart from an interpolated state, a species with a lifetime of femtoseconds is off its steady state by more than the tolerance, and no step size mends that — the implicit step itself does. The case against is that you are accepting a step known to be inaccurate. The default here is 5, because at 0 three of the built-in scenarios stop early; across all thirty-nine, the escape is used three times in total.</li>
+            <li id="help-norm"><strong>Error norm.</strong> How the error of one step is turned from a number per species into a single number to compare with the tolerance. <em>max</em> takes the largest, after each species is scaled by its own tolerance, so the worst-resolved one decides the step; that is what the numerical differentiation formulas were published with and what this page defaults to. <em>rms</em> takes the root mean square instead, which is what CVODE and SUNDIALS do. The difference is not small here: with one species out by exactly one unit of tolerance and the other sixty-two perfect, <em>max</em> reads 1 and rejects the step while <em>rms</em> reads 0.126 and accepts it — a factor of √63, about 8. So <em>rms</em> gives longer steps and a looser answer, and on a model whose trace species sit forty orders of magnitude below the main ones, it is the trace species that the choice is about.</li>
+            <li id="help-method"><strong>Method.</strong> <em>NDF</em> solves a 500-year case here in a second or two, and is the one to use. <em>BDF</em> is the same integrator with the κ terms switched off: a little more stable and a little less accurate per step, which on this model costs about 6 % more steps for the same answer, and is the honest control on what those terms buy. It gets through thirty-eight of the thirty-nine presets; the one it misses stops at the moment the water supply is cut off, where restarting from the interpolated state leaves a trace species further from its steady state than a plain BDF will tolerate. Letting the absolute tolerance follow the solution gets it through that one, in fewer steps than <em>NDF</em> takes. The Julia port of <em>FBDF</em> is about as quick and is an independent check that costs nothing. Any run reports its progress in simulated years as it goes, and <em>Stop</em> ends it at once.</li>
+            <li id="help-matrix"><strong>Iteration matrix.</strong> <em>auto</em> measures the fill of one sparse factorisation, then tries a <em>sparse LU that keeps its pivots</em> and uses it wherever it costs no more than the sparse or dense LU would. On this model it needs about 6,000 multiply-adds per factorisation, against 85,000 for the dense LU. It chooses its pivots from the values once, among entries at least a tenth of the largest in their column, in an order that keeps the factor small. Then it repeats the same eliminations on every later matrix, checking each pivot: it must be at least a hundredth of the largest entry below it. A pivot that fails is chosen again from that point on, and a matrix it cannot factor goes to the dense or sparse LU with partial pivoting. On this model, that makes each step about 30 % cheaper, and it is as accurate: measured against a run at a tolerance of 1e-9, the two give the same errors. The individual steps are not the same, because on this model a change at the level of round-off, from either factorisation, moves the step sequence by several hundred steps either way.</li>
             <li><strong>Jacobian.</strong> <em>finite differences</em> differences the model through the analytic pattern, one evaluation per group of columns that share no row (45 groups for 63 species), for comparison.</li>
-            <li><strong>Non-negative.</strong> Three things at once: the derivative of a species at or below zero may not take it lower, a step that leaves a species negative by more than the tolerance is rejected, and what is left below zero is projected back. On by default: with it every scenario of the study integrates in a second or two, whereas a trace species that has drifted a little below zero is exactly where the Newton iteration of a stiff solver comes to grief (the derivative of the clamped rate law is zero on that side). The Python port ran without it and paid in tolerance and time.</li>
+            <li id="help-nonneg"><strong>Non-negative.</strong> Three things at once: the derivative of a species at or below zero may not take it lower, a step that leaves a species negative by more than the tolerance is rejected, and what is left below zero is projected back. On by default: with it every scenario of the study integrates in a second or two, whereas a trace species that has drifted a little below zero is exactly where the Newton iteration of a stiff solver comes to grief (the derivative of the clamped rate law is zero on that side). The Python port ran without it and paid in tolerance and time.</li>
           </ul>
 
-          <h3>Files</h3>
+          <h3 id="help-files">Files</h3>
           <p><em>Save as .fac</em> writes the model text; <em>Open…</em> reads one back, and so does dropping the file anywhere on the page. A dropped file is taken as a model only when it ends in <code>.fac</code>, <code>.txt</code> or <code>.in</code>, and only one at a time, so that something dropped by mistake does not replace the text in the editor. <em>Download Excel</em> writes SETTINGS, DATA (the outputs) and STATES (the species) sheets in the layout of the Python port; CSV writes the table's columns at every solver step. Where the model has a <code>&lt;TIMES&gt;</code> section and the Table tab is set to those times, all three write that grid instead, and the buttons say so.</p>
 
-          <h3>Sending a run to the HDF5 Browser</h3>
+          <h3 id="help-hdf5">Sending a run to the HDF5 Browser</h3>
           <p><em>View in HDF5 Browser</em> on the Charts tab writes the run as an HDF5 file and opens it in the <a href="./rb.html">HDF5 Browser</a> in a second tab. The bytes are handed straight across between the two tabs, so nothing is written to disk and nothing is uploaded. <em>Download HDF5</em> on the Table tab writes the same file, for h5py or anything else that reads HDF5.</p>
           <p><code>/Settings</code> and <code>/Constants</code> hold the case and what it works out to as a dataset each, carrying its own <code>unit</code> and <code>description</code> — the same two attributes every other dataset in the file has, read the same way from the comment beside the value in the model text. They were attributes on the group to begin with, which read as an empty group in a browser that lists children; then both, which made the group itself a wall of sixty name–value pairs. One dataset each is what a reader can actually open.</p>
           <p>The file carries the run and the case that produced it:</p>
@@ -581,6 +616,7 @@ Y2 = , rf = 3.0E7*Y2*Y2</pre>
   <script src="./resources/js/facsimile-worker.js?v=20260923f"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/facsimile-hdf5.js?v=20260917zd"></script>
-  <script src="./resources/js/facsimile-ui.js?v=20260923g"></script>
+  <script src="./resources/js/kvot-info.js?v=20260926"></script>
+  <script src="./resources/js/facsimile-ui.js?v=20260926"></script>
 </body>
 </html>

@@ -33,8 +33,10 @@ from ..indexlists import COMPARTMENT_LIST, SOURCE_INDEX, TARGET_INDEX, TRANSFER_
 from ..names import qualified_name, resolve_reference
 from . import codegen
 from .codegen import CodeWriter, Leaf, Tree
-from .farfield import (FARF_EQUATION_KEYS, FARF_NUCLIDE_KEYS, FarfPath, cell_count, geometry_problem,
-                       structure_problem)
+from .farfield import (FARF_METHODS, FARF_NUCLIDE_KEYS, FarfError, FarfPath, active_equation_keys, cell_count,
+                       effective_structure, geometry_problem, is_semi_analytic, structure_problem, surface_of,
+                       uses_cells)
+from .farfield_semi import FARF_TEXT, LaplaceFarfPath
 from .indexspace import IndexError_, IndexSpace
 from .lang import Call, Node, Num, ParseError, Ref, collect_references, parse
 from .lookup import LookupError_, Table
@@ -593,7 +595,10 @@ class _Builder:
         self._layout_algebraic()
         self._prepare_parsing()
         self._parse_all()
-        order_algebraic(self.algebraic, self.alg_by_name)
+        try:
+            order_algebraic(self.algebraic, self.alg_by_name)
+        except BuildError as e:
+            raise self._semi_loop(e) from None
         self._levels()
         self._events()
         self._generate_algebraic()
@@ -602,6 +607,49 @@ class _Builder:
         self._jumps()
         self._decay_tables()
         self._initial_state()
+
+    def _semi_loop(self, e: 'BuildError') -> 'BuildError':
+        """A loop through a semi-analytical path's release said as what it is:
+        the path's inflow reads the release, which reads the inflow, with no
+        state between them -- a path on cells breaks such a loop with its
+        cells, and this one cannot."""
+        m = re.search(r'Circular reference: (.*)\. ', str(e))
+        if not m:
+            return e
+        names = m.group(1).split(' -> ')
+        path = next((p for p in self.farf_layout if p.farf.laplace and p.name in names), None)
+        if path is None:
+            return e
+        return BuildError(f"'{path.local}' is worked out semi-analytically, and what flows into it reads its own "
+                          f'release at the same instant ({m.group(1)}). Its release depends on what flows in, so '
+                          'the two cannot be worked out one after the other: put a compartment between them, or '
+                          'work the path out on cells.', path.name)
+
+    def semi_refusals(self, X: np.ndarray) -> None:
+        """What a semi-analytical path cannot be, found once the settings that
+        never move are worked out: a setting that follows the clock or the
+        state, and a path its method cannot solve."""
+        for p in self.farf_layout:
+            if not p.farf.laplace:
+                continue
+            for key in active_equation_keys(p.block):
+                slot = self.alg_by_name.get(f'{p.name}#{key}')
+                if slot is None or key == 'pen_dep_0':
+                    continue
+                cls = int(self.slot_class[slot.base:slot.base + slot.width].max()) if slot.width else 0
+                if cls == 0:
+                    continue
+                said = str(p.block.get(key) if p.block.get(key) is not None else '').strip()
+                raise BuildError(f"'{p.local}' is worked out semi-analytically, which solves the path once for the "
+                                 f'whole run, so its settings have to be constants -- and '
+                                 f"{FARF_TEXT.get(key, key)} follows the {'clock' if cls == 1 else 'state of the model'}"
+                                 + (f" ('{said}')" if said else '')
+                                 + '. Give it a constant, or work the path out on cells, which reads its settings '
+                                 'as they change.', p.name)
+            try:
+                self.FARF[p.farf_index].prepare(X)
+            except FarfError as e:
+                raise BuildError(f"'{p.local}' cannot be worked out semi-analytically: {e}", p.name) from None
 
     # --- small helpers ------------------------------------------------------------------
 
@@ -642,6 +690,10 @@ class _Builder:
             problem = structure_problem(b) or geometry_problem(b)
             if problem:
                 raise BuildError(problem, b['qname'])
+            laplace = is_semi_analytic(b)
+            if not uses_cells(b) and not laplace:
+                raise BuildError(f"'{b.get('method')}' is not a way this tool can work a path out "
+                                 f"({', '.join(FARF_METHODS)})", b['qname'])
             dims = self.dims_of(b)
             nuc_dims = [d for d in dims if self.is_nuclide_dim(d)]
             if len(nuc_dims) > 1:
@@ -667,7 +719,7 @@ class _Builder:
                     dim_off[o * nnuc + m] = at + (m * strides[m_idx] if m_idx >= 0 else 0)
             e = Entry(name=b['qname'], local=b['name'], system=b.get('system') or '', base=n,
                       width=other_width * ncells * nnuc, dims=dims, block=b, kind='farfield', hidden=True,
-                      farf=Entry(structure={'n_f': b['n_f'], 'n_m': b['n_m'], 'o_b': b['o_b'], 'n_b': b['n_b']},
+                      farf=Entry(structure=None if laplace else effective_structure(b), laplace=laplace,
                                  nnuc=nnuc, other_dims=other_dims, other_width=other_width, ncells=ncells,
                                  m_idx=m_idx, list_name=list_name, dim_off=dim_off, single_off=single_off))
             states.append(e)
@@ -908,7 +960,8 @@ class _Builder:
         self.FARF: List[FarfPath] = []
         for p in self.farf_layout:
             setting_base = {}
-            for key in FARF_EQUATION_KEYS:
+            keys = active_equation_keys(p.block)
+            for key in keys:
                 per_nuclide = key in FARF_NUCLIDE_KEYS
                 slot = add(f'{p.name}#{key}', f'farfield:{key}', p.block, key, None if per_nuclide else p.farf.other_dims)
                 slot.hidden = True
@@ -916,16 +969,37 @@ class _Builder:
                 if not per_nuclide:
                     slot.single = True
             rel = add(p.name, 'farfield', p.block, None)
-            rel.needs = [f'{p.name}#{key}' for key in FARF_EQUATION_KEYS]
+            rel.needs = [f'{p.name}#{key}' for key in keys]
             rel.farf = p
             rel.farf_index = len(self.FARF)
             p.alg_release = rel
             p.farf_index = len(self.FARF)
+            if p.farf.laplace:
+                # The release reads what flows in at the same instant -- the
+                # step being taken carries it with a weight -- so it is worked
+                # out after every rate that delivers into the path.
+                for t in self.project.transfers:
+                    if t.get('to') and t.get('to') not in self.state_by_name and self.path_by_name.get(t['to']) is p:
+                        rel.needs.append(t['qname'])
+                for src in self.project.inflows:
+                    if src.get('to') not in self.state_by_name and self.path_by_name.get(src.get('to')) is p:
+                        rel.needs.append(src['qname'])
+                sim = self.project.simulation
+                self.FARF.append(LaplaceFarfPath(
+                    base=p.base, nnuc=p.farf.nnuc, other_width=p.farf.other_width, dim_off=p.farf.dim_off,
+                    single_off=p.farf.single_off, setting_base=setting_base, keys=keys,
+                    single=[k for k in keys if k not in FARF_NUCLIDE_KEYS], surface=surface_of(p.block),
+                    release_base=rel.base, span=float(sim['end_time']) - float(sim['start_time']),
+                    names=self.space.index_names(p.farf.list_name) if p.farf.list_name else None,
+                    block_name=p.name))
+                continue
             self.FARF.append(FarfPath(structure=p.farf.structure, base=p.base, nnuc=p.farf.nnuc,
                                       other_width=p.farf.other_width, dim_off=p.farf.dim_off,
                                       single_off=p.farf.single_off, setting_base=setting_base,
-                                      single=[k for k in FARF_EQUATION_KEYS if k not in FARF_NUCLIDE_KEYS],
-                                      release_base=rel.base))
+                                      single=[k for k in keys if k not in FARF_NUCLIDE_KEYS],
+                                      release_base=rel.base, keys=keys,
+                                      grid='matched' if p.block.get('grid') == 'matched' else 'reference',
+                                      surface=surface_of(p.block)))
         self.MEM: List[Recorder] = []
         self.recorders: List[Entry] = []
         mean_state_by_name = {m.name: m for m in self.mean_states}
@@ -1321,7 +1395,11 @@ class _Builder:
                                       a.width))
             return out
         if a.kind == 'farfield':
-            out.append(self._special(a, f'FARF[{a.farf_index}].release(y, X)', True, False))
+            # A semi-analytical path reads the clock too: the step being taken
+            # is the one from its last record to now.
+            call = (f'FARF[{a.farf_index}].release(y, X, t)' if a.farf.farf.laplace
+                    else f'FARF[{a.farf_index}].release(y, X)')
+            out.append(self._special(a, call, True, False))
             return out
         if a.kind == 'waste_package:hazard':
             W = a.waste
@@ -1680,6 +1758,9 @@ class _Builder:
         contrib_sign: List[np.ndarray] = []
         contrib_tgt: List[np.ndarray] = []
         nflux = 0
+        # What flows into each semi-analytical path, term by term: the
+        # release reads it at the same instant (``laplaceLines``).
+        laplace_in: Dict[int, List[Tuple[np.ndarray, np.ndarray, np.ndarray]]] = {}
         for t in project.transfers:
             alg = self.alg_by_name[t['qname']]
             src = self.state_by_name.get(t.get('from')) if t.get('from') else None
@@ -1699,6 +1780,10 @@ class _Builder:
             s_off = _as_array(self.state_offsets(alg.dims, pos, src, t['name'], W), W) if src else None
             g_off = _as_array(self.state_offsets(alg.dims, pos, tgt, t['name'], W), W) if tgt else None
             p_off = _as_array(self.farf_inlet(alg.dims, pos, path, t['name'], W), W) if path else None
+            if path is not None and path.farf.laplace:
+                donor = s_off if mbd and s_off is not None else np.full(W, -1, dtype=np.int64)
+                laplace_in.setdefault(path.farf_index, []).append(
+                    (p_off - path.base, alg.base + np.arange(W, dtype=np.int64), donor))
             mbd_mask.append(np.full(W, mbd))
             src_idx.append(s_off if s_off is not None else np.full(W, -1, dtype=np.int64))
             cols_t: List[np.ndarray] = []
@@ -1742,6 +1827,23 @@ class _Builder:
             contrib_tgt.append(T.ravel()[keep])
             contrib_sign.append(S.ravel()[keep])
             contrib_flux.append(Fk.ravel()[keep])
+        # A semi-analytical path's release leaves what it holds: a flux out of
+        # each held state at the rate of its release slot, taken from no donor.
+        for p in self.farf_layout:
+            if not p.farf.laplace:
+                continue
+            F = self.FARF[p.farf_index]
+            W = F.slots
+            if W == 0:
+                continue
+            k = np.arange(nflux, nflux + W, dtype=np.int64)
+            nflux += W
+            rate_idx.append(F.release_slots.copy())
+            mbd_mask.append(np.zeros(W, dtype=bool))
+            src_idx.append(np.full(W, -1, dtype=np.int64))
+            contrib_tgt.append(F.held_idx.copy())
+            contrib_sign.append(np.full(W, -1.0))
+            contrib_flux.append(k)
         self.nflux = nflux
         if nflux:
             self.flux_rate = np.concatenate(rate_idx)
@@ -1770,6 +1872,9 @@ class _Builder:
             target = (_as_array(self.state_offsets(alg.dims, pos, tgt, s['name'], W), W) if tgt is not None
                       else _as_array(self.farf_inlet(alg.dims, pos, path, s['name'], W), W))
             rate = alg.base + np.arange(W, dtype=np.int64)
+            if path is not None and path.farf.laplace:
+                laplace_in.setdefault(path.farf_index, []).append(
+                    (target - path.base, rate.copy(), np.full(W, -1, dtype=np.int64)))
             cols_t = [target]
             cols_x = [rate]
             if budget is not None and tgt is not None:
@@ -1779,6 +1884,15 @@ class _Builder:
             xs.append(np.stack(cols_x, axis=1).ravel())
         if tg:
             ph.append(('x', np.concatenate(tg), np.concatenate(xs)))
+        for p in self.farf_layout:
+            if not p.farf.laplace:
+                continue
+            terms = laplace_in.get(p.farf_index, [])
+            empty = np.zeros(0, dtype=np.int64)
+            self.FARF[p.farf_index].set_inflow(
+                np.concatenate([q[0] for q in terms]) if terms else empty,
+                np.concatenate([q[1] for q in terms]) if terms else empty,
+                np.concatenate([q[2] for q in terms]) if terms else empty)
 
         # Waste packages: fail out of the intact inventory, fail - release into the exposed.
         for W in self.waste_layout:
@@ -1928,7 +2042,17 @@ class _Builder:
             else:
                 p.decay_slot = None
             F = self.FARF[p.farf_index]
-            ph.append(('farf', p.farf_index))
+            if p.farf.laplace:
+                # The whole table: the path is solved along the chain itself.
+                F.set_decay(None if dec is None else dec['lam'], None if dec is None else {
+                    'lam': [float(v) for v in dec['lam']], 'ioff': [int(v) for v in dec['ioff']],
+                    'icnt': [int(v) for v in dec['icnt']], 'ipar': [int(v) for v in dec['ipar']],
+                    'icoef': [float(v) for v in dec['icoef']]})
+            else:
+                # The matched layers resolve the thinnest profile any nuclide on
+                # the path has, and one that decays fast has a thin one.
+                F.set_decay(dec['lam'] if dec is not None else None)
+                ph.append(('farf', p.farf_index))
             if dec is not None:
                 nnuc = p.farf.nnuc
                 starts = F.cell_starts

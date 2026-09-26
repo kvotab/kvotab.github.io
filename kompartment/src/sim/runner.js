@@ -14,7 +14,7 @@ import {
 import { buildSystem, tupleByList, describeTuple, BuildError } from './builder.js';
 import { julia } from '../ode/julia-solvers.js';
 import { audit as auditBudget } from '../domain/massbalance.js';
-import { cellNames } from '../domain/farfield.js';
+import { cellNames, heldCells, usesCells } from '../domain/farfield.js';
 import { valueAt } from '../domain/project.js';
 import { dormandPrince, SolverError } from '../ode/solvers/dormand-prince.js';
 import { rosenbrock23 } from '../ode/solvers/rosenbrock23.js';
@@ -177,6 +177,10 @@ export function run(input, opts = {}) {
 	// rewrites `P` calls `system.evaluateInvariant()` before running, which is
 	// what ./probabilistic.js does. See *Three passes, not one* in INTERNALS.md.
 	const system = opts.system ?? buildSystem(project);
+	// A far-field path lays its matched layers out at the first instant of a
+	// run and holds them to the end of it: this is that first instant, for
+	// every run, a realisation's included.
+	system.restartPaths?.();
 	const buildMs = now() - t0;
 	// Built. Said out loud because the caller may be showing a word about it:
 	// on a large model this is seconds, and the first step can be seconds more
@@ -531,6 +535,10 @@ export function run(input, opts = {}) {
 	const solveSpan = (grid2, start) => {
 		system.useClockInterpolation?.(minChange, grid2[0]);
 		opts.equations?.onSegment?.(grid2[0], minChange);
+		// A semi-analytical path records the instant a segment starts at: the
+		// inflow may have stepped at the corner, and a jump may have delivered
+		// an amount into it at once. See ../sim/farfield-laplace.js.
+		system.startSegment?.(grid2[0], start);
 		return system.events
 			? solveWithEvents(system, f, solver, grid2, start, solverOpts)
 			: solver(f, grid2, start, solverOpts);
@@ -596,6 +604,11 @@ export function run(input, opts = {}) {
 	 */
 	function finish(startedAt) {
 		const solveMs = now() - startedAt;
+		// What a semi-analytical path could not hold to its mass balance, said
+		// with the run rather than kept quiet: see `balanceWarnings` in
+		// ./farfield-laplace.js. It reaches the run log and the block.
+		const farfield = (system.paths ?? []).flatMap((F) => F.balanceWarnings?.() ?? []);
+		if (farfield.length && solution.stats) solution.stats.farfield = farfield;
 		// Only the states are kept. Every other series -- an expression, a
 		// rate, a table read at the clock, a reduction, what a recorder holds
 		// -- is worked out from `(t, y)` when it is asked for, one algebraic
@@ -1412,7 +1425,8 @@ function farfieldOutputs(entry, indexSpace, materialList) {
 	// The release is an inventory per unit time; what the cells hold is the
 	// inventory itself, so the unit is that one with the time taken off.
 	const unit = String(block.unit ?? '').replace(/\/[^/]*$/, '') || 'Bq';
-	const cells = block.report_cells ? cellNames(block) : null;
+	// A path worked out semi-analytically has no cells to report.
+	const cells = block.report_cells && usesCells(block) ? cellNames(block) : null;
 	// A path indexed by nothing holds one quantity: no nuclide names, and no
 	// index in any label.
 	const names = listName ? indexSpace.indexNames(listName) : [null];
@@ -1430,8 +1444,12 @@ function farfieldOutputs(entry, indexSpace, materialList) {
 				index.push(dim === listName ? nuclide : others[k++]);
 			}
 			const suffix = index.length ? ` [${index.join(', ')}]` : '';
-			const offsets = new Int32Array(ncells);
-			for (let cell = 0; cell < ncells; cell++) offsets[cell] = base + cell * nnuc + m;
+			// What the path holds. The extra cells of a semi-infinite outlet
+			// are the rock past the release point: what is in them has been
+			// released, and counting it here as well would count it twice.
+			const held = heldCells(block);
+			const offsets = new Int32Array(held);
+			for (let cell = 0; cell < held; cell++) offsets[cell] = base + cell * nnuc + m;
 			out.push({
 				kind: 'farfield_inventory', block: `${entry.name} held`,
 				nuclide: materialList ? nuclide : null,

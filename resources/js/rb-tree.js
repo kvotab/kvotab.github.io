@@ -174,6 +174,14 @@ async function loadGroupChildren(groupItem, path) {
     const readFileKey = rawFileAttr || getTreeFile();
     let file = loadedFiles[readFileKey];
 
+    // A lazy file answers for a group once the group above it is fetched.
+    for (const fk of isUnionMode() ? getEnabledFiles() : [readFileKey]) {
+      const lazy = lazyStateOf(loadedFiles[fk]);
+      if (lazy && lazy.pathSet.has(path)) {
+        try { await lazy.ensureGroup(path); } catch (e) { ignoreFailure('loadGroupChildren:lazy', e); }
+      }
+    }
+
     // In union mode, the primary file may not have this group.
     // Try to find any enabled file that does.
     let node = null;
@@ -307,10 +315,12 @@ function toggleGroup(event, groupItemArg) {
 
   const path = groupItem.getAttribute('data-path');
   if (path) {
+    const nodeFileKey = groupItem.getAttribute('data-file') || null;
+    if ((event.ctrlKey || event.metaKey) && toggleGroupInSelection(path, nodeFileKey)) return;
+
     multiSelectMode = false;
     selectedDatasets = [];
-
-    const nodeFileKey = groupItem.getAttribute('data-file') || null;
+    selectedGroups = [];
     selectedFileKey = nodeFileKey;
 
     selectedDatasetPath = path;
@@ -326,6 +336,52 @@ function toggleGroup(event, groupItemArg) {
 }
 
 /**
+ * Ctrl/Cmd+click on a group that draws a chart of its own: add it to the
+ * groups already selected, or take it out again. Two or more are drawn as one
+ * chart, a panel each, in the order they were picked; one left is the single
+ * group's chart it always was. A group without a chart of its own has nothing
+ * to add, and is left to the plain click.
+ *
+ * @param {string} path
+ * @param {string|null} fileKey - The file whose tree the group is in (null in
+ *   the merged trees, where it is every enabled file)
+ * @returns {boolean} Whether the click was taken
+ */
+function toggleGroupInSelection(path, fileKey) {
+  const files = fileKey ? [fileKey] : getEnabledFiles();
+  if (!files.some(fk => loadedFiles[fk] && checkGroupForRadionuclides(loadedFiles[fk], path))) return false;
+
+  // What is selected already, when it is a group of the same kind.
+  const groups = selectedGroups.length ? selectedGroups.slice()
+    : (selectedIsRadionuclidesGroup && selectedDatasetPath
+      ? [{ path: selectedDatasetPath, fileKey: selectedFileKey }] : []);
+  const at = groups.findIndex(g => g.path === path && g.fileKey === fileKey);
+  if (at >= 0) groups.splice(at, 1);
+  else groups.push({ path, fileKey });
+
+  multiSelectMode = false;
+  selectedDatasets = [];
+  if (groups.length === 0) {
+    selectedGroups = [];
+    selectedDatasetPath = null;
+    selectedIsRadionuclidesGroup = false;
+    EventBus.emit('selection:changed', { mode: 'none' });
+    return true;
+  }
+  selectedDatasetPath = groups[0].path;
+  selectedFileKey = groups[0].fileKey;
+  selectedIsRadionuclidesGroup = true;
+  if (groups.length === 1) {
+    selectedGroups = [];
+    EventBus.emit('selection:changed', { mode: 'group', path: groups[0].path, fileKey: groups[0].fileKey, isGroup: true });
+  } else {
+    selectedGroups = groups;
+    EventBus.emit('selection:changed', { mode: 'groups', items: groups.slice() });
+  }
+  return true;
+}
+
+/**
  * Toggle the Intersect checkbox and rebuild the tree.
  */
 async function toggleTreeMode() {
@@ -334,6 +390,7 @@ async function toggleTreeMode() {
   selectedDatasetPath = null;
   selectedIsRadionuclidesGroup = false;
   selectedDatasets = [];
+  selectedGroups = [];
   multiSelectMode = false;
   resetInfoPanel();
   hideChart();
@@ -411,6 +468,8 @@ async function toggleTreeMode() {
  * @returns {Set<string>} Set of all paths in the group
  */
 function collectAllPaths(group, prefix = '') {
+  const lazy = lazyStateOf(group);
+  if (lazy) return lazyPathsUnder(lazy, prefix);
   const paths = new Set();
   try {
     let keys = [];
@@ -434,6 +493,20 @@ function collectAllPaths(group, prefix = '') {
 }
 
 /**
+ * Every path below `prefix` in a lazy file, from the list it was opened with:
+ * the same set the walks below collect, without fetching a single group.
+ *
+ * @param {RbLazyState} lazy
+ * @param {string} prefix - '' for the whole file
+ * @returns {Set<string>}
+ */
+function lazyPathsUnder(lazy, prefix) {
+  if (!prefix) return new Set(lazy.paths);
+  const head = prefix.endsWith('/') ? prefix : prefix + '/';
+  return new Set(lazy.paths.filter(p => p.startsWith(head)));
+}
+
+/**
  * Asynchronously collect all paths (groups and datasets) from an HDF5 file
  * without blocking the main thread. Yields to the event loop periodically
  * and honors the global cancellation flag `window._treeRefreshCancelled`.
@@ -444,6 +517,8 @@ function collectAllPaths(group, prefix = '') {
  * @returns {Promise<Set<string>>}
  */
 async function collectAllPathsAsync(group, prefix = '', opts = {}) {
+  const lazy = lazyStateOf(group);
+  if (lazy) return lazyPathsUnder(lazy, prefix);
   const paths = new Set();
   const yieldEvery = (opts && opts.yieldEvery) || 200;
   let counter = 0;
@@ -658,7 +733,7 @@ function ensureTreeWorker() {
   if (treeWorker) return treeWorker;
   try {
     treeWorkerH5Ready = false;
-    treeWorker = new Worker('resources/js/tree-worker.js');
+    treeWorker = new Worker('resources/js/tree-worker.js?v=20260926');
     treeWorker.onmessage = (ev) => {
       const d = ev.data || {};
       // handle generic notifications (no id) such as worker lifecycle messages
@@ -1246,6 +1321,20 @@ async function buildTree(group, prefix = '', isNested = false, fileName = '', in
   const frag = document.createDocumentFragment();
   // depth guard for incremental rendering (maxDepth=0 => render nothing)
   if (typeof maxDepth === 'number' && maxDepth <= 0) return frag;
+
+  // A lazy file's group is fetched before it is listed -- in union mode in
+  // every file that can supply a child of it (see rb-lazy.js).
+  try {
+    const here = prefix || '/';
+    const lazy = lazyStateOf(group);
+    if (lazy) await lazy.ensureGroup(here);
+    if (pathOwnership) {
+      for (const fk of getEnabledFiles()) {
+        const other = lazyStateOf(loadedFiles[fk]);
+        if (other && other !== lazy && (here === '/' || other.pathSet.has(here))) await other.ensureGroup(here);
+      }
+    }
+  } catch (e) { ignoreFailure('buildTree:lazy', e); }
 
 
   // Add root group item only at top level

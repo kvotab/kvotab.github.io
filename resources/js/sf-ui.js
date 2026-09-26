@@ -310,7 +310,7 @@
       more: more('Uncertainty', 'help-uncertainty'),
     },
     'set:n': { kicker: 'Sampling', title: 'Realisations', lead: 'How many times the whole calculation is done, each with its own water and its own set of constants.', facts: [['SR-Site and PSAR', '6916'], ['Largest here', MAX_N.toLocaleString('en')]], sections: [{ text: 'About 7000 realisations take a fraction of a second; a million take about half a minute and keep only the first part of the sampled constants for the sensitivity analysis.' }] },
-    'set:seed': { kicker: 'Sampling', title: 'Seed', lead: 'Any whole number. The same seed, data and settings give the same realisations, here and in any other browser.', sections: [{ text: 'The random numbers are this page’s own (sfc32 seeded per constant), so they are not those of @Risk, MATLAB or NumPy: the distributions agree with SR-Site and the PSAR, the individual realisations do not.' }] },
+    'set:seed': { kicker: 'Sampling', title: 'Seed', lead: 'Any whole number. The same seed, data and settings give the same realisations, here and in any other browser.', sections: [{ text: 'The random numbers are this page’s own (sfc32 seeded per constant), so they are not those of @Risk: the distributions agree with SR-Site and the PSAR, the individual realisations do not.' }] },
     'set:draw': () => ({
       kicker: 'Sampling', title: 'Groundwater draw', lead: 'Which row of the table each realisation takes.',
       sections: [{ choices: [

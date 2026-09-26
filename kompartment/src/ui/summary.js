@@ -73,7 +73,8 @@ export function summarise(collection, b) {
 		case 'delays':
 			return `${b.target ?? '—'} delayed by ${b.delay ?? '0'}`;
 		case 'farfields':
-			return `${b.n_f ?? 20} x ${b.n_m ?? 20} cells`
+			// Worked out exactly it has no cells to count.
+			return `${b.method === 'semi-analytical' ? 'semi-analytical' : `${b.n_f ?? 20} x ${b.n_m ?? 20} cells`}`
 				+ `${b.to ? `, into ${b.to}` : ''}`;
 		case 'triggers':
 			return `${b.first ?? '0'} ${

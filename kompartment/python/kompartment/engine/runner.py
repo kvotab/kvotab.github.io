@@ -157,6 +157,11 @@ def run(project: Any, system: Any = None, on_progress: Optional[Callable[[float,
                                   compiled=compiled)
     t0 = time.perf_counter()
     system = system if system is not None else build_system(project)
+    # A far-field path lays its matched layers out at the first instant of a
+    # run and holds them to the end of it: this is that instant, every run.
+    restart = getattr(system, 'restart_paths', None)
+    if restart is not None:
+        restart()
     build_ms = (time.perf_counter() - t0) * 1000
     grid = project.time_grid()
     eq = equations or {}
@@ -275,10 +280,17 @@ def run(project: Any, system: Any = None, on_progress: Optional[Callable[[float,
     compiled_run, compiled_why = _compiled_run(compiled, system, solver_id, opts, min_change, steps is not None,
                                                equations is not None)
 
+    start_segment = getattr(system, 'start_segment', None)
+
     def solve_span(grid2: np.ndarray, start: np.ndarray) -> Dict[str, Any]:
         system.use_clock_interpolation(min_change, float(grid2[0]))
         if on_segment is not None:
             on_segment(float(grid2[0]), min_change)
+        # A semi-analytical path records the instant a segment starts at: the
+        # inflow may have stepped at the corner, and a jump may have delivered
+        # an amount into it at once.
+        if start_segment is not None:
+            start_segment(float(grid2[0]), start)
         if system.events is not None:
             return solve_with_events(system, f, solver, grid2, start, opts)
         if compiled_run is not None:
@@ -331,6 +343,11 @@ def run(project: Any, system: Any = None, on_progress: Optional[Callable[[float,
             solution['stats']['compiled'] = compiled_run is not None
             if compiled_why and compiled_run is None:
                 solution['stats']['compiled_why'] = compiled_why
+            # What a semi-analytical path could not hold to its mass balance,
+            # said with the run rather than kept quiet (``stats.farfield``).
+            warned = [w for F in getattr(system, 'laplace', None) or [] for w in F.balance_warnings()]
+            if warned:
+                solution['stats']['farfield'] = warned
         if jumps and solution.get('stats') is not None:
             solution['stats']['jumps'] = jumped[0]
         if steps is not None:
@@ -595,8 +612,11 @@ def lookup_point_outputs(layout: Any) -> List[Dict[str, Any]]:
 
 
 def farfield_outputs(entry: Any, space: Any, material_list: Optional[str]) -> List[Dict[str, Any]]:
-    from .farfield import cell_names
+    from .farfield import cell_names, held_cells
     farf, block = entry.farf, entry.block
+    # What the path holds: a semi-infinite outlet's extra cells are rock past
+    # the release point, and what is in them has been released.
+    held = held_cells(block)
     unit_text = str(block.get('unit') if block.get('unit') is not None else '')
     import re
     unit = re.sub(r'/[^/]*$', '', unit_text) or 'Bq'
@@ -617,7 +637,7 @@ def farfield_outputs(entry: Any, space: Any, material_list: Optional[str]) -> Li
                     index.append(others[k])
                     k += 1
             suffix = f" [{', '.join(index)}]" if index else ''
-            offsets = base + np.arange(farf.ncells) * farf.nnuc + m
+            offsets = base + np.arange(held) * farf.nnuc + m
             out.append({'kind': 'farfield_inventory', 'block': f'{entry.name} held',
                         'nuclide': nuclide if material_list else None, 'index': index or None, 'dims': entry.dims,
                         'label': f'{entry.name} held{suffix}', 'unit': unit, 'source': 'y',

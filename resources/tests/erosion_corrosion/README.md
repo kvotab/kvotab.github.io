@@ -78,7 +78,15 @@ their own quantiles, and the custom-text parser.
 ## What test-ui.py checks
 
 The wiring: that the page loads without a script error and builds one control
-per catalogue parameter; that the code test case, dropped on the panel after
+per catalogue parameter; that every catalogue parameter, every section heading
+of the panel and every result tab's toolbar has its (i), with a topic behind
+each slot and every "Read more in Help" link pointing at a heading that exists
+(`KvotInfo.audit()`), that no hover tooltips are left on the settings, that the
+(i)s line up at the right, and that an (i) opens the panel between the header
+and the footer with the title, the value in force and the names of the
+parameter, follows a change of the value or of a tab's choice while open,
+closes by its ×, by the same (i) and by Escape, and that its Help link opens
+the Help tab at the heading; that the code test case, dropped on the panel after
 the SR-Site settings are set on it, runs and puts 35 rows, 17 rejected and a
 corrected mean of 3.5 in the state, the summary cards and the status line;
 that the failure table has the rows in the documented order and sorts; that

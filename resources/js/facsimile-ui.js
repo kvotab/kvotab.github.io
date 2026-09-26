@@ -6,7 +6,8 @@
    page opened from file://) the same handler runs inline.
    ========================================================================== */
 /* global KVOT, Plotly, XlsxWriter, registerActions, reportFailure, notifyUser, kvotEscapeHtml, kvotCsvCell,
-          kvotFormatBytes, FACSIMILE_DEFAULT_MODEL, FACSIMILE_PRESETS, FacsimileHDF5, handleFacsimileMessage */
+          kvotFormatBytes, FACSIMILE_DEFAULT_MODEL, FACSIMILE_PRESETS, FacsimileHDF5, handleFacsimileMessage,
+          KvotInfo */
 (function () {
   'use strict';
 
@@ -389,20 +390,28 @@
     const box = $('facSettings');
     const m = state.compiled;
     if (!m) { box.innerHTML = '<p class="fac-muted">The model text does not compile; see the Model tab.</p>'; return; }
-    // What the text says, always: this panel is a view of those lines.
+    // What the text says, always: this panel is a view of those lines. Each
+    // row ends in an (i) whose topic is made from the line (caseTopic). What
+    // the value works out to is in that topic, where a tooltip used to carry
+    // it, and on the field as data-value, which is what the tests wait on.
     const html = m.settings.map((s) => {
       const value = s.expr;
       const label = s.comment ? s.comment : s.name;
+      const id = `facSet-${s.name}`;
       const control = s.isTable
-        ? `<select data-setting="${esc(s.name)}" data-on-change="fac:settingChanged">${m.tableNames.map((t) => `<option value="${esc(t)}"${t === value ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select>`
-        : `<input type="text" data-setting="${esc(s.name)}" value="${esc(value)}" data-on-change="fac:settingChanged" title="${esc(`${s.name} = ${s.value}`)}">`;
-      return `<div class="fac-row"><label>${esc(label)}<span class="fac-name">${esc(s.name)}</span></label>${control}</div>`;
+        ? `<select id="${esc(id)}" data-setting="${esc(s.name)}" data-value="${esc(String(s.value))}" data-on-change="fac:settingChanged">${m.tableNames.map((t) => `<option value="${esc(t)}"${t === value ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select>`
+        : `<input type="text" id="${esc(id)}" data-setting="${esc(s.name)}" data-value="${esc(String(s.value))}" value="${esc(value)}" data-on-change="fac:settingChanged">`;
+      return `<div class="fac-row"><label for="${esc(id)}">${esc(label)}<span class="fac-name">${esc(s.name)}</span></label>${control}`
+        + `<span class="kvot-info-slot" data-info-key="${esc(`case:${s.name}`)}"></span></div>`;
     }).join('');
     // Rebuilding the panel takes the focus out of the field that was just
     // edited, which on Enter is the field the reader is still in.
     const focused = document.activeElement;
     const was = focused && focused.dataset ? focused.dataset.setting : null;
     box.innerHTML = html || '<p class="fac-muted">The model has no &lt;SETTINGS&gt; section.</p>';
+    // The rows are new, and so may be the settings: the topics are registered
+    // again, with one for each setting there now, and the new slots filled.
+    setupInfo();
     if (was) {
       const again = box.querySelector(`[data-setting="${CSS.escape(was)}"]`);
       if (again) {
@@ -583,6 +592,7 @@
     $('facClamp').checked = !!s.clamp;
     $('facNonNeg').checked = !!s.nonNegative;
     updateSolverOptions();
+    refreshInfo();
   }
 
   function setStatus(text, tone) {
@@ -2163,6 +2173,612 @@
   }
 
   /* ---------------------------------------------------------------------
+     The (i): what each setting, heading and toolbar is
+
+     A small (i) at the right-hand edge opens a panel over the right-hand side
+     of the window with what the thing is, what its choices do and where the
+     Help says more (resources/js/kvot-info.js does the panel). It replaces
+     the hover tooltips these controls had, which cannot be read while a field
+     is being edited, hold a sentence or two, and do not work on touch or from
+     the keyboard.
+
+     A topic that marks the choice in force, or shows a value, is a function:
+     it is called each time its panel opens, and again by KvotInfo.refresh()
+     when a setting changes under an open panel. Which methods read a solver
+     setting is worked out from the declarations updateSolverOptions uses
+     (BUILTIN_OPTIONS, FacsimileOdeJulia.options), so the panel and its (i)s
+     cannot disagree about it. The case settings are the model's own, so
+     their topics are made from the compiled lines (caseTopic) and registered
+     again after every compile (setupInfo).
+     --------------------------------------------------------------------- */
+  const more = (label, id) => ({ label, id });
+  const isPort = (method) => typeof FacsimileOdeJulia !== 'undefined' && FacsimileOdeJulia.is(method);
+
+  /** The methods on the menu that read `key`, by the menu's own names. */
+  function readers(key) {
+    const menu = Array.from($('facMethod').options);
+    const names = menu
+      .filter((o) => (isPort(o.value) ? FacsimileOdeJulia.options(o.value) || [] : BUILTIN_OPTIONS).includes(key))
+      .map((o) => o.textContent.replace(/\s*\(.*$/, '').trim());
+    if (!names.length) return 'none';
+    return names.length === menu.length ? 'every method' : listOf(names);
+  }
+
+  /** What each method on the menu is, and what it costs on this model. */
+  const METHOD_NOTES = {
+    ndf: 'This page’s own: the numerical differentiation formulas of Shampine and Reichelt, of orders 1 to 5. The one to use: a 500-year case takes a second or two. With BDF formulas ticked it runs the plain backward differentiation formulas. The only method that takes a model with algebraic variables.',
+    julia_fbdf: 'A multistep formula of variable order that reuses one matrix factorisation across many steps. About as quick as the NDF on this model, and an independent check that costs nothing.',
+    julia_qndf: 'The same numerical differentiation formulas as the NDF, written by other people: the most direct check there is on it. With BDF formulas ticked it runs as QBDF. About three times the steps of the NDF on this model.',
+    julia_kencarp4: 'A diagonally implicit Runge–Kutta method of order 4, cheap at moderate and loose tolerances. The dearest here that finishes: about ten times the steps of the NDF.',
+    julia_radau5: 'Fully implicit, order 5 in three stages, and the least troubled by stiffness: the one to believe when two others disagree. It does not get through this model at an absolute tolerance of 1e-30.',
+    julia_rodas5p: 'A Rosenbrock method: one linear solve per stage and no Newton iteration, so nothing that can fail to converge. It does not get through this model at 1e-30; at 1e-20 it takes a few hundred steps.',
+    julia_trbdf2: 'Second order, L-stable and diagonally implicit: fast at loose tolerances. About five times the steps of the NDF on this model.',
+  };
+
+  const TOPICS = {
+    'sec:scenario': () => {
+      const p = FACSIMILE_PRESETS.find((x) => x.id === state.presetId);
+      const inReport = FACSIMILE_PRESETS.filter((x) => /^SKB TR-22-15, Table 3-1/.test(x.reference || '')).length;
+      return {
+        kicker: 'Section', title: 'Scenario',
+        lead: 'The cases of SKB’s study of the gas in an intact canister. Choosing one writes its settings into the `<SETTINGS>` lines of the model text, a line at a time, so a model you have edited keeps every change but its settings.',
+        facts: [['Scenarios', String(FACSIMILE_PRESETS.length)], ['From TR-22-15, Table 3-1', String(inReport)], ['Now', p ? p.id : 'custom']],
+        sections: [
+          { heading: 'Choosing one', list: [
+            'writes each of its settings into its line, keeping the comment',
+            'sets the relative tolerance to the one the Python port’s tests ran that case at, from 1e-3 to 1e-5',
+            'puts `H2OPAIR` back to 0, the water model the published cases were run with',
+            'leaves the method and the other solver settings as they were',
+          ] },
+          { heading: 'custom', text: 'The list follows the text: after every compile it shows the scenario whose settings the text holds, or custom when it holds none of them. Typing over a setting, in the panel or in the text, makes the case custom.' },
+          { heading: 'Where each is defined', text: 'The line under the description: the case and the results section of TR-22-15, or, for a variant the report does not have, the note or the FACSIMILE file it comes from. It goes with the run into the HDF5 file and the Excel file.' },
+          { heading: 'Keep in mind', text: 'A setting is written only where the text has a line for it. One with no line is named and left out, and the case then reads as custom.' },
+        ],
+        more: more('What this page does', 'help-about'),
+      };
+    },
+    'sec:file': {
+      kicker: 'Section', title: 'Model file',
+      lead: 'The model is a text, shown and edited on the Model tab. This section reads one in, writes it out, or goes back to the built-in one.',
+      facts: [['Largest file', '16 MB']],
+      sections: [
+        { list: [
+          '**Open…** reads a model file into the editor and compiles it. Dropping a file anywhere on the page does the same, one file at a time, ending in `.fac`, `.txt` or `.in`.',
+          '**Save as .fac** writes the text in the editor, named after the scenario: `canister_13g.fac`, or `canister_custom.fac` for a case of your own.',
+          '**Reset** puts back the built-in model text, which carries the settings of 13g, and every solver setting at its default.',
+        ] },
+        { heading: 'Kept between visits', text: 'The text, the settings, the solver settings and which sections are folded are kept in this browser’s storage, not its cache, so a reload does not reset them; Reset does. When the built-in model has changed since, a text you had not edited is moved onto the new one with your settings carried over, and one you had edited is kept, with a word in the status line. Nothing leaves your machine.' },
+      ],
+      more: more('Files', 'help-files'),
+    },
+    'sec:case': () => {
+      const m = state.compiled;
+      const p = FACSIMILE_PRESETS.find((x) => x.id === state.presetId);
+      return {
+        kicker: 'Section', title: 'Case settings',
+        lead: 'The `<SETTINGS>` lines of the model text, a row each. A setting has one copy, and it is the line: typing in a field rewrites its line, comment and all, and editing the line shows in the field at the next compile. So the file you save is the case you ran.',
+        facts: [['Settings', m ? String(m.settings.length) : ''], ['Scenario', p ? p.id : 'custom']],
+        sections: [
+          { heading: 'A value is', list: [
+            'a number',
+            'an expression of earlier settings and the constants, such as `PCAR = 1 - PCAIR`',
+            'for a profile, the name of a `<TABLE>`, which is then offered as a list',
+          ] },
+          { heading: 'The label', text: 'The comment on the line. A unit in brackets in it is the unit the HDF5 file records for the setting.' },
+          { heading: 'Keep in mind', text: 'Typing over a setting makes the case custom, and choosing a scenario writes its settings over yours. The page reads `TEND` as the length of the run, and runs a model with no `TEND` line for 500 years.' },
+        ],
+        more: more('The model file', 'help-model-file'),
+      };
+    },
+    'sec:solver': {
+      kicker: 'Section', title: 'Solver',
+      lead: 'Which integrator solves the model, and how closely. Method and the two tolerances are what a reader changes; the rest is under Advanced settings, for when those are not enough.',
+      sections: [
+        { text: 'Only the settings the chosen method reads are shown, and a line under them names the ones it does not. They are kept in this browser between visits; Reset, in the Model file section, puts them back to their defaults.' },
+        { heading: 'Two choices that are not settings', list: [
+          'The NDF solves its Newton corrections in variables scaled by `max(|y|, atol/rtol)`. The concentrations span forty orders of magnitude, and unscaled, the pivoting is decided by the largest coefficients and the corrections for the trace species come out wrong.',
+          'It takes at least two Newton iterations a step. At the humidity switch a Jacobian formed a step earlier can damp the first correction by a factor 1e6 while the residual is still far from zero.',
+        ] },
+      ],
+      more: more('Solver settings', 'help-solver'),
+    },
+    'set:method': () => {
+      const v = $('facMethod').value;
+      return {
+        kicker: 'Solver', title: 'Method',
+        lead: 'The integrator. Every one is a stiff solver handed the model’s analytic sparse Jacobian; they differ in their formulas, and on this model in what they cost. The Julia ports are methods of DifferentialEquations.jl, ported to JavaScript: nothing is downloaded, and they run in the page as the NDF does.',
+        facts: [['Default', 'NDF']],
+        sections: [
+          { choices: Array.from($('facMethod').options).map((o) => [o.textContent.trim(), METHOD_NOTES[o.value] || '', o.value === v]) },
+          { heading: 'Keep in mind', list: [
+            'The Julia ports need a background worker. Where none can start, as in a copy of the page opened from a file, they are refused rather than run on the page, where a run of minutes is a frozen tab.',
+            'A model with an `<ALGEBRAIC>` section runs on the NDF only. The ports take no mass matrix and would integrate the constraint residuals as if they were rates of change.',
+            'The costs are for the 500-year case 13g at the page’s defaults, and say nothing about accuracy: every method that finishes agrees on the water left.',
+          ] },
+        ],
+        more: more('The Julia ports', 'help-julia'),
+      };
+    },
+    'set:rtol': {
+      kicker: 'Solver', title: 'Relative tolerance',
+      lead: 'The error a step may make, as a fraction of each quantity’s own size: 1e-5 is about five significant digits. Tighter is slower and more accurate.',
+      facts: [['Default', '1e-5'], ['Allowed', 'above 0, below 1'], ['The scenarios', '1e-3 to 1e-5']],
+      sections: [
+        { heading: 'How it is used', text: 'The error of each species is compared with `rtol·max(|y|, atol/rtol)`: a species above `atol/rtol` is judged against itself, one below it against the absolute tolerance.' },
+        { heading: 'Choosing a scenario', text: 'sets it to the tolerance the Python port’s tests ran that case at.' },
+        { heading: 'Keep in mind', text: 'The water left after 500 years is not converged at 1e-5. On 13g it scatters between 36 and 66 g at tolerances from 1e-4 to 1e-6, not even monotonically, and settles at 65.94 g from 1e-7 down. If the number matters, tighten this to 1e-7 and check that it stops moving.' },
+      ],
+      more: more('Read the table for cost, not for accuracy', 'help-converged'),
+    },
+    'set:atol': {
+      kicker: 'Solver', title: 'Absolute tolerance',
+      lead: 'The error allowed on a small concentration, in mol/cm³: a species below `atol/rtol` may be out by this much, so set it below the smallest concentration that matters.',
+      facts: [['Default', '1e-30 mol/cm³'], ['Allowed', '0 or more']],
+      sections: [
+        { text: 'The Python port used 1e-100 and below: purely relative control down to nothing, which is why it took minutes. 1e-30 leaves the species below it unresolved, which is where the physics stops mattering.' },
+        { heading: 'Keep in mind', text: 'A looser one makes every method cheaper here, and is worth trying before a method is given up on: Rodas5P, which does not get through this model at 1e-30, solves it in a few hundred steps at 1e-20. For a few species on their own, use the per-species tolerance under Advanced settings.' },
+      ],
+      more: more('Solver settings: tolerances', 'help-tolerances'),
+    },
+    'set:bdf': () => ({
+      kicker: 'Solver', title: 'BDF formulas',
+      lead: 'Runs the plain backward differentiation formulas: the NDF with every κ set to zero. On QNDF it gives QBDF.',
+      facts: [['Default', 'off'], ['κ of the NDF', '−0.185, −1/9, −0.0823, −0.0415 and 0 at orders 1 to 5'], ['Read by', readers('bdf')]],
+      sections: [
+        { text: 'κ is how far each numerical differentiation formula departs from the backward differentiation formula of the same order. The BDF are a little more stable and a little less accurate per step: on this model about 6 % more steps for the same answer.' },
+        { heading: 'When to tick it', text: 'To see what the κ terms buy on a problem, or to match a result someone else worked out with BDF. The NDF run as BDF gets through all but one of the 39 scenarios. The one it misses stops where the water supply is cut off, and letting the absolute tolerance follow the solution gets it through.' },
+        { heading: 'Not the Newton tolerance', text: 'The κ of the Newton tolerance, further down, is another number: how closely a Julia port solves each stage.' },
+      ],
+      more: more('Solver settings: method', 'help-method'),
+    }),
+    'set:atolSpecies': () => ({
+      kicker: 'Solver', title: 'Per-species absolute tolerance',
+      lead: 'An absolute tolerance of their own for the species named, one `SPECIES VALUE` a line. Every species not listed keeps the absolute tolerance above.',
+      facts: [['Default', 'none'], ['Read by', readers('atolSpecies')]],
+      sections: [
+        { heading: 'Writing it', list: [
+          '`H2O 1e-12`, `OH = 1e-22` or `OH: 1e-22`; several on a line, with commas or semicolons between them',
+          '`#` or `!` starts a comment',
+          'names are matched against the compiled model, in any case',
+          'a line that is not a name and a number, a negative value or a name the model does not have is named under the panel, and Run refuses it',
+        ] },
+        { heading: 'Two things to know first', list: [
+          'It does nothing for a species that is never small. The weight is `max(|y|, atol/rtol)`, so at rtol 1e-5 and atol 1e-30 anything above 1e-25 is judged against itself, and its own atol never enters.',
+          'Relaxing the fast trace species, the obvious use, backfires on this model. Taking the ions `E`, `HP`, `O2M`, `H3OP` and `NOP` from 1e-30 to 1e-20 cost about twelve times the steps. A tolerance above a species’ own size hides it from the error test, and the step controller then asks for steps the Newton iteration cannot solve.',
+        ] },
+      ],
+      more: more('Solver settings: per-species absolute tolerance', 'help-atol-species'),
+    }),
+    'set:norm': () => {
+      const n = state.compiled ? state.compiled.nspecies : 0;
+      const v = $('facNorm').value;
+      return {
+        kicker: 'Solver', title: 'Error norm',
+        lead: 'How the errors of the species, each divided by its own tolerance, are made into the one number a step is accepted or rejected on.',
+        facts: [['Default', 'max'], ['Read by', readers('norm')]],
+        sections: [
+          { choices: [
+            ['max', 'The largest of them: the worst-resolved species decides the step. What the numerical differentiation formulas were published with.', v === 'max'],
+            ['rms', 'Their root mean square, as CVODE and SUNDIALS take it: longer steps and a looser answer.', v === 'rms'],
+          ] },
+          { heading: 'How far apart', text: n
+            ? `With one of this model’s ${n} species out by exactly one unit of tolerance and the rest exact, max reads 1 and rejects the step, while rms reads 1/√${n} = ${(1 / Math.sqrt(n)).toFixed(3)} and accepts it.`
+            : 'With one of n species out by exactly one unit of tolerance and the rest exact, max reads 1 and rejects the step, while rms reads 1/√n and accepts it.' },
+          { heading: 'Keep in mind', text: 'The trace species here sit forty orders of magnitude below the main ones, and it is they the choice is about. rms makes the methods far cheaper on this model, and is worth trying before a method is given up on. RadauIIA5 does not read it: it measures its error against Hairer’s own transformed tolerances, in a norm of its own.' },
+        ],
+        more: more('Solver settings: error norm', 'help-norm'),
+      };
+    },
+    'set:maxOrder': () => ({
+      kicker: 'Solver', title: 'Maximum order',
+      lead: 'The highest order the variable-order formulas may reach, from 1 to 5. Lower is steadier through a discontinuity and slower on a smooth stretch.',
+      facts: [['Default', '5'], ['Read by', readers('maxOrder')]],
+      sections: [{ text: 'Only the multistep formulas have an order to cap. The one-step methods, Rodas5P, KenCarp4, TRBDF2 and RadauIIA5 (fixed at order 5 in three stages), do not show it.' }],
+      more: more('Which settings apply', 'help-apply'),
+    }),
+    'set:minOrder': () => ({
+      kicker: 'Solver', title: 'Minimum order',
+      lead: 'The lowest order the variable-order formulas may drop to. Set it to the maximum to hold the order fixed; a minimum above the maximum is read as the maximum.',
+      facts: [['Default', '1'], ['Read by', readers('minOrder')]],
+      sections: [{ text: 'The NDF has no minimum and does not show it: it starts at order 1 and chooses its order from its own error estimates.' }],
+      more: more('Which settings apply', 'help-apply'),
+    }),
+    'set:hmax': {
+      kicker: 'Solver', title: 'Maximum step',
+      lead: 'The longest step the solver may take, in years.',
+      facts: [['Default', '0'], ['0, for the NDF', 'a tenth of the time it is integrating: the run, or what is left of it after an event'], ['0, for the Julia ports', 'no limit']],
+      sections: [
+        { heading: 'When to set it', text: 'Where the model changes faster than its output can show and the solver steps over the change, and to catch an event whose trigger moves faster than the solution. A crossing is found from the sign of the trigger at the two ends of a step: an excursion that goes out and comes back inside one step is not seen at all, and one that is seen can be placed on an interpolant too coarse for it. On sin(t) against 0.9 the second crossing comes out at 3.01 where it belongs at 2.02. A cap makes the solver look more often.' },
+        { heading: 'Keep in mind', text: 'A small cap makes a long run long: 1e-4 years over 500 years is five million steps.' },
+      ],
+      more: more('Events at a list of values', 'help-events'),
+    },
+    'set:matrix': () => {
+      const v = $('facMatrix').value;
+      return {
+        kicker: 'Solver', title: 'Iteration matrix',
+        lead: 'How I − hJ, the matrix every implicit step solves with, is factorised. The choice changes what a step costs, not the answer beyond round-off.',
+        facts: [['Default', 'auto'], ['Read by', readers('matrix')]],
+        sections: [
+          { choices: [
+            ['auto', 'Measures the fill of one sparse factorisation, then tries the sparse LU that keeps its pivots and takes it wherever it costs no more than the sparse or the dense LU would. Right almost always.', v === 'auto'],
+            ['sparse LU, pivots kept', 'Chooses its pivots from the values once, among entries at least a tenth of the largest in their column and in an order that keeps the factor small. It then repeats the same eliminations on every later matrix, checking that each pivot is still at least a hundredth of the largest entry below it. A pivot that fails is chosen again from there on, and a matrix it cannot factor goes to the dense or the sparse LU.', v === 'refactor'],
+            ['sparse LU', 'Gilbert–Peierls with partial pivoting, the pivots chosen afresh for every matrix, in the natural or the reverse Cuthill–McKee column order, whichever filled in less on a trial.', v === 'sparse'],
+            ['dense LU', 'The whole n × n matrix, with partial pivoting: the cheaper one once a sparse factor fills in past about a third of it.', v === 'dense'],
+          ] },
+          { heading: 'On this model', text: 'The kept-pivot LU needs about 6,000 multiply-adds per factorisation against 85,000 for the dense LU, which makes a step about 30 % cheaper; measured against a run at rtol 1e-9, its errors are the same. The steps themselves are not: here a change at the level of round-off, from either LU, moves the run by several hundred steps either way.' },
+          { heading: 'The Julia ports', text: 'They have no kept-pivot LU, and take that choice as their sparse LU. The Last run section says which LU a run used and how full its factor was.' },
+        ],
+        more: more('Solver settings: iteration matrix', 'help-matrix'),
+      };
+    },
+    'set:jacobian': () => {
+      const v = $('facJacobian').value;
+      const m = state.compiled;
+      return {
+        kicker: 'Solver', title: 'Jacobian',
+        lead: 'Where df/dy, the matrix every implicit step needs, comes from.',
+        facts: [['Default', 'analytic, sparse'], ['Read by', readers('jacobian')]],
+        sections: [
+          { choices: [
+            ['analytic, sparse', 'Derived from the equations when the text is compiled: every expression is emitted with its derivative with respect to each species it depends on, so a switch such as `ramp` contributes its true slope. Exact.', v === 'analytic'],
+            ['finite differences', `Differenced, slower and less exact: the check to run when the analytic one is in doubt. The NDF differences through the analytic pattern, one evaluation of the model per group of columns that share no row${m ? ` (${m.colours} for the ${m.nspecies} species here)` : ''}. The Julia ports are then handed no pattern, and difference every column.`, v === 'numeric'],
+          ] },
+          { text: 'Check Jacobian, at the foot of the panel, compares the two at a few states without a run, and the Jacobian tab shows the result.' },
+        ],
+        more: more('The Jacobian', 'help-jacobian'),
+      };
+    },
+    'set:kappa': () => ({
+      kicker: 'Solver', title: 'Newton tolerance',
+      lead: 'How closely each stage’s Newton iteration must converge, as a share of one unit of the error tolerance: the κ of DifferentialEquations.jl.',
+      facts: [['Default', '1e-3'], ['DifferentialEquations.jl', '1e-2'], ['Allowed', 'above 0, below 1'], ['Read by', readers('kappa')]],
+      sections: [
+        { text: 'It is not a cosmetic knob. A loose tolerance leaves a stage half-solved, which corrupts the error estimate read off the stages, and the step-size controller then acts on a corrupted number: at 1e-2 that is enough in an ESDIRK’s stages. 1e-3 was measured to be both more accurate and cheaper on the standard stiff test problems.' },
+        { heading: 'Not the κ of the NDF', text: 'The NDF does not read it: its Newton iteration stops once the error left is under 0.3 of rtol. The κ that the BDF formulas switch sets to zero is another thing again, the formulas’ departure from the BDF.' },
+      ],
+      more: more('Which settings apply: the Newton tolerance', 'help-kappa'),
+    }),
+    'set:maxJacAge': () => ({
+      kicker: 'Solver', title: 'Jacobian reuse',
+      lead: 'How many steps a Jacobian may be reused before it is formed again, however well the Newton iteration is converging; 1 forms it every step.',
+      facts: [['Default', '20 steps'], ['At least', '1'], ['Read by', readers('maxJacAge')]],
+      sections: [{ text: 'Reusing it is most of what makes a stiff solver cheap on a large model; reusing it too long costs Newton iterations instead. The NDF decides for itself when to form a new one. Rodas5P forms one every step: a Rosenbrock method’s Jacobian is part of the method, and a stale one changes its order, not only its speed.' }],
+      more: more('Which settings apply', 'help-apply'),
+    }),
+    'set:belowTolRun': () => ({
+      kicker: 'Solver', title: 'Steps at the floor',
+      lead: 'What to do when a step at the smallest size the clock can represent fails anyway: a shorter step does not exist. 0 stops the run there and hands back what it had, which is the published rule. Above 0, that many such steps in a row are accepted, and the Last run section says in bold how many were.',
+      facts: [['Default', '5'], ['The published rule', '0'], ['Read by', readers('belowTolRun')]],
+      sections: [
+        { text: '**This is a departure from the published method, not part of it.** Reaching the same point, a variable-order multistep code raises a tolerance-not-met error and returns, as every solver in DifferentialEquations.jl does.' },
+        { heading: 'For and against', text: 'The error test is not always asking a sensible question: after a restart from an interpolated state, a species with a lifetime of femtoseconds is off its steady state by more than the tolerance, and no step size mends that; the implicit step itself does. Against it, a step known to be inaccurate is accepted. At 0 three of the built-in scenarios stop early; across all 39 the escape is used three times in total.' },
+        { heading: 'For the NDF', text: 'The count covers steps whose Newton iteration will not converge at the floor as well as those that fail the error test.' },
+      ],
+      more: more('Solver settings: accept failing steps at the floor', 'help-floor'),
+    }),
+    'set:maxSteps': () => ({
+      kicker: 'Solver', title: 'Step budget',
+      lead: 'How many steps the solver may take before it gives up, says so, and hands back what it had integrated.',
+      facts: [['Default', '2,000,000'], ['At least', '100'], ['Read by', readers('maxSteps')]],
+      sections: [{ text: 'A run that reaches it has usually met something the model did not mean, rather than needing a larger budget. The count starts again after each event, where the run restarts.' }],
+    }),
+    'set:stagnationTol': () => ({
+      kicker: 'Solver', title: 'Stall tolerance',
+      lead: 'How large a Newton correction may be and still be taken once it has stopped shrinking, as a share of one unit of the tolerance, with a fresh Jacobian. 0 never takes one, and is this page’s default.',
+      facts: [['Default', '0: never'], ['rtm.html', '0.5'], ['Allowed', '0 to 1'], ['Read by', readers('stagnationTol')]],
+      sections: [
+        { heading: 'When to raise it', text: 'Only for a model whose rates cancel so heavily that the correction cannot shrink any further: rate constants of 1e16 against concentrations of 1e-9, as rtm.html’s networks have. There the NDF otherwise rejects the step and cuts it, again and again, and a shorter step does not reduce round-off.' },
+        { heading: 'Keep in mind', text: 'On a model that does not need it, it costs accuracy. On this one it made the 500-year water agree less well with SKB’s FACSIMILE result at every tolerance tried, which is why it is off here.' },
+      ],
+    }),
+    'set:maxPoints': {
+      kicker: 'Solver', title: 'Points kept',
+      lead: 'How many points of the solution are kept for the charts, the table and the files. Past it the stored points are thinned as the run goes, to every second one and then every fourth, so that a long run still fits in memory. The solution itself is not affected.',
+      facts: [['Default', '20,000'], ['At least', '1,000'], ['Read by', 'every method']],
+      sections: [{ text: 'The two ends of the run and the state at each event are always kept, and the Last run section says when thinning happened: one in N beside the count of points. The model’s own output times are interpolated from every accepted step, not from the kept ones.' }],
+      more: more('How much of a run is kept', 'help-kept'),
+    },
+    'set:autoAtol': () => ({
+      kicker: 'Solver', title: 'Absolute tolerance follows the solution',
+      lead: 'After every accepted step each species’ absolute tolerance is raised to rtol·|y| if that is larger, and never lowered again: each is judged against the largest it has ever been, rather than a floor fixed before the run.',
+      facts: [['Default', 'off'], ['Read by', readers('autoAtol')]],
+      sections: [
+        { heading: 'For', text: 'A radical that rose to 1e-5 and has decayed to 1e-40 is otherwise still held to 1e-30, thirty-five orders below anything it ever was, and the step size pays for it.' },
+        { heading: 'Against', text: 'It only ever loosens, so a species that peaked and fell is no longer controlled in its tail.' },
+        { heading: 'On this model', text: 'It depends on the method. On the 500-year case it takes FBDF to about 60 % of its steps with the same answer, leaves the NDF slightly worse and doubles the work of QNDF. The Newton iteration keeps the tolerance the run started with, and what a species has reached is remembered across events.' },
+      ],
+      more: more('Solver settings: the absolute tolerance follows the solution', 'help-auto-atol'),
+    }),
+    'set:smoothEst': () => ({
+      kicker: 'Solver', title: 'Smooth the error estimate',
+      lead: 'Filters the error estimate through I − hJ, as Shampine proposed, so that a stiff component cannot inflate it and force a needlessly small step.',
+      facts: [['Default', 'on'], ['Read by', readers('smoothEst')]],
+      sections: [{ text: 'Only those three filter their estimate this way. The others do not read the setting, and it is not shown for them.' }],
+    }),
+    'set:clamp': () => ({
+      kicker: 'Solver', title: 'Read negative concentrations as zero',
+      lead: 'Every concentration in the rate laws is read as max(0, c), so a small negative excursion cannot drive a rate the wrong way. The solution itself may still dip below zero, unless the next setting stops it.',
+      facts: [['Default', 'on'], ['Read by', readers('clamp')]],
+      sections: [{ text: 'Not a solver setting at all: it changes the generated rate laws, so it is built into the derivative and the Jacobian every solver is handed, and applies to them all alike. Changing it compiles the model again. The Python port reads negatives as zero too.' }],
+      more: more('Which settings apply: reading negatives as zero', 'help-clamp'),
+    }),
+    'set:nonNegative': () => {
+      const port = isPort($('facMethod').value);
+      return {
+        kicker: 'Solver', title: 'Keep every species non-negative',
+        lead: 'Keeps every species at or above zero. It is three things at once, and the two families do different amounts of it.',
+        facts: [['Default', 'on'], ['Read by', readers('nonNegative')]],
+        sections: [
+          { choices: [
+            ['NDF', 'All three: the derivative of a species at or below zero may not take it lower, a step that leaves a species negative by more than the tolerance is rejected, and what is left below zero is projected back. The Last run section counts the projections.', !port],
+            ['Julia ports', 'The projection only: each accepted step is put back onto zero.', port],
+          ] },
+          { heading: 'Why it is on', text: 'With it every scenario of the study integrates in a second or two. A trace species that has drifted a little below zero is where the Newton iteration of a stiff solver comes to grief, because the derivative of the clamped rate law is zero on that side. The Python port ran without it and paid in tolerance and time.' },
+          { heading: 'Keep in mind', text: 'An algebraic variable is never projected: its value is whatever satisfies its constraint.' },
+        ],
+        more: more('Solver settings: non-negative', 'help-nonneg'),
+      };
+    },
+    'sec:run': {
+      kicker: 'Section', title: 'Last run',
+      lead: 'What the last run cost and how it was solved, from the solver’s own counts.',
+      sections: [
+        { list: [
+          '**steps**: the accepted steps; **rejected**: attempts that failed, the error test or the Newton iteration, and were tried again',
+          '**points**: the points of the solution kept, and **one in N** when the store was thinned (Points kept)',
+          '**evaluations of f**, **Jacobians**, **LU factorisations** and **solves**: the work',
+          '**accepted below tolerance**, in bold: steps at the floor taken although they failed (Steps at the floor)',
+          '**projections onto zero**: species a step left negative and put back',
+          '**Iteration matrix**: which LU the run used, the entries of its factor against the dense n², its ordering, and for the kept-pivot LU how often the pivots were chosen again',
+          '**Algebraic start**, for a model with algebraic variables: how far the constraints moved their starting values',
+          '**Output grid**: how many of the model’s output times the run reached',
+          'the events: when each fired and what it changed, or that it stopped the run',
+        ] },
+        { text: 'A run that fails says how far it got, with its last accepted steps (the time t, the step h, the order k and the error over rtol), and the charts and the table show what was integrated before the failure.' },
+      ],
+      more: more('How much of a run is kept', 'help-kept'),
+    },
+    'pane:charts': {
+      kicker: 'Tab', title: 'Charts',
+      lead: 'The last run drawn four ways. The first three are the canister model’s: temperature, pressure and dose rate; water, relative humidity, oxygen and the two corrosion rates; and the amounts of the main species. The fourth draws whatever you tick.',
+      facts: [['from, at first', '1e-4, in the unit of the axis']],
+      sections: [
+        { heading: 'The toolbar', list: [
+          '**Time axis**: hours or years, log or linear, for every chart but the first, which is always in years on a linear axis',
+          '**from**: the left-hand end of a log time axis, in its unit. The points before it are dropped rather than hidden, so the height of a chart is decided by what is shown; empty starts at the first point of the run. Not offered on a linear axis.',
+          '**log amounts**: a log scale for the oxygen and corrosion axis of the second chart and for the amounts of the third',
+          '**View in HDF5 Browser**: writes the run as an HDF5 file and opens it in the HDF5 Browser in a second tab. The file is handed across in memory: nothing is written to disk or uploaded.',
+        ] },
+        { heading: 'Keep in mind', text: 'An event is drawn as a dotted line, labelled with what it changed. A model that reports none of the first three charts’ quantities gets a note there instead; the fourth chart works for any model.' },
+      ],
+      more: more('Sending a run to the HDF5 Browser', 'help-hdf5'),
+    },
+    'pane:series': {
+      kicker: 'Charts', title: 'Your own selection',
+      lead: 'Any quantity of the last run, ticked in the list below, drawn against the time axis chosen above.',
+      sections: [
+        { heading: 'The list', list: [
+          '**Outputs**: the `<OUTPUTS>` lines',
+          '**Equations**: the `<EQUATIONS>` lines, the rate constants, the Gibbs energies and the corrosion switches among them',
+          '**Reaction rates**: the reactions given a name with `rate =`',
+          '**Species**: the state itself, in mol/cm³',
+          '**Algebraic**: the variables of an `<ALGEBRAIC>` section, where there is one',
+        ] },
+        { text: 'Each name shows its unit, read off the comment on its line. What is ticked is repeated above the list, and each chip there removes its own series; **clear** unticks them all, **log y** switches the y axis, and the box filters the names and units shown.' },
+        { heading: 'Keep in mind', text: 'The list offers what the last run produced, so a quantity added to the model text appears once it has been run.' },
+      ],
+    },
+    'pane:table': () => {
+      const times = (state.compiled && state.compiled.outputTimes && state.compiled.outputTimes.length) || 0;
+      return {
+        kicker: 'Tab', title: 'Table',
+        lead: 'The last run as numbers, and the files to take it away in.',
+        sections: [{ list: [
+          '**Columns**: the outputs (the Excel file’s DATA sheet), the species in mol/cm³ (its STATES sheet), or both',
+          `**Rows**: about 200 or 1000 rows spread evenly in log time, every step kept, or the model’s own output times${times ? `, ${times} here` : ', where it has a `<TIMES>` section'}. Those are the cubic through the accepted steps on either side and their derivatives, not a solver’s own interpolant, so every method gives the same grid.`,
+          '**Download CSV**: the chosen columns at every kept step, or at the output times when those are chosen; the button says which',
+          '**Download Excel**: SETTINGS, DATA and STATES sheets in the layout of the Python port, at the same rows',
+          '**Download HDF5**: the file View in HDF5 Browser hands over, with the run, the case and the model text, for h5py or anything else that reads HDF5',
+        ] }],
+        more: more('Files', 'help-files'),
+      };
+    },
+    'pane:model': {
+      kicker: 'Tab', title: 'Model',
+      lead: 'The model text itself: settings, constants, species, tables, equations, reactions, events, output times and outputs, in the sections the Help describes.',
+      sections: [
+        { list: [
+          '**Apply changes** compiles the text. It is also compiled a moment after you stop typing, and before every run.',
+          '**colour the syntax** paints comments, section headings, numbers, function names and the words that mean something where they stand: `kf` and `rate` in a reaction, `down` and `stop` in an event, `log` and `lin` in a time list. Turn it off for a very large model. Remembered between visits.',
+        ] },
+        { text: 'The text is checked as you type. A line you are still writing is reported quietly under the box and never selected; left alone, it becomes an error with a button that takes the caret to it. The line under the box counts what the model compiles to.' },
+        { heading: 'Keep in mind', text: 'The Case settings are this text’s `<SETTINGS>` lines: a field typed in rewrites its line, and a line edited here shows in the field. The text is kept in this browser between visits.' },
+      ],
+      more: more('The model file', 'help-model-file'),
+    },
+    'pane:jacobian': () => {
+      const m = state.compiled;
+      return {
+        kicker: 'Tab', title: 'Jacobian',
+        lead: 'The pattern of df/dy the model compiles to. Rows are the species’ equations and columns the species they are differentiated with respect to; the diagonal is drawn in the accent colour, and pointing at a cell names it.',
+        facts: m ? [['Size', `${m.nspecies} × ${m.nspecies}`], ['Structurally non-zero', `${m.nnz} (${(100 * m.density).toFixed(1)} %)`], ['Column groups', String(m.colours)]] : [],
+        sections: [
+          { text: 'Which entries can be non-zero is known before a number is computed, so the matrix is stored and factorised as a sparse one, and a finite-difference Jacobian through this pattern needs one evaluation of the model per group of columns that share no row, not one per species.' },
+          { heading: 'Check Jacobian', text: 'The button at the foot of the panel compares the analytic entries with finite differences at the initial state and at three states with every species present, and lists the entries that differ by more than 0.1 %. An entry counts when its effect on the rate over the perturbation is more than 1e-9 of the rate; below that a finite difference is round-off.' },
+          { text: 'After a run, the text beside the pattern says how the iteration matrix I − hJ was factorised and how full its factor was.' },
+        ],
+        more: more('The Jacobian', 'help-jacobian'),
+      };
+    },
+    'pane:code': () => {
+      const v = $('facCodeSelect').value;
+      return {
+        kicker: 'Tab', title: 'Code',
+        lead: 'The JavaScript the model text is compiled to: the functions every solver calls.',
+        sections: [
+          { choices: [
+            ['rhs', 'dy/dt, the rate of change of every species', v === 'rhs'],
+            ['jac', 'the values of the sparse Jacobian, in compressed-column order over its pattern', v === 'jac'],
+            ['observe', 'the equations and the outputs, for the table and the charts', v === 'observe'],
+            ['events', 'the event triggers, whose crossings of zero the solver looks for', v === 'events'],
+            ['init', 'the `<INITIAL>` section, evaluated once at t = 0', v === 'init'],
+          ] },
+          { text: 'A temporary is shared between a value and its derivatives. A long function is cut into parts, run one after another, because a browser will not optimise a function past about 60 KB of bytecode: whole, this model’s Jacobian ran about thirty times slower.' },
+        ],
+      };
+    },
+  };
+
+  /*
+    The case settings. Their rows are the model's own <SETTINGS> lines, so
+    each topic is made from the line as compiled: its value, what that works
+    out to, the built-in model's value and what the scenarios set it to. The
+    built-in canister model's settings also get a sentence on what they do,
+    read off the lines that use them -- but only while the line is still the
+    built-in one, judged by its comment, so a setting of the same name in a
+    model of one's own is not described as the canister's.
+  */
+  const CASE_NOTES = {
+    DOSERI: 'The dose rate in the gas at closure. It decays as `exp(−LAMBDA·t)`, with `LAMBDA` = 7.33e-10 s⁻¹, a half-life of about 30 years, and drives every radiolysis reaction. The G-values need it in 100 eV cm⁻³ s⁻¹, which it is converted to with the density of the gas at closure.',
+    STEELAREA: 'The area of steel that corrodes, in m². With the free gas volume it turns a corrosion rate in mm/y into moles of iron per cm³ of gas per second, so both corrosion rates scale with it.',
+    VOLUME: 'The free gas volume of the canister, in m³. The water at closure, the corrosion and the release from failed rods are spread over it, and the amounts in mol and g that the charts show are the concentrations times it.',
+    PRESSI: 'The pressure of the dry gas at closure, in atm, water vapour not included. With the temperature at t = 0 it gives the concentration of dry gas that the air and argon fractions share out. 1 atm is taken as 1.01e5 Pa, as in the FACSIMILE model.',
+    PCAIR: 'The share of the dry gas that is air, taken as 20 % O₂ and 80 % N₂; the rest is argon, `PCAR`.',
+    PCAR: 'The share of the dry gas that is argon. As `1 - PCAIR`, which is how the built-in model writes it, argon makes up the rest. At 0, as in 13g-fac, only the air is there, so with `PCAIR` at 0.03 the dry gas is 3 % of `PRESSI`.',
+    H2OLQDI: 'All the water in the canister at closure, in grams, vapour and liquid together. What the gas cannot hold at the starting temperature is liquid; how that is modelled is `H2OPAIR`.',
+    H2OPAIR: 'How liquid water is modelled.',
+    H2OFINAL: 'How much water the failed rods release in all, in grams. An event stops the release when that much has been added, by setting `H2OINPUTR` to 0; with no release it has nothing to do.',
+    H2OINPUTR: 'The rate at which failed rods release water into the gas, in g/day, until `H2OFINAL` grams have come out. 0 is no release.',
+    TPROF: 'The canister temperature against time: the name of a `<TABLE>` of years and °C, interpolated linearly and clamped at its ends. The rate constants are evaluated at it as it changes, and so is the saturation vapour pressure of the water.',
+    CORR_ON: 'Whether the steel insert corrodes.',
+    RHLIM: 'The relative humidity, as a fraction (0.6 is 60 %), above which the steel corrodes at `AERCORRAT` and `ANCORRAT`; below it the rates are `AERCORRATRH` and `ANCORRATRH`. 0 is no limit: the full rates at any humidity.',
+    AERCORRAT: 'The corrosion rate of the steel while oxygen remains, in mm/y, above the humidity limit: 4Fe + 2H₂O + 3O₂ = 4FeOOH, consuming oxygen and water.',
+    ANCORRAT: 'The corrosion rate once the oxygen is gone, in mm/y, above the humidity limit: 3Fe + 4H₂O = Fe₃O₄ + 4H₂, consuming water and making hydrogen.',
+    AERCORRATRH: 'The oxic corrosion rate below the humidity limit `RHLIM`, in mm/y, in place of `AERCORRAT`. 0 is no corrosion below the limit, and with `RHLIM` at 0 it is never used.',
+    ANCORRATRH: 'The anoxic corrosion rate below the humidity limit `RHLIM`, in mm/y, in place of `ANCORRAT`. 0 is no corrosion below the limit, and with `RHLIM` at 0 it is never used.',
+    RAMP_ORDER: 'The concentration, in mol/cm³, over which the oxic corrosion turns off as the oxygen runs out and the anoxic one takes over, and over which all corrosion stops as the water runs out. Each switch is about 1 well above it, about 0.37 at it and e⁻¹⁰⁰ at zero; smaller is sharper.',
+    TEND: 'The length of the run, in years from closure (t = 0). The progress bar and the status line measure against it.',
+  };
+
+  /** The canister model's tables, for the choice of temperature profile. */
+  const TABLE_NOTES = {
+    TEMP_PWR: 'PWR fuel, from 110 °C at closure.',
+    TEMP_BWR: 'BWR fuel, from 85 °C at closure.',
+    TEMP_PWRLOW: 'PWR fuel with a lower starting temperature, from 70 °C.',
+    VPH2O: 'The saturation vapour pressure of water against temperature: on the list because every table is, and not a profile in time.',
+  };
+
+  let builtInLines = null;
+  /** The built-in model's <SETTINGS> lines: name -> { value, comment }. */
+  function builtInSettings() {
+    if (builtInLines) return builtInLines;
+    builtInLines = new Map();
+    let inSettings = false;
+    for (const raw of String(FACSIMILE_DEFAULT_MODEL).split('\n')) {
+      const section = /^<\s*([A-Za-z][A-Za-z ]*?)(?:\s+[A-Za-z_][A-Za-z0-9_]*)?\s*>$/.exec(raw.trim());
+      if (section) { inSettings = section[1].trim().toUpperCase() === 'SETTINGS'; continue; }
+      if (!inSettings) continue;
+      const m = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([^#]*?)\s*(?:#\s*(.*?))?\s*$/.exec(raw);
+      if (m) builtInLines.set(m[1], { value: m[2].trim(), comment: (m[3] || '').trim() });
+    }
+    return builtInLines;
+  }
+
+  /** What a setting is called: its comment, without the unit or what follows a colon. */
+  const settingTitle = (s) => String(s.comment || '').replace(/\s*\(.*$/, '').replace(/:.*$/, '').trim() || s.name;
+
+  /** Which scenarios give a setting which value, as lines of a list. */
+  function scenarioValues(name) {
+    const groups = new Map();
+    for (const p of FACSIMILE_PRESETS) {
+      if (!Object.prototype.hasOwnProperty.call(p.settings, name)) continue;
+      const v = String(p.settings[name]);
+      if (!groups.has(v)) groups.set(v, []);
+      groups.get(v).push(p.id);
+    }
+    // Named where there are few, counted where there are many. Said as
+    // "scenario 12" rather than "in 12", which would read as a count.
+    const total = FACSIMILE_PRESETS.length;
+    return [...groups].sort((a, b) => b[1].length - a[1].length).map(([v, ids]) => {
+      if (ids.length === total) return `\`${v}\` in every one`;
+      if (ids.length > 8) return `\`${v}\` in ${ids.length} of the ${total}`;
+      return `\`${v}\` in scenario${ids.length === 1 ? '' : 's'} ${listOf(ids)}`;
+    });
+  }
+
+  /** The topic of one case setting, made from its line when the panel opens. */
+  function caseTopic(name) {
+    return () => {
+      const m = state.compiled;
+      const s = m && m.settings.find((x) => x.name === name);
+      if (!s) return { kicker: 'Case settings', title: name, lead: 'The model text has no line for this setting any more.' };
+      const built = builtInSettings().get(name);
+      const canister = !!(built && CASE_NOTES[name] && built.comment === String(s.comment || '').trim());
+      const unit = s.isTable || typeof FacsimileHDF5 === 'undefined' ? '' : FacsimileHDF5.unitFromComment(s.comment);
+      const worksOut = !s.isTable && String(s.expr).trim() !== String(s.value) && Number(s.expr) !== Number(s.value);
+      const v = s.isTable ? s.value : Number(s.value);
+      const sections = [];
+      const lead = canister ? CASE_NOTES[name] : 'A line of the `<SETTINGS>` section of the model text. Typing in the field rewrites the line; editing the line changes the field at the next compile.';
+      let link = null;
+      if (canister && name === 'H2OPAIR') {
+        sections.push({ choices: [
+          ['0', 'One species `H2O` holds all the water, and the part above the saturation concentration `H2OEQ` is liquid (the `@H2O = min(H2O, H2OEQ)` line), so the gas is saturated while any liquid is left. What every scenario sets.', v === 0],
+          ['1', 'FACSIMILE’s own: a separate liquid species `H2OLIQ` and its fast pair, condensation first order in the vapour and evaporation zeroth order at `1E6·H2OEQ`, switched off once the liquid is gone. One species and two reactions more.', v === 1],
+        ] }, { heading: 'Keep in mind', text: 'The two agree when the answer has converged, 65.94 g of water after 500 years of 13g at rtol 1e-8, but not before it: at rtol 1e-5 they read 65.93 and 63.00 g.' });
+        link = more('Differences from the FACSIMILE original', 'help-h2opair');
+      } else if (canister && name === 'CORR_ON') {
+        sections.push({ choices: [
+          ['1', 'The steel corrodes: with oxygen while oxygen and water remain, consuming both, and without once the oxygen is gone, consuming water and making hydrogen.', v === 1],
+          ['0', 'No corrosion, as in the zero-corrosion variants.', v === 0],
+        ] });
+      } else if (canister && name === 'TPROF') {
+        // The profiles first; the vapour-pressure table is on the list only
+        // because every table is.
+        const tables = (m.tableNames || []).slice().sort((a, b) => (a === 'VPH2O') - (b === 'VPH2O'));
+        sections.push({ heading: 'The tables', choices: tables.map((t) => [t, TABLE_NOTES[t] || 'A table of the model.', s.value === t]) });
+        link = more('The model file', 'help-model-file');
+      } else if (canister && name === 'RHLIM') {
+        sections.push({ heading: 'Keep in mind', text: 'The switch turns over within about 1e-7 of the humidity. It is what makes this model hard to integrate, and why the water left after 500 years is not converged at the default tolerance: small differences early decide which side of it a run comes down on.' });
+        link = more('Read the table for cost, not for accuracy', 'help-converged');
+      }
+      const values = scenarioValues(name);
+      if (values.length) sections.push({ heading: 'In the scenarios', list: values });
+      return {
+        kicker: 'Case settings', title: settingTitle(s), lead,
+        facts: [
+          ['Line', `${name} = ${s.expr}`],
+          ['Unit', unit],
+          ['Works out to', worksOut ? String(s.value) : ''],
+          ['Built-in model (13g)', built ? built.value : ''],
+        ],
+        sections,
+        more: link,
+      };
+    };
+  }
+
+  /**
+   * Registers every topic, the fixed ones and one for each case setting of
+   * the model now compiled, and fills the slots. Called at boot and after
+   * each compile: the case settings come and go with the model text, and the
+   * shared module takes its topics in one go.
+   */
+  function setupInfo() {
+    if (typeof KvotInfo === 'undefined') return;
+    const topics = Object.assign({}, TOPICS);
+    for (const s of (state.compiled && state.compiled.settings) || []) topics[`case:${s.name}`] = caseTopic(s.name);
+    KvotInfo.setup({ topics, onMore: () => showTab('help') });
+    // A setting's panel left open after its line went away has nothing to show.
+    const open = KvotInfo.current();
+    if (open && !topics[open]) KvotInfo.close();
+    else KvotInfo.refresh();
+  }
+
+  /** Redraws an open panel whose topic reads the controls. */
+  const refreshInfo = () => { if (typeof KvotInfo !== 'undefined') KvotInfo.refresh(); };
+
+  /* ---------------------------------------------------------------------
      Actions
      --------------------------------------------------------------------- */
   registerActions({
@@ -2195,6 +2811,7 @@
     'fac:solverChanged': () => {
       readSolverControls();
       updateSolverOptions();
+      refreshInfo();
       saveState();
       if (!state.running) scheduleCompile(150);
     },
@@ -2233,7 +2850,7 @@
     // whether the line the compiler objected to is the one being written.
     'fac:modelCaret': () => { if (state.compileError) renderModelInfo(); },
     'fac:gotoError': () => { if (state.compileError && state.compileError.line) markLine(state.compileError.line); },
-    'fac:showCode': () => showCode(),
+    'fac:showCode': () => { showCode(); refreshInfo(); },
     'fac:noop': () => {},
   });
 
@@ -2257,6 +2874,9 @@
   initSideResize();
   initSections();
   initSolverAdvanced();
+  // The (i)s of the fixed rows now, and of the case settings once the model
+  // has compiled and renderSettings has made their rows.
+  setupInfo();
   initDrop();
   showTab('charts');
   compile().then(() => renderSeriesList());

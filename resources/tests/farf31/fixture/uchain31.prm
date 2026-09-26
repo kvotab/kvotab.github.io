@@ -1,0 +1,5 @@
+# made-up numerical settings
+TALBOT
+RELINT 1.0E-03
+BQMIN 1.0E-03
+NPMIN 32

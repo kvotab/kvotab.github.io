@@ -136,6 +136,7 @@ function createPlotlyChart(path, savedAxisState) {
   // Hide "Show Total" and "Show Ratio" checkboxes (only for radionuclides groups)
   setShowTotalVisible(false);
   setShowRatioVisible(false);
+  setOverlayGroupsVisible(false);
   setShowMaxVisible(true);
   setShowCIVisible(false);  // Will be enabled if we have probabilistic data
   setShowSDOMVisible(false); // Will be enabled if SDOM is available
@@ -550,6 +551,7 @@ function createMultiDatasetChart(items) {
   // Hide "Show Total" and "Show Ratio" checkboxes (only for radionuclides groups)
   setShowTotalVisible(false);
   setShowRatioVisible(false);
+  setOverlayGroupsVisible(false);
   setShowMaxVisible(true);
   setShowCIVisible(false);  // Will be enabled if we have probabilistic data
   setShowSDOMVisible(false); // Will be enabled if SDOM is available
@@ -1404,86 +1406,79 @@ function insertTotalTraces(ctx) {
   return sawSDOM;
 }
 
-async function createRadionuclidesChart(path, savedAxisState) {
-  if (!_axesLocked) resetPresetDropdown();
-  const plotDiv = getElement('plotlyChart');
-  const chartContainer = getElement('plotlyChartContainer');
-  showChartLoading(chartContainer);
-  let wasCIChecked = false;
-  let wasSDOMChecked = false;
-  let backgroundSourceValue = selectedBackgroundOverlaySource || '__none__';
-  try {
-    const ciCheckbox = getElement('showCI');
-    if (ciCheckbox) {
-      wasCIChecked = !!ciCheckbox.checked;
-    }
-    const sdomCheckbox = getElement('showSDOM');
-    if (sdomCheckbox) {
-      wasSDOMChecked = !!sdomCheckbox.checked;
-    }
-    const backgroundSelect = getElement('backgroundSourceSelect');
-    if (backgroundSelect && backgroundSelect.value) {
-      backgroundSourceValue = backgroundSelect.value;
-    }
-  } catch (e) { ignoreFailure('createRadionuclidesChart', e); }
-  try {
-  if (plotDiv) plotDiv.innerHTML = '';
-  // Yield to browser for immediate UI update before heavy processing (cross-browser)
-  await new Promise(requestAnimationFrame);
-  await new Promise(resolve => setTimeout(resolve, 0));
-  // Show "Show Total" checkbox for radionuclides groups (suppressed if a "Total" sub-node already exists)
-  setShowTotalVisible(true);
-  let hasTotalSubNode = false;
-  setShowMaxVisible(true);
-  setShowCIVisible(false);
-  setShowSDOMVisible(false);
-  setBackgroundSelectorVisible(false);
-  setIterationSelectorVisible(false);
-  populateBackgroundSelector([{ value: '__none__', label: 'No background' }], '__none__');
-  
+/**
+ * The groups a radionuclides chart draws, and from which files: the one
+ * selected, or each of several selected together (selectedGroups), which get
+ * a panel apiece. A group picked in one file's tree is drawn from that file
+ * alone, which is what lets two panels compare one group across two files; in
+ * the merged trees it is drawn from every enabled file, as a single group is.
+ *
+ * @param {string} path - The group the chart was asked for
+ * @returns {{path: string, fileKey: string|null, files: string[]}[]}
+ */
+function radionuclidePanels(path) {
+  const several = selectedIsRadionuclidesGroup && selectedGroups.length > 1
+    && selectedGroups.some(g => g.path === path);
+  if (!several) return [{ path, fileKey: null, files: getEffectiveFiles() }];
+  const enabled = getEnabledFiles();
+  return selectedGroups.map(g => ({
+    path: g.path,
+    fileKey: g.fileKey,
+    files: g.fileKey ? (enabled.includes(g.fileKey) ? [g.fileKey] : []) : enabled
+  }));
+}
+
+/** A group's unit, from the first of its files that says one. */
+function groupUnitOf(panel) {
+  for (const fk of panel.files) {
+    const file = loadedFiles[fk];
+    if (!file || !checkDatasetExistsInFile(file, panel.path)) continue;
+    const unit = getAttr(FileService.get(file, panel.path), 'unit');
+    if (unit !== undefined && unit !== null && String(unit) !== '') return String(unit);
+  }
+  return '';
+}
+
+/** What each panel is called: its group, and its file when that is one of several. */
+function panelLabels(panels) {
+  const files = getEnabledFiles().length;
+  return panels.map(p => (p.fileKey && files > 1 ? `${p.path} (${p.fileKey})` : p.path));
+}
+
+/**
+ * The traces of one radionuclides group drawn from `enabledFiles`: a line per
+ * member, the totals when Show Total is on and the ratios when Show Ratio is.
+ *
+ * Split out of createRadionuclidesChart so that several groups can be drawn
+ * together (renderRadionuclidePanels). What is found about the files on the
+ * way -- probabilistic data and time, the background sources -- goes into
+ * `shared`, one object across all the groups drawn. The controls that depend
+ * on this one group are the caller's to set, from what it returns.
+ *
+ * @param {string} path - The group
+ * @param {string[]} enabledFiles - The files to draw it from
+ * @param {Object} shared - See createRadionuclidesChart
+ * @param {{selectedIterIdx: number, ratio: boolean}} opts - `ratio` false leaves
+ *   Show Ratio out, which has no one place to go on a chart of several groups
+ * @returns {Promise<{traces: Object[], hasTotalSubNode: boolean,
+ *   secondaryHasTraces: boolean, showRatioChecked: boolean}>}
+ */
+async function collectRadionuclideGroup(path, enabledFiles, shared, { selectedIterIdx, ratio }) {
   const traces = [];
-  const enabledFiles = getEffectiveFiles();
-
-  // Determine the currently-selected iteration index (0-based, default 0)
-  const _iterInputEarly = getElement('showIterNum');
-  const _selectedIterNum = (_iterInputEarly && _iterInputEarly.value) ? parseInt(_iterInputEarly.value, 10) : 1;
-  const _selectedIterIdx = (isFinite(_selectedIterNum) && _selectedIterNum >= 1) ? _selectedIterNum - 1 : 0;
-
-  // Show "Show Ratio" checkbox only when exactly 2 files are enabled (thick + thin lines)
-  // and secondary file has data for this path — will be set after building traces
   const hasTwoFiles = enabledFiles.length === 2;
-  setShowRatioVisible(false);
-
   // Store data for computing total
   const totalDataByFile = {};
-  const nIterByFile = {};
-  let hasProbTime = false;          // any file has probabilistic /time
-  let probTimeIterMax = 0;
-
   // Track the starting index of each file's traces in the traces array
   const fileTraceStartIndex = {};
-  
-  // Track if any probabilistic data exists
-  let hasProbabilistic = false;
-  let hasSDOM = false;
+  let hasTotalSubNode = false;
 
-  let timeUnit = '';
-  let yAxisName = path.split('/').pop();
-  let indexBackgroundSegments = [];
-  let backgroundSourceOptions = [{ value: '__none__', label: 'No background' }];
-  
-  if (enabledFiles.length > 0) {
-    const firstFile = loadedFiles[enabledFiles[0]];
-    timeUnit = getTimeUnit(firstFile);
-  }
-  
   // Build traces for each file and each radionuclide
   for (const fileKey of enabledFiles) {
     const file = loadedFiles[fileKey];
-    if (nIterByFile[fileKey] === undefined) {
-      nIterByFile[fileKey] = getRootNIter(file);
+    if (shared.nIterByFile[fileKey] === undefined) {
+      shared.nIterByFile[fileKey] = getRootNIter(file);
     }
-    const nIter = nIterByFile[fileKey];
+    const nIter = shared.nIterByFile[fileKey];
     
     // Record where this file's traces begin
     fileTraceStartIndex[fileKey] = traces.length;
@@ -1514,9 +1509,9 @@ async function createRadionuclidesChart(path, savedAxisState) {
           kvotWarn(`Could not read probabilistic time matrix in ${fileKey}`);
           continue;
         }
-        hasProbTime = true;
-        if (timeMatrix.nIter > probTimeIterMax) probTimeIterMax = timeMatrix.nIter;
-        const iterIdx  = Math.min(_selectedIterIdx, timeMatrix.nIter - 1);
+        shared.hasProbTime = true;
+        if (timeMatrix.nIter > shared.probTimeIterMax) shared.probTimeIterMax = timeMatrix.nIter;
+        const iterIdx  = Math.min(selectedIterIdx, timeMatrix.nIter - 1);
         const timeRow  = timeMatrix.matrix[iterIdx];
         const iterLen  = timeMatrix.iterLengths[iterIdx];
         probTimeForFile = {
@@ -1528,18 +1523,18 @@ async function createRadionuclidesChart(path, savedAxisState) {
       }
       const effectiveTimeData = probTimeForFile ? probTimeForFile.effectiveTimeData : timeData;
 
-      if (backgroundSourceOptions.length === 1) {
-        backgroundSourceOptions = collectBackgroundSourceOptions(file, group, path);
-        if (!backgroundSourceOptions.some(option => option.value === backgroundSourceValue)) {
-          backgroundSourceValue = '__none__';
+      if (shared.backgroundSourceOptions.length === 1) {
+        shared.backgroundSourceOptions = collectBackgroundSourceOptions(file, group, path);
+        if (!shared.backgroundSourceOptions.some(option => option.value === shared.backgroundSourceValue)) {
+          shared.backgroundSourceValue = '__none__';
         }
-        selectedBackgroundOverlaySource = backgroundSourceValue;
-        populateBackgroundSelector(backgroundSourceOptions, backgroundSourceValue);
-        setBackgroundSelectorVisible(backgroundSourceOptions.length > 1);
+        selectedBackgroundOverlaySource = shared.backgroundSourceValue;
+        populateBackgroundSelector(shared.backgroundSourceOptions, shared.backgroundSourceValue);
+        setBackgroundSelectorVisible(shared.backgroundSourceOptions.length > 1);
       }
 
-      if (!indexBackgroundSegments.length && backgroundSourceValue !== '__none__') {
-        indexBackgroundSegments = collectIndexBackgroundSegments(file, backgroundSourceValue, timeData);
+      if (!shared.indexBackgroundSegments.length && shared.backgroundSourceValue !== '__none__') {
+        shared.indexBackgroundSegments = collectIndexBackgroundSegments(file, shared.backgroundSourceValue, timeData);
       }
       
       let datasetKeys = [];
@@ -1565,8 +1560,8 @@ async function createRadionuclidesChart(path, savedAxisState) {
           if (series) {
             // Both flags are only ever raised, never cleared, so folding the
             // per-dataset answer in with || matches the original assignments.
-            hasProbabilistic = hasProbabilistic || series.sawProbabilistic;
-            hasSDOM = hasSDOM || series.sawSDOM;
+            shared.hasProbabilistic = shared.hasProbabilistic || series.sawProbabilistic;
+            shared.hasSDOM = shared.hasSDOM || series.sawSDOM;
             accumulateRadionuclideTotal({
               totalDataByFile, fileKey, nIter, series,
               dataset, datasetKey, path, effectiveTimeData
@@ -1586,23 +1581,17 @@ async function createRadionuclidesChart(path, savedAxisState) {
     }
   }
 
-  // Hide "Show Total" if a "Total" sub-node already exists in the group
-  if (hasTotalSubNode) setShowTotalVisible(false);
-  
-  // Now that traces are built, show "Show Ratio" only if both files contributed data
+  // Whether "Show Ratio" has anything to compare: both files contributed data.
+  let secondaryHasTraces = false;
   if (hasTwoFiles) {
     const secondaryFile = enabledFiles[1];
     const secondaryStart = fileTraceStartIndex[secondaryFile] != null ? fileTraceStartIndex[secondaryFile] : traces.length;
-    const secondaryHasTraces = secondaryStart < traces.length;
-    setShowRatioVisible(secondaryHasTraces);
+    secondaryHasTraces = secondaryStart < traces.length;
   }
 
   // Collect max values per radionuclide per file (needed for ratio display)
   const showRatioCheckbox = getElement('showRatio');
-  const showRatioChecked = hasTwoFiles && showRatioCheckbox && showRatioCheckbox.checked;
-
-  // Hide "Show Max" when ratio is active
-  setShowMaxVisible(!showRatioChecked);
+  const showRatioChecked = ratio && hasTwoFiles && showRatioCheckbox && showRatioCheckbox.checked;
   const maxByFileAndName = {}; // { datasetKey: { fileKey: maxVal } }
   if (showRatioChecked) {
     for (const fileKey of enabledFiles) {
@@ -1635,7 +1624,7 @@ async function createRadionuclidesChart(path, savedAxisState) {
   if (insertTotalTraces({
     traces, totalDataByFile, enabledFiles, fileTraceStartIndex, hasTotalSubNode,
     showRatioChecked, primaryFile, secondaryFile
-  })) hasSDOM = true;
+  })) shared.hasSDOM = true;
 
   // Update thick-line trace names with ratio of max values if "Show Ratio" is checked
   if (showRatioChecked) {
@@ -1668,19 +1657,196 @@ async function createRadionuclidesChart(path, savedAxisState) {
       }
     }
   }
+
+  return { traces, hasTotalSubNode, secondaryHasTraces, showRatioChecked };
+}
+
+async function createRadionuclidesChart(path, savedAxisState) {
+  if (!_axesLocked) resetPresetDropdown();
+  const plotDiv = getElement('plotlyChart');
+  const chartContainer = getElement('plotlyChartContainer');
+  showChartLoading(chartContainer);
+  let wasCIChecked = false;
+  let wasSDOMChecked = false;
+  let backgroundSourceValue = selectedBackgroundOverlaySource || '__none__';
+  try {
+    const ciCheckbox = getElement('showCI');
+    if (ciCheckbox) {
+      wasCIChecked = !!ciCheckbox.checked;
+    }
+    const sdomCheckbox = getElement('showSDOM');
+    if (sdomCheckbox) {
+      wasSDOMChecked = !!sdomCheckbox.checked;
+    }
+    const backgroundSelect = getElement('backgroundSourceSelect');
+    if (backgroundSelect && backgroundSelect.value) {
+      backgroundSourceValue = backgroundSelect.value;
+    }
+  } catch (e) { ignoreFailure('createRadionuclidesChart', e); }
+  try {
+  if (plotDiv) plotDiv.innerHTML = '';
+  // Yield to browser for immediate UI update before heavy processing (cross-browser)
+  await new Promise(requestAnimationFrame);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  // Show "Show Total" checkbox for radionuclides groups (suppressed if a "Total" sub-node already exists)
+  setShowTotalVisible(true);
+  setShowMaxVisible(true);
+  setShowCIVisible(false);
+  setShowSDOMVisible(false);
+  setBackgroundSelectorVisible(false);
+  setIterationSelectorVisible(false);
+  populateBackgroundSelector([{ value: '__none__', label: 'No background' }], '__none__');
   
-  renderRadionuclidesChart({
-    traces, path, enabledFiles, chartContainer, savedAxisState, hasProbabilistic,
-    hasProbTime, hasSDOM, probTimeIterMax, showRatioChecked, backgroundSourceOptions,
-    backgroundSourceValue, indexBackgroundSegments, timeUnit, yAxisName,
-    wasCIChecked, wasSDOMChecked
-  });
+  // One group, or several drawn a panel each: see radionuclidePanels.
+  const panels = radionuclidePanels(path);
+
+  // Determine the currently-selected iteration index (0-based, default 0)
+  const _iterInputEarly = getElement('showIterNum');
+  const _selectedIterNum = (_iterInputEarly && _iterInputEarly.value) ? parseInt(_iterInputEarly.value, 10) : 1;
+  const _selectedIterIdx = (isFinite(_selectedIterNum) && _selectedIterNum >= 1) ? _selectedIterNum - 1 : 0;
+
+  // Show "Show Ratio" checkbox only when exactly 2 files are enabled (thick + thin lines)
+  // and secondary file has data for this path — will be set after building traces
+  setShowRatioVisible(false);
+
+  // Several groups can also be drawn in one chart, thick and thin, but only
+  // while no files are combined: intersect and union already draw a second
+  // file thin, and a thin line cannot say both "the other file" and "the
+  // other group".
+  const overlayOffered = panels.length > 1 && !isIntersectMode() && !isUnionMode();
+  setOverlayGroupsVisible(overlayOffered);
+  const overlay = overlayOffered && !!getElement('overlayGroups')?.checked;
+
+  // What every group drawn adds to: the iterations per file, whether any file
+  // has probabilistic data or a probabilistic /time, and the background
+  // sources, which are read from the first group that offers them.
+  const shared = {
+    nIterByFile: {},
+    hasProbTime: false,
+    probTimeIterMax: 0,
+    hasProbabilistic: false,
+    hasSDOM: false,
+    backgroundSourceOptions: [{ value: '__none__', label: 'No background' }],
+    backgroundSourceValue,
+    indexBackgroundSegments: [],
+  };
+
+  let timeUnit = '';
+  if (panels[0].files.length > 0) {
+    const firstFile = loadedFiles[panels[0].files[0]];
+    timeUnit = getTimeUnit(firstFile);
+  }
+
+  const built = [];
+  for (const panel of panels) {
+    built.push(await collectRadionuclideGroup(panel.path, panel.files, shared,
+      { selectedIterIdx: _selectedIterIdx, ratio: panels.length === 1 }));
+  }
+
+  if (panels.length === 1) {
+    const { traces, hasTotalSubNode, secondaryHasTraces, showRatioChecked } = built[0];
+    const enabledFiles = panels[0].files;
+    // Hide "Show Total" if a "Total" sub-node already exists in the group
+    if (hasTotalSubNode) setShowTotalVisible(false);
+    // Show "Show Ratio" only if both files contributed data
+    if (enabledFiles.length === 2) setShowRatioVisible(secondaryHasTraces);
+    // Hide "Show Max" when ratio is active
+    setShowMaxVisible(!showRatioChecked);
+    renderRadionuclidesChart({
+      traces, path, enabledFiles, chartContainer, savedAxisState,
+      hasProbabilistic: shared.hasProbabilistic, hasProbTime: shared.hasProbTime,
+      hasSDOM: shared.hasSDOM, probTimeIterMax: shared.probTimeIterMax, showRatioChecked,
+      backgroundSourceOptions: shared.backgroundSourceOptions,
+      backgroundSourceValue: shared.backgroundSourceValue,
+      indexBackgroundSegments: shared.indexBackgroundSegments,
+      timeUnit, yAxisName: path.split('/').pop(), wasCIChecked, wasSDOMChecked
+    });
+  } else if (overlay) {
+    const traces = overlayRadionuclideGroups(built, panels);
+    setShowTotalVisible(built.some(b => !b.hasTotalSubNode));
+    // Show Ratio compares two groups as it compares two files: the first
+    // group's maximum over the second's, in the thick line's name.
+    const secondaryHasTraces = built.length === 2 && built[1].traces.length > 0;
+    setShowRatioVisible(secondaryHasTraces);
+    const showRatioChecked = secondaryHasTraces && !!getElement('showRatio')?.checked;
+    if (showRatioChecked) applyGroupRatio(traces);
+    setShowMaxVisible(!showRatioChecked);
+    // One y axis for all of them. It is named after the group, as a single
+    // group's is, when they all have one name (vault_A/total and vault_B/total);
+    // otherwise it is a value, in whichever units they are in.
+    const units = [...new Set(panels.map(groupUnitOf).filter(Boolean))];
+    const names = new Set(panels.map(p => p.path.split('/').pop()));
+    const yAxisTitle = names.size > 1 || units.length > 1
+      ? `Value${units.length ? ` (${units.join(', ')})` : ''}` : null;
+    renderRadionuclidesChart({
+      traces, path: panels[0].path, enabledFiles: panels[0].files, chartContainer, savedAxisState,
+      hasProbabilistic: shared.hasProbabilistic, hasProbTime: shared.hasProbTime,
+      hasSDOM: shared.hasSDOM, probTimeIterMax: shared.probTimeIterMax, showRatioChecked,
+      backgroundSourceOptions: shared.backgroundSourceOptions,
+      backgroundSourceValue: shared.backgroundSourceValue,
+      indexBackgroundSegments: shared.indexBackgroundSegments,
+      timeUnit, yAxisName: panels[0].path.split('/').pop(),
+      yAxisTitle,
+      wasCIChecked, wasSDOMChecked
+    });
+  } else {
+    // Show Total is there while any group has no "Total" of its own. Show Max
+    // would write a number per panel into the one legend entry they share.
+    setShowTotalVisible(built.some(b => !b.hasTotalSubNode));
+    setShowMaxVisible(false);
+    renderRadionuclidePanels({
+      built, panels, chartContainer, savedAxisState, ...shared, timeUnit,
+      wasCIChecked, wasSDOMChecked
+    });
+  }
   } catch (err) {
     console.error('createRadionuclidesChart failed:', err);
     hideChartLoading(chartContainer);
     setupBackgroundOverlayTooltip(getElement('plotlyChart'), []);
     hideChart();
   }
+}
+
+/**
+ * What a radionuclides chart does once Plotly has drawn it, with one panel or
+ * several: the CI and SEM bands and the realisation it had before it was
+ * redrawn, the background sources, and the overlay's tooltip.
+ *
+ * @param {Object} ctx - The renderer's context
+ * @returns {Function} for renderChart to call
+ */
+function afterRadionuclideRender(ctx) {
+  const { hasProbTime, hasProbabilistic, hasSDOM, wasCIChecked, wasSDOMChecked,
+          backgroundSourceOptions, backgroundSourceValue, indexBackgroundSegments } = ctx;
+  return () => {
+    // Mark the chart so toggleShowIteration knows this is a prob-time chart
+    if (hasProbTime && currentChartData) {
+      currentChartData._isProbTimeChart = true;
+    }
+    if (hasProbabilistic && !hasProbTime && wasCIChecked) {
+      const ciCheckbox = getElement('showCI');
+      if (ciCheckbox) {
+        ciCheckbox.checked = true;
+        toggleShowCI();
+      }
+    }
+    if (hasSDOM && !hasProbTime && wasSDOMChecked) {
+      const sdomCheckbox = getElement('showSDOM');
+      if (sdomCheckbox) {
+        sdomCheckbox.checked = true;
+        toggleShowSDOM();
+      }
+    }
+    populateBackgroundSelector(backgroundSourceOptions, backgroundSourceValue);
+    setBackgroundSelectorVisible(backgroundSourceOptions.length > 1);
+    if (!hasProbTime) {
+      const _iterInput = getElement('showIterNum');
+      if (_iterInput && _iterInput.value && parseInt(_iterInput.value, 10) >= 1) {
+        toggleShowIteration();
+      }
+    }
+    setupBackgroundOverlayTooltip(getElement('plotlyChart'), indexBackgroundSegments);
+  };
 }
 
 /**
@@ -1749,7 +1915,7 @@ function renderRadionuclidesChart(ctx) {
     }
     
     const { xScale, yScale } = getChartScales();
-    const yAxisTitle = yAxisUnit ? `${yAxisName} (${yAxisUnit})` : yAxisName;
+    const yAxisTitle = ctx.yAxisTitle || (yAxisUnit ? `${yAxisName} (${yAxisUnit})` : yAxisName);
     
     const layout = ChartService.createBaseLayout({
       title: path,
@@ -1768,35 +1934,7 @@ function renderRadionuclidesChart(ctx) {
     applyAxisState(layout, savedAxisState);
     _applyLockedAxes(layout);
     
-    renderChart(traces, layout, path, () => {
-      // Mark the chart so toggleShowIteration knows this is a prob-time chart
-      if (hasProbTime && currentChartData) {
-        currentChartData._isProbTimeChart = true;
-      }
-      if (hasProbabilistic && !hasProbTime && wasCIChecked) {
-        const ciCheckbox = getElement('showCI');
-        if (ciCheckbox) {
-          ciCheckbox.checked = true;
-          toggleShowCI();
-        }
-      }
-      if (hasSDOM && !hasProbTime && wasSDOMChecked) {
-        const sdomCheckbox = getElement('showSDOM');
-        if (sdomCheckbox) {
-          sdomCheckbox.checked = true;
-          toggleShowSDOM();
-        }
-      }
-      populateBackgroundSelector(backgroundSourceOptions, backgroundSourceValue);
-      setBackgroundSelectorVisible(backgroundSourceOptions.length > 1);
-      if (!hasProbTime) {
-        const _iterInput = getElement('showIterNum');
-        if (_iterInput && _iterInput.value && parseInt(_iterInput.value, 10) >= 1) {
-          toggleShowIteration();
-        }
-      }
-      setupBackgroundOverlayTooltip(getElement('plotlyChart'), indexBackgroundSegments);
-    });
+    renderChart(traces, layout, path, afterRadionuclideRender(ctx));
   } else {
     hideChartLoading(chartContainer);
     setupBackgroundOverlayTooltip(getElement('plotlyChart'), []);
@@ -1804,6 +1942,222 @@ function renderRadionuclidesChart(ctx) {
   }
 }
 
+
+/**
+ * What tells group `other` apart from group `first` in a line's name: the
+ * part of its path that differs -- `vault_B` for /biosphere/vault_B/mire/total
+ * beside /biosphere/vault_A/mire/total -- and its file, when that differs too.
+ *
+ * @param {{path: string, files: string[]}} first
+ * @param {{path: string, files: string[]}} other
+ * @returns {string}
+ */
+function groupSuffix(first, other) {
+  const a = first.path.split('/').filter(Boolean);
+  const b = other.path.split('/').filter(Boolean);
+  let head = 0;
+  while (head < a.length && head < b.length && a[head] === b[head]) head++;
+  let tail = 0;
+  while (tail < a.length - head && tail < b.length - head
+    && a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail++;
+  const parts = [];
+  const middle = b.slice(head, b.length - tail).join('/');
+  if (middle) parts.push(middle);
+  const fa = first.files[0];
+  const fb = other.files[0];
+  if (fa && fb && fa !== fb) parts.push(filenameDiff(fa, fb));
+  return parts.join(', ') || other.path;
+}
+
+/**
+ * Several radionuclides groups in one chart, the way intersect and union draw
+ * several files: the first group's lines as its own chart draws them, and every
+ * other group's at half the width, named with what tells it apart
+ * (groupSuffix). The colour and dash stay the member's.
+ *
+ * @param {Object[]} built - From collectRadionuclideGroup, one per group
+ * @param {Object[]} panels - From radionuclidePanels
+ * @returns {Object[]} the traces, the first group's first
+ */
+function overlayRadionuclideGroups(built, panels) {
+  const traces = [];
+  built.forEach((b, i) => {
+    const suffix = i === 0 ? '' : groupSuffix(panels[0], panels[i]);
+    for (const t of b.traces) {
+      if (i > 0) {
+        t.name = `${t.name} (${suffix})`;
+        t.line = { ...t.line, width: (t.line?.width ?? 2) / 2 };
+      }
+      t._groupIndex = i;
+      traces.push(t);
+    }
+  });
+  return traces;
+}
+
+/**
+ * Show Ratio across the two groups of a chart drawn by
+ * overlayRadionuclideGroups, as it is across two files: each thick line's
+ * name gets the ratio of its maximum to the thin line's of the same member,
+ * and the thin lines stay drawn but leave the legend.
+ *
+ * @param {Object[]} traces - Modified in place
+ */
+function applyGroupRatio(traces) {
+  const maxOf = (t) => (t.y || []).reduce((m, v) => (v > m ? v : m), -Infinity);
+  const thin = new Map(traces.filter(t => t._groupIndex === 1).map(t => [t._datasetKey, t]));
+  for (const t of traces) {
+    if (t._groupIndex === 0) {
+      const other = thin.get(t._datasetKey);
+      if (!other) continue;
+      const a = maxOf(t);
+      const b = maxOf(other);
+      if (b !== 0 && isFinite(b)) t.name = `${t.name} (${formatRatio(a / b)})`;
+      else if (b === 0 && a > 0) t.name = `${t.name} (∞)`;
+    } else if (t._groupIndex === 1) {
+      t.showlegend = false;
+      t._hiddenFromLegend = true; // preserve across dynamic legend updates
+    }
+  }
+}
+
+/**
+ * Draw several radionuclides groups as one chart, a panel each, top to bottom
+ * in the order they were picked. Each panel is drawn as that group's own chart
+ * would be: the same colour and dash for a member, a second file's lines half
+ * as wide, a total in black. One time axis runs under all of them.
+ *
+ * Panels whose groups share a unit share a y axis too (`matches`), with the
+ * first panel in that unit: a line can be read against the same line in the
+ * next panel, and whatever sets the y axis -- lin/log, a preset, the axes
+ * lock, auto range on log -- sets them all through it. Groups in another unit
+ * have an axis of their own, since one scale for becquerels and sieverts would
+ * be no scale at all.
+ * forEveryPanel keeps the types and ticks in step, which Plotly does not do
+ * for matched axes, and requires.
+ *
+ * The legend lists each line once, and clicking it shows or hides that line in
+ * every panel (`legendgroup`).
+ *
+ * @param {Object} ctx - see createRadionuclidesChart
+ */
+function renderRadionuclidePanels(ctx) {
+  const { built, panels, chartContainer, savedAxisState, hasProbabilistic, hasProbTime,
+          hasSDOM, probTimeIterMax, timeUnit, backgroundSourceOptions, backgroundSourceValue,
+          indexBackgroundSegments } = ctx;
+  // A group with nothing to draw from the files enabled has no panel.
+  const drawn = panels.map((panel, i) => ({ panel, traces: built[i].traces })).filter(d => d.traces.length > 0);
+  if (!drawn.length) {
+    hideChartLoading(chartContainer);
+    setupBackgroundOverlayTooltip(getElement('plotlyChart'), []);
+    hideChart();
+    return;
+  }
+
+  const units = drawn.map(d => groupUnitOf(d.panel));
+  const labels = panelLabels(drawn.map(d => d.panel));
+  const traces = [];
+  const listed = new Set();
+  drawn.forEach((d, i) => {
+    const k = i === 0 ? '' : String(i + 1);
+    for (const t of d.traces) {
+      t.xaxis = 'x' + k;
+      t.yaxis = 'y' + k;
+      // One legend entry for a line, whichever panels it is in.
+      t.legendgroup = t.name;
+      if (listed.has(t.name)) {
+        t.showlegend = false;
+        t._hiddenFromLegend = true;
+      } else {
+        listed.add(t.name);
+      }
+      // A name repeats from panel to panel, so an export says whose it is.
+      t._exportName = `${labels[i]}: ${t.name}`;
+      traces.push(t);
+    }
+  });
+
+  // Show CI / SDOM controls only for regular (non prob-time) probabilistic data
+  setShowCIVisible(hasProbabilistic && !hasProbTime);
+  setShowSDOMVisible(hasSDOM && !hasProbTime);
+  const regularIterMax = traces.filter(t => t._numRealizations).reduce((m, t) => Math.max(m, t._numRealizations), 0);
+  const iterMax = hasProbTime ? probTimeIterMax : regularIterMax;
+  setIterationSelectorVisible(iterMax > 0);
+  if (iterMax > 0) setIterationSelectorMax(iterMax);
+  populateBackgroundSelector(backgroundSourceOptions, backgroundSourceValue);
+  setBackgroundSelectorVisible(backgroundSourceOptions.length > 1);
+
+  const { xScale, yScale } = getChartScales();
+  const layout = ChartService.createBaseLayout({
+    title: '',
+    xAxisTitle: timeUnit ? `Time (${timeUnit})` : 'Time',
+    yAxisTitle: '',
+    xScale,
+    yScale
+  });
+  if (indexBackgroundSegments.length) {
+    layout.shapes = (layout.shapes || [])
+      .concat(backgroundRectShapes(indexBackgroundSegments, traces, xScale));
+  }
+  // The first panel's axes are the ones the controls read and set, and the
+  // others are copied from them once the saved view and the lock are on.
+  applyAxisState(layout, savedAxisState);
+  _applyLockedAxes(layout);
+  layoutPanels(layout, drawn.map((d, i) => ({
+    label: labels[i],
+    unit: units[i],
+    title: units[i] || d.panel.path.split('/').pop()
+  })));
+
+  renderChart(traces, layout, drawn[0].panel.path, afterRadionuclideRender(ctx));
+}
+
+/**
+ * Split a layout's plot area into panels stacked top to bottom, a pair of
+ * axes each: `xaxis` and `yaxis` for the first, `xaxis2` and `yaxis2` for the
+ * next. Every x axis follows the first and only the bottom one is labelled.
+ * A y axis follows the first panel's in the same unit, if there is an earlier
+ * one. Each panel has its name above it.
+ *
+ * @param {Object} layout - From createBaseLayout; modified in place
+ * @param {{label: string, unit: string, title: string}[]} panels
+ */
+function layoutPanels(layout, panels) {
+  const n = panels.length;
+  const gap = n > 1 ? 0.08 : 0;
+  const height = (1 - gap * (n - 1)) / n;
+  const x0 = layout.xaxis;
+  const y0 = layout.yaxis;
+  layout.annotations = (layout.annotations || []).slice();
+  panels.forEach((p, i) => {
+    const k = i === 0 ? '' : String(i + 1);
+    const top = 1 - i * (height + gap);
+    layout['xaxis' + k] = {
+      ...x0,
+      anchor: 'y' + k,
+      ...(i ? { matches: 'x' } : {}),
+      showticklabels: i === n - 1,
+      title: i === n - 1 ? x0.title : ''
+    };
+    const first = panels.findIndex(q => q.unit === p.unit);
+    const own = i > 0 && first === i;
+    layout['yaxis' + k] = {
+      ...y0,
+      anchor: 'x' + k,
+      domain: [Math.max(0, top - height), top],
+      ...(first < i ? { matches: 'y' + (first === 0 ? '' : String(first + 1)) } : {}),
+      // A panel in a unit of its own does not take the first panel's range:
+      // a saved or locked one is in the first panel's unit.
+      ...(own ? { range: undefined, autorange: true } : {}),
+      title: p.title
+    };
+    // A group's name is the file's, so it goes in as text and not as markup.
+    layout.annotations.push({
+      text: escapeHtml(p.label), xref: 'paper', yref: 'paper', x: 0, y: top,
+      xanchor: 'left', yanchor: 'bottom', showarrow: false, font: { size: 11 }
+    });
+  });
+}
 
 /**
  * Get standard Plotly configuration with custom toolbar buttons.

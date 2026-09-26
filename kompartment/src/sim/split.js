@@ -86,6 +86,87 @@ export const AUTO_GAIN_UNTIMED = 1.6;
 export const START_MS = 250;
 
 /**
+ * What building a part costs, as a share of building the whole model.
+ *
+ * Not the part's share of the states: switching materials off shortens the
+ * loops the generated code runs, not the code, and the code is what a build
+ * spends its time on. Measured on the largest imported assessment -- 798
+ * compartments over 54 nuclides, 55,728 states -- a part of 1,032 states
+ * generated 7.6 million characters of code against the whole model's 7.7
+ * million, and built in 2.8 to 3.9 s against 6.9 to 7.1 s.
+ */
+export const PART_BUILD = 0.5;
+
+/*
+ * MEMORY. Every worker of a page runs in the page's process, and in Chromium
+ * every JavaScript heap of one process shares one reservation of about 4 GB
+ * -- whatever the machine has. Past it, the engine does not fail the one
+ * allocation: it takes the whole tab down, page and workers with it, so
+ * nothing here gets to fall back to a whole solve. Measured in Chrome 153 and
+ * Edge 154 with workers doing nothing but hold memory: eight of 450 MB were
+ * fine, ten crashed, and five of 800 MB crashed at about 3.6 GB between them.
+ *
+ * So how many workers a split starts is decided by what each will hold as well
+ * as by the cores. A part's worker holds the model's text (parsed, and the
+ * string it was parsed from) and the part's build, whose size follows the
+ * generated code rather than the part: on that assessment 195 to 309 MB of
+ * heap each, which is two bytes of heap per character of model text and about
+ * 35 per character of code. Besides the heap, each compiles its own code, and
+ * the optimising compilers held about 0.8 GB per worker there -- 100 bytes per
+ * character of code -- which is the machine's memory rather than the tab's.
+ * Nineteen workers (a 20-thread PC) took the tab down; nine needed 10 GB.
+ */
+
+/** The share of the tab's JavaScript memory a split may plan to fill. */
+export const TAB_HEAP_BYTES = 3e9;
+
+/** Heap per character of generated code, in a part's worker. */
+export const HEAP_PER_CODE_CHAR = 35;
+
+/** Memory outside the heap per character of generated code: the compilers'. */
+export const MEMORY_PER_CODE_CHAR = 100;
+
+/** However many cores and however much memory: past this, the builds cost more than the parts save. */
+export const MOST_PART_WORKERS = 8;
+
+/**
+ * How many workers a split may start without running the tab, or the machine,
+ * out of memory.
+ *
+ * The page and the coordinator hold about three parts' worth between them --
+ * the page's copies of the model and the coordinator's whole build, which
+ * carries the Jacobian -- and the rest of `TAB_HEAP_BYTES` is shared out. The
+ * machine's memory, where the browser says (`navigator.deviceMemory`, in GB,
+ * which Chromium rounds and caps at 8), is given half to the workers.
+ *
+ * @param {object} p
+ * @param {number} p.modelChars  the length of the model's text, as the workers receive it
+ * @param {number} p.codeChars   the length of the code the whole model generated
+ * @param {number|null} [p.deviceMemory]  the machine's memory in GB, where known
+ * @returns {{workers: number, heapEach: number, memoryEach: number}}
+ */
+export function partWorkerCap({ modelChars = 0, codeChars = 0, deviceMemory = null } = {}) {
+	const heapEach = 2 * Math.max(0, modelChars) + HEAP_PER_CODE_CHAR * Math.max(0, codeChars);
+	const memoryEach = heapEach + MEMORY_PER_CODE_CHAR * Math.max(0, codeChars);
+	let workers = MOST_PART_WORKERS;
+	if (heapEach > 0) workers = Math.min(workers, Math.floor(TAB_HEAP_BYTES / heapEach) - 3);
+	if (Number.isFinite(deviceMemory) && deviceMemory > 0 && memoryEach > 0) {
+		workers = Math.min(workers, Math.floor((0.5 * deviceMemory * 1e9) / memoryEach));
+	}
+	return { workers: Math.max(1, workers), heapEach, memoryEach };
+}
+
+/** The length of the code a built system generated: what its builds and compilations cost follows. */
+export function codeChars(system) {
+	const src = system?.source ?? {};
+	let n = 0;
+	for (const key of ['dydt', 'invariant', 'atInstant', 'moving', 'jacobian']) {
+		if (typeof src[key] === 'string') n += src[key].length;
+	}
+	return n;
+}
+
+/**
  * A name for each state that is the same for the same state in any build of
  * the model, whichever materials that build has: the block, its index, and for
  * a far-field path the cell. The mass-balance budgets are named by the term and
@@ -293,20 +374,32 @@ export function packJobs(costs, workers) {
 /**
  * Whether to split this run, and how.
  *
- * The prediction is the cost model above: each job costs its share of the
- * whole model's build and of its solve, the bins run side by side, and each
- * worker costs a start. The whole model's solve time comes from `known` -- a
- * previous run of this same layout on this worker -- and where there is none
- * the ratio is judged on the model's shape alone, with a larger margin and
- * only for a large model. The shape is the part that is certain; the step
- * counts are not, since a part may need fewer steps than the whole and never
- * more than the whole's worst part, which is what this assumes.
+ * The jobs are packed into one bin per worker, and **a bin is built once**:
+ * its jobs' materials together are one part of the model, since jobs that
+ * cannot reach each other can as well be solved together as apart -- the
+ * builds are what a part costs whatever its size, so a worker that built each
+ * of its jobs in turn spent most of its time building.
+ *
+ * The prediction is the cost model above: each bin costs a part's build and its
+ * share of the solve -- the shared work once, and its states' share of the
+ * rest -- the bins run side by side, and each worker costs a start. The whole
+ * model's solve time comes from `known` -- a previous run of this same layout
+ * on this worker -- and where there is none the ratio is judged on the model's
+ * shape alone, with a larger margin and only for a large model. The shape is
+ * the part that is certain; the step counts are not, since a part may need
+ * fewer steps than the whole and never more than the whole's worst part, which
+ * is what this assumes.
+ *
+ * How many bins is the cores this run may use, and no more than the memory
+ * allows (`memoryCap`, from `partWorkerCap`): a split that would take the tab
+ * down is not a faster run.
  *
  * @param {object} system  the whole model, built
  * @param {object} project the `Project`
  * @param {object} opts
  * @param {'auto'|'on'|'off'} [opts.mode]
  * @param {number} opts.workers  cores this run may use for parts
+ * @param {number} [opts.memoryCap]  workers the memory allows (`partWorkerCap`)
  * @param {boolean} opts.nest    whether a worker can be started from here
  * @param {boolean} [opts.scipy] the solver is one of the SciPy ones
  * @param {number} [opts.buildMs]  what building the whole model just took
@@ -317,7 +410,7 @@ export function packJobs(costs, workers) {
  *   keys?: string[], bins?: number[][], parts?: number, predicted?: number|null}}
  */
 export function planSplit(system, project, {
-	mode = 'auto', workers = 1, nest = true, scipy = false, buildMs = 0, known = null,
+	mode = 'auto', workers = 1, memoryCap = Infinity, nest = true, scipy = false, buildMs = 0, known = null,
 } = {}) {
 	const m = mode === 'on' || mode === 'off' ? mode : 'auto';
 	const no = (why) => ({ use: false, mode: m, why });
@@ -331,19 +424,27 @@ export function planSplit(system, project, {
 	const found = splitJobs(system);
 	if (!found.ok) return no(found.why);
 	const n = system.layout.nstate;
-	const costs = found.jobs.map((j) => jobCost(j.states, n));
-	const cores = Math.max(1, Math.floor(workers));
-	if (cores < 2) return no('there is one core to run on');
-	const bins = packJobs(costs, cores);
-	const load = Math.max(...bins.map((b) => b.reduce((s, j) => s + costs[j], 0)));
+	const allowed = Math.max(1, Math.floor(Math.min(workers, memoryCap)));
+	const capped = memoryCap < workers;
+	if (allowed < 2) {
+		return no(capped
+			? 'a model this size leaves room for one worker in the page’s memory'
+			: 'there is one core to run on');
+	}
+	// Packed by states: a bin is one build, so the work every part repeats is
+	// paid once per bin whatever it holds.
+	const bins = packJobs(found.jobs.map((j) => j.states), allowed);
+	const binStates = bins.map((b) => b.reduce((s, j) => s + found.jobs[j].states, 0));
+	const load = Math.max(...binStates.map((s) => jobCost(s, n)));
 	const plan = {
 		use: true, mode: m, jobs: found.jobs, owner: found.owner, keys: found.keys, bins,
 		parts: found.parts, predicted: null,
 		why: '',
 	};
 	const size = `${found.jobs.length} parts, the largest ${Math.round(100 * Math.max(...found.jobs.map((j) => j.states)) / n)}% of the states`;
+	const on = `on ${bins.length} cores${capped && bins.length === allowed ? ', as many as the page’s memory allows for a model this size' : ''}`;
 	if (m === 'on') {
-		plan.why = `asked for: ${size}, on ${bins.length} cores`;
+		plan.why = `asked for: ${size}, ${on}`;
 		return plan;
 	}
 	// Auto. A split this model has had, measured, decides: it is the answer
@@ -353,21 +454,21 @@ export function planSplit(system, project, {
 			return no(`split, it was measured at ${known.gain.toFixed(1)}×, which is not enough to be worth it`);
 		}
 		plan.predicted = known.gain;
-		plan.why = `${size}; measured at ${known.gain.toFixed(1)}× the last time, on ${bins.length} cores`;
+		plan.why = `${size}; measured at ${known.gain.toFixed(1)}× the last time, ${on}`;
 		return plan;
 	}
 	if (known?.solveMs != null && Number.isFinite(known.solveMs)) {
 		const S = known.solveMs;
 		const B = Math.max(0, buildMs);
-		const predicted = S / (load * (B + S) + START_MS);
+		const predicted = S / (PART_BUILD * B + load * S + START_MS);
 		if (S < AUTO_SOLVE_MS) {
 			return { ...no(`a whole solve takes ${Math.round(S)} ms, too short to be worth dividing`), predicted };
 		}
 		if (predicted < AUTO_GAIN) {
-			return { ...no(`${size}; expected ${predicted.toFixed(1)}× on ${bins.length} cores, not enough`), predicted };
+			return { ...no(`${size}; expected ${predicted.toFixed(1)}× ${on}, not enough`), predicted };
 		}
 		plan.predicted = predicted;
-		plan.why = `${size}; expected ${predicted.toFixed(1)}× faster on ${bins.length} cores`;
+		plan.why = `${size}; expected ${predicted.toFixed(1)}× faster ${on}`;
 		return plan;
 	}
 	const shape = 1 / load;
@@ -375,11 +476,28 @@ export function planSplit(system, project, {
 		return { ...no(`${n.toLocaleString('en')} states, too few to be worth dividing before a run has been timed`), predicted: shape };
 	}
 	if (shape < AUTO_GAIN_UNTIMED) {
-		return { ...no(`${size}; at most ${shape.toFixed(1)}× on ${bins.length} cores, not enough`), predicted: shape };
+		return { ...no(`${size}; at most ${shape.toFixed(1)}× ${on}, not enough`), predicted: shape };
 	}
 	plan.predicted = shape;
-	plan.why = `${size}; up to ${shape.toFixed(1)}× faster on ${bins.length} cores`;
+	plan.why = `${size}; up to ${shape.toFixed(1)}× faster ${on}`;
 	return plan;
+}
+
+/**
+ * The plan's bins as the jobs the workers are given: one per bin, its jobs'
+ * materials together, and which of the whole model's states each files.
+ *
+ * @returns {{jobs: Array<{materials: string[], states: number}>, owner: Int32Array}}
+ */
+export function binJobs(plan) {
+	const binOf = new Int32Array(plan.jobs.length);
+	plan.bins.forEach((bin, b) => { for (const j of bin) binOf[j] = b; });
+	const jobs = plan.bins.map((bin) => ({
+		materials: bin.flatMap((j) => plan.jobs[j].materials),
+		states: bin.reduce((s, j) => s + plan.jobs[j].states, 0),
+	}));
+	const owner = Int32Array.from(plan.owner, (j) => binOf[j]);
+	return { jobs, owner };
 }
 
 /**

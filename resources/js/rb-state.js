@@ -41,6 +41,13 @@ let selectedIsRadionuclidesGroup = false;
 let selectedDatasets = [];
 /** @type {boolean} True when user is selecting multiple datasets with Ctrl/Cmd key */
 let multiSelectMode = false;
+/**
+ * @type {{path: string, fileKey: string|null}[]} Groups selected together with
+ * Ctrl/Cmd+click, each one a group that draws a chart of its own; drawn as one
+ * chart with a panel each (see toggleGroupInSelection). Empty unless there
+ * are two or more: a single group is selectedDatasetPath as it always was.
+ */
+let selectedGroups = [];
 /** @type {string|null} File key of the tree node that was clicked (null = use all enabled files) */
 let selectedFileKey = null;
 
@@ -106,8 +113,10 @@ const INFO_PANEL_DEFAULT_MESSAGE = `
     <h4>Tips</h4>
     <ul>
       <li><kbd>Ctrl</kbd>-click (<kbd>⌘</kbd> on Mac) datasets to <strong>compare multiple</strong> in one chart.</li>
+      <li><kbd>Ctrl</kbd>-click groups that draw a chart of their own to draw them together, <strong>a panel each</strong>, or in one chart with <strong>Same chart</strong>.</li>
       <li>Use the <strong>search bar</strong> to filter the tree — supports <code>*</code> wildcards and <code>/</code> full-path search.</li>
       <li>Load <strong>multiple files</strong> and use the ∩ (intersect) or ∪ (union) toggle to combine trees.</li>
+      <li><strong>Large files</strong> open at once: from 256 MB a file is read from disk as you look at it, not loaded whole.</li>
       <li>Toggle <strong>Dynamic Legend</strong> to auto-hide traces outside the current view.</li>
       <li>Right-click the chart to <strong>copy</strong> or <strong>download</strong> data as CSV / Excel.</li>
     </ul>
@@ -255,6 +264,17 @@ function setShowTotalVisible(show) {
  * Only shown when there are exactly two enabled files (thick + thin lines).
  * @param {boolean} show - Whether to show the checkbox
  */
+/**
+ * Show or hide "Same chart", which draws several groups selected together in
+ * one chart rather than a panel each (renderRadionuclidePanels). Offered only
+ * while no files are combined; see createRadionuclidesChart.
+ * @param {boolean} show
+ */
+function setOverlayGroupsVisible(show) {
+  const label = getElement('overlayGroupsLabel');
+  if (label) label.style.display = show ? '' : 'none';
+}
+
 function setShowRatioVisible(show) {
   const label = getElement('showRatioLabel');
   if (label) {

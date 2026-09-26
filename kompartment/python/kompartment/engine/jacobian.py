@@ -182,6 +182,12 @@ def state_dependencies(system: Any) -> Dict[int, np.ndarray]:
 def _special_dependencies(b: Any, a: Any, deps: Dict[int, np.ndarray], of_x: Any) -> None:
     if a.kind == 'farfield':
         F = b.FARF[a.farf_index]
+        if getattr(F, 'method', '') == 'semi-analytical':
+            # The release reads what flows into the same combination: the
+            # step being taken carries it with a weight (``releasePattern``).
+            for s, cols in enumerate(F.release_dependencies(of_x)):
+                deps[int(F.release_slots[s])] = cols
+            return
         for s in range(F.slots):
             parts = [F.rel_idx[s]] + [of_x(int(x)) for x in F.setting_idx[s]]
             deps[int(F.release_slots[s])] = np.unique(np.concatenate(parts))

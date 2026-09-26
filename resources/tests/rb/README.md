@@ -28,6 +28,21 @@ Then, from this directory:
 
 `compare.py` prints `IDENTICAL` or lists every field that moved.
 
+`characterise.py` registers its two fixtures with h5wasm directly. With
+`--open` it opens them through the page's file input instead, as a reader
+does, and with rb-lazy.js's switch set either way: `--open never` reads them
+into memory, `--open always` reads them lazily from disk in a worker. The two
+fingerprints are the check that a lazy file behaves as a file in memory:
+
+    python3 characterise.py memory --open never
+    python3 characterise.py lazy --open always
+    python3 compare.py memory.json lazy.json
+
+Three fields differ, and should: `load.two.files/lazy`, which says which way
+the files were read, and `file.toggle.remove/afterRemove/memfsBefore` and
+`memfsAfter`, which count files in h5wasm's in-memory filesystem, where a lazy
+file never is. Anything else that moves is a difference a reader would see.
+
 ## What is covered
 
 `characterise.py` walks seventeen steps: the initial DOM inventory, the expected
@@ -182,6 +197,41 @@ auto range from zero. The file is built in the page with h5wasm.
 
     python3 test-log-range.py
 
+`test-groups.py` covers several groups selected together. Ctrl-click (Cmd on
+a Mac) on a group that draws a chart of its own adds it to the groups selected,
+and again takes it out. The groups are drawn as one chart with a panel each,
+top to bottom in the order picked, and each panel as that group's own chart
+would be drawn, with the same colour and dash for a member. One time axis runs
+under all of them, and the legend lists each line once and shows or hides it in
+every panel. Panels in the same unit share a y axis, so lin/log, presets and
+auto range act on all of them; a group in another unit has an axis of its own.
+Show Max and Show Ratio would put a number per panel into one legend entry, so
+they are not offered. A CI band goes in its line's panel. A folder that draws
+no chart of its own is left to the plain click. While no files are combined,
+**Same chart** draws the groups in one chart instead, the way intersect and
+union draw files: the first group's lines as its own chart draws them, the
+others' at half the width, named with the part of the path that tells them
+apart, and Show Ratio across two groups as across two files. With files
+combined it is not offered, ticked or not, since a thin line already means the
+other file there. The file is built in the page with h5wasm.
+
+    python3 test-groups.py
+
+`test-lazy.py` covers the two things learnt from the HDF Group's myHDF5
+(H5Web). First, compression: a dataset compressed with a filter h5wasm has no
+decoder for (LZF, h5py's own, and likewise blosc, zstd, lz4, bitshuffle) used
+to read as whatever was in memory, with no error on the page: the fixture's
+first values came out as 8.8e-308, 0, 4.9e-313, 0. The decoder is now fetched
+when a selection needs it, pinned by hash, both for a file in memory and for a
+lazy one, and the test reads the fixture both ways. Second, lazy files: one
+session -- the tree, a group's chart, a dataset's, a multi-selection, groups a
+panel each, a search -- is run on a file opened lazily and on the same file in
+memory, and must come out the same with nothing read before it was fetched.
+The size rule (lazy from 256 MB, or `localStorage['kvot-rb-lazy']` set to
+`always` or `never`) is checked on stand-ins.
+
+    python3 test-lazy.py
+
 ## Nothing here needs a committed data file
 
 `handoff-demo.html` used to fetch a sample HDF5 file to get valid bytes, and
@@ -193,6 +243,10 @@ now builds a small file with h5wasm instead, which is what a page that produces
 HDF5 data would really do, and the test uses that same builder. Neither needs
 anything from `resources/data`. `test-axes.py` builds its overlay file the
 same way, and `test-constants.py` its three files.
+
+The one exception is `fixtures/lzf.h5` (26 KB, made-up values), which h5wasm
+cannot write: writing LZF needs the very plugin `test-lazy.py` checks is
+fetched. `fixtures/make-lzf.py` makes it again with h5py.
 
 ## Known noise
 

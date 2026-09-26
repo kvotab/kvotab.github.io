@@ -511,6 +511,8 @@ class _Analytic:
 
     def _special_plan(self, a: Any) -> Any:
         b = self.b
+        if a.kind == 'farfield' and getattr(b.FARF[a.farf_index], 'method', '') == 'semi-analytical':
+            return ('laplace', b.FARF[a.farf_index])
         if a.kind == 'farfield':
             F = b.FARF[a.farf_index]
             for x in F.setting_idx.ravel():
@@ -572,6 +574,9 @@ class _Analytic:
 
     def _special_gradient(self, plan: tuple, G: np.ndarray, y: np.ndarray, X: np.ndarray, t: float) -> None:
         kind = plan[0]
+        if kind == 'laplace':
+            self._laplace_gradient(plan[1], G, y, X, t)
+            return
         if kind == 'farfield':
             F, dst = plan[1], plan[2]
             F.refresh(X)
@@ -602,6 +607,41 @@ class _Analytic:
                         r = self.g_row_of[tgt]
                         cols = self.g_cols[r]
                         G[self.g_pos(out, cols)] += G[self.g_ptr[r]:self.g_ptr[r + 1]]
+
+    def _laplace_gradient(self, F: Any, G: np.ndarray, y: np.ndarray, X: np.ndarray, t: float) -> None:
+        """The release of a semi-analytical path along the state
+        (``releaseTangent``): the weight of each source's current inflow times
+        that inflow's gradient -- zero while the step is shorter than the time
+        anything takes to come through."""
+        cur = F.current_weights(t)
+        if not cur.any():
+            return
+        n = F.nnuc
+        for slot in range(F.slots):
+            out = int(F.release_slots[slot])
+            if out not in self.g_row_of:
+                continue
+            r_out = self.g_row_of[out]
+            row_cols = self.g_cols[r_out]
+            if not row_cols.size:
+                continue
+            acc = np.zeros(row_cols.size)
+            o = slot // n
+            for j in range(n):
+                w = cur[slot * n + j]
+                if w == 0:
+                    continue
+                for x, d in F.terms_into[o * n + j]:
+                    scale = w
+                    if d >= 0:
+                        acc[np.searchsorted(row_cols, d)] += w * X[x]
+                        scale = w * y[d]
+                    if x in self.g_row_of and self.moving[x] == 2:
+                        r = self.g_row_of[x]
+                        cols = self.g_cols[r]
+                        if cols.size:
+                            acc[np.searchsorted(row_cols, cols)] += scale * G[self.g_ptr[r]:self.g_ptr[r + 1]]
+            G[self.g_ptr[r_out]:self.g_ptr[r_out + 1]] += acc
 
     @staticmethod
     def _leaf_value(leaf: Leaf, y: np.ndarray, X: np.ndarray, P: np.ndarray, t: float) -> Any:
@@ -726,8 +766,12 @@ class _Analytic:
         b = self.b
         if any(r.mem >= 0 for r in b.recorders):
             return False
+        # A semi-analytical path's release carries the inflow of the step
+        # being taken with a weight that changes from step to step.
+        if any(p.farf.laplace for p in b.farf_layout):
+            return False
         moves = lambda a: a.name in b.on_state or a.name in b.on_clock  # noqa: E731
-        paths = {p.name for p in b.farf_layout}
+        paths = {p.name for p in b.farf_layout if not p.farf.laplace}
         paths |= {W.q for W in b.waste_layout if W.release_slot.name not in b.on_clock}
 
         def bare_release(a: Any) -> bool:

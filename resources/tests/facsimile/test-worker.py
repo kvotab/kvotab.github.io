@@ -19,7 +19,8 @@ solvers exist, because a Worker does not inherit the page's cache-busting and a
 browser holding an older copy of the worker will otherwise offer solvers that
 nothing can run.
 
-Start the server and the browser as in ../rb/README.md, then
+Start the server and the browser as in ../rb/README.md (other ports with
+FAC_HTTP_PORT and FAC_CDP_PORT), then
 
     python3 resources/tests/facsimile/test-worker.py
 
@@ -27,12 +28,15 @@ Exit status is 0 when every check passes.
 """
 import asyncio
 import json
+import os
 import sys
 import urllib.request
 
 import websockets
 
-URL = 'http://127.0.0.1:8765/facsimile.html'
+HTTP = int(os.environ.get('FAC_HTTP_PORT', '8765'))
+CDP = int(os.environ.get('FAC_CDP_PORT', '9222'))
+URL = f'http://127.0.0.1:{HTTP}/facsimile.html'
 
 # Installed before the page's scripts, so the page sees a browser with workers
 # unavailable -- a file:// visit, or a policy that forbids them.
@@ -142,7 +146,7 @@ async def run_method(s, method, seconds=90):
 
 
 async def main():
-    ver = json.load(urllib.request.urlopen('http://127.0.0.1:9222/json/version'))
+    ver = json.load(urllib.request.urlopen(f'http://127.0.0.1:{CDP}/json/version'))
     async with websockets.connect(ver['webSocketDebuggerUrl'], max_size=64 * 1024 * 1024) as bws:
 
         # --- a worker: everything works ------------------------------------

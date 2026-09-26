@@ -13,6 +13,9 @@
  */
 function checkDatasetExistsInFile(file, path) {
   try {
+    // A lazy file knows its paths without fetching their groups (rb-lazy.js).
+    const lazy = lazyStateOf(file);
+    if (lazy && (path === '/' || lazy.pathSet.has(path))) return true;
     const dataset = FileService.get(file, path);
     return dataset !== null && dataset !== undefined;
   } catch (e) {
@@ -32,6 +35,8 @@ function checkIfPathExistsInFile(fileName, path) {
   try {
     const file = loadedFiles[fileName];
     if (!file) return false;
+    const lazy = lazyStateOf(file);
+    if (lazy && (path === '/' || lazy.pathSet.has(path))) return true;
     const node = FileService.get(file, path);
     return node !== null && node !== undefined;
   } catch (e) {

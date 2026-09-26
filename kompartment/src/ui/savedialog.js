@@ -23,6 +23,7 @@ import { openModal } from './modal.js';
 import { renderDualTree, dualTreeState } from './dualtree.js';
 import { canBeEndpoint } from '../domain/edit.js';
 import { dialogInfo } from './dialoginfo.js';
+import { exportReportNodes } from './ecoreport.js';
 
 /**
  * What can be written, in the order a reader looks for them.
@@ -44,9 +45,10 @@ export const KINDS = [
 			['json', 'JSON', 'Readable, and what every other tool takes'],
 			['zip', 'ZIP', 'About a fifth of the size; double-clicks open on any desktop'],
 			['gz', 'gzip', 'The same, in the form a command line makes'],
-			// An export rather than a save: the model stays in its own file,
-			// and what the project could not hold is listed once it is written.
-			['eco', 'Ecolego project (.eco)', 'An Ecolego 6 project. What it has no place for is listed when it is saved'],
+			// An export rather than a save: the model stays in its own file.
+			// What the project would hold, and what it has no place for, is
+			// listed below the choice, before anything is written.
+			['eco', 'Ecolego project (.eco)', 'An Ecolego 6 project. The model stays in its own file; this is a copy in Ecolego’s terms'],
 		],
 	},
 	{
@@ -144,13 +146,17 @@ function refusal(kind, can) {
  * @param {string[]} opts.endpoints the model's endpoint list, under Endpoints to start with
  * @param {string} [opts.log]      what Run log would write, to be shown before it is
  * @param {object} opts.chosen     `{kind, format, holds, which}` remembered between openings
+ * @param {object} [opts.eco]      the Ecolego export, for its report before it is written:
+ *   `preview()` resolves to `{report}` -- worked out once, when the format is first
+ *   chosen -- and `reveal` is what a block's name in it does when clicked
+ *   (see ./ecoreport.js)
  * @param {(choice) => void} opts.onSave  `{kind, format, keys, open, holds, which}`;
  *   `open` is the HDF5 Browser rather than the disk, and is called from the
  *   click itself, so that the tab can be opened there; `holds` and `which` say
  *   which of a sample a Realisations file is of
  */
 export function openSaveDialog({
-	can, series = [], data = [], endpoints = [], log = '', chosen = {}, onSave,
+	can, series = [], data = [], endpoints = [], log = '', chosen = {}, eco = null, onSave,
 }) {
 	// The first thing that can actually be written, so the dialog does not
 	// open on a row it will refuse.
@@ -187,6 +193,18 @@ export function openSaveDialog({
 		series: ['Not in the file', 'In the file'],
 		endpoints: ['Not kept', 'Endpoints'],
 		data: ['Not in the file', 'In the file'],
+	};
+
+	// The Ecolego export, once asked for: its report is shown while the
+	// format is chosen, and the file written is that same export.
+	let ecoRun = null;
+	let ecoDone = null;
+	const ecoExport = () => {
+		ecoRun ??= Promise.resolve().then(() => eco.preview()).then(
+			(done) => { ecoDone = { report: done.report }; return done; },
+			(e) => { ecoDone = { error: e }; throw e; },
+		);
+		return ecoRun;
 	};
 
 	let handle = null;
@@ -237,6 +255,31 @@ export function openSaveDialog({
 				if (why) right.append(el('p', { className: 'hint' }, why));
 			}
 
+			// What an Ecolego project of this model would hold, and what it has
+			// no place for: before anything is written, which is when it can
+			// still be changed -- a name in the list goes to that block.
+			if (what.key === 'model' && format === 'eco' && eco?.preview) {
+				const box = el('div', { className: 'save-eco', 'aria-live': 'polite' });
+				const show = () => {
+					if (ecoDone?.error) {
+						box.replaceChildren(el('p', { className: 'ir-warn' },
+							`It cannot be exported as it stands: ${ecoDone.error.message}`));
+						return;
+					}
+					box.replaceChildren(...exportReportNodes(ecoDone.report, { when: 'before', reveal: eco.reveal }));
+					if (eco.reveal) {
+						box.append(el('p', { className: 'hint' }, 'Nothing is written until Export. A name in the '
+							+ 'list goes to that block, and the list is worked out again when you come back.'));
+					}
+				};
+				if (ecoDone) show();
+				else {
+					box.append(el('p', { className: 'hint' }, 'Working out what an Ecolego project can hold of this model…'));
+					ecoExport().then(() => { if (box.isConnected) show(); }, () => { if (box.isConnected) show(); });
+				}
+				right.append(box);
+			}
+
 			// The log itself, before it is saved, as the log window shows it:
 			// what is about to be written is the one thing worth seeing here.
 			if (what.key === 'log' && log) {
@@ -276,7 +319,7 @@ export function openSaveDialog({
 			// rebuild the dialog -- the trees redraw themselves.
 			const go = el('button', { type: 'button', className: 'primary' },
 				what.key === 'model' && can.fileName && format === 'json'
-					? `Save to ${can.fileName}` : 'Save…');
+					? `Save to ${can.fileName}` : what.key === 'model' && format === 'eco' ? 'Export…' : 'Save…');
 			// The same file into the reader instead of onto the disk. Beside
 			// Save rather than a format of its own: it is somewhere to send the
 			// file, not another kind of file.
@@ -343,6 +386,8 @@ export function openSaveDialog({
 					open: toBrowser,
 					holds,
 					which,
+					// The export the report was of, so the file is that one.
+					prepared: what.key === 'model' && format === 'eco' && ecoRun ? ecoRun : null,
 				});
 			};
 			go.addEventListener('click', () => send(false));

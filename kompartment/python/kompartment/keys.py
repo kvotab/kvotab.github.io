@@ -114,6 +114,41 @@ def _migrate_farfield_targets(raw: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+#: What a far-field path that says nothing about its numerics meant when it was
+#: written: the reference implementation's outlet and matrix layers, and F given
+#: (``FARF_LEGACY`` in src/domain/farfield.js).
+FARF_LEGACY: Dict[str, Any] = {'o_b': 1, 'n_b': 0, 'grid': 'reference', 'surface': 'f', 'method': 'discretized'}
+
+
+def _migrate_farfield_defaults(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """A far-field path's numerics, as a file written before they were a choice
+    meant them (``migrateFarfieldDefaults``): written into the block, so that a
+    validated model runs exactly as it did."""
+    farfields = raw.get('farfields')
+    if not isinstance(farfields, list):
+        return raw
+    changed = False
+    out_f = []
+    for f in farfields:
+        if not isinstance(f, dict):
+            out_f.append(f)
+            continue
+        missing = [k for k in FARF_LEGACY if k not in f]
+        if not missing:
+            out_f.append(f)
+            continue
+        changed = True
+        g = dict(f)
+        for k in missing:
+            g[k] = FARF_LEGACY[k]
+        out_f.append(g)
+    if not changed:
+        return raw
+    out = dict(raw)
+    out['farfields'] = out_f
+    return out
+
+
 def migrate_keys(raw: Dict[str, Any]) -> Dict[str, Any]:
     """A copy of ``raw`` with every older key renamed to the current one.
 
@@ -127,7 +162,7 @@ def migrate_keys(raw: Dict[str, Any]) -> Dict[str, Any]:
     out = _rename(_rename(copy.deepcopy(raw), PROJECT), COLLECTION)
     if isinstance(out.get('index_lists'), list):
         out['index_lists'] = [_rename(l, INDEX_LIST) for l in out['index_lists']]
-    out = split_material_roles(rename_built_in_lists(_migrate_farfield_targets(out)))
+    out = split_material_roles(rename_built_in_lists(_migrate_farfield_defaults(_migrate_farfield_targets(out))))
     sim = out.get('simulation')
     if isinstance(sim, dict):
         sim = _rename(sim, SIMULATION)

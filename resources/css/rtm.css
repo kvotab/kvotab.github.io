@@ -99,6 +99,21 @@
 .rtm-check { display: flex; gap: 6px; align-items: center; margin: 0 0 6px; cursor: pointer; }
 .rtm-check[hidden] { display: none; }
 
+/*
+  The (i) of a setting, at the right-hand end of its label line (kvot-info.css
+  and kvot-info.js; the topics are in rtm-ui.js). A label here often carries a
+  second line in grey, so the (i) sits level with the first line rather than
+  in the middle of the two. A check box has the same, on a line of its own that
+  carries the data-solver-opt, so the (i) hides with the setting it explains.
+*/
+.rtm-sec > summary { display: flex; align-items: center; gap: 6px; }
+.rtm-sec-title { flex: 1 1 auto; min-width: 0; }
+.rtm-row > .kvot-info-line { align-items: flex-start; margin: 0 0 2px; }
+.rtm-row > .kvot-info-line > label { margin: 0; }
+.rtm-check-line { display: flex; align-items: flex-start; gap: 6px; margin: 0 0 6px; }
+.rtm-check-line[hidden] { display: none; }
+.rtm-check-line > .rtm-check { flex: 1 1 auto; min-width: 0; margin: 0; }
+
 .rtm-facts {
   font-family: ui-monospace, Menlo, Consolas, monospace;
   font-size: 11px;

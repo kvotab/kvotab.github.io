@@ -79,20 +79,81 @@ FAILURE_KEYS = {
 }
 TIMINGS = ('at', 'poisson')
 ACTIONS = ('fail', 'move')
-OUTFLOWS = (0, 1, 2, 3)
+OUTFLOWS = (0, 1, 2, 3, 4)
+#: How a far-field path gives its flow-wetted surface, and lays its matrix out.
+SURFACES = ('f', 'aw', 'aperture')
+GRIDS = ('matched', 'reference')
+#: How a far-field path is worked out: on cells, or semi-analytically.
+FARF_METHODS = ('discretized', 'semi-analytical')
 AVAILABILITY_SCHEMES = ('limit', 'shared_limit', 'langmuir', 'shared_langmuir')
 AVAILABILITY_BASES = ('amount', 'moles')
 TRANSPORT_OPERATIONS = ('sum', 'mean')
 TRANSPORT_ARGUMENTS = ('all', 'point', 'range')
 
-FARF_EQUATION_KEYS = ('tw', 'f', 'kd_f', 'kd_m', 'de_m', 'eps_m', 'rho_m', 'pe', 'pen_dep', 'pen_dep_0')
+FARF_EQUATION_KEYS = ('tw', 'f', 'aw', 'aperture', 'kd_f', 'kd_m', 'de_m', 'eps_m', 'rho_m', 'pe', 'pen_dep',
+                      'pen_dep_0')
 FARF_NUCLIDE_KEYS = ('kd_f', 'eps_m', 'kd_m', 'de_m')
 FARF_STRUCTURE_KEYS = ('n_f', 'n_m', 'o_b', 'n_b')
+#: What a new path starts with: the reference implementation's physics, the
+#: semi-infinite outlet (4) with its extra cells worked out ('') and matched
+#: matrix layers. A saved path that does not mention the last three meant the
+#: reference implementation's: see ``FARF_LEGACY`` in :mod:`kompartment.keys`.
 FARF_DEFAULTS: Dict[str, Any] = {
-    'tw': '100', 'f': '1e5', 'kd_f': '0', 'kd_m': '0', 'de_m': '1e-4', 'eps_m': '0.0018',
+    'method': 'discretized',
+    'tw': '100', 'surface': 'f', 'f': '1e5', 'kd_f': '0', 'kd_m': '0', 'de_m': '1e-4', 'eps_m': '0.0018',
     'rho_m': '2700', 'pe': '10', 'pen_dep': '12.5', 'pen_dep_0': '', 'n_f': 20, 'n_m': 20,
-    'o_b': 1, 'n_b': 0, 'handle_decay': True, 'report_cells': False,
+    'o_b': 4, 'n_b': '', 'grid': 'matched', 'handle_decay': True, 'report_cells': False,
 }
+#: The optional settings a path may also be given (the other ways of giving
+#: its wetted surface).
+FARF_OPTIONAL_KEYS = ('aw', 'aperture')
+
+
+def _count_number(v: Any) -> float:
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return float('nan')
+
+
+def farfield_extra_cells(block: Dict[str, Any]) -> int:
+    """How many cells a path has past its release point (``extraCells``): the
+    count it gives, or, left empty, none -- unless its outlet is the rock going
+    on (4), which works the count out as the fewest cells that bring
+    ((2 NF - Pe)/(2 NF + Pe))**NB under a tenth, a Peclet number that is not a
+    number being taken as 10."""
+    nb = block.get('n_b')
+    if nb is None or (isinstance(nb, str) and not nb.strip()):
+        if _count_number(block.get('o_b')) != 4:
+            return 0
+        n = _count_number(block.get('n_f'))
+        p = _count_number(block.get('pe'))
+        if not (n == n and n.is_integer()) or n < 1:
+            return 0
+        if not (p > 0) or p == float('inf'):
+            p = 10.0
+        rho = (2 * n - p) / (2 * n + p)
+        if not (rho > 0):
+            return 0
+        k, left = 0, 1.0
+        while left > 0.1 and k < 10000:
+            left *= rho
+            k += 1
+        return k
+    return int(_count_number(nb))
+
+
+def farfield_cells(block: Dict[str, Any]) -> int:
+    """How many cells one nuclide's path has (``cellCount``): one for a path
+    worked out semi-analytically (what it holds), none for any other way than
+    cells."""
+    if block.get('method') == 'semi-analytical':
+        return 1
+    if block.get('method') not in (None, '', 'discretized'):
+        return 0
+    nf = int(_count_number(block.get('n_f', 20)))
+    nm = int(_count_number(block.get('n_m', 20)))
+    return (nf + farfield_extra_cells(block)) * (nm + 1)
 WASTE_NUCLIDE_KEYS = ('inventory', 'irf', 'degradation_rate')
 WASTE_SINGLE_KEYS = ('fail_at', 'fail_from', 'fail_to', 'fail_start', 'fail_rate', 'fail_scale', 'fail_shape')
 WASTE_EQUATION_KEYS = WASTE_NUCLIDE_KEYS + WASTE_SINGLE_KEYS
@@ -132,8 +193,9 @@ class Field:
 
     ``kind`` says how a value is read and written: ``'equation'`` (a string;
     numbers are written as equations), ``'text'``, ``'bool'``, ``'int'``,
-    ``'number'`` or ``'choice'`` (one of ``choices``). Setting ``None`` removes
-    the key, which returns the field to its default.
+    ``'count'`` (a whole number, or ``''`` to have it worked out), ``'number'``
+    or ``'choice'`` (one of ``choices``). Setting ``None`` removes the key,
+    which returns the field to its default.
     """
 
     def __init__(self, key: str, kind: str = 'equation', default: Any = None,
@@ -173,12 +235,14 @@ class Field:
             return str(value)
         if self.kind == 'bool':
             return bool(value)
-        if self.kind in ('int', 'number'):
+        if self.kind == 'count' and (value == '' or (isinstance(value, str) and not value.strip())):
+            return ''
+        if self.kind in ('int', 'number', 'count'):
             try:
                 v = float(value)
             except (TypeError, ValueError):
                 raise EditError(f"{where}'{value}' is not a number, and {self.name} has to be one") from None
-            if self.kind == 'int':
+            if self.kind in ('int', 'count'):
                 if not v.is_integer():
                     raise EditError(f'{where}{self.name} has to be a whole number (got {value})')
                 return int(v)
@@ -1077,8 +1141,18 @@ class Farfield(Block):
     entry_keys = FARF_EQUATION_KEYS
     equation_keys = FARF_EQUATION_KEYS
 
+    method = Field('method', 'choice', 'discretized', FARF_METHODS,
+                   doc="How the path is worked out: ``'discretized'``, on cells with the rest of the model, or "
+                       "``'semi-analytical'``, exactly from its transfer function -- one state per nuclide for "
+                       'what it holds, its settings constant through a run, the rock going on past the release '
+                       'point.')
     tw = Field('tw', 'equation', '100', doc='T_w: water travel time along the path.')
-    f = Field('f', 'equation', '1e5', doc='F: flow-related transport resistance, [time]·m²/m³.')
+    surface = Field('surface', 'choice', 'f', SURFACES,
+                    doc="How the flow-wetted surface is given: ``'f'`` (F), ``'aw'`` (a_w) or ``'aperture'``.")
+    f = Field('f', 'equation', '1e5', doc='F: flow-related transport resistance, [time]·m²/m³ (surface f).')
+    aw = Field('aw', 'equation', '1000', doc='a_w: flow-wetted surface per unit volume of water, m²/m³ (surface aw).')
+    aperture = Field('aperture', 'equation', '0.002',
+                     doc='δ: the fracture aperture, m; a_w = 2/δ (surface aperture).')
     kd_f = Field('kd_f', 'equation', '0', doc='K_d,f: sorption on the fracture coating, m³/m² (per nuclide).')
     kd_m = Field('kd_m', 'equation', '0', doc='K_d,m: partition coefficient in the rock matrix, m³/kg (per nuclide).')
     de_m = Field('de_m', 'equation', '1e-4', doc='D_e,m: effective diffusivity in the matrix, m²/[time] (per nuclide).')
@@ -1090,9 +1164,14 @@ class Farfield(Block):
                       "'' for automatic.")
     n_f = Field('n_f', 'int', 20, doc='NF: cells along the fracture (at least 1).')
     n_m = Field('n_m', 'int', 20, doc='NM: layers into the matrix (at least 2).')
-    o_b = Field('o_b', 'choice', 1, OUTFLOWS, doc='OB: the water downstream: 0 infinite dilution, 1 as '
-                'the last cell, 2 linear, 3 quadratic extrapolation.')
-    n_b = Field('n_b', 'int', 0, doc='NB: extra cells past the point the release is measured at.')
+    o_b = Field('o_b', 'choice', 1, OUTFLOWS, doc='OB: the water downstream: 4 the rock goes on (semi-infinite, '
+                'as in FARF31; new paths), 0 infinite dilution, 1 as the last cell, 2 linear, 3 quadratic '
+                'extrapolation.')
+    n_b = Field('n_b', 'count', 0, doc="NB: extra cells past the point the release is measured at; '' to have "
+                'them worked out (the semi-infinite outlet needs some).')
+    grid = Field('grid', 'choice', 'reference', GRIDS,
+                 doc="How the matrix layers are laid out: ``'matched'`` to diffusion into the rock (new paths), or "
+                     "``'reference'``, as in SKB's reference implementation.")
     handle_decay = Field('handle_decay', 'bool', True, doc='Decay and ingrowth in every cell.')
     report_cells = Field('report_cells', 'bool', False, doc='Report every cell, not only the total.')
 

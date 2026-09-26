@@ -2006,7 +2006,10 @@ footer #status {
 
 /* The stage text is a sentence, not a percentage, so it drops the 4ch tabular
    slot the digits need and takes the room it wants -- up to the point where it
-   would push the run statistics off the line. */
+   would push the run statistics off the line. Opening a file says its stage
+   the same way, beside a bar that is not striped: it moves a step at a time,
+   and a stripe would stand still while each step holds the page. */
+.foot-progress progress[data-opening] + #progress-pct,
 .foot-progress progress[data-loading] + #progress-pct {
 	width: auto;
 	max-width: 36ch;
@@ -6078,16 +6081,25 @@ table.ix-table input { width: 130px; padding: 2px 6px; font-size: 11.5px; }
 	margin-left: auto;
 }
 
-/* The Information view's (i), after its buttons at the end of its title bar. */
-.info-nav + .info-btn { margin-left: 4px; align-self: center; }
+/* The Information view's (i), after its buttons at the end of its title bar,
+   and beside them. The buttons take the push to the right, so the (i) has to
+   give up the one every section's (i) gets above (`.panel-section > summary >
+   .info-btn`), which outranked this rule while it was only `.info-nav +
+   .info-btn`. Two auto margins in one row share the free space, so the arrows
+   came to rest halfway along: 42px short of the (i) with nothing selected, and
+   23px further right once Edit… came in beside them. */
+.panel-section > summary > .info-nav + .info-btn { margin-left: 4px; align-self: center; }
 
-/* Out into a window of its own, beside the view's name. */
+/* Out into a window of its own, beside the view's name. The icon is the
+   window's put-back button run the other way (`popIcon` in ./icons.js). */
 .info-pop {
+	display: inline-flex;
+	align-items: center;
 	margin-left: 4px;
-	padding: 0 5px;
-	font-size: 12px;
-	line-height: 1.4;
+	padding: 1px 5px;
+	line-height: 1;
 }
+.info-pop svg { display: block; }
 
 /* Out in its window (`popInfo`), the view leaves the rail to the tree. */
 #sidebar.is-info-out > #info,
@@ -6100,6 +6112,14 @@ table.ix-table input { width: 130px; padding: 2px 6px; font-size: 11.5px; }
 .modal.is-info-window .info-body { border-top: none; overflow: visible; padding: 10px 12px 16px; }
 .modal-head > .info-window-bar { margin-left: auto; align-self: center; display: flex; }
 .modal-head > .info-window-bar + .info-btn { margin-left: 4px; }
+/* Where the × is in any other window: the pop-out icon coming home. */
+.modal-close.is-pop-back {
+	display: inline-flex;
+	align-items: center;
+	align-self: center;
+	padding: 5px 7px;
+}
+.modal-close.is-pop-back svg { display: block; width: 15px; height: 15px; }
 
 .info-arrow {
 	padding: 0 6px;
@@ -8806,6 +8826,34 @@ input.ix-unit { width: 130px; padding: 2px 6px; font-size: 11.5px; }
 
 /* In Save…, the log about to be written, in the room the format leaves. */
 .save-log { max-height: 46vh; margin: 0; }
+
+/* In Save…, what an Ecolego project of the model would hold and leave out,
+   before it is written: the Build tab's report, in the room the format
+   leaves, with the names of the blocks as ways to go to them. */
+.save-eco {
+	max-height: 42vh;
+	overflow-y: auto;
+	font-size: 12px;
+	background: var(--surface-2);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	padding: 8px 10px;
+}
+.save-eco .hint { margin: 6px 0 0; }
+.ir-ok { margin: 6px 0 2px; color: var(--text-secondary); }
+.ir-link {
+	font: inherit;
+	font-weight: 600;
+	color: var(--link);
+	background: none;
+	border: 0;
+	padding: 0;
+	cursor: pointer;
+	text-decoration: underline dotted;
+	text-underline-offset: 2px;
+}
+.ir-link:hover { text-decoration-style: solid; }
+.ir-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 2px; }
 
 /* A disruptive event's actions: one row each -- what, on which block, what
    share -- and a button for one more. */

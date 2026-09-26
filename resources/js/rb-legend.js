@@ -103,7 +103,10 @@ function refreshDynamicLegend() {
   window._dynamicLegendUpdating = true;
   Plotly.restyle(plotDiv, { showlegend: showlegendValues, legendrank: legendrankValues }).then(() => {
     window._dynamicLegendUpdating = false;
-    const totalCount = plotDiv.data.length;
+    // What could be listed: not a band, and not a panel's copy of a line the
+    // legend lists once (renderRadionuclidePanels), which would make it read
+    // "Showing 3/6" with nothing hidden at all.
+    const totalCount = plotDiv.data.filter(t => !t._hiddenFromLegend).length;
     const statusEl = document.getElementById('legendStatus');
 
     if (statusEl) {

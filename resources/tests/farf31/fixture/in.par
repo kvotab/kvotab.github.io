@@ -1,0 +1,9 @@
+# made-up parameters
+TW 60.
+PECLET 12.
+ASPEC 1500.
+EPS 0.004
+DE 3.0E-6
+PENDEP 2.0
+KDR_U2 0.03
+KDR_TH 0.3

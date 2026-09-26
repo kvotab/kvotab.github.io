@@ -97,6 +97,17 @@
 .zf-slider input[type="range"] { width: 100%; margin: 2px 0 0; }
 .zf-ticks { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--text-muted); }
 
+/* ---- the (i): at the right-hand end of a heading, a label or a checkbox --
+   The button and its panel are kvot-info.css; these are the lines it sits
+   on. A checkbox line keeps the (i) level with its first line of text. */
+.zf-sec > summary { display: flex; align-items: center; gap: 6px; }
+.zf-sec > summary .zf-sec-title { flex: 1 1 auto; min-width: 0; }
+.zf-label-line { margin: 0 0 2px; }
+.zf-label-line label { margin: 0; }
+.zf-check-line { align-items: flex-start; margin: 0 0 6px; }
+.zf-check-line .zf-check { margin: 0; }
+.zf-actions .kvot-info-slot { margin-left: auto; }
+
 .zf-drop {
   border: 1px dashed var(--input-border);
   border-radius: 6px;
@@ -228,6 +239,12 @@
   background: var(--bg-primary);
 }
 .zf-pane[hidden] { display: none; }
+/* The line at the top of a result tab, with its (i) at the right: of the
+   tables in Resolved and All citations, and in the other two over the
+   right-hand edge of a card's content (64rem inside 4px border + 10px). */
+.zf-toolbar { display: flex; align-items: flex-start; gap: 10px; margin: 0 0 10px; }
+.zf-toolbar.zf-measure { max-width: calc(64rem + 14px); }
+.zf-toolbar .zf-summary { margin: 0; }
 .zf-empty { margin: 0; padding: 24px 12px 40px; color: var(--text-muted); font-size: 12px; line-height: 1.6; max-width: 46rem; }
 .zf-empty[hidden] { display: none; }
 

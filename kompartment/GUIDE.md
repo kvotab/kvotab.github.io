@@ -890,9 +890,20 @@ Eight views over one model, all editing the same object:
 | **Help** | This file, and `INTERNALS.md`, read here — with a table of contents down the side. Set apart from the others because it is not a view of the model. |
 
 The left panel is the only panel, and it holds three things in a column:
-**Model** (the name and description, which are what the header shows),
-**Simulation**, and below them the **tree of the model** with the
+**Model** (the name and description, which are what the header shows, and
+the author), **Simulation**, and below them the **tree of the model** with the
 **Information** view of whatever is selected.
+
+**Who wrote it, and when.** Under the description, **Author** is who wrote the
+model — a name, a team, an organisation — saved in the file as `author`. The
+line under it says when the model was made and when it was last saved, which the
+file keeps as `created` and `saved` (ISO 8601 times, UTC): **New** dates a
+model when it is made, and every save of the model — JSON, ZIP, gzip, or with
+its results — stamps `saved`, and `created` too for a model made before these
+were kept, which is then dated by its first save. Neither is an edit: nothing
+runs again, the Save button does not light up, an undo leaves them as they
+are, and the version report does not count two saves of the same model as two
+versions. An export to another tool's format is not a save and is not stamped.
 
 It is one panel, not two. Splitting the blocks across a list on the left and a
 tree on the right puts them in two places at once, in two orders, in two columns
@@ -923,12 +934,14 @@ is the point of the arrangement: with a model of any size the tree is hundreds
 of rows long, and a panel that scrolled meant reading a block's equation and
 then losing it to reach the next block in the tree.
 
-**Information can have a window of its own.** The **⧉** beside its name takes
-the view out of the panel into a window that floats over the page. Drag it by
-its title bar and pull its bottom-right corner to size it; while it is out, the
-tree has the whole height of the panel. It goes on following the selection, and
-its buttons go with it into the window's title bar. It stays open when another
-model is opened. Its × puts it back, as does Escape with the keyboard in it.
+**Information can have a window of its own.** The button beside its name, a
+box with an arrow leaving it, takes the view out of the panel into a window
+that floats over the page. Drag it by its title bar and pull its bottom-right
+corner to size it; while it is out, the tree has the whole height of the panel.
+It goes on following the selection, and its buttons go with it into the
+window's title bar. It stays open when another model is opened. The button
+where a window has its ×, the same box with the arrow coming back into it,
+puts it back, as does Escape with the keyboard in it.
 Unlike the panel's widths, the window is remembered in this browser: where it
 was, how big, and whether it was out.
 
@@ -1213,11 +1226,11 @@ line goes quiet rather than repeating what the problem strip already says.
 step a run takes: a tenth of a millisecond. *Building* the model to do it is the
 expensive half — measured in the browser, the whole thing takes a millisecond or
 two on the bundled examples, about 100 ms on a model of 1,141 blocks and 2.4 s
-on a landscape model of 4,278 — so it happens a moment after the edit
-rather than during it, and a model that turns out to cost more than 400 ms is
-measured once, said so, and then left alone. Nothing is worked out until
-something asks: a model nobody opens a block of costs nothing at all, and the
-code that does the work is not even loaded. On one of those the line shows what it worked out and goes quiet at your
+on a landscape model of 4,278 — so it is done in a worker of its own, beside
+the page rather than on it, a moment after the edit rather than during it: the
+page does not stop while a large model builds. A model that turns out to cost
+more than 3 s is measured once, said so, and then left alone, since building it
+again after every edit would keep a core busy for a line under a box. On one of those the line shows what it worked out and goes quiet at your
 next edit rather than showing a number that is no longer true; the table's first
 row after a run is the same number.
 
@@ -1346,7 +1359,7 @@ card collapses to its bar if you would rather not have it.
 **With nothing selected it describes the model.** The panel is not idle then —
 it is the only view that can say what the *whole* file is, which is the first
 thing anyone wants from one they have just opened: its name and description,
-how many blocks it holds and how they split across sub-systems, how many
+who wrote it, how many blocks it holds and how they split across sub-systems, how many
 **states** the solver will integrate (one per compartment per index
 combination, plus one per running mean), the **index lists** with the size of
 each, and the run settings — time span, output points and spacing, solver, and
@@ -2020,6 +2033,13 @@ a `.zip` that a mail system decided to call something else. A ZIP is looked
 is a model, and one holding neither says so rather than failing with a parse
 error about a byte nobody wrote.
 
+A large file takes a moment: the largest imported assessment, a 37 MB
+`model.xml`, takes about a second here and two or three on a slower machine.
+The bar in the footer says where the opening has got to — reading the file,
+opening the archive, reading `model.xml`, reading the blocks, connecting them,
+setting the model up — and moves on at each step, so a page that is working
+does not look stuck.
+
 Nothing is lost either way — the JSON inside a `.zip` is the same JSON, and the
 model that comes back out is identical to the one that went in.
 
@@ -2196,11 +2216,21 @@ that share a solubility limit.
 - **always** splits whenever the model can be split, even when that is slower.
 - **never** solves the whole model as one system.
 
-Each part is the model with every other material switched off. It is solved on
-the output grid at its own steps, and its states are filed back into the whole
-model by name. So everything after the solve is exactly as for a whole run:
-every series, the table, the exports, the dataset. The run takes as long as
-its slowest part and its build; the others run beside it.
+Each core is given its share of the parts as one model — every other material
+switched off — which it builds once and solves on the output grid at its own
+steps, and the states are filed back into the whole model by name. So
+everything after the solve is exactly as for a whole run: every series, the
+table, the exports, the dataset. The run takes as long as its slowest share
+and its build; the others run beside it.
+
+**How many cores is also a question of memory.** Every core's worker builds a
+model the size of the whole one — switching materials off shortens what the
+code loops over, not the code — and all of a page's workers share one budget
+of memory in the browser: past it, the whole tab closes, not only the run. So
+a split uses no more workers than the model's size leaves room for, and no
+more than half of what the browser says the machine has, and never more than
+eight. On the largest imported assessment that is four workers where the
+browser reports 8 GB, and the run log says when memory was what decided.
 
 **The parts agree with a whole solve to within the tolerance, not to the last
 digit.** Each part takes the steps its own states need rather than the steps
@@ -4123,9 +4153,14 @@ setting. It is meant to be opened in Ecolego; read back here, it is the model
 that went out, apart from what its report lists. An export is not a save: the
 model stays in its own file, and **Save** goes on writing there.
 
-Once the file is written, a report appears where an import's does: what went
-out, **what was left out and why**, what was written in an equivalent form,
-and anything else worth knowing before the file is used. The same model always
+**Before anything is written**, choosing the format shows under it what the
+project would hold: how many of each kind of block, **what would be left out
+and why**, what would be written in an equivalent form, and anything else
+worth knowing. That is the moment it is worth reading — the model can still be
+changed to fit, and each block's name in the list is a link that closes the
+dialog and takes you to it. Nothing is written until **Export…**; come back
+and the list is worked out again. Once the file is written, the same report
+appears where an import's does, as the record of what went out. The same model always
 gives the same bytes — the archive's entries are stored rather than
 compressed, so that the file does not depend on the browser that wrote it —
 and the Python package's `Model.save('model.eco')` writes exactly the same
@@ -4168,6 +4203,32 @@ own way:
   which moves the same flux.
 - A **truncation at percentiles** of a distribution becomes the values those
   percentiles fall at, which cut the curve in the same place.
+- A **far-field pathway** is written as what it is on the grid: a sub-system,
+  *Rock_cells* for a path called *Rock*, holding a compartment for every cell —
+  `F1` … `F20` along the fracture, and `M3_1` … `M3_20` for the matrix layers
+  behind the third — and a transfer for every rate between two of them, so
+  that the file's transport matrix is the path's own, entry for entry. The
+  path's settings (`TW`, `F`, `Kd_m`, `De_m`, …) are expressions there, spelled
+  as the path wrote them, and the rates are expressions of those — `adv`,
+  `disp`, `k_fm`, `k_1_2`, … — so Ecolego works them out as a run goes and a
+  sampled `Kd` or `De` moves them as it does here. The layers' thicknesses are
+  the one thing no Ecolego expression can work out — they come out of a
+  root-find — so they are parameters `d_1` … `d_20` (and the node spacings
+  `h_1` … `h_20` of matched layers), holding the numbers a run here lays out at
+  its start; Ecolego keeps those whatever the settings do during a run or from
+  one realisation to the next. Everything that read the path reads it still:
+  its release is an expression under the path's own name, `Rock`, and what it
+  holds is the aggregate `Rock_cells.held`. A transfer into the path arrives in
+  `F1`; the transfer that carried its release comes in from a *source* at the
+  same rate, since a release takes nothing from the path, and what leaves the
+  far end of the cells goes to the sink `Rock_cells.Outflow`. With the rock going
+  on past the release point, the cells past it stand for the rock downstream:
+  what they hold has been released already, so a total over the whole
+  sub-system counts it twice. A path worked out **semi-analytically** has no
+  cells; it is written as the same path on cells, with the rock going on past
+  the release point, and the report says that it agrees with the exact path
+  only as closely as those cells do. A path that is switched off, or cannot be
+  laid out, is left out.
 - A **logarithmic output grid** is written as the list of its times, since an
   Ecolego geometric series from a start of zero begins at 1 and this grid
   begins far below it. An even grid is Ecolego's linear series, and a list of
@@ -4181,7 +4242,8 @@ own way:
 equivalent, and none is written in a form Ecolego would read as something
 else:
 
-- far-field pathways, waste packages and disruptive events;
+- waste packages and disruptive events, and a far-field pathway that is
+  switched off or whose layers cannot be laid out;
 - a transfer that adds its flux up over *sum extra indices*, or whose
   availability is shared over a group;
 - a block indexed by the `Compartments` or `Transfers` list, and an equation
@@ -4205,7 +4267,10 @@ either differently at different indices.
 
 **What has been checked, and what has not.** Every bundled example and a set
 of made-up models covering every block kind are exported, imported again and
-run, and give the same numbers as the model they came from. The file has not
+run, and give the same numbers as the model they came from — a far-field
+pathway's cells to within the tolerance it was solved to, since the solver
+steps through the same equations assembled another way. The author goes out
+as the project's author and comes back as the model's. The file has not
 been opened in Ecolego itself: what the importer does not read — the empty
 diagram, the GUIDs, the `.version` flags, the source and sink blocks, a
 floor of `-1.0E300` for a compartment that may go negative — is written the way
@@ -5201,12 +5266,18 @@ says so rather than letting you.
 
 ### What it may be indexed by
 
-**Whatever a compartment may be indexed by**, including nothing.
+**Whatever a compartment may be indexed by**, including nothing — and a model
+needs no radionuclides to have one.
 
 Indexed by the radionuclides it is one path per nuclide, with the decay chain
-running between them inside every cell: the ordinary case. Indexed by nothing
-it transports one quantity with **no decay and no ingrowth** — a tracer, a
-stable species, or a mass.
+running between them inside every cell: the ordinary case. A member of the
+catalogue marked *stable* on the Decay tab — a stable element beside the
+radionuclides — rides the same path and simply does not decay. Indexed by nothing it transports one
+quantity with **no decay and no ingrowth** — a tracer, a stable species, or a
+mass — and that is how a path arrives in a model with no radionuclides at all.
+Indexed by a list of chemical species, it carries each of them with its own
+sorption and diffusion, none of them decaying: nothing about a path needs a
+nuclide.
 
 **Indexed by anything else as well, it is that many paths side by side.** One
 block per landscape object, per climate, per waste type — the same geometry
@@ -5249,14 +5320,14 @@ in two columns of five, read in pairs:
 
 | | |
 |---|---|
-| **Release** | **Flow-wetted surface area** |
-| **T<sub>w</sub>** | **F** |
+| **Release** | **Flow-wetted surface given as** |
+| **T<sub>w</sub>** | **F**, **a<sub>w</sub>** or **δ** |
 | **K<sub>d,f</sub>** | **P<sub>e</sub>** |
 | **ε<sub>m</sub>** | **ρ<sub>m</sub>** |
 | **K<sub>d,m</sub>** | **D<sub>e,m</sub>** |
 
-Each retention term sits beside the number it is read against, and the two
-derived readings are at the top. The names are the symbols they are on paper —
+Each retention term sits beside the number it is read against, and where the
+release goes and how the wetted surface is given are at the top. The names are the symbols they are on paper —
 subscripts and Greek — not a transliteration of them.
 
 **The chemistry belongs to the nuclide**, so each may hold its own value — set
@@ -5275,7 +5346,7 @@ radionuclide per row:
 | | |
 |---|---|
 | **T<sub>w</sub>** | the water travel time along the path |
-| **F** | the flow-related transport resistance, in [time]·m²/m³ |
+| **F**, **a<sub>w</sub>** or **δ** | the flow-wetted surface, one of three ways: see below |
 | **ρ<sub>m</sub>** | the dry bulk density of the rock |
 | **P<sub>e</sub>** | the Peclet number; the dispersion is T<sub>w</sub>/P<sub>e</sub> |
 | **PENDEP**, **PENDEP0** | the depths, under *Discretisation* below |
@@ -5284,13 +5355,22 @@ The water does not travel at one speed for caesium and another for iodine, so
 there is no per-nuclide box for T<sub>w</sub> to be filled in by accident. They
 are still equations, and still read at every step.
 
-A path may be indexed by the radionuclide list or by nothing at all — one block
-is one migration path, and every other dimension multiplies several hundred
-states by its width — so that is the only list the panel offers.
+**The flow-wetted surface is given one of three ways**, chosen under *Flow-wetted
+surface given as*:
 
-F/T<sub>w</sub> is the flow-wetted surface per unit volume of water, which
-is what turns a resistance into a geometry — the panel shows it, and the
-fracture aperture that goes with it, beside the two fields it comes from.
+| | |
+|---|---|
+| **F** | the flow-related transport resistance, in [time]·m²/m³ — what a hydrogeological model supplies, beside T<sub>w</sub> |
+| **a<sub>w</sub>** | the wetted surface per unit volume of flowing water, in m²/m³ |
+| **δ** | the fracture aperture, in m: a fracture has two walls, so a<sub>w</sub> = 2/δ |
+
+They say the same thing — a<sub>w</sub> = F/T<sub>w</sub> — and the line under
+the choice works out the other two from whichever is given. Switching carries
+the number across when the settings are numbers, so the path does not change;
+each of the three is an equation like any other setting. What differs is what
+stays put when something else moves: given a<sub>w</sub> or δ, a travel time
+that follows a table moves F with it, which is right when the geometry is what
+is known; given F, the geometry moves instead.
 
 **The release goes to one place.** It is the flux out of the far end of the
 fracture: a single quantity the block works out for itself, so two lines
@@ -5308,11 +5388,116 @@ field's tooltip for anyone cross-checking against SKB's own reports.
 
 | | |
 |---|---|
+| **Matrix layers laid out** | *matched to diffusion into the rock* (new paths), or *as in SKB's reference implementation* — see below |
 | **Depth into the matrix modelled** | `PENDEP` |
-| **First layer's thickness** | `PENDEP0`. Left empty it is worked out: the thickness that makes the layers grow by a factor of e, which for a 12.5 m depth in 20 layers is 44 nanometres |
+| **First layer's thickness** | `PENDEP0`. Left empty it is worked out: for matched layers from the path's own time scales — 3.6 mm in `examples/farfield.json` — and for the reference layers as the thickness that makes them grow by a factor of e, 44 nanometres for a 12.5 m depth in 20 layers |
 | **Fracture cells**, **Matrix layers** | `NF` (at least 1) and `NM` (at least 2) |
-| **Water downstream of the path** | `OB`: infinite dilution, the same concentration as the last cell, linear extrapolation, or quadratic. The stored value is the number the reference uses; the choice is made by what it means |
-| **Cells past the release point** | `NB` — extra fracture cells *past* the point the release is read at, so the reading stops depending on the outflow condition |
+| **Water downstream of the path** | `OB`: *the rock goes on past the release point, as in FARF31* (new paths, and this tool's own); or one of the reference implementation's four — infinite dilution, the same concentration as the last cell, linear extrapolation, or quadratic. The stored value is the number the reference uses (4 for the rock going on); the choice is made by what it means |
+| **Cells past the release point** | `NB` — extra fracture cells *past* the point the release is read at. Empty works the count out: as many as the rock going on needs, and none for the other four |
+
+### The rock goes on: the outlet new paths have
+
+The analytical far-field models — FARF31's stream tube among them — do not stop
+the rock where the release is measured. It goes on, the concentration falls to
+zero only infinitely far downstream, and what is released is the whole flux
+across the plane at the end of the path, advection and dispersion together.
+Water beyond that plane pushes back on it, by dispersion running upstream, and
+that is what a finite grid has to say something about.
+
+The reference implementation's four outlets each close the path at the plane
+with an assumption about water nobody models. Its default, *the same
+concentration as the last cell*, is a closed outlet, and it releases less than
+the rock going on would: by 4a/(1+a)² at a frequency where
+a = √(1 + 4·T<sub>w</sub>·g/P<sub>e</sub>) — about 3% short at the peak of
+`examples/farfield.json`, and far more for a nuclide the path holds back hard.
+
+*The rock goes on* keeps a few cells of the same rock past the plane — each
+with its matrix layers, since it is the same rock — reads the release as the
+flux across the plane between cell N<sub>F</sub> and the first of them, and
+closes the last by linear extrapolation. The push back upstream dies away by a
+factor (2·N<sub>F</sub> − P<sub>e</sub>)/(2·N<sub>F</sub> + P<sub>e</sub>) per
+cell, so the count is the fewest cells that bring it under a tenth: **5 for 20
+cells at P<sub>e</sub> 10**, 10 for 40, none at all where 2·N<sub>F</sub> ≤
+P<sub>e</sub> and nothing runs upstream. A Peclet number written as an
+equation is taken as 10 for the count, which has to be settled before anything
+is worked out; set the count yourself when it is far from that. Measured
+against the rock going on for ever, the five cells are within 5×10⁻⁴ in the
+logarithm of the transfer function at every frequency — well under what the 20
+fracture cells themselves cost.
+
+What those cells hold has already been released, so it is not in the path's
+**held** total, and a release drawn into a compartment is not counted twice:
+the path and the compartment together hold what went in, less what decayed.
+The dispersion comes out right too: a pulse read back off the release gives
+P<sub>e</sub> = 10.01 for 20 or 40 cells at P<sub>e</sub> 10, where the
+closed outlet gives 11.04 and 11.10.
+
+Against FARF31 (the model of the FARF31 page in this repository, solved in the
+Laplace domain), `examples/farfield.json` — its vault's own leaching into the
+path, U-238 → U-234 → Th-230 — releases these peaks:
+
+| grid | outlet | states | run | U-238 | U-234 | Th-230 |
+|---|---|---|---|---|---|---|
+| reference, 20 × 20 | closed | 1,266 | 0.7 s | 1.103 | 1.064 | 1.064 |
+| reference, 40 layers from 0.1 mm | closed | 2,466 | 1.7 s | 0.980 | 1.005 | 1.006 |
+| reference, 40 layers from 0.1 mm | + 20 extra cells | 4,926 | 3.4 s | 1.007 | 1.001 | 1.001 |
+| matched, 20 × 20 | closed | 1,266 | 0.7 s | 0.972 | 1.002 | 1.003 |
+| **matched, 20 × 20** | **rock goes on** | **1,581** | **0.9 s** | **0.999** | **0.998** | **0.998** |
+| matched, 20 × 12 | rock goes on | 981 | 0.5 s | 0.999 | 0.999 | 0.998 |
+| matched, 40 × 12 | rock goes on | 1,956 | 1.0 s | 1.000 | 1.001 | 0.999 |
+
+### Matrix layers matched to diffusion into the rock
+
+All the fracture ever sees of the rock is how much it takes up: the admittance
+√(D<sub>e</sub>R<sub>m</sub>s)·tanh(x<sub>0</sub>√(R<sub>m</sub>s/D<sub>e</sub>))
+at each frequency s, with R<sub>m</sub> = ε<sub>m</sub> + ρ<sub>m</sub>K<sub>d,m</sub>.
+The layers are a ladder of capacities joined by conductances, and how closely
+their admittance follows that one over the frequencies a release is made of is
+the whole accuracy of the matrix. Two things decide it.
+
+**Where the nodes sit.** With a node at the centre of each layer — the reference
+layers — a geometric series takes up a fixed fraction too little: 0.4% at a
+ratio of 1.3, 1% at 1.5, 5.8% at e, which is the ratio the reference layers
+grow by. An error in what the rock takes up is an error in the exponent of the
+release, and it is multiplied by the exponent: the example's peaks came out
+6–10% high on the reference layers, and its rising edge twice as high at a
+hundredth of the peak. Spacing the nodes by the geometric mean of the layers
+they join — the first at d<sub>0</sub>/(1 + √q) from the wall — removes the
+bias altogether, leaving a ripple of 10⁻⁷ at a ratio of 1.35 and 10⁻⁵ at 1.5.
+It is the interlacing the optimal grids of Ingerman, Druskin and Knizhnerman
+have. On the matched layers what is left of the rising edge's error — 12% at
+a tenth of the peak — is the fracture cells', not the rock's (see below).
+
+**Where the ladder starts.** It ends at the depth modelled with the whole
+capacity in it, so the slowest frequencies are right whatever the layers. It
+has to start thin enough for the fastest frequency that still matters, which
+is where the path's transfer function has fallen to e⁻²⁵: from there the
+first layer is a tenth of the depth diffusion reaches, worked out for every
+nuclide on the path — they share the layers, since a daughter grows in cell by
+cell — and for one that decays faster than that, at its decay constant. In the
+example that is 3.6 mm, growing by 1.44 to 12.5 m in 20 layers, where the
+reference layers start at 44 nanometres: the rate ratio across the rock falls
+from 10¹⁶ to about 10³. Doubled to 40 layers, the reference ones start at
+10⁻¹⁷ m and stall the solver at its step limit; the matched ones run the
+example in four seconds.
+
+**Laid out once per run.** The layers are worked out from the path's settings at
+the first instant of a run and held to its end, for every realisation afresh:
+the layers are where the matrix's inventory is, and a layout that followed a
+travel time moving over a glacial cycle would carry one layer's inventory into
+another's geometry. The reference layers follow their settings, as they always
+did.
+
+The matched layers can take a first thickness of their own, like the reference
+ones; the node spacing is theirs either way.
+
+### Paths saved before these choices
+
+A path saved before the outlet and the layers were choices says nothing about
+them, and meant the reference implementation's: it opens with the outlet it had
+(the closed one, unless it said otherwise) and the reference layers, written
+into the block, and runs exactly as it did — the numbers a validated model gave
+are not changed by opening it. Change either in its panel to have the new ones.
 
 ### The grid disperses on its own
 
@@ -5335,12 +5520,26 @@ Measured rather than asserted, by pushing a pulse through a non-sorbing,
 non-diffusing path and reading the Peclet number back off the spread of the
 breakthrough (σ²/t̄² = 2/P<sub>e</sub>), with P<sub>e</sub> set to 10:
 
-| NF | measured P<sub>e</sub> | |
-|---|---|---|
-| 3 | 6.09 | clamped — `2·NF` |
-| 4 | 8.03 | clamped — `2·NF` |
-| **5** | **10.01** | the boundary: the grid alone gives the P<sub>e</sub> asked for |
-| 20 | 11.08 | corrected, the residue being the outflow boundary's own 8/P<sub>e</sub>² |
+| NF | measured P<sub>e</sub>, rock goes on | closed outlet | |
+|---|---|---|---|
+| 3 | 6.01 | 6.01 | clamped — `2·NF` |
+| 4 | 8.00 | 8.00 | clamped — `2·NF` |
+| **5** | **10.00** | **10.00** | the boundary: the grid alone gives the P<sub>e</sub> asked for, and nothing runs upstream to feel the outlet |
+| 20 | 10.01 | 11.04 | corrected; the closed outlet's residue is its own, 2(1 − e<sup>−P<sub>e</sub></sup>)/P<sub>e</sub>² in σ²/t̄² |
+| 40 | 10.01 | 11.10 | |
+
+Above the floor the fracture is a central scheme, second order in the cell
+length, and its first two moments — the travel time and the spread — are the
+continuous path's exactly. What it cannot do is follow a front the path
+sharpens hard: the error in the logarithm of the transfer function grows with
+the cube of how strongly the path attenuates and falls as 1/N<sub>F</sub>². In
+the example the peaks are within 0.3% of FARF31 at 20 cells and the rising edge
+within 12% down to a tenth of the peak (3% at 40 cells). A made-up radium that
+the path attenuates by e⁻²⁶ at its steady state comes out ten times too high
+at 20 cells, twice at 40, 20% at 80 and 6% at 160 — a release that small is
+arithmetic dust beside the others, but when such a nuclide matters, it is the
+fracture cells that decide it, not the matrix layers: doubling those changes
+nothing.
 
 The layers are a geometric series adding up to exactly PENDEP, because the
 concentration gradient is steepest at the fracture wall and all but flat at
@@ -5367,11 +5566,13 @@ through its inlet.
 
 ### Two things worth knowing
 
-**Extra outflow cells read inside the path.** With NB > 0 the reading is taken
-between cell NF and the first extra one, so the mass it reports is still in the
-model. Delivering it to a compartment as well counts it twice, and the panel
-says so. Use them when you want a reading that does not depend on the outflow
-condition, and read it rather than drawing a release.
+**Extra outflow cells read inside the path** — under the reference
+implementation's four outlets. With NB > 0 the reading is taken between cell NF
+and the first extra one, so the mass it reports is still in the model.
+Delivering it to a compartment as well counts it twice, and the panel says so.
+Under *the rock goes on* the same cells are rock downstream of the release
+point, what they hold has been released, and a release delivered anywhere is
+counted once.
 
 **A quadratic outflow can read backwards.** `C_out = 3C_n − 3C_{n−1} + C_{n−2}`
 extrapolates past the last cell, and before the front arrives that is negative:
@@ -5384,17 +5585,106 @@ or turn the constraint off on that compartment.
 
 ### Cost
 
-A 20 × 20 path is 420 states per nuclide, so three nuclides is 1,260 — usually
-most of the state vector, and one path with no nuclide dimension is 420. It is solved *with* the rest of the model, in one
-system, which is the point: the release feeds a biosphere model that feeds back
-into nothing, and the solver sees all of it at once. `examples/farfield.json`
-is 1,266 states and takes about a second.
+A 20 × 20 path is 420 states per nuclide, and 525 with the five cells of rock
+past the release point, so three nuclides is 1,575 — usually most of the state
+vector. It is solved *with* the rest of the model, in one system, which is the
+point: the release feeds a biosphere model that feeds back into nothing, and
+the solver sees all of it at once. `examples/farfield.json` is 1,581 states and
+takes about a second.
 
-The automatic first layer makes the path very stiff — a 44-nanometre layer
-beside a 7-metre one is a rate ratio of 10¹⁶ — so use ndf or the SciPy BDF,
-and expect a few thousand steps. df/dy is generated analytically and factorised
-sparsely, which is what makes that affordable: 4,630 non-zeros out of 1.6
-million, in six colours.
+A path is stiff — the fastest matrix layer exchanges far faster than the water
+moves — so use ndf or the SciPy BDF. df/dy is generated analytically and
+factorised sparsely, which is what makes that affordable. The matched layers
+are much the gentler: the example's first layer is 3.6 mm beside a 3.8 m one, a
+rate ratio of about 10³, where the reference layers put 44 nanometres beside
+7 metres, 10¹⁶, and stalled the solver at its step limit when they were
+doubled.
+
+### Worked out semi-analytically
+
+**Worked out** in the panel chooses how the path is solved. *On cells* is
+everything above. *Semi-analytically* solves the same path — advection and
+dispersion along the fracture, sorption on its coating, diffusion into a matrix
+of the depth given and sorption there, decay and ingrowth along the model's
+chains, branches included — exactly, the way FARF31 does: in the Laplace
+domain, where the whole path is one transfer matrix. From it the block works
+out, once at the start of the run, the path's **unit responses**: how much of
+each nuclide comes out of the far end, at every time, after a unit of each
+nuclide goes in at t = 0. During the run the release is what has flowed in so
+far convolved with those responses, evaluated at every step the solver takes;
+nothing is discretised, so there is nothing to refine.
+
+What is left in the state vector is **what the path holds**, one state per
+nuclide: it gains what flows in and loses what is released and what decays,
+so `<name> held` is reported as before and the mass balance closes the same
+way. The release is still the block's value, drawn into a compartment or read
+by an equation.
+
+**When to use it.** When the path's settings are numbers — or parameters,
+drawn afresh for each realisation — it is exact and cheap: `examples/farfield.json`
+worked out semi-analytically is 9 states instead of 1,581.
+
+| | states | steps | run |
+|---|---|---|---|
+| on cells, 20 × 20, the rock going on | 1,581 | 3,776 | 0.9 s |
+| semi-analytically | 9 | 1,511 | 0.3 s |
+| on cells, steps of at most 100 years | 1,581 | 12,318 | 1.8 s |
+| semi-analytically, steps of at most 100 years | 9 | 10,330 | 0.8 s |
+| on cells, steps of at most 10 years | 1,581 | 101,734 | 12 s |
+| semi-analytically, steps of at most 10 years | 9 | 100,163 | 7 s |
+
+The vault in that example leaches at a constant rate, so what enters the path
+is a sum of exponentials and the release can be worked out independently, by
+quadrature over the responses: the run agrees with it to 2 parts in 10⁸.
+FARF31's own output for the same case differs from both by up to a part in a
+thousand above a hundredth of the peak — its handling of the input, not the
+path. On cells, the matched 20 × 20 grid is within 0.2% at the peaks and
+further off on the rising edge.
+
+**What it cannot do**, and says so by name before a run:
+
+- **Settings that change during the run.** The responses are worked out once,
+  from the settings at the first instant. A travel time that reads the clock,
+  a lookup table over time, or a compartment is refused, naming the setting;
+  work the path out on cells, which reads its settings as they change.
+- **Anything but the rock going on.** The outlet is the one the exact solution
+  has: dispersion carries on past the release point. The four closed outlets
+  and the cells past the release point belong to the cells.
+- **No cells, so no cell report.** *Report every cell* is not offered; the
+  total held is.
+- **At most 16 nuclides linked by decay** from any one source nuclide to any
+  one daughter: the transfer matrix is worked out for each such group.
+- **A nuclide that does not diffuse into the matrix** (D<sub>e</sub> = 0)
+  cannot be linked by decay to one that does: give it a small D<sub>e</sub>.
+- **An inflow that reads the path's own release** at the same instant, with no
+  compartment between: the release is worked out from what flows in, so the
+  two cannot be worked out one after the other.
+- **Split runs and dy/dp.** The release is a convolution over the whole run so
+  far, which neither can carry: both say so and run nothing.
+
+A probabilistic run works each realisation's responses out from its own drawn
+settings; realisations that draw the same path share them. Events and jumps
+elsewhere in the model are fine — the history of what flowed in is carried
+across every restart.
+
+**Plug flow and a matrix without end** are the limits P<sub>e</sub> → ∞ and a
+depth → ∞, and are written `1/0`. Under plug flow nothing arrives before the
+delay T<sub>w</sub>·R<sub>f</sub>, and where the matrix takes up almost nothing
+most of a pulse arrives within a hair of it: that part is kept as a point mass
+at the delay and released from the recorded inflow. A very large finite Peclet
+number is not the same thing to this method: see below.
+
+**Every unit response is held to its mass balance** — its integral against
+what leaves the path by its last time, which is T(0) unless the response runs
+on past the end of the run. One that misses is worked out again, from earlier
+and on a grid twice as fine; one that misses even so is said, in the run log, in
+the problems strip, on the block and in its settings, and the release worked
+out from it is not to be relied on. Where this happens is a front far sharper
+than the rest of the response — a Peclet number of 10⁵ or more into a matrix
+that takes up almost nothing — and such a path also takes minutes to work out:
+in one made-up case P<sub>e</sub> 10⁴ held to 3 parts in 10¹¹ in 23 s, 10⁵
+missed by 1.5 parts in 10⁵ and 10⁶ by 9 %, each in 150 s. Work such a path out
+on cells, or as plug flow.
 
 ## Waste packages: the source term with its barriers
 
@@ -6550,9 +6840,9 @@ on the parameters instead of on the state. Three block types are the exception:
 a far-field pathway, a waste package and a disruptive event each fall back to
 one forward difference for `df/dp`, which is what every model used to do.
 
-A model can still be too stiff for it — `farfield.json` is, since each
-parameter adds another 1,266 states to a system whose first rock layer is 44
-nanometres thick. The dialog says what the solve will cost before it starts.
+A model can still be too big for it — each parameter of `farfield.json` adds
+another 1,581 states to the system — and the dialog says what the solve will
+cost before it starts.
 
 This is exact where the probabilistic sensitivity is sampled, and local where
 that one is global: it says how the answer responds to a small change *here*,

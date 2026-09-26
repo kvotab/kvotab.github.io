@@ -29,6 +29,21 @@ function toggleShowTotal() {
 }
 
 /**
+ * "Same chart" for several groups selected together: all of them in one chart,
+ * the first group's lines thick and the others' thin, the way intersect and
+ * union draw several files, instead of a panel each. Redrawn with the axes
+ * as they are, as Show Total is.
+ *
+ * @returns {void}
+ */
+function toggleOverlayGroups() {
+  if (selectedIsRadionuclidesGroup && selectedDatasetPath) {
+    const savedAxis = captureAxisState();
+    Promise.resolve().then(() => createRadionuclidesChart(selectedDatasetPath, savedAxis));
+  }
+}
+
+/**
  * Handle "Show Ratio" checkbox toggle for radionuclides charts.
  * When checked, appends the ratio of max values (thick/thin) to the legend
  * name of thick-line traces.
@@ -174,7 +189,9 @@ function setupBackgroundOverlayTooltip(plotDiv, segments) {
     const py = evt.clientY - rect.top;
 
     const inX = px >= xAxis._offset && px <= (xAxis._offset + xAxis._length);
-    const inY = py >= yAxis._offset && py <= (yAxis._offset + yAxis._length);
+    // Over any panel, on a chart of several (they all share the x axis).
+    const inY = Object.keys(fullLayout).some(k => /^yaxis\d*$/.test(k)
+      && py >= fullLayout[k]._offset && py <= (fullLayout[k]._offset + fullLayout[k]._length));
     if (!inX || !inY) {
       tip.style.display = 'none';
       return;
@@ -304,6 +321,9 @@ async function toggleShowCI() {
           }
           
           const ciBandTrace = {
+            // In the panel of the line it belongs to, on a chart of several.
+            xaxis: trace.xaxis,
+            yaxis: trace.yaxis,
             x: [...timeSlice, ...timeSlice.slice().reverse()],
             y: [...p95Slice, ...p5Slice.slice().reverse()],
             fill: 'tozeroy',
@@ -404,6 +424,8 @@ async function toggleShowSDOM() {
         }
 
         sdomTraces.push({
+          xaxis: trace.xaxis,
+          yaxis: trace.yaxis,
           x: [...timeSlice, ...timeSlice.slice().reverse()],
           y: [...upperSlice, ...lowerSlice.slice().reverse()],
           fill: 'tozeroy',
@@ -431,6 +453,8 @@ async function toggleShowSDOM() {
         }
         if (stripeX.length > 0) {
           sdomTraces.push({
+            xaxis: trace.xaxis,
+            yaxis: trace.yaxis,
             x: stripeX,
             y: stripeY,
             mode: 'lines',
@@ -549,6 +573,8 @@ function toggleShowIteration() {
     }
     const color = (trace.line && trace.line.color) ? trace.line.color : '#888888';
     iterTraces.push({
+      xaxis: trace.xaxis,
+      yaxis: trace.yaxis,
       x: trace._timeData.slice(),
       y,
       type: 'scatter',

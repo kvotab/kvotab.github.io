@@ -30,7 +30,7 @@ function downloadChartData() {
   let csv = 'Series,X,Y\n';
   
   for (const trace of currentChartData.traces) {
-    const name = trace.name;
+    const name = trace._exportName || trace.name;
     for (let i = 0; i < trace.x.length; i++) {
       csv += `"${name}",${trace.x[i]},${trace.y[i]}\n`;
     }
@@ -306,7 +306,7 @@ async function downloadChartDataAsExcel() {
       
       // Create series with xlsxwrite.js
       const series = xlsx.newSeries({
-        name: { text: trace.name || `Series ${idx + 1}` },
+        name: { text: trace._exportName || trace.name || `Series ${idx + 1}` },
         x: { values: xVals.map(v => v === null || v === undefined ? NaN : v) },
         y: { values: yVals.map(v => v === null || v === undefined ? NaN : v) },
         length: Math.max(xVals.length, yVals.length),
@@ -328,7 +328,7 @@ async function downloadChartDataAsExcel() {
     
     // ============ PREPARE DATA ============
     // Build data array with headers
-    const headers = ['Time', ...traces.map((t, i) => t.name || `Series ${i + 1}`)];
+    const headers = ['Time', ...traces.map((t, i) => t._exportName || t.name || `Series ${i + 1}`)];
     const dataRows = [];
     
     for (let i = 0; i < maxLength; i++) {

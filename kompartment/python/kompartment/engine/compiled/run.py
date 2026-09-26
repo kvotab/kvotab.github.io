@@ -99,6 +99,11 @@ def prepare(system: Any, solver_id: str, opts: Dict[str, Any], *, min_change: fl
         raise NotCompiled(f"the solver '{solver_id}' has no compiled loop")
     if min_change > 0:
         raise NotCompiled('the clock-only slots are worked out every min_change_time and interpolated')
+    semi = [F for F in getattr(system, 'laplace', None) or []]
+    if semi:
+        raise NotCompiled(f"'{semi[0].block_name}' is worked out semi-analytically: its release is the inflow's "
+                          'recorded history convolved with the path\'s responses, which the compiled loop does not '
+                          'keep')
     n = system.nstate
     if solver_points and 2 * cs.MAX_SOLVER_POINTS * n * 8 > STEPS_MAX_BYTES:
         raise NotCompiled(f"the solver's own steps are asked for as output, and {n} states would need more room "

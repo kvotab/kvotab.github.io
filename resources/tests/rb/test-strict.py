@@ -44,6 +44,7 @@ PROBES = {
     'rb-state':          'initDOMReferences',
     'rb-utils':          'waitForH5Wasm',
     'rb-hdf5':           'checkDatasetExistsInFile',
+    'rb-lazy':           'wantsLazyFile',
     'rb-file':           'getEnabledFiles',
     'rb-tabs':           'hideFileTabTooltip',
     'rb-tree':           'toggleGroupExpansion',

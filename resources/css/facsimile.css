@@ -105,13 +105,26 @@
   outline-offset: 2px;
 }
 .fac-sec:first-child > summary { margin-top: 2px; }
+/*
+  THE (i) AT THE RIGHT-HAND EDGE (the button and its panel are kvot-info.css's)
+
+  A heading, a row and a tick box each end in one. A row keeps a column of
+  17px for it after the field, the width of the button, and a heading and a
+  tick-box line put it at their right-hand end, so every (i) in the panel is
+  in one line down the right whichever kind of line it is on.
+*/
+.fac-sec > summary { display: flex; align-items: center; gap: 6px; }
+.fac-sec > summary .fac-sec-title { flex: 1 1 auto; min-width: 0; }
 .fac-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 110px;
+  grid-template-columns: minmax(0, 1fr) 110px 17px;
   gap: 6px;
   align-items: center;
   margin: 3px 0;
 }
+/* A tick box and its (i): the label takes the line, the (i) its end. */
+.fac-check-line { display: flex; align-items: center; gap: 6px; margin: 4px 0; }
+.fac-check-line > .fac-check { flex: 1 1 auto; min-width: 0; margin: 0; }
 .fac-row label {
   color: var(--text-secondary);
   font-size: 12px;
@@ -178,8 +191,8 @@
 }
 .fac-check input { margin: 0; }
 /* An author `display` beats the browser's own [hidden] { display: none }, so a
-   row hidden from script needs saying again here. Both of these carry one. */
-.fac-row[hidden], .fac-check[hidden] { display: none; }
+   row hidden from script needs saying again here. All three carry one. */
+.fac-row[hidden], .fac-check[hidden], .fac-check-line[hidden] { display: none; }
 
 .fac-preset { margin: 4px 0 8px; }
 .fac-preset select { width: 100%; padding: 4px; font-size: 12px; }

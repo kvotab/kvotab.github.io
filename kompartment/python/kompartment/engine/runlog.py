@@ -366,6 +366,16 @@ def run_log_lines(project: Any, payload: Any, replayed: Any = None, build: str =
                        f"{_to_fixed(100 * _number(_get(h, 'fraction')), 1)}% of the run")
         if len(held) > 20:
             out.append(f'  and {len(held) - 20} more')
+    # a semi-analytical far-field path whose unit response missed its mass
+    # balance: the run went on with it, and the log says so
+    farfield = _nz(_get(_get(payload, 'stats'), 'farfield'), [])
+    if len(farfield):
+        n = len(farfield)
+        out.append('')
+        out.append(f"semi-analytical far-field paths: {n} unit response{'' if n == 1 else 's'} missed "
+                   f"{'its' if n == 1 else 'their'} mass balance")
+        for w in farfield:
+            out.append(f"  {_s(_get(w, 'block'))}: {_s(_get(w, 'message'))}")
     audit = _get(payload, 'massBalance')
     if _truthy(audit):
         out.append('')

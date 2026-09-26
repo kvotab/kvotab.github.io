@@ -56,6 +56,9 @@ import {
 	FARF_EQUATION_KEYS,
 	FARF_NUCLIDE_KEYS,
 	FARF_STRUCTURE_KEYS,
+	FARF_SURFACE_DEFAULTS,
+	SURFACE_KEY,
+	surfaceOf,
 	structureProblem,
 	geometryProblem,
 } from './farfield.js';
@@ -745,9 +748,24 @@ export class Project {
 			// could not mean anything. Kept as written when it is not a
 			// number, so that `validate` can name it.
 			for (const key of FARF_STRUCTURE_KEYS) {
-				const v = Number(raw[key] ?? DEFAULTS.farfield[key]);
+				// Extra cells left empty are worked out: kept empty, so that
+				// what they come to follows the other settings.
+				const given = raw[key] ?? DEFAULTS.farfield[key];
+				if (key === 'n_b' && (given == null || (typeof given === 'string' && given.trim() === ''))) {
+					base[key] = '';
+					continue;
+				}
+				const v = Number(given);
 				base[key] = Number.isFinite(v) ? Math.round(v) : raw[key];
 			}
+			// The way the wetted surface is given, and that setting's equation
+			// if the file has none: the other two ways are the file's own
+			// business, and are not worked out.
+			// A choice this tool does not know is kept as written, so that
+			// `validate` can name it.
+			base.surface = raw.surface == null || raw.surface === '' ? surfaceOf(raw) : raw.surface;
+			const used = SURFACE_KEY[surfaceOf(base)];
+			if (used && base[used] == null) base[used] = FARF_SURFACE_DEFAULTS[used];
 			// Where the release goes is a transfer drawn out of the block, not
 			// a field on it: see `migrateFarfieldTargets` in ./keys.js.
 			delete base.to;

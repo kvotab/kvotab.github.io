@@ -137,7 +137,9 @@ class ReadBack(unittest.TestCase):
         for name in names:
             out = export_eco(models()[name])
             back = import_eco_file(out.bytes)
-            exclude = [s['name'] for s in out.report.skipped] + [s['name'] for s in out.report.rewritten]
+            # What the report names, and the sub-systems a far-field path was written as.
+            exclude = ([s['name'] for s in out.report.skipped] + [s['name'] for s in out.report.rewritten]
+                       + [s['into'] for s in out.report.rewritten if 'into' in s])
             exports[name] = out
             requests.append({'task': 'canonical', 'model': models()[name], 'exclude': exclude})
             requests.append({'task': 'canonical', 'model': json.loads(dumps(back.project)), 'exclude': exclude,
@@ -193,7 +195,7 @@ class ReadBack(unittest.TestCase):
     def test_what_has_no_equivalent_is_left_out_and_named(self):
         out = export_eco(models()['NO_EQUIVALENT'])
         skipped = {f"{s['type']}:{s['name']}" for s in out.report.skipped}
-        for key in ('far-field pathway:Path', 'waste package:Canisters', 'event:Quake', 'transfer:Discharge',
+        for key in ('far-field pathway:Idle', 'waste package:Canisters', 'event:Quake', 'transfer:Discharge',
                     'transfer:Shared', 'parameter:per_transfer', 'expression:Ends', 'function:Zero',
                     'expression:Reads_that', 'distribution:k', 'distribution:Kd', 'correlation group:grouped',
                     'correlation:1 pair(s)'):
@@ -201,6 +203,10 @@ class ReadBack(unittest.TestCase):
         self.assertTrue(any(w.startswith('The diagram is this tool’s own and is not written (its layout)')
                             for w in out.report.warnings))
         rewritten = {s['name']: s['how'] for s in out.report.rewritten}
+        # A path that runs goes out as its cells; the one switched off cannot be laid out.
+        self.assertIn('written as the sub-system Path_cells', rewritten['Path'])
+        self.assertIn('Path_cells.F1', rewritten['ToPath'])
+        self.assertNotIn('far-field pathway:Path', skipped)
         self.assertIn('narrowed onto Wetland', rewritten['WetlandLoss'])
         self.assertIn('written into its rate', rewritten['Leach'])
         self.assertIn('RADAU5', rewritten['radau5'])

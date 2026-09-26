@@ -26,6 +26,7 @@ import {
 } from '../src/ui/startvalue.js';
 import {
 	layerDepths, coefficients, cellStructure, cellValues, cellNames, FARF_EQUATION_KEYS,
+	effectiveStructure, releaseCells, releaseWeights,
 } from '../src/domain/farfield.js';
 import { JACOBIANS, RELEASES } from './farfield-fixture.js';
 import {
@@ -9032,7 +9033,7 @@ test('the run that is saved is the run of the model that is saved', async () => 
 	const app = readFileSync(new URL('src/ui/app.js', root), 'utf8');
 	const worker = readFileSync(new URL('src/worker/sim-worker.js', root), 'utf8');
 
-	const save = /async function saveFile\(as = 'json'\) \{([\s\S]*?)\n\}/.exec(app)?.[1] ?? '';
+	const save = /async function saveFile\(as = 'json'(?:, \{ prepared = null \} = \{\})?\) \{([\s\S]*?)\n\}/.exec(app)?.[1] ?? '';
 	// The layout signature cannot catch a changed rate -- it moves nothing --
 	// so a model edited since its run would pair with results that are not
 	// its own. Refused on the page, where the same test already draws the dot
@@ -21594,7 +21595,8 @@ await (async () => {
 	const roundTrip = async (model) => {
 		const out = await eco.exportEco(model);
 		const back = await importEcoFile(out.bytes);
-		const exclude = [...out.report.skipped, ...out.report.rewritten].map((s) => s.name);
+		// What the report names, and the sub-systems a far-field path was written as.
+		const exclude = [...out.report.skipped, ...out.report.rewritten].flatMap((s) => (s.into ? [s.name, s.into] : [s.name]));
 		const want = fx.canonicalModel(model, { exclude });
 		want.simulation.solver = SOLVER_BACK[want.simulation.solver] ?? want.simulation.solver;
 		const got = fx.canonicalModel(back.project, { exclude, imported: true });
@@ -21618,18 +21620,21 @@ await (async () => {
 
 	test('every bundled example exports to an .eco that imports back as the same model', async () => {
 		for (const [file, model] of examples) {
-			const { want, got, report } = await roundTrip(model);
+			const { want, got, report, back } = await roundTrip(model);
 			sameText(got, want, file);
-			// What went out is what was counted.
-			assert(report.counts.compartments === got.blocks.filter((b) => b.kind === 'compartments').length,
-				`${file}: ${report.counts.compartments} compartments counted`);
+			// What went out is what was counted -- a far-field path's cells too.
+			assert(report.counts.compartments === back.project.compartments.length,
+				`${file}: ${report.counts.compartments} compartments counted, ${back.project.compartments.length} read back`);
 		}
 		// And what could not go out is named, with the reason.
 		const named = async (file) => (await eco.exportEco(examples.find(([f]) => f === file)[1])).report;
+		// A far-field path goes out as its cells, and what reads it goes with it.
 		const farfield = await named('farfield.json');
-		assert(farfield.skipped.some((s) => s.name === 'Rock' && /FARFCOMP/.test(s.why)), JSON.stringify(farfield.skipped));
-		assert(farfield.skipped.some((s) => s.name === 'Well_concentration' && /reads 'Rock'/.test(s.why)),
-			'what reads the path did not go with it');
+		assert(!farfield.skipped.length, JSON.stringify(farfield.skipped));
+		const rock = farfield.rewritten.find((s) => s.name === 'Rock');
+		assert(rock?.into === 'Rock_cells' && /525 compartments/.test(rock.how) && /1050 transfers/.test(rock.how), JSON.stringify(rock));
+		assert(farfield.rewritten.some((s) => s.name === 'Leach' && /Rock_cells\.F1$/.test(s.how)), JSON.stringify(farfield.rewritten));
+		assert(farfield.rewritten.some((s) => s.name === 'Release' && /from a source/.test(s.how)), JSON.stringify(farfield.rewritten));
 		const packages = await named('waste-packages.json');
 		for (const n of ['Canisters', 'Quake', 'Glaciation', 'Release']) {
 			assert(packages.skipped.some((s) => s.name === n), `${n} is not named: ${JSON.stringify(packages.skipped)}`);
@@ -21663,9 +21668,18 @@ await (async () => {
 			// solved to. radau5 goes out as RADAU5 and comes back as ndf, so
 			// the comparison is of ndf with ndf.
 			const loose = name === 'NO_EQUIVALENT';
-			const model = loose
+			let model = loose
 				? { ...structuredClone(source), simulation: { ...source.simulation, solver: 'ndf', rtol: 1e-10, abstol: 1e-13 } }
 				: source;
+			// A far-field path comes back as its cells: the same equations, a
+			// state for a state, assembled as transfers rather than as the
+			// path's own matrix -- so the solver steps differently, and the
+			// two are compared at the tolerance they were solved to, on times
+			// fixed in advance rather than on the steps each happened to take.
+			const paths = (model.farfields ?? []).length > 0;
+			if (paths && ['both', 'solver'].includes(model.simulation?.spacing)) {
+				model = { ...structuredClone(model), simulation: { ...model.simulation, spacing: 'log', output_times: [] } };
+			}
 			const out = await eco.exportEco(model);
 			const back = await importEcoFile(out.bytes);
 			const a = run(fx.withoutBlocks(fx.openedModel(model), out.report.skipped.map((s) => s.name)));
@@ -21675,8 +21689,11 @@ await (async () => {
 				assert(Math.abs(a.t[i] - b.t[i]) <= 1e-12 * Math.abs(a.t[i]), `${name}: time ${i} is ${b.t[i]}, was ${a.t[i]}`);
 			}
 			const theirs = new Map(b.outputs().map((o) => [o.label, o]));
+			// What a path holds is the aggregate in the sub-system it became.
+			const held = out.report.rewritten.filter((s) => s.into).map((s) => [`${s.name} held`, `${s.into}.held`]);
 			for (const o of a.outputs()) {
-				const p = theirs.get(o.label);
+				const renamed = held.find(([from]) => o.label === from || o.label.startsWith(`${from} [`));
+				const p = theirs.get(renamed ? renamed[1] + o.label.slice(renamed[0].length) : o.label);
 				if (!p) {
 					// Only a lookup point's own distribution, which the report named.
 					assert(/@/.test(o.label), `${name}: ${o.label} did not come back`);
@@ -21686,7 +21703,7 @@ await (async () => {
 				const y = b.series(p);
 				let scale = 0;
 				for (const v of x) scale = Math.max(scale, Math.abs(v));
-				const tol = (loose ? 1e-7 : 1e-12) * (scale || 1);
+				const tol = (paths ? 1e-6 : loose ? 1e-7 : 1e-12) * (scale || 1);
 				for (let i = 0; i < x.length; i++) {
 					assert(Math.abs(x[i] - y[i]) <= tol, `${name}: ${o.label} at ${a.t[i]} is ${y[i]}, was ${x[i]}`);
 				}
@@ -21776,8 +21793,11 @@ await (async () => {
 		// The description is the project's comment, and text the XML cannot
 		// hold as written comes through intact.
 		const props = child(root, 'project-properties');
-		assert(props.attrs.name === 'Every kind of block' && /\nSecond line/.test(children(props, 'property')[0].text),
+		const property = (name) => children(props, 'property').find((p) => p.attrs.name === name)?.text ?? '';
+		assert(props.attrs.name === 'Every kind of block' && /\nSecond line/.test(property('comment')),
 			'the name and description');
+		// And who wrote it, as Ecolego keeps an author: before the comment.
+		assert(property('author') === 'A. Modeller' && children(props, 'property')[0].attrs.name === 'author', property('author'));
 		assert(childText(soil, 'comment') === fx.EVERY_KIND.compartments[0].comment, childText(soil, 'comment'));
 		// The root of the hierarchy is nameless, and every sub-system says where it is.
 		const blocks = children(child(root, 'hierarchy-model'), 'sub-system-block');
@@ -21834,8 +21854,8 @@ await (async () => {
 		const { report, xml } = await eco.exportEco(fx.NO_EQUIVALENT);
 		const skipped = new Map(report.skipped.map((s) => [`${s.type}:${s.name}`, s.why]));
 		for (const key of [
-			'far-field pathway:Path', 'waste package:Canisters', 'event:Quake', 'transfer:Discharge',
-			'transfer:Shared', 'transfer:ToPath', 'transfer:FromPackages', 'parameter:per_transfer',
+			'far-field pathway:Idle', 'waste package:Canisters', 'event:Quake', 'transfer:Discharge',
+			'transfer:Shared', 'transfer:FromPackages', 'parameter:per_transfer',
 			'expression:Ends', 'function:Zero', 'expression:Calls_nothing', 'expression:Reads_path',
 			'expression:Reads_that', 'distribution:k', 'distribution:Kd', 'correlation group:grouped',
 			'distribution:Spread', 'derived numbers:1 number(s)', 'correlation:1 pair(s)',
@@ -21844,12 +21864,15 @@ await (async () => {
 		}
 		assert(/Transfers/.test(skipped.get('parameter:per_transfer')), skipped.get('parameter:per_transfer'));
 		assert(/reads 'Reads_path'/.test(skipped.get('expression:Reads_that')), 'what reads a left-out block is named for it');
+		// A path that is switched off has no layers to lay out; one that runs goes out as its cells.
+		assert(/switched off/.test(skipped.get('far-field pathway:Idle')), skipped.get('far-field pathway:Idle'));
+		assert(!skipped.has('far-field pathway:Path') && !skipped.has('transfer:ToPath'), [...skipped.keys()].join(', '));
 		// None of them is in the file, not even as a dangling reference.
 		const root = parseXML(xml);
-		for (const id of ['Path', 'Canisters', 'Quake', 'Discharge', 'Shared', 'per_transfer', 'Zero', 'Reads_that']) {
+		for (const id of ['Idle', 'Canisters', 'Quake', 'Discharge', 'Shared', 'per_transfer', 'Zero', 'Reads_that']) {
 			assert(!byId(root, id), `${id} is in the file`);
 		}
-		assert(!/"Path"|Reads_path/.test(xml), 'something still names what is left out');
+		assert(!/"Idle"|Idle_cells|Reads_path/.test(xml), 'something still names what is left out');
 		// And the settings with nowhere to go are named, and the diagram is a line rather than a loss.
 		assert(report.warnings.some((w) => /bdf, mass_balance/.test(w)), report.warnings.join('\n'));
 		assert(report.warnings.some((w) => /^The diagram is this tool’s own and is not written \(its layout\)/.test(w)),
@@ -22035,6 +22058,110 @@ await (async () => {
 		assert(!landscape.report.warnings.some((w) => /comment/.test(w)), landscape.report.warnings.join('\n'));
 		const commented = await eco.exportEco({ index_lists: [{ name: 'Objects', comment: 'Mine', indices: ['A'] }] });
 		assert(commented.report.warnings.some((w) => /^1 index list comment\(s\) were left out/.test(w)), commented.report.warnings.join('\n'));
+	});
+
+	test('a far-field path goes out as its own transport matrix, entry for entry, under every outlet', () => {
+		// Random rates, the matrix the path assembles from them, and the one
+		// its transfers make: a flux from each donor to each receiver, and
+		// what a cell loses to nothing out of the path.
+		let seed = 3;
+		const rnd = () => { seed = (seed * 16807) % 2147483647; return 0.1 + seed / 2147483647; };
+		for (const [ob, nb, nf, nm] of [[0, 0, 5, 3], [1, 0, 5, 3], [2, 0, 5, 3], [3, 0, 5, 3], [1, 2, 4, 2], [2, 2, 4, 4],
+			[3, 3, 4, 3], [4, '', 20, 20], [4, 3, 6, 5], [1, 0, 1, 2], [0, 0, 1, 2]]) {
+			const block = { n_f: nf, n_m: nm, o_b: ob, n_b: nb, pe: 10 };
+			const g = effectiveStructure(block);
+			const c = {
+				advF: rnd(), dF: rnd(), diffFM1: rnd(), diffM1F: rnd(),
+				diffMMF: Float64Array.from({ length: nm - 1 }, rnd), diffMMB: Float64Array.from({ length: nm - 1 }, rnd),
+			};
+			const rates = [c.advF, c.dF, c.diffFM1, c.diffM1F, ...c.diffMMF, ...c.diffMMB];
+			const { rows, cols, nnz } = cellStructure(g);
+			const values = cellValues(g, c, new Float64Array(nnz));
+			const n = (g.n_f + g.n_b) * (nm + 1);
+			const A = Array.from({ length: n }, () => new Float64Array(n));
+			for (let e = 0; e < nnz; e++) A[rows[e]][cols[e]] += values[e];
+			const B = Array.from({ length: n }, () => new Float64Array(n));
+			const net = eco.pathNetwork(block);
+			for (const t of net.transfers) {
+				const rate = t.terms.reduce((sum, [k, v]) => sum + v * rates[k], 0);
+				B[t.from][t.from] -= rate;
+				if (t.to != null) B[t.to][t.from] += rate;
+			}
+			for (let i = 0; i < n; i++) {
+				for (let j = 0; j < n; j++) {
+					assert(Math.abs(A[i][j] - B[i][j]) <= 1e-12 * (1 + Math.abs(A[i][j])),
+						`outlet ${ob}, ${nb} extra: entry ${i},${j} is ${B[i][j]} where the path has ${A[i][j]}`);
+				}
+			}
+			// And the release reads the same cells with the same weights.
+			const w = releaseWeights(g, c, new Float64Array(releaseCells(g).length));
+			assert(net.release.map((r) => r.cell).join() === releaseCells(g).join(), `outlet ${ob}: the release cells`);
+			net.release.forEach((r, i) => close(r.terms.reduce((sum, [k, v]) => sum + v * rates[k], 0), w[i], 1e-12,
+				`outlet ${ob}: the release weight of ${r.cell}`));
+			// No transfer carries a rate of nothing, and every rate is whole multiples of the path's own.
+			assert(net.transfers.every((t) => t.terms.length && t.terms.every(([, v]) => Number.isInteger(v))), `outlet ${ob}`);
+		}
+	});
+
+	test('a far-field path’s settings are spelled from the sub-system it is written in, and its layers per object', () => {
+		const root = xmlOf(fx.FARFIELD_PATHS);
+		const eq = (id) => childText(child(byId(root, id), 'entry'), 'equation');
+		// A block of the path's own sub-system becomes a path; the model's stays bare.
+		assert(eq('Geo.Rock_cells.TW') === 'Geo.TW_path' && eq('Geo.Rock_cells.F') === 'Geo.F_scaled', eq('Geo.Rock_cells.TW'));
+		assert(eq('Geo.Rock_cells.Kd_m') === 'Kd' && eq('Aperture_path_cells.De_m') === 'De * 2', eq('Geo.Rock_cells.Kd_m'));
+		// The path is what everything read it as: its release, under its own name.
+		assert(eq('Geo.Rock') === 'Geo.Rock_cells.release' && eq('Seen') === 'Aperture_path * 1e-3', eq('Geo.Rock'));
+		assert(eq('Geo.Rock_cells.release') === '(adv + disp) * F8 - disp * F9', eq('Geo.Rock_cells.release'));
+		assert(eq('Aperture_path_cells.release') === 'adv * F6' && eq('Aperture_path_cells.a_w') === '2 / delta',
+			eq('Aperture_path_cells.release'));
+		// A value per nuclide is a row per nuclide, over every object.
+		const eps = children(byId(root, 'Geo.Rock_cells.eps_m'), 'entry').map((e) => `${e.attrs.index ?? ''}=${childText(e, 'equation')}`);
+		assert(eps.join(' ') === '=0.005 U-235,Lake=0.004 U-235,Mire=0.004', eps.join(' '));
+		// Each object has a travel time of its own, and so layers of its own.
+		const d1 = children(byId(root, 'Geo.Rock_cells.d_1'), 'entry');
+		assert(d1.length === 2 && d1[1].attrs.index === 'Mire' && childText(d1[0], 'value') !== childText(d1[1], 'value'),
+			d1.map((e) => childText(e, 'value')).join());
+		// The reference layers have no node spacings; the matched ones do.
+		assert(!byId(root, 'Aperture_path_cells.h_1') && byId(root, 'Geo.Rock_cells.h_1'), 'node spacings');
+		// Transfers in reach the first cell; a release comes in from a source.
+		assert(byId(root, 'Into_rock').attrs.target === 'Geo.Rock_cells.F1', byId(root, 'Into_rock').attrs.target);
+		const out = byId(root, 'Geo.Out_of_rock');
+		assert(byId(root, out.attrs.source).attrs.type === 'source' && out.attrs.target === 'Geo.Well', JSON.stringify(out.attrs));
+		// No cell may be held at zero: a path's cells are not, here.
+		const f1 = child(byId(root, 'Geo.Rock_cells.F1'), 'entry');
+		assert(childText(f1, 'lower-saturation') === '-1.0E300', childText(f1, 'lower-saturation'));
+	});
+
+	test('a semi-analytical path goes out as the same path on cells, and says so', async () => {
+		const model = structuredClone(examples.find(([f]) => f === 'farfield.json')[1]);
+		model.farfields[0].method = 'semi-analytical';
+		model.simulation = { ...model.simulation, spacing: 'log', output_times: [], output_points: 60, start_time: 0 };
+		const out = await eco.exportEco(model);
+		assert(out.report.warnings.some((w) => /^'Rock' is worked out semi-analytically here/.test(w)), out.report.warnings.join('\n'));
+		assert(/525 compartments/.test(out.report.rewritten.find((s) => s.name === 'Rock').how), 'not on 20 × 20 cells');
+		// The same answer, as closely as the cells come to it.
+		const back = await importEcoFile(out.bytes);
+		const a = run(fx.openedModel(model));
+		const b = run(fx.openedModel(back.project));
+		const theirs = new Map(b.outputs().map((o) => [o.label, o]));
+		for (const label of ['Well [U-238]', 'Well [U-234]']) {
+			const x = a.series(a.outputs().find((o) => o.label === label));
+			const y = b.series(theirs.get(label));
+			let peak = 0;
+			for (const v of x) peak = Math.max(peak, v);
+			const at = x.indexOf(peak);
+			assert(Math.abs(y[at] - peak) <= 0.02 * peak, `${label}: ${y[at]} at the peak, where the exact path gives ${peak}`);
+		}
+	});
+
+	test('the author goes out as the project’s author, and comes back beside the name', async () => {
+		const out = eco.exportModelXML({ name: 'Authored', description: 'What it is.', author: '  A. Modeller ' });
+		assert(/<property name="author" type="string"><!\[CDATA\[A\. Modeller\]\]><\/property>\n\t\t<property name="comment"/.test(out.xml),
+			out.xml.slice(0, 400));
+		const back = importModelXML(out.xml);
+		assert(back.project.author === 'A. Modeller', back.project.author);
+		assert(Object.keys(back.project).slice(0, 3).join() === 'name,description,author', Object.keys(back.project).join());
+		assert(!/name="author"/.test(eco.exportModelXML({ name: 'Anonymous' }).xml), 'an author nobody gave');
 	});
 })();
 
@@ -22843,7 +22970,9 @@ test('a path says what it cannot do', () => {
 		const raw = base();
 		raw.farfields[0].index_lists = [];
 		const built = buildSystem(new Project(raw));
-		assert(built.layout.nstate === 1 + 420, `states ${built.layout.nstate}`);
+		// 20 fracture cells and the 5 of rock past the release point that the
+		// semi-infinite outlet works out at Pe 10, each with 20 layers.
+		assert(built.layout.nstate === 1 + 25 * 21, `states ${built.layout.nstate}`);
 		assert(!/DEC\[/.test(built.source.dydt.split('far-field path')[1] ?? ''),
 			'a path with no nuclide dimension has nothing to decay');
 	}
@@ -23067,7 +23196,7 @@ test('every way of connecting agrees about what a path may be', () => {
 		const src = ed.addSource(raw, { to: 'Rock', rate: '1' });
 		assert(src.to === 'Rock', JSON.stringify(src));
 		const built = buildSystem(new Project(structuredClone(raw)));
-		assert(built.layout.nstate === 2 + 420, `states ${built.layout.nstate}`);
+		assert(built.layout.nstate === 2 + 25 * 21, `states ${built.layout.nstate}`);
 	}
 
 	// Out of a path: a release. Its rate is the path itself -- the flux out of
@@ -23157,7 +23286,9 @@ test('a path’s chemistry is per nuclide and its geometry is not', () => {
 	// to choose: the engine asks only whether a key is in the list.
 	assert(ed.FARF_NUCLIDE_KEYS.join() === 'kd_f,eps_m,kd_m,de_m',
 		ed.FARF_NUCLIDE_KEYS.join());
-	assert(ed.FARF_SINGLE_KEYS.join() === 'tw,f,rho_m,pe,pen_dep,pen_dep_0',
+	// F, the wetted surface and the aperture are three ways of saying one
+	// thing about the path, and a path uses one of them.
+	assert(ed.FARF_SINGLE_KEYS.join() === 'tw,f,aw,aperture,rho_m,pe,pen_dep,pen_dep_0',
 		ed.FARF_SINGLE_KEYS.join());
 	// Between them they are every equation-valued setting, and no key is in
 	// both -- a setting in neither would be silently unreadable.
@@ -23219,7 +23350,8 @@ test('the editor can add a path, and it survives a round trip', () => {
 	const raw = { name: 'edit', nuclides: ['Cs-137', 'Sr-90'], compartments: [] };
 	const block = ed.addFarfield(raw, { name: 'Rock' });
 	assert(block.index_lists.length === 1, 'indexed by the nuclides');
-	assert(ed.farfieldStates(raw, block).states === 420 * 2,
+	// 20 cells and the 5 past the release point the outlet works out, by 21.
+	assert(ed.farfieldStates(raw, block).states === 525 * 2,
 		JSON.stringify(ed.farfieldStates(raw, block)));
 	// A path is a node on the diagram and answers to the block tree like any
 	// other block.
@@ -23235,10 +23367,12 @@ test('the editor can add a path, and it survives a round trip', () => {
 		assert(String(back.farfields[0][key]) === String(block[key]),
 			`${key}: ${back.farfields[0][key]} vs ${block[key]}`);
 	}
-	// ...and a model with no radionuclides cannot have one.
-	let refused = null;
-	try { ed.addFarfield({ name: 'x', compartments: [] }, {}); } catch (e) { refused = e.message; }
-	assert(/needs the model to have radionuclides/.test(refused ?? ''), String(refused));
+	// ...and a model with no radionuclides has one too: indexed by nothing,
+	// one quantity that does not decay, until the dimension box says what.
+	const plain = { name: 'x', compartments: [] };
+	const none = ed.addFarfield(plain, {});
+	assert(none.index_lists.length === 0, JSON.stringify(none.index_lists));
+	assert(ed.farfieldStates(plain, none).states === 525, JSON.stringify(ed.farfieldStates(plain, none)));
 });
 
 // =========================================================================
@@ -25488,7 +25622,7 @@ test('Save asks where the file goes, and says nothing when the answer is no', as
 	assert(/<button id="save"[\s\S]*?>Save…<\/button>/.test(html), 'the button does not say Save…');
 
 	const app = readFileSync(new URL('src/ui/app.js', root), 'utf8');
-	const save = /async function saveFile\(as = 'json'\) \{([\s\S]*?)\n\}/.exec(app)?.[1];
+	const save = /async function saveFile\(as = 'json'(?:, \{ prepared = null \} = \{\})?\) \{([\s\S]*?)\n\}/.exec(app)?.[1];
 	assert(save, 'saveFile is gone');
 	assert(/typeof window\.showSaveFilePicker === 'function'/.test(save),
 		'nothing opens the operating system’s save dialog');
@@ -25506,7 +25640,7 @@ test('Save asks where the file goes, and says nothing when the answer is no', as
 	// offered: the dialog lets it be changed, and typing `.zip` should give a
 	// ZIP whichever entry was highlighted. What each name produces is the next
 	// test along, which reads the bytes rather than the source.
-	assert(/modelFileFor\(handle\.name, state\.raw, \{ extra \}\)/.test(save),
+	assert(/const written = modelToWrite\(handle\.name\);\n\t+const file = await modelFileFor\(handle\.name, written, \{ extra, prepared \}\)/.test(save),
 		'the format is decided before the name is settled');
 });
 
@@ -27840,7 +27974,10 @@ test('the far-field panel reads in pairs, and its port is reachable', async () =
 	const rows = /const rows = \[([\s\S]*?)\];/.exec(insp)?.[1];
 	assert(rows, 'the settings are not laid out in a known order');
 	const order = rows.replace(/\s+/g, ' ').trim();
-	assert(order.startsWith("releaseRow, awRow, single('tw'), single('f'), "
+	// The second row is how the flow-wetted surface is given, with the other
+	// two ways of saying it worked out beneath; the setting it chose pairs
+	// with the travel time, as F always did.
+	assert(order.startsWith("releaseRow, surfaceRow, single('tw'), surfaceValue, "
 		+ "perNuclide('kd_f'), single('pe'), perNuclide('eps_m'), single('rho_m'), "
 		+ "perNuclide('kd_m'),"), order);
 	// D_e,m is last because the per-index grid hangs off it: the four nuclide
@@ -27956,7 +28093,8 @@ test('the fracture grid disperses on its own, and the model says when that is to
 		return 2 / (m2 / m0 - mean * mean) * mean * mean;
 	};
 	// Clamped: the breakthrough is as dispersive as 2*NF says, within a few
-	// per cent -- the residue is the outflow boundary, which adds 8/Pe^2.
+	// per cent -- the residue is the closed outflow boundary's, which takes
+	// 2(1 - e^-Pe)/Pe^2 off sigma^2/tbar^2.
 	for (const nf of [3, 4]) {
 		const got = measure(nf);
 		assert(Math.abs(got - 2 * nf) / (2 * nf) < 0.05,
@@ -27969,6 +28107,375 @@ test('the fracture grid disperses on its own, and the model says when that is to
 	// And a finer grid stays there rather than sharpening past it.
 	const fine = measure(20);
 	assert(fine > 10 && fine < 12, `NF=20 measures Pe ${fine.toFixed(2)}`);
+});
+
+test('the matched layers take up what diffusion into the rock does, where the reference ones fall short', async () => {
+	const farf = await import('../src/domain/farfield.js');
+	// What the fracture sees of the rock is its admittance: the flux into the
+	// wall per unit concentration at frequency s. Exact, for a matrix of
+	// depth x0 with no flux through its far face:
+	const exact = (s, de, rm, x0) => Math.sqrt(de * rm * s) * Math.tanh(x0 * Math.sqrt(rm * s / de));
+	// ...and a ladder of layers: capacities rm*d[j], conductances de/h[j],
+	// summed from the far end in as a continued fraction. The reference
+	// layers' nodes sit at their centres.
+	const ladder = (s, de, rm, d, h) => {
+		const n = d.length;
+		const hh = h ?? Array.from(d, (x, j) => (j === 0 ? x / 2 : (d[j - 1] + x) / 2));
+		let A = s * rm * d[n - 1];
+		for (let k = n - 2; k >= 0; k--) A = s * rm * d[k] + 1 / (hh[k + 1] / de + 1 / A);
+		return 1 / (hh[0] / de + 1 / A);
+	};
+	// Made-up numbers of the ordinary sort: 12.5 m of granite, a nuclide
+	// that sorbs a little, the fracture of the bundled example.
+	const de = 3e-5;
+	const rm = 4.6;
+	const x0 = 12.5;
+	const nuc = { de, rm, lam: 0, rf: 1 };
+	const g = farf.matchedGrid({ penDep: x0, nm: 20, first: null, aw: 2000, tw: 50, pe: 10, nucs: [nuc] });
+	const ref = farf.layerDepths(x0, 20, 2000, null);
+	let worstMatched = 0;
+	let worstRef = 0;
+	for (let k = 0; k <= 40; k++) {
+		const s = 10 ** (-9 + 6 * k / 40);
+		const want = exact(s, de, rm, x0);
+		worstMatched = Math.max(worstMatched, Math.abs(ladder(s, de, rm, g.d, g.h) / want - 1));
+		worstRef = Math.max(worstRef, Math.abs(ladder(s, de, rm, ref, null) / want - 1));
+	}
+	// Up to the fastest frequency that still matters, a millisecond of the
+	// matrix's own time: the matched layers within 2e-3 everywhere, the
+	// reference ones short by their constant 5.8 %.
+	assert(worstMatched < 2e-3, `matched layers off by ${worstMatched}`);
+	assert(worstRef > 0.05 && worstRef < 0.07, `the reference layers' shortfall is ${worstRef}`);
+
+	// The geometry: a geometric series to exactly the depth, nodes spaced by
+	// the geometric mean of the layers they join, the first at d0/(1 + sqrt q).
+	close(g.d.reduce((a, b) => a + b, 0), x0, 1e-13, 'the layers reach the depth');
+	for (let j = 1; j < 20; j++) {
+		close(g.d[j] / g.d[j - 1], g.q, 1e-13, `ratio at ${j}`);
+		close(g.h[j], Math.sqrt(g.d[j - 1] * g.d[j]), 1e-15, `node spacing ${j}`);
+	}
+	close(g.h[0], g.d[0] / (1 + Math.sqrt(g.q)), 1e-15, 'the first node');
+	// The first layer, worked out: millimetres, not the reference's 44 nm.
+	assert(g.d[0] > 1e-3 && g.d[0] < 1e-2, `first layer ${g.d[0]}`);
+	assert(ref[0] < 1e-7, `reference first layer ${ref[0]}`);
+
+	// Every nuclide on the path at once, since they share the cells: a
+	// daughter that decays fast has a thin profile, and thins the layers of
+	// its parent too. So does one that diffuses slowly into a rock it sorbs on.
+	const withDaughter = farf.autoFirstLayer({
+		penDep: x0, nm: 20, aw: 2000, tw: 50, pe: 10, nucs: [nuc, { de, rm: 54, lam: 0.03, rf: 1 }],
+	});
+	assert(withDaughter < g.d[0] / 3, `a fast daughter leaves the first layer at ${withDaughter}`);
+	// Never thicker than an even split, which is where the series stops growing.
+	const shallow = farf.matchedGrid({ penDep: 0.02, nm: 10, first: null, aw: 2000, tw: 50, pe: 10, nucs: [nuc] });
+	assert(shallow.q === 1 && shallow.d.every((x) => x === 0.002), JSON.stringify(Array.from(shallow.d)));
+	// A nuclide that does not enter the rock asks for nothing.
+	assert(farf.penetrationScale({ de: 0, rm, lam: 0 }, { aw: 2000, tw: 50, pe: 10 }) === Infinity);
+	// A first layer too thick to grow from is refused, as for the reference ones.
+	let refused = null;
+	try { farf.matchedGrid({ penDep: 5, nm: 20, first: 1, aw: 2000, tw: 50, pe: 10, nucs: [nuc] }); } catch (e) { refused = e.message; }
+	assert(/cannot add up to a penetration depth/.test(refused ?? ''), String(refused));
+});
+
+test('the matched layers are laid out at the start of a run and held to its end', async () => {
+	const farf = await import('../src/domain/farfield.js');
+	// A path whose travel time follows a table would otherwise lay its layers
+	// out afresh as it moved, carrying one layer's inventory into another's
+	// geometry. So the runtime lays them out at the first refresh after a
+	// restart and keeps them; the rates over them follow the settings.
+	const keys = farf.activeEquationKeys({ surface: 'f' });
+	const settingBase = Object.fromEntries(keys.map((k, i) => [k, i]));
+	const path = new FarfPath({
+		structure: { n_f: 4, n_m: 5, o_b: 4, n_b: '', pe: 10 }, base: 0, nnuc: 1, otherWidth: 1,
+		dimOff: Int32Array.from([0]), singleOff: Int32Array.from([0]), settingBase, keys,
+		single: keys.filter((k) => !farf.FARF_NUCLIDE_KEYS.includes(k)), grid: 'matched', surface: 'f',
+		releaseBase: keys.length,
+	});
+	const X = new Float64Array(keys.length + 1);
+	const put = (v) => { for (const [k, x] of Object.entries(v)) X[settingBase[k]] = x; };
+	put({ tw: 50, f: 1e5, kd_f: 0, kd_m: 1e-3, de_m: 3e-5, eps_m: 0.004, rho_m: 2700, pe: 10, pen_dep: 12.5, pen_dep_0: 0 });
+	path.refresh(X);
+	const first = Array.from(path.layers[0].d);
+	const before = Array.from(path.vals);
+	// The travel time moves: the rates follow it, the layers do not.
+	put({ tw: 80, f: 1.6e5 });
+	path.refresh(X);
+	assert(Array.from(path.layers[0].d).every((x, j) => x === first[j]), 'the layers moved within a run');
+	assert(Array.from(path.vals).some((v, e) => v !== before[e]), 'the rates did not follow the travel time');
+	// A new run lays them out again, from the settings as they are now.
+	put({ de_m: 3e-4 });
+	path.restart();
+	path.refresh(X);
+	assert(path.layers[0].d[0] !== first[0], 'a new run kept the last run’s layers');
+	// And the reference layers are not held: they follow their settings, as they always did.
+	assert(new FarfPath({
+		structure: { n_f: 4, n_m: 5, o_b: 1, n_b: 0 }, base: 0, nnuc: 1, otherWidth: 1,
+		dimOff: Int32Array.from([0]), singleOff: Int32Array.from([0]), settingBase, keys,
+		single: [], releaseBase: keys.length,
+	}).grid === 'reference', 'a path that says nothing has the reference layers');
+});
+
+test('the rock goes on past the release point: its flux is read at the plane and counted once', async () => {
+	const farf = await import('../src/domain/farfield.js');
+	// As many cells of rock past the plane as the push back upstream needs:
+	// the fewest that bring ((2 NF - Pe)/(2 NF + Pe))^NB under a tenth.
+	const counts = [[20, 10, 5], [40, 10, 10], [10, 10, 3], [5, 10, 0], [3, 10, 0], [20, 'Pe_far', 5], [1, 10, 0]];
+	for (const [nf, pe, want] of counts) {
+		assert(farf.autoExtraCells(nf, pe) === want, `NF ${nf}, Pe ${pe}: ${farf.autoExtraCells(nf, pe)} cells`);
+	}
+	// On the grid it is those cells, closed by linear extrapolation, the
+	// release read between cell NF and the first of them.
+	const eff = farf.effectiveStructure({ n_f: 20, n_m: 20, o_b: 4, n_b: '', pe: '10' });
+	assert(eff.o_b === 2 && eff.n_b === 5 && eff.downstream, JSON.stringify(eff));
+	assert(farf.effectiveStructure({ ...eff }).n_b === 5, 'not idempotent');
+	assert(farf.extraCells({ n_f: 20, o_b: 1, n_b: '' }) === 0, 'the closed outlet worked out cells');
+	assert(farf.heldCells({ n_f: 20, n_m: 20, o_b: 4, n_b: '', pe: '10' }) === 20 * 21, 'held counts the rock downstream');
+
+	// Everything that went in is in the path or in the compartment its
+	// release was handed to: the cells past the plane hold released mass and
+	// are not the path's.
+	const model = (ob) => ({
+		name: 'goes-on',
+		simulation: {
+			start_time: 0, end_time: 4e3, output_points: 200, spacing: 'linear',
+			solver: 'ndf', rtol: 1e-10, abstol: 1e-24, time_unit: 'year',
+		},
+		nuclides: ['Sn-126'],
+		half_lives: { 'Sn-126': 'stable' },
+		compartments: [{ name: 'Out', initial: '0', index_lists: ['Radionuclides'] }],
+		inflows: [{ name: 'In', to: 'Rock', rate: '1', index_lists: ['Radionuclides'] }],
+		transfers: [{
+			name: 'Release', from: 'Rock', to: 'Out',
+			rate: 'Rock', multiply_by_donor: false, index_lists: ['Radionuclides'],
+		}],
+		farfields: [{
+			name: 'Rock', index_lists: ['Radionuclides'], handle_decay: false,
+			tw: '20', f: '1e4', kd_f: '0', kd_m: '1e-4', de_m: '1e-3',
+			eps_m: '0.0018', rho_m: '2700', pe: '8', pen_dep: '5', pen_dep_0: '',
+			n_f: 8, n_m: 6, o_b: ob, n_b: '', grid: 'matched',
+		}],
+	});
+	const res = run(structuredClone(model(4)));
+	const held = res.series(res.outputs().find((o) => o.kind === 'farfield_inventory'));
+	const out = res.series(res.outputs().find((o) => o.block === 'Out'));
+	for (let k = 0; k < res.t.length; k += 20) {
+		close(held[k] + out[k], res.t[k], 1e-6, `at t=${res.t[k]}: held ${held[k]} + delivered ${out[k]}`);
+	}
+	// ...so delivering it is not the double counting the reference outlets' cells are.
+	assert(ed.farfieldWarning(model(4), model(4).farfields[0]) == null, 'the rock downstream warns of counting twice');
+	const legacy = model(1);
+	legacy.farfields[0].n_b = 2;
+	assert(/counts it twice/.test(ed.farfieldWarning(legacy, legacy.farfields[0]) ?? ''), 'the old extra cells stopped warning');
+
+	// And the spread comes out as asked: a pulse read back off the release
+	// gives Pe 10 at 20 cells, where the closed outlet adds its own residue.
+	const measure = (ob) => {
+		const r = run({
+			name: 'pe', nuclides: ['X'], half_lives: { X: 'stable' },
+			simulation: { ...DEFAULT_SIMULATION, end_time: 400, output_points: 2001, spacing: 'linear', rtol: 1e-10, abstol: 1e-18 },
+			index_lists: [{ name: 'Radionuclides', for_contaminants: true, indices: [{ name: 'X' }] }],
+			compartments: [{ name: 'Src', initial: '1', index_lists: ['Radionuclides'] }],
+			farfields: [{
+				name: 'P', index_lists: ['Radionuclides'], tw: '100', f: '1e5', kd_f: '0', kd_m: '0', de_m: '0',
+				eps_m: '0.0018', rho_m: '2700', pe: '10', pen_dep: '12.5', pen_dep_0: '',
+				n_f: 20, n_m: 2, o_b: ob, n_b: '', grid: 'matched', handle_decay: false,
+			}],
+			transfers: [{ name: 'In', from: 'Src', to: 'P', rate: '1e9', multiply_by_donor: true, index_lists: ['Radionuclides'] }],
+			inflows: [], parameters: [], expressions: [],
+		});
+		const v = r.series(r.outputs().find((o) => o.kind === 'farfield'));
+		let m0 = 0, m1 = 0, m2 = 0;
+		for (let k = 1; k < r.t.length; k++) {
+			const dt = r.t[k] - r.t[k - 1];
+			const f = (v[k] + v[k - 1]) / 2;
+			const t = (r.t[k] + r.t[k - 1]) / 2;
+			m0 += f * dt; m1 += f * t * dt; m2 += f * t * t * dt;
+		}
+		const mean = m1 / m0;
+		return 2 / (m2 / m0 - mean * mean) * mean * mean;
+	};
+	const goesOn = measure(4);
+	assert(Math.abs(goesOn - 10) < 0.1, `the rock going on measures Pe ${goesOn.toFixed(3)}`);
+	assert(measure(1) > 10.8, 'the closed outlet lost its residue');
+});
+
+test('F, the wetted surface and the aperture are one path said three ways', async () => {
+	const farf = await import('../src/domain/farfield.js');
+	const s = {
+		nf: 10, nm: 8, tw: 40, f: 8e4, kd_f: 1e-3, kd_m: 2e-3, de_m: 3e-5, eps_m: 0.004, rho_m: 2650,
+		pe: 10, pen_dep: 6, pen_dep_0: null, lam: 0, grid: 'matched',
+	};
+	const byF = farf.coefficients({ ...s, surface: 'f' });
+	const byAw = farf.coefficients({ ...s, surface: 'aw', aw: 2000, f: NaN });
+	const byAperture = farf.coefficients({ ...s, surface: 'aperture', aperture: 1e-3, f: NaN });
+	for (const c of [byAw, byAperture]) {
+		for (const key of ['aw', 'fDf', 'advF', 'dF', 'diffFM1', 'diffM1F']) close(c[key], byF[key], 1e-12, key);
+		for (let j = 0; j < 7; j++) close(c.diffMMF[j], byF.diffMMF[j], 1e-12, `diffMMF ${j}`);
+	}
+	// The builder works out the one in use and leaves the other two as text:
+	// no slot, no evaluation, so an unfinished aperture never stops a path
+	// that gives F.
+	const model = (surface, extra) => ({
+		name: 'three-ways',
+		simulation: { start_time: 0, end_time: 2e3, output_points: 30, spacing: 'log', solver: 'ndf', rtol: 1e-9, abstol: 1e-20, time_unit: 'year' },
+		nuclides: ['Cs-135'],
+		compartments: [],
+		inflows: [{ name: 'In', to: 'Rock', rate: '1', index_lists: ['Radionuclides'] }],
+		farfields: [{
+			name: 'Rock', index_lists: ['Radionuclides'], tw: '40', surface, kd_f: '0', kd_m: '1e-3',
+			de_m: '3e-5', eps_m: '0.004', rho_m: '2650', pe: '10', pen_dep: '6', pen_dep_0: '',
+			n_f: 10, n_m: 8, o_b: 4, n_b: '', grid: 'matched', ...extra,
+		}],
+	});
+	const built = buildSystem(new Project(model('aperture', { aperture: '1e-3', f: 'not ( an equation', aw: '' })));
+	const names = built.layout.algebraic.map((a) => a.name);
+	assert(names.includes('Rock#aperture') && !names.includes('Rock#f') && !names.includes('Rock#aw'), names.join());
+	const series = (m) => {
+		const r = run(structuredClone(m));
+		return r.series(r.outputs().find((o) => o.block === 'Rock'));
+	};
+	const a = series(model('f', { f: '8e4' }));
+	const b = series(model('aw', { aw: '2000' }));
+	const c = series(model('aperture', { aperture: '1e-3' }));
+	const peak = Math.max(...a);
+	for (let k = 0; k < a.length; k++) {
+		assert(Math.abs(b[k] - a[k]) <= 1e-7 * peak && Math.abs(c[k] - a[k]) <= 1e-7 * peak,
+			`at ${k}: F ${a[k]}, a_w ${b[k]}, aperture ${c[k]}`);
+	}
+	// An aperture that is no length is refused in its own words.
+	let refused = null;
+	try { run(model('aperture', { aperture: '0' })); } catch (e) { refused = e.message; }
+	assert(/aperture must be a positive length/.test(refused ?? ''), String(refused));
+});
+
+test('a path needs no radionuclides: species do not decay, and no name is read as a nuclide', () => {
+	// A model with no radionuclides at all gets a path indexed by nothing,
+	// and the dimension box can make it one per chemical species.
+	const raw = {
+		name: 'species', compartments: [], inflows: [], transfers: [],
+		index_lists: [{ name: 'Species', indices: [{ name: 'Sulphide' }, { name: 'Chloride' }] }],
+		simulation: { start_time: 0, end_time: 3e3, output_points: 100, spacing: 'linear', solver: 'ndf', rtol: 1e-10, abstol: 1e-22, time_unit: 'year' },
+	};
+	const block = ed.addFarfield(raw, { name: 'Rock' });
+	assert(block.index_lists.length === 0, JSON.stringify(block.index_lists));
+	ed.setBlockDimensions(raw, 'Rock', ['Species']);
+	ed.addCompartment(raw, { name: 'Out', index_lists: ['Species'] });
+	raw.compartments[0].index_lists = ['Species'];
+	raw.inflows.push({ name: 'In', to: 'Rock', rate: '1', index_lists: ['Species'] });
+	raw.transfers.push({ name: 'Release', from: 'Rock', to: 'Out', rate: 'Rock', multiply_by_donor: false, index_lists: ['Species'] });
+	Object.assign(raw.farfields[0], {
+		tw: '10', f: '2e3', kd_m: '1e-4', de_m: '1e-3', pen_dep: '2', n_f: 8, n_m: 6,
+		entries: [{ index: { Species: 'Chloride' }, kd_m: '0', de_m: '1e-4' }],
+	});
+	const res = run(structuredClone(raw));
+	const pick = (kind, species) => res.series(res.outputs().find((o) => o.kind === kind
+		&& (o.index ?? []).includes(species)));
+	for (const species of ['Sulphide', 'Chloride']) {
+		const held = pick('farfield_inventory', species);
+		const out = res.series(res.outputs().find((o) => o.block === 'Out' && (o.index ?? []).includes(species)));
+		// Nothing decays, so what went in is in the path or delivered.
+		const k = res.t.length - 1;
+		close(held[k] + out[k], res.t[k], 1e-6, `${species}: held ${held[k]} + delivered ${out[k]}`);
+	}
+	// The two species travel the same water with their own chemistry.
+	const r1 = pick('farfield', 'Sulphide');
+	const r2 = pick('farfield', 'Chloride');
+	assert(r1.some((v, k) => Math.abs(v - r2[k]) > 1e-6), 'two species with different sorption came out the same');
+	// And a path of the catalogue carries a stable element beside the
+	// radionuclides: it rides the same cells and does not decay.
+	const mixed = {
+		name: 'mixed', compartments: [], transfers: [],
+		index_lists: [{ name: 'Materials', for_contaminants: true, indices: [{ name: 'Cs-135' }, { name: 'Stable' }] }],
+		half_lives: { Stable: 'stable' },
+		inflows: [{ name: 'In', to: 'Rock', rate: '1', index_lists: ['Materials'] }],
+		farfields: [{ name: 'Rock', index_lists: ['Materials'], ...ed.FARF_DEFAULTS, tw: '10', f: '2e3', de_m: '1e-3', pen_dep: '2', n_f: 8, n_m: 6 }],
+		simulation: { start_time: 0, end_time: 3e3, output_points: 20, spacing: 'linear', solver: 'ndf', rtol: 1e-9, abstol: 1e-20, time_unit: 'year' },
+	};
+	const m = run(mixed);
+	const stable = m.series(m.outputs().find((o) => o.block === 'Rock' && (o.index ?? []).includes('Stable')));
+	close(stable[stable.length - 1], 1, 1e-4, 'a stable member reaches the rate that goes in');
+});
+
+test('a path saved before the new outlet and layers keeps its own, and says so', async () => {
+	const keys = await import('../src/domain/keys.js');
+	const { compareModels } = await import('../src/domain/versions.js');
+	// Written before the choices existed: no layers named, a closed outlet.
+	const old = {
+		name: 'old', nuclides: ['Cs-135'],
+		farfields: [{ name: 'Rock', index_lists: ['Radionuclides'], tw: '50', f: '1e5', o_b: 1, n_b: 0 }],
+	};
+	const migrated = keys.migrateKeys(structuredClone(old));
+	const f = migrated.farfields[0];
+	assert(f.grid === 'reference' && f.o_b === 1 && f.n_b === 0 && f.surface === 'f', JSON.stringify(f));
+	// ...and a file with no outlet at all meant the reference default, the closed one.
+	const bare = keys.migrateKeys({ farfields: [{ name: 'R' }] }).farfields[0];
+	assert(bare.o_b === 1 && bare.n_b === 0 && bare.grid === 'reference', JSON.stringify(bare));
+	// Opening it is not a change to it.
+	assert(compareModels(old, migrated).same, JSON.stringify(compareModels(old, migrated).blocks.changed));
+	// New paths start with the rock going on and the matched layers.
+	assert(ed.FARF_DEFAULTS.o_b === 4 && ed.FARF_DEFAULTS.grid === 'matched' && ed.FARF_DEFAULTS.n_b === '',
+		JSON.stringify(ed.FARF_DEFAULTS));
+	// A path saved from the editor says so out loud, and comes back the same.
+	const raw = { name: 'new', nuclides: ['Cs-135'], compartments: [] };
+	const block = ed.addFarfield(raw, { name: 'Rock' });
+	const back = new Project(structuredClone(raw)).toJSON().farfields[0];
+	for (const key of ['o_b', 'n_b', 'grid', 'surface']) {
+		assert(String(back[key]) === String(block[key]), `${key}: ${back[key]} vs ${block[key]}`);
+	}
+});
+
+test('a path’s Jacobian is exact over the matched layers and the rock going on, however its surface is given', () => {
+	const base = (extra = {}) => ({
+		name: 'jac2',
+		simulation: { start_time: 0, end_time: 100, output_points: 20, spacing: 'linear', solver: 'ndf', rtol: 1e-10, abstol: 1e-20, time_unit: 'year' },
+		nuclides: ['U-234', 'Th-230'],
+		compartments: [
+			{ name: 'Src', initial: '1', index_lists: ['Radionuclides'] },
+			{ name: 'Bio', initial: '0', index_lists: ['Radionuclides'] },
+		],
+		transfers: [
+			{ name: 'T', from: 'Src', to: 'Rock', rate: '0.3', multiply_by_donor: true },
+			{ name: 'R', from: 'Rock', to: 'Bio', rate: 'Rock', multiply_by_donor: false },
+		],
+		farfields: [{
+			name: 'Rock', index_lists: ['Radionuclides'],
+			tw: '1', surface: 'f', f: '1', kd_f: '0.2', kd_m: '0.3', de_m: '0.1',
+			eps_m: '1', rho_m: '2', pe: '4', pen_dep: '3', pen_dep_0: '',
+			n_f: 4, n_m: 3, o_b: 4, n_b: '', grid: 'matched', ...extra,
+		}],
+	});
+	const check = (raw, label) => {
+		const built = buildSystem(new Project(structuredClone(raw)));
+		built.restartPaths();
+		assert(built.jacobian.available, `${label}: ${built.jacobian.reason}`);
+		const n = built.layout.nstate;
+		const y = new Float64Array(n);
+		for (let i = 0; i < n; i++) y[i] = 0.7 + 0.2 * Math.sin(i * 1.7);
+		const t = 13;
+		const fp = new Float64Array(n);
+		const fm = new Float64Array(n);
+		built.dydt(t, y, fp);
+		const J = built.jacobian.evaluateDense(t, y, Array.from({ length: n }, () => new Float64Array(n)));
+		let maxF = 1;
+		for (let i = 0; i < n; i++) maxF = Math.max(maxF, Math.abs(fp[i]));
+		const h = 1e-6;
+		const noise = 8 * Number.EPSILON * maxF / h;
+		for (let j = 0; j < n; j++) {
+			const yj = y[j];
+			y[j] = yj + h; built.dydt(t, y, fp);
+			y[j] = yj - h; built.dydt(t, y, fm);
+			y[j] = yj;
+			for (let i = 0; i < n; i++) {
+				const fd = (fp[i] - fm[i]) / (2 * h);
+				assert(Math.abs(fd - J[i][j]) <= noise + 1e-6 * Math.abs(J[i][j]), `${label}: J(${i},${j}) = ${J[i][j]}, difference ${fd}`);
+			}
+		}
+	};
+	check(base(), 'constant settings');
+	check(base({ surface: 'aw', aw: '1 + 0.5 * Bio[U-234]' }), 'a_w follows a compartment');
+	check(base({ surface: 'aperture', aperture: '2 / (1 + Src[U-234])' }), 'the aperture follows a compartment');
+	check(base({ tw: '1 + Src[U-234]', de_m: '0.1 * (1 + Bio[Th-230])' }), 'travel time and diffusivity follow');
+	check(base({ kd_f: '0.2 * (1 + Src[U-234])', pen_dep_0: '0.3' }), 'coating sorption follows, a given first layer');
 });
 
 test('a connection can be given a colour, a weight and a dash', async () => {
@@ -30263,11 +30770,11 @@ test('the editor is wired to the importer', async () => {
 
 	// One reader for both routes in, so importing accepts exactly what opening
 	// accepts -- including the .eco archives this is actually for.
-	const read = /async function readModelFile\(file\) \{([\s\S]*?)\n\}/.exec(app)?.[1];
+	const read = /async function readModelFile\(file(?:, \{ onStage = null \} = \{\})?\) \{([\s\S]*?)\n\}/.exec(app)?.[1];
 	assert(read && /importEcoFile/.test(read) && /importModelXML/.test(read),
 		'the file reader does not read the Ecolego forms');
-	const open = /async function openModelFile\(file\) \{([\s\S]*?)\n\}/.exec(app)?.[1];
-	assert(open && /readModelFile\(file\)/.test(open),
+	const open = /async function openModelFile\(file(?:, \{ read = null \} = \{\})?\) \{([\s\S]*?)\n\}/.exec(app)?.[1];
+	assert(open && /readModelFile\(file, \{ onStage: /.test(open),
 		'Open… and Import… read a file two different ways');
 
 	// The model being imported *from* is put through the same tidying as one
@@ -31196,7 +31703,7 @@ test('a version report says what changed between two models, block by block', as
 	const lines = V.reportLines(diff, { before: 'well-jan.json', after: 'well-mar.json' });
 	const text = lines.join('\n');
 	assert(lines[0] === 'Version report: well-mar.json against well-jan.json');
-	assert(/^Blocks: 6 before, 6 after — 1 added, 1 removed, 3 changed, 1 renamed, 3 in the lists and nuclides, 2 settings, the name or description$/m.test(text), lines[1]);
+	assert(/^Blocks: 6 before, 6 after — 1 added, 1 removed, 3 changed, 1 renamed, 3 in the lists and nuclides, 2 settings, the name, description or author$/m.test(text), lines[1]);
 	assert(/^\+ compartment Lake$/m.test(text) && /^- compartment Well$/m.test(text));
 	assert(/^↔ parameter k_old → k \(renamed\)$/m.test(text));
 	assert(/^~ parameter Kd\n    entries\[Cs-137\]\.value: 100 → 200\n    entries\[Ra-226\]: \(absent\) → \{"index":"Ra-226","value":500\}$/m.test(text), text);
@@ -31225,7 +31732,7 @@ test('the sidebar offers a version report against the file as opened or another 
 	// The model as opened is kept as one string beside the undo stack, and it
 	// is taken after the tidying that opening does, so that tidying is not a
 	// difference.
-	assert(/undoStack\.reset\(state\.raw, viewNow\(\)\);\n(?:\s*\/\/.*\n)*\s*state\.opened = \{\n\s*text: JSON\.stringify\(state\.raw\),\n\s*label: modelSource\?\.example \? `the example \$\{modelSource\.example\}` : \(modelSource\?\.label \?\? UNTITLED\),/.test(app),
+	assert(/undoStack\.reset\(state\.raw, viewNow\(\)\);\n(?:\s*\/\/.*\n)*\s*state\.opened = \{\n\s*text: typeof undoStack\.cur === 'string' \? undoStack\.cur : JSON\.stringify\(state\.raw\),\n\s*label: modelSource\?\.example \? `the example \$\{modelSource\.example\}` : \(modelSource\?\.label \?\? UNTITLED\),/.test(app),
 		'the model as opened is not remembered at setModel');
 	assert(/className: 'ghost sb-action sb-compare'/.test(app), 'no Compare with button');
 	assert(/label: 'The model as it was opened'/.test(app) && /label: 'Another file(?:…|\\u2026)'/.test(app));
@@ -35197,7 +35704,7 @@ test('everything this tool writes is in one room, and everything a file holds is
 	assert(KINDS.find((k) => k.key === 'realisations')?.holds === true, 'Realisations does not ask');
 	assert(/const HOLDS = \[\n\t\['all',[\s\S]*?\n\t\['mean',[\s\S]*?\n\t\['one',/.test(dialog),
 		'the three holdings are not offered');
-	assert(/holds,\n\t\t\t\t\twhich,\n\t\t\t\t\}\);/.test(dialog), 'the choice does not leave the dialog');
+	assert(/holds,\n\t\t\t\t\twhich,\n(?:\t\t\t\t\t.*\n)*\t\t\t\t\}\);/.test(dialog), 'the choice does not leave the dialog');
 	assert(/await downloadRealisations\(idx, null, holds === 'one' \? which : holds, handoff\);/.test(app),
 		'the export is not told which of the sample to write');
 
@@ -36548,11 +37055,131 @@ test('whether to split is a setting, with an automatic choice that says why', as
 	// The worker decides from the built system, hands a failed split back to
 	// the whole model, and says in the run's statistics what it did.
 	const worker = readFileSync(new URL('../src/worker/sim-worker.js', import.meta.url), 'utf8');
-	assert(/const plan = planSplit\(system, whole, \{/.test(worker), 'the worker does not plan');
+	assert(/let plan = planSplit\(system, whole, splitOptions\);/.test(worker), 'the worker does not plan');
 	assert(/plan\.why = `tried, and solved whole instead: \$\{e\.message \?\? e\}`;/.test(worker),
 		'a split that fails is not solved whole');
 	assert(/if \(msg\.type === 'part-run'\) \{/.test(worker) && /onGrid: true,/.test(worker), 'no worker takes a part');
 	assert(/split: \{\n\t\t\t\tused: !!plan\.use, mode: plan\.mode, why: plan\.why,/.test(worker), 'the run does not say');
+});
+
+test('a split starts no more workers than the page’s memory can hold, and builds each worker’s share once', async () => {
+	const split = await import('../src/sim/split.js');
+	const { Results } = await import('../src/sim/runner.js');
+	const { readFileSync } = await import('node:fs');
+	// The largest imported assessment: 23.8 million characters of model and
+	// 7.7 million of generated code. The tab has room for six of its workers,
+	// and a machine that says it has 8 GB for three.
+	const big = { modelChars: 23.8e6, codeChars: 7.7e6 };
+	assert(split.partWorkerCap(big).workers === 6, JSON.stringify(split.partWorkerCap(big)));
+	assert(split.partWorkerCap({ ...big, deviceMemory: 8 }).workers === 3, JSON.stringify(split.partWorkerCap({ ...big, deviceMemory: 8 })));
+	// A model a quarter the size of the page's budget has no room for a worker at all.
+	assert(split.partWorkerCap({ modelChars: 1e6, codeChars: 3e7 }).workers === 1, 'a worker the tab has no room for');
+	// An ordinary one is held to the ceiling whatever the machine has.
+	assert(split.partWorkerCap({ modelChars: 5e5, codeChars: 2e5, deviceMemory: 8 }).workers === split.MOST_PART_WORKERS, 'the ceiling');
+
+	const load = (file) => JSON.parse(readFileSync(new URL(`../examples/${file}`, import.meta.url), 'utf8'));
+	const bio = new Project(load('biosphere.json'));
+	const sys = buildSystem(bio);
+	assert(split.codeChars(sys) > 1000 && split.codeChars(sys) < 1e7, `${split.codeChars(sys)} characters of code`);
+	const plan = (opts) => split.planSplit(sys, bio, { workers: 8, nest: true, ...opts });
+	// The memory decides how many, and says so.
+	const two = plan({ mode: 'on', memoryCap: 2 });
+	assert(two.use && two.bins.length === 2 && /as many as the page’s memory allows/.test(two.why), two.why);
+	assert(!plan({ mode: 'on', memoryCap: 1 }).use && /room for one worker/.test(plan({ mode: 'on', memoryCap: 1 }).why),
+		plan({ mode: 'on', memoryCap: 1 }).why);
+	// A bin is one job: its materials together, built once, filing the states
+	// of every part in it -- and the run is the whole model's to within the
+	// tolerance, as a job per part is.
+	const { jobs, owner } = split.binJobs(two);
+	assert(jobs.length === 2 && jobs.reduce((s, j) => s + j.states, 0) === sys.layout.nstate, JSON.stringify(jobs));
+	assert(new Set(jobs.flatMap((j) => j.materials)).size === two.jobs.flatMap((j) => j.materials).length, 'a material in two bins');
+	const pj = bio.toJSON();
+	const outcomes = jobs.map((job) => {
+		const r = run(new Project(split.partModel(pj, job.materials)), { onGrid: true });
+		const np = r.system.layout.nstate;
+		const y = new Float64Array(r.t.length * np);
+		r.y.forEach((row, i) => y.set(row, i * np));
+		return { t: r.t, y, np, keys: split.stateKeys(r.system.layout), stats: r.stats };
+	});
+	const { t, rows, stats } = split.assembleParts({ keys: two.keys, owner }, outcomes);
+	const parted = new Results({ project: bio, system: sys, solution: { t, y: rows, stats }, timing: {} });
+	const ref = run(new Project(load('biosphere.json')));
+	const a = ref.seriesMany(ref.outputs());
+	const b = parted.seriesMany(parted.outputs());
+	let worst = 0;
+	a.forEach((col, k) => {
+		const peak = Math.max(...Array.from(col, Math.abs)) || 1;
+		for (let i = 0; i < col.length; i++) worst = Math.max(worst, Math.abs(col[i] - b[k][i]) / peak);
+	});
+	assert(worst < 2e-4, `two bins differ from the whole by ${worst.toExponential(2)} of a peak`);
+
+	// The worker works the cap out before it starts anything, starts one
+	// worker per bin, gives each its bin as one job and closes it when that is
+	// in, and a part's worker lets go of the text and the code's text.
+	const worker = readFileSync(new URL('../src/worker/sim-worker.js', import.meta.url), 'utf8');
+	assert(/const cap = partWorkerCap\(\{\n\t+modelChars: splitText\.length,\n\t+codeChars: codeChars\(system\),\n\t+deviceMemory:/.test(worker)
+		&& /plan = planSplit\(system, whole, \{ \.\.\.splitOptions, memoryCap: cap\.workers \}\);/.test(worker), 'no cap');
+	assert(/const \{ jobs: work, owner \} = binJobs\(plan\);/.test(worker) && /\} finally \{\n\t+workers\[b\]\.close\(\);/.test(worker),
+		'a worker per bin, closed when it is done');
+	assert(/msg\.text = null;/.test(worker) && /partSystem\.source = null;/.test(worker), 'a part keeps what it has read');
+});
+
+test('opening a file says how far it has got: the import is taken a step at a time', async () => {
+	const { importModelXML, importModelXMLStepwise, importEcoFile } = await import('../src/io/eco.js');
+	const eco = await import('../src/io/ecoexport.js');
+	const fx = await import('./eco-export-fixture.js');
+	// The same model either way, and the steps in order.
+	const { xml, bytes } = await eco.exportEco(fx.EVERY_KIND);
+	const stages = [];
+	const stepwise = await importModelXMLStepwise(xml, { fileName: 'x.eco' }, async (s) => { stages.push(s); });
+	const whole = importModelXML(xml, { fileName: 'x.eco' });
+	assert(stages.join() === 'xml,blocks,settings', stages.join());
+	assert(JSON.stringify(stepwise.project) === JSON.stringify(whole.project), 'the steps make another model');
+	// From an archive, which is unzipped first; and a caller that asks for no
+	// steps gets none and waits for nothing.
+	const archived = [];
+	const back = await importEcoFile(bytes, { fileName: 'x.eco', onStage: (s) => { archived.push(s); } });
+	assert(archived.join() === 'unzip,xml,blocks,settings', archived.join());
+	assert(!('onStage' in back.project) && !/onStage/.test(back.project.description), 'the page’s hook went into the model');
+	assert(JSON.stringify((await importEcoFile(bytes, { fileName: 'x.eco' })).project) === JSON.stringify(back.project), 'a different model without the hook');
+	// The page shows each step in the footer and paints before the next, and
+	// takes the bar down after -- unless a run has taken it.
+	const { readFileSync } = await import('node:fs');
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	assert(/\?\? await readModelFile\(file, \{ onStage: \(stage\) => showOpening\(stage, file\.name\) \}\);\n\t+await showOpening\('setup', file\.name\);\n\t+setModel\(project, \{ label: file\.name \}\);/.test(app), 'no steps on the way in');
+	assert(/\} finally \{\n\t\tendOpening\(\);\n\t\}/.test(app) && /function endOpening\(\) \{[\s\S]*?if \(state\.running\) return;/.test(app), 'the bar is left up, or a run’s is taken down');
+	assert(/requestAnimationFrame\(\(\) => setTimeout\(\(\) => \{ clearTimeout\(t\); resolve\(\); \}, 0\)\);/.test(app), 'no paint between the steps');
+	// Import… reads the file once: opening it from there is what was read.
+	assert((app.match(/run: \(\) => openModelFile\(file, \{ read \}\),/g) ?? []).length === 2, 'Import… reads the file again to open it');
+});
+
+test('the values at the start are worked out in a worker, and read out of it block by block', async () => {
+	const { valuesAtStart } = await import('../src/sim/atstart.js');
+	const { readFileSync } = await import('node:fs');
+	const raw = JSON.parse(readFileSync(new URL('../examples/farfield.json', import.meta.url), 'utf8'));
+	const harness = await simWorker();
+	const id = 900001;
+	const [ready] = await harness.ask({ type: 'start-values', id, text: JSON.stringify(raw) });
+	assert(ready.type === 'start-values' && ready.fault === null && ready.ms >= 0, JSON.stringify(ready));
+	const [answer] = await harness.ask({ type: 'start-of', id, names: ['Vault', 'Leach', 'Nothing'] });
+	const here = valuesAtStart(new Project(structuredClone(raw)));
+	const got = new Map(answer.answers);
+	assert(JSON.stringify(got.get('Vault').own) === JSON.stringify(here.of('Vault').own), 'another Vault');
+	assert(JSON.stringify([...got.get('Leach').fields]) === JSON.stringify([...here.of('Leach').fields]), 'another Leach');
+	assert(got.get('Nothing') === null, 'a block that is not there');
+	// A question about another build is answered with nothing.
+	const [stale] = await harness.ask({ type: 'start-of', id: id + 1, names: ['Vault'] });
+	assert(stale.answers === null, JSON.stringify(stale));
+	// A model that will not build says why, as the page's strip needs it.
+	const broken = structuredClone(raw);
+	broken.transfers[0].rate = 'no_such_block * 2';
+	const [fault] = await harness.ask({ type: 'start-values', id: id + 2, text: JSON.stringify(broken) });
+	assert(fault.fault && /no_such_block/.test(fault.fault.message), JSON.stringify(fault));
+	// And the answer does not keep the whole build alive: what it reads is the
+	// layout and the values, not the system.
+	const atstart = readFileSync(new URL('../src/sim/atstart.js', import.meta.url), 'utf8');
+	const reader = /const describe = \(name\) => \{[\s\S]*?\n\t\};/.exec(atstart)?.[0] ?? '';
+	assert(reader && !/\bsys\b|\bproject\b/.test(reader) && /\t\tlayout, entry, kind, SOURCE\[where\],/.test(atstart), 'the answer holds the system');
 });
 
 test('a part that reads another material by name builds with that one switched on', async () => {
@@ -36999,8 +37626,9 @@ test('several block settings windows can be open at once, each about its own blo
 	assert(/document\.querySelector\('dialog:modal'\) \?\? footer/.test(app), 'the notice moves into a window');
 });
 
-test('Information pops out into a window of its own, and its arrows sit beside its (i)', async () => {
+test('Information pops out into a window of its own and back, and its arrows sit beside its (i)', async () => {
 	const { readFileSync } = await import('node:fs');
+	const { popIcon } = await import('../src/ui/icons.js');
 	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
 	const info = readFileSync(new URL('../src/ui/info.js', import.meta.url), 'utf8');
 	const modal = readFileSync(new URL('../src/ui/modal.js', import.meta.url), 'utf8');
@@ -37012,6 +37640,47 @@ test('Information pops out into a window of its own, and its arrows sit beside i
 	const icon = info.indexOf('if (hooks.info && !windowed) bar?.append(hooks.info());');
 	assert(edit > 0 && arrows > edit && icon > arrows, `the bar's order: door ${edit}, arrows ${arrows}, (i) ${icon}`);
 	assert(/bar\?\.append\(nav\);\n[^]*?if \(hooks\.info && !windowed\)/.test(info), 'the (i) is no longer after the buttons');
+	// And beside it on the screen, which the order alone did not make them.
+	// Every section's (i) is pushed right by an auto margin, and the arrows
+	// are too; two auto margins in one row share the free space, so the
+	// arrows sat halfway along until the (i) after them gave its margin up,
+	// by a rule that outranks `.panel-section > summary > .info-btn`.
+	assert(/^\.panel-section > summary > \.info-nav \+ \.info-btn \{ margin-left: 4px;/m.test(css),
+		'the (i) after the arrows keeps its auto margin, and the arrows float away from it');
+	assert(!/^\.info-nav \+ \.info-btn \{/m.test(css), 'the weaker rule is back, and loses to the auto margin');
+	// Out by a box with an arrow leaving it, back by the same box with the
+	// arrow coming home, where the × is in any other window: the × read as
+	// closing the view, not as putting it back.
+	assert(/popIcon\('out'\)\);/.test(info) && !/\\u29c9/.test(info), 'the pop-out button is not the icon');
+	assert(/back\.classList\.add\('is-pop-back'\);\n\tback\.replaceChildren\(popIcon\('back'\)\);/.test(app)
+		&& /back\.setAttribute\('aria-label', 'Put Information back in the panel'\);/.test(app),
+		'the window is still put back with a ×');
+	assert(/^\.modal-close\.is-pop-back \{/m.test(css), 'the put-back button is drawn as a ×-sized text button');
+	// The two icons, built on a stub document -- synchronously, since
+	// `document` is global and other tests run beside this one.
+	const made = [];
+	const previous = globalThis.document;
+	globalThis.document = {
+		createElementNS: (ns, tag) => {
+			const n = { tag, attrs: {}, kids: [], setAttribute(k, v) { this.attrs[k] = v; }, append(...c) { this.kids.push(...c); } };
+			made.push(n);
+			return n;
+		},
+	};
+	let out, back;
+	try {
+		out = popIcon('out');
+		back = popIcon('back');
+	} finally {
+		if (previous === undefined) delete globalThis.document;
+		else globalThis.document = previous;
+	}
+	const heads = [out, back].map((g) => g.kids.map((k) => k.attrs.d).at(-1));
+	assert(heads[0] === 'M9.5 2.5h4v4' && heads[1] === 'M7.5 4.5v4h4', `arrowheads ${JSON.stringify(heads)}`);
+	assert([out, back].every((g) => g.attrs.stroke === 'currentColor' && g.attrs['aria-hidden'] === 'true'
+		&& g.kids.slice(0, 2).map((k) => k.attrs.d).join() === back.kids.slice(0, 2).map((k) => k.attrs.d).join()),
+		'the two are not one box and one line, in the button\'s colour');
+	assert(out.attrs.class === 'pop-icon pop-out' && back.attrs.class === 'pop-icon pop-back');
 	// The way out, beside the view's name, and the view drawn into a window's
 	// body with its buttons in the window's head.
 	assert(/bar\.querySelector\('\.panel-section-title'\)\?\.after\(out\);/.test(info), 'no pop-out button beside the name');
@@ -37156,7 +37825,10 @@ test('a fault found by building the model is marked on its block, and said in it
 	const { readFileSync } = await import('node:fs');
 	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
 	assert(/for \(const p of \[state\.runProblem, state\.buildProblem\]\) \{\n\t\tif \(p\?\.where\) entries\.push/.test(app), 'a build fault marks no block');
-	assert(/startValues = \{ model, rev, at \};\n\tnoteBuildProblem\(fault\);/.test(app), 'the build for the values at the start keeps what it found to itself');
+	// In the worker, and on the page where there is none.
+	assert(/startValues = \{ model, rev, id, answers: reply\.fault \? null : new Map\(\), at: null \};\n\tnoteBuildProblem\(reply\.fault \? Object\.assign\(new Error\(reply\.fault\.message\), reply\.fault\) : null\);/.test(app)
+		&& /startValues = \{ model, rev, id: 0, answers: null, at \};\n\tnoteBuildProblem\(fault\);/.test(app),
+		'the build for the values at the start keeps what it found to itself');
 	assert(/state\.runProblem = null;\n\t\t\/\/ And the build's, which is looked for again straight away\.\n\t\trecheckBuild\(\);/.test(app), 'a fixed fault stays');
 	assert(/const faults = el\('div', \{ className: 'settings-problems', role: 'alert' \}\);/.test(app)
 		&& /function fillSettingsProblems\(\)/.test(app), 'the settings say nothing of the block’s faults');
@@ -37314,7 +37986,7 @@ test('every function the shell hands out as a hook is one it defines', async () 
 test('the page opens on a new model unless the address names an example', async () => {
 	const { readFileSync } = await import('node:fs');
 	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
-	assert(/const start = EXAMPLES\.some\(\(e\) => e\.file === wanted\) \? wanted : null;\n\tif \(!start\) \{\n\t\tsetModel\(structuredClone\(BLANK\), \{ label: 'New model' \}\);/.test(app),
+	assert(/const start = EXAMPLES\.some\(\(e\) => e\.file === wanted\) \? wanted : null;\n\tif \(!start\) \{\n\t\tsetModel\(blankModel\(\), \{ label: 'New model' \}\);/.test(app),
 		'the page opens on an example');
 	assert(!/EXAMPLES\[0\]\.file/.test(app), 'the first example is still the default');
 });
@@ -37333,6 +38005,78 @@ test('the build stamp is at the foot of the Help tab, and the footer is the run�
 	assert(/#panel-help \{\n\tgrid-template-rows: auto minmax\(0, 1fr\) auto;/.test(css), 'the Help tab has no row for it');
 	assert(!/^\.build-stamp \{ margin-left: auto/m.test(css), 'the footer’s rule for it is still there');
 });
+
+// =========================================================================
+section('who wrote the model, and when it was made and saved');
+
+test('the author is kept trimmed, beside the name and the description, and dropped when blank', () => {
+	const raw = { name: 'M', description: 'D', simulation: {}, compartments: [], layout: {} };
+	assert(ed.setModelAuthor(raw, '  A. Modeller  ') === 'A. Modeller' && raw.author === 'A. Modeller', raw.author);
+	assert(Object.keys(raw).join() === 'name,description,author,simulation,compartments,layout', Object.keys(raw).join());
+	ed.setModelAuthor(raw, '   ');
+	assert(!('author' in raw) && ed.modelAuthor(raw) === '', JSON.stringify(raw));
+});
+
+test('a save stamps when, and a model made before the field existed is dated by its first save', () => {
+	const raw = { name: 'M', simulation: {}, layout: {} };
+	const first = new Date(Date.UTC(2026, 8, 26, 10, 0, 0, 5));
+	ed.stampSaved(raw, first);
+	assert(raw.created === '2026-09-26T10:00:00.005Z' && raw.saved === raw.created, JSON.stringify(raw));
+	assert(Object.keys(raw).join() === 'name,created,saved,simulation,layout', Object.keys(raw).join());
+	const later = new Date(Date.UTC(2026, 8, 27, 8, 30));
+	ed.stampSaved(raw, later);
+	assert(raw.created === '2026-09-26T10:00:00.005Z' && raw.saved === '2026-09-27T08:30:00.000Z', JSON.stringify(raw));
+	// A stamp that is not a time is not one: the next save dates the model.
+	const odd = { name: 'M', created: 'yesterday' };
+	ed.stampSaved(odd, later);
+	assert(odd.created === odd.saved && ed.readStamp('yesterday') === null && ed.readStamp(odd.saved)?.getTime() === later.getTime(),
+		JSON.stringify(odd));
+	// A new model is dated when it is made, and has not been saved.
+	const made = ed.stampCreated({ name: 'New', simulation: {}, saved: 'x' }, first);
+	assert(made.created === '2026-09-26T10:00:00.005Z' && !('saved' in made), JSON.stringify(made));
+});
+
+test('stepping back through the edits leaves the stamps as they are, and they are not a change to the model', async () => {
+	const now = { name: 'M', created: '2026-01-01T00:00:00.000Z', saved: '2026-09-26T12:00:00.000Z', parameters: [{ name: 'k', value: 2 }] };
+	const before = { name: 'M', created: '2026-01-01T00:00:00.000Z', parameters: [{ name: 'k', value: 1 }] };
+	const back = ed.keepStamps(structuredClone(before), now);
+	assert(back.saved === now.saved && back.parameters[0].value === 1, JSON.stringify(back));
+	assert(Object.keys(back).join() === 'name,created,saved,parameters', Object.keys(back).join());
+	// The version report: the author is a difference, the stamps are not.
+	const V = await import('../src/domain/versions.js');
+	const { describe, shapeOf } = await import('../src/ui/undo.js');
+	const same = V.compareModels(before, { ...before, saved: now.saved, created: '2027-01-01T00:00:00.000Z' });
+	assert(same.same, JSON.stringify(same.other));
+	const diff = V.compareModels({ ...before, author: 'A' }, { ...before, author: 'B' });
+	assert(!diff.same && diff.author?.before === 'A' && diff.author?.after === 'B', JSON.stringify(diff.author));
+	assert(V.reportLines(diff).includes('Author: A → B'), V.reportLines(diff).join('\n'));
+	// And an edit to it is named in the undo list.
+	assert(describe(shapeOf({ ...before, author: 'A' }), shapeOf({ ...before, author: 'B' })) === 'Change the author', 'undo label');
+	// Nothing about it makes a run owing.
+	assert(ed.integrationFingerprint({ ...before, author: 'A', saved: now.saved }) === ed.integrationFingerprint(before),
+		'the fingerprint moved');
+});
+
+test('the Model panel edits the author and shows the dates, and Save stamps what it writes', async () => {
+	const { readFileSync } = await import('node:fs');
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	assert(/id: 'model-author'/.test(app) && /ed\.setModelAuthor\(raw, author\.value\);\n\t\tmodelChanged\(\{ layoutOnly: true \}\);/.test(app),
+		'no author field, or it marks a run owing');
+	assert(/modelDatesLine\(raw\),/.test(app), 'the dates are not shown');
+	// Every write of the model file writes a stamped copy, and the stamps are taken once it is written.
+	const writes = app.match(/const written = modelToWrite\([^)]*\);\n\t+const file = await modelFileFor\([^,]+, written/g) ?? [];
+	assert(writes.length === 3, `${writes.length} writes stamp the model`);
+	assert(/function modelToWrite\(name\) \{\n\treturn \/\\\.eco\$\/i\.test\(name\) \? state\.raw : ed\.stampSaved\(\{ \.\.\.state\.raw \}, new Date\(\)\);/.test(app),
+		'an export is stamped, or a save is not');
+	assert(/state\.raw = ed\.keepStamps\(step\.raw, state\.raw\);/.test(app), 'an undo takes the stamps back');
+	assert(/function blankModel\(\) \{\n\treturn ed\.stampCreated\(structuredClone\(BLANK\)\);/.test(app) && !/setModel\(structuredClone\(BLANK\)/.test(app),
+		'a new model is not dated');
+});
+
+// The semi-analytical far-field path keeps its tests in a file of its own,
+// which also runs alone with a longer comparison against the cells.
+section('the semi-analytical far-field path');
+for (const [name, fn] of (await import('./farfield-laplace.js')).TESTS) test(name, fn);
 
 // =========================================================================
 await Promise.all(pending);

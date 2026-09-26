@@ -65,7 +65,11 @@ class OpeningAFile(unittest.TestCase):
             'parameters': [], 'compartments': [], 'transfers': [], 'expressions': [], 'inflows': [],
         }
         js = app('normalise', model=blank)['model']
-        self.assertEqual(dumps(kp.Model.new().raw), dumps(js))
+        new = kp.Model.new().raw
+        # Dated now, as the application's New dates it -- and beside the name
+        # and the description, as that one writes it.
+        self.assertRegex(new.pop('created'), r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$')
+        self.assertEqual(dumps(new), dumps(js))
 
     def test_state_counts_agree(self):
         for path in sorted(EXAMPLES.glob('*.json')):

@@ -1,0 +1,7 @@
+# A made-up case for the browser test: a chain of three, one element twice
+PRINT DEBUG
+DIFFUSIVITY SINGLE
+CASENAME uchain
+U238   4.468E+09  1  1
+U234   2.455E+05  1  1
+Th230  7.54E+04   0  0

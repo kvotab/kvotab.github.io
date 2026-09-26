@@ -944,6 +944,76 @@ function buildAttributesTable(attrs, jsonReplacer) {
 }
 
 /**
+ * Display information for several groups selected together (Ctrl/Cmd+click),
+ * each one a group that draws a chart of its own, and draw them as one chart
+ * with a panel each (createRadionuclidesChart reads selectedGroups).
+ *
+ * Everything shown comes from the file, so it is set as text, never markup.
+ *
+ * @param {{path: string, fileKey: string|null}[]} items
+ */
+function showMultipleGroupAttributes(items) {
+  const infoDiv = document.getElementById('info');
+  while (infoDiv.firstChild) infoDiv.removeChild(infoDiv.firstChild);
+  if (!items || items.length === 0) {
+    resetInfoPanel();
+    hideChart();
+    return;
+  }
+  infoDiv.style.display = '';
+  const heading = document.getElementById('datasetInfoHeading');
+  if (heading) heading.style.display = '';
+
+  const frag = document.createDocumentFragment();
+  const header = document.createElement('div');
+  header.className = 'info-multi-header';
+  header.textContent = `📊 ${items.length} groups selected`;
+  frag.appendChild(header);
+
+  const row = (label, text) => {
+    const section = document.createElement('div'); section.className = 'info-section';
+    const lbl = document.createElement('div'); lbl.className = 'info-label'; lbl.textContent = label;
+    const val = document.createElement('div'); val.className = 'info-content'; val.textContent = text;
+    section.appendChild(lbl); section.appendChild(val);
+    return section;
+  };
+
+  for (const item of items) {
+    const files = item.fileKey ? [item.fileKey] : getEnabledFiles();
+    for (const fileKey of files) {
+      const file = loadedFiles[fileKey];
+      if (!file || !checkDatasetExistsInFile(file, item.path)) continue;
+      const group = FileService.get(file, item.path);
+      if (!group) continue;
+
+      const section = document.createElement('div'); section.className = 'file-data-section';
+      section.style.borderLeftColor = 'var(--color-kvot-accent)';
+      const h4 = document.createElement('h4');
+      h4.textContent = item.path + ' ';
+      const small = document.createElement('span'); small.style.fontWeight = '400'; small.style.fontSize = '11px'; small.style.color = '#888'; small.textContent = `(${fileKey})`;
+      h4.appendChild(small);
+      section.appendChild(h4);
+
+      let members = [];
+      try { members = (FileService.keys(group) || []).filter(isVisibleGroupEndpoint); } catch (e) { ignoreFailure('showMultipleGroupAttributes', e); }
+      section.appendChild(row('Members', `${members.length}: ${members.slice(0, 8).join(', ')}${members.length > 8 ? ', …' : ''}`));
+
+      const attrs = getAllAttrs(group);
+      const shown = Object.entries(attrs).slice(0, 5);
+      if (shown.length) {
+        section.appendChild(row('Key Attributes', shown.map(([k, v]) => `${k}: ${v === undefined || v === null ? '' : String(v)}`).join('\n')));
+        section.lastChild.querySelector('.info-content').style.whiteSpace = 'pre-line';
+      }
+      frag.appendChild(section);
+    }
+  }
+
+  infoDiv.appendChild(frag);
+  currentPdfHistogram = false;
+  createRadionuclidesChart(items[0].path);
+}
+
+/**
  * Display information for multiple selected datasets.
  * Each item carries its own fileKey for cross-file comparisons.
  * @param {{path: string, fileKey: string|null}[]} items - Array of selected dataset items

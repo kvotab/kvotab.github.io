@@ -124,6 +124,7 @@ export function shapeOf(raw) {
 		shapes: JSON.stringify(raw.shapes ?? null),
 		name: raw.name ?? '',
 		description: raw.description ?? '',
+		author: raw.author ?? '',
 	};
 }
 
@@ -197,6 +198,7 @@ export function describe(before, after, hint) {
 	if (before.shapes !== after.shapes) return 'Edit drawing';
 	if (before.name !== after.name) return 'Rename the model';
 	if (before.description !== after.description) return 'Edit the description';
+	if (before.author !== after.author) return 'Change the author';
 	if (before.view !== after.view) return 'Change what the diagram shows';
 
 	if (before.layout.join('\n') !== after.layout.join('\n')) {

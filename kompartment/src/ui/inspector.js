@@ -24,8 +24,20 @@ import {
 	FARF_HELP,
 	FARF_LABEL,
 	FARF_TERM,
-	OUTFLOWS,
 	OUTFLOW_LABEL,
+	OUTFLOW_ORDER,
+	CONTINUES,
+	SURFACES,
+	SURFACE_KEY,
+	SURFACE_LABEL,
+	FARF_SURFACE_DEFAULTS,
+	GRIDS,
+	GRID_LABEL,
+	FARF_METHODS,
+	METHOD_LABEL,
+	autoExtraCells,
+	isSemiAnalytic,
+	surfaceOf,
 } from '../domain/farfield.js';
 import { pointsBox, sparkPath } from './lookup-editor.js';
 import * as qa from '../domain/qa.js';
@@ -547,7 +559,7 @@ export function renderInspector(host, project, selection, hooks = {}, opts = {})
 	 */
 	const equationField = (label, get, set, {
 		hint, field = null, title, self = false, check = null, complete = null,
-		uncertain = false,
+		uncertain = false, placeholder = '',
 	} = {}) => {
 		const read = check ?? ((text) => validateEquation(project, text, qname, { self }));
 		const error = read(get());
@@ -556,7 +568,7 @@ export function renderInspector(host, project, selection, hooks = {}, opts = {})
 			set(v);
 			hooks.onChange?.({ soft: !!problem });
 			if (problem) hooks.onStatus?.(`${block.name}: ${problem}`, 'warn');
-		}, { mono: true });
+		}, { mono: true, placeholder });
 		// Names are what an equation is mostly made of, and this model's are
 		// neither short nor guessable -- `NearField.Bentoniteinlet.Comp_5`.
 		attachCompletion(input, complete ?? equationLook(project, qname, system));
@@ -993,14 +1005,15 @@ export function renderInspector(host, project, selection, hooks = {}, opts = {})
 		// An event acts on whole blocks: there is no dimension to offer, and
 		// nothing to say about the lists.
 	} else if (kind === 'farfield') {
-		// The filter above is what emptied the list, not the model: a path may
-		// be indexed by the radionuclides or by nothing, and this model has no
-		// radionuclide list to offer.
+		// Nothing to offer: a path may be indexed by any list a compartment
+		// may -- the radionuclides, chemical species, objects -- or by
+		// nothing, and this model has no list it can carry.
 		more(el('p', { className: 'insp-hint insp-noindex' },
-			'A far-field path may be indexed by the radionuclide list or by '
-			+ 'nothing at all, and this model has no radionuclide list. ',
+			'A far-field path may be indexed by any of the model\u2019s index lists '
+			+ '-- the radionuclides, chemical species, landscape objects -- or by nothing, '
+			+ 'which is one quantity that does not decay. This model has none to offer. ',
 			openLists('Add one on the Index lists tab'),
-			' to give the path a nuclide dimension.'));
+			' to give the path a dimension.'));
 	} else if (allLists.length) {
 		// The model has lists, and none of them is one this kind can carry:
 		// a compartment in a model whose only lists are made of its blocks.
@@ -1893,10 +1906,35 @@ export function renderInspector(host, project, selection, hooks = {}, opts = {})
 		// how far into the rock is modelled, and how finely -- rather than as
 		// fourteen fields in the order they happen to be stored.
 		const states = ed.farfieldStates(project, block);
+		// Per nuclide where the path runs a decay chain; a path of chemical
+		// species, or of nothing, has cells per index or just cells.
+		const per = ed.decayDimensionOf(project, block) ? ' per nuclide'
+			: (block.index_lists ?? []).length ? ' per index' : '';
+		// Worked out exactly, the path has no cells: one state for what it
+		// holds, and a release that is a convolution rather than a flux out
+		// of a last cell.
+		const exact = isSemiAnalytic(block);
 		host.append(derivedField('States',
-			`${states.states} (${states.cells} cells per nuclide)`,
-			'The path is solved with the rest of the model, so these are part of '
-			+ 'the state vector. A finer grid costs more of them.'));
+			exact ? `${states.states} (what the path holds${per})`
+				: `${states.states} (${states.cells} cells${per})`,
+			exact
+				? 'The path is solved once for the whole run, in the Laplace domain, and '
+					+ 'its release is what has flowed in convolved with its response: all '
+					+ 'that is left in the state vector is what it holds.'
+				: 'The path is solved with the rest of the model, so these are part of '
+					+ 'the state vector. A finer grid costs more of them.'));
+		// How: on cells with everything else, or exactly. Beside the states,
+		// which are what the choice changes.
+		host.append(selectField(FARF_TERM.method, exact ? 'semi-analytical' : 'discretized',
+			FARF_METHODS.map((m) => [m, METHOD_LABEL[m]]),
+			(v) => commit(() => { block.method = v; }),
+			{
+				hint: exact
+					? 'Exact for the path as given, with no cells to refine: the settings '
+						+ 'have to stay the same through a run, and the rock goes on past the '
+						+ 'release point.'
+					: FARF_HELP.method,
+			}));
 
 		// Where the release goes is a line drawn out of the block, not a field
 		// on it: one mechanism for "this flux goes there", visible on the
@@ -1921,12 +1959,22 @@ export function renderInspector(host, project, selection, hooks = {}, opts = {})
 					+ `equation, so it can be read whether or not it is delivered.`,
 			});
 
-		// F/T_w, the wetted surface per unit volume of water: the one reading
-		// that says what the two numbers above it mean together.
-		const awRow = derivedField('Flow-wetted surface area',
-			numericAw(block),
-			'F/T\u2094 — the wetted surface per unit volume of water, in m²/m³. '
-			+ 'The fracture aperture is twice its inverse.');
+		// The flow-wetted surface, given one of three ways -- F, the wetted
+		// surface per volume of water, or the fracture aperture -- and the other
+		// two worked out beside the choice: the one reading that says what the
+		// numbers mean together. Switching keeps the path the same where the
+		// numbers allow it: the new setting starts at what the old one said.
+		const surface = surfaceOf(block);
+		const surfaceRow = selectField(FARF_TERM.surface, surface,
+			SURFACES.map((k) => [k, SURFACE_LABEL[k]]),
+			(v) => commit(() => {
+				const key = SURFACE_KEY[v];
+				if (block[key] == null || block[key] === '') {
+					block[key] = sameSurface(block, v) ?? FARF_SURFACE_DEFAULTS[key];
+				}
+				block.surface = v;
+			}),
+			{ hint: surfaceReading(block) });
 
 		// The labels are written in symbol markup -- `K<sub>d,f</sub>` -- so
 		// they are rendered rather than printed. See FARF_LABEL.
@@ -1944,19 +1992,23 @@ export function renderInspector(host, project, selection, hooks = {}, opts = {})
 				field: key,
 				uncertain: !dims.length,
 				hint: `${FARF_HELP[key]}${dims.length
-					? ' — a property of the nuclide, so each can have its own below.'
+					? ' — a property of what travels, the nuclide or the species, so each '
+						+ 'can have its own below.'
 					: ''}`,
 			},
 		);
+		// Whichever of the three the path gives.
+		const surfaceValue = single(SURFACE_KEY[surface]);
 
 		// Ten settings in one narrow column is a scroll; in two it is a block
 		// of five rows that can be read at a glance. Paired by what they are
-		// about rather than by storage order: the two derived readings at the
-		// top, then the water's travel beside the surface it travels over,
-		// then each retention term beside the number it is read against.
+		// about rather than by storage order: the release and how the wetted
+		// surface is given at the top, then the water's travel beside the
+		// surface it travels over, then each retention term beside the number
+		// it is read against.
 		//
-		//   Release                 Flow-wetted surface area
-		//   T_w                     F
+		//   Release                 Flow-wetted surface given as
+		//   T_w                     F (or a_w, or δ)
 		//   K_d,f (default)         P_e
 		//   ε_m   (default)         ρ_m
 		//   K_d,m (default)         D_e,m (default)
@@ -1973,8 +2025,8 @@ export function renderInspector(host, project, selection, hooks = {}, opts = {})
 		// every pair by one.
 		releaseRow.classList.add('insp-farf-start');
 		const rows = [
-			releaseRow, awRow,
-			single('tw'), single('f'),
+			releaseRow, surfaceRow,
+			single('tw'), surfaceValue,
 			perNuclide('kd_f'), single('pe'),
 			perNuclide('eps_m'), single('rho_m'),
 			perNuclide('kd_m'),
@@ -1985,43 +2037,118 @@ export function renderInspector(host, project, selection, hooks = {}, opts = {})
 		// them rather than the first, and the section spans the full width.
 		withEntries(perNuclide('de_m'));
 
+		// Worked out exactly there is nothing to discretise: how far the rock
+		// goes is physics, and the outlet is the one the solution has.
+		if (exact) {
+			const depth = equationField(FARF_TERM.pen_dep,
+				() => block.pen_dep, (v) => { block.pen_dep = v; },
+				{ field: 'pen_dep', uncertain: true, hint: FARF_HELP.pen_dep });
+			depth.classList.add('insp-farf-start');
+			host.append(depth);
+			host.append(derivedField(FARF_TERM.o_b, 'The rock goes on past the release point',
+				'The outlet the exact solution has: dispersion carries on past the point '
+				+ 'where the release is measured. Worked out on cells, the block offers the '
+				+ 'others.'));
+		}
+
 		// The discretisation, which is numerics rather than physics.
-		const grid = railSection('farf-grid', 'Discretisation',
+		const grid = exact ? null : railSection('farf-grid', 'Discretisation',
 			`${block.n_f} × ${block.n_m}`,
 			'How finely the path is divided. Numerics rather than physics: a '
 			+ 'finer grid is a better answer and a slower one.');
-		const intoGrid = (node) => grid.append(node);
-		// Labelled by what each one is, not by what the reference
-		// implementation calls it: `PENDEP`, `NF`, `OB` are input names, and a
-		// panel headed by them reads as a listing of variables rather than as
-		// a set of choices. The reference name is on the field's tooltip, for
-		// anyone cross-checking against the SKB reports. See FARF_TERM.
-		const asks = (key) => ({
-			hint: FARF_HELP[key],
-			title: `${ed.symbolText(FARF_LABEL[key])} in the reference implementation`,
-		});
-		for (const key of ['pen_dep', 'pen_dep_0']) {
-			intoGrid(equationField(FARF_TERM[key],
-				() => block[key], (v) => { block[key] = v; },
-				{ field: key, uncertain: true, ...asks(key) }));
+		const intoGrid = (node) => grid?.append(node);
+		if (!exact) {
+			// Labelled by what each one is, not by what the reference
+			// implementation calls it: `PENDEP`, `NF`, `OB` are input names, and a
+			// panel headed by them reads as a listing of variables rather than as
+			// a set of choices. The reference name is on the field's tooltip, for
+			// anyone cross-checking against the SKB reports. See FARF_TERM.
+			const asks = (key) => ({
+				hint: FARF_HELP[key],
+				title: `${ed.symbolText(FARF_LABEL[key])} in the reference implementation`,
+			});
+			// How the layers are laid out: matched to diffusion into the rock, or
+			// the reference implementation's own, kept for the models built on it.
+			const layout = block.grid === 'matched' ? 'matched' : 'reference';
+			intoGrid(selectField(FARF_TERM.grid, layout,
+				GRIDS.map((g) => [g, GRID_LABEL[g]]),
+				(v) => commit(() => { block.grid = v; }),
+				{
+					hint: layout === 'matched'
+						? 'A geometric series from a first layer worked out from the path’s '
+							+ 'own time scales, every nuclide on it at once, with each node placed '
+							+ 'so that the rock takes up what exact diffusion would. Laid out at '
+							+ 'the start of each run and held to its end.'
+						: 'Layers growing by e from the first, nodes at their centres: the '
+							+ 'reference implementation’s, which takes up about 6 % too little '
+							+ 'where its layers are coarse. Kept so that models built on it run '
+							+ 'as they did.',
+				}));
+			for (const key of ['pen_dep', 'pen_dep_0']) {
+				intoGrid(equationField(FARF_TERM[key],
+					() => block[key], (v) => { block[key] = v; },
+					{
+						field: key,
+						uncertain: true,
+						...asks(key),
+						...(key === 'pen_dep_0' ? { placeholder: 'auto' } : {}),
+					}));
+			}
+			for (const key of ['n_f', 'n_m']) {
+				intoGrid(numberField(FARF_TERM[key],
+					() => block[key], (v) => commit(() => { block[key] = Math.round(Number(v)); }),
+					asks(key)));
+			}
+			// The numbers are what the model stores and what a report cites; they
+			// are not a choice anybody makes by number, so the choice is the words.
+			intoGrid(selectField(FARF_TERM.o_b, String(block.o_b ?? 1),
+				OUTFLOW_ORDER.map((o) => [String(o), OUTFLOW_LABEL[o]]),
+				(v) => commit(() => { block.o_b = Number(v); }),
+				{
+					...asks('o_b'),
+					...(Number(block.o_b) === CONTINUES ? {
+						hint: 'The rock does not stop where the release is measured: a few of its '
+							+ 'cells past that point say how the water beyond pushes back, and the '
+							+ 'release is the flux across the plane between them.',
+					} : {}),
+				}));
+			// Extra cells past the release point: a count, or empty to have it
+			// worked out -- which, for the rock that goes on, is as many as the
+			// push back upstream needs, and otherwise none.
+			{
+				const continues = Number(block.o_b) === CONTINUES;
+				const auto = continues ? autoExtraCells(block.n_f, block.pe) : 0;
+				const peNumber = Number.isFinite(Number(block.pe)) && Number(block.pe) > 0;
+				const shown = () => (block.n_b === '' || block.n_b == null ? '' : String(block.n_b));
+				const input = textField(shown(), (v, node) => {
+					const text = v.trim();
+					if (!text) {
+						commit(() => { block.n_b = ''; });
+						return;
+					}
+					const n = Number(text);
+					if (!Number.isInteger(n) || n < 0) {
+						hooks.onStatus?.(`'${v}' is not a whole number of cells`, 'warn');
+						node.value = shown();
+						return;
+					}
+					commit(() => { block.n_b = n; });
+				}, { mono: true, placeholder: `auto: ${auto}` });
+				input.title = `${ed.symbolText(FARF_LABEL.n_b)} in the reference implementation`;
+				intoGrid(row(FARF_TERM.n_b, input, {
+					hint: continues
+						? `${FARF_HELP.n_b}. Empty works it out from the fracture cells and the `
+							+ `Peclet number${peNumber ? '' : ', taken as 10 while it is an equation'}.`
+						: FARF_HELP.n_b,
+				}));
+			}
+			intoGrid(checkField('Report every cell',
+				() => !!block.report_cells,
+				(v) => { block.report_cells = v; },
+				`${FARF_HELP.report_cells} — ${states.states} more series for this block, `
+				+ 'so it is off until it is wanted. The total it holds is always reported.'));
+			more(grid);
 		}
-		for (const key of ['n_f', 'n_m', 'n_b']) {
-			intoGrid(numberField(FARF_TERM[key],
-				() => block[key], (v) => commit(() => { block[key] = Math.round(Number(v)); }),
-				asks(key)));
-		}
-		// The numbers are what the model stores and what a report cites; they
-		// are not a choice anybody makes by number, so the choice is the words.
-		intoGrid(selectField(FARF_TERM.o_b, String(block.o_b ?? 1),
-			OUTFLOWS.map((o) => [String(o), OUTFLOW_LABEL[o]]),
-			(v) => commit(() => { block.o_b = Number(v); }),
-			asks('o_b')));
-		intoGrid(checkField('Report every cell',
-			() => !!block.report_cells,
-			(v) => { block.report_cells = v; },
-			`${FARF_HELP.report_cells} — ${states.states} more series for this block, `
-			+ 'so it is off until it is wanted. The total it holds is always reported.'));
-		more(grid);
 
 		// Decay runs in every cell of the path, as it does in a compartment,
 		// and can be turned off for the same reason.
@@ -2239,18 +2366,52 @@ export function renderInspector(host, project, selection, hooks = {}, opts = {})
  * whether it should go on being one.
  */
 /**
- * F/TW as a number, when both are numbers. Blank when either is an equation:
- * a read-out that guessed would be worse than one that says nothing.
+ * The wetted surface per volume of water a path's settings come to, when they
+ * are numbers: F/T_w, a_w itself, or 2/δ. Null when any of them is an
+ * equation -- a read-out that guessed would be worse than one that says
+ * nothing.
  */
 function numericAw(block) {
+	const how = surfaceOf(block);
 	const tw = Number(block.tw);
-	const f = Number(block.f);
-	if (!Number.isFinite(tw) || !Number.isFinite(f) || !(tw > 0)) {
-		return 'follows the equations';
-	}
-	const aw = f / tw;
-	return `${Number(aw.toPrecision(5))} m²/m³ (aperture ${
-		Number((2 / aw).toPrecision(3))} m)`;
+	let aw = NaN;
+	if (how === 'aw') aw = Number(block.aw);
+	else if (how === 'aperture') aw = 2 / Number(block.aperture);
+	else if (tw > 0) aw = Number(block.f) / tw;
+	return Number.isFinite(aw) && aw > 0 ? aw : null;
+}
+
+const shortNumber = (x, digits = 4) => String(Number(x.toPrecision(digits)));
+
+/**
+ * The other two ways of saying what a path's wetted surface is, for the line
+ * under the choice: given F, the wetted surface and the aperture; given the
+ * surface, F and the aperture; given the aperture, the other two.
+ */
+function surfaceReading(block) {
+	const aw = numericAw(block);
+	const tw = Number(block.tw);
+	if (aw == null) return 'The other two follow the equations: a_w = F/T_w, and the aperture is 2/a_w.';
+	const aperture = `aperture ${shortNumber(2 / aw, 3)} m`;
+	const f = tw > 0 ? `F = a_w·T_w = ${shortNumber(aw * tw)}` : 'F follows T_w';
+	const how = surfaceOf(block);
+	if (how === 'aw') return `${f}; ${aperture}.`;
+	if (how === 'aperture') return `a_w = 2/\u03b4 = ${shortNumber(aw)} m²/m³; ${f}.`;
+	return `a_w = F/T_w = ${shortNumber(aw)} m²/m³; ${aperture}.`;
+}
+
+/**
+ * What a path's wetted surface is when given the other way, as an equation, so
+ * that switching how it is given does not change the path. Null when the
+ * settings are equations and there is no number to carry across.
+ */
+function sameSurface(block, how) {
+	const aw = numericAw(block);
+	if (aw == null) return null;
+	const tw = Number(block.tw);
+	if (how === 'aw') return shortNumber(aw, 12);
+	if (how === 'aperture') return shortNumber(2 / aw, 12);
+	return tw > 0 ? shortNumber(aw * tw, 12) : null;
 }
 
 function renderSystemPanel(host, project, path, hooks) {
@@ -2583,8 +2744,12 @@ export function renderEntryEditor(project, block, kind, dims, hooks, opts = {}) 
 		const decay = ed.decayDimensionOf(project, block);
 		const over = dims.filter((d) => d !== decay);
 		if (over.length) {
+			// Of F, the wetted surface and the aperture, only the one the path
+			// gives: the other two are not worked out, and a column for them
+			// would be numbers that change nothing.
+			const used = new Set(ed.activeEquationKeys(block));
 			extras = [...extras, ...ed.FARF_SINGLE_KEYS
-				.filter((k) => ed.FARF_EQUATION_KEYS.includes(k))
+				.filter((k) => ed.FARF_EQUATION_KEYS.includes(k) && used.has(k))
 				.map((k) => ({
 					key: k,
 					label: ed.FARF_LABEL[k],

@@ -22,6 +22,11 @@ then
 
     python3 resources/tests/facsimile/test-ui.py
 
+Other ports with FAC_HTTP_PORT and FAC_CDP_PORT, for when another session
+has the usual two:
+
+    FAC_HTTP_PORT=8812 FAC_CDP_PORT=9312 python3 resources/tests/facsimile/test-ui.py
+
 Exit status is 0 when every check passes.
 """
 import asyncio
@@ -37,7 +42,23 @@ import websockets
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'rb'))
 from driver import open_page  # noqa: E402
 
-URL = 'http://127.0.0.1:8765/facsimile.html'
+HTTP = int(os.environ.get('FAC_HTTP_PORT', '8765'))
+CDP = int(os.environ.get('FAC_CDP_PORT', '9222'))
+if CDP != 9222:
+    # The HDF5 Browser's driver asks port 9222 for the list of tabs, and it
+    # is that page's file rather than this one's; its question is sent to the
+    # port given here instead.
+    _urlopen = urllib.request.urlopen
+
+    def _urlopen_on_cdp(url, *args, **kwargs):
+        if isinstance(url, str):
+            url = url.replace('127.0.0.1:9222/', f'127.0.0.1:{CDP}/')
+        return _urlopen(url, *args, **kwargs)
+
+    urllib.request.urlopen = _urlopen_on_cdp
+
+SITE = f'http://127.0.0.1:{HTTP}/'
+URL = f'{SITE}facsimile.html'
 # Long enough to exercise the whole machinery, short enough to answer at once.
 TEND_YEARS = 0.01
 REPO = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..'))
@@ -88,7 +109,7 @@ POINTS = "(() => { const d = document.getElementById('chart4'); "\
 
 async def open_rb_tab(bws, settle_seconds=6):
     """Attaches to the HDF5 Browser tab the page opened, if it is there."""
-    listing = json.load(urllib.request.urlopen('http://127.0.0.1:9222/json/list'))
+    listing = json.load(urllib.request.urlopen(f'http://127.0.0.1:{CDP}/json/list'))
     target = next((t for t in listing if 'rb.html' in t.get('url', '')), None)
     if not target:
         return None
@@ -178,7 +199,7 @@ async def tick(page, index):
 
 
 async def main():
-    ver = json.load(urllib.request.urlopen('http://127.0.0.1:9222/json/version'))
+    ver = json.load(urllib.request.urlopen(f'http://127.0.0.1:{CDP}/json/version'))
     async with websockets.connect(ver['webSocketDebuggerUrl'], max_size=64 * 1024 * 1024) as bws:
         tid, page = await open_page(bws, url=URL, settle=3)
         try:
@@ -220,9 +241,11 @@ async def main():
             check('a setting typed in the panel reaches the text', await settle(page,
                 r"/^DOSERI\s*=\s*99\.5\s+# Initial dose rate/m"
                 ".test(document.getElementById('facModelText').value)", True), True)
+            # What the value works out to is on the field as data-value: the
+            # tooltip that carried it is now the row's (i).
             check('and the compiled setting follows it', await settle(page,
-                "document.querySelector('[data-setting=\"DOSERI\"]').title",
-                'DOSERI = 99.5'), 'DOSERI = 99.5')
+                "document.querySelector('[data-setting=\"DOSERI\"]').dataset.value",
+                '99.5'), '99.5')
             check('and the scenario is no longer a preset', await settle(page,
                 "document.getElementById('facPreset').value", ''), '')
 
@@ -255,8 +278,8 @@ async def main():
                 "document.getElementById('facModelText').value === FACSIMILE_DEFAULT_MODEL"), True)
 
             await set_control(page, '[data-setting="TEND"]', str(TEND_YEARS))
-            await settle(page, "document.querySelector('[data-setting=\"TEND\"]').title",
-                         f'TEND = {TEND_YEARS}')
+            await settle(page, "document.querySelector('[data-setting=\"TEND\"]').dataset.value",
+                         str(TEND_YEARS))
 
             # Nothing has been solved yet: ticking must say so rather than throw.
             await tick(page, 0)
@@ -733,7 +756,7 @@ async def main():
             # same case unconstrained is five thousand. That is the shape of
             # run the reader has to be able to watch and to get out of.
             await set_control(page, '[data-setting="TEND"]', '500')
-            await settle(page, "document.querySelector('[data-setting=\"TEND\"]').title", 'TEND = 500')
+            await settle(page, "document.querySelector('[data-setting=\"TEND\"]').dataset.value", '500')
             await set_control(page, '#facHmax', '1e-4')
             await click(page, '#facRun')
             running = await settle(page, "/^Running NDF:/.test("
@@ -769,8 +792,8 @@ async def main():
 
             await set_control(page, '#facHmax', '0')
             await set_control(page, '[data-setting="TEND"]', str(TEND_YEARS))
-            await settle(page, "document.querySelector('[data-setting=\"TEND\"]').title",
-                         f'TEND = {TEND_YEARS}')
+            await settle(page, "document.querySelector('[data-setting=\"TEND\"]').dataset.value",
+                         str(TEND_YEARS))
 
             # --- the model editor -----------------------------------------------
             # Typing a new output at the end of the file, a character at a time,
@@ -949,7 +972,7 @@ async def main():
             # fifteen arrive folded. Seeded from another page of the same
             # origin, as the stored-solver check below is and for the same
             # reason: this page writes its own state back as it unloads.
-            await page.send('Page.navigate', {'url': 'http://127.0.0.1:8765/'})
+            await page.send('Page.navigate', {'url': SITE})
             await asyncio.sleep(1.5)
             await page.ev("""(() => {
               const kept = JSON.parse(localStorage.getItem('kvot-facsimile-v1'));
@@ -1038,7 +1061,7 @@ async def main():
             #
             # Seeded as an older, unedited visit: a stamp that is not today's
             # build, textEdited false, and a setting of the reader's own.
-            await page.send('Page.navigate', {'url': 'http://127.0.0.1:8765/'})
+            await page.send('Page.navigate', {'url': SITE})
             await asyncio.sleep(1.5)
             # The seed is checked, not assumed: it is written into another
             # page's localStorage and read back by a third navigation, and a
@@ -1089,7 +1112,7 @@ async def main():
             # Seeded from another page of the same origin on purpose: this page
             # writes its state back as it unloads, so anything written into
             # storage while it is open is overwritten on the way out.
-            await page.send('Page.navigate', {'url': 'http://127.0.0.1:8765/'})
+            await page.send('Page.navigate', {'url': SITE})
             await asyncio.sleep(1.5)
             seeded = await page.ev("""(() => {
               const raw = localStorage.getItem('kvot-facsimile-v1');
@@ -1111,7 +1134,7 @@ async def main():
             # same solver, so it must come back selected and not merely default
             # to something -- which is indistinguishable here, so the check is
             # that the value is the NDF rather than that nothing broke.
-            await page.send('Page.navigate', {'url': 'http://127.0.0.1:8765/'})
+            await page.send('Page.navigate', {'url': SITE})
             await asyncio.sleep(1.5)
             await page.ev("""(() => {
               const kept = JSON.parse(localStorage.getItem('kvot-facsimile-v1'));
@@ -1128,7 +1151,7 @@ async def main():
             # switch on the NDF and on QNDF. A visit that had one chosen gets
             # that method with the switch on, which is the same run.
             for old, method in (('bdf', 'ndf'), ('julia_qbdf', 'julia_qndf')):
-                await page.send('Page.navigate', {'url': 'http://127.0.0.1:8765/'})
+                await page.send('Page.navigate', {'url': SITE})
                 await asyncio.sleep(1.5)
                 await page.ev("""(() => {
                   const kept = JSON.parse(localStorage.getItem('kvot-facsimile-v1'));
@@ -1153,8 +1176,8 @@ async def main():
             check('with the BDF switch off',
                   await page.ev("document.getElementById('facBdf').checked"), False)
             await set_control(page, '[data-setting="TEND"]', str(TEND_YEARS))
-            await settle(page, "document.querySelector('[data-setting=\"TEND\"]').title",
-                         f'TEND = {TEND_YEARS}')
+            await settle(page, "document.querySelector('[data-setting=\"TEND\"]').dataset.value",
+                         str(TEND_YEARS))
             # Clicked once and then waited on: putting the click inside the
             # polled expression starts a fresh run on every poll.
             await click(page, '#facRun')
@@ -1384,6 +1407,111 @@ async def main():
             check('Reset puts the built-in model back after all that', await settle(
                 page, "document.getElementById('facModelText').value === FACSIMILE_DEFAULT_MODEL", True), True)
 
+            # --- the (i) beside each setting, heading and toolbar ----------------
+            # They replace the hover tooltips the rows had. Every slot has to
+            # have a topic and every Help link a heading to land on; the panel
+            # opens between the header and the footer with its topic's title;
+            # the same (i), the x and Escape close it; a topic that marks the
+            # choice in force follows the control while it is open; and Read
+            # more goes to the Help tab, at the heading it names. Escape is
+            # sent through the browser's own input: it is the page's keydown
+            # handler that closes the panel, not a dialog's close request, so
+            # it is not the Escape that hangs headless Chrome over a <dialog>.
+            await click(page, '[data-tab="charts"]')
+            await settle(page, "document.querySelectorAll('#facSettings [data-setting]').length > 0", True)
+            await page.ev("(() => { for (const id of ['sec-case', 'sec-solver', 'sec-run'])"
+                          " document.getElementById(id).open = true; })()")
+            folded = await page.ev("document.getElementById('facSolverAdvanced').hidden")
+            if folded:
+                await click(page, '#facSolverMore')
+            await asyncio.sleep(0.3)
+            errors_before = len([1 for kind, _ in page.logs if kind in ('error', 'exception')])
+            with open(os.path.join(REPO, 'facsimile.html'), encoding='utf-8') as fh:
+                static_slots = fh.read().count('class="kvot-info-slot"')
+            audit = json.loads(await page.ev("JSON.stringify(KvotInfo.audit())"))
+            check('every (i) has a topic', audit['noTopic'], [])
+            check('and every Help link in them has a heading to go to', audit['brokenMore'], [])
+            check('every slot has its button', audit['buttons'], audit['slots'])
+            check(f'at least the {static_slots} of the markup', audit['buttons'] >= static_slots, True)
+            check('and one on every case setting', await page.ev(
+                "document.querySelectorAll('#facSettings .info-btn').length"
+                " === document.querySelectorAll('#facSettings [data-setting]').length"), True)
+            check('no setting is left with a hover tooltip', await page.ev(
+                "[...document.querySelectorAll('#facSide [title]')].map(e => e.id || e.tagName).join(',')"), '')
+            check('the (i)s of the panel are in one line down its right-hand edge', await page.ev(
+                "new Set([...document.querySelectorAll('#facSide .info-btn')].filter(b => b.checkVisibility())"
+                ".map(b => Math.round(b.getBoundingClientRect().right))).size"), 1)
+
+            panel_title = "(document.querySelector('.info-panel .info-panel-title') || {}).textContent"
+            panel_open = "!!document.querySelector('.info-panel')"
+            await click(page, '[data-info="set:rtol"]')
+            check('an (i) opens the panel with its topic', await page.ev(panel_title), 'Relative tolerance')
+            check('between the header and the footer', await page.ev(
+                "(() => { const p = document.querySelector('.info-panel').getBoundingClientRect();"
+                " const h = document.querySelector('header').getBoundingClientRect();"
+                " const f = document.querySelector('footer').getBoundingClientRect();"
+                " return Math.abs(p.top - h.bottom) < 1 && Math.abs(p.bottom - f.top) < 1; })()"), True)
+            check('and says which (i) it belongs to', await page.ev(
+                "document.querySelector('[data-info=\"set:rtol\"]').getAttribute('aria-expanded')"), 'true')
+            await click(page, '[data-info="set:rtol"]')
+            check('the same (i) closes it', await page.ev(panel_open), False)
+
+            await click(page, '[data-info="sec:solver"]')
+            check('a section heading has one', await page.ev(panel_title), 'Solver')
+            check('which does not fold the section', await page.ev(
+                "document.getElementById('sec-solver').open"), True)
+            await click(page, '.info-panel-close')
+            check('the x closes it', await page.ev(panel_open), False)
+
+            await click(page, '[data-info="set:norm"]')
+            opened_norm = await page.ev(panel_title)
+            for kind in ('keyDown', 'keyUp'):
+                await asyncio.wait_for(page.send('Input.dispatchKeyEvent', {
+                    'type': kind, 'key': 'Escape', 'code': 'Escape', 'windowsVirtualKeyCode': 27}), 20)
+            check('and so does Escape', [opened_norm, await settle(page, panel_open, False, tries=20)],
+                  ['Error norm', False])
+            check('which gives the focus back to the (i)', await page.ev(
+                "document.activeElement && document.activeElement.dataset.info"), 'set:norm')
+
+            # A topic that marks the choice in force is asked again while open.
+            chosen = ("[...document.querySelectorAll('.info-panel .info-choices dt.is-current')]"
+                      ".map(d => d.textContent).join(',')")
+            await click(page, '[data-info="set:method"]')
+            check('a choice topic marks the one in force', await page.ev(chosen), 'NDF')
+            await set_control(page, '#facMethod', 'julia_fbdf')
+            check('and follows the control while it is open', await page.ev(chosen), 'FBDF (Julia port)')
+            await set_control(page, '#facMethod', 'ndf')
+            await page.ev("KvotInfo.close()")
+
+            # A case setting's topic is made from its line in the model text.
+            await click(page, '[data-info="case:DOSERI"]')
+            check('a case setting has one, named from its line', await page.ev(panel_title), 'Initial dose rate')
+            check('with the line itself', await page.ev(
+                "document.querySelector('.info-panel .info-facts dd').textContent"), 'DOSERI = 238.0')
+            check('and what the scenarios set it to', await page.ev(
+                "[...document.querySelectorAll('.info-panel li')].map(li => li.textContent)"
+                ".some(t => t === '238 in 22 of the 39')"), True)
+            await page.ev("KvotInfo.close()")
+
+            await click(page, '[data-info="pane:charts"]')
+            check('so has each tab’s toolbar', await page.ev(panel_title), 'Charts')
+            await page.ev("KvotInfo.close()")
+
+            await click(page, '[data-info="set:belowTolRun"]')
+            await click(page, '.info-panel-more')
+            await asyncio.sleep(0.3)
+            check('Read more in Help goes to the Help tab and closes the panel', await page.ev(
+                "!document.getElementById('pane-help').hidden && !document.querySelector('.info-panel')"), True)
+            check('at the heading it names', await page.ev(
+                "(() => { const h = document.getElementById('help-floor').getBoundingClientRect();"
+                " const p = document.getElementById('pane-help').getBoundingClientRect();"
+                " return Math.abs(h.top - p.top) < 2; })()"), True)
+            check('and none of it raised an error', len([1 for kind, _ in page.logs
+                                                         if kind in ('error', 'exception')]) - errors_before, 0)
+            await click(page, '[data-tab="charts"]')
+            if folded:
+                await click(page, '#facSolverMore')
+
             # --- colouring the model text ---------------------------------------
             # Last, and from a fresh load of the page, for two reasons: the
             # colouring is remembered between visits, so a check that changed
@@ -1396,7 +1524,7 @@ async def main():
             # character lands. A mismatch is invisible in an empty file and
             # glaring in a full one, which is why it is measured here rather
             # than eyeballed.
-            await page.send('Page.navigate', {'url': 'http://127.0.0.1:8765/'})
+            await page.send('Page.navigate', {'url': SITE})
             await asyncio.sleep(1.2)
             check('the stored colouring choice can be cleared', await page.ev(r"""(() => {
               const kept = JSON.parse(localStorage.getItem('kvot-facsimile-v1') || 'null');

@@ -1126,8 +1126,8 @@ function jvpSourceFor(b, opts = {}) {
 		// state, the rate's own tangent. It writes X as well as dX, since the
 		// value has to be there for whatever reads it.
 		if (a.kind === 'farfield') {
-			lines.push(`\tFARF[${a.farfIndex}].release(y, X);`);
-			lines.push(`\tFARF[${a.farfIndex}].releaseTangent(y, v, X, dX);`);
+			lines.push(`\tFARF[${a.farfIndex}].release(y, X, ctx.t);`);
+			lines.push(`\tFARF[${a.farfIndex}].releaseTangent(y, v, X, dX, ctx.t);`);
 			continue;
 		}
 		// Waste packages. The hazard is a function of the clock and of settings
@@ -1554,6 +1554,11 @@ function isConstant(b, SX) {
 	// extreme so far, and a running mean divides by a time that grows. Neither
 	// gives a matrix that can be factorised once.
 	if ((b.recorders ?? []).some((r) => r.mem >= 0)) return false;
+	// Nor does a path worked out semi-analytically: its release carries the
+	// inflow of the step being taken with a weight that changes from step to
+	// step, so the rows of what it holds move whether or not anything else
+	// reads the release.
+	if ((b.farfLayout ?? []).some((p) => p.farf?.laplace)) return false;
 
 	const clock = new Map();
 	// A reference is resolved before it is followed, exactly as the code
@@ -1629,7 +1634,10 @@ function isConstant(b, SX) {
 	// exactly when the release slot does not follow the clock, which is
 	// decided above and checked here.
 	const paths = new Set([
-		...(b.farfLayout ?? []).map((p) => p.name),
+		// A path on cells: its release is a fixed weighting of its cells. Not
+		// a semi-analytical one, whose release carries the inflow of the step
+		// being taken with a weight that changes from step to step.
+		...(b.farfLayout ?? []).filter((p) => !p.farf?.laplace).map((p) => p.name),
 		...(b.wasteLayout ?? []).filter((W) => !clock.get(W.q)).map((W) => W.q),
 	]);
 	const isBareRelease = (a) => {

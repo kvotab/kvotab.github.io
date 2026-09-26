@@ -27,7 +27,8 @@
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
-  <link rel="stylesheet" href="./resources/css/erosion_corrosion.css?v=20260922b">
+  <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20260926">
+  <link rel="stylesheet" href="./resources/css/erosion_corrosion.css?v=20260926">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
 </head>
 <body>
@@ -40,7 +41,7 @@
         <div class="ec-side-scroll">
 
           <details class="ec-sec" id="sec-hydro" open>
-            <summary>Hydro data<span class="ec-count" id="ecHydroCount"></span></summary>
+            <summary><span class="ec-sec-title">Hydro data</span><span class="ec-count" id="ecHydroCount"></span><span class="kvot-info-slot" data-info-key="sec:hydro"></span></summary>
             <p class="ec-about">One file per DFN realisation: the deposition-hole table from the hydrogeological modelling (ConnectFlow CSV or PTB, an Excel sheet of it, or a DarcyTools performance-measure table). Several files are several realisations.</p>
             <div class="ec-drop" id="ecDrop">Drop hydro files here, or
               <button type="button" class="ec-btn secondary small" data-on-click="ec:openFiles">Open…</button>
@@ -49,14 +50,16 @@
             <ul class="ec-files" id="ecFiles"></ul>
             <div class="ec-actions">
               <button type="button" class="ec-btn secondary small" data-on-click="ec:clearHydro">Remove all</button>
-              <button type="button" class="ec-btn secondary small" data-on-click="ec:hydroCsv" title="Save what was read from each file as a ten-column CSV">Save as CSV</button>
+              <button type="button" class="ec-btn secondary small" data-on-click="ec:hydroCsv">Save as CSV</button>
             </div>
             <div class="ec-row">
-              <label>Layout size for DarcyTools tables<span class="ec-name">total deposition holes; blank takes it from the file, or its row count</span></label>
+              <div class="kvot-info-line ec-label-line"><label for="ecTotalHoles">Layout size for DarcyTools tables</label><span class="kvot-info-slot" data-info-key="set:totalHoles"></span></div>
+              <span class="ec-name">total deposition holes; blank takes it from the file, or its row count</span>
               <input id="ecTotalHoles" type="text" inputmode="numeric" placeholder="e.g. 8969" data-on-change="ec:hydroOptionChanged">
             </div>
             <div class="ec-row">
-              <label>Inflow-rejection list<span class="ec-name">hole IDs; used by “High inflow filtering”</span></label>
+              <div class="kvot-info-line ec-label-line"><label>Inflow-rejection list</label><span class="kvot-info-slot" data-info-key="set:inflow"></span></div>
+              <span class="ec-name">hole IDs; used by “High inflow filtering”</span>
               <div class="ec-actions">
                 <button type="button" class="ec-btn secondary small" data-on-click="ec:openInflow">Open list…</button>
                 <button type="button" class="ec-btn secondary small" data-on-click="ec:clearInflow">Clear</button>
@@ -67,10 +70,11 @@
           </details>
 
           <details class="ec-sec" id="sec-hs" open>
-            <summary>Sulphide</summary>
+            <summary><span class="ec-sec-title">Sulphide</span><span class="kvot-info-slot" data-info-key="sec:hs"></span></summary>
             <p class="ec-about">The distribution of sulphide concentration in the fracture water. Every hole meets every value: the fraction of values that fail a hole in time is that hole’s contribution to the mean number of failed canisters.</p>
             <div class="ec-row">
-              <label>Distribution [HS⁻]<span class="ec-name">Excel HSTabName · py hs_tab_name</span></label>
+              <div class="kvot-info-line ec-label-line"><label for="ecHsTable">Distribution [HS⁻]</label><span class="kvot-info-slot" data-info-key="set:hsTable"></span></div>
+              <span class="ec-name">Excel HSTabName · py hs_tab_name</span>
               <select id="ecHsTable" data-on-change="ec:hsChanged">
                 <option value="HSForsmark">HSForsmark: Forsmark groundwater, 46 values (PSAR)</option>
                 <option value="HSLaxemar">HSLaxemar: Laxemar groundwater, 51 values</option>
@@ -81,26 +85,27 @@
             </div>
             <div id="ecHsGeneric" hidden>
               <div class="ec-row">
-                <label>Form</label>
+                <div class="kvot-info-line ec-label-line"><label for="ecHsKind">Form</label><span class="kvot-info-slot" data-info-key="set:hsKind"></span></div>
                 <select id="ecHsKind" data-on-change="ec:hsChanged">
                   <option value="shifted-lognormal">shifted lognormal by mean, s.d. and shift (2.4 port)</option>
                   <option value="log10-normal">log10-normal by μ and σ (@Risk workbook)</option>
                 </select>
               </div>
               <div id="ecHsShifted" class="ec-inline">
-                <div class="ec-row"><label>Mean<span class="ec-unit">M</span></label><input id="ecHsMean" type="text" inputmode="decimal" data-on-change="ec:hsChanged"></div>
-                <div class="ec-row"><label>Std. dev.<span class="ec-unit">M</span></label><input id="ecHsStd" type="text" inputmode="decimal" data-on-change="ec:hsChanged"></div>
-                <div class="ec-row"><label>Shift<span class="ec-unit">M</span></label><input id="ecHsShift" type="text" inputmode="decimal" data-on-change="ec:hsChanged"></div>
+                <div class="ec-row"><div class="kvot-info-line ec-label-line"><label for="ecHsMean">Mean<span class="ec-unit">M</span></label><span class="kvot-info-slot" data-info-key="set:hsMean"></span></div><input id="ecHsMean" type="text" inputmode="decimal" data-on-change="ec:hsChanged"></div>
+                <div class="ec-row"><div class="kvot-info-line ec-label-line"><label for="ecHsStd">Std. dev.<span class="ec-unit">M</span></label><span class="kvot-info-slot" data-info-key="set:hsStd"></span></div><input id="ecHsStd" type="text" inputmode="decimal" data-on-change="ec:hsChanged"></div>
+                <div class="ec-row"><div class="kvot-info-line ec-label-line"><label for="ecHsShift">Shift<span class="ec-unit">M</span></label><span class="kvot-info-slot" data-info-key="set:hsShift"></span></div><input id="ecHsShift" type="text" inputmode="decimal" data-on-change="ec:hsChanged"></div>
               </div>
               <div id="ecHsLog10" class="ec-inline" hidden>
-                <div class="ec-row"><label>μ<span class="ec-unit">log10 M</span></label><input id="ecHsMu" type="text" inputmode="decimal" data-on-change="ec:hsChanged"></div>
-                <div class="ec-row"><label>σ<span class="ec-unit">log10 units</span></label><input id="ecHsSigma" type="text" inputmode="decimal" data-on-change="ec:hsChanged"></div>
+                <div class="ec-row"><div class="kvot-info-line ec-label-line"><label for="ecHsMu">μ<span class="ec-unit">log10 M</span></label><span class="kvot-info-slot" data-info-key="set:hsMu"></span></div><input id="ecHsMu" type="text" inputmode="decimal" data-on-change="ec:hsChanged"></div>
+                <div class="ec-row"><div class="kvot-info-line ec-label-line"><label for="ecHsSigma">σ<span class="ec-unit">log10 units</span></label><span class="kvot-info-slot" data-info-key="set:hsSigma"></span></div><input id="ecHsSigma" type="text" inputmode="decimal" data-on-change="ec:hsChanged"></div>
               </div>
-              <div class="ec-row"><label>Number of values<span class="ec-name">midpoint quantiles (k − ½)/n</span></label><input id="ecHsN" type="text" inputmode="numeric" data-on-change="ec:hsChanged"></div>
+              <div class="ec-row"><div class="kvot-info-line ec-label-line"><label for="ecHsN">Number of values</label><span class="kvot-info-slot" data-info-key="set:hsN"></span></div><span class="ec-name">midpoint quantiles (k − ½)/n</span><input id="ecHsN" type="text" inputmode="numeric" data-on-change="ec:hsChanged"></div>
             </div>
             <div id="ecHsCustom" hidden>
               <div class="ec-row">
-                <label>Concentrations, mol/L<span class="ec-name">any separators; sorted for you</span></label>
+                <div class="kvot-info-line ec-label-line"><label for="ecHsText">Concentrations, mol/L</label><span class="kvot-info-slot" data-info-key="set:hsCustom"></span></div>
+                <span class="ec-name">any separators; sorted for you</span>
                 <textarea id="ecHsText" spellcheck="false" placeholder="1.2e-4 1.22e-5 1.15e-5 …" data-on-change="ec:hsChanged"></textarea>
               </div>
             </div>
@@ -113,12 +118,12 @@
         <div class="ec-side-foot">
           <div class="ec-actions">
             <button type="button" class="ec-btn" id="ecRun" data-on-click="ec:run">Run</button>
-            <button type="button" class="ec-btn secondary small" data-on-click="ec:resetParams" title="Every parameter back to the PSAR workbook’s default">Reset parameters</button>
-            <button type="button" class="ec-btn secondary small" data-on-click="ec:saveCase" title="The settings and the sulphide choice as a JSON file">Save case</button>
+            <button type="button" class="ec-btn secondary small" data-on-click="ec:resetParams">Reset parameters</button>
+            <button type="button" class="ec-btn secondary small" data-on-click="ec:saveCase">Save case</button>
             <button type="button" class="ec-btn secondary small" data-on-click="ec:openCase">Open case…</button>
             <input type="file" id="ecCaseFile" accept=".json" hidden data-on-change="ec:caseChosen">
           </div>
-          <label class="ec-check"><input type="checkbox" id="ecAutoRun" checked data-on-change="ec:autoRunChanged"><span>Run on every change</span></label>
+          <div class="ec-check-line"><label class="ec-check"><input type="checkbox" id="ecAutoRun" checked data-on-change="ec:autoRunChanged"><span>Run on every change</span></label><span class="kvot-info-slot" data-info-key="set:autoRun"></span></div>
           <div class="ec-status" id="ecStatus">Loading…</div>
         </div>
       </aside>
@@ -147,7 +152,8 @@
             <span class="ec-muted">One row per hole and sulphide value that fails inside the assessment time: the workbook’s sheet “InputTrptCalcs”, the input to the radionuclide transport calculations. Click a heading to sort.</span>
             <span class="ec-spacer"></span>
             <button type="button" class="ec-btn secondary small" data-on-click="ec:failuresCsv">CSV</button>
-            <button type="button" class="ec-btn secondary small" data-on-click="ec:excel" title="Settings, key outputs, failure table and the per-hole sheets as one workbook">Excel</button>
+            <button type="button" class="ec-btn secondary small" data-on-click="ec:excel">Excel</button>
+            <span class="kvot-info-slot" data-info-key="pane:failures"></span>
           </div>
           <div class="ec-table-wrap" id="ecFailTable"></div>
           <p class="ec-empty" id="ecFailEmpty">Run the model to get the table of failure times.</p>
@@ -157,6 +163,7 @@
         <section class="ec-pane" data-pane="time" hidden>
           <div class="ec-toolbar">
             <span class="ec-muted">How the counts build up: advective positions, and the mean number of failed canisters (corrected) — the quantity plotted against time in the PSAR sensitivity figures.</span>
+            <span class="kvot-info-slot" data-info-key="pane:time"></span>
           </div>
           <div class="plot" id="ecChartTime" hidden></div>
           <p class="ec-empty" id="ecTimeEmpty">Run the model to see the counts against time.</p>
@@ -180,6 +187,7 @@
             <label id="ecDistReal" hidden>Realisation
               <select id="ecDistRealSelect" data-on-change="ec:distChanged"></select>
             </label>
+            <span class="kvot-info-slot" data-info-key="pane:distributions"></span>
           </div>
           <div class="plot" id="ecChartDist" hidden></div>
           <p class="ec-empty" id="ecDistEmpty">Run the model to see the distributions over the deposition holes.</p>
@@ -205,6 +213,7 @@
             <label id="ecHoleReal" hidden>Realisation
               <select id="ecHoleRealSelect" data-on-change="ec:holesChanged"></select>
             </label>
+            <span class="kvot-info-slot" data-info-key="pane:holes"></span>
             <span class="ec-muted" id="ecHoleNote"></span>
             <span class="ec-spacer"></span>
             <button type="button" class="ec-btn secondary small" id="ecHoleMore" data-on-click="ec:holesMore" hidden>Show more</button>
@@ -232,8 +241,8 @@
             the key outputs of the workbook’s <em>Info</em> sheet, and the distribution plots of its five
             plot sheets.</p>
 
-          <h3>What happens to each hole</h3>
-          <h4>1. Rejection</h4>
+          <h3 id="help-holes">What happens to each hole</h3>
+          <h4 id="help-rejection">1. Rejection</h4>
           <p>Holes that would not be used are rejected by criteria on what could be observed during
             construction. A hole is rejected if any selected criterion holds: FPC ≠ 0 (a fracture that
             intersects the full tunnel perimeter also cuts the hole); EFPC ≥ the number of consecutive holes
@@ -247,7 +256,7 @@
             <i>δ</i> with Doe’s relation <i>T</i> = (<i>δ</i>/0.5)² (TR-09-20, equation 3-2), or with the
             cubic law <i>T</i> = (<i>δ</i>/<i>a</i>)³ if you choose it.</p>
 
-          <h4>2. Flow at the hole</h4>
+          <h4 id="help-flow">2. Flow at the hole</h4>
           <p>The hydro model gives the Darcy flux <i>U</i><sub>0</sub> in the fracture crossing the hole. The
             water velocity in that fracture is</p>
           <p class="ec-eq"><i>v</i> = <i>U</i><sub>0</sub>·<i>w</i>/<i>δ</i></p>
@@ -262,7 +271,7 @@
             volume of the eroded half of the buffer. The two cross at <i>q</i><sub>lim</sub>, 0.0885 m³/yr with the
             default geometry.</p>
 
-          <h4>3. Time to advective conditions</h4>
+          <h4 id="help-advective">3. Time to advective conditions</h4>
           <p>The buffer is advective once <i>m</i><sub>buffadv</sub> = 1200 kg has been lost. The loss rate depends on
             the model chosen:</p>
           <table class="ec-ref">
@@ -280,7 +289,7 @@
             advective (1E+99 in the tables). “Initial advection” sets <i>t</i><sub>adv</sub> = 0 everywhere,
             the case of no buffer from the start.</p>
 
-          <h4>4. Corrosion and the failure table</h4>
+          <h4 id="help-corrosion">4. Corrosion and the failure table</h4>
           <p>With the buffer advective, sulphide at concentration [HS⁻] corrodes the copper at the rate
             <i>Q</i><sub>eq</sub>·[HS⁻]·<i>M</i><sub>Cu</sub>/(<i>f</i><sub>HS</sub>·<i>ρ</i><sub>Cu</sub>·<i>A</i><sub>corr</sub>)
             over the area <i>A</i><sub>corr</sub> = π<i>r</i><sub>can</sub>·<i>h</i><sub>corr</sub> (TR-10-66, 4.3.2–4.3.3), so
@@ -296,7 +305,7 @@
             number of rows divided by the number of sulphide values, and the corrected figure scales that to
             the normalising number of canisters over the accepted holes.</p>
 
-          <h4>5. The distribution plots</h4>
+          <h4 id="help-plots">5. The distribution plots</h4>
           <p>Cumulative distributions over the ensemble of holes of: the hydro model’s own <i>Q</i><sub>eq</sub>, with and
             without the addition for a thermally spalled zone (TR-10-66, equations 4-9 to 4-12); the corrosion
             rate through an <em>intact</em> buffer at a fixed sulphide concentration, with and without spalling
@@ -306,7 +315,7 @@
             lines the workbook draws (5 cm of copper in 10<sup>6</sup> and 10<sup>5</sup> years; 1200 kg in the
             assessment time and in the dilute fraction of it).</p>
 
-          <h3>Hydro files</h3>
+          <h3 id="help-hydro">Hydro files</h3>
           <p>Four shapes are read, detected from the content rather than the extension:</p>
           <table class="ec-ref">
             <tbody>
@@ -321,7 +330,7 @@
             the realisation number, and the distributions can be pooled. The page never keeps your files
             beyond the visit; settings are kept in the browser.</p>
 
-          <h3>Sulphide</h3>
+          <h3 id="help-sulphide">Sulphide</h3>
           <p>HSForsmark and HSLaxemar are the workbook’s tables to the digit; HSTest is the ten-value table of
             the code test. The generated distribution replaces the workbook’s one-point HSGeneric: a shifted
             lognormal by mean, standard deviation and shift (the 2.4 port’s <code>_gen_hs_generic</code>), or
@@ -349,7 +358,7 @@
             sulphide concentration” follows the workbook (holes with at least one failing value), which the
             Python port matches with the default filters on.</p>
 
-          <h3>Parameters</h3>
+          <h3 id="help-params">Parameters</h3>
           <p>Every setting and parameter, with its default (the PSAR workbook’s), its name in the workbook and
             its attribute in the Python port. A changed value is marked in the panel and listed on the Summary
             tab; <em>Save case</em> writes them all to a JSON file that <em>Open case…</em> reads back, and the
@@ -394,12 +403,14 @@
       ec-hsdata    the sulphide tables and the generated distributions
       ec-hydro     the hydro-file readers (ConnectFlow CSV/PTB, Excel, DarcyTools)
       xlsxwrite    the Excel writer (needs JSZip, loaded above)
+      kvot-info    the (i) next to each setting and its panel
       ec-ui        this page
   -->
-  <script src="./resources/js/ec-model.js?v=20260921"></script>
+  <script src="./resources/js/ec-model.js?v=20260926"></script>
   <script src="./resources/js/ec-hsdata.js?v=20260921"></script>
   <script src="./resources/js/ec-hydro.js?v=20260926"></script>
   <script src="./resources/js/xlsxwrite.js?v=20260902"></script>
-  <script src="./resources/js/ec-ui.js?v=20260926"></script>
+  <script src="./resources/js/kvot-info.js?v=20260926"></script>
+  <script src="./resources/js/ec-ui.js?v=20260926b"></script>
 </body>
 </html>

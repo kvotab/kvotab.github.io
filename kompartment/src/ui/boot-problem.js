@@ -78,7 +78,19 @@
 	// than leave a page of dead buttons.
 	var started = false;
 	var moduleError = null;
-	window.__ecolegoStarted = function () { started = true; };
+	var shown = false;
+	// Four seconds is a guess about a machine, and a slow one -- a cold cache,
+	// a busy disk, a laptop on battery -- can take longer to load the modules
+	// and still start. The message then took the page away for good, leaving
+	// a working editor hidden behind "did not start". So a start that comes
+	// late takes the message down again.
+	window.__ecolegoStarted = function () {
+		started = true;
+		if (!shown) return;
+		box.hidden = true;
+		box.replaceChildren();
+		document.getElementById('app').hidden = false;
+	};
 
 	// A module that fails to link reports itself here, message and all. The
 	// commonest cause by far is a *stale* module: browsers cache JavaScript
@@ -97,6 +109,7 @@
 
 	setTimeout(function () {
 		if (started) return;
+		shown = true;
 		var detail = moduleError
 			? [node('p', 'The browser reported:'), node('pre', moduleError)]
 			: [];

@@ -35,6 +35,8 @@ const { valuesAtStart } = await load('sim/atstart.js');
 const { LU } = await load('ode/core/linalg.js');
 const { partitionOf } = await load('sim/partition.js');
 const split = await load('sim/split.js');
+const { layerDepths } = await load('domain/farfield.js');
+const farf = await load('domain/farfield.js');
 
 const req = JSON.parse(readFileSync(0, 'utf8'), (k, v) => (
 	v === 'Infinity' ? Infinity : v === '-Infinity' ? -Infinity : v === 'NaN' ? NaN : v));
@@ -209,6 +211,33 @@ switch (req.task) {
 			if (lu.singular) return { singular: true, column: lu.failColumn, nonFinite: lu.nonFinite };
 			return { lu: lu.lu.map((r) => Array.from(r)), piv: Array.from(lu.piv), x: Array.from(lu.solve(Float64Array.from(c.b))) };
 		});
+		break;
+	}
+	case 'layer_depths': {
+		out = req.cases.map(([penDep, nm, aw, first]) => Array.from(layerDepths(penDep, nm, aw, first)));
+		break;
+	}
+	case 'farfield_grids': {
+		// The matched matrix layers, the semi-infinite outlet's extra cells and
+		// one nuclide's rates over them, for cases the test makes up.
+		out = {
+			grids: req.grids.map((g) => {
+				try {
+					const r = farf.matchedGrid(g);
+					return { d: Array.from(r.d), h: Array.from(r.h), q: r.q };
+				} catch (e) { return { error: e.message }; }
+			}),
+			extra: req.extra.map(([nf, pe]) => farf.autoExtraCells(nf, pe)),
+			rates: req.rates.map((s) => {
+				try {
+					const c = farf.coefficients(s);
+					return {
+						aw: c.aw, advF: c.advF, dF: c.dF, fDf: c.fDf, diffFM1: c.diffFM1, diffM1F: c.diffM1F,
+						diffMMF: Array.from(c.diffMMF), diffMMB: Array.from(c.diffMMB), d: Array.from(c.d),
+					};
+				} catch (e) { return { error: e.message }; }
+			}),
+		};
 		break;
 	}
 	case 'probabilistic': {

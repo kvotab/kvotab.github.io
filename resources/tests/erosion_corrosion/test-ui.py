@@ -3,10 +3,12 @@
 
 test-model.js proves the arithmetic. This proves the wiring: that the page
 loads without a script error, that the panel is built from the catalogue,
-that SKB's code test case, dropped on the panel with the SR-Site settings,
-runs and puts the documented numbers in the summary, that every tab draws,
-that a parameter change re-runs, and that a dropped CSV of unknown shape is
-refused with a message rather than a silence.
+that every setting, section heading and tab toolbar has its (i) and the
+panel it opens says the right thing and closes, that SKB's code test case,
+dropped on the panel with the SR-Site settings, runs and puts the documented
+numbers in the summary, that every tab draws, that a parameter change
+re-runs, and that a dropped CSV of unknown shape is refused with a message
+rather than a silence.
 
 The test file is SKB's and not in the repository: the checks that need it
 drop the local copy that make-local-fixtures.py writes, and are skipped
@@ -115,6 +117,10 @@ async def main():
         await page.call('Page.enable', session=page.sid)
         await page.call('Emulation.setDeviceMetricsOverride',
                         {'width': 1500, 'height': 950, 'deviceScaleFactor': 1, 'mobile': False}, session=page.sid)
+        # The cache off, which needs the Network domain on: a reused profile
+        # otherwise serves yesterday's scripts, or a local file since removed.
+        await page.call('Network.enable', session=page.sid)
+        await page.call('Network.clearBrowserCache', session=page.sid)
         await page.call('Network.setCacheDisabled', {'cacheDisabled': True}, session=page.sid)
         # A clean slate: the page keeps its settings in localStorage.
         await page.call('Page.addScriptToEvaluateOnNewDocument',
@@ -133,6 +139,113 @@ async def main():
                   await page.ev("document.querySelectorAll('#ecParamRef tbody tr').length") > n_params, True)
             check('the sulphide note describes HSForsmark',
                   await page.ev("document.getElementById('ecHsNote').textContent.startsWith('46 values')"), True)
+
+            # --- the (i) and its panel --------------------------------------
+            audit = json.loads(await page.ev("JSON.stringify(KvotInfo.audit())"))
+            check('every (i) slot has a topic', audit['noTopic'], [])
+            check('every topic has a title, and its Help link a heading in the page', audit['brokenMore'], [])
+            check('every slot has its button', audit['buttons'], audit['slots'])
+            check('every catalogue parameter has its (i)',
+                  await page.ev("ECModel.PARAMS.filter((d) => !document.querySelector("
+                                "`#ecParamSections .kvot-info-slot[data-info-key=\"p:${d.key}\"] .info-btn`)).map((d) => d.key)"), [])
+            check('every section heading of the panel has one',
+                  await page.ev("Array.from(document.querySelectorAll('.ec-side details.ec-sec > summary'))"
+                                ".filter((s) => !s.querySelector('.info-btn')).map((s) => s.textContent)"), [])
+            check('and every result tab’s toolbar',
+                  await page.ev("['failures', 'time', 'distributions', 'holes']"
+                                ".filter((t) => !document.querySelector(`.ec-pane[data-pane=\"${t}\"] .ec-toolbar .info-btn`))"), [])
+            # (A file name cut short keeps its title: the whole name, not a tooltip.)
+            check('no hover tooltips left on the settings or the toolbars',
+                  await page.ev("Array.from(document.querySelectorAll('.ec-side [title], .ec-toolbar [title]'))"
+                                ".filter((el) => !el.matches('.ec-file-name')).map((el) => el.outerHTML.slice(0, 80))"), [])
+            check('the (i)s of the side panel line up at the right',
+                  await page.ev("""(() => {
+                    for (const d of document.querySelectorAll('.ec-side details.ec-sec')) d.open = true;
+                    const r = Array.from(document.querySelectorAll('.ec-side .info-btn'))
+                      .filter((b) => b.getBoundingClientRect().width > 0 && !b.closest('.ec-inline'))
+                      .map((b) => Math.round(b.getBoundingClientRect().right));
+                    return r.length > 70 && Math.max(...r) - Math.min(...r) <= 1;
+                  })()"""), True)
+            await page.ev("document.querySelector('[data-info=\"p:mBuffAdv\"]').click()")
+            await asyncio.sleep(0.3)
+            check('a parameter’s (i) opens the panel with its title',
+                  await page.ev("document.querySelector('.info-panel .info-panel-title').textContent"), 'Buffer loss for advection')
+            fact = """((label) => {
+              const dt = Array.from(document.querySelectorAll('.info-panel .info-facts dt')).find((d) => d.textContent === label);
+              return dt ? dt.nextElementSibling.textContent : null;
+            })(%s)"""
+            check('and the current value', await page.ev(fact % json.dumps('Current value')), '1200')
+            check('the workbook and Python names', await page.ev(fact % json.dumps('Workbook name')) + ' ' + await page.ev(fact % json.dumps('Python name')),
+                  'MBuffAdv m_buffadv')
+            check('and a Read more link to the Help',
+                  await page.ev("document.querySelector('.info-panel .info-panel-more').textContent"), 'Read more in Help: Time to advective conditions →')
+            check('the panel sits between the header and the footer',
+                  await page.ev("""(() => {
+                    const p = document.querySelector('.info-panel').getBoundingClientRect();
+                    return Math.abs(p.top - document.querySelector('header').getBoundingClientRect().bottom) < 1.5
+                      && Math.abs(p.bottom - document.querySelector('footer').getBoundingClientRect().top) < 1.5;
+                  })()"""), True)
+            await page.ev("(() => { const el = document.querySelector('input[data-key=\"mBuffAdv\"]'); el.value = '600';"
+                          " el.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.3)
+            check('an open panel follows a change of the value', await page.ev(fact % json.dumps('Current value')), '600 (changed)')
+            await page.ev("document.querySelector('[data-on-click=\"ec:resetParams\"]').click()")
+            await asyncio.sleep(0.3)
+            check('the × closes it',
+                  await page.ev("document.querySelector('.info-panel .info-panel-close').click(), !document.querySelector('.info-panel') && KvotInfo.current() === null"), True)
+            await page.ev("document.querySelector('[data-info=\"p:buffModel\"]').click()")
+            await asyncio.sleep(0.2)
+            check('a choice lists its options with the one in force marked',
+                  await page.ev("Array.from(document.querySelectorAll('.info-panel .info-choices dt.is-current')).map((d) => d.textContent)"),
+                  ['NewKTH: erosion, TR-16-11 (PSAR)'])
+            await page.ev("document.querySelector('[data-info=\"p:buffModel\"]').click()")
+            await asyncio.sleep(0.2)
+            check('the same (i) closes it', await page.ev("!document.querySelector('.info-panel')"), True)
+            # Escape as a key press. (Chrome 153 headless can hang on a CDP Escape
+            # that closes a modal <dialog>; this panel is not one, and closing it
+            # this way was tried repeatedly without a hang.)
+            async def escape():
+                for kind in ('keyDown', 'keyUp'):
+                    await page.call('Input.dispatchKeyEvent', {'type': kind, 'key': 'Escape', 'code': 'Escape',
+                                                               'windowsVirtualKeyCode': 27, 'nativeVirtualKeyCode': 27}, session=page.sid)
+            await page.ev("document.querySelector('[data-info=\"sec:hydro\"]').click()")
+            await asyncio.sleep(0.2)
+            await escape()
+            await asyncio.sleep(0.2)
+            check('Escape closes it', await page.ev("!document.querySelector('.info-panel')"), True)
+            check('and the focus goes back to its (i)', await page.ev("document.activeElement.dataset.info || ''"), 'sec:hydro')
+            await page.ev("document.querySelector('[data-info=\"sec:hydro\"]').click()")
+            await asyncio.sleep(0.2)
+            await page.ev("document.activeElement.blur()")
+            await escape()
+            await asyncio.sleep(0.2)
+            check('also when the focus has left it for the page', await page.ev("!document.querySelector('.info-panel')"), True)
+            # A tab's (i) marks the choice in force, and follows a change of it.
+            await page.ev("(() => { const s = document.getElementById('ecDistWhich'); s.value = 'erosion';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await page.ev("document.querySelector('[data-info=\"pane:distributions\"]').click()")
+            await asyncio.sleep(0.2)
+            current = "Array.from(document.querySelectorAll('.info-panel .info-choices dt.is-current')).map((d) => d.textContent)"
+            check('a tab’s (i) marks the quantity shown', await page.ev(current), ['Buffer loss rate (EroPlt)'])
+            await page.ev("(() => { const s = document.getElementById('ecDistWhich'); s.value = 'qeq';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.2)
+            check('and follows a change of it', await page.ev(current), ['Qeq from the hydro model (QeqPlt)'])
+            # Read more in Help: the Help tab, at the heading.
+            await page.ev("document.querySelector('[data-info=\"p:w\"]').click()")
+            await asyncio.sleep(0.2)
+            await page.ev("document.querySelector('.info-panel .info-panel-more').click()")
+            await asyncio.sleep(0.4)
+            check('Read more in Help opens the Help tab at the heading',
+                  await page.ev("""(() => {
+                    const pane = document.querySelector('.ec-pane[data-pane="help"]');
+                    const h = document.getElementById('help-flow');
+                    return ECPage.getState().tab === 'help' && !pane.hidden && !document.querySelector('.info-panel')
+                      && Math.abs(h.getBoundingClientRect().top - pane.getBoundingClientRect().top) < 2;
+                  })()"""), True)
+            await page.ev("document.querySelector('[data-tab=\"summary\"]').click()")
+            await asyncio.sleep(0.2)
+            check('no script errors from the (i)s', page.errors, [])
 
             # --- the code test case ----------------------------------------
             # SKB's test file (SKBdoc 1895160) is not part of the page: set the

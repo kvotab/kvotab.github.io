@@ -56,6 +56,9 @@
     textNote: null,
   };
 
+  /** The solver settings as the page ships them, before a visit's own are read over them: the (i) panels quote these as the defaults. */
+  const SOLVER_DEFAULTS = Object.freeze({ ...state.solver });
+
   /** A cheap, stable fingerprint. Not a checksum: only equality. */
   function stampOf(text) {
     const s = String(text);
@@ -359,11 +362,13 @@
       }
       $('rtmModelNote').textContent = m.warnings.join('  ');
       $('rtmModelNote').hidden = !m.warnings.length;
+      infoRefresh();
       return true;
     } catch (e) {
       state.compiled = null;
       state.compileError = e;
       renderFacts();
+      infoRefresh();
       if (!state.running) setStatus(`The model does not compile: ${e.message}${note}`, 'error');
       return false;
     }
@@ -407,7 +412,7 @@
     // for a "from" time in seconds.
     const u = timeUnit();
     $('rtmTendUnit').textContent = `${u.name}s; blank uses TEND from the text`;
-    $('rtmHmaxUnit').textContent = `${u.name}s; 0 = a tenth of the run`;
+    $('rtmHmaxUnit').textContent = `${u.name}s; 0: a tenth of the run for the NDF, no limit for the ports`;
     $('rtmTMinUnit').textContent = u.symbol;
     $('rtmGradTMinUnit').textContent = u.symbol;
     if (m.nparameters) bits.push(`${m.nparameters} parameter${m.nparameters === 1 ? '' : 's'}: ${m.parameters.join(', ')}`);
@@ -524,6 +529,7 @@
     setProgress(null);
     state.compiled = reply.model;
     renderFacts();
+    infoRefresh();
     renderSeriesList();
     renderCells();
     renderProfileSpecies();
@@ -701,10 +707,11 @@
     const box = $('rtmSeries');
     const names = speciesNames();
     const picked = new Set(state.picked);
+    // The title is the name alone, for one too long for its cell. Which
+    // species do not move is in the (i) of this tab, pane:time.
     box.innerHTML = names.map((nm) => {
       const on = picked.has(nm);
-      const immobile = state.compiled && state.compiled.transport && !state.compiled.mobile[names.indexOf(nm)];
-      return `<label class="rtm-item${on ? ' on' : ''}" title="${esc(nm)}${immobile ? ' — does not move' : ''}">`
+      return `<label class="rtm-item${on ? ' on' : ''}" title="${esc(nm)}">`
         + `<input type="checkbox" value="${esc(nm)}"${on ? ' checked' : ''} data-on-change="rtm:pick">`
         + `<span>${esc(nm)}</span></label>`;
     }).join('');
@@ -1389,6 +1396,454 @@
   }
 
   /* ---------------------------------------------------------------------
+     The (i) beside each setting, section heading and tab toolbar
+
+     What each setting's hover text used to say, and more: what it is, what
+     its choices do, the default and the limits as this file and the solvers
+     have them, and which methods read it. kvot-info.js draws the (i) into the
+     slots of rtm.html and opens the panel. A topic that is a function is
+     called each time its panel opens, or is refreshed, so it can mark the
+     current choice and read the model as compiled; infoRefresh() is called
+     wherever those change. Inline markup is `code` and **bold**, nothing else.
+     --------------------------------------------------------------------- */
+  const infoRefresh = () => { if (typeof KvotInfo !== 'undefined') KvotInfo.refresh(); };
+  const more = (label, id) => ({ label, id });
+  const mb = (bytes) => `${(bytes / 1048576).toFixed(bytes < 10 * 1048576 ? 1 : 0)} MB`;
+
+  /** "a, b and c", or the first `max` of them and how many more. */
+  function someOf(names, max = 10) {
+    return names.length <= max ? listOf(names) : `${names.slice(0, max).join(', ')} and ${names.length - max} more`;
+  }
+
+  /**
+   * Which of the methods on the menu read the setting `key`: from the same
+   * lists updateSolverOptions hides the rows by, so the two cannot disagree.
+   */
+  function readers(key) {
+    const julia = typeof FacsimileOdeJulia !== 'undefined';
+    const ids = Array.from($('rtmMethod').options, (o) => o.value);
+    const reads = (id) => (id === 'ndf'
+      ? BUILTIN_OPTIONS.includes(key)
+      : julia && FacsimileOdeJulia.is(id) && FacsimileOdeJulia.options(id).includes(key));
+    const name = (id) => (id === 'ndf' ? 'NDF' : FacsimileOdeJulia.label(id));
+    const yes = ids.filter(reads).map(name);
+    const no = ids.filter((id) => !reads(id)).map(name);
+    if (!no.length) return 'every method';
+    if (!yes.length) return 'none of the methods';
+    return no.length <= 2 && yes.length > no.length ? `every method but ${listOf(no)}` : listOf(yes);
+  }
+
+  /** How long a run would go: the panel's time, or the TEND of the text. */
+  function runTend() {
+    const typed = String(state.solver.tend ?? '').trim();
+    if (typed && Number(typed) > 0) return Number(typed);
+    return state.compiled ? state.compiled.settings.TEND : null;
+  }
+
+  const TOPICS = {
+    'sec:model': () => {
+      const m = state.compiled;
+      const warned = m ? m.warnings.length : 0;
+      return {
+        kicker: 'Section', title: 'Model',
+        lead: 'What the text on the Model tab compiles to, read back from it. Nothing here is set in the panel: change the text, and this follows.',
+        facts: [
+          ['Compiles', '0.4 s after the last keystroke, or on Apply'],
+          ['Warnings', m ? (warned ? `${warned}, listed under the text on the Model tab` : 'none')
+            : (state.compileError ? 'the text does not compile; the status line says why' : 'not compiled yet')],
+        ],
+        sections: [{
+          heading: 'Line by line',
+          list: [
+            '`batch` or `transport`, and how many species and reactions: `MODE`, `<SPECIES>` and `<REACTIONS>`.',
+            'For a column, the cells: how many, over what length and how laid out, from `CELLS`, `LENGTH` and `GRID` with its `GRID_RATIO` or `GRID_POWER`, and a first cell pinned by `SURFACE_LAYER`.',
+            'With a rock matrix, `dual porosity`: `MATRIX_CELLS` layers behind each cell to `MATRIX_DEPTH`, the `MATRIX_POROSITY`, the wall area per m³ of flowing water, and the species that have a `Dm=` and so enter the rock.',
+            'What moves: `diffusion`, `advection` at the `VELOCITY`, or `nothing moves`.',
+            'The two ends, `LEFT | RIGHT`, with `cauchy` and `outflow` read as the `robin` and `free` they mean.',
+            'Equilibria and the totals they conserve, and whether `EQUILIBRATE` put the starting state on them.',
+            'Parameters and tables by name, and a species held in some cells only.',
+            '`a mass matrix is in force`: a species has an `R=`, or a rock matrix gives it a capacity.',
+            'The equations, species times cells with the rock layers counted; the non-zeros of the Jacobian; and `TEND`, in the model’s time unit.',
+          ],
+        }],
+        more: more('<SETTINGS>', 'help-settings'),
+      };
+    },
+
+    'sec:solver': () => ({
+      kicker: 'Section', title: 'Solver',
+      lead: 'How the equations are integrated: which method, for how long and how accurately. The same settings, by the same names and in the same order, as on the canister radiolysis page, which runs the same solvers.',
+      facts: [
+        ['Method', methodLabel()],
+        ['Runs on', workerKind === 'inline' ? 'this page, which it holds until the run ends' : 'a background worker'],
+        ['Kept', 'in this browser, between visits'],
+      ],
+      sections: [
+        { text: 'Only the settings the chosen method reads are shown. The note at the foot of Advanced settings names the ones it passes over, and says where a method reads one differently from the NDF.' },
+        { text: 'The defaults are this page’s own, set for its reaction networks: among them a tighter relative tolerance than the canister radiolysis page’s, and a stalled Newton correction taken (the stall tolerance).' },
+        { text: 'A change applies to the next run. A run already going keeps what it was given, and so does the HDF5 file written from it.' },
+      ],
+      more: more('Choosing a solver', 'help-solver'),
+    }),
+
+    'set:method': () => {
+      const cur = $('rtmMethod').value;
+      return {
+        kicker: 'Solver', title: 'Method',
+        lead: 'Which integrator solves the model. NDF is the page’s own and the right first choice. The other six are ported from DifferentialEquations.jl and run here in the page, on the same analytic Jacobian; nothing is downloaded.',
+        sections: [{
+          choices: [
+            ['NDF', 'The numerical differentiation formulas of Shampine and Reichelt, as in MATLAB’s ode15s: variable order 1 to 5, on the sparse Jacobian. With **BDF formulas** under Advanced settings it runs as the plain BDF.', cur === 'ndf'],
+            ['FBDF', 'Fixed-leading-coefficient BDF, variable order. It reuses one factorisation over many steps, which on a system of hundreds of equations is most of the cost: the one to try on a large column, and first when NDF will not get through.', cur === 'julia_fbdf'],
+            ['QNDF', 'The same formulas as NDF, with the same κ, written by other people: the most direct check of the built-in solver. With **BDF formulas** it is QBDF.', cur === 'julia_qndf'],
+            ['KenCarp4', 'A fourth-order diagonally implicit Runge–Kutta method (ESDIRK), L-stable. A middle course, cheap at moderate tolerances.', cur === 'julia_kencarp4'],
+            ['RadauIIA5', 'Fully implicit, fifth order, L-stable: the most accurate per step and the least troubled by stiffness, the one to believe when two others disagree. It factorises its complex half densely, which is slow past a few thousand equations.', cur === 'julia_radau5'],
+            ['Rodas5P', 'A Rosenbrock method, fifth order, with no Newton iteration at all, so nothing to fail to converge. The one to try when a run will not get past something.', cur === 'julia_rodas5p'],
+            ['TRBDF2', 'Second order, L-stable, fast at loose tolerances on smooth problems. On sharp transients at a tight tolerance it can be far out and still report success.', cur === 'julia_trbdf2'],
+          ],
+        }, {
+          heading: 'Keep in mind',
+          text: 'The Julia ports keep a species non-negative by projecting each step back and nothing more, and do not read the stall tolerance. The canister radiolysis page’s Help describes them at more length.',
+        }],
+        more: more('Choosing a solver', 'help-solver'),
+      };
+    },
+
+    'set:tend': () => {
+      const u = timeUnit();
+      const m = state.compiled;
+      const tend = m ? m.settings.TEND : null;
+      const said = tend == null ? null
+        : `${tend} ${u.symbol}${fmtTime(tend).endsWith(` ${u.symbol}`) ? '' : ` (${fmtTime(tend)})`}`;
+      return {
+        kicker: 'Solver', title: 'Simulated time',
+        lead: `How long to run, in the model’s own time unit, ${u.name}s. Blank runs to the TEND the model text gives.`,
+        facts: [['TEND', said], ['Unless the text gives one', `1 ${u.symbol}`], ['Allowed', 'a number above 0, or blank']],
+        sections: [
+          { text: 'A plain number: the box takes no unit, because the model has one. `TIME_UNIT` in the text converts nothing; it says which unit every rate constant, diffusivity and velocity is already written in, so 10 here is ten of those.' },
+          { text: 'The Times box on Against distance does take a unit, `500 a` or `30 d`, and converts it into the model’s.' },
+        ],
+        more: more('The time unit', 'help-time-unit'),
+      };
+    },
+
+    'set:rtol': () => ({
+      kicker: 'Solver', title: 'Relative tolerance',
+      lead: 'The error a step may make, as a fraction of each quantity’s own size: 1e-6 is about six significant digits. Tighter is slower and more accurate.',
+      facts: [['Default', SOLVER_DEFAULTS.rtol], ['Allowed', 'above 0 and below 1'], ['Read by', readers('rtol')]],
+      sections: [
+        { text: 'It holds for every species in every cell alike. Near zero, where a fraction of the value is no error at all, the absolute tolerance takes over.' },
+        { heading: 'Keep in mind', text: 'The way to tell whether an answer has converged is to run it again at a tenth of this: what moves was not settled. The stall tolerance is a share of this one.' },
+      ],
+    }),
+
+    'set:atol': () => ({
+      kicker: 'Solver', title: 'Absolute tolerance',
+      lead: 'The error allowed on a quantity near zero, in the units the model’s concentrations are written in. Below it a species is not controlled, so set it below the smallest amount that matters.',
+      facts: [['Default', SOLVER_DEFAULTS.atol], ['Allowed', '0 or more'], ['Read by', readers('atol')]],
+      sections: [
+        { text: 'Each species in each cell may be out by about the larger of this and rtol times its value. One number serves every species: the canister radiolysis page’s tolerances per species are not here.' },
+        { heading: 'Keep in mind', text: 'A species that matters at 1e-12 is carried along, but not resolved, under an atol of 1e-10: its error is never looked at. **Absolute tolerance follows the solution** raises this as the run goes.' },
+      ],
+    }),
+
+    'set:bdf': () => ({
+      kicker: 'Solver', title: 'BDF formulas',
+      lead: 'Runs the plain backward differentiation formulas: the NDF with every κ set to zero. On QNDF it gives QBDF.',
+      facts: [['Default', SOLVER_DEFAULTS.bdf ? 'on' : 'off'], ['κ, orders 1 to 5', '−0.185, −1/9, −0.0823, −0.0415, 0'], ['Read by', readers('bdf')]],
+      sections: [
+        { text: 'κ adds a multiple of the predictor’s miss to each formula, which buys a smaller error constant for a slight loss of stability; at order 5 it is zero already. The BDFs therefore usually take a few more steps for the same answer. Switch it on to see what those terms are worth on a model, or to match a result someone else worked out with BDF.' },
+        { heading: 'Keep in mind', text: 'This κ is a coefficient of the formulas. The Newton tolerance, which DifferentialEquations.jl also calls κ, is another thing.' },
+      ],
+      more: more('Choosing a solver', 'help-solver'),
+    }),
+
+    'set:norm': () => {
+      const cur = $('rtmNorm').value;
+      const n = state.compiled ? state.compiled.states : 0;
+      return {
+        kicker: 'Solver', title: 'Error norm',
+        lead: 'How the errors of all the components are combined into the one number a step is accepted or refused on.',
+        facts: [['Default', SOLVER_DEFAULTS.norm], ['Read by', readers('norm')]],
+        sections: [{
+          choices: [
+            ['max', 'The worst-resolved species in the worst cell decides. The stricter of the two.', cur === 'max'],
+            ['rms', n > 1
+              ? `The root mean square over every species in every cell, as in CVODE. Here that is ${n} numbers, so one component badly out counts 1/${Math.round(Math.sqrt(n))} as much as it would under max.`
+              : 'The root mean square over every species in every cell, as in CVODE. On a long column one component badly out counts for little.', cur === 'rms'],
+          ],
+        }],
+      };
+    },
+
+    'set:maxOrder': () => ({
+      kicker: 'Solver', title: 'Maximum order',
+      lead: 'The highest order the variable-order formulas may reach. Lower is steadier through a discontinuity and slower on a smooth stretch.',
+      facts: [['Default', String(SOLVER_DEFAULTS.maxOrder)], ['Allowed', '1 to 5'], ['Read by', readers('maxOrder')]],
+      sections: [{ text: 'Orders 1 and 2 are A-stable. From 3 to 5 the formulas are stable only in a wedge about the negative real axis, narrower as the order rises, so a model whose Jacobian has stiff eigenvalues far off that axis, a fast oscillation that is damped, is safer with a maximum of 2.' }],
+    }),
+
+    'set:minOrder': () => ({
+      kicker: 'Solver', title: 'Minimum order',
+      lead: 'The lowest order the variable-order Julia ports may drop to. Pinned to the maximum, it holds the order fixed.',
+      facts: [['Default', String(SOLVER_DEFAULTS.minOrder)], ['Allowed', '1 to 5; above the maximum it is the maximum'], ['Read by', readers('minOrder')]],
+      sections: [{ text: 'A fixed order is for comparing with a code that uses one, or for seeing what the changes of order are doing. The NDF has no floor to set: it starts at order 1 and chooses its own.' }],
+    }),
+
+    'set:hmax': () => {
+      const u = timeUnit();
+      const tend = runTend();
+      return {
+        kicker: 'Solver', title: 'Maximum step',
+        lead: `The longest step the solver may take, in ${u.name}s. Set it where the model changes faster than its solution shows, and the solver steps over the change.`,
+        facts: [
+          ['Default', SOLVER_DEFAULTS.hmax],
+          ['0, for NDF', tend ? `a tenth of the run, ${fmtTime(tend / 10)}` : 'a tenth of the run'],
+          ['0, for the Julia ports', 'no limit but the run itself'],
+          ['Allowed', '0 or more'],
+          ['Read by', readers('hmax')],
+        ],
+        sections: [{ text: `A limit costs steps wherever the solution is smooth, and every step counts against the step budget: a maximum of a millionth of the run needs a million steps, where the default budget is ${Number(SOLVER_DEFAULTS.maxSteps).toLocaleString('en')}.` }],
+      };
+    },
+
+    'set:matrix': () => {
+      const cur = $('rtmMatrix').value;
+      const n = state.compiled ? state.compiled.states : 0;
+      return {
+        kicker: 'Solver', title: 'Iteration matrix',
+        lead: 'How I − hJ, the matrix every implicit step solves with, is factorised. It decides the speed, not the answer.',
+        facts: [
+          ['Default', SOLVER_DEFAULTS.matrix],
+          ['Dense LU', 'refused past 256 MB, about 5,800 equations'],
+          ['This model', n ? `${n} equations; dense, ${mb(8 * n * n)}` : null],
+          ['Read by', readers('matrix')],
+        ],
+        sections: [{
+          choices: [
+            ['auto', 'One trial factorisation decides: the LU that keeps its pivots where it costs no more, the dense LU where the sparse factor fills more than 35 % of the matrix, and the searching sparse LU otherwise. Right almost always. The Julia ports make their own choice.', cur === 'auto'],
+            ['sparse LU, pivots kept', 'Keeps its pivots from one factorisation to the next and re-checks them, which saves the search on a matrix whose pattern never changes; one it cannot do goes to the LU auto would otherwise use. The Julia ports have no such LU and use their sparse one.', cur === 'refactor'],
+            ['sparse LU', 'Chooses its pivots afresh at every factorisation (Gilbert–Peierls).', cur === 'sparse'],
+            ['dense LU', 'Every entry, zero or not: n² numbers. Quick for a small batch, slow for a long column.', cur === 'dense'],
+          ],
+        }],
+        more: more('The Jacobian', 'help-jacobian'),
+      };
+    },
+
+    'set:jacobian': () => {
+      const cur = $('rtmJacobian').value;
+      return {
+        kicker: 'Solver', title: 'Jacobian',
+        lead: 'Where df/dy comes from.',
+        facts: [['Default', 'analytic, sparse'], ['Read by', readers('jacobian')]],
+        sections: [{
+          choices: [
+            ['analytic, sparse', 'Worked out when the model compiles: the rate laws differentiated symbolically, and the transport, which is linear, entered exactly. Nothing is differenced, so there is no step size to choose.', cur === 'analytic'],
+            ['finite differences', 'Differenced from the equations. The NDF differences through the analytic pattern, a group of columns per evaluation; the Julia ports are then given no pattern, and difference one column per evaluation into a dense matrix. Slower and less exact either way.', cur === 'numeric'],
+          ],
+        }, { text: 'Differencing is the check to run when the analytic Jacobian is in doubt. **Check Jacobian**, under Run, compares the two without a run.' }],
+        more: more('The Jacobian', 'help-jacobian'),
+      };
+    },
+
+    'set:kappa': () => ({
+      kicker: 'Solver', title: 'Newton tolerance',
+      lead: 'How closely each stage’s Newton iteration must converge, as a share of one unit of the tolerance. DifferentialEquations.jl calls it κ.',
+      facts: [['Default', SOLVER_DEFAULTS.kappa], ['Allowed', 'above 0 and below 1'], ['Read by', readers('kappa')]],
+      sections: [
+        { text: 'Loose leaves a stage half-solved, and the error estimate is read off those stages, so the step-size controller acts on a corrupted number. 1e-3 was measured, not chosen: at DifferentialEquations.jl’s own 1e-2, TRBDF2 and KenCarp4 went wrong on standard stiff test problems, and at 1e-3 they were right and several times cheaper.' },
+        { heading: 'Keep in mind', text: 'Not the κ of **BDF formulas**, which is a coefficient of the NDF’s formulas. The NDF has a Newton test of its own and does not read this; nor does Rodas5P, which has no Newton iteration.' },
+      ],
+    }),
+
+    'set:maxJacAge': () => ({
+      kicker: 'Solver', title: 'Jacobian reuse',
+      lead: 'How many steps a Jacobian may be reused before it is formed again; 1 forms it at every step.',
+      facts: [['Default', SOLVER_DEFAULTS.maxJacAge], ['Allowed', '1 or more'], ['Read by', readers('maxJacAge')]],
+      sections: [
+        { text: 'Reusing it is most of what makes a stiff solver cheap on a large model, and a Newton iteration that slows down asks for a fresh one anyway. This is a plain age limit on top, as CVODE has, because a Newton that converges at its first iteration never questions its Jacobian: TRBDF2 once kept a Jacobian hundreds of steps old and walked off to 1e9 in quantities that belong between 0 and 1.' },
+        { text: 'Rodas5P forms the Jacobian at every step by definition, and the NDF decides for itself, so neither reads this.' },
+      ],
+    }),
+
+    'set:belowTolRun': () => ({
+      kicker: 'Solver', title: 'Steps at the floor',
+      lead: 'How many failing steps may be accepted in a row at the smallest step the clock can represent, where no shorter step exists. 0 stops the run there and hands back what it has.',
+      facts: [['Default', SOLVER_DEFAULTS.belowTolRun], ['Allowed', 'a whole number, 0 or more'], ['Read by', readers('belowTolRun')]],
+      sections: [
+        { text: 'At the floor a failing step can only be accepted as it stands or the run given up. The NDF counts both kinds of failure here, an error test and a Newton iteration that will not converge; the Julia ports count the error test.' },
+        { heading: 'Keep in mind', text: '0 is what the published methods do: accepting a step known to be inaccurate should be asked for.' },
+      ],
+    }),
+
+    'set:maxSteps': () => ({
+      kicker: 'Solver', title: 'Step budget',
+      lead: 'How many steps the solver may take before it gives up and says so, handing back what it had.',
+      facts: [['Default', Number(SOLVER_DEFAULTS.maxSteps).toLocaleString('en')], ['Allowed', '100 or more'], ['Read by', readers('maxSteps')]],
+      sections: [{ text: 'A run that reaches it has usually met something the model did not mean, rather than needing a larger budget. What it did integrate is drawn, which is usually where the trouble can be seen.' }],
+    }),
+
+    'set:stagnationTol': () => ({
+      kicker: 'Solver', title: 'Stall tolerance',
+      lead: 'How large a Newton correction may be, as a share of one tolerance, and still be taken once it has stopped shrinking and the Jacobian is fresh. 0 never takes one.',
+      facts: [['Default', SOLVER_DEFAULTS.stagnationTol], ['Allowed', '0 to 1'], ['Read by', readers('stagnationTol')]],
+      sections: [
+        { text: 'Reaction networks with rate constants to 1e16 against concentrations of 1e-9 cancel over sixteen digits, and their residual cannot be worked out to better than about a part in 1e7. The correction stops shrinking there, which an ordinary convergence test reads as divergence: the step is cut, which does nothing, and a run can take millions of steps to cover a few seconds. At 0.5 such a model runs in a few thousand.' },
+        { heading: 'Keep in mind', text: 'On a model that does not need it, it costs accuracy: a correction is taken that more iterations would have improved. The canister radiolysis page leaves it at 0.' },
+      ],
+      more: more('Choosing a solver', 'help-solver'),
+    }),
+
+    'set:maxPoints': () => {
+      const m = state.compiled;
+      const pts = Math.max(1000, Number(state.solver.maxPoints) || Number(SOLVER_DEFAULTS.maxPoints));
+      return {
+        kicker: 'Solver', title: 'Points kept',
+        lead: 'How many points of the solution are kept for the charts and the files. Past this the stored points are thinned as the run goes, so a long run still fits; the solution itself is not affected.',
+        facts: [
+          ['Default', SOLVER_DEFAULTS.maxPoints],
+          ['Least', '1000'],
+          ['This model', m ? `${m.states} numbers a point, ${mb(8 * m.states * pts)} at ${pts}` : null],
+        ],
+        sections: [
+          { text: 'When the store is full, every other point is dropped and from then on every second step is kept, and so on. A long run ends with between half and all of this many, dense where the solver crept and sparse where it flew.' },
+          { heading: 'Keep in mind', text: 'A time asked for on Against distance is drawn at the nearest stored point, not interpolated. More points bring those closer, at the cost of memory.' },
+        ],
+        more: more('Reading the charts', 'help-charts'),
+      };
+    },
+
+    'set:autoAtol': () => ({
+      kicker: 'Solver', title: 'Absolute tolerance follows the solution',
+      lead: 'Lets each component’s absolute tolerance rise to rtol times the largest it has been, so that it is judged against its own history rather than a floor fixed before the run.',
+      facts: [['Default', SOLVER_DEFAULTS.autoAtol ? 'on' : 'off'], ['Read by', readers('autoAtol')]],
+      sections: [
+        { text: 'Much cheaper on a decay chain, or anything else that spans many decades. Each species in each cell has its own, and it only ever rises: a quantity that peaked and decayed is no longer controlled in its tail.' },
+        { text: 'The Newton iteration keeps the absolute tolerance it started with: how well a step’s equations were solved is not judged against history.' },
+      ],
+    }),
+
+    'set:smoothEst': () => ({
+      kicker: 'Solver', title: 'Smooth the error estimate',
+      lead: 'Filters the error estimate through I − hJ, as Shampine proposed, so that a stiff component cannot inflate it and force a needlessly small step.',
+      facts: [['Default', SOLVER_DEFAULTS.smoothEst ? 'on' : 'off'], ['Read by', readers('smoothEst')]],
+      sections: [{ text: 'The multistep methods, NDF, FBDF and QNDF, estimate their error from the backward differences instead.' }],
+    }),
+
+    'set:nonNegative': () => ({
+      kicker: 'Solver', title: 'Keep every species non-negative',
+      lead: 'Holds every species in every cell at or above zero.',
+      facts: [['Default', SOLVER_DEFAULTS.nonNegative ? 'on' : 'off'], ['Read by', readers('nonNegative')]],
+      sections: [
+        { list: [
+          'The NDF damps the derivative, so that a species at zero cannot be pushed further down; counts a violation in the error test; and projects an accepted step back to zero.',
+          'The Julia ports do the last of the three only.',
+        ] },
+        { heading: 'Keep in mind', text: 'Switch it off to see whether the model itself drives a species below zero. A negative value then points at the model, a reaction that consumes a species its rate law does not read for one, rather than at the solver.' },
+      ],
+    }),
+
+    'pane:time': () => {
+      const m = state.compiled;
+      const still = m && m.transport ? m.species.filter((_, i) => !m.mobile[i]) : [];
+      return {
+        kicker: 'Tab', title: 'Against time',
+        lead: 'The species ticked in the list, at one cell, at every stored point of the run.',
+        sections: [
+          { heading: 'The toolbar', list: [
+            '**Cell**: which cell of the column, with its centre in metres from the left-hand face. A batch is one cell and has no picker.',
+            '**Layer**: with a rock matrix, the fracture or a layer of rock behind the cell, by the depth of its centre.',
+            '**log time**, **log concentration**: logarithmic axes. A log axis cannot show zero, so t = 0, and values at or below zero, are left off.',
+            '**from**: where a log time axis starts, a plain number in the model’s time unit. A stiff run’s first steps are femtoseconds long, and without it the chart opens on fifteen empty decades. A linear axis starts at 0 whatever it says.',
+            '**clear**: unticks every species.',
+            '**CSV**: the species ticked, or all of them when none is, at the cell and layer shown, a row per stored point.',
+            '**View in HDF5 Browser**: the whole run as an HDF5 file, opened in the HDF5 Browser in a new tab without touching the disk. The browser has to let the page open a tab.',
+            '**HDF5**: the same file, as a download.',
+          ] },
+          { heading: 'The list', text: [
+            'A ticked species is filled in the accent colour. In a column a species diffuses when it has a `D`, and with `ADVECTION` and a `VELOCITY` the flow carries every species that is not `fixed`, whatever its `D`.',
+            still.length ? `In this model these do not move: ${someOf(still)}.` : '',
+          ].filter(Boolean) },
+        ],
+        more: more('Taking the run away with you', 'help-export'),
+      };
+    },
+
+    'pane:profile': () => ({
+      kicker: 'Tab', title: 'Against distance',
+      lead: 'One species across the column at several times, a curve for each. It needs a run in transport mode: a batch has no distance.',
+      sections: [
+        { heading: 'The toolbar', list: [
+          '**Species**: its own choice, apart from the ticks on Against time.',
+          '**Across**: with a rock matrix, along the fracture at one layer, or into the rock behind one cell, with the fracture at depth 0.',
+          '**Layer**, or **At cell** into the rock: which layer the curve runs along, or which cell the rock is behind.',
+          '**Times**: a list such as `0, 1 h, 30 d, 500 y`, in s, min, h, d, a or y (both years of 365.25 days); a bare number is in the model’s own unit. Empty draws eight, spread evenly over the stored points, the last at the end of the run.',
+          '**log concentration**: a logarithmic axis.',
+        ] },
+        { heading: 'Which times are drawn', text: 'Each time asked for is drawn at the nearest stored point; nothing is interpolated. The legend names the time drawn, and the note says which moved by more than 1 %, which could not be read and which lie past the end of the run.' },
+      ],
+      more: more('Reading the charts', 'help-charts'),
+    }),
+
+    'pane:gradient': () => {
+      const cur = $('rtmGradScale').value;
+      return {
+        kicker: 'Tab', title: 'Gradient',
+        lead: 'The whole run in one picture: time along x, distance from the left-hand face up y, and the concentration of one species as colour, a band per cell and a column per stored point. It needs a run in transport mode.',
+        sections: [
+          { heading: 'The toolbar', list: [
+            '**Species**, and **Layer** with a rock matrix: what is drawn, along the fracture or along one layer of rock.',
+            '**log time** and **from**: as on Against time. Without a from time the first femtoseconds take most of a log axis; the note says how many points it left off.',
+            '**log concentration**: colours by log₁₀ c. Values at or below zero are left blank rather than put at the bottom of the scale, and the note counts them.',
+            '**smooth**: interpolates between the cells. It looks better and claims a resolution the run has not got, which is why it is off.',
+          ] },
+          { heading: 'Colours', choices: [
+            ['yellow to red', 'Light for low, dark red for high.', cur === 'YlOrRd'],
+            ['viridis', 'Dark purple to yellow, even in lightness, and in order when printed in grey.', cur === 'Viridis'],
+            ['cividis', 'Dark blue to yellow, made to read the same to most colour-blind readers.', cur === 'Cividis'],
+            ['grey', 'Black for low, white for high.', cur === 'Greys'],
+          ] },
+        ],
+        more: more('Reading the charts', 'help-charts'),
+      };
+    },
+
+    'pane:model': () => ({
+      kicker: 'Tab', title: 'Model',
+      lead: 'The model the page solves, as text. It compiles 0.4 s after the last keystroke; the status line says what it compiled to or where it went wrong, and any warnings are listed under the text.',
+      facts: [
+        ['Examples', `${EXAMPLES.length} in ${new Set(EXAMPLES.map((e) => e.group)).size} groups`],
+        ['A drop reads', `up to ${DROP_MAX_FILES} files, ${DROP_MAX_BYTES / 1048576} MB`],
+        ['The text is kept', 'in this browser, between visits'],
+      ],
+      sections: [
+        { heading: 'The toolbar', list: [
+          '**Example**: loads one of the examples. The text is replaced without asking, and a line under the picker says what the model is and where it comes from.',
+          '**Apply**: compiles the text now.',
+          '**Reset to the built-in model**: water radiolysis and uranium dissolution at a spent-fuel surface, 127 reactions over 36 species. It too replaces the text without asking.',
+          '**Open…**: a model text (`.rtm`, `.txt`), or skbrtm’s database files and the Python script that runs them (`.in`, `.py`), read as one model. Dropping files, or their folder, anywhere on the page does the same.',
+          '**Save**: the text, as `model.rtm`.',
+          '**colour the syntax**: paints comments, section headings, numbers, functions and the words that mean something where they stand. Turn it off for a very large model. The choice is kept.',
+        ] },
+        { heading: 'Keep in mind', text: 'A reload does not bring the built-in model back: the text stays in this browser until Reset, an example or a file replaces it.' },
+      ],
+      more: more('The model text', 'help-model-text'),
+    }),
+
+    'pane:jacobian': {
+      kicker: 'Tab', title: 'Jacobian',
+      lead: 'The sparsity pattern of the matrix the solver factorises, and what Check Jacobian found.',
+      facts: [['Picture', '200 to 620 pixels square'], ['Listed', 'up to 10 disagreements for each state checked']],
+      sections: [
+        { heading: 'The pattern', text: 'Every entry the rate laws and the transport put in the Jacobian: the chemistry of each cell in the accent colour, and in the text colour the couplings between cells, the thin diagonals beside the blocks. The state is ordered cell by cell, so the matrix is banded. The caption says how much of one cell’s block is filled.' },
+        { heading: 'Check Jacobian', text: 'The button under Run compares the analytic Jacobian with a central difference, at the starting state and again with every species that starts at zero set to between 1e-9 and 5e-9, so that rate laws which vanish at the start are tested too. An entry far below the largest in its column cannot be measured by a difference at all; those are counted apart rather than called wrong.' },
+      ],
+      more: more('The Jacobian', 'help-jacobian'),
+    },
+  };
+
+  /* ---------------------------------------------------------------------
      The examples
      --------------------------------------------------------------------- */
   const EXAMPLES = typeof RTM_EXAMPLES !== 'undefined' ? RTM_EXAMPLES : [];
@@ -1792,6 +2247,7 @@
       state.gradTMin = $('rtmGradTMin').value;
       saveState();
       drawGradient();
+      infoRefresh();
     },
     'rtm:redrawProfile': () => {
       state.profileSpecies = $('rtmProfileSpecies').value;
@@ -1820,7 +2276,7 @@
     'rtm:downloadCsv': () => downloadCsv(),
     'rtm:toHdf5': () => { viewInHdf5Browser(); },
     'rtm:downloadHdf5': () => downloadHdf5(),
-    'rtm:solverChanged': () => { readSolverControls(); updateSolverOptions(); saveState(); },
+    'rtm:solverChanged': () => { readSolverControls(); updateSolverOptions(); saveState(); infoRefresh(); },
     'rtm:more': () => {
       const open = !state.sections[ADVANCED_KEY];
       state.sections[ADVANCED_KEY] = open;
@@ -1878,6 +2334,9 @@
   showAdvanced(!!state.sections[ADVANCED_KEY]);
   $('rtmGradScale').value = state.gradScale;
   $('rtmGradTMin').value = state.gradTMin;
+  // The (i)s: "Read more in Help" shows the Help tab, and kvot-info.js then
+  // scrolls it to the heading.
+  if (typeof KvotInfo !== 'undefined') KvotInfo.setup({ topics: TOPICS, onMore: () => showTab('help') });
   showTab(['profile', 'gradient', 'model', 'jacobian', 'help'].includes(state.tab)
     ? state.tab : 'time');
   window.addEventListener('resize', resize);

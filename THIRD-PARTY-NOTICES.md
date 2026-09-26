@@ -28,7 +28,9 @@ others. Each item keeps its own licence.
 jQuery and jQuery UI (MIT), MathJax (Apache-2.0), Leaflet (BSD-2-Clause),
 SheetJS `xlsx` (Apache-2.0), SortableJS (MIT), h5wasm (BSD-3-Clause), JSZip
 (MIT/GPLv3 dual), pdf.js (Apache-2.0), sql.js (MIT, with SQLite, public
-domain), and — only when a model in Kompartment
+domain), h5wasm-plugins (ISC; the compression libraries it is built from keep
+their own licences) only when an HDF5 file in `rb.html` needs one of its
+decompressors, and — only when a model in Kompartment
 asks for a SciPy solver — Pyodide (MPL-2.0) with the CPython (PSF), NumPy and
 SciPy (BSD-3-Clause) builds it carries. They are fetched by the visitor's
 browser from their publishers and are not redistributed here.
@@ -43,6 +45,11 @@ browser from their publishers and are not redistributed here.
 - **docXMLater** by DiaTech (https://github.com/ItMeDiaTech/docXMLater, MIT):
   `resources/js/zoterify-docx.js` follows its way of editing an existing Word
   document under Track Changes. No code is copied from it.
+- **myHDF5 and H5Web** by the ESRF (https://github.com/silx-kit/h5web, MIT):
+  `rb.html` reads a large local file the way H5Web's h5wasm provider does,
+  through WORKERFS in a worker, and loads HDF5 compression plugins by filter
+  id as it does. `resources/js/rb-lazy.js` and `rb-lazy-worker.js` are written
+  independently; no code is copied from them.
 
 ## Data
 

@@ -18,13 +18,19 @@
  */
 
 import { COLLECTIONS, qualifiedName } from './systems.js';
+import { migrateFarfieldDefaults } from './keys.js';
 
 /** Fields that describe the drawing, not the model. */
 const LAYOUT = new Set(['x', 'y', 'w', 'h', 'shape', 'colour', 'color', 'collapsed', 'label']);
 
 /** Top-level keys that are compared some other way than as a block collection. */
-const HEADER = new Set(['name', 'description']);
-const OWN = new Set(['simulation', 'nuclides', 'index_lists', ...COLLECTIONS, ...HEADER]);
+const HEADER = new Set(['name', 'description', 'author']);
+/**
+ * When the file was made and last saved: facts about the file rather than
+ * about the model, so two saves of the same model are not two versions of it.
+ */
+const STAMPS = new Set(['created', 'saved']);
+const OWN = new Set(['simulation', 'nuclides', 'index_lists', ...COLLECTIONS, ...HEADER, ...STAMPS]);
 
 /** One kind's singular, for the report. */
 export function singular(kind) {
@@ -118,6 +124,7 @@ const nameOf = (x) => (typeof x === 'string' ? x : String(x?.name ?? ''));
  *   same: boolean,
  *   name: {before: string, after: string}|null,
  *   description: {before: string, after: string}|null,
+ *   author: {before: string, after: string}|null,
  *   blocks: {
  *     added: Array<{kind: string, name: string}>,
  *     removed: Array<{kind: string, name: string}>,
@@ -133,12 +140,18 @@ const nameOf = (x) => (typeof x === 'string' ? x : String(x?.name ?? ''));
  * }}
  */
 export function compareModels(before, after) {
-	before ??= {};
-	after ??= {};
+	// A far-field path written before its outlet and matrix layers were a
+	// choice says nothing about them, and opening it writes what it meant
+	// into the block. That is the same model, so both sides are read that way
+	// before anything is compared: a file against the model it was opened
+	// into reports no change the reader did not make.
+	before = migrateFarfieldDefaults(before ?? {});
+	after = migrateFarfieldDefaults(after ?? {});
 	const out = {
 		same: true,
 		name: null,
 		description: null,
+		author: null,
 		blocks: { added: [], removed: [], renamed: [], changed: [], counted: { before: 0, after: 0 } },
 		lists: [], listsAdded: [], listsRemoved: [],
 		nuclides: { added: [], removed: [], changed: [] },
@@ -245,7 +258,7 @@ export function compareModels(before, after) {
 		if (!same(before[k], after[k])) out.other.push({ field: k, before: before[k], after: after[k] });
 	}
 
-	out.same = !out.name && !out.description
+	out.same = !out.name && !out.description && !out.author
 		&& !out.blocks.added.length && !out.blocks.removed.length
 		&& !out.blocks.renamed.length && !out.blocks.changed.length
 		&& !out.lists.length && !out.listsAdded.length && !out.listsRemoved.length
@@ -282,7 +295,7 @@ export function summary(diff) {
 		+ diff.nuclides.added.length + diff.nuclides.removed.length + diff.nuclides.changed.length;
 	if (rest) parts.push(`${rest} in the lists and nuclides`);
 	if (diff.settings.length) parts.push(`${diff.settings.length} setting${diff.settings.length === 1 ? '' : 's'}`);
-	if (diff.name || diff.description) parts.push('the name or description');
+	if (diff.name || diff.description || diff.author) parts.push('the name, description or author');
 	if (diff.other.length) parts.push(`${diff.other.length} other`);
 	return parts.join(', ');
 }
@@ -300,6 +313,7 @@ export function reportLines(diff, { before = 'the earlier version', after = 'thi
 	lines.push(`Blocks: ${diff.blocks.counted.before} before, ${diff.blocks.counted.after} after — ${summary(diff)}`);
 	if (diff.name) lines.push(`Name: ${shown(diff.name.before)} → ${shown(diff.name.after)}`);
 	if (diff.description) lines.push(`Description: ${shown(diff.description.before)} → ${shown(diff.description.after)}`);
+	if (diff.author) lines.push(`Author: ${shown(diff.author.before)} → ${shown(diff.author.after)}`);
 
 	const b = diff.blocks;
 	if (b.added.length || b.removed.length || b.renamed.length || b.changed.length) lines.push('');

@@ -26,10 +26,15 @@
   border-right: 1px solid var(--border-color);
   background: var(--bg-surface);
 }
-.ec-side-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0 14px 10px; }
+/* Both keep a scrollbar's gutter, so that with classic scrollbars the (i)s
+   of the foot line up with those above it, and nothing moves sideways when
+   the sections grow long enough to scroll. */
+.ec-side-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; padding: 0 14px 10px; }
 .ec-side-foot {
   flex: 0 0 auto;
   padding: 8px 14px 10px;
+  overflow: hidden;
+  scrollbar-gutter: stable;
   border-top: 1px solid var(--border-color);
   background: var(--bg-secondary);
 }
@@ -47,8 +52,12 @@
 .ec-resize:hover::after, .ec-resize.active::after { background: var(--color-kvot-accent); }
 
 /* ---- a folding section -------------------------------------------------- */
+/* The heading line: the title, a count and the section's (i) at the right. */
 .ec-sec { margin: 0 0 4px; }
 .ec-sec > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin: 10px 0 6px;
   padding: 0 0 4px 16px;
   border-bottom: 1px solid var(--border-color);
@@ -67,8 +76,8 @@
   color: var(--text-muted);
 }
 .ec-sec[open] > summary::before { transform: rotate(90deg); }
+.ec-sec > summary .ec-sec-title { flex: 1 1 auto; min-width: 0; }
 .ec-sec > summary .ec-count {
-  float: right;
   font: 11px verdana, sans-serif;
   color: var(--text-muted);
 }
@@ -94,6 +103,11 @@
   font-family: ui-monospace, Menlo, Consolas, monospace;
 }
 .ec-row textarea { min-height: 80px; resize: vertical; }
+/* The label line of a field: the label, then its (i) at the right-hand end
+   (kvot-info-line); the description and the names below it, then the field. */
+.ec-row .ec-label-line { align-items: flex-start; }      /* a label of two lines keeps its (i) on the first */
+.ec-row .ec-label-line > label { margin: 0; }
+.ec-row > input, .ec-row > select, .ec-row > textarea, .ec-row > .ec-actions { margin-top: 2px; }
 .ec-row input.changed, .ec-row select.changed { border-color: var(--color-kvot-bright); }
 .ec-row input:invalid { border-color: var(--color-kvot-accent); }
 .ec-unit { color: var(--text-muted); font-size: 11px; margin-left: 4px; }
@@ -101,6 +115,10 @@
 .ec-check[hidden] { display: none; }
 .ec-check input { margin-top: 2px; }
 .ec-check.changed > span { text-decoration: underline; text-decoration-color: var(--color-kvot-bright); text-underline-offset: 3px; }
+/* A checkbox with its (i) at the right-hand end of its first line. */
+.ec-check-line { display: flex; align-items: flex-start; gap: 6px; margin: 0 0 6px; }
+.ec-check-line > .ec-check { flex: 1 1 auto; min-width: 0; margin: 0; }
+.ec-check-line > .kvot-info-slot { margin-top: 1px; }
 .ec-desc { display: block; font-size: 11px; color: var(--text-muted); line-height: 1.4; }
 .ec-inline { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .ec-muted { color: var(--text-muted); font-size: 11px; line-height: 1.5; }
@@ -242,6 +260,10 @@
   font-family: ui-monospace, Menlo, Consolas, monospace;
 }
 .ec-toolbar .ec-spacer { flex: 1 1 auto; }
+/* A toolbar that opens with a note: the note takes the room that is left,
+   so the buttons and the (i) stay on its first line rather than dropping
+   below it one by one. */
+.ec-toolbar > .ec-muted:first-child { flex: 99 1 24rem; min-width: 0; }   /* grows ahead of the spacer */
 
 /* ---- charts and the empty state ----------------------------------------- */
 .plot { width: 100%; height: 460px; }

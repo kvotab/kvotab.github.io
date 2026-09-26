@@ -17,7 +17,7 @@
 
 import * as ed from '../domain/edit.js';
 import { systemOf } from '../domain/systems.js';
-import { blockIcon } from './icons.js';
+import { blockIcon, popIcon } from './icons.js';
 import {
 	summarise,
 	summariseIndexList,
@@ -218,9 +218,9 @@ export function renderInfo(host, project, selection, hooks = {}) {
 		const out = el('button', {
 			className: 'ghost info-pop', type: 'button',
 			title: 'Open Information in a window of its own, which can be moved and resized. '
-				+ 'Closing the window puts it back here.',
+				+ 'The same box with the arrow coming back, in the window, puts it back here.',
 			'aria-label': 'Open Information in a window of its own',
-		}, '\u29c9');
+		}, popIcon('out'));
 		out.addEventListener('click', (ev) => { ev.preventDefault(); ev.stopPropagation(); hooks.onPopOut(); });
 		bar.querySelector('.panel-section-title')?.after(out);
 	}
@@ -496,10 +496,21 @@ export function renderInfo(host, project, selection, hooks = {}) {
 		// on a path wants to know what it transports and how fast, and only
 		// then how finely it was divided.
 		const states = ed.farfieldStates(project, block);
-		host.append(line('Path', el('span', {},
-			`${block.n_f} fracture cells, ${block.n_m} matrix layers, `
+		const extra = ed.extraCells(block);
+		// Worked out exactly there are no cells to describe: the path is its
+		// transfer function, and what it holds is all it keeps.
+		const exact = ed.isSemiAnalytic(block);
+		host.append(line('Path', el('span', {}, exact
+			? `worked out semi-analytically from its transfer function, ${states.states} `
+				+ `state${states.states === 1 ? '' : 's'} for what it holds`
+			: `${block.n_f} fracture cells${extra && Number(block.o_b) === ed.CONTINUES
+				? ` and ${extra} past the release point` : ''}, ${block.n_m} matrix layers `
+			+ `(${block.grid === 'matched' ? 'matched to diffusion' : 'as in the reference implementation'}), `
 			+ `${states.states} states`)));
-		for (const key of ed.FARF_EQUATION_KEYS) {
+		// Only the settings the path is worked out from: of F, the wetted
+		// surface and the aperture, the one it gives.
+		for (const key of ed.activeEquationKeys(block)) {
+			if (exact && key === 'pen_dep_0') continue;
 			const v = String(block[key] ?? '').trim();
 			if (!v) continue;
 			const perNuclide = ed.FARF_NUCLIDE_KEYS.includes(key);
@@ -515,10 +526,11 @@ export function renderInfo(host, project, selection, hooks = {}) {
 					? el('span', { className: 'info-dim' }, ' · and per index below')
 					: null));
 		}
-		host.append(line('Outflow', ed.OUTFLOW_LABEL[block.o_b ?? 1] ?? String(block.o_b)));
-		if (Number(block.n_b) > 0) {
-			host.append(line('Read', `${block.n_b} cell`
-				+ `${Number(block.n_b) === 1 ? '' : 's'} before the far end`));
+		host.append(line('Outflow', exact ? ed.OUTFLOW_LABEL[ed.CONTINUES]
+			: ed.OUTFLOW_LABEL[block.o_b ?? 1] ?? String(block.o_b)));
+		if (!exact && Number(block.o_b) !== ed.CONTINUES && extra > 0) {
+			host.append(line('Read', `${extra} cell`
+				+ `${extra === 1 ? '' : 's'} before the far end`));
 		}
 		const releases = ed.releaseTransfers(project, qname);
 		host.append(line('Release',
@@ -766,6 +778,10 @@ function renderModelInfo(host, project, hooks) {
 	if (project.description) {
 		host.append(el('p', { className: 'info-comment' }, project.description));
 	}
+	// Who wrote it, where the file says -- which an imported Ecolego project
+	// does whenever its author was filled in.
+	const author = String(project.author ?? '').trim();
+	if (author) host.append(line('Author', el('span', {}, author)));
 
 	// --- how big it is -----------------------------------------------------
 	const all = ed.blocksIn(project, '', { deep: true });

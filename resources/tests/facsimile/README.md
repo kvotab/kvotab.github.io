@@ -189,6 +189,11 @@ the browser as in ../rb/README.md, then
 
     python3 resources/tests/facsimile/test-ui.py
 
+When another session has ports 8765 and 9222, `FAC_HTTP_PORT` and
+`FAC_CDP_PORT` give this test and `test-worker.py` others:
+
+    FAC_HTTP_PORT=8812 FAC_CDP_PORT=9312 python3 resources/tests/facsimile/test-ui.py
+
 It resets the page, solves a short case, and then works the fourth chart --
 "Your own selection" -- the way a reader does: ticking series one after
 another, changing the time axis, toggling the log scale, unticking, clearing,
@@ -254,6 +259,21 @@ Open… is checked through the same reading. So is a file dropped during a run:
 it is compiled once the run is over or stopped, and the HDF5 file of that run,
 caught on its way to the disk, still holds the text the run solved rather than
 the one that arrived meanwhile.
+
+The (i) beside every setting, section heading and tab toolbar is checked just
+before the colouring. It replaced the hover tooltips, so the first checks are
+that no control in the panel still has one, that `KvotInfo.audit()` finds no
+slot without a topic and no "Read more in Help" link without a heading to land
+on, that there are at least as many buttons as slots in the markup and one on
+every case setting (those rows are made after each compile, and so are their
+topics), and that the (i)s of the panel are in one line down its right-hand
+edge. Then a panel is opened, and closed the three ways: the same (i), its ×,
+and Escape sent through the browser's own input. That Escape is safe here: it
+is the page's own keydown handler that closes the panel, not a dialog's close
+request, which is what hangs headless Chrome over a `<dialog>`. A topic that
+marks the choice in force has to follow its control while it is open, a case
+setting's topic has to be made from its line, and Read more has to land on
+its heading on the Help tab.
 
 The settings are checked in both directions, because they are one thing seen
 twice: a value typed into the panel has to appear on its line in the model

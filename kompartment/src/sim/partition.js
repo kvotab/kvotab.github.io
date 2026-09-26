@@ -154,6 +154,15 @@ export function whyNotSplit(system) {
 		const why = UNSEEN[rec.kind];
 		if (why) return `'${rec.name}' is a ${rec.kind.replace(/_/g, ' ')}: ${why}`;
 	}
+	// A semi-analytical path's release is a convolution over what flowed into
+	// it during the run, and the series of a split run are worked out
+	// afterwards on the whole model's system, which never saw that history.
+	const laplace = (system.layout?.farfields ?? []).find((p) => p.farf?.laplace);
+	if (laplace) {
+		return `'${laplace.name}' is worked out semi-analytically: its release is a convolution `
+			+ 'over what flowed into it during the run, which the whole model the series are '
+			+ 'worked out on afterwards does not have';
+	}
 	// Events arrive as a compiled bundle rather than as recorders when the
 	// model declares them that way, so both routes are checked.
 	if (system.events?.n) {

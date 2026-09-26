@@ -17,19 +17,28 @@ let fileCounter = 0;
 try { self.postMessage({ cmd: 'started' }); } catch (e) { /* ignore */ }
 
 // load h5wasm inside the worker (IIFE build)
-try {
-  // Pinned to the same version the page loads. '@latest' let the worker and
-  // the main thread run different builds, and made an upstream release able to
-  // break intersect mode with no change here.
-  importScripts('https://cdn.jsdelivr.net/npm/h5wasm@0.9.0/dist/iife/h5wasm.min.js');
-} catch (e) {
-  // importScripts may throw in restricted environments; we'll surface an error on compute requests
-  console.warn('tree-worker: failed to import h5wasm via importScripts', e);
-}
+//
+// Pinned to the same version the page loads. '@latest' let the worker and
+// the main thread run different builds, and made an upstream release able to
+// break intersect mode with no change here. Pinned to the same bytes as well:
+// importScripts cannot check a hash, so the build is fetched with the page's
+// `integrity` -- the browser refuses anything else -- and run from those bytes.
+(async function loadH5wasm() {
+  try {
+    const response = await fetch('https://cdn.jsdelivr.net/npm/h5wasm@0.10.3/dist/iife/h5wasm.min.js',
+      { integrity: 'sha384-ddY2IJ7uyvBrG5FPTk2LGWBUTJBV+MchV38zJwXMPuFYM9YwIH4iN9RxvDe01UEW' });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const url = URL.createObjectURL(await response.blob());
+    try { importScripts(url); } finally { URL.revokeObjectURL(url); }
+  } catch (e) {
+    // we'll surface an error on compute requests
+    console.warn('tree-worker: failed to load h5wasm', e);
+  }
+})();
 
 async function waitForH5Wasm() {
   let attempts = 0;
-  while (typeof self.h5wasm === 'undefined' && attempts < 50) {
+  while (typeof self.h5wasm === 'undefined' && attempts < 150) {
     await new Promise(r => setTimeout(r, 100));
     attempts++;
   }

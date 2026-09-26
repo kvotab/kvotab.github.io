@@ -216,14 +216,31 @@ export function blockTopic(kind) {
 			{ diagram: 'a box marked with a canister', file: '`waste_packages`', more: 'Waste packages: the source term with its barriers' });
 		case 'farfield': return topic('Far-field pathway',
 			'A transport path through fractured rock (FARFCOMP): advection along fractures, diffusion into '
-			+ 'the rock matrix beside them, sorption and decay, discretised into cells.',
+			+ 'the rock matrix beside them, sorption and decay — worked out on cells with the rest of the '
+			+ 'model, or semi-analytically from the path’s transfer function.',
 			[
+				'**Worked out** — *on cells*: the fracture and the rock divided into cells, solved with '
+				+ 'the rest of the model, every setting free to change during the run. *Semi-analytically*: '
+				+ 'the path solved exactly once per run, and what flows in convolved with its responses — '
+				+ 'one state per nuclide for what it holds, no cells to refine, the settings constant '
+				+ 'through the run and the rock going on past the release point.',
 				'**Release** — the compartment what leaves the far end goes to.',
-				'The path’s own settings — its length, the flow-wetted surface area, the water '
-				+ 'residence time, the matrix depth — one value each.',
+				'**Flow-wetted surface given as** — F, the flow-related transport resistance; a_w, the '
+				+ 'wetted surface per volume of flowing water; or δ, the fracture aperture (a_w = 2/δ). '
+				+ 'The other two are worked out under the choice, and switching keeps the path the same.',
+				'The path’s own settings — the water travel time, the Peclet number, the rock’s density, '
+				+ 'the matrix depth — one value each.',
 				'The chemistry — sorption, diffusivity, porosity — per nuclide, under **Values per '
-				+ 'index**.',
-				'**Discretisation** — how many cells along the path and into the matrix.',
+				+ 'index**. A stable species does not decay, and a list of chemical species decays along '
+				+ 'nothing: a path needs no radionuclides.',
+				'**Discretisation**, on cells — how many cells along the path and into the matrix, and '
+				+ 'how the matrix layers are laid out: matched to diffusion into the rock, from a first '
+				+ 'layer worked out from the path’s own time scales, or as in SKB’s reference '
+				+ 'implementation. Worked out semi-analytically only the depth into the matrix is left, '
+				+ 'beside the chemistry.',
+				'**Water downstream of the path** — new paths have the rock going on past the release '
+				+ 'point, as in FARF31, with a few cells of it beyond: **Cells past the release point**, '
+				+ 'empty to have them worked out.',
 				'**Report every cell** — chart each cell, not only what the path releases.',
 				'**Handle decay and ingrowth** — whether the nuclides decay on the way.',
 			],

@@ -81,6 +81,11 @@ const KVOT = (() => {
       desc: 'SKB’s buffer erosion and canister corrosion calculation for every deposition hole of a KBS-3 layout, from hydro data you drop in: rejection criteria, time to advection, sulphide-driven failure times and the key outputs of the PSAR workbook.',
     },
     {
+      href: './FARF31.html',
+      label: 'FARF31 Far-Field Transport',
+      desc: 'SKB’s far-field model FARF31: radionuclides along a stream tube with dispersion, matrix diffusion and sorption, and decay chains of any length, solved in the Laplace domain from the release you give; FARF31’s own input and output files read and written.',
+    },
+    {
       href: './SimpleFunctions.html',
       label: 'Simple Functions',
       desc: 'Radionuclide solubility limits by SKB’s Simple Functions: the SR-Site and PSAR calculation for 20 elements in the water of a failed canister, Monte Carlo over groundwater compositions and equilibrium constants, with controlling solids, speciation and sensitivities.',

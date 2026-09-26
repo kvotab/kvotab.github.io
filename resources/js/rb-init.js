@@ -50,12 +50,35 @@ initDOMReferences();
 
 
 // EventBus listeners -------------------------------------------------
-// Centralized selection handler — updates DOM classes and info/chart display
+/*
+  What a selection is about to read is fetched first when it has to be: a lazy
+  file's groups and values, or a decompressor its data needs (rbPrepareSelection
+  in rb-lazy.js). With nothing to fetch the selection is applied at once, as it
+  always was. The newest selection wins: one overtaken while it waits is not
+  drawn over the one that overtook it.
+*/
+let _selectionSeq = 0;
 EventBus.on('selection:changed', (payload) => {
+  const seq = ++_selectionSeq;
+  let pending = null;
+  try { pending = rbPrepareSelection(payload); } catch (e) { kvotWarn('rbPrepareSelection failed', e); }
+  if (!pending) {
+    applySelection(payload);
+    return;
+  }
+  pending
+    .catch((e) => kvotWarn('rbPrepareSelection failed', e))
+    .then(() => { if (seq === _selectionSeq) applySelection(payload); });
+});
+
+// Centralized selection handler — updates DOM classes and info/chart display
+function applySelection(payload) {
   try {
     const tree = document.getElementById('tree');
 
     if (!payload || !payload.mode) return; 
+    // Only a selection of several groups keeps them; anything else starts over.
+    if (payload.mode !== 'groups') selectedGroups = [];
 
     // support explicit 'none' mode for clearing selection from other components
 
@@ -98,6 +121,19 @@ EventBus.on('selection:changed', (payload) => {
       return;
     }
 
+    if (payload.mode === 'groups') {
+      // Several groups, each drawing a chart of its own: all of them marked,
+      // and one chart with a panel each (see toggleGroupInSelection).
+      document.querySelectorAll('.tree-item.dataset.selected').forEach(el => el.classList.remove('selected'));
+      document.querySelectorAll('.tree-item.group.expanded').forEach(el => el.classList.remove('expanded'));
+      for (const it of payload.items || []) {
+        const el = findTreeItem(it.path, { fileKey: it.fileKey, extra: '.group', root: tree });
+        if (el) el.classList.add('expanded');
+      }
+      try { showMultipleGroupAttributes(payload.items || []); } catch (e) { kvotWarn('selection:changed handler showMultipleGroupAttributes failed', e); }
+      return;
+    }
+
     if (payload.mode === 'multi') {
       // clear previous selection then mark provided items
       document.querySelectorAll('.tree-item.dataset.selected').forEach(el => el.classList.remove('selected'));
@@ -124,7 +160,7 @@ EventBus.on('selection:changed', (payload) => {
   } catch (e) {
     console.error('EventBus selection:changed handler error', e);
   }
-});
+}
 
 // Theme-change handler (subscribed to EventBus by MutationObserver)
 EventBus.on('theme:changed', ({ isDark }) => {
@@ -140,7 +176,7 @@ EventBus.on('theme:changed', ({ isDark }) => {
 
     if (!currentChartData) return;
     _suppressPresetSync = true;
-    Plotly.relayout(el, ChartService.relayoutForTheme(isDark));
+    Plotly.relayout(el, forEveryPanel(el, ChartService.relayoutForTheme(isDark)));
     setTimeout(() => { _suppressPresetSync = false; }, 0);
   } catch (e) {
     kvotWarn('theme:changed handler failed', e);
@@ -825,6 +861,12 @@ document.getElementById('fileInput').addEventListener('change', async (e) => {
       const file = files[i];
       updateFileLoadTicker(i, files.length, file.name);
       try {
+        if (wantsLazyFile(file)) {
+          // Read from disk as it is looked at, in a worker, whatever its
+          // size: see rb-lazy.js. The limit below is for reading it whole.
+          await ingestHdf5Lazy(file, 'fileInput:load');
+          continue;
+        }
         /*
           Checked before the read, not after. An HDF5 result set is read into
           memory whole and then copied into the h5wasm filesystem, so an

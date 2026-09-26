@@ -256,3 +256,36 @@ export function sampleMark(which) {
 	g.append(svg('path', { class: 'smark-line', d: line }));
 	return g;
 }
+
+/**
+ * The way the Information view goes out of the rail into a window of its
+ * own, and the way it comes back: a box with an arrow leaving it by its top
+ * right-hand corner, and the same box with the arrow coming home. They are a
+ * pair so that the one reads as undoing the other. The window used to be put
+ * back with a ×, which says "close" and not "put back".
+ *
+ * @param {'out'|'back'} way
+ * @returns {SVGSVGElement} 13 by 13, in the button's own colour
+ */
+export function popIcon(way) {
+	const back = way === 'back';
+	const g = svg('svg', {
+		class: `pop-icon pop-${back ? 'back' : 'out'}`,
+		viewBox: '0 0 16 16',
+		width: 13,
+		height: 13,
+		'aria-hidden': 'true',
+		focusable: 'false',
+		fill: 'none',
+		stroke: 'currentColor',
+		'stroke-width': 1.4,
+		'stroke-linecap': 'round',
+		'stroke-linejoin': 'round',
+	});
+	// The box, open at the corner the arrow crosses.
+	g.append(svg('path', { d: 'M7 2.5H4A1.5 1.5 0 0 0 2.5 4v8A1.5 1.5 0 0 0 4 13.5h8a1.5 1.5 0 0 0 1.5-1.5V9' }));
+	g.append(svg('path', { d: 'M13.5 2.5L7.5 8.5' }));
+	// Its head outside the box going out, inside it coming back.
+	g.append(svg('path', { d: back ? 'M7.5 4.5v4h4' : 'M9.5 2.5h4v4' }));
+	return g;
+}

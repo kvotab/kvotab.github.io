@@ -97,6 +97,9 @@ exercise `domain/` and `sim/` directly, which is why they can be plain Node.
 | `src/ui/histview.js`, `src/ui/scatterview.js` | The Chart tab's other two pictures of a sample |
 | `src/ui/clipboard.js` | The block clipboard, shared between tabs of one browser |
 | `src/io/eco.js` | The importer for `.eco` projects and `.eas` assessments |
+| `src/io/ecoexport.js` | The exporter to `.eco` projects (and `python/kompartment/io/ecoexport.py`, which writes the same bytes) |
+| `src/sim/pathlayout.js` | A far-field path's matrix layers as a run lays them out, for the exporter |
+| `src/ui/ecoreport.js` | What an export holds and leaves out, in the Save dialog and on the Build tab |
 | `src/io/zip.js`, `src/io/gzip.js`, `src/io/inflate.js` | Reading and writing the archives those come in |
 | `src/io/hdf5.js` | An HDF5 writer, in the shape the assessment tools read |
 | `src/io/resultfile.js`, `src/io/dataset.js` | Results files, and a project archive with its run beside it |
@@ -2157,19 +2160,49 @@ number. Where each part of it lives:
 
 | | |
 |---|---|
-| the layer grid | `layerDepths` in `src/domain/farfield.js`, over `zeroin` |
-| the fracture and matrix rates | `coefficients` |
+| the layer grid | `pathGrid`: `matchedGrid` (new paths) or `layerDepths` (the reference layers, bit for bit), both over `zeroin`, in `src/domain/farfield.js` |
+| the flow-wetted surface | `wettedSurface` and its tangent: F/T<sub>w</sub>, a<sub>w</sub>, or 2/δ, as the block's `surface` says |
+| the fracture and matrix rates | `coefficients(s, grid)` |
+| the outlet on the grid | `effectiveStructure`: `o_b` 4 (the rock goes on) is `o_b` 2 at the far end of `extraCells` = `autoExtraCells(n_f, pe)` cells, `downstream` |
 | the transport matrix | `cellStructure` + `cellValues` |
 | the release out of the path | `releaseCells` + `releaseWeights` |
 | decay and ingrowth inside a cell | `buildDecayModel`, the model's own, in both unit conventions |
 | the inlet | a flux delivered to the block lands in cell 0 |
 | the derivative and its Jacobian | `FarfPath` in `src/sim/farfield.js` |
 
-**What it may be indexed by** is the radionuclide list or nothing at all. That
-is narrower than this tool's other blocks on purpose: one block is one migration
-path, and the numbers that describe a path -- a travel time and a flow
-resistance out of a hydrogeological model -- arrive per path. Indexed by
-nothing it transports one quantity with no decay and no ingrowth.
+**What it may be indexed by** is whatever a compartment may be, including
+nothing and including lists that are not the radionuclides: the nuclide
+dimension, when it has one, is the chain the cells decay along, and every other
+dimension is that many paths side by side. A member of the catalogue marked
+stable has λ = 0; a path on a list of chemical species decays along nothing.
+`addFarfield` indexes a new path by the radionuclides when the model has them
+and by nothing otherwise.
+
+**The two numerics a path chooses** -- the outlet and the matrix layers -- are
+this tool's own for new paths (`FARF_DEFAULTS`: `o_b` 4, `n_b` empty, `grid`
+'matched') and the reference implementation's for any path saved before they
+were choices: `migrateFarfieldDefaults` in `src/domain/keys.js` (and
+`kompartment/keys.py`) writes `FARF_LEGACY` -- `o_b` 1, `n_b` 0, `grid`
+'reference', `surface` 'f' -- into a block that does not say, so it runs
+exactly as it did. `compareModels` reads both sides that way, so a file against
+the model it was opened into reports no change. `method` is 'discretized' or
+absent: the cells are one way of working a path out, `usesCells` is what the
+builder asks, and every other setting is the method's input. The other way is
+'semi-analytical' (`isSemiAnalytic`): see *Worked out semi-analytically* below.
+
+**The matched layers** are a geometric series to exactly the depth, the
+nodes spaced by the geometric mean of the layers they join and the first at
+d<sub>0</sub>/(1 + √q) from the wall, which removes the constant shortfall of
+nodes at layer centres (5.8% of the admittance at the reference's ratio of e).
+The first layer is `autoFirstLayer`: the shallowest `penetrationScale` of every
+nuclide on the path -- the depth diffusion reaches at the frequency where the
+path's transfer function has fallen to e<sup>-25</sup>, or at the nuclide's own
+decay constant if that is faster -- over 10. Square roots, the four operations
+and repeated multiplication only, so the Python engine lays out the same
+doubles. `FarfPath` lays them out per combination of the other dimensions at
+its first refresh after `restart()`, which `run()` calls through
+`system.restartPaths()` before anything is evaluated, and holds them for the
+run; so their tangent is zero, and the Jacobian stays exact.
 
 **Which settings may differ per nuclide** is the four that are chemistry:
 `Kd,f`, `Kd,m`, `De,m` and the matrix porosity -- the last because the porosity
@@ -2218,9 +2251,10 @@ equation in an algebraic slot, so it can follow the clock, a lookup table or a
 compartment, and the rates are recomputed when — and only when — their inputs
 move. Nothing is precomputed on a time grid and interpolated between. That
 also means df/dy has to carry the *rates'* own tangents when a setting depends
-on the state, which is `coefficientsTangent` and, because the layer
+on the state, which is `coefficientsTangent` and, because the reference layer
 thicknesses come out of two root-finds, `layerDepthsTangent` by the implicit
-function theorem.
+function theorem. The matched layers are held for the run, so only the rates
+over them move.
 
 ### Two places where care is needed
 
@@ -2274,6 +2308,124 @@ properties the model has to have.
   what it is differencing. Each of the ten settings in turn made to follow a
   compartment, plus the two that move through a root-find, plus a chain: every
   entry within the noise floor of the difference itself.
+
+### Worked out semi-analytically
+
+`method: 'semi-analytical'` solves the same path exactly in the Laplace domain
+and convolves, rather than integrating cells. Two modules and one runtime
+object:
+
+| | |
+|---|---|
+| the solution | `src/domain/farfield-laplace.js` (and `python/kompartment/engine/farfield_laplace.py`): the transfer matrix T(s) = H(G) over the block's decay network, its inversion on a parabola, and each unit response tabulated as quintic Hermite pieces to 2e-8 |
+| the runtime | `LaplaceFarfPath` in `src/sim/farfield-laplace.js` (and `engine/farfield_semi.py`), with `FarfPath`'s interface |
+| the builder | `farfLayout` gives the block one state per nuclide per combination (`cellCount` 1), what it holds; the release slot `needs` every rate delivering into the path; `laplaceLines` compiles what flows in (value, tangent and columns) into `setInflow` |
+| the hooks | `primeRecorders`, `storeStep` (every accepted step and output time) and `startSegment` (every segment the runner starts: after a switch time or a jump) record the inflow; `restartPaths` makes the responses be worked out again from the settings at a run's first instant |
+
+**The balance.** d(held)/dt = in − out − Λ·held, `apply` doing the last two,
+so what went in, what came out and what decayed add up to what is held
+whatever the solver does. `out` is the release slot: the recorded history
+convolved with the responses, plus the step being taken -- from the last record
+to the time asked about, the cubic through the last records and the current
+inflow, integrated exactly. The current inflow's weight is the release's
+derivative along it, which is `releaseTangent`; it is zero while the step is
+shorter than the time anything takes to come through. That weight changes from
+step to step, so `isConstant` is false for any model with such a path.
+
+**The history** is kept per source as blocks of six moments that merge while
+they are narrow beside every response spacing they will still meet (`RHO`),
+so it stays about as long as the response's own grid: 2,200 blocks over three
+slots after 10⁵ steps. Two records at one instant are a step in the inflow; a
+jump of what is held between them is an amount delivered at once. The records
+also travel in `MEM` (as `farfield_inflow` holders), so a run saved with its
+data and read back sweeps the convolution forward again.
+
+**Under plug flow** a response starts at its delay, and what arrives before
+its first tabulated time is a point mass there (`m0`, de Hoog's inversion of
+T/s): `addEarlyMass` in the domain module, `convolve` releases it as
+m0·in(t − t<sub>0</sub>), and the runtime reads that inflow from the records
+(`_recordedInflow`, the same causal cubic the history holds) or, when the lag
+falls inside the step being taken, from the step's own cubic (`pointParts`,
+whose current-inflow weight joins the Jacobian's).
+
+**Every release response is held to its mass balance** (`massBalance`): its
+integral, m0 included, against what leaves the path by its last time -- T(0)
+when the Chernoff bound says the rest is below 1e-10 of it, and otherwise de
+Hoog's integral to that time -- relative to T(0), at 1e-5. A miss is worked out
+again from a thousandth of the first time on a grid twice as fine; one that
+misses even so is `balanced: false`, collected by `balanceWarnings`, put in the
+run's `stats.farfield`, and said in the run log and as a warning on the block
+(the problems strip, the diagram's marks and the settings window). Never a
+quiet shortfall.
+
+**Refused at build time, by name**, in `buildSystem` once the invariant slots
+are known: a setting whose slot is not class 0 (the clock or the state), what
+`preparePath` cannot solve (a daughter with De = 0 linked to a diffusing
+member; more than `MAX_BLOCK` = 16 nuclides linked from one source to one
+target), and a loop through the release with no state in it (`orderAlgebraic`'s
+cycle, reworded). `whyNotSplit` and `uncarried` refuse split runs and dy/dp,
+and `integrationFingerprint` is null, since each would reuse or split a run
+whose release is a history. The Python engine refuses the compiled path with
+the same reason in `compiled_why`.
+
+### Written out for Ecolego
+
+An Ecolego project has no far-field block, so `src/io/ecoexport.js` writes a
+path as what it is on the grid: a sub-system of compartments, one per cell,
+and a transfer for every rate between two of them (`planPath`).
+
+**The transfers are read off the path's own matrix** (`pathNetwork`).
+`cellValues` and `releaseWeights` are linear in the rates they are handed, so
+each rate set to one and the rest to zero gives that rate's share of every
+entry: an entry off the diagonal is a flux from its column's cell to its row's
+at that combination of rates, and what a column loses beyond what the others
+gain leaves the path, to a sink. Nothing about the outlets is written out by
+hand, so every outflow condition and every count of extra cells comes out as
+the matrix a run assembles -- the test assembles both from random rates and
+compares them entry by entry. The coefficients are whole numbers (`adv +
+disp`, `adv - 2 * disp`, `3 * disp`), and a few are negative: the
+extrapolated outlets read the cells upstream of the last one.
+
+**The rates are expressions; the layers are numbers.** The path's settings
+become expressions in the sub-system, and the rates expressions of those
+(`adv`, `disp`, `k_fm`, `k_mf`, `k_1_2`, …), as `coefficients` writes them --
+so a sampled Kd or De moves them in Ecolego as here. Their equations are
+*respelled* on the way in (`respell`): a bare name means the writer's own
+sub-system or the model's, never an ancestor in between, so a reference to a
+block beside the path becomes its full path once the equation is one level
+further in. The local names avoid every identifier the settings read, so
+nothing they read is shadowed. The layers' thicknesses come out of a
+root-find, which no expression can do, so `pathLayouts` (`src/sim/pathlayout.js`)
+builds the model **as it goes out** -- after everything else left out has
+fallen, since a model full of blocks with no equivalent may not build as it
+is -- evaluates it once at the start, and reads each path's layers the way a
+run lays them out. The matched layers are `FarfPath`'s own, to the last bit.
+The reference layers are `referenceLayers`: `layerDepths` with every power of
+the ratio a running product, because V8's `**` is the one thing the Python
+package cannot reproduce (it agrees with C's `pow` on 83 % of integer powers
+and with fdlibm's on 87 %) and the two must write the same file; they differ
+from a run's by a unit or two in the last place.
+
+**What reads the path still reads it.** Its release is an expression under
+the path's own name, reading `release` in the sub-system; its inventory is the
+aggregate `held`, over the cells up to the release point. A transfer into the
+path arrives in `F1`. The transfer that carried its release comes in from a
+source at the same rate -- a release takes nothing from the path -- and what
+leaves the far end of the cells goes to the sub-system's `Outflow` sink. With
+the semi-infinite outlet the two differ: the release is the flux across the
+plane at the release point, and the extra cells beyond it go on holding what
+crossed it, which a total over the sub-system counts twice. A semi-analytical
+path is written as its equivalent on cells (`cellEquivalent`: its own counts
+and layers, the semi-infinite outlet).
+
+**How it was checked.** The example and `FARFIELD_PATHS` in
+`test/eco-export-fixture.js` (a path per object in a sub-system, matched
+layers per travel time, a value per nuclide; a second at the top, by its
+aperture, on reference layers from a first layer of its own) are exported,
+read back by both importers and run: the re-imported model gives the path's
+numbers to within the tolerance it was solved to -- 5e-8 at `rtol` 1e-8 on
+the example, 7e-12 on a 3 × 2 path at fixed output times -- and the Python
+package writes the same bytes.
 
 ## Waste packages
 
@@ -2667,6 +2819,13 @@ comparing two summaries: a block that appeared is an *Add*, one that vanished a
 *Delete*, one whose name changed a *Rename*, one whose sub-system changed a
 *Move*. Where nothing structural changed, the step is named after whatever the
 editor was pointed at -- *Edit Buffer*.
+
+Two fields are not the model's but the file's: `created` and `saved`, which
+Save stamps into a copy of the model as it writes it and into the model itself
+once it is written (`stampSaved`, `adoptStamps`). A step carries them across
+(`keepStamps`), since putting the model back as it was does not put back the
+time it was saved; they are never recorded as an edit, the fingerprint does
+not read them, and the version report leaves them out.
 
 ## The compartment and transfer dimensions
 
@@ -3900,11 +4059,18 @@ solve. `splitJobs` turns the partition into *jobs*, sets of materials, because
 a part is built by switching every other material off: parts that share a
 material are merged, and a part with no material at all rides with the smallest
 job, since switching materials off does not remove it -- it is in every job's
-build and is taken from one. Each job goes to a worker as the model's text and
-a list of materials; the worker switches the others off (`partModel`), builds,
-solves on the output grid, and sends its states back named (`stateKeys`: block,
-index, and for a far field the cell). `assembleParts` files every state from
-the job that owns it into the whole model's vector, and the result is a
+build and is taken from one. The jobs are packed onto the cores, and **each
+core's share is one job**: its materials together, built once (`binJobs`).
+Jobs that cannot reach each other can as well be solved together as apart,
+and a build is what a part costs whatever its size -- a part of 1,032 of the
+largest assessment's 55,728 states generated 7.6 million characters of code
+against the whole model's 7.7 million -- so a worker that built each of its
+jobs in turn spent most of its time building: 32 builds for 9 workers there.
+Each share goes to a worker as the model's text and a list of materials; the
+worker switches the others off (`partModel`), builds, solves on the output
+grid, and sends its states back named (`stateKeys`: block, index, and for a far
+field the cell), and is closed as soon as it has. `assembleParts` files every
+state from the share that owns it into the whole model's vector, and the result is a
 `Results` of the whole model's own system -- nothing downstream knows it was
 split. The check above, that a part's derivative is the whole model's on its
 states to zero difference, is now a test, on every job of the bundled
@@ -3933,9 +4099,29 @@ need not be: a jump moves a share of a state into the same index of another
 block, or a package failure into the block the release is already transferred
 to, so it joins nothing the derivative does not.
 
-**Auto** predicts with the measured shape of the cost: a job pays `0.12 +
-0.88 × its share of the states` of a whole derivative call and of a whole build,
-jobs are packed onto the cores largest first, and each worker costs a start.
+**Memory decides how many workers, as well as the cores.** Every worker of a
+page is a thread of its process, and in Chromium every JavaScript heap in one
+process shares one reservation of about 4 GB, whatever the machine has:
+measured with workers that only hold memory, eight of 450 MB were fine in
+Chrome 153 and Edge 154, ten crashed, and five of 800 MB crashed at about
+3.6 GB between them. Past it the engine takes the whole renderer down, so the
+fallback to a whole solve never gets to run. On the largest imported
+assessment each part's worker held 195 to 309 MB of heap (two bytes per
+character of model text, about 35 per character of generated code) and, in its
+compilers, about 0.8 GB more of the machine's memory: a PC reporting 20 threads
+started 19 workers and lost the tab 16 s in, and nine needed 10 GB. Brave never
+split that model at all, because it reports four cores. `partWorkerCap` works
+out how many fit -- the heap's 3 GB less three workers' worth for the page and
+the coordinator, half of `navigator.deviceMemory` for the rest, and no more than
+eight -- from the model's text and the whole build's code, once a split is on
+the cards, and `planSplit` plans on no more (`memoryCap`) and says so. A part's
+worker drops the text once parsed and the parse once built, and the
+coordinator drops its copy once every worker has one.
+
+**Auto** predicts with the measured shape of the cost: a share pays `0.12 +
+0.88 × its share of the states` of a whole derivative call -- the shared work
+once, since it is one build -- and half of a whole build (`PART_BUILD`), shares
+are packed onto the cores largest first, and each worker costs a start.
 What it assumes -- that the largest part needs every step the whole model takes
 -- is the pessimistic end: a part answers to its own states, and on the
 assessments it has been measured on it needed markedly fewer, so splits ran
@@ -4718,10 +4904,11 @@ are integrated to what the plain run integrates them to. The regression test
 is a single compartment `dy/dt = -k·y` with `k = 1e-5` and `y₀ = 1e10`, checked
 against `dy/dk = -t·y` at every output time.
 
-Not every model is reachable even so: `examples/farfield.json` still stops
-early, and for its own reason -- its first matrix layer is 44 nanometres, which
-the example's own comment calls out as making the path very stiff, and the
-augmented system inherits that with a copy of 1,266 states per parameter.
+Not every model is reachable even so: `examples/farfield.json` is large for
+it, since the augmented system carries a copy of its 1,581 states per
+parameter. (It stopped early for another reason too while its path used the
+reference layers, whose automatic first layer is 44 nanometres; the example has
+the matched layers now, 3.6 mm from the wall.)
 
 Reported as an **elasticity**, `(p/y)·(dy/dp)`, because `dy/dp` carries the units
 of both and two parameters measured in different things cannot be compared. The
@@ -5432,7 +5619,10 @@ history's labels. Each window's (i) is keyed by the window
 (`dialog:block:<id>`), since two windows can be about two kinds of block.
 
 The Information view uses the same machinery for a window of its own (`popInfo`
-in src/ui/app.js), opened by the **⧉** in its title bar. `renderInfoCard`
+in src/ui/app.js), opened by the button beside its name in its title bar.
+That button and the window's put-back button, which takes the place of the ×,
+are one icon drawn two ways (`popIcon` in src/ui/icons.js): a box with an arrow
+leaving it, and coming back into it. `renderInfoCard`
 renders into the window's body while `infoWin` is set, and into `#info`
 otherwise. With `hooks.bar`, `renderInfo` (src/ui/info.js) skips the fold and
 puts its buttons in a slot in the window's head, ahead of its (i).
@@ -5478,7 +5668,13 @@ named the setting by its slot, `Canisters#degradation_rate`. Three changes:
   caught to `noteBuildProblem`: a `buildProblem`, shown in the strip ("the
   model will not build as it stands") but not refusing Run. `recheckBuild`
   runs it again after every edit, or forgets the fault for a model whose build
-  is over `START_BUDGET`, where the run will say it;
+  is over `START_BUDGET`, where the run will say it. The build is done in a
+  worker of its own (`previewWorker`, the `start-values` and `start-of`
+  messages of the simulation worker): the page sends the undo stack's text,
+  the worker builds and evaluates and keeps the answer, and the page asks it
+  for the blocks it is showing, filling their lines in when the answers come.
+  On the largest imported assessment that took a 2.2 s stop off the page after
+  every open; on the page, where no worker can be had, it is done as before;
 * `marksByName` marks the block that the run's problem or the build's names,
   and `fillSettingsProblems` puts every problem naming a block at the top of
   that block's settings -- filled in place, since a fault can arrive after the

@@ -77,6 +77,7 @@ function resetTreeModeToSeparated() {
   selectedIsRadionuclidesGroup = false;
   selectedFileKey = null;
   selectedDatasets = [];
+  selectedGroups = [];
   multiSelectMode = false;
 
   // Reset right-hand panel
@@ -219,14 +220,32 @@ function refreshInfoAndChart() {
     selectedDatasetPath = null;
     selectedIsRadionuclidesGroup = false;
     selectedFileKey = null;
+    selectedGroups = [];
     
     document.querySelectorAll('.tree-item.dataset.selected').forEach(el => el.classList.remove('selected'));
     document.querySelectorAll('.tree-item.group.expanded').forEach(el => el.classList.remove('expanded'));
     return;
   }
 
-  // Path exists, refresh display
-  if (selectedIsRadionuclidesGroup) {
+  // Path exists, refresh display -- once what it reads is here, which for a
+  // lazy file just enabled may be nothing yet (rbPrepareSelection).
+  const payload = selectedIsRadionuclidesGroup && selectedGroups.length > 1
+    ? { mode: 'groups', items: selectedGroups.slice() }
+    : { mode: selectedIsRadionuclidesGroup ? 'group' : 'single', path: selectedDatasetPath };
+  let pending = null;
+  try { pending = rbPrepareSelection(payload); } catch (e) { kvotWarn('rbPrepareSelection failed', e); }
+  if (pending) {
+    pending.catch((e) => kvotWarn('rbPrepareSelection failed', e)).then(() => redrawSelection(checkFile));
+    return;
+  }
+  redrawSelection(checkFile);
+}
+
+/** The info panel and chart for the selection as it stands. */
+function redrawSelection(checkFile) {
+  if (selectedIsRadionuclidesGroup && selectedGroups.length > 1) {
+    showMultipleGroupAttributes(selectedGroups);
+  } else if (selectedIsRadionuclidesGroup) {
     showNodeAttributes(selectedDatasetPath, true);
     Promise.resolve().then(() => createRadionuclidesChart(selectedDatasetPath));
   } else {

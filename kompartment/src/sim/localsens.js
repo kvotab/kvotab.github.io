@@ -237,6 +237,15 @@ export function uncarried(project, system, wanted) {
 			+ 'a jump: after it, it depends on how the jump moves with the parameters, which the '
 			+ 'sensitivity equations do not have.';
 	}
+	// A semi-analytical path's release is read by its own held state, always,
+	// and it is a convolution over the whole run's inflow.
+	for (const p of system.layout.farfields ?? []) {
+		if (!p.farf?.laplace) continue;
+		return `'${p.local ?? p.name}' is worked out semi-analytically: its release is a convolution `
+			+ 'over what flowed into it during the run, and dy/dp through a history is not carried by '
+			+ 'the sensitivity equations, which see only the present. Work the path out on cells to '
+			+ 'run a local sensitivity analysis.';
+	}
 	for (const a of readByDerivative(system)) {
 		const rec = a.recorder;
 		if (!rec) continue;

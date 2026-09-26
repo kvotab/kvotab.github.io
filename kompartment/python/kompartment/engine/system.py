@@ -121,9 +121,14 @@ class System:
         self.jumps = self._compile_jumps()
         self.remembering = [r for r in b.recorders if r.mem >= 0]
         self.recorders = b.recorders
+        # The far-field paths worked out semi-analytically: they keep the
+        # history of what flowed into them, as the recorders keep theirs.
+        self.laplace = [F for F in self.FARF if getattr(F, 'method', '') == 'semi-analytical']
         self.events = Events(self, b.event_slots, b.event_direction, b.event_handlers) if b.event_slots else None
         self.layout = self._layout()
         self.evaluate_invariant()
+        if self.laplace:
+            b.semi_refusals(self.X)
         self.jacobian: Dict[str, Any]
         if not jacobian:
             self.jacobian = {'available': False, 'reason': 'not asked for'}
@@ -249,6 +254,12 @@ class System:
             if pt.row < table.n:
                 table.set_y(pt.row, float(self.P[pt.slot]))
 
+    def restart_paths(self) -> None:
+        """Starts a run for the far-field paths: their matched layers are laid
+        out again at its first instant and held to its end (``restartPaths``)."""
+        for F in self.FARF:
+            F.restart()
+
     def evaluate_invariant(self, t: Optional[float] = None, y: Optional[np.ndarray] = None) -> np.ndarray:
         """Works out the slots that never move (after a parameter has changed)."""
         self.refresh_tables()
@@ -338,7 +349,7 @@ class System:
 
     def prime_recorders(self, t0: float, y0: np.ndarray) -> None:
         """Puts every history back to the start of a run."""
-        if not self.remembering:
+        if not self.remembering and not self.laplace:
             return
         for r in self.MEM:
             r.prime(t0, 0.0)
@@ -347,20 +358,36 @@ class System:
             seed = rec.aux['initial'] if rec.kind == 'snapshot' else rec.aux['target']
             for off in range(rec.width):
                 self.MEM[rec.mem + off].prime(t0, float(values[seed.base + off]))
+        # A semi-analytical path starts its history with the inflow at t0.
+        for F in self.laplace:
+            F.prime(t0, y0, values)
 
     def store_step(self, t: float, y: np.ndarray) -> None:
         """Records a step the solver accepted (the accepted-step callback)."""
-        if not self.remembering:
+        if not self.remembering and not self.laplace:
             return
         values = self.evaluate_algebraic(t, y)
         for rec in self.remembering:
             frm = rec.aux['target'] if rec.kind == 'delay' else rec.entry
             for off in range(rec.width):
                 self.MEM[rec.mem + off].store(t, float(values[frm.base + off]))
+        for F in self.laplace:
+            F.store(t, y, values)
+
+    def start_segment(self, t: float, y: np.ndarray) -> None:
+        """A segment starts at ``t`` from ``y`` (``startSegment``): after a
+        switch time the inflow into a semi-analytical path may have stepped,
+        and after a jump what it holds may have, which is an amount delivered
+        at once. Only those paths are told."""
+        if not self.laplace:
+            return
+        values = self.evaluate_algebraic(t, y)
+        for F in self.laplace:
+            F.store(t, y, values)
 
     @property
     def has_store_step(self) -> bool:
-        return bool(self.remembering)
+        return bool(self.remembering or self.laplace)
 
     def set_disruption(self, index: int, sampled: bool, times: Sequence[float] = ()) -> None:
         """Whether an event's occurrences are drawn for this run, and which."""
@@ -379,7 +406,8 @@ class System:
         processes. See :meth:`restore_run_state`."""
         return {'mem': list(self.MEM), 'dis': self.DIS.copy(),
                 'sampled': [list(getattr(D, 'sampled_times', []) or []) for D in self.builder.disruption_layout],
-                'clock': (self._min_change, self._origin)}
+                'clock': (self._min_change, self._origin),
+                'laplace': [F.run_state() for F in self.laplace]}
 
     def restore_run_state(self, state: Dict[str, Any]) -> None:
         """Puts a run's state (from :meth:`run_state`, perhaps of the same
@@ -388,6 +416,8 @@ class System:
         # in place, never replaced.
         self.MEM[:] = state['mem']
         self.DIS[:] = state['dis']
+        for F, kept in zip(self.laplace, state.get('laplace') or []):
+            F.restore_run_state(kept)
         for D, times in zip(self.builder.disruption_layout, state['sampled']):
             D.sampled_times = list(times)
         self.use_clock_interpolation(*state['clock'])

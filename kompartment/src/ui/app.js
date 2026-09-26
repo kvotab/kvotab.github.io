@@ -38,7 +38,7 @@ import {
 	renderInspector,
 } from './inspector.js';
 import { section as part, el } from './parts.js';
-import { blockIcon, sampleMark } from './icons.js';
+import { blockIcon, sampleMark, popIcon } from './icons.js';
 import { openMenu } from './menu.js';
 import { openModal, refreshModal, closeAllModals } from './modal.js';
 import { openProbabilisticDialog, openReplayDialog, openBandsDialog, bandPairs } from './probdialog.js';
@@ -68,6 +68,7 @@ import { openQueryDialog } from './querydialog.js';
 import * as dt from '../domain/datatable.js';
 import { openDataImport } from './dataimport.js';
 import { openSaveDialog } from './savedialog.js';
+import { exportReportNodes } from './ecoreport.js';
 import { openImportChooser } from './importchooser.js';
 import { openOptimiseDialog } from './optdialog.js';
 import { findBlock } from '../domain/blocks.js';
@@ -127,7 +128,7 @@ import { dialogInfo } from './dialoginfo.js';
  * caused more than one "the code says otherwise" puzzle. Serve with serve.py,
  * which disables caching.
  */
-const BUILD = '2026-09-25';
+const BUILD = '2026-09-26';
 
 const EXAMPLES = [
 	{ file: 'four-compartment.json', title: 'Four-compartment test model' },
@@ -171,6 +172,11 @@ const BLANK = {
 	expressions: [],
 	inflows: [],
 };
+
+/** A new model, dated now: the one time its making is known for certain. */
+function blankModel() {
+	return ed.stampCreated(structuredClone(BLANK));
+}
 
 /**
  * The two side panels: the left one that edits values, and the right-hand
@@ -525,6 +531,11 @@ const state = {
 	// view mark it: by block name and by every sub-system above one.
 	marks: new Map(),
 	runProblem: null,
+	// What the last run warned about, block by block: a far-field path worked
+	// out semi-analytically whose unit response missed its mass balance (the
+	// run's `stats.farfield`). Warnings, not faults -- the run went on -- and
+	// replaced by the next run's.
+	runWarnings: [],
 	// What the build behind the values at the start found, when it would not
 	// build: the same fault a run would stop on, found without one. See
 	// `noteBuildProblem`.
@@ -1612,6 +1623,10 @@ function acceptResults(payload, replayed = null, storedLog = null) {
 	// again in full -- which the status line says, since a curve that is the
 	// 734th draw and not the model's values is a different thing to read.
 	state.results = { ...payload, rev: state.runRev ?? state.rev, runId: state.runId, replayed, storedLog };
+	// What this run warns about, in place of the last run's: see `runWarnings`.
+	const hadWarnings = state.runWarnings.length > 0;
+	state.runWarnings = Array.isArray(payload.stats?.farfield) ? payload.stats.farfield : [];
+	if (hadWarnings || state.runWarnings.length) remark();
 	// What the next edit will be compared against. Taken from the model this
 	// run was of, not the one on screen, for the same reason `rev` is.
 	state.integrationKey = state.runKey ?? null;
@@ -3011,7 +3026,9 @@ function timeTravel(back) {
 	// nothing against the one arriving.
 	clearPendingCut();
 	const had = new Set(ed.allBlocks(state.raw).map(ed.qualifiedName));
-	state.raw = step.raw;
+	// When the file was made and last saved are facts about the file, not
+	// edits: stepping back through the model leaves them as they are.
+	state.raw = ed.keepStamps(step.raw, state.raw);
 	// Whatever the step brought back is what the step was about, so that is
 	// what ends up selected -- the stored selection only says where the editor
 	// was pointed before. The two differ exactly where it matters: deleting
@@ -3109,22 +3126,72 @@ function scheduleAutoRun() {
  * How long working the values out may take before it stops doing it by itself.
  *
  * The whole model has to be built to evaluate any of it, and building is the
- * expensive half. Measured in Chrome, over the whole thing -- the copy, the
- * `Project`, the build and the evaluation: a millisecond or two on the bundled
- * examples, about 100 ms on an imported model of 1,141 blocks, 330 ms on
- * ERICA's 30 blocks over a thousand nuclides each, and 2.4 s on a landscape
- * model of 4,278. Size is no guide -- those ERICA models are the smallest in
- * the corpus by block count and among the slowest to build -- so the cost is
- * measured once per model and the answer remembered, which is what
- * `importblocks.js` does with its own build check and for the same reason.
+ * expensive half: a millisecond or two on the bundled examples, about 100 ms
+ * on an imported model of 1,141 blocks, 330 ms on ERICA's 30 blocks over a
+ * thousand nuclides each, 2.4 s on a landscape model of 4,278, and 2.2 s on
+ * the largest imported assessment (798 compartments over 54 nuclides). Size is
+ * no guide -- those ERICA models are the smallest in the corpus by block count
+ * and among the slowest to build -- so the cost is measured once per model and
+ * the answer remembered, which is what `importblocks.js` does with its own
+ * build check and for the same reason.
+ *
+ * It is done in a worker of its own (`previewWorker`), so the page does not
+ * stop while it happens; what the budget saves is a core kept busy after every
+ * edit. On the page -- where a worker cannot be had -- it stops the page, and
+ * the budget is the old one.
  */
-const START_BUDGET = 400;
+const START_BUDGET = 3000;
+const START_BUDGET_ON_PAGE = 400;
 
-/** The values, and what they were worked out from. */
-let startValues = { model: null, rev: -1, at: null };
-/** What the last attempt cost, and which model that was. */
-let startCost = { model: null, ms: 0 };
+/**
+ * The values, and what they were worked out from: which worker build, and the
+ * blocks read out of it so far -- `null` for one that has no values.
+ */
+let startValues = { model: null, rev: -1, id: 0, answers: null, at: null };
+/** What the last attempt cost, where, and which model that was. */
+let startCost = { model: null, ms: 0, budget: START_BUDGET };
 let startTimer = null;
+
+/**
+ * The worker the values are worked out in: one of its own, beside the run's,
+ * so that neither waits for the other. Started when first asked, and put down
+ * if it fails, for the page to do the work itself.
+ */
+let preview = null;
+
+function previewWorker() {
+	if (preview) return preview.worker ? preview : null;
+	try {
+		const w = new Worker(new URL('../worker/sim-worker.js', import.meta.url), { type: 'module' });
+		preview = { worker: w, seq: 0, waiting: new Map() };
+		w.onmessage = (ev) => {
+			const m = ev.data;
+			const key = `${m?.type}:${m?.id}`;
+			const answer = preview?.waiting.get(key);
+			if (!answer) return;
+			preview.waiting.delete(key);
+			answer(m);
+		};
+		w.onerror = () => {
+			// Answered with nothing, and not asked again: the page does it.
+			const waiting = preview?.waiting ?? new Map();
+			preview = { worker: null, seq: 0, waiting: new Map() };
+			for (const answer of waiting.values()) answer(null);
+			try { w.terminate(); } catch { /* gone either way */ }
+		};
+	} catch {
+		preview = { worker: null, seq: 0, waiting: new Map() };
+	}
+	return preview.worker ? preview : null;
+}
+
+/** One question to the worker, answered by the reply of the same type and id -- or null. */
+function askPreview(p, message) {
+	return new Promise((resolve) => {
+		p.waiting.set(`${message.type}:${message.id}`, resolve);
+		p.worker.postMessage(message);
+	});
+}
 
 /**
  * The values as they stand, or null while they are being worked out.
@@ -3136,7 +3203,7 @@ let startTimer = null;
 function startValuesNow() {
 	if (!state.raw) return null;
 	if (startValues.model === state.raw && startValues.rev === state.rev) {
-		return startValues.at;
+		return startValues;
 	}
 	scheduleStartValues();
 	return null;
@@ -3150,7 +3217,7 @@ function scheduleStartValues() {
 	// was measured on, because a landscape model's cost says nothing about the
 	// two-compartment one pasted into the JSON tab after it -- and a model
 	// arrives by more routes than `setModel`.
-	if (startCost.model === state.raw && startCost.ms > START_BUDGET) return;
+	if (startCost.model === state.raw && startCost.ms > startCost.budget) return;
 	startTimer = setTimeout(async () => {
 		startTimer = null;
 		if (!await computeStartValues()) return;
@@ -3170,6 +3237,28 @@ function scheduleStartValues() {
 async function computeStartValues() {
 	const model = state.raw;
 	const rev = state.rev;
+	const p = previewWorker();
+	if (!p) return computeStartValuesHere(model, rev);
+	// The model as the worker is to read it: the undo stack's text, which is
+	// the model as it stands and has been written out already -- stringifying
+	// it again was 70 ms of a large model's opening.
+	const text = typeof undoStack.cur === 'string' ? undoStack.cur : JSON.stringify(model);
+	const id = ++p.seq;
+	const reply = await askPreview(p, { type: 'start-values', id, text });
+	if (!reply) return computeStartValuesHere(model, rev);
+	// A model opened, pasted or undone while the worker built this one: the
+	// answer is about a model nobody is looking at, and its cost says nothing
+	// about the one that replaced it.
+	if (state.raw !== model || state.rev !== rev) return false;
+	startCost = { model, ms: reply.ms, budget: START_BUDGET };
+	startValues = { model, rev, id, answers: reply.fault ? null : new Map(), at: null };
+	noteBuildProblem(reply.fault ? Object.assign(new Error(reply.fault.message), reply.fault) : null);
+	sayStartBudget();
+	return true;
+}
+
+/** The same, on the page, where no worker can be had: it stops the page while it builds. */
+async function computeStartValuesHere(model, rev) {
 	let at = null;
 	// Loaded when something first asks, like the main-thread solver above and
 	// for the same reason: this pulls in the whole builder, and an editor that
@@ -3181,14 +3270,11 @@ async function computeStartValues() {
 		// It will not appear on a second attempt either, and the panels ask
 		// again on every render: without latching, a failed fetch is a request
 		// every 400 ms for the rest of the session.
-		startCost = { model, ms: Infinity };
+		startCost = { model, ms: Infinity, budget: START_BUDGET_ON_PAGE };
 		return false;
 	}
 	// The first of those imports is a real fetch, and a model can be opened,
-	// pasted or undone while it is in flight. Building the one captured above
-	// would then cost whatever it costs and be filed against a model nobody
-	// is looking at -- and its cost would latch the budget for the model that
-	// replaced it.
+	// pasted or undone while it is in flight.
 	if (state.raw !== model || state.rev !== rev) return false;
 	// Timed from here, so what is measured is the work rather than the fetch.
 	const started = Date.now();
@@ -3196,30 +3282,54 @@ async function computeStartValues() {
 	try {
 		at = valuesAtStart(new Project(structuredClone(model)));
 	} catch (e) {
-		// A model that will not build has no values. Why is not something a
-		// line under one box can say -- but a fault the builder names is one
-		// the run would stop on, and the strip does not have it: see
-		// `noteBuildProblem`.
+		// A model that will not build has no values; a fault the builder
+		// names is one the run would stop on -- see `noteBuildProblem`.
 		at = null;
 		fault = e;
 	}
-	startCost = { model, ms: Date.now() - started };
-	startValues = { model, rev, at };
+	startCost = { model, ms: Date.now() - started, budget: START_BUDGET_ON_PAGE };
+	startValues = { model, rev, id: 0, answers: null, at };
 	noteBuildProblem(fault);
-	// Said once, when it gives up, because a line that quietly stops
-	// appearing reads as a fault rather than as a decision. What is measured
-	// is the whole thing -- the copy, the `Project`, the build, the
-	// evaluation -- which in Chrome is a millisecond or two on the bundled
-	// examples, about 100 ms on a model of 1,141 blocks, and 2.4 s on a
-	// landscape model of 4,278.
-	if (startCost.ms > START_BUDGET) {
-		flash(`Working out what the equations come to at the start takes `
-			+ `${fmtTime(startCost.ms / 1000)} s on this model, which is too `
-			+ `long to repeat after every edit — so those lines will not be `
-			+ `brought up to date again. A run shows the same numbers, in the `
-			+ `table's first row.`, 'info');
-	}
+	sayStartBudget();
 	return true;
+}
+
+/**
+ * Said once, when it gives up, because a line that quietly stops appearing
+ * reads as a fault rather than as a decision.
+ */
+function sayStartBudget() {
+	if (startCost.ms <= startCost.budget) return;
+	flash(`Working out what the equations come to at the start takes `
+		+ `${fmtTime(startCost.ms / 1000)} s on this model, which is too `
+		+ `long to repeat after every edit — so those lines will not be `
+		+ `brought up to date again. A run shows the same numbers, in the `
+		+ `table's first row.`, 'info');
+}
+
+/** Blocks asked about since the last question went to the worker. */
+let startAsking = null;
+
+/**
+ * Asks the worker for one block's values, with every other asked for in the
+ * same moment: a settings dialog asks for each of its boxes, the Information
+ * view for its block, and one message carries them all.
+ */
+function askStartOf(name) {
+	const sv = startValues;
+	if (!sv.answers || !preview?.worker) return;
+	if (startAsking) { startAsking.names.add(name); return; }
+	startAsking = { names: new Set([name]) };
+	queueMicrotask(async () => {
+		const names = [...startAsking.names];
+		startAsking = null;
+		const reply = await askPreview(preview, { type: 'start-of', id: sv.id, names });
+		// For the build that was asked, and no other.
+		if (startValues !== sv || !reply?.answers) return;
+		for (const [n, found] of reply.answers) sv.answers.set(n, found ?? null);
+		fillStartValues(document, startValueFor);
+		renderInfoCard();
+	});
 }
 
 /**
@@ -3228,11 +3338,22 @@ async function computeStartValues() {
  * `key` is the property the equation was written in -- `initial`, `equation`,
  * `rate`, `target`, `delay`, `first`, `second` -- which is what the settings
  * dialog already calls the field. Without a key it is the block's own value,
- * which is what the chart would draw for it.
+ * which is what the chart would draw for it. Null while it is being worked
+ * out, and the line is written when it is.
  */
 function startValueFor(name, key = null) {
-	const at = startValuesNow();
-	const found = at?.of(name);
+	const sv = startValuesNow();
+	if (!sv) return null;
+	let found;
+	if (sv.at) {
+		found = sv.at.of(name);
+	} else if (sv.answers) {
+		if (!sv.answers.has(name)) {
+			askStartOf(name);
+			return null;
+		}
+		found = sv.answers.get(name);
+	}
 	if (!found) return null;
 	if (!key) return found.own;
 	return found.fields.get(key) ?? null;
@@ -3260,6 +3381,9 @@ function marksByName() {
 	// name costs nothing and is how a warning is found once the list is gone.
 	for (const w of state.warnings) {
 		entries.push({ where: w.name, level: 'warning', message: w.message });
+	}
+	for (const w of state.runWarnings) {
+		entries.push({ where: w.block, level: 'warning', message: `After the last run: ${w.message}` });
 	}
 	// And a fault found by building the model -- by the last run, or by the
 	// build behind the values at the start -- when it names a block. Those
@@ -3494,7 +3618,7 @@ function noteBuildProblem(e) {
  * it says is about the model before the edit and the run will say it again.
  */
 function recheckBuild() {
-	if (startCost.model === state.raw && startCost.ms > START_BUDGET) {
+	if (startCost.model === state.raw && startCost.ms > startCost.budget) {
 		noteBuildProblem(null);
 		return;
 	}
@@ -3514,6 +3638,7 @@ function fillSettingsProblems() {
 			...state.problems,
 			...(state.runProblem ? [state.runProblem] : []),
 			...(buildProblemShown() ? [state.buildProblem] : []),
+			...state.runWarnings.map((w) => ({ where: w.block, what: 'After the last run', message: w.message })),
 		].filter((p) => p.where === name);
 		box.replaceChildren(...mine.map((p) => el('p', { className: 'settings-problem' },
 			el('b', {}, p.kind === 'run' ? 'The last run failed here. ' : p.kind === 'build' ? 'This will not build. ' : `${p.what}: `),
@@ -3567,7 +3692,7 @@ function renderProblems() {
 	// stay on the diagram and in the tree either way.
 	const warnings = ed.view(state.raw).show_warning_list === false
 		? []
-		: state.warnings.map((w) => ({
+		: [...state.warnings.map((w) => ({
 			where: w.name,
 			what: w.field ?? 'units',
 			message: w.message,
@@ -3575,7 +3700,9 @@ function renderProblems() {
 			// has no name to link to and an editor instead; `goto` says which.
 			goto: w.goto ?? null,
 			warning: true,
-		}));
+		})), ...state.runWarnings.map((w) => ({
+			where: w.block, what: 'last run', message: w.message, warning: true,
+		}))];
 	const rows = [...all, ...warnings];
 	box.replaceChildren();
 	box.hidden = !rows.length;
@@ -3848,15 +3975,18 @@ function jacobianDetail(p) {
 function splitDetail(split) {
 	if (!split) return '';
 	if (!split.used) return `Not split: ${split.why}.`;
-	const lines = [`Solved in ${split.jobs.length} independent parts on ${split.workers} cores, `
-		+ `each at its own steps: ${split.why}.`];
+	// One line per worker: each solved its share of the parts together, at
+	// its own steps.
+	const parts = split.parts ?? split.jobs.length;
+	const lines = [`Solved in ${parts} independent parts on ${split.workers} cores, `
+		+ `each core\u2019s share at its own steps: ${split.why}.`];
 	if (split.gain) lines.push(`About ${split.gain.toFixed(1)}\u00d7 the speed of a whole solve, by this machine\u2019s estimate.`);
 	lines.push('');
 	for (const j of split.jobs.slice(0, 12)) {
 		lines.push(`${j.materials.slice(0, 6).join(', ')}${j.materials.length > 6 ? `, and ${j.materials.length - 6} more` : ''}`
 			+ ` \u2014 ${j.states.toLocaleString()} states, ${j.nsteps ?? '?'} steps, ${Math.round(j.solveMs ?? 0)} ms`);
 	}
-	if (split.jobs.length > 12) lines.push(`and ${split.jobs.length - 12} more parts`);
+	if (split.jobs.length > 12) lines.push(`and ${split.jobs.length - 12} more cores`);
 	lines.push('', 'The parts agree with a whole solve to within the tolerance, not to the last digit.');
 	return lines.join('\n');
 }
@@ -4356,7 +4486,7 @@ function setStatus(p) {
 	// automatic choice not to split is not news, and the log has it.
 	const split = s.split;
 	if (split?.used) {
-		parts.push(['split', `${split.jobs.length} parts on ${split.workers} core${split.workers === 1 ? '' : 's'}`]);
+		parts.push(['split', `${split.parts ?? split.jobs.length} parts on ${split.workers} core${split.workers === 1 ? '' : 's'}`]);
 	} else if (split && split.mode === 'on') {
 		parts.push(['split', 'not possible']);
 	}
@@ -5040,7 +5170,13 @@ function popInfo() {
 	// The view's own buttons in the window's title bar, before its (i): where
 	// they are in the rail.
 	handle.head.insertBefore(bar, handle.head.querySelector('.info-btn') ?? handle.head.lastChild);
-	handle.dialog.querySelector('.modal-close').title = 'Put Information back in the panel (Esc)';
+	// Its close button puts the view back rather than closing anything, so
+	// it shows that: the pop-out button's box, with the arrow coming home.
+	const back = handle.dialog.querySelector('.modal-close');
+	back.classList.add('is-pop-back');
+	back.replaceChildren(popIcon('back'));
+	back.title = 'Put Information back in the panel (Esc)';
+	back.setAttribute('aria-label', 'Put Information back in the panel');
 
 	// Where it was last, kept on the screen; the first time, beside the rail.
 	const saved = readInfoWindow();
@@ -6117,6 +6253,34 @@ function openSection(id) {
 }
 
 /**
+ * When the model was made and last saved, as the file records it: a line
+ * under the author, read-only, since both are stamped by Save itself.
+ */
+function modelDatesLine(raw) {
+	const created = ed.readStamp(raw.created);
+	const saved = ed.readStamp(raw.saved);
+	const day = (d) => d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+	const time = (d) => d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+	const parts = [];
+	if (created) parts.push(`Created ${day(created)}`);
+	if (saved) {
+		// The day once when both are the same day: "saved 14:03" reads better
+		// than the date twice.
+		const sameDay = created && day(created) === day(saved);
+		parts.push(`${parts.length ? 'saved' : 'Saved'} ${sameDay ? '' : `${day(saved)}, `}${time(saved)}`);
+	}
+	const text = parts.length ? parts.join(' · ') : 'Not saved yet — Save records when it was made and saved.';
+	return el('p', {
+		className: 'hint model-dates',
+		title: [
+			created ? `Created ${created.toLocaleString()}` : 'No date of making recorded',
+			saved ? `Last saved ${saved.toLocaleString()}` : 'Not saved yet',
+			'Both are in the file as created and saved, and Save writes them.',
+		].join('\n'),
+	}, text);
+}
+
+/**
  * The model's own name and description.
  *
  * They were previously editable only by hand in the JSON tab, which is an odd
@@ -6150,11 +6314,25 @@ function renderModelGroup(raw) {
 		modelChanged({ layoutOnly: true });
 	});
 
+	const author = el('input', {
+		type: 'text', id: 'model-author', className: 'stack-input',
+		value: ed.modelAuthor(raw), spellcheck: false,
+		placeholder: 'Who wrote it — a name, a team, an organisation',
+	});
+	author.addEventListener('change', () => {
+		ed.setModelAuthor(raw, author.value);
+		modelChanged({ layoutOnly: true });
+	});
+	author.addEventListener('keydown', (e) => { if (e.key === 'Enter') author.blur(); });
+
 	group.append(
 		el('div', { className: 'field-stack' },
 			el('label', { htmlFor: 'model-name' }, 'Name'), name),
 		el('div', { className: 'field-stack' },
 			el('label', { htmlFor: 'model-description' }, 'Description'), desc),
+		el('div', { className: 'field-stack' },
+			el('label', { htmlFor: 'model-author' }, 'Author'), author),
+		modelDatesLine(raw),
 	);
 
 	// --- review -----------------------------------------------------------
@@ -9538,6 +9716,18 @@ function openSave() {
 		// with a later time on it.
 		log,
 		chosen: state.saveChoice,
+		// The Ecolego export: what it would hold and leave out, shown before
+		// anything is written, and then the file itself.
+		eco: {
+			preview: async () => {
+				// A frame first, so the dialog says it is working before the
+				// page is busy working it out.
+				await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
+				const { exportEco } = await import('../io/ecoexport.js');
+				return exportEco(state.raw);
+			},
+			reveal: revealByName,
+		},
 		onSave: (choice) => {
 			state.saveChoice = { kind: choice.kind, format: choice.format, holds: choice.holds, which: choice.which };
 			runSave({ ...choice, log });
@@ -9553,7 +9743,7 @@ function openSave() {
  * pop-up is allowed out of a user gesture and not out of a promise that
  * settles after one.
  */
-async function runSave({ kind, format, keys, open = false, holds = 'all', which = 1, log = null }) {
+async function runSave({ kind, format, keys, open = false, holds = 'all', which = 1, log = null, prepared = null }) {
 	const handoff = open ? openResultBrowser() : null;
 	if (open && !handoff) return;
 	const r = state.results;
@@ -9563,7 +9753,7 @@ async function runSave({ kind, format, keys, open = false, holds = 'all', which 
 	const idx = keys ? indicesFor(outs, keys) : null;
 	const everything = idx && idx.length === outs.length;
 	const suffix = everything ? '-all' : '';
-	if (kind === 'model') { await saveFile(format); return; }
+	if (kind === 'model') { await saveFile(format, { prepared }); return; }
 	if (kind === 'archive') {
 		// Choosing here *is* choosing the endpoints: the list is a property of
 		// the model, so it is written back before the file is, and a re-run
@@ -9646,7 +9836,14 @@ async function chooseImport(file) {
 		} else {
 			// A model file, in whichever of its forms -- and an archive may
 			// carry a run beside it.
-			const { project, report, dataset, datasetProblem } = await readModelFile(file);
+			let read;
+			try {
+				await showOpening('read', file.name);
+				read = await readModelFile(file, { onStage: (stage) => showOpening(stage, file.name) });
+			} finally {
+				endOpening();
+			}
+			const { project, report, dataset, datasetProblem } = read;
 			const source = ed.migrateKeys(structuredClone(project));
 			ed.materialiseShorthand(source);
 			const blocks = ed.blockCount ? ed.blockCount(source) : countBlocks(source);
@@ -9664,7 +9861,8 @@ async function chooseImport(file) {
 					{
 						label: 'Open it',
 						title: 'Replaces the model that is open.',
-						run: () => openModelFile(file),
+						// What was read just now, rather than reading it again.
+						run: () => openModelFile(file, { read }),
 					},
 				],
 			});
@@ -9679,7 +9877,7 @@ async function chooseImport(file) {
 				actions: [{
 					label: 'Open the model and its run', primary: true,
 					title: 'The run comes back without the solve.',
-					run: () => openModelFile(file),
+					run: () => openModelFile(file, { read }),
 				}],
 			});
 			void report;
@@ -10239,7 +10437,7 @@ function tableMenu(ev) {
  *
  * @returns {Promise<{name: string, body: string|Uint8Array, type: string}>}
  */
-export async function modelFileFor(name, model = state.raw, { extra = null } = {}) {
+export async function modelFileFor(name, model = state.raw, { extra = null, prepared = null } = {}) {
 	const text = JSON.stringify(model, null, 2);
 	const lower = name.toLowerCase();
 	const inner = `${slug(model?.name)}.json`;
@@ -10250,8 +10448,10 @@ export async function modelFileFor(name, model = state.raw, { extra = null } = {
 		if (extra?.length) {
 			throw new Error(`A run cannot be saved inside an .eco project, and '${name}' is one.`);
 		}
+		// The export the Save dialog showed the report of, where there is one:
+		// the same model, so the same file, and not worked out twice.
 		const { exportEco } = await import('../io/ecoexport.js');
-		const { bytes, report } = await exportEco(model);
+		const { bytes, report } = await (prepared ?? exportEco(model));
 		return { name, body: bytes, type: 'application/zip', report };
 	}
 
@@ -10304,7 +10504,7 @@ function savedSize(body, text, extra = null) {
 		+ `${(100 - (100 * body.length) / from).toFixed(0)}% smaller than the JSON`;
 }
 
-async function saveFile(as = 'json') {
+async function saveFile(as = 'json', { prepared = null } = {}) {
 	const base = slug(state.raw.name);
 	const name = as === 'zip' ? `${base}.zip`
 		: as === 'gz' ? `${base}.json.gz`
@@ -10369,10 +10569,12 @@ async function saveFile(as = 'json') {
 				// By the name it ended up with, not the one that was offered:
 				// the dialog lets the format be changed, and typing `.zip`
 				// should produce a ZIP whichever entry was highlighted.
-				const file = await modelFileFor(handle.name, state.raw, { extra });
+				const written = modelToWrite(handle.name);
+				const file = await modelFileFor(handle.name, written, { extra, prepared });
 				const to = await handle.createWritable();
 				await to.write(file.body);
 				await to.close();
+				adoptStamps(written);
 				// An export is somebody else's file about this model, and what
 				// it could not hold is the first thing worth reading about it.
 				if (file.report) {
@@ -10394,8 +10596,10 @@ async function saveFile(as = 'json') {
 			return;
 		}
 	}
-	const file = await modelFileFor(name, state.raw, { extra });
+	const written = modelToWrite(name);
+	const file = await modelFileFor(name, written, { extra, prepared });
 	download(file.name, file.body, file.type);
+	adoptStamps(written);
 	if (file.report) {
 		exportedFile(file, file.name);
 		return;
@@ -10427,10 +10631,12 @@ async function saveToFile() {
 	const handle = state.fileHandle;
 	if (!handle) { await saveFile('json'); return; }
 	try {
-		const file = await modelFileFor(handle.name, state.raw, {});
+		const written = modelToWrite(handle.name);
+		const file = await modelFileFor(handle.name, written, {});
 		const to = await handle.createWritable();
 		await to.write(file.body);
 		await to.close();
+		adoptStamps(written);
 		noteSaved(handle);
 		flash(`Saved ${handle.name}.`, 'info');
 	} catch (e) {
@@ -10440,6 +10646,25 @@ async function saveToFile() {
 			+ 'choose where to put it.', 'warn');
 		await saveFile('json');
 	}
+}
+
+/**
+ * The model as a file of it is written: a copy stamped with the time it was
+ * saved (see `stampSaved`), or, for an export, the model as it is -- an
+ * Ecolego project is another tool's file about this model, not a save of it.
+ */
+function modelToWrite(name) {
+	return /\.eco$/i.test(name) ? state.raw : ed.stampSaved({ ...state.raw }, new Date());
+}
+
+/**
+ * The stamps a file was written with, now the model's own -- once it has
+ * actually been written, so a save that failed half-way does not claim one.
+ */
+function adoptStamps(written) {
+	if (written === state.raw) return;
+	ed.keepStamps(state.raw, written);
+	$('.model-dates')?.replaceWith(modelDatesLine(state.raw));
 }
 
 /** Records that the model as it stands is in a file, and redraws the button. */
@@ -10544,14 +10769,14 @@ function pickFile(then) {
 /** Where a saved run lives inside a model archive. See ../io/dataset.js. */
 const DATASET_DIR = 'results/';
 
-export async function readModelFile(file) {
+export async function readModelFile(file, { onStage = null } = {}) {
 	const lower = file.name.toLowerCase();
 	// The name goes in because the file knows things the model does not: every
 	// Ecolego project in the corpus calls itself `model`, and the file's own
 	// name is the one anybody uses for it. See `describeModel`.
 	if (lower.endsWith('.eco') || lower.endsWith('.eas')) {
 		const { importEcoFile } = await import('../io/eco.js');
-		return importEcoFile(await file.arrayBuffer(), { fileName: file.name });
+		return importEcoFile(await file.arrayBuffer(), { fileName: file.name, onStage });
 	}
 
 	// What it *is*, from its first four bytes, rather than what it is called.
@@ -10573,7 +10798,7 @@ export async function readModelFile(file) {
 		// called. `.eco` above is the fast path, not the only one.
 		if ([...entries.keys()].some((n) => /(^|\/)model\.xml$/i.test(n))) {
 			const { importEcoFile } = await import('../io/eco.js');
-			return importEcoFile(await file.arrayBuffer(), { fileName: file.name });
+			return importEcoFile(await file.arrayBuffer(), { fileName: file.name, onStage });
 		}
 		// The model is at the root; a run, if the archive carries one, is under
 		// `results/`. Both are looked for, and a `results/` entry that will not
@@ -10586,6 +10811,7 @@ export async function readModelFile(file) {
 				+ `no .json file and no model.xml. It holds ${[...entries.keys()]
 					.slice(0, 4).join(', ')}.`);
 		}
+		if (onStage) await onStage('json');
 		const project = JSON.parse(entryText(entries.get(jsonName)));
 		const { isDataset, readDataset } = await import('../io/dataset.js');
 		if (!isDataset(entries)) return { project, report: null };
@@ -10605,18 +10831,21 @@ export async function readModelFile(file) {
 		// Whatever was compressed: a project, or a bare model.xml somebody
 		// gzipped.
 		if (text.trimStart().startsWith('<')) {
-			const { importModelXML } = await import('../io/eco.js');
-			return importModelXML(text, { fileName: file.name });
+			const { importModelXMLStepwise } = await import('../io/eco.js');
+			return importModelXMLStepwise(text, { fileName: file.name }, onStage);
 		}
+		if (onStage) await onStage('json');
 		return { project: JSON.parse(text), report: null };
 	}
 
 	if (lower.endsWith('.xml')) {
-		const { importModelXML } = await import('../io/eco.js');
-		return importModelXML(await file.text(), { fileName: file.name });
+		const { importModelXMLStepwise } = await import('../io/eco.js');
+		return importModelXMLStepwise(await file.text(), { fileName: file.name }, onStage);
 	}
 	if (lower.endsWith('.json') || file.type === 'application/json') {
-		return { project: JSON.parse(await file.text()), report: null };
+		const text = await file.text();
+		if (onStage) await onStage('json');
+		return { project: JSON.parse(text), report: null };
 	}
 	// Named rather than guessed: reading an unknown file as JSON gives a parse
 	// error that says nothing about what went wrong.
@@ -10758,7 +10987,13 @@ const LARGE_FILE = 200 * 1024 * 1024;
  */
 const HUGE_EXPORT = 512 * 1024 * 1024;
 
-async function openModelFile(file) {
+/**
+ * @param {File} file
+ * @param {{read?: object}} [opts]  `read` is what `readModelFile` already made of
+ *   the file -- the Import… chooser reads it to say what it holds -- so that
+ *   opening it does not read it all again
+ */
+async function openModelFile(file, { read = null } = {}) {
 	if (file.size > LARGE_FILE) {
 		const mb = Math.round(file.size / 1048576);
 		const go = window.confirm(
@@ -10768,7 +11003,10 @@ async function openModelFile(file) {
 		if (!go) { flash(`Did not open ${file.name}.`, 'info'); return; }
 	}
 	try {
-		const { project, report, dataset, datasetProblem } = await readModelFile(file);
+		if (!read) await showOpening('read', file.name);
+		const { project, report, dataset, datasetProblem } = read
+			?? await readModelFile(file, { onStage: (stage) => showOpening(stage, file.name) });
+		await showOpening('setup', file.name);
 		setModel(project, { label: file.name });
 		if (report) showImportReport(report, file.name);
 		if (datasetProblem) {
@@ -10779,7 +11017,66 @@ async function openModelFile(file) {
 		}
 	} catch (e) {
 		showError({ name: e.name ?? 'Open', message: e.message });
+	} finally {
+		endOpening();
 	}
+}
+
+/**
+ * Where opening a file has got to, in the footer's bar.
+ *
+ * Opening a large model takes seconds -- the largest imported assessment is a
+ * 37 MB model.xml, 0.2 s of it parsing the XML, 0.15 s reading its blocks,
+ * 0.75 s setting it up, and a slower machine takes two or three times that --
+ * and each of those holds the page while it runs. A page that has gone quiet
+ * for that long looks stuck. So the open is taken a step at a time, and
+ * between steps the bar says which and how far along the whole it is, and is
+ * given a frame to be painted in before the next step holds the page again.
+ */
+const OPENING_STAGE = {
+	read: [0.03, 'Reading the file'],
+	unzip: [0.08, 'Opening the archive'],
+	xml: [0.15, 'Reading model.xml'],
+	json: [0.3, 'Reading the model'],
+	blocks: [0.45, 'Reading the blocks'],
+	settings: [0.65, 'Connecting the blocks'],
+	setup: [0.8, 'Setting the model up'],
+};
+
+async function showOpening(stage, fileName = '') {
+	// A run's bar is the run's: an open that starts one hands it over.
+	if (state.running) return;
+	const [fraction, words] = OPENING_STAGE[stage] ?? [null, String(stage)];
+	const bar = $('#progress');
+	const text = $('#progress-pct');
+	if (!bar || !text) return;
+	$('#run-progress').classList.add('is-on');
+	bar.removeAttribute('data-loading');
+	bar.setAttribute('data-opening', stage);
+	bar.max = 1;
+	if (fraction == null) bar.removeAttribute('value');
+	else bar.value = fraction;
+	text.textContent = `${words}…`;
+	text.title = fileName ? `Opening ${fileName}` : '';
+	// Painted before the next step holds the page. A frame alone is not
+	// enough -- it only schedules the paint -- and a tab in the background
+	// never gets one, so a timer is the backstop.
+	await new Promise((resolve) => {
+		const t = setTimeout(resolve, 60);
+		requestAnimationFrame(() => setTimeout(() => { clearTimeout(t); resolve(); }, 0));
+	});
+}
+
+/** The open is over: the bar goes, unless a run has taken it. */
+function endOpening() {
+	const bar = $('#progress');
+	if (!bar?.hasAttribute('data-opening')) return;
+	bar.removeAttribute('data-opening');
+	if (state.running) return;
+	$('#run-progress').classList.remove('is-on');
+	bar.value = 0;
+	$('#progress-pct').textContent = '';
+	$('#progress-pct').title = '';
 }
 
 /**
@@ -10968,50 +11265,26 @@ function showExportReport(report, fileName) {
 	close.addEventListener('click', () => { box.hidden = true; });
 	heading.append(close);
 	box.append(heading);
-
-	box.append(el('p', { className: 'ir-counts' }, report.summary().split('\n')[0]));
-
-	if (report.skipped.length) {
-		const byType = new Map();
-		for (const sk of report.skipped) {
-			if (!byType.has(sk.type)) byType.set(sk.type, []);
-			byType.get(sk.type).push(sk);
-		}
-		const list = el('ul', { className: 'ir-list' });
-		for (const [type, items] of byType) {
-			list.append(el('li', {},
-				el('b', {}, `${items.length} ${type}`),
-				`: ${items.slice(0, 6).map((s) => `${s.name} (${s.why})`).join('; ')}${items.length > 6 ? '…' : ''}`));
-		}
-		box.append(
-			el('p', { className: 'ir-warn' },
-				'These have no place in the file and were left out. The model in it is '
-				+ 'not the whole of this one:'),
-			list,
-		);
-	}
-
-	if (report.rewritten.length) {
-		box.append(el('details', { className: 'ir-details' },
-			el('summary', {}, `${report.rewritten.length} thing(s) written in an equivalent form`),
-			el('ul', { className: 'ir-list' }, ...report.rewritten.map((r) => el('li', {},
-				el('b', {}, `${r.type} ${r.name}`), `: ${r.how}`)))));
-	}
-
-	if (report.renamed.length) {
-		box.append(el('details', { className: 'ir-details' },
-			el('summary', {}, `${report.renamed.length} renamed`),
-			el('p', { className: 'ir-hint' },
-				report.renamed.map((r) => `${r.from} → ${r.to}`).join(', '))));
-	}
-
-	for (const w of report.warnings) {
-		box.append(el('p', { className: 'ir-warn' }, w));
-	}
+	box.append(...exportReportNodes(report, { when: 'after', limit: 6, reveal: revealByName }));
 
 	box.hidden = false;
 	selectTab('build');
 }
+
+/**
+ * What a name in a report does when clicked: the block it names, selected on
+ * its diagram -- for the names that are blocks of the model as it is now.
+ */
+const revealByName = {
+	has: (name) => !!ed.findBlock(state.raw, name),
+	go: (name) => {
+		const found = ed.findBlock(state.raw, name);
+		if (!found) return;
+		closeAllModals();
+		selectTab('build');
+		setSelection({ kind: found.kind, name });
+	},
+};
 
 // --- JSON tab -------------------------------------------------------------------
 
@@ -11344,13 +11617,20 @@ function setModel(raw, source) {
 	// as a chain of diffs, but walking two hundred of them back over a
 	// megabyte of model to answer "what have I changed since I opened this"
 	// is the wrong price for a question a reviewer asks once a session.
+	//
+	// The undo stack's own text: it was written a line above from the same
+	// model, and a second stringify was 60 ms and another copy of the model
+	// in memory on the largest imported assessment.
 	state.opened = {
-		text: JSON.stringify(state.raw),
+		text: typeof undoStack.cur === 'string' ? undoStack.cur : JSON.stringify(state.raw),
 		label: modelSource?.example ? `the example ${modelSource.example}` : (modelSource?.label ?? UNTITLED),
 	};
 	rememberLocked();
 	renderEditorViews();
-	renderModelEditor();
+	// The JSON tab's text only for the JSON tab: laid out indented it is twice
+	// the model, and selecting the tab writes it. Opening a large model wrote
+	// it for nobody -- 90 ms and 46 MB on that assessment.
+	if (state.tab === 'model') renderModelEditor();
 	renderUndoButtons();
 	renderSaveButton();
 	// The pane may not have its final size yet on first paint.
@@ -11572,7 +11852,7 @@ export function boot() {
 	// Right-clicking it does the same: that is where a hand goes looking for
 	// "the other way to do this", and now there is only the one way.
 	$('#save').addEventListener('contextmenu', (ev) => { ev.preventDefault(); openSave(); });
-	$('#new').addEventListener('click', () => setModel(structuredClone(BLANK), { label: 'New model' }));
+	$('#new').addEventListener('click', () => setModel(blankModel(), { label: 'New model' }));
 	// The table's own menu carries the export; there is no toolbar button.
 	$('#panel-table').addEventListener('contextmenu', tableMenu);
 	$('#table-mode').addEventListener('change', (ev) => {
@@ -11882,7 +12162,7 @@ export function boot() {
 	// thing, for the links that were written when it had to be asked for.
 	const start = EXAMPLES.some((e) => e.file === wanted) ? wanted : null;
 	if (!start) {
-		setModel(structuredClone(BLANK), { label: 'New model' });
+		setModel(blankModel(), { label: 'New model' });
 		if (wanted && wanted !== 'blank' && wanted !== 'draft') {
 			flash(`There is no example called “${wanted}”, so this is a new model. `
 				+ 'The examples are in the list at the top.', 'warn');
@@ -11897,7 +12177,7 @@ export function boot() {
 		.catch((e) => {
 			// Never leave an empty editor: fall back to a blank model so the
 			// toolbar still works, and say why the example did not load.
-			setModel(structuredClone(BLANK), { label: 'New model' });
+			setModel(blankModel(), { label: 'New model' });
 			flash(
 				`Could not load the example (${e.message}). Started a blank model instead.`,
 				'warn',

@@ -125,7 +125,8 @@
     for (const g of ECModel.GROUPS) {
       const items = ECModel.PARAMS.filter((d) => d.group === g.id);
       if (!items.length) continue;
-      html.push(`<details class="ec-sec" id="sec-${g.id}"><summary>${esc(g.label)}<span class="ec-count" id="ecChanged-${g.id}"></span></summary>`);
+      html.push(`<details class="ec-sec" id="sec-${g.id}"><summary><span class="ec-sec-title">${esc(g.label)}</span><span class="ec-count" id="ecChanged-${g.id}"></span>`
+        + `<span class="kvot-info-slot" data-info-key="sec:${g.id}"></span></summary>`);
       if (g.about) html.push(`<p class="ec-about">${esc(g.about)}</p>`);
       for (const d of items) html.push(paramControl(d));
       html.push('</details>');
@@ -140,20 +141,28 @@
     return parts.join(' · ');
   }
 
+  /**
+   * One row of the panel. The (i) sits at the right-hand end of the label
+   * line (of the checkbox line for a switch); its topic is paramTopic().
+   */
   function paramControl(d) {
     const name = traceName(d);
+    const slot = `<span class="kvot-info-slot" data-info-key="p:${d.key}"></span>`;
+    const desc = d.desc ? `<span class="ec-desc">${esc(d.desc)}</span>` : '';
+    const trace = name ? `<span class="ec-name">${esc(name)}</span>` : '';
     if (d.type === 'bool') {
-      return `<label class="ec-check" data-key="${d.key}"><input type="checkbox" data-key="${d.key}" data-on-change="ec:paramChanged">`
-        + `<span>${esc(d.label)}${d.desc ? `<span class="ec-desc">${esc(d.desc)}</span>` : ''}${name ? `<span class="ec-name">${esc(name)}</span>` : ''}</span></label>`;
+      return `<div class="ec-check-line"><label class="ec-check" data-key="${d.key}"><input type="checkbox" data-key="${d.key}" data-on-change="ec:paramChanged">`
+        + `<span>${esc(d.label)}${desc}${trace}</span></label>${slot}</div>`;
     }
+    const id = `ecp-${d.key}`;
+    const unit = d.type !== 'select' && d.unit ? `<span class="ec-unit">${esc(d.unit)}</span>` : '';
+    const head = `<div class="kvot-info-line ec-label-line"><label for="${id}">${esc(d.label)}${unit}</label>${slot}</div>${desc}${trace}`;
     if (d.type === 'select') {
       const opts = d.options.map((o) => `<option value="${esc(o[0])}">${esc(o[1])}</option>`).join('');
-      return `<div class="ec-row" data-key="${d.key}"><label>${esc(d.label)}${d.desc ? `<span class="ec-desc">${esc(d.desc)}</span>` : ''}${name ? `<span class="ec-name">${esc(name)}</span>` : ''}</label>`
-        + `<select data-key="${d.key}" data-on-change="ec:paramChanged">${opts}</select></div>`;
+      return `<div class="ec-row" data-key="${d.key}">${head}<select id="${id}" data-key="${d.key}" data-on-change="ec:paramChanged">${opts}</select></div>`;
     }
-    const unit = d.unit ? `<span class="ec-unit">${esc(d.unit)}</span>` : '';
-    return `<div class="ec-row" data-key="${d.key}"><label>${esc(d.label)}${unit}${d.desc ? `<span class="ec-desc">${esc(d.desc)}</span>` : ''}${name ? `<span class="ec-name">${esc(name)}</span>` : ''}</label>`
-      + `<input type="text" inputmode="decimal" data-key="${d.key}" data-on-change="ec:paramChanged" spellcheck="false"></div>`;
+    return `<div class="ec-row" data-key="${d.key}">${head}`
+      + `<input id="${id}" type="text" inputmode="decimal" data-key="${d.key}" data-on-change="ec:paramChanged" spellcheck="false"></div>`;
   }
 
   /** Put the state's values into the controls and mark what differs from the defaults. */
@@ -176,14 +185,16 @@
       const c = $(`ecChanged-${g.id}`);
       if (c) c.textContent = changedPerGroup[g.id] ? `${changedPerGroup[g.id]} changed` : '';
     }
+    infoRefresh();
   }
 
+  /** A value as a field shows it: 15 digits, which is every digit of a default such as the workbook's AdvConst. */
   function numberText(v) {
     if (typeof v !== 'number') return String(v);
     if (Number.isInteger(v) && Math.abs(v) < 1e15) return String(v);
     const a = Math.abs(v);
-    if (a >= 1e6 || a < 1e-3) return trimExp(v.toExponential(12));
-    return trimZeros(v.toPrecision(13));
+    if (a >= 1e6 || a < 1e-3) return trimExp(v.toExponential(14));
+    return trimZeros(v.toPrecision(15));
   }
 
   function readParam(el) {
@@ -234,6 +245,7 @@
     $('ecHsLog10').hidden = g.kind !== 'log10-normal';
     $('ecHsCustom').hidden = state.hs.table !== 'custom';
     describeHs();
+    infoRefresh();
   }
 
   function describeHs() {
@@ -325,11 +337,14 @@
       const meta = [`${t.format}`, `${t.n.toLocaleString('en')} holes`, `${t.meta.flowing.toLocaleString('en')} with a flowing fracture`];
       if (t.meta.padded) meta.push(`${t.meta.padded} padded`);
       const warns = t.warnings.map((w) => `<span class="ec-file-warn">${esc(w)}</span>`).join('');
+      // The name's title shows the whole of a name cut short; the ×'s
+      // accessible name is its aria-label.
       return `<li><span class="ec-file-name" title="${esc(h.name)}">${i + 1}. ${esc(h.name)}</span>`
-        + `<button type="button" title="Remove this realisation" aria-label="Remove ${esc(h.name)}" data-on-click="ec:removeHydro" data-index="${i}">×</button>`
+        + `<button type="button" aria-label="Remove ${esc(h.name)}" data-on-click="ec:removeHydro" data-index="${i}">×</button>`
         + `<span class="ec-file-meta">${esc(meta.join(' · '))}</span>${warns}</li>`;
     }).join('');
     $('ecHydroCount').textContent = state.hydro.length ? `${state.hydro.length} realisation${state.hydro.length > 1 ? 's' : ''}` : '';
+    infoRefresh();
   }
 
   /* ---------------------------------------------------------------------
@@ -839,6 +854,7 @@
       case 'holes': renderHoles(); break;
       default: break;
     }
+    infoRefresh();
   }
 
   function initSideResize() {
@@ -906,12 +922,368 @@
   }
 
   /* ---------------------------------------------------------------------
+     The (i) next to each setting, section heading and tab toolbar
+
+     kvot-info.js draws the button and the panel; this is what they say.
+     The parameters' topics come from the catalogue in ec-model.js (label,
+     desc, info, optionInfo, unit, default, workbook and Python names), so a
+     parameter added there gets its (i) with no change here. Topics that
+     show a current value or choice are functions, read each time the
+     panel is drawn; infoRefresh() redraws an open one after a change.
+     --------------------------------------------------------------------- */
+  const more = (label, id) => ({ label, id });
+  const paras = (x) => [].concat(x ?? []).filter(Boolean);
+
+  /** The Help heading a group's parameters link to, and the exceptions. */
+  const HELP_FOR_GROUP = {
+    rejection: more('Rejection', 'help-rejection'),
+    buffer: more('Time to advective conditions', 'help-advective'),
+    corrosion: more('Corrosion and the failure table', 'help-corrosion'),
+    diffusive: more('The distribution plots', 'help-plots'),
+    freshwater: more('Parameters', 'help-params'),
+    misc: more('Parameters', 'help-params'),
+  };
+  const HELP_FOR_PARAM = {
+    okFlagFiltering: more('Corrosion and the failure table', 'help-corrosion'),
+    pessAperture: more('Parameters', 'help-params'),
+    rDepHole: more('Flow at the hole', 'help-flow'),
+    dWater: more('Flow at the hole', 'help-flow'),
+    w: more('Flow at the hole', 'help-flow'),
+    flowConcFact: more('Flow at the hole', 'help-flow'),
+    hCan: more('The distribution plots', 'help-plots'),
+    averageFlow: more('Parameters', 'help-params'),
+    averageFlowFactor: more('Parameters', 'help-params'),
+    nCanisters: more('Rejection', 'help-rejection'),
+  };
+
+  function infoRefresh() {
+    if (typeof KvotInfo !== 'undefined') KvotInfo.refresh();
+  }
+
+  const unitText = (u) => (u === '−' ? '− (dimensionless)' : u);
+  function valueText(d, v) {
+    if (d.type === 'bool') return v ? 'on' : 'off';
+    if (d.type === 'select') return String(v);
+    return numberText(v);
+  }
+
+  function paramTopic(d) {
+    const g = ECModel.GROUPS.find((x) => x.id === d.group);
+    const v = state.params[d.key];
+    const extra = paras(d.info);
+    const lead = d.desc || extra.shift() || '';
+    const sections = extra.length ? [{ text: extra }] : [];
+    if (d.type === 'select') {
+      const what = d.optionInfo || {};
+      sections.push({ heading: 'Choices', choices: d.options.map(([val, label]) => [label, what[val] || '', v === val]) });
+    }
+    return {
+      kicker: g ? g.label : 'Parameter',
+      title: d.label,
+      lead,
+      facts: [
+        ['Unit', d.type === 'number' || d.type === 'int' ? unitText(d.unit || '') : ''],
+        ['Default', valueText(d, d.def)],
+        ['Current value', `${valueText(d, v)}${v !== d.def ? ' (changed)' : ''}`],
+        ['Workbook name', d.xl ? `\`${d.xl}\`` : 'none'],
+        ['Python name', d.py ? `\`${d.py}\`` : 'none'],
+      ],
+      sections,
+      more: HELP_FOR_PARAM[d.key] || HELP_FOR_GROUP[d.group] || more('Parameters', 'help-params'),
+    };
+  }
+
+  function groupTopic(g) {
+    const items = ECModel.PARAMS.filter((d) => d.group === g.id);
+    const changed = items.filter((d) => state.params[d.key] !== d.def).length;
+    const extra = paras(g.info);
+    const lead = g.about || extra.shift() || '';
+    return {
+      kicker: 'Section',
+      title: g.label,
+      lead,
+      facts: [['Parameters', String(items.length)], ['Changed from the default', changed ? String(changed) : 'none']],
+      sections: extra.length ? [{ text: extra }] : [],
+      more: HELP_FOR_GROUP[g.id] || more('Parameters', 'help-params'),
+    };
+  }
+
+  /** A select's options as choices, the chosen one marked; `what` explains each by value. */
+  function optionChoices(id, what, current) {
+    const sel = $(id);
+    return Array.from(sel ? sel.options : []).map((o) => [o.textContent, what[o.value] || '', o.value === current]);
+  }
+
+  function hsName() {
+    const t = state.hs.table;
+    if (ECHS.TABLES[t]) return t;
+    return t === 'generic' ? 'generated' : 'custom list';
+  }
+
+  /** The topic of one parameter of the generated sulphide distribution. */
+  function genTopic(title, key, unit, lead, source, text) {
+    return {
+      kicker: 'Sulphide',
+      title,
+      lead,
+      facts: [
+        ['Unit', unit],
+        ['Default', numberText(ECHS.GENERIC_DEFAULTS[key])],
+        ['Current value', numberText(state.hs.generic[key])],
+        ['In the sources', source],
+      ],
+      sections: text ? [{ text }] : [],
+      more: more('Sulphide', 'help-sulphide'),
+    };
+  }
+
+  const HS_TABLE_WHAT = {
+    HSForsmark: 'Forsmark groundwater, 46 values: 40 sulphide analyses and 6 below the detection limit, set to 10^−6.9 M. The PSAR base case, to the workbook’s digits.',
+    HSLaxemar: 'Laxemar groundwater, 51 values: the distribution of the review version of the sulphide report, as the workbook holds it.',
+    HSTest: 'The workbook’s table of ten values for the code test.',
+    generic: 'A lognormal distribution drawn as midpoint quantiles, in place of the workbook’s one-point HSGeneric table. Its form and parameters appear under the list.',
+    custom: 'Your own list of concentrations, typed or pasted under the list.',
+  };
+  const DIST_WHAT = {
+    qeq: 'The hydro model’s equivalent flow rate for an intact buffer, with and without the addition for a thermally spalled zone (TR-10-66, equations 4-9 to 4-12), in m³/yr. The line is qlim.',
+    corrDiff: 'Through an intact buffer at the fixed sulphide concentration, with and without spalling (TR-10-66, equation 4-19a), in µm/yr. The lines: the rate limited by diffusion in the buffer alone, and the copper thickness in 1,000,000 years.',
+    erosion: 'The rate of the chosen buffer loss model, in kg/yr. The lines: the buffer loss for advection over the assessment time, and over the dilute fraction of it.',
+    corrAdv: 'With the buffer eroded, at the fixed sulphide concentration, in µm/yr. The lines: the copper thickness in 1,000,000 and in 100,000 years.',
+    gradient: 'The hydraulic gradient i = v·δ/T in the intersecting fracture, with T from the transmissivity law chosen.',
+    aperture: 'TRAPP as read from the hydro file, in m.',
+    velocity: 'v = U0·w/δ in the intersecting fracture, in m/yr.',
+    tAdv: 'The time to advective conditions of the accepted holes with a flowing fracture, in years. The line is the assessment time.',
+  };
+  const HOLE_FILTER_WHAT = {
+    all: 'Every hole of the realisation.',
+    flowing: 'A fracture crosses the hole and the water in it moves: v > 0.',
+    accepted: 'Not rejected by any criterion.',
+    rejected: 'Rejected by at least one criterion; the column Rejected by names them.',
+    advective: 'tAdv before the assessment time.',
+    failing: 'The holes with rows in the failure table: not skipped, and at least one sulphide value fails the canister in time.',
+    skipped: 'Left out of the failure table: rejected, unable to fail in time with failure time filtering on, or OKFLAG ≠ 0 with OKFLAG filtering on.',
+    edge: 'Not rejected by EFPC, two rows from a hole that is, on a fracture of the same length and aperture.',
+  };
+
+  function infoTopics() {
+    const t = {
+      'sec:hydro': () => {
+        const n = state.hydro.length;
+        const holes = state.hydro.reduce((a, h) => a + h.table.n, 0);
+        return {
+          kicker: 'Section',
+          title: 'Hydro data',
+          lead: 'The deposition-hole tables of the hydrogeological modelling, one file per DFN realisation. Several files are several realisations of one case, evaluated with the same settings.',
+          facts: [['Realisations', n ? String(n) : 'none loaded'], ['Holes', n ? holes.toLocaleString('en') : '']],
+          sections: [
+            { heading: 'What is read', text: 'Ten columns per hole: the position ID, OKFLAG, U0, QEQ, TW, F, TRAPP, FPC, EFPC and FLEN; other columns are ignored. The shape is recognised from the content, not the extension: ConnectFlow CSV or PTB, an Excel sheet of such a table, or a DarcyTools performance-measure table.' },
+            { heading: 'The buttons', list: [
+              '**Open…**, or a drop on the panel, adds files. A case file (`.json`) opened or dropped this way is applied instead.',
+              'The × on a file removes that realisation; **Remove all** removes them all.',
+              '**Save as CSV** saves what was read from each file as a CSV of the ten columns (POINT, OKFLAG, U0, QEQ, TW, F, TRAPP, FPC, EFPC, FLEN), one file per realisation.',
+            ] },
+            { heading: 'Keep in mind', text: 'The lines under a file say what was doubtful in it: a missing column, padding to the layout size, a value that would not parse. The files stay in the browser and are not kept after the visit; the settings are.' },
+          ],
+          more: more('Hydro files', 'help-hydro'),
+        };
+      },
+      'set:totalHoles': () => ({
+        kicker: 'Hydro data',
+        title: 'Layout size for DarcyTools tables',
+        lead: 'The number of deposition holes in the whole layout. A DarcyTools table lists only the holes with particles, and the normalisation counts every hole.',
+        facts: [['Current value', state.totalHoles || 'blank'], ['Applies to', 'DarcyTools .dtpm and CSV tables']],
+        sections: [{ text: [
+          'The table is padded with empty holes to this size. Blank takes the `Total DHs:` line of a .dtpm file, and otherwise the number of holes in the file, which the note under the file then points out. A number here takes precedence over the file’s line; one smaller than the number of holes in the file is ignored.',
+          'ConnectFlow tables are not affected: they list every hole.',
+        ] }],
+        more: more('Hydro files', 'help-hydro'),
+      }),
+      'set:inflow': () => ({
+        kicker: 'Hydro data',
+        title: 'Inflow-rejection list',
+        lead: 'Hole IDs to reject for high inflow to the open repository (R-09-19). They are rejected only with **High inflow filtering** on, under Rejection of deposition holes.',
+        facts: [
+          ['Loaded', state.inflow ? `${state.inflow.name}, ${state.inflow.set.size.toLocaleString('en')} IDs` : 'none'],
+          ['High inflow filtering', state.params.highFlowFiltering ? 'on' : 'off'],
+        ],
+        sections: [{ text: [
+          'A text file of IDs, one per line or separated by commas, semicolons or spaces; lines that start with `#` are skipped. A line with a numeric ID and then 0 or 1 is read as a flag: 1 rejects the hole, 0 does not.',
+          'The IDs are matched as text with the hole IDs of every realisation, loaded before or after the list, and the note under the buttons says how many matched. **Clear** removes the list. It is not kept after the visit.',
+        ] }],
+        more: more('Rejection', 'help-rejection'),
+      }),
+
+      'sec:hs': () => {
+        let d = null;
+        try { d = ECHS.describe(hsValues().values); } catch (e) { d = null; }
+        const has = d && d.n;
+        return {
+          kicker: 'Section',
+          title: 'Sulphide',
+          lead: 'The distribution of sulphide concentration in the fracture water. Every accepted hole meets every value, and each value that fails the canister within the assessment time is one row of the failure table.',
+          facts: [
+            ['Distribution', hsName()],
+            ['Values', has ? d.n.toLocaleString('en') : 'none'],
+            ['Highest', has ? `${fmt(d.max, 3)} M` : ''],
+            ['Mean', has ? `${fmt(d.mean, 3)} M` : ''],
+            ['Lowest', has ? `${fmt(d.min, 3)} M` : ''],
+          ],
+          sections: [{ text: 'The mean number of failed canisters is the number of rows over the number of values: a hole contributes the fraction of the distribution that fails it in time. Only the values above a hole’s HSmin fail it, so the high end of the distribution decides the result.' }],
+          more: more('Sulphide', 'help-sulphide'),
+        };
+      },
+      'set:hsTable': () => ({
+        kicker: 'Sulphide',
+        title: 'Distribution [HS⁻]',
+        lead: 'Which table of sulphide concentrations the holes meet.',
+        facts: [['Default', 'HSForsmark'], ['Current value', hsName()], ['Workbook name', '`HSTabName`'], ['Python name', '`hs_tab_name`']],
+        sections: [
+          { heading: 'Choices', choices: optionChoices('ecHsTable', HS_TABLE_WHAT, state.hs.table) },
+          { text: 'The table is sorted in descending order, and the j-th failure time of a hole uses the j-th highest value, as the workbook and the Python port read it. The Python port’s HSForsmark is rounded to six digits, which moves its failure times by about one part in a million from the workbook’s.' },
+        ],
+        more: more('Sulphide', 'help-sulphide'),
+      }),
+      'set:hsKind': () => ({
+        kicker: 'Sulphide',
+        title: 'Form',
+        lead: 'Which kind of lognormal distribution is generated.',
+        facts: [['Default', 'shifted lognormal'], ['Current value', state.hs.generic.kind === 'log10-normal' ? 'log10-normal' : 'shifted lognormal']],
+        sections: [
+          { heading: 'Choices', choices: optionChoices('ecHsKind', {
+            'shifted-lognormal': 'The 2.4 Python port’s `_gen_hs_generic`: a lognormal with the given arithmetic mean and standard deviation, plus the shift.',
+            'log10-normal': 'The @Risk workbook’s `10^RiskNormal(−5.79757, 0.63849)`: log10 [HS⁻] is normal with mean μ and standard deviation σ.',
+          }, state.hs.generic.kind) },
+          { text: 'Both are drawn as the midpoint quantiles (k − ½)/n, k = 1 … n, so the same parameters always give the same table. The 2.4 port draws random numbers with a fixed seed and the @Risk workbook samples a Latin hypercube; both approximate these quantiles.' },
+        ],
+        more: more('Sulphide', 'help-sulphide'),
+      }),
+      'set:hsMean': () => genTopic('Mean', 'mean', 'M', 'The arithmetic mean of the lognormal part, before the shift is added.', '`hs_generic_mean` of the 2.4 port',
+        'With the standard deviation it gives the parameters of the underlying normal: σ² = ln(1 + (s.d./mean)²) and μ = ln(mean) − σ²/2.'),
+      'set:hsStd': () => genTopic('Std. dev.', 'std', 'M', 'The standard deviation of the lognormal part, before the shift is added.', '`hs_generic_std` of the 2.4 port',
+        'With the mean it gives the parameters of the underlying normal: σ² = ln(1 + (s.d./mean)²) and μ = ln(mean) − σ²/2.'),
+      'set:hsShift': () => genTopic('Shift', 'shift', 'M', 'A concentration added to every value of the lognormal.', '`hs_generic_shift` of the 2.4 port',
+        'It is also the lowest value the distribution can take.'),
+      'set:hsMu': () => genTopic('μ', 'mu10', 'log10 M', 'The mean of log10 [HS⁻], with [HS⁻] in mol/L.', 'the first argument of `RiskNormal` in the @Risk workbook', ''),
+      'set:hsSigma': () => genTopic('σ', 'sigma10', 'log10 units', 'The standard deviation of log10 [HS⁻].', 'the second argument of `RiskNormal` in the @Risk workbook', ''),
+      'set:hsN': () => genTopic('Number of values', 'n', '', 'How many midpoint quantiles are drawn: the size of the generated table.', '`hs_generic_n` of the 2.4 port, 10,000 there',
+        'Rounded, and kept between 1 and 200,000. More values resolve the high end of the distribution, where the failures come from, more finely; with 7000 holes a table of 10,000 values still takes well under a second.'),
+      'set:hsCustom': () => {
+        const c = ECHS.parseCustom(state.hs.customText);
+        return {
+          kicker: 'Sulphide',
+          title: 'Concentrations, mol/L',
+          lead: 'Your own table of sulphide concentrations, in mol/L.',
+          facts: [['Values read', c.values.length.toLocaleString('en')], ['Dropped', c.dropped ? String(c.dropped) : 'none']],
+          sections: [{ text: 'Separate the values with spaces, new lines, commas or semicolons. A comma inside a single number written without a dot, such as `1,2e-5`, is a decimal comma. Anything that is not a positive number is dropped, and the note under the box says how many were. The values are sorted highest first, as the model reads them.' }],
+          more: more('Sulphide', 'help-sulphide'),
+        };
+      },
+
+      'set:autoRun': () => ({
+        kicker: 'Run',
+        title: 'Run on every change',
+        lead: 'On, the calculation runs again a moment after a setting changes. Off, a changed parameter or sulphide setting waits for **Run**, and the status says “Changed. Press Run.”',
+        facts: [['Default', 'on'], ['Current value', state.autoRun ? 'on' : 'off']],
+        sections: [
+          { text: 'Loading or removing hydro files, the layout size, the inflow list, the fracture width w, Reset parameters and opening a case run the calculation at once either way.' },
+          { heading: 'The buttons', list: [
+            '**Run** calculates now.',
+            '**Reset parameters** puts every parameter back to the PSAR workbook’s default. The sulphide choice and the hydro data stay as they are.',
+            '**Save case** writes every parameter, the sulphide choice and the layout size as a JSON file, with the names of the hydro files and of the inflow list but not their data. **Open case…** reads such a file back, as does a drop on the panel, and the status names what in it could not be matched: settings it does not know, hydro files that are not loaded.',
+          ] },
+        ],
+        more: more('Parameters', 'help-params'),
+      }),
+
+      'pane:failures': () => ({
+        kicker: 'Tab',
+        title: 'Failure times',
+        lead: 'One row per hole and sulphide value that fails the canister within the assessment time: the workbook’s sheet “InputTrptCalcs”, the input to the radionuclide transport calculations.',
+        facts: [['Rows', state.result ? state.result.table.length.toLocaleString('en') : 'not run yet']],
+        sections: [
+          { heading: 'Columns', list: [
+            '`Index`: the row, in hole order and then by descending sulphide, as the workbook and the Python port write them.',
+            '`Real.`: the realisation the row comes from, when more than one file is loaded.',
+            '`tFail` = `tAdv` + `tCorr`, in years: the time to advective conditions and the time to corrode through, CorrHoleFact / (Qeq·[HS⁻]).',
+            '`[HS⁻]` and `HS #`: the sulphide value and its rank in the table, highest first.',
+            '`F`, `tw` and `q`: the transport resistance and the travel time from the hydro file, and the flow through the eroded hole.',
+            '`Edge`: the hole is an EFPC edge position.',
+          ] },
+          { text: 'Click a heading to sort by it, and again to reverse the order.' },
+          { heading: 'Saving', list: [
+            '**CSV**: every row in Index order, whatever the sort on screen, at full precision: Index, Realisation, the workbook’s IDProb, tFailProb, FProb, twProb and qProb, then tAdv, tCorr, HS, HSIndex and Edge.',
+            '**Excel**: one workbook with the case settings, the key outputs, this table, the per-hole sheet of each realisation and the sulphide table used.',
+          ] },
+        ],
+        more: more('Corrosion and the failure table', 'help-corrosion'),
+      }),
+      'pane:time': {
+        kicker: 'Tab',
+        title: 'Against time',
+        lead: 'How the counts build up after closure, on a log time axis from 100 years to the assessment time.',
+        sections: [
+          { heading: 'Curves', list: [
+            '**Mean number of failed canisters, corrected**: the failure times before t, over the number of sulphide values, scaled to the canisters to normalise to over the accepted holes. At the assessment time it is the corrected mean of the Summary.',
+            '**Failed canisters at the highest sulphide concentration**: the holes that would have failed by t if every hole met the highest value of the distribution; not corrected.',
+            '**Advective positions**, on the right-hand axis: the holes whose buffer is advective by t.',
+          ] },
+          { text: 'With several realisations each curve is the mean over them. The dashed line marks 100,000 years.' },
+        ],
+        more: more('Corrosion and the failure table', 'help-corrosion'),
+      },
+      'pane:distributions': () => ({
+        kicker: 'Tab',
+        title: 'Distributions',
+        lead: 'Cumulative distributions over the deposition holes, one quantity at a time, as the plot sheets of the workbook draw them.',
+        sections: [
+          { heading: 'Quantity', choices: optionChoices('ecDistWhich', DIST_WHAT, state.dist.which) },
+          { heading: 'Realisation', text: 'With more than one file loaded: every realisation pooled into one distribution, or one of them.' },
+          { heading: 'Reading the curves', text: [
+            'Each quantity is drawn for all holes and again after rejection, where the rejected holes count as zero; the time to advective conditions is drawn once. A curve starts where the holes with a non-zero value begin, so the gap below it is the share of holes at zero. Holes in deformation zones (FPC = 2) are zero in both series.',
+            'The workbook takes the percentiles 1 to 100 % and blanks the zeros; the page uses the sorted values themselves, which is the same picture without interpolation.',
+          ] },
+        ],
+        more: more('The distribution plots', 'help-plots'),
+      }),
+      'pane:holes': () => ({
+        kicker: 'Tab',
+        title: 'Deposition holes',
+        lead: 'Every hole of one realisation with every per-hole quantity of the calculation: the workbook’s sheet “Calc”.',
+        sections: [
+          { heading: 'Show', choices: optionChoices('ecHoleFilter', HOLE_FILTER_WHAT, state.holes.filter) },
+          { text: '**ID** keeps the holes whose ID contains the text. **Realisation** picks the file, when more than one is loaded.' },
+          { heading: 'Columns', list: [
+            'OKFLAG, U0, δ (TRAPP), FLEN, FPC, EFPC, tw and F, as read from the hydro file.',
+            'T, the transmissivity from TRAPP by the law chosen, and i, the hydraulic gradient.',
+            'v, the water velocity in the fracture, and q, the flow through the eroded hole.',
+            'Qeq eroded, the equivalent flow rate through the eroded buffer, and QEQ hydro, the hydro model’s own for an intact buffer.',
+            'Loss rate, of the chosen buffer model, and tAdv, the time to advective conditions: never, or 1e+99 in the files, when the buffer does not become advective.',
+            'HSmin, the sulphide concentration that fails the canister exactly at the assessment time; tFailMin, the failure time at the highest value of the table; # HS, how many values are above HSmin.',
+            'Rejected by, Skipped and Edge: the criteria that reject the hole, whether it is left out of the failure table, and whether it is an EFPC edge position.',
+            'tFreshWater, the time for dilute water to reach the hole, for the holes not skipped.',
+          ] },
+          { heading: 'Saving', text: 'The table shows 300 holes at first, and **Show more** adds 1000. **CSV** saves every hole that passes the filter and the ID search, sorted as shown, at full precision. The Excel export of the Failure times tab has every hole of every realisation.' },
+        ],
+        more: more('What happens to each hole', 'help-holes'),
+      }),
+    };
+    for (const g of ECModel.GROUPS) t[`sec:${g.id}`] = () => groupTopic(g);
+    for (const d of ECModel.PARAMS) t[`p:${d.key}`] = () => paramTopic(d);
+    return t;
+  }
+
+  function setupInfo() {
+    if (typeof KvotInfo === 'undefined') return;
+    KvotInfo.setup({ topics: infoTopics(), onMore: () => showTab('help') });
+  }
+
+  /* ---------------------------------------------------------------------
      Actions
      --------------------------------------------------------------------- */
   registerActions({
     'ec:tab': (ev, el) => showTab(el.dataset.tab),
     'ec:run': () => run(),
-    'ec:autoRunChanged': (ev, el) => { state.autoRun = el.checked; saveState(); if (state.autoRun) scheduleRun(0); },
+    'ec:autoRunChanged': (ev, el) => { state.autoRun = el.checked; saveState(); infoRefresh(); if (state.autoRun) scheduleRun(0); },
     'ec:paramChanged': (ev, el) => { readParam(el); writeParamControls(); saveState(); scheduleRun(); if (el.dataset.key === 'w') reparseHydro(); },
     'ec:resetParams': () => { state.params = ECModel.defaults(); writeParamControls(); saveState(); scheduleRun(0); },
     'ec:hsChanged': () => { readHsControls(); saveState(); scheduleRun(); },
@@ -963,6 +1335,7 @@
       if (el.id === 'ecDistRealSelect') state.dist.real = el.value;
       saveState();
       renderDistributions();
+      infoRefresh();
     },
     'ec:holesChanged': (ev, el) => {
       if (el.id === 'ecHoleFilter') state.holes.filter = el.value;
@@ -971,6 +1344,7 @@
       state.holes.limit = 300;
       saveState();
       renderHoles();
+      infoRefresh();
     },
     'ec:holesMore': () => { state.holes.limit += 1000; renderHoles(); },
   });
@@ -986,6 +1360,7 @@
   $('ecAutoRun').checked = state.autoRun;
   $('ecDistWhich').value = state.dist.which;
   $('ecHoleFilter').value = state.holes.filter;
+  setupInfo();
   initSideResize();
   initSections();
   initDrop();

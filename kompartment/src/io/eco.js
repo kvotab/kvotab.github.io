@@ -169,6 +169,10 @@ const DONOR_DEFAULT = lookup({ transfer: false, 'transfer-coefficient': true });
  * @returns {Promise<{project: object, report: ImportReport}>}
  */
 export async function importEcoFile(data, meta = {}) {
+	// `onStage` is the page's, for saying how far the import has got (see
+	// `importModelXMLStepwise`); the rest is what the file is.
+	const { onStage = null, ...info } = meta;
+	meta = info;
 	const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
 
 	// Ecolego 4/5 wrote the model as a bare XML file, usually UTF-16 with a
@@ -189,9 +193,10 @@ export async function importEcoFile(data, meta = {}) {
 				+ 'If it is a project folder, zip it or open its model.xml directly.',
 			);
 		}
-		return importModelXML(text, meta);
+		return importModelXMLStepwise(text, meta, onStage);
 	}
 
+	if (onStage) await onStage('unzip');
 	let entries;
 	try {
 		entries = await unzip(bytes);
@@ -228,7 +233,7 @@ export async function importEcoFile(data, meta = {}) {
 		);
 	}
 
-	return importModelXML(modelXml, { ...meta, version: ecolegoVersion(entries) });
+	return importModelXMLStepwise(modelXml, { ...meta, version: ecolegoVersion(entries) }, onStage);
 }
 
 /**
@@ -286,6 +291,35 @@ export function decodeXmlBytes(bytes) {
  * @param {{fileName?: string, version?: string}} meta
  */
 export function importModelXML(text, meta = {}) {
+	const steps = importSteps(text, meta);
+	let r = steps.next();
+	while (!r.done) r = steps.next();
+	return r.value;
+}
+
+/**
+ * The same import, a step at a time: `onStage(stage)` is awaited between the
+ * steps -- `'xml'` before the XML is parsed, `'blocks'` before the blocks are
+ * read, `'settings'` before they are connected and the settings read -- so a
+ * page can say where it has got to, and paint, while a large file comes in.
+ * Each step is one synchronous stretch: on the largest imported assessment
+ * about 0.2 s here, where the whole import is one of 0.4 s.
+ *
+ * @param {string} text
+ * @param {object} meta  as `importModelXML` takes it
+ * @param {((stage: string) => unknown)|null} onStage
+ */
+export async function importModelXMLStepwise(text, meta = {}, onStage = null) {
+	const steps = importSteps(text, meta);
+	for (let r = steps.next(); ; r = steps.next()) {
+		if (r.done) return r.value;
+		if (onStage) await onStage(r.value);
+	}
+}
+
+/** The import, as steps: yields the name of each before it, returns what `importModelXML` does. */
+function* importSteps(text, meta) {
+	yield 'xml';
 	let root;
 	try {
 		root = parseXML(text);
@@ -299,6 +333,7 @@ export function importModelXML(text, meta = {}) {
 		throw new ImportError('The XML has no <data-model> element');
 	}
 
+	yield 'blocks';
 	const report = new ImportReport();
 	const names = new NameMapper(report);
 
@@ -332,6 +367,7 @@ export function importModelXML(text, meta = {}) {
 	const { blockNameById, wiring } = readBlocks(
 		dataModel, project, names, indexIds, report, hierarchy,
 	);
+	yield 'settings';
 	readSimulationSettings(dataModel, project, report);
 
 	// Two rewrites, both textual and both necessary:
@@ -366,6 +402,12 @@ export function importModelXML(text, meta = {}) {
 	// file spelled it: blocks are renamed, groups flattened, interfaces
 	// connected and unreachable targets dropped on the way here.
 	project.description = describeModel(project, { ...provenance, ...meta });
+	// Who wrote it, as the file says -- beside the name and the description,
+	// where a model of this tool's own keeps it.
+	if (provenance.author) {
+		const { name, description, ...rest } = project;
+		return { project: { name, description, author: provenance.author, ...rest }, report };
+	}
 	return { project, report };
 }
 

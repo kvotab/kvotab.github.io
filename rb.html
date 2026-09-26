@@ -163,6 +163,10 @@
               <input type="checkbox" id="dynamicLegend" checked data-on-change="toggleDynamicLegend">
               Dynamic Legend
             </label>
+            <label id="overlayGroupsLabel" style="display: none;" title="Draw the selected groups in one chart, the first with thick lines and the others thin, as intersect and union draw files, instead of a panel each">
+              <input type="checkbox" id="overlayGroups" data-on-change="toggleOverlayGroups">
+              Same chart
+            </label>
             <label id="showTotalLabel" style="display: none;">
               <input type="checkbox" id="showTotal" checked data-on-change="toggleShowTotal">
               Show Total
@@ -227,7 +231,7 @@
         <div>
           <h3 id="datasetInfoHeading" style="display:none;">Dataset Information <span id="showHintButton" class="show-hint-button" title="Show tip">💡</span></h3>
             <div class="multi-select-hint" style="display: none;" id="multiSelectHint">
-              💡 <strong>Tip:</strong> Hold Ctrl (⌘ on Mac) and click datasets to compare multiple
+              💡 <strong>Tip:</strong> Hold Ctrl (⌘ on Mac) and click datasets to compare multiple, or groups that draw a chart to draw them together
               <button id="multiSelectHintClose" class="hint-close" title="Dismiss" style="cursor:pointer;border:none;background:none;font-size:14px;line-height:1;">×</button>
             </div>
             <div id="info">
@@ -246,8 +250,10 @@
                   <h4>Tips</h4>
                   <ul>
                     <li><kbd>Ctrl</kbd>-click (<kbd>⌘</kbd> on Mac) datasets to <strong>compare multiple</strong> in one chart.</li>
+                    <li><kbd>Ctrl</kbd>-click groups that draw a chart of their own to draw them together, <strong>a panel each</strong>, or in one chart with <strong>Same chart</strong>.</li>
                     <li>Use the <strong>search bar</strong> to filter the tree — supports <code>*</code> wildcards and <code>/</code> full-path search.</li>
                     <li>Load <strong>multiple files</strong> and use the ∩ (intersect) or ∪ (union) toggle to combine trees.</li>
+                    <li><strong>Large files</strong> open at once: from 256 MB a file is read from disk as you look at it, not loaded whole.</li>
                     <li>Toggle <strong>Dynamic Legend</strong> to auto-hide traces outside the current view.</li>
                     <li>Right-click the chart to <strong>copy</strong> or <strong>download</strong> data as CSV / Excel.</li>
                   </ul>
@@ -309,7 +315,7 @@
     every caller already goes through waitForH5Wasm(), so it is deferred: the
     page renders immediately and the gate handles the rest.
   -->
-  <script defer src="https://cdn.jsdelivr.net/npm/h5wasm@0.9.0/dist/iife/h5wasm.min.js" integrity="sha384-0kPHehXdhwrXsjsY2cFREoF1T3bEwA7VXlpZGg3zE1DDnW294q/kakEEPAsA5JXW" crossorigin="anonymous"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/h5wasm@0.10.3/dist/iife/h5wasm.min.js" integrity="sha384-ddY2IJ7uyvBrG5FPTk2LGWBUTJBV+MchV38zJwXMPuFYM9YwIH4iN9RxvDe01UEW" crossorigin="anonymous"></script>
   <!--
     Module layers, loaded in dependency order. Each file owns one concern and
     the ones below may use the ones above. The site-wide error contract
@@ -320,6 +326,8 @@
       rb-utils    generic helpers, HDF5 access wrapper, statistics
       rb-actions  which action names this page uses, and what they call
       rb-hdf5     reading /time, probabilistic matrices, dataset attributes
+      rb-lazy     large local files read in a worker as they are looked at
+                  (rb-lazy-worker.js), and HDF5 compression plugins
       rb-file     which files are loaded, enabled and in what order
       rb-tabs     the file tab strip
       rb-tree     tree building, lazy expansion, intersect and union
@@ -357,24 +365,25 @@
     since they were one file and nothing runs at load time.
   -->
   <script src="./resources/js/pdf-sampler.js?v=20260921"></script>
-  <script src="./resources/js/rb-state.js?v=20260921"></script>
+  <script src="./resources/js/rb-state.js?v=20260926"></script>
   <script src="./resources/js/rb-utils.js?v=20260924a"></script>
-  <script src="./resources/js/rb-actions.js?v=20260921"></script>
-  <script src="./resources/js/rb-hdf5.js?v=20260924a"></script>
-  <script src="./resources/js/rb-file.js?v=20260921"></script>
+  <script src="./resources/js/rb-actions.js?v=20260926"></script>
+  <script src="./resources/js/rb-hdf5.js?v=20260926"></script>
+  <script src="./resources/js/rb-lazy.js?v=20260926"></script>
+  <script src="./resources/js/rb-file.js?v=20260926"></script>
   <script src="./resources/js/rb-tabs.js?v=20260921"></script>
-  <script src="./resources/js/rb-tree.js?v=20260924"></script>
-  <script src="./resources/js/rb-chart-axes.js?v=20260924"></script>
-  <script src="./resources/js/rb-chart-presets.js?v=20260924a"></script>
-  <script src="./resources/js/rb-chart-export.js?v=20260921"></script>
-  <script src="./resources/js/rb-chart-toggles.js?v=20260924a"></script>
-  <script src="./resources/js/rb-chart.js?v=20260924a"></script>
-  <script src="./resources/js/rb-legend.js?v=20260924"></script>
-  <script src="./resources/js/rb-info.js?v=20260924"></script>
-  <script src="./resources/js/rb-search.js?v=20260924"></script>
+  <script src="./resources/js/rb-tree.js?v=20260926"></script>
+  <script src="./resources/js/rb-chart-axes.js?v=20260926"></script>
+  <script src="./resources/js/rb-chart-presets.js?v=20260926"></script>
+  <script src="./resources/js/rb-chart-export.js?v=20260926"></script>
+  <script src="./resources/js/rb-chart-toggles.js?v=20260926"></script>
+  <script src="./resources/js/rb-chart.js?v=20260926"></script>
+  <script src="./resources/js/rb-legend.js?v=20260926"></script>
+  <script src="./resources/js/rb-info.js?v=20260926"></script>
+  <script src="./resources/js/rb-search.js?v=20260926"></script>
   <script src="./resources/js/rb-dragdrop.js?v=20260921"></script>
   <script src="./resources/js/rb-export.js?v=20260921"></script>
-  <script src="./resources/js/rb-init.js?v=20260921"></script>
+  <script src="./resources/js/rb-init.js?v=20260926"></script>
   <script src="./resources/js/rb-resize.js?v=20260921"></script>
   <script src="./resources/js/rb-handoff.js?v=20260921"></script>
 </body>

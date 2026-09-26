@@ -337,6 +337,12 @@ def import_model_xml(text: str, *, file_name: Optional[str] = None,
     described = dict(provenance)
     described.update(meta)
     project['description'] = _describe_model(project, described)
+    # Who wrote it, as the file says -- beside the name and the description,
+    # where a model of this tool's own keeps it.
+    if provenance.get('author'):
+        head = {'name': project['name'], 'description': project['description'], 'author': provenance['author']}
+        head.update((k, v) for k, v in project.items() if k not in head)
+        project = head
     json_ready(project)
     return ImportResult(project, report)
 

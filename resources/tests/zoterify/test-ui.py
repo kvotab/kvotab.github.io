@@ -15,8 +15,13 @@ saves, and then takes the saved .docx apart:
     people.xml, and the parts the page did not edit are byte for byte the
     parts it was given.
 
+On the way it checks the (i) beside each section, setting and tab
+(check_info): a topic for every slot and a target for every Help link,
+each (i) opening its own topic, the ×, the same (i) and Escape closing it,
+and no tooltip left on the tool.
+
 Start a server at the repository root and a headless Chrome, as in
-../rb/README.md (ports can be changed below), then
+../rb/README.md (ZF_PORT and ZF_CDP choose the ports), then
 
     python3 resources/tests/zoterify/test-ui.py
 
@@ -280,6 +285,8 @@ async def run_checks(page):
           await page.ev("[...document.getElementById('zfScope').options].map(o => o.textContent).join('|')"),
           'All libraries (13)|My Library (11)|Team references (2)|My Library / Thesis (1)|My Library / Thesis / Chapter 2 (2)|Team references / Site data (1)')
 
+    await check_info(page)
+
     await page.ev('ZFPage.analyse()')
     st = await page.ev("JSON.stringify(ZFPage.getState().run.results.map((r, i) => [r.ref.label, ZFPage.statusOf(i), r.item ? r.item.key : null, !!r.entryConfirmed]))")
     rows = json.loads(st)
@@ -385,6 +392,92 @@ async def run_checks(page):
     await check_names(page)
     await check_names_from_list(page)
     check('no script errors at the end', page.errors, [])
+
+
+async def check_info(page):
+    """The (i) beside each section, setting and tab (resources/js/kvot-info.js):
+    every slot has a topic and every Help link a target; each (i) opens its
+    own topic, and the ×, the same (i) and Escape close it; a list of
+    choices marks the current setting; the panel sits between the header and
+    the footer; "Read more in Help" leads to the paragraph; and the tooltips
+    the (i) replaced are gone."""
+    with open(os.path.join(HERE, '..', '..', '..', 'zoterify.html'), encoding='utf-8') as f:
+        static = f.read().count('data-info-key="')
+    audit = await page.ev('KvotInfo.audit()')
+    print('      ', audit)
+    check('every (i) slot has a topic', audit['noTopic'], [])
+    check('every topic has a title, and its Help link a target in the page', audit['brokenMore'], [])
+    check(f'an (i) in every slot, at least the {static} of the markup', [audit['buttons'] >= static, audit['buttons'] == audit['slots']], [True, True])
+    check('no tooltip is left on the tool: the (i) holds that text', await page.ev("document.querySelectorAll('#zf [title]').length"), 0)
+
+    sections = "JSON.stringify([...document.querySelectorAll('details.zf-sec')].map(d => d.open))"
+    folded = await page.ev(sections)
+    rows = json.loads(await page.ev("""JSON.stringify([...document.querySelectorAll('.kvot-info-slot .info-btn')].map((b) => {
+        b.click();
+        const p = document.querySelector('.info-panel');
+        const title = p ? p.querySelector('.info-panel-title').textContent : '';
+        const body = p ? p.querySelector('.info-panel-body').textContent : '';
+        const row = [b.dataset.info, title, b.getAttribute('aria-label') === `About ${title}`, b.getAttribute('aria-expanded') === 'true',
+                     body.trim().length > 40, !/[*][*]|`/.test(body)];
+        if (p) p.querySelector('.info-panel-close').click();
+        return row.concat([!document.querySelector('.info-panel'), b.getAttribute('aria-expanded') === 'false']);
+    }))"""))
+    check(f'each of the {len(rows)} (i)s opens its own topic, named as its label says, with no stray markup, and the × closes it',
+          [r for r in rows if not (r[1] and all(r[2:]))], [])
+    check('... and no section folded or unfolded on the way', await page.ev(sections), folded)
+
+    # A real click on the (i) of a section heading, then the same (i), then Escape.
+    async def click_at(xy):
+        for t in ('mousePressed', 'mouseReleased'):
+            await page.call('Input.dispatchMouseEvent', {'type': t, 'x': xy[0], 'y': xy[1], 'button': 'left', 'clickCount': 1}, session=page.sid)
+    xy = json.loads(await page.ev("""(() => { const b = document.querySelector('[data-info="sec:match"]'); b.scrollIntoView({ block: 'center' });
+        const r = b.getBoundingClientRect(); return JSON.stringify([r.left + r.width / 2, r.top + r.height / 2]); })()"""))
+    await click_at(xy)
+    check('a click on the (i) of a section heading opens its topic, and the section stays open',
+          await page.ev("[KvotInfo.current(), document.querySelector('.info-panel .info-panel-title').textContent, document.getElementById('sec-match').open]"),
+          ['sec:match', 'Matching', True])
+    await click_at(xy)
+    check('the same (i) closes it', await page.ev("[!!document.querySelector('.info-panel'), document.getElementById('sec-match').open]"), [False, True])
+    await click_at(xy)
+    try:
+        for t in ('keyDown', 'keyUp'):
+            await asyncio.wait_for(page.call('Input.dispatchKeyEvent', {'type': t, 'key': 'Escape', 'code': 'Escape', 'windowsVirtualKeyCode': 27}, session=page.sid), 15)
+        closed = await asyncio.wait_for(page.ev("!document.querySelector('.info-panel') && document.activeElement === document.querySelector('[data-info=\"sec:match\"]')"), 15)
+    except asyncio.TimeoutError:
+        closed = 'Chrome did not answer the Escape'
+    check('Escape closes it, and the focus goes back to its (i)', closed, True)
+
+    # Function topics follow the settings.
+    current = "[...document.querySelectorAll('.info-panel .info-choices dt.is-current')].map(d => d.textContent)"
+    level = "(() => { const s = document.getElementById('zfLevel'); s.value = '%d'; s.dispatchEvent(new Event('change', { bubbles: true })); })()"
+    await page.ev("KvotInfo.open('set:level')")
+    before = await page.ev(current)
+    await page.ev(level % 2)
+    after = await page.ev(current)
+    await page.ev(level % 1)
+    check('a list of choices marks the current setting, and follows it while open', [before, after], [['Balanced'], ['Strict']])
+    check('the thresholds shown are the matcher\'s',
+          await page.ev("[...document.querySelectorAll('.info-panel .info-facts dt')].slice(0, 3).map(d => `${d.textContent}: ${d.nextElementSibling.textContent}`).join('|')"),
+          await page.ev("Object.entries(ZFMatch.LEVELS).map(([k, v]) => `${k[0].toUpperCase()}${k.slice(1)}: fit ${v.name.toFixed(2)} · ahead ${v.margin.toFixed(2)}`).join('|')"))
+    await page.ev("KvotInfo.open('set:scope')")
+    check('the scope topic says what is chosen', await page.ev("document.querySelector('.info-panel .info-facts dd').textContent"), 'All libraries (13)')
+    check('the panel sits between the header and the footer, at the right-hand edge',
+          await page.ev("""(() => { const panel = document.querySelector('.info-panel');
+              panel.getAnimations().forEach((a) => a.finish());   // it slides in from 24px to the right
+              const p = panel.getBoundingClientRect();
+              return [p.top - document.querySelector('header').getBoundingClientRect().bottom,
+                      document.querySelector('footer').getBoundingClientRect().top - p.bottom, innerWidth - p.right].map(Math.round).map(Math.abs); })()"""),
+          [0, 0, 0])
+
+    await page.ev("KvotInfo.open('set:comment')")
+    await page.ev("document.querySelector('.info-panel .info-panel-more').click()")
+    check('"Read more in Help" closes the panel, shows the Help and scrolls to the paragraph',
+          await page.ev("""(() => { const pane = document.querySelector('.zf-pane[data-pane="help"]');
+              const a = pane.getBoundingClientRect(), b = document.getElementById('help-comments').getBoundingClientRect();
+              return [!document.querySelector('.info-panel'), !pane.hidden, pane.scrollTop > 0, b.top >= a.top - 1 && b.top < a.bottom]; })()"""),
+          [True, True, True, True])
+    await page.ev("document.querySelector('[data-tab=\"review\"]').click()")
+    check('no script errors from the (i)s', page.errors, [])
 
 
 def field_runs(p):

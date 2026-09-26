@@ -54,6 +54,12 @@ import { extremeFromEco, directionFromEco } from '../domain/recorders.js';
 import { kindInfo, quantile, complete } from '../domain/pdf.js';
 import { tokenize } from '../parser/parser.js';
 import { RESERVED } from '../domain/names.js';
+import {
+	FARF_DEFAULTS, FARF_METHODS, FARF_NUCLIDE_KEYS, FARF_SURFACE_DEFAULTS,
+	activeEquationKeys, cellStructure, cellValues, effectiveStructure, isSemiAnalytic, releaseCells,
+	releaseWeights, structureProblem, surfaceOf, usesCells,
+} from '../domain/farfield.js';
+import { pathLayouts, cellEquivalent } from '../sim/pathlayout.js';
 
 export class ExportError extends Error {
 	constructor(message) {
@@ -259,9 +265,10 @@ export class ExportReport {
 		}
 	}
 
-	rewrite(type, name, how) {
+	/** `into`, where it is given, is the sub-system the thing was written as. */
+	rewrite(type, name, how, into = null) {
 		if (!this.rewritten.some((s) => s.type === type && s.name === name && s.how === how)) {
-			this.rewritten.push({ type, name, how });
+			this.rewritten.push(into == null ? { type, name, how } : { type, name, how, into });
 		}
 	}
 
@@ -430,6 +437,18 @@ class Context {
 		this.fluxPlans = new Map();
 		/** Source and sink components to write: [{ name, id, system, type }]. */
 		this.boundaries = [];
+		/** Far-field paths that go out as cells: qualified name -> what they became. */
+		this.farPaths = new Map();
+		/** What those paths are written as, by collection, in the order they are written. */
+		this.generated = { parameters: [], compartments: [], expressions: [], block_reductions: [], transfers: [] };
+		/** The plans of the transfers between a path's cells, by qualified name. */
+		this.generatedPlans = new Map();
+		/** The sub-systems the paths are written as, and those of them written switched off. */
+		this.generatedSystems = [];
+		/** The paths' layers, once worked out: see `pathLayouts`. */
+		this.layouts = null;
+		/** Names taken in each sub-system: blocks, sub-systems and boundaries. */
+		this.usedNames = new Map();
 	}
 
 	known(name) { return this.blocks.has(name); }
@@ -625,6 +644,10 @@ class Context {
 	 * First the blocks that have no Ecolego equivalent at all, then everything
 	 * that reads one of them -- an equation that names a block the file does
 	 * not have is not a model Ecolego can run -- until nothing more falls.
+	 *
+	 * A far-field path goes out as what it is on the grid: compartments and
+	 * transfers (see `planPath`). One that cannot be laid out is left out,
+	 * with the reason.
 	 */
 	decideBlocks() {
 		const { raw, report } = this;
@@ -632,7 +655,8 @@ class Context {
 
 		for (const b of raw.farfields ?? []) {
 			if (!b || typeof b !== 'object') continue;
-			skip(qnameOf(b), 'a far-field pathway (FARFCOMP) is a transport model of its own, which Ecolego has no block for');
+			const why = this.pathProblem(b);
+			if (why) skip(qnameOf(b), why);
 		}
 		for (const b of raw.waste_packages ?? []) {
 			if (!b || typeof b !== 'object') continue;
@@ -678,13 +702,44 @@ class Context {
 				if (why) skip(q, why);
 			}
 		}
+		this.fall(skip);
 
-		// Everything that reads what is left out.
+		// A far-field path's layers are laid out by a run, of the model as it
+		// goes out -- so after everything else that is left out has fallen,
+		// and anything that reads a path that cannot be laid out falls after it.
+		if ((raw.farfields ?? []).some((b) => b && typeof b === 'object' && !this.skippedBlocks.has(qnameOf(b)))) {
+			this.layouts = pathLayouts(this.goingOut());
+			let fell = false;
+			for (const b of raw.farfields ?? []) {
+				if (!b || typeof b !== 'object') continue;
+				const q = qnameOf(b);
+				if (this.skippedBlocks.has(q)) continue;
+				const layout = this.layouts.get(q);
+				const why = !layout
+					? 'it takes no part in a run -- its sub-system is switched off -- so it has no layers to lay out'
+					: layout.error ? `its matrix layers cannot be laid out: ${layout.error}` : null;
+				if (why) { skip(q, why); fell = true; }
+			}
+			if (fell) this.fall(skip);
+		}
+
+		for (const [q, why] of this.skippedBlocks) {
+			const found = this.blocks.get(q);
+			report.skip(KIND_WORD[found?.collection] ?? 'block', q, why);
+		}
+		// The paths first: the transfers into and out of one are written to
+		// what it became.
+		this.planPaths();
+		this.planFluxes();
+	}
+
+	/** Everything that reads what is left out, until nothing more falls. */
+	fall(skip) {
 		for (;;) {
 			let fell = false;
 			for (const [q, { collection, block }] of this.blocks) {
 				if (this.skippedBlocks.has(q)) continue;
-				if (collection === 'farfields' || collection === 'waste_packages' || collection === 'events') continue;
+				if (collection === 'waste_packages' || collection === 'events') continue;
 				const lost = this.readsSkipped(block, collection);
 				if (lost) {
 					skip(q, `it reads '${lost}', which is left out`);
@@ -701,12 +756,355 @@ class Context {
 			}
 			if (!fell) break;
 		}
+	}
 
-		for (const [q, why] of this.skippedBlocks) {
-			const found = this.blocks.get(q);
-			report.skip(KIND_WORD[found?.collection] ?? 'block', q, why);
+	/**
+	 * The model as it goes out: what is left out taken away, and the endpoints
+	 * that named it. It builds wherever the file can run, since everything
+	 * that read something taken away has been taken away with it.
+	 */
+	goingOut() {
+		const out = { ...this.raw };
+		for (const collection of ALL_COLLECTIONS) {
+			if (!Array.isArray(out[collection])) continue;
+			out[collection] = out[collection].filter((b) => !(b && typeof b === 'object' && this.skippedBlocks.has(qnameOf(b))));
 		}
-		this.planFluxes();
+		if (Array.isArray(out.simulation?.endpoints)) {
+			out.simulation = { ...out.simulation, endpoints: out.simulation.endpoints.filter((n) => !this.skippedBlocks.has(String(n))) };
+		}
+		return out;
+	}
+
+	// --- far-field paths ---------------------------------------------------------------
+
+	/**
+	 * Why a far-field path cannot go out as cells, as far as the path itself
+	 * says, or null when it can. Whether its layers can be laid out is asked
+	 * of a run, in `decideBlocks` (see ../sim/pathlayout.js).
+	 */
+	pathProblem(b) {
+		const dims = Array.isArray(b.index_lists) ? b.index_lists : [];
+		const auto = this.autoDimOf(dims);
+		if (auto) return `it is indexed by '${auto}', a list made of the model's own blocks, which Ecolego has no equivalent for`;
+		if (!usesCells(b) && !isSemiAnalytic(b)) {
+			return `'${b.method}' is not a way this tool works a path out (${FARF_METHODS.join(', ')})`;
+		}
+		const bad = structureProblem(cellEquivalent(b));
+		if (bad) return `its cells cannot be laid out: ${bad}`;
+		if (b.enabled === false) {
+			return 'it is switched off, and a path that takes no part in a run has no layers to lay out; switch it on to have it written';
+		}
+		return null;
+	}
+
+	/** Names taken in a sub-system: its blocks, its own sub-systems, and what has been added to it. */
+	namesIn(system) {
+		if (!this.usedNames.has(system)) {
+			const set = new Set();
+			for (const [q] of this.blocks) if (parentOf(q) === system) set.add(baseName(q));
+			for (const path of this.systemPathsList()) if (parentOf(path) === system) set.add(baseName(path));
+			this.usedNames.set(system, set);
+		}
+		return this.usedNames.get(system);
+	}
+
+	/** A name not yet taken in `system`, as close to `base` as can be, and taken now. */
+	claimName(system, base, avoid = null) {
+		const set = this.namesIn(system);
+		const free = (n) => !set.has(n) && !(avoid?.has(n)) && !RESERVED.has(n);
+		let name = base;
+		for (let n = 2; !free(name); n++) name = `${base}_${n}`;
+		set.add(name);
+		return name;
+	}
+
+	/**
+	 * An equation written in `from`, spelled so that it means the same from
+	 * `to`: a reference to a block in `from` has to become a path once the
+	 * equation is one level further in (see `resolveReference` in
+	 * ../domain/systems.js -- a bare name is the writer's own, or the model's).
+	 */
+	respell(text, from, to) {
+		const src = String(text ?? '');
+		let toks;
+		try { toks = tokenize(src); } catch (e) { return src; } // an equation that will not tokenize is written as it is
+		const known = (n) => this.known(n);
+		let out = '';
+		let at = 0;
+		for (let i = 0; i < toks.length; i++) {
+			const t = toks[i];
+			if (t.type !== 'ident') continue;
+			if (toks[i + 1]?.type === 'lparen' && RESERVED.has(t.value)) continue;
+			const q = resolveReference(t.value, from, known);
+			if (q == null) continue;
+			const spelled = this.referenceFrom(q, to);
+			if (spelled === t.value) continue;
+			out += src.slice(at, t.pos) + spelled;
+			at = t.pos + t.text.length;
+		}
+		return out + src.slice(at);
+	}
+
+	/** Adds a block that stands for part of a path, where every reference can find it. */
+	generate(collection, block) {
+		this.generated[collection].push(block);
+		const q = qnameOf(block);
+		if (!this.blocks.has(q)) this.blocks.set(q, { collection, block, generated: true });
+		return q;
+	}
+
+	planPaths() {
+		for (const b of this.raw.farfields ?? []) {
+			if (!b || typeof b !== 'object' || this.skippedBlocks.has(qnameOf(b))) continue;
+			this.planPath(b);
+		}
+		// The sub-system list again, with the paths' own in it.
+		this.paths = null;
+	}
+
+	/**
+	 * One path, as what it is on the grid: a sub-system holding a compartment
+	 * for every cell -- the fracture cells in a row, each with its matrix
+	 * layers behind it -- and a transfer for every rate between two of them,
+	 * which is exactly the path's transport matrix (`pathNetwork`); the
+	 * path's settings, and the rates worked out from them, as expressions; the
+	 * layers' thicknesses as parameters; and the release, which is what every
+	 * other block reads the path as, as an expression under the path's own
+	 * name. What leaves the far end of the cells goes to a sink, and the
+	 * release is delivered where the path delivered it by a transfer from a
+	 * source (see `planFluxes`) -- which for the rock going on past the
+	 * release point is not the same flux, and is the release.
+	 */
+	planPath(b) {
+		const q = qnameOf(b);
+		const system = b.system ?? '';
+		const layout = this.layouts.get(q);
+		const cells = cellEquivalent(b);
+		const g = effectiveStructure(cells);
+		const nf = g.n_f;
+		const nm = g.n_m;
+		const NF = nf + g.n_b;
+		const dims = [...(b.index_lists ?? [])];
+		const otherDims = layout.otherDims;
+		const nuclide = dims.find((d) => !otherDims.includes(d)) ?? null;
+		const matched = layout.grid === 'matched';
+		const sim = this.raw.simulation ?? {};
+		const time = ['second', 'minute', 'hour', 'day', 'year'].includes(sim.time_unit) ? sim.time_unit : 'year';
+		const perTime = `1/${time}`;
+
+		// The sub-system, beside the path; and inside it, names that cannot be
+		// mistaken for anything the path's own equations read.
+		const sub = system ? `${system}.${this.claimName(system, `${b.name}_cells`)}` : this.claimName('', `${b.name}_cells`);
+		this.generatedSystems.push(sub);
+		this.paths = null;
+		this.usedNames.set(sub, new Set());
+		const settings = writtenSettings(b);
+		const avoid = new Set();
+		const read = (text) => {
+			let toks;
+			try { toks = tokenize(String(text ?? '')); } catch (e) { return; }
+			for (const t of toks) if (t.type === 'ident') avoid.add(t.value);
+		};
+		for (const key of settings) {
+			read(b[key]);
+			for (const e of b.entries ?? []) if (e && typeof e === 'object' && key in e) read(e[key]);
+		}
+		const local = (base) => this.claimName(sub, base, avoid);
+		const at = (name) => `${sub}.${name}`;
+
+		// The settings, as the path's own equations, spelled from the sub-system.
+		const surface = surfaceOf(b);
+		const N = {};
+		for (const key of settings) {
+			N[key] = local(SETTING_NAME[key]);
+			const def = b[key] ?? FARF_SURFACE_DEFAULTS[key] ?? FARF_DEFAULTS[key] ?? '0';
+			const entries = [];
+			for (const e of b.entries ?? []) {
+				if (!e || typeof e !== 'object' || !(key in e)) continue;
+				const index = entryIndex(e.index, dims, this.nuclideListName);
+				if (!index) continue;
+				entries.push({ index, equation: this.respell(e[key], system, sub) });
+			}
+			this.generate('expressions', {
+				name: N[key], system: sub,
+				index_lists: FARF_NUCLIDE_KEYS.includes(key) ? [...dims] : [...otherDims],
+				equation: this.respell(def, system, sub),
+				...(entries.length ? { entries } : {}),
+				comment: `${SETTING_COMMENT[key].replace(/\[time\]/g, time)}. ${q}'s own setting.`,
+			});
+		}
+
+		// What the rates are worked out from, as ../domain/farfield.js works them out.
+		const expr = (name, equation, over, extra = {}) => this.generate('expressions', {
+			name, system: sub, index_lists: [...over], equation, ...extra,
+		});
+		const aw = surface === 'aw' ? N.aw : local('a_w');
+		if (surface !== 'aw') {
+			expr(aw, surface === 'aperture' ? `2 / ${N.aperture}` : `${N.f} / ${N.tw}`, otherDims, {
+				unit: 'm2/m3', comment: 'The flow-wetted surface per unit volume of flowing water.',
+			});
+		}
+		const fdf = local('f_df');
+		expr(fdf, `1 / (1 + ${N.kd_f} * ${aw})`, dims,
+			{ comment: 'The fraction dissolved in the fracture water rather than sorbed on its coating.' });
+		const rm = local('R_m');
+		expr(rm, `${N.eps_m} + ${N.rho_m} * ${N.kd_m}`, dims,
+			{ comment: 'The matrix’s capacity for the nuclide: its porosity, and what sorbs.' });
+		const adv = local('adv');
+		expr(adv, `${fdf} * ${nf} / ${N.tw}`, dims, {
+			unit: perTime, comment: `Advection from one fracture cell to the next: ${nf} cells along the travel time.`,
+		});
+		const disp = local('disp');
+		expr(disp, `max(0, ${adv} * (${nf} / ${N.pe} - 0.5))`, dims, {
+			unit: perTime,
+			comment: `Dispersion between neighbouring fracture cells. ${nf} cells already disperse as a Peclet `
+				+ `number of ${2 * nf} would, so this is what is added to that, and never less than nothing.`,
+		});
+
+		// The layers, as the numbers a run lays them out at: one parameter per
+		// thickness, and per node spacing on the matched layers, with a value
+		// per combination of the path's other lists where those differ.
+		const d = [];
+		const h = [];
+		const geometry = (prefix, pick, what) => {
+			const names = [];
+			for (let j = 0; j < nm; j++) {
+				const name = local(`${prefix}_${j + 1}`);
+				const value = pick(layout.combos[0])[j];
+				const entries = layout.combos.slice(1)
+					.filter((c) => pick(c)[j] !== value)
+					.map((c) => ({ index: { ...c.index }, value: pick(c)[j] }));
+				this.generate('parameters', {
+					name, system: sub, index_lists: [...otherDims], value, unit: 'm',
+					...(entries.length ? { entries } : {}),
+					...(j === 0 ? { comment: what } : {}),
+				});
+				names.push(name);
+			}
+			return names;
+		};
+		d.push(...geometry('d', (c) => c.d, `The matrix layers’ thicknesses, from the fracture wall inwards, as a run `
+			+ `here lays them out at its start${matched ? ', matched to diffusion into the rock' : ''}.`));
+		if (matched) {
+			h.push(...geometry('h', (c) => c.h, 'The node spacings the matched layers exchange over: the wall to the '
+				+ 'first layer’s node, then node to node.'));
+		}
+		const symbolNames = [adv, disp, local('k_fm'), local('k_mf')];
+		for (let j = 0; j < nm - 1; j++) symbolNames.push(local(`k_${j + 1}_${j + 2}`));
+		for (let j = 0; j < nm - 1; j++) symbolNames.push(local(`k_${j + 2}_${j + 1}`));
+		const [, , kfm, kmf] = symbolNames;
+		const de = N.de_m;
+		const layerNote = (j) => (j === 0
+			? { comment: 'Diffusion through the rock: from one matrix layer into the next one in, and, below, back out.' }
+			: {});
+		if (matched) {
+			expr(kfm, `${fdf} * ${aw} * ${de} / ${h[0]}`, dims, { unit: perTime, comment: 'From a fracture cell into its first matrix layer.' });
+			expr(kmf, `${de} / (${rm} * ${d[0]} * ${h[0]})`, dims, { unit: perTime, comment: 'From the first matrix layer back into its fracture cell.' });
+			for (let j = 0; j < nm - 1; j++) {
+				expr(symbolNames[4 + j], `${de} / (${rm} * ${d[j]} * ${h[j + 1]})`, dims, { unit: perTime, ...layerNote(j) });
+			}
+			for (let j = 0; j < nm - 1; j++) {
+				expr(symbolNames[4 + nm - 1 + j], `${de} / (${rm} * ${d[j + 1]} * ${h[j + 1]})`, dims, { unit: perTime });
+			}
+		} else {
+			expr(kfm, `${fdf} * 2 * ${aw} * ${de} / ${d[0]}`, dims, { unit: perTime, comment: 'From a fracture cell into its first matrix layer.' });
+			expr(kmf, `2 * ${de} / (${rm} * ${d[0]} * ${d[0]})`, dims, { unit: perTime, comment: 'From the first matrix layer back into its fracture cell.' });
+			for (let j = 0; j < nm - 1; j++) {
+				expr(symbolNames[4 + j], `2 * ${de} / (${rm} * ${d[j]} * (${d[j]} + ${d[j + 1]}))`, dims, { unit: perTime, ...layerNote(j) });
+			}
+			for (let j = 0; j < nm - 1; j++) {
+				expr(symbolNames[4 + nm - 1 + j], `2 * ${de} / (${rm} * ${d[j + 1]} * (${d[j + 1]} + ${d[j]}))`, dims, { unit: perTime });
+			}
+		}
+
+		// The cells, in the path's own order: each fracture cell, then its layers.
+		const decays = b.handle_decay !== false && nuclide != null;
+		const inventory = inventoryUnit(b.unit, time) || (nuclide ? (this.raw.decay_unit === 'mol' ? 'mol' : 'Bq') : '');
+		const cellName = new Array(NF * (nm + 1));
+		for (let k = 0; k < NF; k++) {
+			const past = g.downstream && k === nf;
+			cellName[k * (nm + 1)] = local(`F${k + 1}`);
+			this.generate('compartments', {
+				name: cellName[k * (nm + 1)], system: sub, index_lists: [...dims],
+				initial: '0', non_negative: false, handle_decay: decays,
+				...(inventory ? { unit: inventory } : {}),
+				...(k === 0 ? { comment: `The first fracture cell of ${q}: what flows into the path arrives here.` }
+					: past ? { comment: `The first of the ${g.n_b} cells past the release point, which stand for the rock `
+						+ 'downstream: what they hold has been released already.' } : {}),
+			});
+			for (let j = 1; j <= nm; j++) {
+				cellName[k * (nm + 1) + j] = local(`M${k + 1}_${j}`);
+				this.generate('compartments', {
+					name: cellName[k * (nm + 1) + j], system: sub, index_lists: [...dims],
+					initial: '0', non_negative: false, handle_decay: decays,
+					...(inventory ? { unit: inventory } : {}),
+				});
+			}
+		}
+
+		// The rates between them, and out of the far end.
+		const net = pathNetwork(cells);
+		const outflow = local('Outflow');
+		const outflowId = at(outflow);
+		this.boundaries.push({ name: outflow, id: outflowId, system: sub, type: 'sink' });
+		let count = 0;
+		for (const tr of net.transfers) {
+			const from = cellName[tr.from];
+			const to = tr.to == null ? outflow : cellName[tr.to];
+			const name = local(`${from}_to_${to}`);
+			const tq = this.generate('transfers', {
+				name, system: sub, from: at(from), to: tr.to == null ? null : at(to),
+				index_lists: [...dims], rate: termsText(tr.terms, symbolNames), multiply_by_donor: true, unit: perTime,
+			});
+			this.generatedPlans.set(tq, {
+				collection: 'transfers', from: at(from), to: tr.to == null ? null : at(to), dims: [...dims], fileDims: [...dims],
+				intersection: false, narrowed: null, availability: null, ...(tr.to == null ? { sink: outflowId } : {}),
+			});
+			count++;
+		}
+
+		// The release, which is what the rest of the model reads the path as.
+		const release = local('release');
+		expr(release, net.release.map((r, i) => weighted(r.terms, symbolNames, cellName[r.cell], i === 0)).join(''), dims, {
+			...(String(b.unit ?? '').trim() ? { unit: String(b.unit).trim() } : {}),
+			comment: g.n_b > 0
+				? `The flux across the release point, between ${cellName[net.release[0].cell]} and ${cellName[net.release[1].cell]}.`
+				: `The flux out of the far end of the path, as its outflow condition reads it.`,
+		});
+		// What the path holds -- the other half of a mass balance with its
+		// release: every cell up to the release point, as a run here counts it.
+		const held = local('held');
+		this.generate('block_reductions', {
+			name: held, system: sub, index_lists: [...dims], operation: 'sum',
+			targets: cellName.slice(0, (g.downstream ? nf : NF) * (nm + 1)),
+			...(inventory ? { unit: inventory } : {}),
+			comment: `What ${q} holds: every cell${g.downstream && g.n_b ? ' up to the release point' : ''}, fracture and rock.`,
+		});
+		this.generate('expressions', {
+			name: b.name, system, index_lists: [...dims],
+			equation: this.referenceFrom(at(release), system),
+			...(String(b.unit ?? '').trim() ? { unit: String(b.unit).trim() } : {}),
+			...(String(b.comment ?? '').trim() ? { comment: String(b.comment).trim() } : {}),
+		});
+
+		const inlet = at(cellName[0]);
+		this.farPaths.set(q, { q, sub, inlet });
+		const ncells = NF * (nm + 1);
+		this.report.rewrite(KIND_WORD.farfields, q, `written as the sub-system ${sub}: ${ncells} compartments -- `
+			+ `${nf} fracture cells${g.n_b ? ` and ${g.n_b} past the release point` : ''}, each with ${nm} matrix `
+			+ `layers behind it -- and the ${count} transfers between them${nuclide ? `, per ${nuclide}` : ''}. Its settings and `
+			+ `the rates worked out from them are expressions there; its release is the expression ${q}, and what it `
+			+ `holds the aggregate ${at(held)}. The layers `
+			+ `are written as the thicknesses a run here lays out at its start (${d[0]} … ${d[nm - 1]}${matched
+				? `, and the node spacings ${h[0]} … ${h[nm - 1]}` : ''}, in m), which Ecolego keeps whatever the settings `
+			+ 'do during a run or from one realisation to the next'
+			+ (g.downstream && g.n_b ? `. The ${g.n_b} cells past the release point stand for the rock downstream: what `
+				+ 'they hold has been released already, so a total over the sub-system counts it twice' : ''), sub);
+		if (isSemiAnalytic(b)) {
+			this.report.warn(`'${q}' is worked out semi-analytically here, from its transfer function, which Ecolego `
+				+ `has nothing like. It is written as the same path on cells -- ${nf} × ${nm}, with the rock going on past `
+				+ 'the release point -- which agrees with the exact answer only as closely as those cells do.');
+		}
 	}
 
 	/** A connection's end, as a qualified name. */
@@ -730,7 +1128,8 @@ class Context {
 
 	/** Every equation a block holds, block-level and per index. */
 	equationsOf(block, collection) {
-		const keys = EQUATION_KEYS[collection] ?? [];
+		// A path's are the settings that go into the file as equations.
+		const keys = collection === 'farfields' ? writtenSettings(block) : EQUATION_KEYS[collection] ?? [];
 		const out = [];
 		const take = (holder) => {
 			for (const k of keys) {
@@ -776,18 +1175,30 @@ class Context {
 		return Array.isArray(found.block.index_lists) ? found.block.index_lists : [];
 	}
 
+	/** Whether a connection's end is a far-field path. */
+	isPathEnd(ref, conn) {
+		return ref != null && this.blocks.get(this.resolveEnd(ref, conn))?.collection === 'farfields';
+	}
+
 	/** Why a transfer or inflow cannot go out, or null when it can. */
 	fluxProblem(t, collection, compartments) {
-		const ends = collection === 'inflows' ? [null, t.to] : [t.from ?? null, t.to ?? null];
+		let ends = collection === 'inflows' ? [null, t.to] : [t.from ?? null, t.to ?? null];
 		for (const [ref, what] of [[ends[0], 'donor'], [ends[1], 'receiver']]) {
 			if (ref == null) continue;
 			const q = this.resolveEnd(ref, t);
 			if (compartments.has(q)) continue;
 			const found = this.blocks.get(q);
-			if (found?.collection === 'farfields') return `its ${what} is the far-field pathway '${q}', which is left out`;
+			if (found?.collection === 'farfields') {
+				// Written as its cells, and so an end like any other.
+				if (!this.skippedBlocks.has(q)) continue;
+				return `its ${what} is the far-field pathway '${q}', which is left out`;
+			}
 			if (found?.collection === 'waste_packages') return `its ${what} is the waste package '${q}', which is left out`;
 			return `its ${what} '${ref}' is not a compartment of this model`;
 		}
+		// What a transfer out of a path carries is its release, which takes
+		// nothing from the path: a flux from outside.
+		if (this.isPathEnd(ends[0], t)) ends = [null, ends[1]];
 		if (ends[0] == null && ends[1] == null) return 'it has neither a donor nor a receiver';
 		const dims = Array.isArray(t.index_lists) ? t.index_lists : [];
 		const auto = this.autoDimOf(dims);
@@ -829,18 +1240,8 @@ class Context {
 	 */
 	planFluxes() {
 		const { raw, report } = this;
-		const usedNames = new Map(); // system -> names taken there
-		const taken = (system) => {
-			if (!usedNames.has(system)) {
-				const set = new Set();
-				for (const [q] of this.blocks) if (parentOf(q) === system) set.add(baseName(q));
-				for (const path of this.systemPathsList()) if (parentOf(path) === system) set.add(baseName(path));
-				usedNames.set(system, set);
-			}
-			return usedNames.get(system);
-		};
 		const boundary = (name, system, type) => {
-			const set = taken(system);
+			const set = this.namesIn(system);
 			let local = `${name}_${type}`;
 			for (let n = 2; set.has(local); n++) local = `${name}_${type}_${n}`;
 			set.add(local);
@@ -854,10 +1255,27 @@ class Context {
 				const q = qnameOf(t);
 				if (this.skippedBlocks.has(q)) continue;
 				const inflow = collection === 'inflows';
-				const fromRef = inflow ? null : (t.from ?? null);
+				let fromRef = inflow ? null : (t.from ?? null);
 				const toRef = t.to ?? null;
-				const from = fromRef == null ? null : this.resolveEnd(fromRef, t);
-				const to = toRef == null ? null : this.resolveEnd(toRef, t);
+				let from = fromRef == null ? null : this.resolveEnd(fromRef, t);
+				let to = toRef == null ? null : this.resolveEnd(toRef, t);
+				// A far-field path at either end. What flows into one arrives
+				// in its first fracture cell; what a transfer out of one
+				// carries is its release, which takes nothing from the path --
+				// so that end is a source, and the rate says how much.
+				const into = to == null ? null : this.farPaths.get(to);
+				const outOf = from == null ? null : this.farPaths.get(from);
+				if (into) {
+					report.rewrite(KIND_WORD[collection], q, `it delivers into the far-field pathway '${to}', so it is `
+						+ `written into that path's first fracture cell, ${into.inlet}`);
+					to = into.inlet;
+				}
+				if (outOf) {
+					report.rewrite(KIND_WORD[collection], q, `it carries the release of the far-field pathway '${from}', `
+						+ `which takes nothing from the path: written as a transfer from a source, at the same rate`);
+					fromRef = null;
+					from = null;
+				}
 				const dims = Array.isArray(t.index_lists) ? [...t.index_lists] : [];
 				const fromDims = this.endDims(fromRef, t);
 				const toDims = this.endDims(toRef, t);
@@ -967,6 +1385,8 @@ class Context {
 				add(b?.system);
 			}
 		}
+		// The sub-systems the far-field paths are written as.
+		for (const path of this.generatedSystems) add(path);
 		this.paths = out;
 		return out;
 	}
@@ -997,6 +1417,11 @@ class Context {
 				if (!this.goesOut(b) || b.system) continue;
 				claim(String(b.name), KIND_WORD[collection]);
 			}
+			// A far-field path's release goes out as an expression of its name.
+			for (const b of this.generated[collection] ?? []) {
+				if (b.system) continue;
+				claim(String(b.name), KIND_WORD[collection]);
+			}
 		}
 		if (clashes.length) {
 			this.report.warn(`${clashes.join(', ')}: an index list and something at the top of the model share a `
@@ -1014,11 +1439,15 @@ class Context {
 
 	hasStates() {
 		return (this.raw.compartments ?? []).some((c) => this.goesOut(c))
-			|| (this.raw.running_means ?? []).some((c) => this.goesOut(c));
+			|| (this.raw.running_means ?? []).some((c) => this.goesOut(c))
+			|| this.generated.compartments.length > 0;
 	}
 
 	counts() {
-		const n = (collection) => (this.raw[collection] ?? []).filter((b) => this.goesOut(b)).length;
+		// What went out: the model's own blocks, and what its far-field paths
+		// were written as.
+		const n = (collection) => (this.raw[collection] ?? []).filter((b) => this.goesOut(b)).length
+			+ (this.generated[collection]?.length ?? 0);
 		return {
 			index_lists: this.exportLists.length,
 			compartments: n('compartments'),
@@ -1038,6 +1467,150 @@ class Context {
 			nuclides: this.nuclideNames.length,
 		};
 	}
+}
+
+// --- a far-field path on the grid ----------------------------------------------------
+
+/** What each setting of a path is called in the file: SKB's own notation, as far as a name can carry it. */
+const SETTING_NAME = table({
+	tw: 'TW', f: 'F', aw: 'a_w', aperture: 'delta', kd_f: 'Kd_f', kd_m: 'Kd_m', de_m: 'De_m',
+	eps_m: 'eps_m', rho_m: 'rho_m', pe: 'Pe',
+});
+
+/**
+ * What each is, for its comment in the file: the panel's own words
+ * (`FARF_HELP` in ../domain/farfield.js), kept here so that the file does not
+ * change when the panel's wording does -- and so the Python package, which
+ * writes the same file, has one list to match.
+ */
+const SETTING_COMMENT = table({
+	tw: 'The water travel time along the path, in [time]',
+	f: 'The flow-related transport resistance, in [time]·m²/m³',
+	aw: 'The flow-wetted surface per unit volume of flowing water, in m²/m³',
+	aperture: 'The fracture aperture, in m: two walls, so the wetted surface is 2/δ per m³ of water',
+	kd_f: 'Sorption on the fracture coating, in m³/m² (0 for none)',
+	kd_m: 'The partition coefficient in the rock matrix, in m³/kg',
+	de_m: 'The effective diffusivity in the rock matrix, in m²/[time]',
+	eps_m: 'The porosity of the rock matrix',
+	rho_m: 'The dry bulk density of the rock matrix, in kg/m³',
+	pe: 'The Peclet number; dispersion is the travel time over it',
+});
+
+/**
+ * The settings of a path that go into the file as equations: every one it is
+ * worked out from, but the two that only lay its layers out -- those are in
+ * the file as the layers themselves.
+ */
+function writtenSettings(b) {
+	return activeEquationKeys(b).filter((k) => k !== 'pen_dep' && k !== 'pen_dep_0');
+}
+
+/**
+ * The transport matrix of a path, as transfers.
+ *
+ * Read off `cellValues` and `releaseWeights` themselves, which are linear in
+ * the rates they are handed: each rate set to one and the rest to zero gives
+ * that rate's share of every entry, so what is written is the matrix a run
+ * here assembles, entry for entry, however the outflow condition shapes it.
+ * An entry off the diagonal is a flux from its column's cell to its row's; a
+ * column that loses more than it hands on loses the rest out of the path.
+ *
+ * The rates, in order: advection, dispersion, fracture to first layer and
+ * back, then layer to layer inwards, then outwards.
+ *
+ * @returns {{transfers: Array<{from: number, to: number|null, terms: Array<[number, number]>}>,
+ *   release: Array<{cell: number, terms: Array<[number, number]>}>}} cells in the path's own
+ *   numbering (`cellIndex`), terms as [rate, how many]
+ */
+export function pathNetwork(block) {
+	const g = effectiveStructure(block);
+	const nm = g.n_m;
+	const { rows, cols, nnz } = cellStructure(g);
+	const nsym = 4 + 2 * (nm - 1);
+	const unit = (k) => {
+		const c = {
+			advF: 0, dF: 0, diffFM1: 0, diffM1F: 0,
+			diffMMF: new Float64Array(nm - 1), diffMMB: new Float64Array(nm - 1),
+		};
+		if (k === 0) c.advF = 1;
+		else if (k === 1) c.dF = 1;
+		else if (k === 2) c.diffFM1 = 1;
+		else if (k === 3) c.diffM1F = 1;
+		else if (k < 4 + nm - 1) c.diffMMF[k - 4] = 1;
+		else c.diffMMB[k - 4 - (nm - 1)] = 1;
+		return c;
+	};
+	const ncells = (g.n_f + g.n_b) * (nm + 1);
+	const entries = new Map();
+	const diag = Array.from({ length: ncells }, () => new Float64Array(nsym));
+	const out = new Float64Array(nnz);
+	const rel = releaseCells(g);
+	const w = new Float64Array(rel.length);
+	const release = rel.map((cell) => ({ cell, share: new Float64Array(nsym) }));
+	for (let k = 0; k < nsym; k++) {
+		const c = unit(k);
+		cellValues(g, c, out);
+		for (let e = 0; e < nnz; e++) {
+			if (out[e] === 0) continue;
+			if (rows[e] === cols[e]) { diag[cols[e]][k] += out[e]; continue; }
+			const key = `${cols[e]},${rows[e]}`;
+			if (!entries.has(key)) entries.set(key, { from: cols[e], to: rows[e], share: new Float64Array(nsym) });
+			entries.get(key).share[k] += out[e];
+		}
+		w.fill(0);
+		releaseWeights(g, c, w);
+		rel.forEach((_, i) => { release[i].share[k] += w[i]; });
+	}
+	const terms = (share) => [...share].map((v, k) => [k, v]).filter(([, v]) => v !== 0);
+	// The order the structure lists them in, each position once.
+	const transfers = [];
+	const seen = new Set();
+	for (let e = 0; e < nnz; e++) {
+		if (rows[e] === cols[e]) continue;
+		const key = `${cols[e]},${rows[e]}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		const x = entries.get(key);
+		if (x && x.share.some((v) => v !== 0)) transfers.push({ from: x.from, to: x.to, terms: terms(x.share) });
+	}
+	// What each cell loses that no other cell gains: out of the path.
+	const handed = Array.from({ length: ncells }, () => new Float64Array(nsym));
+	for (const x of entries.values()) for (let k = 0; k < nsym; k++) handed[x.from][k] += x.share[k];
+	for (let cell = 0; cell < ncells; cell++) {
+		const lost = new Float64Array(nsym);
+		for (let k = 0; k < nsym; k++) lost[k] = -diag[cell][k] - handed[cell][k];
+		if (lost.some((v) => v !== 0)) transfers.push({ from: cell, to: null, terms: terms(lost) });
+	}
+	return { transfers, release: release.map((r) => ({ cell: r.cell, terms: terms(r.share) })) };
+}
+
+/** A sum of rates as an equation: `adv + disp`, `adv - 2 * disp`. */
+function termsText(terms, names) {
+	return terms.map(([k, v], i) => {
+		const a = Math.abs(v);
+		const body = a === 1 ? names[k] : `${a} * ${names[k]}`;
+		if (i === 0) return v < 0 ? `-${body}` : body;
+		return v < 0 ? ` - ${body}` : ` + ${body}`;
+	}).join('');
+}
+
+/** One cell's share of the release, as a term of a sum: `(adv + disp) * F20`, ` - disp * F21`. */
+function weighted(terms, names, cell, first) {
+	if (terms.length === 1) {
+		const [k, v] = terms[0];
+		const a = Math.abs(v);
+		const body = `${a === 1 ? '' : `${a} * `}${names[k]} * ${cell}`;
+		if (first) return v < 0 ? `-${body}` : body;
+		return v < 0 ? ` - ${body}` : ` + ${body}`;
+	}
+	return `${first ? '' : ' + '}(${termsText(terms, names)}) * ${cell}`;
+}
+
+/** What a path's cells hold, from the unit of what it releases: `Bq/year` -> `Bq`. */
+function inventoryUnit(unit, time) {
+	const u = String(unit ?? '').trim();
+	const suffix = `/${time}`;
+	return u.endsWith(suffix) ? u.slice(0, -suffix.length).trim() : '';
 }
 
 /** Which of a block's values are equations, for finding what it reads. */
@@ -1348,6 +1921,10 @@ function writeProjectProperties(w, raw, ctx, options) {
 	if (options.modified instanceof Date && Number.isFinite(options.modified.getTime())) {
 		w.text('modification-date', String(options.modified.getTime()));
 	}
+	// Who wrote it, as Ecolego keeps an author: a property beside the comment,
+	// and before it, as the files it writes have them.
+	const author = String(raw.author ?? '').trim();
+	if (author) w.cdata('property', author, [['name', 'author'], ['type', 'string']]);
 	const description = String(raw.description ?? '').trim();
 	if (description) w.cdata('property', description, [['name', 'comment'], ['type', 'string']]);
 	w.close('project-properties');
@@ -1496,6 +2073,9 @@ function writeBlocks(w, ctx) {
 			if (ctx.skippedBlocks.has(qnameOf(block))) continue;
 			writeComponent(w, ctx, block, collection);
 		}
+		// After the model's own: a path's cells follow the compartments, as
+		// its states follow theirs in a run here.
+		for (const block of ctx.generated[collection] ?? []) writeComponent(w, ctx, block, collection);
 	}
 	for (const b of ctx.boundaries) {
 		w.open('component', [['name', b.name], ['type', b.type], ['dimension', '0'], ['index-lists', '']]);
@@ -1512,6 +2092,7 @@ function writeBlocks(w, ctx) {
 			if (plan) writeConnection(w, ctx, t, plan);
 		}
 	}
+	for (const t of ctx.generated.transfers) writeConnection(w, ctx, t, ctx.generatedPlans.get(qnameOf(t)));
 	w.close('block-model');
 	if (ctx.expandedEntries) {
 		ctx.report.rewrite('values per index', `${ctx.expandedEntries} block(s)`, 'an entry that names only '

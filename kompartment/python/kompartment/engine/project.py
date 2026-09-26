@@ -30,7 +30,8 @@ from ..keys import COLLECTIONS, migrate_keys
 from ..names import NAME_RE, RESERVED, is_valid_path, is_within, qualified_name, resolve_reference, system_paths
 from ..simulation import DEFAULTS as DEFAULT_SIMULATION
 from ..simulation import TIME_UNITS
-from .farfield import FARF_DEFAULTS, FARF_EQUATION_KEYS, FARF_NUCLIDE_KEYS, FARF_STRUCTURE_KEYS
+from .farfield import (FARF_DEFAULTS, FARF_EQUATION_KEYS, FARF_NUCLIDE_KEYS, FARF_STRUCTURE_KEYS,
+                       FARF_SURFACE_DEFAULTS, SURFACE_KEY, surface_of)
 from .farfield import geometry_problem, structure_problem
 from .. import jsmath
 from .indexspace import IndexError_, IndexSpace
@@ -750,8 +751,20 @@ class Project:
             base['operation'] = 'max' if op is None or op == '' else (_extreme(op) or op)
         if kind == 'farfield':
             for key in FARF_STRUCTURE_KEYS:
-                v = js_number(raw[key] if raw.get(key) is not None else DEFAULTS['farfield'][key])
+                given = raw[key] if raw.get(key) is not None else DEFAULTS['farfield'][key]
+                # Extra cells left empty are worked out, and kept empty.
+                if key == 'n_b' and (given is None or (isinstance(given, str) and given.strip() == '')):
+                    base[key] = ''
+                    continue
+                v = js_number(given)
                 base[key] = int(math.floor(v + 0.5)) if math.isfinite(v) else raw.get(key)
+            # The way the wetted surface is given (kept as written when it is not
+            # one, for validation to name), and its equation if the file has none.
+            base['surface'] = surface_of(raw) if raw.get('surface') is None or raw.get('surface') == '' \
+                else raw.get('surface')
+            used = SURFACE_KEY[surface_of(base)]
+            if base.get(used) is None:
+                base[used] = FARF_SURFACE_DEFAULTS[used]
             base.pop('to', None)
         if kind == 'waste_package':
             f = raw.get('failure')

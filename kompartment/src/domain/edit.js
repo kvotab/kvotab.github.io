@@ -123,12 +123,15 @@ import {
 	FARF_TERM,
 	OUTFLOWS,
 	OUTFLOW_LABEL,
+	CONTINUES,
 	cellCount,
 	cellNames,
 	structureProblem,
 	geometryProblem,
 	dispersionWarning,
 	gridPeclet,
+	extraCells,
+	isSemiAnalytic,
 } from './farfield.js';
 import {
 	WASTE_EQUATION_KEYS, WASTE_NUCLIDE_KEYS, WASTE_LABEL, WASTE_HELP, WASTE_DEFAULTS,
@@ -663,30 +666,29 @@ export function addSource(project, { name, to, rate, system } = {}) {
 /**
  * A far-field path: a dual-porosity transport model behind one block.
  *
- * It arrives indexed by the nuclide list, because that is the only way it can
- * be built -- one path per nuclide, with the decay chain running between them
- * -- and with the reference implementation's own defaults for everything else.
- * Twenty cells by twenty layers is what SKB's assessments use.
+ * It arrives indexed by the radionuclides when the model has them -- one path
+ * per nuclide, with the decay chain running between them -- and by nothing
+ * otherwise: one quantity that does not decay, which the dimension box can
+ * turn into a path per chemical species, per object, or whatever else the
+ * model's lists hold. Nothing about a path needs a nuclide: a species that is
+ * stable, or on a list that is not the radionuclides, simply does not decay.
+ * The reference implementation's own numbers
+ * for the physics -- twenty cells by twenty layers is what SKB's assessments
+ * use -- and this tool's for the outlet and the matrix layers; see
+ * `FARF_DEFAULTS`.
  */
 export function addFarfield(project, { name, at, system = '' } = {}) {
 	const n = name ?? uniqueName(project, 'Farfield', system);
 	// Both forms of the dimension: a flagged index list, or the older
-	// `nuclides` shorthand that Project desugars into one. An empty list is
-	// not a dimension, and a path indexed by nothing is not a path.
+	// `nuclides` shorthand that Project desugars into one.
 	const list = materialDimensionName(project);
-	if (!list) {
-		throw new EditError(
-			'A far-field path needs the model to have radionuclides: it holds one '
-			+ 'path per nuclide and lets them grow into one another.',
-		);
-	}
 	const block = placed({
 		name: n, ...FARF_DEFAULTS,
 		unit: `${decayUnit(project)}/${project.simulation?.time_unit ?? 'year'}`,
-		// Indexed by the radionuclides, which is what a path is normally for.
-		// The other choice is nothing at all -- one quantity, no decay -- and
-		// the dimension box in the panel is where that is made.
-		index_lists: [list],
+		// Indexed by the radionuclides, which is what a path is most often
+		// for; with none, by nothing, and the dimension box in the panel is
+		// where anything else is chosen.
+		index_lists: list ? [list] : [],
 	}, system);
 	ensure(project, 'farfields').push(block);
 	if (at) setPosition(project, qualify(system, n), at);
@@ -741,13 +743,19 @@ export { describeDisruption };
  * @returns {string|null}
  */
 export function farfieldWarning(project, block) {
+	// Worked out exactly, the release is the flux past the far end and
+	// nothing else: there are no cells to read it inside, or to extrapolate.
+	if (isSemiAnalytic(block)) return null;
 	const releases = releaseTransfers(project, qualifiedName(block));
 	if (!releases.length) return null;
 	const where = releases.map((t) => t.to).filter(Boolean);
 	if (!where.length) return null;
-	if (Number(block.n_b) > 0) {
-		return `the release is read inside the path, ${block.n_b} cell`
-			+ `${Number(block.n_b) === 1 ? '' : 's'} before its far end, so the mass `
+	// The semi-infinite outlet's extra cells are rock past the release point,
+	// so what they hold has been released already. The reference
+	// implementation's are the path's own, read inside.
+	if (Number(block.o_b) !== CONTINUES && extraCells(block) > 0) {
+		return `the release is read inside the path, ${extraCells(block)} cell`
+			+ `${extraCells(block) === 1 ? '' : 's'} before its far end, so the mass `
 			+ `it reports is still in the path: delivering it to `
 			+ `${where.join(' and ')} counts it twice`;
 	}
@@ -8741,6 +8749,87 @@ export function setModelDescription(project, text) {
 	return modelDescription(project);
 }
 
+/**
+ * The top of a model file, in the order it is written: what the model is
+ * called and what it is, who wrote it, and when it was made and last saved.
+ * The rest of the file follows in whatever order it already had.
+ */
+export const HEADER_KEYS = ['name', 'description', 'author', 'created', 'saved'];
+
+/**
+ * Puts the header first, in place: the same object, its keys re-ordered.
+ *
+ * A field that is added later -- the author typed in, the first save stamped
+ * -- would otherwise land at the bottom of the file, below a layout of a
+ * thousand lines, where nobody reading the JSON would look for who wrote it.
+ */
+function headerFirst(project) {
+	const keys = Object.keys(project);
+	const want = [...HEADER_KEYS.filter((k) => keys.includes(k)), ...keys.filter((k) => !HEADER_KEYS.includes(k))];
+	if (want.every((k, i) => k === keys[i])) return project;
+	const values = want.map((k) => project[k]);
+	for (const k of keys) delete project[k];
+	want.forEach((k, i) => { project[k] = values[i]; });
+	return project;
+}
+
+export function modelAuthor(project) {
+	return String(project.author ?? '').trim();
+}
+
+/** Who wrote the model: stored trimmed, and dropped rather than stored blank. */
+export function setModelAuthor(project, name) {
+	const a = String(name ?? '').trim();
+	if (a) project.author = a;
+	else delete project.author;
+	headerFirst(project);
+	return modelAuthor(project);
+}
+
+/** Whether a stamp is a time that can be read back: an ISO 8601 date and time. */
+export function readStamp(value) {
+	if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T/.test(value)) return null;
+	const at = new Date(value);
+	return Number.isFinite(at.getTime()) ? at : null;
+}
+
+/**
+ * Records a save: `saved` becomes `when`, and `created` too if the model has
+ * none -- a model made before the field existed is dated by its first save,
+ * which is the earliest this tool can vouch for.
+ *
+ * Neither is an edit. Nothing is run again for them, the Save button does not
+ * light up, and an undo leaves them alone (see `keepStamps`): they are facts
+ * about the file, not about the model in it.
+ *
+ * @returns the project, stamped in place
+ */
+export function stampSaved(project, when = new Date()) {
+	const at = when.toISOString();
+	if (!readStamp(project.created)) project.created = at;
+	project.saved = at;
+	return headerFirst(project);
+}
+
+/** Records that a model has just been made, now. */
+export function stampCreated(project, when = new Date()) {
+	project.created = when.toISOString();
+	delete project.saved;
+	return headerFirst(project);
+}
+
+/**
+ * Carries the file's two stamps from one version of a model to another: an
+ * undo puts the model back as it was, but not the time it was last saved.
+ */
+export function keepStamps(to, from) {
+	for (const key of ['created', 'saved']) {
+		if (from?.[key] == null) delete to[key];
+		else to[key] = from[key];
+	}
+	return headerFirst(to);
+}
+
 // --- units that follow from the model ---------------------------------------
 
 // The derivations themselves live in ./units.js, so that Project can use them
@@ -9086,9 +9175,12 @@ export function blockTree(project, filter = {}, opts = {}) {
 // one module for the model. See ./farfield.js.
 export {
 	FARF_DEFAULTS, FARF_EQUATION_KEYS, FARF_NUCLIDE_KEYS, FARF_SINGLE_KEYS,
-	FARF_STRUCTURE_KEYS, FARF_HELP, FARF_LABEL, FARF_TERM, OUTFLOWS, OUTFLOW_LABEL,
-	cellCount, cellNames, structureProblem, geometryProblem, dispersionWarning,
-	gridPeclet,
+	FARF_STRUCTURE_KEYS, FARF_CHOICE_KEYS, FARF_HELP, FARF_LABEL, FARF_TERM, OUTFLOWS,
+	OUTFLOW_LABEL, OUTFLOW_ORDER, CONTINUES, SURFACES, SURFACE_KEY, SURFACE_LABEL, GRIDS,
+	GRID_LABEL, FARF_SURFACE_DEFAULTS, FARF_LEGACY, cellCount, cellNames, heldCells,
+	structureProblem, geometryProblem, dispersionWarning, gridPeclet, extraCells,
+	autoExtraCells, activeEquationKeys, surfaceOf, usesCells, isSemiAnalytic, FARF_METHODS,
+	METHOD_LABEL,
 } from './farfield.js';
 
 // Waste packages: the source term with its barriers. Re-exported so the panels

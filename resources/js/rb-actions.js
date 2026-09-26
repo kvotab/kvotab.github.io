@@ -24,6 +24,7 @@ registerActions({
 
   /* ── Chart series and overlays ────────────────────────────────────────── */
   toggleDynamicLegend:     () => toggleDynamicLegend(),
+  toggleOverlayGroups:     () => toggleOverlayGroups(),
   toggleShowTotal:         () => toggleShowTotal(),
   toggleShowRatio:         () => toggleShowRatio(),
   toggleShowMax:           () => toggleShowMax(),
