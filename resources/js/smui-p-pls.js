@@ -359,7 +359,8 @@
   }
 
   async function vipDialog(ctx, f) {
-    const v = await SM.ui.form({ title: 'Set VIP Threshold', info: 'p:pls:vip', fields: [{ key: 'thr', label: 'VIP threshold', type: 'number', value: vipThreshold(ctx, f) }], validate: (x) => (x.thr > 0 ? null : 'The threshold is a positive number') });
+    const v = await SM.ui.form({ title: 'Set VIP Threshold', info: 'p:pls:vip', fields: [{ key: 'thr', label: 'VIP threshold', type: 'number', value: vipThreshold(ctx, f),
+      help: 'The dashed line of this fit\'s VIP plots, and the cut of its Number of VIP > Threshold in the Model Comparison Summary: an X below it contributes little. A positive number (0.8, Wold\'s rule of thumb and JMP\'s default); it changes no fit.' }], validate: (x) => (x.thr > 0 ? null : 'The threshold is a positive number') });
     if (v) ctx.set('vipThreshold', v.thr, f.id);
   }
 
@@ -380,6 +381,39 @@
   }
 
   /* ======================================================================
+     THE LAUNCH'S ROLES AND OPTIONS, with what each is for (the (i))
+     ====================================================================== */
+  const HELP = {
+    method: 'NIPALS, scikit-learn\'s PLSRegression: each factor\'s X scores deflate both the X\'s and the Y\'s, as JMP\'s NIPALS does. JMP\'s SIMPLS (the same for one Y) is not in scikit-learn, so NIPALS is the only choice.',
+    validation: 'How the number of factors is chosen: the one with the smallest Root Mean PRESS, the predicted residuals of rows the model did not learn from. KFold (the default): the training rows in random folds. Holdback: a random share of the rows chooses, the others fit the model. Leave-One-Out: each row predicted by the model fitted without it (slow for many rows). None: the Initial Number of Factors, with no validation. A Validation column, when cast, decides instead.',
+    folds: 'With KFold: the number of folds, 2 or more (7 by default), each training row put in one at random from the seed (scikit-learn\'s KFold, shuffled); at most the number of training rows.',
+    holdback: 'With Holdback: the share of the rows, between 0 and 1 (0.2), drawn at random from the seed to choose the number of factors; the model is fitted to the other rows.',
+    factors: 'The most factors tried, 1 or more (15): from 0 up to it, the validation takes the number with the smallest Root Mean PRESS (at least 1). It is cut to the number of X\'s and to what the rows allow, the rows of each fit less two. With None it is the number fitted.',
+  };
+  const ROLES = [
+    { key: 'y', label: 'Y', min: 1, numeric: true, types: ['continuous'], hint: 'required: continuous responses',
+      help: 'One or more continuous responses, fitted together: the factors are chosen to predict all of them. Rows missing a Y or an X are left out.' },
+    { key: 'x', label: 'X', min: 1, numeric: true, types: ['continuous'], hint: 'required: continuous factors',
+      help: 'The continuous factors, as many and as correlated as they come (more X\'s than rows is fine): partial least squares reduces them to a few factors, linear combinations of the X\'s chosen to explain them and to predict the Y\'s.' },
+    { key: 'validation', label: 'Validation', max: 1, hint: 'optional: 0/1/2 or Training/Validation/Test', info: 'p:predict:validation',
+      help: 'Optional: a column of 0 or Training (the rows the model is fitted to), 1 or Validation (the rows whose Root Mean PRESS chooses the number of factors) and 2 or Test (kept out of both, drawn in their own markers). When cast, it decides instead of the Validation Method.' },
+    { key: 'by', label: 'By', hint: 'optional', help: 'A separate analysis for each level of the By column (each combination of levels, with several). Rows with a missing By value are left out.' },
+  ];
+  const OPTIONS = [
+    { key: 'center', label: 'Centering', type: 'check', value: true,
+      help: 'On (the default): each column less its mean over the training rows before the fit, as JMP centres. Off: the uncentred model, through the origin (scikit-learn always centres, so it is given the rows and their mirror image, whose means are 0).' },
+    { key: 'scale', label: 'Scaling', type: 'check', value: true,
+      help: 'On (the default): each column divided by its standard deviation over the training rows, so that a column with large values does not dominate the factors. Off: the columns as they are, and Root Mean PRESS in the units of the Y\'s.' },
+    { key: 'plsMethod', label: 'Method', type: 'select', value: 'nipals', choices: [['nipals', 'NIPALS']], hint: 'scikit-learn\'s PLSRegression is NIPALS; SIMPLS is not in it', help: HELP.method },
+    { key: 'method', label: 'Validation Method', type: 'select', value: 'kfold', choices: METHODS, hint: 'a Validation column, when cast, decides instead', help: HELP.validation },
+    { key: 'folds', label: 'Number of Folds', type: 'number', value: 7, help: HELP.folds },
+    { key: 'holdback', label: 'Holdback Portion', type: 'number', value: 0.2, help: HELP.holdback },
+    { key: 'factors', label: 'Initial Number of Factors', type: 'number', value: 15, help: HELP.factors },
+    { key: 'seed', label: 'Random Seed', type: 'text', value: '', hint: 'empty: a seed drawn now and kept with the report',
+      help: 'The seed of the folds, the holdback and van der Voet\'s randomization test. Empty: a seed drawn at the first run and kept with the report, so that Redo, a project and the Python code give the same fit.' },
+  ];
+
+  /* ======================================================================
      TOPICS: the (i) panels
      ====================================================================== */
   const TOPICS = {
@@ -388,14 +422,24 @@
       lead: 'Predicts one or more continuous Y\'s from many continuous X\'s, even more X\'s than rows or X\'s that are nearly collinear (spectra, process sensors), through a few factors: linear combinations of the X\'s chosen to explain the X\'s and to predict the Y\'s. Validation chooses how many factors. The numbers are scikit-learn\'s PLSRegression (NIPALS).',
       sections: [
         { heading: 'Roles', choices: [['Y', 'One or more continuous responses, fitted together.'], ['X', 'Continuous factors.'], ['Validation', 'Optional: 0 or Training, 1 or Validation, 2 or Test.'], ['By', 'A separate analysis for each level.']] },
-        { heading: 'Centering and Scaling', text: 'On by default: each column less its mean, over its standard deviation (the training rows\'). Without Scaling a column with large values dominates the factors. scikit-learn always centres; with Centering off it is given the rows and their mirror image, whose means are 0, which gives the uncentred model.' },
-        { heading: 'Method', text: 'NIPALS, scikit-learn\'s PLSRegression: the X scores deflate both the X\'s and the Y\'s, as JMP\'s NIPALS. JMP\'s SIMPLS (the same for one Y) is not in scikit-learn.' },
-        { heading: 'Validation Method', choices: [['KFold', '7 folds by default, drawn at random from the seed (scikit-learn KFold with shuffle).'], ['Holdback', 'A share of the rows (0.2) drawn from the seed chooses the number of factors; the rest fit the model.'], ['Leave-One-Out', 'Each row predicted by the model without it.'], ['Validation column', 'Its 1 rows choose, its 0 rows fit, its 2 rows are kept out.'], ['None', 'The Initial Number of Factors, as many as the rows and X\'s allow.']] },
-        { heading: 'Initial Number of Factors', text: 'The most factors tried (15 by default), at most the number of X\'s and the training rows less two.' },
+        // the launch's options (the validation and the factors are also the Model Launch's, in the report)
+        { heading: 'Options', choices: OPTIONS.map((o) => [o.label, o.help]) },
       ],
       more: MORE,
     },
-    'p:pls:launch': { kicker: 'Partial Least Squares', title: 'Model Launch', lead: 'The settings of a new fit: the method (NIPALS), the validation method with its folds or holdback portion, and the Initial Number of Factors. Go adds the fit below, and a line to the Model Comparison Summary; Remove Fit (a fit\'s red triangle) takes it away.', more: MORE },
+    'p:pls:launch': {
+      kicker: 'Partial Least Squares', title: 'Model Launch',
+      lead: 'The settings of a new fit: the method (NIPALS), the validation method with its folds or holdback portion, and the Initial Number of Factors. Go adds the fit below, and a line to the Model Comparison Summary; Remove Fit (a fit\'s red triangle) takes it away. Centering and Scaling are the launch\'s, for every fit.',
+      sections: [{ choices: [
+        ['Method Specification', HELP.method],
+        ['Validation Method', `${HELP.validation} With a Validation column in the launch it shows Validation Column and cannot be changed.`],
+        ['Number of Folds', HELP.folds],
+        ['Holdback Portion', HELP.holdback],
+        ['Initial Number of Factors', HELP.factors],
+        ['Go', 'Fits with these settings and adds the fit under the others, each with its own outline and red triangle; the fits share the report\'s seed.'],
+      ] }],
+      more: MORE,
+    },
     'p:pls:summary': { kicker: 'Partial Least Squares', title: 'Model Comparison Summary', lead: 'A line per fit: its method and validation, the training rows, the number of factors, the cumulative percent of the X and Y variation it explains, and how many X\'s have a VIP above the threshold.', more: MORE },
     'p:pls:fit': {
       kicker: 'Partial Least Squares', title: 'NIPALS Fit',
@@ -429,22 +473,8 @@
     uses: ['sklearn.cross_decomposition.PLSRegression', 'sklearn.model_selection.KFold, LeaveOneOut', 'numpy.linalg.pinv', 'scipy.stats.beta'],
     launch: {
       lead: 'Choose the continuous responses and the continuous factors. The number of factors is chosen by validation (KFold by default) and can be refitted from Model Launch in the report.',
-      roles: [
-        { key: 'y', label: 'Y', min: 1, numeric: true, types: ['continuous'], hint: 'required: continuous responses' },
-        { key: 'x', label: 'X', min: 1, numeric: true, types: ['continuous'], hint: 'required: continuous factors' },
-        { key: 'validation', label: 'Validation', max: 1, hint: 'optional: 0/1/2 or Training/Validation/Test', info: 'p:predict:validation' },
-        { key: 'by', label: 'By', hint: 'optional' },
-      ],
-      options: [
-        { key: 'center', label: 'Centering', type: 'check', value: true },
-        { key: 'scale', label: 'Scaling', type: 'check', value: true },
-        { key: 'plsMethod', label: 'Method', type: 'select', value: 'nipals', choices: [['nipals', 'NIPALS']], hint: 'scikit-learn\'s PLSRegression is NIPALS; SIMPLS is not in it' },
-        { key: 'method', label: 'Validation Method', type: 'select', value: 'kfold', choices: METHODS, hint: 'a Validation column, when cast, decides instead' },
-        { key: 'folds', label: 'Number of Folds', type: 'number', value: 7 },
-        { key: 'holdback', label: 'Holdback Portion', type: 'number', value: 0.2 },
-        { key: 'factors', label: 'Initial Number of Factors', type: 'number', value: 15 },
-        { key: 'seed', label: 'Random Seed', type: 'text', value: '', hint: 'empty: a seed drawn now and kept with the report' },
-      ],
+      roles: ROLES,
+      options: OPTIONS,
       validate: (spec) => {
         const o = spec.options || {};
         if (o.folds != null && !(Number.isInteger(o.folds) && o.folds >= 2)) return 'Number of Folds is a whole number, 2 or more';

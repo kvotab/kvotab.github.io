@@ -62,10 +62,22 @@
     ctx.saveColumn(name, { rows: r.rows, values: nums(r.values).map((v) => (finite(v) ? v : null)) }, spec);
   }
 
-  const censorRole = { key: 'censor', label: 'Censor', max: 1, hint: 'optional: the value in Censor Code marks a censored row' };
-  const freqRole = { key: 'freq', label: 'Freq', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric' };
-  const byRole = { key: 'by', label: 'By', hint: 'optional' };
-  const censorCodeOpt = { key: 'censorCode', label: 'Censor Code', type: 'text', value: '1', size: 5, hint: 'the value of the Censor column that marks a censored row' };
+  const censorRole = { key: 'censor', label: 'Censor', max: 1, hint: 'optional: the value in Censor Code marks a censored row',
+    help: 'Marks the right-censored rows: a row whose value equals the Censor Code (1 unless set) had not failed yet at its time; any other value is a failure. Without a Censor column every time is a failure. Rows with a missing censor value are left out.' };
+  const freqRole = { key: 'freq', label: 'Freq', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric',
+    help: 'A whole-number count per row, rounded down: the product-limit estimate and the tests take the row that many times, the parametric fits weight its log-likelihood by it. Rows with a count below 1 are left out.' };
+  const byRole = { key: 'by', label: 'By', hint: 'optional',
+    help: 'A separate report for each level of the By column (each combination of levels, with several By columns). Rows with a missing By value are left out.' };
+  const censorCodeOpt = { key: 'censorCode', label: 'Censor Code', type: 'text', value: '1', size: 5, hint: 'the value of the Censor column that marks a censored row',
+    help: 'The value of the Censor column that marks a censored row, 1 by default (JMP\'s): a number for a numeric Censor column, the exact text for a character one (such as censored). Every other value is a failure.' };
+  // The Freq of the other platforms: what they do with it
+  const FREQ_HELP = {
+    parametric: 'A count per row that weights its log-likelihood: a row of Freq 3 counts as three rows. Rows with a missing, zero or negative count are left out.',
+    phreg: 'A whole-number count per row, rounded down: the row enters the partial likelihood that many times. Rows with a count below 1 are left out.',
+    curve: 'How many observations each row stands for: its squared residual counts that many times (multiplied with the Weight), and N and the degrees of freedom are the sum of the counts. Rows with a missing, zero or negative count are left out.',
+  };
+  const timeHelp = (fits) => `The time to the event (a failure) or to the censoring of each row: numeric and continuous. Rows without a time are left out${fits ? '; the log-time distributions (Weibull, Lognormal, Exponential, Fréchet, Loglogistic) need times above 0' : ''}.`;
+  const effectsHelp = (ph) => `The effects, each a main effect: a continuous column as it is, a nominal or ordinal one effect coded (a level's estimate is its difference from the average of the levels).${ph ? ' There is no intercept: the baseline hazard takes its place.' : ' Empty: the distribution with the intercept alone.'}`;
   const DISTS = [['weibull', 'Weibull'], ['lognormal', 'Lognormal'], ['exponential', 'Exponential'], ['frechet', 'Fréchet'], ['loglogistic', 'Loglogistic'],
     ['normal', 'Normal'], ['sev', 'SEV'], ['logistic', 'Logistic'], ['lev', 'LEV']];
   const DIST_LABEL = Object.fromEntries(DISTS);
@@ -198,8 +210,8 @@
     SM.app.addTable(new SM.Table({ name, source: `saved from ${ctx.report.title}`, notes: 'Product-limit (Kaplan-Meier) estimates, from statsmodels SurvfuncRight.', columns }));
   }
 
-  async function askList(ctx, title, label, key, value, check) {
-    const v = await SM.ui.form({ title, fields: [{ key: 'v', label, value: (ctx.opt(key, null) || value || []).join(', '), full: true }] });
+  async function askList(ctx, title, label, key, value, check, help) {
+    const v = await SM.ui.form({ title, fields: [{ key: 'v', label, value: (ctx.opt(key, null) || value || []).join(', '), full: true, help }] });
     if (!v) return;
     const list = parseList(v.v).filter(check || (() => true));
     ctx.set(key, list.length ? list.slice(0, 20) : null);
@@ -291,7 +303,7 @@
   }
 
   function survivalMenu(ctx) {
-    const ask = (title, label, key, dflt, check) => askList(ctx, title, label, key, dflt, check);
+    const ask = (title, label, key, dflt, check, help) => askList(ctx, title, label, key, dflt, check, help);
     return [
       ctx.check('Survival Plot', 'survPlot', null, true),
       ctx.check('Failure Plot', 'failPlot', null, false),
@@ -310,8 +322,10 @@
       ctx.check('Weibull Fit', 'fit:weibull', null, false),
       ctx.check('Lognormal Fit', 'fit:lognormal', null, false),
       { separator: true },
-      { label: 'Estimate Survival Probability…', action: () => ask('Estimate Survival Probability', `Times (${ctx.name('y')}), separated by commas`, 'estTimes', [], null) },
-      { label: 'Estimate Time Quantile…', action: () => ask('Estimate Time Quantile', 'Failure probabilities between 0 and 1, separated by commas', 'estProbs', [0.1, 0.5, 0.9], (p) => p > 0 && p < 1) },
+      { label: 'Estimate Survival Probability…', action: () => ask('Estimate Survival Probability', `Times (${ctx.name('y')}), separated by commas`, 'estTimes', [], null,
+        'Up to 20 times, separated by commas or spaces: the product-limit estimate of surviving past each time, with its log(−log) interval, for each group. Empty: the outline is removed.') },
+      { label: 'Estimate Time Quantile…', action: () => ask('Estimate Time Quantile', 'Failure probabilities between 0 and 1, separated by commas', 'estProbs', [0.1, 0.5, 0.9], (p) => p > 0 && p < 1,
+        'Up to 20 fractions failed, strictly between 0 and 1 (0.5 is the median; others are dropped): the time by which each fraction has failed, with its interval (statsmodels\' quantile and quantile_ci). Empty: the outline is removed.') },
       { label: 'Save Estimates', action: () => saveEstimates(ctx) },
     ];
   }
@@ -537,7 +551,7 @@
     // ---- the calculator
     const fitted = res.fits.filter((f) => !f.error);
     if (fitted.length && ctx.opt('calc', true)) {
-      const ob = ctx.outline('Distribution Calculator', { key: 'calc', menu: () => [{ label: 'Remove', action: () => ctx.set('calc', false) }] });
+      const ob = ctx.outline('Distribution Calculator', { key: 'calc', info: 'p:lifedist-calc', menu: () => [{ label: 'Remove', action: () => ctx.set('calc', false) }] });
       const tIn = el('input', { type: 'text', inputmode: 'decimal', size: 18, 'aria-label': 'Times', placeholder: 'e.g. 10, 20' });
       tIn.value = (calcT || []).join(', ');
       const pIn = el('input', { type: 'text', inputmode: 'decimal', size: 18, 'aria-label': 'Failure probabilities', placeholder: 'e.g. 0.1, 0.5' });
@@ -600,7 +614,8 @@
     const y = ctx.name('y');
     const save = async (what) => {
       const v = await SM.ui.form({ title: what === 'quantile' ? 'Save Quantiles' : 'Save Survival Probabilities', fields: [what === 'quantile'
-        ? { key: 'v', label: 'Failure probability (0 to 1)', type: 'number', value: 0.5 } : { key: 'v', label: `Time (${y})`, type: 'number', value: null }] });
+        ? { key: 'v', label: 'Failure probability (0 to 1)', type: 'number', value: 0.5, help: 'A fraction failed, strictly between 0 and 1 (0.5 for the median): the new column holds, for each row, the time by which that fraction of units with its effects has failed, from the fitted model.' }
+        : { key: 'v', label: `Time (${y})`, type: 'number', value: null, help: 'A time: the new column holds, for each row, the probability that a unit with its effects survives past it, S(t | x), from the fitted model.' }] });
       if (!v || v.v == null || (what === 'quantile' && !(v.v > 0 && v.v < 1))) return;
       const r = await ctx.call('parametric.save', { ...parametricPayload(ctx), what, value: v.v });
       if (r.error) { SM.ui.toast(r.error, { error: true }); return; }
@@ -773,7 +788,8 @@
       ctx.check('Confidence Curves', `ci:${m.key}`, null, false),
       grouped ? ctx.check('Test Parallelism', `par:${m.key}`, null, false, { disabled: !HAS_SHIFT.has(m.key) }) : null,
       grouped ? ctx.check('Test Equal Parameters', `eq:${m.key}`, null, false) : null,
-      { label: 'Custom Inverse Prediction…', action: () => askList(ctx, `Inverse Prediction: ${m.label}`, `Values of ${y}, separated by commas`, `inv:${m.key}`, [], null) },
+      { label: 'Custom Inverse Prediction…', action: () => askList(ctx, `Inverse Prediction: ${m.label}`, `Values of ${y}, separated by commas`, `inv:${m.key}`, [], null,
+        `Up to 20 values of ${y}: the ${ctx.name('x')} at which the fitted curve reaches each (up to three crossings within the data's range and a quarter of it beyond), with delta-method limits from the uncertainty of the parameters. Empty: the outline is removed.`) },
       { separator: true },
       { label: 'Save Prediction', action: () => { if (m.res && m.res.pred) saveFrom(ctx, `Predicted ${y} (${m.label})`, m.res.pred, { notes: `Fit Curve ${m.label}` }); } },
       { label: 'Save Residuals', action: () => { if (m.res && m.res.resid) saveFrom(ctx, `Residual ${y} (${m.label})`, m.res.resid, { notes: `Fit Curve ${m.label}` }); } },
@@ -803,6 +819,11 @@
     return out;
   }
   const startText = (obj) => Object.entries(obj).map(([k, v]) => `${k} = ${fmt(v, { sig: 10 })}`).join(', ');
+  const NL_HELP = {
+    model: 'The model of Y: an expression in parameters, columns and numbers, for example a * exp(-b * :dose) + c. A column is written :name, or :"name with spaces"; every other name is a parameter (a plain name that is a column and has no starting value is the column). + − * / and ^ for powers, comparisons inside where(condition, a, b), and the functions listed; anything else is refused, and nothing is run as code.',
+    start: 'A starting value for each parameter, as name = value, separated by commas (a = 1, b = 0.1). A parameter without one starts at 1. Least squares iterates from these values: from a poor start it can stop at a local minimum, or fail to converge.',
+    find: 'Reads the model and lists its parameters and columns; each parameter keeps the starting value already typed, or gets 1. Set the values before OK.',
+  };
 
   function nonlinearExtra(api, spec) {
     const model = el('textarea', { class: 'sm-nl-model', rows: 3, spellcheck: 'false', 'aria-label': 'Model', placeholder: 'a * exp(-b * :dose) + c' });
@@ -831,6 +852,8 @@
       el('label', { class: 'sm-nl-label' }, 'Parameters and starting values', el('div', { class: 'sm-nl-startrow' }, start, find)), found);
     return {
       el: box,
+      help: [['Model', NL_HELP.model], ['Parameters and starting values', NL_HELP.start], ['Find Parameters', NL_HELP.find]],
+      helpHeading: 'The model',
       read: () => ({ options: { model: model.value, start: start.value } }),
       recall: (s) => { if (s && s.options) { model.value = s.options.model || ''; start.value = s.options.start || ''; } },
     };
@@ -877,14 +900,17 @@
     const y = ctx.name('y');
     return [
       { label: 'Edit Model…', action: async () => {
-        const v = await SM.ui.form({ title: 'Edit Model', fields: [{ key: 'model', label: 'Model', type: 'textarea', value: ctx.opt('model', '') }, { key: 'start', label: 'Parameters and starting values', value: ctx.opt('start', ''), full: true }] });
+        const v = await SM.ui.form({ title: 'Edit Model', info: 'p:nonlinear-model', fields: [{ key: 'model', label: 'Model', type: 'textarea', value: ctx.opt('model', ''), help: NL_HELP.model },
+          { key: 'start', label: 'Parameters and starting values', value: ctx.opt('start', ''), full: true, help: NL_HELP.start }] });
         if (v) { ctx.set('model', v.model, null, { rerun: false }); ctx.set('start', v.start); }
       } },
       { label: 'Use Estimates as Starting Values', disabled: !(ctx.nlRes && ctx.nlRes.estimates_raw), action: () => { const r = ctx.nlRes; ctx.set('start', startText(Object.fromEntries(r.params.map((p, i) => [p, num(r.estimates_raw[i])])))); } },
       { label: 'Fit Options…', action: async () => {
         const v = await SM.ui.form({ title: 'Fit Options', fields: [
-          { key: 'method', label: 'Method', type: 'select', value: ctx.opt('method', 'lm'), choices: [['lm', 'Levenberg-Marquardt'], ['trf', 'Trust region reflective'], ['dogbox', 'Dogbox']] },
-          { key: 'maxEval', label: 'Maximum function evaluations (empty: automatic)', type: 'number', value: ctx.opt('maxEval', null) }] });
+          { key: 'method', label: 'Method', type: 'select', value: ctx.opt('method', 'lm'), choices: [['lm', 'Levenberg-Marquardt'], ['trf', 'Trust region reflective'], ['dogbox', 'Dogbox']],
+            help: 'The algorithm of scipy\'s least_squares: Levenberg-Marquardt (MINPACK\'s, the default: usually the fastest for a small problem), Trust region reflective (scipy\'s general method) or Dogbox. Another method can converge where one does not.' },
+          { key: 'maxEval', label: 'Maximum function evaluations (empty: automatic)', type: 'number', value: ctx.opt('maxEval', null),
+            help: 'The most evaluations of the model the fit may make before it stops and says that it did not converge. Empty: 400 × (the number of parameters + 1).' }] });
         if (v) { ctx.set('method', v.method, null, { rerun: false }); ctx.set('maxEval', v.maxEval > 0 ? Math.round(v.maxEval) : null); }
       } },
       ctx.check('Confidence Curves', 'ci', null, false),
@@ -935,7 +961,16 @@
     'p:lifedist-scale': {
       kicker: 'Life Distribution', title: 'Probability scales',
       lead: 'On a distribution\'s probability paper its CDF is a straight line: the vertical axis is Φ⁻¹(F) of the distribution\'s standard form, the horizontal axis log(time) for the log-time families.',
-      sections: [{ heading: 'Reading it', list: ['Points close to a straight line on a scale: that distribution describes the data.', 'The points are the nonparametric estimate of the failure probability at each failure, at the middle of its jump (Meeker and Escobar\'s plotting position).', 'The Exponential scale plots −log(1 − F) against the time: an exponential fit is a line through the origin.'] }],
+      sections: [
+        { heading: 'The table beside the plot', choices: [['Show', 'Fits the distribution and draws its curve (its Parametric Estimate outline appears under Statistics); unticked, the fit is dropped. Nonparametric: the Kaplan-Meier points.'], ['Scale', 'The probability paper: the vertical axis on that distribution\'s scale, the horizontal one log(time) for the log-time families; Nonparametric is a plain probability axis. The pointwise bands are drawn for the fitted distribution whose scale is shown.']] },
+        { heading: 'Reading it', list: ['Points close to a straight line on a scale: that distribution describes the data.', 'The points are the nonparametric estimate of the failure probability at each failure, at the middle of its jump (Meeker and Escobar\'s plotting position).', 'The Exponential scale plots −log(1 − F) against the time: an exponential fit is a line through the origin.', 'Click a line of Model Comparisons to show that distribution\'s scale.'] },
+      ],
+    },
+    'p:lifedist-calc': {
+      kicker: 'Life Distribution', title: 'Distribution Calculator',
+      lead: 'Failure probabilities and quantiles of every fitted distribution, with Wald limits by the delta method at the report\'s 1 − α.',
+      sections: [{ choices: [['Probability of failure by the time', 'Up to 20 times, separated by commas: for each, the probability F(t) of failing by then, its limits and the survival 1 − F(t).'], ['Time by which a fraction has failed', 'Up to 20 fractions strictly between 0 and 1 (0.1, 0.5 for the median): the time by which that fraction has failed, the quantile, with its limits. Others are dropped.']] },
+        { text: 'A changed box redraws the report when it loses the focus (Enter or Tab); empty, it lists nothing. The red triangle\'s Distribution Calculator hides the outline.' }],
     },
     'p:parametric': {
       kicker: 'Analyze', title: 'Fit Parametric Survival',
@@ -984,7 +1019,8 @@
     uses: ['statsmodels.base.model.GenericLikelihoodModel (censored likelihood)', 'statsmodels.duration.survfunc.SurvfuncRight', 'scipy.special (log_ndtr, ndtri)'],
     launch: {
       lead: 'Choose the time to failure and, if some times are censored, the censor column.',
-      roles: [{ key: 'y', label: 'Y, Time to Event', min: 1, max: 1, numeric: true, types: ['continuous'], hint: 'required numeric' }, censorRole, freqRole, byRole],
+      roles: [{ key: 'y', label: 'Y, Time to Event', min: 1, max: 1, numeric: true, types: ['continuous'], hint: 'required numeric', help: timeHelp(true) }, censorRole,
+        { ...freqRole, help: 'A whole-number count per row, rounded down: the nonparametric estimate takes the row that many times, and the fitted distributions weight its log-likelihood by it. Rows with a count below 1 are left out.' }, byRole],
       options: [censorCodeOpt],
     },
     title: (spec, t) => `Life Distribution${yName(spec, t) ? ` - ${yName(spec, t)}` : ''}`,
@@ -998,9 +1034,11 @@
     uses: ['statsmodels.duration.survfunc.SurvfuncRight', 'statsmodels.duration.survfunc.survdiff', 'SurvfuncRight.quantile_ci, simultaneous_cb', 'statsmodels.base.model.GenericLikelihoodModel'],
     launch: {
       lead: 'Choose the time to event, and the censor column if some times are censored (the event had not happened yet). A grouping column gives one curve per level.',
-      roles: [{ key: 'y', label: 'Y, Time to Event', min: 1, max: 1, numeric: true, types: ['continuous'], hint: 'required numeric' },
-        { key: 'group', label: 'Grouping', max: 1, hint: 'optional' }, censorRole, freqRole, byRole],
-      options: [censorCodeOpt, { key: 'failure', label: 'Plot Failure instead of Survival', type: 'check', value: false }],
+      roles: [{ key: 'y', label: 'Y, Time to Event', min: 1, max: 1, numeric: true, types: ['continuous'], hint: 'required numeric', help: timeHelp(false) },
+        { key: 'group', label: 'Grouping', max: 1, hint: 'optional', help: 'One product-limit curve per level, and Tests Between Groups of whether the curves differ (log-rank and the weighted tests). Rows with a missing value are left out; without a Grouping, one curve of all the rows.' },
+        censorRole, freqRole, byRole],
+      options: [censorCodeOpt, { key: 'failure', label: 'Plot Failure instead of Survival', type: 'check', value: false,
+        help: 'The main plot shows the estimated failure probability, 1 − S(t), rising from 0, instead of the survival S(t). The red triangle\'s Plot Options change it later.' }],
     },
     title: () => 'Product-Limit Survival Fit',
     triangle: survivalMenu,
@@ -1013,9 +1051,10 @@
     uses: ['statsmodels.base.model.GenericLikelihoodModel (censored location-scale regression)', 'patsy (effect coding)'],
     launch: {
       lead: 'Choose the time to event, the censor column and the effects; the distribution is set below or later from the red triangle.',
-      roles: [{ key: 'y', label: 'Time to Event', min: 1, max: 1, numeric: true, types: ['continuous'], hint: 'required numeric' }, censorRole,
-        { key: 'x', label: 'Model Effects', hint: 'optional: continuous or nominal columns' }, freqRole, byRole],
-      options: [censorCodeOpt, { key: 'dist', label: 'Distribution', type: 'select', value: 'weibull', choices: DISTS }],
+      roles: [{ key: 'y', label: 'Time to Event', min: 1, max: 1, numeric: true, types: ['continuous'], hint: 'required numeric', help: timeHelp(true) }, censorRole,
+        { key: 'x', label: 'Model Effects', hint: 'optional: continuous or nominal columns', help: effectsHelp(false) }, { ...freqRole, help: FREQ_HELP.parametric }, byRole],
+      options: [censorCodeOpt, { key: 'dist', label: 'Distribution', type: 'select', value: 'weibull', choices: DISTS,
+        help: 'The distribution of the errors ε of the accelerated failure time model log(time) = x·β + σ·ε: Weibull (smallest extreme value errors, the default), Lognormal (normal), Exponential (a Weibull with σ = 1), Fréchet (largest extreme value) or Loglogistic (logistic); Normal, SEV, Logistic and LEV model the time itself. The red triangle\'s Distribution changes it later.' }],
     },
     title: () => 'Parametric Survival Fit',
     triangle: parametricMenu,
@@ -1028,9 +1067,10 @@
     uses: ['statsmodels.duration.hazard_regression.PHReg', 'PHReg.loglike (partial likelihood)'],
     launch: {
       lead: 'Choose the time to event, the censor column and the effects.',
-      roles: [{ key: 'y', label: 'Time to Event', min: 1, max: 1, numeric: true, types: ['continuous'], hint: 'required numeric' }, censorRole,
-        { key: 'x', label: 'Model Effects', min: 1, hint: 'required: continuous or nominal columns' }, freqRole, byRole],
-      options: [censorCodeOpt, { key: 'ties', label: 'Ties', type: 'select', value: 'breslow', choices: [['breslow', 'Breslow'], ['efron', 'Efron']] }],
+      roles: [{ key: 'y', label: 'Time to Event', min: 1, max: 1, numeric: true, types: ['continuous'], hint: 'required numeric', help: timeHelp(false) }, censorRole,
+        { key: 'x', label: 'Model Effects', min: 1, hint: 'required: continuous or nominal columns', help: effectsHelp(true) }, { ...freqRole, help: FREQ_HELP.phreg }, byRole],
+      options: [censorCodeOpt, { key: 'ties', label: 'Ties', type: 'select', value: 'breslow', choices: [['breslow', 'Breslow'], ['efron', 'Efron']],
+        help: 'How tied failure times enter the partial likelihood (statsmodels\' PHReg): Breslow\'s approximation, the default, or Efron\'s, closer to the exact likelihood when many times are tied; without ties the two agree. The red triangle\'s Ties changes it later.' }],
     },
     title: () => 'Proportional Hazards Fit',
     triangle: phMenu,
@@ -1043,11 +1083,13 @@
     uses: ['scipy.optimize.least_squares', 'scipy.optimize.curve_fit (in the code shown)', 'statsmodels.tools.numdiff.approx_fprime'],
     launch: {
       lead: 'Choose Y and X; a group column gives a curve per level. Pick a model now, or later from the red triangle.',
-      roles: [{ key: 'y', label: 'Y, Response', min: 1, max: 1, numeric: true, types: ['continuous'], hint: 'required numeric' },
-        { key: 'x', label: 'X, Regressor', min: 1, max: 1, numeric: true, types: ['continuous'], hint: 'required numeric' },
-        { key: 'group', label: 'Group', max: 1, hint: 'optional' },
-        { key: 'weight', label: 'Weight', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric' }, freqRole, byRole],
-      options: [{ key: 'first', label: 'Fit', type: 'select', value: '', choices: [['', '(choose later)'], ...CURVES.flatMap(([, items]) => items.filter(Boolean))] }],
+      roles: [{ key: 'y', label: 'Y, Response', min: 1, max: 1, numeric: true, types: ['continuous'], hint: 'required numeric', help: 'The continuous response the curves are fitted to, by least squares.' },
+        { key: 'x', label: 'X, Regressor', min: 1, max: 1, numeric: true, types: ['continuous'], hint: 'required numeric', help: 'The continuous regressor, the x of the curve. Weibull Growth, Power and Logarithmic need every x above 0.' },
+        { key: 'group', label: 'Group', max: 1, hint: 'optional', help: 'A separate curve, with parameters of its own, for each level; a model\'s red triangle then tests parallel and equal curves (Test Parallelism, Test Equal Parameters). Rows with a missing value are left out.' },
+        { key: 'weight', label: 'Weight', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric', help: 'A weight per row in the sum of squares, Σw(y − f(x))², multiplied with Freq: a row of weight 2 counts twice (its variance taken as half). Rows with a missing, zero or negative weight are left out.' },
+        { ...freqRole, help: FREQ_HELP.curve }, byRole],
+      options: [{ key: 'first', label: 'Fit', type: 'select', value: '', choices: [['', '(choose later)'], ...CURVES.flatMap(([, items]) => items.filter(Boolean))],
+        help: 'A model to fit at once, from the library, with its automatic starting values; (choose later) opens the report with the plot alone. The red triangle adds and removes models.' }],
     },
     title: () => 'Fit Curve',
     triangle: curveMenu,
@@ -1060,8 +1102,9 @@
     uses: ['scipy.optimize.least_squares', 'ast (the model parser)', 'statsmodels.tools.numdiff.approx_fprime'],
     launch: {
       lead: 'Choose the response and type the model: parameters, columns and numbers, for example a * exp(-b * :dose) + c, with a starting value for each parameter.',
-      roles: [{ key: 'y', label: 'Y, Response', min: 1, max: 1, numeric: true, types: ['continuous'], hint: 'required numeric' },
-        { key: 'weight', label: 'Weight', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric' }, freqRole, byRole],
+      roles: [{ key: 'y', label: 'Y, Response', min: 1, max: 1, numeric: true, types: ['continuous'], hint: 'required numeric', help: 'The continuous response the model predicts; the model may not use it.' },
+        { key: 'weight', label: 'Weight', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric', help: 'A weight per row: the fit minimises Σw(y − model)² (the residuals times √w), multiplied with Freq. Rows with a missing, zero or negative weight are left out.' },
+        { ...freqRole, help: FREQ_HELP.curve }, byRole],
       extra: nonlinearExtra,
       validate: (spec) => (spec.options && String(spec.options.model || '').trim() ? null : 'Type the model: an expression in parameters and columns, for example a * exp(-b * :dose) + c'),
     },

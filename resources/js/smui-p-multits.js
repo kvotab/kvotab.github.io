@@ -180,14 +180,25 @@
       ...CRITERIA.map(([k, lab]) => ({ label: lab, checked: !fixed && lagBy(ctx) === k, action: () => { ctx.set('lagFixed', null, null, { rerun: false }); ctx.set('lagBy', k); } })),
       { separator: true },
       { label: 'Fixed Lag Order…', checked: !!fixed, action: async () => {
-        const v = await SM.ui.form({ title: 'Fixed Lag Order', info: 'p:multits:lags', fields: [{ key: 'p', label: 'Lag order p of the VAR (empty: by the criterion)', type: 'number', value: fixed }], validate: (x) => (x.p == null || (Number.isInteger(x.p) && x.p >= 1 && x.p <= 48) ? null : 'a whole number from 1 to 48, or empty') });
+        const v = await SM.ui.form({ title: 'Fixed Lag Order', info: 'p:multits:lags', fields: [{ key: 'p', label: 'Lag order p of the VAR (empty: by the criterion)', type: 'number', value: fixed, helpLabel: 'Lag order p',
+          help: 'The lag of the VAR, 1 to 48, in place of the one the criterion chooses; every part of the report after Lag Order Selection uses it. Empty goes back to the criterion. A click on a line of the selection table fixes that lag too.' }], validate: (x) => (x.p == null || (Number.isInteger(x.p) && x.p >= 1 && x.p <= 48) ? null : 'a whole number from 1 to 48, or empty') });
         if (v) ctx.set('lagFixed', v.p || null);
       } },
     ];
   }
 
-  async function askNumber(ctx, { title, label, key, value, min, max, info }) {
-    const v = await SM.ui.form({ title, info, fields: [{ key: 'n', label, type: 'number', value }], validate: (x) => (Number.isInteger(x.n) && x.n >= min && x.n <= max ? null : `a whole number from ${min} to ${max}`) });
+  /* What the number each red-triangle item asks for does: its dialog's (i). */
+  const ASK_HELP = {
+    maxlags: 'The largest lag of the Lag Order Selection table, 1 to 48: VARs of every lag from 0 (1 with neither a trend nor an exogenous column) up to it are fitted on the same observations, those after it, and the criterion picks one. A larger maximum leaves out more observations at the start.',
+    wLags: 'The lags h the Portmanteau test looks at, from p + 1 to 200 (at first the larger of 10 and p + 4): its χ² has k²(h − p) degrees of freedom. A larger h looks for dynamics further back, at some cost in power for the near ones.',
+    mcRepl: 'How many times the fitted VAR is simulated and refitted for Monte Carlo bands, 50 to 10 000 (1000 by default); used when Confidence Bands is Monte Carlo. More give steadier band edges, and take longer.',
+    horizon: 'How many periods after a shock the impulse responses run, and how many steps ahead the variance decomposition goes: 1 to 100 (10 by default), one setting for both.',
+    forecast: 'How many periods after the last observation the VAR forecasts, and the VECM too: 1 to 500 (12 by default).',
+    rank: 'The number of cointegrating relations of the VECM, 1 to k − 1 for k series, in place of the rank the Johansen test chose; Rank from the Test (the red triangle) goes back to the test\'s.',
+  };
+
+  async function askNumber(ctx, { title, label, key, value, min, max, info, help = ASK_HELP[key] }) {
+    const v = await SM.ui.form({ title, info, fields: [{ key: 'n', label, type: 'number', value, help }], validate: (x) => (Number.isInteger(x.n) && x.n >= min && x.n <= max ? null : `a whole number from ${min} to ${max}`) });
     if (v) ctx.set(key, v.n);
   }
 
@@ -391,7 +402,8 @@
     const v = await SM.ui.form({
       title: 'Cholesky Ordering', info: 'p:multits:irf',
       lead: 'The order of the series in the Cholesky factor of the residual covariance, for the orthogonalized impulse responses and the variance decomposition: a series responds at once to shocks of the series before it, never to those after it. Put the most exogenous first.',
-      fields: cur.map((n, i) => ({ key: `o${i}`, label: `${ords[i] || `${i + 1}th`}`, type: 'select', value: n, choices: ys.map((c) => [c.name, c.name]) })),
+      fields: cur.map((n, i) => ({ key: `o${i}`, label: `${ords[i] || `${i + 1}th`}`, type: 'select', value: n, choices: ys.map((c) => [c.name, c.name]), helpLabel: '1st, 2nd, …',
+        help: 'The series at that place in the ordering, each series once. A shock to a series moves the series after it in the same period, never those before it: put first the series least moved by the others within a period. It starts at the order of Y.' })),
       validate: (x) => (new Set(cur.map((_, i) => x[`o${i}`])).size === cur.length ? null : 'each series once'),
     });
     if (!v) return;
@@ -579,9 +591,12 @@
       title: 'Johansen Test Options', info: 'p:multits:coint',
       lead: 'The deterministic terms and the number of lagged differences of the test (coint_johansen). With a VAR(p) in levels a VECM has p − 1 lagged differences.',
       fields: [
-        { key: 'det', label: 'Deterministic terms (det_order)', type: 'select', value: String(detOrder(ctx)), choices: DET_ORDERS },
-        { key: 'kd', label: 'Lagged differences (k_ar_diff)', type: 'number', value: kArDiff(ctx, S, p) },
-        { key: 'method', label: 'Choose the rank by', type: 'select', value: ctx.opt('rankMethod', 'trace'), choices: [['trace', 'Trace test'], ['maxeig', 'Maximum eigenvalue test']] },
+        { key: 'det', label: 'Deterministic terms (det_order)', type: 'select', value: String(detOrder(ctx)), choices: DET_ORDERS,
+          help: 'The test\'s deterministic terms: None (−1); Constant, unrestricted (0, the default), which lets the levels drift in a linear trend; Constant and linear trend, unrestricted (1). The VECM takes the same unless VECM Deterministic Terms picks others.' },
+        { key: 'kd', label: 'Lagged differences (k_ar_diff)', type: 'number', value: kArDiff(ctx, S, p),
+          help: `The lagged differences in the test's regression, and in the VECM, 0 to 24: at first p − 1, the short-run dynamics of the VAR(${p}) in levels (p when Difference is on).` },
+        { key: 'method', label: 'Choose the rank by', type: 'select', value: ctx.opt('rankMethod', 'trace'), choices: [['trace', 'Trace test'], ['maxeig', 'Maximum eigenvalue test']],
+          help: 'The test that picks the rank, from r = 0 up, the first r not rejected: the trace test (the default) of rank ≤ r against k, or the maximum eigenvalue test of r against r + 1. At the tabulated level (10, 5 or 1%) nearest α.' },
       ],
       validate: (x) => (Number.isInteger(x.kd) && x.kd >= 0 && x.kd <= 24 ? null : 'Lagged differences: a whole number from 0 to 24'),
     });
@@ -775,7 +790,8 @@
     'p:multits:lags': {
       kicker: 'Multivariate Time Series', title: 'Lag Order Selection',
       lead: 'VARs of every lag from 0 to the maximum, all fitted on the same observations (those after the maximum lag), with Akaike\'s (AIC), Schwarz\'s (BIC), Hannan-Quinn\'s (HQIC) criteria and the final prediction error (FPE), as statsmodels\' select_order computes them. The smallest of each is marked.',
-      sections: [{ heading: 'Choosing', text: 'The lag the chosen criterion prefers (AIC by default) fits the VAR; Choose Lag By in the red triangle picks another criterion, and a click on a line fixes that lag. BIC and HQIC choose shorter lags than AIC and FPE; the Whiteness Test says whether the residuals are left with autocorrelation.' }],
+      sections: [{ heading: 'Choosing', text: 'The lag the chosen criterion prefers (AIC by default) fits the VAR; Choose Lag By in the red triangle picks another criterion, and a click on a line fixes that lag. BIC and HQIC choose shorter lags than AIC and FPE; the Whiteness Test says whether the residuals are left with autocorrelation.' },
+        { heading: 'In the report', choices: [['A line of the table', 'click it to fix that lag (from 1 up): the VAR and every part after it use it, as Fixed Lag Order… does. The line in use is marked, and so is the smallest value of each criterion. Choose Lag By, in the red triangle, goes back to a criterion']] }],
       more: MORE,
     },
     'p:multits:var': {
@@ -884,16 +900,24 @@
     launch: {
       lead: 'Two or more series observed at the same times. A date column as X, Time ID gives a date axis and the dates of the forecasts; Exogenous columns enter every equation as regressors. The order of Y is the Cholesky ordering of the orthogonalized impulse responses.',
       roles: [
-        { key: 'y', label: 'Y, Time Series', min: 2, types: ['continuous'], hint: 'required: two or more continuous' },
-        { key: 'time', label: 'X, Time ID', max: 1, numeric: true, hint: 'optional: a date or a time step', info: 'p:multits:timeid' },
-        { key: 'exog', label: 'Exogenous', numeric: true, types: ['continuous'], hint: 'optional continuous: regressors', info: 'p:multits:exog' },
-        { key: 'by', label: 'By', hint: 'optional' },
+        { key: 'y', label: 'Y, Time Series', min: 2, types: ['continuous'], hint: 'required: two or more continuous',
+          help: 'The series modelled together, observed at the same times. Their order is the Cholesky ordering of the orthogonalized impulse responses and the variance decomposition (Cholesky Ordering… changes it). The analysis runs over the span where every series has a value; a missing value inside it is filled by linear interpolation.' },
+        { key: 'time', label: 'X, Time ID', max: 1, numeric: true, hint: 'optional: a date or a time step', info: 'p:multits:timeid',
+          help: 'Orders the rows and labels the time axis. A date column gives the calendar frequency and the dates of the forecasts; dates missing from the calendar are inserted and filled. A numeric Time ID continues its step; without one the row number is the time.' },
+        { key: 'exog', label: 'Exogenous', numeric: true, types: ['continuous'], hint: 'optional continuous: regressors', info: 'p:multits:exog',
+          help: 'Continuous columns that enter every equation as regressors, not modelled themselves. The forecasts take their future values from the rows after the series (the Y columns empty there), holding the last one beyond them. Transform > Difference leaves them as they are.' },
+        { key: 'by', label: 'By', hint: 'optional',
+          help: 'A separate report of the rows of each level (each combination of levels, with several By columns). Rows with a missing By value are left out.' },
       ],
       options: [
-        { key: 'maxlags', label: 'Maximum Lag for Selection', type: 'number', value: 8 },
-        { key: 'forecast', label: 'Forecast Periods', type: 'number', value: 12 },
-        { key: 'horizon', label: 'IRF Horizon', type: 'number', value: 10 },
-        { key: 'trend', label: 'Trend', type: 'select', value: 'c', choices: TRENDS },
+        { key: 'maxlags', label: 'Maximum Lag for Selection', type: 'number', value: 8,
+          help: 'The largest lag of the Lag Order Selection table, 1 to 48 (8 by default): VARs of every lag up to it are fitted on the same observations and the criterion picks one. Lowered when the series are too short for it; Maximum Lag…, in the red triangle, changes it later.' },
+        { key: 'forecast', label: 'Forecast Periods', type: 'number', value: 12,
+          help: 'How many periods after the last observation the VAR (and the VECM) forecasts, 1 to 500; 12 by default.' },
+        { key: 'horizon', label: 'IRF Horizon', type: 'number', value: 10,
+          help: 'How many periods after a shock the impulse responses, and the variance decomposition, run: 1 to 100, 10 by default.' },
+        { key: 'trend', label: 'Trend', type: 'select', value: 'c', choices: TRENDS,
+          help: 'The deterministic terms of every equation: Constant (the default, for series that vary about a level), Constant and Linear Trend (for series that drift), or None. The stationarity tests and the Engle-Granger test take the same terms.' },
       ],
       validate: (spec) => {
         const o = spec.options || {};

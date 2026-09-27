@@ -297,8 +297,42 @@
       el('div', { class: 'sm-fm-effbox' }, tools, list));
     renderList();
     sync();
+    // What the part's fields do: the personality's options as they show now, then the model effects.
+    const help = () => {
+      const p = pers.value;
+      const on = (l) => !l.hidden;
+      const out = [['Personality', 'How the model is fitted and reported. It follows the Y until you choose one: Standard Least Squares for a continuous Y, Nominal or Ordinal Logistic for a nominal or ordinal one. The (i) beside it describes each.']];
+      if (on(lEmph)) out.push(['Emphasis', 'Which outlines open at first: Effect Leverage (the leverage plots and Effect Details, the default), Effect Screening (Sorted Parameter Estimates and the Prediction Profiler, Effect Details closed) or Minimal Report (the tables, without the plots). The red triangle turns each part on or off later.']);
+      if (on(lDist)) {
+        out.push(['Distribution', p === 'genreg' ? 'Normal, Binomial (a proportion, or a two-level Y, which is always binomial) or Poisson (counts); Model Launch in the report changes it.'
+          : `The distribution of the response: Normal; Binomial (a two-level Y or a proportion${p === 'glm' ? ', or events and trials as two Y columns' : ''}); Poisson for counts; Gamma and Inverse Gaussian for positive values; Negative Binomial for counts that vary more than a Poisson's (${p === 'gee' ? 'its α fixed below' : 'its α estimated, statsmodels\' NB2 model, with the log link and no Weight or Freq'})${p === 'gee' ? '; Tweedie, for values of 0 or more with exact zeros' : ''}.`]);
+      }
+      if (on(lAlpha)) out.push(['α', 'The negative binomial\'s dispersion, fixed: the variance is μ + αμ². Above 0, 1 by default; GEE does not estimate it.']);
+      if (on(lPower)) out.push(['Power', 'The Tweedie variance power p, the variance proportional to μ^p: from 1 (Poisson) to 3 (inverse Gaussian); between 1 and 2 the compound Poisson-gamma, for values of 0 or more with exact zeros. 1.5 by default.']);
+      if (on(lLink)) out.push(['Link Function', 'The function of the mean that is linear in the effects. A change of distribution picks its usual link: Identity for the normal, Logit for the binomial, Log for the others. A log link makes the effects multiplicative (rate or mean ratios).']);
+      if (on(lDistr)) out.push(['Link', 'The link of the cumulative probabilities P(Y ≤ level): Logit, the proportional odds model (the default, as JMP), or Probit (statsmodels\' OrderedModel).']);
+      if (on(lTarget)) out.push(['Target Level', `For a two-level Y, the level whose probability is modeled (the event); the first level by default.${p === 'nominal' ? ' With more levels Nominal Logistic models each level against the last and does not use it.' : ''}`]);
+      if (on(lCorr)) out.push(['Working Correlation', 'The correlation GEE assumes among a subject\'s rows: Independence; Exchangeable (one correlation for every pair, the default); AR(1) (α to the power of the distance; needs Time); Nested (needs Subgroup); Unstructured (one for each pair of times; needs Time). The estimates stay consistent when it is wrong, and the robust standard errors allow for that; a closer one gives more precise estimates.']);
+      if (on(lCov)) out.push(['Covariance', 'The standard errors: Robust, the sandwich, right even when the working correlation is not (the default); Naive, from the model, right only when the working correlation is; Bias-reduced, Mancl and DeRouen\'s correction of the sandwich, which is too small with few subjects.']);
+      if (on(lScale)) out.push(['Scale', 'The scale φ of the variance: Estimated, Pearson χ²/(N − p), or Fixed at the value beside it (1 by default). A change of distribution picks Fixed for the binomial, Poisson and negative binomial, Estimated for the others.']);
+      if (on(lTau)) out.push(['Quantile τ', 'The quantile of Y to fit, strictly between 0 and 1: 0.5 is the median, 0.9 the upper tenth. Model Launch in the report changes it.']);
+      out.push(
+        ['Model effects', 'The list of the model\'s effects: click one to select it (shift or ctrl/⌘ adds), for Cross, Nest, Attributes and Remove; a double click removes it. A crossing is A*B, a nested effect B[A], a random one ends in &Random.'],
+        ['Add', 'Each selected column (in the list on the left) as a main effect.'],
+        ['Cross', 'The selected columns crossed into one interaction, A*B; each selected effect of the list crossed with the selected columns; or two or more selected effects crossed together. A continuous column crossed with itself is its square. Continuous columns in crossings are centred at their means, as JMP\'s Center Polynomials.'],
+        ['Nest', 'Nests the selected effects within the selected columns: B[A], the levels of B within each level of A.'],
+        ['Macros', 'A whole model from the selected columns: Full Factorial (every crossing), Factorial to Degree (the crossings up to Degree), Factorial Sorted (every crossing, by degree), Response Surface (the main effects, the two-way crossings and the squares of the continuous columns), Polynomial to Degree (every power and crossing up to Degree).'],
+        ['Degree', 'The degree of Factorial to Degree and Polynomial to Degree, 1 to 6; 2 by default.'],
+        ['Attributes', 'Random Effect: marks the selected effects random, their levels a sample from a larger population, estimated as a variance component. Standard Least Squares then fits by REML, as Mixed Model (which needs one); the other personalities take fixed effects only and say so.'],
+        ['Remove', 'Takes the selected effects out of the model (so do Delete and a double click).'],
+        ['No Intercept', 'Fits the model without its constant term, so that the prediction is 0 where every effect is 0. Generalized Regression keeps its intercept, which is never penalized.'],
+      );
+      return out;
+    };
     return {
       el: rootEl,
+      help,
+      helpHeading: 'Personality and model effects',
       read() {
         const p = pers.value;
         const gee = p === 'gee' ? { workCorr: corrSel.value, geeCov: covSel.value, geeScale: scaleSel.value, geeScaleValue: num(scaleVal, 1), nbAlpha: num(nbAlpha, 1), varPower: num(varPower, 1.5) } : {};
@@ -375,6 +409,8 @@
     if (p === 'mixed' && !effects.some((e) => e.random)) return 'The mixed model needs a random effect: select an effect and choose Attributes > Random Effect.';
     if ((p === 'stepwise' || p === 'genreg') && !effects.some((e) => !e.random)) return `${PERS_LABEL[p]} needs model effects.`;
     if ((p === 'stepwise' || p === 'genreg' || p === 'manova') && effects.some((e) => e.random)) return `${PERS_LABEL[p]} takes fixed effects only.`;
+    // (these fitted the fixed effects alone, leaving the random ones out without a word)
+    if ((p === 'glm' || p === 'nominal' || p === 'ordinal') && effects.some((e) => e.random)) return `${PERS_LABEL[p]} takes fixed effects only: take the Random Effect attribute off, or fit random effects with Standard Least Squares or Mixed Model.`;
     const w = ((spec.roles.weight || []).length || (spec.roles.freq || []).length);
     if ((p === 'mixed' || p === 'manova') && w) return `${PERS_LABEL[p]}: statsmodels takes no weights here; remove Weight and Freq.`;
     if (p === 'gee') {
@@ -633,7 +669,8 @@
     const key = `contrast:${label}`;
     const v = await SM.ui.form({
       title: `LSMeans Contrast: ${label}`, lead: 'A weight for each level; the weights of a contrast usually sum to zero (for example 1, −1, 0 compares the first two levels). Each contrast is added to the report; the joint test covers all of them.',
-      fields: lsm.labels.map((l, i) => ({ key: `c${i}`, label: l, type: 'number', value: i === 0 ? 1 : i === 1 ? -1 : 0 })),
+      fields: lsm.labels.map((l, i) => ({ key: `c${i}`, label: l, type: 'number', value: i === 0 ? 1 : i === 1 ? -1 : 0, helpLabel: 'The weight of each level',
+        help: 'The contrast is the sum of the weights times the least squares means, tested with t against 0. Weights that sum to zero compare levels: 1, −1, 0 the first two levels, 1, 1, −2 the first two against the third; empty is 0. Each OK adds a contrast; the joint F test covers all of them.' })),
     });
     if (!v) return;
     const coefs = lsm.labels.map((_, i) => v[`c${i}`] || 0);
@@ -963,7 +1000,8 @@
       ...hc.map(([k, l]) => ({ label: l, checked: t === k, action: () => set({ type: k }) })),
       { label: 'Newey–West HAC…', checked: t === 'HAC', action: async () => {
         const v = await SM.ui.form({ title: 'Newey–West HAC', info: 'p:fitmodel:robust', lead: 'Heteroscedasticity- and autocorrelation-consistent standard errors, the rows taken in the order of the table (sort it by time first).',
-          fields: [{ key: 'maxlags', label: 'Maximum lag', type: 'number', value: cur && cur.type === 'HAC' && cur.maxlags != null ? cur.maxlags : Math.floor(4 * (n / 100) ** (2 / 9)), hint: 'Newey and West\'s rule: 4 (n/100)^(2/9)' }],
+          fields: [{ key: 'maxlags', label: 'Maximum lag', type: 'number', value: cur && cur.type === 'HAC' && cur.maxlags != null ? cur.maxlags : Math.floor(4 * (n / 100) ** (2 / 9)), hint: 'Newey and West\'s rule: 4 (n/100)^(2/9)',
+            help: 'The largest lag of the autocorrelation the standard errors allow for, a whole number from 0 to n − 2, with Bartlett weights that fall with the lag (statsmodels\' HAC, no small-sample correction); 0 gives White\'s HC0. It starts at Newey and West\'s rule, 4(n/100)^(2/9) rounded down.' }],
           validate: (x) => (Number.isInteger(x.maxlags) && x.maxlags >= 0 && x.maxlags < n - 1 ? null : 'the lag must be a whole number from 0 to n − 2') });
         if (v) set({ type: 'HAC', maxlags: v.maxlags });
       } },
@@ -972,7 +1010,8 @@
         if (!cols.length) { SM.ui.toast('The table has no other column to cluster by'); return; }
         const pick = cur && cur.type === 'cluster' && cols.some((c) => c.id === cur.col) ? cur.col : (cols.find((c) => c.isCategorical) || cols[0]).id;
         const v = await SM.ui.form({ title: 'Cluster-Robust Standard Errors', info: 'p:fitmodel:robust', lead: 'Rows with the same value of the column form a cluster: their errors may be correlated, the clusters are independent.',
-          fields: [{ key: 'col', label: 'Cluster by', type: 'select', value: pick, choices: cols.map((c) => [c.id, c.name]) }] });
+          fields: [{ key: 'col', label: 'Cluster by', type: 'select', value: pick, choices: cols.map((c) => [c.id, c.name]),
+            help: 'The column whose values make the clusters (a school, a firm, a subject): rows of one cluster may have correlated errors, the clusters are independent. The t tests use the clusters less one as their degrees of freedom, with the small-sample factor G/(G − 1)·(n − 1)/(n − p); a few clusters give unreliable standard errors.' }] });
         if (v) set({ type: 'cluster', col: v.col });
       } },
     ];
@@ -1125,7 +1164,8 @@
     const cur = ctx.opt('rr:order', null, sc);
     const v = await SM.ui.form({ title: 'Order Rows By', info: 'p:fitmodel:recursive',
       lead: 'The recursive and rolling fits take the rows in this order: the table\'s, or sorted by a column (a time, a date, an index; a nominal column by its value order). Rows without a value of the column are left out.',
-      fields: [{ key: 'col', label: 'Order by', type: 'select', value: cur && t.col(cur) ? cur : '', choices: [['', 'Row order (the table\'s)'], ...t.columns.map((c) => [c.id, c.name])] }] });
+      fields: [{ key: 'col', label: 'Order by', type: 'select', value: cur && t.col(cur) ? cur : '', choices: [['', 'Row order (the table\'s)'], ...t.columns.map((c) => [c.id, c.name])],
+        help: 'The column the rows are sorted by for the recursive estimates, the CUSUM tests and the rolling windows: a time, a date, an index (a nominal column by its value order; ties keep the table\'s order). Rows without a value of it are left out. Row order takes the table as it is.' }] });
     if (v) ctx.set('rr:order', v.col || null, sc);
   }
 
@@ -1134,7 +1174,8 @@
     const cur = ctx.opt('rr:window', null, sc);
     const v = await SM.ui.form({ title: 'Rolling Window', info: 'p:fitmodel:recursive',
       lead: 'The number of consecutive rows in each window of the rolling regression. Empty: a tenth of the rows, at least three times the parameters.',
-      fields: [{ key: 'w', label: 'Rows in a window', type: 'number', value: cur ?? '' }],
+      fields: [{ key: 'w', label: 'Rows in a window', type: 'number', value: cur ?? '',
+        help: 'The number of consecutive rows (in the order above) in each window of the rolling regression; it must be more than the number of parameters. Empty: a tenth of the rows, but at least three times the parameters. OK also turns Rolling Regression on.' }],
       validate: (x) => (x.w == null || (Number.isInteger(x.w) && x.w >= 3 && x.w <= n) ? null : `the window: a whole number from 3 to ${n}`) });
     if (v) { ctx.set('rr:window', v.w ?? null, sc, { rerun: false }); ctx.set('rr:rolling', true, sc); }
   }
@@ -1269,7 +1310,7 @@
       b('Make Model', makeModel), b('Run Model', runModel)),
     ctx.rt({ columns: [{ key: 'sse', label: 'SSE' }, { key: 'dfe', label: 'DFE' }, { key: 'rmse', label: 'RMSE' }, { key: 'rsq', label: 'RSquare' }, { key: 'rsq_adj', label: 'RSquare Adj' }, { key: 'cp', label: 'Cp' }, { key: 'p', label: 'p', fmt: 'int' }, { key: 'aicc', label: 'AICc' }, { key: 'bic', label: 'BIC' }], rows: [res.stats] }, { sortable: false, key: 'swstats' }));
     // Current Estimates: Lock and Entered boxes
-    const ce = ctx.outline('Current Estimates', { parent, key: 'swcur' });
+    const ce = ctx.outline('Current Estimates', { parent, key: 'swcur', info: 'p:fitmodel:stepwise' });
     const tbl = el('table', { class: 'sm-rt sm-fm-swtable' });
     tbl.append(el('thead', null, el('tr', null, ...['Lock', 'Entered', 'Parameter', 'Estimate', 'nDF', 'SS', '"F Ratio"', '"Prob>F"'].map((h, i) => el('th', { class: i < 3 ? 'sm-l' : null, text: h })))));
     const body = el('tbody');
@@ -1291,7 +1332,7 @@
     else hist.add(ctx.note('No steps yet: press Go or Step.'));
     if (o('sw:all', false)) {
       const r = await ctx.call('fitmodel.all_models', { ...payload, per_size: 5 });
-      const ob = ctx.outline('All Possible Models', { parent, key: 'swall', menu: () => [{ label: 'Remove', action: () => ctx.set('sw:all', false, sc) }] });
+      const ob = ctx.outline('All Possible Models', { parent, key: 'swall', info: 'p:fitmodel:stepwise', menu: () => [{ label: 'Remove', action: () => ctx.set('sw:all', false, sc) }] });
       if (r.error) ob.add(ctx.warn(r.error));
       else {
         ob.add(ctx.rt({ columns: [{ key: 'model', label: 'Model', fmt: 'text' }, { key: 'number', label: 'Number', fmt: 'int' }, { key: 'rsq', label: 'RSquare' }, { key: 'rmse', label: 'RMSE' }, { key: 'aicc', label: 'AICc' }, { key: 'bic', label: 'BIC' }, { key: 'cp', label: 'Cp' }], rows: r.models.map((m) => ({ ...m, model: `${m.model}${m.best ? '  (best of its size)' : ''}${m.min_aicc ? '  (smallest AICc)' : ''}` })) },
@@ -1715,8 +1756,10 @@
     return SM.ui.form({
       title: 'Repeated Measures', info: 'p:fitmodel:repeated', okLabel: 'OK',
       lead: 'The Y columns are the levels of a within-subject factor, in their order: give the factor a name. The report tests the model effects on the sum of the responses (Between Subjects) and on their contrasts, as crossings with the named factor (Within Subjects).',
-      fields: [{ key: 'name', label: 'Y Name', type: 'text', value: ctx.opt('rmName', 'Time', sc) },
-        { key: 'univariate', label: 'Univariate Tests Also', type: 'check', value: !!ctx.opt('univariate', false, sc) }],
+      fields: [{ key: 'name', label: 'Y Name', type: 'text', value: ctx.opt('rmName', 'Time', sc),
+        help: 'The name of the within-subject factor whose levels the Y columns are, in their order (Time by default): the Within Subjects tests are named after it (Time, Time*drug).' },
+        { key: 'univariate', label: 'Univariate Tests Also', type: 'check', value: !!ctx.opt('univariate', false, sc),
+          help: 'Adds Mauchly\'s sphericity test and the univariate within tests, unadjusted and with the degrees of freedom times the Greenhouse–Geisser and Huynh–Feldt epsilons, beside the multivariate tests.' }],
       validate: (v) => (String(v.name || '').trim() ? null : 'Give the within-subject factor a name (Time, for example).'),
     });
   }
@@ -2249,7 +2292,13 @@
     'p:fitmodel:summary': {
       kicker: 'Fit Model', title: 'Effect Summary',
       lead: 'The effects by LogWorth, −log₁₀ of the p-value of their test (the line is at p = 0.01). FDR adjusts the p-values for the number of effects (Benjamini and Hochberg).',
-      sections: [{ heading: 'Editing the model', text: 'Click an effect and press Remove to refit without it; Undo brings it back; Edit opens the launch dialog.' }],
+      sections: [{ heading: 'Editing the model', choices: [
+        ['An effect\'s line', 'Click it to choose the effect for Remove; click it again to let it go.'],
+        ['Remove', 'Refits the model without the chosen effect, in this report.'],
+        ['Edit', 'Opens the launch dialog with the model (the red triangle\'s Model Dialog), to change it and fit again.'],
+        ['Undo', 'Puts back the model as it was before the last Remove, up to 20 steps back.'],
+        ['FDR', 'Shows LogWorth and p-values adjusted for the number of effects by Benjamini and Hochberg\'s false discovery rate, so that a few small p-values among many effects are not taken at face value.'],
+      ] }],
       more: MORE,
     },
     'p:fitmodel:leverage': {
@@ -2264,17 +2313,56 @@
       sections: [{ choices: [['LSMeans Student\'s t', 'pairwise t tests, no adjustment for the number of comparisons'], ['LSMeans Tukey HSD', 'pairwise comparisons adjusted by the studentized range (Tukey-Kramer)'], ['Connecting Letters Report', 'levels that share no letter differ significantly'], ['LSMeans Contrast', 'your own weighted comparisons of the levels, with a joint F test']] }],
       more: MORE,
     },
-    'p:fitmodel:profiler': {
-      kicker: 'Fit Model', title: 'Profilers',
-      lead: 'The Prediction Profiler shows how the prediction changes with each factor, the others held at their current values. Drag a red dashed line, click a plot, or type a value; the prediction and its confidence interval are on the left.',
-      sections: [{ heading: 'Contour Profiler', text: 'The prediction over two continuous factors as a contour map, the rows of the table on it.' }, { heading: 'Interaction Plots', text: 'The prediction across one factor with a line for each level of another: parallel lines mean no interaction.' }],
-      more: MORE,
+    // The shared profiler's red triangle (smui-profiler.js) is explained after the controls.
+    'p:fitmodel:profiler': () => {
+      const shared = (SM.info && SM.info.get('p:profiler')) || null;
+      return {
+        kicker: 'Fit Model', title: 'Profilers',
+        lead: 'The Prediction Profiler shows how the prediction changes with each factor, the others held at their current values. Drag a red dashed line, click a plot, or type a value; the prediction and its confidence interval are on the left.',
+        sections: [
+          { heading: 'Prediction Profiler', choices: [
+            ['The red dashed line', 'Drag it along a factor\'s plot to set that factor: every response\'s prediction and interval follow, and so do the curves of the other factors.'],
+            ['A click in a plot', 'Sets the factor to the value clicked.'],
+            ['The value box', 'Under each plot: type a continuous factor\'s value and press Enter, or pick a categorical factor\'s level.'],
+            ['The slider', 'Under a continuous factor: moves it over its range.'],
+            ['The desirability plots', 'With Desirability Functions on, at the right of each response: click one to set that response\'s desirability.'],
+          ] },
+          ...((shared && shared.sections) || []).map((x) => ({ ...x, heading: x.heading || 'Its red triangle' })),
+          { heading: 'Contour Profiler', text: 'The prediction over two continuous factors as a contour map, the rows of the table on it.', choices: [
+            ['Horizontal, Vertical', 'The two continuous factors of the map; choosing one that is the other\'s swaps them.'],
+            ['Response', 'With several responses: the one mapped.'],
+            ['The other factors', 'The values at which the factors off the map are held: type a continuous one\'s value (it starts at its mean), pick a categorical one\'s level (its first).'],
+          ] },
+          { heading: 'Interaction Plots', text: 'The prediction across one factor with a line for each level of another: parallel lines mean no interaction.' },
+        ],
+        more: MORE,
+      };
     },
     'p:fitmodel:boxcox': { kicker: 'Fit Model', title: 'Box-Cox Y Transformation', lead: 'The error sum of squares of the model for the power transformations of Y, scaled by the geometric mean so that they compare. The best λ minimises it; λ near 1 needs no transformation, near 0 a logarithm. Save Best Transformation adds the transformed column; Refit with Transform fits the model to it.', more: MORE },
     'p:fitmodel:stepwise': {
       kicker: 'Fit Model', title: 'Stepwise',
       lead: 'Builds the model one effect at a time. Go runs until the rule stops, Step makes one step, the Entered boxes put effects in and out by hand. Make Model opens the launch dialog with the chosen effects, Run Model fits them at once.',
-      sections: [{ choices: [['P-value Threshold', 'forward enters the most significant effect while its p-value is below Prob to Enter; backward removes the least significant while above Prob to Leave; mixed does both'], ['Minimum AICc, BIC', 'goes all the way and keeps the model with the smallest criterion on the path'], ['Rules', 'Combine enters an interaction with its lower effects, Restrict only after them; Whole Effects has no rule']] }],
+      sections: [
+        { heading: 'Stepwise Regression Control', choices: [
+          ['Stopping Rule', 'P-value Threshold (the default): the steps go on while the best move passes Prob to Enter or Prob to Leave. Minimum AICc or Minimum BIC: the steps go all the way in the direction and the model with the smallest criterion on the path is kept (Mixed makes the move that lowers it most, while one does).'],
+          ['Direction', 'Forward (the default) enters the most significant effect at each step; Backward removes the least significant, and Go starts from every effect when none is entered; Mixed does both, a step in and then out while an effect leaves.'],
+          ['Rules', 'How crossings go with their parts: Combine enters an effect together with the effects it contains (A and B with A*B) and removes them together; Restrict lets an effect enter only after the effects it contains, and leave only before them; Whole Effects has no rule. Combine is the default when the model has crossings.'],
+          ['Prob to Enter', 'P-value Threshold: an effect enters while its p-value is below it, strictly between 0 and 1 (0.25 by default, as JMP).'],
+          ['Prob to Leave', 'An entered effect leaves while its p-value is above it (0.1 by default).'],
+          ['Go', 'Steps until the rule stops, each step a line of the Step History.'],
+          ['Step', 'Makes one step.'],
+          ['Enter All', 'Enters every effect.'],
+          ['Remove All', 'Takes out every effect that is not locked.'],
+          ['Make Model', 'Opens the launch dialog with the entered effects and Standard Least Squares, to change them or press OK.'],
+          ['Run Model', 'Fits the entered effects with Standard Least Squares, in a new report.'],
+        ] },
+        { heading: 'Current Estimates', choices: [
+          ['Lock', 'Keeps the effect as it is, in the model or out of it, whatever the steps and Remove All do.'],
+          ['Entered', 'Puts the effect in the model or takes it out by hand; the move is a line of the Step History. A locked effect\'s box cannot change.'],
+          ['F Ratio, Prob>F', 'For an entered effect the F test of taking it out; for one not entered, of putting it in.'],
+        ] },
+        { heading: 'All Possible Models', text: 'From the red triangle: the five best models of each size by RSquare. Click a line to make it the current model.' },
+      ],
       more: MORE,
     },
     'p:fitmodel:glm': {
@@ -2295,7 +2383,16 @@
       sections: [{ choices: [['Var Component', 'the variance of the random effect; Var Ratio its ratio to the residual variance, Pct of Total its share'], ['Std Error', 'from the REML information; Wald intervals and p-values'], ['DFDen', 'Satterthwaite\'s degrees of freedom of each test'], ['Conditional', 'predictions with the random effects\' BLUPs; marginal: the fixed effects only']] }],
       more: MORE,
     },
-    'p:fitmodel:manova': { kicker: 'Fit Model', title: 'MANOVA', lead: 'Tests each effect on all responses at once: Wilks\' lambda, Pillai\'s trace, the Hotelling-Lawley trace and Roy\'s maximum root, each with an F approximation. Choose Response transforms the responses first (sum, contrasts, polynomial trends); Repeated Measures takes the responses for the levels of a within-subject factor.', more: MORE },
+    'p:fitmodel:manova': {
+      kicker: 'Fit Model', title: 'MANOVA',
+      lead: 'Tests each effect on all responses at once: Wilks\' lambda, Pillai\'s trace, the Hotelling-Lawley trace and Roy\'s maximum root, each with an F approximation. Choose Response transforms the responses first (sum, contrasts, polynomial trends); Repeated Measures takes the responses for the levels of a within-subject factor.',
+      sections: [{ heading: 'Response Specification', choices: [
+        ['Choose Response', 'What the tests are made on: Identity, the responses themselves (the default); Sum, their total; Mean, their average; Contrast, each response against the last; Polynomial, their orthogonal linear, quadratic and higher trends in the order of the columns; Repeated Measures, JMP\'s design for a within-subject factor (it asks for its name).'],
+        ['Y Name', 'Repeated Measures: the name of the within-subject factor (Time by default); the Within Subjects tests are named after it.'],
+        ['Univariate Tests Also', 'Repeated Measures: adds Mauchly\'s sphericity test and the univariate within tests, unadjusted and with the Greenhouse–Geisser and Huynh–Feldt epsilons. Without Repeated Measures: a univariate test of each response.'],
+      ] }],
+      more: MORE,
+    },
     'p:fitmodel:repeated': {
       kicker: 'Fit Model', title: 'Repeated Measures',
       lead: 'Each row is a subject and the Y columns are its measurements at the levels of a within-subject factor (Y Name, Time by default), in the order of the columns; rows missing a measurement are left out. The model effects are the between-subject factors. As in JMP, this is a sum and a contrast response design at once.',
@@ -2318,13 +2415,33 @@
       kicker: 'Fit Model', title: 'Generalized Regression',
       lead: 'JMP Pro\'s penalized and stepwise fits of a normal, binomial or Poisson response, with a validation that picks the model on the path. The predictors are centred and scaled first, by the rows that train the model; the intercept is not penalized. The fits minimise the objective of statsmodels\' fit_regularized, solved as glmnet does (coordinate descent inside Newton steps).',
       sections: [
+        { heading: 'Model Launch', choices: [
+          ['Distribution', 'Normal, Binomial or Poisson (from the launch dialog; a two-level Y is binomial whichever is chosen). Every change in Model Launch fits the path again and shows its best model.'],
+          ['Estimation Method', 'The penalty, or the selection, that makes the path (below).'],
+          ['Adaptive', 'Lasso and Elastic Net: each term\'s penalty is divided by the size of its unpenalized estimate, so large effects are shrunk less.'],
+          ['Validation Method', 'How the model on the path is chosen (below). With a column in the launch dialog\'s Validation role: Validation Column (the default), AICc or BIC.'],
+          ['Elastic Net Alpha', 'Elastic Net: the lasso\'s share of the penalty, above 0 and below 1 (0.9 by default); near 0 the fit is nearly ridge.'],
+          ['Number of Folds', 'KFold: the folds the rows are split into at random, from 2 to the number of rows (5 by default).'],
+          ['Holdback Proportion', 'Holdback: the share of the rows held back to validate, between 0 and 1 (0.3 by default).'],
+          ['Random Seed', 'KFold and Holdback: the seed of the random split. Empty: a seed drawn at the first run and kept with the report (it shows greyed in the box); type a whole number for another split.'],
+        ] },
         { heading: 'Estimation Method', choices: [['Lasso', 'an l1 penalty: small effects are set to zero'], ['Elastic Net', 'the lasso and ridge penalties mixed; Elastic Net Alpha is the lasso share'], ['Ridge', 'an l2 penalty: every effect shrinks, none is zero'], ['Adaptive', 'for the lasso and the elastic net: each term\'s penalty is divided by |b| of the maximum likelihood fit (of a ridge fit when that does not exist), so large effects are penalized less'], ['Forward Selection', 'terms enter one at a time, the one with the largest score statistic (for the normal the largest drop in the error sum of squares); each step is a maximum likelihood fit'], ['Pruned Forward Selection', 'after each entry a term leaves while the model without it fits better than every model of its size before (a floating search)']] },
-        { heading: 'Validation Method', choices: [['AICc, BIC', 'the model on the path with the smallest criterion of the training fit'], ['KFold', 'the rows split at random into folds (Number of Folds); each fold is predicted by a fit to the others; the curve is the mean of the folds\' Scaled −LogLikelihood. As in JMP, the model shown is the fold model that validates best at the chosen penalty'], ['Holdback', 'a random share of the rows (Holdback Proportion) held back to validate, drawn as the page draws a Validation Portion'], ['Leave-One-Out', 'KFold with a fold per row: slow, and taken up to 1000 rows (300 for the binomial, the Poisson and the forward methods)'], ['Validation Column', 'the launch\'s Validation role: 0 Training, 1 Validation, 2 Test (kept out of both)'], ['Random Seed', 'the seed of KFold and Holdback; empty: one drawn at the first run and kept with the report']] },
+        { heading: 'Validation Method', choices: [['AICc, BIC', 'the model on the path with the smallest criterion of the training fit'], ['KFold', 'the rows split at random into folds (Number of Folds); each fold is predicted by a fit to the others; the curve is the mean of the folds\' Scaled −LogLikelihood. As in JMP, the model shown is the fold model that validates best at the chosen penalty'], ['Holdback', 'a random share of the rows (Holdback Proportion) held back to validate, drawn as the page draws a Validation Portion'], ['Leave-One-Out', 'KFold with a fold per row: slow, and taken up to 1000 rows (300 for the binomial, the Poisson and the forward methods)'], ['Validation Column', 'the launch\'s Validation role: 0 Training, 1 Validation, 2 Test (kept out of both)']] },
         { heading: 'Validation rows of a normal response', text: 'Their −LogLikelihood takes the variance of the training residuals (SSE/N).' },
       ],
       more: MORE,
     },
-    'p:fitmodel:grpath': { kicker: 'Fit Model', title: 'Solution Path', lead: 'The estimates on the centred and scaled predictors (left) and the validation curve (right: AICc, BIC, or the Scaled −LogLikelihood of the validation rows) along the path: against the magnitude of the scaled estimates (the sum of their absolute values) for the penalized methods, against the step for forward selection. The red line is the model the report shows; drag it in either plot, or click a point, to show another. Reset to the Best Model goes back to the smallest value of the curve.', more: MORE },
+    'p:fitmodel:grpath': {
+      kicker: 'Fit Model', title: 'Solution Path',
+      lead: 'The estimates on the centred and scaled predictors (left) and the validation curve (right: AICc, BIC, or the Scaled −LogLikelihood of the validation rows) along the path: against the magnitude of the scaled estimates (the sum of their absolute values) for the penalized methods, against the step for forward selection. The red line is the model the report shows; drag it in either plot, or click a point, to show another. Reset to the Best Model goes back to the smallest value of the curve.',
+      sections: [{ heading: 'Choosing a model', choices: [
+        ['The red line', 'Drag it along either plot: the report shows the model at the point of the path nearest to where it is let go (its Model Summary and estimates follow).'],
+        ['A point', 'Click a point of either plot to show that model.'],
+        ['The dotted line', 'The best model by the validation curve, when another one is shown.'],
+        ['Reset to the Best Model', 'The red triangle: back to the model with the smallest value of the curve.'],
+      ] }],
+      more: MORE,
+    },
     'p:fitmodel:grsummary': { kicker: 'Fit Model', title: 'Model Summary', lead: 'The fit\'s measures for each set of rows: Training (the rows the model learns from), Validation (the rows that chose it) and Test (a Validation column\'s 2s, kept out of both). −LogLikelihood of the set under the fitted model (the normal\'s variance from the training residuals, SSE/N); Scaled −LogLikelihood, that per unit of weight (the validation curve); Generalized RSquare against the training mean (Nagelkerke\'s; for the normal 1 − exp(2(LL0 − LL)/N)); RASE, the root mean squared error. Number of Parameters, BIC and AICc are the training fit\'s: the nonzero terms and the intercept (for the elastic net and ridge the trace of the ridge hat matrix on the nonzero terms); for the normal AICc and BIC count the variance too.', more: MORE },
     'p:fitmodel:gee': {
       kicker: 'Fit Model', title: 'Generalized Estimating Equations',
@@ -2355,7 +2472,20 @@
     'p:fitmodel:regdiag': {
       kicker: 'Fit Model', title: 'Regression Diagnostics',
       lead: 'Tests of a least squares fit\'s assumptions, from statsmodels.stats.diagnostic. A small p-value speaks against the assumption.',
-      sections: [{ choices: [['Breusch–Pagan, White', 'constant variance, against a variance that depends on the regressors'], ['Goldfeld–Quandt', 'the variances of two halves of the rows, sorted'], ['Ramsey RESET', 'powers of the prediction added: is the form linear?'], ['Harvey–Collier', 'the mean of the recursive residuals, in an order'], ['Rainbow', 'the fit of the central rows against all of them'], ['Breusch–Godfrey', 'autocorrelation of the residuals up to a lag, in the row order'], ['Jarque–Bera, Omnibus', 'normal residuals, from their skewness and kurtosis']] }],
+      sections: [
+        { choices: [['Breusch–Pagan, White', 'constant variance, against a variance that depends on the regressors'], ['Goldfeld–Quandt', 'the variances of two halves of the rows, sorted'], ['Ramsey RESET', 'powers of the prediction added: is the form linear?'], ['Harvey–Collier', 'the mean of the recursive residuals, in an order'], ['Rainbow', 'the fit of the central rows against all of them'], ['Breusch–Godfrey', 'autocorrelation of the residuals up to a lag, in the row order'], ['Jarque–Bera, Omnibus', 'normal residuals, from their skewness and kurtosis']] },
+        { heading: 'The settings above a test', choices: [
+          ['Sort by (Goldfeld–Quandt)', 'The order in which the rows are cut into two halves: by the predicted values (the default), by a continuous factor of the model, or in row order.'],
+          ['Leave out the middle', 'The share of the middle rows left out between the halves: nothing (the default), 10%, 20%, 25% or a third. Leaving some out sharpens the contrast between the halves.'],
+          ['Alternative', 'Variance increasing along the order (the second half\'s larger, the default), decreasing, or two-sided.'],
+          ['Powers of the predicted (RESET)', '2: the squares of the predicted values added to the model; 2 and 3: the squares and the cubes (the default).'],
+          ['Order (Harvey–Collier)', 'The order of the recursive residuals: row order (the default), the predicted values or a continuous factor.'],
+          ['Central rows by (Rainbow)', 'Which rows make the central fit: those of smallest leverage (Utts, the default), or the middle of the row order, of the predicted values or of a continuous factor.'],
+          ['Central fraction', 'The share of the rows in the central fit, 0.1 to 0.9 (0.5 by default).'],
+          ['Lags (Breusch–Godfrey)', 'The number of lagged residuals tested, a whole number from 1; empty: 10, or a fifth of the rows when that is fewer.'],
+        ] },
+        { text: 'A change runs the test again. A weighted fit is tested as least squares on the data times √w.' },
+      ],
       more: MORE,
     },
     'p:fitmodel:influence': { kicker: 'Fit Model', title: 'Influence and partial residuals', lead: 'The Influence Plot puts each row\'s externally studentized residual against its leverage; the area of the bubble is Cook\'s D, the lines mark residuals of ±2 and leverages of 2p/n and 3p/n. Component + Residual Plots show, for each continuous term, the residual plus the term\'s part of the fit against the term: a curve asks for a transformation.', more: MORE },
@@ -2366,6 +2496,11 @@
         { choices: [['Recursive Estimates', 'each coefficient from the first rows up to each row, with its band; the last are the report\'s estimates'], ['CUSUM Test', 'the cumulative sum of the recursive residuals (each row\'s prediction error from the rows before it, standardised): a path that leaves the bounds says the relation shifts'], ['CUSUM of Squares Test', 'the cumulative share of the squared recursive residuals against the diagonal: leaving the bounds says the variance or the slopes change'], ['Rolling Regression', 'least squares on each window of consecutive rows (Rolling Window… sets its size), plotted at the window\'s last row']] },
         { heading: 'Reading them', text: 'Sort the rows by time first (Order Rows By…). The CUSUM reacts to shifts in the level of Y, the CUSUM of squares to changes in the spread or the slopes; the recursive and rolling estimates show which coefficient moves, and where. The bounds are for the 1%, 5% or 10% level (Brown, Durbin and Evans 1975; Edgerton and Wells 1994).' },
         { heading: 'Linking', text: 'A recursive point stands for the row it adds: clicking it selects that row. A rolling point stands for its window: clicking it selects the window\'s rows.' },
+        { heading: 'The settings above the plots', choices: [
+          ['Order by', 'The order the rows are taken in: the table\'s row order, or sorted by a column (a nominal or ordinal one by its value order); rows without a value of it are left out.'],
+          ['Significance', 'The level of the CUSUM and CUSUM of squares bounds: 1%, 5% (the default) or 10%. The bands of the estimates are at the report\'s α.'],
+          ['Window', 'Rolling Regression: the rows in each window, more than the parameters and at most every row; empty, a tenth of the rows but at least three times the parameters.'],
+        ] },
       ],
       more: MORE,
     },
@@ -2384,7 +2519,13 @@
       kicker: 'Fit Model', title: 'Quantile Regression',
       lead: 'A quantile of Y given the effects (0.5 the median, 0.9 the upper tenth) instead of its mean: statsmodels\' QuantReg minimises the sum of check losses. It needs no normal errors, resists outliers in Y, and shows how the effects differ across the distribution. JMP Pro has it in Generalized Regression, without the quantile process.',
       sections: [
-        { heading: 'Model Launch', choices: [['Quantile τ', 'the quantile of the report, strictly between 0 and 1'], ['Standard Errors', 'Robust (statsmodels\' default, one density estimate for every row), IID, or Powell\'s sandwich (a density per row: for a spread that changes with X)'], ['Kernel, Bandwidth', 'how the density of the residuals at the quantile is estimated (Hall–Sheather, Bofinger, Chamberlain)'], ['Quantile Process', 'the quantiles of the process: a list (0.1, 0.5, 0.9) or a range (0.05 to 0.95 by 0.05)']] },
+        { heading: 'Model Launch', choices: [
+          ['Quantile τ', 'The quantile of the report, strictly between 0 and 1 (from the launch dialog; 0.5, the median, by default).'],
+          ['Standard Errors', 'Robust (statsmodels\' default: one density estimate for every row, each squared score by the sign of its residual), IID (τ(1 − τ)/f̂(0)² (X′X)⁻¹, Stata\'s qreg default: the same error distribution in every row), or Powell\'s kernel sandwich (a density per row: for a spread that changes with X, as R\'s quantreg se = "ker").'],
+          ['Kernel', 'The kernel of the estimate of the residuals\' density at the quantile, which every standard error needs: Epanechnikov (the default), Gaussian, Cosine, Parzen or Biweight.'],
+          ['Bandwidth', 'Its bandwidth rule: Hall–Sheather (the default), Bofinger or Chamberlain.'],
+          ['Quantile Process', 'The quantiles of the process: a list (0.1, 0.5, 0.9) or a range (0.05 to 0.95 by 0.05, the default); at most 99, each strictly between 0 and 1.'],
+        ] },
         { heading: 'Report', choices: [['Summary of Fit', 'Koenker and Machado\'s pseudo RSquare, 1 − the check loss over that of the intercept alone; the share of rows below the fit, which should be near τ'], ['Parameter Estimates', 'at the quantile τ, with t tests'], ['Quantile Process', 'each coefficient against τ, beside the least squares estimate'], ['Quantile Regression Plot', 'with one continuous factor: the fitted lines of several quantiles']] },
       ],
       more: MORE,
@@ -2501,17 +2642,28 @@
     launch: {
       lead: 'Choose the Y, add the model effects from the selected columns, and pick a personality. Continuous Y: least squares; nominal or ordinal Y: logistic.',
       roles: [
-        { key: 'y', label: 'Y', min: 1, hint: 'required' },
-        { key: 'weight', label: 'Weight', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric' },
-        { key: 'freq', label: 'Freq', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric' },
-        { ...SM.predict.roles({ weight: false, freq: false, by: false })[0], hint: 'optional (Generalized Regression): 0/1/2 or Training/Validation/Test' },
-        { key: 'endog', label: 'Endogenous', hint: 'required: the model effects\' columns that are endogenous' },
-        { key: 'instruments', label: 'Instruments', hint: 'required: the excluded instruments' },
-        { key: 'offset', label: 'Offset', max: 1, numeric: true, types: ['continuous'], hint: 'optional (generalized linear model, GEE)' },
-        { key: 'subject', label: 'Subject', max: 1, hint: 'required: the rows that belong together' },
-        { key: 'time', label: 'Time', max: 1, numeric: true, hint: 'optional: the order within a subject' },
-        { key: 'subgroup', label: 'Subgroup', max: 1, hint: 'optional: a grouping within the subjects' },
-        { key: 'by', label: 'By', hint: 'optional' },
+        { key: 'y', label: 'Y', min: 1, hint: 'required',
+          help: 'The response. Its modeling type picks the personality until you choose one: continuous Standard Least Squares, nominal Nominal Logistic, ordinal Ordinal Logistic. Several Y columns are fitted one at a time with the same model; MANOVA takes them together, and a binomial Generalized Linear Model takes two as events and trials.' },
+        { key: 'weight', label: 'Weight', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric',
+          help: 'A weight per row, multiplied with Freq: least squares becomes weighted least squares (Stepwise too), the Generalized Linear Model takes it as variance weights, the logistic fits and Generalized Regression as frequencies (the ordinal and multinomial logistic fits repeat each row, so they need whole numbers). Mixed Model, MANOVA, GEE, Instrumental Variables and Quantile Regression take none, nor the negative binomial. Rows with a missing, zero or negative weight are left out.' },
+        { key: 'freq', label: 'Freq', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric',
+          help: 'How many observations each row stands for: least squares counts the error degrees of freedom from their sum, as JMP; the Generalized Linear Model and the logistic fits take them as frequency weights (or repeated rows). It multiplies the Weight; Mixed Model, MANOVA, GEE, Instrumental Variables and Quantile Regression take none. With a Freq, Robust Standard Errors are not computed.' },
+        { ...SM.predict.roles({ weight: false, freq: false, by: false })[0], hint: 'optional (Generalized Regression): 0/1/2 or Training/Validation/Test',
+          help: 'Generalized Regression only: rows with 0 or Training fit the path, 1 or Validation choose the model on it (Validation Method: Validation Column), 2 or Test are kept out of both and only measured; rows with no value are left out. With this column KFold, Holdback and Leave-One-Out are not offered. The other personalities take every row and say so.' },
+        { key: 'endog', label: 'Endogenous', hint: 'required: the model effects\' columns that are endogenous',
+          help: 'Instrumental Variables only (required there): the columns of the model effects that are correlated with the error. Every effect that holds one is endogenous; a crossing or power of one is instrumented by the same crossing or power of the instruments.' },
+        { key: 'instruments', label: 'Instruments', hint: 'required: the excluded instruments',
+          help: 'Instrumental Variables only (required there): the excluded instruments, columns that move the endogenous ones but have no effect of their own on Y. They stay out of the model effects (the exogenous effects instrument themselves); at least as many instrument columns as endogenous ones.' },
+        { key: 'offset', label: 'Offset', max: 1, numeric: true, types: ['continuous'], hint: 'optional (generalized linear model, GEE)',
+          help: 'Generalized Linear Model and GEE: a known part of the linear predictor, added with a coefficient of 1; for example the log of the exposure, with a log link, to model a rate of counts.' },
+        { key: 'subject', label: 'Subject', max: 1, hint: 'required: the rows that belong together',
+          help: 'GEE only (required there): rows with the same value belong together, a subject or a cluster. The working correlation applies within a subject; the subjects are independent.' },
+        { key: 'time', label: 'Time', max: 1, numeric: true, hint: 'optional: the order within a subject',
+          help: 'GEE: the order of a subject\'s rows, numeric; the rows are sorted by it. The AR(1) working correlation needs it (the correlation falls with the distance in that order), and the Unstructured one (a correlation for each pair of its values: at most 15 values, each at most once per subject).' },
+        { key: 'subgroup', label: 'Subgroup', max: 1, hint: 'optional: a grouping within the subjects',
+          help: 'GEE: a grouping within the subjects, for the Nested working correlation (a variance component for the subject and one for the subgroups within it).' },
+        { key: 'by', label: 'By', hint: 'optional',
+          help: 'A separate fit and report for each level of the By column (each combination of levels, with several By columns). Rows with a missing By value are left out.' },
       ],
       extra: constructEffects,
       validate,

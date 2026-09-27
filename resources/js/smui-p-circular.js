@@ -292,7 +292,8 @@
     const v = await SM.ui.form({
       title: `V Test: ${col.name}`, info: 'p:circular:tests',
       lead: `Test against uniformity for a mode at a direction you expect (Durand and Greenwood 1958), in the report's units (${S.units === 'clock' ? `a clock of period ${fmt(S.P)}` : S.units}).`,
-      fields: [{ key: 'dir', label: 'Expected mean direction', type: 'number', value: cur ?? 0 }],
+      fields: [{ key: 'dir', label: 'Expected mean direction', type: 'number', value: cur ?? 0,
+        help: 'The direction the angles are expected to cluster around, chosen before looking at these data (a theory, an earlier study), in the report\'s units. The test is one-sided: it has more power than the Rayleigh test when the mode is near this direction, and little when it is far from it.' }],
       validate: (x) => (x.dir != null && Number.isFinite(x.dir) ? null : 'Give a direction.'),
     });
     if (v) ctx.set('vdir', v.dir, col.id);
@@ -452,16 +453,24 @@
     launch: {
       lead: 'Cast one or more columns of angles into Y and choose their units. An X column relates them to a covariate, another angle or groups.',
       roles: [
-        { key: 'y', label: 'Y, Angle', min: 1, numeric: true, types: ['continuous'], hint: 'required: one or more', info: 'p:circular' },
-        { key: 'x', label: 'X', max: 1, hint: 'optional', info: 'p:circular:x' },
-        { key: 'freq', label: 'Freq', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric' },
-        { key: 'by', label: 'By', hint: 'optional' },
+        { key: 'y', label: 'Y, Angle', min: 1, numeric: true, types: ['continuous'], hint: 'required: one or more', info: 'p:circular',
+          help: 'The angles, directions or times to describe, read in the Units below; each column gets an outline of its own. A value outside one turn is wrapped onto the circle (370° is 10°); a row with no value is left out of that column.' },
+        { key: 'x', label: 'X', max: 1, hint: 'optional', info: 'p:circular:x',
+          help: 'Optional, another column than the angles. A continuous X gives the circular-linear correlation (how well X predicts the direction), or with X is an angle too the circular-circular one; a nominal or ordinal X compares its groups (their mean directions, the Watson-Williams and uniform-scores tests) and colours the dot plot by group.' },
+        { key: 'freq', label: 'Freq', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric',
+          help: 'A whole number per row: the row counts that many times in every statistic, test and rose bar (the dot plot still draws it once). Rows whose Freq is zero, negative or missing are left out.' },
+        { key: 'by', label: 'By', hint: 'optional',
+          help: 'A separate analysis of the rows of each level (each combination of levels, with several By columns). Rows with a missing By value are left out.' },
       ],
       options: [
-        { key: 'units', label: 'Units', type: 'select', value: 'degrees', choices: UNITS },
-        { key: 'period', label: 'Period of a clock', type: 'number', value: 24, hint: 'the full circle in the clock\'s units: 24 hours, 7 days, 12 months' },
-        { key: 'zero', label: 'Zero and direction', type: 'select', value: 'auto', choices: ZERO },
-        { key: 'xAngle', label: 'X is an angle too', type: 'check', value: false },
+        { key: 'units', label: 'Units', type: 'select', value: 'degrees', choices: UNITS,
+          help: 'How the numbers of Y (and of an angle X) are read: Degrees, a full turn is 360; Radians, a full turn is 2π; Clock, a full turn is the Period of a clock below. The report gives every statistic in these units; its red triangle changes them.' },
+        { key: 'period', label: 'Period of a clock', type: 'number', value: 24, hint: 'the full circle in the clock\'s units: 24 hours, 7 days, 12 months',
+          help: 'The length of one full turn when Units is Clock: 24 for hours of the day (23:30 is then next to 00:30), 7 for days of the week, 12 for months, 60 for minutes. Above 0; not used for degrees and radians.' },
+        { key: 'zero', label: 'Zero and direction', type: 'select', value: 'auto', choices: ZERO,
+          help: 'Where zero sits in the circular dot plot and the rose diagram, and which way the angles run. Automatic puts zero at the top, clockwise, for degrees and clocks (as on a compass and a clock face), and at the right, counterclockwise, for radians (as in mathematics). It changes the graphs only, not the statistics.' },
+        { key: 'xAngle', label: 'X is an angle too', type: 'check', value: false,
+          help: 'For a continuous X in the same units as Y (a second direction, another time of day): the circular-circular correlation of Jammalamadaka and SenGupta in place of the circular-linear one. Off by default; a nominal or ordinal X ignores it.' },
       ],
       validate(spec, table) {
         const o = spec.options || {};
@@ -479,7 +488,8 @@
       const bins = binsOf(ctx, S);
       return [
         { label: 'Units', submenu: () => [...UNITS.slice(0, 2).map(([k, l]) => ({ label: l, checked: S.units === k, action: () => ctx.set('units', k) })),
-          { label: 'Clock…', checked: S.units === 'clock', action: async () => { const v = await SM.ui.form({ title: 'Units: a clock', fields: [{ key: 'p', label: 'Period (the full circle: 24 hours, 7 days, 12 months)', type: 'number', value: S.units === 'clock' ? S.P : 24 }], validate: (f) => (f.p > 0 ? null : 'The period must be positive.') }); if (v) { ctx.set('period', v.p, null, { rerun: false }); ctx.set('units', 'clock'); } } }] },
+          { label: 'Clock…', checked: S.units === 'clock', action: async () => { const v = await SM.ui.form({ title: 'Units: a clock', fields: [{ key: 'p', label: 'Period (the full circle: 24 hours, 7 days, 12 months)', type: 'number', value: S.units === 'clock' ? S.P : 24, helpLabel: 'Period',
+            help: 'The length of one full turn in the columns\' own units: 24 for hours of the day, 7 for days of the week, 12 for months, 60 for minutes. The values are read modulo it, and OK switches the report to these units.' }], validate: (f) => (f.p > 0 ? null : 'The period must be positive.') }); if (v) { ctx.set('period', v.p, null, { rerun: false }); ctx.set('units', 'clock'); } } }] },
         { label: 'Zero and Direction', submenu: () => ZERO.map(([k, l]) => ({ label: l, checked: ctx.opt('zero', 'auto') === k, action: () => ctx.set('zero', k) })) },
         { label: 'Rose Bins', submenu: () => [8, 12, 16, 18, 24, 36, 72].map((b) => ({ label: String(b), checked: bins === b, action: () => ctx.set('bins', b) })) },
         x && !x.isCategorical ? ctx.check('X Is an Angle', 'xAngle', null, false) : null,

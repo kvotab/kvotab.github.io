@@ -87,6 +87,24 @@ def c4(n):
 D4_2 = math.sqrt(2.0) * float(stats.norm.ppf(0.75))
 
 
+@functools.lru_cache(maxsize=None)
+def d4(n):
+    """The median of the range of n standard normal values, the divisor of
+    the median moving range over a span of n: 0.954 for 2, 1.588 for 3,
+    1.978 for 4. It solves P(W <= w) = n int phi(x) [Phi(x + w) - Phi(x)]^(n-1) dx = 1/2."""
+    n = int(n)
+    if n == 2:
+        return D4_2
+    from scipy import integrate
+    cdf = lambda w: integrate.quad(lambda x: n * stats.norm.pdf(x) * (stats.norm.cdf(x + w) - stats.norm.cdf(x)) ** (n - 1), -np.inf, np.inf, epsabs=1e-13, epsrel=1e-12)[0]
+    return float(optimize.brentq(lambda w: cdf(w) - 0.5, 1e-9, 40.0, xtol=1e-14))
+
+
+_D4_CODE = '''def d4(n):   # the median range of n standard normal values
+    from scipy import optimize
+    return optimize.brentq(lambda w: integrate.quad(lambda x: n * stats.norm.pdf(x) * (stats.norm.cdf(x + w) - stats.norm.cdf(x)) ** (n - 1), -np.inf, np.inf)[0] - 0.5, 1e-9, 40)'''
+
+
 def factors(n, k=3.0):
     """The factors of the variables control charts for subgroups of n, with
     k-sigma limits (the printed tables have k = 3)."""
@@ -390,7 +408,7 @@ def within_sigma(units, method, span=2):
         if not len(mr):
             return float('nan'), float('nan')
         if method == 'mmr':
-            return float(np.median(mr) / D4_2), float(0.62 * len(mr))
+            return float(np.median(mr) / d4(span)), float(0.62 * len(mr))
         return float(np.mean(mr) / d2(span)), float(0.62 * len(mr))
     if method == 'lj':
         allv = np.concatenate([u['y'] for u in units]) if units else np.array([])
@@ -735,8 +753,10 @@ def _chart_code(table_name, y, chart, subgroup, phase, n_trials, subgroup_size, 
             lines.append(f'sigma = {known_sigma!r}   # given')
         elif chart == 'lj' or method == 'lj':
             lines.append('sigma = x.std(ddof=1)   # Levey Jennings: the overall standard deviation')
-        elif method == 'mmr':
+        elif method == 'mmr' and span == 2:
             lines.append('sigma = np.median(mr) / (np.sqrt(2) * stats.norm.ppf(0.75))   # median moving range / 0.954')
+        elif method == 'mmr':
+            lines += [_D4_CODE, f'sigma = np.median(mr) / d4({span})   # median moving range / d4({span})']
         else:
             lines.append(f'sigma = mr.mean() / d2({span})   # average moving range / d2')
         lines.append(f'center = {known_mean!r}' if known_mean is not None else 'center = x.mean()')
@@ -771,7 +791,13 @@ def _chart_code(table_name, y, chart, subgroup, phase, n_trials, subgroup_size, 
     elif method == 'pooled':
         lines.append('dof = (n - 1).sum(); sigma = np.sqrt(((n - 1) * s ** 2).sum() / dof) / c4(dof + 1)')
     elif method in ('mr', 'mmr'):
-        lines.append('sigma = np.abs(np.diff(xbar)).mean() / d2(2)   # moving range of the subgroup means')
+        mrs = 'np.abs(np.diff(xbar))' if span == 2 else f'xbar.rolling({span}).apply(np.ptp).dropna()'
+        if method == 'mr':
+            lines.append(f'sigma = {mrs}.mean() / d2({span})   # the average moving range of the subgroup means')
+        elif span == 2:
+            lines.append(f'sigma = np.median({mrs}) / (np.sqrt(2) * stats.norm.ppf(0.75))   # the median moving range of the subgroup means / 0.954')
+        else:
+            lines += [_D4_CODE, f'sigma = np.median({mrs}) / d4({span})   # the median moving range of the subgroup means / d4({span})']
     elif method == 'lj':
         lines.append(f'sigma = df[{Y}].std(ddof=1)')
     else:

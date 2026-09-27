@@ -39,6 +39,8 @@
       if (it.submenu) {
         b.classList.add('sm-sub');
         const openSub = () => {
+          // A disabled item's submenu stays shut; hovering it closes any other.
+          if (it.disabled) { closeMenus(level + 1); buttons.forEach((x) => x.classList.remove('is-open')); return; }
           buttons.forEach((x) => x.classList.remove('is-open'));
           b.classList.add('is-open');
           const r = b.getBoundingClientRect();
@@ -94,6 +96,32 @@
   /* ---- dialogs ------------------------------------------------------------ */
   const dialogs = [];
 
+  /* A dialog moves when its title bar is dragged (mouse, pen or touch), and
+     its title bar stays inside the window. */
+  function makeMovable(box, head) {
+    let dx = 0, dy = 0;
+    head.classList.add('sm-dialog-grip');
+    head.addEventListener('pointerdown', (ev) => {
+      if (ev.button !== 0 || ev.target.closest('button, a, input, select, textarea, .kvot-info-slot')) return;
+      ev.preventDefault();
+      const r = box.getBoundingClientRect();
+      const left0 = r.left - dx, top0 = r.top - dy;      // where it sits unmoved
+      const hh = head.getBoundingClientRect().height;
+      const sx = ev.clientX - dx, sy = ev.clientY - dy;
+      const move = (e) => {
+        dx = Math.min(innerWidth - left0 - 60, Math.max(60 - left0 - r.width, e.clientX - sx));
+        dy = Math.min(innerHeight - top0 - hh, Math.max(-top0, e.clientY - sy));
+        box.style.transform = `translate(${Math.round(dx)}px, ${Math.round(dy)}px)`;
+      };
+      const up = () => { head.removeEventListener('pointermove', move); head.removeEventListener('pointerup', up); head.removeEventListener('pointercancel', up); head.classList.remove('is-moving'); };
+      try { head.setPointerCapture(ev.pointerId); } catch (e) { /* synthetic events */ }
+      head.classList.add('is-moving');
+      head.addEventListener('pointermove', move);
+      head.addEventListener('pointerup', up);
+      head.addEventListener('pointercancel', up);
+    });
+  }
+
   function dialog({ title, body, buttons = [], narrow = false, info = null, onClose = null, className = '' }) {
     const back = el('div', { class: 'sm-modal-back' });
     const x = el('button', { type: 'button', class: 'sm-dialog-x', 'aria-label': 'Close', text: '×' });
@@ -104,6 +132,7 @@
     const box = el('div', { class: `sm-dialog${narrow ? ' narrow' : ''} ${className}`, role: 'dialog', 'aria-modal': 'true', 'aria-label': title },
       head, el('div', { class: 'sm-dialog-body' }, body), foot);
     back.append(box);
+    makeMovable(box, head);
     let closed = false;
     const api = {
       el: box,
@@ -141,9 +170,28 @@
   }
 
   /* Ask for a few values: fields [{ key, label, type, value, choices,
-     step, min, max, placeholder, full }]. Resolves to { key: value } or
-     null. */
+     step, min, max, placeholder, full, hint, help, helpLabel }]. Resolves
+     to { key: value } or null. The dialog's (i) shows its info topic and,
+     after it, what each field is for (its help, or its hint), under
+     helpLabel when the label is one of many alike ('Y1: Goal'); an
+     explanation is given once. */
   function form({ title, lead, fields, okLabel = 'OK', info = null, validate = null }) {
+    const seen = new Set();
+    const described = [];
+    for (const f of fields) {
+      const text = f.help || f.hint;
+      const label = f.helpLabel || f.label;
+      if (!text || seen.has(`${label}\u0001${text}`)) continue;
+      seen.add(`${label}\u0001${text}`);
+      described.push([label, text]);
+    }
+    if (described.length && typeof KvotInfo !== 'undefined') {
+      const base = (info && SM.info && SM.info.get(info)) || null;
+      const key = `form:${info || title}`;
+      (SM.info ? SM.info.add : KvotInfo.add)({ [key]: { kicker: (base && base.kicker) || 'Dialog', title: (base && base.title) || title, lead: (base && base.lead) || lead || '',
+        sections: [...((base && base.sections) || []), { heading: 'Fields', choices: described }], more: base ? base.more : undefined } });
+      info = key;
+    }
     return new Promise((resolve) => {
       const inputs = {};
       const grid = el('div', { class: 'sm-form' });

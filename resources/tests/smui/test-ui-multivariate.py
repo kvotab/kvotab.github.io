@@ -71,6 +71,128 @@ async def shot(page, name):
         await page.shot(os.path.join(SHOTS, name))
 
 
+# The (i) of a launch dialog, of a form and of an outline: open it, read the
+# sections of its panel ([{heading, choices: [[name, text]]}]), close it; and
+# the labels of the controls in an outline (the inputs' labels, the buttons).
+HELP_JS = r'''
+window.__hlp = {
+  sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+  async read(btn) {
+    if (!btn) return null;
+    btn.click();
+    await this.sleep(120);
+    const p = document.querySelector('.info-panel');
+    if (!p) return null;
+    const secs = [];
+    let cur = null;
+    for (const node of p.querySelector('.info-panel-body').children) {
+      if (node.tagName === 'H3') { cur = { heading: node.textContent, choices: [] }; secs.push(cur); }
+      else if (node.matches('dl.info-choices')) {
+        if (!cur) { cur = { heading: '', choices: [] }; secs.push(cur); }
+        node.querySelectorAll(':scope > dt').forEach((dt) => cur.choices.push([dt.textContent, dt.nextElementSibling ? dt.nextElementSibling.textContent : '']));
+      }
+    }
+    const out = { title: p.querySelector('.info-panel-title').textContent, secs };
+    KvotInfo.close();
+    await this.sleep(30);
+    return out;
+  },
+  async launch(id) {
+    SM.app.launch(id);
+    await this.sleep(300);
+    const dlg = [...document.querySelectorAll('.sm-launch-dialog')].pop();
+    if (!dlg) return { error: `no launch dialog for ${id}` };
+    const noTopic = KvotInfo.audit().noTopic;
+    const info = await this.read(dlg.querySelector('.sm-dialog-head .info-btn'));
+    dlg.querySelector('.sm-dialog-x').click();
+    const L = SM.platforms.get(id).launch;
+    return { noTopic, info, roles: L.roles.map((r) => r.label), options: (L.options || []).map((o) => o.label) };
+  },
+  async dialog(run) {
+    const n0 = SM.ui.dialogs.length;
+    run();
+    let d = null;
+    for (let i = 0; i < 80 && !d; i++) { await this.sleep(50); if (SM.ui.dialogs.length > n0) d = SM.ui.dialogs[SM.ui.dialogs.length - 1].el; }
+    if (!d) return { error: 'no dialog opened' };
+    await this.sleep(100);
+    const labels = [...d.querySelectorAll('.sm-form label')].map((l) => l.textContent);
+    const noTopic = KvotInfo.audit().noTopic;
+    const info = await this.read(d.querySelector('.sm-dialog-head .info-btn'));
+    d.querySelector('.sm-dialog-x').click();
+    await this.sleep(60);
+    return { labels, noTopic, info };
+  },
+  // an outline of the report by its title, or by the start of it
+  head(rep, title) { return [...rep.body.querySelectorAll('.sm-ob-head')].find((x) => { const t = x.querySelector('h2, h3, h4').textContent; return t === title || (title.endsWith('…') && t.startsWith(title.slice(0, -1))); }); },
+  async form(rep, title, path) {
+    const h = this.head(rep, title);
+    if (!h) return { error: `no outline ${title}` };
+    return this.dialog(() => {
+      h.querySelector('.sm-ob-menu').click();
+      for (const label of path) {
+        const menus = document.querySelectorAll('.sm-menu');
+        const b = [...menus[menus.length - 1].querySelectorAll('button')].find((x) => x.querySelector('.sm-label') && x.querySelector('.sm-label').textContent === label);
+        if (!b) { SM.ui.closeMenus(0); throw new Error(`no menu item ${label}`); }
+        b.click();
+      }
+    });
+  },
+  // the (i) of an outline, and the labels of the controls in it
+  async outline(rep, title) {
+    const h = this.head(rep, title);
+    if (!h) return { error: `no outline ${title}` };
+    const body = h.parentElement.querySelector(':scope > .sm-ob-body');
+    const controls = [];
+    body.querySelectorAll(':scope > .mv-controls').forEach((box) => {
+      box.querySelectorAll(':scope > .mv-control > span').forEach((s) => controls.push(s.textContent));
+      box.querySelectorAll(':scope > button').forEach((b) => controls.push(b.textContent));
+    });
+    return { info: await this.read(h.querySelector(':scope .info-btn')), controls };
+  },
+};
+'''
+
+
+def section(info, heading):
+    """The choices of the last section of an (i) panel with this heading."""
+    secs = [s for s in (info or {}).get('secs', []) if s['heading'] == heading]
+    return secs[-1]['choices'] if secs else []
+
+
+def check_launch(r, name):
+    check(f'{name} launch dialog: every (i) has a topic while it is open', r.get('noTopic'), [])
+    roles = section(r.get('info'), 'Roles')
+    check(f'{name} launch (i): the Roles list every role', [n for n, _ in roles], r.get('roles'))
+    check(f'{name} launch (i): each role says what it is for before what it takes', [n for n, t in roles if t.startswith('(') or len(t) < 60], [])
+    opts = section(r.get('info'), 'Options')
+    check(f'{name} launch (i): the Options list every option, each with its help', ([n for n, _ in opts], [n for n, t in opts if len(t) < 40]), (r.get('options'), []))
+
+
+def check_form(r, name, title=None, expect=None):
+    """A form's (i) explains every field: under its label, or under the name
+    (helpLabel) that stands for fields repeated per item (expect)."""
+    check(f'{name}: the form opens, every (i) has a topic while it is open', (r.get('error'), r.get('noTopic')), (None, []))
+    fields = section(r.get('info'), 'Fields')
+    names = [n for n, _ in fields]
+    if expect is not None:
+        check(f'{name}: its (i) explains the fields repeated per item once', (names, len(r.get('labels') or []) > len(names)), (expect, True))
+    else:
+        missing = [lab for lab in r.get('labels') or [] if lab not in names and not any(n.lower() in lab.lower() for n in names)]
+        check(f'{name}: its (i) explains every field', (bool(names), missing), (True, []))
+    check(f'{name}: ... each with what it is for', [n for n, t in fields if len(t) < 30], [])
+    if title:
+        check(f'{name}: the (i) builds on the topic {title}', (r.get('info') or {}).get('title'), title)
+
+
+def names_of(choices):
+    """The controls a list of choices explains: 'x, y' and '− and +' name two."""
+    out = set()
+    for n, _ in choices:
+        out.update(p.strip() for p in n.replace(' and ', ', ').split(', '))
+        out.add(n)
+    return out
+
+
 async def run_menu(page, label, sub=None):
     """Run an item of the top red triangle of the report open last."""
     return await page.ev(f'''(async () => {{
@@ -452,6 +574,49 @@ async def main():
     check('every Help link has a target', audit.get('brokenMore'), [])
     helprows = await page.ev('["multivariate", "pca", "factor", "discriminant", "hcluster", "kmeans", "respscreen", "outliers", "mca", "mds"].filter(id => !document.getElementById("help-p-" + id))')
     check('the Help tab lists the ten platforms', helprows, [])
+
+    # ---- help for every input: the launch dialogs, the forms, the controls in the reports ---------------------------
+    await page.ev(HELP_JS)
+    mine = ['multivariate', 'pca', 'factor', 'discriminant', 'hcluster', 'kmeans', 'respscreen', 'outliers', 'mca', 'mds']
+    r = await page.ev(f'''{json.dumps(mine)}.flatMap((id) => {{ const L = SM.platforms.get(id).launch;
+      return [...L.roles, ...(L.options || [])].filter((f) => !f.help).map((f) => `${{id}}: ${{f.label}}`); }})''')
+    check('every role and option of the ten platforms has its help', r, [])
+    for pid in mine:
+        check_launch(await page.ev(f'__hlp.launch({json.dumps(pid)})'), pid)
+    specs = [('pca', {'y': ['a', 'b', 'c', 'd', 'e']}, {'fmtload': True}), ('factor', {'y': ['a', 'b', 'c', 'd', 'e']}, {'fits': [{'method': 'ml', 'prior': 'smc', 'k': 2, 'rotation': 'varimax', 'kaiser': True}]}),
+             ('discriminant', {'y': ['a', 'b', 'c', 'd', 'e'], 'x': ['grp']}, {'stepwise': True}), ('hcluster', {'y': ['u', 'v']}, {}), ('kmeans', {'y': ['u', 'v']}, {}),
+             ('respscreen', {'y': ['a', 'b'], 'x': ['c', 'grp']}, {}), ('outliers', {'y': ['a', 'c']}, {'qro': True, 'rfo': True, 'mro': True, 'knn': True}),
+             ('mca', {'y': ['grp', 'q1', 'q2']}, {}), ('multivariate', {'y': ['a', 'c', 'e']}, {})]
+    for pid, roles, opts in specs:
+        r = await page.ev(open_report_js(pid, roles, opts), timeout=240)
+        check(f'{pid}: a report for the help checks, without errors', r['errors'], [])
+        await page.ev(f'window.__rep_{pid} = {LAST}')
+    forms = [('pca', 'Principal Components: on Correlations', ['Factor Rotation…'], 'Factor Rotation', None), ('pca', 'Principal Components: on Correlations', ['Save Columns', 'Save Principal Components…'], 'Save Principal Components', None),
+             ('discriminant', 'Discriminant Analysis', ['Discriminant Method', 'Regularized, Compromise Method…'], 'Regularization Parameters', None),
+             ('discriminant', 'Discriminant Analysis', ['Score Options', 'Select Uncertain Rows…'], 'Select Uncertain Rows', None),
+             ('discriminant', 'Discriminant Analysis', ['Specify Priors', 'Other…'], 'Specify Priors (a field per group)', ['Each group']),
+             ('hcluster', 'Hierarchical Clustering', ['Number of Clusters…'], 'Number of Clusters', None), ('respscreen', 'Response Screening', ['Max Logworth…'], 'Max Logworth', None),
+             ('multivariate', 'Multivariate', ['Set α Level', 'Other…'], 'Set α Level', None)]
+    for pid, title_, path, name, expect in forms:
+        check_form(await page.ev(f'__hlp.form(window.__rep_{pid}, {json.dumps(title_)}, {json.dumps(path)})'), name, expect=expect)
+    # the controls in the reports: each is explained in its outline's (i)
+    # (the outline, the heading of its section on the controls, how many controls it has: inputs and buttons)
+    panels = [('pca', 'Summary Plots', 'In the report', 2), ('pca', 'Formatted Loading Matrix', 'In the report', 2), ('factor', 'Model Launch', 'The controls', 7),
+              ('factor', 'Factor Analysis on Correlations with 2 Factors…', 'In the report', 2), ('discriminant', 'Column Selection', 'In the report', 5),
+              ('hcluster', 'Dendrogram', 'In the report', 3), ('kmeans', 'Iterative Clustering', 'The controls', 6), ('kmeans', 'K Means NCluster=3', 'In the report', 0),
+              ('outliers', 'Quantile Range Outliers', 'In the report', 8), ('outliers', 'Robust Fit Outliers', 'In the report', 6), ('outliers', 'Multivariate Robust Outliers', 'In the report', 4),
+              ('outliers', 'Multivariate k-Nearest Neighbor Outliers', 'In the report', 1), ('mca', 'Correspondence Analysis', 'In the report', 2)]
+    for pid, title_, heading, n in panels:
+        r = await page.ev(f'__hlp.outline(window.__rep_{pid}, {json.dumps(title_)})')
+        choices = section((r or {}).get('info'), heading)
+        controls = (r or {}).get('controls', [])
+        check(f'{pid}, {title_}: its (i) explains the {n} controls in it', (bool(choices), len(controls), [c for c in controls if c not in names_of(choices)]), (True, n, []))
+        check(f'{pid}, {title_}: ... each with what it does', [n for n, t in choices if len(t) < 12], [])
+    r = await page.ev('''(async () => { const b = __rep_outliers.body.querySelector('.mv-methods .info-btn'); const info = await __hlp.read(b); return info && [info.title, info.secs.map((s) => s.heading)]; })()''')
+    check('Explore Outliers: the method buttons have an (i) that explains them', (r or [None, []])[0], 'Explore Outliers')
+    check('... with a section on the buttons', 'The method buttons' in (r or [None, []])[1], True)
+    r = await page.ev(f'''(async () => {{ for (const id of {json.dumps([s[0] for s in specs])}) SM.app.closeReport(window['__rep_' + id]); return {{ dialogs: SM.ui.dialogs.length, audit: KvotInfo.audit().noTopic }}; }})()''')
+    check('the forms closed with their ×, and every (i) left has a topic', (r['dialogs'], r['audit']), (0, []))
 
     # ---- By, for every platform ------------------------------------------------------------------------------------------
     await page.ev('SM.app.current.setType("f", { modelingType: "nominal" })')

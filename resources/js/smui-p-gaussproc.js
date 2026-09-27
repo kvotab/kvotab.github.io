@@ -174,13 +174,14 @@
   }
 
   async function settingsDialog(ctx) {
+    // no info: the platform's topic lists these options already; the form's (i) is its fields
     const v = await SM.ui.form({
-      title: 'Fit Settings', info: 'p:gaussproc',
+      title: 'Fit Settings',
       lead: 'The rows the model is fitted to and the optimizer\'s restarts. Both change the model; the seed draws the rows (above Rows to Fit) and the restarts.',
       fields: [
-        { key: 'maxRows', label: 'Rows to Fit, at most', type: 'number', value: intOr(ctx.opt('maxRows', 400), 400, 3) },
-        { key: 'restarts', label: 'Optimizer Restarts (empty: 2 for at most 150 rows fitted)', type: 'number', value: restartsOf(ctx.opt('restarts', null)) },
-        { key: 'seed', label: 'Random Seed (empty: the one drawn)', type: 'text', value: ctx.opt('seed', '') ?? '' },
+        { key: 'maxRows', label: 'Rows to Fit, at most', type: 'number', value: intOr(ctx.opt('maxRows', 400), 400, 3), help: HELP.maxRows },
+        { key: 'restarts', label: 'Optimizer Restarts (empty: 2 for at most 150 rows fitted)', type: 'number', value: restartsOf(ctx.opt('restarts', null)), help: HELP.restarts },
+        { key: 'seed', label: 'Random Seed (empty: the one drawn)', type: 'text', value: ctx.opt('seed', '') ?? '', help: 'The seed of the rows drawn above Rows to Fit, of the optimizer\'s restarts and of the Sobol points of the sensitivities: a whole number. Empty keeps the seed drawn for this report.' },
       ],
       validate: (x) => (!(Number.isInteger(x.maxRows) && x.maxRows >= 3) ? 'Rows to Fit is a whole number, 3 or more'
         : !(x.restarts == null || (Number.isInteger(x.restarts) && x.restarts >= 0 && x.restarts <= 50)) ? 'Optimizer Restarts is a whole number from 0 to 50, or empty'
@@ -204,6 +205,31 @@
   }
 
   /* ======================================================================
+     THE LAUNCH'S ROLES AND OPTIONS, with what each is for (the (i))
+     ====================================================================== */
+  const HELP = {
+    maxRows: 'JMP fits every row; the fit grows as the cube of the rows, so with more rows than this (400) the model is fitted to that many rows drawn at random with the seed, and the other rows are predicted by it (the diamonds of Actual by Predicted). A whole number, 3 or more: raise it for a better model at the cost of time.',
+    restarts: 'The optimizer of the likelihood (L-BFGS-B) starts from length scales equal to the columns\' standard deviations; each restart starts it again from a random point (scikit-learn\'s n_restarts_optimizer, drawn from the seed) and the best likelihood is kept: slower, and safer against a local maximum. Empty: 2 restarts when at most 150 rows are fitted (cheap), none above; from 0 to 50.',
+    seed: 'The seed of the rows drawn above Rows to Fit, of the optimizer\'s restarts and of the Sobol points of the sensitivities. Empty: a seed drawn at the first run and kept with the report, so that Redo, a project and the Python code give the same model.',
+  };
+  const ROLES = [
+    { key: 'y', label: 'Y', min: 1, numeric: true, types: ['continuous'], hint: 'required: continuous, a model each',
+      help: 'One or more continuous responses: a Gaussian process is fitted to each by maximum likelihood, with the same factors and settings (with several, each has an outline of its own). It suits a smooth response, most of all a deterministic computer experiment.' },
+    { key: 'x', label: 'X', min: 1, numeric: true, types: ['continuous'], hint: 'required: continuous factors',
+      help: 'The continuous factors, in their own units (they are not rescaled): the correlation of two runs falls with their distance in each factor, at a rate fitted per factor (Theta, or a length scale). Rows missing a factor are left out.' },
+    { key: 'by', label: 'By', hint: 'optional', help: 'A separate model and report for each level of the By column (each combination of levels, with several). Rows with a missing By value are left out.' },
+  ];
+  const OPTIONS = [
+    { key: 'correlation', label: 'Correlation Type', type: 'select', value: 'gaussian', choices: CORR.map(([k, l]) => [k, k === 'gaussian' ? l : `${l} (not JMP's Cubic)`]),
+      help: 'How the correlation of two runs falls with their distance. Gaussian (JMP\'s default): exp(−Σ θₖ (xₖ − x′ₖ)²), scikit-learn\'s RBF with a length scale ℓ per factor (θ = 1/(2ℓ²)), an infinitely smooth surface. Matérn ν = 5/2 or 3/2: scikit-learn\'s Matérn, a surface twice or once differentiable, for a response that changes more abruptly. JMP\'s other choice, Cubic, is not in scikit-learn; Matérn is offered in its place, not as it.' },
+    { key: 'nugget', label: 'Estimate Nugget Parameter', type: 'check', value: false, hint: 'smooth over noise (WhiteKernel) instead of going through every row',
+      help: 'Adds scikit-learn\'s WhiteKernel, a noise level fitted with the rest: the model no longer goes through every row but smooths over noise. Turn it on for a noisy response or replicated settings; off (the default), the fit interpolates the rows, as it should for a deterministic computer experiment.' },
+    { key: 'maxRows', label: 'Rows to Fit, at Most', type: 'number', value: 400, hint: 'more rows than this: the model is fitted to a random subset of this size (from the seed), the rest predicted', help: HELP.maxRows },
+    { key: 'restarts', label: 'Optimizer Restarts', type: 'number', value: null, hint: 'extra optimizer starts from random points (from the seed), the best likelihood kept; empty: 2 when at most 150 rows are fitted, else none', help: HELP.restarts },
+    { key: 'seed', label: 'Random Seed', type: 'text', value: '', hint: 'empty: a seed drawn now and kept with the report', help: HELP.seed },
+  ];
+
+  /* ======================================================================
      TOPICS: the (i) panels
      ====================================================================== */
   const TOPICS = {
@@ -212,9 +238,8 @@
       lead: 'A smooth surface through the responses of an experiment, most of all a deterministic computer experiment: the response is a Gaussian process over the factors, whose correlation falls with the distance between two settings, fitted by maximum likelihood. It predicts between the runs and says how much each factor, and each pair of factors, moves the response. The numbers are scikit-learn\'s GaussianProcessRegressor (normalize_y), one model per Y.',
       sections: [
         { heading: 'Roles', choices: [['Y', 'One or more continuous responses: a model each.'], ['X', 'Continuous factors.'], ['By', 'A separate analysis for each level.']] },
-        { heading: 'Correlation Type', choices: [['Gaussian', 'JMP\'s default: exp(−Σ θₖ (xₖ − x′ₖ)²), scikit-learn\'s RBF with a length scale per factor, θ = 1/(2ℓ²). Infinitely smooth.'], ['Matérn ν = 5/2, 3/2', 'scikit-learn\'s Matérn: twice or once differentiable surfaces. JMP\'s other choice, Cubic, is not in scikit-learn; Matérn is offered in its place, not as it.']] },
-        { heading: 'Estimate Nugget Parameter', text: 'Adds scikit-learn\'s WhiteKernel: the model no longer goes through every row but smooths over noise. Use it for a noisy response or replicated settings. Without it the fit interpolates the rows.' },
-        { heading: 'Rows to Fit, Optimizer Restarts, Random Seed', text: 'JMP fits every row; the fit grows as the cube of the rows, so above Rows to Fit (400) the model is fitted to that many rows drawn at random with the seed, and the other rows are predicted. The optimizer (L-BFGS-B) starts from length scales equal to the columns\' standard deviations; Optimizer Restarts start it again from random points (scikit-learn\'s n_restarts_optimizer, drawn from the seed) and keep the best likelihood: slower, and safer against a local maximum. Left empty, 2 restarts when at most 150 rows are fitted (cheap), none above.' },
+        // the launch's options (Correlation Type and the nugget are in the red triangle too, the others in Fit Settings…)
+        { heading: 'Options', choices: OPTIONS.map((o) => [o.label, o.help]) },
         { heading: 'Validation', text: 'JMP\'s Gaussian Process has no validation rows; the jackknife predictions of Actual by Predicted are its check.' },
       ],
       more: MORE,
@@ -250,18 +275,8 @@
     uses: ['sklearn.gaussian_process.GaussianProcessRegressor', 'sklearn.gaussian_process.kernels (RBF, Matern, ConstantKernel, WhiteKernel)', 'scipy.linalg.cho_solve', 'scipy.special.erf', 'scipy.stats.qmc.Sobol', 'numpy.polynomial.legendre.leggauss'],
     launch: {
       lead: 'Choose one or more continuous responses and the continuous factors. A Gaussian process is fitted to each response by maximum likelihood (scikit-learn\'s GaussianProcessRegressor).',
-      roles: [
-        { key: 'y', label: 'Y', min: 1, numeric: true, types: ['continuous'], hint: 'required: continuous, a model each' },
-        { key: 'x', label: 'X', min: 1, numeric: true, types: ['continuous'], hint: 'required: continuous factors' },
-        { key: 'by', label: 'By', hint: 'optional' },
-      ],
-      options: [
-        { key: 'correlation', label: 'Correlation Type', type: 'select', value: 'gaussian', choices: CORR.map(([k, l]) => [k, k === 'gaussian' ? l : `${l} (not JMP's Cubic)`]) },
-        { key: 'nugget', label: 'Estimate Nugget Parameter', type: 'check', value: false, hint: 'smooth over noise (WhiteKernel) instead of going through every row' },
-        { key: 'maxRows', label: 'Rows to Fit, at Most', type: 'number', value: 400, hint: 'more rows than this: the model is fitted to a random subset of this size (from the seed), the rest predicted' },
-        { key: 'restarts', label: 'Optimizer Restarts', type: 'number', value: null, hint: 'extra optimizer starts from random points (from the seed), the best likelihood kept; empty: 2 when at most 150 rows are fitted, else none' },
-        { key: 'seed', label: 'Random Seed', type: 'text', value: '', hint: 'empty: a seed drawn now and kept with the report' },
-      ],
+      roles: ROLES,
+      options: OPTIONS,
       validate: (spec) => {
         const o = spec.options || {};
         if (o.maxRows != null && !(Number.isInteger(o.maxRows) && o.maxRows >= 3)) return 'Rows to Fit is a whole number, 3 or more';

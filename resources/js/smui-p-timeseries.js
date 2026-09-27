@@ -61,9 +61,14 @@
   const horizon = (ctx) => Math.max(0, Math.min(1000, int(ctx.opt('forecast', 25), 25)));
   const maxiter = (ctx) => Math.max(5, int(ctx.opt('maxiter', 200), 200));
   function periodOf(ctx, S) {
+    return knownPeriod(ctx, S) || 12;
+  }
+  /* The seasonal period when one is known (the launch's, or the Time ID's
+     calendar's); null otherwise, when periodOf() guesses 12. */
+  function knownPeriod(ctx, S) {
     const p = int(ctx.opt('period', null), 0);
     if (p >= 2) return p;
-    return S && S.period_auto >= 2 ? S.period_auto : 12;
+    return S && S.period_auto >= 2 ? S.period_auto : null;
   }
   /* Observations per year of the Time ID's calendar frequency (pandas'
      frequency string: MS, QS-OCT, YS-JAN, W-SUN, 3MS ...), as the backend
@@ -524,9 +529,12 @@
       title: `Zivot-Andrews Test: ${col.name}`, info: 'p:timeseries:zivot',
       lead: 'The break is searched for between the trimmed ends of the series. The lags of the test regression are chosen once by the criterion, up to the largest lag (empty: 12(n/100)^¼, Schwert\'s rule).',
       fields: [
-        { key: 'trim', label: 'Trimming at each end (0 to 1/3)', type: 'number', value: o.trim },
-        { key: 'maxlag', label: 'Largest lag (empty: automatic)', type: 'number', value: o.maxlag ?? '' },
-        { key: 'autolag', label: 'Lags chosen by', type: 'select', value: o.autolag || 'none', choices: [['AIC', 'AIC'], ['BIC', 'BIC'], ['t-stat', 't statistic of the last lag'], ['none', 'none: the largest lag']] },
+        { key: 'trim', label: 'Trimming at each end (0 to 1/3)', type: 'number', value: o.trim, helpLabel: 'Trimming at each end',
+          help: 'The share of the series at each end where no break is looked for, from 0 up to below 1/3: 0.15 by default, Zivot and Andrews\' own. A break needs enough data on both sides; less trimming looks nearer the ends.' },
+        { key: 'maxlag', label: 'Largest lag (empty: automatic)', type: 'number', value: o.maxlag ?? '', helpLabel: 'Largest lag',
+          help: 'The most lagged differences in the test regression, a whole number from 0. Empty (the default): 12(n/100)^¼, Schwert\'s rule, as statsmodels takes it.' },
+        { key: 'autolag', label: 'Lags chosen by', type: 'select', value: o.autolag || 'none', choices: [['AIC', 'AIC'], ['BIC', 'BIC'], ['t-stat', 't statistic of the last lag'], ['none', 'none: the largest lag']],
+          help: 'How many of those lags the test keeps, chosen once for the regression without a break (Baum\'s approximation): AIC (the default) or BIC, the smallest criterion; the t statistic, dropping the last lag while it is not significant at 5%; none, all of them.' },
       ],
       validate: (x) => (!(x.trim >= 0 && x.trim < 1 / 3) ? 'Trimming: from 0 up to below 1/3' : x.maxlag != null && !(Number.isInteger(x.maxlag) && x.maxlag >= 0) ? 'Largest lag: a whole number from 0' : null),
     });
@@ -606,10 +614,16 @@
     const D = filterDefaults(S);
     const freq = D.f ? `${fmt(D.f)} observations a year` : 'no calendar frequency: statsmodels\' defaults, meant for quarterly data';
     const fields = kind === 'hp'
-      ? [{ key: 'lamb', label: 'λ, Smoothing', type: 'number', value: D.lamb }]
-      : [{ key: 'low', label: 'Shortest period in the band', type: 'number', value: D.low }, { key: 'high', label: 'Longest period in the band', type: 'number', value: D.high }];
-    if (kind === 'bk') fields.push({ key: 'K', label: 'K, Lead-lag length (values lost at each end)', type: 'number', value: D.K });
-    if (kind === 'cf') fields.push({ key: 'drift', label: 'Remove the drift first', type: 'check', value: true });
+      ? [{ key: 'lamb', label: 'λ, Smoothing', type: 'number', value: D.lamb,
+        help: 'The penalty on the trend\'s squared second differences, above 0: a larger λ gives a smoother trend and leaves more in the cycle. It starts at Ravn and Uhlig\'s 1600 (s/4)⁴ for s observations a year, or at 1600 when the Time ID has no calendar frequency.' }]
+      : [{ key: 'low', label: 'Shortest period in the band', type: 'number', value: D.low,
+        help: 'The shortest cycle kept, in observations, at least 2: movements faster than it stay out of the cycle. It starts at 1.5 years of observations (6 quarters), or 6 with no calendar frequency.' },
+      { key: 'high', label: 'Longest period in the band', type: 'number', value: D.high,
+        help: 'The longest cycle kept, in observations, above the shortest: slower movements count as trend. It starts at 8 years of observations (32 quarters), or 32 with no calendar frequency.' }];
+    if (kind === 'bk') fields.push({ key: 'K', label: 'K, Lead-lag length (values lost at each end)', type: 'number', value: D.K, helpLabel: 'K, Lead-lag length',
+      help: 'The half-length of the moving average, a whole number from 1: it has 2K + 1 terms, comes closer to the ideal band pass as K grows, and loses K values of the cycle at each end. It starts at 3 years of observations (12 quarters).' });
+    if (kind === 'cf') fields.push({ key: 'drift', label: 'Remove the drift first', type: 'check', value: true,
+      help: 'Takes out the line through the first and the last value (the drift of a random walk) before filtering, as Christiano and Fitzgerald do. On by default.' });
     const lead = kind === 'hp' ? `The trend minimises the squared deviations plus λ times the squared second differences of the trend. λ follows Ravn and Uhlig's rule 1600 (s/4)⁴ for s observations a year (${freq}): 6.25 yearly, 1600 quarterly, 129600 monthly.`
       : `A band-pass filter keeps the cycles whose period lies in the band, by default the business cycle of 1.5 to 8 years (${freq}).`;
     const v = await SM.ui.form({ title: `${FILTER_LABEL[kind]}: ${col.name}`, okLabel: 'Estimate', info: 'p:timeseries:filters', lead, fields,
@@ -1155,7 +1169,20 @@
   }
 
   /* ---- the dialogs ---------------------------------------------------------------------------------------------------------------- */
-  const LEVEL = (v = 0.95) => ({ key: 'level', label: 'Prediction Interval', type: 'number', value: v });
+  /* What the fields the model dialogs share are for: their (i). */
+  const H = {
+    level: 'The coverage of the prediction intervals, of the forecasts and of the one-step-ahead predictions: 0.95 by default, a number between 0 and 1.',
+    intercept: 'Estimates μ, the mean of the differenced series (with d = 1 a drift, a steady rise or fall); off fixes it at 0. On by default, as in JMP.',
+    constrain: 'Keeps the AR part stationary and the MA part invertible during the fit (statsmodels\' enforce_stationarity and enforce_invertibility). On by default; off lets the estimates go anywhere, which can fit a little better and forecast strangely.',
+    p: 'The number of autoregressive terms, 0 to 12: the differenced series depends on its own p previous values. A partial autocorrelation that cuts off after lag p suggests p.',
+    d: 'How many times the series is differenced before the ARMA part, 0 to 2: 1 for a series that wanders (a unit root: the ADF tests, or an autocorrelation that dies out slowly), 2 rarely.',
+    q: 'The number of moving average terms, 0 to 12: the series depends on the q previous shocks. An autocorrelation that cuts off after lag q suggests q.',
+    P: 'Autoregressive terms at the seasonal lags s, 2s, …: 0 to 4.',
+    D: 'Seasonal differences (1 − B^s), 0 to 2: 1 for a seasonal pattern that persists from one period to the next.',
+    Q: 'Moving average terms at the seasonal lags, 0 to 4. The airline model, a classic for monthly data, is (0, 1, 1)(0, 1, 1)12.',
+    s: 'The seasonal period s: 12 for monthly data, 4 for quarterly, 7 for daily data with a weekly pattern. At least 2; it starts at the Seasonal Period of the launch, or the Time ID\'s.',
+  };
+  const LEVEL = (v = 0.95) => ({ key: 'level', label: 'Prediction Interval', type: 'number', value: v, help: H.level });
   const levelOk = (x) => (x.level > 0 && x.level < 1 ? null : 'Prediction Interval: a level between 0 and 1, such as 0.95');
   const orderOk = (x, keys, max) => {
     for (const k of keys) if (x[k] != null && (!Number.isInteger(x[k]) || x[k] < 0 || x[k] > max[k])) return `${k}: a whole number from 0 to ${max[k]}`;
@@ -1167,16 +1194,16 @@
     const P0 = preset || {};
     const period = P0.s || periodOf(ctx, S);
     const fields = [
-      { key: 'p', label: 'p, Autoregressive Order', type: 'number', value: P0.p ?? 0 },
-      { key: 'd', label: 'd, Differencing Order', type: 'number', value: P0.d ?? 0 },
-      { key: 'q', label: 'q, Moving Average Order', type: 'number', value: P0.q ?? 0 },
+      { key: 'p', label: 'p, Autoregressive Order', type: 'number', value: P0.p ?? 0, help: H.p },
+      { key: 'd', label: 'd, Differencing Order', type: 'number', value: P0.d ?? 0, help: H.d },
+      { key: 'q', label: 'q, Moving Average Order', type: 'number', value: P0.q ?? 0, help: H.q },
     ];
     if (seasonal) fields.push(
-      { key: 'P', label: 'P, Seasonal Autoregressive Order', type: 'number', value: P0.P ?? 0 },
-      { key: 'D', label: 'D, Seasonal Differencing Order', type: 'number', value: P0.D ?? 1 },
-      { key: 'Q', label: 'Q, Seasonal Moving Average Order', type: 'number', value: P0.Q ?? 1 },
-      { key: 's', label: 'Observations per Period', type: 'number', value: period });
-    fields.push(LEVEL(P0.level), { key: 'intercept', label: 'Intercept', type: 'check', value: P0.intercept ?? true }, { key: 'constrain', label: 'Constrain fit', type: 'check', value: P0.constrain ?? true });
+      { key: 'P', label: 'P, Seasonal Autoregressive Order', type: 'number', value: P0.P ?? 0, help: H.P },
+      { key: 'D', label: 'D, Seasonal Differencing Order', type: 'number', value: P0.D ?? 1, help: H.D },
+      { key: 'Q', label: 'Q, Seasonal Moving Average Order', type: 'number', value: P0.Q ?? 1, help: H.Q },
+      { key: 's', label: 'Observations per Period', type: 'number', value: period, help: H.s });
+    fields.push(LEVEL(P0.level), { key: 'intercept', label: 'Intercept', type: 'check', value: P0.intercept ?? true, help: H.intercept }, { key: 'constrain', label: 'Constrain fit', type: 'check', value: P0.constrain ?? true, help: H.constrain });
     const v = await SM.ui.form({
       title: `${seasonal ? 'Seasonal ARIMA' : 'ARIMA'} Specification: ${col.name}`, okLabel: 'Estimate', info: 'p:timeseries:arima',
       lead: seasonal ? 'Seasonal ARIMA(p, d, q)(P, D, Q)s by exact maximum likelihood. The intercept is the mean of the differenced series; Constrain fit keeps the AR part stable and the MA part invertible.' : 'ARIMA(p, d, q) by exact maximum likelihood. The intercept is the mean of the differenced series; Constrain fit keeps the AR part stable and the MA part invertible.',
@@ -1204,8 +1231,10 @@
     const v = await SM.ui.form({
       title: `ARIMA Model Group: ${col.name}`, okLabel: 'Estimate', info: 'p:timeseries:group',
       lead: 'A range for each order, such as 0-2; every combination is fitted (at most 64 models) and goes into the Model Comparison table. The report of the best one by AIC shows; the Report boxes show others.',
-      fields: [...keys.map((k) => ({ key: k, label: `${labels[k]} (range)`, value: start[k] })), { key: 's', label: 'Observations per Period', type: 'number', value: period }, LEVEL(),
-        { key: 'intercept', label: 'Intercept', type: 'check', value: true }, { key: 'constrain', label: 'Constrain fit', type: 'check', value: true }],
+      fields: [...keys.map((k) => ({ key: k, label: `${labels[k]} (range)`, value: start[k], helpLabel: 'p, d, q, P, D, Q (ranges)',
+        help: 'For each order a whole number or a range such as 0-2 (also 0–2, 0 to 2, 0..2): every combination is fitted. p and q go to 12, d and D to 2, P and Q to 4, and at most 64 models in all. The first ranges, p 0-1 and q 0-1, make four models.' })),
+      { key: 's', label: 'Observations per Period', type: 'number', value: period, help: `${H.s} Used by the models whose P, D or Q is above 0.` }, LEVEL(),
+        { key: 'intercept', label: 'Intercept', type: 'check', value: true, help: `${H.intercept} For every model of the group.` }, { key: 'constrain', label: 'Constrain fit', type: 'check', value: true, help: H.constrain }],
       validate: (x) => {
         for (const k of keys) if (!parseRange(x[k], MAXO[k])) return `${labels[k]}: a whole number or a range such as 0-2 (at most ${MAXO[k]})`;
         const n = count(x);
@@ -1232,22 +1261,25 @@
     const P0 = preset || {};
     const period = P0.s || periodOf(ctx, S);
     const pre = new Map((P0.inputs || []).map((x) => [x.name, x]));
+    const noise = 'The ARIMA orders of the noise N_t, the part of Y the inputs leave: p and q 0 to 12, d and D 0 to 2, P and Q 0 to 4, read as in ARIMA… (an AR(1) noise at first). Choose them from the residual correlations of the fit.';
     const fields = [
-      { key: 'p', label: 'Noise p, Autoregressive Order', type: 'number', value: P0.p ?? 1 },
-      { key: 'd', label: 'Noise d, Differencing Order', type: 'number', value: P0.d ?? 0 },
-      { key: 'q', label: 'Noise q, Moving Average Order', type: 'number', value: P0.q ?? 0 },
-      { key: 'P', label: 'Noise P, Seasonal Autoregressive Order', type: 'number', value: P0.P ?? 0 },
-      { key: 'D', label: 'Noise D, Seasonal Differencing Order', type: 'number', value: P0.D ?? 0 },
-      { key: 'Q', label: 'Noise Q, Seasonal Moving Average Order', type: 'number', value: P0.Q ?? 0 },
-      { key: 's', label: 'Observations per Period', type: 'number', value: period },
+      { key: 'p', label: 'Noise p, Autoregressive Order', type: 'number', value: P0.p ?? 1, helpLabel: 'Noise p, d, q, P, D, Q', help: noise },
+      { key: 'd', label: 'Noise d, Differencing Order', type: 'number', value: P0.d ?? 0, helpLabel: 'Noise p, d, q, P, D, Q', help: noise },
+      { key: 'q', label: 'Noise q, Moving Average Order', type: 'number', value: P0.q ?? 0, helpLabel: 'Noise p, d, q, P, D, Q', help: noise },
+      { key: 'P', label: 'Noise P, Seasonal Autoregressive Order', type: 'number', value: P0.P ?? 0, helpLabel: 'Noise p, d, q, P, D, Q', help: noise },
+      { key: 'D', label: 'Noise D, Seasonal Differencing Order', type: 'number', value: P0.D ?? 0, helpLabel: 'Noise p, d, q, P, D, Q', help: noise },
+      { key: 'Q', label: 'Noise Q, Seasonal Moving Average Order', type: 'number', value: P0.Q ?? 0, helpLabel: 'Noise p, d, q, P, D, Q', help: noise },
+      { key: 's', label: 'Observations per Period', type: 'number', value: period, help: `${H.s} Used when the noise has a seasonal order.` },
     ];
     inputs.forEach((c, i) => {
       const p = pre.get(c.name);
-      fields.push({ key: `use${i}`, label: `Input ${c.name}`, type: 'check', value: preset ? !!p : true },
-        { key: `lag${i}`, label: `${c.name}: input lag (dead time)`, type: 'number', value: p ? p.lag || 0 : 0 },
-        { key: `num${i}`, label: `${c.name}: numerator order (more lags)`, type: 'number', value: p ? p.num || 0 : 0 });
+      fields.push({ key: `use${i}`, label: `Input ${c.name}`, type: 'check', value: preset ? !!p : true, helpLabel: 'Input (each column)', help: 'Whether that Input List column enters the model, at least one; all of them at first.' },
+        { key: `lag${i}`, label: `${c.name}: input lag (dead time)`, type: 'number', value: p ? p.lag || 0 : 0, helpLabel: 'Input lag (dead time)',
+          help: 'The delay b before the input acts: it enters as x(t − b), 0 by default. The first positive lag where Cross Correlation peaks is a good guess.' },
+        { key: `num${i}`, label: `${c.name}: numerator order (more lags)`, type: 'number', value: p ? p.num || 0 : 0, helpLabel: 'Numerator order (more lags)',
+          help: 'How many more lags of the input enter after b: x(t − b) to x(t − b − r), each with a coefficient of its own. 0 by default; b + r at most 24. The first b + r observations are left out of the fit.' });
     });
-    fields.push(LEVEL(P0.level), { key: 'intercept', label: 'Intercept', type: 'check', value: P0.intercept ?? true }, { key: 'constrain', label: 'Constrain fit', type: 'check', value: P0.constrain ?? true });
+    fields.push(LEVEL(P0.level), { key: 'intercept', label: 'Intercept', type: 'check', value: P0.intercept ?? true, help: H.intercept }, { key: 'constrain', label: 'Constrain fit', type: 'check', value: P0.constrain ?? true, help: H.constrain });
     const v = await SM.ui.form({
       title: `Transfer Function Model Specification: ${col.name}`, okLabel: 'Estimate', info: 'p:timeseries:transfer',
       lead: 'Regression on the inputs with ARIMA errors (statsmodels\' ARIMA with exog). Each input enters at its lag and, with a numerator order r, at the r lags after it. Forecasts take the inputs\' future values from the rows after the series; beyond them the last value is held.',
@@ -1275,8 +1307,9 @@
     const P0 = preset || {};
     const seasonal = method === 'seasonal' || method === 'winters';
     const fields = [LEVEL(P0.level)];
-    if (seasonal) fields.push({ key: 's', label: 'Observations per Period', type: 'number', value: P0.s || periodOf(ctx, S) });
-    if (method === 'winters') fields.push({ key: 'mult', label: 'Seasonality', type: 'select', value: P0.multiplicative ? 'mul' : 'add', choices: [['add', 'Additive (JMP\'s Winters Method)'], ['mul', 'Multiplicative']] });
+    if (seasonal) fields.push({ key: 's', label: 'Observations per Period', type: 'number', value: P0.s || periodOf(ctx, S), help: `${H.s} The series needs two periods and two values more.` });
+    if (method === 'winters') fields.push({ key: 'mult', label: 'Seasonality', type: 'select', value: P0.multiplicative ? 'mul' : 'add', choices: [['add', 'Additive (JMP\'s Winters Method)'], ['mul', 'Multiplicative']],
+      help: 'Additive (JMP\'s Winters Method): the seasonal effects are added to the level, a swing of the same size every period. Multiplicative: they scale the level, a swing that grows with the series; every value must be above zero.' });
     const v = await SM.ui.form({
       title: `${SMOOTH_LABEL[method]}: ${col.name}`, okLabel: 'Estimate', info: 'p:timeseries:smoothing',
       lead: 'The smoothing weights and the starting states that minimise the one-step-ahead squared errors (statsmodels\' holtwinters), with prediction intervals from the model\'s moving-average weights.',
@@ -1293,11 +1326,17 @@
       title: `Specify State Space Smoothing Models: ${col.name}`, okLabel: 'OK', info: 'p:timeseries:ets',
       lead: 'ETS(error, trend, seasonal) models of Hyndman et al. (2008): every combination of the boxes checked is fitted by maximum likelihood and compared by AICc. statsmodels has no multiplicative trend. Multiplicative parts need values above zero.',
       fields: [
-        { key: 'eA', label: 'Error: Additive (A)', type: 'check', value: true }, { key: 'eM', label: 'Error: Multiplicative (M)', type: 'check', value: pos },
-        { key: 'tN', label: 'Trend: None (N)', type: 'check', value: true }, { key: 'tA', label: 'Trend: Additive (A)', type: 'check', value: true }, { key: 'tAd', label: 'Trend: Additive damped (Ad)', type: 'check', value: true },
-        { key: 'sN', label: 'Seasonal: None (N)', type: 'check', value: true }, { key: 'sA', label: 'Seasonal: Additive (A)', type: 'check', value: period >= 2 }, { key: 'sM', label: 'Seasonal: Multiplicative (M)', type: 'check', value: pos && period >= 2 },
-        { key: 'period', label: 'Period', type: 'number', value: period },
-        { key: 'stable', label: 'Leave out additive errors with multiplicative seasonality (unstable)', type: 'check', value: true },
+        { key: 'eA', label: 'Error: Additive (A)', type: 'check', value: true, help: 'Fit models whose errors add to the prediction, of the same size at every level.' },
+        { key: 'eM', label: 'Error: Multiplicative (M)', type: 'check', value: pos, help: 'Fit models whose errors are relative, growing with the level; for values above zero (checked at first when every value is). Their prediction intervals are simulated.' },
+        { key: 'tN', label: 'Trend: None (N)', type: 'check', value: true, help: 'Fit models without a trend: the level wanders, and the forecasts are flat.' },
+        { key: 'tA', label: 'Trend: Additive (A)', type: 'check', value: true, help: 'Fit models with a trend that may change over time; the forecasts go on in a straight line.' },
+        { key: 'tAd', label: 'Trend: Additive damped (Ad)', type: 'check', value: true, help: 'Fit models whose trend flattens out over the forecasts (a damping φ below 1 is estimated); they often forecast best.' },
+        { key: 'sN', label: 'Seasonal: None (N)', type: 'check', value: true, help: 'Fit models without a seasonal part.' },
+        { key: 'sA', label: 'Seasonal: Additive (A)', type: 'check', value: knownPeriod(ctx, S) != null, help: 'Fit models whose seasonal effects add to the level: a swing of the same size every period. Checked at first when the period is known (the launch\'s Seasonal Period, or the Time ID\'s calendar), not when it is only guessed.' },
+        { key: 'sM', label: 'Seasonal: Multiplicative (M)', type: 'check', value: pos && knownPeriod(ctx, S) != null, help: 'Fit models whose seasonal effects scale the level, a swing that grows with the series; for values above zero (checked at first when every value is and the period is known). Their prediction intervals are simulated.' },
+        { key: 'period', label: 'Period', type: 'number', value: period, help: 'The seasonal period of the seasonal models, at least 2 (12 for monthly data); the series needs two periods and four values more.' },
+        { key: 'stable', label: 'Leave out additive errors with multiplicative seasonality (unstable)', type: 'check', value: true, helpLabel: 'Leave out additive errors with multiplicative seasonality',
+          help: 'Skips ETS(A, ·, M), whose likelihood is numerically unstable (Hyndman et al. 2008 leave these models out too). On by default.' },
         LEVEL(),
       ],
       validate: (x) => {
@@ -1334,20 +1373,28 @@
     const seasonalDefault = P0.kind ? (P0.seasonal ? 'dummy' : P0.freqPeriod ? 'trig' : 'none') : (S.period_auto >= 2 ? 'dummy' : 'none');
     const pre = new Set(P0.inputs || []);
     const fields = [
-      { key: 'trend', label: 'Level and Trend', type: 'select', value: P0.trend || 'local linear trend', choices: UC_TRENDS },
-      { key: 'seas', label: 'Seasonal', type: 'select', value: seasonalDefault, choices: [['none', 'None'], ['dummy', 'Seasonal dummies (time domain)'], ['trig', 'Trigonometric (frequency domain)']] },
-      { key: 'period', label: 'Seasonal Period', type: 'number', value: period },
-      { key: 'harmonics', label: 'Harmonics, trigonometric (empty: all)', type: 'number', value: P0.freqHarmonics || '' },
-      { key: 'stochSeasonal', label: 'Stochastic seasonal (it may change over time)', type: 'check', value: P0.kind ? (P0.seasonal ? P0.stochSeasonal !== false : P0.stochFreq !== false) : true },
-      { key: 'cycle', label: 'Cycle', type: 'check', value: !!P0.cycle },
-      { key: 'stochCycle', label: 'Stochastic cycle', type: 'check', value: P0.stochCycle !== false },
-      { key: 'damped', label: 'Damped cycle', type: 'check', value: P0.damped !== false },
-      { key: 'cycleLo', label: 'Cycle period from (empty: statsmodels\' default)', type: 'number', value: P0.cycleLo ?? '' },
-      { key: 'cycleHi', label: 'Cycle period to (empty: statsmodels\' default)', type: 'number', value: P0.cycleHi ?? '' },
-      { key: 'ar', label: 'Autoregressive Order', type: 'number', value: P0.ar || 0 },
+      { key: 'trend', label: 'Level and Trend', type: 'select', value: P0.trend || 'local linear trend', choices: UC_TRENDS,
+        help: 'The trend part, one of statsmodels\' twelve: from no trend (y = ε) and a fixed intercept, through the local level (a random-walk level plus noise), to the local linear trend (the default: a level and a slope that both follow random walks) and the smooth trend (a random slope only). A variance estimated at 0 fixes that part.' },
+      { key: 'seas', label: 'Seasonal', type: 'select', value: seasonalDefault, choices: [['none', 'None'], ['dummy', 'Seasonal dummies (time domain)'], ['trig', 'Trigonometric (frequency domain)']],
+        help: 'None; seasonal dummies, one effect per season summing to zero over the period; or a trigonometric seasonal of sines and cosines, which with fewer harmonics gives a smoother pattern. Seasonal dummies at first when the Time ID has a seasonal period.' },
+      { key: 'period', label: 'Seasonal Period', type: 'number', value: period, help: 'The observations per period of the seasonal part, a whole number from 2 (12 for monthly data). Not used with Seasonal None.' },
+      { key: 'harmonics', label: 'Harmonics, trigonometric (empty: all)', type: 'number', value: P0.freqHarmonics || '', helpLabel: 'Harmonics',
+        help: 'For a trigonometric seasonal: how many sine-cosine pairs, 1 to period/2; empty takes them all. Fewer harmonics, fewer parameters and a smoother seasonal pattern.' },
+      { key: 'stochSeasonal', label: 'Stochastic seasonal (it may change over time)', type: 'check', value: P0.kind ? (P0.seasonal ? P0.stochSeasonal !== false : P0.stochFreq !== false) : true, helpLabel: 'Stochastic seasonal',
+        help: 'On (the default): the seasonal pattern may change slowly over time, with a variance of its own. Off: the same pattern in every period.' },
+      { key: 'cycle', label: 'Cycle', type: 'check', value: !!P0.cycle, help: 'Adds a cycle whose period (its frequency) is estimated within bounds, such as a business cycle. Off by default.' },
+      { key: 'stochCycle', label: 'Stochastic cycle', type: 'check', value: P0.stochCycle !== false, help: 'With a cycle: its amplitude and phase may change over time (on, the default); off, a fixed wave.' },
+      { key: 'damped', label: 'Damped cycle', type: 'check', value: P0.damped !== false, help: 'With a cycle: a damping factor below 1 is estimated, so the cycle dies out unless new shocks renew it (on, the default); off, undamped.' },
+      { key: 'cycleLo', label: 'Cycle period from (empty: statsmodels\' default)', type: 'number', value: P0.cycleLo ?? '', helpLabel: 'Cycle period from',
+        help: 'The shortest period the cycle may take, in observations, at least 2. With both bounds empty statsmodels bounds the period to 1.5 to 12 years for yearly, quarterly and monthly data; with only the upper bound given, this one is 2. Try other bounds when cycle models end at different maxima.' },
+      { key: 'cycleHi', label: 'Cycle period to (empty: statsmodels\' default)', type: 'number', value: P0.cycleHi ?? '', helpLabel: 'Cycle period to',
+        help: 'The longest period the cycle may take, above the lower bound; empty with a lower bound given: no upper bound.' },
+      { key: 'ar', label: 'Autoregressive Order', type: 'number', value: P0.ar || 0, help: 'An AR(p) part, 0 to 12 (0 by default), beside the irregular: short-run dynamics the other parts leave in the residuals.' },
     ];
-    inputs.forEach((c, i) => fields.push({ key: `use${i}`, label: `Input ${c.name}`, type: 'check', value: preset ? pre.has(c.name) : true }));
-    fields.push({ key: 'exact', label: 'Exact diffuse initialization', type: 'check', value: !!P0.exact }, LEVEL(P0.level));
+    inputs.forEach((c, i) => fields.push({ key: `use${i}`, label: `Input ${c.name}`, type: 'check', value: preset ? pre.has(c.name) : true, helpLabel: 'Input (each column)',
+      help: 'Whether that Input List column enters as a regressor, its coefficient estimated with the rest; all of them at first. The forecasts take its future values from the rows after the series.' }));
+    fields.push({ key: 'exact', label: 'Exact diffuse initialization', type: 'check', value: !!P0.exact,
+      help: 'Durbin and Koopman\'s exact likelihood for the nonstationary states (the published Nile estimates need it). Off (the default): statsmodels\' approximate diffuse start, which leaves the first observations out of the likelihood.' }, LEVEL(P0.level));
     const v = await SM.ui.form({
       title: `Structural Model Specification: ${col.name}`, okLabel: 'Estimate', info: 'p:timeseries:structural',
       lead: 'y = level + seasonal + cycle + autoregressive + regression on the inputs + irregular, each part a small state space model (statsmodels\' UnobservedComponents), fitted by maximum likelihood with the Kalman filter. Missing values are skipped. The cycle\'s period is bounded; statsmodels\' default is 1.5 to 12 years for yearly, quarterly and monthly data.',
@@ -1379,13 +1426,17 @@
       title: `Regime Switching Specification: ${col.name}`, okLabel: 'Estimate', info: 'p:timeseries:regime',
       lead: 'k regimes, each with its own mean (and trend), variance or AR coefficients, and a Markov chain that moves between them (Hamilton 1989; statsmodels\' MarkovRegression, or MarkovAutoregression with an AR part). The likelihood has local maxima: the fit starts from statsmodels\' default and from random starts (a fixed seed) and keeps the best.',
       fields: [
-        { key: 'k', label: 'Number of Regimes', type: 'select', value: String(P0.k || 2), choices: [['2', '2'], ['3', '3']] },
-        { key: 'order', label: 'Autoregressive Order (0: switching regression)', type: 'number', value: P0.order || 0 },
-        { key: 'trend', label: 'Mean', type: 'select', value: P0.trend || 'c', choices: [['c', 'Intercept'], ['ct', 'Intercept and linear trend'], ['n', 'None (only the variance switches)']] },
-        { key: 'swTrend', label: 'Switching mean (and trend)', type: 'check', value: P0.swTrend !== false },
-        { key: 'swVar', label: 'Switching variance', type: 'check', value: !!P0.swVar },
-        { key: 'swAr', label: 'Switching AR coefficients', type: 'check', value: !!P0.swAr },
-        { key: 'starts', label: 'Random Starts', type: 'number', value: P0.starts ?? 5 },
+        { key: 'k', label: 'Number of Regimes', type: 'select', value: String(P0.k || 2), choices: [['2', '2'], ['3', '3']],
+          help: '2 (the default: expansion and recession, calm and turbulent) or 3. More regimes need more data (ten values per regime at least) and have more local maxima.' },
+        { key: 'order', label: 'Autoregressive Order (0: switching regression)', type: 'number', value: P0.order || 0, helpLabel: 'Autoregressive Order',
+          help: '0 (the default): statsmodels\' MarkovRegression, the series about the regime\'s mean with no dynamics of its own. 1 to 8: MarkovAutoregression, an AR(p) about the regime\'s mean.' },
+        { key: 'trend', label: 'Mean', type: 'select', value: P0.trend || 'c', choices: [['c', 'Intercept'], ['ct', 'Intercept and linear trend'], ['n', 'None (only the variance switches)']],
+          help: 'What each regime\'s mean is made of: an intercept (the default), an intercept and a linear trend, or none, when only the variance (or the AR part) can switch.' },
+        { key: 'swTrend', label: 'Switching mean (and trend)', type: 'check', value: P0.swTrend !== false, help: 'Each regime has its own intercept (and trend); off, they share one. On by default.' },
+        { key: 'swVar', label: 'Switching variance', type: 'check', value: !!P0.swVar, help: 'Each regime has its own variance, for calm and turbulent periods. Off by default.' },
+        { key: 'swAr', label: 'Switching AR coefficients', type: 'check', value: !!P0.swAr, help: 'With an Autoregressive Order above 0: each regime has its own AR coefficients; off, they share them.' },
+        { key: 'starts', label: 'Random Starts', type: 'number', value: P0.starts ?? 5,
+          help: 'How many random starting points, 0 to 50 (5 by default), beside statsmodels\' default start and one with the regimes at the quantiles of the series: each is fitted and the highest likelihood kept (the Starts table shows them all). The draws have a fixed seed, so the report is the same every time; more starts find the best maximum more surely, and take longer.' },
       ],
       validate: (x) => {
         if (!(Number.isInteger(x.order) && x.order >= 0 && x.order <= 8)) return 'Autoregressive Order: a whole number from 0 to 8';
@@ -1407,12 +1458,17 @@
       title: `Theta Model: ${col.name}`, okLabel: 'Estimate', info: 'p:timeseries:theta',
       lead: 'The theta method (Assimakopoulos and Nikolopoulos 2000) with statsmodels\' ThetaModel: the series is deseasonalized if it tests seasonal, simple exponential smoothing gives α and a linear trend b0, and the forecast weights the trend line by (θ − 1)/θ. θ = 2 is the classic method, simple exponential smoothing with drift.',
       fields: [
-        { key: 'theta', label: 'θ, Theta (at least 1)', type: 'number', value: P0.theta || 2 },
-        { key: 'deseasonalize', label: 'Deseasonalize', type: 'check', value: P0.deseasonalize ?? period >= 2 },
-        { key: 'period', label: 'Seasonal Period', type: 'number', value: period },
-        { key: 'useTest', label: 'Test for seasonality first (10%)', type: 'check', value: P0.useTest !== false },
-        { key: 'method', label: 'Deseasonalizing', type: 'select', value: P0.method || 'auto', choices: [['auto', 'Automatic: multiplicative if every value is above zero'], ['multiplicative', 'Multiplicative'], ['additive', 'Additive']] },
-        { key: 'mle', label: 'Estimate by maximum likelihood (an IMA(1, 1) with drift)', type: 'check', value: !!P0.mle },
+        { key: 'theta', label: 'θ, Theta (at least 1)', type: 'number', value: P0.theta || 2, helpLabel: 'θ, Theta',
+          help: 'How much the forecasts follow the trend line: it is weighted by (θ − 1)/θ. 2 (the default) is the classic method, simple exponential smoothing with drift; 1 is simple exponential smoothing alone; a larger θ follows the trend more closely.' },
+        { key: 'deseasonalize', label: 'Deseasonalize', type: 'check', value: P0.deseasonalize ?? period >= 2,
+          help: 'Takes the seasonal pattern out before the fit (seasonal_decompose) and puts it back into the forecasts. On at first; a series shorter than two periods is left as it is.' },
+        { key: 'period', label: 'Seasonal Period', type: 'number', value: period, help: 'The observations per period used to deseasonalize, a whole number from 2.' },
+        { key: 'useTest', label: 'Test for seasonality first (10%)', type: 'check', value: P0.useTest !== false, helpLabel: 'Test for seasonality first',
+          help: 'On (the default): the series is deseasonalized only when its autocorrelation at the seasonal lag is significant at 10%, as statsmodels tests it. Off: always, when Deseasonalize is on.' },
+        { key: 'method', label: 'Deseasonalizing', type: 'select', value: P0.method || 'auto', choices: [['auto', 'Automatic: multiplicative if every value is above zero'], ['multiplicative', 'Multiplicative'], ['additive', 'Additive']],
+          help: 'How the seasonal pattern is taken out: Automatic (multiplicative when every value is above zero, else additive), Multiplicative (a swing that grows with the level) or Additive (a swing of one size).' },
+        { key: 'mle', label: 'Estimate by maximum likelihood (an IMA(1, 1) with drift)', type: 'check', value: !!P0.mle, helpLabel: 'Estimate by maximum likelihood',
+          help: 'Estimates α and the drift together, by maximum likelihood of the IMA(1, 1) with drift that the method is. Off (the default): α from simple exponential smoothing and the drift from a linear trend, the original method.' },
         LEVEL(P0.level),
       ],
       validate: (x) => (!(x.theta >= 1) ? 'θ: at least 1' : x.deseasonalize && !(Number.isInteger(x.period) && x.period >= 2) ? 'Seasonal Period: a whole number from 2' : levelOk(x)),
@@ -1438,18 +1494,27 @@
     const P0 = preset || {};
     const pre = new Set(P0.inputs || []);
     const fields = [];
-    inputs.forEach((c, i) => fields.push({ key: `use${i}`, label: `Input ${c.name}`, type: 'check', value: preset ? pre.has(c.name) : true }));
+    inputs.forEach((c, i) => fields.push({ key: `use${i}`, label: `Input ${c.name}`, type: 'check', value: preset ? pre.has(c.name) : true, helpLabel: 'Input (each column)',
+      help: 'Whether that Input List column enters the model, at least one and at most nine; all of them at first.' }));
     const ordersText = P0.order ? [P0.order.p || 0, ...(P0.inputs || []).map((c) => (P0.order.q && P0.order.q[c] != null ? P0.order.q[c] : '-'))].join(', ') : '';
     fields.push(
-      { key: 'maxlag', label: `Largest lag of ${col.name}, p`, type: 'number', value: P0.maxlag || 4 },
-      { key: 'maxorder', label: 'Largest lag of the inputs, q', type: 'number', value: P0.maxorder ?? 4 },
-      { key: 'ic', label: 'Choose the orders by', type: 'select', value: P0.ic || 'aic', choices: [['aic', 'AIC'], ['bic', 'BIC']] },
-      { key: 'glob', label: 'Search every subset of lags (slow)', type: 'check', value: !!P0.glob },
-      { key: 'orders', label: 'Or fixed orders p, q1, q2 … (- leaves an input out)', type: 'text', value: ordersText, placeholder: 'empty: choose them' },
-      { key: 'trend', label: 'Deterministic Terms', type: 'select', value: P0.trend || 'c', choices: [['c', 'Intercept'], ['ct', 'Intercept and trend'], ['n', 'None']] },
-      { key: 'case', label: 'Bounds Test Case', type: 'select', value: String(P0.case || ''), choices: [['', 'Automatic: 3 with an intercept, 4 with a trend, 1 with neither'], ['1', '1: no intercept, no trend'], ['2', '2: restricted intercept'], ['3', '3: unrestricted intercept'], ['4', '4: restricted trend'], ['5', '5: unrestricted trend']] },
-      { key: 'causal', label: 'Causal: the inputs from lag 1 on', type: 'check', value: !!P0.causal },
-      { key: 'seasonal', label: 'Seasonal dummies', type: 'check', value: !!P0.seasonal },
+      { key: 'maxlag', label: `Largest lag of ${col.name}, p`, type: 'number', value: P0.maxlag || 4, helpLabel: 'Largest lag of the series, p',
+        help: 'The most lags of the series itself that the order search tries, 1 to 24 (4 by default).' },
+      { key: 'maxorder', label: 'Largest lag of the inputs, q', type: 'number', value: P0.maxorder ?? 4, help: 'The most lags of each input the search tries, 0 to 24 (4 by default); 0 keeps each input\'s current value only.' },
+      { key: 'ic', label: 'Choose the orders by', type: 'select', value: P0.ic || 'aic', choices: [['aic', 'AIC'], ['bic', 'BIC']],
+        help: 'The criterion of the order search (statsmodels\' ardl_select_order), every candidate fitted on the same sample: AIC (the default), or BIC, which chooses shorter lags.' },
+      { key: 'glob', label: 'Search every subset of lags (slow)', type: 'check', value: !!P0.glob, helpLabel: 'Search every subset of lags',
+        help: 'Tries every subset of the lags up to the largest, skipping lags in between, instead of the orders 1 to p only; at most 4096 models, so keep the largest lags small. Off by default.' },
+      { key: 'orders', label: 'Or fixed orders p, q1, q2 … (- leaves an input out)', type: 'text', value: ordersText, placeholder: 'empty: choose them', helpLabel: 'Fixed orders',
+        help: 'Orders to use instead of a search: p for the series, then a q for each input checked, in their order, apart by commas or spaces (such as 2, 1, 0); - leaves that input out. Empty (the default): the search chooses them.' },
+      { key: 'trend', label: 'Deterministic Terms', type: 'select', value: P0.trend || 'c', choices: [['c', 'Intercept'], ['ct', 'Intercept and trend'], ['n', 'None']],
+        help: 'The regression\'s deterministic terms: an intercept (the default), an intercept and a linear trend, or none. They decide which bounds test cases apply.' },
+      { key: 'case', label: 'Bounds Test Case', type: 'select', value: String(P0.case || ''), choices: [['', 'Automatic: 3 with an intercept, 4 with a trend, 1 with neither'], ['1', '1: no intercept, no trend'], ['2', '2: restricted intercept'], ['3', '3: unrestricted intercept'], ['4', '4: restricted trend'], ['5', '5: unrestricted trend']],
+        help: 'Where Pesaran, Shin and Smith\'s bounds test puts the deterministic terms: in the level relation (restricted) or outside it. Automatic takes the usual one, 3 with an intercept and 4 with a trend (1 with neither); 2 goes with an intercept and 5 with a trend.' },
+      { key: 'causal', label: 'Causal: the inputs from lag 1 on', type: 'check', value: !!P0.causal, helpLabel: 'Causal',
+        help: 'Leaves out the inputs\' current values (lag 0), so that the model uses only their past. Off by default.' },
+      { key: 'seasonal', label: 'Seasonal dummies', type: 'check', value: !!P0.seasonal,
+        help: 'Adds a dummy for each season of the seasonal period (the launch\'s Seasonal Period, else the Time ID\'s, else 12). Off by default; the bounds test refits without them.' },
       LEVEL(P0.level));
     const v = await SM.ui.form({
       title: `ARDL Specification: ${col.name}`, okLabel: 'Estimate', info: 'p:timeseries:ardl',
@@ -1497,9 +1562,11 @@
       title: `Differencing Specification: ${col.name}`, okLabel: 'Estimate', info: 'p:timeseries:difference',
       lead: 'w_t = (1 − B)^d (1 − B^s)^D y_t. Each Estimate adds a Difference report.',
       fields: [
-        { key: 'd', label: 'Nonseasonal Differencing Order, d', type: 'select', value: '1', choices: [['0', '0'], ['1', '1'], ['2', '2']] },
-        { key: 'D', label: 'Seasonal Differencing Order, D', type: 'select', value: '0', choices: [['0', '0'], ['1', '1'], ['2', '2']] },
-        { key: 's', label: 'Observations per Period, s', type: 'number', value: periodOf(ctx, S) },
+        { key: 'd', label: 'Nonseasonal Differencing Order, d', type: 'select', value: '1', choices: [['0', '0'], ['1', '1'], ['2', '2']],
+          help: 'How many times the series is differenced, (1 − B)^d: 1 (the default) turns a series that wanders, with a unit root, into its changes; 2 rarely helps. Its ADF tests and autocorrelations then say whether that was enough.' },
+        { key: 'D', label: 'Seasonal Differencing Order, D', type: 'select', value: '0', choices: [['0', '0'], ['1', '1'], ['2', '2']],
+          help: 'Seasonal differences (1 − B^s)^D, each value less the one a period before: 1 takes out a seasonal pattern that repeats from period to period. 0 by default.' },
+        { key: 's', label: 'Observations per Period, s', type: 'number', value: periodOf(ctx, S), help: 'The seasonal period of the seasonal differences, at least 2 when D is above 0; it starts at the Seasonal Period of the launch, or the Time ID\'s.' },
       ],
       validate: (x) => (+x.D > 0 && !(x.s >= 2) ? 'Observations per Period: at least 2' : null),
     });
@@ -1513,15 +1580,26 @@
     const period = periodOf(ctx, S);
     let spec = { kind };
     if (kind === 'cycle') {
-      const v = await SM.ui.form({ title: `Define Cycle: ${col.name}`, info: 'p:timeseries:decomposition', fields: [{ key: 'units', label: 'Units per Cycle', type: 'number', value: period }, { key: 'constant', label: 'Subtract a constant', type: 'check', value: true }], validate: (x) => (x.units > 1 ? null : 'Units per Cycle: above 1') });
+      const v = await SM.ui.form({ title: `Define Cycle: ${col.name}`, info: 'p:timeseries:decomposition', fields: [
+        { key: 'units', label: 'Units per Cycle', type: 'number', value: period, help: 'The length U of the cycle in observations, above 1 (12 for a yearly cycle of monthly data); it starts at the seasonal period. The amplitude and the phase of C + A cos(2πt/U + P) are fitted by least squares.' },
+        { key: 'constant', label: 'Subtract a constant', type: 'check', value: true, help: 'On (the default): the cycle has a constant C, fitted with it and removed with it, so the decycled series is centred near zero. Off: the cosine alone, and the series keeps its level.' }],
+      validate: (x) => (x.units > 1 ? null : 'Units per Cycle: above 1') });
       if (!v) return;
       spec = { kind, units: v.units, constant: !!v.constant };
     } else if (kind === 'classical') {
-      const v = await SM.ui.form({ title: `Seasonal Decomposition: ${col.name}`, info: 'p:timeseries:decomposition', fields: [{ key: 'period', label: 'Period', type: 'number', value: period }, { key: 'model', label: 'Decomposition Type', type: 'select', value: 'additive', choices: [['additive', 'Additive'], ['multiplicative', 'Multiplicative']] }], validate: (x) => (x.period >= 2 ? null : 'Period: at least 2') });
+      const v = await SM.ui.form({ title: `Seasonal Decomposition: ${col.name}`, info: 'p:timeseries:decomposition', fields: [
+        { key: 'period', label: 'Period', type: 'number', value: period, help: 'The seasonal period, at least 2: the moving average of the trend runs over one period. The series needs two full periods and one value more.' },
+        { key: 'model', label: 'Decomposition Type', type: 'select', value: 'additive', choices: [['additive', 'Additive'], ['multiplicative', 'Multiplicative']],
+          help: 'Additive (the default): y = trend + seasonal + irregular, a seasonal swing of one size. Multiplicative: y = trend × seasonal × irregular, a swing that grows with the level; every value must be above zero.' }],
+      validate: (x) => (x.period >= 2 ? null : 'Period: at least 2') });
       if (!v) return;
       spec = { kind, period: Math.round(v.period), model: v.model };
     } else if (kind === 'stl') {
-      const v = await SM.ui.form({ title: `STL Decomposition: ${col.name}`, info: 'p:timeseries:decomposition', fields: [{ key: 'period', label: 'Period', type: 'number', value: period }, { key: 'robust', label: 'Robust (downweights outliers)', type: 'check', value: false }], validate: (x) => (x.period >= 2 ? null : 'Period: at least 2') });
+      const v = await SM.ui.form({ title: `STL Decomposition: ${col.name}`, info: 'p:timeseries:decomposition', fields: [
+        { key: 'period', label: 'Period', type: 'number', value: period, help: 'The seasonal period, at least 2 (12 for monthly data); the series needs two full periods and one value more.' },
+        { key: 'robust', label: 'Robust (downweights outliers)', type: 'check', value: false, helpLabel: 'Robust',
+          help: 'STL\'s robust fit: values far from the fit get less weight, so an outlier ends in the irregular part instead of bending the trend and the seasonal. Off by default.' }],
+      validate: (x) => (x.period >= 2 ? null : 'Period: at least 2') });
       if (!v) return;
       spec = { kind, period: Math.round(v.period), robust: !!v.robust };
     }
@@ -1592,8 +1670,10 @@
 
   function globalItems(ctx) {
     return [
-      { label: 'Number of Forecast Periods…', action: async () => { const v = await SM.ui.form({ title: 'Number of Forecast Periods', fields: [{ key: 'n', label: 'Forecast periods for every model', type: 'number', value: horizon(ctx) }], validate: (x) => (x.n >= 0 && x.n <= 1000 ? null : 'from 0 to 1000') }); if (v) ctx.set('forecast', Math.round(v.n)); } },
-      { label: 'Maximum Iterations…', action: async () => { const v = await SM.ui.form({ title: 'Maximum Iterations', lead: 'For the ARIMA and state space fits from now on.', fields: [{ key: 'n', label: 'Maximum iterations', type: 'number', value: maxiter(ctx) }], validate: (x) => (x.n >= 5 && x.n <= 10000 ? null : 'from 5 to 10000') }); if (v) ctx.set('maxiter', Math.round(v.n)); } },
+      { label: 'Number of Forecast Periods…', action: async () => { const v = await SM.ui.form({ title: 'Number of Forecast Periods', fields: [{ key: 'n', label: 'Forecast periods for every model', type: 'number', value: horizon(ctx),
+        help: 'How many periods after the end of the series every model forecasts, with its prediction interval: 0 to 1000 (0: none). It starts at the launch\'s Forecast Periods, 25 by default.' }], validate: (x) => (x.n >= 0 && x.n <= 1000 ? null : 'from 0 to 1000') }); if (v) ctx.set('forecast', Math.round(v.n)); } },
+      { label: 'Maximum Iterations…', action: async () => { const v = await SM.ui.form({ title: 'Maximum Iterations', lead: 'For the ARIMA and state space fits from now on.', fields: [{ key: 'n', label: 'Maximum iterations', type: 'number', value: maxiter(ctx),
+        help: 'The most iterations of the optimizer, 5 to 10 000 (200 by default), for the ARIMA, transfer function and structural model fits; the state space smoothing fits take at least 200 and the regime-switching fits at most 500. Raise it when a model reports that its fit did not converge.' }], validate: (x) => (x.n >= 5 && x.n <= 10000 ? null : 'from 5 to 10000') }); if (v) ctx.set('maxiter', Math.round(v.n)); } },
     ];
   }
 
@@ -1636,7 +1716,13 @@
       more: MORE,
     },
     'p:timeseries:spectral': { kicker: 'Time Series', title: 'Spectral Density', lead: 'The periodogram I(f_i) = (N/2)(a_i² + b_i²) at the frequencies i/N, from the least squares Fourier coefficients, and the spectral density: the periodogram smoothed (triangular weights) and scaled by 1/(4π), against frequency and period. The White Noise Test gives Fisher\'s kappa (the largest periodogram value over the mean) with its exact p-value and Bartlett\'s Kolmogorov-Smirnov statistic of the cumulative periodogram.', more: MORE },
-    'p:timeseries:lag': { kicker: 'Time Series', title: 'Lag Plot', lead: 'Each observation against the one p periods earlier. A cloud with no shape says the observations are unrelated at that lag; a line or a curve says they are related. Change p in the box; points are linked to the rows.', more: MORE },
+    'p:timeseries:lag': {
+      kicker: 'Time Series', title: 'Lag Plot',
+      lead: 'Each observation against the one p periods earlier. A cloud with no shape says the observations are unrelated at that lag; a line or a curve says they are related. Change p in the box; points are linked to the rows.',
+      sections: [{ heading: 'In the report', choices: [['Lag p', 'the lag of the plot, a whole number from 1 (1 at first): type it and press Enter, or leave the box; the plot, the number of pairs and their correlation follow'],
+        ['− and +', 'one lag less or more, drawn at once; the lag stays between 1 and n − 2'], ['A point', 'an observation and the one p before it: clicking or dragging selects the later row']] }],
+      more: MORE,
+    },
     'p:timeseries:ccf': { kicker: 'Time Series', title: 'Cross Correlation', lead: 'The correlation of the series at t + k with an input at t, for k from −K to K (statsmodels\' ccf): peaks at positive lags mean the input leads. The ticks are ±2 standard errors 1/√(n − |k|). Used to choose the lags of a transfer function.', more: MORE },
     'p:timeseries:arima': {
       kicker: 'Time Series', title: 'ARIMA and Seasonal ARIMA',
@@ -1659,8 +1745,20 @@
       ],
       more: MORE,
     },
-    'p:timeseries:ets': { kicker: 'Time Series', title: 'State Space Smoothing', lead: 'ETS(error, trend, seasonal) models (Hyndman et al. 2008) with additive or multiplicative errors, no, additive or damped trend, and no, additive or multiplicative seasonality, fitted by maximum likelihood with statsmodels\' ETSModel and ranked by AICc. Their likelihood is not comparable with the ARIMA models\', as JMP also warns. Multiplicative models get simulated prediction intervals (a fixed seed).', more: MORE },
-    'p:timeseries:comparison': { kicker: 'Time Series', title: 'Model Comparison', lead: 'Every fitted model with DF, variance, AIC, SBC, AICc, RSquare, −2LogLikelihood, AIC weights, MAPE and MAE, sorted by AIC. Report shows the model\'s report; Graph overlays its forecasts, prediction interval and residual autocorrelations in the plots below. The red triangle removes or hides models, and saves all forecasts in one new table.', more: MORE },
+    'p:timeseries:ets': {
+      kicker: 'Time Series', title: 'State Space Smoothing',
+      lead: 'ETS(error, trend, seasonal) models (Hyndman et al. 2008) with additive or multiplicative errors, no, additive or damped trend, and no, additive or multiplicative seasonality, fitted by maximum likelihood with statsmodels\' ETSModel and ranked by AICc. Their likelihood is not comparable with the ARIMA models\', as JMP also warns. Multiplicative models get simulated prediction intervals (a fixed seed).',
+      sections: [{ heading: 'In the report', choices: [['A line of the selection table', 'click it to show that model\'s report, and its forecasts in the Model Comparison plots; the best by AICc (★) shows at first. The Report and Graph boxes of Model Comparison hide them again']] }],
+      more: MORE,
+    },
+    'p:timeseries:comparison': {
+      kicker: 'Time Series', title: 'Model Comparison',
+      lead: 'Every fitted model with DF, variance, AIC, SBC, AICc, RSquare, −2LogLikelihood, AIC weights, MAPE and MAE, sorted by AIC. Report shows the model\'s report; Graph overlays its forecasts, prediction interval and residual autocorrelations in the plots below. The red triangle removes or hides models, and saves all forecasts in one new table.',
+      sections: [{ heading: 'In the report', choices: [['Report', 'the box of a model: checked, its report (Model Summary, Parameter Estimates, Forecast, Residuals) shows below the table. Every model\'s is checked at first, but only the best of a model group (by AIC, or AICc for state space smoothing)'],
+        ['Graph', 'the box of a model: checked, its one-step-ahead predictions, forecasts and prediction interval join the forecast plot, and its residual autocorrelations the two small plots, in the model\'s colour'],
+        ['A column heading', 'click it to sort the models by that statistic, again to reverse the order'], ['Right click the table', 'Copy Table, or Make into Data Table']] }],
+      more: MORE,
+    },
     'p:timeseries:structural': {
       kicker: 'Time Series', title: 'Structural Model',
       lead: 'A structural (unobserved components) model writes the series as a sum of parts, each a small state space model: y = level + seasonal + cycle + autoregressive + β\'x + irregular. statsmodels\' UnobservedComponents fits the variances of their disturbances (and the cycle\'s frequency and damping, the AR coefficients, the input coefficients) by maximum likelihood with the Kalman filter, which also skips missing values.',
@@ -1758,15 +1856,22 @@
     launch: {
       lead: 'Choose the series. A date column as X, Time ID gives a date axis, the seasonal period and the dates of the forecasts; Input List columns are the inputs of transfer functions, structural and ARDL models.',
       roles: [
-        { key: 'y', label: 'Y, Time Series', min: 1, types: ['continuous'], hint: 'required: one or more continuous' },
-        { key: 'inputs', label: 'Input List', numeric: true, hint: 'optional numeric: inputs of transfer functions, structural and ARDL models' },
-        { key: 'time', label: 'X, Time ID', max: 1, numeric: true, hint: 'optional: a date or a time step', info: 'p:timeseries:timeid' },
-        { key: 'by', label: 'By', hint: 'optional' },
+        { key: 'y', label: 'Y, Time Series', min: 1, types: ['continuous'], hint: 'required: one or more continuous',
+          help: 'The series to analyse, in time order (the Time ID\'s, else the rows\'); each column gets its own outline, red triangle and models. It runs from its first value to its last; excluded rows inside count as missing values, as in JMP, so that the spacing is kept.' },
+        { key: 'inputs', label: 'Input List', numeric: true, hint: 'optional numeric: inputs of transfer functions, structural and ARDL models',
+          help: 'Input series, numeric (a price, a 0/1 promotion flag): Cross Correlation and the Input Time Series Panel show them beside each Y, and Transfer Function, Structural Model and ARDL take them as regressors. Forecasts use their values in the rows after the series (Y missing there), and hold the last one beyond them.' },
+        { key: 'time', label: 'X, Time ID', max: 1, numeric: true, hint: 'optional: a date or a time step', info: 'p:timeseries:timeid',
+          help: 'Orders the rows and labels the time axis. A date column gives the calendar frequency, the seasonal period (12 for monthly data, 4 for quarterly …) and the dates of the forecasts; dates missing from the calendar count as missing values. A numeric Time ID continues its step; without one the row number is the time.' },
+        { key: 'by', label: 'By', hint: 'optional',
+          help: 'A separate report of the rows of each level (each combination of levels, with several By columns). Rows with a missing By value are left out.' },
       ],
       options: [
-        { key: 'forecast', label: 'Forecast Periods', type: 'number', value: 25 },
-        { key: 'nlags', label: 'Autocorrelation Lags', type: 'number', value: 25 },
-        { key: 'period', label: 'Seasonal Period (empty: from the Time ID)', type: 'number', value: '' },
+        { key: 'forecast', label: 'Forecast Periods', type: 'number', value: 25,
+          help: 'How many periods after the end of the series each model forecasts, with its prediction interval: 0 to 1000, 25 by default (0: none). Number of Forecast Periods…, in the red triangle, changes it for every model.' },
+        { key: 'nlags', label: 'Autocorrelation Lags', type: 'number', value: 25,
+          help: 'How many lags the autocorrelations, partial autocorrelations, variogram, AR coefficients and Ljung-Box tests go to, for the series, its differences and the models\' residuals (at most n − 1), and the lags either way of Cross Correlation. 25 by default, at least 2; about n/4 is a common choice.' },
+        { key: 'period', label: 'Seasonal Period (empty: from the Time ID)', type: 'number', value: '',
+          help: 'The observations per seasonal period: the one the model and decomposition dialogs start with, the Seasonal Subseries Plot uses and ARDL\'s seasonal dummies take. Empty (the default): from the Time ID\'s calendar frequency (12 for monthly data, 4 for quarterly), else 12. At least 2.' },
       ],
       validate: (spec) => {
         const o = spec.options || {};

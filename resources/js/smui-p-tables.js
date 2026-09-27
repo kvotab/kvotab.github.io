@@ -40,6 +40,7 @@
   const uniqueTable = (base) => (SM.app ? SM.app.uniqueTableName(base) : base);
   const record = (t, label) => { if (SM.app && SM.app.record) SM.app.record(t, label); };
   const toast = (text, opts) => SM.ui.toast(text, opts);
+  const infoSlot = (key) => (typeof KvotInfo !== 'undefined' ? KvotInfo.slot(key) : null);
 
   let pointer = { x: 160, y: 120 };
   if (typeof document !== 'undefined') {
@@ -148,6 +149,26 @@
 
   /* ---- Tables > Summary ------------------------------------------------------------- */
   const SUMMARY_STATS = ['N', 'Mean', 'Std Dev', 'Min', 'Max', 'Range', 'Sum', 'Median', 'Quantiles', 'N Missing', 'N Categories', '% of Total', 'CV', 'Std Err', 'Variance', 'Geometric Mean', 'Interquartile Range', 'Mode'];
+  // What each statistic is, for the (i) of Summary's dialog (tables.py computes them).
+  const SUMMARY_STAT_HELP = [
+    ['N', 'The number of values that are not missing (with Freq, the sum of the counts).'],
+    ['Mean', 'The average; with Weight or Freq, the weighted average.'],
+    ['Std Dev', 'The standard deviation, with n − 1 in the denominator (weighted as statsmodels\' DescrStatsW weights it).'],
+    ['Min, Max', 'The smallest and the largest value.'],
+    ['Range', 'The largest value minus the smallest (Max − Min).'],
+    ['Sum', 'The total of the values (with Weight or Freq, each times them).'],
+    ['Median', 'The middle value, by JMP\'s quantile definition (the (n + 1)p-th value in order, interpolated); with Weight, DescrStatsW\'s weighted median.'],
+    ['Quantiles', 'The quantiles at the percents in Quantiles (%), JMP\'s definition: a column for each percent.'],
+    ['N Missing', 'The number of rows where the column is missing.'],
+    ['N Categories', 'The number of distinct values.'],
+    ['% of Total', 'The group\'s share of the column\'s sum over the whole table (for a character column, of its count), in percent.'],
+    ['CV', 'The coefficient of variation: 100 × Std Dev / Mean.'],
+    ['Std Err', 'The standard error of the mean: Std Dev / √N.'],
+    ['Variance', 'The standard deviation squared.'],
+    ['Geometric Mean', 'The exponential of the mean log; missing unless every value is positive.'],
+    ['Interquartile Range', 'The third quartile minus the first.'],
+    ['Mode', 'The most common value (of values tied, the smallest, or the first in alphabetical order); Weight and Freq do not count here.'],
+  ];
 
   function statsPicker(defaults, title = 'Statistics') {
     const chosen = new Set(defaults);
@@ -174,22 +195,22 @@
       id: 'summary', title: 'Summary', info: 'cmd:summary',
       lead: 'A new table with a row for each group: N Rows and the statistics of the Statistics Columns. Selecting a summary row selects its rows in this table.',
       roles: [
-        { key: 'cols', label: 'Statistics Columns', hint: 'the columns to summarize' },
-        { key: 'group', label: 'Group', hint: 'optional: a row per level' },
-        { key: 'subgroup', label: 'Subgroup', hint: 'optional: side by side' },
-        { key: 'weight', label: 'Weight', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric' },
-        { key: 'freq', label: 'Freq', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric' },
+        { key: 'cols', label: 'Statistics Columns', hint: 'the columns to summarize', help: 'The columns to summarize: the new table has a column for each ticked statistic of each of them. Character columns take only N, N Missing, N Categories, % of Total and Mode.' },
+        { key: 'group', label: 'Group', hint: 'optional: a row per level', help: 'A row of the new table for each level of these columns (each combination of levels with several), in value order; a missing value makes a group of its own. Without Group, one row for the whole table.' },
+        { key: 'subgroup', label: 'Subgroup', hint: 'optional: side by side', help: 'Columns whose levels go side by side instead of down: each statistic gets a column for each level, Mean(height, F) and Mean(height, M).' },
+        { key: 'weight', label: 'Weight', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric', help: 'Weights the Mean, Sum, % of Total, Std Dev, Variance, Std Err, CV, Geometric Mean and the quantiles, as statsmodels\' DescrStatsW does (the same as Distribution); rows with a missing, zero or negative weight are left out.' },
+        { key: 'freq', label: 'Freq', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric', help: 'A count for each row: N adds them up and the row counts that many times in the statistics; rows with a missing, zero or negative count are left out. N Rows still counts the rows themselves.' },
       ],
       options: [
-        { key: 'quantiles', label: 'Quantiles (%)', type: 'text', value: '25, 75', size: 10 },
-        { key: 'format', label: 'Statistics column names', type: 'select', value: 'stat(column)', choices: [['stat(column)', 'stat(column)'], ['column', 'column'], ['stat of column', 'stat of column'], ['column stat', 'column stat']] },
-        { key: 'link', label: 'Link to original data table', type: 'check', value: true },
-        { key: 'included', label: 'Leave out excluded rows', type: 'check', value: false },
-        { key: 'name', label: 'Output table name', type: 'text', value: '', size: 18 },
+        { key: 'quantiles', label: 'Quantiles (%)', type: 'text', value: '25, 75', size: 10, help: 'The percents for the Quantiles statistic, separated by commas (default 25, 75): a column Quantiles25(x) and so on for each. Numbers outside 0 to 100 are dropped.' },
+        { key: 'format', label: 'Statistics column names', type: 'select', value: 'stat(column)', choices: [['stat(column)', 'stat(column)'], ['column', 'column'], ['stat of column', 'stat of column'], ['column stat', 'column stat']], help: 'How the new columns are named: stat(column) gives Mean(height) (the default), column just height (best with one statistic, as the names would repeat), stat of column Mean of height, column stat height Mean. A Subgroup level is added after a comma.' },
+        { key: 'link', label: 'Link to original data table', type: 'check', value: true, help: 'On (the default): selecting rows of the summary selects their groups\' rows in this table. Off: the two tables are not linked.' },
+        { key: 'included', label: 'Leave out excluded rows', type: 'check', value: false, help: 'Summarizes the included rows only. Off (the default): every row counts, excluded or not.' },
+        { key: 'name', label: 'Output table name', type: 'text', value: '', size: 18, help: 'The new table\'s name; empty: this table\'s name and By (the Group columns), or Summary without Group.' },
       ],
       extra: (api, spec) => {
         const p = statsPicker(['Mean']);
-        return { el: p.el, read: () => ({ options: { stats: p.get() } }), recall: (s) => p.set((s && s.options && s.options.stats) || ['Mean']) };
+        return { el: p.el, read: () => ({ options: { stats: p.get() } }), recall: (s) => p.set((s && s.options && s.options.stats) || ['Mean']), helpHeading: 'Each statistic', help: SUMMARY_STAT_HELP };
       },
       validate: (s) => (!s.roles.group.length && !s.roles.cols.length ? 'Choose Group columns, Statistics Columns, or both' : (s.roles.cols.length && !(s.options.stats || []).length ? 'Tick at least one statistic' : null)),
     }, (s) => runSummary(app, t, s).catch(fail('Summary')));
@@ -232,19 +253,19 @@
       id: 'subset', title: 'Subset', info: 'cmd:subset',
       lead: 'A new table of some rows and columns. Random samples are drawn from the seed, so the same seed gives the same rows.',
       roles: [
-        { key: 'cols', label: 'Columns', hint: 'optional: all columns' },
-        { key: 'strata', label: 'Stratify', hint: 'optional: sample within each level' },
-        { key: 'by', label: 'Subset By', hint: 'optional: a table per level' },
+        { key: 'cols', label: 'Columns', hint: 'optional: all columns', help: 'The columns of the new table, in the order listed here; empty takes every column.' },
+        { key: 'strata', label: 'Stratify', hint: 'optional: sample within each level', help: 'With a random sample: the rows are drawn within each level of these columns (each combination of levels), the rate or the size applying to each, so that every level is in the sample.' },
+        { key: 'by', label: 'Subset By', hint: 'optional: a table per level', help: 'A separate new table for each level of these columns (each combination), named after it, with that level\'s rows of the subset.' },
       ],
       options: [
-        { key: 'rows', label: 'Rows', type: 'select', value: nsel ? 'selected' : 'all', choices: [['all', 'All rows'], ['selected', `Selected rows (${nsel})`], ['rate', 'Random: sampling rate'], ['size', 'Random: sample size']] },
-        { key: 'rate', label: 'Sampling rate', type: 'number', value: 0.5 },
-        { key: 'size', label: 'Sample size', type: 'number', value: Math.min(10, t.nrows) },
-        { key: 'seed', label: 'Seed', type: 'text', value: String(Math.floor(Math.random() * 1e6)), size: 8 },
-        { key: 'states', label: 'Keep row states', type: 'check', value: true },
-        { key: 'formula', label: 'Copy formula', type: 'check', value: true },
-        { key: 'suppress', label: 'Suppress formula evaluation', type: 'check', value: false },
-        { key: 'name', label: 'Output table name', type: 'text', value: '', size: 18 },
+        { key: 'rows', label: 'Rows', type: 'select', value: nsel ? 'selected' : 'all', choices: [['all', 'All rows'], ['selected', `Selected rows (${nsel})`], ['rate', 'Random: sampling rate'], ['size', 'Random: sample size']], help: 'Which rows go into the new table: **All rows**; **Selected rows** (the default when rows are selected); **Random: sampling rate**, a share of the rows drawn at random; **Random: sample size**, a number of them. Random rows are drawn from every row, excluded ones too, and keep the table\'s order.' },
+        { key: 'rate', label: 'Sampling rate', type: 'number', value: 0.5, help: 'With Random: sampling rate, the share of the rows to draw, above 0 and at most 1, rounded to whole rows (default 0.5, half of them); with Stratify, that share of each level.' },
+        { key: 'size', label: 'Sample size', type: 'number', value: Math.min(10, t.nrows), help: 'With Random: sample size, how many rows to draw (every row when there are fewer); with Stratify, that many from each level.' },
+        { key: 'seed', label: 'Seed', type: 'text', value: String(Math.floor(Math.random() * 1e6)), size: 8, help: 'Any number or text: the random rows are drawn from it, so the same seed on the same table and settings draws the same rows again. A new random seed is filled in each time the dialog opens.' },
+        { key: 'states', label: 'Keep row states', type: 'check', value: true, help: 'On (the default): each row takes its state along, selected, excluded, hidden or labeled, with its colour and marker.' },
+        { key: 'formula', label: 'Copy formula', type: 'check', value: true, help: 'On (the default): a formula column stays a formula when every column it uses comes along too (its Col functions then work over the subset\'s rows); otherwise, and when off, its values are copied as plain values.' },
+        { key: 'suppress', label: 'Suppress formula evaluation', type: 'check', value: false, help: 'With Copy formula: the formula columns keep the values they have in this table, instead of being worked out again over the subset.' },
+        { key: 'name', label: 'Output table name', type: 'text', value: '', size: 18, help: 'The new table\'s name; empty: Subset of and this table\'s name. With Subset By each table adds its level, (sex=F).' },
       ],
       validate: (s) => {
         if (s.options.rows === 'selected' && !t.counts().selected) return 'No rows are selected: choose All rows or a random sample';
@@ -313,10 +334,10 @@
     cast(t, {
       id: 'sort', title: 'Sort', info: 'cmd:sort',
       lead: 'Sort by the By columns, the first one first. Click ▲ beside a By column to sort it descending (▼). Categorical columns sort in their value order; missing values go last.',
-      roles: [{ key: 'by', label: 'By', min: 1, hint: 'required' }],
+      roles: [{ key: 'by', label: 'By', min: 1, hint: 'required', help: 'The columns to sort by: the first sorts the rows, each next one breaks the ties of those before it, and rows tied on all of them keep their order. Numbers sort by value, nominal, ordinal and text columns in their value order; missing values go last.' }],
       options: [
-        { key: 'replace', label: 'Replace table', type: 'check', value: false },
-        { key: 'name', label: 'Output table name', type: 'text', value: '', size: 18 },
+        { key: 'replace', label: 'Replace table', type: 'check', value: false, help: 'Sorts this table itself instead of making a new one; Edit > Undo takes it back.' },
+        { key: 'name', label: 'Output table name', type: 'text', value: '', size: 18, help: 'The new table\'s name; empty: this table\'s name and Sorted. Not used with Replace table.' },
       ],
       extra: (api) => {
         const desc = new Set();
@@ -337,7 +358,7 @@
           new MutationObserver(() => decorate(ul)).observe(ul, { childList: true });
           decorate(ul);
         });
-        return { el: box, read: () => ({ options: { desc: [...desc] } }) };
+        return { el: box, read: () => ({ options: { desc: [...desc] } }), help: [['▲ ▼ beside a By column', 'The direction of that column: ▲ ascending (the default), ▼ descending; click the arrow to turn it. Missing values stay last either way.']] };
       },
     }, (s) => {
       const keys = s.roles.by.map((id) => ({ col: id, desc: (s.options.desc || []).includes(id) }));
@@ -363,15 +384,15 @@
     cast(t, {
       id: 'stack', title: 'Stack', info: 'cmd:stack',
       lead: 'Columns into rows: a Label column with the column names and a Data column with their values, one row per value; the other columns are repeated.',
-      roles: [{ key: 'cols', label: 'Stack Columns', min: 1, hint: 'required' }, { key: 'keep', label: 'Keep Columns', hint: 'with Select only' }],
+      roles: [{ key: 'cols', label: 'Stack Columns', min: 1, hint: 'required', help: 'The columns whose values go into one column, a row for each value. When they are all numeric the Data column is numeric; otherwise it is text.' }, { key: 'keep', label: 'Keep Columns', hint: 'with Select only', help: 'With Non-stacked columns set to Select: the other columns to repeat on every row of the new table.' }],
       options: [
-        { key: 'data', label: 'Stacked Data Column', type: 'text', value: 'Data', size: 10 },
-        { key: 'label', label: 'Source Label Column', type: 'text', value: 'Label', size: 10 },
-        { key: 'id', label: 'ID column (row numbers; empty for none)', type: 'text', value: 'ID', size: 8 },
-        { key: 'others', label: 'Non-stacked columns', type: 'select', value: 'all', choices: [['all', 'Keep All'], ['none', 'Drop All'], ['select', 'Select (Keep Columns)']] },
-        { key: 'byRow', label: 'Stack by Row', type: 'check', value: true },
-        { key: 'dropMissing', label: 'Eliminate missing rows', type: 'check', value: false },
-        { key: 'name', label: 'Output table name', type: 'text', value: '', size: 18 },
+        { key: 'data', label: 'Stacked Data Column', type: 'text', value: 'Data', size: 10, help: 'The name of the new column of values (default Data).' },
+        { key: 'label', label: 'Source Label Column', type: 'text', value: 'Label', size: 10, help: 'The name of the new column that says which column each value came from (default Label); it is nominal, its levels in the order of the Stack Columns.' },
+        { key: 'id', label: 'ID column (row numbers; empty for none)', type: 'text', value: 'ID', size: 8, help: 'The name of a new column of the source row numbers (default ID), which Split needs to put the table back; empty leaves it out.' },
+        { key: 'others', label: 'Non-stacked columns', type: 'select', value: 'all', choices: [['all', 'Keep All'], ['none', 'Drop All'], ['select', 'Select (Keep Columns)']], help: '**Keep All** (the default) repeats every other column on the rows of its row\'s values; **Drop All** leaves them out; **Select (Keep Columns)** keeps the columns in Keep Columns.' },
+        { key: 'byRow', label: 'Stack by Row', type: 'check', value: true, help: 'On (the default): each row\'s values stay together, row 1\'s first, then row 2\'s; off: column by column, every value of the first column, then of the second.' },
+        { key: 'dropMissing', label: 'Eliminate missing rows', type: 'check', value: false, help: 'Leaves out the new rows whose stacked value is missing.' },
+        { key: 'name', label: 'Output table name', type: 'text', value: '', size: 18, help: 'The new table\'s name; empty: this table\'s name and Stacked.' },
       ],
     }, async (s) => {
       try {
@@ -390,10 +411,10 @@
     cast(t, {
       id: 'split', title: 'Split', info: 'cmd:split',
       lead: 'Rows into columns: a column for each level of Split By, holding the Split Columns\' values, one row per level of the Group columns (a level that repeats within a group starts another row).',
-      roles: [{ key: 'cols', label: 'Split Columns', min: 1, hint: 'required' }, { key: 'by', label: 'Split By', min: 1, max: 1, hint: 'required' }, { key: 'group', label: 'Group', hint: 'optional' }],
+      roles: [{ key: 'cols', label: 'Split Columns', min: 1, hint: 'required', help: 'The columns whose values are spread out: each gets a new column for each level of Split By, named after the level (with several Split Columns, the column\'s name and the level).' }, { key: 'by', label: 'Split By', min: 1, max: 1, hint: 'required', help: 'The column whose levels become the new columns, in value order; rows where it is missing are left out.' }, { key: 'group', label: 'Group', hint: 'optional', help: 'A row of the new table for each level of these columns (each combination); a level of Split By that comes twice in a group starts a second row. Without Group, the first row of each level goes into row 1, the second into row 2, and so on.' }],
       options: [
-        { key: 'others', label: 'Remaining columns', type: 'select', value: 'drop', choices: [['drop', 'Drop All'], ['keep', 'Keep All (first value of each row)']] },
-        { key: 'name', label: 'Output table name', type: 'text', value: '', size: 18 },
+        { key: 'others', label: 'Remaining columns', type: 'select', value: 'drop', choices: [['drop', 'Drop All'], ['keep', 'Keep All (first value of each row)']], help: '**Drop All** (the default) leaves the other columns out; **Keep All** keeps them, with the value of the first source row of each new row.' },
+        { key: 'name', label: 'Output table name', type: 'text', value: '', size: 18, help: 'The new table\'s name; empty: this table\'s name and Split.' },
       ],
     }, async (s) => {
       try {
@@ -419,11 +440,11 @@
     cast(t, {
       id: 'transpose', title: 'Transpose', info: 'cmd:transpose',
       lead: 'Columns become rows and rows columns. The Label column\'s values name the new columns (otherwise Row 1, Row 2, …); By transposes each level separately.',
-      roles: [{ key: 'cols', label: 'Transpose Columns', min: 1, hint: 'required' }, { key: 'label', label: 'Label', max: 1, hint: 'optional' }, { key: 'by', label: 'By', hint: 'optional' }],
+      roles: [{ key: 'cols', label: 'Transpose Columns', min: 1, hint: 'required', help: 'The columns that become rows: a row for each, named in the Label column, holding its value in each source row. When some are numeric and some text, every value is text.' }, { key: 'label', label: 'Label', max: 1, hint: 'optional', help: 'A column whose values name the new columns (a repeated name gets 2, 3, …); without it they are Row 1, Row 2, ….' }, { key: 'by', label: 'By', hint: 'optional', help: 'Transposes the rows of each level separately: the new table starts with the By columns, the rows of each level one after another.' }],
       options: [
-        { key: 'selected', label: `Transpose selected rows only (${nsel})`, type: 'check', value: false },
-        { key: 'labelName', label: 'Label column name', type: 'text', value: 'Label', size: 10 },
-        { key: 'name', label: 'Output table name', type: 'text', value: '', size: 18 },
+        { key: 'selected', label: `Transpose selected rows only (${nsel})`, type: 'check', value: false, help: 'Only the selected rows become columns (with none selected, every row); off (the default), every row.' },
+        { key: 'labelName', label: 'Label column name', type: 'text', value: 'Label', size: 10, help: 'The name of the new column that holds the transposed columns\' names (default Label).' },
+        { key: 'name', label: 'Output table name', type: 'text', value: '', size: 18, help: 'The new table\'s name; empty: Transpose of and this table\'s name.' },
       ],
     }, async (s) => {
       try {
@@ -647,8 +668,8 @@
     cast(t, {
       id: 'missingpattern', title: 'Missing Data Pattern', info: 'cmd:missingpattern',
       lead: 'A table with a row for each pattern of missing values in the columns: how many rows have it, and which columns are missing (1) in it. Selecting a pattern selects its rows.',
-      roles: [{ key: 'cols', label: 'Add Columns', min: 1, hint: 'required' }],
-      options: [{ key: 'name', label: 'Output table name', type: 'text', value: '', size: 18 }],
+      roles: [{ key: 'cols', label: 'Add Columns', min: 1, hint: 'required', help: 'The columns whose missing values make the patterns: a pattern is a 1 (missing) or 0 for each of them, in this order, and each gets a 0/1 column in the new table.' }],
+      options: [{ key: 'name', label: 'Output table name', type: 'text', value: '', size: 18, help: 'The new table\'s name; empty: Missing Data Pattern of and this table\'s name.' }],
     }, async (s) => {
       try {
         const cols = idsOf(t, s.roles.cols);
@@ -849,7 +870,7 @@
     const v = await SM.ui.form({
       title: 'Make Indicator Columns', info: 'cmd:indicator',
       lead: `A 0/1 column for each level of ${cats.map((c) => c.name).join(', ')}: 1 in the rows with that level. Missing rows are missing.`,
-      fields: [{ key: 'append', label: 'Append column name (sex[F] rather than F)', type: 'check', value: true }, { key: 'formula', label: 'As formula columns', type: 'check', value: false }],
+      fields: [{ key: 'append', label: 'Append column name (sex[F] rather than F)', type: 'check', value: true, help: 'On (the default): each new column is named after the column and the level, sex[F]; off, after the level alone, F.' }, { key: 'formula', label: 'As formula columns', type: 'check', value: false, help: 'Each new column is a formula, If(Is Missing(:x), ., :x == level), that follows the column when it changes; off (the default), plain 0/1 values.' }],
     });
     if (!v) return;
     record(t, 'Make Indicator Columns');
@@ -884,15 +905,15 @@
       title: 'Make Binning Column', info: 'cmd:binning',
       lead: 'A new ordinal column of the bin each value falls in, labelled by its range. A bin holds its lower limit and not its upper one, except the last.',
       fields: [
-        { key: 'col', label: 'Column', type: 'select', value: pre.id, choices: nums.map((c) => [c.id, c.name]) },
-        { key: 'method', label: 'Bins', type: 'select', value: 'width', choices: [['width', 'Equal width'], ['quantile', 'Quantiles (equal counts)'], ['custom', 'Custom cut points']] },
-        { key: 'k', label: 'Number of bins', type: 'number', value: 5 },
-        { key: 'width', label: 'Bin width (equal width; empty: rounded automatically)', type: 'number', value: null },
-        { key: 'start', label: 'First cut point (equal width; optional)', type: 'number', value: null },
-        { key: 'cuts', label: 'Cut points (custom), e.g. 150, 160, 170', value: '' },
-        { key: 'style', label: 'Labels', type: 'select', value: 'range', choices: [['range', 'Range: 150 - 160'], ['interval', 'Interval: [150, 160)'], ['lower', 'Lower limit: 150'], ['mid', 'Midpoint: 155']] },
-        { key: 'formula', label: 'As a formula column', type: 'check', value: true },
-        { key: 'name', label: 'New column name (empty: column Binned)', value: '' },
+        { key: 'col', label: 'Column', type: 'select', value: pre.id, choices: nums.map((c) => [c.id, c.name]), help: 'The numeric column to cut into bins; the new column goes right after it.' },
+        { key: 'method', label: 'Bins', type: 'select', value: 'width', choices: [['width', 'Equal width'], ['quantile', 'Quantiles (equal counts)'], ['custom', 'Custom cut points']], help: '**Equal width** (the default): bins of one width; **Quantiles (equal counts)**: cut at the column\'s quantiles (JMP\'s definition), so that each bin holds about as many rows; **Custom cut points**: cut at the values you list.' },
+        { key: 'k', label: 'Number of bins', type: 'number', value: 5, help: 'With Equal width and no Bin width, about how many bins (the width is rounded); with Quantiles, how many (fewer when quantiles tie). Default 5.' },
+        { key: 'width', label: 'Bin width (equal width; empty: rounded automatically)', type: 'number', value: null, help: 'With Equal width: the width of every bin, in the column\'s units; empty lets the Number of bins choose a round width.' },
+        { key: 'start', label: 'First cut point (equal width; optional)', type: 'number', value: null, help: 'With Equal width: where the bins start, their first boundary; values below it make a first bin of their own. Empty: the whole multiple of the width at or below the smallest value.' },
+        { key: 'cuts', label: 'Cut points (custom), e.g. 150, 160, 170', value: '', help: 'With Custom cut points: the boundaries between the bins, separated by commas; a value equal to a cut point goes into the bin above it. Cut points outside the column\'s range are dropped.' },
+        { key: 'style', label: 'Labels', type: 'select', value: 'range', choices: [['range', 'Range: 150 - 160'], ['interval', 'Interval: [150, 160)'], ['lower', 'Lower limit: 150'], ['mid', 'Midpoint: 155']], help: 'How the bins are named: by **Range** (the default), **Interval** (the last bin closed, with ]), **Lower limit** or **Midpoint**. The first bin starts at the smallest value and the last ends at the largest.' },
+        { key: 'formula', label: 'As a formula column', type: 'check', value: true, help: 'On (the default): a formula column, If(:x < cut, label, …), that follows the column when it changes; off: plain text values.' },
+        { key: 'name', label: 'New column name (empty: column Binned)', value: '', help: 'The new column\'s name; empty: the column\'s name and Binned. It is ordinal, its levels in the order of the bins.' },
       ],
       validate: (x) => (x.method === 'custom' && !String(x.cuts).split(/[,;\s]+/).some((s) => s !== '' && Number.isFinite(Number(s))) ? 'Give one or more cut points' : (x.method !== 'custom' && !(x.k >= 2 || x.width > 0) ? 'Two or more bins, or a bin width' : null)),
     });
@@ -1071,7 +1092,7 @@
       state.stats.includes('Quantiles') ? el('label', { class: 'smt-check' }, 'Quantiles (%)', q) : null,
       el('span', { class: 'sm-spacer' }), btn('Clear', () => set(emptyTab())), btn('Done', () => ctx.set('panel', false), 'sm-btn small primary'));
     return el('div', { class: 'smt-builder' },
-      el('div', { class: 'smt-left' }, el('h4', { text: 'Columns' }), list, adders),
+      el('div', { class: 'smt-left' }, el('h4', null, 'Columns', infoSlot('p:tabulate')), list, adders),
       el('div', { class: 'smt-right' }, zone('cols', 'Drop zone for columns', state.cols), zone('rows', 'Drop zone for rows', state.rows), zone('analysis', 'Analysis columns', state.analysis), statBar, opts));
   }
 
@@ -1140,16 +1161,38 @@
 
   SM.platforms.register({
     id: 'tabulate', label: 'Tabulate', menu: 'Analyze', order: 30, launch: null, info: 'p:tabulate',
-    about: 'Builds a table of statistics by dragging columns: categorical columns into the rows and columns (side by side to cross them, onto one another to nest them), continuous columns as analysis columns, and statistics from the palette; All adds totals. pandas and numpy compute the cells.',
+    about: 'Builds a table of statistics by dragging columns: categorical columns into the rows and columns (side by side for blocks one after another, onto one another to nest them; the rows cross the columns), continuous columns as analysis columns, and statistics from the palette; All adds totals. pandas and numpy compute the cells.',
     uses: ['pandas (grouping)', 'numpy.quantile(method="weibull")', 'statsmodels.stats.weightstats.DescrStatsW'],
     topics: {
       'p:tabulate': {
         kicker: 'Analyze', title: 'Tabulate',
         lead: 'An interactive table: drag columns into the drop zones and statistics onto them, and the table is computed as you build it.',
         sections: [
-          { heading: 'Building the table', list: ['Drag a nominal or ordinal column into the drop zone for rows or for columns; drag another beside it to cross them, or onto its name to nest it.', 'Drag continuous columns to Analysis columns (or into either zone): their statistics fill the cells.', 'Click statistics in the palette to add or remove them: N, Mean, Std Dev, Min, Max, Range, Sum, Median, Quantiles, % of Total, Column %, Row %, N Missing, Mode, Variance, Std Err, CV.', 'Without the mouse: select a column in the list, then Add to Rows, Nest in Rows, Add to Columns or Analysis Column; Enter adds it to the rows (categorical) or as an analysis column.'] },
+          { heading: 'Building the table', list: ['Drag a nominal or ordinal column into the drop zone for rows or for columns. Another dropped beside it adds a second block after the first (its levels listed after the first\'s); dropped onto its name, it is nested in it, a row for each combination of their levels. A column in the rows and one in the columns cross: a cell holds the rows of both its levels.', 'Drag continuous columns to Analysis columns (or into either zone): their statistics fill the cells.', 'Click statistics in the palette to add or remove them: N, Mean, Std Dev, Min, Max, Range, Sum, Median, Quantiles, % of Total, Column %, Row %, N Missing, Mode, Variance, Std Err, CV, Interquartile Range.', 'Without the mouse: select a column in the list, then Add to Rows, Nest in Rows, Add to Columns or Analysis Column; Enter adds it to the rows (categorical) or as an analysis column.'] },
+          { heading: 'The control panel', choices: [
+            ['Columns', 'The table\'s columns. Drag one to a drop zone, or click it and press a button under the list; double-click (or Enter) adds a categorical column to the rows and a continuous one as an analysis column.'],
+            ['Add to Rows', 'The selected column becomes a new block of rows, after those there.'],
+            ['Nest in Rows', 'The selected column is nested in the last block of rows: a row for each combination of their levels.'],
+            ['Add to Columns', 'The selected column becomes a new block of columns: a column of cells for each of its levels.'],
+            ['Analysis Column', 'The selected column\'s statistics fill the cells; a continuous column goes here wherever it is dropped, and several stand side by side.'],
+            ['Drop zones', 'The drop zones for columns and for rows take nominal and ordinal columns (dropped on a column already there, nested in it); Analysis columns takes continuous ones. × on a column takes it out.'],
+            ['Statistics', 'Click a statistic to add it or take it away; each gives a column of cells. N counts the rows (with an analysis column, its values that are not missing); % of Total, Column % and Row % are a cell\'s share of the whole table, of its column or of its row (of the rows, or of the analysis column\'s sum). The others need an analysis column: Mean, Std Dev, Min, Max, Range, Sum, Median, Quantiles (JMP\'s definition), N Missing, Mode, Variance, Std Err, CV and Interquartile Range.'],
+            ['All row (totals)', 'Adds a row for all the rows together, after the others.'],
+            ['All column (totals)', 'Adds a column of cells for all the rows together, after the others.'],
+            ['Include missing for grouping columns', 'A missing value in a row or column grouping becomes a level of its own. Off (the default, as in JMP): a row with a missing grouping value is left out of the whole table.'],
+            ['Freq', 'A numeric column of counts: each row counts that many times; rows with a missing, zero or negative count are left out.'],
+            ['Quantiles (%)', 'Shown with the Quantiles statistic: the percents, separated by commas (default 25, 75).'],
+            ['Clear', 'Starts again: every zone emptied, Freq and the totals off, the statistics back to N.'],
+            ['Done', 'Hides the control panel and keeps the table.'],
+          ] },
           { heading: 'Totals and missing values', text: 'All row and All column add the totals. A row with a missing value in a grouping column is left out of the whole table unless Include missing for grouping columns is on; excluded rows are left out too. Freq counts each row that many times.' },
           { heading: 'Done', text: 'Done hides the control panel, as in JMP; the red triangle\'s Show Control Panel brings it back. Right click the table to copy it or make it into a data table.' },
+          { heading: 'The red triangle', choices: [
+            ['Show Control Panel', 'Shows the control panel again, or hides it as Done does.'],
+            ['Add All Row, Add All Column', 'The totals, as the boxes in the panel.'],
+            ['Include missing for grouping columns', 'As the box in the panel.'],
+            ['Make Into Data Table', 'The table as a new data table, its row levels and its cells as columns.'],
+          ] },
         ],
         more: { label: 'Tabulate', id: 'help-p-tabulate' },
       },
@@ -1203,7 +1246,22 @@
       'p:colviewer': {
         kicker: 'Cols', title: 'Columns Viewer',
         lead: 'One line per column with its counts and, for continuous columns, the mean, standard deviation, median and quartiles. Excluded rows are left out.',
-        sections: [{ heading: 'Using it', list: ['Click lines to select columns (they are selected in the data table too).', 'Distribution opens Analyze > Distribution with the selected columns, or all of them.', 'The quartiles are JMP\'s: numpy\'s weibull method, the (n+1)p-th value.'] }],
+        sections: [
+          { heading: 'Using it', list: ['Click lines to select columns (they are selected in the data table too).', 'Distribution opens Analyze > Distribution with the selected columns, or all of them.', 'The quartiles are JMP\'s: numpy\'s weibull method, the (n+1)p-th value.'] },
+          { heading: 'In the report', choices: [
+            ['A line of the table', 'Click it to select that column, and again to unselect it; the columns are selected in the data table too.'],
+            ['Distribution', 'Opens Analyze > Distribution with the selected columns (every column when none is selected).'],
+            ['Clear Select', 'Unselects every column.'],
+            ['Select All', 'Selects every column.'],
+          ] },
+          { heading: 'The table', choices: [
+            ['N, N Missing', 'How many values of the column are there and how many are missing, in the included rows.'],
+            ['N Categories', 'The number of distinct values.'],
+            ['Min, Max', 'The smallest and the largest value of a numeric column.'],
+            ['Mean, Std Dev, Median, Lower Quartile, Upper Quartile', 'For continuous columns: the mean, the standard deviation (n − 1), the median and the quartiles.'],
+          ] },
+          { heading: 'The red triangle', text: 'Distribution of Selected does what the Distribution button does; Clear Select unselects every column.' },
+        ],
         more: { label: 'Columns Viewer', id: 'help-p-colviewer' },
       },
     },
@@ -1237,7 +1295,7 @@
       new MutationObserver(mark).observe(tbl.querySelector('tbody'), { childList: true });
       mark();
       count.textContent = sel.size ? `${sel.size} selected` : 'Click lines to select columns';
-      const o = ctx.outline('Summary Statistics', { key: 'cv' });
+      const o = ctx.outline('Summary Statistics', { key: 'cv', info: 'p:colviewer' });
       o.add(bar, tbl, ctx.note(`${ctx.rows.length} rows (excluded rows left out). Mean, Std Dev and the quartiles for continuous columns; N Categories counts the distinct values.`), ctx.code(res.code));
     },
   });
@@ -1270,13 +1328,13 @@
         : method === 'mice' ? 'statsmodels\' MICEData: each column in turn is fitted on the others and its missing values drawn by predictive mean matching; the seed makes it repeatable.'
           : `Each missing value becomes the column's ${method} over the rows of the report.`,
       fields: [
-        { key: 'where', label: 'Save', type: 'select', value: 'new', choices: [['new', 'as new columns (Imputed[x])'], ['inplace', 'in place, in the columns themselves']] },
-        ...(method === 'mice' ? [{ key: 'seed', label: 'Seed', type: 'number', value: 1 }, { key: 'iter', label: 'Cycles', type: 'number', value: 10 }] : []),
+        { key: 'where', label: 'Save', type: 'select', value: 'new', choices: [['new', 'as new columns (Imputed[x])'], ['inplace', 'in place, in the columns themselves']], help: '**As new columns** (the default): a column Imputed[x] beside each column, with its missing values filled and the original kept; **in place**: the missing cells of the columns themselves are filled (a formula column\'s go to a new column). Edit > Undo takes either back.' },
+        ...(method === 'mice' ? [{ key: 'seed', label: 'Seed', type: 'number', value: 1, help: 'numpy\'s random seed, set before MICEData runs, so the same seed gives the same imputed values: a whole number, 0 or more (anything else is taken as 1).' }, { key: 'iter', label: 'Cycles', type: 'number', value: 10, help: 'How many times MICEData goes round all the columns (its update_all), 1 to 100 (default 10): each time, every column with missing values is fitted on the others and its missing values drawn again by predictive mean matching.' }] : []),
       ],
     });
     if (!v) return;
     try {
-      const res = await SM.engine.call('tables.impute', { columns: cols.map((c) => c.name), method, rows: ctx.rows, seed: v.seed || 1, n_iter: Math.max(1, Math.min(100, v.iter || 10)) }, t);
+      const res = await SM.engine.call('tables.impute', { columns: cols.map((c) => c.name), method, rows: ctx.rows, seed: Number.isInteger(v.seed) && v.seed >= 0 ? v.seed : 1, n_iter: Math.max(1, Math.min(100, v.iter || 10)) }, t);
       record(t, `Impute (${labels[method]})`);
       const rows = res.rows;
       let n = 0;
@@ -1309,13 +1367,19 @@
           { heading: 'Reports', choices: [['Missing Columns Report', 'Each column\'s number and percent of missing values; click a line to select those rows.'], ['Missing Value Report', 'Each pattern of missing columns and how many rows have it; click a line to select its rows.'], ['Missing Value Snapshot', 'A cell plot: a mark for each missing cell, row by row; drag over it to select rows.']] },
           { heading: 'Imputation', choices: [['Mean, Median', 'The column\'s mean or median over the report\'s rows.'], ['Multivariate Normal', 'The conditional expectation of the missing values given the observed ones, with the mean and covariance estimated by EM (maximum likelihood) from all rows.'], ['Chained Equations', 'statsmodels\' MICEData: predictive mean matching, column by column, for the cycles asked for, from a seed.']] },
           { heading: 'In place or new', text: 'Imputed values go to new columns Imputed[x], or into the columns themselves; Edit > Undo takes them back.' },
+          { heading: 'Buttons', choices: [
+            ['Select Rows with Missing', 'Selects the report\'s rows that have a missing value in any of its columns.'],
+            ['Exclude Rows with Missing', 'Excludes those rows in the table, so that analyses leave them out (Edit > Undo takes it back).'],
+            ['Impute ▾', 'Fills the missing values of the numeric columns: Mean, Median, Multivariate Normal Imputation or Chained Equations (MICE); a dialog asks where the values go.'],
+          ] },
+          { heading: 'The red triangle', text: 'Shows or hides each of the three reports, and has the same Select, Exclude and Impute as the buttons.' },
         ],
         more: { label: 'Explore Missing Values', id: 'help-p-missing' },
       },
     },
     launch: {
       lead: 'Choose the columns to look at. Imputation works on the numeric ones.',
-      roles: [{ key: 'y', label: 'Y, Columns', min: 1, hint: 'required' }, { key: 'by', label: 'By', hint: 'optional' }],
+      roles: [{ key: 'y', label: 'Y, Columns', min: 1, hint: 'required', help: 'The columns to look at: their missing values are counted by column and by pattern, and drawn row by row. Imputation fills the numeric ones among them.' }, { key: 'by', label: 'By', hint: 'optional', help: 'A separate report for each level of the By columns; an imputation from a report then uses that group\'s rows.' }],
     },
     title: () => 'Explore Missing Values',
     triangle(ctx) {
@@ -1343,7 +1407,7 @@
       ctx.container.append(el('div', { class: 'smt-mvbar' },
         b('Select Rows with Missing', () => t.select(missingRows(ctx, cols, (m) => m.some(Boolean)))),
         b('Exclude Rows with Missing', () => { const r = missingRows(ctx, cols, (m) => m.some(Boolean)); record(t, 'Exclude Rows with Missing'); t.setState(r, 'excluded', true); toast(`Excluded ${r.length} rows`); }),
-        menu('Impute', () => [{ label: 'Mean', action: () => imputeFrom(ctx, 'mean') }, { label: 'Median', action: () => imputeFrom(ctx, 'median') }, { label: 'Multivariate Normal Imputation', action: () => imputeFrom(ctx, 'mvn') }, { label: 'Chained Equations (MICE)', action: () => imputeFrom(ctx, 'mice') }])));
+        menu('Impute', () => [{ label: 'Mean', action: () => imputeFrom(ctx, 'mean') }, { label: 'Median', action: () => imputeFrom(ctx, 'median') }, { label: 'Multivariate Normal Imputation', action: () => imputeFrom(ctx, 'mvn') }, { label: 'Chained Equations (MICE)', action: () => imputeFrom(ctx, 'mice') }]), infoSlot('p:missing')));
       ctx.container.append(ctx.kv([['Rows', res.n, 'int'], ['Rows with a missing value', res.rows_with_missing, 'int'], ['Missing cells', res.cells_missing, 'int'], ['Percent of cells', res.n && cols.length ? 100 * res.cells_missing / (res.n * cols.length) : null]]));
       if (ctx.opt('colsReport', true)) {
         const o = ctx.outline('Missing Columns Report', { key: 'cols' });
@@ -1481,7 +1545,7 @@
       const ex = el('button', { type: 'button', class: 'sm-btn', text: 'Examples ▾', 'aria-haspopup': 'menu' });
       ex.addEventListener('click', () => SM.ui.menu(SCRIPT_EXAMPLES.map(([label, c]) => ({ label, action: () => { ed.value = c; typed.add(rep); save(); ed.focus(); } })), ex, { returnFocus: ex }));
       const warnBox = el('div', { class: 'sm-ob-warn', text: 'This code came with a saved project or file. Read it before you run it: Python here can do whatever this page can do in the browser.', hidden: typed.has(rep) });
-      const o = ctx.outline('Script', { key: 'editor' });
+      const o = ctx.outline('Script', { key: 'editor', info: 'cmd:pyscript' });
       o.add(ctx.note(`df is ${t.name}: ${ctx.rows.length} rows (excluded rows left out), the columns by their names, nominal and ordinal columns as pandas Categoricals, dates as milliseconds since 1970. np, pd, sm (statsmodels.api), smf (statsmodels.formula.api) and stats (scipy.stats) are imported. Set result to a DataFrame to make it a data table. The code runs only when you press Run, each time in a fresh namespace.`),
         warnBox, ed, el('div', { class: 'smp-bar' }, runBtn, ex, el('span', { class: 'sm-ob-note', text: 'Tab indents; ctrl/⌘+Enter runs.' })));
       const out = ctx.outline('Output', { key: 'output' });
@@ -1503,17 +1567,59 @@
     'cmd:stack': { kicker: 'Tables', title: 'Stack', lead: 'Columns into rows: the Label column says which column a value came from, the Data column holds it; the non-stacked columns are repeated (Keep All), left out (Drop All) or those in Keep Columns. Stack by Row keeps each row\'s values together; the ID column numbers the source rows.' },
     'cmd:split': { kicker: 'Tables', title: 'Split', lead: 'Rows into columns, the opposite of Stack: a new column for each level of Split By, holding the values of the Split Columns, one row for each level of the Group columns. A level that appears twice in a group starts a second row; without Group, rows are matched by their order.' },
     'cmd:transpose': { kicker: 'Tables', title: 'Transpose', lead: 'Rows become columns: a row for each transposed column (its name in the Label column) and a column for each row, named by the Label column\'s values or Row 1, Row 2… By transposes each level separately. Mixed numeric and text columns give text.' },
-    'cmd:concatenate': { kicker: 'Tables', title: 'Concatenate', lead: 'The rows of several tables one after another, their columns matched by name; a column a table lacks is missing in its rows. Create source column adds the table each row came from; Append to first table adds the rows to the first table instead of making a new one (Edit > Undo takes it back). Formulas are not copied.' },
+    'cmd:concatenate': { kicker: 'Tables', title: 'Concatenate', lead: 'The rows of several tables one after another, their columns matched by name; a column a table lacks is missing in its rows. Create source column adds the table each row came from; Append to first table adds the rows to the first table instead of making a new one (Edit > Undo takes it back). Formulas are not copied.', sections: [
+      { heading: 'Fields', choices: [
+        ['Data tables to be concatenated', 'Tick the tables whose rows go in, two or more (the first two are ticked at the start); their rows follow one another in the order listed, the current table first.'],
+        ['Create source column', 'Adds a Source Table column holding the name of the table each row came from.'],
+        ['Append to first table', 'Adds the other tables\' rows to the first table itself, with the columns it lacks, instead of making a new table; Edit > Undo takes it back.'],
+        ['Output table name', 'The new table\'s name; empty: Concatenated. Not used with Append to first table.'],
+      ] }] },
     'cmd:join': { kicker: 'Tables', title: 'Join', lead: 'Rows of two tables side by side: by matching columns (pairs of columns whose values must be equal; a missing value matches nothing), by row number, or every row with every row (Cartesian).', sections: [
-      { heading: 'Options', choices: [['Include non-matches', 'Keep the rows of the main table (left join), of the other (right join) or of both (full join) that have no match; without, only matched rows (inner join).'], ['Drop multiples', 'Keep only the first row of each key in that table, as pandas\' drop_duplicates.'], ['Match flag', 'A column: 1 main table only, 2 other table only, 3 both.'], ['Merge same name columns', 'One column for each pair of matching columns.']] }] },
-    'cmd:update': { kicker: 'Tables', title: 'Update', lead: 'Changes the current table: for each row, the first matching row of the other table replaces the values of the columns both have (with Ignore missing, a missing value leaves the old one), and the other table\'s other columns are added. Edit > Undo takes it back.' },
+      { heading: 'Fields', choices: [
+        ['Join with', 'The other table; its columns come after this table\'s.'],
+        ['Matching', '**By Matching Columns** (the default): rows whose values are equal in every pair of matching columns; **By Row Number**: row 1 with row 1, row 2 with row 2; **Cartesian Join**: every row of this table with every row of the other.'],
+        ['Matching columns', 'Choose a column of each table and press Match to add the pair; a row matches when every pair is equal (compared as text when either column is text), and a missing value matches nothing. A column name both tables share is paired at the start; remove takes a pair away.'],
+        ['Include non-matches', '**Main table**: keep this table\'s rows that match nothing (a left join); **With table**: the other table\'s (a right join); both: a full join. Neither (the default): matched rows only, an inner join. By Row Number, they keep the longer table\'s extra rows.'],
+        ['Drop multiples', 'By Matching Columns: keep only the first row of each key in that table (as pandas\' drop_duplicates), so that a key matches at most one of its rows.'],
+        ['Match flag', 'On (the default): a Match Flag column, 1 for a row from this table only, 2 from the other only, 3 from both.'],
+        ['Merge same name columns', 'By Matching Columns, on (the default): one column for each pair of matching columns, the other table\'s value filling the rows only it has; off: both tables\' matching columns are kept. Other columns with the same name in both tables are both kept, each named after its table (x of Students, x of Other).'],
+        ['Output table name', 'The new table\'s name; empty: Join of this table with the other.'],
+      ] }] },
+    'cmd:update': { kicker: 'Tables', title: 'Update', lead: 'Changes the current table: for each row, the first matching row of the other table replaces the values of the columns both have (with Ignore missing, a missing value leaves the old one), and the other table\'s other columns are added. Edit > Undo takes it back.', sections: [
+      { heading: 'Fields', choices: [
+        ['Update with data from', 'The other table, whose values go into this one.'],
+        ['Matching', '**By Matching Columns** (the default): each row takes the values of the first row of the other table that is equal in every pair of matching columns; **By Row Number**: row 1 from row 1, row 2 from row 2.'],
+        ['Matching columns', 'Choose a column of each table and press Match to add the pair; a missing value matches nothing. A column name both tables share is paired at the start; remove takes a pair away.'],
+        ['Ignore missing', 'On (the default): a missing value in the other table leaves this table\'s value as it is; off, it makes the value missing.'],
+        ['Replace columns in main table', '**All** (the default): the columns both tables have, other than the matching ones, take the other table\'s values in the matched rows; **None**: they are left as they are.'],
+        ['Add columns from update table', '**All** (the default): the other table\'s columns that this one lacks are added, filled in the matched rows; **None**: no column is added.'],
+      ] }] },
     'cmd:missingpattern': { kicker: 'Tables', title: 'Missing Data Pattern', lead: 'A table with one row per pattern of missing values in the chosen columns: Count, the number of columns missing, the pattern (1 for missing, in the columns\' order) and a 0/1 column per column. Selecting a pattern selects its rows in the source table.' },
-    'cmd:recode': { kicker: 'Cols', title: 'Recode', lead: 'Give distinct values new values: type them, or use Trim, Collapse Whitespace, Title Case, Lower Case, Upper Case, and Group Similar Values (the same letters and digits ignoring case, accents, spaces and signs; the commonest spelling wins). Old values given one new value merge.', sections: [{ heading: 'Done', choices: [['New Column', 'A new column beside this one.'], ['In Place', 'This column changes (Edit > Undo takes it back).'], ['Formula Column', 'A new formula column, Match(:x, old, new, …, :x), that follows the column when it changes.']] }] },
+    'cmd:recode': { kicker: 'Cols', title: 'Recode', lead: 'Give distinct values new values: type them, or use Trim, Collapse Whitespace, Title Case, Lower Case, Upper Case, and Group Similar Values (the same letters and digits ignoring case, accents, spaces and signs; the commonest spelling wins). Old values given one new value merge.', sections: [
+      { heading: 'The dialog', choices: [
+        ['Old Values, Count', 'Each distinct value of the column in its value order (and Missing, when some rows are), with how many rows have it.'],
+        ['New Values', 'Type the new value beside the old one. Old values given the same new value become one; an empty new value makes those rows missing. A numeric column stays numeric when every new value is a number; otherwise the result is text.'],
+        ['Filter values', 'Shows only the values whose old or new text holds what you type.'],
+        ['Trim Whitespace, Collapse Whitespace', 'Take the spaces off the ends of every new value; Collapse also makes each run of spaces inside one space.'],
+        ['Title Case, Lower Case, Upper Case', 'Change the case of the letters of every new value.'],
+        ['Group Similar Values', 'Gives values that differ only in case, accents, spaces and signs one new value: the spelling with the most rows.'],
+        ['Reset', 'Puts every new value back to its old value.'],
+        ['Name', 'The new column\'s name (the column\'s name and 2 at the start); not used In Place.'],
+      ] },
+      { heading: 'Done', choices: [['New Column', 'A new column beside this one.'], ['In Place', 'This column changes (Edit > Undo takes it back).'], ['Formula Column', 'A new formula column, Match(:x, old, new, …, :x), that follows the column when it changes.']] }] },
     'cmd:newformula': { kicker: 'Cols', title: 'New Formula Column', lead: 'A new formula column next to the column: Transform (Log, Log10, Square Root, Square, Reciprocal, Exp, Standardize, Center, Absolute Value), Row (Lag, Difference, Cumulative Sum, Row Number), Distributional (Rank, Rank Fraction, Normal Quantile), or Combine the selected columns (Sum, Mean, Difference, Ratio). Each is a formula you can open and edit.' },
     'cmd:indicator': { kicker: 'Cols > Utilities', title: 'Make Indicator Columns', lead: 'For a nominal or ordinal column, a 0/1 column per level: 1 where the row has the level, 0 elsewhere, missing where the column is missing. As formula columns, they follow the column.' },
     'cmd:binning': { kicker: 'Cols > Utilities', title: 'Make Binning Column', lead: 'Cut a numeric column into bins: of equal width (rounded widths, or the width you give), of equal counts (quantiles, JMP\'s definition) or at your cut points. The new column is ordinal, labelled by the ranges, in their order; as a formula column it follows the column.' },
     'cmd:standardize': { kicker: 'Cols > Utilities', title: 'Standardize', lead: 'For each selected numeric column a formula column Col Standardize(:x): (x − mean)/standard deviation over all rows.' },
-    'cmd:pyscript': { kicker: 'File', title: 'Python Script', lead: 'A report tab with a Python editor. The code runs in the page\'s Python engine only when you press Run, in a fresh namespace, with df the table (included rows, the real column names, nominal and ordinal columns as Categoricals) and np, pd, sm, smf and stats imported.', sections: [{ heading: 'Output', text: 'What the code prints is shown, and its error with the line. Leave a DataFrame (or Series) in result and Make into Data Table opens it as a table.' }, { heading: 'Saved projects', text: 'A project keeps the code of its script tabs but never runs it: a script from someone else shows a warning until you run it yourself.' }] },
+    'cmd:pyscript': { kicker: 'File', title: 'Python Script', lead: 'A report tab with a Python editor. The code runs in the page\'s Python engine only when you press Run, in a fresh namespace, with df the table (included rows, the real column names, nominal and ordinal columns as Categoricals) and np, pd, sm, smf and stats imported.', sections: [
+      { heading: 'In the report', choices: [
+        ['The editor', 'Your Python. Tab indents (every selected line, when several are), shift+Tab takes an indent back, ctrl/⌘+Enter runs. The code is kept with the report, and in this browser as the start of the next script.'],
+        ['Run', 'Runs the code on the table\'s included rows, each time in a fresh namespace; nothing runs before you press it.'],
+        ['Examples ▾', 'Puts an example in the editor in place of what is there: describe the table, group means, a regression with statsmodels\' formulas, a t test.'],
+        ['Make into Data Table', 'Shown when the code left a DataFrame (or Series) in result: opens it as a new data table.'],
+        ['Insert Example, Clear Output (red triangle)', 'The same examples, and clearing what the last run printed.'],
+      ] },
+      { heading: 'Output', text: 'What the code prints is shown, and its error with the line. Leave a DataFrame (or Series) in result and Make into Data Table opens it as a table.' }, { heading: 'Saved projects', text: 'A project keeps the code of its script tabs but never runs it: a script from someone else shows a warning until you run it yourself.' }] },
   };
 
   const reg = (d) => SM.commands.register(d);

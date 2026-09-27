@@ -357,6 +357,16 @@
     const number = (i) => { const s = String(i.value).trim().replace(',', '.'); return s === '' ? null : Number(s); };
     return {
       el: box,
+      help: [
+        ['Control', 'Where the effects start: a level of a two-level treatment (at first its first level), or a number for a continuous one (at first its first quartile, or the smaller of its two values). statsmodels codes it 0.'],
+        ['Treated', 'Where the effects go: the other level (at first the last), or a number (the third quartile, or the larger value), coded 1. For a continuous treatment the effects are those of the whole step from Control to Treated.'],
+        ['Outcome model', 'The model of Y on the treatment, the mediator and the covariates: Least Squares for a continuous Y (its default), Logistic or Probit for two levels or 0/1 (Logistic is the default for a categorical Y), Poisson for a count. A categorical Y takes Logistic or Probit only.'],
+        ['Mediator model', 'The model of the mediator on the treatment and the covariates, chosen the same way: Least Squares for a continuous mediator, Logistic or Probit for a two-level one, Poisson for a count.'],
+        ['Treatment × mediator interaction', 'Adds treatment × mediator to the outcome model, so that the mediator may act differently under control and under treatment; the control and treated versions of ACME and ADE then differ. Off by default: without it, and with least squares models, the two versions are the same.'],
+        ['Number', 'How many simulations, 20 to 100 000 (1000 by default). More give steadier estimates and intervals and a finer p-value, whose smallest step is 2 / simulations; the time grows with them, and rows × simulations may be at most 10 million.'],
+        ['Method', 'Parametric (quasi-Bayesian, the default, as in R\'s mediation): each simulation draws the two models\' parameters from their estimated sampling distributions. Nonparametric bootstrap: each refits both models to a resample of the rows; slower, and it does not lean on the normal approximation.'],
+        ['Seed', 'The seed of the simulations, a whole number from 0: the same seed gives the same numbers, here and in the Python shown.'],
+      ],
       read() {
         const c = col('treatment');
         let control = null, treated = null;
@@ -416,7 +426,8 @@
       const choices = lv.map((v) => [String(v), SM.grid.cellText(c, v)]);
       const cur0 = levelOf(ctx.table, c, ctx.opt('control', null), lv[0]), cur1 = levelOf(ctx.table, c, ctx.opt('treated', null), lv[lv.length - 1]);
       const v = await SM.ui.form({ title: `Treatment Contrast: ${c.name}`, info: 'p:mediation:contrast', fields: [
-        { key: 'c0', label: 'Control level', type: 'select', value: String(cur0), choices }, { key: 'c1', label: 'Treated level', type: 'select', value: String(cur1), choices }],
+        { key: 'c0', label: 'Control level', type: 'select', value: String(cur0), choices, help: 'The level the effects start from, coded 0 in both models.' },
+        { key: 'c1', label: 'Treated level', type: 'select', value: String(cur1), choices, help: 'The level the effects go to, coded 1; another level than Control. Swapping the two turns every effect\'s sign, and the control and treated versions trade places.' }],
       validate: (x) => (x.c0 === x.c1 ? 'The two levels must be different.' : null) });
       if (!v) return;
       ctx.set('control', lv.find((x) => String(x) === v.c0), null, { rerun: false });
@@ -424,7 +435,8 @@
     } else {
       const [d0, d1] = defaultContrast(c);
       const v = await SM.ui.form({ title: `Treatment Contrast: ${c.name}`, info: 'p:mediation:contrast', lead: `The effects compare ${c.name} at the treated value with ${c.name} at the control value.`, fields: [
-        { key: 'c0', label: 'Control value', type: 'number', value: ctx.opt('control', d0) }, { key: 'c1', label: 'Treated value', type: 'number', value: ctx.opt('treated', d1) }],
+        { key: 'c0', label: 'Control value', type: 'number', value: ctx.opt('control', d0), help: `The value of ${c.name} the effects start from, in its units: at first its first quartile, or the smaller of its two values.` },
+        { key: 'c1', label: 'Treated value', type: 'number', value: ctx.opt('treated', d1), help: `The value they go to (at first the third quartile, or the larger value): the effects are those of moving ${c.name} from Control value to Treated value, with the treatment recoded to (T − control)/(treated − control), the same model.` }],
       validate: (x) => (x.c0 == null || x.c1 == null || x.c0 === x.c1 ? 'Give two different numbers.' : null) });
       if (!v) return;
       ctx.set('control', v.c0, null, { rerun: false });
@@ -434,9 +446,9 @@
 
   async function simulationDialog(ctx) {
     const v = await SM.ui.form({ title: 'Simulations', info: 'p:mediation:simulation', fields: [
-      { key: 'n', label: 'Number of simulations', type: 'number', value: ctx.opt('nRep', 1000) },
-      { key: 'method', label: 'Method', type: 'select', value: ctx.opt('method', 'parametric'), choices: METHODS },
-      { key: 'seed', label: 'Seed', type: 'number', value: ctx.opt('seed', 1) }],
+      { key: 'n', label: 'Number of simulations', type: 'number', value: ctx.opt('nRep', 1000), help: '20 to 100 000, 1000 by default. More give steadier estimates and intervals and a finer p-value (its step is 2 / simulations); rows × simulations may be at most 10 million.' },
+      { key: 'method', label: 'Method', type: 'select', value: ctx.opt('method', 'parametric'), choices: METHODS, help: 'Parametric (quasi-Bayesian) or the nonparametric bootstrap, as above; the bootstrap refits both models in every simulation, so it takes longer.' },
+      { key: 'seed', label: 'Seed', type: 'number', value: ctx.opt('seed', 1), help: 'A whole number from 0: the same seed gives the same simulations, here and in the Python shown.' }],
     validate: (x) => (!(x.n >= 20 && x.n <= 100000) ? 'Simulations: a number from 20 to 100000.' : !Number.isInteger(x.seed) || x.seed < 0 ? 'Seed: a whole number, zero or more.' : null) });
     if (!v) return;
     ctx.set('nRep', Math.round(v.n), null, { rerun: false });
@@ -561,7 +573,7 @@
           ['Mediator', 'What the treatment may change and that may change the outcome: continuous, binary or a count.'],
           ['Covariates', 'Columns that affect the mediator and the outcome (or the treatment), measured before the treatment; they enter both models.'],
           ['By', 'A separate analysis for each level.']] },
-        { heading: 'Options', text: 'The two models\' types (following the columns), the treatment × mediator interaction in the outcome model, the number of simulations (1000), the method (parametric or bootstrap) and the seed. Every one is also in the red triangle.' },
+        { heading: 'In the red triangle', text: 'Every setting of the launch dialog can be changed in the report: Outcome and Mediator Model Type, Treatment × Mediator Interaction, Treatment Contrast…, Method and Simulations… (the number and the seed); the effects are simulated again.' },
         { heading: 'Reading it', text: 'ACME is the indirect effect, ADE the direct one, and their sum the total. Look at the intervals, and think hard about sequential ignorability: nothing unmeasured may drive both the mediator and the outcome.' },
       ],
       more: MORE,
@@ -591,7 +603,8 @@
       kicker: 'Mediation', title: 'Simulations',
       lead: 'How many times the effects are simulated, and how.',
       sections: [{ choices: [['Parametric', 'the quasi-Bayesian method: the models\' parameters drawn from their approximate sampling distributions (the default, as in R\'s mediation)'],
-        ['Bootstrap', 'the models refitted to resamples of the rows; slower (a fit per model per simulation)'], ['Simulations', '1000 by default; the p-value\'s step is 2 / simulations'], ['Seed', 'the same seed gives the same simulations, here and in the Python shown']] }],
+        ['Bootstrap', 'the models refitted to resamples of the rows; slower (a fit per model per simulation)']] },
+      { text: 'The number of simulations (1000 by default) sets how steady the estimates are and the p-value\'s step, 2 / simulations; the seed makes them repeatable, here and in the Python shown.' }],
       more: MORE,
     },
     'p:mediation:about': { kicker: 'Mediation', title: 'Assumptions and Method', lead: 'What the effects mean, what they assume (sequential ignorability), how statsmodels computes them and how that differs from R\'s mediation package.', more: MORE },
@@ -605,11 +618,16 @@
     launch: {
       lead: 'The effect of a treatment on an outcome, split into the part that goes through a mediator (indirect) and the rest (direct): a model of the mediator, a model of the outcome, and simulations.',
       roles: [
-        { key: 'y', label: 'Y, Outcome', min: 1, max: 1, hint: 'required: continuous, binary or a count' },
-        { key: 'treatment', label: 'Treatment', min: 1, max: 1, hint: 'required: two levels, or continuous' },
-        { key: 'mediator', label: 'Mediator', min: 1, max: 1, hint: 'required' },
-        { key: 'covariates', label: 'Covariates', hint: 'optional: in both models' },
-        { key: 'by', label: 'By', hint: 'optional' },
+        { key: 'y', label: 'Y, Outcome', min: 1, max: 1, hint: 'required: continuous, binary or a count',
+          help: 'The outcome: continuous (least squares), two levels or 0/1 (logistic or probit: the effects are on the probability of the second level, or of 1) or a count (Poisson: on the expected count), as Outcome model says. Rows with a missing value in any role are left out.' },
+        { key: 'treatment', label: 'Treatment', min: 1, max: 1, hint: 'required: two levels, or continuous',
+          help: 'What may cause the change: a column with two levels, whose Control and Treated levels are picked below, or a continuous one, with two values to compare (at first its quartiles, or its two values when it has only two).' },
+        { key: 'mediator', label: 'Mediator', min: 1, max: 1, hint: 'required',
+          help: 'The path the effect may take: something the treatment changes and that changes the outcome in turn, measured after the treatment and before the outcome. Continuous, two levels or a count, as Mediator model says.' },
+        { key: 'covariates', label: 'Covariates', hint: 'optional: in both models',
+          help: 'Optional. Columns measured before the treatment that affect the mediator and the outcome (or the treatment): they enter both models as main effects, a nominal one effect coded. Nothing the treatment itself changes may be among them.' },
+        { key: 'by', label: 'By', hint: 'optional',
+          help: 'A separate analysis of the rows of each level (each combination of levels, with several By columns). Rows with a missing By value are left out.' },
       ],
       extra: launchExtra,
       validate,

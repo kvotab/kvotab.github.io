@@ -206,8 +206,13 @@
 
   function levelOptions(ctx) {
     return [0.01, 0.05, 0.1, 0.5].map((a) => ({ label: String(a), checked: Math.abs(ctx.alpha - a) < 1e-12, action: () => ctx.set('alpha', a) }))
-      .concat([{ label: 'Other…', action: async () => { const v = await SM.ui.form({ title: 'Set α Level', fields: [{ key: 'a', label: 'α (for the confidence intervals and tests)', type: 'number', value: ctx.alpha }] }); if (v && v.a > 0 && v.a < 1) ctx.set('alpha', v.a); } }]);
+      .concat([{ label: 'Other…', action: async () => { const v = await SM.ui.form({ title: 'Set α Level', fields: [{ key: 'a', label: 'α (for the confidence intervals and tests)', type: 'number', value: ctx.alpha,
+        help: 'The significance level: the confidence intervals are 100(1 − α)%, and the tests, the outlier limits and the false discovery rate use it. Between 0 and 1; 0.05 by default.' }] }); if (v && v.a > 0 && v.a < 1) ctx.set('alpha', v.a); } }]);
   }
+
+  /* The launch roles several platforms share, and what they are for. */
+  const BY_HELP = 'A separate report for each level of the By column (with several columns, each combination of their levels). Rows with a missing By value are left out.';
+  const LABEL_HELP = 'A column whose values name the rows in the hover text of the graphs; without it the table\'s label column, else the row number.';
 
   /* ======================================================================
      MULTIVARIATE
@@ -533,14 +538,19 @@
     launch: {
       lead: 'Choose two or more numeric columns. The report starts with their correlations and a scatterplot matrix; the red triangle adds the rest.',
       roles: [
-        { key: 'y', label: 'Y, Columns', min: 2, numeric: true, types: ['continuous', 'ordinal'], hint: 'required: two or more numeric' },
-        { key: 'weight', label: 'Weight', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric' },
-        { key: 'freq', label: 'Freq', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric' },
-        { key: 'by', label: 'By', hint: 'optional' },
+        { key: 'y', label: 'Y, Columns', min: 2, numeric: true, types: ['continuous', 'ordinal'], hint: 'required: two or more numeric',
+          help: 'The columns whose correlations, covariances and scatterplot matrix are shown, and which the outlier distances and item reliability are computed over.' },
+        { key: 'weight', label: 'Weight', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric',
+          help: 'Case weights: the means, covariances and correlations are weighted (statsmodels DescrStatsW); the tests count rows, or Freq, in their degrees of freedom. Rows with a missing, zero or negative weight are left out.' },
+        { key: 'freq', label: 'Freq', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric',
+          help: 'A count per row: the row stands for that many observations, in the estimates and in the tests\' degrees of freedom.' },
+        { key: 'by', label: 'By', hint: 'optional', help: BY_HELP },
       ],
       options: [
-        { key: 'method', label: 'Estimation Method', type: 'select', value: 'rowwise', choices: [['rowwise', 'Row-wise'], ['pairwise', 'Pairwise']] },
-        { key: 'matrixFormat', label: 'Matrix Format', type: 'select', value: 'square', choices: [['square', 'Square'], ['lower', 'Lower Triangular'], ['upper', 'Upper Triangular']] },
+        { key: 'method', label: 'Estimation Method', type: 'select', value: 'rowwise', choices: [['rowwise', 'Row-wise'], ['pairwise', 'Pairwise']],
+          help: 'Row-wise, the default: only the rows with every column present, so every statistic uses the same rows. Pairwise: each correlation and covariance on the rows where its two columns are present, which uses more of the data when values are missing, but the matrix need not be positive definite. JMP\'s REML, ML and Robust are not offered.' },
+        { key: 'matrixFormat', label: 'Matrix Format', type: 'select', value: 'square', choices: [['square', 'Square'], ['lower', 'Lower Triangular'], ['upper', 'Upper Triangular']],
+          help: 'The layout of the scatterplot matrix: Square shows every pair twice, with the columns\' names on the diagonal; Lower and Upper Triangular show each pair once.' },
       ],
     },
     title: () => 'Multivariate',
@@ -583,6 +593,9 @@
   const ON = { correlations: 'Correlations', covariances: 'Covariances', unscaled: 'Unscaled' };
   const ROTATIONS = [['varimax', 'Varimax'], ['quartimax', 'Quartimax'], ['equamax', 'Equamax'], ['biquartimax', 'Biquartimax'], ['parsimax', 'Parsimax'], ['factorparsimax', 'Factorparsimax'], ['orthomax', 'Orthomax (γ)'],
     ['promax', 'Promax (oblique)'], ['quartimin', 'Quartimin (oblique)'], ['biquartimin', 'Biquartimin (oblique)'], ['covarimin', 'Covarimin (oblique)'], ['oblimin', 'Oblimin (γ, oblique)'], ['obvarimax', 'Obvarimax (oblique)'], ['obequamax', 'Obequamax (oblique)'], ['obparsimax', 'Obparsimax (oblique)']];
+  const ROTATION_HELP = 'An orthogonal rotation (Varimax, the common choice, and the others of the orthomax family) keeps the rotated factors uncorrelated; an oblique one (Promax, Quartimin, Oblimin …) lets them correlate, which often gives simpler loadings. Each looks for loadings near 0 or ±1, so that each column belongs to few factors.';
+  const GAMMA_HELP = 'The weight γ of the Orthomax and Oblimin families: Orthomax with γ = 1 is varimax and 0 quartimax; Oblimin with γ = 0 is quartimin, 0.5 biquartimin, 1 covarimin. Empty: 1 for Orthomax, 0 for Oblimin. The other rotations do not use it.';
+  const KAISER_HELP = 'Rotate with each column\'s loadings scaled to unit length, and scale them back after (SAS\'s default), so that columns with small communalities count as much as the others in the rotation.';
 
   async function pcaRender(ctx) {
     const names = ctx.names('y');
@@ -597,7 +610,7 @@
     const cx = Math.min(o('pcx', 0), k - 1), cy = Math.min(Math.max(o('pcy', 1), 0), k - 1);
     box.append(ctx.note(`${fmt(res.n)} observations${res.n_rows < ctx.rows.length ? `; ${dropped(ctx.rows.length - res.n_rows)}` : ''}. ${{ correlations: 'The eigenvalues of the correlation matrix sum to the number of columns.', covariances: 'Eigenvalues of the covariance matrix.', unscaled: "Eigenvalues of the uncentred cross products X′X/n." }[on]}`));
     if (o('summary', true)) {
-      const ob = ctx.outline('Summary Plots', { key: 'summary' });
+      const ob = ctx.outline('Summary Plots', { key: 'summary', info: 'pca:summary' });
       const choose = controls(control('Select component, x', selectEl(cx, res.eigenvalues.map((_, j) => [j, comp(j)]), (v) => ctx.set('pcx', +v), 'x component')),
         control('y', selectEl(cy, res.eigenvalues.map((_, j) => [j, comp(j)]), (v) => ctx.set('pcy', +v), 'y component')));
       ob.add(ctx.row(eigenBars(ctx, res, 250, 240), scorePlot(ctx, res, cx, cy, 300, 280, o('ellipse', false)), loadingPlot(ctx, res.loadings, names, cx, cy, 300, 280, on !== 'unscaled', comp)), choose);
@@ -683,7 +696,7 @@
 
   function formattedLoadings(ctx, res, names, comp) {
     const thr = ctx.opt('suppress', 0);
-    const ob = ctx.outline('Formatted Loading Matrix', { key: 'fmtload' });
+    const ob = ctx.outline('Formatted Loading Matrix', { key: 'fmtload', info: 'pca:fmtload' });
     const order = names.map((_, i) => i).sort((i, j) => res.loadings[j][0] - res.loadings[i][0]);
     const kk = res.eigenvalues.length;
     const tbl = matrixTable(ctx, res.eigenvalues.map((_, j) => comp(j)), order.map((i) => res.loadings[i]), { rowNames: order.map((i) => names[i]), digits: 4 });
@@ -722,7 +735,8 @@
     if (res.error) { SM.ui.toast(res.error, { error: true }); return; }
     const k = res.eigenvalues.length;
     const dflt = Math.max(1, res.eigenvalues.filter((e) => e >= 1).length);
-    const v = await SM.ui.form({ title: 'Save Principal Components', fields: [{ key: 'n', label: `Number of components (1 to ${k})`, type: 'number', value: Math.min(k, dflt) }] });
+    const v = await SM.ui.form({ title: 'Save Principal Components', fields: [{ key: 'n', label: `Number of components (1 to ${k})`, type: 'number', value: Math.min(k, dflt),
+      help: 'How many component columns (Prin1, Prin2, …) to add to the table; the default is the number of eigenvalues of at least 1. A score is the centred row (on correlations also standardized) times the eigenvector, so each column\'s variance is its eigenvalue.' }] });
     if (!v || !(v.n >= 1)) return;
     for (let j = 0; j < Math.min(k, Math.round(v.n)); j++) ctx.saveColumn(`Prin${j + 1}`, { rows: res.rows, values: res.scores.map((s) => s[j]) }, { notes: `principal component ${j + 1} on ${ON[res.on]}` });
   }
@@ -732,10 +746,11 @@
     const v = await SM.ui.form({
       title: 'Factor Rotation', lead: 'Rotate the loadings of the first components, as JMP\'s Factor Analysis option of Principal Components does.',
       fields: [
-        { key: 'k', label: 'Number of components to rotate', type: 'number', value: cur.k ?? 2 },
-        { key: 'method', label: 'Rotation', type: 'select', value: cur.method || 'varimax', choices: ROTATIONS },
-        { key: 'gamma', label: 'γ (Orthomax and Oblimin only)', type: 'number', value: cur.gamma ?? null },
-        { key: 'kaiser', label: 'Kaiser normalization', type: 'check', value: cur.kaiser !== false },
+        { key: 'k', label: 'Number of components to rotate', type: 'number', value: cur.k ?? 2,
+          help: 'The first components whose loadings are rotated together; two or more.' },
+        { key: 'method', label: 'Rotation', type: 'select', value: cur.method || 'varimax', choices: ROTATIONS, help: ROTATION_HELP },
+        { key: 'gamma', label: 'γ (Orthomax and Oblimin only)', type: 'number', value: cur.gamma ?? null, help: GAMMA_HELP },
+        { key: 'kaiser', label: 'Kaiser normalization', type: 'check', value: cur.kaiser !== false, help: KAISER_HELP },
       ],
     });
     if (v) ctx.set('rotation', { k: Math.max(2, Math.round(v.k || 2)), method: v.method, gamma: v.gamma, kaiser: !!v.kaiser });
@@ -756,16 +771,36 @@
         ],
         more: { label: 'Principal Components', id: 'help-p-pca' },
       },
+      'pca:summary': {
+        kicker: 'Principal Components', title: 'Summary Plots',
+        lead: 'The eigenvalues as bars, the rows as points on two components (the score plot) and the columns as rays on the same two (the loading plot, inside the unit circle on correlations and covariances).',
+        sections: [{ heading: 'In the report', choices: [
+          ['Select component, x', 'The component on the horizontal axis of the score and loading plots; the Score Plot, Loading Plot and Biplot outlines follow it too.'],
+          ['y', 'The component on the vertical axis.']] }],
+        more: { label: 'Principal Components', id: 'help-p-pca' },
+      },
+      'pca:fmtload': {
+        kicker: 'Principal Components', title: 'Formatted Loading Matrix',
+        lead: 'The loadings with the columns sorted by their loading on Prin1, largest first, and the small ones dimmed or left blank, so that the pattern stands out.',
+        sections: [{ heading: 'In the report', choices: [
+          ['Suppress absolute loading values less than', 'Loadings smaller than this in absolute value are dimmed (or blanked); empty or 0 shows them all. The value takes effect when you leave the field or press Enter.'],
+          ['Blank them (else dimmed)', 'Leave the suppressed loadings empty instead of dimming them.']] }],
+        more: { label: 'Principal Components', id: 'help-p-pca' },
+      },
     },
     launch: {
       lead: 'Choose the columns. The report shows the eigenvalues, a score plot and a loading plot of the first two components.',
       roles: [
-        { key: 'y', label: 'Y, Columns', min: 2, numeric: true, types: ['continuous', 'ordinal'], hint: 'required: two or more numeric' },
-        { key: 'weight', label: 'Weight', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric' },
-        { key: 'freq', label: 'Freq', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric' },
-        { key: 'by', label: 'By', hint: 'optional' },
+        { key: 'y', label: 'Y, Columns', min: 2, numeric: true, types: ['continuous', 'ordinal'], hint: 'required: two or more numeric',
+          help: 'The columns whose principal components are found. Rows with a missing value in any of them are left out.' },
+        { key: 'weight', label: 'Weight', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric',
+          help: 'Case weights of the means and of the matrix analysed. Rows with a missing, zero or negative weight are left out.' },
+        { key: 'freq', label: 'Freq', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric',
+          help: 'A count per row: the row stands for that many observations, in the matrix and in Bartlett\'s test.' },
+        { key: 'by', label: 'By', hint: 'optional', help: BY_HELP },
       ],
-      options: [{ key: 'on', label: 'Principal components on', type: 'select', value: 'correlations', choices: [['correlations', 'Correlations'], ['covariances', 'Covariances'], ['unscaled', 'Unscaled']] }],
+      options: [{ key: 'on', label: 'Principal components on', type: 'select', value: 'correlations', choices: [['correlations', 'Correlations'], ['covariances', 'Covariances'], ['unscaled', 'Unscaled']],
+        help: 'Correlations, the default: each column standardized first, so every column counts alike and the loadings are correlations. Covariances: the columns only centred, so those with larger variances weigh more; for columns in the same units. Unscaled: the raw cross products X′X/n, neither centred nor scaled. The red triangle changes it later.' }],
     },
     title: (spec) => `Principal Components: on ${ON[(spec.options && spec.options.on) || 'correlations'] || 'Correlations'}`,
     triangle(ctx) {
@@ -939,16 +974,37 @@
         ],
         more: { label: 'Factor Analysis', id: 'help-p-factor' },
       },
-      'fa:launch': { kicker: 'Factor Analysis', title: 'Model Launch', lead: 'Set the factoring method, the prior communalities, the number of factors (default: the eigenvalues of at least one) and the rotation, then press Go. γ is the weight of the Orthomax and Oblimin families. Each Go adds a fit report below; Remove Fit in its red triangle takes it away.', more: { label: 'Factor Analysis', id: 'help-p-factor' } },
-      'fa:fit': { kicker: 'Factor Analysis', title: 'A factor fit', lead: 'Communalities (the share of each column\'s variance the factors take up), the variance each factor explains, the loadings sorted so that columns of the same factor are together, and for maximum likelihood the tests of no common factors (Bartlett\'s sphericity) and of enough factors. The red triangle shows the rest and saves the factor scores.', more: { label: 'Factor Analysis', id: 'help-p-factor' } },
+      'fa:launch': {
+        kicker: 'Factor Analysis', title: 'Model Launch', lead: 'Set the factoring method, the prior communalities, the number of factors (default: the eigenvalues of at least one) and the rotation, then press Go. γ is the weight of the Orthomax and Oblimin families. Each Go adds a fit report below; Remove Fit in its red triangle takes it away.',
+        sections: [{ heading: 'The controls', choices: [
+          ['Factoring method', 'Maximum Likelihood, the default: the factors that make the correlations most likely, with tests of whether they are enough; it needs a positive definite correlation matrix. Principal Axis: the eigenvectors of the correlation matrix with communalities on its diagonal, iterated (statsmodels, 50 iterations).'],
+          ['Prior communality', 'The diagonal Principal Axis starts from: Common Factor Analysis puts each column\'s squared multiple correlation (SMC) there, Principal Components 1. Maximum likelihood estimates the communalities itself and does not use it.'],
+          ['Number of factors', 'How many factors to extract; empty takes the number of eigenvalues of at least 1. Maximum likelihood takes at most one fewer than the columns, and warns when the model is not identified.'],
+          ['Rotation method', `None, or a rotation of the loadings. ${ROTATION_HELP}`],
+          ['γ', GAMMA_HELP],
+          ['Kaiser normalization', KAISER_HELP],
+          ['Go', 'Fit the model with these settings and add its report below; each Go adds another, and the settings stay for the next one.']] }],
+        more: { label: 'Factor Analysis', id: 'help-p-factor' },
+      },
+      'fa:fit': {
+        kicker: 'Factor Analysis', title: 'A factor fit', lead: 'Communalities (the share of each column\'s variance the factors take up), the variance each factor explains, the loadings sorted so that columns of the same factor are together, and for maximum likelihood the tests of no common factors (Bartlett\'s sphericity) and of enough factors. The red triangle shows the rest and saves the factor scores.',
+        sections: [{ heading: 'In the report', choices: [
+          ['Suppress absolute loading values less than', 'Loadings smaller than this in absolute value are dimmed (or blanked) in the loading tables, so that the pattern stands out; empty or 0 shows them all. Loadings of 0.5 or more are in colour.'],
+          ['Blank them (else dimmed)', 'Leave the suppressed loadings empty instead of dimming them.'],
+          ['x, y', 'With three or more factors: the factors on the axes of the loading plot and of the score plot.']] }],
+        more: { label: 'Factor Analysis', id: 'help-p-factor' },
+      },
     },
     launch: {
       lead: 'Choose the numeric columns (three or more for maximum likelihood). Then choose the model in the report\'s Model Launch and press Go.',
       roles: [
-        { key: 'y', label: 'Y, Columns', min: 2, numeric: true, types: ['continuous', 'ordinal'], hint: 'required: numeric' },
-        { key: 'weight', label: 'Weight', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric' },
-        { key: 'freq', label: 'Freq', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric' },
-        { key: 'by', label: 'By', hint: 'optional' },
+        { key: 'y', label: 'Y, Columns', min: 2, numeric: true, types: ['continuous', 'ordinal'], hint: 'required: numeric',
+          help: 'The columns to factor, through their correlation matrix; maximum likelihood needs three or more. Rows with a missing value in any of them are left out.' },
+        { key: 'weight', label: 'Weight', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric',
+          help: 'Case weights of the correlation matrix. Rows with a missing, zero or negative weight are left out.' },
+        { key: 'freq', label: 'Freq', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric',
+          help: 'A count per row: the row stands for that many observations, in the correlations and in the tests\' degrees of freedom.' },
+        { key: 'by', label: 'By', hint: 'optional', help: BY_HELP },
       ],
     },
     title: () => 'Factor Analysis',
@@ -1149,20 +1205,36 @@
         ],
         more: { label: 'Discriminant', id: 'help-p-discriminant' },
       },
-      'disc:stepwise': { kicker: 'Discriminant', title: 'Stepwise variable selection', lead: 'Step Forward enters the column with the smallest Prob > F, Step Backward removes the entered one with the largest. The F tests the categories in an analysis of covariance of the column on the entered ones. Apply This Model fits the discriminant with the entered columns.', more: { label: 'Discriminant', id: 'help-p-discriminant' } },
+      'disc:stepwise': {
+        kicker: 'Discriminant', title: 'Stepwise variable selection', lead: 'Step Forward enters the column with the smallest Prob > F, Step Backward removes the entered one with the largest. The F tests the categories in an analysis of covariance of the column on the entered ones. Apply This Model fits the discriminant with the entered columns.',
+        sections: [{ heading: 'In the report', choices: [
+          ['Step Forward', 'Enter the column not yet entered with the smallest Prob > F.'],
+          ['Step Backward', 'Remove the entered column with the largest Prob > F.'],
+          ['Enter All', 'Enter every column.'],
+          ['Remove All', 'Remove every column.'],
+          ['Apply This Model', 'Fit the discriminant below with the entered columns only (with none entered, with all of them).'],
+          ['A line of the table', 'Click it to enter or remove that column.']] }],
+        more: { label: 'Discriminant', id: 'help-p-discriminant' },
+      },
     },
     launch: {
       lead: 'Choose the continuous covariates and the column of categories to predict.',
       roles: [
-        { key: 'y', label: 'Y, Covariates', min: 1, numeric: true, types: ['continuous'], hint: 'required: continuous' },
-        { key: 'x', label: 'X, Categories', min: 1, max: 1, types: ['nominal', 'ordinal'], hint: 'required: nominal or ordinal' },
-        { key: 'weight', label: 'Weight', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric' },
-        { key: 'freq', label: 'Freq', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric' },
-        { key: 'by', label: 'By', hint: 'optional' },
+        { key: 'y', label: 'Y, Covariates', min: 1, numeric: true, types: ['continuous'], hint: 'required: continuous',
+          help: 'The columns the groups are predicted from, assumed multivariate normal within each group. Rows with a missing value in any of them are left out.' },
+        { key: 'x', label: 'X, Categories', min: 1, max: 1, types: ['nominal', 'ordinal'], hint: 'required: nominal or ordinal',
+          help: 'The column of the groups to predict: each row is classified into the level with the largest posterior probability.' },
+        { key: 'weight', label: 'Weight', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric',
+          help: 'Weights the means, the covariances and the posterior probabilities; the multivariate tests count rows, not the sum of the weights, in their degrees of freedom.' },
+        { key: 'freq', label: 'Freq', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric',
+          help: 'A count per row: the row stands for that many observations in the means and covariances.' },
+        { key: 'by', label: 'By', hint: 'optional', help: BY_HELP },
       ],
       options: [
-        { key: 'method', label: 'Discriminant Method', type: 'select', value: 'linear', choices: [['linear', 'Linear, Common Covariance'], ['quadratic', 'Quadratic, Different Covariances'], ['regularized', 'Regularized, Compromise Method']] },
-        { key: 'stepwise', label: 'Stepwise Variable Selection', type: 'check', value: false },
+        { key: 'method', label: 'Discriminant Method', type: 'select', value: 'linear', choices: [['linear', 'Linear, Common Covariance'], ['quadratic', 'Quadratic, Different Covariances'], ['regularized', 'Regularized, Compromise Method']],
+          help: 'Linear, the default: one covariance matrix pooled over the groups, and straight boundaries between them. Quadratic: each group its own covariance, curved boundaries; it needs more rows per group. Regularized: a compromise of the two, with λ = 0.5 and γ = 0 until set in the red triangle.' },
+        { key: 'stepwise', label: 'Stepwise Variable Selection', type: 'check', value: false,
+          help: 'Start the report with the Column Selection panel, where the covariates are entered or removed one step at a time by their F tests; Apply This Model then fits the discriminant with the entered ones.' },
       ],
     },
     title: () => 'Discriminant Analysis',
@@ -1174,14 +1246,16 @@
         { label: 'Discriminant Method', submenu: () => [
           { label: 'Linear, Common Covariance', checked: o('method', 'linear') === 'linear', action: () => ctx.set('method', 'linear') },
           { label: 'Quadratic, Different Covariances', checked: o('method', 'linear') === 'quadratic', action: () => ctx.set('method', 'quadratic') },
-          { label: 'Regularized, Compromise Method…', checked: o('method', 'linear') === 'regularized', action: async () => { const v = await SM.ui.form({ title: 'Regularization Parameters', fields: [{ key: 'lam', label: 'λ, shrinkage to the common covariance (0 to 1)', type: 'number', value: o('lam', 0.5) }, { key: 'gam', label: 'γ, shrinkage to the diagonal (0 to 1)', type: 'number', value: o('gam', 0) }], validate: (x) => (x.lam >= 0 && x.lam <= 1 && x.gam >= 0 && x.gam <= 1 ? null : 'λ and γ are between 0 and 1') }); if (v) { ctx.set('lam', v.lam, null, { rerun: false }); ctx.set('gam', v.gam, null, { rerun: false }); ctx.set('method', 'regularized'); } } },
+          { label: 'Regularized, Compromise Method…', checked: o('method', 'linear') === 'regularized', action: async () => { const v = await SM.ui.form({ title: 'Regularization Parameters', fields: [{ key: 'lam', label: 'λ, shrinkage to the common covariance (0 to 1)', type: 'number', value: o('lam', 0.5), help: 'Each group\'s covariance becomes λ·(the pooled covariance) + (1 − λ)·(its own): 1 is the linear method, 0 the quadratic. 0.5 by default.' },
+            { key: 'gam', label: 'γ, shrinkage to the diagonal (0 to 1)', type: 'number', value: o('gam', 0), help: 'Then (1 − γ) of that plus γ of its diagonal, which shrinks the covariances toward zero and steadies the fit with many covariates or few rows. 0 by default.' }], validate: (x) => (x.lam >= 0 && x.lam <= 1 && x.gam >= 0 && x.gam <= 1 ? null : 'λ and γ are between 0 and 1') }); if (v) { ctx.set('lam', v.lam, null, { rerun: false }); ctx.set('gam', v.gam, null, { rerun: false }); ctx.set('method', 'regularized'); } } },
         ] },
         ctx.check('Discriminant Scores', 'scores', null, true),
         { label: 'Score Options', submenu: () => [
           ctx.check('Show Interesting Rows Only', 'interesting', null, false), ctx.check('Show Classification Counts', 'counts', null, true),
           ctx.check('Show Distances to Each Group', 'dist', null, false), ctx.check('Show Probabilities to Each Group', 'probs', null, false),
           { label: 'Select Misclassified Rows', action: withRes((res) => ctx.table.select(res.rows.filter((_, k) => res.misclassified[k]))) },
-          { label: 'Select Uncertain Rows…', action: async () => { const v = await SM.ui.form({ title: 'Select Uncertain Rows', lead: 'Rows whose probability for some group is inside the range.', fields: [{ key: 'lo', label: 'From', type: 'number', value: 0.1 }, { key: 'hi', label: 'To', type: 'number', value: 0.9 }] }); if (!v) return; await withRes((res) => ctx.table.select(res.rows.filter((_, k) => res.prob[k].some((p) => p > v.lo && p < v.hi))))(); } },
+          { label: 'Select Uncertain Rows…', action: async () => { const v = await SM.ui.form({ title: 'Select Uncertain Rows', lead: 'Rows whose probability for some group is inside the range.', fields: [{ key: 'lo', label: 'From', type: 'number', value: 0.1, help: 'The lower end of the range: a row is selected when its posterior probability of some group lies strictly between From and To, a row the model is unsure of. 0.1 by default.' },
+            { key: 'hi', label: 'To', type: 'number', value: 0.9, help: 'The upper end of the range; 0.9 by default.' }] }); if (!v) return; await withRes((res) => ctx.table.select(res.rows.filter((_, k) => res.prob[k].some((p) => p > v.lo && p < v.hi))))(); } },
           { label: 'Save Formulas', action: withRes((res, labels) => discSave(ctx, res, labels)) },
         ] },
         ctx.check('Canonical Plot', 'canplot', null, true),
@@ -1198,7 +1272,8 @@
             const xcol = ctx.role('x');
             const lv = ctx.table.levels(xcol);
             const cur = o('priorValues', {}) || {};
-            const v = await SM.ui.form({ title: 'Specify Priors', lead: 'The prior probability of each group; they are scaled to sum to one.', fields: lv.slice(0, 40).map((l, i) => ({ key: `p${i}`, label: SM.grid.cellText(xcol, l), type: 'number', value: cur[String(l)] ?? +(1 / lv.length).toFixed(4) })) });
+            const v = await SM.ui.form({ title: 'Specify Priors', lead: 'The prior probability of each group; they are scaled to sum to one.', fields: lv.slice(0, 40).map((l, i) => ({ key: `p${i}`, label: SM.grid.cellText(xcol, l), type: 'number', value: cur[String(l)] ?? +(1 / lv.length).toFixed(4),
+              helpLabel: 'Each group', help: 'The prior probability of the group. The priors are scaled to sum to one, so only their proportions count; a larger prior moves the classification toward the group. An empty field counts as 0.' })) });
             if (!v) return;
             const pv = {};
             lv.slice(0, 40).forEach((l, i) => { pv[String(l)] = v[`p${i}`] ?? 0; });
@@ -1265,6 +1340,7 @@
     const n = res.n;
     const { merges, heights, order } = res;
     const k = Math.max(1, Math.min(n, Math.round(o('ncluster', null) ?? defaultClusters(heights, n))));
+    if (!ctx.headless) ctx.report.hcShownClusters = k;      // what Number of Clusters… starts from
     const { lab, nodeCluster } = clustersAt(merges, n, k, order);
     const members = Array.from({ length: k }, () => []);
     for (let i = 0; i < n; i++) members[lab[i]].push(res.rows[i]);
@@ -1420,27 +1496,42 @@
         ],
         more: { label: 'Hierarchical Cluster', id: 'help-p-hcluster' },
       },
-      'hc:dendro': { kicker: 'Hierarchical Cluster', title: 'Dendrogram', lead: 'Read from left to right: each vertical line joins two clusters at the distance where they were joined. The dashed line cuts the tree into the chosen number of clusters; the distance graph below shows the distance of each join against the number of clusters left.', more: { label: 'Hierarchical Cluster', id: 'help-p-hcluster' } },
+      'hc:dendro': {
+        kicker: 'Hierarchical Cluster', title: 'Dendrogram', lead: 'Read from left to right: each vertical line joins two clusters at the distance where they were joined. The dashed line cuts the tree into the chosen number of clusters; the distance graph below shows the distance of each join against the number of clusters left.',
+        sections: [{ heading: 'In the report', choices: [
+          ['Number of clusters', 'Drag the slider (1 to 60) to cut the tree into that many clusters; the report follows when you let go. The colours, the cluster summary and Save Clusters use this number.'],
+          ['− and +', 'One cluster fewer, or one more.'],
+          ['The cluster buttons', 'Under the dendrogram, one per cluster with its number of rows: a click selects its rows (with shift, adds them to the selection).'],
+          ['A join', 'Click a line of the dendrogram to select the rows under that join.'],
+          ['Distance Graph', 'Click a point to choose that number of clusters.']] }],
+        more: { label: 'Hierarchical Cluster', id: 'help-p-hcluster' },
+      },
       'mv:ccc': { kicker: 'Clustering', title: 'Cubic clustering criterion', lead: 'Sarle\'s (1983) CCC compares the R² of the clusters with the R² expected if the data were uniform in a box (hyper-rectangle) of the same shape (the eigenvalues of the covariance matrix). Large positive values suggest clusters; peaks mark candidate numbers of clusters. It assumes roughly spherical clusters. Computed as SAS PROC CLUSTER does (checked against its Fisher iris example).', more: { label: 'K Means Cluster', id: 'help-p-kmeans' } },
     },
     launch: {
       lead: 'Choose the columns to cluster the rows by. Label names the rows in the dendrogram.',
       roles: [
-        { key: 'y', label: 'Y, Columns', min: 1, numeric: true, types: ['continuous', 'ordinal'], hint: 'required: numeric' },
-        { key: 'label', label: 'Label', max: 1, hint: 'optional' },
-        { key: 'by', label: 'By', hint: 'optional' },
+        { key: 'y', label: 'Y, Columns', min: 1, numeric: true, types: ['continuous', 'ordinal'], hint: 'required: numeric',
+          help: 'The columns the distances between the rows are computed from. Rows with a missing value in any of them are left out; at most 4000 rows (for more, K Means Cluster).' },
+        { key: 'label', label: 'Label', max: 1, hint: 'optional',
+          help: 'A column whose values name the rows in the dendrogram, the clustering history and the hover text; without it the table\'s label column, else the row number.' },
+        { key: 'by', label: 'By', hint: 'optional', help: BY_HELP },
       ],
       options: [
-        { key: 'method', label: 'Method', type: 'select', value: 'ward', choices: HMETHODS },
-        { key: 'standardize', label: 'Standardize By', type: 'select', value: 'columns', choices: STDBY },
-        { key: 'twoWay', label: 'Two Way Clustering', type: 'check', value: false },
+        { key: 'method', label: 'Method', type: 'select', value: 'ward', choices: HMETHODS,
+          help: 'How far apart two clusters are, with JMP\'s squared Euclidean distances. Ward, the default, joins the pair that raises the within-cluster sum of squares least: compact clusters of similar size. Average: the mean distance between their rows. Centroid: between their means. Single: their closest rows (it makes long chains). Complete: their farthest rows.' },
+        { key: 'standardize', label: 'Standardize By', type: 'select', value: 'columns', choices: STDBY,
+          help: 'Columns, the default: each column scaled to mean 0 and standard deviation 1 first, so that no column dominates by its units. Unstandardized: the values as they are. Rows: each row centred and scaled across its own columns, to cluster by the shape of the profile rather than its level.' },
+        { key: 'twoWay', label: 'Two Way Clustering', type: 'check', value: false,
+          help: 'Also cluster the columns, and show the values as a heat map with the rows in the order of the dendrogram and the columns in the order of their own clustering.' },
       ],
     },
     title: () => 'Hierarchical Clustering',
     triangle(ctx) {
       return [
         ctx.check('Color Clusters', 'colorClusters', null, false), ctx.check('Mark Clusters', 'markClusters', null, false),
-        { label: 'Number of Clusters…', action: async () => { const v = await SM.ui.form({ title: 'Number of Clusters', fields: [{ key: 'k', label: 'Number of clusters', type: 'number', value: ctx.opt('ncluster', 3) }] }); if (v && v.k >= 1) ctx.set('ncluster', Math.round(v.k)); } },
+        { label: 'Number of Clusters…', action: async () => { const v = await SM.ui.form({ title: 'Number of Clusters', fields: [{ key: 'k', label: 'Number of clusters', type: 'number', value: ctx.opt('ncluster', null) ?? ctx.report.hcShownClusters ?? 3,
+          help: 'Where the tree is cut: the number of clusters the rows fall into, marked by the dashed line and used by the colours, the cluster summary and Save Clusters. Until set, it is where the joining distance jumps most (2 to 10).' }] }); if (v && v.k >= 1) ctx.set('ncluster', Math.round(v.k)); } },
         ctx.check('Cluster Criterion', 'criterion', null, false),
         ctx.check('Show Dendrogram', 'dendro', null, true), ctx.check('Distance Graph', 'distGraph', null, true), ctx.check('Clustering History', 'history', null, true), ctx.check('Cluster Summary', 'summary', null, false),
         ctx.check('Two Way Clustering', 'twoWay', null, false),
@@ -1513,7 +1604,7 @@
     const o = (k, d) => ctx.opt(k, d, sc);
     const members = Array.from({ length: f.k }, () => []);
     f.labels.forEach((c, i) => members[c].push(res.rows[i]));
-    const ob = ctx.outline(`K Means NCluster=${f.k}`, { key: `km:${f.k}`, closed: !open, menu: () => [
+    const ob = ctx.outline(`K Means NCluster=${f.k}`, { key: `km:${f.k}`, closed: !open, info: 'km:fit', menu: () => [
       ctx.check('Biplot', 'biplot', sc, true), ctx.check('Biplot Rays', 'rays', sc, true), ctx.check('Parallel Coord Plots', 'pcp', sc, false), ctx.check('Scatterplot Matrix', 'splom', sc, false),
       { separator: true },
       { label: 'Save Colors to Table', action: () => members.forEach((rs, c) => ctx.table.setColor(rs, c % 12)) },
@@ -1609,20 +1700,44 @@
         ],
         more: { label: 'K Means Cluster', id: 'help-p-kmeans' },
       },
-      'km:control': { kicker: 'K Means Cluster', title: 'Iterative Clustering', lead: 'Number of Clusters and an optional Range of Clusters (up to 30 more) choose what is fitted; Columns Scaled Individually scales each column to standard deviation 1 first. Restarts and Seed set the k-means++ starts. Press Go.', more: { label: 'K Means Cluster', id: 'help-p-kmeans' } },
+      'km:control': {
+        kicker: 'K Means Cluster', title: 'Iterative Clustering', lead: 'Number of Clusters and an optional Range of Clusters (up to 30 more) choose what is fitted; Columns Scaled Individually scales each column to standard deviation 1 first. Restarts and Seed set the k-means++ starts. Press Go.',
+        sections: [{ heading: 'The controls', choices: [
+          ['Number of Clusters', 'k, the number of clusters; with a range, the smallest k fitted. 3 by default.'],
+          ['Range of Clusters (Optional)', 'A larger k: every k from Number of Clusters up to it (at most 30 more) is fitted and compared in Cluster Comparison, the one with the largest CCC marked. Empty fits one k.'],
+          ['Columns Scaled Individually', 'Scale each column to standard deviation 1 first (on by default), so that columns in large units do not dominate the distances.'],
+          ['Restarts', 'How many k-means++ starts; the fit with the smallest within-cluster sum of squares is kept. 10 by default, 1 to 100.'],
+          ['Seed', 'The seed of the random starts: the same seed gives the same clusters.'],
+          ['Go', 'Fit with these settings; what is typed in the fields is used only when Go is pressed.']] }],
+        more: { label: 'K Means Cluster', id: 'help-p-kmeans' },
+      },
+      'km:fit': {
+        kicker: 'K Means Cluster', title: 'A k-means fit',
+        lead: 'The clusters of one k: their sizes, means and standard deviations in the columns\' units, and a biplot on the first two principal components with a 90% ellipse around each cluster.',
+        sections: [{ heading: 'In the report', choices: [
+          ['The cluster buttons', 'One per cluster with its number of rows: a click selects its rows (with shift, adds them to the selection).'],
+          ['A line of Cluster Summary', 'Click it to select the rows of that cluster.']] }],
+        more: { label: 'K Means Cluster', id: 'help-p-kmeans' },
+      },
     },
     launch: {
       lead: 'Choose the numeric columns to cluster the rows by.',
       roles: [
-        { key: 'y', label: 'Y, Columns', min: 1, numeric: true, types: ['continuous', 'ordinal'], hint: 'required: numeric' },
-        { key: 'weight', label: 'Weight', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric' },
-        { key: 'freq', label: 'Freq', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric' },
-        { key: 'by', label: 'By', hint: 'optional' },
+        { key: 'y', label: 'Y, Columns', min: 1, numeric: true, types: ['continuous', 'ordinal'], hint: 'required: numeric',
+          help: 'The columns the distances between the rows are measured in. Rows with a missing value in any of them are left out.' },
+        { key: 'weight', label: 'Weight', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric',
+          help: 'Weights each row\'s pull on its cluster\'s mean and its share of the within-cluster sum of squares. Rows with a missing, zero or negative weight are left out.' },
+        { key: 'freq', label: 'Freq', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric',
+          help: 'A count per row: the row counts as that many identical rows.' },
+        { key: 'by', label: 'By', hint: 'optional', help: BY_HELP },
       ],
       options: [
-        { key: 'k', label: 'Number of Clusters', type: 'number', value: 3 },
-        { key: 'kRange', label: 'Range of Clusters (optional)', type: 'number', value: null },
-        { key: 'scaled', label: 'Columns Scaled Individually', type: 'check', value: true },
+        { key: 'k', label: 'Number of Clusters', type: 'number', value: 3,
+          help: 'k, the number of clusters to fit; with a Range of Clusters, the smallest k. The report\'s Iterative Clustering panel changes it later.' },
+        { key: 'kRange', label: 'Range of Clusters (optional)', type: 'number', value: null,
+          help: 'A larger k: every k from Number of Clusters up to this one is fitted and compared by the cubic clustering criterion in Cluster Comparison. Empty fits one k.' },
+        { key: 'scaled', label: 'Columns Scaled Individually', type: 'check', value: true,
+          help: 'Scale each column to standard deviation 1 before clustering (on by default), so that columns in large units do not dominate the distances. Off: the columns in their own units.' },
       ],
     },
     title: () => 'K Means Cluster',
@@ -1713,11 +1828,15 @@
     launch: {
       lead: 'Choose many responses and factors: every pair is tested. A line of the report opens that pair in Fit Y by X.',
       roles: [
-        { key: 'y', label: 'Y, Response', min: 1, hint: 'required: one or more' },
-        { key: 'x', label: 'X', min: 1, hint: 'required: one or more' },
-        { key: 'weight', label: 'Weight', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric' },
-        { key: 'freq', label: 'Freq', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric' },
-        { key: 'by', label: 'By', hint: 'optional' },
+        { key: 'y', label: 'Y, Response', min: 1, hint: 'required: one or more',
+          help: 'The responses, of any modeling type: each is tested against each X, a continuous Y by an F test, an ordinal or nominal one by a likelihood-ratio χ².' },
+        { key: 'x', label: 'X', min: 1, hint: 'required: one or more',
+          help: 'The factors, of any modeling type: a continuous X by a regression (or a logistic fit, for a categorical Y), an ordinal or nominal one by a one-way ANOVA (or a contingency table). Each pair uses the rows where both are present.' },
+        { key: 'weight', label: 'Weight', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric',
+          help: 'Weight and Freq together (their product) act as frequency weights in every test. Rows with a missing, zero or negative value are left out.' },
+        { key: 'freq', label: 'Freq', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric',
+          help: 'A count per row: the row stands for that many observations in every test.' },
+        { key: 'by', label: 'By', hint: 'optional', help: BY_HELP },
       ],
     },
     title: () => 'Response Screening',
@@ -1725,7 +1844,8 @@
       return [
         ctx.check('FDR PValue Plot', 'fdrPlot', null, true), ctx.check('FDR LogWorth by Effect Size', 'lwEffect', null, true), ctx.check('FDR LogWorth by RSquare', 'lwR2', null, false),
         { label: 'Set α Level', submenu: () => levelOptions(ctx) },
-        { label: 'Max Logworth…', action: async () => { const v = await SM.ui.form({ title: 'Max Logworth', fields: [{ key: 'm', label: 'Largest LogWorth reported (larger ones are shown as this)', type: 'number', value: ctx.opt('maxLogworth', 1000) }] }); if (v && v.m > 0) ctx.set('maxLogworth', v.m); } },
+        { label: 'Max Logworth…', action: async () => { const v = await SM.ui.form({ title: 'Max Logworth', fields: [{ key: 'm', label: 'Largest LogWorth reported (larger ones are shown as this)', type: 'number', value: ctx.opt('maxLogworth', 1000),
+          help: 'A cap on the LogWorths, −log₁₀ p, and the FDR LogWorths: larger ones are shown as this value, so that a few p-values near zero do not squeeze the rest of the plots. 1000 by default.' }] }); if (v && v.m > 0) ctx.set('maxLogworth', v.m); } },
       ];
     },
     render: rsRender,
@@ -1739,6 +1859,13 @@
     ['rfo', 'Robust Fit Outliers', 'Univariate', 'Values more than K robust spreads from a robust centre (Huber, Cauchy or quartiles).'],
     ['mro', 'Multivariate Robust Outliers', 'Multivariate', 'Rows far from the others in all the columns together: robust Mahalanobis distances (MCD).'],
     ['knn', 'Multivariate k-Nearest Neighbor Outliers', 'Multivariate', 'Rows far from their nearest neighbours.'],
+  ];
+  // the buttons under a method's report, as its (i) explains them
+  const EO_ACTIONS = [
+    ['Select Rows', 'Select the rows the method finds: those with an outlier in any column listed, or above the limit.'],
+    ['Exclude Rows', 'Exclude those rows from every analysis; Rescan then screens the rows that are left.'],
+    ['Color Rows', 'Colour those rows red, in the table and every graph.'],
+    ['Rescan', 'Run the report again, after rows were excluded or values changed.'],
   ];
 
   function eoActions(ctx, rowsOf, what) {
@@ -1758,7 +1885,8 @@
     const pick = el('div', { class: 'mv-methods', role: 'group', 'aria-label': 'Outlier methods' });
     let group = null;
     for (const [key, label, g, about] of EO) {
-      if (g !== group) { pick.append(el('h5', { text: g })); group = g; }
+      // the first heading carries the (i) that explains the buttons
+      if (g !== group) { pick.append(el('h5', null, g, group === null && typeof KvotInfo !== 'undefined' ? KvotInfo.slot('p:outliers') : null)); group = g; }
       const b = el('button', { type: 'button', class: `mv-method${o(key, false) ? ' is-on' : ''}`, 'aria-pressed': String(!!o(key, false)) }, el('strong', { text: label }), el('span', { text: about }));
       b.addEventListener('click', () => ctx.set(key, !o(key, false)));
       pick.append(b);
@@ -1857,21 +1985,51 @@
         lead: 'Screens continuous columns for unusual values before an analysis. Press a method; its report lists the outliers, and the buttons select, exclude or colour those rows.',
         sections: [
           { heading: 'Methods', choices: EO.map(([, label, , about]) => [label, about]) },
+          { heading: 'The method buttons', text: 'Press a method at the top of the report to add its report below, and press it again to take it away; the red triangle has the same four.' },
           { heading: 'Differences from JMP', text: 'JMP\'s Robust PCA Outliers is not here; Multivariate Robust Outliers uses the reweighted MCD (FAST-MCD), JMP\'s older platform its robust covariance estimate. Changing values to missing and missing value codes are left to the table.' },
         ],
         more: { label: 'Explore Outliers', id: 'help-p-outliers' },
       },
-      'eo:qro': { kicker: 'Explore Outliers', title: 'Quantile Range Outliers', lead: 'With Tail Quantile t and multiplier Q, the thresholds are q(t) − Q·(q(1 − t) − q(t)) and q(1 − t) + Q·(q(1 − t) − q(t)). The defaults t = 0.1, Q = 3 flag only extreme values. Restrict search to integers keeps whole numbers only (error codes). Nines lists all-nines values above the upper quantile.', more: { label: 'Explore Outliers', id: 'help-p-outliers' } },
-      'eo:rfo': { kicker: 'Explore Outliers', title: 'Robust Fit Outliers', lead: 'A robust centre c and spread s per column; outliers lie outside c ± K·s (K = 4 by default). Huber\'s estimates resist a few outliers; Cauchy ones resist more but can follow the denser part of clustered data; Quartile uses the median and IQR/1.34898.', more: { label: 'Explore Outliers', id: 'help-p-outliers' } },
-      'eo:mro': { kicker: 'Explore Outliers', title: 'Multivariate Robust Outliers', lead: 'The minimum covariance determinant estimate takes the half of the rows whose covariance has the smallest determinant, so outliers cannot pull it; the distances from it are robust. Rows above the limit are outliers in the columns jointly, even when no single value is extreme.', more: { label: 'Explore Outliers', id: 'help-p-outliers' } },
-      'eo:knn': { kicker: 'Explore Outliers', title: 'k nearest neighbour outliers', lead: 'Each row\'s distance to its 1st, 2nd, 3rd, 5th, 8th … nearest neighbour. Large distances mark isolated rows; a cluster of k or fewer outliers shows at the k after its size.', more: { label: 'Explore Outliers', id: 'help-p-outliers' } },
+      'eo:qro': {
+        kicker: 'Explore Outliers', title: 'Quantile Range Outliers', lead: 'With Tail Quantile t and multiplier Q, the thresholds are q(t) − Q·(q(1 − t) − q(t)) and q(1 − t) + Q·(q(1 − t) − q(t)). The defaults t = 0.1, Q = 3 flag only extreme values. Restrict search to integers keeps whole numbers only (error codes). Nines lists all-nines values above the upper quantile.',
+        sections: [{ heading: 'In the report', choices: [
+          ['Tail Quantile', 't, above 0 and below 0.5: the quantiles q(t) and q(1 − t) the thresholds are measured from. 0.1 by default.'],
+          ['Q', 'How many interquantile ranges, q(1 − t) − q(t), beyond those quantiles a value must lie to be an outlier; 3 by default. A smaller Q flags more values.'],
+          ['Restrict search to integers', 'Flag only the whole numbers among the outliers, as error and missing-value codes such as 999 usually are.'],
+          ['Show only columns with outliers', 'Leave the columns without an outlier out of the table.'],
+          ...EO_ACTIONS,
+          ['A line of a table', 'Click it to select the rows of that column, cell or row (with shift, add them).']] }],
+        more: { label: 'Explore Outliers', id: 'help-p-outliers' },
+      },
+      'eo:rfo': {
+        kicker: 'Explore Outliers', title: 'Robust Fit Outliers', lead: 'A robust centre c and spread s per column; outliers lie outside c ± K·s (K = 4 by default). Huber\'s estimates resist a few outliers; Cauchy ones resist more but can follow the denser part of clustered data; Quartile uses the median and IQR/1.34898.',
+        sections: [{ heading: 'In the report', choices: [
+          ['Method', 'The robust centre and spread of each column: Huber, the default, M-estimates of location and scale (statsmodels); Cauchy, the location and scale of a Cauchy distribution fitted by maximum likelihood (scipy); Quartile, the median and the interquartile range over 1.34898.'],
+          ['K Sigma', 'Values more than K spreads from the centre are outliers; 4 by default.'],
+          ...EO_ACTIONS,
+          ['A line of a table', 'Click it to select the rows of that column or cell (with shift, add them).']] }],
+        more: { label: 'Explore Outliers', id: 'help-p-outliers' },
+      },
+      'eo:mro': {
+        kicker: 'Explore Outliers', title: 'Multivariate Robust Outliers', lead: 'The minimum covariance determinant estimate takes the half of the rows whose covariance has the smallest determinant, so outliers cannot pull it; the distances from it are robust. Rows above the limit are outliers in the columns jointly, even when no single value is extreme.',
+        sections: [{ heading: 'In the report', choices: [...EO_ACTIONS, ['The plots', 'Drag over points to select their rows.']] }],
+        more: { label: 'Explore Outliers', id: 'help-p-outliers' },
+      },
+      'eo:knn': {
+        kicker: 'Explore Outliers', title: 'k nearest neighbour outliers', lead: 'Each row\'s distance to its 1st, 2nd, 3rd, 5th, 8th … nearest neighbour. Large distances mark isolated rows; a cluster of k or fewer outliers shows at the k after its size.',
+        sections: [{ heading: 'In the report', choices: [
+          ['K', 'The largest neighbour to plot: a graph for k = 1, 2, 3, 5, 8, 13, … up to K; 8 by default, at most one less than the rows.'],
+          ['The plots', 'Drag over points to select their rows.']] }],
+        more: { label: 'Explore Outliers', id: 'help-p-outliers' },
+      },
     },
     launch: {
       lead: 'Choose the continuous columns to screen, then pick the methods in the report.',
       roles: [
-        { key: 'y', label: 'Y, Columns', min: 1, numeric: true, types: ['continuous'], hint: 'required: continuous' },
-        { key: 'label', label: 'Label', max: 1, hint: 'optional' },
-        { key: 'by', label: 'By', hint: 'optional' },
+        { key: 'y', label: 'Y, Columns', min: 1, numeric: true, types: ['continuous'], hint: 'required: continuous',
+          help: 'The columns to screen: the univariate methods take each column alone, the multivariate ones all of them together (on the rows with no missing value).' },
+        { key: 'label', label: 'Label', max: 1, hint: 'optional', help: LABEL_HELP },
+        { key: 'by', label: 'By', hint: 'optional', help: BY_HELP },
       ],
     },
     title: () => 'Explore Outliers',
@@ -1951,6 +2109,7 @@
         lead: 'Maps the levels of several categorical columns so that levels chosen by the same rows lie close together: correspondence analysis of the indicator (dummy) matrix, equivalently of the Burt table of all two-way tables.',
         sections: [
           { heading: 'Reading it', text: 'Each dimension takes a share (Portion) of the total inertia (J − Q)/Q. The raw portions understate the fit of multiple correspondence analysis; Show Adjusted Inertia gives Benzécri\'s and Greenacre\'s corrections.' },
+          { heading: 'In the report', choices: [['x, y', 'With three or more dimensions, under the plot: the dimensions on the axes of the plot of the levels and of the row plot.']] },
           { heading: 'Differences from JMP', text: 'Supplementary variables and IDs, the X, Factor role (simple correspondence analysis) and Cochran\'s Q are not here. The signs of the dimensions are arbitrary.' },
         ],
         more: { label: 'Multiple Correspondence Analysis', id: 'help-p-mca' },
@@ -1959,9 +2118,11 @@
     launch: {
       lead: 'Choose two or more nominal or ordinal columns.',
       roles: [
-        { key: 'y', label: 'Y, Response', min: 2, types: ['nominal', 'ordinal'], hint: 'required: two or more categorical' },
-        { key: 'freq', label: 'Freq', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric' },
-        { key: 'by', label: 'By', hint: 'optional' },
+        { key: 'y', label: 'Y, Response', min: 2, types: ['nominal', 'ordinal'], hint: 'required: two or more categorical',
+          help: 'The columns whose levels are mapped together; levels chosen by the same rows lie close. Rows with a missing value in any of them are left out.' },
+        { key: 'freq', label: 'Freq', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric',
+          help: 'A count per row: the row stands for that many identical rows (a table of counts). Rows with a missing, zero or negative count are left out.' },
+        { key: 'by', label: 'By', hint: 'optional', help: BY_HELP },
       ],
     },
     title: () => 'Multiple Correspondence Analysis',
@@ -2026,13 +2187,17 @@
     launch: {
       lead: 'Choose the attribute columns of the objects (the rows), or the columns of a distance matrix.',
       roles: [
-        { key: 'y', label: 'Y, Columns', min: 1, numeric: true, types: ['continuous', 'ordinal'], hint: 'required: numeric' },
-        { key: 'label', label: 'Label', max: 1, hint: 'optional' },
-        { key: 'by', label: 'By', hint: 'optional' },
+        { key: 'y', label: 'Y, Columns', min: 1, numeric: true, types: ['continuous', 'ordinal'], hint: 'required: numeric',
+          help: 'The attributes of the objects, one row per object; or, with Data Format Distance Matrix, the columns of a square matrix of distances, as many columns as rows. Attributes: rows with a missing value are left out.' },
+        { key: 'label', label: 'Label', max: 1, hint: 'optional',
+          help: 'A column whose values name the objects on the map (up to 60 objects) and in its hover text; without it the table\'s label column, else the row number.' },
+        { key: 'by', label: 'By', hint: 'optional', help: BY_HELP },
       ],
       options: [
-        { key: 'format', label: 'Data Format', type: 'select', value: 'attributes', choices: [['attributes', 'Attribute List'], ['matrix', 'Distance Matrix']] },
-        { key: 'standardize', label: 'Standardize the columns', type: 'check', value: true },
+        { key: 'format', label: 'Data Format', type: 'select', value: 'attributes', choices: [['attributes', 'Attribute List'], ['matrix', 'Distance Matrix']],
+          help: 'Attribute List, the default: the rows are the objects and the columns their attributes, and the distances are Euclidean. Distance Matrix: the columns hold the distances between the rows\' objects; the matrix is made symmetric, a missing entry taken from the other side of the diagonal.' },
+        { key: 'standardize', label: 'Standardize the columns', type: 'check', value: true,
+          help: 'Attribute List only: scale each column to mean 0 and standard deviation 1 before the distances (on by default), so that no attribute dominates by its units. A distance matrix is used as it is.' },
       ],
     },
     title: () => 'Multidimensional Scaling',

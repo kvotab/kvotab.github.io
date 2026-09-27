@@ -12,19 +12,21 @@ ones computed here by brute force on the standardized factors (a training
 row not its own neighbour, a tied vote to the first level), the best K is
 marked, a click on a line of the table or a point of the plot shows another
 K, Save Predicteds agrees with the Measures of Fit and Save Near Neighbor
-Rows with the neighbours found here; a continuous response gives RASE.
-Naive Bayes: the saved probabilities are the ones computed here from the
-engine's class parameters (normal densities, smoothed level shares), the
-Smoothing dialog changes alpha. Support Vector Machines: Gamma defaults to
-one over the columns of X, the saved most likely levels agree with Fit
-Details, the decision boundary's points select their rows (one by a real
-mouse click) and table selections highlight them, the tuning design and the
-linear kernel come from the red triangle, a continuous response saves
-predictions and residuals. Every red triangle opens; the profiler draws and
-answers a new value; Bootstrap reruns the platforms headless; By gives one
-analysis per group with combined tables; Redo and a project keep the
-options; every (i) has a topic and every Help link a target; the reports
-draw in the dark theme and at phone width without a sideways page scroll.
+Rows with the neighbours found here; a continuous response gives RASE. Naive
+Bayes: the saved probabilities are the ones computed here from the engine's
+class parameters (normal densities, smoothed level shares), the Smoothing
+dialog changes alpha. Support Vector Machines: Gamma defaults to one over
+the columns of X, the saved most likely levels agree with Fit Details, the
+decision boundary's points select their rows (one by a real mouse click) and
+table selections highlight them, the tuning design and the linear kernel
+come from the red triangle, a continuous response saves predictions and
+residuals. Every red triangle opens; the profiler draws and answers a new
+value; Bootstrap reruns the platforms headless; By gives one analysis per
+group with combined tables; Redo and a project keep the options; every (i)
+has a topic and every Help link a target; the launch dialogs' (i) give every
+role and option its help, and the forms' (i) each of their fields; the
+reports draw in the dark theme and at phone width without a sideways page
+scroll.
 
 Start a server on the repository root and headless Chrome (README.md) on
 SMUI_HTTP_PORT and SMUI_CDP_PORT, then
@@ -247,6 +249,107 @@ SAVE = '''
 
 def save_js(path):
     return f'({SAVE})({json.dumps(path)})'
+
+
+
+# ---- the (i) of a launch dialog, a form or an outline: its sections, as
+# { headings, sections: { heading: [[name, text], ...] } }. kind 'dialog':
+# arg is JS that opens the dialog (clickPath(rep, title, path) and wait(ms)
+# are at hand; it is not awaited, as a form resolves only when it closes);
+# kind 'slot': arg is JS giving the element that holds the (i).
+INFO = r'''
+(async (kind, arg, part) => {
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+  const clickPath = async (rep, title, path) => {
+    SM.app.showTab(SM.app.tabOf(rep));
+    const head = [...rep.body.querySelectorAll('.sm-ob-head')].find(h => { const t = h.querySelector('h2, h3, h4'); return t && (title === '*top*' ? t.tagName === 'H2' : t.textContent.trim() === title); });
+    if (!head) throw new Error('no outline ' + title);
+    head.querySelector('.sm-ob-menu').click();
+    await wait(60);
+    for (const label of path) {
+      const menus = [...document.querySelectorAll('.sm-menu')];
+      const b = [...menus[menus.length - 1].querySelectorAll('button')].find(x => x.querySelector('.sm-label') && x.querySelector('.sm-label').textContent === label);
+      if (!b) throw new Error('no item ' + label);
+      b.click();
+      await wait(80);
+    }
+  };
+  const read = () => {
+    const p = document.querySelector('.info-panel');
+    if (!p) return null;
+    const out = { title: p.querySelector('.info-panel-title').textContent, headings: [], sections: {} };
+    let cur = '';
+    for (const n of p.querySelector('.info-panel-body').children) {
+      if (n.tagName === 'H3') { cur = n.textContent; out.headings.push(cur); }
+      else if (n.tagName === 'DL') (out.sections[cur] = out.sections[cur] || []).push(...[...n.querySelectorAll(':scope > dt')].map(dt => [dt.textContent, dt.nextElementSibling ? dt.nextElementSibling.textContent : '']));
+    }
+    return out;
+  };
+  let dlg = null, btn = null;
+  window.__infoError = null;
+  if (kind === 'slot') {
+    const node = (new Function('return ' + arg))();
+    btn = node && (node.matches('.info-btn') ? node : node.querySelector('.info-btn'));
+  } else {
+    const before = new Set(document.querySelectorAll('.sm-dialog'));
+    (new Function('clickPath', 'wait', 'return (async () => {' + arg + '})()'))(clickPath, wait).catch((e) => { window.__infoError = String(e); });
+    for (let i = 0; i < 100 && !dlg && !window.__infoError; i++) { await wait(50); dlg = [...document.querySelectorAll('.sm-dialog')].find(d => !before.has(d)) || null; }
+    if (!dlg) { SM.ui.closeMenus(0); return { error: window.__infoError || 'no dialog' }; }
+    await wait(120);
+    btn = dlg.querySelector('.sm-dialog-head .info-btn');
+  }
+  if (!btn) { if (dlg) dlg.querySelector('.sm-dialog-x').click(); return { error: 'no (i)' }; }
+  // the inputs of a part (JS giving an element; a dialog's is dlg): each one's aria-label and label text
+  const box = part ? (new Function('dlg', 'return ' + part))(dlg) : null;
+  const inputs = box ? [...box.querySelectorAll('input, select, textarea')].map(e => [e.getAttribute('aria-label') || '', e.closest('label') ? e.closest('label').textContent.trim() : '']) : [];
+  btn.click();
+  await wait(150);
+  const out = read() || { error: 'no panel' };
+  out.inputs = inputs;
+  out.key = KvotInfo.current();
+  out.noTopic = KvotInfo.audit().noTopic;
+  KvotInfo.close();
+  if (dlg) { dlg.querySelector('.sm-dialog-x').click(); await wait(120); }
+  return out;
+})
+'''
+
+
+def info_js(kind, arg, part=None):
+    return f'({INFO})({json.dumps(kind)}, {json.dumps(arg)}, {json.dumps(part)})'
+
+
+def unexplained(info, heading=None):
+    """The inputs of the part that no entry of the panel (of one section) names."""
+    secs = info.get('sections') or {}
+    names = [n for h, cs in secs.items() if heading is None or h == heading for n, _ in cs]
+    return [a or t for a, t in info.get('inputs', []) if not any(a.startswith(n) or t.startswith(n) for n in names)]
+
+
+async def dialog_help(page, opener, platform_id, name):
+    """A launch dialog's (i): one Roles and one Options section, every role and
+    option with its help (a role's followed by what it takes), and no (i)
+    without a topic while the dialog is open. Returns the panel."""
+    d = await page.ev(info_js('dialog', opener))
+    if not isinstance(d, dict) or 'sections' not in d:
+        check(f'{name}: the launch dialog\'s (i) opens', d, 'a panel')
+        return {'headings': [], 'sections': {}}
+    want = await page.ev(f'(() => {{ const L = SM.platforms.get({json.dumps(platform_id)}).launch; return {{ roles: L.roles.map(r => [r.label, r.help || ""]), options: (L.options || []).map(o => [o.label, o.help || ""]) }}; }})()')
+    roles, opts = dict(d['sections'].get('Roles', [])), dict(d['sections'].get('Options', []))
+    check(f'{name}: the launch dialog\'s (i) has one Roles and one Options section', (d['headings'].count('Roles'), d['headings'].count('Options')), (1, 1 if want['options'] else 0))
+    check('... every role with its help, then what it takes', [(lab, bool(h) and roles.get(lab, '').startswith(h) and roles[lab].endswith(')')) for lab, h in want['roles']], [(lab, True) for lab, _ in want['roles']])
+    check('... every option with its help', [(lab, bool(h) and opts.get(lab) == h) for lab, h in want['options']], [(lab, True) for lab, _ in want['options']])
+    check('... and every (i) has a topic while it is open', d['noTopic'], [])
+    return d
+
+
+async def form_help(page, opener, fields, name):
+    """A form's (i) lists each of its fields with what it is for."""
+    f = await page.ev(info_js('dialog', opener))
+    got = dict((f.get('sections') or {}).get('Fields', [])) if isinstance(f, dict) else {}
+    check(f'{name}: the form\'s (i) lists its fields, each with its help', [(x, len(got.get(x, '')) > 30) for x in fields], [(x, True) for x in fields])
+    check('... and every (i) has a topic while it is open', f.get('noTopic') if isinstance(f, dict) else f, [])
+    return f
 
 
 async def main():
@@ -548,6 +651,22 @@ async def main():
     check('Help names the scikit-learn classes', ('KNeighborsClassifier' in (helps[0] or ''), 'GaussianNB' in (helps[1] or ''), 'SVC' in (helps[2] or '')), (True, True, True))
     topics = await page.ev('[...Object.keys(SM.platforms.get("knn").topics), ...Object.keys(SM.platforms.get("naivebayes").topics), ...Object.keys(SM.platforms.get("svm").topics)]')
     check('their topics', sorted(topics), sorted(['p:knn', 'p:knn:selection', 'p:knn:fit', 'p:naivebayes', 'p:naivebayes:params', 'p:svm', 'p:svm:summary', 'p:svm:tuning', 'p:svm:boundary']))
+
+    # ---- the (i) explains every input: the launch dialogs, the forms, Model Selection's clicks
+    await page.ev('SM.app.showTab(SM.app.tabOf(SM.app.tables.find(t => t.name === "Orchard")))')
+    for pid, label in (('knn', 'K Nearest Neighbors'), ('naivebayes', 'Naive Bayes'), ('svm', 'Support Vector Machines')):
+        d = await dialog_help(page, f"SM.app.launch('{pid}')", pid, label)
+        if pid == 'naivebayes':
+            check("... its Informative Missing says a missing value is left out of the row's product", "left out of its row's product" in dict(d['sections'].get('Options', [])).get('Informative Missing', ''), True)
+    knn = 'SM.app.reports.find(r => r.platform.id === "knn" && !(r.spec.roles.by || []).length)'
+    nb = 'SM.app.reports.find(r => r.platform.id === "naivebayes")'
+    svm = 'SM.app.reports.find(r => r.platform.id === "svm" && r.title === "Support Vector Machines for grade")'
+    await form_help(page, f"await clickPath({knn}, '*top*', ['Number of Neighbors…']);", ['Number of Neighbors, K (every K up to it is fitted)'], 'K Nearest Neighbors\' Number of Neighbors…')
+    await form_help(page, f"await clickPath({nb}, '*top*', ['Smoothing…']);", ["α, added to every count of a categorical factor's levels", 'Variance smoothing: the share of the largest variance added to each'], 'Naive Bayes\' Smoothing…')
+    await form_help(page, f"await clickPath({svm}, '*top*', ['Cost and Gamma…']);", ['Cost', 'Gamma (empty: one over the columns of X)'], 'Support Vector Machines\' Cost and Gamma…')
+    await form_help(page, f"await clickPath({svm}, '*top*', ['Tuning Design…']);", ['Fit a tuning design of Cost and Gamma', 'Number of design points'], '... and its Tuning Design…')
+    s = await page.ev(info_js('slot', f"[...{knn}.body.querySelectorAll('.sm-ob-head')].find(h => h.textContent.trim() === 'Model Selection')"))
+    check('Model Selection\'s (i): a click on a line or a point, Select K, Number of Neighbors', [c[0] for c in s['sections'].get('Choosing K', [])], ['A click on a line or a point', 'Select K (red triangle)', 'Number of Neighbors… (red triangle)'])
     await page.ev('SM.app.showTab(SM.app.tabOf(SM.app.reports.find(r => r.platform.id === "svm" && r.title === "Support Vector Machines for grade")))')
     await page.ev("KVOT.setTheme ? KVOT.setTheme('dark') : document.documentElement.setAttribute('data-theme', 'dark')")
     await asyncio.sleep(3.0)

@@ -200,6 +200,9 @@ async def main():
     check('a project keeps them', (r['newTable'], r['back']), (True, 4))
     check('no errors (By, project)', r['errors'], [])
 
+    # ---- help for every input: the launch dialog's (i), the red-triangle forms' (i)
+    await help_inputs(page)
+
     # ---- (i) topics, dark theme, phone width
     audit = json.loads(await page.ev('JSON.stringify(KvotInfo.audit())'))
     check('every (i) has a topic', audit.get('noTopic'), [])
@@ -218,8 +221,144 @@ async def main():
     await shot(page, '04-phone.png')
     await page.call('Emulation.setDeviceMetricsOverride', {'width': 1500, 'height': 950, 'deviceScaleFactor': 1, 'mobile': False}, session=page.sid)
     await page.ev("KVOT.setTheme ? KVOT.setTheme('light') : document.documentElement.setAttribute('data-theme', 'light')")
+    # ---- the tolerance interval keeps its own confidence level when a
+    # prediction interval at another level is shown too
+    r = await page.ev('''(async () => {
+      const t = __dt.table('Students'); const h = t.col('height (cm)').id;
+      const read = (rep) => { const tr = __dt.head('Tolerance Intervals', rep).parentElement.querySelector('table.sm-rt tbody tr'); return [tr.children[1].textContent, tr.children[2].textContent]; };
+      const both = {}; both[h + '|pi'] = { level: 0.95, k: 1 }; both[h + '|ti'] = { level: 0.99, coverage: 0.9 };
+      const alone = {}; alone[h + '|ti'] = { level: 0.99, coverage: 0.9 };
+      const r1 = await __dt.open('Students', { y: ['height (cm)'] }, both); const a = read(r1);
+      const r2 = await __dt.open('Students', { y: ['height (cm)'] }, alone); const b = read(r2);
+      const code = [r1.body.querySelectorAll('details.sm-code').length, r2.body.querySelectorAll('details.sm-code').length];
+      const errors = [r1, r2].flatMap((x) => __dt.errors(x)); SM.app.closeReport(r1); SM.app.closeReport(r2);
+      return { a, b, code, errors };
+    })()''')
+    check('with a 95% prediction interval, the 99% tolerance interval is the one it has alone', (r['a'], r['errors']), (r['b'], []))
+    check('each interval then shows its own Python', r['code'][0] - r['code'][1], 1)
     check('no script errors', page.errors, [])
     await page.close()
+
+
+# Read the (i) panels: the open panel's title and sections, each with its
+# heading, its choices [name, text] and its paragraphs.
+HELP_JS = r"""
+window.__help = {
+  sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+  panel() {
+    const p = document.querySelector('.info-panel');
+    if (!p) return null;
+    const out = { title: p.querySelector('.info-panel-title').textContent, sections: [] };
+    let cur = { heading: '', choices: [], text: [] };
+    out.sections.push(cur);
+    for (const n of p.querySelector('.info-panel-body').children) {
+      if (n.tagName === 'H3') { cur = { heading: n.textContent, choices: [], text: [] }; out.sections.push(cur); }
+      else if (n.tagName === 'DL' && n.classList.contains('info-choices')) for (const dt of n.querySelectorAll('dt')) cur.choices.push([dt.textContent, dt.nextElementSibling ? dt.nextElementSibling.textContent : '']);
+      else cur.text.push(n.textContent);
+    }
+    return out;
+  },
+  async read(btn) { if (!btn) return null; btn.click(); await this.sleep(150); const r = this.panel(); KvotInfo.close(); await this.sleep(40); return r; },
+  names(p, heading) { const s = p && p.sections.find((x) => x.heading === heading); return s ? s.choices.map((c) => c[0]) : null; },
+  // the shortest text of a section's choices, without what a role takes '(required, ...)'
+  shortest(p, heading) { const s = p && p.sections.find((x) => x.heading === heading); return s && s.choices.length ? Math.min(...s.choices.map((c) => c[1].replace(/\s*\([^()]*\)$/, '').length)) : 0; },
+  dialog() { return [...document.querySelectorAll('.sm-dialog')].pop(); },
+  async launch(id, setup) {
+    SM.app.launch(id); await this.sleep(350);
+    const d = [...document.querySelectorAll('.sm-launch-dialog')].pop();
+    if (setup) await setup(d);
+    await this.sleep(100);
+    const audit = KvotInfo.audit();
+    const p = await this.read(d.querySelector('.sm-dialog-head .info-btn'));
+    return { d, p, noTopic: audit.noTopic };
+  },
+  async menu(title, path, rep, n = 0) {
+    rep = rep || SM.app.reports[SM.app.reports.length - 1];
+    const h = [...rep.body.querySelectorAll('.sm-ob-head')].filter((x) => x.querySelector('h2, h3, h4').textContent === title)[n];
+    if (!h) throw new Error('no outline ' + title);
+    h.querySelector('.sm-ob-menu').click();
+    for (const label of path) {
+      await this.sleep(60);
+      const m = [...document.querySelectorAll('.sm-menu')].pop();
+      const b = m && [...m.querySelectorAll('button')].find((x) => x.querySelector('.sm-label') && x.querySelector('.sm-label').textContent === label);
+      if (!b) { SM.ui.closeMenus(0); throw new Error('no menu item ' + label); }
+      b.click();
+    }
+  },
+  async form() {
+    let d = null;
+    for (let i = 0; i < 60 && !(d && d.querySelector('.sm-form')); i++) { await this.sleep(50); d = this.dialog(); }
+    if (!d) throw new Error('no form');
+    const labels = [...d.querySelectorAll('.sm-form label')].map((l) => l.textContent);
+    const audit = KvotInfo.audit();
+    const p = await this.read(d.querySelector('.sm-dialog-head .info-btn'));
+    [...d.querySelectorAll('.sm-dialog-foot .sm-btn')].find((b) => b.textContent === 'Cancel').click();
+    await this.sleep(60);
+    return { labels, title: p && p.title, fields: this.names(p, 'Fields'), shortest: this.shortest(p, 'Fields'), headings: p ? p.sections.map((x) => x.heading) : null, noTopic: audit.noTopic };
+  },
+};
+"""
+
+
+async def help_inputs(page):
+    """The launch dialog's (i) lists every role and option with what it is
+    for; each red-triangle form's (i) lists its fields."""
+    await page.ev(HELP_JS)
+    r = await page.ev('''(async () => {
+      const a = await __help.launch('distribution');
+      const out = { roles: __help.names(a.p, 'Roles'), rolesShort: __help.shortest(a.p, 'Roles'), opts: __help.names(a.p, 'Options'), optsShort: __help.shortest(a.p, 'Options'), noTopic: a.noTopic };
+      a.d.querySelector('.sm-dialog-x').click();
+      return out; })()''')
+    check('the launch dialog\'s (i) lists every role', r['roles'], ['Y, Columns', 'Weight', 'Freq', 'By'])
+    check('... each with what it is for, beyond what it takes', r['rolesShort'] > 60, True)
+    check('... and the option, explained', (r['opts'], r['optsShort'] > 60), (['Histograms Only'], True))
+    check('every (i) of the open launch dialog has a topic', r['noTopic'], [])
+    r = await page.ev('''(async () => {
+      const t = __dt.table('Students'); const h = t.col('height (cm)').id;
+      const o = {}; o[h + '|testMean'] = { mu: 165 };
+      const rep = await __dt.open('Students', { y: ['height (cm)', 'sex'] }, o);
+      const out = {};
+      const run = async (title, path, key, n) => { await __help.menu(title, path, rep, n); out[key] = await __help.form(); };
+      await run('height (cm)', ['Test Mean…'], 'mean');
+      await run('height (cm)', ['Test Std Dev…'], 'sd');
+      await run('height (cm)', ['Test Equivalence…'], 'equiv');
+      await run('height (cm)', ['Confidence Interval', 'Other…'], 'ci');
+      await run('height (cm)', ['Prediction Interval…'], 'pi');
+      await run('height (cm)', ['Tolerance Interval…'], 'ti');
+      await run('height (cm)', ['Capability Analysis…'], 'cap');
+      await run('height (cm)', ['Histogram Options', 'Set Bin Width…'], 'bin');
+      await run('height (cm)', ['Display Options', 'Customize Summary Statistics…'], 'stats');
+      await run('Test Mean', ['Bayes Factor…'], 'bf');
+      await run('sex', ['Test Probabilities…'], 'probs');
+      await run('sex', ['Confidence Interval', 'Other…'], 'cicat');
+      await run('Distributions', ['Arrange in Rows…'], 'rows');
+      SM.app.closeReport(rep);
+      return out; })()''')
+    if isinstance(r, str):
+        print(r)
+    want = {'mean': ['Specify hypothesized mean', 'True standard deviation, for a z test (optional)'], 'sd': ['Specify hypothesized standard deviation'],
+            'equiv': ['Lower bound', 'Upper bound'], 'ci': ['1 − α'], 'pi': ['1 − α', 'Number of future values'], 'ti': ['Confidence, 1 − α', 'Proportion covered'],
+            'cap': ['Lower spec limit', 'Target', 'Upper spec limit'], 'bin': ['Bin width (empty: automatic)'], 'bf': ['Scale r of the Cauchy prior on δ'],
+            'cicat': ['1 − α'], 'rows': ['Plots per row (0: as many as fit)']}
+    for k, fields in want.items():
+        check(f'the {k} form\'s (i) lists its fields, explained', (r[k]['fields'], r[k]['shortest'] > 40), (fields, True))
+    check('Customize Summary Statistics: every statistic explained', (r['stats']['fields'] == r['stats']['labels'], len(r['stats']['fields']), r['stats']['shortest'] > 10), (True, 29, True))
+    check('Test Probabilities: one entry for the levels\' probabilities', (r['probs']['labels'], r['probs']['fields']), (['F', 'M'], ['Each level']))
+    check('the Bayes Factor form\'s (i) builds on its topic', (r['bf']['title'], r['bf']['headings'][-1]), ('Bayes Factor', 'Fields'))
+    check('every (i) of the open forms has a topic', [x['noTopic'] for x in r.values()], [[]] * len(r))
+    # Test Rate, on a column of counts
+    r = await page.ev('''(async () => {
+      const t = new SM.Table({ name: 'Help counts', columns: [{ name: 'events', dataType: 'numeric', values: [0, 1, 3, 2, 0, 4, 1, 2] }, { name: 'years', dataType: 'numeric', values: [1, 2, 3, 2, 1, 4, 2, 3] }] });
+      SM.app.addTable(t);
+      const rep = await __dt.open('Help counts', { y: ['events'] });
+      await __help.menu('events', ['Test Rate…'], rep);
+      const f = await __help.form();
+      SM.app.closeReport(rep); SM.app.closeTable(t);
+      return f; })()''')
+    if isinstance(r, str):
+        print(r)
+    check('Test Rate\'s (i): its topic, then its fields', (r['title'], r['fields'], r['shortest'] > 60, r['noTopic']),
+          ('Test Rate', ['Hypothesized rate (events per unit of exposure)', 'Exposure', 'Test', 'Confidence interval'], True, []))
 
 
 asyncio.run(main())

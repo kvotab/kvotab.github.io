@@ -189,9 +189,11 @@
   align-items: flex-end;
   gap: 2px;
   padding: 5px 8px 0;
-  border-bottom: 1px solid var(--border-color);
-  background: var(--bg-secondary);
+  /* the line under the tabs is drawn inside the row, so that the active tab
+     covers it without reaching out of the row (which made it scroll) */
+  background: linear-gradient(var(--border-color), var(--border-color)) left bottom / 100% 1px no-repeat, var(--bg-secondary);
   overflow-x: auto;
+  overflow-y: hidden;
   scrollbar-width: thin;
 }
 .sm-tab {
@@ -210,7 +212,7 @@
   white-space: nowrap;
 }
 .sm-tab:hover { color: var(--text-primary); background: color-mix(in oklab, var(--bg-primary) 60%, transparent); }
-.sm-tab.is-active { background: var(--bg-primary); border-color: var(--border-color); color: var(--text-primary); font-weight: 600; margin-bottom: -1px; padding-bottom: 6px; }
+.sm-tab.is-active { background: var(--bg-primary); border-color: var(--border-color); color: var(--text-primary); font-weight: 600; padding-bottom: 6px; }
 .sm-tab .sm-tabtitle { overflow: hidden; text-overflow: ellipsis; }
 .sm-tab .sm-tabclose { display: inline-flex; width: 16px; height: 16px; align-items: center; justify-content: center; border-radius: 3px; color: var(--text-muted); font-size: 13px; line-height: 1; }
 .sm-tab .sm-tabclose:hover { background: var(--sm-sel-bg); color: var(--text-primary); }
@@ -587,11 +589,30 @@
   .sm-launch { grid-template-columns: 1fr; }
   .sm-actions { flex-direction: row; flex-wrap: wrap; }
 }
+/* Printing the page itself (the browser's Print; Save > Print… prints the
+   report as a document instead): the current view flows onto the paper,
+   without the site's header and footer and the page's controls. */
 @media print {
-  .sm-menubar, .sm-side, .sm-handle, .sm-tabs, .sm-reportbar, .sm-ob-menu { display: none !important; }
-  .sm-body { display: block; }
-  .sm-reportbody { overflow: visible; }
+  body > header, body > footer, body > .nav-toggle, body > #menu, .sm-menubar, .sm-side, .sm-handle, .sm-tabs, .sm-reportbar,
+  .sm-ob-menu, .sm-ob-toggle, .kvot-info-slot, [data-noexport], .sm-toast, .info-panel,
+  .sm-reportbody button, .sm-reportbody details.sm-code:not([open]) { display: none !important; }
+  .content, .sm, .sm-body, .sm-main, .sm-views { display: block !important; height: auto !important; min-height: 0 !important; overflow: visible !important; position: static !important; }
+  .sm-views > .sm-view:not([hidden]) { display: block !important; position: static !important; height: auto !important; overflow: visible !important; }
+  .sm-report, .sm-reportbody { display: block !important; height: auto !important; overflow: visible !important; }
+  .sm-reportbody { padding: 0 !important; }
+  .sm-rt, .sm-kv, .sm-plot { break-inside: avoid; }
+  .sm-ob-head { break-after: avoid; }
+  /* nothing in a report scrolls on paper (a graph's own parts aside); set
+     by smui-report.js before printing: boxes that scroll lose their limits,
+     and what is wider than the paper is scaled to fit it */
+  .sm-reportbody :not(.js-plotly-plot, .js-plotly-plot *, svg, svg *) { overflow: visible !important; }
+  .sm-print-flow { max-width: none !important; max-height: none !important; }
+  .sm-print-zoom { zoom: var(--sm-print-zoom, 1); }
+  .sm-reportbody pre { white-space: pre-wrap !important; overflow-wrap: anywhere; }
 }
+@page { margin: 12mm; }
+/* the frame Print… prints from: off the screen, at a page's size (a zero-size frame prints blank in some browsers) */
+.sm-print-frame { position: fixed; left: -10000px; top: 0; width: 800px; height: 1100px; border: 0; }
 
 /* ---- the Prediction Profiler (smui-profiler.js), for any platform ---- */
 .sm-profwrap { max-width: 100%; overflow-x: auto; padding-bottom: 4px; }
@@ -614,3 +635,8 @@
 
 /* ---- Bootstrap's progress (smui-bootstrap.js) ---- */
 .sm-boot-progress progress { width: 100%; height: 12px; accent-color: var(--color-kvot-accent); }
+
+/* ---- dialogs move by their title bar (smui-ui.js) ---- */
+.sm-dialog-grip { cursor: move; touch-action: none; user-select: none; }
+.sm-dialog-grip.is-moving { cursor: grabbing; }
+.sm-dialog-grip button, .sm-dialog-grip a, .sm-dialog-grip .kvot-info-slot { cursor: pointer; }

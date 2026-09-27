@@ -77,6 +77,28 @@
 
   const profilerNote = (extra) => `Drag the red dashed line of a factor, click in its plot, or type its value.${extra ? ` ${extra}` : ''}`;
 
+  /* What each field of the launch dialogs and the forms is for: the (i). */
+  const HELP = {
+    knnY: 'The column to predict: continuous (the mean response of the K nearest training rows) or nominal or ordinal (the level most of them have, its probability the share of their votes with a prior of one vote spread over the levels).',
+    knnX: 'The factors the distance between rows is measured on: a continuous one standardized by the training rows\' mean and standard deviation, a categorical one as a 0/1 column per level, not scaled, so that a different level adds 2 to the squared distance (as √2 standard deviations of a continuous factor would).',
+    k: 'The largest K fitted, from 1 to 1000 (10): every K from 1 up to it is fitted, and the best is the one with the smallest misclassification rate (RASE for a continuous Y) on the validation rows, or on the training rows, each left out of its own neighbours, when there are none. At most the training rows less one are used.',
+    kPick: 'The K whose fit the report shows under Model Selection instead of the best one; the Measures of Fit and Save Columns follow it. Select K ▸ Best K goes back to the best.',
+    nbY: 'The nominal or ordinal column whose levels the rows are classified into; every row gets a probability of each level (the order of an ordinal response is not used).',
+    nbX: 'The factors, taken as independent within each level of Y: a continuous one by a normal density per level, a categorical one by its smoothed shares of levels per level.',
+    nbMissing: 'On (the default): rows missing a factor are kept, the missing value is left out of its row\'s product, and that it is missing counts as a factor of its own (Missing values, above). Off: rows missing any factor are left out.',
+    alpha: 'The count added to every level of a categorical factor within every level of Y (CategoricalNB\'s alpha, 1: Laplace smoothing), so that a combination the training rows lack does not give a probability of 0. A larger α pulls the shares toward equal ones.',
+    varSmoothing: 'The share of the largest variance of a continuous factor that is added to every variance (GaussianNB\'s var_smoothing, 1e-9), so that no variance is 0. A larger share flattens the normal densities.',
+    svmY: 'The column to predict: continuous (support vector regression, SVR) or nominal or ordinal (a support vector classifier, SVC, with Platt\'s probabilities; the order of an ordinal response is not used).',
+    svmX: 'The factors, standardized by the training rows\' mean and standard deviation (a categorical one as a 0/1 column per level, not scaled): the kernel works on the distances between rows in them.',
+    kernel: 'Radial Basis Function (the default): exp(−γ‖x − x′‖²), which lets the boundary (or the prediction) bend around groups of rows. Linear: a flat boundary, or a linear prediction, with Cost alone to set.',
+    cost: 'What each training error costs against a wide, simple margin, above 0 (1): a large Cost follows the training rows closely and can overfit, a small one gives a smoother model. With Tuning Design on, the design chooses it instead.',
+    gamma: 'How far a training row\'s influence reaches in the radial basis function exp(−γ‖x − x′‖²): a large Gamma gives a wiggly boundary that can overfit, a small one a smooth boundary. Empty: 1 over the number of columns of X (the 0/1 level columns counted). Not used by the Linear kernel; with Tuning Design on, the design chooses it.',
+    tune: 'Fits a design of Cost (and Gamma) values, judges each by the misclassification rate or RASE of the validation rows (of 5-fold crossvalidation of the training rows when there are none), and keeps the best: the Cost and Gamma given are then not used. It takes a while on many rows.',
+    points: 'The number of points of the tuning design, from 2 to 200 (20): with the radial basis function about that many pairs of Cost (0.1 to 1000) and Gamma (1/100 to 10 times its default), crossed evenly on the log scale; with the Linear kernel that many Costs from 0.01 to 100.',
+    costForm: 'What each training error costs against a wide, simple margin, above 0: a large Cost follows the training rows closely and can overfit, a small one gives a smoother model. OK turns the tuning design off, so that this Cost and Gamma are the ones fitted.',
+    gammaForm: 'How far a training row\'s influence reaches in the radial basis function exp(−γ‖x − x′‖²): a large Gamma gives a wiggly boundary that can overfit, a small one a smooth boundary. Empty: 1 over the number of columns of X (the 0/1 level columns counted). Not used by the Linear kernel.',
+  };
+
   /* ======================================================================
      K NEAREST NEIGHBORS
      ====================================================================== */
@@ -138,7 +160,7 @@
   function knnKItems(ctx, r) {
     const cur = ctx.opt('knnK', null);
     const pick = async () => {
-      const v = await SM.ui.form({ title: 'Select K', fields: [{ key: 'k', label: `K (1 to ${r.k})`, type: 'number', value: r.chosen }], validate: (x) => (Number.isInteger(x.k) && x.k >= 1 && x.k <= r.k ? null : `K is a whole number from 1 to ${r.k}`) });
+      const v = await SM.ui.form({ title: 'Select K', fields: [{ key: 'k', label: `K (1 to ${r.k})`, type: 'number', value: r.chosen, help: HELP.kPick }], validate: (x) => (Number.isInteger(x.k) && x.k >= 1 && x.k <= r.k ? null : `K is a whole number from 1 to ${r.k}`) });
       if (v) ctx.set('knnK', v.k === r.best ? null : v.k);
     };
     const each = r.k <= 30 ? Array.from({ length: r.k }, (_, i) => ({ label: `K = ${i + 1}`, checked: cur === i + 1, action: () => ctx.set('knnK', i + 1) })) : [{ label: 'Other K…', action: pick }];
@@ -154,7 +176,7 @@
   }
 
   async function kDialog(ctx) {
-    const v = await SM.ui.form({ title: 'Number of Neighbors', info: 'p:knn', fields: [{ key: 'k', label: 'Number of Neighbors, K (every K up to it is fitted)', type: 'number', value: kOf(ctx) }], validate: (x) => (Number.isInteger(x.k) && x.k >= 1 && x.k <= 1000 ? null : 'K is a whole number from 1 to 1000') });
+    const v = await SM.ui.form({ title: 'Number of Neighbors', info: 'p:knn', fields: [{ key: 'k', label: 'Number of Neighbors, K (every K up to it is fitted)', type: 'number', value: kOf(ctx), help: HELP.k }], validate: (x) => (Number.isInteger(x.k) && x.k >= 1 && x.k <= 1000 ? null : 'K is a whole number from 1 to 1000') });
     if (v) { ctx.set('knnK', null, null, { rerun: false }); ctx.set('k', v.k); }
   }
 
@@ -215,8 +237,8 @@
     const v = await SM.ui.form({
       title: 'Smoothing', info: 'p:naivebayes',
       fields: [
-        { key: 'alpha', label: 'α, added to every count of a categorical factor\'s levels', type: 'number', value: Number(ctx.opt('nbAlpha', 1)) },
-        { key: 'vs', label: 'Variance smoothing: the share of the largest variance added to each', type: 'number', value: Number(ctx.opt('nbVar', 1e-9)) },
+        { key: 'alpha', label: 'α, added to every count of a categorical factor\'s levels', type: 'number', value: Number(ctx.opt('nbAlpha', 1)), help: HELP.alpha },
+        { key: 'vs', label: 'Variance smoothing: the share of the largest variance added to each', type: 'number', value: Number(ctx.opt('nbVar', 1e-9)), help: HELP.varSmoothing },
       ],
       validate: (x) => (!(x.alpha > 0) ? 'α is positive' : !(x.vs >= 0) ? 'The variance smoothing is zero or more' : null),
     });
@@ -319,16 +341,17 @@
   async function tuneDialog(ctx) {
     const v = await SM.ui.form({
       title: 'Tuning Design', info: 'p:svm:tuning',
-      fields: [{ key: 'tune', label: 'Fit a tuning design of Cost and Gamma', type: 'check', value: !!ctx.opt('tune', false) }, { key: 'points', label: 'Number of design points', type: 'number', value: Number(ctx.opt('points', 20)) || 20 }],
+      fields: [{ key: 'tune', label: 'Fit a tuning design of Cost and Gamma', type: 'check', value: !!ctx.opt('tune', false), help: HELP.tune }, { key: 'points', label: 'Number of design points', type: 'number', value: Number(ctx.opt('points', 20)) || 20, help: HELP.points }],
       validate: (x) => (Number.isInteger(x.points) && x.points >= 2 && x.points <= 200 ? null : 'The design has 2 to 200 points'),
     });
     if (v) { ctx.set('points', v.points, null, { rerun: false }); ctx.set('tune', v.tune); }
   }
 
   async function costDialog(ctx) {
+    // no info: the platform's topic lists Cost and Gamma already; the form's (i) is its fields
     const v = await SM.ui.form({
-      title: 'Cost and Gamma', info: 'p:svm',
-      fields: [{ key: 'cost', label: 'Cost', type: 'number', value: Number(ctx.opt('cost', 1)) || 1 }, { key: 'gamma', label: 'Gamma (empty: one over the columns of X)', type: 'text', value: ctx.opt('gamma', '') ?? '' }],
+      title: 'Cost and Gamma',
+      fields: [{ key: 'cost', label: 'Cost', type: 'number', value: Number(ctx.opt('cost', 1)) || 1, help: HELP.costForm }, { key: 'gamma', label: 'Gamma (empty: one over the columns of X)', type: 'text', value: ctx.opt('gamma', '') ?? '', help: HELP.gammaForm }],
       validate: (x) => {
         if (!(x.cost > 0)) return 'Cost is a positive number';
         const g = String(x.gamma || '').trim();
@@ -446,6 +469,11 @@
     'p:knn:selection': {
       kicker: 'K Nearest Neighbors', title: 'Model Selection',
       lead: 'For every K from 1 to the Number of Neighbors: the misclassification rate (and the number of rows misclassified) or the RASE, the root average squared error, of each set. The best K has the smallest value on the validation rows, or on the training rows when there are none; of equal values the smallest K. Click a line of the table or a point of the plot to see another K.',
+      sections: [{ heading: 'Choosing K', choices: [
+        ['A click on a line or a point', 'Shows that K in Chosen Model below (the solid line in the plot); a click on the best K goes back to it. Save Columns saves the K shown.'],
+        ['Select K (red triangle)', 'The same from a menu: Best K, or any K up to the Number of Neighbors (Other K… when there are more than 30).'],
+        ['Number of Neighbors… (red triangle)', 'Fits every K up to a new largest one.'],
+      ] }],
       more: MORE('knn', 'K Nearest Neighbors'),
     },
     'p:knn:fit': {
@@ -481,7 +509,9 @@
       lead: 'A support vector classifier (a categorical response: scikit-learn\'s SVC) or regression (a continuous one: SVR) on the standardized factors, with a radial basis function or linear kernel. Cost weighs the errors against a wide margin; Gamma sets how far a training row\'s influence reaches (the radial basis function exp(−γ‖x − x′‖²)).',
       sections: [
         { heading: 'Roles', choices: [['Y, Response', 'continuous (SVR) or categorical (SVC)'], ['X, Factor', 'standardized by the training rows\' mean and standard deviation; a level\'s 0/1 column as it is'], ['Weight, Freq', 'case weights of the fit (they scale each row\'s Cost)'], ['Validation', 'judges the tuning design']] },
-        { heading: 'Defaults', choices: [['Kernel', 'Radial Basis Function'], ['Cost', '1'], ['Gamma', 'one over the number of columns of X'], ['Epsilon (SVR)', '0.1 on the standardized response']] },
+        // the launch's options (Kernel Function, Cost and Gamma, Tuning Design are in the red triangle too)
+        { heading: 'Options', choices: [['Kernel Function', HELP.kernel], ['Cost', HELP.cost], ['Gamma', HELP.gamma], ['Tuning Design', HELP.tune], ['Design Points', HELP.points]] },
+        { heading: 'Epsilon', text: 'SVR\'s epsilon is fixed at 0.1 of the standardized response: errors smaller than a tenth of the response\'s standard deviation cost nothing.' },
         { heading: 'Probabilities', text: 'SVC(probability=True): Platt scaling, a logistic curve on the decision function fitted by 5-fold cross-validation inside libsvm, its folds from random_state (the report\'s seed). The most likely level is the one with the largest probability; the decision function\'s level can differ near the boundary (Model Summary counts the rows).' },
         { heading: DIFF_JMP, text: 'JMP\'s exact tuning design, its default Gamma and how it scales the response for SVR are not known here; these are this platform\'s choices. Without validation rows the tuning design is judged by 5-fold cross-validation of the training rows.' },
       ],
@@ -500,6 +530,10 @@
     'p:svm:boundary': {
       kicker: 'Support Vector Machines', title: 'Decision Boundary',
       lead: 'The model over two continuous factors, the others at the Prediction Profiler\'s current values: for two levels the decision function (0 is the boundary, −1 and 1 the margins), for more the most likely level, for a continuous response the prediction. The rows are drawn on it (filled: training, open: validation and test; rings: the support vectors) and linked to the table.',
+      sections: [{ heading: 'The red triangle', choices: [
+        ['Factors', 'With three or more continuous factors: the pair the model is drawn over (the first two at first).'],
+        ['Support Vectors', 'Rings the training rows that are support vectors, the rows on or inside the margin that alone define the model. On for a classifier; off for SVR, where nearly every row is one.'],
+      ] }],
       more: MORE('svm', 'Support Vector Machines'),
     },
   };
@@ -513,8 +547,8 @@
     uses: ['sklearn.neighbors.KNeighborsClassifier, KNeighborsRegressor (kneighbors)'],
     launch: {
       lead: 'Predicts each row from its K nearest training rows. Every K from 1 to K is fitted; the best is kept by the validation rows (a Validation column or the Validation Portion), or by the training rows.',
-      roles: [{ key: 'y', label: 'Y, Response', min: 1, max: 1, hint: 'required: continuous or categorical' }, xRole, ...SM.predict.roles({ weight: false, freq: false })],
-      options: [{ key: 'k', label: 'Number of Neighbors, K', type: 'number', value: 10, hint: 'every K from 1 to this one is fitted' }, ...SM.predict.options()],
+      roles: [{ key: 'y', label: 'Y, Response', min: 1, max: 1, hint: 'required: continuous or categorical', help: HELP.knnY }, { ...xRole, help: HELP.knnX }, ...SM.predict.roles({ weight: false, freq: false })],
+      options: [{ key: 'k', label: 'Number of Neighbors, K', type: 'number', value: 10, hint: 'every K from 1 to this one is fitted', help: HELP.k }, ...SM.predict.options()],
       validate: (spec) => { const k = spec.options.k; return Number.isInteger(k) && k >= 1 && k <= 1000 ? null : 'Number of Neighbors, K: a whole number from 1 to 1000'; },
     },
     title: titled('K Nearest Neighbors'), triangle: knnTriangle, render: knnRender,
@@ -526,8 +560,9 @@
     uses: ['the model of sklearn.naive_bayes.GaussianNB and CategoricalNB, combined (numpy; checked against them)'],
     launch: {
       lead: 'Classifies the rows by a nominal or ordinal response from continuous and categorical factors, each taken as independent within a level.',
-      roles: [{ key: 'y', label: 'Y, Response', min: 1, max: 1, types: ['nominal', 'ordinal'], hint: 'required: nominal or ordinal' }, xRole, ...SM.predict.roles()],
-      options: SM.predict.options(),
+      roles: [{ key: 'y', label: 'Y, Response', min: 1, max: 1, types: ['nominal', 'ordinal'], hint: 'required: nominal or ordinal', help: HELP.nbY }, { ...xRole, help: HELP.nbX }, ...SM.predict.roles()],
+      // the shared Informative Missing, told as this model handles a missing value
+      options: SM.predict.options().map((o) => (o.key === 'missing' ? { ...o, help: HELP.nbMissing } : o)),
     },
     title: titled('Naive Bayes'), triangle: nbTriangle, render: nbRender,
   });
@@ -538,13 +573,13 @@
     uses: ['sklearn.svm.SVC (probability=True: Platt scaling), SVR', 'sklearn.model_selection.KFold, StratifiedKFold (the tuning design without validation rows)'],
     launch: {
       lead: 'A support vector machine for a continuous or categorical response. The factors are standardized; a tuning design picks Cost and Gamma by the validation rows.',
-      roles: [{ key: 'y', label: 'Y, Response', min: 1, max: 1, hint: 'required: continuous or categorical' }, xRole, ...SM.predict.roles()],
+      roles: [{ key: 'y', label: 'Y, Response', min: 1, max: 1, hint: 'required: continuous or categorical', help: HELP.svmY }, { ...xRole, help: HELP.svmX }, ...SM.predict.roles()],
       options: [
-        { key: 'kernel', label: 'Kernel Function', type: 'select', value: 'rbf', choices: KERNELS },
-        { key: 'cost', label: 'Cost', type: 'number', value: 1 },
-        { key: 'gamma', label: 'Gamma', type: 'text', value: '', hint: 'empty: one over the number of columns of X' },
-        { key: 'tune', label: 'Tuning Design', type: 'check', value: false, hint: 'fit a design of Cost and Gamma values and keep the best by validation' },
-        { key: 'points', label: 'Design Points', type: 'number', value: 20 },
+        { key: 'kernel', label: 'Kernel Function', type: 'select', value: 'rbf', choices: KERNELS, help: HELP.kernel },
+        { key: 'cost', label: 'Cost', type: 'number', value: 1, help: HELP.cost },
+        { key: 'gamma', label: 'Gamma', type: 'text', value: '', hint: 'empty: one over the number of columns of X', help: HELP.gamma },
+        { key: 'tune', label: 'Tuning Design', type: 'check', value: false, hint: 'fit a design of Cost and Gamma values and keep the best by validation', help: HELP.tune },
+        { key: 'points', label: 'Design Points', type: 'number', value: 20, help: HELP.points },
         ...SM.predict.options(),
       ],
       validate: (spec) => {

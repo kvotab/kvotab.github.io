@@ -358,18 +358,54 @@
   }
 
   const CMD_TOPIC = (title, lead, sections) => ({ kicker: 'DOE', title, lead, sections });
+  /* The fields of the design dialogs, as their (i) explains them. */
+  const RESPONSE_CHOICES = [
+    ['Response name', 'The name of an empty response column of the design table, for the results of the runs.'],
+    ['Goal', 'Maximize, Match Target, Minimize or None: written into the response column\'s notes; the design does not depend on it.'],
+    ['×', 'Remove the response (one always stays).'],
+    ['Add Response', 'Another response column, Y2, Y3, …'],
+  ];
+  const factorChoices = ({ categorical = true, twoLevel = false } = {}) => [
+    ['Name', 'The factor\'s column name in the design table; the names must differ.'],
+    ['Role', categorical ? `Continuous: set at a low and a high value (and the middle for center points). Categorical: ${twoLevel ? 'two named levels' : 'a list of named levels, each a setting of its own'}.` : 'Continuous only, in this design.'],
+    ['Values', categorical ? `A continuous factor's low and high values in its own units, low below high: they are −1 and +1 of the coding the column's notes keep. A categorical factor's levels, separated by commas${twoLevel ? ': exactly two' : ''}.` : 'The low and high values in the factor\'s own units, low below high: they are −1 and +1 of the coding the column\'s notes keep.'],
+    ['×', 'Remove the factor.'],
+    [categorical ? 'Add Continuous, Add Categorical' : 'Add Continuous', 'Another factor, named X4, X5, … in turn.'],
+    ['Add N', `Add as many ${categorical ? 'continuous ' : ''}factors as the box before it says (1 to 30).`],
+  ];
+  const outputChoices = ({ centers = null, replicates = null } = {}) => [
+    ['Run Order', 'Randomize, the default (the Random Seed repeats an order); Sort Left to Right, the first factor changing slowest; Sort Right to Left, the last changing slowest; Keep the Same, the standard order.'],
+    ...(centers ? [['Number of Center Points', centers]] : []),
+    ...(replicates ? [['Number of Replicates', replicates]] : []),
+    ['Random Seed', 'The seed of the random run order: the same seed gives the same order. Empty draws one, and the table\'s notes say which.'],
+  ];
+  const MAKE_TABLE = ['Make Table', 'Make the design table and add it to the open tables; the dialog keeps its settings for the next time in this session.'];
   SM.commands.register({
     menu: 'DOE/Classical', label: 'Screening Design…', order: 10, action: screening, uses: ['numpy (generators, defining relation)'],
     about: 'Two-level fractional factorial (by generators, with resolution and aliases) and Plackett-Burman designs for screening many factors.',
     topics: { 'cmd:screening': CMD_TOPIC('Screening Design', 'Two-level designs that estimate every main effect in few runs. Fractional factorials 2^(k−p) are built from generators; their resolution (III: main effects aliased with two-factor interactions, IV: main effects clear, V: two-factor interactions clear) comes from the defining relation. Plackett-Burman designs of 12, 20 and 24 runs alias every main effect partially with many interactions.', [
       { heading: 'Steps', list: ['Name the responses and the factors (continuous with a low and high value, or categorical with two levels).', 'Choose a design from the list: runs, type and resolution.', 'Show Aliases lists the defining relation and which effects are confounded.', 'Make Table makes the design table; its notes keep the generators and aliases.'] },
+      { heading: 'Responses', choices: RESPONSE_CHOICES },
+      { heading: 'Factors', choices: factorChoices({ twoLevel: true }) },
+      { heading: 'Choose a Design', choices: [
+        ['The list', 'The designs for this many factors, by their runs, type and resolution: the full factorial (up to 128 runs), the regular fractions, and Plackett-Burman designs of 12, 20 and 24 runs. It starts at the smallest of resolution IV or better, and follows the number of factors.'],
+        ['Show Aliases', 'The generators, the defining relation and which main effects and two-factor interactions are confounded, for the design chosen.']] },
+      { heading: 'Output Options', choices: outputChoices({
+        centers: 'Runs with every continuous factor at the middle of its range (the categorical factors alternate their two levels): a check of curvature and an estimate of pure error. They need a continuous factor; 0 by default.',
+        replicates: 'Copies of the whole design beyond the first (the center points are not copied); 0 by default.' }) },
+      { heading: 'Buttons', choices: [MAKE_TABLE] },
     ]) },
   });
   SM.commands.register({
     menu: 'DOE/Classical', label: 'Full Factorial Design…', order: 20, action: fullFactorial, uses: ['itertools.product', 'numpy.random.default_rng (run order)'],
     about: 'Every combination of the levels of continuous (two-level) and categorical factors, with replicates, center points and a randomized or sorted run order.',
     topics: { 'cmd:fullfactorial': CMD_TOPIC('Full Factorial Design', 'Every combination of the factors\' levels: 2 for each continuous factor (low and high), and each level of a categorical factor. All main effects and interactions can be estimated.', [
-      { heading: 'Output options', choices: [['Run Order', 'Randomize (with a seed, to repeat it), sort left to right (the first factor changes slowest) or right to left, or keep the standard order.'], ['Center Points', 'Runs at the middle of the continuous factors: a check of curvature and an estimate of pure error.'], ['Replicates', 'Copies of the whole design beyond the first.']] },
+      { heading: 'Responses', choices: RESPONSE_CHOICES },
+      { heading: 'Factors', choices: factorChoices() },
+      { heading: 'Output Options', choices: outputChoices({
+        centers: 'Runs with every continuous factor at the middle of its range (the categorical factors cycle through their levels): a check of curvature and an estimate of pure error. They need a continuous factor; 0 by default.',
+        replicates: 'Copies of the whole design beyond the first (the center points are not copied): 1 doubles the runs. 0 by default.' }) },
+      { heading: 'Buttons', choices: [MAKE_TABLE] },
       { heading: 'The table', text: 'A Pattern column (− low, + high, 0 center, a number the level of a categorical factor), the factors with their modeling types, and an empty column for each response. A continuous factor\'s notes give its coding, which Evaluate Design uses.' },
     ]) },
   });
@@ -379,6 +415,16 @@
     topics: { 'cmd:rsm': CMD_TOPIC('Response Surface Design', 'Designs for a second-order (quadratic) model of continuous factors.', [
       { heading: 'Designs', choices: [['CCD, rotatable', 'α = F^¼ (F the cube runs): the prediction variance depends only on the distance from the center.'], ['CCD, orthogonal', 'α chosen so the squared terms are uncorrelated.'], ['CCD, face centred', 'α = 1: three levels per factor, inside the cube.'], ['CCD, spherical', 'α = √k: every non-center point on one sphere.'], ['Box-Behnken', 'Three levels, runs on the edges of the cube and none at its corners.']] },
       { heading: 'Axial values', text: 'With α > 1 the axial points lie beyond the low and high values; Inscribe shrinks the design so they fall on the limits.' },
+      { heading: 'Responses', choices: RESPONSE_CHOICES },
+      { heading: 'Factors', choices: factorChoices({ categorical: false }) },
+      { heading: 'Choose a Design', choices: [
+        ['The list', 'The designs for this many factors (central composite for 2 to 8, Box-Behnken for 3 to 7), by their runs and axial value α; choosing one puts its usual number of center points into Output Options. The orthogonal α depends on the number of center points, and the list shows it for the usual number.'],
+        ['Axial value α (CCD; empty: the design\'s)', 'A distance of the axial points of your own, in coded units (1 is the low or high value), for a central composite design; empty keeps the chosen design\'s α. Box-Behnken designs have no axial points.'],
+        ['Inscribe (axial points at the factor limits)', 'Shrink the whole design by 1/α, so that the axial points lie at the low and high values and the cube inside them: for factors that cannot go beyond their limits.']] },
+      { heading: 'Output Options', choices: outputChoices({
+        centers: 'Runs at the center of the design: they estimate pure error and steady the prediction variance near the center. Choosing a design puts its usual number here.',
+        replicates: 'Copies of the design\'s runs beyond the first (the center points are not copied); 0 by default.' }) },
+      { heading: 'Buttons', choices: [MAKE_TABLE] },
     ]) },
   });
   SM.commands.register({
@@ -386,6 +432,13 @@
     about: 'Latin hypercube, sphere packing, uniform, Sobol and Halton designs over the ranges of continuous factors (scipy.stats.qmc), seeded.',
     topics: { 'cmd:spacefilling': CMD_TOPIC('Space Filling Design', 'Points that fill the factor space evenly, for computer experiments and nonparametric models.', [
       { heading: 'Methods', choices: [['Latin Hypercube', 'Every factor\'s range cut into n equal strata with one point in each; optimised for the centred discrepancy (scipy random-cd).'], ['Sphere Packing', 'A Latin hypercube with the smallest distance between points made large (maximin).'], ['Uniform', 'Minimum centred discrepancy: close to a uniform distribution.'], ['Sobol, Halton', 'Scrambled low-discrepancy sequences; Sobol is balanced for a power of two runs.']] },
+      { heading: 'Responses', choices: RESPONSE_CHOICES },
+      { heading: 'Factors', choices: factorChoices({ categorical: false }) },
+      { heading: 'Space Filling Design Methods', choices: [
+        ['Method', 'How the points are placed: one of the methods above; Latin Hypercube by default.'],
+        ['Number of Runs', 'How many points, 2 to 10000; 20 by default.'],
+        ['Random Seed', 'The seed of the random placement: the same seed gives the same design; empty draws a new one each time, and the table\'s notes say which.']] },
+      { heading: 'Buttons', choices: [MAKE_TABLE] },
     ]) },
   });
 
@@ -466,9 +519,10 @@
   async function powerSettings(ctx) {
     const cur = ctx.opt('powerSettings', { alpha: 0.05, rmse: 1, coefficient: 1 }) || {};
     const v = await SM.ui.form({ title: 'Power Analysis', fields: [
-      { key: 'alpha', label: 'Significance level', type: 'number', value: cur.alpha ?? 0.05 },
-      { key: 'rmse', label: 'Anticipated RMSE', type: 'number', value: cur.rmse ?? 1 },
-      { key: 'coefficient', label: 'Anticipated coefficient (for every term)', type: 'number', value: cur.coefficient ?? 1 },
+      { key: 'alpha', label: 'Significance level', type: 'number', value: cur.alpha ?? 0.05, help: 'The α of the test of each coefficient; 0.05 by default. Between 0 and 1.' },
+      { key: 'rmse', label: 'Anticipated RMSE', type: 'number', value: cur.rmse ?? 1, help: 'The error standard deviation you expect in the response; the power rises as it falls. 1 by default; positive.' },
+      { key: 'coefficient', label: 'Anticipated coefficient (for every term)', type: 'number', value: cur.coefficient ?? 1,
+        help: 'The size of the coefficient to detect, the same for every term, in coded units: a continuous factor\'s coefficient is half the change in the response from its low to its high value. 1 by default.' },
     ], validate: (x) => (!(x.alpha > 0 && x.alpha < 1) ? 'α must lie between 0 and 1' : !(x.rmse > 0) ? 'the RMSE must be positive' : null) });
     if (v) ctx.set('powerSettings', v);
   }
@@ -491,10 +545,13 @@
     launch: {
       lead: 'Choose the factor columns of a design table. The Model option sets the terms to evaluate.',
       roles: [
-        { key: 'x', label: 'X, Factor', min: 1, hint: 'required' },
-        { key: 'y', label: 'Y, Response', hint: 'optional' },
+        { key: 'x', label: 'X, Factor', min: 1, hint: 'required',
+          help: 'The factor columns of the design. A continuous one is coded −1 to +1 from the low and high values in its notes (the "Coding [low, high]" a DOE design table writes), else from the data\'s range; an ordinal or nominal one is effect coded. Rows with a missing factor are left out.' },
+        { key: 'y', label: 'Y, Response', hint: 'optional',
+          help: 'The responses, for the record only: the evaluation depends on the factor settings alone.' },
       ],
-      options: [{ key: 'model', label: 'Model', type: 'select', value: 'main', choices: MODELS }],
+      options: [{ key: 'model', label: 'Model', type: 'select', value: 'main', choices: MODELS,
+        help: 'The terms the design is judged for: Main Effects; with the Two-Factor Interactions; Response Surface, which adds the squares of the continuous factors; Full Factorial, every interaction. Terms left out (the next order of interactions) are the alias terms. The Model red triangle changes it later.' }],
     },
     title: () => 'Evaluate Design',
     triangle: (ctx) => [
@@ -659,6 +716,35 @@
         sections: [
           { heading: 'Situations', choices: [['One and Two Sample Means', 't tests (statsmodels TTestPower, TTestIndPower); for two means the sample size is the total of both groups; Extra Parameters take error degrees of freedom.'], ['k Sample Means', 'One-way ANOVA from the means and σ (Cohen\'s f, FTestAnovaPower); the sample size is the total.'], ['Proportions', 'One sample: the normal approximation on Cohen\'s h and the exact binomial power. Two samples: the pooled z test (power_proportions_2indep).'], ['One Sample Variance', 'The χ² test of σ₀² against σ₀² + the difference; exact.'], ['Counts per Unit', 'A Poisson rate per unit against the baseline plus the difference; normal approximation and exact.'], ['Sigma Quality Level', 'Φ⁻¹(1 − defects/opportunities) + 1.5.']] },
           { heading: 'Whole numbers', text: 'A computed sample size is fractional; the report also gives the smallest whole one that reaches the power, and for proportions and counts the smallest with the exact power.' },
+          { heading: 'In the report', choices: [
+            ['The situation buttons', 'Above the report: each situation has its own fields, and the values entered in them are kept when you come back to it.'],
+            ['Fields marked ◦', 'The effect, the sample size and the power: give two and leave one empty, and it is computed (shown in its field as = value). With all three given, the power is computed again from the other two.'],
+            ['Test', 'Two-sided or one-sided, in the direction of the difference given (not for k means and the sigma level). Two-sided by default, but one-sided for One Sample Variance and Counts per Unit.'],
+            ['Continue', 'Compute. Enter in a field, or leaving a field you changed, does the same.'],
+            ['Reset the Inputs', 'In the red triangle: the situation\'s default values again.']] },
+          { heading: 'Means', choices: [
+            ['Alpha', 'The significance level of the test, in every situation but the sigma level; 0.05 by default.'],
+            ['Std Dev', 'The standard deviation σ of the response, which the difference is measured against.'],
+            ['Extra Parameters', 'Parameters of the model beyond the means (covariates, blocks): each takes one error degree of freedom. 0 by default.'],
+            ['Group Size Ratio (n2/n1)', 'Two Sample Means: the second group\'s size over the first\'s; the total is split in this ratio. 1 is equal groups.'],
+            ['Difference to Detect', 'One mean: μ − μ₀; two means: μ₁ − μ₂; in the units of the response. With a one-sided test its sign gives the direction.'],
+            ['Means (separated by commas)', 'k Sample Means: the group means you expect, two or more; the effect is Cohen\'s f, their standard deviation over Std Dev.'],
+            ['Sample Size, Sample Size (total)', 'One mean: n; two and k means: the total over the groups.'],
+            ['Power', 'The probability of rejecting the null hypothesis when the effect is as given; 0.8 by default.']] },
+          { heading: 'Proportions', choices: [
+            ['Null Proportion', 'One Sample Proportion: p₀, the proportion under the null hypothesis.'],
+            ['Proportion', 'One Sample Proportion: the true proportion to detect.'],
+            ['Proportion 1, Proportion 2', 'Two Sample Proportions: the first group\'s proportion to detect, and the second group\'s.'],
+            ['Null Difference in Proportion', 'Two Sample Proportions: p₁ − p₂ under the null hypothesis. 0 tests equal proportions; another value a difference of that margin (non-inferiority or superiority).'],
+            ['Sample Size 1', 'The size of the first group.'],
+            ['Sample Size 2 (empty: as group 1)', 'The size of the second group: with Sample Size 1 given, their ratio. When Sample Size 1 is the field computed, the groups are taken as equal.']] },
+          { heading: 'Variance, counts and sigma', choices: [
+            ['Baseline Variance', 'One Sample Variance: σ₀², the variance under the null hypothesis.'],
+            ['Difference to Detect (variance)', 'σ₁² − σ₀²; a negative difference tests for a smaller variance.'],
+            ['Baseline Count per Unit', 'Counts per Unit: λ₀, the rate per unit under the null hypothesis.'],
+            ['Difference to Detect', 'Counts per Unit: λ₁ − λ₀, the change in the count per unit.'],
+            ['Sample Size (units)', 'Counts per Unit: the number of units observed.'],
+            ['Number of Defects, Number of Opportunities, Sigma Quality Level', 'Sigma Quality Level: give two and the third is computed, with the level = Φ⁻¹(1 − defects/opportunities) + 1.5.']] },
         ],
         more: { label: 'Sample Size and Power', id: 'help-p-power' },
       },

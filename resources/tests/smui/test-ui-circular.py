@@ -105,6 +105,154 @@ window.__ci = {
 '''
 
 
+# ---- help for every input: the (i) of the launch dialog, of the forms and of the report's controls
+HELP_JS = r'''
+window.__hp = {
+  sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+  async waitNew(n0, sel) {
+    for (let i = 0; i < 300; i++) { const d = [...document.querySelectorAll(sel)]; if (d.length > n0) return d[d.length - 1]; await this.sleep(50); }
+    return null;
+  },
+  // The open (i) panel: its title and sections, each a heading with its [name, text] entries.
+  panel() {
+    const p = document.getElementById('kvot-info-panel');
+    if (!p) return null;
+    const sections = [{ heading: null, entries: [] }];
+    for (const node of p.querySelector('.info-panel-body').children) {
+      if (node.tagName === 'H3') sections.push({ heading: node.textContent, entries: [] });
+      else if (node.matches('dl.info-choices')) {
+        const dt = [...node.children].filter((x) => x.tagName === 'DT'), dd = [...node.children].filter((x) => x.tagName === 'DD');
+        dt.forEach((t, i) => sections[sections.length - 1].entries.push([t.textContent, dd[i] ? dd[i].textContent : '']));
+      }
+    }
+    return { title: p.querySelector('.info-panel-title').textContent, headings: sections.map((s) => s.heading).filter(Boolean), sections: sections.filter((s) => s.heading || s.entries.length) };
+  },
+  // Click an (i), read its panel, close it.
+  async open(btn) {
+    if (!btn) return null;
+    btn.click();
+    await this.sleep(80);
+    const out = { key: btn.dataset.info, ...this.panel() };
+    KvotInfo.close();
+    return out;
+  },
+  audit() { const a = KvotInfo.audit(); return { noTopic: a.noTopic, brokenMore: a.brokenMore }; },
+  showTable(name) { const t = SM.app.tables.find((x) => x.name === name); if (t) SM.app.showTab(SM.app.tabOf(t)); return !!t; },
+  // Cast columns into a role of a launch dialog.
+  cast(d, names, role) {
+    const items = [...d.querySelectorAll('.sm-pick-list li')];
+    names.forEach((n, i) => {
+      const li = items.find((x) => x.textContent === n);
+      if (!li) throw new Error('no column ' + n);
+      li.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, ctrlKey: i > 0 }));
+    });
+    [...d.querySelectorAll('.sm-role .sm-btn')].find((b) => b.textContent === role).click();
+  },
+  choose(d, aria, value) { const s = d.querySelector(`select[aria-label="${aria}"]`); s.value = value; s.dispatchEvent(new Event('change', { bubbles: true })); },
+  // A launch dialog's (i) after prep(dialog), audited while the dialog is open; then Cancel.
+  async launch(id, prep) {
+    const n0 = document.querySelectorAll('.sm-launch-dialog').length;
+    SM.app.launch(id);
+    const d = await this.waitNew(n0, '.sm-launch-dialog');
+    if (!d) throw new Error('no launch dialog');
+    if (prep) { await prep(d); await this.sleep(80); }
+    const info = await this.open(d.querySelector('.sm-dialog-head .info-btn'));
+    const audit = this.audit();
+    const L = SM.platforms.get(id).launch;
+    [...d.querySelectorAll('.sm-actions .sm-btn')].find((b) => b.textContent === 'Cancel').click();
+    await this.sleep(60);
+    return { info, audit, roles: (L.roles || []).map((r) => r.label), options: (L.options || []).map((o) => o.label) };
+  },
+  head(rep, title) { return [...rep.body.querySelectorAll('.sm-ob-head')].find((h) => { const t = h.querySelector('h2, h3, h4'); return t && t.textContent === title; }); },
+  // Pick from the red triangle of an outline (null: the top one), without waiting for a redraw.
+  async menu(rep, title, path) {
+    const h = title == null ? (rep.body.querySelector('.sm-ob.level-0 > .sm-ob-head') || rep.body.querySelector('.sm-ob-head')) : this.head(rep, title);
+    if (!h) throw new Error('no outline ' + title);
+    h.querySelector('.sm-ob-menu').click();
+    for (const label of path) {
+      await this.sleep(40);
+      const m = [...document.querySelectorAll('.sm-menu')].pop();
+      const b = m && [...m.querySelectorAll('button')].find((x) => x.querySelector('.sm-label') && x.querySelector('.sm-label').textContent === label);
+      if (!b) { SM.ui.closeMenus(0); throw new Error('no menu item ' + label); }
+      b.click();
+    }
+  },
+  // A form that open() brings up: its fields' labels and its (i), audited while open; then closed.
+  async form(open) {
+    const n0 = document.querySelectorAll('.sm-dialog').length;
+    await open();
+    const d = await this.waitNew(n0, '.sm-dialog');
+    if (!d) throw new Error('no form opened');
+    const info = await this.open(d.querySelector('.sm-dialog-head .info-btn'));
+    const audit = this.audit();
+    const out = { title: d.querySelector('.sm-dialog-head h2').textContent, labels: [...d.querySelectorAll('.sm-form label')].map((l) => l.textContent), info, audit };
+    d.querySelector('.sm-dialog-x').click();
+    await this.sleep(60);
+    return out;
+  },
+  // An outline's own (i).
+  async outline(rep, title) { const h = this.head(rep, title); return h ? this.open(h.querySelector('.kvot-info-slot .info-btn')) : null; },
+};
+true
+'''
+
+
+def help_section(info, heading):
+    """The [name, text] entries of a section of an (i) panel, as a dict; None when there is none."""
+    for s in (info or {}).get('sections', []):
+        if s['heading'] == heading:
+            return dict(s['entries'])
+    return None
+
+
+async def check_launch_help(page, pid, settings=None, prep='null', what=None):
+    """A launch dialog's (i): every role and option with its help, the fields
+    of the platform's own part (settings), and a topic for every (i) while the
+    dialog is open."""
+    what = what or f'{pid}: the launch dialog'
+    r = await page.ev(f'__hp.launch({json.dumps(pid)}, {prep})', timeout=300)
+    if not isinstance(r, dict):
+        check(f'{what}: opens', r, 'a dialog')
+        return None
+    info = r['info'] or {}
+    roles = help_section(info, 'Roles') or {}
+    check(f'{what}: its (i) lists every role', list(roles), r['roles'])
+    check(f'{what}: every role has help beyond what it takes', [k for k, t in roles.items() if t.startswith('(') or len(t) < 80], [])
+    check(f'{what}: one Roles section (the topic\'s gives way to it)', info.get('headings', []).count('Roles'), 1)
+    opts = help_section(info, 'Options') or {}
+    check(f'{what}: its (i) lists every option', list(opts), r['options'])
+    check(f'{what}: every option has help', [k for k, t in opts.items() if len(t) < 60], [])
+    if settings is not None:
+        got = help_section(info, 'Settings') or {}
+        check(f'{what}: its (i) explains the fields of the platform\'s own part', list(got), settings)
+        check(f'{what}: none of them in a word', [k for k, t in got.items() if len(t) < 30], [])
+    check(f'{what}: every (i) has a topic while it is open', r['audit']['noTopic'], [])
+    check(f'{what}: every Help link has a target', r['audit']['brokenMore'], [])
+    return info
+
+
+async def check_form_help(page, open_js, fields, what):
+    """A form's (i) lists every field with its help, in order (fields: the names shown)."""
+    r = await page.ev(f'__hp.form(async () => {{ {open_js} }})', timeout=300)
+    if not isinstance(r, dict):
+        check(f'{what}: opens', r, 'a dialog')
+        return None
+    got = help_section(r['info'], 'Fields') or {}
+    check(f'{what}: its (i) explains every field', list(got), fields)
+    check(f'{what}: none of them in a word', [k for k, t in got.items() if len(t) < 30], [])
+    check(f'{what}: every (i) has a topic while it is open', r['audit']['noTopic'], [])
+    return r
+
+
+async def check_controls_help(page, rep_js, title, names, what, heading='In the report'):
+    """An outline's (i) explains the controls inside the report, in a section of choices."""
+    info = await page.ev(f'__hp.outline({rep_js}, {json.dumps(title)})')
+    got = help_section(info, heading) or {}
+    check(f'{what}: its (i) explains the controls in the report', list(got), names)
+    check(f'{what}: none of them in a word', [k for k, t in got.items() if len(t) < 30], [])
+    return info
+
+
 async def main():
     page = await open_page(f'{BASE}/smui.html?example=wind')
     st = await wait_engine(page)
@@ -403,6 +551,16 @@ async def main():
     check('30 000 angles: every one used', r['n'], 30000)
     check('30 000 angles: done within 60 s', r['ms'] < 60000, True)
     print(f'   (30 000 angles took {r["ms"] / 1000:.1f} s)')
+
+    # ---- help for every input: the launch dialog's (i), the forms' (i)
+    await page.ev(HELP_JS)
+    check('help: back on the Wind table', await page.ev('__hp.showTable("Wind")'), True)
+    await check_launch_help(page, 'circular', what='circular: the launch dialog')
+    await page.ev('''(async () => { const t = SM.app.tables.find((x) => x.name === 'Wind'); const rep = SM.app.openReport(SM.platforms.get('circular'), { roles: { y: [t.col('direction (°)').id] }, options: {} }, t);
+      await new Promise((r) => rep.on('done', r)); return rep.title; })()''', timeout=300)
+    rep = 'SM.app.reports[SM.app.reports.length - 1]'
+    await check_form_help(page, f"await __hp.menu({rep}, 'direction (°)', ['V Test…'])", ['Expected mean direction'], 'circular: V Test…')
+    await check_form_help(page, f"await __hp.menu({rep}, null, ['Units', 'Clock…'])", ['Period'], 'circular: Units > Clock…')
     check('no script errors', page.errors, [])
     await page.close()
 

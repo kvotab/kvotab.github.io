@@ -641,7 +641,8 @@ def space_filling(factors, n_runs=20, method='lhs', responses=None, seed=None):
                   '    if E.min() > D.min() or (E.min() == D.min() and (E == E.min()).sum() < (D == D.min()).sum()): u, D = y, E']
     lines += [f'X = qmc.scale(u, {lo.tolist()!r}, {hi.tolist()!r})', 'print(qmc.discrepancy(u, method="CD"))']
     code = '\n'.join(lines)
-    return {'name': 'Space Filling Design', 'columns': cols, 'n_runs': n, 'seed': seed, 'notes': ' '.join(notes), 'discrepancy': disc, 'min_distance': dmin, 'code': code}
+    # the seed, drawn or given, so that the design can be made again
+    return {'name': 'Space Filling Design', 'columns': cols, 'n_runs': n, 'seed': seed, 'notes': ' '.join(notes + [f'Random seed {seed}.']), 'discrepancy': disc, 'min_distance': dmin, 'code': code}
 
 
 # ---------------------------------------------------------------------------

@@ -246,7 +246,8 @@
       { label: 'Mirrored', checked: ctx.opt('mirror', true), action: () => ctx.set('mirror', true) },
       { label: 'Overlaid', checked: !ctx.opt('mirror', true), action: () => ctx.set('mirror', false) },
       ctx.check('Show Common Support', 'support', null, true),
-      { label: 'Set Bin Width…', action: async () => { const v = await SM.ui.form({ title: 'Set Bin Width', fields: [{ key: 'w', label: 'Bin width of the propensity scores', type: 'number', value: ctx.opt('psBin', 0.05) }], validate: (x) => (x.w > 0.004 && x.w <= 0.5 ? null : 'a width between 0.005 and 0.5') }); if (v) ctx.set('psBin', v.w); } },
+      { label: 'Set Bin Width…', action: async () => { const v = await SM.ui.form({ title: 'Set Bin Width', fields: [{ key: 'w', label: 'Bin width of the propensity scores', type: 'number', value: ctx.opt('psBin', 0.05),
+        help: 'The width of the bars of the Overlap histogram on the 0 to 1 scale of the scores, 0.005 to 0.5: 0.05 (the default) gives 20 bars. Narrower bars show more detail with many rows; wider ones steady a small sample. Only the graph changes.' }], validate: (x) => (x.w > 0.004 && x.w <= 0.5 ? null : 'a width between 0.005 and 0.5') }); if (v) ctx.set('psBin', v.w); } },
       { separator: true },
       { label: 'Trim Propensity Scores…', action: () => trimDialog(ctx) },
       trim ? { label: 'Remove Trimming', action: () => ctx.set('trim', null) } : null,
@@ -259,7 +260,8 @@
     const v = await SM.ui.form({
       title: 'Trim Propensity Scores', info: 'p:treatment:overlap',
       lead: 'Leave out the rows whose propensity score (from the model on every row) is below ε or above 1 − ε, and fit everything again on the rest. The effect is then for the population where the groups overlap. 0 turns trimming off.',
-      fields: [{ key: 'eps', label: 'ε', type: 'number', value: ctx.opt('trim', null) ?? 0.05 }],
+      fields: [{ key: 'eps', label: 'ε', type: 'number', value: ctx.opt('trim', null) ?? 0.05,
+        help: 'The threshold, from 0 up to below 0.5: rows whose propensity score, in the model on all the rows, is below ε or above 1 − ε are left out, and every part of the report is fitted again on the rest. 0.05 and 0.1 are usual; 0 turns trimming off. The effects are then for the rows kept, not the whole sample.' }],
       validate: (x) => (x.eps == null || (x.eps >= 0 && x.eps < 0.5) ? null : 'ε between 0 and 0.5'),
     });
     if (v) ctx.set('trim', v.eps > 0 ? v.eps : null);
@@ -326,7 +328,8 @@
         { label: 'IPW (for the ATE)', checked: bw === 'ate', action: () => ctx.set('balW', 'ate') },
         { label: 'ATT (odds for the controls)', checked: bw === 'att', action: () => ctx.set('balW', 'att') },
       ] },
-      { label: 'Set Threshold…', action: async () => { const v = await SM.ui.form({ title: 'Balance Threshold', fields: [{ key: 't', label: 'Largest |SMD| taken as balanced', type: 'number', value: thr }], validate: (x) => (x.t > 0 ? null : 'a number above 0') }); if (v) ctx.set('smdThreshold', v.t); } },
+      { label: 'Set Threshold…', action: async () => { const v = await SM.ui.form({ title: 'Balance Threshold', fields: [{ key: 't', label: 'Largest |SMD| taken as balanced', type: 'number', value: thr,
+        help: 'The dashed line of the Love plot, and the mark the note counts against: a covariate whose |standardized mean difference| is above it is out of balance. 0.1, the usual mark, by default; above 0. The estimates do not change.' }], validate: (x) => (x.t > 0 ? null : 'a number above 0') }); if (v) ctx.set('smdThreshold', v.t); } },
     ] });
     const rows = res.balance.map((b) => ({ term: b.term, mean_t: b.mean_t, mean_c: b.mean_c, smd: b.smd, vr: b.vr, mean_tx: b[`mean_t${suffix}`], mean_cx: b[`mean_c${suffix}`], smd_x: b[`smd${suffix}`], vr_x: b[`vr${suffix}`] }));
     const wl = bw === 'att' ? 'ATT Weighted' : 'Weighted';
@@ -355,7 +358,8 @@
       { label: 'IPW (for the ATE)', checked: wt === 'ate', action: () => ctx.set('wType', 'ate') },
       { label: 'ATT (odds for the controls)', checked: wt === 'att', action: () => ctx.set('wType', 'att') },
       { separator: true },
-      { label: 'Show Largest…', action: async () => { const v = await SM.ui.form({ title: 'Largest Weights', fields: [{ key: 'n', label: 'How many to list', type: 'number', value: ctx.opt('nLargest', 10) }] }); if (v && v.n > 0) ctx.set('nLargest', Math.min(200, Math.round(v.n))); } },
+      { label: 'Show Largest…', action: async () => { const v = await SM.ui.form({ title: 'Largest Weights', fields: [{ key: 'n', label: 'How many to list', type: 'number', value: ctx.opt('nLargest', 10),
+        help: 'How many rows the list of the largest weights shows, largest first, with each row\'s group, propensity score and outcome: 10 by default, at most 200.' }] }); if (v && v.n > 0) ctx.set('nLargest', Math.min(200, Math.round(v.n))); } },
       { label: 'Save IPW Weight', action: () => saveScores(ctx, 'w_ate') },
       { label: 'Save ATT Weight', action: () => saveScores(ctx, 'w_att') },
     ] });
@@ -446,6 +450,7 @@
     const box = el('div', { class: 'sm-te-launch' }, el('label', null, el('span', { text: 'Treated Level' }), sel), slot('p:treatment'));
     return {
       el: box,
+      help: [['Treated Level', 'Which level of the Treatment is the treated group; the other is the control. The effects are treated minus control, and the effect on the treated (ATT) averages over this group. It starts at the last level (the larger value, or the last in the column\'s value order); Treated Level, in the red triangle, changes it later.']],
       read() {
         const c = col();
         if (!c || sel.value === '') return { options: { treated: null } };
@@ -584,7 +589,8 @@
     'p:treatment:weights': {
       kicker: 'Treatment Effects', title: 'Weights',
       lead: 'The IPW weights: 1/p for a treated row and 1/(1 − p) for a control, so that each group stands for the whole sample; for the effect on the treated 1 and p/(1 − p).',
-      sections: [{ choices: [['Effective N', '(Σw)²/Σw²: how many unweighted rows the weighted group is worth'], ['Largest weights', 'the rows that count most; click one to select it in the table'], ['Save', 'the weights as a column, for weighted analyses elsewhere']] }],
+      sections: [{ choices: [['Effective N', '(Σw)²/Σw²: how many unweighted rows the weighted group is worth'], ['Largest weights', 'the rows that count most; click a line to select its row in the table (shift adds it, ctrl or ⌘ toggles it). Show Largest… sets how many are listed'],
+        ['The histogram', 'the weights of the treated above the axis and of the controls below (or overlaid, as Overlap is drawn); click a bar to select its rows'], ['Save', 'the weights as a column, for weighted analyses elsewhere']] }],
       more: MORE,
     },
     'p:treatment:outcome': {
@@ -607,13 +613,19 @@
     launch: {
       lead: 'The effect of a two-level treatment on an outcome, from observational data: a propensity score model for the treatment, an outcome model in each group, and five estimators that combine them.',
       roles: [
-        { key: 'y', label: 'Y, Outcome', min: 1, max: 1, numeric: true, hint: 'required: continuous or 0/1' },
-        { key: 'treatment', label: 'Treatment', min: 1, max: 1, hint: 'required: two levels' },
-        { key: 'outcome', label: 'Outcome Covariates', hint: 'the outcome models' },
-        { key: 'covariates', label: 'Treatment Covariates', hint: 'the propensity model; empty: as the outcome' },
-        { key: 'by', label: 'By', hint: 'optional' },
+        { key: 'y', label: 'Y, Outcome', min: 1, max: 1, numeric: true, hint: 'required: continuous or 0/1',
+          help: 'The outcome the treatment may change: continuous, or 0/1, when the effects are differences in the proportion of 1s (from linear outcome models). Rows with a missing value in the outcome, the treatment or a covariate are left out.' },
+        { key: 'treatment', label: 'Treatment', min: 1, max: 1, hint: 'required: two levels',
+          help: 'Who got the treatment: a column with exactly two levels in the rows used (0/1, yes/no, program/none). Treated Level, below the roles, says which level is the treated group; the other is the control.' },
+        { key: 'outcome', label: 'Outcome Covariates', hint: 'the outcome models',
+          help: 'The columns of the outcome models, least squares of Y on them in each group, which RA, AIPW, AIPW (WLS) and IPW-RA use (IPW does not). Each enters as a main effect, a nominal one effect coded. Empty: the outcome model is the group mean.' },
+        { key: 'covariates', label: 'Treatment Covariates', hint: 'the propensity model; empty: as the outcome',
+          help: 'The columns of the propensity score model, the logit (or probit) of the treatment on them: everything that affects both who is treated and the outcome belongs here, measured before the treatment. Empty: the Outcome Covariates. The two lists together need at least one column.' },
+        { key: 'by', label: 'By', hint: 'optional',
+          help: 'A separate analysis of the rows of each level (each combination of levels, with several By columns). Rows with a missing By value are left out.' },
       ],
-      options: [{ key: 'link', label: 'Treatment Model', type: 'select', value: 'logit', choices: [['logit', 'Logit'], ['probit', 'Probit']] }],
+      options: [{ key: 'link', label: 'Treatment Model', type: 'select', value: 'logit', choices: [['logit', 'Logit'], ['probit', 'Probit']],
+        help: 'The link of the propensity score model: Logit, logistic regression (the default, as in Stata\'s teffects), or Probit. They give nearly the same scores except near 0 and 1. Treatment Model, in the red triangle, switches it later.' }],
       extra: launchExtra,
       validate,
     },

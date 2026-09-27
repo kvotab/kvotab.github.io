@@ -176,6 +176,14 @@ check.near('slope held: the intercept is the mean of y - b x', r['terms'][0]['es
 r = call('fitybyx.fit_special', table=tid2, y='y', x='x', ytr='reciprocal', xtr='none')
 lo, hi = np.array(r['curve']['lo_fit']), np.array(r['curve']['hi_fit'])
 check('reciprocal: the confidence curves stay ordered', bool(np.all(lo <= np.array(r['curve']['fit']) + 1e-12) and np.all(np.array(r['curve']['fit']) <= hi + 1e-12)), True)
+# the square of X takes negative X (X is not transformed back); Y's square still needs y >= 0
+_xn = np.linspace(-3, 3, 25); _yn = 2 + 0.5 * _xn ** 2 + np.sin(7 * _xn) / 5
+r = call('fitybyx.fit_special', table=table({'x': _xn, 'y': _yn}), y='y', x='x', ytr='none', xtr='square')
+_ref = sm.OLS(_yn, sm.add_constant(_xn ** 2)).fit()
+check('Square of X: every row is used, negative X too', (r.get('notes') or []) == [] or not any('outside the domain' in n_ for n_ in r['notes']), True)
+check.near('... and the fit is least squares on X squared', r['terms'][1]['estimate'], float(_ref.params[1]), rel=1e-9)
+r = call('fitybyx.fit_special', table=table({'x': _xn, 'y': _yn - 3}), y='y', x='x', ytr='square', xtr='none')
+check('Square of Y: rows with Y below zero are left out', any('outside the domain' in n_ for n_ in r.get('notes', [])), True)
 
 # Fit Spline: scipy on rows combined by X
 r = call('fitybyx.fit_spline', table=tid, y='weight', x='height', lam=1000, want_rows=True)

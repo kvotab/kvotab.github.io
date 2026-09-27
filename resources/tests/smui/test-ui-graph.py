@@ -150,6 +150,26 @@ Object.defineProperty(window, '_gb', { configurable: true, get: () => SM.platfor
 window.drawn = async (p) => { for (let i = 0; i < 150 && !p.drawn; i++) await new Promise(r => setTimeout(r, 20)); return p; };
 window.lastPlot = async () => { const rep = SM.app.reports[SM.app.reports.length - 1]; await drawn(rep.plots[0]); return [rep, rep.plots[0]]; };
 window.rerun = async (fn) => { const done = new Promise(res => _rep.on('done', res)); await fn(); await done; await settle(); await _gb.idle(); };
+// The (i) panel as it reads: its title, its section headings and the choices under each ([name, text, current]).
+window.infoRead = () => {
+  const p = document.querySelector('.info-panel'); if (!p) return null;
+  const out = { title: p.querySelector('.info-panel-title').textContent, heads: [], choices: {} };
+  let head = '';
+  for (const n of p.querySelector('.info-panel-body').children) {
+    if (n.tagName === 'H3') { head = n.textContent; out.heads.push(head); }
+    else if (n.matches('dl.info-choices')) { const dd = [...n.querySelectorAll('dd')]; out.choices[head] = [...n.querySelectorAll('dt')].map((dt, i) => [dt.textContent, dd[i] ? dd[i].textContent : '', dt.classList.contains('is-current')]); }
+  }
+  return out;
+};
+window.infoClick = async (root) => { const b = root && root.querySelector('.info-btn'); if (!b) return null; b.click(); await settle(); return infoRead(); };
+// A dialog from a menu item: the report's top red triangle, then the item.
+window.menuDialog = async (rep, label) => {
+  rep.body.querySelector('.sm-ob.level-0 > .sm-ob-head .sm-ob-menu').click(); await settle();
+  const item = [...document.querySelectorAll('.sm-menu button')].find(b => b.textContent.replace(/^✓/, '') === label);
+  if (!item) return null; item.click(); await settle();
+  return [...document.querySelectorAll('.sm-dialog')].pop() || null;
+};
+window.cancelDialog = async (dlg) => { [...dlg.querySelectorAll('button')].find(b => b.textContent === 'Cancel').click(); await settle(); };
 '''
 
 # A seeded table for the platforms that want continuous coordinates, IDs and times, and mixtures.
@@ -569,6 +589,53 @@ async def main():
     check('a saved project opens the builder on the new table\'s columns', (r['n'], r['x'], r['y'], r['ok']), (1, ['sex'], ['height (cm)'], True))
     check('and draws the graph', r['traces'] > 0, True)
 
+    # ---- the (i): what every zone, element and property is for, following the graph on show
+    r = await page.ev('''(async () => {
+      KvotInfo.close();
+      await gbSet({ x: ['height (cm)'], y: ['weight (kg)'] }, ['points', 'smoother']);
+      const main = await infoClick(_rep.body.querySelector('.sm-gb-bar'));
+      const props = await infoClick(_rep.body.querySelector('.sm-gb-props h4'));
+      // the controls the Properties panel shows, element by element
+      const shown = [..._rep.body.querySelectorAll('.sm-gb-prop')].map(fs => [fs.querySelector('legend').textContent.replace('×', '').trim(),
+        [...fs.querySelectorAll(':scope > .sm-gb-field')].map(f => (f.querySelector(':scope > span') || f.querySelector(':scope > label')).textContent)]);
+      // a change while the (i) is open: the Local Kernel's settings come first
+      await _gb.prop('smoother', 'method', 'lowess');
+      const after = infoRead();
+      KvotInfo.close();
+      return { main, props, shown, after, audit: KvotInfo.audit().noTopic };
+    })()''')
+    check('Graph Builder\'s (i): zones, builder, elements, the properties of the elements in the graph, red triangle', [h for h in r['main']['heads'] if h in ('Zones', 'The builder', 'Elements', 'Properties: Points', 'Properties: Smoother', 'The red triangle')], ['Zones', 'The builder', 'Elements', 'Properties: Points', 'Properties: Smoother', 'The red triangle'])
+    check('... every zone explained', [c[0] for c in r['main']['choices']['Zones']], ['X, Y', 'Group X, Group Y', 'Wrap', 'Overlay', 'Color', 'Size', 'Freq'])
+    check('... the elements in the graph marked', [c[0] for c in r['main']['choices']['Elements'] if c[2]], ['Points', 'Smoother'])
+    check('... the builder\'s buttons', [c[0] for c in r['main']['choices']['The builder'] if c[0] in ('Undo', 'Start Over', 'Done')], ['Undo', 'Start Over', 'Done'])
+    shown = dict(r['shown'])
+    check('the Properties heading has its own (i), a section per element', (r['props']['title'], r['props']['heads']), ('Properties', ['Points', 'Smoother']))
+    check('... listing the controls the panel shows, in its order, first', {k: [c[0] for c in r['props']['choices'][k]][:len(v)] for k, v in shown.items()}, shown)
+    check('... then those that come with another choice, saying when', [c[1].split('.')[0] for c in r['props']['choices']['Points'][len(shown['Points']):]], ['Shown with a Summary Statistic'])
+    check('... every control with a real explanation', all(len(c[1]) > 40 for k in r['props']['choices'] for c in r['props']['choices'][k]), True)
+    check('an open (i) follows a change: Local Kernel\'s settings first', [c[0] for c in r['after']['choices']['Smoother']][:3], ['Method', 'Local Width', 'Local Robustness'])
+    check('(i) audit with the builder: every slot has a topic', r['audit'], [])
+    r = await page.ev('''(async () => {
+      await _gb.elements(['points', 'smoother', 'fit', 'ellipse', 'contour', 'line', 'bar', 'area', 'box', 'bean', 'histogram', 'heatmap', 'mosaic', 'caption', 'pie']);
+      const all = SM.info.get('p:graphbuilder:props');
+      const bad = [];
+      for (const s of all.sections) { if (!s.text) bad.push(s.heading + ': what it draws'); for (const [n, d] of s.choices) if (!d || /undefined|null/.test(d) || d.length < 30) bad.push(s.heading + ' / ' + n); }
+      SM.app.showTab(SM.app.tabOf(_rep.table));
+      const away = SM.info.get('p:graphbuilder');
+      SM.app.showTab(SM.app.tabOf(_rep));
+      const dlg = await menuDialog(_rep, 'Graph Size…');
+      const form = await infoClick(dlg.querySelector('.sm-dialog-head'));
+      const audit = KvotInfo.audit().noTopic;
+      KvotInfo.close(); await cancelDialog(dlg);
+      await gbSet({ x: ['sex'], y: ['height (cm)'] }, ['box']);
+      return { n: all.sections.map(s => s.heading), props: all.sections.reduce((a, s) => a + s.choices.length, 0), bad,
+        away: away.sections.filter(s => s.heading.startsWith('Properties: ')).length, form: form && form.choices.Fields, audit, closed: !document.querySelector('.sm-dialog') };
+    })()''')
+    check('every element\'s properties explained (15 elements, 63 properties)', (len(r['n']), r['props'], r['bad']), (15, 63, []))
+    check('with no builder on show, the (i) explains every element\'s properties', r['away'], 15)
+    check('a form\'s (i) lists its fields: Graph Size', [f[0] for f in r['form'] or []], ['Width', 'Height'])
+    check('... with the form open, every (i) has a topic', (r['audit'], r['closed']), ([], True))
+
     # ---- 10,000 rows stay quick
     r = await page.ev('''(async () => {
       const R = SM.util.rng('big graph'); const n = 10000; const x = [], y = [], g = [];
@@ -594,6 +661,29 @@ async def main():
 
     # ---- the other platforms, on a seeded table
     check('the seeded table', await page.ev(MAKE), 240)
+    # every launch dialog's (i): each role and option with what it is for
+    r = await page.ev('''(async () => {
+      const out = {};
+      for (const id of ['scattermatrix', 'scatter3d', 'contour', 'surface', 'bubble', 'parallel', 'cellplot', 'ternary', 'treemap', 'functional', 'chart', 'overlay']) {
+        SM.app.launch(id); await settle();
+        const dlg = document.querySelector('.sm-launch-dialog');
+        const info = await infoClick(dlg.querySelector('.sm-dialog-head'));
+        const audit = KvotInfo.audit().noTopic;
+        KvotInfo.close();
+        // the roles the dialog shows (a Data Format hides some): one row per role, in order
+        const rows = [...dlg.querySelectorAll('.sm-role')];
+        [...dlg.querySelectorAll('.sm-actions .sm-btn')].find(b => b.textContent === 'Cancel').click(); await settle();
+        const L = SM.platforms.get(id).launch;
+        out[id] = { roles: (info.choices.Roles || []).map(c => c[0]), wantRoles: L.roles.filter((x, i) => rows.length !== L.roles.length || !rows[i].hidden).map(x => x.label), options: (info.choices.Options || []).map(c => c[0]), wantOptions: (L.options || []).map(x => x.label),
+          thin: [...(info.choices.Roles || []).filter(c => c[1].startsWith('(') || c[1].length < 40), ...(info.choices.Options || []).filter(c => c[1].length < 30)].map(c => c[0]),
+          settings: (info.choices.Settings || []).map(c => c[0]), audit };
+      }
+      return { out, open: !!document.querySelector('.sm-dialog') };
+    })()''')
+    for pid, v in r['out'].items():
+        check(f'{pid}: the launch dialog\'s (i) explains every role and option', (v['roles'], v['options'], v['thin'], v['audit']), (v['wantRoles'], v['wantOptions'], [], []))
+    check('functional: the (i) explains the Data Format as well', r['out']['functional']['settings'], ['Data Format'])
+    check('the launch dialogs are closed again', r['open'], False)
     async def run(pid, roles, options=None):
         res = await page.ev(open_report_js(pid, roles, options))
         check(f'{pid}: opens without errors', (res['errors'], res['plots'] >= 1), ([], True))
@@ -621,6 +711,9 @@ async def main():
     })()''')
     check('scatter 3D: a point per row, axes to choose', (r['type'], r['n'], r['sels']), ('scatter3d', 240, 3))
     check('scatter 3D: a click selects the row, drawn in orange', (r['sel'], r['col']), ([r['want']], '#d9822b'))
+    r = await page.ev('''(async () => { const rep = SM.app.reports[SM.app.reports.length - 1]; const info = await infoClick(rep.body.querySelector('.sm-graph-pick')); KvotInfo.close();
+      return info ? (info.choices['In the report'] || []).map(c => c[0]) : null; })()''')
+    check('scatter 3D: an (i) by the axis menus explains them', r[:1] if r else r, ['X Axis, Y Axis, Z Axis'])
     await run('contour', {'y': ['z'], 'x': ['x', 'y']})
     r = await page.ev('''(async () => { const [rep, p] = await lastPlot(); const z = p.traces[0].z;
       return { rows: z.length, cols: z[0].length, holes: z.flat().some(v => v == null), linked: p.rows[1] ? p.rows[1].length : 0, code: rep.pythonScript().includes('griddata') }; })()''')
@@ -656,6 +749,10 @@ async def main():
     })()''')
     check('parallel plot: a trace per group, linked; selected lines redrawn', (r['lines'], r['ov']), (2, 10))
     check.near('parallel plot: each axis on its range (0 to 1)', r['top'], 1.0, 1e-12)
+    r = await page.ev('''(async () => { const rep = SM.app.reports[SM.app.reports.length - 1]; const dlg = await menuDialog(rep, 'Reverse Axes…');
+      const info = await infoClick(dlg.querySelector('.sm-dialog-head')); const audit = KvotInfo.audit().noTopic; KvotInfo.close(); await cancelDialog(dlg);
+      return { fields: info ? (info.choices.Fields || []).map(c => c[0]) : null, boxes: dlg.querySelectorAll('input[type=checkbox]').length, audit }; })()''')
+    check('parallel plot: the (i) of Reverse Axes explains its column boxes once', (r['fields'], r['boxes'], r['audit']), (['A column'], 4, []))
     await run('cellplot', {'y': ['x', 'z', 'g']})
     r = await page.ev('''(async () => {
       const [rep, p] = await lastPlot(); const t = rep.table;
@@ -696,6 +793,13 @@ async def main():
     })()''')
     check('chart: the mean of each category', all(abs(a - b) < 1e-9 for a, b in zip(r['got'], r['want'])) and len(r['got']) == 4, True)
     check('chart: a click on a bar selects its rows', r['n'], r['lv2'])
+    await run('chart', {'y': ['pop'], 'x': ['country']}, {'stat': 'max', 'kind': 'pie'})
+    r = await page.ev('''(async () => {
+      const [rep, p] = await lastPlot(); const t = rep.table;
+      const cn = t.col('country'), pop = t.col('pop'); const lv = t.levels(cn);
+      return { got: p.traces[0].values, want: lv.map(l => Math.max(...rowsWhere(t, r => cn.values[r] === l).map(r => pop.values[r]))) };
+    })()''')
+    check('chart: a Pie Chart of the Max has slices of the maxima (not of the means)', all(abs(a - b) < 1e-9 for a, b in zip(r['got'], r['want'])) and len(r['got']) == 4, True)
     await run('overlay', {'y': ['z', 'pop'], 'x': ['x']})
     r = await page.ev('''(async () => {
       const rep = SM.app.reports[SM.app.reports.length - 1]; const c = rep.table.col('pop');

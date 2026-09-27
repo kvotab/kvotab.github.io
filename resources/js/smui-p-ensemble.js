@@ -44,28 +44,48 @@
      function of the number of terms (p) and the other settings. */
   const FIELDS = {
     forest: [
-      { panel: 'Forest', key: 'trees', label: 'Number of Trees in the Forest', type: 'int', dflt: 100, min: 1, max: 5000 },
-      { panel: 'Forest', key: 'terms', label: 'Number of Terms Sampled per Split', type: 'int', dflt: (p) => defaultTerms(p), min: 1 },
-      { panel: 'Forest', key: 'rate', label: 'Bootstrap Sample Rate', type: 'num', dflt: 1, min: 0, max: 1, open: true },
-      { panel: 'Forest', key: 'minSplits', label: 'Minimum Splits per Tree', type: 'int', dflt: 10, min: 0 },
-      { panel: 'Forest', key: 'maxSplits', label: 'Maximum Splits per Tree', type: 'int', dflt: 2000, min: 1, max: 100000 },
-      { panel: 'Forest', key: 'minSize', label: 'Minimum Size Split', type: 'int', dflt: 5, min: 1 },
-      { panel: 'Forest', key: 'stop', label: 'Tree Size', type: 'select', dflt: 'oob', choices: [['oob', 'Stop by Out-of-Bag Loss (JMP)'], ['none', 'Grow to Maximum Splits (scikit-learn)']] },
-      { panel: 'Forest', key: 'early', label: 'Early Stopping', type: 'check', dflt: true },
-      { panel: 'Multiple Fits', key: 'multi', label: 'Multiple Fits over Number of Terms', type: 'check', dflt: false },
-      { panel: 'Multiple Fits', key: 'maxTerms', label: 'Max Number of Terms', type: 'int', dflt: (p) => p, min: 1 },
+      { panel: 'Forest', key: 'trees', label: 'Number of Trees in the Forest', type: 'int', dflt: 100, min: 1, max: 5000,
+        help: 'How many trees are grown, from 1 to 5000 (fewer when Early Stopping stops them). More trees average away more of the noise of single trees and take longer; JMP\'s default is 100.' },
+      { panel: 'Forest', key: 'terms', label: 'Number of Terms Sampled per Split', type: 'int', dflt: (p) => defaultTerms(p), min: 1,
+        help: 'How many X columns each split may choose from, drawn at random for every split (scikit-learn\'s max_features); a categorical X counts as its share of the 0/1 level columns. Empty: JMP\'s default since JMP 16, p − floor(p/4) of the p X columns (13 terms: 10; the grey number in the box); earlier versions took floor(p/4). Fewer terms make the trees differ more from each other.' },
+      { panel: 'Forest', key: 'rate', label: 'Bootstrap Sample Rate', type: 'num', dflt: 1, min: 0, max: 1, open: true,
+        help: 'The share of the training rows drawn, with replacement, for each tree: 1 (the default) draws as many rows as there are, which leaves about 37% of them out of each tree (its out-of-bag rows). A smaller share gives each tree fewer rows and more out-of-bag ones. Above 0 and at most 1.' },
+      { panel: 'Forest', key: 'minSplits', label: 'Minimum Splits per Tree', type: 'int', dflt: 10, min: 0,
+        help: 'Each tree keeps at least this many splits (10), when it can grow them; beyond them a split stays only while it lowers the tree\'s out-of-bag loss, as JMP stops its trees. It does nothing with Tree Size set to Grow to Maximum Splits.' },
+      { panel: 'Forest', key: 'maxSplits', label: 'Maximum Splits per Tree', type: 'int', dflt: 2000, min: 1, max: 100000,
+        help: 'The most splits a tree may have (2000): scikit-learn grows each tree best first, the split that lowers the impurity most next, until it has this many or no split is left.' },
+      { panel: 'Forest', key: 'minSize', label: 'Minimum Size Split', type: 'int', dflt: 5, min: 1,
+        help: 'The fewest rows a split may leave on either side (scikit-learn\'s min_samples_leaf; JMP\'s default 5). Larger values give smaller trees that fit less noise.' },
+      { panel: 'Forest', key: 'stop', label: 'Tree Size', type: 'select', dflt: 'oob', choices: [['oob', 'Stop by Out-of-Bag Loss (JMP)'], ['none', 'Grow to Maximum Splits (scikit-learn)']],
+        help: 'Stop by Out-of-Bag Loss (the default, as JMP describes its trees): past Minimum Splits per Tree each tree is cut back at the first split that does not lower the loss of the rows it did not see. Grow to Maximum Splits: scikit-learn\'s trees are kept whole.' },
+      { panel: 'Forest', key: 'early', label: 'Early Stopping', type: 'check', dflt: true,
+        help: 'With validation rows: the trees are grown one at a time, growth stops when the last tenth of the trees asked for (at least 5) has not improved the validation RSquare (Entropy RSquare for a categorical response), and the best number of trees is kept (the first k trees do not depend on how many are grown, so that is the forest of that many trees). Without validation rows it does nothing.' },
+      { panel: 'Multiple Fits', key: 'multi', label: 'Multiple Fits over Number of Terms', type: 'check', dflt: false,
+        help: 'Fits a forest for each number of terms from Number of Terms Sampled per Split up to Max Number of Terms, each about 1.25 times the one before (JMP\'s example: 4, 5, 6, 8, 10), and shows the one with the best validation statistic (the out-of-bag one without validation rows); Model Validation-Set Summaries lists them all.' },
+      { panel: 'Multiple Fits', key: 'maxTerms', label: 'Max Number of Terms', type: 'int', dflt: (p) => p, min: 1,
+        help: 'The largest number of terms Multiple Fits tries; empty: every X column. Used only with Multiple Fits.' },
     ],
     boosted: [
-      { panel: 'Boosting', key: 'layers', label: 'Number of Layers', type: 'int', dflt: 50, min: 1, max: 20000 },
-      { panel: 'Boosting', key: 'splits', label: 'Splits per Tree', type: 'int', dflt: 3, min: 1, max: 1000 },
-      { panel: 'Boosting', key: 'learn', label: 'Learning Rate', type: 'num', dflt: 0.1, min: 0, max: 1, open: true },
-      { panel: 'Boosting', key: 'minSize', label: 'Minimum Size Split', type: 'int', dflt: 5, min: 1 },
-      { panel: 'Multiple Fits', key: 'multi', label: 'Multiple Fits over Splits and Learning Rate', type: 'check', dflt: false },
-      { panel: 'Multiple Fits', key: 'maxSplits', label: 'Max Splits per Tree', type: 'int', dflt: (p, s) => s.splits ?? 3, min: 1, max: 1000 },
-      { panel: 'Multiple Fits', key: 'maxLearn', label: 'Max Learning Rate', type: 'num', dflt: (p, s) => s.learn ?? 0.1, min: 0, max: 1, open: true },
-      { panel: 'Stochastic Boosting', key: 'rowRate', label: 'Row Sampling Rate', type: 'num', dflt: 1, min: 0, max: 1, open: true },
-      { panel: 'Stochastic Boosting', key: 'colRate', label: 'Column Sampling Rate', type: 'num', dflt: 1, min: 0, max: 1, open: true },
-      { panel: 'Stochastic Boosting', key: 'early', label: 'Early Stopping', type: 'check', dflt: true },
+      { panel: 'Boosting', key: 'layers', label: 'Number of Layers', type: 'int', dflt: 50, min: 1, max: 20000,
+        help: 'How many small trees are fitted in turn, from 1 to 20000 (fewer when Early Stopping stops them), each to what the layers before it left; JMP\'s default is 50. A small Learning Rate needs more layers.' },
+      { panel: 'Boosting', key: 'splits', label: 'Splits per Tree', type: 'int', dflt: 3, min: 1, max: 1000,
+        help: 'The splits of each layer\'s tree (3), grown best first. 1 gives stumps, which add up the factors\' effects one at a time; more splits let a layer take up interactions.' },
+      { panel: 'Boosting', key: 'learn', label: 'Learning Rate', type: 'num', dflt: 0.1, min: 0, max: 1, open: true,
+        help: 'The share of each layer\'s fit that is added to the model (0.1), above 0 and at most 1. A small rate learns slowly and needs more layers, and usually predicts new rows better.' },
+      { panel: 'Boosting', key: 'minSize', label: 'Minimum Size Split', type: 'int', dflt: 5, min: 1,
+        help: 'The fewest rows a split may leave on either side (scikit-learn\'s min_samples_leaf; JMP\'s default 5).' },
+      { panel: 'Multiple Fits', key: 'multi', label: 'Multiple Fits over Splits and Learning Rate', type: 'check', dflt: false,
+        help: 'Fits a boosted tree for every Splits per Tree from the one above up to Max Splits per Tree, each with every learning rate from Learning Rate up to Max Learning Rate in steps of 0.1, and shows the one with the best validation statistic. It needs validation rows (without them one boosted tree is fitted), and at most 60 fits.' },
+      { panel: 'Multiple Fits', key: 'maxSplits', label: 'Max Splits per Tree', type: 'int', dflt: (p, s) => s.splits ?? 3, min: 1, max: 1000,
+        help: 'The largest Splits per Tree that Multiple Fits tries; empty: Splits per Tree.' },
+      { panel: 'Multiple Fits', key: 'maxLearn', label: 'Max Learning Rate', type: 'num', dflt: (p, s) => s.learn ?? 0.1, min: 0, max: 1, open: true,
+        help: 'The largest learning rate that Multiple Fits tries, in steps of 0.1 from Learning Rate; empty: Learning Rate.' },
+      { panel: 'Stochastic Boosting', key: 'rowRate', label: 'Row Sampling Rate', type: 'num', dflt: 1, min: 0, max: 1, open: true,
+        help: 'The share of the training rows drawn, without replacement, for each layer (scikit-learn\'s subsample); 1, the default, uses every row. Below 1 is stochastic boosting, which often predicts better. JMP stratifies the draw by a categorical response; scikit-learn does not.' },
+      { panel: 'Stochastic Boosting', key: 'colRate', label: 'Column Sampling Rate', type: 'num', dflt: 1, min: 0, max: 1, open: true,
+        help: 'The share of the columns tried at each split (scikit-learn\'s max_features, a categorical X\'s 0/1 columns counted one by one); 1, the default, tries every column. JMP draws its columns once per layer.' },
+      { panel: 'Stochastic Boosting', key: 'early', label: 'Early Stopping', type: 'check', dflt: true,
+        help: 'With validation rows (on by default): the fit stops at the first layer that does not improve the validation RSquare (Entropy RSquare for a categorical response) and keeps the layers before it, as JMP does. Without validation rows every layer is kept.' },
     ],
   };
 
@@ -130,13 +150,16 @@
         const s = read();
         for (const f of FIELDS[kind]) if (typeof f.dflt === 'function') inputs[f.key].placeholder = p ? String(f.dflt(p, s)) : '';
         const valid = !!(state && state.validation && state.validation.length);
-        hint.textContent = valid ? '' : 'Early Stopping and Multiple Fits need validation rows: a Validation column, or a Validation Portion below.';
+        hint.textContent = valid ? '' : kind === 'boosted' ? 'Early Stopping and Multiple Fits need validation rows: a Validation column, or a Validation Portion below.'
+          : 'Early Stopping needs validation rows: a Validation column, or a Validation Portion below. Without them Multiple Fits chooses by the out-of-bag statistics.';
       };
       api.onRolesChange(update);
       for (const i of Object.values(inputs)) i.addEventListener('input', () => update(api.state));
       update(api.state);
       return {
         el: box,
+        helpHeading: kind === 'boosted' ? 'Gradient-Boosted Trees Specification' : 'Bootstrap Forest Specification',
+        help: FIELDS[kind].map((f) => [f.label, f.help]),
         read: () => ({ options: { settings: read() } }),
         recall: (saved) => {
           const so = (saved && saved.options && saved.options.settings) || null;
@@ -409,11 +432,12 @@
     const cur = settingsOf(ctx);
     const fields = FIELDS[kind].map((f) => {
       const d = typeof f.dflt === 'function' ? f.dflt(p, cur) : f.dflt;
-      if (f.type === 'check') return { key: f.key, label: f.label, type: 'check', value: cur[f.key] ?? d };
-      if (f.type === 'select') return { key: f.key, label: f.label, type: 'select', value: cur[f.key] ?? d, choices: f.choices };
-      return { key: f.key, label: f.label, type: 'number', value: cur[f.key] ?? d };
+      if (f.type === 'check') return { key: f.key, label: f.label, type: 'check', value: cur[f.key] ?? d, help: f.help };
+      if (f.type === 'select') return { key: f.key, label: f.label, type: 'select', value: cur[f.key] ?? d, choices: f.choices, help: f.help };
+      return { key: f.key, label: f.label, type: 'number', value: cur[f.key] ?? d, help: f.help };
     });
-    const v = await SM.ui.form({ title: `${KIND[kind].label} Specification`, info: 'p:ensemble:spec', fields,
+    // the (i) of the form: what each field is for (the Specifications topic has both kinds' fields)
+    const v = await SM.ui.form({ title: `${KIND[kind].label} Specification`, fields,
       lead: kind === 'forest' ? 'The forest\'s settings, as JMP\'s Bootstrap Forest Specification window has them. OK fits the forest again.' : 'The boosted tree\'s settings, as JMP\'s Gradient-Boosted Trees Specification window has them. OK fits it again.',
       validate: (x) => checkSettings(kind, x) });
     if (!v) return;
@@ -462,7 +486,6 @@
       sections: [ROLES,
         { heading: 'Each tree', text: 'scikit-learn grows the tree best first up to Maximum Splits per Tree, with at least Minimum Size Split rows on each side of a split. JMP says its trees split until a stopping criterion stops improving and are then pruned back one split; here the criterion is the tree\'s out-of-bag loss: past Minimum Splits per Tree a split stays while it lowers the loss of the rows the tree did not see, and the first that does not is taken back. Tree Size ▸ Grow to Maximum Splits keeps scikit-learn\'s trees whole.' },
         { heading: 'Probabilities', text: 'As JMP\'s Partition: at each node Prob = (n + prior)/(N + 1), the node\'s counts n (N in all) plus a prior worth one row, the prior 0.9 of the parent\'s prior and 0.1 of the parent\'s Prob, at the root the root\'s shares. So no probability is 0 (scikit-learn\'s own leaves give 0 for a level missing from a leaf); the forest averages its trees\' probabilities.' },
-        { heading: 'Early Stopping', text: 'With validation rows: the trees are grown one at a time, and when the last tenth of the trees asked for (at least 5) has not improved the validation RSquare (Entropy RSquare for a categorical response), growth stops and the best number is kept. The first k trees of a forest do not depend on how many are grown, so the kept forest is the forest of that many trees.' },
         { heading: 'Beyond and short of JMP', text: 'The Out of Bag line of Overall Statistics and Permutation Importance are not in JMP. A categorical X is split one level against the others (JMP splits its levels into two groups); Ordinal Restricts Order, Profit Matrix, Decision Threshold and the prediction formula are not here.' }],
       more: KIND.forest.more,
     },
@@ -470,21 +493,23 @@
       kicker: 'Analyze > Predictive Modeling', title: 'Boosted Tree',
       lead: 'A sum of small trees (layers), each fitted to the residuals of the layers before it and scaled by the learning rate (scikit-learn\'s GradientBoostingRegressor and GradientBoostingClassifier, their trees grown best first to Splits per Tree splits).',
       sections: [ROLES,
-        { heading: 'Early Stopping', text: 'With validation rows, as JMP: the fit stops at the first layer that does not improve the validation RSquare (Entropy RSquare for a categorical response) and keeps the layers before it.' },
-        { heading: 'A categorical response', text: 'Each layer fits the gradient of the log likelihood (the log odds for two levels, a tree per level for more; JMP takes two levels only). JMP\'s Overfit Penalty has no scikit-learn counterpart and is not used: the leaf values are scikit-learn\'s Newton steps.' },
-        { heading: 'Sampling', text: 'Row Sampling Rate draws that share of the training rows for each layer (scikit-learn\'s subsample; JMP stratifies a categorical response). Column Sampling Rate tries that share of the columns at each split (scikit-learn\'s max_features); JMP draws the columns once per layer.' }],
+        { heading: 'A categorical response', text: 'Each layer fits the gradient of the log likelihood (the log odds for two levels, a tree per level for more; JMP takes two levels only). JMP\'s Overfit Penalty has no scikit-learn counterpart and is not used: the leaf values are scikit-learn\'s Newton steps.' }],
       more: KIND.boosted.more,
     },
     'p:ensemble:spec': {
       kicker: 'Bootstrap Forest, Boosted Tree', title: 'Specifications',
-      lead: 'The settings of the fit, with JMP\'s defaults. Change Specifications… (red triangle) fits again.',
+      lead: 'The settings of the fit, with JMP\'s defaults, and what came of them: the rows of each set, the Number of Trees Kept (or Layers Kept) after early stopping, a forest\'s Bootstrap Samples (the rows drawn for each tree), and whether Early Stopping was on. Change Specifications… (red triangle) fits again.',
       sections: [
-        { heading: 'Bootstrap Forest', choices: [['Number of Trees in the Forest', '100'], ['Number of Terms Sampled per Split', 'the X columns tried at each split; JMP 16 and later default to p - floor(p/4) (13 terms: 10), earlier versions to floor(p/4). A categorical X takes its share of the 0/1 columns.'], ['Bootstrap Sample Rate', 'the share of the training rows drawn, with replacement, for each tree (1)'], ['Minimum and Maximum Splits per Tree', '10 and 2000'], ['Minimum Size Split', 'the fewest rows on each side of a split (5)'], ['Early Stopping', 'with validation rows (on)'], ['Multiple Fits over Number of Terms', 'forests from the number of terms up to Max Number of Terms, each about 1.25 times the one before (JMP\'s example: 4, 5, 6, 8, 10)']] },
-        { heading: 'Boosted Tree', choices: [['Number of Layers', '50'], ['Splits per Tree', '3'], ['Learning Rate', '0.1, between 0 and 1'], ['Minimum Size Split', '5'], ['Row and Column Sampling Rates', '1'], ['Multiple Fits over Splits and Learning Rate', 'every splits per tree up to Max Splits per Tree and every learning rate up to Max Learning Rate in steps of 0.1']] },
+        { heading: 'Bootstrap Forest', choices: FIELDS.forest.map((f) => [f.label, f.help]) },
+        { heading: 'Boosted Tree', choices: FIELDS.boosted.map((f) => [f.label, f.help]) },
         { heading: 'Random Seed', text: 'The bootstrap samples, the columns tried and the row sampling follow the report\'s seed (scikit-learn\'s random_state), so a redraw, a project and the Python code give the same model.' },
       ],
     },
-    'p:ensemble:summaries': { kicker: 'Bootstrap Forest, Boosted Tree', title: 'Model Validation-Set Summaries', lead: 'Every fit of Multiple Fits with its validation set\'s statistics (a forest without validation rows: the out-of-bag statistics). The report shows the fit with the largest RSquare, or Entropy RSquare for a categorical response; a click on another line shows that one.' },
+    'p:ensemble:summaries': {
+      kicker: 'Bootstrap Forest, Boosted Tree', title: 'Model Validation-Set Summaries',
+      lead: 'Every fit of Multiple Fits with its validation set\'s statistics (a forest without validation rows: the out-of-bag statistics). The report shows the fit with the largest RSquare, or Entropy RSquare for a categorical response; a click on another line shows that one.',
+      sections: [{ choices: [['A click on a line', 'Shows that fit in the report below it (its Specifications, statistics, curves and contributions); the line shown is marked. Specifications… or a new launch goes back to the best one.']] }],
+    },
     'p:ensemble:cumulative': {
       kicker: 'Bootstrap Forest, Boosted Tree', title: 'Cumulative Validation',
       lead: 'A statistic of each set after 1, 2, … trees or layers: the forest of the first k trees, or the first k layers. The dashed line marks the number kept. Statistic (red triangle) picks RSquare or RASE, or for a categorical response Entropy RSquare, Mean -Log p, RASE, Mean Abs Dev or the Misclassification Rate. Cumulative Details below the plot gives the values; Save Cumulative Details makes them a table.',
@@ -496,7 +521,22 @@
       sections: [{ choices: [['Splits', 'the splits of the tree kept'], ['Rank', 'of OOB Loss/N, smallest first'], ['OOB Loss', 'the out-of-bag loss (squared error, or -log p) before the last split was taken back'], ['RSquare', 'the tree\'s in-bag RSquare'], ['IB SSE, IB SSE/N', 'the in-bag sum of squared errors, and over the bootstrap sample\'s size'], ['OOB N, OOB SSE, OOB SSE/N', 'the out-of-bag rows and the kept tree\'s squared errors on them']] }],
     },
     'p:ensemble:contrib': { kicker: 'Bootstrap Forest, Boosted Tree', title: 'Column Contributions', lead: 'For each X column: how many splits use it over all the trees or layers, and the SS (continuous) or G² (categorical) those splits take away: the parent\'s minus its two children\'s, the SS a node\'s sum of squares about its mean and G² twice its entropy (natural log) from the counts. Portion is the column\'s share of the total.' },
-    'p:ensemble:trees': { kicker: 'Bootstrap Forest, Boosted Tree', title: 'Tree Views', lead: 'One tree of the forest (as it was cut back) or one layer of the boosted tree, a line per node: the split that leads to it and, with estimates, its training rows (weighted, in bag) and its mean or JMP probabilities; a layer\'s estimate is what it adds to the prediction.' },
+    'p:ensemble:trees': {
+      kicker: 'Bootstrap Forest, Boosted Tree', title: 'Tree Views',
+      lead: 'One tree of the forest (as it was cut back) or one layer of the boosted tree, a line per node: the split that leads to it and, with estimates, its training rows (weighted, in bag) and its mean or JMP probabilities; a layer\'s estimate is what it adds to the prediction.',
+      sections: [
+        { heading: 'The controls', choices: [
+          ['‹ and ›', 'Show the tree (or layer) before or after this one.'],
+          ['Tree, Layer', 'Type the number of a tree (from 1 to the number kept) and press Enter, or leave the box, to show it.'],
+        ] },
+        { heading: 'Show Trees (red triangle)', choices: [
+          ['Show names', 'Each node by the column of X its split uses (a categorical factor\'s 0/1 level column).'],
+          ['Show names categories', 'Each node by its condition: a value cut, or a level against the others.'],
+          ['Show names categories estimates', 'The conditions, and each node\'s training rows and its estimate.'],
+          ['Hide Trees', 'Takes the Tree Views away.'],
+        ] },
+      ],
+    },
   };
 
   /* ======================================================================
@@ -520,8 +560,11 @@
         lead: kind === 'forest' ? 'Choose a response and the factors. The forest averages many trees, each on a bootstrap sample of the training rows; the Specification below has JMP\'s settings.'
           : 'Choose a response and the factors. Each layer is a small tree fitted to what the layers before it left; the Specification below has JMP\'s settings.',
         roles: [
-          { key: 'y', label: 'Y, Response', min: 1, max: 1, hint: 'required' },
-          { key: 'x', label: 'X, Factor', min: 1, hint: 'required: one or more' },
+          { key: 'y', label: 'Y, Response', min: 1, max: 1, hint: 'required',
+            help: kind === 'forest' ? 'The column the forest predicts. Continuous: each tree predicts a mean and the forest averages them. Nominal or ordinal: each tree gives a probability of every level (JMP\'s, never 0) and the forest averages them; the order of an ordinal response is not used.'
+              : 'The column the boosted tree predicts. Continuous: the layers add up to the prediction, each fitted to the residuals of those before. Nominal or ordinal: the layers add up on the log-odds scale (a tree per level each layer, for more than two levels); the order of an ordinal response is not used.' },
+          { key: 'x', label: 'X, Factor', min: 1, hint: 'required: one or more',
+            help: 'The predictors, of any modeling type: a continuous one as it is, a categorical one as a 0/1 column per level, so that a split takes one level against the others (JMP splits the levels into two groups). Column Contributions shows how much each one is used.' },
           ...SM.predict.roles(),
         ],
         options: SM.predict.options(),

@@ -136,9 +136,17 @@
   function alphaMenu(ctx) {
     const cur = ctx.alpha;
     return [0.01, 0.05, 0.1].map((a) => ({ label: String(a), checked: Math.abs(cur - a) < 1e-12, action: () => ctx.set('alpha', a) })).concat([{
-      label: 'Other…', action: async () => { const v = await ask('Set α Level', [{ key: 'a', label: 'α', type: 'number', value: cur }]); if (v && v.a > 0 && v.a < 1) ctx.set('alpha', v.a); },
+      label: 'Other…', action: async () => { const v = await ask('Set α Level', [{ key: 'a', label: 'α', type: 'number', value: cur, help: 'The significance level of every test in the report; its confidence intervals are 100(1 − α)%. Between 0 and 1; 0.05 by default.' }]); if (v && v.a > 0 && v.a < 1) ctx.set('alpha', v.a); },
     }]);
   }
+
+  /* What the fields of the red-triangle dialogs are for, shown by their (i). */
+  const HELP = {
+    lambda: 'The penalty λ on the curvature in Σ w (y − f(x))² + λ ∫ f″(x)² dx (scipy make_smoothing_spline): a small λ follows the points, a large one tends to the straight line. Its scale depends on the units of X, unless X is standardized.',
+    stdx: 'Fit the spline in (X − mean)/SD, as JMP\'s Standardize X, so that a given λ means the same smoothness whatever the units of X. A λ chosen by cross-validation gives the same curve either way.',
+    tau: 'The quantile of Y the line follows at each X (statsmodels QuantReg): 0.5 is the median regression (least absolute deviations), 0.9 the line with 90% of Y below it. Between 0 and 1; it is kept within 0.01 to 0.99.',
+    control: 'The level every other level is compared with, such as a placebo or the standard treatment.',
+  };
 
   /* A report table whose positive numbers are marked (threshold matrices). */
   function markPositive(tbl) {
@@ -179,7 +187,8 @@
     const v = await SM.ui.form({
       title, info: 'p:fitybyx:bayes',
       lead: 'Under the alternative the standardized effect δ has a Cauchy prior centred at 0; its scale r is the effect size that is as likely to be exceeded as not. √2/2 ≈ 0.707 is the default of Rouder et al. (2009) and JASP; 1 is the original JZS prior, 0.5 expects smaller effects.',
-      fields: [{ key: 'r', label: 'Scale r of the Cauchy prior on δ', type: 'number', value: cur.r }],
+      fields: [{ key: 'r', label: 'Scale r of the Cauchy prior on δ', type: 'number', value: cur.r,
+        help: 'Half of the Cauchy(0, r) prior on the standardized effect δ lies within ±r. √2/2 ≈ 0.707 by default; take a smaller r when only small effects are plausible, a larger one when large effects are expected. A larger r favours the null hypothesis more when the observed effect is small. Positive.' }],
       validate: (x) => (x.r > 0 ? null : 'The scale must be positive.'),
     });
     if (v) ctx.set(key, { r: v.r }, sc);
@@ -191,7 +200,8 @@
     const v = await SM.ui.form({
       title: 'Bayes Factor for the Correlation', info: 'p:fitybyx:bayes',
       lead: 'Under the alternative the correlation ρ has a beta(1/κ, 1/κ) prior stretched to (−1, 1): κ = 1 is uniform (the default of Ly, Verhagen and Wagenmakers 2016 and JASP); a smaller κ expects correlations nearer 0.',
-      fields: [{ key: 'kappa', label: 'Width κ of the prior on ρ', type: 'number', value: cur.kappa }],
+      fields: [{ key: 'kappa', label: 'Width κ of the prior on ρ', type: 'number', value: cur.kappa,
+        help: 'The prior on ρ under the alternative is beta(1/κ, 1/κ) stretched to (−1, 1): κ = 1, the default, is uniform; a smaller κ puts more of it near ρ = 0, a larger one more near ±1. Positive.' }],
       validate: (x) => (x.kappa > 0 ? null : 'κ must be positive.'),
     });
     if (v) ctx.set('corrBf', { kappa: v.kappa }, sc);
@@ -494,13 +504,13 @@
       items.push(tog('Plot Residuals', 'resid', false));
     }
     if (f.kind === 'spline') {
-      items.push({ label: 'Change Lambda…', action: async () => { const v = await ask('Fit Spline', [{ key: 'lam', label: 'λ (empty: generalised cross-validation)', type: 'number', value: f.lam }, { key: 'std', label: 'Standardize X', type: 'check', value: !!f.standardize }]); if (v) upd({ lam: v.lam > 0 ? v.lam : null, standardize: !!v.std }); } });
+      items.push({ label: 'Change Lambda…', action: async () => { const v = await ask('Fit Spline', [{ key: 'lam', label: 'λ (empty: generalised cross-validation)', type: 'number', value: f.lam, help: `${HELP.lambda} Empty or zero chooses λ by generalised cross-validation.` }, { key: 'std', label: 'Standardize X', type: 'check', value: !!f.standardize, help: HELP.stdx }]); if (v) upd({ lam: v.lam > 0 ? v.lam : null, standardize: !!v.std }); } });
     }
     if (f.kind === 'lowess') {
       items.push({ label: 'Smoothness', submenu: () => [0.1, 0.2, 0.333, 0.5, 0.667, 0.8, 1].map((a) => ({ label: `α = ${a}`, checked: Math.abs((f.frac ?? 0.667) - a) < 1e-9, action: () => upd({ frac: a }) })) },
         { label: 'Robustness', submenu: () => [0, 1, 2, 3].map((k) => ({ label: `${k} iteration${k === 1 ? '' : 's'}`, checked: (f.it ?? 0) === k, action: () => upd({ it: k }) })) });
     }
-    if (f.kind === 'quantile') items.push({ label: 'Change Quantile…', action: async () => { const v = await ask('Fit Quantile', [{ key: 'tau', label: 'Quantile τ (0 to 1)', type: 'number', value: f.tau }]); if (v && v.tau > 0 && v.tau < 1) upd({ tau: v.tau }); } });
+    if (f.kind === 'quantile') items.push({ label: 'Change Quantile…', action: async () => { const v = await ask('Fit Quantile', [{ key: 'tau', label: 'Quantile τ (0 to 1)', type: 'number', value: f.tau, help: HELP.tau }]); if (v && v.tau > 0 && v.tau < 1) upd({ tau: v.tau }); } });
     if (f.kind === 'ellipse' && res && res.means) {
       // the rows of this ellipse's group inside (or outside) its contour
       const inside = (want) => {
@@ -529,11 +539,16 @@
     const v = await SM.ui.form({
       title: 'Fit Special', lead: 'Transform Y and X, fit a polynomial in the transformed X, or hold the intercept or the slope at a value. The curve is drawn on the original scale.',
       fields: [
-        { key: 'ytr', label: 'Y Transformation', type: 'select', value: 'none', choices: tr },
-        { key: 'xtr', label: 'X Transformation', type: 'select', value: 'none', choices: tr.map(([k, l]) => [k, l.replace(/y/g, 'x')]) },
-        { key: 'degree', label: 'Degree', type: 'select', value: '1', choices: [['1', '1: Straight Line'], ['2', '2: Quadratic'], ['3', '3: Cubic'], ['4', '4: Quartic'], ['5', '5: Quintic']] },
-        { key: 'intercept', label: 'Constrain Intercept to (empty: free)', type: 'number', value: null },
-        { key: 'slope', label: 'Constrain Slope to (empty: free)', type: 'number', value: null },
+        { key: 'ytr', label: 'Y Transformation', type: 'select', value: 'none', choices: tr,
+          help: 'Fit a function of Y instead of Y. The curve is drawn back on the original scale, and Fit Measured on Original Scale reports the fit there. Rows outside the domain are left out: the log needs values above zero, the square root and the square zero or more, the reciprocal anything but zero.' },
+        { key: 'xtr', label: 'X Transformation', type: 'select', value: 'none', choices: tr.map(([k, l]) => [k, l.replace(/y/g, 'x')]),
+          help: 'The same for X: the fit is a line, or a polynomial, in the transformed X, with the same domains, except that the square takes any X (X is not transformed back).' },
+        { key: 'degree', label: 'Degree', type: 'select', value: '1', choices: [['1', '1: Straight Line'], ['2', '2: Quadratic'], ['3', '3: Cubic'], ['4', '4: Quartic'], ['5', '5: Quintic']],
+          help: 'The degree of the polynomial in the (transformed) X; the powers above one are centred at its mean, as JMP does. A constrained fit is a straight line.' },
+        { key: 'intercept', label: 'Constrain Intercept to (empty: free)', type: 'number', value: null,
+          help: 'Hold the intercept at this value, on the transformed scale, and fit only the slope. With the slope held too nothing is estimated: the line is drawn and its errors reported.' },
+        { key: 'slope', label: 'Constrain Slope to (empty: free)', type: 'number', value: null,
+          help: 'Hold the slope at this value and fit only the intercept.' },
       ],
       validate: (x) => ((x.intercept != null || x.slope != null) && x.degree !== '1' ? 'A constrained fit is a straight line (degree 1).' : null),
     });
@@ -543,7 +558,7 @@
 
   function bivMenu(ctx, sc) {
     const add = (fit) => addFit(ctx, sc, fit);
-    const other = (title, label, key, map, dflt) => async () => { const v = await ask(title, [{ key: 'v', label, type: 'number', value: dflt }]); if (v && v.v != null) { const f = map(v.v); if (f) add(f); } };
+    const other = (title, label, key, map, dflt, help) => async () => { const v = await ask(title, [{ key: 'v', label, type: 'number', value: dflt, help }]); if (v && v.v != null) { const f = map(v.v); if (f) add(f); } };
     const gid = ctx.opt('groupBy', null, sc);
     return [
       ctx.check('Show Points', 'points', sc, true),
@@ -557,7 +572,7 @@
       { label: 'Fit Special…', action: () => fitSpecialDialog(ctx, sc) },
       { label: 'Flexible', submenu: [
         { label: 'Fit Spline', submenu: () => [[0.1, '0.1, flexible'], [1, '1'], [10, '10'], [100, '100'], [1000, '1000'], [10000, '10000, stiff']].map(([l, t]) => ({ label: t, action: () => add({ kind: 'spline', lam: l }) }))
-          .concat([{ label: 'Automatic (generalised cross-validation)', action: () => add({ kind: 'spline', lam: null }) }, { label: 'Other…', action: async () => { const v = await ask('Fit Spline', [{ key: 'lam', label: 'λ', type: 'number', value: 1 }, { key: 'std', label: 'Standardize X', type: 'check', value: false }]); if (v && v.lam > 0) add({ kind: 'spline', lam: v.lam, standardize: !!v.std }); } }]) },
+          .concat([{ label: 'Automatic (generalised cross-validation)', action: () => add({ kind: 'spline', lam: null }) }, { label: 'Other…', action: async () => { const v = await ask('Fit Spline', [{ key: 'lam', label: 'λ', type: 'number', value: 1, help: `${HELP.lambda} A positive number; Automatic in the menu chooses λ by generalised cross-validation.` }, { key: 'std', label: 'Standardize X', type: 'check', value: false, help: HELP.stdx }]); if (v && v.lam > 0) add({ kind: 'spline', lam: v.lam, standardize: !!v.std }); } }]) },
         { label: 'Kernel Smoother', action: () => add({ kind: 'lowess', frac: 0.667, it: 0 }) },
         { label: 'Fit Each Value', action: () => add({ kind: 'each' }) },
       ] },
@@ -565,14 +580,16 @@
         { label: 'Univariate Variances, Prin Comp', action: () => add({ kind: 'orth', mode: 'univariate' }) },
         { label: 'Equal Variances', action: () => add({ kind: 'orth', mode: 'equal' }) },
         { label: 'Fit X to Y', action: () => add({ kind: 'orth', mode: 'x_to_y' }) },
-        { label: 'Specified Variance Ratio…', action: other('Fit Orthogonal', 'Variance ratio, var(Y error) / var(X error)', 'ratio', (r) => (r >= 0 ? { kind: 'orth', mode: 'ratio', ratio: r } : null), 1) },
+        { label: 'Specified Variance Ratio…', action: other('Fit Orthogonal', 'Variance ratio, var(Y error) / var(X error)', 'ratio', (r) => (r >= 0 ? { kind: 'orth', mode: 'ratio', ratio: r } : null), 1,
+          'δ, the variance of the measurement error in Y over that in X (Deming regression): 1 treats both alike, as Equal Variances does; 0 puts all the error in X, as Fit X to Y; a large ratio comes close to the least-squares line of Y on X. Zero or more.') },
       ] },
       { label: 'Robust', submenu: [
         { label: 'Fit Robust', action: () => add({ kind: 'robust', method: 'huber' }) },
         { label: 'Fit Robust Bisquare', action: () => add({ kind: 'robust', method: 'bisquare' }) },
       ] },
-      { label: 'Fit Quantile', submenu: [0.1, 0.25, 0.5, 0.75, 0.9].map((t) => ({ label: String(t), action: () => add({ kind: 'quantile', tau: t }) })).concat([{ label: 'Other…', action: other('Fit Quantile', 'Quantile τ (0 to 1)', 'tau', (t) => (t > 0 && t < 1 ? { kind: 'quantile', tau: t } : null), 0.5) }]) },
-      { label: 'Density Ellipse', submenu: [0.5, 0.9, 0.95, 0.99].map((p) => ({ label: p.toFixed(2), action: () => add({ kind: 'ellipse', p }) })).concat([{ label: 'Other…', action: other('Density Ellipse', 'Probability', 'p', (p) => (p > 0 && p < 1 ? { kind: 'ellipse', p } : null), 0.95) }]) },
+      { label: 'Fit Quantile', submenu: [0.1, 0.25, 0.5, 0.75, 0.9].map((t) => ({ label: String(t), action: () => add({ kind: 'quantile', tau: t }) })).concat([{ label: 'Other…', action: other('Fit Quantile', 'Quantile τ (0 to 1)', 'tau', (t) => (t > 0 && t < 1 ? { kind: 'quantile', tau: t } : null), 0.5, HELP.tau) }]) },
+      { label: 'Density Ellipse', submenu: [0.5, 0.9, 0.95, 0.99].map((p) => ({ label: p.toFixed(2), action: () => add({ kind: 'ellipse', p }) })).concat([{ label: 'Other…', action: other('Density Ellipse', 'Probability', 'p', (p) => (p > 0 && p < 1 ? { kind: 'ellipse', p } : null), 0.95,
+        'The probability the ellipse holds under a bivariate normal with the pair\'s means, standard deviations and correlation: 0.95 encloses about 95% of the points when the data are bivariate normal. Between 0 and 1.') }]) },
       { label: 'Nonpar Density', action: () => add({ kind: 'kde' }) },
       { separator: true },
       { label: 'Group By…', checked: !!gid, action: () => groupByDialog(ctx, sc) },
@@ -583,7 +600,8 @@
     const cats = ctx.table.columns.filter((c) => c.isCategorical);
     if (!cats.length) { SM.ui.toast('Group By needs an ordinal or nominal column'); return; }
     const cur = ctx.opt('groupBy', null, sc);
-    const v = await ask('Group By', [{ key: 'col', label: 'Fit separately for each level of', type: 'select', value: cur || '', choices: [['', '(none)'], ...cats.map((c) => [c.id, c.name])] }],
+    const v = await ask('Group By', [{ key: 'col', label: 'Fit separately for each level of', type: 'select', value: cur || '', choices: [['', '(none)'], ...cats.map((c) => [c.id, c.name])],
+      help: 'An ordinal or nominal column: every fit is then made separately in each of its levels that has two or more rows. (none) fits all the rows together.' }],
       'The fits chosen from the red triangle are then done for each level, drawn in the level\'s colour, each with its own report.');
     if (v) ctx.set('groupBy', v.col || null, sc);
   }
@@ -911,7 +929,11 @@
     const v = await SM.ui.form({
       title: 'Equivalence Test: Probability of Superiority', info: 'p:fitybyx:brunner',
       lead: 'Two levels are stochastically equivalent when P(Y₁ > Y₂) + ½P(Y₁ = Y₂) lies between the bounds; ½ is no difference.',
-      fields: [{ key: 'low', label: 'Lower bound', type: 'number', value: cur.low }, { key: 'upp', label: 'Upper bound', type: 'number', value: cur.upp }],
+      fields: [
+        { key: 'low', label: 'Lower bound', type: 'number', value: cur.low,
+          help: 'The smallest probability of superiority still counted as no practical difference; 0.4 by default. The levels are equivalent at α when the whole 100(1 − 2α)% interval of P lies between the bounds.' },
+        { key: 'upp', label: 'Upper bound', type: 'number', value: cur.upp,
+          help: 'The largest such probability; 0.6 by default. The bounds need 0 ≤ lower < upper ≤ 1, and usually lie either side of ½.' }],
       validate: (x) => (x.low != null && x.upp != null && x.low >= 0 && x.low < x.upp && x.upp <= 1 ? null : 'The bounds must satisfy 0 ≤ lower < upper ≤ 1.'),
     });
     if (v) ctx.set('bmTost', { low: v.low, upp: v.upp }, sc);
@@ -949,11 +971,16 @@
       title: `Compare Rates: ${y.name} by ${x.name}`, info: 'p:fitybyx:rates',
       lead: `${y.name} counts events; each row is one unit, observed for its exposure (time, person-years, area). Each level's rate is its total count over its total exposure.`,
       fields: [
-        { key: 'exposure', label: 'Exposure', type: 'select', value: cur.exposure || '', choices: [['', '(none: every row is one unit)'], ...nums.map((c) => [c.id, c.name])] },
-        { key: 'compare', label: 'Compare the rates by their', type: 'select', value: cur.compare, choices: [['ratio', 'Ratio'], ['diff', 'Difference']] },
-        { key: 'method', label: 'Test', type: 'select', value: cur.method, choices: RATE_TESTS.map((m) => [m[0], tag(m)]) },
-        { key: 'ci', label: 'Confidence interval', type: 'select', value: cur.ci, choices: RATE_CIS.map((m) => [m[0], tag(m)]) },
-        { key: 'control', label: 'Levels compared', type: 'select', value: ctlIndex === '-1' ? '' : ctlIndex, choices: [['', 'Each pair (later level against earlier)'], ...levels.map((l, i) => [String(i), `Each level against ${lvText(x, l)}`])] },
+        { key: 'exposure', label: 'Exposure', type: 'select', value: cur.exposure || '', choices: [['', '(none: every row is one unit)'], ...nums.map((c) => [c.id, c.name])],
+          help: 'A continuous column with each row\'s exposure: time at risk, person-years, area. A level\'s rate is its total count over its total exposure; rows whose exposure is missing, zero or negative are left out. (none) counts every row as one unit.' },
+        { key: 'compare', label: 'Compare the rates by their', type: 'select', value: cur.compare, choices: [['ratio', 'Ratio'], ['diff', 'Difference']],
+          help: 'Ratio: rate₁/rate₂, where 1 is no difference. Difference: rate₁ − rate₂, where 0 is no difference. It decides which tests and intervals apply.' },
+        { key: 'method', label: 'Test', type: 'select', value: cur.method, choices: RATE_TESTS.map((m) => [m[0], tag(m)]),
+          help: 'The test of equal rates for each pair (statsmodels test_poisson_2indep). Score, the default, takes the variance under the null hypothesis; Wald the variance of the estimated rates, and is poor with small counts; the exact conditional test (the binomial of count₁ given count₁ + count₂) and its mid-p form suit small counts; the E-tests (Gu et al. 2008; Ng et al. 2007) find the p-value from the estimated rates instead of conditioning on the total. Some are for a ratio or a difference only, as marked.' },
+        { key: 'ci', label: 'Confidence interval', type: 'select', value: cur.ci, choices: RATE_CIS.map((m) => [m[0], tag(m)]),
+          help: 'The interval of the ratio or the difference (statsmodels confint_poisson_2indep). Score, the default, inverts the score test; exact conditional is the Clopper-Pearson interval of count₁ out of count₁ + count₂; MOVER combines each rate\'s own interval; the Wald intervals are the simplest, and 0.5 added keeps them defined when a count is zero.' },
+        { key: 'control', label: 'Levels compared', type: 'select', value: ctlIndex === '-1' ? '' : ctlIndex, choices: [['', 'Each pair (later level against earlier)'], ...levels.map((l, i) => [String(i), `Each level against ${lvText(x, l)}`])],
+          help: 'Each pair: every later level against every earlier one. Or each level against one control level, such as a placebo. With several comparisons the Holm-adjusted p-values are among the optional columns (right click the table).' },
       ],
       validate: (f) => {
         const ok = (list, key) => forCompare(list, f.compare).some((m) => m[0] === key);
@@ -1007,10 +1034,12 @@
 
   async function powerDialog(ctx, sc, cur = {}) {
     const v = await ask('Power Details', [
-      { key: 'alpha', label: 'Alpha', type: 'number', value: cur.alpha ?? ctx.alpha },
-      { key: 'sigma', label: 'Sigma (empty: the RMSE)', type: 'number', value: cur.sigma ?? null },
-      { key: 'delta', label: 'Delta (empty: the observed effect size)', type: 'number', value: cur.delta ?? null },
-      { key: 'nobs', label: 'Numbers of observations, separated by commas (empty: the observed N)', value: (cur.nobs || []).join(', ') },
+      { key: 'alpha', label: 'Alpha', type: 'number', value: cur.alpha ?? ctx.alpha, help: 'The significance level of the F test whose power is computed; the report\'s α unless changed. Between 0 and 1.' },
+      { key: 'sigma', label: 'Sigma (empty: the RMSE)', type: 'number', value: cur.sigma ?? null, help: 'The error standard deviation σ; empty takes the RMSE of the one-way ANOVA.' },
+      { key: 'delta', label: 'Delta (empty: the observed effect size)', type: 'number', value: cur.delta ?? null,
+        help: 'The effect to detect: the standard deviation of the level means about their mean, √(Σ nᵢ(μᵢ − μ)²/N); empty takes the observed one. The power is statsmodels FTestAnovaPower\'s for the effect size δ/σ.' },
+      { key: 'nobs', label: 'Numbers of observations, separated by commas (empty: the observed N)', value: (cur.nobs || []).join(', '),
+        help: 'The total sample sizes to give the power at, a line of the table each; empty takes the rows of the report. A size not above the number of levels is left out.' },
     ], 'The power of the one-way ANOVA F test for an effect of size δ with error standard deviation σ.');
     if (!v) return;
     const nobs = String(v.nobs || '').split(/[,;\s]+/).map(Number).filter((z) => z > 0);
@@ -1101,7 +1130,7 @@
     };
     const has = (key, pred) => ctx.opt(key, [], sc).some(pred);
     const askControl = async (title) => {
-      const v = await ask(title, [{ key: 'c', label: 'Control level', type: 'select', value: 0, choices: levels.map((l, i) => [String(i), lvText(x, l)]) }]);
+      const v = await ask(title, [{ key: 'c', label: 'Control level', type: 'select', value: 0, choices: levels.map((l, i) => [String(i), lvText(x, l)]), help: HELP.control }]);
       return v ? levels[Number(v.c)] : undefined;
     };
     const cmpItem = (label, method, control) => ({
@@ -1150,7 +1179,8 @@
       ] },
       ctx.check('Unequal Variances', 'unequal', sc, false),
       { label: 'Compare Rates…', checked: !!ctx.opt('rates', null, sc), disabled: !isCountColumn(ctx, y, x), action: () => ratesDialog(ctx, sc, y, x) },
-      { label: 'Equivalence Test', submenu: [{ label: 'Means…', checked: !!ctx.opt('equiv', null, sc), action: async () => { const v = await ask('Equivalence Test', [{ key: 'd', label: 'Difference considered practically zero', type: 'number', value: (ctx.opt('equiv', null, sc) || {}).delta ?? null }]); if (v && v.d > 0) ctx.set('equiv', { delta: v.d }, sc); } },
+      { label: 'Equivalence Test', submenu: [{ label: 'Means…', checked: !!ctx.opt('equiv', null, sc), action: async () => { const v = await ask('Equivalence Test', [{ key: 'd', label: 'Difference considered practically zero', type: 'number', value: (ctx.opt('equiv', null, sc) || {}).delta ?? null,
+        help: 'δ, in the units of Y: two means that differ by less than δ count as equivalent. Each pair gets two one-sided t tests (statsmodels ttost_ind, the pair\'s pooled variance), and is equivalent at α when the 100(1 − 2α)% interval of its difference lies inside ±δ. Positive.' }]); if (v && v.d > 0) ctx.set('equiv', { delta: v.d }, sc); } },
         { label: 'Probability of Superiority…', checked: !!ctx.opt('bmTost', null, sc), action: () => brunnerTostDialog(ctx, sc) }] },
       { label: 'Power…', checked: !!ctx.opt('power', null, sc), action: () => powerDialog(ctx, sc, ctx.opt('power', null, sc) || {}) },
       { label: 'Set α Level', submenu: () => alphaMenu(ctx) },
@@ -1308,7 +1338,8 @@
     return [
       ctx.check('Logistic Plot', 'lplot', sc, true),
       ctx.check('Odds Ratios', 'odds', sc, false),
-      { label: 'Inverse Prediction…', disabled: !binary, checked: !!ctx.opt('inverse', null, sc), action: async () => { const v = await ask('Inverse Prediction', [{ key: 'p', label: 'Probabilities, separated by commas', value: (ctx.opt('inverse', null, sc) || [0.5]).join(', ') }]); if (v) { const ps = String(v.p).split(/[,;\s]+/).map(Number).filter((p) => p > 0 && p < 1); ctx.set('inverse', ps.length ? ps : null, sc); } } },
+      { label: 'Inverse Prediction…', disabled: !binary, checked: !!ctx.opt('inverse', null, sc), action: async () => { const v = await ask('Inverse Prediction', [{ key: 'p', label: 'Probabilities, separated by commas', value: (ctx.opt('inverse', null, sc) || [0.5]).join(', '),
+        help: 'Probabilities of the target level, each between 0 and 1: for each, the X at which the fitted probability equals it, with Fieller\'s confidence limits. 0.5 gives the X where both levels are equally likely (an ED50).' }]); if (v) { const ps = String(v.p).split(/[,;\s]+/).map(Number).filter((p) => p > 0 && p < 1); ctx.set('inverse', ps.length ? ps : null, sc); } } },
       ctx.check('ROC Curve', 'roc', sc, false),
       ctx.check('Lift Curve', 'lift', sc, false),
       ctx.check('Confusion Matrix', 'confusion', sc, false),
@@ -1607,7 +1638,8 @@
       { label: 'Cochran Mantel Haenszel…', checked: !!ctx.opt('cmh', null, sc), action: async () => {
         const cats = ctx.table.columns.filter((c) => c.isCategorical && c.id !== x.id && c.id !== y.id);
         if (!cats.length) { SM.ui.toast('Cochran Mantel Haenszel needs a third ordinal or nominal column to group by'); return; }
-        const v = await ask('Cochran Mantel Haenszel', [{ key: 'c', label: 'Grouping column (strata)', type: 'select', value: ctx.opt('cmh', null, sc) || cats[0].id, choices: cats.map((c) => [c.id, c.name]) }]);
+        const v = await ask('Cochran Mantel Haenszel', [{ key: 'c', label: 'Grouping column (strata)', type: 'select', value: ctx.opt('cmh', null, sc) || cats[0].id, choices: cats.map((c) => [c.id, c.name]),
+          help: 'An ordinal or nominal column other than X and Y. A 2×2 table of X by Y is made in each of its levels: the Mantel-Haenszel test asks whether X and Y are associated within the strata (a common odds ratio of 1), Breslow-Day whether the strata\'s odds ratios are equal. Strata without both levels of X and of Y are left out.' }]);
         if (v) ctx.set('cmh', v.c, sc);
       } },
       ctx.check('Agreement Statistic', 'agree', sc, false),
@@ -1686,7 +1718,7 @@
     return [
       { head: 'For every analysis of a kind' }, ...items,
       { separator: true },
-      { label: 'Arrange in Rows…', action: async () => { const v = await ask('Arrange in Rows', [{ key: 'n', label: 'Analyses per row (0: one under the other)', type: 'number', value: ctx.opt('perRow', 0) }]); if (v) ctx.set('perRow', Math.max(0, Math.round(v.n || 0))); } },
+      { label: 'Arrange in Rows…', action: async () => { const v = await ask('Arrange in Rows', [{ key: 'n', label: 'Analyses per row (0: one under the other)', type: 'number', value: ctx.opt('perRow', 0), help: 'How many of the analyses of the pairs stand side by side in each row; 0 puts each under the one before.' }]); if (v) ctx.set('perRow', Math.max(0, Math.round(v.n || 0))); } },
     ];
   }
 
@@ -1875,12 +1907,18 @@
     launch: {
       lead: 'Cast one or more columns into each role; every Y is analysed against every X. The modeling types of the pair choose the analysis:',
       roles: [
-        { key: 'y', label: 'Y, Response', min: 1, hint: 'required: one or more' },
-        { key: 'x', label: 'X, Factor', min: 1, hint: 'required: one or more' },
-        { key: 'block', label: 'Block', max: 1, types: ['ordinal', 'nominal'], hint: 'optional (Oneway)' },
-        { key: 'weight', label: 'Weight', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric', info: 'p:fitybyx:weights' },
-        { key: 'freq', label: 'Freq', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric', info: 'p:fitybyx:weights' },
-        { key: 'by', label: 'By', hint: 'optional' },
+        { key: 'y', label: 'Y, Response', min: 1, hint: 'required: one or more',
+          help: 'The responses. Each is analysed against each X: a continuous Y gets a Bivariate fit (continuous X) or a Oneway analysis (ordinal or nominal X), an ordinal or nominal Y a Logistic fit or a Contingency analysis. Right click a column to change its modeling type, and so its analysis.' },
+        { key: 'x', label: 'X, Factor', min: 1, hint: 'required: one or more',
+          help: 'The factors. Every Y is paired with every X (a column is never paired with itself); the modeling types of the pair choose the analysis, as the map shows.' },
+        { key: 'block', label: 'Block', max: 1, types: ['ordinal', 'nominal'], hint: 'optional (Oneway)',
+          help: 'Oneway only: a column of blocks (batches, days, subjects). Means/Anova then fits it as an additive effect, a randomized block ANOVA with Type III tests and least squares means, and the rows without a block are left out of the plot, the quantiles, the means and the ANOVA. The comparisons, the rank tests and the other tests do not use it.' },
+        { key: 'weight', label: 'Weight', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric', info: 'p:fitybyx:weights',
+          help: 'A weight per row: the least-squares fits, the ANOVA and its means (and Student\'s t comparisons), the logistic likelihood and the counts of a contingency table are weighted. A test whose statsmodels or scipy function takes no weights (the t tests, the rank tests, Tukey\'s, Games-Howell\'s and Dunnett\'s comparisons; robust, quantile and LOWESS fits) does not use it, and the report says so. Rows with a missing, zero or negative weight are left out.' },
+        { key: 'freq', label: 'Freq', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric', info: 'p:fitybyx:weights',
+          help: 'A count per row: the row stands for that many observations, and the degrees of freedom count them. Where a function takes no weights the rows are repeated, so Freq must then hold whole numbers.' },
+        { key: 'by', label: 'By', hint: 'optional',
+          help: 'A separate analysis for each level of the By column (with several columns, each combination of their levels), with the same options. Rows with a missing By value are left out.' },
       ],
       extra: () => ({ el: launchMap(), read: () => null }),
       validate(spec, table) {
@@ -2056,9 +2094,12 @@
     launch: {
       lead: 'Cast the two paired measurements (or more: every pair is analysed) into Y; the difference is the second minus the first. Binary responses (0/1, yes/no) get Cochran\'s Q and McNemar\'s tests.',
       roles: [
-        { key: 'y', label: 'Y, Paired Response', min: 2, types: ['continuous', 'ordinal', 'nominal'], hint: 'required: two or more continuous, or binary' },
-        { key: 'x', label: 'X, Grouping', max: 1, types: ['ordinal', 'nominal'], hint: 'optional' },
-        { key: 'by', label: 'By', hint: 'optional' },
+        { key: 'y', label: 'Y, Paired Response', min: 2, types: ['continuous', 'ordinal', 'nominal'], hint: 'required: two or more continuous, or binary',
+          help: 'The paired measurements of each unit (before and after, left and right). The analysis is of the second column in the role minus the first; with three or more, of every pair. Binary columns (two values in all, such as 0/1 or yes/no) also get Cochran\'s Q and McNemar\'s tests; ordinal and nominal ones must be binary.' },
+        { key: 'x', label: 'X, Grouping', max: 1, types: ['ordinal', 'nominal'], hint: 'optional',
+          help: 'A column of groups: the points are coloured by group, and Across Groups compares the mean differences and the pair means between the groups (one-way ANOVAs).' },
+        { key: 'by', label: 'By', hint: 'optional',
+          help: 'A separate analysis for each level of the By column (with several columns, each combination of their levels). Rows with a missing By value are left out.' },
       ],
       validate(spec, table) {
         const ys = ((spec.roles && spec.roles.y) || []).map((id) => table.col(id)).filter(Boolean);

@@ -141,13 +141,21 @@
     return s && (s.lsl != null || s.usl != null) ? s : null;
   }
 
+  /* What the spec limit fields are for (the report's Spec Limits… and the
+     launch's). */
+  const SPEC_HELP = {
+    lsl: 'The lower specification limit: values below it are nonconforming. Empty when there is none; with one limit only the one-sided indices are given (Cpk is then Cpl or Cpu), and no Cp, Pp or goal plot point.',
+    target: 'The target value, for Cpm (with both limits). Empty: no Cpm, and the middle of the limits centres the goal plot and the capability box plots.',
+    usl: 'The upper specification limit: values above it are nonconforming. Empty when there is none; it must be above the lower one.',
+  };
+
   async function specDialog(ctx, cols, { title = 'Spec Limits', store = true } = {}) {
     const fields = cols.flatMap((c) => {
       const s = specOf(ctx, c) || {};
       return [
-        { key: `${c.id}|lsl`, label: `${c.name}: lower spec limit`, type: 'number', value: s.lsl ?? null },
-        { key: `${c.id}|target`, label: `${c.name}: target`, type: 'number', value: s.target ?? null },
-        { key: `${c.id}|usl`, label: `${c.name}: upper spec limit`, type: 'number', value: s.usl ?? null },
+        { key: `${c.id}|lsl`, label: `${c.name}: lower spec limit`, type: 'number', value: s.lsl ?? null, help: SPEC_HELP.lsl, helpLabel: 'Lower spec limit' },
+        { key: `${c.id}|target`, label: `${c.name}: target`, type: 'number', value: s.target ?? null, help: SPEC_HELP.target, helpLabel: 'Target' },
+        { key: `${c.id}|usl`, label: `${c.name}: upper spec limit`, type: 'number', value: s.usl ?? null, help: SPEC_HELP.usl, helpLabel: 'Upper spec limit' },
       ];
     });
     const v = await SM.ui.form({ title, lead: 'Leave a limit empty when there is none. The column\'s Spec Limits property (Cols > Column Info) gives the defaults.', fields,
@@ -193,7 +201,8 @@
   function chartType(ctx) {
     const c = ctx.opt('chart', 'auto');
     if (c !== 'auto') return c;
-    return ctx.role('subgroup') || ctx.opt('subgroupSize', null) ? 'xbar_r' : 'ir';
+    // a subgroup size of 1 is every row a point, as no size is (XBar & R has no range then)
+    return ctx.role('subgroup') || ctx.opt('subgroupSize', null) >= 2 ? 'xbar_r' : 'ir';
   }
 
   const chartTitle = (res, name) => `${res.chart_label}${/Chart$/.test(res.chart_label) ? '' : ' chart'} of ${name}`;
@@ -514,10 +523,17 @@
     return [
       { label: 'Chart Type', submenu: () => CHARTS.map(([k, l]) => ({ label: l, checked: ctx.opt('chart', 'auto') === k, action: () => ctx.set('chart', k) })) },
       { label: 'Sigma', submenu: () => [{ label: 'Default for the chart', checked: !ctx.opt('sigma', null), action: () => ctx.set('sigma', null) }, ...SIGMAS.map(([k, l]) => ({ label: l, checked: ctx.opt('sigma', null) === k, action: () => ctx.set('sigma', k) }))] },
-      { label: 'K Sigma…', action: () => ask('K Sigma', [{ key: 'k', label: 'Limits at k sigma', type: 'number', value: ctx.opt('k', 3) }], 'k', (v) => (v.k > 0 ? v.k : 3)) },
-      { label: 'Specify Stats…', action: () => ask('Specify Stats', [{ key: 'mean', label: 'Mean (center line); empty: estimated', type: 'number', value: (ctx.opt('known', null) || {}).mean ?? null }, { key: 'sigma', label: 'Sigma; empty: estimated', type: 'number', value: (ctx.opt('known', null) || {}).sigma ?? null }], 'known', (v) => (v.mean == null && v.sigma == null ? null : v)) },
-      ctx.role('subgroup') ? null : { label: 'Subgroup Size…', action: () => ask('Subgroup Size', [{ key: 'n', label: 'Consecutive rows per subgroup (empty: none)', type: 'number', value: ctx.opt('subgroupSize', null) }], 'subgroupSize', (v) => (v.n >= 2 ? Math.round(v.n) : null)) },
-      { label: 'Moving Range Span…', action: () => ask('Moving Range Span', [{ key: 'w', label: 'Points in each moving range', type: 'number', value: ctx.opt('mrSpan', 2) }], 'mrSpan', (v) => (v.w >= 2 ? Math.round(v.w) : 2)) },
+      { label: 'K Sigma…', action: () => ask('K Sigma', [{ key: 'k', label: 'Limits at k sigma', type: 'number', value: ctx.opt('k', 3),
+        help: 'The control limits lie k standard errors of the plotted statistic either side of the center line: 3, the default, gives about 3 false alarms in 1000 points of a stable normal process. The zones of the tests are thirds of this distance.' }], 'k', (v) => (v.k > 0 ? v.k : 3)) },
+      { label: 'Specify Stats…', action: () => ask('Specify Stats', [
+        { key: 'mean', label: 'Mean (center line); empty: estimated', type: 'number', value: (ctx.opt('known', null) || {}).mean ?? null,
+          help: 'A known or historical process mean for the center line, instead of the grand mean of each phase. Not for the P, NP, C and U charts.' },
+        { key: 'sigma', label: 'Sigma; empty: estimated', type: 'number', value: (ctx.opt('known', null) || {}).sigma ?? null,
+          help: 'A known process standard deviation for the limits, instead of the estimate from the subgroups or moving ranges. Not for the P, NP, C and U charts.' }], 'known', (v) => (v.mean == null && v.sigma == null ? null : v)) },
+      ctx.role('subgroup') ? null : { label: 'Subgroup Size…', action: () => ask('Subgroup Size', [{ key: 'n', label: 'Consecutive rows per subgroup (empty: none)', type: 'number', value: ctx.opt('subgroupSize', null),
+        help: 'Without a Subgroup column: consecutive rows form subgroups of this many, 2 or more; a new subgroup also starts where the phase changes. Empty: each row is a point. The individual charts ignore it.' }], 'subgroupSize', (v) => (v.n >= 2 ? Math.round(v.n) : null)) },
+      { label: 'Moving Range Span…', action: () => ask('Moving Range Span', [{ key: 'w', label: 'Points in each moving range', type: 'number', value: ctx.opt('mrSpan', 2),
+        help: 'How many consecutive points each moving range spans, 2 or more (2, the default, is the difference of neighbours). The moving-range sigma is their average over d₂(span), and the Moving Range chart plots them.' }], 'mrSpan', (v) => (v.w >= 2 ? Math.round(v.w) : 2)) },
       { separator: true },
       { label: 'Tests', submenu: () => [
         ...[1, 2, 3, 4, 5, 6, 7, 8].map((t) => ({ label: `Test ${t}`, checked: tests.includes(t), action: () => setTests(tests.includes(t) ? tests.filter((x) => x !== t) : [...tests, t]) })),
@@ -533,8 +549,22 @@
       ctx.check('Show Center Line', 'showCenter', null, true),
       ctx.check('Show Limit Summaries', 'limitSummaries', null, true),
       { separator: true },
-      cur === 'ewma' ? { label: 'EWMA Parameters…', action: () => ask('EWMA Parameters', [{ key: 'lam', label: 'λ (weight of the newest mean)', type: 'number', value: ew.lam ?? 0.2 }, { key: 'L', label: 'Limits at L sigma', type: 'number', value: ew.L ?? 3 }, { key: 'target', label: 'Target (empty: the mean)', type: 'number', value: ew.target ?? null }], 'ewma') } : null,
-      cur === 'cusum' ? { label: 'CUSUM Parameters…', action: () => ask('CUSUM Parameters', [{ key: 'h', label: 'h, decision interval (standard errors)', type: 'number', value: cu.h ?? 4 }, { key: 'k', label: 'k, reference value (standard errors)', type: 'number', value: cu.k ?? 0.5 }, { key: 'target', label: 'Target (empty: the mean)', type: 'number', value: cu.target ?? null }, { key: 'headStart', label: 'Head start at h/2 (FIR)', type: 'check', value: !!cu.headStart }], 'cusum') } : null,
+      cur === 'ewma' ? { label: 'EWMA Parameters…', action: () => ask('EWMA Parameters', [
+        { key: 'lam', label: 'λ (weight of the newest mean)', type: 'number', value: ew.lam ?? 0.2,
+          help: 'Each point is λ·(the subgroup mean) + (1 − λ)·(the point before), 0 < λ ≤ 1: a small λ remembers far back and finds small shifts; λ = 1 is the XBar chart. 0.2 by default.' },
+        { key: 'L', label: 'Limits at L sigma', type: 'number', value: ew.L ?? 3,
+          help: 'The limits lie L standard errors of the EWMA statistic either side of the center, from its exact variance at each point (narrower at the start). 3 by default.' },
+        { key: 'target', label: 'Target (empty: the mean)', type: 'number', value: ew.target ?? null,
+          help: 'The center line and the value the average starts from; empty takes the grand mean of each phase.' }], 'ewma') } : null,
+      cur === 'cusum' ? { label: 'CUSUM Parameters…', action: () => ask('CUSUM Parameters', [
+        { key: 'h', label: 'h, decision interval (standard errors)', type: 'number', value: cu.h ?? 4,
+          help: 'A sum beyond h, in standard errors of the subgroup mean, signals a shift. 4 by default; a larger h gives fewer false alarms and slower detection (the average run lengths are in the notes).' },
+        { key: 'k', label: 'k, reference value (standard errors)', type: 'number', value: cu.k ?? 0.5,
+          help: 'The slack taken off at every step, usually half the shift to detect: 0.5, the default, is tuned to a shift of one standard error.' },
+        { key: 'target', label: 'Target (empty: the mean)', type: 'number', value: cu.target ?? null,
+          help: 'The in-control mean the deviations are summed from; empty takes the grand mean of each phase.' },
+        { key: 'headStart', label: 'Head start at h/2 (FIR)', type: 'check', value: !!cu.headStart,
+          help: 'Start both sums at h/2 instead of 0 (the fast initial response of Lucas and Crosier), so that a process off target from the start signals sooner.' }], 'cusum') } : null,
       ctx.check('Show Capability', 'capability', null, true),
       { label: 'Spec Limits…', action: () => specDialog(ctx, ctx.roles('y')) },
       { label: 'Save Limits', submenu: () => [
@@ -549,15 +579,15 @@
     const v = await SM.ui.form({
       title: 'Customize Tests', lead: 'The number of points in each pattern. JMP\'s defaults are shown; the Western Electric rules use 8 for test 2.',
       fields: [
-        { key: 't2', label: 'Test 2: points in a row on one side', type: 'number', value: n[2] },
-        { key: 't3', label: 'Test 3: points steadily increasing or decreasing', type: 'number', value: n[3] },
-        { key: 't4', label: 'Test 4: points alternating up and down', type: 'number', value: n[4] },
-        { key: 't5m', label: 'Test 5: m points in zone A or beyond…', type: 'number', value: n[5][0] },
-        { key: 't5n', label: '…out of n in a row', type: 'number', value: n[5][1] },
-        { key: 't6m', label: 'Test 6: m points in zone B or beyond…', type: 'number', value: n[6][0] },
-        { key: 't6n', label: '…out of n in a row', type: 'number', value: n[6][1] },
-        { key: 't7', label: 'Test 7: points in a row in zone C', type: 'number', value: n[7] },
-        { key: 't8', label: 'Test 8: points in a row outside zone C', type: 'number', value: n[8] },
+        { key: 't2', label: 'Test 2: points in a row on one side', type: 'number', value: n[2], help: 'Test 2 fails at this many points in a row on one side of the center line: a shift in the mean. 9 by default (Western Electric: 8).' },
+        { key: 't3', label: 'Test 3: points steadily increasing or decreasing', type: 'number', value: n[3], help: 'Test 3 fails at this many points in a row each higher (or each lower) than the one before: a trend. 6 by default.' },
+        { key: 't4', label: 'Test 4: points alternating up and down', type: 'number', value: n[4], help: 'Test 4 fails at this many points in a row going up and down in turn: two alternating sources, such as two machines. 14 by default.' },
+        { key: 't5m', label: 'Test 5: m points in zone A or beyond…', type: 'number', value: n[5][0], help: 'Test 5 fails when m of n points in a row lie in zone A or beyond (more than two thirds of the way to a limit), on the same side. m, 2 by default.' },
+        { key: 't5n', label: '…out of n in a row', type: 'number', value: n[5][1], help: 'n of test 5, 3 by default; m must not be larger.' },
+        { key: 't6m', label: 'Test 6: m points in zone B or beyond…', type: 'number', value: n[6][0], help: 'Test 6 fails when m of n points in a row lie in zone B or beyond (more than a third of the way to a limit), on the same side. m, 4 by default.' },
+        { key: 't6n', label: '…out of n in a row', type: 'number', value: n[6][1], help: 'n of test 6, 5 by default; m must not be larger.' },
+        { key: 't7', label: 'Test 7: points in a row in zone C', type: 'number', value: n[7], help: 'Test 7 fails at this many points in a row within zone C (the third next to the center line), on either side: less variation than the limits allow, often stratified subgroups. 15 by default.' },
+        { key: 't8', label: 'Test 8: points in a row outside zone C', type: 'number', value: n[8], help: 'Test 8 fails at this many points in a row with none in zone C, on both sides of the center line: a mixture of two processes. 8 by default.' },
       ],
       validate: (x) => (x.t5m > x.t5n || x.t6m > x.t6n ? 'm must not be larger than n' : null),
     });
@@ -593,15 +623,22 @@
     launch: {
       lead: 'Choose the process columns and, for subgrouped data, the subgroup column. Without a subgroup the chart is of individual values.',
       roles: [
-        { key: 'y', label: 'Y, Process', min: 1, numeric: true, hint: 'required numeric' },
-        { key: 'subgroup', label: 'Subgroup', max: 1, hint: 'optional' },
-        { key: 'phase', label: 'Phase', max: 1, hint: 'optional' },
-        { key: 'ntrials', label: 'n Trials', max: 1, numeric: true, types: ['continuous'], hint: 'optional: P, NP, U' },
-        { key: 'by', label: 'By', hint: 'optional' },
+        { key: 'y', label: 'Y, Process', min: 1, numeric: true, hint: 'required numeric',
+          help: 'The measurements to chart, one chart per column; for P and NP charts the number of defective units in each row, for C and U charts the number of defects.' },
+        { key: 'subgroup', label: 'Subgroup', max: 1, hint: 'optional',
+          help: 'The subgroup (sample) of each row, any modeling type: the rows with the same value make one point, in the order of its levels. Without it every row is a point, or consecutive rows form subgroups of the size given below. The individual charts keep a point per row, ordered and labelled by it.' },
+        { key: 'phase', label: 'Phase', max: 1, hint: 'optional',
+          help: 'A column of phases (before and after a change): each phase gets its own center line and limits, with a line where the phase changes.' },
+        { key: 'ntrials', label: 'n Trials', max: 1, numeric: true, types: ['continuous'], hint: 'optional: P, NP, U',
+          help: 'P, NP and U charts: how many units were inspected in each row (for U, the size of the area of opportunity), summed over a subgroup. Without it every row counts as one unit.' },
+        { key: 'by', label: 'By', hint: 'optional',
+          help: 'A separate report for each level of the By column (with several columns, each combination of their levels). Rows with a missing By value are left out.' },
       ],
       options: [
-        { key: 'chart', label: 'Chart', type: 'select', value: 'auto', choices: CHARTS },
-        { key: 'subgroupSize', label: 'Subgroup size (no Subgroup column)', type: 'number', value: null },
+        { key: 'chart', label: 'Chart', type: 'select', value: 'auto', choices: CHARTS,
+          help: 'Automatic: XBar & R with a Subgroup column or a subgroup size of 2 or more, else Individual & Moving Range. XBar & R and XBar & S plot the subgroup means with their ranges or standard deviations; Levey Jennings takes the overall standard deviation; a Run Chart has no limits. P and NP (proportion or number defective) need n Trials or a Subgroup column; C and U count defects. EWMA and CUSUM find small sustained shifts. The red triangle changes it later.' },
+        { key: 'subgroupSize', label: 'Subgroup size (no Subgroup column)', type: 'number', value: null,
+          help: 'Without a Subgroup column: consecutive rows form subgroups of this many, 2 or more; a new subgroup also starts where the phase changes. Empty: every row is a point. The individual charts ignore it.' },
       ],
       validate: (s, t) => {
         const ch = s.options.chart;
@@ -735,7 +772,8 @@
     const graphs = [];
     if (ctx.opt('goal', true)) {
       const g = goalPlot(ctx, cols, res);
-      if (g) { const ob = ctx.outline('Goal Plot', { key: 'goal', menu: () => [ctx.check('Within Sigma (Cpk) instead of Overall', 'goalWithin', null, false), { label: 'Goal Ppk…', action: async () => { const v = await SM.ui.form({ title: 'Goal Plot', fields: [{ key: 'k', label: 'Ppk of the triangle', type: 'number', value: ctx.opt('goalPpk', 1) }] }); if (v && v.k > 0) ctx.set('goalPpk', v.k); } }] }); ob.add(g, ctx.note('Each column at (mean − target)/(USL − LSL) and standard deviation/(USL − LSL); inside the triangle its Ppk is above the goal (with the target at the middle of the limits). Click a point to select the column.')); graphs.push(ob.el); }
+      if (g) { const ob = ctx.outline('Goal Plot', { key: 'goal', info: 'cap:goal', menu: () => [ctx.check('Within Sigma (Cpk) instead of Overall', 'goalWithin', null, false), { label: 'Goal Ppk…', action: async () => { const v = await SM.ui.form({ title: 'Goal Plot', fields: [{ key: 'k', label: 'Ppk of the triangle', type: 'number', value: ctx.opt('goalPpk', 1),
+        help: 'The Ppk the triangle stands for: a column inside it has a larger Ppk (with the target at the middle of the limits). 1 by default; the Goal slider under the plot sets it too, from 0.5 to 2.5. Positive.' }] }); if (v && v.k > 0) ctx.set('goalPpk', v.k); } }] }); ob.add(g, ctx.note('Each column at (mean − target)/(USL − LSL) and standard deviation/(USL − LSL); inside the triangle its Ppk is above the goal (with the target at the middle of the limits). Click a point to select the column.')); graphs.push(ob.el); }
     }
     if (ctx.opt('boxplots', true)) {
       const b = capBoxPlots(ctx, cols, res);
@@ -794,7 +832,8 @@
       { label: 'Distribution', submenu: () => DISTS.map(([k, l]) => ({ label: l, checked: d === k, action: () => ctx.set('dist', k, col.id) })) },
       { label: 'Spec Limits…', action: () => specDialog(ctx, [col]) },
       { label: 'Save Spec Limits as Column Property', action: () => { const s = specOf(ctx, col); if (!s) { SM.ui.toast('No spec limits to save'); return; } col.specLimits = { lsl: s.lsl ?? null, target: s.target ?? null, usl: s.usl ?? null }; ctx.table._changed('schema', { info: col.id }); SM.ui.toast(`Saved the spec limits of ${col.name} as its Spec Limits property`); } },
-      { label: 'Historical Sigma…', action: async () => { const v = await SM.ui.form({ title: `Historical Sigma: ${col.name}`, fields: [{ key: 's', label: 'Within sigma (empty: estimated)', type: 'number', value: ctx.opt('historical', null, col.id) }] }); if (v) ctx.set('historical', v.s > 0 ? v.s : null, col.id); } },
+      { label: 'Historical Sigma…', action: async () => { const v = await SM.ui.form({ title: `Historical Sigma: ${col.name}`, fields: [{ key: 's', label: 'Within sigma (empty: estimated)', type: 'number', value: ctx.opt('historical', null, col.id),
+        help: 'A known within (short-term) standard deviation of this column, used for Cp, Cpk and the expected within nonconformance instead of the estimate from the subgroups or moving ranges. Empty: estimated.' }] }); if (v) ctx.set('historical', v.s > 0 ? v.s : null, col.id); } },
       ctx.check('Within Sigma Density', 'curveWithin', col.id, true),
       ctx.check('Overall Sigma Density', 'curveOverall', col.id, true),
       { separator: true },
@@ -832,7 +871,7 @@
       if (!cs.length) { api.message('Cast the process columns into Y, Process first.'); return; }
       const v = await SM.ui.form({
         title: 'Spec Limits', lead: 'The columns\' Spec Limits property gives the defaults. Leave a limit empty when there is none.',
-        fields: cs.flatMap((c) => { const s = specs[c.name] || c.specLimits || {}; return [{ key: `${c.id}|lsl`, label: `${c.name}: LSL`, type: 'number', value: s.lsl ?? null }, { key: `${c.id}|target`, label: `${c.name}: Target`, type: 'number', value: s.target ?? null }, { key: `${c.id}|usl`, label: `${c.name}: USL`, type: 'number', value: s.usl ?? null }]; }),
+        fields: cs.flatMap((c) => { const s = specs[c.name] || c.specLimits || {}; return [{ key: `${c.id}|lsl`, label: `${c.name}: LSL`, type: 'number', value: s.lsl ?? null, help: SPEC_HELP.lsl, helpLabel: 'LSL' }, { key: `${c.id}|target`, label: `${c.name}: Target`, type: 'number', value: s.target ?? null, help: SPEC_HELP.target, helpLabel: 'Target' }, { key: `${c.id}|usl`, label: `${c.name}: USL`, type: 'number', value: s.usl ?? null, help: SPEC_HELP.usl, helpLabel: 'USL' }]; }),
       });
       if (!v) return;
       for (const c of cs) specs[c.name] = { lsl: v[`${c.id}|lsl`], target: v[`${c.id}|target`], usl: v[`${c.id}|usl`] };
@@ -852,6 +891,8 @@
         return { options: { specs: out } };
       },
       recall: (s) => { specs = JSON.parse(JSON.stringify((s && s.options && s.options.specs) || {})); show(); },
+      helpHeading: 'Spec Limits',
+      help: [['Spec Limits…', 'A form with the lower spec limit, the target and the upper spec limit of each Y, Process column; the list under the button shows them. A column\'s Spec Limits property (Cols > Column Info) gives the defaults, and a limit left empty means none. At least one column needs a limit; the report\'s red triangle changes them later.']],
     };
   }
 
@@ -859,12 +900,25 @@
     id: 'capability', label: 'Process Capability', menu: 'Analyze/Quality and Process', order: 20, info: 'p:capability',
     about: 'Capability of one or more process columns against their spec limits: within and overall indices (Cp, Cpk, Cpl, Cpu, Pp, Ppk, Ppl, Ppu, Cpm) with confidence intervals, nonconformance observed and expected, histograms with the normal curves, the goal plot and capability box plots; lognormal, Weibull or gamma fits with the percentile method.',
     uses: ['scipy.stats (norm, chi2, nct, lognorm, weibull_min, gamma)', 'numpy'],
+    topics: {
+      'cap:goal': {
+        kicker: 'Process Capability', title: 'Goal Plot',
+        lead: 'Each column with both spec limits as a point: across, its mean shift (mean − target)/(USL − LSL); up, its standard deviation over USL − LSL, overall or within. Inside the triangle a column\'s Ppk is above the goal, for a target at the middle of the limits.',
+        sections: [{ heading: 'In the report', choices: [
+          ['Goal', 'The slider sets the Ppk of the triangle, from 0.5 to 2.5 (1 by default); the plot follows when you let go. Goal Ppk… in the red triangle takes any value.'],
+          ['A point', 'Click it to select that column in the table (with shift, ⌘ or ctrl, add it); selected columns are drawn larger.']] }],
+        more: { label: 'Process Capability', id: 'help-p-capability' },
+      },
+    },
     launch: {
       lead: 'Choose the process columns and give their spec limits (the Spec Limits column property is the default). With a subgroup column the within sigma comes from the subgroups, else from the moving range in row order.',
       roles: [
-        { key: 'y', label: 'Y, Process', min: 1, numeric: true, types: ['continuous'], hint: 'required continuous' },
-        { key: 'subgroup', label: 'Subgroup', max: 1, hint: 'optional' },
-        { key: 'by', label: 'By', hint: 'optional' },
+        { key: 'y', label: 'Y, Process', min: 1, numeric: true, types: ['continuous'], hint: 'required continuous',
+          help: 'The process columns, each against its own spec limits (below). A column\'s missing values are left out of its own analysis only.' },
+        { key: 'subgroup', label: 'Subgroup', max: 1, hint: 'optional',
+          help: 'The subgroup of each row: the within sigma then comes from the variation inside the subgroups (the average range unless Within Sigma says otherwise). Without it, from the moving ranges of neighbouring rows, in row order.' },
+        { key: 'by', label: 'By', hint: 'optional',
+          help: 'A separate report for each level of the By column (with several columns, each combination of their levels). Rows with a missing By value are left out.' },
       ],
       extra: specExtra,
       validate: (s, t) => {
@@ -972,7 +1026,10 @@
       ctx.check('Frequency Table', 'table', null, true),
       { separator: true },
       { label: 'Causes', submenu: () => [
-        { label: 'Combine Causes…', action: async () => { const cur = ctx.opt('combine', null) || {}; const v = await SM.ui.form({ title: 'Combine Causes', lead: 'Combine the smallest causes into Other: those below a share of the total, or all but the largest few.', fields: [{ key: 'below', label: 'Combine causes below this percent', type: 'number', value: cur.below ?? 5 }, { key: 'top', label: 'or keep only the largest (number of causes)', type: 'number', value: cur.top ?? null }] }); if (v) ctx.set('combine', v.top ? { top: v.top } : v.below != null ? { below: v.below } : null); } },
+        { label: 'Combine Causes…', action: async () => { const cur = ctx.opt('combine', null) || {}; const v = await SM.ui.form({ title: 'Combine Causes', lead: 'Combine the smallest causes into Other: those below a share of the total, or all but the largest few.', fields: [{ key: 'below', label: 'Combine causes below this percent', type: 'number', value: cur.below ?? 5,
+          help: 'The causes whose share of the total count is below this percent become one bar, Other (when at least two are that small). 5 by default.' },
+        { key: 'top', label: 'or keep only the largest (number of causes)', type: 'number', value: cur.top ?? null,
+          help: 'Keep this many of the largest causes and combine the rest into Other; when given, it is used instead of the percent.' }] }); if (v) ctx.set('combine', v.top ? { top: v.top } : v.below != null ? { below: v.below } : null); } },
         { label: 'Separate Causes', disabled: !ctx.opt('combine', null), action: () => ctx.set('combine', null) },
       ] },
       hasGroups ? { label: 'Count Analysis', submenu: () => [ctx.check('Test Rates Across Groups', 'testRates', null, false)] } : null,
@@ -998,10 +1055,14 @@
     launch: {
       lead: 'Choose the cause column; optionally a frequency column and one or two grouping columns.',
       roles: [
-        { key: 'y', label: 'Y, Cause', min: 1, max: 1, hint: 'required' },
-        { key: 'x', label: 'X, Grouping', max: 2, hint: 'optional, up to two' },
-        { key: 'freq', label: 'Freq', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric' },
-        { key: 'by', label: 'By', hint: 'optional' },
+        { key: 'y', label: 'Y, Cause', min: 1, max: 1, hint: 'required',
+          help: 'The cause (defect type, complaint) of each row, any modeling type: a bar per cause, largest first.' },
+        { key: 'x', label: 'X, Grouping', max: 2, hint: 'optional, up to two',
+          help: 'One or two columns: a Pareto plot for each of their levels (or combinations of levels), with the causes in the overall order, and Test Rates Across Groups in the red triangle.' },
+        { key: 'freq', label: 'Freq', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric',
+          help: 'A count per row, such as the number of defects of that cause; without it every row counts once. Rows with a missing, zero or negative count are left out.' },
+        { key: 'by', label: 'By', hint: 'optional',
+          help: 'A separate report for each level of the By column (with several columns, each combination of their levels). Rows with a missing By value are left out.' },
       ],
     },
     title: () => 'Pareto Plot',
@@ -1172,9 +1233,12 @@
     const v = await SM.ui.form({
       title: 'Gauge R&R', lead: 'The measurement variation as k standard deviations, and optionally a tolerance (USL − LSL) for the P/T ratio. JMP\'s default k is 6; older AIAG manuals use 5.15.',
       fields: [
-        { key: 'k', label: 'K, sigma multiplier', type: 'number', value: cur.k ?? 6 },
-        { key: 'tolerance', label: 'Tolerance (USL − LSL)', type: 'number', value: cur.tolerance ?? (s.lsl != null && s.usl != null ? s.usl - s.lsl : null) },
-        { key: 'historical', label: 'Historical sigma of the process (optional)', type: 'number', value: cur.historical ?? null },
+        { key: 'k', label: 'K, sigma multiplier', type: 'number', value: cur.k ?? 6,
+          help: 'The variation of each source is shown as K standard deviations: 6 by default, as JMP; older AIAG manuals use 5.15. It changes the Variation column, % of Tolerance and P/T, not the shares of the total.' },
+        { key: 'tolerance', label: 'Tolerance (USL − LSL)', type: 'number', value: cur.tolerance ?? (s.lsl != null && s.usl != null ? s.usl - s.lsl : null),
+          help: 'The width of the specification, for % of Tolerance and the precision to tolerance ratio P/T = K·σ(Gauge R&R)/tolerance. Empty takes the width of the response\'s Spec Limits property, when it has both limits; else there is no P/T.' },
+        { key: 'historical', label: 'Historical sigma of the process (optional)', type: 'number', value: cur.historical ?? null,
+          help: 'A known standard deviation of the whole process: the total variation becomes its square, and the part variation what is left after the gauge, instead of both coming from the parts in this study.' },
       ],
     });
     if (v) ctx.set('gauge', { k: v.k > 0 ? v.k : 6, tolerance: v.tolerance > 0 ? v.tolerance : null, historical: v.historical > 0 ? v.historical : null });
@@ -1258,14 +1322,20 @@
     launch: {
       lead: 'Choose the response and the grouping columns, outer first. For a Gauge R&R: X = Operator, Part (or Part in Part, Sample ID).',
       roles: [
-        { key: 'y', label: 'Y, Response', min: 1, hint: 'required' },
-        { key: 'x', label: 'X, Grouping', min: 1, hint: 'required: outer first' },
-        { key: 'part', label: 'Part, Sample ID', max: 1, hint: 'optional' },
-        { key: 'standard', label: 'Standard', max: 1, hint: 'optional: attribute gauge' },
-        { key: 'by', label: 'By', hint: 'optional' },
+        { key: 'y', label: 'Y, Response', min: 1, hint: 'required',
+          help: 'The measurement; a nominal or ordinal response gives the attribute gauge (the agreement of raters) instead of the variability chart. With several, a report for each.' },
+        { key: 'x', label: 'X, Grouping', min: 1, hint: 'required: outer first',
+          help: 'The grouping factors, outermost first (for example Operator, then Part): the chart nests the cells in this order, and the variance components are of these factors. For an attribute gauge: the raters, and the parts if there is no Part column.' },
+        { key: 'part', label: 'Part, Sample ID', max: 1, hint: 'optional',
+          help: 'The parts measured in a Gauge R&R (without it, the last X column is the part); it joins the grouping factors as the innermost one. For an attribute gauge: the parts rated.' },
+        { key: 'standard', label: 'Standard', max: 1, hint: 'optional: attribute gauge',
+          help: 'Attribute gauge only: the true rating of each part, for the Effectiveness report and the misclassifications.' },
+        { key: 'by', label: 'By', hint: 'optional',
+          help: 'A separate report for each level of the By column (with several columns, each combination of their levels). Rows with a missing By value are left out.' },
       ],
       options: [
-        { key: 'model', label: 'Model', type: 'select', value: 'crossed', choices: MODELS },
+        { key: 'model', label: 'Model', type: 'select', value: 'crossed', choices: MODELS,
+          help: 'The random-effects model of the variance components and the Gauge R&R. Crossed, the default: every factor and every interaction. Nested: each factor within the ones before it (each part measured by one operator only). Main Effect: no interactions. The last two mix the two for three factors. The red triangle of Variance Components changes it later.' },
       ],
     },
     title: (spec, table) => {

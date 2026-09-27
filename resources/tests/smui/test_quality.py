@@ -154,6 +154,15 @@ r = call('quality.control_chart', table=tid3, y='x', chart='lj')
 check.near('Levey Jennings: sigma is the standard deviation', r['summary']['sigma'][0]['sigma'], float(np.std(xi, ddof=1)), rel=1e-12)
 r = call('quality.control_chart', table=tid3, y='x', chart='ir', sigma='mmr')
 check.near('median moving range', r['summary']['sigma'][0]['sigma'], float(np.median(mr)) / (math.sqrt(2) * stats.norm.ppf(0.75)), rel=1e-12)
+# over a span of w rows the divisor is the median range of w normal values
+# (the published table: 1.588, 1.978, 2.257, 2.472 for 3 to 6), not 0.954
+for w_, v_ in ((3, 1.588), (4, 1.978), (5, 2.257), (6, 2.472)):
+    check.near(f'median range of {w_} normal values, d4({w_})', Q.d4(w_), v_, abs_=5e-4)
+_rw = np.random.default_rng(7).standard_normal((200000, 3))
+check.near('d4(3) is the median of simulated ranges of three', Q.d4(3), float(np.median(np.ptp(_rw, axis=1))), abs_=0.01)
+mr3 = np.array([np.ptp(xi[i - 2:i + 1]) for i in range(2, len(xi))])
+r = call('quality.control_chart', table=tid3, y='x', chart='ir', sigma='mmr', mr_span=3)
+check.near('median moving range over a span of 3: median / d4(3)', r['summary']['sigma'][0]['sigma'], float(np.median(mr3)) / Q.d4(3), rel=1e-12)
 r = call('quality.control_chart', table=tid3, y='x', chart='ir', known_mean=50, known_sigma=2)
 check('known mean and sigma', (r['panels'][0]['cl'][0], r['panels'][0]['ucl'][0], r['panels'][0]['lcl'][0]), (50.0, 56.0, 44.0))
 
@@ -460,6 +469,12 @@ with tempfile.TemporaryDirectory() as tmp:
         r = call('quality.control_chart', table=tid, y='d', chart='ir', table_name='Process')
         out = run_code(r['code'])
         check('the Individuals code prints the report\'s limits (d2 by scipy quad: nine decimals)', f"{r['limits']['rows'][0]['ucl']:.9f}" in out, True)
+        r = call('quality.control_chart', table=tid, y='d', chart='ir', sigma='mmr', mr_span=3, table_name='Process')
+        out = run_code(r['code'])
+        check('the median moving range code over a span of 3 prints the report\'s limits', f"{r['limits']['rows'][0]['ucl']:.8f}" in out, True)
+        r = call('quality.control_chart', table=tid, y='d', subgroup='subgroup', chart='xbar_r', sigma='mmr', mr_span=3, table_name='Process')
+        out = run_code(r['code'])
+        check('... and on the subgroup means of an XBar chart', f"{r['limits']['rows'][0]['ucl']:.6f}"[:8] in out, True)
         r = call('quality.capability', table=tid, columns=['d'], specs={'d': {'lsl': lsl, 'usl': usl}}, subgroup='subgroup', table_name='Process')
         out = run_code(r['code'])
         cpk = next(i['estimate'] for i in r['columns'][0]['within'] if i['index'] == 'Cpk')

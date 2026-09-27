@@ -48,6 +48,20 @@
   }
   const sig = (v, n = 6) => fmt(v, { sig: n });
 
+  /* What each field of the launch dialog and the forms is for: the (i). */
+  const HELP = {
+    y: 'The column the tree predicts. Continuous: a regression tree, each leaf predicting the mean of its rows and each split chosen by the sum of squares it explains. Nominal or ordinal: a classification tree, each leaf giving a probability of every level and each split chosen by the likelihood-ratio G² (the order of an ordinal response is not used).',
+    x: 'The columns a split may use, of any modeling type. A continuous column is cut at a value, an ordinal one between two neighbouring levels (see Ordinal Restricts Order), a nominal one into two groups of its levels. Each split takes the one column and cut with the largest LogWorth, so a column that does not help is simply never used.',
+    minsize: 'The fewest rows a split may leave on either side, counted by Freq (CART counts rows): a cut that leaves fewer is not a candidate. 5 is JMP\'s default; raise it for a smaller, steadier tree, lower it to let small groups split off. Below 1 it is a share of the training rows: 0.05 is 5% of them.',
+    ordinalOrder: 'On (the default, as in JMP): an ordinal X is cut between neighbouring levels, so each side of a split is a run of levels in their order. Off: its levels are grouped freely, as a nominal X\'s are. CART splits an ordinal X one level against the rest either way.',
+    method: 'Decision Tree (the default) is JMP\'s: each split the column and cut with the largest LogWorth, a p-value adjusted for how many cuts the column offers, and leaf probabilities shrunk toward the parent\'s. CART is scikit-learn\'s tree, grown best first by the largest fall in squared error (or entropy), with no such adjustment; it splits a nominal X one level against the rest, its leaf rates can be 0, and it has no Candidates or splits of one node. Method (red triangle) switches between them.',
+    missing: 'On (JMP\'s default): rows missing a factor are kept. The Decision Tree sends a missing value of a continuous X to the side of each split where it fits better, and makes a missing level of a categorical X a level of its own; CART takes the training mean plus a 0/1 Missing column. Off: rows missing any factor are left out.',
+    splits: 'How many splits to make in one step, from 1 to 500, each the best one at that point: the same as pressing Split that many times. It stops early when no leaf can be split with Minimum Size Split rows on each side.',
+    specificColumn: 'The X column to split this leaf by, whether or not it is the best one. A nominal or ordinal column (levels grouped) takes its best grouping of levels, or its best cut between levels.',
+    specificCut: 'For a continuous column: the rows below this value go to one side and the others to the other (a missing value where it fits better); empty takes the column\'s best cut. The cut must leave Minimum Size Split rows on each side, and its LogWorth is not adjusted, as it was not chosen among cuts. Ignored for a nominal or ordinal column.',
+    folds: 'The number of folds, from 2 to 100 (5 by default). The training rows are split at random, from the report\'s seed, into k folds of nearly equal size, and each fold is predicted by a tree grown on the other folds with as many best splits as this tree has. More folds grow each tree on more of the rows, and take longer.',
+  };
+
   /* The colours of the sets (the same in the Split History and elsewhere). */
   function setColor(set) {
     const dark = SM.util.themeColors().dark;
@@ -163,7 +177,7 @@
     };
     const split = b('Split', 'Split the leaf and column with the largest LogWorth (Shift-click: several splits)', async (ev) => {
       if (ev.shiftKey) {
-        const v = await SM.ui.form({ title: 'Split', info: 'p:partition', fields: [{ key: 'n', label: 'Number of splits', type: 'number', value: 5 }], validate: (x) => (x.n >= 1 && x.n <= 500 ? null : 'From 1 to 500 splits') });
+        const v = await SM.ui.form({ title: 'Split', info: 'p:partition:tree', fields: [{ key: 'n', label: 'Number of splits', type: 'number', value: 5, help: HELP.splits }], validate: (x) => (x.n >= 1 && x.n <= 500 ? null : 'From 1 to 500 splits') });
         if (v) addStep(ctx, { op: 'split', n: Math.round(v.n) });
       } else addStep(ctx, { op: 'split' });
     });
@@ -458,8 +472,8 @@
       title: `Split Specific: ${nd.label}`, info: 'p:partition:tree',
       lead: 'Split this leaf by a column of your choice: at its best cut, or at a value you give (a continuous column). The other rows of the tree stay as they are.',
       fields: [
-        { key: 'col', label: 'Column', type: 'select', value: first ? first.id : '', choices: xs.map((c) => [c.id, `${c.name}${cont.has(c.name) ? '' : ' (levels grouped)'}`]) },
-        { key: 'cut', label: 'Cut value (a continuous column; empty: the best cut)', type: 'number', value: null },
+        { key: 'col', label: 'Column', type: 'select', value: first ? first.id : '', choices: xs.map((c) => [c.id, `${c.name}${cont.has(c.name) ? '' : ' (levels grouped)'}`]), help: HELP.specificColumn },
+        { key: 'cut', label: 'Cut value (a continuous column; empty: the best cut)', type: 'number', value: null, help: HELP.specificCut },
       ],
       validate: (x) => (x.cut != null && !Number.isFinite(x.cut) ? 'The cut value is a number' : null),
     });
@@ -600,7 +614,7 @@
      K FOLD CROSSVALIDATION
      ====================================================================== */
   async function kfoldDialog(ctx) {
-    const v = await SM.ui.form({ title: 'K Fold Crossvalidation', info: 'p:partition:kfold', lead: 'The training rows are split into k folds drawn from the report\'s seed; each fold is predicted by a tree with as many best splits as this one, grown on the other folds.', fields: [{ key: 'k', label: 'Number of folds (k)', type: 'number', value: ctx.opt('kfold', null) || 5 }], validate: (x) => (Number.isInteger(x.k) && x.k >= 2 && x.k <= 100 ? null : 'k is a whole number from 2 to 100') });
+    const v = await SM.ui.form({ title: 'K Fold Crossvalidation', info: 'p:partition:kfold', lead: 'The training rows are split into k folds drawn from the report\'s seed; each fold is predicted by a tree with as many best splits as this one, grown on the other folds.', fields: [{ key: 'k', label: 'Number of folds (k)', type: 'number', value: ctx.opt('kfold', null) || 5, help: HELP.folds }], validate: (x) => (Number.isInteger(x.k) && x.k >= 2 && x.k <= 100 ? null : 'k is a whole number from 2 to 100') });
     if (v) ctx.set('kfold', v.k);
   }
 
@@ -638,7 +652,8 @@
   }
 
   async function minSizeDialog(ctx) {
-    const v = await SM.ui.form({ title: 'Minimum Size Split', info: 'p:partition', lead: 'The fewest rows (by Freq) either side of a split may have: a number of rows, or below 1 a share of the training rows. JMP\'s default is 5.', fields: [{ key: 'm', label: 'Minimum size', type: 'number', value: ctx.opt('minsize', 5) }], validate: (x) => (x.m > 0 ? null : 'A positive number') });
+    // no info: the platform's topic already lists this option; the form's (i) is its field
+    const v = await SM.ui.form({ title: 'Minimum Size Split', lead: 'The fewest rows (by Freq) either side of a split may have: a number of rows, or below 1 a share of the training rows. JMP\'s default is 5.', fields: [{ key: 'm', label: 'Minimum size', type: 'number', value: ctx.opt('minsize', 5), help: HELP.minsize }], validate: (x) => (x.m > 0 ? null : 'A positive number') });
     if (v) ctx.set('minsize', v.m);
   }
 
@@ -683,7 +698,7 @@
       lead: 'A decision tree, grown one split at a time as JMP\'s Partition grows it. Each split cuts the rows of a leaf in two by one column: a continuous or ordinal column at a value, a nominal column into two groups of its levels. The leaves predict the mean of a continuous response, or the probability of each level of a categorical one.',
       sections: [
         { heading: 'Roles', choices: [['Y, Response', 'One column: continuous (a regression tree) or nominal or ordinal (a classification tree).'], ['X, Factor', 'The columns a split may use, of any type.'], ['Weight, Freq', 'Freq counts a row that many times (the minimum size counts it so); Weight weighs it in the means and rates.'], ['Validation', 'Rows marked 0 or Training grow the tree; 1 or Validation choose its size (Go); 2 or Test are kept out of both.'], ['By', 'A tree for each level, each with its own splits.']] },
-        { heading: 'Launch options', choices: [['Minimum Size Split', 'The fewest rows either side of a split (JMP\'s default 5); below 1, a share of the training rows.'], ['Informative Missing', 'A missing value of a continuous X goes to the side of each split that fits better; a missing level of a categorical X is a level of its own. Off: rows missing a factor are left out (JMP keeps them).'], ['Ordinal Restricts Order', 'An ordinal X is cut between neighbouring levels only; off, its levels are grouped freely like a nominal X\'s.'], ['Validation Portion, Random Seed', 'A share of the rows held back for validation, drawn from the seed.'], ['Method', 'Decision Tree (JMP\'s LogWorth, the default), or CART: scikit-learn\'s trees, grown best first, for comparison. CART takes the split with the largest decrease of the impurity, not adjusted for how many cuts a column has; it splits a nominal X one level against the rest, cuts halfway between two values, and its leaf probabilities are the plain rates, which can be 0.']] },
+        { heading: 'Options', choices: [['Minimum Size Split', 'The fewest rows either side of a split (JMP\'s default 5); below 1, a share of the training rows.'], ['Informative Missing', 'A missing value of a continuous X goes to the side of each split that fits better; a missing level of a categorical X is a level of its own. Off: rows missing a factor are left out (JMP keeps them).'], ['Ordinal Restricts Order', 'An ordinal X is cut between neighbouring levels only; off, its levels are grouped freely like a nominal X\'s.'], ['Validation Portion, Random Seed', 'A share of the rows held back for validation, drawn from the seed.'], ['Method', 'Decision Tree (JMP\'s LogWorth, the default), or CART: scikit-learn\'s trees, grown best first, for comparison. CART takes the split with the largest decrease of the impurity, not adjusted for how many cuts a column has; it splits a nominal X one level against the rest, cuts halfway between two values, and its leaf probabilities are the plain rates, which can be 0.']] },
         { heading: 'How a split is chosen', text: 'For every leaf and column the best cut: the one that explains the most, SS (the sum of squares between the two sides) for a continuous response, G² (the likelihood-ratio chi-square) for a categorical one. A nominal X\'s levels are ordered by the response mean or rate and cut between neighbours (the best grouping for a continuous or two-level response); for a response of three or more levels every grouping is tried, up to 12 levels. The split made is the one with the largest LogWorth: −log10 of the split\'s p-value (the two-group F test, or G² as a chi-square) adjusted for the number of ways the column can be cut, so a column with many values does not win just by having more cuts to choose from.' },
         { heading: 'The adjustment', text: 'JMP calibrates its adjustment by Monte Carlo and has not published it, so the LogWorths here are not JMP\'s numbers, and where two columns are close the split chosen can differ. Here: for ordered cuts (a continuous or ordinal X), 1 plus the expected number of times the statistic crosses its observed value between neighbouring cuts (Lausen, Sauerbrei and Schumacher 1994; Rice\'s formula for a chi process); for a nominal X the smaller of Bonferroni over its groupings and Scheffé\'s bound; never more than Bonferroni over the candidates. With no effect an adjusted p-value falls below 0.05 in at most about 5% of samples (2 to 4% for a column with many values, where the bound is a little conservative), where the best of 200 unadjusted cuts does in more than half (the tests check both).' },
         { heading: 'Probabilities', text: 'A leaf\'s probability of a level is (n + prior)/(N + 1): its count of the level plus a prior, over its count plus one. The root\'s prior is the training rates; a child\'s is 0.9 of its parent\'s prior plus 0.1 of its parent\'s probability (JMP\'s documented rule, λ = 0.9). So no probability is 0, and a small leaf leans toward its parent. Rate is the plain share.' },
@@ -693,11 +708,25 @@
     },
     'p:partition:tree': {
       kicker: 'Partition', title: 'The Tree and the Buttons',
-      lead: 'Split splits the leaf whose best split has the largest LogWorth; Prune takes back the split with two leaves and the smallest LogWorth; Go (with validation rows) splits until the validation RSquare has not improved for 10 splits and keeps the tree with the best one. Shift-click Split for several splits. The splits are the report\'s: Redo, a project and By keep them.',
+      lead: 'Split splits the leaf whose best split has the largest LogWorth; Prune takes back the split with two leaves and the smallest LogWorth; Go (with validation rows) splits until the validation RSquare has not improved for 10 splits and keeps the tree with the best one. Shift-click Split for several splits. The splits are the report\'s: Redo, a project and By keep them, and Start Over (red triangle) takes them all back.',
       sections: [
+        { heading: 'The buttons', choices: [
+          ['Split', 'Makes the best split there is: of every leaf and every column, the cut with the largest LogWorth (CART: the next split of scikit-learn\'s best-first tree). Shift-click it to make several in one step.'],
+          ['Prune', 'Takes back the weakest of the splits whose two children are both leaves, the one with the smallest LogWorth (CART: the last split made). Dimmed while the tree has no split.'],
+          ['Go', 'Only with validation rows (a Validation column or a Validation Portion). Splits one leaf at a time until 10 splits in a row have not improved the validation RSquare (Entropy RSquare for a categorical response), then keeps the tree that had the best one; Split History shows the splits it looked at beyond it, dotted.'],
+          ['Color Points', 'A categorical response: gives the rows in the table the colour of their response level, so that every graph shows the levels.'],
+        ] },
         { heading: 'The graph', text: 'The training rows side by side in their leaves (numbered as in the Leaf Report), each leaf as wide as its rows: the response with the leaf\'s mean, or the leaf\'s rates of the levels stacked with the rows scattered in them. Drag over points to select rows.' },
         { heading: 'A node', choices: [['Count', 'its training rows (by Freq)'], ['Mean, Std Dev', 'of a continuous response'], ['G^2', 'its −2 log likelihood: 2 × the sum of −log(rate) over its rows'], ['Rate, Prob', 'the share of each level, and the probability the tree predicts (the rate shrunk toward the parent\'s)'], ['LogWorth', 'of the split made at the node'], ['Difference', 'the left child\'s mean minus the right child\'s']] },
-        { heading: 'Clicking', text: 'A click on a node selects its rows (every set) in the table and shows its candidates; Shift adds, Ctrl or ⌘ toggles. The orange bar along its foot is the share of its training rows selected. Its red triangle (or a right click) has Split Here (its best split), Split Best (the best split at or below it), Split Specific (a column of your choice, at a value you give), Prune Below, Prune Worst and Select Rows.' },
+        { heading: 'Clicking a node', choices: [
+          ['A click', 'Selects the node\'s rows (every set) in the table and shows its Candidates; Shift adds, Ctrl or ⌘ toggles. The orange bar along its foot is the share of its training rows selected.'],
+          ['Split Here', 'In the node\'s red triangle (or a right click), for a leaf: makes its best split.'],
+          ['Split Best', 'Makes the best split of any leaf at or below the node.'],
+          ['Split Specific…', 'Splits a leaf by a column of your choice, at its best cut or at a value you give.'],
+          ['Prune Below', 'Takes back every split below the node, which becomes a leaf again.'],
+          ['Prune Worst', 'Takes back the weakest split at or below the node whose two children are leaves.'],
+          ['Select Rows, Show Candidates', 'Selects the node\'s rows; or opens Candidates at the node, the selection left alone. A CART node has Select Rows only.'],
+        ] },
       ],
       more: MORE,
     },
@@ -733,15 +762,16 @@
     launch: {
       lead: 'Choose a response and the factors. The tree starts with every row in one node: press Split to grow it, or Go with validation rows.',
       roles: [
-        { key: 'y', label: 'Y, Response', min: 1, max: 1, hint: 'required: one, continuous or categorical' },
-        { key: 'x', label: 'X, Factor', min: 1, hint: 'required: one or more' },
+        { key: 'y', label: 'Y, Response', min: 1, max: 1, hint: 'required: one, continuous or categorical', help: HELP.y },
+        { key: 'x', label: 'X, Factor', min: 1, hint: 'required: one or more', help: HELP.x },
         ...SM.predict.roles(),
       ],
       options: [
-        ...SM.predict.options(),
-        { key: 'minsize', label: 'Minimum Size Split', type: 'number', value: 5, hint: 'the fewest rows either side of a split (below 1: a share of the training rows)' },
-        { key: 'ordinalOrder', label: 'Ordinal Restricts Order', type: 'check', value: true, hint: 'an ordinal X is cut between neighbouring levels only' },
-        { key: 'method', label: 'Method', type: 'select', value: 'jmp', choices: [['jmp', 'Decision Tree'], ['cart', 'CART (scikit-learn)']], hint: 'Decision Tree: JMP\'s LogWorth; CART: scikit-learn\'s trees, for comparison' },
+        // the shared Informative Missing, told as this engine handles a missing value
+        ...SM.predict.options().map((o) => (o.key === 'missing' ? { ...o, help: HELP.missing } : o)),
+        { key: 'minsize', label: 'Minimum Size Split', type: 'number', value: 5, hint: 'the fewest rows either side of a split (below 1: a share of the training rows)', help: HELP.minsize },
+        { key: 'ordinalOrder', label: 'Ordinal Restricts Order', type: 'check', value: true, hint: 'an ordinal X is cut between neighbouring levels only', help: HELP.ordinalOrder },
+        { key: 'method', label: 'Method', type: 'select', value: 'jmp', choices: [['jmp', 'Decision Tree'], ['cart', 'CART (scikit-learn)']], hint: 'Decision Tree: JMP\'s LogWorth; CART: scikit-learn\'s trees, for comparison', help: HELP.method },
       ],
       validate: (spec) => {
         const m = spec.options && spec.options.minsize;

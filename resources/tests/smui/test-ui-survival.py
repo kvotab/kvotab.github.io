@@ -338,6 +338,9 @@ async def main():
     r = await page.ev(open_report_js('nonlinear', {'y': ['y']}, {'model': "__import__('os').getcwd()", 'start': ''}))
     check('a model outside the language is refused', any('quotes' in w for w in r['warnings']), True)
 
+    # ---- help for every input: the launch dialogs, the red-triangle forms, the controls in the reports
+    await help_inputs(page)
+
     # ---- (i) topics and Help
     audit = json.loads(await page.ev('JSON.stringify(KvotInfo.audit())'))
     check('every (i) has a topic', audit.get('noTopic'), [])
@@ -360,6 +363,141 @@ async def main():
     await shot(page, 'survival-08-phone.png')
     check('no script errors', page.errors, [])
     await page.close()
+
+
+# Read the (i) panels: the open panel's title and sections, each with its
+# heading, its choices [name, text] and its paragraphs.
+HELP_JS = r"""
+window.__help = {
+  sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+  panel() {
+    const p = document.querySelector('.info-panel');
+    if (!p) return null;
+    const out = { title: p.querySelector('.info-panel-title').textContent, sections: [] };
+    let cur = { heading: '', choices: [], text: [] };
+    out.sections.push(cur);
+    for (const n of p.querySelector('.info-panel-body').children) {
+      if (n.tagName === 'H3') { cur = { heading: n.textContent, choices: [], text: [] }; out.sections.push(cur); }
+      else if (n.tagName === 'DL' && n.classList.contains('info-choices')) for (const dt of n.querySelectorAll('dt')) cur.choices.push([dt.textContent, dt.nextElementSibling ? dt.nextElementSibling.textContent : '']);
+      else cur.text.push(n.textContent);
+    }
+    return out;
+  },
+  async read(btn) { if (!btn) return null; btn.click(); await this.sleep(150); const r = this.panel(); KvotInfo.close(); await this.sleep(40); return r; },
+  names(p, heading) { const s = p && p.sections.find((x) => x.heading === heading); return s && s.choices.length ? s.choices.map((c) => c[0]) : null; },
+  // the shortest text of a section's choices, without what a role takes '(required, ...)'
+  shortest(p, heading) { const s = p && p.sections.find((x) => x.heading === heading); return s && s.choices.length ? Math.min(...s.choices.map((c) => c[1].replace(/\s*\([^()]*\)$/, '').length)) : 0; },
+  dialog() { return [...document.querySelectorAll('.sm-dialog')].pop(); },
+  async launch(id) {
+    SM.app.launch(id); await this.sleep(350);
+    const d = [...document.querySelectorAll('.sm-launch-dialog')].pop();
+    const audit = KvotInfo.audit();
+    const p = await this.read(d.querySelector('.sm-dialog-head .info-btn'));
+    return { d, p, noTopic: audit.noTopic };
+  },
+  async menu(title, path, rep) {
+    rep = rep || SM.app.reports[SM.app.reports.length - 1];
+    const h = [...rep.body.querySelectorAll('.sm-ob-head')].find((x) => x.querySelector('h2, h3, h4').textContent === title);
+    if (!h) throw new Error('no outline ' + title);
+    h.querySelector('.sm-ob-menu').click();
+    for (const label of path) {
+      await this.sleep(60);
+      const m = [...document.querySelectorAll('.sm-menu')].pop();
+      const b = m && [...m.querySelectorAll('button')].find((x) => x.querySelector('.sm-label') && x.querySelector('.sm-label').textContent === label);
+      if (!b) { SM.ui.closeMenus(0); throw new Error('no menu item ' + label); }
+      b.click();
+    }
+  },
+  async form() {
+    let d = null;
+    for (let i = 0; i < 60 && !(d && d.querySelector('.sm-form')); i++) { await this.sleep(50); d = this.dialog(); }
+    if (!d) throw new Error('no form');
+    const labels = [...d.querySelectorAll('.sm-form label')].map((l) => l.textContent);
+    const audit = KvotInfo.audit();
+    const p = await this.read(d.querySelector('.sm-dialog-head .info-btn'));
+    [...d.querySelectorAll('.sm-dialog-foot .sm-btn')].find((b) => b.textContent === 'Cancel').click();
+    await this.sleep(60);
+    return { labels, title: p && p.title, fields: this.names(p, 'Fields'), shortest: this.shortest(p, 'Fields'), noTopic: audit.noTopic };
+  },
+  async outline(title, rep) {
+    rep = rep || SM.app.reports[SM.app.reports.length - 1];
+    const h = [...rep.body.querySelectorAll('.sm-ob-head')].find((x) => x.querySelector('h2, h3, h4').textContent === title);
+    return h ? this.read(h.querySelector('.kvot-info-slot .info-btn')) : null;
+  },
+};
+"""
+
+
+async def help_inputs(page):
+    """What every input is for, in the (i) panels: each launch dialog's roles,
+    options and the Nonlinear model fields; the red-triangle forms' fields;
+    Life Distribution's check boxes, scale and calculator."""
+    await page.ev(HELP_JS)
+    await page.ev('SM.app.showTab(SM.app.tabOf(SM.app.tables.find(t => t.name === "Clinical study")))')
+    r = await page.ev('''(async () => {
+      const out = {};
+      for (const id of ['lifedist', 'survival', 'parametric', 'phreg', 'fitcurve', 'nonlinear']) {
+        const a = await __help.launch(id);
+        out[id] = { roles: __help.names(a.p, 'Roles'), rolesShort: __help.shortest(a.p, 'Roles'), opts: __help.names(a.p, 'Options'), optsShort: __help.shortest(a.p, 'Options'),
+          model: __help.names(a.p, 'The model'), modelShort: __help.shortest(a.p, 'The model'), noTopic: a.noTopic };
+        a.d.querySelector('.sm-dialog-x').click(); await __help.sleep(60);
+      }
+      return out; })()''')
+    if isinstance(r, str):
+        print(r)
+    want = {'lifedist': (['Y, Time to Event', 'Censor', 'Freq', 'By'], ['Censor Code']),
+            'survival': (['Y, Time to Event', 'Grouping', 'Censor', 'Freq', 'By'], ['Censor Code', 'Plot Failure instead of Survival']),
+            'parametric': (['Time to Event', 'Censor', 'Model Effects', 'Freq', 'By'], ['Censor Code', 'Distribution']),
+            'phreg': (['Time to Event', 'Censor', 'Model Effects', 'Freq', 'By'], ['Censor Code', 'Ties']),
+            'fitcurve': (['Y, Response', 'X, Regressor', 'Group', 'Weight', 'Freq', 'By'], ['Fit']),
+            'nonlinear': (['Y, Response', 'Weight', 'Freq', 'By'], None)}
+    for k, (roles, opts) in want.items():
+        x = r[k]
+        check(f'{k}: the launch dialog\'s (i) lists every role and option', (x['roles'], x['opts']), (roles, opts))
+        check(f'{k}: each explained, beyond what a role takes', x['rolesShort'] > 30 and (opts is None or x['optsShort'] > 60), True)
+        check(f'{k}: every (i) of the open dialog has a topic', x['noTopic'], [])
+    check('Nonlinear: the model\'s fields', (r['nonlinear']['model'], r['nonlinear']['modelShort'] > 60), (['Model', 'Parameters and starting values', 'Find Parameters'], True))
+
+    # ---- the red-triangle forms
+    r = await page.ev(open_report_js('survival', {'y': ['months'], 'censor': ['censored'], 'group': ['treatment']}, {'censorCode': '1'}))
+    check('a survival report to work on', r['errors'], [])
+    r = await page.ev('''(async () => {
+      const out = {};
+      await __help.menu('Product-Limit Survival Fit', ['Estimate Survival Probability…']); out.times = await __help.form();
+      await __help.menu('Product-Limit Survival Fit', ['Estimate Time Quantile…']); out.probs = await __help.form();
+      return out; })()''')
+    check('Estimate Survival Probability: its field, explained', (r['times']['fields'], r['times']['shortest'] > 60), (['Times (months), separated by commas'], True))
+    check('Estimate Time Quantile: its field, explained', (r['probs']['fields'], r['probs']['shortest'] > 60), (['Failure probabilities between 0 and 1, separated by commas'], True))
+    r = await page.ev(open_report_js('parametric', {'y': ['months'], 'censor': ['censored'], 'x': ['treatment', 'age']}, {'censorCode': '1', 'dist': 'weibull'}))
+    r = await page.ev('''(async () => {
+      const out = {};
+      await __help.menu('Parametric Survival Fit: Weibull', ['Save Quantiles…']); out.q = await __help.form();
+      await __help.menu('Parametric Survival Fit: Weibull', ['Save Survival Probabilities…']); out.s = await __help.form();
+      return out; })()''')
+    check('Save Quantiles and Save Survival Probabilities: their fields', (r['q']['fields'], r['s']['fields'], min(r['q']['shortest'], r['s']['shortest']) > 60),
+          (['Failure probability (0 to 1)'], ['Time (months)'], True))
+    r = await page.ev(open_report_js('fitcurve', {'y': ['months'], 'x': ['age']}, {'first': 'linear'}))
+    r = await page.ev('''(async () => { await __help.menu('Fit Linear', ['Custom Inverse Prediction…']); return __help.form(); })()''')
+    if isinstance(r, str):
+        print(r)
+    check('Custom Inverse Prediction: its field', (r['fields'], r['shortest'] > 60), (['Values of months, separated by commas'], True))
+    r = await page.ev(open_report_js('nonlinear', {'y': ['months']}, {'model': 'a + b * :age', 'start': 'a = 1, b = 1'}))
+    r = await page.ev('''(async () => {
+      const out = {};
+      await __help.menu('Nonlinear Fit', ['Edit Model…']); out.edit = await __help.form();
+      await __help.menu('Nonlinear Fit', ['Fit Options…']); out.opts = await __help.form();
+      return out; })()''')
+    check('Edit Model: the model language topic, then its fields', (r['edit']['title'], r['edit']['fields']), ('The model language', ['Model', 'Parameters and starting values']))
+    check('Fit Options: its fields, explained', (r['opts']['fields'], r['opts']['shortest'] > 60), (['Method', 'Maximum function evaluations (empty: automatic)'], True))
+    check('every (i) of the open forms has a topic', [x['noTopic'] for x in (r['edit'], r['opts'])], [[], []])
+
+    # ---- Life Distribution: the check boxes and the scale, the calculator
+    r = await page.ev(open_report_js('lifedist', {'y': ['months'], 'censor': ['censored']}, {'censorCode': '1'}))
+    r = await page.ev('''(async () => ({ compare: __help.names(await __help.outline('Compare Distributions'), 'The table beside the plot'),
+      calc: __help.names(await __help.outline('Distribution Calculator'), ''), noTopic: KvotInfo.audit().noTopic }))()''')
+    check('Compare Distributions\' (i): its check boxes and scale buttons', r['compare'], ['Show', 'Scale'])
+    check('the Distribution Calculator has an (i) for its boxes', r['calc'], ['Probability of failure by the time', 'Time by which a fraction has failed'])
+    check('every (i) of these reports has a topic', r['noTopic'], [])
 
 
 asyncio.run(main())

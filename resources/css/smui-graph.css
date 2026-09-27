@@ -108,6 +108,11 @@
 .sm-gb.is-done .sm-gb-bar, .sm-gb.is-done .sm-gb-left, .sm-gb.is-done .sm-gb-palette, .sm-gb.is-done .sm-gb-zone { display: none; }
 .sm-gb.is-done .sm-gb-work { grid-template-columns: minmax(0, 1fr); }
 .sm-gb.is-done .sm-gb-frame { grid-template-columns: auto; grid-template-areas: "plot"; }
+/* on paper, the graph alone too (the controls are left out, smui.css) */
+@media print {
+  .sm-gb .sm-gb-work { grid-template-columns: minmax(0, 1fr); }
+  .sm-gb .sm-gb-frame { grid-template-columns: auto; grid-template-areas: "plot"; }
+}
 
 /* phone width: the columns, then the graph with its zones, then the properties */
 @container gb (max-width: 700px) {

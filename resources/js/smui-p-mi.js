@@ -344,7 +344,8 @@
   async function chooseImputation(ctx) {
     const res = ctx.mi.res;
     const v = await SM.ui.form({ title: 'Save Imputed Table', info: 'p:mi:save', lead: `A new table with the missing values of ${res.imputed.map((x) => x.column).join(', ') || 'no column'} filled in from one of the ${res.m} imputations.`,
-      fields: [{ key: 'j', label: `Imputation (1 to ${res.m})`, type: 'number', value: 1 }],
+      fields: [{ key: 'j', label: `Imputation (1 to ${res.m})`, type: 'number', value: 1, helpLabel: 'Imputation',
+        help: 'Which of the imputations fills in the new table, a whole number from 1 to m. Each is one plausible completion; an analysis of a single imputed table understates the uncertainty, which the pooled fit (or all the imputations stacked) takes into account.' }],
       validate: (x) => (Number.isInteger(x.j) && x.j >= 1 && x.j <= res.m ? null : `Give a whole number from 1 to ${res.m}.`) });
     if (v) saveOne(ctx, v.j - 1);
   }
@@ -421,6 +422,18 @@
     const intOf = (i) => { const s = String(i.value).trim(); return s === '' ? null : Number(s); };
     return {
       el: box,
+      help: [
+        ['Add', 'Adds the columns selected in the list on the left to the analysis model, each as a main effect.'],
+        ['Cross', 'Adds an interaction: the crossing of two or more columns selected on the left; with effects selected in the model list as well, each of them crossed with each selected column; with only effects selected, their crossing.'],
+        ['Remove', 'Takes the effects selected in the model list out (a double click removes one too).'],
+        ['Effects', 'The analysis model\'s effects: click to select one, shift or ctrl/⌘ for more. Their columns join the imputation. With none the model is the response\'s mean, pooled.'],
+        ['Model', 'The analysis model: Least Squares (the default for a continuous response), Logistic or Probit for a two-level one (Logistic by default for a categorical response), Poisson for counts.'],
+        ['Method', 'MICE (chained equations, the default): each column in turn regressed on the others and its missing values drawn by predictive mean matching, so every imputed value is one that occurs; for continuous, two-level and ordinal columns. Bayesian Gaussian: a Gibbs sampler of a multivariate normal; numbers only, no categorical column with missing values.'],
+        ['Imputations m', 'How many completed tables are made, analysed and pooled: 2 to 200, 20 by default. More make the between-imputation variance, and so the pooled standard errors, steadier; the time grows with m.'],
+        ['Burn-in', 'The imputer\'s cycles before the first imputation is taken, so that it forgets its start. Empty: statsmodels\' default, 10 for MICE and 100 for the normal. Raise it when the trace still drifts after the shaded burn-in.'],
+        ['Skip', 'The cycles run and not used between two imputations, so that they are less alike. Empty: statsmodels\' default, 3 for MICE and 10 for the normal. All the cycles together, burn-in + m × (skip + 1), may be at most 20 000.'],
+        ['Seed', 'The seed of the imputer\'s draws, a whole number from 0: the same seed gives the same imputations, here and in the Python shown.'],
+      ],
       read() {
         const m = intOf(mIn), seed = intOf(seedIn);
         return { effects: effects.map(serialize), options: { model: modelSel.value, method: methodSel.value, m: m == null ? 20 : m, burnin: intOf(burnIn), skip: intOf(skipIn), seed: seed == null ? 1 : seed } };
@@ -472,11 +485,14 @@
   async function imputationsDialog(ctx) {
     const method = ctx.opt('method', 'mice');
     const [b0, s0] = DEFAULTS[method];
+    const name = method === 'mice' ? 'MICE' : 'the normal';
     const v = await SM.ui.form({ title: 'Imputations', info: 'p:mi:method', fields: [
-      { key: 'm', label: 'Imputations m', type: 'number', value: ctx.opt('m', 20) },
-      { key: 'burnin', label: `Burn-in cycles (empty: ${b0})`, type: 'number', value: ctx.opt('burnin', null) },
-      { key: 'skip', label: `Cycles skipped between imputations (empty: ${s0})`, type: 'number', value: ctx.opt('skip', null) },
-      { key: 'seed', label: 'Seed', type: 'number', value: ctx.opt('seed', 1) }],
+      { key: 'm', label: 'Imputations m', type: 'number', value: ctx.opt('m', 20), help: 'How many completed tables are made and pooled, 2 to 200 (20 by default): more make the pooled standard errors steadier, and take longer.' },
+      { key: 'burnin', label: `Burn-in cycles (empty: ${b0})`, type: 'number', value: ctx.opt('burnin', null), helpLabel: 'Burn-in cycles',
+        help: `The cycles before the first imputation, so that the imputer forgets its start; empty: statsmodels' ${b0} for ${name}. Raise it when a trace still drifts after the shaded burn-in.` },
+      { key: 'skip', label: `Cycles skipped between imputations (empty: ${s0})`, type: 'number', value: ctx.opt('skip', null), helpLabel: 'Cycles skipped',
+        help: `The cycles run and not used between two imputations, so that they are less alike; empty: statsmodels' ${s0} for ${name}. Burn-in + m × (skip + 1) may be at most 20 000 cycles.` },
+      { key: 'seed', label: 'Seed', type: 'number', value: ctx.opt('seed', 1), help: 'A whole number from 0: the same seed gives the same imputations, here and in the Python shown.' }],
     validate: (x) => (!(Number.isInteger(x.m) && x.m >= 2 && x.m <= 200) ? 'Imputations: a whole number from 2 to 200.'
       : [x.burnin, x.skip].some((y) => y != null && !(Number.isInteger(y) && y >= 0)) ? 'Burn-in and skip: whole numbers, zero or more.'
         : !(Number.isInteger(x.seed) && x.seed >= 0) ? 'Seed: a whole number, zero or more.' : null) });
@@ -584,12 +600,19 @@
         { heading: 'Roles', choices: [['Y, Columns to Impute', 'The columns to fill in; each is imputed from all the others, and used to impute them. Continuous columns, and (MICE) two-level or ordinal ones.'],
           ['Model Response', 'The analysis model\'s Y (optional). Empty: impute only, and save the imputed tables.'], ['By', 'A separate imputation for each level.']] },
         { heading: 'Analysis Model', text: 'Add the effects of the model from the selected columns (Cross for an interaction) and choose its type. Its columns join the imputation. Nominal effects are effect coded and continuous columns centred in crossings, as JMP does.' },
-        { heading: 'Imputation', text: 'MICE or Bayesian Gaussian, the number of imputations m (20), the burn-in and the cycles skipped between imputations (empty: statsmodels\' defaults, 10 and 3 for MICE, 100 and 10 for the normal), and the seed.' },
+        { heading: 'In the red triangle', text: 'Method, Analysis Model Type and Imputations… (m, the burn-in, the cycles skipped and the seed) change the report without relaunching it; a new method goes back to its own default burn-in and skip.' },
         { heading: 'Report and Save', text: 'Missing Data, the Pooled Estimates beside the complete-case fit, the Imputation Diagnostics. Save (red triangle) writes one imputed table, all m stacked with .imp and .id columns, or the average of the imputations as new columns.' },
       ],
       more: MORE,
     },
-    'p:mi:missing': { kicker: 'Multiple Imputation', title: 'Missing Data', lead: 'How many values each column misses (Missing Columns Report) and which combinations are missing together (Missing Value Report), over the report\'s rows, as Explore Missing Values shows them. Click a line to select its rows.', more: MORE },
+    'p:mi:missing': {
+      kicker: 'Multiple Imputation', title: 'Missing Data',
+      lead: 'How many values each column misses (Missing Columns Report) and which combinations are missing together (Missing Value Report), over the report\'s rows, as Explore Missing Values shows them. Click a line to select its rows.',
+      sections: [{ heading: 'In the report', choices: [['A line of Missing Columns Report', 'click it to select the rows where that column is missing.'],
+        ['A line of Missing Value Report', 'click it to select the rows with that pattern: missing exactly in the columns with a 1.'],
+        ['The red triangle', 'Select Rows with Missing selects every row that misses a value in these columns, Select Complete Rows the others.']] }],
+      more: MORE,
+    },
     'p:mi:pooled': {
       kicker: 'Multiple Imputation', title: 'Pooled Estimates',
       lead: 'The analysis model\'s estimates pooled over the imputations by Rubin\'s rules, statsmodels\' MICE.fit or MI.fit, with the complete-case fit beside them.',
@@ -599,14 +622,20 @@
         ['Complete cases', 'the same model on the rows with every model column observed']] }],
       more: MORE,
     },
-    'p:mi:diagnostics': { kicker: 'Multiple Imputation', title: 'Imputation Diagnostics', lead: 'For each imputed column: its observed and imputed values overlaid, and the trace of the imputed values\' mean over the imputer\'s cycles (the burn-in shaded, the imputations dotted). A trace with a trend after the burn-in asks for a longer burn-in.', more: MORE },
+    'p:mi:diagnostics': {
+      kicker: 'Multiple Imputation', title: 'Imputation Diagnostics',
+      lead: 'For each imputed column: its observed and imputed values overlaid, and the trace of the imputed values\' mean over the imputer\'s cycles (the burn-in shaded, the imputations dotted). A trace with a trend after the burn-in asks for a longer burn-in.',
+      sections: [{ heading: 'In the report', choices: [['A bar', 'click an Observed bar to select the rows whose value falls in it, an Imputed bar the rows with an imputed value there in any of the imputations (a bin, or a level for a categorical column).'],
+        ['A column\'s red triangle', 'shows or hides its Observed and Imputed graph and its Trace; Select Rows Imputed selects the rows whose value was missing.']] }],
+      more: MORE,
+    },
     'p:mi:model': { kicker: 'Multiple Imputation', title: 'Analysis Model', lead: 'The model fitted to every imputed table: the Model Response on these effects (Add a column, Cross columns for an interaction, Remove). Least Squares for a continuous response, Logistic or Probit for a two-level one, Poisson for counts. No effects: the pooled mean of the response.', more: MORE },
     'p:mi:method': {
       kicker: 'Multiple Imputation', title: 'Imputation',
       lead: 'How the missing values are drawn.',
       sections: [{ choices: [['MICE', 'chained equations: each column in turn regressed on the others, its missing values drawn by predictive mean matching (observed values of the 20 nearest rows); for mixed data'],
-        ['Bayesian Gaussian', 'a Gibbs sampler of a multivariate normal; continuous columns (the page standardizes them for statsmodels\' priors)'],
-        ['m', 'the number of imputations; more make the pooled standard errors steadier'], ['Burn-in', 'the cycles run before the first imputation'], ['Skip', 'the cycles run, and not used, between two imputations'], ['Seed', 'the same seed gives the same imputations, here and in the Python shown']] }],
+        ['Bayesian Gaussian', 'a Gibbs sampler of a multivariate normal; continuous columns (the page standardizes them for statsmodels\' priors)']] },
+      { text: 'Both run one chain: the burn-in cycles, then an imputation every skip + 1 cycles, m in all. More imputations make the pooled standard errors steadier; the seed makes the imputations repeatable, here and in the Python shown.' }],
       more: MORE,
     },
     'p:mi:save': { kicker: 'Multiple Imputation', title: 'Save', lead: 'Imputed Table: a new table with the missing values filled in from one imputation. All Imputations Stacked: the m tables one after another, with .imp (the imputation) and .id (the row). Average of the Imputations: new columns in this table, each missing value replaced by the mean (or most frequent level) of its imputations; a single filled-in column understates the uncertainty, which is why the pooled fit is the one to report.', more: MORE },
@@ -621,9 +650,12 @@
     launch: {
       lead: 'Fill in the missing values of the columns several times, fit an analysis model to each completed table and pool the fits (Rubin\'s rules). The imputation uses every column cast here and in the model.',
       roles: [
-        { key: 'y', label: 'Y, Columns to Impute', min: 1, hint: 'required: impute these, and impute from them' },
-        { key: 'response', label: 'Model Response', max: 1, hint: 'optional: the analysis model\'s Y; empty: impute only' },
-        { key: 'by', label: 'By', hint: 'optional' },
+        { key: 'y', label: 'Y, Columns to Impute', min: 1, hint: 'required: impute these, and impute from them',
+          help: 'The columns whose missing values are filled in; each is imputed from all the other columns of the imputation and helps to impute them. Continuous columns, and with MICE two-level and ordinal ones too (a nominal column of more levels may help but not be imputed). Include every column that predicts the missing values, or whether they are missing.' },
+        { key: 'response', label: 'Model Response', max: 1, hint: 'optional: the analysis model\'s Y; empty: impute only',
+          help: 'The Y of the analysis model that is fitted to every completed table and pooled. It joins the imputation, as it must, and may have missing values itself; a categorical one takes two levels (Logistic or Probit). Empty: the report imputes only, for Save.' },
+        { key: 'by', label: 'By', hint: 'optional',
+          help: 'A separate imputation, and analysis, of the rows of each level (each combination of levels, with several By columns). Rows with a missing By value are left out.' },
       ],
       extra: launchExtra,
       validate,

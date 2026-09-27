@@ -74,6 +74,118 @@ def launch_js(platform, casts, opts=None):
     return f'({LAUNCH})({json.dumps(platform)}, {json.dumps(casts)}, {json.dumps(opts or {})})'
 
 
+# The (i) of a launch dialog, of a form or design dialog and of an outline:
+# open it, read the sections of its panel ([{heading, choices: [[name,
+# text]]}]), close it.
+HELP_JS = r'''
+window.__hlp = {
+  sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+  async read(btn) {
+    if (!btn) return null;
+    btn.click();
+    await this.sleep(120);
+    const p = document.querySelector('.info-panel');
+    if (!p) return null;
+    const secs = [];
+    let cur = null;
+    for (const node of p.querySelector('.info-panel-body').children) {
+      if (node.tagName === 'H3') { cur = { heading: node.textContent, choices: [] }; secs.push(cur); }
+      else if (node.matches('dl.info-choices')) {
+        if (!cur) { cur = { heading: '', choices: [] }; secs.push(cur); }
+        node.querySelectorAll(':scope > dt').forEach((dt) => cur.choices.push([dt.textContent, dt.nextElementSibling ? dt.nextElementSibling.textContent : '']));
+      }
+    }
+    const out = { title: p.querySelector('.info-panel-title').textContent, secs };
+    KvotInfo.close();
+    await this.sleep(30);
+    return out;
+  },
+  async launch(id) {
+    SM.app.launch(id);
+    await this.sleep(300);
+    const dlg = [...document.querySelectorAll('.sm-launch-dialog')].pop();
+    if (!dlg) return { error: `no launch dialog for ${id}` };
+    const noTopic = KvotInfo.audit().noTopic;
+    const info = await this.read(dlg.querySelector('.sm-dialog-head .info-btn'));
+    dlg.querySelector('.sm-dialog-x').click();
+    const L = SM.platforms.get(id).launch;
+    return { noTopic, info, roles: L.roles.map((r) => r.label), options: (L.options || []).map((o) => o.label) };
+  },
+  async dialog(run) {
+    const n0 = SM.ui.dialogs.length;
+    run();
+    let d = null;
+    for (let i = 0; i < 80 && !d; i++) { await this.sleep(50); if (SM.ui.dialogs.length > n0) d = SM.ui.dialogs[SM.ui.dialogs.length - 1].el; }
+    if (!d) return { error: 'no dialog opened' };
+    await this.sleep(100);
+    const labels = [...d.querySelectorAll('.sm-form label')].map((l) => l.textContent);
+    const noTopic = KvotInfo.audit().noTopic;
+    const info = await this.read(d.querySelector('.sm-dialog-head .info-btn'));
+    d.querySelector('.sm-dialog-x').click();
+    await this.sleep(60);
+    return { labels, noTopic, info };
+  },
+  head(rep, title) { return [...rep.body.querySelectorAll('.sm-ob-head')].find((x) => x.querySelector('h2, h3, h4').textContent === title); },
+  async form(rep, title, path) {
+    const h = this.head(rep, title);
+    if (!h) return { error: `no outline ${title}` };
+    return this.dialog(() => {
+      h.querySelector('.sm-ob-menu').click();
+      for (const label of path) {
+        const menus = document.querySelectorAll('.sm-menu');
+        const b = [...menus[menus.length - 1].querySelectorAll('button')].find((x) => x.querySelector('.sm-label') && x.querySelector('.sm-label').textContent === label);
+        if (!b) { SM.ui.closeMenus(0); throw new Error(`no menu item ${label}`); }
+        b.click();
+      }
+    });
+  },
+  async outline(rep, title) {
+    const h = this.head(rep, title);
+    if (!h) return { error: `no outline ${title}` };
+    return this.read(h.querySelector('.info-btn'));
+  },
+};
+'''
+
+
+def section(info, heading):
+    """The choices of the last section of an (i) panel with this heading."""
+    secs = [s for s in (info or {}).get('secs', []) if s['heading'] == heading]
+    return secs[-1]['choices'] if secs else []
+
+
+def all_names(info):
+    """Every name a panel explains; 'Proportion 1, Proportion 2' names two."""
+    out = set()
+    for s in (info or {}).get('secs', []):
+        for n, _ in s['choices']:
+            out.add(n)
+            out.update(p.strip() for p in n.split(', '))
+    return out
+
+
+def check_launch(r, name):
+    check(f'{name} launch dialog: every (i) has a topic while it is open', r.get('noTopic'), [])
+    roles = section(r.get('info'), 'Roles')
+    check(f'{name} launch (i): the Roles list every role', [n for n, _ in roles], r.get('roles'))
+    check(f'{name} launch (i): each role says what it is for before what it takes', [n for n, t in roles if t.startswith('(') or len(t) < 60], [])
+    opts = section(r.get('info'), 'Options')
+    check(f'{name} launch (i): the Options list every option, each with its help', ([n for n, _ in opts], [n for n, t in opts if len(t) < 40]), (r.get('options'), []))
+
+
+def check_form(r, name, title=None):
+    """A form's (i) explains every field, under its label or under the name
+    (helpLabel) that stands for fields repeated per column."""
+    check(f'{name}: the form opens, every (i) has a topic while it is open', (r.get('error'), r.get('noTopic')), (None, []))
+    fields = section(r.get('info'), 'Fields')
+    names = [n for n, _ in fields]
+    missing = [lab for lab in r.get('labels') or [] if lab not in names and not any(n.lower() in lab.lower() for n in names)]
+    check(f'{name}: its (i) explains every field', (bool(names), missing), (True, []))
+    check(f'{name}: ... each with what it is for', [n for n, t in fields if len(t) < 30], [])
+    if title:
+        check(f'{name}: the (i) builds on the topic {title}', (r.get('info') or {}).get('title'), title)
+
+
 async def settle(page, s=0.8):
     await asyncio.sleep(s)
 
@@ -181,6 +293,9 @@ async def main():
     for chart in ('xbar_s', 'ir', 'lj', 'run', 'ewma', 'cusum'):
         r = await page.ev(open_report_js('controlchart', {'y': ['diameter (mm)'], 'subgroup': ['subgroup']}, {'chart': chart}))
         check(f'{chart} chart: report without errors', (r['errors'], r['plots']), ([], 1))
+    # a subgroup size of 1 is every row a point: Automatic is the individuals chart
+    r = await page.ev(open_report_js('controlchart', {'y': ['diameter (mm)']}, {'subgroupSize': 1}))
+    check('Automatic with a subgroup size of 1: Individual & Moving Range, without errors', (r['errors'], r['plots'], any('Individual' in o for o in r['outlines'])), ([], 1, True))
 
     # ---- Process Capability from its launch dialog, spec limits from the column property
     r = await page.ev(launch_js('capability', [['Y, Process', ['diameter (mm)']], ['Subgroup', ['subgroup']]]))
@@ -398,6 +513,79 @@ async def main():
     })()''')
     check(f'every red triangle opens ({r["n"]} menus, {r["items"]} items)', r['n'] > 40 and r['items'] > 300, True)
     check('no script errors from the menus', page.errors, [])
+
+    # ---- help for every input: the launch dialogs, the forms, the design dialogs, the controls in the reports
+    await page.ev(HELP_JS)
+    mine = ['controlchart', 'capability', 'pareto', 'variability', 'evaldesign']
+    r = await page.ev(f'''{json.dumps(mine)}.flatMap((id) => {{ const L = SM.platforms.get(id).launch;
+      return [...L.roles, ...(L.options || [])].filter((f) => !f.help).map((f) => `${{id}}: ${{f.label}}`); }})''')
+    check('every role and option of the quality platforms and Evaluate Design has its help', r, [])
+    await page.ev("SM.app.showTab(SM.app.tabOf(SM.app.tables.find(t => t.col('diameter (mm)'))))")
+    for pid in mine:
+        r = await page.ev(f'__hlp.launch({json.dumps(pid)})')
+        check_launch(r, pid)
+        if pid == 'capability':
+            check('capability launch (i): the Spec Limits part explains its button', [n for n, t in section(r.get('info'), 'Spec Limits') if len(t) > 60], ['Spec Limits…'])
+    # the launch's Spec Limits form: its fields repeat per column, explained once each
+    r = await page.ev('''(async () => {
+      SM.app.launch('capability'); await __hlp.sleep(300);
+      const dlg = document.querySelector('.sm-launch-dialog');
+      [...dlg.querySelectorAll('.sm-pick-list li')].find((x) => x.textContent === 'diameter (mm)').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      [...dlg.querySelectorAll('.sm-role .sm-btn')].find((b) => b.textContent === 'Y, Process').click();
+      const out = await __hlp.dialog(() => dlg.querySelector('.sm-q-launch .sm-btn').click());
+      dlg.querySelector('.sm-dialog-x').click();
+      return out; })()''')
+    check_form(r, 'the launch\'s Spec Limits form')
+    check('... under the names LSL, Target, USL', [n for n, _ in section(r.get('info'), 'Fields')], ['LSL', 'Target', 'USL'])
+    await page.ev('''(async () => {
+      const open = async (tableOf, id, roles, options) => { const t = SM.app.tables.find(tableOf); SM.app.showTab(SM.app.tabOf(t));
+        const ids = {}; for (const [k, names] of Object.entries(roles)) ids[k] = names.map((n) => t.col(n).id);
+        const rep = SM.app.openReport(SM.platforms.get(id), { roles: ids, options: options || {} }, t); await new Promise((res) => rep.on('done', res)); return rep; };
+      const proc = (t) => t.col('diameter (mm)');
+      window.__cc = await open(proc, 'controlchart', { y: ['diameter (mm)'], subgroup: ['subgroup'] });
+      window.__ir = await open(proc, 'controlchart', { y: ['diameter (mm)'] }, { chart: 'ir' });
+      window.__ew = await open(proc, 'controlchart', { y: ['diameter (mm)'], subgroup: ['subgroup'] }, { chart: 'ewma' });
+      window.__cu = await open(proc, 'controlchart', { y: ['diameter (mm)'], subgroup: ['subgroup'] }, { chart: 'cusum' });
+      window.__cap = await open(proc, 'capability', { y: ['diameter (mm)'], subgroup: ['subgroup'] });
+      window.__par = await open((t) => t.name === 'Defects', 'pareto', { y: ['cause'] });
+      window.__var = await open((t) => t.name === 'Gauge', 'variability', { y: ['Y'], x: ['Operator', 'Part'] });
+      window.__ev = await open((t) => t.name.startsWith('Full Factorial'), 'evaldesign', { x: ['Temp', 'Time', 'X3'] }); })()''', timeout=300)
+    cc = 'Control Chart Builder'
+    forms = [('__cc', cc, ['K Sigma…'], 'K Sigma'), ('__cc', cc, ['Specify Stats…'], 'Specify Stats'), ('__cc', cc, ['Moving Range Span…'], 'Moving Range Span'),
+             ('__cc', cc, ['Tests', 'Customize Tests…'], 'Customize Tests'), ('__cc', cc, ['Spec Limits…'], 'the chart\'s Spec Limits'),
+             ('__ir', cc, ['Subgroup Size…'], 'Subgroup Size'), ('__ew', cc, ['EWMA Parameters…'], 'EWMA Parameters'), ('__cu', cc, ['CUSUM Parameters…'], 'CUSUM Parameters'),
+             ('__cap', 'Process Capability', ['Spec Limits…'], 'the capability\'s Spec Limits'), ('__cap', 'Goal Plot', ['Goal Ppk…'], 'Goal Ppk'),
+             ('__cap', 'diameter (mm) Capability', ['Historical Sigma…'], 'Historical Sigma'), ('__par', 'Pareto Plot', ['Causes', 'Combine Causes…'], 'Combine Causes'),
+             ('__var', 'Variability Gauge', ['Gauge Studies', 'Gauge RR…'], 'Gauge R&R'), ('__ev', 'Evaluate Design', ['Power Settings…'], 'Power Settings')]
+    for var, title_, path, name in forms:
+        check_form(await page.ev(f'__hlp.form(window.{var}, {json.dumps(title_)}, {json.dumps(path)})'), name)
+    r = await page.ev("__hlp.outline(__cap, 'Goal Plot')")
+    check('the Goal Plot\'s (i) explains its slider and its points', [n for n, t in section(r, 'In the report') if len(t) > 30], ['Goal', 'A point'])
+    # the design dialogs: every field and button of theirs is in their (i)
+    for label in ('Screening Design…', 'Full Factorial Design…', 'Response Surface Design…', 'Space Filling Design…'):
+        r = await page.ev(f'__hlp.dialog(() => SM.commands.all().find((c) => c.label === {json.dumps(label)}).action(SM.app))')
+        names = all_names(r.get('info'))
+        check(f'{label} every (i) has a topic while it is open', (r.get('error'), r.get('noTopic')), (None, []))
+        check(f'{label} its (i) explains every field of its forms', [x for x in r.get('labels') or [] if x not in names], [])
+        check(f'{label} ... and the responses, the factors and Make Table', [x for x in ('Response name', 'Goal', 'Add Response', 'Name', 'Role', 'Values', 'Add N', 'Make Table') if x not in names], [])
+    # Sample Size and Power: every field of every situation is in the (i) of its outline
+    r = await page.ev('''(async () => {
+      SM.app.launch('power'); const rep = SM.app.reports[SM.app.reports.length - 1]; await new Promise((res) => rep.on('done', res));
+      const labels = new Set(); const sits = [...rep.body.querySelectorAll('.sm-pw-sits .sm-btn')].map((b) => b.textContent);
+      for (const s of sits) {
+        const b = [...rep.body.querySelectorAll('.sm-pw-sits .sm-btn')].find((x) => x.textContent === s);
+        if (!b.classList.contains('is-on')) { b.click(); await new Promise((res) => rep.on('done', res)); }
+        rep.body.querySelectorAll('.sm-pw-form label').forEach((l) => labels.add(l.textContent.replace(/ ◦$/, '')));
+      }
+      const info = await __hlp.outline(rep, sits[sits.length - 1]);
+      SM.app.closeReport(rep);
+      return { sits: sits.length, labels: [...labels], info }; })()''', timeout=300)
+    names = all_names(r['info'])
+    check(f'Sample Size and Power: the fields of all {r["sits"]} situations are in the (i)', (r['sits'], [x for x in r['labels'] if x not in names]), (8, []))
+    check('... with the situation buttons, the ◦ fields and Continue', [x for x in ('The situation buttons', 'Fields marked ◦', 'Test', 'Continue') if x not in names], [])
+    r = await page.ev('(async () => { for (const rep of [__cc, __ir, __ew, __cu, __cap, __par, __var, __ev]) SM.app.closeReport(rep); return { dialogs: SM.ui.dialogs.length, audit: KvotInfo.audit().noTopic }; })()')
+    check('the forms closed with their ×, and every (i) left has a topic', (r['dialogs'], r['audit']), (0, []))
+    check('no script errors from the help checks', page.errors, [])
 
     # ---- projects keep the reports; the Python script holds their code
     r = await page.ev('''(async () => {

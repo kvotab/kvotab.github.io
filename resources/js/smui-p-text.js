@@ -56,6 +56,17 @@
   };
   const ink = () => (SM.util.themeColors().dark ? INK.dark : INK.light);
 
+  /* What each field of the forms is for: the (i). */
+  const HELP = {
+    maxTerms: 'The columns of the document term matrix: at most this many terms, the most frequent first (ties alphabetically), from 1 to 100 000.',
+    minFreq: 'Only terms seen at least this many times in all become columns; rarer ones are left out.',
+    manage: {
+      stopAdd: 'One word per line (lowercase): each is left out of the terms, and no phrase begins or ends with one. scikit-learn\'s English stop words are left out anyway.',
+      recodes: 'One recode per line, old -> new (=, => and → work too): the old term is counted as the new one, an existing term to combine the two; nothing after the arrow drops the term.',
+      phrasesAdd: 'One phrase of two or more words per line: where its words follow each other in a text they count as one term, and the single words lose those occurrences.',
+    },
+  };
+
   const wide = (tbl) => el('div', { class: 'sm-tx-scroll' }, tbl);
   const snippet = (s, n = 90) => { const t = String(s ?? '').replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
   const scatterType = (n) => (n > 4000 && SM.report.hasWebGL() ? 'scattergl' : 'scatter');
@@ -277,7 +288,7 @@
     const v = await SM.ui.form({
       title: 'Recode', info: 'p:text:manage',
       lead: terms.length === 1 ? `The term "${terms[0]}" is counted as the term you give (an existing one, to combine them). An empty value drops it.` : `The ${terms.length} terms (${terms.slice(0, 6).join(', ')}${terms.length > 6 ? ', …' : ''}) are counted as the one term you give.`,
-      fields: [{ key: 'to', label: 'New value', type: 'text', value: terms[0] }],
+      fields: [{ key: 'to', label: 'New value', type: 'text', value: terms[0], help: 'The term to count the chosen term or terms as (lowercase): an existing term combines them with it, a new one renames them; empty drops them from the terms. The recode is kept with the report (Manage Recodes lists it).' }],
     });
     if (!v) return;
     const cur = listOpt(ctx, 'recodes', sc, {});
@@ -464,7 +475,7 @@
     return [
       { label: 'Layout', submenu: () => LAYOUTS.map(([v, l]) => ({ label: l, checked: o('cloudLayout', 'centered') === v, action: () => ctx.set('cloudLayout', v, sc) })) },
       { label: 'Coloring', submenu: () => COLORINGS.map(([v, l]) => ({ label: l, checked: o('cloudColor', 'uniform') === v, action: () => (v === 'column' ? cloudByDialog(ctx, S) : ctx.set('cloudColor', v, sc)) })) },
-      { label: 'Number of Terms…', action: async () => { const v = await SM.ui.form({ title: 'Word Cloud: Number of Terms', fields: [{ key: 'n', label: 'The most frequent terms to show', type: 'number', value: o('cloudN', 100) }], validate: (x) => (Number.isInteger(x.n) && x.n >= 1 && x.n <= 500 ? null : 'A whole number from 1 to 500') }); if (v) ctx.set('cloudN', v.n, sc); } },
+      { label: 'Number of Terms…', action: async () => { const v = await SM.ui.form({ title: 'Word Cloud: Number of Terms', fields: [{ key: 'n', label: 'The most frequent terms to show', type: 'number', value: o('cloudN', 100), help: 'How many of the most frequent terms the cloud shows, from 1 to 500 (100); each word\'s font grows with the square root of its count, so that its area follows the count.' }], validate: (x) => (Number.isInteger(x.n) && x.n >= 1 && x.n <= 500 ? null : 'A whole number from 1 to 500') }); if (v) ctx.set('cloudN', v.n, sc); } },
       { separator: true },
       { label: 'Remove', action: () => ctx.set('cloud', false, sc) },
     ];
@@ -476,7 +487,8 @@
     if (!nums.length) { SM.ui.toast('The table has no numeric column to colour by', { error: true }); return; }
     const cur = ctx.opt('cloudBy', null, sc);
     const v = await SM.ui.form({ title: 'Word Cloud: Color by Column', info: 'p:text:cloud', lead: 'Each word takes the mean of a numeric column over the rows that hold it: blue below the column\'s mean, red above.',
-      fields: [{ key: 'col', label: 'Column', type: 'select', value: cur && nums.some((c) => c.id === cur) ? cur : nums[0].id, choices: nums.map((c) => [c.id, c.name]) }] });
+      fields: [{ key: 'col', label: 'Column', type: 'select', value: cur && nums.some((c) => c.id === cur) ? cur : nums[0].id, choices: nums.map((c) => [c.id, c.name]),
+        help: 'The numeric column (a rating, say) whose mean over the rows that hold each word colours the word: blue below the column\'s mean over all the rows, red above, a neutral colour near it. A legend under the cloud gives the range.' }] });
     if (!v) return;
     ctx.set('cloudBy', v.col, sc, { rerun: false });
     ctx.set('cloudColor', 'column', sc);
@@ -589,11 +601,11 @@
       title: 'Latent Semantic Analysis, SVD', info: 'p:text:lsa',
       lead: 'The document term matrix is weighted, centered as chosen, and reduced by a truncated singular value decomposition.',
       fields: [
-        { key: 'maxTerms', label: 'Maximum Number of Terms', type: 'number', value: cur.maxTerms },
-        { key: 'minFreq', label: 'Minimum Term Frequency', type: 'number', value: cur.minFreq },
-        { key: 'weighting', label: 'Weighting', type: 'select', value: cur.weighting, choices: WEIGHTINGS },
-        { key: 'k', label: 'Number of Singular Vectors', type: 'number', value: cur.k },
-        { key: 'centering', label: 'Centering and Scaling', type: 'select', value: cur.centering, choices: CENTERING },
+        { key: 'maxTerms', label: 'Maximum Number of Terms', type: 'number', value: cur.maxTerms, help: `${HELP.maxTerms} 1000 by default.` },
+        { key: 'minFreq', label: 'Minimum Term Frequency', type: 'number', value: cur.minFreq, help: `${HELP.minFreq} 4 by default.` },
+        { key: 'weighting', label: 'Weighting', type: 'select', value: cur.weighting, choices: WEIGHTINGS, help: 'How each count is weighted before the decomposition (the choices above); TF IDF, the default, weighs a term down the more documents hold it.' },
+        { key: 'k', label: 'Number of Singular Vectors', type: 'number', value: cur.k, help: 'How many singular vectors to compute, from 1 (100 by default), cut to the documents and the terms less one; the plots show the first two, and the Save commands take the first ones.' },
+        { key: 'centering', label: 'Centering and Scaling', type: 'select', value: cur.centering, choices: CENTERING, help: 'Uncentered, Centered (the default) or Centered and Scaled: whether each term\'s mean is taken away, and each term also divided by its standard deviation, before the decomposition (the choices above).' },
       ],
       validate: specError,
     });
@@ -665,12 +677,12 @@
       title: 'Topic Analysis, Rotated SVD', info: 'p:text:topics',
       lead: 'JMP\'s topics are the first singular vectors rotated by varimax; scikit-learn\'s non-negative matrix factorization and latent Dirichlet allocation are offered too.',
       fields: [
-        { key: 'n', label: 'Number of Topics', type: 'number', value: cur.k },
-        { key: 'method', label: 'Method', type: 'select', value: cur.method, choices: METHODS },
-        { key: 'maxTerms', label: 'Maximum Number of Terms', type: 'number', value: cur.maxTerms },
-        { key: 'minFreq', label: 'Minimum Term Frequency', type: 'number', value: cur.minFreq },
-        { key: 'weighting', label: 'Weighting (LDA takes the counts)', type: 'select', value: cur.weighting, choices: WEIGHTINGS },
-        { key: 'centering', label: 'Centering and Scaling (rotated SVD)', type: 'select', value: cur.centering, choices: CENTERING },
+        { key: 'n', label: 'Number of Topics', type: 'number', value: cur.k, help: 'How many topics, from 1 to 1000 (10), cut to the documents and the terms less one.' },
+        { key: 'method', label: 'Method', type: 'select', value: cur.method, choices: METHODS, help: 'Rotated SVD (varimax), JMP\'s: the first singular vectors rotated so that each topic has a few terms with large loadings. Non-negative Matrix Factorization and Latent Dirichlet Allocation are scikit-learn\'s (the choices above); they start from the report\'s seed.' },
+        { key: 'maxTerms', label: 'Maximum Number of Terms', type: 'number', value: cur.maxTerms, help: `${HELP.maxTerms} 1000 by default.` },
+        { key: 'minFreq', label: 'Minimum Term Frequency', type: 'number', value: cur.minFreq, help: `${HELP.minFreq} 4 by default.` },
+        { key: 'weighting', label: 'Weighting (LDA takes the counts)', type: 'select', value: cur.weighting, choices: WEIGHTINGS, help: 'How each count is weighted, as for Latent Semantic Analysis (TF IDF by default); Latent Dirichlet Allocation always takes the plain counts.' },
+        { key: 'centering', label: 'Centering and Scaling (rotated SVD)', type: 'select', value: cur.centering, choices: CENTERING, help: 'For the rotated SVD only: Uncentered, Centered (the default) or Centered and Scaled, as for Latent Semantic Analysis. NMF and LDA take the weighted matrix as it is.' },
       ],
       validate: specError,
     });
@@ -683,7 +695,7 @@
   async function saveVectors(ctx, S, kind, spec) {
     let count = kind === 'svd' ? Math.min(spec.k, 10) : spec.k;
     if (kind === 'svd') {
-      const v = await SM.ui.form({ title: 'Save Document Singular Vectors', info: 'p:text:lsa', fields: [{ key: 'n', label: 'Number of singular vectors to save', type: 'number', value: count }], validate: (x) => (Number.isInteger(x.n) && x.n >= 1 && x.n <= 1000 ? null : 'A whole number from 1 to 1000') });
+      const v = await SM.ui.form({ title: 'Save Document Singular Vectors', info: 'p:text:lsa', fields: [{ key: 'n', label: 'Number of singular vectors to save', type: 'number', value: count, help: 'How many of the documents\' singular vectors (U S), the first ones, to add to the table as columns Doc Vec1, Doc Vec2, …, from 1 up to the number computed; every row of a document gets its value.' }], validate: (x) => (Number.isInteger(x.n) && x.n >= 1 && x.n <= 1000 ? null : 'A whole number from 1 to 1000') });
       if (!v) return;
       count = v.n;
     }
@@ -718,10 +730,11 @@
       title: 'Save Document Term Matrix', info: 'p:text:dtm',
       lead: 'A column for each term: its weighted count in each row\'s document.',
       fields: [
-        { key: 'which', label: 'Terms', type: 'select', value: chosen.length ? 'chosen' : 'top', choices: [...(chosen.length ? [['chosen', `The ${chosen.length} terms chosen in the Term List`]] : []), ['top', 'The most frequent terms']] },
-        { key: 'maxTerms', label: 'Maximum Number of Terms', type: 'number', value: 100 },
-        { key: 'minFreq', label: 'Minimum Term Frequency', type: 'number', value: 1 },
-        { key: 'weighting', label: 'Weighting', type: 'select', value: 'binary', choices: WEIGHTINGS },
+        { key: 'which', label: 'Terms', type: 'select', value: chosen.length ? 'chosen' : 'top', choices: [...(chosen.length ? [['chosen', `The ${chosen.length} terms chosen in the Term List`]] : []), ['top', 'The most frequent terms']],
+          help: 'The terms chosen in the Term List (when some are; the two fields below are then not used), or the most frequent terms, as many as the two fields below allow.' },
+        { key: 'maxTerms', label: 'Maximum Number of Terms', type: 'number', value: 100, help: 'With the most frequent terms: at most this many columns, from 1 to 100 000 (100).' },
+        { key: 'minFreq', label: 'Minimum Term Frequency', type: 'number', value: 1, help: 'With the most frequent terms: only terms seen at least this many times (1: every term).' },
+        { key: 'weighting', label: 'Weighting', type: 'select', value: 'binary', choices: WEIGHTINGS, help: 'The value of each cell: Binary (the default: 1 when the document holds the term, a 0/1 indicator for modeling), Ternary, Frequency, Log Freq or TF IDF, as Latent Semantic Analysis weighs them.' },
       ],
       validate: specError,
     });
@@ -764,7 +777,7 @@
       recodes: { title: 'Manage Recodes', lead: 'One recode per line: old value -> new value. The old term is counted as the new one (an existing term, to combine them); nothing after the arrow drops the term.', value: Object.entries(listOpt(ctx, 'recodes', sc, {})).map(([a, b]) => `${a} -> ${b}`).join('\n') },
       phrasesAdd: { title: 'Manage Phrases', lead: 'Your phrases, one per line (two or more words): each is counted as one term where its words follow each other, and its words lose those occurrences.', value: listOpt(ctx, 'phrasesAdd', sc, []).join('\n') },
     }[key];
-    const v = await SM.ui.form({ title: `${cfg.title}: ${col.name}`, info: 'p:text:manage', lead: cfg.lead, fields: [{ key: 'text', label: cfg.title.replace('Manage ', ''), type: 'textarea', value: cfg.value }] });
+    const v = await SM.ui.form({ title: `${cfg.title}: ${col.name}`, info: 'p:text:manage', lead: cfg.lead, fields: [{ key: 'text', label: cfg.title.replace('Manage ', ''), type: 'textarea', value: cfg.value, help: HELP.manage[key] }] });
     if (!v) return;
     const lines = String(v.text || '').split(/\r?\n/).map((s) => s.trim().toLowerCase().replace(/\s+/g, ' ')).filter(Boolean);
     if (key === 'recodes') {
@@ -822,6 +835,11 @@
       el('label', { class: 'sm-tx-check' }, chk, el('span', { text: 'Customize Regex' }), typeof KvotInfo !== 'undefined' ? KvotInfo.slot('p:text:regex') : null), row);
     return {
       el: box,
+      helpHeading: 'Customize Regex',
+      help: [
+        ['Customize Regex', 'Tokenize with your own regular expression instead of the built-in patterns. It is for the Regex tokenizer: with Basic Words it is ignored.'],
+        ['Regular expression', 'A Python regular expression (the re module\'s syntax): every match in the lowercase text is a token. [a-z]+ takes letters only, \\S+ everything between spaces. It must compile; the built-in patterns\' clean-up (a possessive \'s dropped, a URL\'s last full stop) is not applied to its matches.'],
+      ],
       read: () => ({ options: { customRegex: chk.checked, regex: pat.value.trim() } }),
       recall: (saved) => {
         const so = (saved && saved.options) || {};
@@ -851,6 +869,33 @@
   }
 
   /* ======================================================================
+     THE LAUNCH'S ROLES AND OPTIONS, with what each is for (the (i))
+     ====================================================================== */
+  const ROLES = [
+    { key: 'text', label: 'Text Columns', min: 1, types: ['nominal', 'ordinal'], hint: 'required: character columns', info: 'p:text',
+      help: 'One or more character columns of text: each gets an explorer of its own (with several, an outline each). A numeric column cannot be one (right click it to make it character).' },
+    { key: 'id', label: 'ID', max: 1, hint: 'optional: the rows of an ID are one document',
+      help: 'Optional: the rows that share an ID are one document (a case), their texts taken together, and rows with no ID are left out. Without it every row is a document of its own.' },
+    { key: 'by', label: 'By', hint: 'optional', help: 'A separate analysis for each level of the By column (each combination of levels, with several). Rows with a missing By value are left out.' },
+  ];
+  const OPTIONS = [
+    { key: 'language', label: 'Language', type: 'select', value: 'english', choices: [['english', 'English']],
+      help: 'English, the one language here: the stop words (scikit-learn\'s ENGLISH_STOP_WORDS) and Porter\'s stemmer are English.' },
+    { key: 'maxWords', label: 'Maximum Words per Phrase', type: 'number', value: 4,
+      help: 'The longest phrase the Phrase List counts, from 1 to 12 words (4): a phrase is a run of 2 up to this many tokens of one text, seen at least twice, that neither begins nor ends with a stop word. 1 makes no phrases.' },
+    { key: 'maxPhrases', label: 'Maximum Number of Phrases', type: 'number', value: 1000,
+      help: 'How many phrases the Phrase List keeps, the most frequent first, from 0 to 100 000 (1000); 0 keeps none.' },
+    { key: 'minChars', label: 'Minimum Characters per Word', type: 'number', value: 1,
+      help: 'Tokens shorter than this are left out, from 1 to 1000 (1): 2 drops one-letter words and single digits.' },
+    { key: 'maxChars', label: 'Maximum Characters per Word', type: 'number', value: 100,
+      help: 'Tokens longer than this are left out, from 1 to 100 000 (100), which drops long strings such as codes; at least the minimum.' },
+    { key: 'stemming', label: 'Stemming', type: 'select', value: 'none', choices: STEMMING,
+      help: 'No Stemming (the default): every word its own term. Stem for Combining: the words that share a Porter stem with another word become one term, marked with a dot (return·), and a word alone keeps its form. Stem All Terms: every word of three or more letters a to z becomes its stem. The Stem Report (Display Options) shows the words behind each stem.' },
+    { key: 'tokenizing', label: 'Tokenizing', type: 'select', value: 'regex', choices: TOKENIZING,
+      help: 'How the lowercase text is cut into tokens. Regex (the default): built-in patterns for URLs, e-mail addresses, numbers such as 3.5 or 25%, and words with inner apostrophes and hyphens such as don\'t and well-known, a possessive \'s dropped; or your own pattern (Customize Regex). Basic Words: runs of letters and digits.' },
+  ];
+
+  /* ======================================================================
      TOPICS: the (i) panels
      ====================================================================== */
   const TOPICS = {
@@ -859,14 +904,8 @@
       lead: 'The words of a column of text: each text is split into tokens, the tokens that are not stop words become terms (stemmed and recoded as you choose), and the terms are counted, listed, drawn as a word cloud and reduced by a singular value decomposition into latent dimensions and topics. The counting is scikit-learn\'s CountVectorizer; its English stop words; the SVD TruncatedSVD or PCA; the stemmer is Porter\'s (1980) algorithm, written here.',
       sections: [
         { heading: 'Roles', choices: [['Text Columns', 'One or more character columns; each gets an analysis of its own.'], ['ID', 'Optional: the rows that share an ID are one document (a case), their texts together.'], ['By', 'A separate analysis for each level.']] },
-        { heading: 'Options', choices: [
-          ['Language', 'English: the stop words and the stemmer are English.'],
-          ['Maximum Words per Phrase', 'The longest phrase in the Phrase List (4).'],
-          ['Maximum Number of Phrases', 'How many phrases the Phrase List keeps, the most frequent (1000).'],
-          ['Minimum and Maximum Characters per Word', 'Shorter and longer tokens are left out (1 and 100).'],
-          ['Stemming', 'No Stemming; Stem for Combining (the words that share a Porter stem with another word become one term, marked with a dot: return·); Stem All Terms (every word).'],
-          ['Tokenizing', 'Regex (built-in patterns: URLs, e-mail addresses, numbers such as 3.5 or 25%, words with inner apostrophes and hyphens such as don\'t and well-known, a possessive \'s dropped) or Basic Words (runs of letters and digits). Customize Regex: your own pattern.'],
-        ] },
+        // the launch's options (Stemming is in the red triangle too)
+        { heading: 'Options', choices: OPTIONS.map((o) => [o.label, o.help]) },
         { heading: 'Differences from JMP', text: 'JMP\'s stop word list and its built-in regular expressions are its own; here the stop words are scikit-learn\'s ENGLISH_STOP_WORDS and the patterns are the ones above. The Word Cloud starts hidden, as in JMP (Display Options).' },
       ],
       more: MORE,
@@ -887,6 +926,7 @@
       sections: [
         { heading: 'Selecting', text: 'A click on a term or phrase selects the rows that hold it; shift adds, ctrl/⌘ toggles. The chosen terms are what Show Text and Save Document Term Matrix take.' },
         { heading: 'Right click', choices: [['Show Text', 'The texts of the rows, with the words marked (every word of a stem).'], ['Add Stop Word', 'Leaves the term out from now on.'], ['Recode', 'Counts the term as another (to combine spellings).'], ['Add Phrase', 'Counts a phrase as one term; its words lose those occurrences.']] },
+        { heading: 'Show Text', choices: [['Select These Rows', 'Selects every row the dialog lists, the ones beyond the first 500 shown too.'], ['Close', 'Closes the dialog; the selection stays as it is.']] },
       ],
       more: MORE,
     },
@@ -923,6 +963,7 @@
       sections: [
         { heading: 'Other methods (scikit-learn)', choices: [['Non-negative Matrix Factorization', 'NMF: the weighted matrix as documents × topics times topics × terms, all non-negative (init nndsvda).'], ['Latent Dirichlet Allocation', 'LDA: a probability model of the counts; each topic a distribution over the terms, each document a mix of topics.']] },
         { heading: 'Seeds', text: 'NMF and LDA start from the report\'s random seed, kept with the report, so a redraw, a project and the Python code give the same topics.' },
+        { heading: 'Clicking', choices: [['A term in Top Loadings by Topic', 'Selects the rows that hold it, as a click in the Term List does (shift adds, ctrl/⌘ toggles).'], ['The Topic Scores plot', 'Click or drag over documents to select their rows.']] },
       ],
       more: MORE,
     },
@@ -942,20 +983,8 @@
     uses: ['sklearn.feature_extraction.text (CountVectorizer, ENGLISH_STOP_WORDS)', 'sklearn.decomposition (TruncatedSVD, PCA, NMF, LatentDirichletAllocation)', 'scipy.sparse', 'Porter\'s stemmer and the varimax rotation, written here'],
     launch: {
       lead: 'Choose one or more character columns. Each text is split into words; the words that are not stop words are counted as terms.',
-      roles: [
-        { key: 'text', label: 'Text Columns', min: 1, types: ['nominal', 'ordinal'], hint: 'required: character columns', info: 'p:text' },
-        { key: 'id', label: 'ID', max: 1, hint: 'optional: the rows of an ID are one document' },
-        { key: 'by', label: 'By', hint: 'optional' },
-      ],
-      options: [
-        { key: 'language', label: 'Language', type: 'select', value: 'english', choices: [['english', 'English']] },
-        { key: 'maxWords', label: 'Maximum Words per Phrase', type: 'number', value: 4 },
-        { key: 'maxPhrases', label: 'Maximum Number of Phrases', type: 'number', value: 1000 },
-        { key: 'minChars', label: 'Minimum Characters per Word', type: 'number', value: 1 },
-        { key: 'maxChars', label: 'Maximum Characters per Word', type: 'number', value: 100 },
-        { key: 'stemming', label: 'Stemming', type: 'select', value: 'none', choices: STEMMING },
-        { key: 'tokenizing', label: 'Tokenizing', type: 'select', value: 'regex', choices: TOKENIZING },
-      ],
+      roles: ROLES,
+      options: OPTIONS,
       extra: launchExtra,
       validate,
     },

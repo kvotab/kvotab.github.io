@@ -127,9 +127,9 @@
       title: 'Bootstrap', info: 'p:bootstrap',
       lead: `Resample the ${g.rows.length} rows of the report with replacement, run ${L.report.platform.label} again on each sample, and collect ${statName(L, column)} of every row of this table.`,
       fields: [
-        { key: 'B', label: 'Number of Bootstrap Samples', type: 'number', value: 500 },
-        { key: 'seed', label: 'Random Seed', type: 'text', value: '', placeholder: 'empty: drawn now' },
-        { key: 'bca', label: `BCa limits (the jackknife: ${g.rows.length} more runs)`, type: 'check', value: false },
+        { key: 'B', label: 'Number of Bootstrap Samples', type: 'number', value: 500, help: 'How many times the rows are drawn again (2 to 100,000), each draw analysed like the report. More samples give steadier limits: 500 is enough for a standard error and 95% limits, a few thousand for 99% limits.' },
+        { key: 'seed', label: 'Random Seed', type: 'text', value: '', placeholder: 'empty: drawn now', help: 'The seed of the resampling: the same seed draws the same samples and gives the same results. Empty: one is drawn now; the results show it.' },
+        { key: 'bca', label: `BCa limits (the jackknife: ${g.rows.length} more runs)`, type: 'check', value: false, helpLabel: 'BCa limits', help: 'Adds bias-corrected and accelerated limits, which correct the percentile limits for skewness as well as bias. The acceleration comes from the jackknife: the analysis is run once more without each row in turn, so this costs a run per row (at most 3,000 rows).' },
       ],
       validate: (x) => (!(x.B >= 2 && x.B <= 100000) ? 'Number of Bootstrap Samples: 2 or more' : (x.bca && g.rows.length > 3000 ? 'BCa needs a run per row: at most 3,000 rows' : null)),
     });
@@ -239,8 +239,7 @@
     'p:bootstrap': {
       kicker: 'Bootstrap', title: 'Bootstrap',
       lead: 'How much a statistic of a report would vary in new samples like this one: the rows are drawn again with replacement, as many as there are, the analysis is run on each such sample, and the statistic is collected. Their spread is its bootstrap standard error; their quantiles give confidence limits that need no formula.',
-      sections: [{ choices: [['Number of Bootstrap Samples', 'more samples give steadier limits; 500 is enough for a standard error, a few thousand for 99% limits'], ['Random Seed', 'the same seed draws the same samples'], ['BCa limits', 'runs the analysis once more without each row in turn (the jackknife) to correct the limits for skewness as well as bias']] },
-        { text: 'Bootstrap Results, a new data table, has a row per sample (BootID 0 is the report itself) and a column per row of the table: analyse it like any table. The rows are resampled independently, which suits rows that are independent (not a time series).' }],
+      sections: [{ text: 'Bootstrap Results, a new data table, has a row per sample (BootID 0 is the report itself) and a column per row of the table: analyse it like any table. The rows are resampled independently, which suits rows that are independent (not a time series).' }],
     },
     'p:bootstrap:limits': {
       kicker: 'Bootstrap', title: 'Bootstrap Confidence Limits',

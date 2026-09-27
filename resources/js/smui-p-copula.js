@@ -409,7 +409,12 @@
     const v = await SM.ui.form({
       title: 'Goodness of Fit', info: 'p:copula:gof',
       lead: 'The Cramér–von Mises distance of each fitted copula from the empirical copula, with a parametric bootstrap p-value: each bootstrap sample is drawn from the fitted copula and fitted again. It takes a while: seconds per hundred samples for most families, longer for the t copula.',
-      fields: [{ key: 'B', label: 'Bootstrap samples', type: 'number', value: cur.B ?? 100 }, { key: 'seed', label: 'Random seed', type: 'number', value: cur.seed ?? 1 }],
+      fields: [
+        { key: 'B', label: 'Bootstrap samples', type: 'number', value: cur.B ?? 100,
+          help: 'How many samples are drawn from each fitted copula and fitted again for its p-value: 10 to 5000, 100 by default. The p-value moves in steps of about 1/B, so 1000 or more pin down a small one; the time grows with B, every sample being a new fit.' },
+        { key: 'seed', label: 'Random seed', type: 'number', value: cur.seed ?? 1,
+          help: 'The seed of the bootstrap draws, a whole number from 0: the same seed gives the same samples and p-values, here and in the Python shown. Another seed shows how much the p-values move by chance.' },
+      ],
       validate: (x) => (x.B >= 10 && x.B <= 5000 && Number.isInteger(x.B) ? (Number.isInteger(x.seed) && x.seed >= 0 ? null : 'The seed is a whole number, 0 or more') : 'Between 10 and 5000 bootstrap samples'),
     });
     if (v) ctx.set('gof', { B: v.B, seed: v.seed });
@@ -516,10 +521,14 @@
       title: 'Simulate', info: 'p:copula:simulate',
       lead: `Draws from the ${f.label} copula (${paramText(f, res.k)}) with the fitted margins, as a new table. The same seed gives the same table.`,
       fields: [
-        { key: 'n', label: 'Number of rows', type: 'number', value: cur.n ?? res.n },
-        { key: 'seed', label: 'Random seed', type: 'number', value: cur.seed ?? 1 },
-        { key: 'scale', label: 'Values', type: 'select', value: cur.scale || 'data', choices: [['data', 'On the data scale: the copula with the fitted margins'], ['uniform', 'On the copula scale: uniform margins']] },
-        { key: 'compare', label: 'Compare with the data in this report', type: 'check', value: true },
+        { key: 'n', label: 'Number of rows', type: 'number', value: cur.n ?? res.n,
+          help: 'How many rows the new table gets, 1 to 1 000 000. It starts at the number of rows the copula was fitted to, which makes the simulated cloud easy to compare with the data.' },
+        { key: 'seed', label: 'Random seed', type: 'number', value: cur.seed ?? 1,
+          help: 'The seed of numpy\'s default_rng, a whole number from 0: the same seed gives the same table, here and in the Python shown.' },
+        { key: 'scale', label: 'Values', type: 'select', value: cur.scale || 'data', choices: [['data', 'On the data scale: the copula with the fitted margins'], ['uniform', 'On the copula scale: uniform margins']],
+          help: 'On the data scale (the default): the copula\'s draws turned into values by each column\'s margin, its quantile function (the margins of Margins: the smallest AICc unless one is picked). On the copula scale: the draws themselves, uniform between 0 and 1 in every column.' },
+        { key: 'compare', label: 'Compare with the data in this report', type: 'check', value: true,
+          help: 'Adds Simulated and Observed to the report: the same draws (the same seed) plotted over the observed rows of the pair shown. The new table is made either way.' },
       ],
       validate: (x) => (!(Number.isInteger(x.n) && x.n >= 1 && x.n <= 1000000) ? 'The number of rows is a whole number from 1 to 1 000 000' : !(Number.isInteger(x.seed) && x.seed >= 0) ? 'The seed is a whole number, 0 or more' : null),
     });
@@ -640,6 +649,12 @@
     update(api.state);
     return {
       el: box,
+      help: [
+        ['Copulas to Fit', 'The families fitted and compared in Copula Comparison (The families, above, says what each describes): all six by default, at least one. With more than two columns only Gaussian, Student t and Independence can be fitted, and the others are greyed out. Fit, in the red triangle, changes the set later.'],
+        ['Rotations', 'How Clayton and Gumbel, which each have one tail, are turned. By the Sign of τ (the default) adds their 180° survival versions when Kendall\'s τ is positive and fits their 90° and 270° rotations instead when it is negative (VineCopula\'s rule); All Rotations fits all four of each; None the unrotated ones only. For two columns.'],
+        ['Estimation', 'Maximum Pseudo-Likelihood (the default) maximises each copula\'s log density over the pseudo-observations. Inversion of Kendall\'s τ sets each parameter so that the copula has the data\'s τ, as statsmodels\' own fit_corr_param does: quicker and less efficient, and its log likelihoods are not maximised. Both use the ranks only.'],
+        ['Fit Margins', 'Adds Margins: a distribution for each column (the smallest AICc, or the one picked there), which with the copula makes a joint distribution, drawn as contours over the data beside the pseudo-observations. Off by default; the copula fits do not change.'],
+      ],
       read: () => ({ options: { families: checks.filter((c) => c.i.checked).map((c) => c.key), rotations: rot.value, method: meth.value, margins: marg.checked } }),
       recall: (saved) => {
         const so = (saved && saved.options) || {};
@@ -704,6 +719,8 @@
       sections: [
         { heading: 'Standard errors', choices: [['Hessian', 'From the numerical Hessian of the log pseudo-likelihood (statsmodels approx_hess). They take the pseudo-observations as known and are too small: the ranks estimate the margins.'], ['Rank-Corrected', 'Genest, Ghoudi and Rivest\'s (1995) variance, which allows for the ranks (R copula\'s fitCopula(method = "mpl")). In simulations here it matches the spread of the estimates.'], ['Kendall\'s τ', 'With τ inversion: the delta method on τ\'s U-statistic variance.']] },
         { heading: 'Bounds', text: 'Clayton θ in [0.0001, 40], Gumbel θ in [1.000001, 50], Frank θ in [−100, 100], ρ in [−0.999, 0.999], ν in [1, 200]. A parameter at a bound has no standard error; Clayton or Gumbel at the lower bound is the independence copula.' },
+        { heading: 'In the report', choices: [['A line of the Fits table', 'click it to show that copula: its contours in Pseudo-Observations, its line marked in the tables, and its use in Joint Probabilities and Simulate. The best by AIC is shown until another is clicked (or picked in Show Copula).'],
+          ['Right click a table', 'Columns shows the optional ones: the number of parameters, −2 LogLikelihood and AICc; beside the estimates, the other kind of standard error.']] },
       ],
       more: MORE,
     },
@@ -716,11 +733,15 @@
     'p:copula:margins': {
       kicker: 'Copulas', title: 'Margins',
       lead: 'A distribution for each column on the rows the copula uses: normal, lognormal, gamma, Weibull, exponential, logistic, Student\'s t and beta (when they apply) fitted by maximum likelihood as Distribution fits them, the smallest AICc chosen; or pick one, or the empirical distribution (its cdf through i/(n + 1) at the sorted values).',
+      sections: [{ heading: 'In the report', choices: [['A line of Fitted Distributions', 'click it to use that distribution as the column\'s margin (the ✓ moves); the joint contours, Joint Probabilities and Simulate follow.'],
+        ['A column\'s red triangle', 'picks its margin from the list, Empirical included; Best by AICc goes back to the automatic choice. All Margins, in the red triangle of Margins, sets every column at once.']] }],
       more: MORE,
     },
     'p:copula:joint': {
       kicker: 'Copulas', title: 'Joint Probabilities',
       lead: 'The copula with the margins is a joint distribution. At a point (x, y): P(X ≤ x, Y ≤ y) = C(F₁(x), F₂(y)), the probability that both are above, and the conditional probabilities P(Y ≤ y | X ≤ x) and P(Y > y | X > x), beside the same under independence and the shares observed in the data.',
+      sections: [{ heading: 'In the report', choices: [['x and y', 'the point, in the units of the two columns (the first column of the pair is X); they start at the columns\' medians.'],
+        ['Compute', 'or Enter in either box: the probabilities at that point, from the copula shown (Copula Comparison) and the margins of Margins. The point is kept with the report.']] }],
       more: MORE,
     },
     'p:copula:simulate': {
@@ -740,8 +761,10 @@
     launch: {
       lead: 'Choose two or more continuous columns. The copulas are fitted to their ranks; Clayton, Frank and Gumbel to two columns, the Gaussian and Student t copulas to any number.',
       roles: [
-        { key: 'y', label: 'Y, Columns', min: 2, numeric: true, types: ['continuous'], hint: 'required: two or more continuous' },
-        { key: 'by', label: 'By', hint: 'optional' },
+        { key: 'y', label: 'Y, Columns', min: 2, numeric: true, types: ['continuous'], hint: 'required: two or more continuous',
+          help: 'The columns whose dependence is studied. Only the rows with a value in every one are used, and the copulas see only their ranks, so each column\'s own distribution does not matter. With more than two, the Gaussian, Student t and independence copulas are fitted to all of them together and the graphs show one pair (Pair, in the red triangles).' },
+        { key: 'by', label: 'By', hint: 'optional',
+          help: 'A separate analysis of the rows of each level (each combination of levels, with several By columns). Rows with a missing By value are left out.' },
       ],
       extra: launchExtra,
       validate: (spec) => ((spec.options && Array.isArray(spec.options.families) && !spec.options.families.length) ? 'Copulas to Fit: choose at least one' : null),

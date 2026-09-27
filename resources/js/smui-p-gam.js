@@ -176,14 +176,16 @@
       { label: 'Basis Size (df)…', action: async () => {
         const lo = t.basis === 'cc' ? 3 : (t.degree || 3) + 1;
         const v = await SM.ui.form({ title: `Basis Size: s(${col.name})`, lead: `The number of basis functions; the term has one parameter fewer (it is centred). At least ${lo}, at most 60.`,
-          fields: [{ key: 'df', label: 'Basis size (df)', type: 'number', value: t.df }], validate: (x) => (Number.isInteger(x.df) && x.df >= lo && x.df <= 60 ? null : `a whole number from ${lo} to 60`) });
+          fields: [{ key: 'df', label: 'Basis size (df)', type: 'number', value: t.df,
+            help: `The number of basis functions of s(${col.name}), ${lo} to 60: a larger basis lets the curve bend more, the penalty then deciding how much. Every term's penalty is chosen again afterwards, since the scale of α changes with the basis.` }], validate: (x) => (Number.isInteger(x.df) && x.df >= lo && x.df <= 60 ? null : `a whole number from ${lo} to 60`) });
         if (v) setTerm(ctx, col, 'df', v.df);
       } },
       { label: 'Degree', disabled: t.basis === 'cc', submenu: () => DEGREES.map((dg) => ({ label: String(dg), checked: t.degree === dg, action: () => setTerm(ctx, col, 'degree', dg) })) },
       { separator: true },
       { label: 'Penalty α…', action: async () => {
         const v = await SM.ui.form({ title: `Penalty α: s(${col.name})`, lead: 'The weight of the roughness penalty α·∫s″². Larger is smoother (EDF towards 1 for a B-spline, 0 for a cyclic term); 0 is an unpenalized regression spline. The other terms keep their penalties.',
-          fields: [{ key: 'a', label: 'Penalty α', type: 'number', value: +t.alpha.toPrecision(6) }], validate: (x) => (x.a != null && x.a >= 0 ? null : 'α is zero or above') });
+          fields: [{ key: 'a', label: 'Penalty α', type: 'number', value: +t.alpha.toPrecision(6),
+            help: 'This term\'s penalty weight, zero or above; it starts at the one in use. The penalties are then set by hand, the others kept where they are, until Choose Penalties Automatically lets the smoothing criterion choose them again.' }], validate: (x) => (x.a != null && x.a >= 0 ? null : 'α is zero or above') });
         if (v) setPenalty(ctx, res, t.index, v.a);
       } },
       { label: 'Choose Penalties Automatically', disabled: !byHand && ctx.opt('smoothing', 'aic') !== 'fixed', action: () => { clearPenalties(ctx); if (ctx.opt('smoothing', 'aic') === 'fixed') ctx.set('smoothing', 'aic'); else ctx.report.run(); } },
@@ -439,15 +441,18 @@
         { label: 'BIC', checked: !byHand && smoothing === 'bic', action: () => setMode('bic') },
         { label: 'GCV', checked: !byHand && smoothing === 'gcv', disabled: family === 'binomial' || family === 'poisson', action: () => setMode('gcv') },
         { label: 'K-Fold Cross-Validation', checked: !byHand && smoothing === 'kfold', disabled: !kfoldOk, action: () => setMode('kfold') },
-        { label: 'Number of Folds…', disabled: smoothing !== 'kfold', action: async () => { const v = await SM.ui.form({ title: 'Number of Folds', fields: [{ key: 'k', label: 'Folds (2 to 20)', type: 'number', value: ctx.opt('folds', 5) }], validate: (x) => (Number.isInteger(x.k) && x.k >= 2 && x.k <= 20 ? null : 'a whole number from 2 to 20') }); if (v) ctx.set('folds', v.k); } },
+        { label: 'Number of Folds…', disabled: smoothing !== 'kfold', action: async () => { const v = await SM.ui.form({ title: 'Number of Folds', fields: [{ key: 'k', label: 'Folds (2 to 20)', type: 'number', value: ctx.opt('folds', 5), helpLabel: 'Folds',
+          help: 'How many parts K-Fold Cross-Validation splits the rows into, 2 to 20 (5 by default): each part is left out in turn, the model fitted to the rest at every penalty of the grid, and the penalties with the smallest prediction error win. The rows are shuffled once, with a fixed seed.' }], validate: (x) => (Number.isInteger(x.k) && x.k >= 2 && x.k <= 20 ? null : 'a whole number from 2 to 20') }); if (v) ctx.set('folds', v.k); } },
         { separator: true },
-        { label: 'Fixed Penalty α…', checked: !byHand && smoothing === 'fixed', action: async () => { const v = await SM.ui.form({ title: 'Fixed Penalty α', lead: 'One penalty weight for every smooth term (statsmodels\' alpha). Its size depends on the units of each column; each term\'s red triangle and slider set its own.', fields: [{ key: 'a', label: 'Penalty α', type: 'number', value: ctx.opt('penalty', 1) }], validate: (x) => (x.a != null && x.a >= 0 ? null : 'α is zero or above') }); if (v) { clearPenalties(ctx); ctx.spec.options.penalty = v.a; ctx.set('smoothing', 'fixed'); } } },
+        { label: 'Fixed Penalty α…', checked: !byHand && smoothing === 'fixed', action: async () => { const v = await SM.ui.form({ title: 'Fixed Penalty α', lead: 'One penalty weight for every smooth term (statsmodels\' alpha). Its size depends on the units of each column; each term\'s red triangle and slider set its own.', fields: [{ key: 'a', label: 'Penalty α', type: 'number', value: ctx.opt('penalty', 1),
+          help: 'The one penalty weight of every smooth term, zero or above (1 at first): larger is smoother, 0 an unpenalized regression spline. OK sets Smoothing to Fixed Penalty α and drops penalties set by hand.' }], validate: (x) => (x.a != null && x.a >= 0 ? null : 'α is zero or above') }); if (v) { clearPenalties(ctx); ctx.spec.options.penalty = v.a; ctx.set('smoothing', 'fixed'); } } },
         { label: 'Penalties Set by Hand', checked: byHand, disabled: true, action: () => {} },
       ] },
       { label: 'Basis for All Terms', submenu: () => [
         ...BASES.map(([k, l]) => ({ label: l, action: () => { clearPenalties(ctx); ctx.set('basis', k); } })),
         { separator: true },
-        { label: 'Basis Size (df)…', action: async () => { const v = await SM.ui.form({ title: 'Basis Size for All Terms', fields: [{ key: 'df', label: 'Basis size (df)', type: 'number', value: ctx.opt('df', 10) }], validate: (x) => (Number.isInteger(x.df) && x.df >= 3 && x.df <= 60 ? null : 'a whole number from 3 to 60') }); if (v) { clearPenalties(ctx); ctx.set('df', v.df); } } },
+        { label: 'Basis Size (df)…', action: async () => { const v = await SM.ui.form({ title: 'Basis Size for All Terms', fields: [{ key: 'df', label: 'Basis size (df)', type: 'number', value: ctx.opt('df', 10),
+          help: 'The number of basis functions of every smooth term, 3 to 60, except a term whose own red triangle has set its own; each term has one parameter fewer. The penalties are chosen again.' }], validate: (x) => (Number.isInteger(x.df) && x.df >= 3 && x.df <= 60 ? null : 'a whole number from 3 to 60') }); if (v) { clearPenalties(ctx); ctx.set('df', v.df); } } },
         { label: 'Degree', submenu: () => DEGREES.map((dg) => ({ label: String(dg), checked: ctx.opt('degree', 3) === dg, action: () => { clearPenalties(ctx); ctx.set('degree', dg); } })) },
       ] },
       { separator: true },
@@ -500,6 +505,16 @@
     const toNum = (s) => { const v = Number(String(s).trim().replace(',', '.')); return String(s).trim() === '' || !Number.isFinite(v) ? null : v; };
     return {
       el: rootEl,
+      // Penalty α and Folds show only for their choice of Smoothing.
+      help: () => [
+        ['Distribution', 'The distribution of Y given the terms: Normal (the default), Binomial for a 0/1 or two-level Y, Poisson for counts, Gamma for a positive, right-skewed Y. A categorical Y takes the Binomial only. It sets the links offered.'],
+        ['Link Function', 'How the sum of the terms turns into the mean. The first of each list is the usual one: Identity for the Normal, Logit for the Binomial, Log for the Poisson and the Gamma. The partial effects are drawn on the scale of the link.'],
+        ['Smoothing', 'How the terms\' penalty weights α are chosen. AIC (the default) or BIC: the penalties with the smallest criterion (BIC smooths more). GCV: generalized cross-validation, not for the Binomial and Poisson. K-Fold Cross-Validation: the smallest prediction error over folds, for the Normal with the identity link and no Weight or Freq. Fixed Penalty α: one α for every term, typed in the box it shows.'],
+        ...(smooth.value === 'fixed' ? [['Penalty α', 'The penalty weight of every smooth term, zero or above: larger is smoother, 0 an unpenalized regression spline. Its size depends on each column\'s units, so a value that suits one term may not suit another; the terms\' sliders set their own later.']] : []),
+        ...(smooth.value === 'kfold' ? [['Folds', 'The number of folds, 2 to 20 (5 by default): the rows are shuffled once, with a fixed seed, and split into that many parts, each left out in turn while the others fit.']] : []),
+        ['Basis Size (df)', 'The number of basis functions of each smooth term, 3 to 60 (10 by default, as mgcv\'s k); a term has one parameter fewer, being centred. A larger basis lets a curve bend more, and the penalty decides how much of it is used. At most the column\'s number of distinct values.'],
+        ['Degree', 'The degree of the B-spline pieces, 2 to 5 (3, cubic, by default). The penalty is on the second derivative, so at least 2; a cyclic cubic term (its red triangle, Basis) has no degree to set.'],
+      ],
       read() {
         return { options: { family: fam.value, link: link.value, smoothing: smooth.value, penalty: toNum(pen.value), df: toNum(df.value), degree: Number(deg.value), folds: toNum(folds.value) } };
       },
@@ -554,9 +569,11 @@
       kicker: 'Generalized Additive Model', title: 'Smooth terms',
       lead: 'A smooth term is a spline: a sum of basis functions whose coefficients are penalized by α times the integrated squared second derivative, so that a larger α gives a smoother curve.',
       sections: [
-        { choices: [['B-Spline', 'statsmodels\' BSplines: knots at the quantiles of the column'], ['Cyclic Cubic', 'CyclicCubicSplines (patsy\'s cc): the curve joins up at the ends, for day of year, hour or angle. The smallest and largest values are the same point of the cycle'], ['Penalty α slider', 'moves α on a log scale; the curve refits as it moves, and the report when you let go. The other terms keep their penalties'], ['Partial residuals', 's(x) plus each row\'s working residual: rows far from the curve fit badly'], ['Include Intercept', 'the curve with the intercept added (statsmodels\' include_constant), its band then includes the intercept\'s uncertainty']] },
+        { choices: [['B-Spline', 'statsmodels\' BSplines: knots at the quantiles of the column'], ['Cyclic Cubic', 'CyclicCubicSplines (patsy\'s cc): the curve joins up at the ends, for day of year, hour or angle. The smallest and largest values are the same point of the cycle'], ['Penalty α slider', 'moves α on a log scale, rougher to the left and smoother to the right; the curve refits as it moves, and the report when you let go. The other terms keep their penalties, which are then set by hand (Choose Penalties Automatically, in a term\'s red triangle, goes back)'],
+          ['EDF, Penalty α', 'under each plot: the term\'s effective degrees of freedom and its α. While the slider moves, the line below it shows the AIC, GCV and total EDF the new α would give'], ['Partial residuals', 's(x) plus each row\'s working residual: rows far from the curve fit badly'], ['Include Intercept', 'the curve with the intercept added (statsmodels\' include_constant), its band then includes the intercept\'s uncertainty']] },
         { heading: 'Identifiability', text: 'Each term is centred to sum to zero over the rows (mgcv\'s constraint), so the curves are about the intercept and a term has one parameter fewer than its basis size.' },
         { heading: 'Surface Plot', text: 'The sum of two terms\' partial effects over a grid: with no interaction its contours are the two curves added.' },
+        { choices: [['Horizontal, Vertical', 'the two smooth terms of the Surface Plot, the first two at first; choosing the one the other axis has swaps them. The points are the rows, linked to the table']] },
       ],
       more: MORE,
     },
@@ -574,6 +591,10 @@
     'p:gam:profiler': {
       kicker: 'Generalized Additive Model', title: 'Prediction Profiler',
       lead: 'The predicted mean on the response scale as each term varies, the others held at their current values, with the confidence interval of the mean. Drag a red dashed line, click a plot or type a value; the settings are kept by Redo.',
+      sections: [{ heading: 'In the report', choices: [['The value box under a plot', 'the factor\'s current value: type one (Enter), or pick a level for a categorical factor; every plot is drawn again at the new setting'],
+        ['The slider', 'moves a continuous factor over the range of its data; the plots follow when you let go'], ['The red dashed line', 'drag it along the plot, or click in the plot, to move that factor there'],
+        ['A desirability plot', 'with Desirability Functions on (red triangle), the small plot at the right of a response: click it to set that response\'s goal and desirability'],
+        ['Remembered Settings', 'a table of the settings Remember Settings kept; click a line to go back to it']] }],
       more: MORE,
     },
     'p:gam:mgcv': {
@@ -631,12 +652,18 @@
     launch: {
       lead: 'Choose the Y, the columns to enter as smooth curves and those to enter as straight lines (or levels), and the distribution. The penalty weights are chosen by AIC unless you say otherwise.',
       roles: [
-        { key: 'y', label: 'Y, Response', min: 1, max: 1, hint: 'required: continuous, 0/1, counts' },
-        { key: 'smooth', label: 'Smooth Terms', min: 1, numeric: true, types: ['continuous'], hint: 'required: continuous' },
-        { key: 'linear', label: 'Linear Terms', hint: 'optional: the parametric part' },
-        { key: 'weight', label: 'Weight', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric' },
-        { key: 'freq', label: 'Freq', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric' },
-        { key: 'by', label: 'By', hint: 'optional' },
+        { key: 'y', label: 'Y, Response', min: 1, max: 1, hint: 'required: continuous, 0/1, counts',
+          help: 'The response, whose mean (through the link) is the sum of the terms. Continuous for the Normal, above zero for the Gamma, 0/1 or two levels for the Binomial (the event is 1, or the first level unless Target Level says otherwise), counts of zero or more for the Poisson.' },
+        { key: 'smooth', label: 'Smooth Terms', min: 1, numeric: true, types: ['continuous'], hint: 'required: continuous',
+          help: 'The columns that enter as smooth curves, a penalized spline each (at least four distinct values). They start with the basis size and degree below; each term\'s red triangle and slider change its own.' },
+        { key: 'linear', label: 'Linear Terms', hint: 'optional: the parametric part',
+          help: 'Optional: the parametric part, main effects. A continuous column enters as a straight line, a nominal or ordinal one effect coded with JMP\'s names; a column whose effect may bend belongs in Smooth Terms instead.' },
+        { key: 'weight', label: 'Weight', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric',
+          help: 'Optional variance weights (statsmodels\' var_weights): a row of weight 2 has half the variance of a row of weight 1, so it counts twice as much in the fit. Not with K-Fold Cross-Validation.' },
+        { key: 'freq', label: 'Freq', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric',
+          help: 'Optional: each row counts that many times (its whole part; 0 leaves it out), as that many copies of it. Not with K-Fold Cross-Validation, which would put a row\'s copies into different folds.' },
+        { key: 'by', label: 'By', hint: 'optional',
+          help: 'A separate model of the rows of each level (each combination of levels, with several By columns). Rows with a missing By value are left out.' },
       ],
       extra: launchPart,
       validate,

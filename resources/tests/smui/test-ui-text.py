@@ -12,14 +12,15 @@ cloud's words do not overlap and grow with the count; stemming, Add Stop
 Word, Recode, Add Phrase and Show Text work from the menus, and Redo keeps
 them; Latent Semantic Analysis gives the engine's singular values, with
 documents linked to the rows both ways; Topic Analysis finds the example's
-five themes; Save Document Term Matrix, Save Document Singular Vectors,
-Save Topic Scores and Save Term Table make the columns and tables they
-should; By and an ID column make the cases they should; a project keeps the
-options with the column ids remapped; the Python script holds the
-scikit-learn calls; hostile text stays text; Bootstrap reruns the report
-headless; the defaults on 5,000 rows are timed; every (i) has a topic; the
-reports draw in the dark theme and at phone width without a sideways page
-scroll, and without script errors.
+five themes; Save Document Term Matrix, Save Document Singular Vectors, Save
+Topic Scores and Save Term Table make the columns and tables they should; By
+and an ID column make the cases they should; a project keeps the options
+with the column ids remapped; the Python script holds the scikit-learn
+calls; hostile text stays text; Bootstrap reruns the report headless; the
+defaults on 5,000 rows are timed; every (i) has a topic; the launch dialog's
+(i) gives every role, option and Customize Regex field its help, and the
+forms' (i) each of their fields; the reports draw in the dark theme and at
+phone width without a sideways page scroll, and without script errors.
 
 Start a server on the repository root and headless Chrome (README.md) on
 SMUI_HTTP_PORT and SMUI_CDP_PORT, then
@@ -236,6 +237,107 @@ async def drawn(page, title_re):
       for (let n = 0; n < 60 && !p.drawn; n++) await new Promise(r => setTimeout(r, 100));
       return p.drawn;
     })(%s)''' % json.dumps(title_re))
+
+
+
+# ---- the (i) of a launch dialog, a form or an outline: its sections, as
+# { headings, sections: { heading: [[name, text], ...] } }. kind 'dialog':
+# arg is JS that opens the dialog (clickPath(rep, title, path) and wait(ms)
+# are at hand; it is not awaited, as a form resolves only when it closes);
+# kind 'slot': arg is JS giving the element that holds the (i).
+INFO = r'''
+(async (kind, arg, part) => {
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+  const clickPath = async (rep, title, path) => {
+    SM.app.showTab(SM.app.tabOf(rep));
+    const head = [...rep.body.querySelectorAll('.sm-ob-head')].find(h => { const t = h.querySelector('h2, h3, h4'); return t && (title === '*top*' ? t.tagName === 'H2' : t.textContent.trim() === title); });
+    if (!head) throw new Error('no outline ' + title);
+    head.querySelector('.sm-ob-menu').click();
+    await wait(60);
+    for (const label of path) {
+      const menus = [...document.querySelectorAll('.sm-menu')];
+      const b = [...menus[menus.length - 1].querySelectorAll('button')].find(x => x.querySelector('.sm-label') && x.querySelector('.sm-label').textContent === label);
+      if (!b) throw new Error('no item ' + label);
+      b.click();
+      await wait(80);
+    }
+  };
+  const read = () => {
+    const p = document.querySelector('.info-panel');
+    if (!p) return null;
+    const out = { title: p.querySelector('.info-panel-title').textContent, headings: [], sections: {} };
+    let cur = '';
+    for (const n of p.querySelector('.info-panel-body').children) {
+      if (n.tagName === 'H3') { cur = n.textContent; out.headings.push(cur); }
+      else if (n.tagName === 'DL') (out.sections[cur] = out.sections[cur] || []).push(...[...n.querySelectorAll(':scope > dt')].map(dt => [dt.textContent, dt.nextElementSibling ? dt.nextElementSibling.textContent : '']));
+    }
+    return out;
+  };
+  let dlg = null, btn = null;
+  window.__infoError = null;
+  if (kind === 'slot') {
+    const node = (new Function('return ' + arg))();
+    btn = node && (node.matches('.info-btn') ? node : node.querySelector('.info-btn'));
+  } else {
+    const before = new Set(document.querySelectorAll('.sm-dialog'));
+    (new Function('clickPath', 'wait', 'return (async () => {' + arg + '})()'))(clickPath, wait).catch((e) => { window.__infoError = String(e); });
+    for (let i = 0; i < 100 && !dlg && !window.__infoError; i++) { await wait(50); dlg = [...document.querySelectorAll('.sm-dialog')].find(d => !before.has(d)) || null; }
+    if (!dlg) { SM.ui.closeMenus(0); return { error: window.__infoError || 'no dialog' }; }
+    await wait(120);
+    btn = dlg.querySelector('.sm-dialog-head .info-btn');
+  }
+  if (!btn) { if (dlg) dlg.querySelector('.sm-dialog-x').click(); return { error: 'no (i)' }; }
+  // the inputs of a part (JS giving an element; a dialog's is dlg): each one's aria-label and label text
+  const box = part ? (new Function('dlg', 'return ' + part))(dlg) : null;
+  const inputs = box ? [...box.querySelectorAll('input, select, textarea')].map(e => [e.getAttribute('aria-label') || '', e.closest('label') ? e.closest('label').textContent.trim() : '']) : [];
+  btn.click();
+  await wait(150);
+  const out = read() || { error: 'no panel' };
+  out.inputs = inputs;
+  out.key = KvotInfo.current();
+  out.noTopic = KvotInfo.audit().noTopic;
+  KvotInfo.close();
+  if (dlg) { dlg.querySelector('.sm-dialog-x').click(); await wait(120); }
+  return out;
+})
+'''
+
+
+def info_js(kind, arg, part=None):
+    return f'({INFO})({json.dumps(kind)}, {json.dumps(arg)}, {json.dumps(part)})'
+
+
+def unexplained(info, heading=None):
+    """The inputs of the part that no entry of the panel (of one section) names."""
+    secs = info.get('sections') or {}
+    names = [n for h, cs in secs.items() if heading is None or h == heading for n, _ in cs]
+    return [a or t for a, t in info.get('inputs', []) if not any(a.startswith(n) or t.startswith(n) for n in names)]
+
+
+async def dialog_help(page, opener, platform_id, name):
+    """A launch dialog's (i): one Roles and one Options section, every role and
+    option with its help (a role's followed by what it takes), and no (i)
+    without a topic while the dialog is open. Returns the panel."""
+    d = await page.ev(info_js('dialog', opener))
+    if not isinstance(d, dict) or 'sections' not in d:
+        check(f'{name}: the launch dialog\'s (i) opens', d, 'a panel')
+        return {'headings': [], 'sections': {}}
+    want = await page.ev(f'(() => {{ const L = SM.platforms.get({json.dumps(platform_id)}).launch; return {{ roles: L.roles.map(r => [r.label, r.help || ""]), options: (L.options || []).map(o => [o.label, o.help || ""]) }}; }})()')
+    roles, opts = dict(d['sections'].get('Roles', [])), dict(d['sections'].get('Options', []))
+    check(f'{name}: the launch dialog\'s (i) has one Roles and one Options section', (d['headings'].count('Roles'), d['headings'].count('Options')), (1, 1 if want['options'] else 0))
+    check('... every role with its help, then what it takes', [(lab, bool(h) and roles.get(lab, '').startswith(h) and roles[lab].endswith(')')) for lab, h in want['roles']], [(lab, True) for lab, _ in want['roles']])
+    check('... every option with its help', [(lab, bool(h) and opts.get(lab) == h) for lab, h in want['options']], [(lab, True) for lab, _ in want['options']])
+    check('... and every (i) has a topic while it is open', d['noTopic'], [])
+    return d
+
+
+async def form_help(page, opener, fields, name):
+    """A form's (i) lists each of its fields with what it is for."""
+    f = await page.ev(info_js('dialog', opener))
+    got = dict((f.get('sections') or {}).get('Fields', [])) if isinstance(f, dict) else {}
+    check(f'{name}: the form\'s (i) lists its fields, each with its help', [(x, len(got.get(x, '')) > 30) for x in fields], [(x, True) for x in fields])
+    check('... and every (i) has a topic while it is open', f.get('noTopic') if isinstance(f, dict) else f, [])
+    return f
 
 
 async def main():
@@ -662,6 +764,22 @@ async def main():
     check('the platform has its line in Help, with scikit-learn\'s classes', bool(helps) and 'CountVectorizer' in helps and 'TruncatedSVD' in helps, True)
     topics = await page.ev('Object.keys(SM.platforms.get("text").topics)')
     check('its topics', sorted(topics), sorted(['p:text', 'p:text:regex', 'p:text:summary', 'p:text:lists', 'p:text:cloud', 'p:text:stems', 'p:text:manage', 'p:text:lsa', 'p:text:topics', 'p:text:dtm']))
+
+    # ---- the (i) explains every input: the launch dialog and Customize Regex, the forms of the red triangles
+    await page.ev('SM.app.showTable(SM.app.tables.find(t => t.name === "Service comments").id)')
+    d = await page.ev(info_js('dialog', "SM.app.launch('text')", "dlg.querySelector('.sm-tx-launch')"))
+    check('Text Explorer: the launch dialog\'s (i) explains Customize Regex and its pattern', ([c[0] for c in d.get('sections', {}).get('Customize Regex', [])], len(d.get('inputs', [])), unexplained(d, 'Customize Regex')), (['Customize Regex', 'Regular expression'], 2, []))
+    await dialog_help(page, "SM.app.launch('text')", 'text', 'Text Explorer')
+    big = 'SM.app.reports.at(-1)'
+    for path, fields in ((['Latent Semantic Analysis, SVD…'], ['Maximum Number of Terms', 'Minimum Term Frequency', 'Weighting', 'Number of Singular Vectors', 'Centering and Scaling']),
+                         (['Topic Analysis, Rotated SVD…'], ['Number of Topics', 'Method', 'Maximum Number of Terms', 'Minimum Term Frequency', 'Weighting (LDA takes the counts)', 'Centering and Scaling (rotated SVD)']),
+                         (['Save Document Term Matrix…'], ['Terms', 'Maximum Number of Terms', 'Minimum Term Frequency', 'Weighting']),
+                         (['Term Options', 'Manage Stop Words…'], ['Stop Words']), (['Term Options', 'Manage Recodes…'], ['Recodes']), (['Term Options', 'Manage Phrases…'], ['Phrases'])):
+        await form_help(page, f"await clickPath({big}, '*top*', {json.dumps(path)});", fields, path[-1])
+    await form_help(page, f"await clickPath({big}, 'Latent Semantic Analysis (SVD)', ['Save Document Singular Vectors…']);", ['Number of singular vectors to save'], 'Save Document Singular Vectors…')
+    await form_help(page, f"await clickPath({big}, 'Word Cloud', ['Number of Terms…']);", ['The most frequent terms to show'], 'Word Cloud: Number of Terms…')
+    lists = await page.ev('SM.info.get("p:text:lists")')
+    check('Term and Phrase Lists\' (i) explains the Show Text dialog\'s buttons', [c[0] for sec in lists['sections'] if sec.get('heading') == 'Show Text' for c in sec['choices']], ['Select These Rows', 'Close'])
 
     # ---- dark theme and phone width
     await page.ev('SM.app.showTab(SM.app.tabOf(SM.app.reports.find(r => r.platform.id === "text" && r.table.name === "Service comments")))')

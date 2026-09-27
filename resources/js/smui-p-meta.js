@@ -25,23 +25,30 @@
 
   /* ---- roles and layouts ------------------------------------------------------ */
   const NUM = { numeric: true, types: ['continuous'], max: 1 };
+  const ES = 'Effect and standard error layout, required there', CONT = 'Two groups, continuous outcome layout, required there', BINL = 'Two groups, binary outcome layout, required there';
   const ROLES = [
-    { key: 'effect', label: 'Effect', ...NUM, hint: 'required: one effect per study' },
-    { key: 'se', label: 'Std Error', ...NUM, hint: 'required: its standard error' },
-    { key: 'n1', label: 'N (Treatment)', ...NUM, hint: 'required' },
-    { key: 'mean1', label: 'Mean (Treatment)', ...NUM, hint: 'required' },
-    { key: 'sd1', label: 'Std Dev (Treatment)', ...NUM, hint: 'required' },
-    { key: 'n2', label: 'N (Control)', ...NUM, hint: 'required' },
-    { key: 'mean2', label: 'Mean (Control)', ...NUM, hint: 'required' },
-    { key: 'sd2', label: 'Std Dev (Control)', ...NUM, hint: 'required' },
-    { key: 'events1', label: 'Events (Treatment)', ...NUM, hint: 'required' },
-    { key: 'total1', label: 'N (Treatment)', ...NUM, hint: 'required: the group size' },
-    { key: 'events2', label: 'Events (Control)', ...NUM, hint: 'required' },
-    { key: 'total2', label: 'N (Control)', ...NUM, hint: 'required: the group size' },
-    { key: 'label', label: 'Study Label', max: 1, hint: 'optional: names in the plots' },
-    { key: 'group', label: 'Group', max: 1, types: ['ordinal', 'nominal'], hint: 'optional: subgroups' },
-    { key: 'covariates', label: 'Covariates', hint: 'optional: for Meta-Regression' },
-    { key: 'by', label: 'By', hint: 'optional' },
+    { key: 'effect', label: 'Effect', ...NUM, hint: 'required: one effect per study',
+      help: `${ES}: each study's effect as it reports it, such as a mean difference, a standardized mean difference or a log odds, risk or hazard ratio (for a log ratio, tick the box of the layout to see ratios).` },
+    { key: 'se', label: 'Std Error', ...NUM, hint: 'required: its standard error',
+      help: `${ES}: the effect's standard error, or its variance when the layout's box says the column holds variances (the role is then called Variance). A study whose value is not above 0 is left out.` },
+    { key: 'n1', label: 'N (Treatment)', ...NUM, hint: 'required', help: `${CONT}: the number of subjects in the treatment group; a study with fewer than 2 in a group is left out.` },
+    { key: 'mean1', label: 'Mean (Treatment)', ...NUM, hint: 'required', help: `${CONT}: the treatment group's mean.` },
+    { key: 'sd1', label: 'Std Dev (Treatment)', ...NUM, hint: 'required', help: `${CONT}: the treatment group's standard deviation, above 0.` },
+    { key: 'n2', label: 'N (Control)', ...NUM, hint: 'required', help: `${CONT}: the number of subjects in the control group, at least 2.` },
+    { key: 'mean2', label: 'Mean (Control)', ...NUM, hint: 'required', help: `${CONT}: the control group's mean; the effect is treatment minus control.` },
+    { key: 'sd2', label: 'Std Dev (Control)', ...NUM, hint: 'required', help: `${CONT}: the control group's standard deviation, above 0.` },
+    { key: 'events1', label: 'Events (Treatment)', ...NUM, hint: 'required', help: `${BINL}: the subjects with the event in the treatment group, from 0 to its N.` },
+    { key: 'total1', label: 'N (Treatment)', ...NUM, hint: 'required: the group size', help: `${BINL}: the size of the treatment group, above 0.` },
+    { key: 'events2', label: 'Events (Control)', ...NUM, hint: 'required', help: `${BINL}: the subjects with the event in the control group, from 0 to its N.` },
+    { key: 'total2', label: 'N (Control)', ...NUM, hint: 'required: the group size', help: `${BINL}: the size of the control group, above 0; the ratios are treatment over control.` },
+    { key: 'label', label: 'Study Label', max: 1, hint: 'optional: names in the plots',
+      help: 'The name of each study in the forest plot, the other plots and the tables. Without it, the table\'s label column (Cols > Label), or the row number.' },
+    { key: 'group', label: 'Group', max: 1, types: ['ordinal', 'nominal'], hint: 'optional: subgroups',
+      help: 'Subgroups: the studies of each level are pooled on their own (the Subgroups outline, with a test of subgroup differences) and listed by level in the forest plot. Studies with a missing value are left out.' },
+    { key: 'covariates', label: 'Covariates', hint: 'optional: for Meta-Regression',
+      help: 'Study-level variables (moderators) for a Meta-Regression, which the report then opens with: continuous columns enter as they are, nominal and ordinal ones as dummies against their first level. The red triangle\'s Meta-Regression… changes them.' },
+    { key: 'by', label: 'By', hint: 'optional',
+      help: 'A separate meta-analysis for each level of the By column (each combination of levels, with several By columns). Rows with a missing By value are left out.' },
   ];
   const ROLE = Object.fromEntries(ROLES.map((r) => [r.key, r]));
   const LAYOUTS = [['es', 'Effect and standard error'], ['cont', 'Two groups, continuous outcome'], ['bin', 'Two groups, binary outcome']];
@@ -703,8 +710,10 @@
       title: 'Cumulative Meta-Analysis', info: 'p:meta:cumulative',
       lead: 'The studies are added one at a time in the order of a column; each line pools the studies up to it.',
       fields: [
-        { key: 'by', label: 'Order by', type: 'select', value: cur ? (cur.by || '') : (guess ? guess.id : ''), choices: [['', '(row order)'], ...cands.map((c) => [c.id, c.name])] },
-        { key: 'desc', label: 'Descending', type: 'check', value: cur ? !!cur.desc : false },
+        { key: 'by', label: 'Order by', type: 'select', value: cur ? (cur.by || '') : (guess ? guess.id : ''), choices: [['', '(row order)'], ...cands.map((c) => [c.id, c.name])],
+          help: 'The column whose order the studies come in: a year of publication, a sample size, a quality rating. (row order) takes the table\'s order. Ties keep the row order; studies missing the value come last.' },
+        { key: 'desc', label: 'Descending', type: 'check', value: cur ? !!cur.desc : false,
+          help: 'Adds the studies from the largest value down (the most recent first, for a year).' },
       ],
     });
     if (v) ctx.set('cum', { by: v.by || null, desc: !!v.desc });
@@ -719,7 +728,8 @@
     const v = await SM.ui.form({
       title: 'Meta-Regression', info: 'p:meta:regression',
       lead: 'Choose the study-level covariates (moderators). Continuous columns enter as they are, nominal and ordinal ones as dummies against their first level.',
-      fields: cands.map((c) => ({ key: c.id, label: `${c.name} (${SM.util.TYPE_LABEL[c.modelingType].toLowerCase()})`, type: 'check', value: cur.has(c.id) })),
+      fields: cands.map((c) => ({ key: c.id, label: `${c.name} (${SM.util.TYPE_LABEL[c.modelingType].toLowerCase()})`, type: 'check', value: cur.has(c.id), helpLabel: 'Each column',
+        help: 'Ticked, the column is a covariate of the meta-regression: a continuous one enters as it is, a nominal or ordinal one as dummies against its first level. The list holds up to 40 columns that are not the layout\'s inputs or the Study Label; none ticked removes the Meta-Regression.' })),
     });
     if (v) ctx.set('mreg', cands.filter((c) => v[c.id]).map((c) => c.id));
   }
@@ -881,8 +891,23 @@
       if (col && col.firstChild !== box) { col.insertBefore(box, col.firstChild); box.classList.add('is-top'); }
       decorate();
     });
+    // What the part's fields do: the Input Layout and the fields of the layout chosen now.
+    const help = () => [
+      ['Input Layout', 'How the table holds the studies, one per row: Effect and standard error (as studies publish them), Two groups, continuous outcome (n, mean and standard deviation of each group) or Two groups, binary outcome (events and totals). Only the roles of the chosen layout show: what is cast into another layout\'s roles stays while the dialog is open, and OK takes the chosen layout\'s alone.'],
+      ...(st.layout === 'es' ? [
+        ['The Std Error column holds', 'Standard errors (a study\'s variance is their square, the default) or variances (used as they are).'],
+        ['Effects are log ratios', 'Tick when the effects are logs of odds, risk or hazard ratios: the pooling stays on the log scale, and the plots and tables also show the ratios, exp(effect), on a log axis.'],
+      ] : st.layout === 'cont' ? [
+        ['Effect size', 'Hedges\' g, the standardized mean difference: the difference of the means over the pooled standard deviation, bias corrected (statsmodels\' effectsize_smd, RevMan\'s formulas; the default), for outcomes measured on different scales. The mean difference, with variance s₁²/n₁ + s₂²/n₂, keeps the outcome\'s own units.'],
+      ] : [
+        ['Effect size', 'The log odds ratio (the default), the log risk ratio (both shown as ratios) or the risk difference, treatment against control (statsmodels\' effectsize_2proportions).'],
+        ['Zero cells', 'A study with no events, or only events, in a group has no finite log ratio: add 0.5 to each of its cells (the default, as RevMan), the treatment-arm correction (amounts that depend on the group sizes, statsmodels\' "tac"), or leave such studies out. Studies with no events (or only events) in both groups are left out of the ratios; the risk difference needs a correction only where both groups are all or nothing.'],
+      ]),
+    ];
     return {
       el: box,
+      help,
+      helpHeading: 'Input Layout',
       read() {
         const roles = {};
         for (const k of INPUT_KEYS) if (!LAYOUT_ROLES[st.layout].includes(k)) roles[k] = [];

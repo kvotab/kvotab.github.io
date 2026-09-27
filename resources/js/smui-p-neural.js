@@ -545,12 +545,34 @@
     },
     'p:neural:launch': {
       kicker: 'Neural', title: 'Model Launch',
-      lead: 'The settings of the next model; Go fits it and adds it to the report. JMP\'s defaults: Holdback 0.3333, three TanH nodes in one layer, no boosting, the Squared penalty and one tour.',
+      lead: 'The settings of the next model; Go fits it and adds it to the report, so that several networks can be fitted and compared (Model Comparison). JMP\'s defaults: Holdback 0.3333, three TanH nodes in one layer, no boosting, the Squared penalty and one tour. The settings are kept with the report for the next Go.',
       sections: [
-        { heading: 'Validation Method', choices: [['Holdback', 'That share of the rows, drawn at random from the seed, validates the model.'], ['KFold', 'The rows in K folds: for each alpha, a model on every fold (fitted on the others, validated on it); the alpha with the best summed validation likelihood; then the fold whose model fits every row best is the model shown, with that fold as its validation set (JMP\'s way).'], ['Excluded Rows Holdback', 'The excluded rows validate and the included ones train (the model sees excluded rows only here).'], ['Validation Column', 'With a Validation column in the launch, its rows: 0 training, 1 validation, 2 test.']] },
-        { heading: 'Hidden Layer Structure', text: 'The number of nodes in the first layer (next to the responses) and the second (next to the X\'s; 0 for one layer). scikit-learn gives every hidden node one activation: TanH (JMP\'s default), Logistic, ReLU, or Identity (JMP\'s Linear). JMP mixes TanH, Linear and Gaussian nodes in a layer; scikit-learn cannot, and has no Gaussian (radial) node.' },
-        { heading: 'Boosting', text: 'Number of Models above 0: base networks of the first layer\'s size are fitted in turn, each to what the sum of those before (scaled by the Learning Rate) leaves, while the validation likelihood improves; the last one kept enters unscaled, as JMP describes. A categorical response is boosted on the log-odds scale: each base model (an MLPRegressor) is fitted to the gradient of the log-likelihood, with a line search for its step, which JMP does not describe. Boosting takes one layer: a second is ignored, as in JMP.' },
-        { heading: 'Fitting Options', choices: [['Transform Covariates', 'The continuous factors made near normal before the fit: scikit-learn\'s PowerTransformer (Yeo-Johnson, standardized) fitted on the training rows. JMP fits a Johnson Su or Sb distribution to each instead.'], ['Robust Fit', 'Least absolute deviations: not in scikit-learn, whose MLPRegressor has only squared error.'], ['Penalty Method', 'Squared is scikit-learn\'s alpha, an L2 penalty on the weights (not the intercepts), its size chosen by the validation likelihood, as JMP chooses its penalty (see Fitting Details). scikit-learn also penalizes the weights of the output layer, which JMP leaves free. Absolute and Weight Decay are not in scikit-learn; No Penalty is alpha 0.'], ['Number of Tours', 'Restarts from new random weights; the tour with the best validation likelihood is kept.'], ['Maximum Iterations', 'scikit-learn\'s max_iter for each L-BFGS fit (not in JMP, which stops early by the validation likelihood). A fit that reaches it warns under the report.']] },
+        { heading: 'Validation Method', choices: [
+          ['Method', 'How the rows are split to choose the penalty, the tour and the boosting steps. Holdback: a random share of the rows validates the model. KFold: for each penalty a model on every fold (fitted on the other folds, validated on it), the penalty with the best validation likelihood summed over the folds, and then the fold whose model fits every row best is the model shown, with that fold as its validation set (JMP\'s way). Excluded Rows Holdback: the rows excluded in the table validate and the included ones train (the model sees excluded rows only here).'],
+          ['Holdback Proportion', 'With Holdback: the share of the rows held back for validation, above 0 and below 1 (JMP\'s 0.3333), drawn at random from the report\'s seed.'],
+          ['Number of Folds', 'With KFold: the number of folds, from 2 to 50 (5), each row put in one of them at random from the report\'s seed.'],
+          ['Validation Column', 'With a Validation column in the launch, its rows decide instead: 0 training, 1 validation, 2 test.'],
+        ] },
+        { heading: 'Hidden Layer Structure', choices: [
+          ['Activation', 'The function of every hidden node: TanH (JMP\'s default, an S-curve from −1 to 1), Logistic (an S-curve from 0 to 1), ReLU (0 below 0, then a straight line) or Identity (JMP\'s Linear, which makes the whole network a linear model). scikit-learn gives every hidden node the one activation: JMP mixes TanH, Linear and Gaussian nodes in a layer, and scikit-learn has no Gaussian (radial) node.'],
+          ['First layer nodes', 'The nodes of the first hidden layer, the one next to the responses: from 1 to 500 (3). More nodes can follow more complicated shapes, and noise too: compare the models on their validation rows (Model Comparison).'],
+          ['Second layer nodes', 'The nodes of a second hidden layer, the one next to the X\'s: 0 (the default) for one layer, up to 500. A boosted model has one layer, and a second is ignored, as in JMP.'],
+        ] },
+        { heading: 'Boosting', choices: [
+          ['Number of Models', 'Above 0: base networks of the first layer\'s size are fitted in turn, each to what the sum of those before (scaled by the Learning Rate) leaves, while the validation likelihood improves; the last one kept enters unscaled, as JMP describes. 0 (the default) fits one network. A categorical response is boosted on the log-odds scale: each base model (an MLPRegressor) is fitted to the gradient of the log-likelihood, with a line search for its step, which JMP does not describe.'],
+          ['Learning Rate', 'With boosting: the scale of each base model in the sum, above 0 and at most 1 (0.1). A smaller rate needs more models, and often predicts new rows better.'],
+        ] },
+        { heading: 'Fitting Options', choices: [
+          ['Transform Covariates', 'Makes the continuous factors near normal before the fit: scikit-learn\'s PowerTransformer (Yeo-Johnson, standardized) fitted on the training rows, which tames skewed factors and long tails. JMP fits a Johnson Su or Sb distribution to each instead.'],
+          ['Robust Fit', 'Least absolute deviations: not in scikit-learn, whose MLPRegressor has only squared error, so it cannot be ticked.'],
+          ['Penalty Method', 'Squared (the default) is scikit-learn\'s alpha, an L2 penalty on the weights (not the intercepts), its size chosen by the validation likelihood as JMP chooses its penalty (Fitting Details shows the path); with no validation rows alpha is scikit-learn\'s default 0.0001. scikit-learn also penalizes the weights of the output layer, which JMP leaves free. No Penalty is alpha 0. Absolute and Weight Decay are not in scikit-learn.'],
+          ['Number of Tours', 'How many times the fit starts again from new random weights, from 1 to 100 (1); the tour with the best validation likelihood is kept. More tours guard against a poor start, and take longer.'],
+          ['Maximum Iterations', 'scikit-learn\'s max_iter for each L-BFGS fit, from 1 to 100000 (200; not in JMP, which stops early by the validation likelihood). A fit that reaches it warns under the report: raise it to see whether the validation measures change.'],
+        ] },
+        { heading: 'Go', choices: [
+          ['Go', 'Fits a model with these settings and adds it to the report, named as JMP names it (NTanH(3)). The report keeps every model: Remove Fit (a model\'s red triangle) takes one away.'],
+          ['Random Seed', 'The report\'s seed, shown beside Go (the launch\'s Random Seed, or one drawn for the report): the holdback, the folds and every network\'s starting weights come from it, so the same settings give the same model.'],
+        ] },
       ],
       more: MORE,
     },
@@ -588,6 +610,7 @@
     'p:neural:compare': {
       kicker: 'Neural', title: 'Model Comparison',
       lead: 'The Measures of Fit of every model of the report, per response and set of rows, the model with the smallest validation -LogLikelihood marked. Compare models on their validation (or test) rows: the training measures improve with every node, the validation ones stop improving when the network starts to fit noise.',
+      sections: [{ choices: [['A click on a line', 'Scrolls the report to that model\'s outline.'], ['Validation', 'The column that says how each model held rows back, shown when the models differ in it (Holdback, KFold, Excluded Rows): they are then judged on different rows.']] }],
       more: MORE,
     },
   };
@@ -602,9 +625,12 @@
     launch: {
       lead: 'Choose one or more responses and the factors. The report opens with the Model Launch: set the network there and press Go.',
       roles: [
-        { key: 'y', label: 'Y, Response', min: 1, hint: 'required: continuous or categorical' },
-        { key: 'x', label: 'X, Factor', min: 1, hint: 'required' },
-        ...SM.predict.roles({ weight: false }),
+        { key: 'y', label: 'Y, Response', min: 1, hint: 'required: continuous or categorical',
+          help: 'One or more responses, continuous, nominal or ordinal: the continuous ones share one network, each categorical one has its own (Several responses, above). Rows missing a response are left out.' },
+        { key: 'x', label: 'X, Factor', min: 1, hint: 'required',
+          help: 'The factors, continuous or categorical: a categorical one enters as a 0/1 column per level (JMP uses effect coding), and every column is standardized by the training rows before the fit. A column that is also a Y is left out of the factors.' },
+        // the shared Validation role, told as this platform splits the rows without one (it has no Validation Portion)
+        ...SM.predict.roles({ weight: false }).map((r) => (r.key === 'validation' ? { ...r, help: 'Which rows do what: 0 or Training fit the networks, 1 or Validation choose the penalty, the tour and the boosting steps and measure the model, 2 or Test are only measured. With one, the Model Launch shows it in place of its Validation Method; without one, the Model Launch holds rows back (Holdback, KFold or Excluded Rows Holdback).' } : r)),
       ],
       options: SM.predict.options().filter((o) => o.key !== 'portion'),
       validate: (spec) => {

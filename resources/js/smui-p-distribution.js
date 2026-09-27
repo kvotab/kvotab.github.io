@@ -51,10 +51,14 @@
       title: `Test Rate: ${col.name}`, info: 'p:distribution:rate',
       lead: `${col.name} counts events; each row is one unit, observed for its exposure (time, person-years, area). The rate is the total count over the total exposure.`,
       fields: [
-        { key: 'rate', label: 'Hypothesized rate (events per unit of exposure)', type: 'number', value: cur.rate },
-        { key: 'exposure', label: 'Exposure', type: 'select', value: cur.exposure || '', choices: [['', '(none: every row is one unit)'], ...nums.map((c) => [c.id, c.name])] },
-        { key: 'method', label: 'Test', type: 'select', value: cur.method || 'exact-c', choices: RATE_TESTS },
-        { key: 'ci', label: 'Confidence interval', type: 'select', value: cur.ci || 'exact-c', choices: RATE_CIS },
+        { key: 'rate', label: 'Hypothesized rate (events per unit of exposure)', type: 'number', value: cur.rate,
+          help: 'The rate the observed one is tested against, in events per unit of exposure (per row when there is no exposure column); it must be above 0.' },
+        { key: 'exposure', label: 'Exposure', type: 'select', value: cur.exposure || '', choices: [['', '(none: every row is one unit)'], ...nums.map((c) => [c.id, c.name])],
+          help: 'A continuous column with each row\'s exposure (a time, person-years, an area): the rate is the total count over the total exposure, and rows without a positive exposure are left out. None: every row is one unit (Freq counts a row as that many units).' },
+        { key: 'method', label: 'Test', type: 'select', value: cur.method || 'exact-c', choices: RATE_TESTS,
+          help: 'The test of the total count against the hypothesized rate (statsmodels\' test_poisson). Exact, the default, uses the Poisson tails, the two-sided p-value twice the smaller one; mid-p takes half the probability of the count seen off them; score and Wald are normal approximations, with the variance at the hypothesized or at the estimated rate; the square-root tests transform the count to steady its variance.' },
+        { key: 'ci', label: 'Confidence interval', type: 'select', value: cur.ci || 'exact-c', choices: RATE_CIS,
+          help: 'The interval of the rate at 1 − α (statsmodels\' confint_poisson). Exact, the default, is Garwood\'s from the gamma distribution: its coverage is at least 1 − α. The mid-p, score, Jeffreys, Wald and Anscombe intervals are approximations, most of them narrower.' },
       ],
       validate: (x) => (x.rate > 0 ? null : 'The hypothesized rate must be positive.'),
     });
@@ -103,7 +107,8 @@
     const v = await SM.ui.form({
       title: `Bayes Factor: ${col.name}`, info: 'p:distribution:bayes',
       lead: 'Under the alternative the standardized effect δ = (μ − μ₀)/σ has a Cauchy prior centred at 0; its scale r is the effect as likely to be exceeded as not. √2/2 ≈ 0.707 is the default of Rouder et al. (2009) and JASP.',
-      fields: [{ key: 'r', label: 'Scale r of the Cauchy prior on δ', type: 'number', value: cur.r }],
+      fields: [{ key: 'r', label: 'Scale r of the Cauchy prior on δ', type: 'number', value: cur.r,
+        help: 'Above 0. Half of the prior\'s weight lies on effects |δ| below r: √2/2 ≈ 0.707 (the default, JASP\'s) expects medium effects, 1 wider ones, a smaller r small ones. A wider prior favours the null hypothesis more when the effect is small.' }],
       validate: (x) => (x.r > 0 ? null : 'The scale must be positive.'),
     });
     if (v) ctx.set('tmBf', { r: v.r }, col.id);
@@ -125,7 +130,8 @@
     const v = await SM.ui.form({
       title: `Bayes Factor: ${col.name}`, info: 'p:distribution:bayes',
       lead: `Under the alternative the probability of ${lv.length ? SM.grid.cellText(col, lv[0]) : 'the first level'} has a beta(a, b) prior; a = b = 1 is uniform, the default. Larger a and b concentrate it at a/(a + b).`,
-      fields: [{ key: 'a', label: 'Prior a', type: 'number', value: cur.a }, { key: 'b', label: 'Prior b', type: 'number', value: cur.b }],
+      fields: [{ key: 'a', label: 'Prior a', type: 'number', value: cur.a, help: 'The first shape of the beta prior, above 0. With b it sets the prior\'s mean, a/(a + b); a = b = 1 is the uniform prior, the default.' },
+        { key: 'b', label: 'Prior b', type: 'number', value: cur.b, help: 'The second shape, above 0. The larger a + b, the more the prior is concentrated around a/(a + b), as if a + b − 2 earlier observations had been made.' }],
       validate: (x) => (x.a > 0 && x.b > 0 ? null : 'a and b must be positive.'),
     });
     if (v) ctx.set('tpBf', { a: v.a, b: v.b }, col.id);
@@ -372,6 +378,8 @@
     const pi = o('pi', null), ti = o('ti', null);
     if (pi || ti) {
       const r = await ctx.call('distribution.intervals', { column: col.name, alpha: pi ? 1 - pi.level : 1 - ti.level, k_future: pi ? pi.k : 1, coverage: ti ? ti.coverage : 0.9 });
+      // the tolerance interval at its own confidence level when the prediction interval's is another
+      const rt = pi && ti && ti.level !== pi.level && !r.error ? await ctx.call('distribution.intervals', { column: col.name, alpha: 1 - ti.level, k_future: 1, coverage: ti.coverage }) : r;
       if (r.error) outline.add(ctx.warn(r.error));
       else {
         if (pi) {
@@ -379,11 +387,12 @@
           const rowsP = [{ what: `Individual (${r.k} future value${r.k > 1 ? 's' : ''})`, lower: r.prediction.lower, upper: r.prediction.upper }, { what: `Mean of ${r.k} future`, lower: r.prediction_mean.lower, upper: r.prediction_mean.upper }];
           if (r.k > 1) rowsP.push({ what: `Std Dev of ${r.k} future`, lower: r.prediction_sd.lower, upper: r.prediction_sd.upper });
           ob.add(ctx.rt({ columns: [{ key: 'what', label: '', fmt: 'text' }, { key: 'lower', label: 'Lower PI' }, { key: 'upper', label: 'Upper PI' }], rows: rowsP }), ctx.note(`${fmt(100 * pi.level)}% prediction intervals from the normal model (Bonferroni over the future values), mean ${fmt(r.mean)}, s ${fmt(r.sd)}, n ${r.n}.`));
+          if (!ti || rt !== r) ob.add(ctx.code(r.code));
         }
         if (ti) {
           const ob = ctx.outline('Tolerance Intervals', { parent: outline, key: 'ti', menu: () => [{ label: 'Remove', action: () => ctx.set('ti', null, sc) }] });
-          ob.add(ctx.rt({ columns: [{ key: 'what', label: 'Proportion', fmt: 'text' }, { key: 'lower', label: 'Lower TI' }, { key: 'upper', label: 'Upper TI' }, { key: 'k', label: 'k' }], rows: [{ what: pctLabel(r.coverage), lower: r.tolerance.lower, upper: r.tolerance.upper, k: r.tolerance.k }] }),
-            ctx.note(`Covers ${pctLabel(r.coverage)} of a normal population with ${fmt(100 * ti.level)}% confidence (Howe's k), two-sided.`), ctx.code(r.code));
+          ob.add(ctx.rt({ columns: [{ key: 'what', label: 'Proportion', fmt: 'text' }, { key: 'lower', label: 'Lower TI' }, { key: 'upper', label: 'Upper TI' }, { key: 'k', label: 'k' }], rows: [{ what: pctLabel(rt.coverage), lower: rt.tolerance.lower, upper: rt.tolerance.upper, k: rt.tolerance.k }] }),
+            ctx.note(`Covers ${pctLabel(rt.coverage)} of a normal population with ${fmt(100 * ti.level)}% confidence (Howe's k), two-sided.`), ctx.code(rt.code));
         }
       }
     }
@@ -495,6 +504,60 @@
     return ob.el;
   }
 
+  /* What each field of the red triangles' dialogs does: the dialog's (i) lists them. */
+  const FIELD_HELP = {
+    binWidth: 'The width of the histogram\'s bars, in the column\'s units; the bins start at a multiple of it below the smallest value (of every column, with Uniform Scaling). Empty or 0: the automatic bins.',
+    mu: 'The mean μ₀ the column\'s mean is tested against: Student\'s t test (statsmodels\' DescrStatsW.ttest_mean, with the Weight and Freq) and, without a Weight or Freq, the Wilcoxon signed-rank test of the differences from μ₀ (scipy); each two-sided and one-sided.',
+    sigma: 'A known standard deviation σ adds a z test, (mean − μ₀)/(σ/√n), beside the t test. Empty: the t test alone, with the sample standard deviation.',
+    sd0: 'The standard deviation σ₀ tested against: (n − 1)s²/σ₀² on χ² with n − 1 degrees of freedom, two-sided (Min PValue, twice the smaller tail) and one-sided. It assumes normal data and takes each row once, without the Weight or Freq.',
+    low: 'The lower end of the range of means that count as equivalent. The first of the two one-sided t tests (TOST, statsmodels\' ttost_mean) is that the mean is above it.',
+    upp: 'The upper end, above the lower one. The second test is that the mean is below it; equivalence is shown when both reject at the report\'s α (the larger of their p-values). Each row counts once.',
+    ciLevel: 'The confidence level, strictly between 0 and 1 (0.95 for 95%; any other value gives 0.95): the t interval of the mean and the χ² intervals of the standard deviation and the variance, which assume normal data. Each row counts once.',
+    piLevel: 'The confidence level of the prediction intervals, between 0 and 1 (0.95 for 95%).',
+    k: 'How many future values the intervals are for: the interval of an individual value is Bonferroni-adjusted over them (t at α/2k), and the report adds the interval of their mean and, from 2 on, of their standard deviation (F). All from the normal model with the sample mean and standard deviation.',
+    tiLevel: 'The confidence, between 0 and 1, that the interval holds at least the proportion covered of the population.',
+    coverage: 'The share of the population the interval is to hold, between 0 and 1 (0.9 for 90%): mean ± k·s with Howe\'s k, two-sided, for normal data.',
+    lsl: 'The lower specification limit; empty for an upper limit only. Cpl = (mean − LSL)/3σ, and the observed and expected shares below it.',
+    target: 'The target value. Only Cpm uses it, and Cpm needs both limits; empty: no Cpm.',
+    usl: 'The upper specification limit; empty for a lower limit only. Cpu = (USL − mean)/3σ. The dialog starts from the column\'s Spec Limits (Column Info); with both limits empty the analysis is removed.',
+    perRow: 'How many columns\' outlines go side by side before a new row starts; 0 lets them flow to the width of the window.',
+    ciCat: 'The confidence level of each level\'s probability interval, strictly between 0 and 1 (0.95 for 95%). Its method is the red triangle\'s Confidence Interval Method (Wilson score, JMP\'s, by default).',
+    probs: 'The probability of each level under the hypothesis: they are scaled to sum to one, and a level given 0 is left out of the test. The likelihood-ratio and Pearson χ² tests (scipy) compare the counts with them; with a Weight or Freq the counts are sums of weights.',
+  };
+
+  // Customize Summary Statistics: what each statistic is
+  const STAT_HELP = {
+    mean: 'The mean, weighted by Weight and Freq.',
+    sd: 'The standard deviation, with n − 1 in the denominator.',
+    se: 'The standard error of the mean, s/√n.',
+    upper: 'The upper limit of the t confidence interval of the mean, at the report\'s 1 − α.',
+    lower: 'The lower limit of that interval.',
+    n: 'The number of values; with a Weight or Freq, the sum of the weights.',
+    sumw: 'The sum of the weights (Weight times Freq); the number of values without them.',
+    sum: 'The sum of the values, weighted.',
+    var: 'The variance, s².',
+    skewness: 'The sample skewness, bias corrected (scipy\'s skew, bias=False): 0 for a symmetric distribution. Not with a Weight or Freq.',
+    kurtosis: 'The excess kurtosis, bias corrected: 0 for the normal distribution. Not with a Weight or Freq.',
+    cv: 'The coefficient of variation, 100·s/mean, in per cent.',
+    nmiss: 'The rows of the report with no value in the column.',
+    nzero: 'The values equal to 0.',
+    nunique: 'The number of distinct values.',
+    uss: 'The uncorrected sum of squares, Σx², weighted.',
+    css: 'The corrected sum of squares, Σ(x − mean)², weighted.',
+    autocorr: 'The correlation of each value with the next one in row order (lag 1). Not with a Weight or Freq.',
+    min: 'The smallest value.',
+    max: 'The largest value.',
+    median: 'The 50% quantile, by the same definition as the Quantiles table.',
+    mode: 'The most frequent value (the smallest of those tied). Not with a Weight or Freq.',
+    trimmed: 'The mean of the values with 5% cut off each end (scipy\'s trim_mean). Not with a Weight or Freq.',
+    geomean: 'The geometric mean, exp of the mean log; only when every value is above 0. Not with a Weight or Freq.',
+    range: 'The largest value minus the smallest.',
+    iqr: 'The 75% quantile minus the 25% quantile.',
+    mad: 'The median of the absolute deviations from the median, unscaled. Not with a Weight or Freq.',
+    robust_mean: 'Huber\'s M-estimate of location, computed jointly with the scale (statsmodels\' Huber), from 5 values on. Not with a Weight or Freq.',
+    robust_sd: 'Huber\'s M-estimate of scale, from the same fit. Not with a Weight or Freq.',
+  };
+
   /* ---- the red triangle of a continuous column --------------------------------- */
   function contMenu(ctx, col) {
     const sc = col.id;
@@ -513,7 +576,7 @@
       ] },
       { label: 'Histogram Options', submenu: () => [
         ctx.check('Histogram', 'histogram', sc, true),
-        { label: 'Set Bin Width…', action: () => ask('Set Bin Width', [{ key: 'w', label: 'Bin width (empty: automatic)', type: 'number', value: o('binWidth', null) }], 'binWidth', (v) => (v.w > 0 ? v.w : null)) },
+        { label: 'Set Bin Width…', action: () => ask('Set Bin Width', [{ key: 'w', label: 'Bin width (empty: automatic)', type: 'number', value: o('binWidth', null), help: FIELD_HELP.binWidth }], 'binWidth', (v) => (v.w > 0 ? v.w : null)) },
         { label: 'Count Axis', checked: o('axis', 'count') === 'count', action: () => ctx.set('axis', 'count', sc) },
         { label: 'Prob Axis', checked: o('axis', 'count') === 'prob', action: () => ctx.set('axis', 'prob', sc) },
         { label: 'Density Axis', checked: o('axis', 'count') === 'density', action: () => ctx.set('axis', 'density', sc) },
@@ -525,14 +588,14 @@
       ctx.check('Stem and Leaf', 'stem', sc, false),
       ctx.check('CDF Plot', 'cdf', sc, false),
       { separator: true },
-      { label: 'Test Mean…', action: () => ask('Test Mean', [{ key: 'mu', label: 'Specify hypothesized mean', type: 'number', value: 0 }, { key: 'sigma', label: 'True standard deviation, for a z test (optional)', type: 'number', value: null }], 'testMean') },
-      { label: 'Test Std Dev…', action: () => ask('Test Std Dev', [{ key: 'sigma', label: 'Specify hypothesized standard deviation', type: 'number', value: 1 }], 'testSd') },
+      { label: 'Test Mean…', action: () => ask('Test Mean', [{ key: 'mu', label: 'Specify hypothesized mean', type: 'number', value: 0, help: FIELD_HELP.mu }, { key: 'sigma', label: 'True standard deviation, for a z test (optional)', type: 'number', value: null, help: FIELD_HELP.sigma }], 'testMean') },
+      { label: 'Test Std Dev…', action: () => ask('Test Std Dev', [{ key: 'sigma', label: 'Specify hypothesized standard deviation', type: 'number', value: 1, help: FIELD_HELP.sd0 }], 'testSd') },
       { label: 'Test Rate…', checked: !!o('testRate', null), disabled: !isCounts(valuesOf(ctx, col).vals), action: () => testRateDialog(ctx, col) },
-      { label: 'Test Equivalence…', action: () => ask('Test Equivalence', [{ key: 'low', label: 'Lower bound', type: 'number', value: null }, { key: 'upp', label: 'Upper bound', type: 'number', value: null }], 'equiv') },
-      { label: 'Confidence Interval', submenu: () => [0.9, 0.95, 0.99].map((l) => ({ label: String(l), checked: o('ci', null) === l, action: () => ctx.set('ci', l, sc) })).concat([{ label: 'Other…', action: () => ask('Confidence Interval', [{ key: 'l', label: '1 − α', type: 'number', value: 0.95 }], 'ci', (v) => (v.l > 0 && v.l < 1 ? v.l : 0.95)) }]) },
-      { label: 'Prediction Interval…', action: () => ask('Prediction Interval', [{ key: 'level', label: '1 − α', type: 'number', value: 0.95 }, { key: 'k', label: 'Number of future values', type: 'number', value: 1 }], 'pi') },
-      { label: 'Tolerance Interval…', action: () => ask('Tolerance Interval', [{ key: 'level', label: 'Confidence, 1 − α', type: 'number', value: 0.95 }, { key: 'coverage', label: 'Proportion covered', type: 'number', value: 0.9 }], 'ti') },
-      { label: 'Capability Analysis…', action: () => { const cur = o('cap', null) || col.specLimits || {}; ask('Capability Analysis', [{ key: 'lsl', label: 'Lower spec limit', type: 'number', value: cur.lsl ?? null }, { key: 'target', label: 'Target', type: 'number', value: cur.target ?? null }, { key: 'usl', label: 'Upper spec limit', type: 'number', value: cur.usl ?? null }], 'cap', (v) => (v.lsl == null && v.usl == null ? null : v)); } },
+      { label: 'Test Equivalence…', action: () => ask('Test Equivalence', [{ key: 'low', label: 'Lower bound', type: 'number', value: null, help: FIELD_HELP.low }, { key: 'upp', label: 'Upper bound', type: 'number', value: null, help: FIELD_HELP.upp }], 'equiv') },
+      { label: 'Confidence Interval', submenu: () => [0.9, 0.95, 0.99].map((l) => ({ label: String(l), checked: o('ci', null) === l, action: () => ctx.set('ci', l, sc) })).concat([{ label: 'Other…', action: () => ask('Confidence Interval', [{ key: 'l', label: '1 − α', type: 'number', value: 0.95, help: FIELD_HELP.ciLevel }], 'ci', (v) => (v.l > 0 && v.l < 1 ? v.l : 0.95)) }]) },
+      { label: 'Prediction Interval…', action: () => ask('Prediction Interval', [{ key: 'level', label: '1 − α', type: 'number', value: 0.95, help: FIELD_HELP.piLevel }, { key: 'k', label: 'Number of future values', type: 'number', value: 1, help: FIELD_HELP.k }], 'pi') },
+      { label: 'Tolerance Interval…', action: () => ask('Tolerance Interval', [{ key: 'level', label: 'Confidence, 1 − α', type: 'number', value: 0.95, help: FIELD_HELP.tiLevel }, { key: 'coverage', label: 'Proportion covered', type: 'number', value: 0.9, help: FIELD_HELP.coverage }], 'ti') },
+      { label: 'Capability Analysis…', action: () => { const cur = o('cap', null) || col.specLimits || {}; ask('Capability Analysis', [{ key: 'lsl', label: 'Lower spec limit', type: 'number', value: cur.lsl ?? null, help: FIELD_HELP.lsl }, { key: 'target', label: 'Target', type: 'number', value: cur.target ?? null, help: FIELD_HELP.target }, { key: 'usl', label: 'Upper spec limit', type: 'number', value: cur.usl ?? null, help: FIELD_HELP.usl }], 'cap', (v) => (v.lsl == null && v.usl == null ? null : v)); } },
       { separator: true },
       { label: 'Continuous Fit', submenu: () => FITS.map(([k, label]) => ({ label, checked: m.includes(k), action: () => ctx.set('fits', m.includes(k) ? m.filter((x) => x !== k) : [...m, k], sc) })).concat([{ separator: true }, ctx.check('All (Compare Distributions)', 'fitAll', sc, false)]) },
       { label: 'Discrete Fit', submenu: () => DISCRETE.map(([k, label]) => ({ label, checked: m.includes(k), action: () => ctx.set('fits', m.includes(k) ? m.filter((x) => x !== k) : [...m, k], sc) })) },
@@ -546,7 +609,7 @@
     const sc = col.id;
     const cur = ctx.opt('stats', ['mean', 'sd', 'se', 'upper', 'lower', 'n'], sc);
     const all = statRows({}, { quantiles: [] }, fmt(100 * (1 - ctx.alpha)), false);
-    const v = await SM.ui.form({ title: `Customize Summary Statistics: ${col.name}`, fields: all.map(([k, label]) => ({ key: k, label, type: 'check', value: cur.includes(k) })) });
+    const v = await SM.ui.form({ title: `Customize Summary Statistics: ${col.name}`, fields: all.map(([k, label]) => ({ key: k, label, type: 'check', value: cur.includes(k), help: STAT_HELP[k] })) });
     if (v) ctx.set('stats', all.map((s) => s[0]).filter((k) => v[k]), sc);
   }
 
@@ -658,7 +721,7 @@
       { label: 'Order By', submenu: () => [[null, 'Original (value order)'], ['desc', 'Count Descending'], ['asc', 'Count Ascending']].map(([v, l]) => ({ label: l, checked: o('order', null) === v, action: () => ctx.set('order', v, sc) })) },
       { label: 'Test Probabilities…', action: () => testProbsDialog(ctx, col) },
       { label: 'Confidence Interval', submenu: () => [0.9, 0.95, 0.99].map((l) => ({ label: String(l), checked: o('ciCat', null) === l, action: () => ctx.set('ciCat', l, sc) }))
-        .concat([{ label: 'Other…', action: async () => { const v = await SM.ui.form({ title: `Confidence Interval: ${col.name}`, fields: [{ key: 'l', label: '1 − α', type: 'number', value: o('ciCat', null) || 0.95 }], validate: (x) => (x.l > 0 && x.l < 1 ? null : '1 − α must be between 0 and 1') }); if (v) ctx.set('ciCat', v.l, sc); } },
+        .concat([{ label: 'Other…', action: async () => { const v = await SM.ui.form({ title: `Confidence Interval: ${col.name}`, fields: [{ key: 'l', label: '1 − α', type: 'number', value: o('ciCat', null) || 0.95, help: FIELD_HELP.ciCat }], validate: (x) => (x.l > 0 && x.l < 1 ? null : '1 − α must be between 0 and 1') }); if (v) ctx.set('ciCat', v.l, sc); } },
           { separator: true }, { label: 'Confidence Interval Method', submenu: () => ciMethodItems(ctx, col) }]) },
       { separator: true },
       { label: 'Save', submenu: () => [{ label: 'Level Numbers', action: () => {
@@ -677,7 +740,7 @@
     const cur = ctx.opt('testProbs', null, col.id) || {};
     const v = await SM.ui.form({
       title: `Test Probabilities: ${col.name}`, lead: 'The hypothesized probability of each level; they are scaled to sum to one. Leave all equal for a test of a uniform distribution.',
-      fields: lv.map((l, i) => ({ key: `p${i}`, label: SM.grid.cellText(col, l), type: 'number', value: cur[String(l)] ?? +(1 / lv.length).toFixed(6) })),
+      fields: lv.map((l, i) => ({ key: `p${i}`, label: SM.grid.cellText(col, l), type: 'number', value: cur[String(l)] ?? +(1 / lv.length).toFixed(6), helpLabel: 'Each level', help: FIELD_HELP.probs })),
     });
     if (!v) return;
     const probs = {};
@@ -734,12 +797,17 @@
     launch: {
       lead: 'Choose the columns to describe. Continuous columns get a histogram, a box plot, quantiles and moments; ordinal and nominal columns a bar chart and frequencies.',
       roles: [
-        { key: 'y', label: 'Y, Columns', min: 1, hint: 'required: one or more' },
-        { key: 'weight', label: 'Weight', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric' },
-        { key: 'freq', label: 'Freq', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric' },
-        { key: 'by', label: 'By', hint: 'optional' },
+        { key: 'y', label: 'Y, Columns', min: 1, hint: 'required: one or more',
+          help: 'The columns to describe, each in an outline of its own. Its modeling type decides what it gets: a continuous column a histogram, an outlier box plot, Quantiles and Summary Statistics; an ordinal or nominal one a bar chart and Frequencies. Right click a column in the list to change its type.' },
+        { key: 'weight', label: 'Weight', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric',
+          help: 'A weight per row, multiplied with Freq: the histogram, the moments and quantiles, Test Mean and the counts of a categorical column weigh each row by it, and N is the sum of the weights (statsmodels\' DescrStatsW). Rows with a missing, zero or negative weight are left out. With a weight the report leaves out the skewness, the kurtosis, the robust and trimmed statistics and the normality tests; Test Std Dev, the other intervals, capability and the fitted distributions take each row once.' },
+        { key: 'freq', label: 'Freq', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric',
+          help: 'How many observations each row stands for: the histogram, the moments and quantiles, Test Mean, Test Rate and the counts of a categorical column take the row that many times, so N is the sum of the counts. It multiplies the Weight; rows with a missing, zero or negative count are left out. Test Std Dev, the other intervals, capability and the fitted distributions take each row once.' },
+        { key: 'by', label: 'By', hint: 'optional',
+          help: 'A separate set of outlines for each level of the By column (each combination of levels, with several By columns). Rows with a missing By value are left out.' },
       ],
-      options: [{ key: 'histOnly', label: 'Histograms Only', type: 'check', value: false }],
+      options: [{ key: 'histOnly', label: 'Histograms Only', type: 'check', value: false,
+        help: 'Only the histogram or bar chart of each column, without the box plot, Quantiles, Summary Statistics and the rest: a compact view of many columns. The top red triangle turns it off again.' }],
     },
     title: (spec) => ((spec.roles.y || []).length === 1 ? 'Distribution' : 'Distributions'),
     triangle(ctx) {
@@ -747,7 +815,7 @@
         ctx.check('Uniform Scaling', 'uniform', null, false),
         ctx.check('Stack', 'stack', null, false),
         ctx.check('Histograms Only', 'histOnly', null, false),
-        { label: 'Arrange in Rows…', action: async () => { const v = await SM.ui.form({ title: 'Arrange in Rows', fields: [{ key: 'n', label: 'Plots per row (0: as many as fit)', type: 'number', value: ctx.opt('perRow', 0) }] }); if (v) ctx.set('perRow', Math.max(0, Math.round(v.n || 0))); } },
+        { label: 'Arrange in Rows…', action: async () => { const v = await SM.ui.form({ title: 'Arrange in Rows', fields: [{ key: 'n', label: 'Plots per row (0: as many as fit)', type: 'number', value: ctx.opt('perRow', 0), help: FIELD_HELP.perRow }] }); if (v) ctx.set('perRow', Math.max(0, Math.round(v.n || 0))); } },
         { separator: true },
         { label: 'Normal Quantile Plots for All', action: () => ctx.set('qq', !ctx.opt('qq', false)) },
         { label: 'Normality Tests for All', action: () => ctx.set('normality', !ctx.opt('normality', false)) },

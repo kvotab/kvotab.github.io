@@ -184,6 +184,7 @@ lhs = call('doe.space_filling', factors=fs3, n_runs=16, method='lhs', seed=7)
 mm = call('doe.space_filling', factors=fs3, n_runs=16, method='maximin', seed=7)
 check('the maximin design spreads the points further than the LHS', mm['min_distance'] > lhs['min_distance'], True)
 check('the discrepancy is reported (scipy)', lhs['discrepancy'] > 0 and 'discrepancy' in lhs['notes'], True)
+check('the notes give the seed, drawn or given', f"Random seed {lhs['seed']}." in lhs['notes'], True)
 
 # ---------------------------------------------------------------------------
 # Evaluate Design

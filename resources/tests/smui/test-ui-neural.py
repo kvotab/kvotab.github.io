@@ -4,23 +4,24 @@
 The simulated Reactor example opens from the URL and File > Examples, and
 Neural sits in Analyze > Predictive Modeling; its launch dialog has JMP's
 roles (Y, X, Freq, Validation, By: no Weight) and options; the report opens
-with JMP's Model Launch and its defaults, and a bad setting is refused;
-the first Go loads scikit-learn and adds Model NTanH(3), whose measures are
-the engine's (called here) and whose RSquare is the one computed here from
-the plotted points; points select their rows and table selections
-highlight them; the model's red triangle shows the Diagram (its inputs,
-nodes, outputs and the Estimates' weights on its lines), Estimates,
-Profiler, Actual and Residual by Predicted and Fitting Details; every red
-triangle opens; more models from the Model Launch (ReLU with two layers,
-KFold, boosting) get JMP's names and a Model Comparison; Remove Fit; a
-categorical response has its confusion matrix and ROC curve, two
-responses one network; Save Columns (predicteds, probabilities, hidden
-layer values, validation) match the engine's; Excluded Rows Holdback and a
-Validation column make their sets; By gives one analysis per group; Redo
-and a project keep the models; the Python script holds scikit-learn's
-calls; Bootstrap reruns the report headless; every (i) has a topic; the
-reports draw in the dark theme and at phone width without a sideways page
-scroll, the diagram scrolling in its own box.
+with JMP's Model Launch and its defaults, and a bad setting is refused; the
+first Go loads scikit-learn and adds Model NTanH(3), whose measures are the
+engine's (called here) and whose RSquare is the one computed here from the
+plotted points; points select their rows and table selections highlight
+them; the model's red triangle shows the Diagram (its inputs, nodes, outputs
+and the Estimates' weights on its lines), Estimates, Profiler, Actual and
+Residual by Predicted and Fitting Details; every red triangle opens; more
+models from the Model Launch (ReLU with two layers, KFold, boosting) get
+JMP's names and a Model Comparison; Remove Fit; a categorical response has
+its confusion matrix and ROC curve, two responses one network; Save Columns
+(predicteds, probabilities, hidden layer values, validation) match the
+engine's; Excluded Rows Holdback and a Validation column make their sets; By
+gives one analysis per group; Redo and a project keep the models; the Python
+script holds scikit-learn's calls; Bootstrap reruns the report headless;
+every (i) has a topic; the launch dialog's (i) gives every role and option
+its help, and the Model Launch's (i) names each of its fields; the reports
+draw in the dark theme and at phone width without a sideways page scroll,
+the diagram scrolling in its own box.
 
 Start a server on the repository root and headless Chrome (README.md) on
 SMUI_HTTP_PORT and SMUI_CDP_PORT, then
@@ -179,6 +180,107 @@ async def triangles(page, name, least):
 
 async def rerun(page):
     await page.ev('(async () => { const rep = SM.app.reports[SM.app.reports.length - 1]; const d = new Promise(res => rep.on("done", res)); rep.run(); await d; })()')
+
+
+
+# ---- the (i) of a launch dialog, a form or an outline: its sections, as
+# { headings, sections: { heading: [[name, text], ...] } }. kind 'dialog':
+# arg is JS that opens the dialog (clickPath(rep, title, path) and wait(ms)
+# are at hand; it is not awaited, as a form resolves only when it closes);
+# kind 'slot': arg is JS giving the element that holds the (i).
+INFO = r'''
+(async (kind, arg, part) => {
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+  const clickPath = async (rep, title, path) => {
+    SM.app.showTab(SM.app.tabOf(rep));
+    const head = [...rep.body.querySelectorAll('.sm-ob-head')].find(h => { const t = h.querySelector('h2, h3, h4'); return t && (title === '*top*' ? t.tagName === 'H2' : t.textContent.trim() === title); });
+    if (!head) throw new Error('no outline ' + title);
+    head.querySelector('.sm-ob-menu').click();
+    await wait(60);
+    for (const label of path) {
+      const menus = [...document.querySelectorAll('.sm-menu')];
+      const b = [...menus[menus.length - 1].querySelectorAll('button')].find(x => x.querySelector('.sm-label') && x.querySelector('.sm-label').textContent === label);
+      if (!b) throw new Error('no item ' + label);
+      b.click();
+      await wait(80);
+    }
+  };
+  const read = () => {
+    const p = document.querySelector('.info-panel');
+    if (!p) return null;
+    const out = { title: p.querySelector('.info-panel-title').textContent, headings: [], sections: {} };
+    let cur = '';
+    for (const n of p.querySelector('.info-panel-body').children) {
+      if (n.tagName === 'H3') { cur = n.textContent; out.headings.push(cur); }
+      else if (n.tagName === 'DL') (out.sections[cur] = out.sections[cur] || []).push(...[...n.querySelectorAll(':scope > dt')].map(dt => [dt.textContent, dt.nextElementSibling ? dt.nextElementSibling.textContent : '']));
+    }
+    return out;
+  };
+  let dlg = null, btn = null;
+  window.__infoError = null;
+  if (kind === 'slot') {
+    const node = (new Function('return ' + arg))();
+    btn = node && (node.matches('.info-btn') ? node : node.querySelector('.info-btn'));
+  } else {
+    const before = new Set(document.querySelectorAll('.sm-dialog'));
+    (new Function('clickPath', 'wait', 'return (async () => {' + arg + '})()'))(clickPath, wait).catch((e) => { window.__infoError = String(e); });
+    for (let i = 0; i < 100 && !dlg && !window.__infoError; i++) { await wait(50); dlg = [...document.querySelectorAll('.sm-dialog')].find(d => !before.has(d)) || null; }
+    if (!dlg) { SM.ui.closeMenus(0); return { error: window.__infoError || 'no dialog' }; }
+    await wait(120);
+    btn = dlg.querySelector('.sm-dialog-head .info-btn');
+  }
+  if (!btn) { if (dlg) dlg.querySelector('.sm-dialog-x').click(); return { error: 'no (i)' }; }
+  // the inputs of a part (JS giving an element; a dialog's is dlg): each one's aria-label and label text
+  const box = part ? (new Function('dlg', 'return ' + part))(dlg) : null;
+  const inputs = box ? [...box.querySelectorAll('input, select, textarea')].map(e => [e.getAttribute('aria-label') || '', e.closest('label') ? e.closest('label').textContent.trim() : '']) : [];
+  btn.click();
+  await wait(150);
+  const out = read() || { error: 'no panel' };
+  out.inputs = inputs;
+  out.key = KvotInfo.current();
+  out.noTopic = KvotInfo.audit().noTopic;
+  KvotInfo.close();
+  if (dlg) { dlg.querySelector('.sm-dialog-x').click(); await wait(120); }
+  return out;
+})
+'''
+
+
+def info_js(kind, arg, part=None):
+    return f'({INFO})({json.dumps(kind)}, {json.dumps(arg)}, {json.dumps(part)})'
+
+
+def unexplained(info, heading=None):
+    """The inputs of the part that no entry of the panel (of one section) names."""
+    secs = info.get('sections') or {}
+    names = [n for h, cs in secs.items() if heading is None or h == heading for n, _ in cs]
+    return [a or t for a, t in info.get('inputs', []) if not any(a.startswith(n) or t.startswith(n) for n in names)]
+
+
+async def dialog_help(page, opener, platform_id, name):
+    """A launch dialog's (i): one Roles and one Options section, every role and
+    option with its help (a role's followed by what it takes), and no (i)
+    without a topic while the dialog is open. Returns the panel."""
+    d = await page.ev(info_js('dialog', opener))
+    if not isinstance(d, dict) or 'sections' not in d:
+        check(f'{name}: the launch dialog\'s (i) opens', d, 'a panel')
+        return {'headings': [], 'sections': {}}
+    want = await page.ev(f'(() => {{ const L = SM.platforms.get({json.dumps(platform_id)}).launch; return {{ roles: L.roles.map(r => [r.label, r.help || ""]), options: (L.options || []).map(o => [o.label, o.help || ""]) }}; }})()')
+    roles, opts = dict(d['sections'].get('Roles', [])), dict(d['sections'].get('Options', []))
+    check(f'{name}: the launch dialog\'s (i) has one Roles and one Options section', (d['headings'].count('Roles'), d['headings'].count('Options')), (1, 1 if want['options'] else 0))
+    check('... every role with its help, then what it takes', [(lab, bool(h) and roles.get(lab, '').startswith(h) and roles[lab].endswith(')')) for lab, h in want['roles']], [(lab, True) for lab, _ in want['roles']])
+    check('... every option with its help', [(lab, bool(h) and opts.get(lab) == h) for lab, h in want['options']], [(lab, True) for lab, _ in want['options']])
+    check('... and every (i) has a topic while it is open', d['noTopic'], [])
+    return d
+
+
+async def form_help(page, opener, fields, name):
+    """A form's (i) lists each of its fields with what it is for."""
+    f = await page.ev(info_js('dialog', opener))
+    got = dict((f.get('sections') or {}).get('Fields', [])) if isinstance(f, dict) else {}
+    check(f'{name}: the form\'s (i) lists its fields, each with its help', [(x, len(got.get(x, '')) > 30) for x in fields], [(x, True) for x in fields])
+    check('... and every (i) has a topic while it is open', f.get('noTopic') if isinstance(f, dict) else f, [])
+    return f
 
 
 async def main():
@@ -501,6 +603,16 @@ async def main():
     check('the platform has its line in Help, with scikit-learn\'s MLPs', bool(helps) and 'MLPRegressor' in helps and 'MLPClassifier' in helps, True)
     topics = await page.ev('Object.keys(SM.platforms.get("neural").topics)')
     check('its topics', sorted(topics), sorted(['p:neural', 'p:neural:launch', 'p:neural:model', 'p:neural:estimates', 'p:neural:diagram', 'p:neural:details', 'p:neural:residual', 'p:neural:compare']))
+
+    # ---- the (i) explains every input: the launch dialog, and every field of the Model Launch in the report
+    d = await dialog_help(page, "SM.app.launch('neural')", 'neural', 'Neural')
+    check('... its Validation role says the Model Launch holds rows back without one (no Validation Portion here)', 'the Model Launch holds rows back' in dict(d['sections'].get('Roles', [])).get('Validation', ''), True)
+    three = 'SM.app.reports.find(r => r.platform.id === "neural" && (r.spec.options.models || []).length === 3)'
+    head = f"[...{three}.body.querySelectorAll('.sm-ob-head')].find(h => h.textContent.trim() === 'Model Launch')"
+    s = await page.ev(info_js('slot', head, f"{head}.parentElement.querySelector('.sm-nn-launch')"))
+    check('the Model Launch\'s (i) names every one of its fields, in JMP\'s boxes, and Go', (len(s.get('inputs', [])), unexplained(s), s.get('headings')),
+          (13, [], ['Validation Method', 'Hidden Layer Structure', 'Boosting', 'Fitting Options', 'Go']))
+    check('... each with what it does', all(len(t) > 40 for cs in s['sections'].values() for _, t in cs), True)
 
     # ---- dark theme and phone width
     await page.ev('SM.app.showTab(SM.app.tabOf(SM.app.reports.find(r => r.platform.id === "neural" && (r.spec.options.models || []).length === 3)))')

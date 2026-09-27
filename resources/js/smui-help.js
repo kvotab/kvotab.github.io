@@ -46,6 +46,17 @@
         { heading: 'Value order', text: 'The order of the levels in reports and graphs, and the order of an ordinal response. By default numbers ascending and text in natural order (A2 before A10).' },
         { heading: 'Format', text: 'How the grid shows the values. A date column holds milliseconds since 1970 and shows them as dates.' },
         { heading: 'Spec Limits', text: 'The lower and upper specification limits and the target of a numeric column. Capability analyses start from them; they are saved with the table.' },
+        { heading: 'Fields', choices: [
+          ['Column name', 'The heading, and the name in launch dialogs and formulas. Formulas that use the column follow the new name.'],
+          ['Data type', 'Numeric or Character. Numeric to character keeps the text of the numbers; character to numeric makes what is not a number missing.'],
+          ['Modeling type', 'Continuous, Ordinal or Nominal: how analyses treat the column. A character column cannot be continuous.'],
+          ['Format', 'Best shows up to 10 significant digits; Fixed decimals a set number of decimals; Percent the value times 100 with a % sign; Date and Date and time show the number (milliseconds since 1970) as a date. The format changes what the grid shows, not the values.'],
+          ['decimals', 'The number of decimals for Fixed decimals, 0 to 12.'],
+          ['Label column', 'Its values label the rows in graphs: a labeled row (Rows > Label) shows its value by its points. A table has one label column: choosing this one clears the other.'],
+          ['Value order', 'The order of the levels: select one and Move Up or Move Down, Reverse the list, or Sort it back to the natural order. Reports, graphs and an ordinal response follow it.'],
+          ['Spec Limits', 'LSL, Target and USL: leave a box empty for no limit.'],
+          ['Notes', 'Free text about the column, kept with the table.'],
+        ] },
       ],
     },
     'rows:selectwhere': { kicker: 'Rows', title: 'Select Where', lead: 'Select the rows where a column meets a condition. Extend adds them to the selection, Restrict keeps only the selected rows that also match.' },
@@ -70,7 +81,18 @@
     'rows:datafilter': {
       kicker: 'Rows', title: 'Data Filter',
       lead: 'Filters the whole table. The matching rows are selected; with Show the other rows are hidden in graphs, with Include they are excluded from analyses. Closing the filter clears the hiding and excluding it did.',
-      sections: [{ heading: 'Versus the Local Data Filter', text: 'The Local Data Filter (a report\'s red triangle) narrows one report and leaves the table alone; the Data Filter changes the table\'s row states, which every report sees.' }],
+      sections: [
+        { heading: 'Controls', choices: [
+          ['Add Filter Columns', 'Adds a column to filter by: a nominal or ordinal column shows a button per level, a continuous one a from and to range. A row must match every filter column.'],
+          ['Levels', 'Click a level to keep its rows; ctrl/⌘ or shift adds more levels (a row matches any of them). Click it again to let every level through.'],
+          ['from, to', 'The range of a continuous column: type a lower and an upper limit; an empty box is no limit.'],
+          ['Select', 'The matching rows are selected in the table, and so in every graph.'],
+          ['Show', 'The other rows are hidden: graphs do not draw them.'],
+          ['Include', 'The other rows are excluded: analyses leave them out.'],
+          ['remove, Clear', 'remove takes one column out of the filter, Clear all of them.'],
+        ] },
+        { heading: 'Versus the Local Data Filter', text: 'The Local Data Filter (a report\'s red triangle) narrows one report and leaves the table alone; the Data Filter changes the table\'s row states, which every report sees.' },
+      ],
       more: { label: 'Row states', id: 'help-rowstates' },
     },
     'report:switcher': {
@@ -80,7 +102,15 @@
     'report:filter': {
       kicker: 'Report', title: 'Local Data Filter',
       lead: 'Narrows this report to the rows that match: pick levels of categorical columns, or a range of a continuous one. The other rows are left out of this report only; the table and other reports keep them. Rows excluded in the table stay excluded.',
-      sections: [{ heading: 'Several filters', text: 'A row must match every filter column. Within one categorical column, ctrl/⌘ or shift adds levels (a row matches any of them).' }],
+      sections: [
+        { heading: 'Controls', choices: [
+          ['Add Filter Columns', 'Adds a column to filter by: a nominal or ordinal column shows a button per level, a continuous one a from and to range.'],
+          ['Levels', 'Click a level to keep its rows; ctrl/⌘ or shift adds more levels. Click it again to let every level through.'],
+          ['from, to', 'The range of a continuous column: type a lower and an upper limit; an empty box is no limit.'],
+          ['remove, Clear', 'remove takes one column out of the filter, Clear all of them.'],
+        ] },
+        { heading: 'Several filters', text: 'A row must match every filter column. Within one categorical column, ctrl/⌘ or shift adds levels (a row matches any of them).' },
+      ],
       more: { label: 'Reports', id: 'help-reports' },
     },
   };
@@ -143,6 +173,7 @@
         '**Y** is the response, **X** the factor or regressor; **Weight** and **Freq** are numeric; **By** repeats the analysis for each level.',
         'Remove takes the selected columns out of their roles; Recall fills in the last launch of the platform, matched by column name.',
         'Right click a column in the dialog to change its modeling type there.',
+        'The (i) in a dialog\'s title bar explains the analysis and what each role, option and field is for. Drag the title bar to move the dialog.',
       ]),
 
       h('h2', 'Reports', 'reports'),
@@ -152,7 +183,7 @@
         'p-values below 0.0001 show as <.0001; an asterisk and red marks those below α (0.05 unless set).',
         '**Redo ▾** runs the analysis again (after exclusions or edits), relaunches the dialog, or turns on Automatic Recalc.',
         '**Local Data Filter** (in the top red triangle) narrows one report to the rows that match chosen levels or ranges, without touching the table.',
-        '**Save ▾** writes the Python script, or the report as a standalone HTML file with its graphs as images.',
+        '**Save ▾** writes the Python script, or the report as a standalone HTML file or a Word document with its graphs as images; **Print…** prints that document, without the page around it. The browser\'s own Print prints the report in view, graphs wider than the paper scaled to fit.',
         'Graphs: click a point or bar to select its rows (shift adds), drag a rectangle to select several; double click to clear. The toolbar above a graph zooms, pans and saves it as PNG.',
       ]),
 
@@ -160,7 +191,7 @@
       ul([
         '**File > Save Table** writes one table as JSON, with its modeling types, formats, value orders, formulas, spec limits and row states; File > Open reads it back.',
         '**File > Save Project** writes every open table and every report (roles, options, filters) into one JSON file; opening it rebuilds the reports.',
-        '**Export** writes CSV, tab-separated text or Excel for other programs; a report\'s **Save ▾** writes its Python script or a standalone HTML copy.',
+        '**Export** writes CSV, tab-separated text or Excel for other programs; a report\'s **Save ▾** writes its Python script, a standalone HTML copy or a Word document (.docx), or prints it.',
         'Nothing is kept by the page itself between visits: save a project before closing the tab.',
         '**Edit > Undo** (ctrl/⌘+Z in the grid) takes back edits, deleted rows and columns, sorting and row states, thirty steps deep.',
       ]),
@@ -170,7 +201,7 @@
         ['Grid', 'arrows move; Enter or F2 edits; typing replaces the cell; Tab moves right; Delete clears; ctrl/⌘+C and V copy and paste; ctrl/⌘+Z undo, shift for redo; ctrl/⌘+A selects all rows'],
         ['Menus', 'arrows move and open submenus; Enter chooses; Escape closes'],
         ['Tabs', 'left and right arrows, Home and End'],
-        ['Dialogs', 'Enter is OK, Escape cancels; in a launch dialog Enter puts the selected columns in the first role that takes them'],
+        ['Dialogs', 'Enter is OK, Escape cancels; in a launch dialog Enter puts the selected columns in the first role that takes them; drag the title bar to move a dialog'],
       ].map((r) => el('tr', null, el('td', null, el('strong', { text: r[0] })), el('td', { text: r[1] }))))),
 
       h('h2', 'The platforms', 'platforms'),

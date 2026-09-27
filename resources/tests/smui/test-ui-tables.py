@@ -65,6 +65,21 @@ window.T = {
   mean: (v) => { const s = v.filter(Number.isFinite); return s.reduce((a, b) => a + b, 0) / s.length; },
   near: (a, b, tol = 1e-9) => Math.abs(a - b) <= tol * Math.max(1, Math.abs(b)),
   menuButton(label) { return [...document.querySelectorAll('.sm-menu button')].find((b) => b.querySelector('.sm-label') && b.querySelector('.sm-label').textContent === label) || null; },
+  // The (i) panel as it reads: its title, its section headings and the choices under each ([name, text]).
+  info() {
+    const p = document.querySelector('.info-panel'); if (!p) return null;
+    const out = { title: p.querySelector('.info-panel-title').textContent, heads: [], choices: {} };
+    let head = '';
+    for (const n of p.querySelector('.info-panel-body').children) {
+      if (n.tagName === 'H3') { head = n.textContent; out.heads.push(head); }
+      else if (n.matches('dl.info-choices')) { const dd = [...n.querySelectorAll('dd')]; out.choices[head] = [...n.querySelectorAll('dt')].map((dt, i) => [dt.textContent, dd[i] ? dd[i].textContent : '']); }
+    }
+    return out;
+  },
+  async infoOf(root) { const b = root && root.querySelector('.info-btn'); if (!b) return null; b.click(); await T.sleep(60); const r = T.info(); r.audit = KvotInfo.audit().noTopic; KvotInfo.close(); return r; },
+  names: (info, head) => ((info && info.choices[head]) || []).map((c) => c[0]),
+  // entries whose explanation is missing or only says what a role takes
+  thin: (info, heads) => heads.flatMap((h) => ((info && info.choices[h]) || []).filter((c) => c[1].startsWith('(') || c[1].length < 30).map((c) => `${h}: ${c[0]}`)),
 };
 '''
 
@@ -653,6 +668,71 @@ async def main():
         check('an error shows with its line', 'IndexError: list index out of range (line 2)' in r['err'], True)
         check('a script from a project shows a warning and does not run', (r['warn2'], r['ran']), (True, False))
     await shot(page, 't05-python.png')
+
+    # ---- the (i) of every dialog: each role, option and field with what it is for -------------------------------------------------------
+    r = await js(page, r'''
+      const t = SM.app.tables[0]; SM.app.showTab(SM.app.tabOf(t)); t.select([]);
+      const out = {};
+      for (const label of ['Summary…', 'Subset…', 'Sort…', 'Stack…', 'Split…', 'Transpose…', 'Missing Data Pattern…']) {
+        T.cmd('Tables', label); const d = T.dlg();
+        const roles = [...d.querySelectorAll('.sm-role .sm-btn')].map((b) => b.textContent);
+        const nopts = d.querySelectorAll('.sm-launch-opts label').length;
+        const info = await T.infoOf(d.querySelector('.sm-dialog-head'));
+        T.ok(d, 'Cancel');
+        out[label] = { roles: T.names(info, 'Roles'), want: roles, opts: T.names(info, 'Options').length, nopts, thin: T.thin(info, ['Roles', 'Options', 'Settings', 'Each statistic']), settings: T.names(info, 'Settings'), stats: T.names(info, 'Each statistic').length, audit: info.audit, title: info.title };
+      }
+      SM.app.launch('missing'); let d = T.dlg();
+      const mv = await T.infoOf(d.querySelector('.sm-dialog-head')); T.ok(d, 'Cancel');
+      out.missing = { roles: T.names(mv, 'Roles'), thin: T.thin(mv, ['Roles']), audit: mv.audit };
+      return { out, open: !!T.dlg() };
+    ''', 'launch dialogs\' (i)')
+    if r:
+        for label, v in r['out'].items():
+            if label == 'missing':
+                continue
+            check(f'{label} the (i) explains every role and option', (v['roles'], v['opts'], v['thin'], v['audit']), (v['want'], v['nopts'], [], []))
+        check('Summary: the (i) explains every statistic', r['out']['Summary…']['stats'], 17)
+        check('Sort: the (i) explains the arrows beside the By columns', r['out']['Sort…']['settings'], ['▲ ▼ beside a By column'])
+        check('Explore Missing Values: the (i) explains its roles', (r['out']['missing']['roles'], r['out']['missing']['thin'], r['out']['missing']['audit']), (['Y, Columns', 'By'], [], []))
+        check('the dialogs are closed again', r['open'], False)
+    r = await js(page, r'''
+      const t = SM.app.tables[0]; SM.app.showTab(SM.app.tabOf(t));
+      const g = SM.app.grid; g.colSel.clear(); g.colSel.add(t.col('sex').id);
+      const form = async (open) => { open(); await T.sleep(60); const d = T.dlg(); const info = await T.infoOf(d.querySelector('.sm-dialog-head')); T.button(d, 'Cancel').click(); await T.sleep(30); return info; };
+      const ind = await form(() => T.cmd('Cols/Utilities', 'Make Indicator Columns…'));
+      const bin = await form(() => T.cmd('Cols/Utilities', 'Make Binning Column…'));
+      g.colSel.clear();
+      const dlg = async (open) => { open(); await T.sleep(60); const d = T.dlg(); const info = await T.infoOf(d.querySelector('.sm-dialog-head')); T.button(d, 'Cancel').click(); await T.sleep(30); return info; };
+      const concat = await dlg(() => T.cmd('Tables', 'Concatenate…'));
+      const join = await dlg(() => T.cmd('Tables', 'Join…'));
+      const upd = await dlg(() => T.cmd('Tables', 'Update…'));
+      const rec = await dlg(() => T.cmd('Cols', 'Recode…', t.col('sex')));
+      const m = SM.app.reports.find((x) => x.platform.id === 'missing');
+      const bar = await T.infoOf(m.body.querySelector('.smt-mvbar'));
+      const imp = await form(() => { T.button(m.body, 'Impute ▾').click(); T.menuButton('Chained Equations (MICE)').click(); });
+      const tab = SM.app.reports.find((x) => x.platform.id === 'tabulate');
+      const p = T.done(tab); tab.spec.options.panel = true; tab.run(); await p;
+      const tb = await T.infoOf(tab.body.querySelector('.smt-left h4'));
+      const head = (id) => [...SM.app.reports.find((x) => x.platform.id === id).body.querySelectorAll('.sm-ob-head')].find((h) => h.querySelector('.info-btn'));
+      const cv = await T.infoOf(head('colviewer'));
+      const py = await T.infoOf(head('pyscript'));
+      const f = (info) => ({ fields: T.names(info, 'Fields'), thin: T.thin(info, ['Fields']), audit: info.audit });
+      return { ind: f(ind), indTitle: ind.title, bin: f(bin), imp: f(imp), concat: f(concat), join: f(join), upd: f(upd), rec: { dialog: T.names(rec, 'The dialog'), done: T.names(rec, 'Done'), audit: rec.audit },
+        bar: T.names(bar, 'Buttons'), tab: T.names(tab ? tb : null, 'The control panel'), cv: T.names(cv, 'In the report'), py: T.names(py, 'In the report'), open: !!T.dlg() };
+    ''', 'forms and dialogs\' (i)')
+    if r:
+        check('Make Indicator Columns: the form\'s (i) lists its fields', (r['ind']['fields'], r['ind']['thin'], r['ind']['audit'], r['indTitle']), (['Append column name (sex[F] rather than F)', 'As formula columns'], [], [], 'Make Indicator Columns'))
+        check('Make Binning Column: the form\'s (i) lists its fields', (len(r['bin']['fields']), r['bin']['thin'], r['bin']['audit']), (9, [], []))
+        check('Impute (MICE): the form\'s (i) lists its fields', (r['imp']['fields'], r['imp']['thin'], r['imp']['audit']), (['Save', 'Seed', 'Cycles'], [], []))
+        check('Concatenate: the dialog\'s (i) explains its fields', (r['concat']['fields'], r['concat']['audit']), (['Data tables to be concatenated', 'Create source column', 'Append to first table', 'Output table name'], []))
+        check('Join: the dialog\'s (i) explains its fields', (r['join']['fields'], r['join']['thin'], r['join']['audit']), (['Join with', 'Matching', 'Matching columns', 'Include non-matches', 'Drop multiples', 'Match flag', 'Merge same name columns', 'Output table name'], [], []))
+        check('Update: the dialog\'s (i) explains its fields', (r['upd']['fields'], r['upd']['thin'], r['upd']['audit']), (['Update with data from', 'Matching', 'Matching columns', 'Ignore missing', 'Replace columns in main table', 'Add columns from update table'], [], []))
+        check('Recode: the dialog\'s (i) explains its buttons and fields', (len(r['rec']['dialog']), r['rec']['done'], r['rec']['audit']), (8, ['New Column', 'In Place', 'Formula Column'], []))
+        check('Explore Missing Values: an (i) by its buttons', r['bar'], ['Select Rows with Missing', 'Exclude Rows with Missing', 'Impute ▾'])
+        check('Tabulate: the control panel\'s (i) explains its buttons', [n for n in r['tab'] if n in ('Add to Rows', 'Nest in Rows', 'Add to Columns', 'Analysis Column', 'Clear', 'Done')], ['Add to Rows', 'Nest in Rows', 'Add to Columns', 'Analysis Column', 'Clear', 'Done'])
+        check('Columns Viewer: its outline\'s (i) explains the buttons', r['cv'], ['A line of the table', 'Distribution', 'Clear Select', 'Select All'])
+        check('Python Script: its outline\'s (i) explains the editor and Run', [n for n in r['py'] if n in ('The editor', 'Run', 'Examples ▾')], ['The editor', 'Run', 'Examples ▾'])
+        check('the forms and dialogs are closed again', r['open'], False)
 
     # ---- the (i) topics and Help links, then the dark theme and phone width ----------------------------------------------------------
     audit = json.loads(await page.ev('JSON.stringify(KvotInfo.audit())'))

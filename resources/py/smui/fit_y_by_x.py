@@ -745,6 +745,9 @@ _TRANSFORMS = {
     'reciprocal': ('1/{}', lambda v: 1 / v, lambda v: 1 / v, lambda v: v != 0),
     'exp': ('Exp({})', np.exp, lambda v: np.log(np.where(v > 0, v, np.nan)), lambda v: np.isfinite(np.exp(np.clip(v, -700, 700)))),
 }
+# X is only transformed forward: a square takes any X (the domain above is
+# Y's, whose fit is taken back by the square root)
+_X_DOMAIN = {'square': lambda v: np.isfinite(v)}
 _TR_TITLE = {'log': 'Log', 'sqrt': 'Sqrt', 'square': 'Square', 'reciprocal': 'Recip', 'exp': 'Exp'}
 _TR_CODE = {'none': '{}', 'log': 'np.log({})', 'sqrt': 'np.sqrt({})', 'square': '{}**2', 'reciprocal': '1/{}', 'exp': 'np.exp({})'}
 
@@ -761,7 +764,7 @@ def fit_special(table, y, x, ytr='none', xtr='none', degree=1, intercept=None, s
     if ytr not in _TRANSFORMS or xtr not in _TRANSFORMS:
         return {'error': 'unknown transformation'}
     xy = _xy(table, y, x, rows, weight, freq)
-    ok = _TRANSFORMS[ytr][3](xy.y) & _TRANSFORMS[xtr][3](xy.x)
+    ok = _TRANSFORMS[ytr][3](xy.y) & _X_DOMAIN.get(xtr, _TRANSFORMS[xtr][3])(xy.x)
     dropped = int(np.sum(~ok))
     yv, xv, wf, f, rws = xy.y[ok], xy.x[ok], xy.wf[ok], xy.f[ok], xy.rows[ok]
     sub = _XY(yv, xv, xy.w[ok], f, rws, weight, freq)

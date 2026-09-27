@@ -11,8 +11,13 @@ exclusion marks the report stale and Redo uses fewer rows; By gives one
 report per level; the Local Data Filter narrows one report; a saved column
 lands in the table; cell edits and modeling types do what they say; the
 report's Python script is the code of its results; Distribution's interval
-methods and Test Rate show what the page computes; the page draws in the
-dark theme and at phone width.
+methods and Test Rate show what the page computes; dialogs move by their
+title bar, a disabled menu item opens no submenu, the tab strip has no
+scroll bar; a dialog's (i) explains its roles, options and fields; Print
+prints the report as a document from a hidden frame, Save Report as Word
+writes a .docx of the open outlines, tables and graphs, and the page's own
+print leaves the site around the report out; the page draws in the dark
+theme (documents keep the light one) and at phone width.
 
 Start a server on the repository root and headless Chrome (the recipe is in
 ../rb/README.md) on SMUI_HTTP_PORT and SMUI_CDP_PORT (defaults 8791, 9291),
@@ -462,11 +467,293 @@ async def main():
     check('a project keeps Test Rate and its exposure column', (r['newTable'], 'Total months' in r['labels']), (True, True))
     await page.ev('SM.app.showTab(SM.app.tabOf(SM.app.tables[0]))')
 
+    # ---- dialogs move by their title bar and stay within reach; the ×
+    # and the (i) in the bar are buttons, not handles
+    r = await page.ev('''(async () => {
+      SM.app.launch('distribution');
+      await new Promise(r => setTimeout(r, 250));
+      const dlg = document.querySelector('.sm-launch-dialog');
+      const head = dlg.querySelector('.sm-dialog-head');
+      const at = () => { const b = dlg.getBoundingClientRect(); return [Math.round(b.left), Math.round(b.top)]; };
+      const drag = (from, dx, dy) => {
+        const o = { bubbles: true, button: 0, pointerId: 7, isPrimary: true };
+        from.dispatchEvent(new PointerEvent('pointerdown', { ...o, clientX: 300, clientY: 200 }));
+        head.dispatchEvent(new PointerEvent('pointermove', { ...o, clientX: 300 + dx, clientY: 200 + dy }));
+        head.dispatchEvent(new PointerEvent('pointerup', { ...o, clientX: 300 + dx, clientY: 200 + dy }));
+      };
+      const p0 = at();
+      drag(head.querySelector('h2'), -150, 60);
+      const p1 = at();
+      drag(head.querySelector('h2'), 5000, 5000);
+      const b = dlg.getBoundingClientRect();
+      const reach = b.left <= innerWidth - 59 && b.top <= innerHeight - head.getBoundingClientRect().height + 1;
+      drag(head.querySelector('h2'), -10000, -10000);
+      const c = dlg.getBoundingClientRect();
+      const back = c.right >= 59 && c.top >= -1;
+      const p2 = at();
+      drag(head.querySelector('.sm-dialog-x'), 80, 80);
+      const still = JSON.stringify(at()) === JSON.stringify(p2) && !!document.querySelector('.sm-launch-dialog');
+      const grip = head.classList.contains('sm-dialog-grip') && getComputedStyle(head).cursor;
+      dlg.querySelector('.sm-dialog-x').click();
+      return { moved: [p1[0] - p0[0], p1[1] - p0[1]], reach, back, still, grip };
+    })()''')
+    check('a dialog moves with its title bar', r['moved'], [-150, 60])
+    check('dragged far right and down, its bar stays in the window', r['reach'], True)
+    check('dragged far left and up, it stays within reach', r['back'], True)
+    check('the × is a button, not a handle', r['still'], True)
+    check('the title bar shows the move cursor', r['grip'], 'move')
+
+    # ---- a disabled item's submenu does not open; an enabled one's does
+    # (the mouse moved by the browser, as a user's)
+    r = await page.ev('''(() => {
+      SM.ui.menu([{ label: 'Off', disabled: true, submenu: () => [{ label: 'hidden', action() {} }] }, { label: 'On', submenu: () => [{ label: 'shown', action() {} }] }], { x: 400, y: 300 });
+      const menu = [...document.querySelectorAll('.sm-menu')].pop();
+      return [...menu.querySelectorAll('button')].map(b => { const r = b.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; });
+    })()''')
+    count = 'document.querySelectorAll(".sm-menu").length'
+
+    async def hover(xy):
+        await page.call('Input.dispatchMouseEvent', {'type': 'mouseMoved', 'x': xy[0], 'y': xy[1]}, session=page.sid)
+        await asyncio.sleep(0.15)
+    await hover(r[0])
+    a = await page.ev(count)
+    await hover(r[1])
+    b = await page.ev(count)
+    shown = await page.ev('[...document.querySelectorAll(".sm-menu")].pop().textContent')
+    await hover(r[0])
+    c = await page.ev(count)
+    await page.ev('SM.ui.closeMenus(0)')
+    check('hovering a disabled item opens no submenu', a, 1)
+    check('hovering an enabled one opens its submenu', (b, shown), (2, 'shown'))
+    check('hovering the disabled item again closes the other submenu', c, 1)
+
+    # ---- the tab strip has no scroll bar of its own
+    r = await page.ev('''(() => { const s = document.querySelector('.sm-tabs'); return { h: s.scrollHeight - s.clientHeight, bar: s.offsetHeight - s.clientHeight - parseFloat(getComputedStyle(s).borderTopWidth) - parseFloat(getComputedStyle(s).borderBottomWidth) }; })()''')
+    check('the tab strip does not scroll vertically', r['h'], 0)
+    check('and shows no scroll bar', r['bar'], 0)
+
+    # ---- the (i) of a launch dialog explains its roles and options; the
+    # platform's own Roles section gives way to the generated one; a form's
+    # (i) lists its fields, each explanation once
+    r = await page.ev('''(async () => {
+      SM.app.launch('distribution');
+      await new Promise(r => setTimeout(r, 250));
+      const dlg = document.querySelector('.sm-launch-dialog');
+      dlg.querySelector('.sm-dialog-head .info-btn').click();
+      await new Promise(r => setTimeout(r, 250));
+      const panel = document.querySelector('.info-panel');
+      const heads = [...panel.querySelectorAll('h3, h4')].map(h => h.textContent);
+      const text = panel.textContent;
+      const audit = KvotInfo.audit().noTopic;
+      KvotInfo.close();
+      dlg.querySelector('.sm-dialog-x').click();
+      const topic = SM.info.get('launch:distribution');
+      const t = SM.app.current;
+      const pending = SM.app.selectRandomly();
+      await new Promise(r => setTimeout(r, 200));
+      const form = [...document.querySelectorAll('.sm-dialog')].pop();
+      form.querySelector('.sm-dialog-head .info-btn').click();
+      await new Promise(r => setTimeout(r, 250));
+      const fp = document.querySelector('.info-panel');
+      const fheads = [...fp.querySelectorAll('h3, h4')].map(h => h.textContent);
+      const fnames = [...fp.querySelectorAll('dt, .info-choice-name, strong')].map(e => e.textContent);
+      const ftext = fp.textContent;
+      KvotInfo.close();
+      form.querySelector('.sm-dialog-x').click();
+      await pending;
+      return { heads, roles: heads.filter(h => h === 'Roles').length, y: text.includes('(required, one or more columns)'), weight: /Weight/.test(text), audit, fn: typeof topic === 'object' && topic.sections.some(s => s.heading === 'Options'), fheads, fnames, seed: ftext.includes('The same seed'), rate: ftext.includes('Sampling rate or number of rows') };
+    })()''')
+    check('a launch dialog (i) has Roles and Options sections', ('Roles' in r['heads'], 'Options' in r['heads']), (True, True))
+    check('one Roles section: the generated one replaces the topic\'s own', r['roles'], 1)
+    check('each role says what it takes', (r['y'], r['weight']), (True, True))
+    check('the dialog\'s (i) has a topic', r['audit'], [])
+    check('SM.info.get gives a topic built when asked', r['fn'], True)
+    check('a form without a topic of its own gets an (i) with its Fields', 'Fields' in r['fheads'], True)
+    check('its fields are explained under their short names', (r['rate'], r['seed']), (True, True))
+
+    # ---- Save ▾ > Print… prints the report as a document (as Save Report
+    # as HTML writes it), from a hidden frame: Graph Builder's chart without
+    # its drop zones and palette; and Save Report as Word writes a .docx of
+    # the open outlines, tables and graphs
+    r = await page.ev('''(async () => {
+      const t = SM.app.tables[0]; SM.app.showTab(SM.app.tabOf(t));
+      const rep = SM.app.openReport(SM.platforms.get('graphbuilder'), { roles: {}, options: {} }, t);
+      await new Promise(res => rep.on('done', res));
+      const gb = rep.body.querySelector('.sm-gb')._gb;
+      await gb.add('y', 'weight (kg)'); await gb.add('x', 'height (cm)');
+      await new Promise(res => setTimeout(res, 300));
+      const save = rep.saveMenu().map(i => [i.label, !!i.disabled]);
+      // the frame's print() is replaced when the page reaches for it, as the
+      // browser's print dialog (which would wait) closing at once
+      let printed = 0, frameDoc = null;
+      const desc = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'contentWindow');
+      Object.defineProperty(HTMLIFrameElement.prototype, 'contentWindow', { configurable: true, get() {
+        const w = desc.get.call(this);
+        if (w && this.classList.contains('sm-print-frame') && this.srcdoc && !w.__spy) {
+          w.__spy = true;
+          w.print = () => { printed++; frameDoc = this.contentDocument; setTimeout(() => w.dispatchEvent(new Event('afterprint')), 20); };
+        }
+        return w;
+      } });
+      let frame;
+      try { frame = await rep.printReport(); } finally { Object.defineProperty(HTMLIFrameElement.prototype, 'contentWindow', desc); }
+      const imgs = frameDoc ? [...frameDoc.images] : [];
+      const out = { save, printed, hidden: frame.getBoundingClientRect().right <= 0,
+        title: frameDoc && frameDoc.querySelector('h1').textContent, imgs: imgs.length, loaded: imgs.every(i => i.complete && i.naturalWidth > 0),
+        controls: frameDoc ? frameDoc.querySelectorAll('button, input, select, .sm-gb-zone, .sm-gb-palette, .sm-gb-left').length : -1,
+        page: frameDoc ? [...frameDoc.querySelectorAll('style')].some(s => s.textContent.includes('@page')) : false };
+      await new Promise(res => setTimeout(res, 150));
+      out.removed = !document.querySelector('.sm-print-frame');
+      out.repTitle = rep.title;
+      SM.app.closeReport(rep);
+      return out;
+    })()''')
+    check('Save ▾ offers HTML, Word and Print', [x[0] for x in r['save'] if x[0] in ('Save Report as HTML', 'Save Report as Word', 'Print…')], ['Save Report as HTML', 'Save Report as Word', 'Print…'])
+    check('Save Report as Word is enabled', [x[1] for x in r['save'] if x[0] == 'Save Report as Word'], [False])
+    check('Print prints once, from a frame off the screen', (r['printed'], r['hidden']), (1, True))
+    check("the printed document has the report's title", r['title'], r['repTitle'])
+    check('the chart is in it as an image, loaded before printing', (r['imgs'], r['loaded']), (1, True))
+    check("without the builder's zones, palette and buttons", r['controls'], 0)
+    check('with page margins for paper', r['page'], True)
+    check('the frame goes after printing', r['removed'], True)
+
+    r = await page.ev('''(async () => {
+      const t = SM.app.tables[0];
+      const rep = SM.app.openReport(SM.platforms.get('distribution'), { roles: { y: [t.col('height (cm)').id, t.col('sex').id] }, options: {} }, t);
+      await new Promise(res => rep.on('done', res));
+      await new Promise(res => setTimeout(res, 300));
+      const heads = [...rep.body.querySelectorAll('.sm-ob-head h3, .sm-ob-head h4')].map(h => h.textContent.trim());
+      // close one outline: it is not in the document
+      const q = [...rep.body.querySelectorAll('.sm-ob')].find(o => o.querySelector(':scope > .sm-ob-head h3, :scope > .sm-ob-head h4')?.textContent.trim() === 'Quantiles');
+      q.classList.add('is-closed');
+      const read = async (blob) => {
+        const zip = await JSZip.loadAsync(blob);
+        const files = Object.keys(zip.files).filter(f => !f.endsWith('/')).sort();
+        const xml = await zip.file('word/document.xml').async('string');
+        const doc = new DOMParser().parseFromString(xml, 'application/xml');
+        const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+        const paras = [...doc.getElementsByTagNameNS(W, 'p')].map(p => ({ style: p.getElementsByTagNameNS(W, 'pStyle')[0]?.getAttribute('w:val') || '', text: [...p.getElementsByTagNameNS(W, 't')].map(x => x.textContent).join('') }));
+        const rels = await zip.file('word/_rels/document.xml.rels').async('string');
+        return { files, bad: !!doc.querySelector('parsererror'), paras, tables: doc.getElementsByTagNameNS(W, 'tbl').length, pictures: doc.getElementsByTagNameNS(W, 'drawing').length, rels: (rels.match(/relationships\\/image/g) || []).length,
+          png: files.filter(f => f.startsWith('word/media/')).length ? [...(await zip.file('word/media/image1.png').async('uint8array')).slice(0, 4)] : [] };
+      };
+      const plain = await read(await SM.docx.report(rep, { plotImage: (p) => rep.plotImage(p, 'png', 2) }));
+      rep.spec.options.showCode = true;
+      const coded = await read(await SM.docx.report(rep, { plotImage: (p) => rep.plotImage(p, 'png', 2) }));
+      rep.spec.options.showCode = false;
+      const tables = [...rep.content.querySelectorAll('table.sm-rt, table.sm-kv')].filter(tb => !tb.closest('.sm-ob.is-closed') && tb.offsetParent !== null).length;
+      const plots = rep.plots.filter(p => !p.box.closest('.sm-ob.is-closed')).length;
+      SM.app.closeReport(rep);
+      return { heads, plain, coded, tables, plots, title: rep.title };
+    })()''')
+    p = r['plain']
+    check('the .docx has the parts Word needs', [f for f in p['files'] if not f.startswith('word/media/')], ['[Content_Types].xml', '_rels/.rels', 'docProps/core.xml', 'word/_rels/document.xml.rels', 'word/document.xml', 'word/styles.xml'])
+    check('its document is well-formed XML', p['bad'], False)
+    check("it starts with the report's title", (p['paras'][0]['style'], p['paras'][0]['text']), ('Title', r['title']))
+    hs = [x['text'] for x in p['paras'] if x['style'].startswith('Heading')]
+    check('the outlines are headings', [h for h in r['heads'] if h != 'Quantiles' and h in hs] == [h for h in r['heads'] if h != 'Quantiles'], True)
+    check('a closed outline keeps its heading but not its body', ('Quantiles' in hs, sum(1 for x in p['paras'] if x['text'] == '97.5%')), (True, 0))
+    check('the open tables are Word tables', p['tables'], r['tables'])
+    check('each graph is a picture, with its image part', (p['pictures'], p['rels'], len([f for f in p['files'] if f.startswith('word/media/')])), (r['plots'], r['plots'], r['plots']))
+    check('the pictures are PNG', p['png'], [137, 80, 78, 71])
+    check('no Python code unless the report shows it', (sum(1 for x in p['paras'] if x['style'] == 'SmCode'), sum(1 for x in r['coded']['paras'] if x['style'] == 'SmCode') > 0), (0, True))
+
+    # ---- the page's own print (the browser's Print command): only the
+    # report in view, flowing over pages
+    r = await page.ev('''(async () => {
+      const t = SM.app.tables[0];
+      const rep = SM.app.openReport(SM.platforms.get('distribution'), { roles: { y: [t.col('height (cm)').id] }, options: {} }, t);
+      await new Promise(res => rep.on('done', res));
+      SM.app.showTab(SM.app.tabOf(rep));
+      return rep.title;
+    })()''')
+    await page.call('Emulation.setEmulatedMedia', {'media': 'print'}, session=page.sid)
+    await asyncio.sleep(0.3)
+    r = await page.ev('''(() => {
+      const shown = (sel) => [...document.querySelectorAll(sel)].some(e => getComputedStyle(e).display !== 'none' && e.getClientRects().length);
+      const rep = SM.app.reports[SM.app.reports.length - 1];
+      const b = rep.body.getBoundingClientRect();
+      return { header: shown('body > header'), footer: shown('body > footer'), toggle: shown('body > .nav-toggle'), menubar: shown('.sm-menubar'), tabs: shown('.sm-tabs'), side: shown('.sm-side'), bar: shown('.sm-reportbar'), menus: shown('.sm-reportbody .sm-ob-menu'), buttons: shown('.sm-reportbody button'),
+        report: b.height > 100, flows: rep.body.scrollHeight <= rep.body.clientHeight + 1, grid: shown('.sm-view:not(.sm-report) .sm-grid') };
+    })()''')
+    await page.call('Emulation.setEmulatedMedia', {'media': ''}, session=page.sid)
+    check('printing the page leaves out the site around it', (r['header'], r['footer'], r['toggle']), (False, False, False))
+    check('and the menus, tabs, panels and report bar', (r['menubar'], r['tabs'], r['side'], r['bar']), (False, False, False, False))
+    check('and the red triangles and buttons of the report', (r['menus'], r['buttons']), (False, False))
+    check('the report in view is printed, flowing over pages', (r['report'], r['flows'], r['grid']), (True, True, False))
+    await page.ev('SM.app.closeReport(SM.app.reports[SM.app.reports.length - 1])')
+    # a graph wider than the paper is scaled to fit it for the print only,
+    # and the box around it does not scroll
+    w = await page.ev('''(async () => {
+      const t = SM.app.tables[0];
+      const rep = SM.app.openReport(SM.platforms.get('graphbuilder'), { roles: {}, options: {} }, t);
+      await new Promise(res => rep.on('done', res));
+      const gb = rep.body.querySelector('.sm-gb')._gb;
+      await gb.add('y', 'weight (kg)'); await gb.add('x', 'height (cm)');
+      SM.app.showTab(SM.app.tabOf(rep));
+      await new Promise(res => setTimeout(res, 400));
+      const p = rep.plots.find(p => p.drawn);
+      const width = p.box.getBoundingClientRect().width;
+      dispatchEvent(new Event('beforeprint'));
+      return { width, screen: p.box.getBoundingClientRect().width };
+    })()''')
+    await page.call('Emulation.setEmulatedMedia', {'media': 'print'}, session=page.sid)
+    await asyncio.sleep(0.3)
+    r = await page.ev('''(() => {
+      const rep = SM.app.reports[SM.app.reports.length - 1];
+      const p = rep.plots.find(p => p.drawn);
+      const b = rep.body.getBoundingClientRect(), g = p.box.getBoundingClientRect();
+      const scrolls = [...rep.body.querySelectorAll('div')].filter(e => !e.closest('.js-plotly-plot') && e.scrollWidth > e.clientWidth + 1 && /auto|scroll/.test(getComputedStyle(e).overflowX)).length;
+      return { right: g.right - b.left, scrolls };
+    })()''')
+    await page.call('Emulation.setEmulatedMedia', {'media': ''}, session=page.sid)
+    # (an emulated print lays out the page again, and the builder redraws at
+    # the new width; a real print does not)
+    after = await page.ev('''(() => { dispatchEvent(new Event('afterprint')); const rep = SM.app.reports[SM.app.reports.length - 1];
+      const out = { n: document.querySelectorAll('.sm-print-zoom, .sm-print-flow').length, zoom: [...rep.body.querySelectorAll('*')].filter(e => e.style.getPropertyValue('--sm-print-zoom')).length }; SM.app.closeReport(rep); return out; })()''')
+    check('the test graph is wider than the paper', w['width'] > 700, True)
+    check('before printing the screen is left as it is', round(w['screen']), round(w['width']))
+    check('on paper the graph fits the page width', r['right'] <= 702, True)
+    check('and nothing around it scrolls', r['scrolls'], 0)
+    check('after printing the scaling is taken off', (after['n'], after['zoom']), (0, 0))
+
     # ---- dark theme and phone width
     await page.ev("KVOT.setTheme ? KVOT.setTheme('dark') : document.documentElement.setAttribute('data-theme', 'dark')")
     await page.ev('SM.app.showTab(SM.app.tabOf(SM.app.reports[0]))')
     await asyncio.sleep(1.2)
     await shot(page, '04-dark.png')
+    r = await page.ev('''(async () => {
+      const rep = SM.app.reports[0]; const p = rep.plots.find(p => p.drawn);
+      const img = await rep.plotImage(p, 'svg');
+      const svg = decodeURIComponent(img.data.replace(/^data:image\\/svg\\+xml,/, ''));
+      return { dark: SM.util.themeColors().dark, paper: /rgb\\(53, ?41, ?33\\)|#352921/i.test(svg) };
+    })()''')
+    check('dark theme: a graph for a document is drawn in the light theme', (r['dark'], r['paper']), (True, True))
+    # a diagram drawn as SVG and styled by the page's CSS (Partition's tree,
+    # say) keeps its paint in a document, in the light theme's colours, and
+    # loses its buttons
+    r = await page.ev('''(async () => {
+      document.head.append(Object.assign(document.createElement('style'), { textContent: '.t-box { fill: var(--bg-surface); stroke: var(--text-muted); } .t-text { fill: var(--text-primary); }' }));
+      const NS = 'http://www.w3.org/2000/svg', mk = (tag, a) => { const e = document.createElementNS(NS, tag); for (const k in a) e.setAttribute(k, a[k]); return e; };
+      SM.platforms.register({ id: 'core-svg-test', label: 'SVG Test', render(ctx) {
+        const s = mk('svg', { width: 120, height: 40, viewBox: '0 0 120 40' });
+        const t = mk('text', { class: 't-text', x: 10, y: 25 }); t.textContent = 'node';
+        const g = mk('g', { role: 'button' }); g.append(mk('path', { d: 'M0 0 L5 0 L2 4 Z' }));
+        s.append(mk('rect', { class: 't-box', x: 1, y: 1, width: 118, height: 38 }), t, g);
+        ctx.outline('Diagram').add(s);
+      } });
+      const rep = SM.app.openReport(SM.platforms.get('core-svg-test'), { roles: {}, options: {} }, SM.app.tables[0]);
+      await new Promise(res => rep.on('done', res));
+      const doc = new DOMParser().parseFromString(await rep.documentHtml(), 'text/html');
+      const text = doc.querySelector('svg text'), box = doc.querySelector('svg rect');
+      const zip = await JSZip.loadAsync(await SM.docx.report(rep, { plotImage: (p) => rep.plotImage(p, 'png', 2) }));
+      const pics = Object.keys(zip.files).filter(f => /^word\\/media\\/.+\\.png$/.test(f)).length;
+      SM.app.closeReport(rep);
+      return { text: text && text.getAttribute('style'), box: box && box.getAttribute('style'), buttons: doc.querySelectorAll('svg [role="button"]').length, pics };
+    })()''')
+    check('a document keeps an SVG diagram\'s paint, in the light theme\'s colours', ('fill:rgb(53, 41, 33)' in (r['text'] or ''), 'stroke:rgb(120, 107, 93)' in (r['box'] or '')), (True, True))
+    check('without its buttons', r['buttons'], 0)
+    check('Word gets it as a picture', r['pics'], 1)
     await page.call('Emulation.setDeviceMetricsOverride', {'width': 400, 'height': 860, 'deviceScaleFactor': 1, 'mobile': True}, session=page.sid)
     await asyncio.sleep(0.8)
     wide = await page.ev('document.documentElement.scrollWidth <= innerWidth + 1')

@@ -527,6 +527,9 @@ async def main():
     check('and draws the same outlines', ('Cumulative Meta-Analysis by year' in r['heads'], 'Meta-Regression' in r['heads'], r['errors']), (True, True, 0))
     check('the opened table closes again', r['closed'], True)
 
+    # ---- help for every input: the launch dialog (by layout), the red-triangle forms
+    await help_inputs(page)
+
     # ---- the Python script, the (i) topics and Help
     script = await page.ev('SM.app.reports.find(r => r.platform.id === "meta").pythonScript()')
     check('the script holds the statsmodels calls', all(s in script for s in ('combine_effects(', 'effectsize_2proportions(', 'sm.OLS(')), True)
@@ -554,6 +557,102 @@ async def main():
     await shot(page, 'meta-05-phone.png')
     check('no script errors', page.errors, [])
     await page.close()
+
+
+# Read the (i) panels: the open panel's title and sections, each with its
+# heading, its choices [name, text] and its paragraphs.
+HELP_JS = r"""
+window.__help = {
+  sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+  panel() {
+    const p = document.querySelector('.info-panel');
+    if (!p) return null;
+    const out = { title: p.querySelector('.info-panel-title').textContent, sections: [] };
+    let cur = { heading: '', choices: [], text: [] };
+    out.sections.push(cur);
+    for (const n of p.querySelector('.info-panel-body').children) {
+      if (n.tagName === 'H3') { cur = { heading: n.textContent, choices: [], text: [] }; out.sections.push(cur); }
+      else if (n.tagName === 'DL' && n.classList.contains('info-choices')) for (const dt of n.querySelectorAll('dt')) cur.choices.push([dt.textContent, dt.nextElementSibling ? dt.nextElementSibling.textContent : '']);
+      else cur.text.push(n.textContent);
+    }
+    return out;
+  },
+  async read(btn) { if (!btn) return null; btn.click(); await this.sleep(150); const r = this.panel(); KvotInfo.close(); await this.sleep(40); return r; },
+  names(p, heading) { const s = p && p.sections.find((x) => x.heading === heading); return s && s.choices.length ? s.choices.map((c) => c[0]) : null; },
+  // the shortest text of a section's choices, without what a role takes '(required, ...)'
+  shortest(p, heading) { const s = p && p.sections.find((x) => x.heading === heading); return s && s.choices.length ? Math.min(...s.choices.map((c) => c[1].replace(/\s*\([^()]*\)$/, '').length)) : 0; },
+  dialog() { return [...document.querySelectorAll('.sm-dialog')].pop(); },
+  async menu(title, path, rep) {
+    rep = rep || SM.app.reports[SM.app.reports.length - 1];
+    const h = [...rep.body.querySelectorAll('.sm-ob-head')].find((x) => x.querySelector('h2, h3, h4').textContent === title);
+    if (!h) throw new Error('no outline ' + title);
+    h.querySelector('.sm-ob-menu').click();
+    for (const label of path) {
+      await this.sleep(60);
+      const m = [...document.querySelectorAll('.sm-menu')].pop();
+      const b = m && [...m.querySelectorAll('button')].find((x) => x.querySelector('.sm-label') && x.querySelector('.sm-label').textContent === label);
+      if (!b) { SM.ui.closeMenus(0); throw new Error('no menu item ' + label); }
+      b.click();
+    }
+  },
+  async form() {
+    let d = null;
+    for (let i = 0; i < 60 && !(d && d.querySelector('.sm-form')); i++) { await this.sleep(50); d = this.dialog(); }
+    if (!d) throw new Error('no form');
+    const labels = [...d.querySelectorAll('.sm-form label')].map((l) => l.textContent);
+    const audit = KvotInfo.audit();
+    const p = await this.read(d.querySelector('.sm-dialog-head .info-btn'));
+    [...d.querySelectorAll('.sm-dialog-foot .sm-btn')].find((b) => b.textContent === 'Cancel').click();
+    await this.sleep(60);
+    return { labels, title: p && p.title, fields: this.names(p, 'Fields'), shortest: this.shortest(p, 'Fields'), noTopic: audit.noTopic };
+  },
+};
+"""
+
+
+async def help_inputs(page):
+    """What every input is for, in the (i) panels: the launch dialog's roles
+    and its Input Layout part, whose fields follow the chosen layout; the
+    Cumulative Meta-Analysis and Meta-Regression forms' fields."""
+    await page.ev(HELP_JS)
+    await page.ev('SM.app.showTab(SM.app.tabOf(SM.app.tables.find(t => t.name === "Trials")))')
+    r = await page.ev('''(async () => {
+      SM.app.launch('meta'); await __help.sleep(350);
+      const d = [...document.querySelectorAll('.sm-launch-dialog')].pop();
+      const info = () => __help.read(d.querySelector('.sm-dialog-head .info-btn'));
+      const layout = async (k) => { const rb = d.querySelector(`.sm-meta-radios input[value="${k}"]`); rb.checked = true; rb.dispatchEvent(new Event('change')); await __help.sleep(60); const q = await info(); out[k + 'Roles'] = __help.names(q, 'Roles'); return __help.names(q, 'Input Layout'); };
+      let out = {};
+      const audit = KvotInfo.audit();
+      const p = await info();
+      out = { roles: __help.names(p, 'Roles'), rolesShort: __help.shortest(p, 'Roles'), bin: __help.names(p, 'Input Layout'), short: __help.shortest(p, 'Input Layout'), noTopic: audit.noTopic, slots: audit.slots };
+      out.es = await layout('es'); out.cont = await layout('cont');
+      d.querySelector('.sm-dialog-x').click();
+      return out; })()''')
+    if isinstance(r, str):
+        print(r)
+    # the roles of the layout on show: binary at first, then the other two
+    rest = ['Study Label', 'Group', 'Covariates', 'By']
+    check('the launch dialog\'s (i) lists the roles of the layout on show', r['roles'], ['Events (Treatment)', 'N (Treatment)', 'Events (Control)', 'N (Control)'] + rest)
+    check('... the effect and standard error layout\'s', r['esRoles'], ['Effect', 'Std Error'] + rest)
+    check('... the continuous layout\'s', r['contRoles'], ['N (Treatment)', 'Mean (Treatment)', 'Std Dev (Treatment)', 'N (Control)', 'Mean (Control)', 'Std Dev (Control)'] + rest)
+    check('... each with what it is for, and the layout it belongs to', r['rolesShort'] > 60, True)
+    check('the Input Layout fields of the binary layout', (r['bin'], r['short'] > 60), (['Input Layout', 'Effect size', 'Zero cells'], True))
+    check('... of the effect and standard error layout', r['es'], ['Input Layout', 'The Std Error column holds', 'Effects are log ratios'])
+    check('... of the continuous layout', r['cont'], ['Input Layout', 'Effect size'])
+    check('every (i) of the open launch dialog has a topic', (r['noTopic'], r['slots'] >= 2), ([], True))
+    r = await page.ev(open_report_js('meta', BIN, BIN_OPTS))
+    check('a meta-analysis to work on', r['errors'], [])
+    r = await page.ev('''(async () => {
+      const top = SM.app.reports[SM.app.reports.length - 1].title;
+      const out = {};
+      await __help.menu(top, ['Cumulative Meta-Analysis…']); out.cum = await __help.form();
+      await __help.menu(top, ['Meta-Regression…']); out.reg = await __help.form();
+      return out; })()''')
+    if isinstance(r, str):
+        print(r)
+    check('Cumulative Meta-Analysis: its topic, then its fields', (r['cum']['title'], r['cum']['fields'], r['cum']['shortest'] > 40), ('Cumulative Meta-Analysis', ['Order by', 'Descending'], True))
+    check('Meta-Regression: one entry for the columns it lists', (r['reg']['title'], r['reg']['fields'], len(r['reg']['labels']) > 1), ('Meta-Regression', ['Each column'], True))
+    check('every (i) of the open forms has a topic', (r['cum']['noTopic'], r['reg']['noTopic']), ([], []))
 
 
 asyncio.run(main())

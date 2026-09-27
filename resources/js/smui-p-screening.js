@@ -323,7 +323,7 @@
     if (!(cut >= 0 && cut <= 1)) cut = 0.5;
     const ob = ctx.outline('Decision Threshold', { key: 'threshold', info: 'p:screening:threshold', menu: () => [
       { label: 'Target Level', submenu: () => r.levels.map((l, i) => ({ label: l, checked: i === lv, action: () => ctx.set('cutLevel', i) })) },
-      { label: 'Set Threshold…', action: async () => { const v = await SM.ui.form({ title: 'Decision Threshold', fields: [{ key: 't', label: `Probability of ${r.levels[lv]} at or above which a row is called ${r.levels[lv]}`, type: 'number', value: cut }], validate: (x) => (x.t >= 0 && x.t <= 1 ? null : 'The threshold is a probability, from 0 to 1') }); if (v) ctx.set('cut', v.t); } },
+      { label: 'Set Threshold…', action: async () => { const v = await SM.ui.form({ title: 'Decision Threshold', fields: [{ key: 't', label: `Probability of ${r.levels[lv]} at or above which a row is called ${r.levels[lv]}`, type: 'number', value: cut, help: 'A probability from 0 to 1 (0.5): a row whose predicted probability of the target level is at least this is called that level. Lower it to catch more of the level\'s rows (a higher sensitivity) at the cost of more false positives; raise it for the opposite.' }], validate: (x) => (x.t >= 0 && x.t <= 1 ? null : 'The threshold is a probability, from 0 to 1') }); if (v) ctx.set('cut', v.t); } },
       { label: 'Remove', action: () => ctx.set('threshold', false) },
     ] });
     const t = await ctx.call('screening.threshold', { ...S.spec, methods: S.pay.methods, repeats: S.pay.repeats, cut, level: lv });
@@ -426,6 +426,28 @@
   /* ======================================================================
      THE LAUNCH DIALOG'S OWN PART: the methods, and K-fold crossvalidation
      ====================================================================== */
+  /* What each box of the part is for (the dialog's (i)); Method Details' (i) says more. */
+  const METHOD_HELP = {
+    tree: 'A decision tree grown best first, its number of splits chosen by the validation rows or 5-fold crossvalidation of the training rows.',
+    forest: '100 trees on bootstrap samples; with validation rows the best of 10, 20, …, 100 trees.',
+    boosted: '50 layers of trees with 3 splits at a learning rate of 0.1; with validation rows the number of layers with the best validation measure.',
+    knn: 'K from 1 to 10 on standardized columns, the best K by the validation rows or leave-one-out.',
+    nb: 'A categorical Y only: a normal density for each continuous factor and level shares for each categorical one.',
+    neural: 'One layer of 3 tanh nodes on standardized columns, its penalty chosen by the validation rows or a holdback of a third.',
+    svm: 'A radial basis function kernel with Cost 1 on standardized columns; the probabilities from Platt\'s sigmoid.',
+    lda: 'A categorical Y only: linear discriminant analysis, one covariance matrix pooled within the levels.',
+    linear: 'The main effects by least squares; for a categorical Y it is Logistic Regression (nominal) or Ordinal Logistic (the cumulative logit), and the box says so.',
+    lasso: 'The lasso on centred and scaled columns, its penalty chosen by the validation rows or the smallest AICc.',
+    enet: 'The elastic net (alpha 0.9), its penalty chosen as the lasso\'s.',
+    stepwise: 'Forward selection of whole factors, each step by the smallest BIC or the best validation measure. Off by default.',
+  };
+  const methodHelp = (key) => `${METHOD_HELP[key]}${DEFAULT.includes(key) ? ' On by default.' : ''}`;
+  const KFOLD_HELP = [
+    ['K Fold Crossvalidation', 'Measures every method on rows it did not see without a Validation column: the rows split at random, from the seed, into folds; each method is fitted once per fold to the others (tuning itself within them) and measured on the fold left out, and Crossvalidation gives the means. The Validation Portion is then not used; with a Validation column it cannot be ticked, as the column\'s sets win.'],
+    ['Folds', 'With K Fold Crossvalidation: the number of folds, from 2 to 20 (5).'],
+    ['Repeated K Fold', 'With K Fold Crossvalidation: how many times it is done with new random folds, from 1 to 10 (1); the measures are the means over every held-out fold.'],
+  ];
+
   function launchExtra(api, spec) {
     const o = (spec && spec.options) || {};
     const want = new Set(Array.isArray(o.methods) ? o.methods : DEFAULT);
@@ -467,6 +489,9 @@
     update(api.state);
     return {
       el: box,
+      helpHeading: 'Method and K Fold Crossvalidation',
+      // each box by the label it shows (Fit Least Squares turns into a logistic regression for a categorical Y)
+      help: () => [...checks.map((c) => [c.span.textContent, methodHelp(c.key)]), ...KFOLD_HELP],
       read: () => ({ options: { methods: checks.filter((c) => c.i.checked).map((c) => c.key), kfold: kf.checked, folds: Number(folds.value.trim()), repeats: Number(reps.value.trim()) } }),
       recall: (saved) => {
         const so = (saved && saved.options) || {};
@@ -504,17 +529,25 @@
       launch: {
         lead: 'A new column that puts every row of the table in the training, validation or test set, for the Validation role of the predictive platforms. With no columns cast, the rows are assigned at random.',
         roles: [
-          { key: 'strata', label: 'Stratification Columns', hint: 'optional: the proportions within each level' },
-          { key: 'groups', label: 'Grouping Columns', hint: 'optional: all rows of a group in one set' },
-          { key: 'time', label: 'Cutpoint Column', max: 1, numeric: true, hint: 'optional: a time column; the earliest rows train' },
+          { key: 'strata', label: 'Stratification Columns', hint: 'optional: the proportions within each level',
+            help: 'Optional: columns whose levels should be split alike, so that every set has its share of each combination of them, a rare response level for one (Stratified, above).' },
+          { key: 'groups', label: 'Grouping Columns', hint: 'optional: all rows of a group in one set',
+            help: 'Optional: columns that make groups of related rows, a patient or a batch, each kept whole in one set so that no group is split between training and validation (Grouped, above).' },
+          { key: 'time', label: 'Cutpoint Column', max: 1, numeric: true, hint: 'optional: a time column; the earliest rows train',
+            help: 'Optional: a numeric time column, for a split in time order, the earliest rows training and the latest testing, as a forecast is judged (Cutpoint, above). Use one kind of column only: stratification, grouping or a cutpoint.' },
         ],
         options: [
-          { key: 'training', label: 'Training Set', type: 'number', value: 0.6 },
-          { key: 'validation', label: 'Validation Set', type: 'number', value: 0.2 },
-          { key: 'test', label: 'Test Set', type: 'number', value: 0.2 },
-          { key: 'seed', label: 'Random Seed', type: 'text', value: '', size: 10, hint: 'empty: a seed drawn now (the column\'s notes keep it)' },
-          { key: 'values', label: 'Values', type: 'select', value: 'text', choices: [['text', 'Training, Validation, Test'], ['numeric', '0, 1, 2']] },
-          { key: 'name', label: 'New Column Name', type: 'text', value: 'Validation', size: 12 },
+          { key: 'training', label: 'Training Set', type: 'number', value: 0.6,
+            help: 'The share of the rows that train the models (0.6), above 0. The three shares are taken relative to their sum, so 6, 2 and 2 work too.' },
+          { key: 'validation', label: 'Validation Set', type: 'number', value: 0.2,
+            help: 'The share of the rows that choose among models, such as a tree\'s size or the number of trees (0.2); 0 for none.' },
+          { key: 'test', label: 'Test Set', type: 'number', value: 0.2,
+            help: 'The share of the rows kept out of both fitting and choosing, for an honest measure of the chosen model (0.2); 0 for none.' },
+          { key: 'seed', label: 'Random Seed', type: 'text', value: '', size: 10, hint: 'empty: a seed drawn now (the column\'s notes keep it)',
+            help: 'The seed of the random order: a whole number gives the same column again; empty draws one now, which the column\'s notes keep.' },
+          { key: 'values', label: 'Values', type: 'select', value: 'text', choices: [['text', 'Training, Validation, Test'], ['numeric', '0, 1, 2']],
+            help: 'Training, Validation, Test (text, the default) or 0, 1, 2 (numeric): both are what the Validation role takes (The column, above).' },
+          { key: 'name', label: 'New Column Name', type: 'text', value: 'Validation', size: 12, help: 'The name of the new column (Validation by default).' },
         ],
         extra: (api) => {
           const hint = el('p', { class: 'sm-scr-hint' });
@@ -574,7 +607,7 @@
       lead: 'Fits many kinds of predictive model to one response, with the same rows, the same training, validation and test sets and the same seed, and puts their measures of fit side by side, as JMP Pro\'s Model Screening does. The models are scikit-learn\'s (and a few written here); the measures are those every predictive platform here reports.',
       sections: [
         { heading: 'Roles', choices: [['Y, Response', 'One column: continuous, or nominal or ordinal for a classification.'], ['X, Factor', 'The predictors; a categorical factor becomes a 0/1 column per level.'], ['Weight, Freq', 'Case weights and row counts, in every method that takes them (K Nearest Neighbors weights its neighbours).'], ['Validation', 'A column of Training/Validation/Test (or 0, 1, 2): its sets win over the portion and K-fold.'], ['By', 'A screening per level.']] },
-        { heading: 'Validation', choices: [['Validation column', 'Its training rows fit, its validation rows tune and compare, its test rows only measure.'], ['Validation Portion', 'With no column, that random share of the rows is held back to tune and compare (0.2 here).'], ['K Fold Crossvalidation', 'The rows split into folds (5), each held out once from a fit to the others; Repeated K Fold draws new folds. The measures are the means over the held-out folds.']] },
+        { heading: 'Validation', text: 'Which rows judge the methods: a Validation column\'s sets when there is one (its training rows fit, its validation rows tune and compare, its test rows only measure); else K Fold Crossvalidation when it is ticked; else the Validation Portion (0.2 here), a random share of the rows held back.' },
         { heading: 'The methods', text: 'Decision Tree, Bootstrap Forest, Boosted Tree, K Nearest Neighbors, Naive Bayes and Discriminant (categorical Y), Neural, Support Vector Machines, Fit Least Squares or Nominal / Ordinal Logistic, Generalized Regression Lasso and Elastic Net, and Fit Stepwise (off by default). Method Details (i) says how each is fitted and where it differs from JMP.' },
       ],
       more: MORE,
@@ -583,7 +616,7 @@
       kicker: 'Model Screening', title: 'Summary Across the Models',
       lead: 'A line per method: RSquare and RASE (continuous Y), or Entropy RSquare, the Misclassification Rate and for two levels the AUC, for each set. The methods are ranked by the validation measure (the crossvalidated one with K-fold, the training one with neither); bold marks the best of each column.',
       sections: [
-        { heading: 'Selecting', choices: [['Click a line', 'Selects the method (or takes it out again).'], ['Select Dominant', 'Selects the methods that no other method matches or beats on every measure shown while beating on one.'], ['Run Selected', 'Opens each selected method\'s own platform (Partition, Bootstrap Forest, Neural, …, Fit Model for the linear ones) with the same Y, X, Weight, Freq, Validation and By, the same Validation Portion and seed; a method whose platform is not here is left out.']] },
+        { heading: 'Selecting', choices: [['Click a line', 'Selects the method (or takes it out again).'], ['Select Dominant', 'Selects the methods that no other method matches or beats on every measure shown while beating on one.'], ['Run Selected', 'Opens each selected method\'s own platform (Partition, Bootstrap Forest, Neural, …, Fit Model for the linear ones) with the same Y, X, Weight, Freq, Validation and By, the same Validation Portion and seed; a method whose platform is not here is left out.'], ['Clear Selection', 'Takes every method out of the selection.']] },
         { heading: 'More measures', text: 'Right click the table, Columns: Generalized RSquare, Mean -Log p, Mean Abs Dev, -LogLikelihood, SSE and N of each set.' },
       ],
       more: MORE,
@@ -618,6 +651,12 @@
     'p:screening:threshold': {
       kicker: 'Model Screening', title: 'Decision Threshold',
       lead: 'For a response with two levels: a row is called the target level when its predicted probability of it is at least the threshold. At the threshold, each method\'s sensitivity, specificity, precision, misclassification rate and F1 score per set, and the counts (right click, Columns); the graph shows the misclassification rate of every threshold. JMP Pro 17\'s Decision Threshold report shows more (the counts as bars, a profit matrix); this is its core.',
+      sections: [{ heading: 'The controls', choices: [
+        ['Probability threshold', 'Type a probability from 0 to 1 (0.5) and press Enter or Apply: a row is called the target level when its probability of it is at least this. A lower threshold catches more of the level\'s rows (a higher sensitivity) and calls more of the others wrongly.'],
+        ['Apply', 'Uses the threshold typed in the box.'],
+        ['A click on the graph', 'Moves the threshold to where you click, to two decimals.'],
+        ['Target Level, Set Threshold… (red triangle)', 'The level whose probability is cut (the second level at first), and the threshold in a dialog.'],
+      ] }],
       more: MORE,
     },
     'cmd:makevalidation': {
@@ -640,8 +679,10 @@
     launch: {
       lead: 'Choose one Y and the X factors, and the methods to compare. Each method is fitted to the same training rows and measured on the same validation and test rows.',
       roles: [
-        { key: 'y', label: 'Y, Response', min: 1, max: 1, hint: 'required: continuous, nominal or ordinal' },
-        { key: 'x', label: 'X, Factor', min: 1, hint: 'required' },
+        { key: 'y', label: 'Y, Response', min: 1, max: 1, hint: 'required: continuous, nominal or ordinal',
+          help: 'The one response every method predicts: continuous, or nominal or ordinal for a classification. A categorical Y adds Naive Bayes and Discriminant, and makes Fit Least Squares a logistic regression (the cumulative logit for an ordinal Y).' },
+        { key: 'x', label: 'X, Factor', min: 1, hint: 'required',
+          help: 'The predictors every method uses: a continuous one as it is (standardized by the methods that need it), a categorical one as a 0/1 column per level (one level left out for the linear methods).' },
         ...SM.predict.roles(),
       ],
       options: SM.predict.options({ portion: 0.2 }),

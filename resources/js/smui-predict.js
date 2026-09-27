@@ -31,19 +31,19 @@
   /* The roles after Y and X. */
   function roles({ weight = true, freq = true, validation = true, by = true } = {}) {
     return [
-      weight ? { key: 'weight', label: 'Weight', max: 1, numeric: true, types: ['continuous'], hint: 'optional: case weights', info: 'p:predict:weight' } : null,
-      freq ? { key: 'freq', label: 'Freq', max: 1, numeric: true, hint: 'optional: row counts', info: 'p:predict:weight' } : null,
-      validation ? { key: 'validation', label: 'Validation', max: 1, hint: 'optional: 0/1/2 or Training/Validation/Test', info: 'p:predict:validation' } : null,
-      by ? { key: 'by', label: 'By', hint: 'optional' } : null,
+      weight ? { key: 'weight', label: 'Weight', max: 1, numeric: true, types: ['continuous'], hint: 'optional: case weights', info: 'p:predict:weight', help: 'A case weight per row: a row of weight 2 counts twice as much in the fit as a row of weight 1. With a Freq column too, the two are multiplied. Rows with a missing, zero or negative weight are left out.' } : null,
+      freq ? { key: 'freq', label: 'Freq', max: 1, numeric: true, hint: 'optional: row counts', info: 'p:predict:weight', help: 'How many observations each row stands for, as if it were repeated that many times: in the fit, in the measures of fit and in the confusion matrices. Rows with a missing, zero or negative count are left out.' } : null,
+      validation ? { key: 'validation', label: 'Validation', max: 1, hint: 'optional: 0/1/2 or Training/Validation/Test', info: 'p:predict:validation', help: 'Which rows the model learns from: 0 or Training (fits the model), 1 or Validation (chooses its size, such as when to stop splitting or adding trees, and measures it), 2 or Test (kept out of both, an honest measure of the chosen model). Rows with no value are left out. Without a Validation column, Validation Portion holds rows back at random.' } : null,
+      by ? { key: 'by', label: 'By', hint: 'optional', help: 'A separate model and report for each level of the By column (each combination of levels with several By columns). Rows with a missing By value are left out.' } : null,
     ].filter(Boolean);
   }
 
   /* The launch options: the validation portion, Informative Missing and the seed. */
   function options({ portion = 0, missing = true } = {}) {
     return [
-      { key: 'portion', label: 'Validation Portion', type: 'number', value: portion, hint: 'a share of the rows held back for validation when there is no Validation column (0: none)' },
-      { key: 'missing', label: 'Informative Missing', type: 'check', value: missing, hint: 'a missing value of a factor is informative: the mean plus a Missing column, or a level of its own' },
-      { key: 'seed', label: 'Random Seed', type: 'text', value: '', hint: 'empty: a seed drawn now and kept with the report' },
+      { key: 'portion', label: 'Validation Portion', type: 'number', value: portion, hint: 'a share of the rows held back for validation when there is no Validation column (0: none)', help: 'When there is no Validation column: the share of the rows, between 0 and 1, held back at random as validation rows (0.3 holds back 30%, rounded to whole rows), drawn from the Random Seed. 0 fits on every row, with no validation.' },
+      { key: 'missing', label: 'Informative Missing', type: 'check', value: missing, hint: 'a missing value of a factor is informative: the mean plus a Missing column, or a level of its own', help: 'On: rows with a missing factor are kept and the missing value can carry information. A missing continuous value is replaced by the mean of the training rows and a 0/1 column that marks it is added; a missing level becomes a level of its own. Off: rows missing any factor are left out.' },
+      { key: 'seed', label: 'Random Seed', type: 'text', value: '', hint: 'empty: a seed drawn now and kept with the report', help: 'The seed of every random draw: the validation holdback and the model\'s own draws (bootstrap samples, starting weights, folds). Empty: a seed is drawn at the first run and kept with the report, so Redo and a saved project give the same model; type a number to get the same model again in a new launch.' },
     ];
   }
 

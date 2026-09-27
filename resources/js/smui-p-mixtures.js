@@ -487,6 +487,28 @@
   }
 
   /* ======================================================================
+     THE LAUNCH'S ROLES AND OPTIONS, with what each is for (the (i))
+     ====================================================================== */
+  const HELP = {
+    k: 'How many normal clusters to fit, from 1 to 50 (3); with a Range of Clusters, the smallest number fitted.',
+    kRange: 'Fits every number of clusters from Number of Clusters up to this one (at most 19 more) and compares them in Cluster Comparison by BIC (or AICc), the best one opened. Empty: Number of Clusters only.',
+    tours: 'How many times EM starts, each from the labels of its own k-means run, from 1 to 100 (10); the tour with the largest likelihood is kept. More tours are safer against a poor local fit, and take longer.',
+    covariance: 'The shape the clusters may take. Full (the default, JMP\'s normal mixtures): a covariance matrix for each cluster, so clusters may differ in size, shape and orientation. Diagonal: a variance for each column in each cluster and no correlations (JMP\'s Diagonal Variance, as far as its documentation says). Tied: one covariance matrix shared by every cluster. Spherical: one variance for each cluster, the same in every column (on the scaled columns when they are scaled). Tied and Spherical are scikit-learn\'s, not JMP options; fewer parameters need fewer rows.',
+    outlier: 'Adds JMP\'s outlier cluster: one more cluster, uniform over the box that holds the rows, which takes the rows that no normal cluster explains, so that they do not pull the normal clusters toward them. Off by default.',
+    scaled: 'On (the default): the fit is on each column scaled to standard deviation 1, so that no column dominates by its units; the means, standard deviations and log likelihoods are reported in the columns\' own units. Off: the columns as they are.',
+    seed: 'The seed of the k-means starts of the tours. Empty: a seed drawn at the first run and kept with the report, so that Redo, a project and the Python code give the same clusters.',
+  };
+  const OPTIONS = [
+    { key: 'k', label: 'Number of Clusters', type: 'number', value: 3, help: HELP.k },
+    { key: 'kRange', label: 'Range of Clusters (optional)', type: 'number', value: null, hint: 'fit every number from Number of Clusters up to this one (at most 19 more)', help: HELP.kRange },
+    { key: 'tours', label: 'Tours', type: 'number', value: 10, hint: 'starts of the EM, each from its own k-means run', help: HELP.tours },
+    { key: 'covariance', label: 'Covariance Structure', type: 'select', value: 'full', choices: COVS, help: HELP.covariance },
+    { key: 'outlier', label: 'Outlier Cluster', type: 'check', value: false, help: HELP.outlier },
+    { key: 'scaled', label: 'Columns Scaled Individually', type: 'check', value: true, help: HELP.scaled },
+    { key: 'seed', label: 'Random Seed', type: 'text', value: '', hint: 'empty: a seed drawn now and kept with the report', help: HELP.seed },
+  ];
+
+  /* ======================================================================
      TOPICS: the (i) panels
      ====================================================================== */
   const TOPICS = {
@@ -495,24 +517,47 @@
       lead: 'Clusters as a mixture of multivariate normal distributions: each cluster has a mean, a covariance and a proportion, and every row a probability of belonging to each cluster, from which it goes to its most likely one. Clusters may overlap and differ in size, shape and orientation, which k-means does not allow. Fitted by EM with scikit-learn\'s GaussianMixture.',
       sections: [
         { heading: 'Roles', choices: [['Y, Columns', 'The continuous columns to cluster the rows by; rows with a missing value are left out.'], ['Freq', 'A count per row: the row stands for that many observations (fractions are rounded down).'], ['By', 'A separate analysis for each level.']] },
-        { heading: 'Covariance structure', choices: [['Full', 'A covariance matrix for each cluster: JMP\'s normal mixtures.'], ['Diagonal', 'A variance for each column in each cluster and no correlations: JMP\'s Diagonal Variance, as far as its documentation says.'], ['Tied', 'One covariance matrix shared by every cluster (scikit-learn\'s; not a JMP option).'], ['Spherical', 'One variance for each cluster, the same in every column (scikit-learn\'s; not a JMP option). With the columns scaled, on the scaled columns.']] },
-        { heading: 'Outlier Cluster', text: 'JMP\'s option: one more cluster, uniform over the box that holds the rows, which takes the rows that no normal cluster explains. scikit-learn has no such component, so with it the EM is the page\'s own (numpy, shown in the Python code): the normal clusters start from the same k-means labels as GaussianMixture, the uniform one with 5% of the rows. Without the uniform cluster that EM gives scikit-learn\'s fit (the tests check it).' },
+        // the launch's options, as the Iterative Clustering panel and the red triangle have them too
+        { heading: 'Options', choices: OPTIONS.map((o) => [o.label, o.help]) },
+        { heading: 'How the outlier cluster is fitted', text: 'scikit-learn has no uniform component, so with the Outlier Cluster the EM is the page\'s own (numpy, shown in the Python code): the normal clusters start from the same k-means labels as GaussianMixture, the uniform one with 5% of the rows. Without the uniform cluster that EM gives scikit-learn\'s fit (the tests check it).' },
         { heading: 'Starts and seeds', text: 'Each tour starts EM from the labels of one k-means run (scikit-learn\'s init_params="kmeans"); all tours draw from one random state seeded by Random Seed, and the tour with the largest likelihood is kept. The seed is kept with the report, so Redo and the Python code give the same fit. JMP chooses its starts its own way, so its clusters can differ.' },
         { heading: 'Differences from JMP', text: 'JMP\'s defaults for Tours, iterations and the convergence criterion are not known here; this page uses 10 tours, at most 500 iterations and a change below 1e-6 in the mean log likelihood of a row. The number of parameters counts the means, the covariance parameters of the structure and the proportions, as scikit-learn does; JMP may count them otherwise. Johnson transforms, Robust Normal Mixtures, the saved formulas and Simulate Clusters are not here.' },
       ],
       more: MORE,
     },
-    'mix:control': { kicker: 'Normal Mixtures', title: 'Iterative Clustering', lead: 'Number of Clusters, and an optional Range of Clusters up to 19 more: every number from the first to the range is fitted and compared. Tours: the number of starts. Covariance: the structure of the clusters\' covariances. Outlier Cluster adds a uniform cluster. Columns Scaled Individually fits the columns scaled to standard deviation 1 (the results stay in their units). Maximum Iterations and Converge Criteria stop the EM; Random Seed sets the starts (empty: the report\'s own). Press Go.', more: MORE },
+    'mix:control': {
+      kicker: 'Normal Mixtures', title: 'Iterative Clustering',
+      lead: 'The settings of the fit, as JMP\'s Iterative Clustering panel has them; Go fits again with them (Enter in a number box does too), and the report keeps them.',
+      sections: [{ choices: [
+        ['Number of Clusters', HELP.k],
+        ['Range of Clusters (Optional)', HELP.kRange],
+        ['Tours', HELP.tours],
+        ['Covariance', HELP.covariance],
+        ['Outlier Cluster', HELP.outlier],
+        ['Columns Scaled Individually', HELP.scaled],
+        ['Maximum Iterations', 'The most EM iterations of each tour, from 1 to 10000 (500). A fit that reaches it without meeting the Converge Criteria is marked not converged.'],
+        ['Converge Criteria', 'EM stops when the mean log likelihood of a row improves by less than this, a positive number (1e-6, scikit-learn\'s tol); a larger value stops sooner, with a rougher fit.'],
+        ['Random Seed', 'The seed of the k-means starts of the tours, a whole number; empty: the report\'s own, shown in grey.'],
+        ['Go', 'Fits the mixture again with these settings and opens the best fit.'],
+      ] }],
+      more: MORE,
+    },
     'mix:comparison': {
       kicker: 'Normal Mixtures', title: 'Cluster Comparison',
       lead: 'Each number of clusters with −2 log likelihood (of the fitted mixture, in the columns\' units), the number of parameters q, AICc = −2 log L + 2q + 2q(q + 1)/(N − q − 1) and BIC = −2 log L + q ln N. The smallest BIC (or AICc: Best By, red triangle) is marked; a click on a line opens that fit.',
-      sections: [{ heading: 'Which criterion', text: 'BIC penalises parameters more and is the usual choice for mixtures; AICc tends to take more clusters. With overlapping or non-normal clusters both can ask for more clusters than there are groups.' }],
+      sections: [
+        { heading: 'Which criterion', text: 'BIC penalises parameters more and is the usual choice for mixtures; AICc tends to take more clusters. With overlapping or non-normal clusters both can ask for more clusters than there are groups.' },
+        { heading: 'Clicking', choices: [['A line', 'Opens that number of clusters\' report below and closes the others; Color Clusters and Mark Clusters then follow it.']] },
+      ],
       more: MORE,
     },
     'mix:fit': {
       kicker: 'Normal Mixtures', title: 'One fit',
       lead: 'The fit for one number of clusters. Cluster Summary: the rows most likely in each cluster (Count, counted by Freq) and the mixing proportion, the model\'s share of the rows. Cluster Means and Cluster Standard Deviations: each cluster\'s fitted normal distribution, in the columns\' units. Click a line of the summary, or a cluster below it, to select its rows.',
-      sections: [{ heading: 'The red triangle', text: 'The graphs, the clusters\' correlations and the profiler of the cluster probabilities; Save Clusters (the most likely cluster of each row), Save Mixture Probabilities (a column for each cluster), Save Colors and Markers to Table.' }],
+      sections: [
+        { heading: 'Clicking', choices: [['A line of Cluster Summary', 'Selects the rows most likely in that cluster; Shift adds them to the selection.'], ['A cluster under the tables', 'The same: each button is a cluster\'s colour and count.']] },
+        { heading: 'The red triangle', text: 'The graphs, the clusters\' correlations and the profiler of the cluster probabilities; Save Clusters (the most likely cluster of each row), Save Mixture Probabilities (a column for each cluster), Save Colors and Markers to Table.' },
+      ],
       more: MORE,
     },
     'mix:splom': { kicker: 'Normal Mixtures', title: 'Scatterplot Matrix', lead: 'Every pair of columns with the rows in the colour of their most likely cluster, and each cluster\'s normal ellipse (its fitted mean and covariance for the pair) holding 90% of it (Ellipse Coverage, red triangle). With one column, the histogram with each cluster\'s density. Drag over points to select rows; rows selected elsewhere are highlighted.', more: MORE },
@@ -529,19 +574,13 @@
     launch: {
       lead: 'Choose the continuous columns to cluster the rows by. Number of Clusters and an optional range choose what is fitted; the report\'s Iterative Clustering panel changes them.',
       roles: [
-        { key: 'y', label: 'Y, Columns', min: 1, numeric: true, types: ['continuous'], hint: 'required: continuous' },
-        { key: 'freq', label: 'Freq', max: 1, numeric: true, types: ['continuous'], hint: 'optional: row counts' },
-        { key: 'by', label: 'By', hint: 'optional' },
+        { key: 'y', label: 'Y, Columns', min: 1, numeric: true, types: ['continuous'], hint: 'required: continuous',
+          help: 'The continuous columns the rows are clustered by: each cluster is a multivariate normal distribution over them. Rows with a missing value in any of them are left out, and a column with one value cannot cluster.' },
+        { key: 'freq', label: 'Freq', max: 1, numeric: true, types: ['continuous'], hint: 'optional: row counts',
+          help: 'Optional: a count per row, which then stands for that many observations in the fit, the counts and the criteria. Fractions are rounded down; rows with a count below 1 are left out.' },
+        { key: 'by', label: 'By', hint: 'optional', help: 'A separate clustering and report for each level of the By column (each combination of levels, with several). Rows with a missing By value are left out.' },
       ],
-      options: [
-        { key: 'k', label: 'Number of Clusters', type: 'number', value: 3 },
-        { key: 'kRange', label: 'Range of Clusters (optional)', type: 'number', value: null, hint: 'fit every number from Number of Clusters up to this one (at most 19 more)' },
-        { key: 'tours', label: 'Tours', type: 'number', value: 10, hint: 'starts of the EM, each from its own k-means run' },
-        { key: 'covariance', label: 'Covariance Structure', type: 'select', value: 'full', choices: COVS },
-        { key: 'outlier', label: 'Outlier Cluster', type: 'check', value: false },
-        { key: 'scaled', label: 'Columns Scaled Individually', type: 'check', value: true },
-        { key: 'seed', label: 'Random Seed', type: 'text', value: '', hint: 'empty: a seed drawn now and kept with the report' },
-      ],
+      options: OPTIONS,
       validate: (spec) => {
         const o = spec.options || {};
         if (o.k != null && !(o.k >= 1 && o.k <= 50)) return 'Number of Clusters: from 1 to 50';

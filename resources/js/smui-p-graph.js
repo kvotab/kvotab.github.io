@@ -303,102 +303,110 @@
   const spline = (e) => e.method !== 'lowess';
   const lowessM = (e) => e.method === 'lowess';
 
+  /* What the help says of the statistics, the error intervals and the labels,
+     for the properties that offer them. */
+  const STATS_HELP = 'N (the count, Freq counted), Mean, Median, Sum, Min, Max, Range, Std Dev, Std Err, Variance, % of Total (the share of the panel\'s sum, or of its count without a continuous variable), First and Third Quartile (JMP\'s (n+1)p quantiles)';
+  const INTERVAL_HELP = '**Range** runs from the minimum to the maximum, **Standard Error** and **Standard Deviation** one of them either side of the mean, **Confidence Interval** the t interval of the mean at 1 − α (α from Set Alpha Level in the red triangle), **Interquartile Range** from the first to the third quartile. Standard Error, Standard Deviation and Confidence Interval go with the Mean only; without a continuous variable there is no interval.';
+  const CONNECT_HELP = 'How the vertices are joined: **Line** (the default) with straight segments, **Curve** with a smooth curve through them, **Step** with a flat run to each next vertex and then a jump to its value.';
+
   /* needs: which X/Y combinations an element draws. z: its drawing order,
-     low first (areas and bars under points and lines). */
+     low first (areas and bars under points and lines). about and each
+     property's help are what Graph Builder's (i) says; shows says when a
+     property that comes and goes is there. */
   const ELEMENTS = [
-    { type: 'points', label: 'Points', z: 60, needs: 'any', props: [
-      { key: 'summary', label: 'Summary Statistic', type: 'select', choices: [['none', 'None'], ...STATS], dflt: 'none' },
-      { key: 'interval', label: 'Error Interval', type: 'select', choices: INTERVALS, dflt: 'none', when: (e) => e.summary !== 'none' },
-      { key: 'jitter', label: 'Jitter', type: 'select', choices: [['auto', 'Auto'], ['none', 'None'], ['uniform', 'Random Uniform'], ['normal', 'Random Normal'], ['grid', 'Centered Grid'], ['packed', 'Packed']], dflt: 'auto', when: (e) => e.summary === 'none' },
-      { key: 'jitterLimit', label: 'Jitter Limit', type: 'number', dflt: 1, min: 0, max: 2, step: 0.1, when: (e) => e.summary === 'none' && e.jitter !== 'none' },
+    { type: 'points', label: 'Points', z: 60, needs: 'any', about: 'A marker for each row, jittered across a categorical axis; with a Summary Statistic, one marker for each level (or value) of the other axis. Takes any columns on X or Y.', props: [
+      { key: 'summary', label: 'Summary Statistic', type: 'select', choices: [['none', 'None'], ...STATS], dflt: 'none', help: `**None** (the default) draws every row. A statistic draws one marker for each level (or distinct value) of the other axis instead, the statistic of the continuous variable over its rows: ${STATS_HELP}. Without a continuous variable only N and % of Total can be drawn (Mean and the others fall back to N). A summary marker is linked to its rows: click it to select them.` },
+      { key: 'interval', label: 'Error Interval', type: 'select', choices: INTERVALS, dflt: 'none', when: (e) => e.summary !== 'none', shows: 'with a Summary Statistic', help: `Error bars on each summary marker. ${INTERVAL_HELP}` },
+      { key: 'jitter', label: 'Jitter', type: 'select', choices: [['auto', 'Auto'], ['none', 'None'], ['uniform', 'Random Uniform'], ['normal', 'Random Normal'], ['grid', 'Centered Grid'], ['packed', 'Packed']], dflt: 'auto', when: (e) => e.summary === 'none', shows: 'with Summary Statistic None', help: 'Spreads the points across a categorical axis (or an axis with no column), so that rows with the same level do not hide one another; a continuous axis is never jittered. **Auto** (the default) and **Random Uniform**: random offsets, any place across the level\'s room as likely as another; **Random Normal**: offsets from a normal distribution, most near the middle; **Centered Grid**: the points of a level with about the same value (the same fortieth of the range) set side by side in a row; **Packed**: a beeswarm, each point as near the middle as it can go without covering another; **None**: every point on its level. Centered Grid and Packed need a continuous variable on the other axis; otherwise they are uniform. The offsets belong to the rows, so a redraw leaves each point where it was.' },
+      { key: 'jitterLimit', label: 'Jitter Limit', type: 'number', dflt: 1, min: 0, max: 2, step: 0.1, when: (e) => e.summary === 'none' && e.jitter !== 'none', shows: 'with a Jitter other than None', help: 'How far the jitter may spread the points, from 0 to 2, as a share of a level\'s room: 1 (the default) spreads them over about 80% of it (Packed may use all of it), 0 puts them back on the level, above 1 spreads them wider.' },
     ] },
-    { type: 'smoother', label: 'Smoother', z: 80, needs: 'xy-cont', props: [
-      { key: 'method', label: 'Method', type: 'select', choices: [['spline', 'Spline'], ['lowess', 'Local Kernel']], dflt: 'spline' },
-      { key: 'lambda', label: 'Lambda', type: 'log', dflt: 0.05, min: 1e-4, max: 1e4, when: spline },
-      { key: 'width', label: 'Local Width', type: 'number', dflt: 0.667, min: 0.05, max: 1, step: 0.05, when: lowessM },
-      { key: 'robust', label: 'Local Robustness', type: 'number', dflt: 3, min: 0, max: 6, step: 1, when: lowessM },
-      { key: 'conf', label: 'Confidence of Fit', type: 'check', dflt: false, when: spline },
+    { type: 'smoother', label: 'Smoother', z: 80, needs: 'xy-cont', about: 'A smooth curve through the points, one for each group of Overlay (or of a categorical Color). Needs continuous X and Y.', props: [
+      { key: 'method', label: 'Method', type: 'select', choices: [['spline', 'Spline'], ['lowess', 'Local Kernel']], dflt: 'spline', help: '**Spline** (the default): JMP\'s smoother, a cubic smoothing spline fitted on standardized X (scipy\'s make_smoothing_spline; rows with the same X are fitted through their mean); it needs 5 distinct X values. **Local Kernel**: statsmodels\' lowess, a straight line fitted to the nearest points around each X, weighted towards the nearest and refitted so that outliers pull it less; not JMP\'s own kernel smoother. It needs 3 distinct X values.' },
+      { key: 'lambda', label: 'Lambda', type: 'log', dflt: 0.05, min: 1e-4, max: 1e4, when: spline, shows: 'with the Spline method', help: 'The spline\'s smoothing penalty λ, from 0.0001 to 10,000 (JMP\'s default 0.05): larger is smoother and tends to the least squares line, smaller follows the points more closely. X is standardized first, so a λ smooths alike whatever X\'s units. Drag the slider (on a log scale) or type a value in the box beside it.' },
+      { key: 'width', label: 'Local Width', type: 'number', dflt: 0.667, min: 0.05, max: 1, step: 0.05, when: lowessM, shows: 'with the Local Kernel method', help: 'The share of the points each local fit uses, 0.05 to 1 (lowess\'s frac; the default 0.667 is its 2/3). Larger is smoother.' },
+      { key: 'robust', label: 'Local Robustness', type: 'number', dflt: 3, min: 0, max: 6, step: 1, when: lowessM, shows: 'with the Local Kernel method', help: 'How many times lowess refits with the points of large residuals down-weighted (its it), 0 to 6 (default 3): more makes the curve less sensitive to outliers, 0 is a plain local fit.' },
+      { key: 'conf', label: 'Confidence of Fit', type: 'check', dflt: false, when: spline, shows: 'with the Spline method', help: 'A band around the spline from 100 bootstrap resamples of the rows (fewer above 2000 rows): the fit plus and minus z(1 − α/2) times their standard deviation, α from Set Alpha Level. The resamples come from a fixed seed, so the band is the same at every redraw.' },
     ] },
-    { type: 'fit', label: 'Line of Fit', z: 82, needs: 'xy-cont', props: [
-      { key: 'fitType', label: 'Fit', type: 'select', choices: [['polynomial', 'Polynomial'], ['robust', 'Robust Cauchy']], dflt: 'polynomial' },
-      { key: 'degree', label: 'Degree', type: 'select', choices: [[1, 'Linear'], [2, 'Quadratic'], [3, 'Cubic']], dflt: 1 },
-      { key: 'confFit', label: 'Confidence of Fit', type: 'check', dflt: true },
-      { key: 'confPred', label: 'Confidence of Prediction', type: 'check', dflt: false, when: (e) => e.fitType !== 'robust' },
-      { key: 'equation', label: 'Equation', type: 'check', dflt: false },
-      { key: 'r2', label: 'R²', type: 'check', dflt: false, when: (e) => e.fitType !== 'robust' },
-      { key: 'rmse', label: 'Root Mean Square Error', type: 'check', dflt: false },
-      { key: 'ftest', label: 'F Test', type: 'check', dflt: false, when: (e) => e.fitType !== 'robust' },
+    { type: 'fit', label: 'Line of Fit', z: 82, needs: 'xy-cont', about: 'A fitted line (or polynomial curve) with its confidence band, for each group. Needs continuous X and Y.', props: [
+      { key: 'fitType', label: 'Fit', type: 'select', choices: [['polynomial', 'Polynomial'], ['robust', 'Robust Cauchy']], dflt: 'polynomial', help: '**Polynomial** (the default): least squares, statsmodels OLS. **Robust Cauchy**: statsmodels\' RLM with Cauchy weights (c = 2.3849), which give outlying points little weight; its band uses the normal quantile, and it has no prediction band, R² or F test.' },
+      { key: 'degree', label: 'Degree', type: 'select', choices: [[1, 'Linear'], [2, 'Quadratic'], [3, 'Cubic']], dflt: 1, help: 'The polynomial\'s degree: **Linear** (the default), **Quadratic** or **Cubic**. The Equation is written as JMP writes it, b0 + b1·x + b2·(x − mean)² + b3·(x − mean)³. A fit of degree d needs more than d + 1 rows and d + 1 distinct X values.' },
+      { key: 'confFit', label: 'Confidence of Fit', type: 'check', dflt: true, help: 'The shaded band around the line, on by default: where the mean of Y lies at each X, at 1 − α (Set Alpha Level in the red triangle).' },
+      { key: 'confPred', label: 'Confidence of Prediction', type: 'check', dflt: false, when: (e) => e.fitType !== 'robust', shows: 'with a Polynomial fit', help: 'Dashed lines of the prediction interval: where the Y of one new row would fall at each X, at 1 − α; wider than the band of the fit.' },
+      { key: 'equation', label: 'Equation', type: 'check', dflt: false, help: 'Writes the fitted equation in the panel\'s top left corner, one for each group.' },
+      { key: 'r2', label: 'R²', type: 'check', dflt: false, when: (e) => e.fitType !== 'robust', shows: 'with a Polynomial fit', help: 'Writes R², the share of the variance of Y that the fit explains, in the corner.' },
+      { key: 'rmse', label: 'Root Mean Square Error', type: 'check', dflt: false, help: 'Writes the root mean square error, the residuals\' standard deviation (for Robust Cauchy, RLM\'s robust estimate of their scale), in the corner.' },
+      { key: 'ftest', label: 'F Test', type: 'check', dflt: false, when: (e) => e.fitType !== 'robust', shows: 'with a Polynomial fit', help: 'Writes the F test of the fit against a flat line at the mean of Y (every term but the intercept zero), with its p-value, in the corner.' },
     ] },
-    { type: 'ellipse', label: 'Ellipse', z: 70, needs: 'xy-cont', props: [
-      { key: 'coverage', label: 'Coverage', type: 'select', choices: [[0.99, '99%'], [0.95, '95%'], [0.9, '90%'], [0.5, '50%']], dflt: 0.95 },
-      { key: 'shaded', label: 'Shaded', type: 'check', dflt: false },
-      { key: 'correlation', label: 'Correlation', type: 'check', dflt: false },
-      { key: 'meanPoint', label: 'Mean Point', type: 'check', dflt: false },
+    { type: 'ellipse', label: 'Ellipse', z: 70, needs: 'xy-cont', about: 'The density ellipse of the bivariate normal with the means, standard deviations and correlation of X and Y, for each group. Needs continuous X and Y.', props: [
+      { key: 'coverage', label: 'Coverage', type: 'select', choices: [[0.99, '99%'], [0.95, '95%'], [0.9, '90%'], [0.5, '50%']], dflt: 0.95, help: 'The share of the fitted normal inside the ellipse: 99%, 95% (the default), 90% or 50% (its radius² is the χ²(2) quantile of it). About that share of the points falls inside when X and Y are close to normal.' },
+      { key: 'shaded', label: 'Shaded', type: 'check', dflt: false, help: 'Fills the ellipse with a light shade of its colour.' },
+      { key: 'correlation', label: 'Correlation', type: 'check', dflt: false, help: 'Writes the correlation r of X and Y (Pearson\'s, Freq counted) in the panel\'s lower right corner, one for each group.' },
+      { key: 'meanPoint', label: 'Mean Point', type: 'check', dflt: false, help: 'Marks the means of X and Y with a cross.' },
     ] },
-    { type: 'contour', label: 'Contour', z: 40, needs: 'contour', props: [
-      { key: 'levels', label: 'Number of Levels', type: 'number', dflt: 4, min: 1, max: 20, step: 1 },
-      { key: 'fill', label: 'Fill', type: 'check', dflt: true },
-      { key: 'line', label: 'Line', type: 'check', dflt: true },
-      { key: 'bw', label: 'Bandwidth Scale', type: 'number', dflt: 1, min: 0.2, max: 5, step: 0.1 },
+    { type: 'contour', label: 'Contour', z: 40, needs: 'contour', about: 'With continuous X and Y, the contours of a kernel density that hold given shares of the points (scipy\'s gaussian_kde); with one categorical axis, a violin of the other variable\'s density for each level.', props: [
+      { key: 'levels', label: 'Number of Levels', type: 'number', dflt: 4, min: 1, max: 20, step: 1, help: 'How many contours, 1 to 20 (default 4), for continuous X and Y: they hold 100%, (L − 1)/L, … and 1/L of the points, so the default 4 draws the regions of the densest 25%, 50%, 75% and all of them. Violins do not use it.' },
+      { key: 'fill', label: 'Fill', type: 'check', dflt: true, help: 'Shades the regions between the contours, darker where the points are densest; for violins, fills them. On by default.' },
+      { key: 'line', label: 'Line', type: 'check', dflt: true, help: 'Draws the contour lines (for violins, their outlines). On by default.' },
+      { key: 'bw', label: 'Bandwidth Scale', type: 'number', dflt: 1, min: 0.2, max: 5, step: 0.1, help: 'Multiplies the kernel\'s bandwidth, Scott\'s rule, by this factor, 0.2 to 5 (default 1): above 1 the contours are smoother, below 1 they show more detail (and more islands).' },
     ] },
-    { type: 'line', label: 'Line', z: 75, needs: 'resp', props: [
-      { key: 'ordering', label: 'Ordering', type: 'select', choices: [['auto', 'Auto'], ['summarized', 'Summarized'], ['row', 'Row Order']], dflt: 'auto' },
-      { key: 'connection', label: 'Connection', type: 'select', choices: [['line', 'Line'], ['curve', 'Curve'], ['step', 'Step']], dflt: 'line' },
-      { key: 'summary', label: 'Summary Statistic', type: 'select', choices: STATS, dflt: 'mean', when: (e) => e.ordering !== 'row' },
-      { key: 'interval', label: 'Error Interval', type: 'select', choices: INTERVALS, dflt: 'none', when: (e) => e.ordering !== 'row' },
-      { key: 'style', label: 'Interval Style', type: 'select', choices: [['bars', 'Error Bars'], ['band', 'Error Band']], dflt: 'bars', when: (e) => e.ordering !== 'row' && e.interval !== 'none' },
+    { type: 'line', label: 'Line', z: 75, needs: 'resp', about: 'A line through a statistic of the continuous variable at each level (or value) of the other axis, or through the rows in the table\'s order, for each group. Needs a continuous X or Y.', props: [
+      { key: 'ordering', label: 'Ordering', type: 'select', choices: [['auto', 'Auto'], ['summarized', 'Summarized'], ['row', 'Row Order']], dflt: 'auto', help: '**Auto** (the default) and **Summarized**: a vertex for each level (or distinct value) of the other axis, at the Summary Statistic, joined in their order. **Row Order**: a vertex for every row, joined in the table\'s order, each linked to its row.' },
+      { key: 'connection', label: 'Connection', type: 'select', choices: [['line', 'Line'], ['curve', 'Curve'], ['step', 'Step']], dflt: 'line', help: CONNECT_HELP },
+      { key: 'summary', label: 'Summary Statistic', type: 'select', choices: STATS, dflt: 'mean', when: (e) => e.ordering !== 'row', shows: 'unless Ordering is Row Order', help: `The statistic at each vertex, Mean by default: ${STATS_HELP}.` },
+      { key: 'interval', label: 'Error Interval', type: 'select', choices: INTERVALS, dflt: 'none', when: (e) => e.ordering !== 'row', shows: 'unless Ordering is Row Order', help: `An interval at each vertex. ${INTERVAL_HELP}` },
+      { key: 'style', label: 'Interval Style', type: 'select', choices: [['bars', 'Error Bars'], ['band', 'Error Band']], dflt: 'bars', when: (e) => e.ordering !== 'row' && e.interval !== 'none', shows: 'with an Error Interval', help: '**Error Bars** (the default) at each vertex, or an **Error Band** shaded between the ends of the intervals.' },
     ] },
-    { type: 'bar', label: 'Bar', z: 20, needs: 'factor', props: [
-      { key: 'barStyle', label: 'Bar Style', type: 'select', choices: [['side', 'Side by side'], ['stacked', 'Stacked'], ['needle', 'Needle']], dflt: 'side' },
-      { key: 'summary', label: 'Summary Statistic', type: 'select', choices: STATS, dflt: 'auto' },
-      { key: 'interval', label: 'Error Interval', type: 'select', choices: INTERVALS, dflt: 'none' },
-      { key: 'label', label: 'Label', type: 'select', choices: LABELS, dflt: 'none' },
+    { type: 'bar', label: 'Bar', z: 20, needs: 'factor', about: 'A bar for each level (or value) of the other axis: a statistic of the continuous variable, or the count of rows. Needs X or Y, but not two categorical columns (Mosaic and Heatmap draw those).', props: [
+      { key: 'barStyle', label: 'Bar Style', type: 'select', choices: [['side', 'Side by side'], ['stacked', 'Stacked'], ['needle', 'Needle']], dflt: 'side', help: '**Side by side** (the default): with Overlay (or several columns merged on an axis) the groups\' bars stand next to one another within each level; **Stacked**: they stand on top of one another (negative values stack downwards); **Needle**: a thin line in place of each bar.' },
+      { key: 'summary', label: 'Summary Statistic', type: 'select', choices: STATS, dflt: 'auto', help: `The height of each bar. **Auto** (the default): the Mean with a continuous variable, N without one. Or ${STATS_HELP}. Without a continuous variable only N and % of Total can be drawn.` },
+      { key: 'interval', label: 'Error Interval', type: 'select', choices: INTERVALS, dflt: 'none', help: `Error bars on each bar. ${INTERVAL_HELP}` },
+      { key: 'label', label: 'Label', type: 'select', choices: LABELS, dflt: 'none', help: '**Label by Value** writes each bar\'s height on it; **Label by Percent of Total Values** its rows\' share of the panel\'s total (of the continuous variable\'s sum, or of the count of rows); **None** (the default) writes nothing.' },
     ] },
-    { type: 'area', label: 'Area', z: 10, needs: 'factor', props: [
-      { key: 'areaStyle', label: 'Area Style', type: 'select', choices: [['overlaid', 'Overlaid'], ['stacked', 'Stacked']], dflt: 'overlaid' },
-      { key: 'summary', label: 'Summary Statistic', type: 'select', choices: STATS, dflt: 'auto' },
-      { key: 'connection', label: 'Connection', type: 'select', choices: [['line', 'Line'], ['curve', 'Curve'], ['step', 'Step']], dflt: 'line' },
+    { type: 'area', label: 'Area', z: 10, needs: 'factor', about: 'A line through a statistic at each level (or value) of the other axis with the area under it filled, for each group. Needs X or Y, but not two categorical columns.', props: [
+      { key: 'areaStyle', label: 'Area Style', type: 'select', choices: [['overlaid', 'Overlaid'], ['stacked', 'Stacked']], dflt: 'overlaid', help: '**Overlaid** (the default): each group\'s area filled down to zero, half transparent over the others; **Stacked**: the groups\' areas on top of one another, so the top edge is their total.' },
+      { key: 'summary', label: 'Summary Statistic', type: 'select', choices: STATS, dflt: 'auto', help: `The height at each vertex. **Auto** (the default): the Mean with a continuous variable, N without one. Or ${STATS_HELP}.` },
+      { key: 'connection', label: 'Connection', type: 'select', choices: [['line', 'Line'], ['curve', 'Curve'], ['step', 'Step']], dflt: 'line', help: CONNECT_HELP },
     ] },
-    { type: 'box', label: 'Box Plot', z: 50, needs: 'resp', props: [
-      { key: 'outliers', label: 'Outliers', type: 'check', dflt: true },
-      { key: 'boxType', label: 'Box Type', type: 'select', choices: [['outlier', 'Outlier'], ['quantile', 'Quantile']], dflt: 'outlier' },
-      { key: 'boxStyle', label: 'Box Style', type: 'select', choices: [['normal', 'Normal'], ['solid', 'Solid'], ['thin', 'Thin']], dflt: 'normal' },
-      { key: 'width', label: 'Width Proportion', type: 'number', dflt: 0.5, min: 0.05, max: 1, step: 0.05 },
-      { key: 'diamond', label: 'Confidence Diamond', type: 'check', dflt: false },
+    { type: 'box', label: 'Box Plot', z: 50, needs: 'resp', about: 'A box plot of the continuous variable for each level (or value) of the other axis and each group, with JMP\'s quantiles; a click on a box selects its rows. Needs a continuous X or Y.', props: [
+      { key: 'outliers', label: 'Outliers', type: 'check', dflt: true, help: 'Draws the values beyond the whiskers as points, each linked to its row (Outlier box type). On by default.' },
+      { key: 'boxType', label: 'Box Type', type: 'select', choices: [['outlier', 'Outlier'], ['quantile', 'Quantile']], dflt: 'outlier', help: 'The box runs from the first to the third quartile, with a line at the median. **Outlier** (the default): the whiskers reach the furthest values within 1.5 interquartile ranges of the box, and the values beyond are outliers. **Quantile**: the whiskers reach the minimum and the maximum, and no value is an outlier.' },
+      { key: 'boxStyle', label: 'Box Style', type: 'select', choices: [['normal', 'Normal'], ['solid', 'Solid'], ['thin', 'Thin']], dflt: 'normal', help: '**Normal** (the default): a lightly filled box; **Solid**: a box filled with its colour; **Thin**: a narrow outline.' },
+      { key: 'width', label: 'Width Proportion', type: 'number', dflt: 0.5, min: 0.05, max: 1, step: 0.05, help: 'The box\'s width as a share of its level\'s room, 0.05 to 1 (default 0.5).' },
+      { key: 'diamond', label: 'Confidence Diamond', type: 'check', dflt: false, help: 'A diamond on each box: its middle at the mean, its top and bottom at the ends of the t confidence interval of the mean at 1 − α (Set Alpha Level in the red triangle).' },
     ] },
     // statsmodels' beanplot, which JMP does not have: a violin, a line per row, the mean and median.
-    { type: 'bean', label: 'Bean', z: 45, needs: 'bean', props: [
-      { key: 'beans', label: 'Beans', type: 'select', choices: [['lines', 'Lines'], ['jitter', 'Jittered Points'], ['none', 'None']], dflt: 'lines' },
-      { key: 'mean', label: 'Mean Line', type: 'check', dflt: true },
-      { key: 'median', label: 'Median', type: 'check', dflt: true },
-      { key: 'overall', label: 'Overall Mean', type: 'check', dflt: true },
-      { key: 'split', label: 'Split Two Groups', type: 'check', dflt: false },
-      { key: 'cutoff', label: 'Cut at the Data', type: 'check', dflt: false },
-      { key: 'bw', label: 'Bandwidth Scale', type: 'number', dflt: 1, min: 0.2, max: 5, step: 0.1 },
+    { type: 'bean', label: 'Bean', z: 45, needs: 'bean', about: 'statsmodels\' bean plot, not in JMP: for each level of a categorical axis (and each group), a violin of the density of the continuous variable, a short line for every row, the mean and the median. Needs a continuous X or Y, and at most a categorical column on the other axis.', props: [
+      { key: 'beans', label: 'Beans', type: 'select', choices: [['lines', 'Lines'], ['jitter', 'Jittered Points'], ['none', 'None']], dflt: 'lines', help: 'The rows inside each violin: **Lines** (the default), a short line across the violin at each row\'s value (a bean), linked to its row; **Jittered Points**, a dot for each row spread across the violin\'s width at its value; **None**, no rows.' },
+      { key: 'mean', label: 'Mean Line', type: 'check', dflt: true, help: 'The mean of each bean as a long line across it. On by default.' },
+      { key: 'median', label: 'Median', type: 'check', dflt: true, help: 'The median of each bean as a cross. On by default.' },
+      { key: 'overall', label: 'Overall Mean', type: 'check', dflt: true, help: 'A dotted line across the panel at the mean of all its rows, as Kampstra\'s bean plot draws it (statsmodels\' beanplot does not). On by default.' },
+      { key: 'split', label: 'Split Two Groups', type: 'check', dflt: false, help: 'With an Overlay (or a categorical Color) of exactly two levels, and one column on each axis: the first level draws the left half of each bean and the second the right half (the lower and upper halves when the beans lie across), back to back.' },
+      { key: 'cutoff', label: 'Cut at the Data', type: 'check', dflt: false, help: 'Ends each violin at the smallest and the largest value. Off (the default, as statsmodels) the density runs 1.5 standard deviations past them.' },
+      { key: 'bw', label: 'Bandwidth Scale', type: 'number', dflt: 1, min: 0.2, max: 5, step: 0.1, help: 'Multiplies the bandwidth of the violins\' Gaussian kernel density (Scott\'s rule) by this factor, 0.2 to 5 (default 1): larger is smoother. Every violin is drawn to the same width, whatever the size of its group.' },
     ] },
-    { type: 'histogram', label: 'Histogram', z: 25, needs: 'histogram', props: [
-      { key: 'histStyle', label: 'Histogram Style', type: 'select', choices: [['bar', 'Bar'], ['kernel', 'Kernel Density']], dflt: 'bar' },
-      { key: 'scale', label: 'Response Scale', type: 'select', choices: [['count', 'Count'], ['percent', 'Percent']], dflt: 'count' },
-      { key: 'binWidth', label: 'Bin Width (empty: automatic)', type: 'number', dflt: null, min: 0, when: (e) => e.histStyle !== 'kernel' },
-      { key: 'bw', label: 'Bandwidth Scale', type: 'number', dflt: 1, min: 0.2, max: 5, step: 0.1, when: (e) => e.histStyle === 'kernel' },
-      { key: 'counts', label: 'Counts', type: 'check', dflt: false, when: (e) => e.histStyle !== 'kernel' },
+    { type: 'histogram', label: 'Histogram', z: 25, needs: 'histogram', about: 'The distribution of one continuous variable in bins (or as a density curve); with a categorical column on the other axis, a histogram for each of its levels. Needs one continuous X or Y.', props: [
+      { key: 'histStyle', label: 'Histogram Style', type: 'select', choices: [['bar', 'Bar'], ['kernel', 'Kernel Density']], dflt: 'bar', help: '**Bar** (the default): the rows counted in bins; **Kernel Density**: a Gaussian kernel density curve (scipy\'s gaussian_kde, Scott\'s bandwidth), scaled to the counts.' },
+      { key: 'scale', label: 'Response Scale', type: 'select', choices: [['count', 'Count'], ['percent', 'Percent']], dflt: 'count', help: '**Count** (the default): rows in each bin (Freq counts a row that many times); **Percent**: the share of the histogram\'s rows, each group\'s and each level\'s histogram adding up to 100.' },
+      { key: 'binWidth', label: 'Bin Width (empty: automatic)', type: 'number', dflt: null, min: 0, when: (e) => e.histStyle !== 'kernel', shows: 'with the Bar style', help: 'The bins\' width in the variable\'s units; they start at a whole multiple of it. Empty (the default): a round width chosen from the number of values. Every panel and group uses the same bins.' },
+      { key: 'bw', label: 'Bandwidth Scale', type: 'number', dflt: 1, min: 0.2, max: 5, step: 0.1, when: (e) => e.histStyle === 'kernel', shows: 'with the Kernel Density style', help: 'Multiplies the density\'s bandwidth (Scott\'s rule) by this factor, 0.2 to 5 (default 1): larger is smoother.' },
+      { key: 'counts', label: 'Counts', type: 'check', dflt: false, when: (e) => e.histStyle !== 'kernel', shows: 'with the Bar style', help: 'Writes each bin\'s count (or percent) above its bar.' },
     ] },
-    { type: 'heatmap', label: 'Heatmap', z: 15, needs: 'xy', props: [
-      { key: 'label', label: 'Label', type: 'select', choices: LABELS, dflt: 'none' },
-      { key: 'bins', label: 'Bins on a Continuous Axis', type: 'number', dflt: 16, min: 2, max: 80, step: 1 },
+    { type: 'heatmap', label: 'Heatmap', z: 15, needs: 'xy', about: 'A cell for each pair of levels (or bins) of X and Y, coloured by its count of rows, or by the mean of a continuous Color column. Needs X and Y.', props: [
+      { key: 'label', label: 'Label', type: 'select', choices: LABELS, dflt: 'none', help: '**Label by Value** writes each cell\'s count (or its mean of the Color column); **Label by Percent of Total Values** the cell\'s share of the panel\'s rows; **None** (the default) writes nothing.' },
+      { key: 'bins', label: 'Bins on a Continuous Axis', type: 'number', dflt: 16, min: 2, max: 80, step: 1, help: 'About how many bins a continuous X or Y is cut into, 2 to 80 (default 16); the bins have round widths, so their number can differ a little. A categorical axis has a cell for each level.' },
     ] },
-    { type: 'mosaic', label: 'Mosaic', z: 5, needs: 'cat-cat', exclusive: true, props: [
-      { key: 'cellLabel', label: 'Cell Labeling', type: 'select', choices: [['none', 'None'], ['count', 'Label by Count'], ['percent', 'Label by Percent']], dflt: 'none' },
-      { key: 'chisq', label: 'Chi-square Test', type: 'check', dflt: false },
+    { type: 'mosaic', label: 'Mosaic', z: 5, needs: 'cat-cat', exclusive: true, about: 'The contingency table of X and Y as areas: a column for each X level as wide as its share of the rows, split by the shares of the Y levels within it. Needs categorical X and Y, and is drawn alone.', props: [
+      { key: 'cellLabel', label: 'Cell Labeling', type: 'select', choices: [['none', 'None'], ['count', 'Label by Count'], ['percent', 'Label by Percent']], dflt: 'none', help: '**Label by Count** writes the rows in each cell; **Label by Percent** the cell\'s share of its X level (its height); **None** (the default) writes nothing.' },
+      { key: 'chisq', label: 'Chi-square Test', type: 'check', dflt: false, help: 'Writes Pearson\'s chi-square test of independence of X and Y above each panel (scipy\'s chi2_contingency, without a continuity correction): χ², its degrees of freedom and the p-value. A note says so when an expected count is below 5 and the p-value is only approximate.' },
     ] },
-    { type: 'caption', label: 'Caption Box', z: 90, needs: 'resp', props: [
-      { key: 'stats', label: 'Summary Statistic', type: 'multi', choices: STATS.filter((s) => s[0] !== 'pct'), dflt: ['mean'], max: 5 },
-      { key: 'location', label: 'Location', type: 'select', choices: [['graph', 'Graph'], ['factor', 'Graph per factor']], dflt: 'graph' },
+    { type: 'caption', label: 'Caption Box', z: 90, needs: 'resp', about: 'A box of summary statistics of the continuous variable, for each group. Needs a continuous X or Y.', props: [
+      { key: 'stats', label: 'Summary Statistic', type: 'multi', choices: STATS.filter((s) => s[0] !== 'pct'), dflt: ['mean'], max: 5, help: 'Tick up to five statistics (the Mean by default): N, Mean, Median, Sum, Min, Max, Range, Std Dev, Std Err, Variance, First and Third Quartile.' },
+      { key: 'location', label: 'Location', type: 'select', choices: [['graph', 'Graph'], ['factor', 'Graph per factor']], dflt: 'graph', help: '**Graph** (the default): a box in the top right corner of each panel (one for each group), over all its rows; **Graph per factor**: a box at each level of the other axis.' },
     ] },
-    { type: 'pie', label: 'Pie', z: 5, needs: 'factor', exclusive: true, props: [
-      { key: 'pieStyle', label: 'Pie Style', type: 'select', choices: [['pie', 'Pie'], ['ring', 'Ring']], dflt: 'pie' },
-      { key: 'summary', label: 'Summary Statistic', type: 'select', choices: [['n', 'N'], ['sum', 'Sum'], ['mean', 'Mean']], dflt: 'auto' },
-      { key: 'label', label: 'Label', type: 'select', choices: [['percent', 'Label by Percent of Total Values'], ['value', 'Label by Value'], ['level', 'Label by Level'], ['none', 'None']], dflt: 'percent' },
+    { type: 'pie', label: 'Pie', z: 5, needs: 'factor', exclusive: true, about: 'A slice for each level of the categorical axis: its count of rows, or the sum or mean of a continuous variable. Needs X or Y, but not two categorical columns, and is drawn alone.', props: [
+      { key: 'pieStyle', label: 'Pie Style', type: 'select', choices: [['pie', 'Pie'], ['ring', 'Ring']], dflt: 'pie', help: '**Pie** (the default), or **Ring**, with a hole in the middle.' },
+      { key: 'summary', label: 'Summary Statistic', type: 'select', choices: [['n', 'N'], ['sum', 'Sum'], ['mean', 'Mean']], dflt: 'auto', help: 'The size of each slice. **Auto** (the default): the Sum of the continuous variable, or N without one; or **N**, **Sum** or **Mean**. Without a continuous variable the slices are always N; a negative value makes an empty slice.' },
+      { key: 'label', label: 'Label', type: 'select', choices: [['percent', 'Label by Percent of Total Values'], ['value', 'Label by Value'], ['level', 'Label by Level'], ['none', 'None']], dflt: 'percent', help: 'What each slice says: its **Percent** of the pie (the default), its **Value**, its **Level**, or nothing.' },
     ] },
   ];
   const ELEMENT = Object.fromEntries(ELEMENTS.map((e) => [e.type, e]));
@@ -1219,7 +1227,7 @@
   async function summaryTraces(E, e, blocks, { stat, mode, shape = 'linear', fill = null, stack = false }) {
     const R0 = blocks[0] && blocks[0].R;
     if (!R0) return;
-    if (!R0.resp && PY_STATS.has(stat)) { E.note(`${ELEMENT[e.type].label}: without a continuous variable the statistic is N.`); stat = 'n'; }
+    if (!R0.resp && !['n', 'pct'].includes(stat)) { E.note(`${ELEMENT[e.type].label}: without a continuous variable the statistic is N.`); stat = 'n'; }
     let interval = e.interval && e.interval !== 'none' ? e.interval : null;
     if (interval && !R0.resp) interval = null;
     if (interval && ['ci', 'se', 'sd'].includes(interval) && stat !== 'mean') { E.note(`${ELEMENT[e.type].label}: the ${interval === 'ci' ? 'confidence interval' : interval === 'se' ? 'standard error' : 'standard deviation'} interval goes with the Mean.`); interval = null; }
@@ -2006,6 +2014,8 @@
       this.renderPalette();
       this.renderProps();
       if (focusKey) { const f = this.root.querySelector(`[data-gbkey="${CSS.escape(focusKey)}"]`); if (f) f.focus({ preventScroll: true }); }
+      // An open (i) of the builder follows its elements and their settings.
+      if (typeof KvotInfo !== 'undefined' && KvotInfo.current && /^p:graphbuilder/.test(KvotInfo.current() || '')) KvotInfo.refresh();
     }
 
     renderColumns() {
@@ -2269,7 +2279,7 @@
 
     renderProps() {
       const box = this.propsBox;
-      box.replaceChildren(el('h4', null, 'Properties'));
+      box.replaceChildren(el('h4', null, 'Properties', infoSlot('p:graphbuilder:props')));
       if (!this.S.elements.length) { box.append(el('p', { class: 'sm-ob-note', text: 'No element: choose one above the graph.' })); return; }
       this.S.elements.forEach((e, idx) => {
         const def = ELEMENT[e.type];
@@ -2528,7 +2538,7 @@
         tog('X Axis Title', (s) => s.show.xTitle, (s) => { s.show.xTitle = !s.show.xTitle; }),
         tog('Y Axis Title', (s) => s.show.yTitle, (s) => { s.show.yTitle = !s.show.yTitle; }),
         { label: 'Legend Position', submenu: () => [['right', 'Right'], ['bottom', 'Bottom'], ['inside', 'Inside']].map(([v, l]) => ({ label: l, checked: S.legendPos === v, action: () => this.update((s) => { s.legendPos = v; }) })) },
-        { label: 'Set Alpha Level', submenu: () => [0.1, 0.05, 0.01].map((a) => ({ label: String(a), checked: S.alpha === a, action: () => this.update((s) => { s.alpha = a; }) })).concat([{ label: 'Other…', action: async () => { const v = await SM.ui.form({ title: 'Set Alpha Level', fields: [{ key: 'a', label: 'α (0 to 0.5)', type: 'number', value: S.alpha }] }); if (v && v.a > 0 && v.a < 0.5) this.update((s) => { s.alpha = v.a; }); } }]) },
+        { label: 'Set Alpha Level', submenu: () => [0.1, 0.05, 0.01].map((a) => ({ label: String(a), checked: S.alpha === a, action: () => this.update((s) => { s.alpha = a; }) })).concat([{ label: 'Other…', action: async () => { const v = await SM.ui.form({ title: 'Set Alpha Level', fields: [{ key: 'a', label: 'α (0 to 0.5)', type: 'number', value: S.alpha, help: 'The α of every interval in the graph: the bands of Line of Fit (of the fit and of prediction), the smoother\'s Confidence of Fit, the Confidence Interval error bars and the Box Plot\'s Confidence Diamond are drawn at 1 − α, so 0.05 (the default) gives 95% and 0.01 gives 99%. A value outside 0 to 0.5 is ignored.' }] }); if (v && v.a > 0 && v.a < 0.5) this.update((s) => { s.alpha = v.a; }); } }]) },
         { separator: true },
         { label: 'Edit Title and Axis Titles…', action: () => this.editTitles() },
         { label: 'Graph Size…', action: () => this.sizeDialog() },
@@ -2541,10 +2551,10 @@
     async editTitles() {
       const S = this.S;
       const cols = zoneCols(S, this.t);
-      const fields = [{ key: 'title', label: 'Title (empty: automatic)', value: S.title ?? '', full: true }];
+      const fields = [{ key: 'title', label: 'Title (empty: automatic)', value: S.title ?? '', full: true, help: 'The title over the graph. Empty gives the automatic one, the Y columns vs. the X columns; Title in the red triangle hides it.' }];
       const fx = cols.x[0], fy = cols.y[0];
-      if (fx) fields.push({ key: 'x', label: `X axis title (${fx.name})`, value: S.labels[`x:${fx.id}`] ?? '', full: true });
-      if (fy) fields.push({ key: 'y', label: `Y axis title (${fy.name})`, value: S.labels[`y:${fy.id}`] ?? '', full: true });
+      if (fx) fields.push({ key: 'x', label: `X axis title (${fx.name})`, value: S.labels[`x:${fx.id}`] ?? '', full: true, helpLabel: 'X axis title', help: 'The title under the X axis where the first X column is; empty: the column\'s name.' });
+      if (fy) fields.push({ key: 'y', label: `Y axis title (${fy.name})`, value: S.labels[`y:${fy.id}`] ?? '', full: true, helpLabel: 'Y axis title', help: 'The title beside the Y axis where the first Y column is; empty: the column\'s name.' });
       const v = await SM.ui.form({ title: 'Edit Title and Axis Titles', fields });
       if (!v) return;
       this.update((s) => {
@@ -2556,7 +2566,7 @@
 
     async sizeDialog() {
       const w = this.width(), h = this.height(this.lastFig && this.lastFig.layout ? 1 : 1);
-      const v = await SM.ui.form({ title: 'Graph Size', lead: 'In pixels; empty fits the graph to the window.', fields: [{ key: 'w', label: 'Width', type: 'number', value: this.S.size ? this.S.size.w : null, placeholder: String(w) }, { key: 'h', label: 'Height', type: 'number', value: this.S.size ? this.S.size.h : null, placeholder: String(h) }] });
+      const v = await SM.ui.form({ title: 'Graph Size', lead: 'In pixels; empty fits the graph to the window.', fields: [{ key: 'w', label: 'Width', type: 'number', value: this.S.size ? this.S.size.w : null, placeholder: String(w), help: 'The graph\'s width in pixels, 240 to 2400 (the grey number is the width now). Empty fits the graph to the window and follows it when it changes.' }, { key: 'h', label: 'Height', type: 'number', value: this.S.size ? this.S.size.h : null, placeholder: String(h), help: 'The height in pixels, 200 to 2400. Empty: about two thirds of the width, more for more than two rows of panels.' }] });
       if (!v) return;
       this.update((s) => { s.size = v.w || v.h ? { w: v.w > 0 ? v.w : null, h: v.h > 0 ? v.h : null } : null; });
     }
@@ -2581,38 +2591,100 @@
     }
   }
 
+  /* ---- Graph Builder: what its (i) says -------------------------------------------------------
+     Both topics are functions: they explain the properties of the elements in
+     the graph on show (the report of the active tab) as its Properties panel
+     shows them, those shown now first and then those that come with another
+     choice; with no builder on show, every element's. */
+  function shownBuilder() {
+    const tab = SM.app && SM.app.activeTab;
+    const b = tab && tab.report ? BUILDERS.get(tab.report) : null;
+    return b && !b.dead ? b : null;
+  }
+
+  function propChoices(e) {
+    const def = ELEMENT[e.type];
+    const on = def.props.filter((p) => !p.when || p.when(e));
+    const off = def.props.filter((p) => !on.includes(p));
+    return [...on.map((p) => [p.label, p.help]), ...off.map((p) => [p.label, `Shown ${p.shows}. ${p.help}`])];
+  }
+
+  function propSections(b, prefix) {
+    const els = b ? b.S.elements.filter((e) => ELEMENT[e.type]) : ELEMENTS.map((d) => elementDefaults(d.type));
+    return els.map((e) => ({ heading: `${prefix}${ELEMENT[e.type].label}`, text: ELEMENT[e.type].about, choices: propChoices(e) }));
+  }
+
+  const GB_ZONES = [
+    ['X, Y', 'The axes, up to 4 columns on X and 6 on Y. With a continuous column on one axis and a categorical one on the other, the continuous one is the variable the elements summarize at each level. Several columns in a zone stand side by side, a panel each, or merge on one axis (right click the zone: Merge Columns); only continuous columns merge. The zone\'s menu also has Log Scale, for a continuous column that is not a date.'],
+    ['Group X, Group Y', 'Small multiples: a column of panels (Group X) or a row of them (Group Y) for each level, sharing their axes. A continuous column with more than 10 distinct values is cut into five bins of about equal counts.'],
+    ['Wrap', 'A panel for each level, wrapped into a grid of about as many columns as rows. While Wrap has a column, Group X and Group Y wait.'],
+    ['Overlay', 'Groups within each panel, each with its colour and legend entry and its own smoother, fit, bars, boxes or beans (up to 60 groups; a continuous column with many values is cut into five bins). Rows with no value are left out of the groups.'],
+    ['Color', 'Colours the points: a blue-to-red gradient over a continuous column, with a colour bar (a Heatmap then shows its mean in each cell); a colour for each level of a categorical one, which also groups the elements as Overlay does. It wins over the rows\' own colours.'],
+    ['Size', 'A continuous column: the larger its value, the larger the point, from 4 pixels across at the column\'s smallest value to 22 at its largest (a missing value gives a small point).'],
+    ['Freq', 'A numeric column of counts: a row counts that many times in every statistic, bin and fit; rows with a missing, zero or negative count are left out.'],
+  ];
+  const GB_BUILDER = [
+    ['Select Columns', 'The table\'s columns; Filter narrows the list by name. Drag a column onto a zone (from here or from the page\'s Columns panel), or click it and then click a zone. Double-click puts it where it fits: a continuous column on Y (then X), a categorical one on X (then Overlay, Group X, Group Y). Right click it, or press Enter, for the list of zones.'],
+    ['A zone and its columns', 'Click an empty zone to pick a column for it from a list. Click a column in a zone for Remove, Move to and Replace with; drop another column on it to replace it. Right click a zone (or use the context menu key) for Merge Columns or Side by Side, Log Scale, Add Column, Swap with and Remove All.'],
+    ['Elements', 'The palette above the graph. Click an element to draw it alone; shift-click (or ctrl/⌘-click) to add it to the others or take it away; right click for the same as a menu. A dimmed element cannot draw the columns in the zones and says why. Until you pick one, the builder chooses as JMP does: Points and Smoother for two continuous columns, Bar for a categorical column alone, Points otherwise.'],
+    ['Properties', 'Under the columns, a box for each element in the graph with its settings (explained below); × takes the element away. A change redraws the graph at once.'],
+    ['Undo', 'Steps back through the changes to the zones, the elements and their properties, up to 60 of them.'],
+    ['Start Over', 'Empties the zones and takes the elements away; the graph size, α and the legend position stay.'],
+    ['Done', 'Hides the columns, the palette, the zones and the properties and leaves the graph; Show Control Panel above the graph (or in the red triangle) brings them back.'],
+    ['Titles', 'With one panel, click the title or an axis title on the graph and type your own; Edit Title and Axis Titles… in the red triangle does it for any graph.'],
+  ];
+  const GB_TRIANGLE = [
+    ['Show Control Panel', 'Shows or hides the columns, the palette, the zones and the properties, as Done does.'],
+    ['Title, Legend, X Axis Title, Y Axis Title', 'Show or hide those parts of the graph.'],
+    ['Legend Position', 'Right (the default; under the graph when it is narrow), Bottom, or Inside the plot\'s top right corner.'],
+    ['Set Alpha Level', 'α for every interval in the graph: the bands of Line of Fit and of the smoother, the Confidence Interval error bars and the Confidence Diamond are at 1 − α (0.05, the default, gives 95%). Other… takes any value between 0 and 0.5.'],
+    ['Edit Title and Axis Titles…', 'Your own title, and titles for the first X and Y columns; an empty one is automatic again.'],
+    ['Graph Size…', 'A fixed width and height in pixels; empty fits the graph to the window.'],
+    ['Undo, Start Over', 'As the buttons above the builder.'],
+  ];
+  const GB_LEAD = 'Drag columns onto the zones around the graph and choose elements from the palette; the graph redraws at once. Points, bars, boxes, bins, cells and slices are linked to their rows: click or drag to select, and the selection shows in every graph of the table.';
+
+  function gbTopic() {
+    const b = shownBuilder();
+    const inGraph = new Set(b ? b.S.elements.map((e) => e.type) : []);
+    const props = propSections(b, 'Properties: ');
+    return {
+      kicker: 'Graph', title: 'Graph Builder', lead: GB_LEAD,
+      sections: [
+        { heading: 'Zones', choices: GB_ZONES },
+        { heading: 'The builder', choices: GB_BUILDER },
+        { heading: 'Elements', text: b ? 'The elements in the graph are marked; their properties follow.' : 'What each element draws; the properties of every element follow.', choices: ELEMENTS.map((d) => [d.label, d.about, inGraph.has(d.type)]) },
+        ...(props.length ? props : [{ heading: 'Properties', text: 'No element in the graph yet: click one in the palette above the graph, and its settings are explained here.' }]),
+        { heading: 'The red triangle', choices: GB_TRIANGLE },
+        { heading: 'Touch and keyboard', list: ['Select a column (tap it, or Space), then tap a zone: the column goes there. Tap a column in a zone for Remove, Move to and Replace with.', 'On a column in the list, Enter opens the list of zones.', 'On a zone, Enter adds a column, the context menu key (or Shift+F10) opens its menu, Delete removes the focused column.'] },
+        { heading: 'Differences from JMP', list: [
+          'Smoother: the same penalised least squares as JMP\'s cubic spline (λ on standardized X), from scipy; JMP\'s option to scale λ by the count is not applied, and its other methods (P-Spline, Savitzky-Golay, moving averages) are not here. Local Kernel is statsmodels\' lowess.',
+          'The smoother\'s Confidence of Fit is a bootstrap band (100 resamples of the rows, fewer for many rows): the fit plus or minus z(1 − α/2) times their spread.',
+          'Line of Fit\'s Robust Cauchy is statsmodels\' RLM with Cauchy weights, c = 2.3849; Time Series fits are not here.',
+          'Ellipse: the contour of the fitted bivariate normal (radius² the χ²(2) quantile of the coverage).',
+          'Contour: highest-density regions of a Gaussian kernel density with Scott\'s bandwidth; Bagplot and HDR types are not here.',
+          'Bean is not in JMP. It follows statsmodels\' beanplot (Kampstra 2008): every violin is scaled to the same width, so their areas do not compare the groups\' sizes; the overall mean line is Kampstra\'s, not drawn by statsmodels.',
+          'Excluded rows are left out of the graph; hidden rows are not drawn but count in the statistics. Map shapes, Page, Interval, Shape and the Local Data Filter\'s own column switcher are not in this builder.',
+        ] },
+      ],
+      more: { label: 'Graph Builder', id: 'help-p-graphbuilder' },
+    };
+  }
+
+  function gbPropsTopic() {
+    const b = shownBuilder();
+    const props = b ? propSections(b, '') : [];
+    return {
+      kicker: 'Graph Builder', title: 'Properties',
+      lead: 'The settings of each element in the graph, under its name; a change redraws the graph at once, and × beside the name takes the element away. Some settings come with another choice (an Error Interval with a Summary Statistic, Lambda with the Spline method); they are listed after the others.',
+      sections: props.length ? props : [{ text: 'No element in the graph yet: click one in the palette above the graph (shift-click adds another), and its settings show in the Properties panel and here.' }],
+      more: { label: 'Graph Builder', id: 'help-p-graphbuilder' },
+    };
+  }
+
   SM.platforms.register({
     id: 'graphbuilder', label: 'Graph Builder', menu: 'Graph', order: 10, launch: null, info: 'p:graphbuilder',
-    topics: {
-      'p:graphbuilder': {
-        kicker: 'Graph', title: 'Graph Builder',
-        lead: 'Drag columns onto the zones around the graph and choose elements from the palette; the graph redraws at once. Points, bars, boxes, bins, cells and slices are linked to their rows: click or drag to select, and the selection shows in every graph of the table.',
-        sections: [
-          { heading: 'Zones', choices: [
-            ['X, Y', 'The axes. Several columns in one zone stand side by side as panels, or merge on one axis (right click the zone). Drop a column on a column already in the zone to replace it.'],
-            ['Group X, Group Y', 'Small multiples: a column (or a row) of panels for each level, with shared axes. A continuous column with many values is cut into five bins.'],
-            ['Wrap', 'A panel for each level, wrapped into a grid.'],
-            ['Overlay', 'Groups within each panel, each with its colour and its own smoother, fit, bars or boxes.'],
-            ['Color', 'Colours the points: a gradient for a continuous column, the palette for a categorical one (which also groups, as Overlay does). It wins over the rows\' colours.'],
-            ['Size', 'The area of each point follows a continuous column.'],
-            ['Freq', 'A count per row: the statistics count the row that many times.'],
-          ] },
-          { heading: 'Elements', text: 'Click an element to show it alone, shift-click to add or remove it; its properties are under the columns. Smoother: JMP\'s cubic smoothing spline on standardized X with lambda 0.05 (scipy\'s make_smoothing_spline minimises the same penalised sum of squares), or statsmodels\' lowess as the Local Kernel. Line of Fit: least squares (statsmodels OLS) with the confidence of the fit and of prediction. Ellipse: the bivariate normal density ellipse. Contour: kernel density contours that hold 25%, 50%, 75% and 100% of the points (scipy\'s gaussian_kde). Bar, Line, Area, Points and Box Plot: summary statistics with JMP\'s quantiles. Bean: statsmodels\' bean plot, for a continuous variable by the levels of a categorical one: a violin of its density, a line for every row (click one to select the row), the mean, the median and the overall mean; Split Two Groups draws two Overlay levels as the halves of one bean.' },
-          { heading: 'Touch and keyboard', list: ['Select a column (tap it, or Space), then tap a zone: the column goes there. Tap a column in a zone for Remove, Move to and Replace with.', 'On a column in the list, Enter opens the list of zones.', 'On a zone, Enter adds a column, the context menu key (or Shift+F10) opens its menu, Delete removes the focused column.'] },
-          { heading: 'Done', text: 'Done hides the columns, the palette and the zones and leaves the graph; the red triangle\'s Show Control Panel brings them back. Click the title or an axis title to edit it. Undo steps back through the changes.' },
-          { heading: 'Differences from JMP', list: [
-            'Smoother: the same penalised least squares as JMP\'s cubic spline (λ on standardized X), from scipy; JMP\'s option to scale λ by the count is not applied, and its other methods (P-Spline, Savitzky-Golay, moving averages) are not here. Local Kernel is statsmodels\' lowess.',
-            'The smoother\'s Confidence of Fit is a bootstrap band (100 resamples of the rows, fewer for many rows): the fit plus or minus 1.96 times their spread.',
-            'Line of Fit\'s Robust Cauchy is statsmodels\' RLM with Cauchy weights, c = 2.3849; Time Series fits are not here.',
-            'Ellipse: the contour of the fitted bivariate normal (radius² the χ²(2) quantile of the coverage).',
-            'Contour: highest-density regions of a Gaussian kernel density with Scott\'s bandwidth; Bagplot and HDR types are not here.',
-            'Bean is not in JMP. It follows statsmodels\' beanplot (Kampstra 2008): every violin is scaled to the same width, so their areas do not compare the groups\' sizes; the overall mean line is Kampstra\'s, not drawn by statsmodels.',
-            'Excluded rows are left out of the graph; hidden rows are not drawn but count in the statistics. Map shapes, Page, Interval, Shape and the Local Data Filter\'s own column switcher are not in this builder.',
-          ] },
-        ],
-        more: { label: 'Graph Builder', id: 'help-p-graphbuilder' },
-      },
-    },
+    topics: { 'p:graphbuilder': gbTopic, 'p:graphbuilder:props': gbPropsTopic },
     about: 'Drag-and-drop graphs: columns onto the X, Y, Group X, Group Y, Wrap, Overlay, Color, Size and Freq zones, elements from a palette (Points, Smoother, Line of Fit, Ellipse, Contour, Line, Bar, Area, Box Plot, Bean, Histogram, Heatmap, Mosaic, Caption Box, Pie), each with its properties. Every mark is linked to its rows; Done leaves the graph alone.',
     uses: ['scipy.interpolate.make_smoothing_spline', 'statsmodels.nonparametric.smoothers_lowess.lowess', 'statsmodels.regression.linear_model.OLS', 'statsmodels.robust.robust_linear_model.RLM', 'scipy.stats.gaussian_kde', 'statsmodels.graphics.boxplots (beanplot\'s violins)', 'scipy.stats.chi2, chi2_contingency', 'numpy.quantile (weibull)'],
     title: () => 'Graph Builder',
@@ -2690,7 +2762,16 @@
         lead: 'A scatterplot for every pair of columns, linked: drag a rectangle in one cell and the rows light up in all of them.',
         sections: [
           { heading: 'Roles', choices: [['Y, Columns', 'The columns; with no X, each pair once (lower or upper triangle) or twice (square).'], ['X', 'Optional: the matrix is then the Y columns by the X columns.'], ['Group', 'Colours the points, and gives each level its own ellipse and fit line.'], ['By', 'A matrix for each level.']] },
-          { heading: 'The red triangle', text: 'Show Points; Fit Line (least squares, statsmodels OLS, with its confidence band); Density Ellipses and their coverage (the bivariate normal with the sample means and covariance); Nonpar Density (kernel density contours holding 25, 50, 75 and 100% of the points, scipy\'s gaussian_kde); Histograms on the diagonal; the matrix format.' },
+          { heading: 'The red triangle', choices: [
+            ['Show Points', 'The points of every pair, linked to the rows: drag a rectangle in one cell and the rows light up in all of them. On by default.'],
+            ['Fit Line', 'A least squares line (statsmodels OLS) in each cell, with its 95% confidence band; one for each level of Group.'],
+            ['Density Ellipses', 'The ellipse of the bivariate normal with the pair\'s means and covariance that holds the Ellipses Coverage; one for each level of Group.'],
+            ['Shaded Ellipses', 'Fills the density ellipses.'],
+            ['Ellipses Coverage', 'The share of the fitted normal inside each ellipse: 99%, 95% (the default), 90% or 50%.'],
+            ['Nonpar Density', 'Kernel density contours that hold 25, 50, 75 and 100% of the points (scipy\'s gaussian_kde, Scott\'s bandwidth), whatever their shape.'],
+            ['Histograms', 'A histogram of each column on the diagonal, its bars linked to their rows.'],
+            ['Matrix Format', 'Lower or upper triangle, or the square of every pair twice; not with X columns.'],
+          ] },
         ],
         more: { label: 'Scatterplot Matrix', id: 'help-p-scattermatrix' },
       },
@@ -2700,12 +2781,12 @@
     launch: {
       lead: 'Choose two or more continuous columns. Each pair gets a scatterplot; with X columns as well the matrix is Y by X.',
       roles: [
-        { key: 'y', label: 'Y, Columns', min: 1, numeric: true, types: ['continuous'], hint: 'required: continuous' },
-        { key: 'x', label: 'X', numeric: true, types: ['continuous'], hint: 'optional: Y by X' },
-        { key: 'group', label: 'Group', max: 1, types: ['ordinal', 'nominal'], hint: 'optional categorical' },
-        { key: 'by', label: 'By', hint: 'optional' },
+        { key: 'y', label: 'Y, Columns', min: 1, numeric: true, types: ['continuous'], hint: 'required: continuous', help: 'The continuous columns to plot against one another. Without X, every pair of them, in the shape Matrix Format says, with each column\'s name on the diagonal; a row with a missing value leaves only the pairs that need it.' },
+        { key: 'x', label: 'X', numeric: true, types: ['continuous'], hint: 'optional: Y by X', help: 'Continuous columns for the matrix\'s columns: the matrix is then the Y columns (down the side) by the X columns (along the bottom), every cell a pair, and Matrix Format does not apply.' },
+        { key: 'group', label: 'Group', max: 1, types: ['ordinal', 'nominal'], hint: 'optional categorical', help: 'Colours the points by level, with a legend; the fit lines, density ellipses and density contours are then drawn for each level.' },
+        { key: 'by', label: 'By', hint: 'optional', help: 'A separate matrix for each level of the By columns (each combination of levels with several).' },
       ],
-      options: [{ key: 'format', label: 'Matrix Format', type: 'select', value: 'lower', choices: [['lower', 'Lower Triangular'], ['upper', 'Upper Triangular'], ['square', 'Square']] }],
+      options: [{ key: 'format', label: 'Matrix Format', type: 'select', value: 'lower', choices: [['lower', 'Lower Triangular'], ['upper', 'Upper Triangular'], ['square', 'Square']], help: '**Lower Triangular** (the default) and **Upper Triangular** show each pair once, below or above the diagonal of names; **Square** shows each pair twice, mirrored. Only without X columns; the red triangle changes it later.' }],
       validate: (s) => ((s.roles.y || []).length + (s.roles.x || []).length < 2 ? 'Choose at least two columns (Y, or Y and X)' : null),
     },
     title: () => 'Scatterplot Matrix',
@@ -2843,8 +2924,16 @@
     topics: {
       'p:scatter3d': {
         kicker: 'Graph', title: 'Scatterplot 3D',
-        lead: 'Three columns as a cloud of points to turn with the mouse (drag to rotate, scroll to zoom). The menus above the graph choose which of the Y columns are on the axes.',
-        sections: [{ heading: 'Linking', text: 'A click on a point selects its row; selected rows are drawn larger in orange, and the rows\' colours, markers, labels and hidden states apply. Coloring colours the points by a column instead.' }, { heading: 'WebGL', text: 'The graph is drawn with WebGL; a browser with WebGL turned off shows a notice instead.' }],
+        lead: 'Three columns as a cloud of points to turn with the mouse (drag to rotate; to zoom, pick Zoom in the toolbar above the graph and drag). The menus above the graph choose which of the Y columns are on the axes.',
+        sections: [
+          { heading: 'In the report', choices: [
+            ['X Axis, Y Axis, Z Axis', 'The Y column on each axis. Choosing a column that is on another axis swaps the two, so the three axes always show three different columns.'],
+            ['The graph', 'Drag to turn it and click a point to select its row. The toolbar above it zooms (pick Zoom, then drag up or down), pans, resets the view and saves a picture; the mouse wheel scrolls the page, not the graph.'],
+            ['Drop Lines (red triangle)', 'A line from each point down to the lowest Z, which shows where the point lies over the X–Y plane (for up to 3000 rows).'],
+          ] },
+          { heading: 'Linking', text: 'A click on a point selects its row; selected rows are drawn larger in orange, and the rows\' colours, markers, labels and hidden states apply. Coloring colours the points by a column instead.' },
+          { heading: 'WebGL', text: 'The graph is drawn with WebGL; a browser with WebGL turned off shows a notice instead.' },
+        ],
         more: { label: 'Scatterplot 3D', id: 'help-p-scatter3d' },
       },
     },
@@ -2853,9 +2942,9 @@
     launch: {
       lead: 'Choose three or more continuous columns; the first three go on the axes, and the menus in the report change them.',
       roles: [
-        { key: 'y', label: 'Y, Columns', min: 3, numeric: true, types: ['continuous'], hint: 'required: three or more' },
-        { key: 'color', label: 'Coloring', max: 1, hint: 'optional' },
-        { key: 'by', label: 'By', hint: 'optional' },
+        { key: 'y', label: 'Y, Columns', min: 3, numeric: true, types: ['continuous'], hint: 'required: three or more', help: 'Three or more continuous columns: the first three go on the X, Y and Z axes, and the menus above the graph put any of them on an axis. A row is drawn when it has all three values.' },
+        { key: 'color', label: 'Coloring', max: 1, hint: 'optional', help: 'Colours the points: a colour for each level of a categorical column (listed under the graph), a blue-to-red gradient over a continuous one. It takes the place of the rows\' own colours.' },
+        { key: 'by', label: 'By', hint: 'optional', help: 'A separate graph for each level of the By columns.' },
       ],
     },
     title: () => 'Scatterplot 3D',
@@ -2874,6 +2963,7 @@
         s.addEventListener('change', () => { const next = ax.slice(); const v = Number(s.value); const other = next.indexOf(v); if (other >= 0 && other !== a) next[other] = next[a]; next[a] = v; ctx.set('axes', next); });
         pick.append(el('label', { for: id }, `${name} Axis`, s));
       });
+      pick.append(infoSlot('p:scatter3d'));
       const rows = ctx.rows.filter((r) => cols.every((c) => Number.isFinite(c.values[r])));
       const C = colorer(t, ctx.role('color'), rows);
       const base = rows.map((r) => (C ? C.color(r) : pointColor()));
@@ -2889,7 +2979,7 @@
       const w = Math.min(760, availWidth(ctx)), h = Math.round(Math.min(620, w * 0.82));
       const box = ctx.plot(traces, { scene: scene3d(cols.map((c) => c.name)), margin: { l: 0, r: 0, t: 6, b: 0 }, xaxis: { visible: false }, yaxis: { visible: false } }, { width: w, height: h, title: 'Scatterplot 3D' });
       pointStates(box, [{ trace: 0, rows, coords: { x: X, y: Y, z: Z }, color: base, size: 3.5, symbols: SYM3D, fade: 0.2, mask: !!C }]);
-      ctx.container.append(pick, box, htmlLegend(C), ctx.note(`${rows.length} rows with all three values. Drag to rotate, scroll to zoom; a click selects a row.`));
+      ctx.container.append(pick, box, htmlLegend(C), ctx.note(`${rows.length} rows with all three values. Drag to rotate; to zoom, pick Zoom in the toolbar above the graph and drag. A click selects a row.`));
     },
   });
 
@@ -2909,9 +2999,9 @@
   const XY_LAUNCH = (lead) => ({
     lead,
     roles: [
-      { key: 'y', label: 'Y', min: 1, numeric: true, types: ['continuous'], hint: 'required: the values (one graph each)' },
-      { key: 'x', label: 'X', min: 2, max: 2, numeric: true, types: ['continuous'], hint: 'required: two coordinates' },
-      { key: 'by', label: 'By', hint: 'optional' },
+      { key: 'y', label: 'Y', min: 1, numeric: true, types: ['continuous'], hint: 'required: the values (one graph each)', help: 'The values to draw over the plane of the two X columns; each Y column gets a graph of its own.' },
+      { key: 'x', label: 'X', min: 2, max: 2, numeric: true, types: ['continuous'], hint: 'required: two coordinates', help: 'Exactly two continuous columns, the coordinates of each row: the first across, the second up. Rows at the same pair of X values are averaged, and the values between the rows are interpolated on their Delaunay triangulation; outside the rows\' hull there are none.' },
+      { key: 'by', label: 'By', hint: 'optional', help: 'A separate graph for each level of the By columns.' },
     ],
   });
 
@@ -2921,7 +3011,14 @@
       'p:contour': {
         kicker: 'Graph', title: 'Contour Plot',
         lead: 'The values of Y over the plane of two X columns, as contour lines or filled bands. The values between the points come from interpolation on their Delaunay triangulation (scipy.interpolate.griddata); outside the points\' hull there is none.',
-        sections: [{ heading: 'The red triangle', text: 'Show Data Points (linked to the rows), Fill Areas, Label Contours, Specify Contours (how many, or the step, from and to), the interpolation (linear, cubic, or the nearest point) and the colour theme.' }],
+        sections: [{ heading: 'The red triangle', choices: [
+          ['Show Data Points', 'The rows as points over the contours, linked to the table. On by default.'],
+          ['Fill Areas', 'Colours the bands between the contour lines instead of drawing the lines alone.'],
+          ['Label Contours', 'Writes each contour\'s level on its line.'],
+          ['Specify Contours…', 'How many contours, or the step between them with a first and last level; empty is automatic: about 10 at round levels.'],
+          ['Interpolation', '**Linear** (the default): a plane over each triangle of the Delaunay triangulation of the rows; **Cubic**: a smooth surface through them (scipy\'s Clough–Tocher); **Nearest**: each grid point takes the value of the nearest row, and there are values beyond the hull too.'],
+          ['Color Theme', 'The colour scale of the levels: Blue to Gray to Red (the default), Viridis, Blues or Spectral.'],
+        ] }],
         more: { label: 'Contour Plot', id: 'help-p-contour' },
       },
     },
@@ -2936,7 +3033,7 @@
         const o = (k, d) => ctx.opt(k, d, sc);
         const ob = ctx.outline(`Contour Plot for ${yc.name}`, { key: `c:${yc.id}`, menu: () => [
           ctx.check('Show Data Points', 'points', sc, true), ctx.check('Fill Areas', 'fill', sc, false), ctx.check('Label Contours', 'labels', sc, false),
-          { label: 'Specify Contours…', action: async () => { const cur = o('levels', {}); const v = await SM.ui.form({ title: `Specify Contours: ${yc.name}`, lead: 'Either the number of contours, or the step (with an optional first and last level). Empty: automatic.', fields: [{ key: 'n', label: 'Number of contours', type: 'number', value: cur.n ?? null }, { key: 'size', label: 'Step', type: 'number', value: cur.size ?? null }, { key: 'min', label: 'First level', type: 'number', value: cur.min ?? null }, { key: 'max', label: 'Last level', type: 'number', value: cur.max ?? null }] }); if (v) ctx.set('levels', v, sc); } },
+          { label: 'Specify Contours…', action: async () => { const cur = o('levels', {}); const v = await SM.ui.form({ title: `Specify Contours: ${yc.name}`, lead: 'Either the number of contours, or the step (with an optional first and last level). Empty: automatic.', fields: [{ key: 'n', label: 'Number of contours', type: 'number', value: cur.n ?? null, help: 'About how many contours: the step between them is the round number at or just above the range of Y divided by this (10 when empty). Not used when a Step is given.' }, { key: 'size', label: 'Step', type: 'number', value: cur.size ?? null, help: 'The distance between two contour levels, in the units of Y; it takes the place of the number of contours.' }, { key: 'min', label: 'First level', type: 'number', value: cur.min ?? null, help: 'With a Step: the lowest contour level (empty: the lowest interpolated value).' }, { key: 'max', label: 'Last level', type: 'number', value: cur.max ?? null, help: 'With a Step: the highest contour level (empty: the highest interpolated value).' }] }); if (v) ctx.set('levels', v, sc); } },
           interpMenu(ctx, sc), themeMenu(ctx, sc),
         ] });
         const res = await ctx.call('graph.interp', { x: xa.name, y: xb.name, z: yc.name, method: o('method', 'linear'), grid: 70 });
@@ -2962,7 +3059,13 @@
       'p:surface': {
         kicker: 'Graph', title: 'Surface Plot',
         lead: 'The values of Y over two X columns as a surface to turn with the mouse, interpolated between the points (scipy.interpolate.griddata), with the data points as a cloud; a click on a point selects its row.',
-        sections: [{ heading: 'The red triangle', text: 'Show Data Points, Show Contours (projected under the surface), the interpolation, the grid size and the colour theme. The graph needs WebGL.' }],
+        sections: [{ heading: 'The red triangle', choices: [
+          ['Show Data Points', 'The rows as points around the surface, linked to the table. On by default.'],
+          ['Show Contours', 'Contour lines of the surface, drawn on it and projected below it.'],
+          ['Interpolation', '**Linear** (the default): a plane over each triangle of the Delaunay triangulation of the rows; **Cubic**: a smooth surface through them (Clough–Tocher); **Nearest**: the value of the nearest row, beyond the hull too.'],
+          ['Color Theme', 'The colour scale of the surface: Blue to Gray to Red (the default), Viridis, Blues or Spectral.'],
+          ['Grid Size…', 'How many grid points the surface has along each X (default 40).'],
+        ] }, { heading: 'The graph', text: 'Drag to turn it; to zoom, pick Zoom in the toolbar above the graph and drag. A click on a data point selects its row. The graph needs WebGL.' }],
         more: { label: 'Surface Plot', id: 'help-p-surface' },
       },
     },
@@ -2978,7 +3081,7 @@
         const ob = ctx.outline(`Surface Plot for ${yc.name}`, { key: `s:${yc.id}`, menu: () => [
           ctx.check('Show Data Points', 'points', sc, true), ctx.check('Show Contours', 'contours', sc, false),
           interpMenu(ctx, sc), themeMenu(ctx, sc),
-          { label: 'Grid Size…', action: async () => { const v = await SM.ui.form({ title: 'Grid Size', fields: [{ key: 'g', label: 'Points on each axis (10 to 120)', type: 'number', value: o('grid', 40) }] }); if (v && v.g) ctx.set('grid', clamp(Math.round(v.g), 10, 120), sc); } },
+          { label: 'Grid Size…', action: async () => { const v = await SM.ui.form({ title: 'Grid Size', fields: [{ key: 'g', label: 'Points on each axis (10 to 120)', type: 'number', value: o('grid', 40), help: 'The surface is interpolated at this many points along each X, so on a grid of this many squared (default 40). A finer grid shows more detail and draws more slowly; values outside 10 to 120 are brought inside.' }] }); if (v && v.g) ctx.set('grid', clamp(Math.round(v.g), 10, 120), sc); } },
         ] });
         const res = await ctx.call('graph.interp', { x: xa.name, y: xb.name, z: yc.name, method: o('method', 'linear'), grid: o('grid', 40) });
         if (res.error) { ob.add(ctx.warn(`${yc.name}: ${res.error}`)); continue; }
@@ -3007,7 +3110,17 @@
       'p:bubble': {
         kicker: 'Graph', title: 'Bubble Plot',
         lead: 'A scatterplot whose points are bubbles: their area follows Sizes, their colour Coloring. With an ID, the rows of each ID become one bubble at their mean X and Y, sized by the sum of Sizes; with Time, a slider and Play step through the times.',
-        sections: [{ heading: 'Linking', text: 'A click on a bubble selects all its rows (every time); bubbles holding a selected row get a heavy outline.' }, { heading: 'The red triangle', text: 'Label the bubbles by ID, change the bubble size, or show every time at once.' }],
+        sections: [
+          { heading: 'In the report', choices: [
+            ['Time slider, Play, Pause', 'With a Time column: the slider shows the bubbles at one time, Play steps through the times in their order and Pause stops it.'],
+            ['A bubble', 'Click it to select all its rows, at every time; bubbles that hold a selected row get a heavy outline. Hover for its ID, time, mean X and Y, size and number of rows.'],
+          ] },
+          { heading: 'The red triangle', choices: [
+            ['Label', 'Writes each bubble\'s ID (or the row\'s label) on it.'],
+            ['All Times', 'With a Time column: every row at once, a bubble for each ID over all the times, without the animation.'],
+            ['Bubble Size', 'Scales every bubble, × 0.5 to × 2; at × 1 the largest bubble is 46 pixels across.'],
+          ] },
+        ],
         more: { label: 'Bubble Plot', id: 'help-p-bubble' },
       },
     },
@@ -3016,14 +3129,14 @@
     launch: {
       lead: 'Y and X place the bubbles. ID makes one bubble of the rows of each level; Time animates them.',
       roles: [
-        { key: 'y', label: 'Y', min: 1, max: 1, numeric: true, types: ['continuous'], hint: 'required' },
-        { key: 'x', label: 'X', min: 1, max: 1, numeric: true, types: ['continuous'], hint: 'required' },
-        { key: 'id', label: 'ID', max: 2, hint: 'optional: a bubble per level' },
-        { key: 'time', label: 'Time', max: 1, hint: 'optional: animation' },
-        { key: 'size', label: 'Sizes', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric' },
-        { key: 'color', label: 'Coloring', max: 1, hint: 'optional' },
-        { key: 'freq', label: 'Freq', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric' },
-        { key: 'by', label: 'By', hint: 'optional' },
+        { key: 'y', label: 'Y', min: 1, max: 1, numeric: true, types: ['continuous'], hint: 'required', help: 'The vertical position: each bubble sits at the mean Y of its rows (Freq-weighted).' },
+        { key: 'x', label: 'X', min: 1, max: 1, numeric: true, types: ['continuous'], hint: 'required', help: 'The horizontal position: the mean X of the bubble\'s rows.' },
+        { key: 'id', label: 'ID', max: 2, hint: 'optional: a bubble per level', help: 'One or two columns: the rows of each level (or each pair of levels) make one bubble, named after it. Without an ID every row is a bubble. Rows with a missing ID are left out.' },
+        { key: 'time', label: 'Time', max: 1, hint: 'optional: animation', help: 'Animates the bubbles: a frame for each level of this column in its value order, with a slider and Play; each frame\'s bubbles are made of that time\'s rows. Rows with no time are left out.' },
+        { key: 'size', label: 'Sizes', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric', help: 'The bubbles\' areas are proportional to the sum of this column over their rows; without it, to their count of rows (with Freq, the sum of the counts).' },
+        { key: 'color', label: 'Coloring', max: 1, hint: 'optional', help: 'Colours the bubbles: a categorical column by the most common level among each bubble\'s rows (with a legend), a continuous one by their mean on a blue-to-red gradient.' },
+        { key: 'freq', label: 'Freq', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric', help: 'A count for each row: it weights the mean X and Y (and the count that sizes a bubble without Sizes); rows with a missing, zero or negative count are left out.' },
+        { key: 'by', label: 'By', hint: 'optional', help: 'A separate graph for each level of the By columns.' },
       ],
     },
     title: () => 'Bubble Plot',
@@ -3151,7 +3264,16 @@
       'p:parallel': {
         kicker: 'Graph', title: 'Parallel Plot',
         lead: 'Each row is a line across parallel axes, one per column. By default each axis runs from its column\'s minimum to its maximum; Scale Uniformly puts them on one scale, Standardize on z-scores.',
-        sections: [{ heading: 'Selecting', text: 'Click a line\'s vertex to select its row, or drag a rectangle over part of one axis to select the rows that pass through it (brushing). Selected rows are drawn over the others in orange.' }, { heading: 'Grouping', text: 'X, Grouping colours the lines by level.' }],
+        sections: [
+          { heading: 'Selecting', text: 'Click a line\'s vertex to select its row, or drag a rectangle over part of one axis to select the rows that pass through it (brushing). Selected rows are drawn over the others in orange.' },
+          { heading: 'Grouping', text: 'X, Grouping colours the lines by level.' },
+          { heading: 'The red triangle', choices: [
+            ['Scale Uniformly', 'Every axis on one scale, the values themselves, instead of each running from its column\'s minimum (bottom) to its maximum (top).'],
+            ['Standardize', 'Every axis in standard deviations from its mean: (value − mean)/std dev, so columns in different units compare.'],
+            ['Center at Zero', 'With Scale Uniformly: each column\'s mean moved to 0, so the axes compare their spreads.'],
+            ['Reverse Axes…', 'Turns the axes you tick upside down (↓ before the name), which helps when a column falls as the others rise.'],
+          ] },
+        ],
         more: { label: 'Parallel Plot', id: 'help-p-parallel' },
       },
     },
@@ -3160,9 +3282,9 @@
     launch: {
       lead: 'Choose two or more continuous columns; each row becomes a line across their axes.',
       roles: [
-        { key: 'y', label: 'Y, Response', min: 2, numeric: true, types: ['continuous'], hint: 'required: two or more' },
-        { key: 'x', label: 'X, Grouping', max: 1, types: ['ordinal', 'nominal'], hint: 'optional categorical' },
-        { key: 'by', label: 'By', hint: 'optional' },
+        { key: 'y', label: 'Y, Response', min: 2, numeric: true, types: ['continuous'], hint: 'required: two or more', help: 'Two or more continuous columns, an axis each, from left to right in this order. A row with a missing value in any of them is left out.' },
+        { key: 'x', label: 'X, Grouping', max: 1, types: ['ordinal', 'nominal'], hint: 'optional categorical', help: 'A categorical column that colours the lines by level, with a legend.' },
+        { key: 'by', label: 'By', hint: 'optional', help: 'A separate graph for each level of the By columns.' },
       ],
     },
     title: () => 'Parallel Plot',
@@ -3175,7 +3297,7 @@
         { label: 'Reverse Axes…', action: async () => {
           const cols = ctx.roles('y');
           const cur = new Set(ctx.opt('reverse', []));
-          const v = await SM.ui.form({ title: 'Reverse Axes', lead: 'The axes to turn upside down.', fields: cols.map((c) => ({ key: c.id, label: c.name, type: 'check', value: cur.has(c.id) })) });
+          const v = await SM.ui.form({ title: 'Reverse Axes', lead: 'The axes to turn upside down.', fields: cols.map((c) => ({ key: c.id, label: c.name, type: 'check', value: cur.has(c.id), helpLabel: 'A column', help: 'Ticked: its axis is turned upside down, the largest value at the bottom (↓ before its name under the axis).' })) });
           if (v) ctx.set('reverse', cols.filter((c) => v[c.id]).map((c) => c.id));
         } },
       ];
@@ -3246,7 +3368,14 @@
       'p:cellplot': {
         kicker: 'Graph', title: 'Cell Plot',
         lead: 'The table as colours: a row of cells for each row, a column for each column. Continuous columns are standardized and coloured blue (low) to red (high); categorical ones take a colour per level.',
-        sections: [{ heading: 'Options', text: 'Scale Uniformly colours every continuous column on one scale (their common range) instead of its own. Center at Zero puts the middle of the colour scale at zero. A click on a cell selects its row; the selected rows are marked in the strip on the left.' }],
+        sections: [
+          { heading: 'The red triangle', choices: [
+            ['Scale Uniformly', 'Colours every continuous column on one scale, from the smallest value of them all to the largest, instead of each column in its own standard deviations (−3 to 3).'],
+            ['Center at Zero', 'Puts the middle of the colour scale at the value zero: for standardized columns 0 rather than the mean, with Scale Uniformly a scale from minus to plus the largest absolute value.'],
+            ['Legend', 'The colour bar of the continuous columns. On by default.'],
+          ] },
+          { heading: 'Selecting', text: 'A click on a cell selects its row; the selected rows are marked in the strip on the left.' },
+        ],
         more: { label: 'Cell Plot', id: 'help-p-cellplot' },
       },
     },
@@ -3255,9 +3384,9 @@
     launch: {
       lead: 'Choose the columns to draw; X labels the rows.',
       roles: [
-        { key: 'y', label: 'Y', min: 1, hint: 'required' },
-        { key: 'x', label: 'X, Label', max: 1, hint: 'optional: row labels' },
-        { key: 'by', label: 'By', hint: 'optional' },
+        { key: 'y', label: 'Y', min: 1, hint: 'required', help: 'The columns to draw, a column of cells each, in this order: continuous ones standardized and coloured blue (low) to red (high), categorical ones a colour for each level; missing values are left blank.' },
+        { key: 'x', label: 'X, Label', max: 1, hint: 'optional: row labels', help: 'A column whose values label the rows down the side (up to 80 rows are labelled); without it, the table\'s label column or the row number.' },
+        { key: 'by', label: 'By', hint: 'optional', help: 'A separate graph for each level of the By columns.' },
       ],
     },
     title: () => 'Cell Plot',
@@ -3341,9 +3470,9 @@
     launch: {
       lead: 'Choose the three components.',
       roles: [
-        { key: 'y', label: 'Y, Plotting', min: 3, max: 3, numeric: true, types: ['continuous'], hint: 'required: three' },
-        { key: 'color', label: 'Coloring', max: 1, hint: 'optional' },
-        { key: 'by', label: 'By', hint: 'optional' },
+        { key: 'y', label: 'Y, Plotting', min: 3, max: 3, numeric: true, types: ['continuous'], hint: 'required: three', help: 'Exactly three numeric columns, the components of a mixture, one for each corner: each row is placed by its three values divided by their sum. Rows with a missing or negative value, or a zero sum, are left out.' },
+        { key: 'color', label: 'Coloring', max: 1, hint: 'optional', help: 'Colours the points: a colour for each level of a categorical column (listed under the graph), a blue-to-red gradient over a continuous one. It takes the place of the rows\' own colours.' },
+        { key: 'by', label: 'By', hint: 'optional', help: 'A separate graph for each level of the By columns.' },
       ],
     },
     title: () => 'Ternary Plot',
@@ -3372,7 +3501,7 @@
       'p:treemap': {
         kicker: 'Graph', title: 'Treemap',
         lead: 'A rectangle for each level of the categories, its area the count of rows (or the sum of Sizes), nested for a second category. Coloring colours the tiles by the mean of a continuous column, or by the level of a categorical one.',
-        sections: [{ heading: 'Linking', text: 'A click on a tile selects its rows; tiles that hold a selected row get an orange outline.' }],
+        sections: [{ heading: 'Linking', text: 'A click on a tile selects its rows; tiles that hold a selected row get an orange outline. Alt-click zooms into a tile, and with two categories the path bar above the tiles goes back up.' }],
         more: { label: 'Treemap', id: 'help-p-treemap' },
       },
     },
@@ -3381,10 +3510,10 @@
     launch: {
       lead: 'Choose one or two categories; Sizes (optional) sets the areas.',
       roles: [
-        { key: 'x', label: 'Categories', min: 1, max: 2, types: ['ordinal', 'nominal'], hint: 'required: one or two' },
-        { key: 'size', label: 'Sizes', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric' },
-        { key: 'color', label: 'Coloring', max: 1, hint: 'optional' },
-        { key: 'by', label: 'By', hint: 'optional' },
+        { key: 'x', label: 'Categories', min: 1, max: 2, types: ['ordinal', 'nominal'], hint: 'required: one or two', help: 'One or two categorical columns: a tile for each level of the first, in value order, split into tiles for the levels of the second. Rows with a missing category are left out.' },
+        { key: 'size', label: 'Sizes', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric', help: 'The tiles\' areas are the sums of this column over their rows; rows with a missing, zero or negative value are left out. Without it, the areas are the counts of rows.' },
+        { key: 'color', label: 'Coloring', max: 1, hint: 'optional', help: 'A continuous column colours each tile by its mean, blue (low) to red (high). A categorical one gives each tile the colour of its first row\'s level, which suits a column that is the same throughout a tile (the first category, say). Without it, the tiles of each level of the first category share a colour, lighter for the tiles of the second.' },
+        { key: 'by', label: 'By', hint: 'optional', help: 'A separate treemap for each level of the By columns.' },
       ],
     },
     title: () => 'Treemap',
@@ -3677,7 +3806,7 @@
       { label: 'Select Outliers', disabled: !out.length, action: () => t.select(outRows) },
       ctx.check('Score Plot', 'fdScores', null, true),
       { label: 'Outlier Threshold…', action: async () => {
-        const v = await SM.ui.form({ title: 'Outlier Threshold', lead: 'A curve is an outlier when its density is below the (1 − threshold) quantile of the densities at the curves; statsmodels\' default is 0.95.', fields: [{ key: 'q', label: 'Threshold (0.5 to 0.999)', type: 'number', value: ctx.opt('fdThreshold', 0.95) }], validate: (x) => (x.q > 0.5 && x.q < 1 ? null : 'The threshold must be between 0.5 and 1') });
+        const v = await SM.ui.form({ title: 'Outlier Threshold', lead: 'A curve is an outlier when its density is below the (1 − threshold) quantile of the densities at the curves; statsmodels\' default is 0.95.', fields: [{ key: 'q', label: 'Threshold (0.5 to 0.999)', type: 'number', value: ctx.opt('fdThreshold', 0.95), help: 'The HDR boxplot\'s outlier contour: about a share 1 − threshold of the curves always fall outside it, so 0.95 (statsmodels\' default) flags about 5% of them and 0.99 about 1%. A number between 0.5 and 1.' }], validate: (x) => (x.q > 0.5 && x.q < 1 ? null : 'The threshold must be between 0.5 and 1') });
         if (v) ctx.set('fdThreshold', v.q);
       } },
       { label: 'Bandwidth', submenu: () => FD_BW.map(([v, l]) => ({ label: l, checked: ctx.opt('fdBw', 'normal_reference') === v, action: () => ctx.set('fdBw', v) })) },
@@ -3790,7 +3919,15 @@
         lead: 'Curves as data: a boxplot of whole curves, ordered by how central each is among the others (its band depth); an HDR boxplot from the density of their principal component scores; and a rainbow plot coloured by depth. statsmodels\' functional graphics: JMP (standard) has no functional boxplots, and JMP Pro\'s Functional Data Explorer is a different analysis (it fits basis functions and functional principal components).',
         sections: [
           { heading: 'Data formats', choices: [['Rows as Functions', 'Each row is a curve, the Y columns its values at the points along it. X is the number in each column\'s name (0, 2.5, week 3), or the column order when a name holds none (X Values in the red triangle).'], ['Stacked', 'A row per point: the ID names the curve, X says where along it (or the order of its rows), Y is the value. Curves measured at different X are interpolated linearly to common points over the range they all cover.']] },
-          { heading: 'The red triangle', choices: [['Functional Boxplot, HDR Boxplot, Rainbow Plot, Curve Depths', 'the views'], ['Depth', 'the modified band depth (statsmodels\' default), statsmodels\' band depth BD2, or BD2 counted from its definition'], ['Outlier Rule, Outlier Factor', 'the fences of the functional boxplot'], ['Select Outliers', 'selects the rows of the functional boxplot\'s outliers'], ['Save Columns', 'depth, rank and outlier flags into the table, a value for each row of a curve']] },
+          { heading: 'The red triangle', choices: [
+            ['Functional Boxplot, HDR Boxplot, Rainbow Plot, Curve Depths', 'The views, each turned on or off; the functional boxplot and the table of depths are on at the start.'],
+            ['Depth', 'How central each curve is: the **Modified Band Depth** (statsmodels\' default, which ties less), statsmodels\' **Band Depth (BD2)**, or **BD2, Counted** from its definition (up to 400 curves). It orders the curves of the functional boxplot, the rainbow plot and the table.'],
+            ['Outlier Rule', 'How the functional boxplot\'s fences are drawn: **statsmodels** (fboxplot, the default), the central region stretched by the factor about the pointwise median of its curves; **Sun and Genton** (R\'s fda::fbplot), the region\'s envelope widened by the factor times its range.'],
+            ['Outlier Factor…', 'The fences\' factor, 1.5 by default; a larger one flags fewer curves.'],
+            ['X Values', 'Rows as Functions: X from the numbers in the Y columns\' names (the default), or the column order 1, 2, ….'],
+            ['Select Outliers', 'Selects the rows of the functional boxplot\'s outliers.'],
+            ['Save Columns', 'Depth, Depth Rank and Outlier Flag, and with the HDR Boxplot its density, outlier flag and PC scores, as new columns: each curve\'s value in every row of it.'],
+          ] },
           { heading: 'Linking', text: 'A curve stands for its row, or for its ID\'s rows: click it (or its line in a table) to select them, shift-click to add. Rows selected anywhere draw their curves in orange. A curve whose rows are all hidden is not drawn; excluded rows are left out.' },
           { heading: 'Band depth', text: 'For each curve, the share of the bands between two curves of the sample that hold it: at every point (BD2), or on average over the points (MBD, which ties less). The deepest curve is the median; the n/2 deepest make the 50% central region. statsmodels computes both from the ranks at each point (Sun, Genton and Nychka\'s fast formula); for BD2 the formula counts more bands than there are, so Band Depth (BD2), Counted counts them.' },
         ],
@@ -3818,6 +3955,12 @@
           { heading: 'Outliers', text: 'A curve is an outlier when its density is below the (1 − threshold) quantile of the densities at the curves: with the threshold 0.95 about 5% of the curves always are. Shape outliers, curves of an unusual form within the others\' range, show here more than in the functional boxplot.' },
           { heading: 'Differences', list: ['The ends of the bands are found exactly on a grid of the score plane, where hdrboxplot searches for them with differential evolution (or a brute-force grid), which falls short of them a little.', 'statsmodels standardizes each point before the PCA; a point where all curves are equal is left out of it here (statsmodels\' PCA fails on it).', 'R\'s rainbow package uses a robust PCA and its own bandwidths, so its regions differ.'] },
           { heading: 'Score Plot', text: 'The curves\' scores with the 50% and 90% regions and the outlier contour. The points are linked to the rows, as the curves are.' },
+          { heading: 'The red triangle', choices: [
+            ['Select Outliers', 'Selects the rows of the HDR boxplot\'s outlying curves.'],
+            ['Score Plot', 'Shows or hides the plot of the curves\' principal component scores. On by default.'],
+            ['Outlier Threshold…', 'The coverage of the outlier contour, 0.95 by default: about a share 1 − threshold of the curves fall outside it and are outliers.'],
+            ['Bandwidth', 'The bandwidths of the kernel density of the scores (statsmodels\' KDEMultivariate): **Normal Reference** (the default, a rule of thumb from the scores\' spread), or found by **Cross-Validation, Likelihood** or **Cross-Validation, Least Squares**, which follow the data more closely and take longer.'],
+          ] },
         ],
         more: { label: 'Functional Data Plot', id: 'help-p-functional' },
       },
@@ -3832,11 +3975,11 @@
     launch: {
       lead: 'Curves: each row a curve whose values are the Y columns (Rows as Functions), or stacked, a row per point: an ID naming the curve, an X and a Y.',
       roles: [
-        { key: 'y', label: 'Y, Output', numeric: true, types: ['continuous'], hint: 'a column for each point along the curves' },
-        { key: 'yl', label: 'Y, Output', max: 1, numeric: true, types: ['continuous'], hint: 'the values' },
-        { key: 'id', label: 'ID, Function', max: 1, hint: 'names the curves' },
-        { key: 'x', label: 'X, Input', max: 1, numeric: true, hint: 'optional: where along the curve (else the row order)' },
-        { key: 'by', label: 'By', hint: 'optional' },
+        { key: 'y', label: 'Y, Output', numeric: true, types: ['continuous'], hint: 'a column for each point along the curves', help: 'Rows as Functions: two or more columns, one for each point along the curves; each row is a curve. X is the number in each column\'s name when every name holds one (0, 2.5, week 3), the columns then taken in the order of those numbers; otherwise the column order (X Values in the red triangle chooses). A row with a missing value is left out.' },
+        { key: 'yl', label: 'Y, Output', max: 1, numeric: true, types: ['continuous'], hint: 'the values', help: 'Stacked: the one column of values, a row for each point of a curve.' },
+        { key: 'id', label: 'ID, Function', max: 1, hint: 'names the curves', help: 'Names the curves. Stacked: required, a curve for the rows of each level. Rows as Functions: optional, the curve\'s name in the tables and legends (else the table\'s label column, or the row number).' },
+        { key: 'x', label: 'X, Input', max: 1, numeric: true, hint: 'optional: where along the curve (else the row order)', help: 'Stacked only: where along its curve each row\'s value lies; without it, the order of the ID\'s rows. Values at the same X of a curve are averaged; curves measured at different X are interpolated linearly to common points over the range every curve covers.' },
+        { key: 'by', label: 'By', hint: 'optional', help: 'A separate Functional Data Plot for each level of the By columns; the depths and outliers are found within each group.' },
       ],
       extra(api, spec) {
         const st = { format: spec && spec.options && spec.options.format === 'long' ? 'long' : 'wide' };
@@ -3860,6 +4003,7 @@
           el: box, position: 'top',
           read: () => ({ roles: st.format === 'long' ? { y: [] } : { yl: [], x: [] }, options: { format: st.format } }),
           recall(saved) { const f = saved && saved.options && saved.options.format; if (f === 'wide' || f === 'long') { st.format = f; apply(); } },
+          help: [['Data Format', '**Rows as Functions** (the default): each row is a curve, its values in the Y, Output columns. **Stacked**: a row for each point, an ID, Function column naming the curve, an optional X, Input and one Y, Output column. The roles change to suit the format.']],
         };
       },
       validate(s) {
@@ -3889,7 +4033,7 @@
         { label: 'Depth', submenu: () => FD_DEPTH.map(([v, l]) => ({ label: l, checked: dm === v, action: () => ctx.set('fdDepth', v) })) },
         { label: 'Outlier Rule', submenu: () => FD_RULES.map(([v, l]) => ({ label: l, checked: ctx.opt('fdRule', 'statsmodels') === v, action: () => ctx.set('fdRule', v) })) },
         { label: 'Outlier Factor…', action: async () => {
-          const v = await SM.ui.form({ title: 'Outlier Factor', lead: 'The factor of the functional boxplot\'s fences: statsmodels\' wfactor (1.5 by default; its own example takes 2.58), or Sun and Genton\'s factor (1.5 in R\'s fda::fbplot).', fields: [{ key: 'f', label: 'Factor (0.5 to 10)', type: 'number', value: ctx.opt('fdFactor', 1.5) }], validate: (x) => (x.f >= 0.5 && x.f <= 10 ? null : 'The factor must be between 0.5 and 10') });
+          const v = await SM.ui.form({ title: 'Outlier Factor', lead: 'The factor of the functional boxplot\'s fences: statsmodels\' wfactor (1.5 by default; its own example takes 2.58), or Sun and Genton\'s factor (1.5 in R\'s fda::fbplot).', fields: [{ key: 'f', label: 'Factor (0.5 to 10)', type: 'number', value: ctx.opt('fdFactor', 1.5), help: 'How far the fences lie from the 50% central region (default 1.5). With the statsmodels rule the region is stretched this many times about the pointwise median of its curves; with Sun and Genton\'s the fences are this many times the region\'s range beyond its edges. A curve that passes a fence anywhere is an outlier, so a larger factor flags fewer curves.' }], validate: (x) => (x.f >= 0.5 && x.f <= 10 ? null : 'The factor must be between 0.5 and 10') });
           if (v) ctx.set('fdFactor', v.f);
         } },
         long ? null : { label: 'X Values', submenu: () => [['names', 'From the Column Names'], ['order', 'Column Order (1, 2, …)']].map(([v, l]) => ({ label: l, checked: ctx.opt('fdX', 'names') === v, action: () => ctx.set('fdX', v) })) },
@@ -3978,7 +4122,14 @@
       'p:chart': {
         kicker: 'Graph > Legacy', title: 'Chart',
         lead: 'A statistic of the Y columns (or the count of rows) for each level of the categories, as bars, lines, points, needles or a pie. A second category column splits each level into side-by-side bars.',
-        sections: [{ heading: 'Options', choices: [['Statistic', 'N, % of Total, Mean, Sum, Min, Max, Std Dev, Std Err, Median, Range (computed as Graph Builder computes them).'], ['Overlay', 'All the Y columns in one chart; otherwise a chart each.'], ['Horizontal', 'The categories down the side.'], ['Error Interval', 'Standard error, standard deviation or the confidence interval of the mean.']] }],
+        sections: [{ heading: 'The red triangle', choices: [
+          ['Chart Type', 'Bar, Line, Point, Needle or Pie chart.'],
+          ['Statistic', 'N, % of Total, Mean, Sum, Min, Max, Std Dev, Std Err, Median or Range, computed as Graph Builder computes them.'],
+          ['Error Interval', 'Range, Standard Error, Standard Deviation, the 95% Confidence Interval of the mean or the Interquartile Range, on each bar or point; the first three go with the Mean.'],
+          ['Horizontal', 'The categories down the side.'],
+          ['Overlay', 'All the Y columns in one chart; otherwise a chart each.'],
+          ['Label by Value', 'Writes each bar\'s value on it.'],
+        ] }],
         more: { label: 'Chart', id: 'help-p-chart' },
       },
     },
@@ -3987,15 +4138,15 @@
     launch: {
       lead: 'Choose the categories and, optionally, the columns to take a statistic of (with none, the count of rows).',
       roles: [
-        { key: 'y', label: 'Y, Statistics', numeric: true, types: ['continuous'], hint: 'optional: continuous' },
-        { key: 'x', label: 'Categories, X, Levels', min: 1, max: 2, hint: 'required: one or two' },
-        { key: 'by', label: 'By', hint: 'optional' },
+        { key: 'y', label: 'Y, Statistics', numeric: true, types: ['continuous'], hint: 'optional: continuous', help: 'The continuous columns whose Statistic is charted for each category. Without them the chart counts rows (N, or % of Total).' },
+        { key: 'x', label: 'Categories, X, Levels', min: 1, max: 2, hint: 'required: one or two', help: 'One or two columns: a bar (point, slice) for each level of the first; a second one splits each level into side-by-side bars, one for each of its levels, with a legend.' },
+        { key: 'by', label: 'By', hint: 'optional', help: 'A separate chart for each level of the By columns.' },
       ],
       options: [
-        { key: 'stat', label: 'Statistic', type: 'select', value: 'mean', choices: CHART_STATS },
-        { key: 'kind', label: 'Chart', type: 'select', value: 'bar', choices: [['bar', 'Bar Chart'], ['line', 'Line Chart'], ['point', 'Point Chart'], ['needle', 'Needle Chart'], ['pie', 'Pie Chart']] },
-        { key: 'horizontal', label: 'Horizontal', type: 'check', value: false },
-        { key: 'overlay', label: 'Overlay', type: 'check', value: true },
+        { key: 'stat', label: 'Statistic', type: 'select', value: 'mean', choices: CHART_STATS, help: 'What each bar shows: N, % of Total (the level\'s share of the column\'s sum, or of the rows), Mean (the default), Sum, Min, Max, Std Dev, Std Err, Median (JMP\'s quantile) or Range. Without Y columns only N and % of Total. A Pie Chart\'s slices are in proportion to the statistic (negative values count as 0); its % of Total is the share of the sum.' },
+        { key: 'kind', label: 'Chart', type: 'select', value: 'bar', choices: [['bar', 'Bar Chart'], ['line', 'Line Chart'], ['point', 'Point Chart'], ['needle', 'Needle Chart'], ['pie', 'Pie Chart']], help: '**Bar Chart** (the default), **Line Chart** (the statistics joined in the levels\' order), **Point Chart**, **Needle Chart** (a thin line for each bar) or **Pie Chart** (a slice for each level). The red triangle changes it later.' },
+        { key: 'horizontal', label: 'Horizontal', type: 'check', value: false, help: 'The categories down the side and the bars across.' },
+        { key: 'overlay', label: 'Overlay', type: 'check', value: true, help: 'On (the default): every Y column in one chart, their bars side by side with a legend; off: a chart for each Y column.' },
       ],
     },
     title: (spec) => ({ bar: 'Bar Chart', line: 'Line Chart', point: 'Point Chart', needle: 'Needle Chart', pie: 'Pie Chart' }[spec.options && spec.options.kind] || 'Chart'),
@@ -4018,7 +4169,8 @@
       const horiz = ctx.opt('horizontal', false);
       const ref = (c) => ({ id: c.id, name: c.name });
       const sets = !ys.length ? [[]] : ctx.opt('overlay', true) ? [ys] : ys.map((c) => [c]);
-      const element = kind === 'pie' ? { type: 'pie', summary: stat === 'n' || stat === 'pct' ? 'n' : stat === 'sum' ? 'sum' : 'mean' }
+      // a pie's slices in proportion to the statistic; % of Total is the share of the sum (of the rows without Y)
+      const element = kind === 'pie' ? { type: 'pie', summary: stat === 'pct' ? (ys.length ? 'sum' : 'n') : stat }
         : kind === 'line' ? { type: 'line', ordering: 'summarized', summary: stat, interval: ctx.opt('interval', 'none') }
           : kind === 'point' ? { type: 'points', summary: stat, interval: ctx.opt('interval', 'none') }
             : { type: 'bar', barStyle: kind === 'needle' ? 'needle' : 'side', summary: stat, interval: ctx.opt('interval', 'none'), label: ctx.opt('label', false) ? 'value' : 'none' };
@@ -4050,7 +4202,12 @@
       'p:overlay': {
         kicker: 'Graph > Legacy', title: 'Overlay Plot',
         lead: 'Several Y columns against one X (or against the row order) in one graph, each with its own markers and line, on the left or the right axis; or each on its own axis, stacked.',
-        sections: [{ heading: 'The red triangle', text: 'Overlay Y\'s (off: separate axes), Sort X (connect in the order of X), Connect Thru Missing, and for each Y column: Left or Right Scale, Show Points, Connect Points, Needle, Step.' }],
+        sections: [{ heading: 'The red triangle', choices: [
+          ['Overlay Y\'s', 'On (the default): every Y column in one graph; off: each on its own axis, stacked, sharing X.'],
+          ['Sort X', 'On (the default): the points are joined in the order of X; off: in the table\'s row order.'],
+          ['Connect Thru Missing', 'A line goes on across a row whose Y is missing; off, it breaks there.'],
+          ['Y Options', 'For each Y column: **Left Scale** or **Right Scale** (the axis on the right, with Overlay Y\'s), **Show Points**, **Connect Points** (the line), **Needle** (a line from 0 to each point) and **Step** (a step from each point to the next).'],
+        ] }],
         more: { label: 'Overlay Plot', id: 'help-p-overlay' },
       },
     },
@@ -4059,10 +4216,10 @@
     launch: {
       lead: 'Choose the Y columns and, optionally, the X to plot them against.',
       roles: [
-        { key: 'y', label: 'Y', min: 1, numeric: true, types: ['continuous'], hint: 'required: one or more' },
-        { key: 'x', label: 'X', max: 1, numeric: true, hint: 'optional: else the row order' },
-        { key: 'group', label: 'Grouping', max: 1, types: ['ordinal', 'nominal'], hint: 'optional' },
-        { key: 'by', label: 'By', hint: 'optional' },
+        { key: 'y', label: 'Y', min: 1, numeric: true, types: ['continuous'], hint: 'required: one or more', help: 'The continuous columns to plot, each with its own colour, markers and line.' },
+        { key: 'x', label: 'X', max: 1, numeric: true, hint: 'optional: else the row order', help: 'A numeric column to plot them against; without it, the row number. Rows with a missing X are left out.' },
+        { key: 'group', label: 'Grouping', max: 1, types: ['ordinal', 'nominal'], hint: 'optional', help: 'A categorical column: a line (and a colour) for each of its levels, for each Y column.' },
+        { key: 'by', label: 'By', hint: 'optional', help: 'A separate graph for each level of the By columns.' },
       ],
     },
     title: () => 'Overlay Plot',

@@ -126,6 +126,109 @@ window.__fyx = {
 };
 '''
 
+# The (i) of a launch dialog, of a form and of an outline: open it, read the
+# sections of its panel ([{heading, choices: [[name, text]]}]), close it.
+HELP_JS = r'''
+window.__hlp = {
+  sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+  async read(btn) {
+    if (!btn) return null;
+    btn.click();
+    await this.sleep(120);
+    const p = document.querySelector('.info-panel');
+    if (!p) return null;
+    const secs = [];
+    let cur = null;
+    for (const node of p.querySelector('.info-panel-body').children) {
+      if (node.tagName === 'H3') { cur = { heading: node.textContent, choices: [] }; secs.push(cur); }
+      else if (node.matches('dl.info-choices')) {
+        if (!cur) { cur = { heading: '', choices: [] }; secs.push(cur); }
+        node.querySelectorAll(':scope > dt').forEach((dt) => cur.choices.push([dt.textContent, dt.nextElementSibling ? dt.nextElementSibling.textContent : '']));
+      }
+    }
+    const out = { title: p.querySelector('.info-panel-title').textContent, secs };
+    KvotInfo.close();
+    await this.sleep(30);
+    return out;
+  },
+  // a launch dialog: KvotInfo.audit() while it is open, its (i), the platform's roles and options
+  async launch(id) {
+    SM.app.launch(id);
+    await this.sleep(300);
+    const dlg = [...document.querySelectorAll('.sm-launch-dialog')].pop();
+    if (!dlg) return { error: `no launch dialog for ${id}` };
+    const noTopic = KvotInfo.audit().noTopic;
+    const info = await this.read(dlg.querySelector('.sm-dialog-head .info-btn'));
+    dlg.querySelector('.sm-dialog-x').click();
+    const L = SM.platforms.get(id).launch;
+    return { noTopic, info, roles: L.roles.map((r) => r.label), options: (L.options || []).map((o) => o.label) };
+  },
+  // the dialog run() opens: its field labels, the audit while it is open, its (i)
+  async dialog(run) {
+    const n0 = SM.ui.dialogs.length;
+    run();
+    let d = null;
+    for (let i = 0; i < 80 && !d; i++) { await this.sleep(50); if (SM.ui.dialogs.length > n0) d = SM.ui.dialogs[SM.ui.dialogs.length - 1].el; }
+    if (!d) return { error: 'no dialog opened' };
+    await this.sleep(100);
+    const labels = [...d.querySelectorAll('.sm-form label')].map((l) => l.textContent);
+    const noTopic = KvotInfo.audit().noTopic;
+    const info = await this.read(d.querySelector('.sm-dialog-head .info-btn'));
+    d.querySelector('.sm-dialog-x').click();
+    await this.sleep(60);
+    return { labels, noTopic, info };
+  },
+  head(rep, title) { return [...rep.body.querySelectorAll('.sm-ob-head')].find((x) => x.querySelector('h2, h3, h4').textContent === title); },
+  // a red-triangle item of an outline that opens a form, by the labels of its path
+  async form(rep, title, path) {
+    const h = this.head(rep, title);
+    if (!h) return { error: `no outline ${title}` };
+    return this.dialog(() => {
+      h.querySelector('.sm-ob-menu').click();
+      for (const label of path) {
+        const menus = document.querySelectorAll('.sm-menu');
+        const b = [...menus[menus.length - 1].querySelectorAll('button')].find((x) => x.querySelector('.sm-label') && x.querySelector('.sm-label').textContent === label);
+        if (!b) { SM.ui.closeMenus(0); throw new Error(`no menu item ${label}`); }
+        b.click();
+      }
+    });
+  },
+  async outline(rep, title) {
+    const h = this.head(rep, title);
+    if (!h) return { error: `no outline ${title}` };
+    return this.read(h.querySelector('.info-btn'));
+  },
+};
+'''
+
+
+def section(info, heading):
+    """The choices of the last section of an (i) panel with this heading."""
+    secs = [s for s in (info or {}).get('secs', []) if s['heading'] == heading]
+    return secs[-1]['choices'] if secs else []
+
+
+def check_launch(r, name):
+    check(f'{name} launch dialog: every (i) has a topic while it is open', r.get('noTopic'), [])
+    roles = section(r.get('info'), 'Roles')
+    check(f'{name} launch (i): the Roles list every role', [n for n, _ in roles], r.get('roles'))
+    check(f'{name} launch (i): each role says what it is for before what it takes', [n for n, t in roles if t.startswith('(') or len(t) < 60], [])
+    opts = section(r.get('info'), 'Options')
+    check(f'{name} launch (i): the Options list every option, each with its help', ([n for n, _ in opts], [n for n, t in opts if len(t) < 40]), (r.get('options'), []))
+
+
+def check_form(r, name, title=None):
+    """A form's (i) explains every field, under its label (or under the name,
+    helpLabel, that stands for fields repeated per item)."""
+    check(f'{name}: the form opens, every (i) has a topic while it is open', (r.get('error'), r.get('noTopic')), (None, []))
+    fields = section(r.get('info'), 'Fields')
+    names = [n for n, _ in fields]
+    missing = [lab for lab in r.get('labels') or [] if lab not in names and not any(n.lower() in lab.lower() for n in names)]
+    check(f'{name}: its (i) explains every field', (bool(names), missing), (True, []))
+    check(f'{name}: ... each with what it is for', [n for n, t in fields if len(t) < 30], [])
+    if title:
+        check(f'{name}: the (i) builds on the topic {title}', (r.get('info') or {}).get('title'), title)
+
 
 async def main():
     page = await open_page(f'{BASE}/smui.html?example=students')
@@ -754,6 +857,41 @@ async def main():
     check('every Help link has a target', audit.get('brokenMore'), [])
     r = await page.ev('SM.app.reports.find(r => r.title === "Oneway Analysis of yield (g) By fertilizer").pythonScript()')
     check('the Python script holds the code of the results', all(s in r for s in ('anova_lm', 'pairwise_tukeyhsd', 'stats.kruskal', 'anova_oneway')), True)
+
+    # ---- help for every input: the launch dialogs' (i) and the red-triangle forms' (i)
+    await page.ev(HELP_JS)
+    r = await page.ev('''['fitybyx', 'matchedpairs'].flatMap((id) => { const L = SM.platforms.get(id).launch;
+      return [...L.roles, ...(L.options || [])].filter((f) => !f.help).map((f) => `${id}: ${f.label}`); })''')
+    check('every role and option of Fit Y by X and Matched Pairs has its help', r, [])
+    await page.ev("SM.app.showTab(SM.app.tabOf(__fyx.table('Students')))")
+    check_launch(await page.ev("__hlp.launch('fitybyx')"), 'Fit Y by X')
+    check_launch(await page.ev("__hlp.launch('matchedpairs')"), 'Matched Pairs')
+    await page.ev('''(async () => { const t = __fyx.table('Students'); const sc = t.col('weight (kg)').id + '~' + t.col('height (cm)').id;
+      const o = {}; o[sc + '|fits'] = [{ id: 'f1', kind: 'spline', lam: 1 }, { id: 'f2', kind: 'quantile', tau: 0.5 }];
+      window.__biv = await __fyx.open('Students', 'fitybyx', { y: ['weight (kg)'], x: ['height (cm)'] }, o);
+      window.__many = await __fyx.open('Students', 'fitybyx', { y: ['height (cm)', 'weight (kg)'], x: ['sex'] }, {});
+      window.__mp = await __fyx.open('Students', 'matchedpairs', { y: ['height (cm)', 'weight (kg)'] }, {});
+      window.__ow = await __fyx.open('Clinical study', 'fitybyx', { y: ['adverse events'], x: ['treatment'] }, {});
+      window.__lg = await __fyx.open('Clinical study', 'fitybyx', { y: ['response'], x: ['dose (mg)'] }, {});
+      window.__ct = await __fyx.open('Clinical study', 'fitybyx', { y: ['response'], x: ['treatment'] }, {}); })()''')
+    biv = 'Bivariate Fit of weight (kg) By height (cm)'
+    ow = 'Oneway Analysis of adverse events By treatment'
+    forms = [('__biv', biv, ['Fit Special…'], 'Fit Special', None), ('__biv', biv, ['Flexible', 'Fit Spline', 'Other…'], 'Fit Spline Other', None),
+             ('__biv', biv, ['Fit Orthogonal', 'Specified Variance Ratio…'], 'Fit Orthogonal ratio', None), ('__biv', biv, ['Density Ellipse', 'Other…'], 'Density Ellipse Other', None),
+             ('__biv', biv, ['Fit Quantile', 'Other…'], 'Fit Quantile Other', None), ('__biv', biv, ['Group By…'], 'Group By', None),
+             ('__biv', biv, ['Bayes Factor for the Correlation…'], 'the correlation\'s Bayes factor', 'Bayes Factor'),
+             ('__biv', 'Smoothing Spline Fit, lambda=1', ['Change Lambda…'], 'Change Lambda', None), ('__biv', 'Quantile Fit, τ=0.5', ['Change Quantile…'], 'Change Quantile', None),
+             ('__many', 'Fit Y by X', ['Arrange in Rows…'], 'Arrange in Rows', None), ('__mp', 'Matched Pairs', ['Bayes Factor…'], 'the paired Bayes factor', 'Bayes Factor'),
+             ('__ow', ow, ['Compare Rates…'], 'Compare Rates', 'Compare Rates'), ('__ow', ow, ['Power…'], 'Power Details', None),
+             ('__ow', ow, ['Equivalence Test', 'Means…'], 'Equivalence Test of means', None), ('__ow', ow, ['Equivalence Test', 'Probability of Superiority…'], 'Equivalence Test of the probability of superiority', 'Brunner-Munzel and the probability of superiority'),
+             ('__ow', ow, ['Compare Means', 'With Control, Dunnett\'s…'], 'Dunnett\'s control level', None), ('__ow', ow, ['Set α Level', 'Other…'], 'Set α Level', None),
+             ('__lg', 'Logistic Fit of response By dose (mg)', ['Inverse Prediction…'], 'Inverse Prediction', None),
+             ('__ct', 'Contingency Analysis of response By treatment', ['Cochran Mantel Haenszel…'], 'Cochran Mantel Haenszel', None)]
+    for var, title_, path, name, topic in forms:
+        r = await page.ev(f'__hlp.form(window.{var}, {json.dumps(title_)}, {json.dumps(path)})')
+        check_form(r, name, topic)
+    r = await page.ev('(async () => { for (const rep of [__biv, __many, __mp, __ow, __lg, __ct]) SM.app.closeReport(rep); return SM.ui.dialogs.length; })()')
+    check('the forms closed with their ×', r, 0)
 
     # ---- dark theme, phone width
     await page.ev("KVOT.setTheme ? KVOT.setTheme('dark') : document.documentElement.setAttribute('data-theme', 'dark')")

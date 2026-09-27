@@ -120,12 +120,12 @@
         const sp = cur[r.name] || defaultSpec('max', ...rowRange(r));
         const pts = sp.points.length === 3 ? sp.points : defaultSpec('max', ...rowRange(r)).points;
         const k = (x) => `${r.name}\u0001${x}`;
-        fields.push({ key: k('goal'), label: `${r.name}: Goal`, type: 'select', value: sp.goal, choices: GOALS });
+        fields.push({ key: k('goal'), label: `${r.name}: Goal`, type: 'select', value: sp.goal, choices: GOALS, helpLabel: 'Goal', help: 'Maximize: larger values are more desirable. Minimize: smaller values are. Match Target: values near the middle point are. None: the response is left out of the overall desirability. Changing the goal keeps the points: set their desirabilities to match.' });
         ['Low', 'Middle', 'High'].forEach((nm, i) => {
-          fields.push({ key: k(`y${i}`), label: `${nm} value`, type: 'number', value: Number.isFinite(pts[i][0]) ? +Number(pts[i][0]).toPrecision(7) : pts[i][0] });
-          fields.push({ key: k(`d${i}`), label: `${nm} desirability`, type: 'number', value: pts[i][1] });
+          fields.push({ key: k(`y${i}`), label: `${nm} value`, type: 'number', value: Number.isFinite(pts[i][0]) ? +Number(pts[i][0]).toPrecision(7) : pts[i][0], helpLabel: 'Low, Middle and High value', help: 'Three values of the response through which the desirability function runs, in any order; it is flat beyond the outer two. They start at the ends and the middle of the range the profiler\'s curves cover.' });
+          fields.push({ key: k(`d${i}`), label: `${nm} desirability`, type: 'number', value: pts[i][1], helpLabel: 'Low, Middle and High desirability', help: 'How desirable each value is, from 0 (unacceptable: an overall desirability of 0) to 1 (ideal). JMP\'s defaults for Maximize are 0.0183, 0.5 and 0.9817, for Minimize the reverse, and for Match Target 0.0183, 1 and 0.0183.' });
         });
-        fields.push({ key: k('importance'), label: 'Importance', type: 'number', value: sp.importance ?? 1 });
+        fields.push({ key: k('importance'), label: 'Importance', type: 'number', value: sp.importance ?? 1, help: 'The weight of the response in the overall desirability, the weighted geometric mean (d₁^w₁ · d₂^w₂ · …)^(1/(w₁ + w₂ + …)): only the ratios of the importances matter, and 0 leaves the response out.' });
       }
       const v = await SM.ui.form({ title: 'Set Desirabilities', info: 'p:profiler:desirability', lead: 'For each response: its goal, three points of its desirability function (a value and its desirability between 0 and 1), and its importance in the overall desirability.', fields,
         validate: (x) => { for (const [kk, val] of Object.entries(x)) if (/\u0001d\d$/.test(kk) && val != null && (val < 0 || val > 1)) return 'A desirability is between 0 and 1'; return null; } });

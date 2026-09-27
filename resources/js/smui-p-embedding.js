@@ -177,7 +177,7 @@
     if (res.dimension === 3 && view !== 'pairs' && C) ob.add(htmlLegend(C));
     if (res.dimension === 3 && view === 'pairs' && ctx.opt('view3d', null) == null) ob.add(ctx.note('This browser has no WebGL, which a turning 3-D plot needs: the three dimensions are drawn in pairs.'));
     const how = C ? `coloured by ${C.col.name}${C.cat ? '' : ' (blue low, red high)'}` : 'in the rows\' colours (Rows > Color or Mark by Column, or Color By in the red triangle)';
-    ob.add(ctx.note(`Each point is a row, ${how}. ${res.dimension === 3 && view !== 'pairs' ? 'Drag to turn the map, scroll to zoom; a click selects a row.' : 'Drag over points to select their rows; rows selected elsewhere are highlighted.'} Near points are near in the columns; the distances between far clusters and the clusters' sizes mean little in t-SNE.`),
+    ob.add(ctx.note(`Each point is a row, ${how}. ${res.dimension === 3 && view !== 'pairs' ? 'Drag to turn the map (to zoom, pick Zoom in the toolbar above it and drag); a click selects a row.' : 'Drag over points to select their rows; rows selected elsewhere are highlighted.'} Near points are near in the columns; the distances between far clusters and the clusters' sizes mean little in t-SNE.`),
       ctx.code(res.code));
   }
 
@@ -286,8 +286,8 @@
     }));
   }
 
-  async function askNumber(ctx, title, key, label, dflt, check, info = null) {
-    const v = await SM.ui.form({ title, info, fields: [{ key: 'v', label, type: key === 'learningRate' ? 'text' : 'number', value: ctx.opt(key, dflt) }], validate: (x) => check(x.v) });
+  async function askNumber(ctx, title, key, label, dflt, check, info = null, help = null) {
+    const v = await SM.ui.form({ title, info, fields: [{ key: 'v', label, type: key === 'learningRate' ? 'text' : 'number', value: ctx.opt(key, dflt), help }], validate: (x) => check(x.v) });
     if (v) ctx.set(key, key === 'learningRate' ? (String(v.v).trim() || 'auto') : v.v);
   }
 
@@ -295,12 +295,12 @@
     const o = (k, d) => ctx.opt(k, d);
     return [
       { label: 'Dimensions', submenu: () => [2, 3].map((d) => ({ label: String(d), checked: Number(o('dimension', 2)) === d, action: () => ctx.set('dimension', d) })) },
-      { label: 'Perplexity…', action: () => askNumber(ctx, 'Perplexity', 'perplexity', 'Perplexity (about the number of neighbours of each row)', 30, (x) => (x > 0 ? null : 'The perplexity is a positive number'), 'emb:details') },
-      { label: 'Iterations…', action: () => askNumber(ctx, 'Iterations', 'iterations', 'Iterations (at least 250)', 1000, (x) => (Number.isInteger(x) && x >= 250 && x <= 100000 ? null : 'A whole number from 250 to 100 000')) },
-      { label: 'Learning Rate…', action: () => askNumber(ctx, 'Learning Rate', 'learningRate', 'Learning rate (a positive number, or auto)', 'auto', (x) => (String(x).trim() === '' || String(x).trim().toLowerCase() === 'auto' || Number(x) > 0 ? null : 'A positive number, or auto')) },
+      { label: 'Perplexity…', action: () => askNumber(ctx, 'Perplexity', 'perplexity', 'Perplexity (about the number of neighbours of each row)', 30, (x) => (x > 0 ? null : 'The perplexity is a positive number'), 'emb:details', HELP.perplexity) },
+      { label: 'Iterations…', action: () => askNumber(ctx, 'Iterations', 'iterations', 'Iterations (at least 250)', 1000, (x) => (Number.isInteger(x) && x >= 250 && x <= 100000 ? null : 'A whole number from 250 to 100 000'), null, HELP.iterations) },
+      { label: 'Learning Rate…', action: () => askNumber(ctx, 'Learning Rate', 'learningRate', 'Learning rate (a positive number, or auto)', 'auto', (x) => (String(x).trim() === '' || String(x).trim().toLowerCase() === 'auto' || Number(x) > 0 ? null : 'A positive number, or auto'), null, HELP.learningRate) },
       { label: 'Initialization', submenu: () => [['pca', 'PCA'], ['random', 'Random']].map(([v, l]) => ({ label: l, checked: o('init', 'pca') === v, action: () => ctx.set('init', v) })) },
       ctx.check('Standardize Columns', 'standardize', null, true),
-      { label: 'Random Seed…', action: async () => { const v = await SM.ui.form({ title: 'Random Seed', fields: [{ key: 's', label: 'Seed (empty: the report\'s own)', type: 'text', value: o('seed', '') }], validate: (x) => (String(x.s).trim() === '' || Number.isInteger(Number(x.s)) ? null : 'A whole number, or empty') }); if (v) ctx.set('seed', String(v.s).trim() === '' ? '' : Math.trunc(Number(v.s))); } },
+      { label: 'Random Seed…', action: async () => { const v = await SM.ui.form({ title: 'Random Seed', fields: [{ key: 's', label: 'Seed (empty: the report\'s own)', type: 'text', value: o('seed', ''), help: 'The seed of the random start: a whole number, or empty for the report\'s own. It changes the map only with Initialization ▸ Random; with the PCA start scikit-learn gives the same map for every seed.' }], validate: (x) => (String(x.s).trim() === '' || Number.isInteger(Number(x.s)) ? null : 'A whole number, or empty') }); if (v) ctx.set('seed', String(v.s).trim() === '' ? '' : Math.trunc(Number(v.s))); } },
       { separator: true },
       ctx.check('Fit Details', 'details', null, true),
       { label: 'Color By', submenu: () => colorItems(ctx) },
@@ -313,6 +313,37 @@
   }
 
   /* ======================================================================
+     THE LAUNCH'S ROLES AND OPTIONS, with what each is for (the (i))
+     ====================================================================== */
+  const HELP = {
+    perplexity: 'About how many neighbours each row has: the width of its Gaussian neighbourhood is set so that 2 to the power of its entropy is this number (30, scikit-learn\'s default). Small values show local structure, large ones more of the global; a positive number, lowered when it is not below the number of rows.',
+    iterations: 'The steps of the gradient descent, from 250 to 100 000 (1000); the first 250 are the early exaggeration (12), which pulls the clusters apart. More iterations let the map settle, and take longer.',
+    learningRate: 'The step size of the gradient descent: a positive number, or auto (the default), max(N / 12 / 4, 50) for N rows, scikit-learn\'s rule. Too high a rate can leave the points in a ball, too low one in a dense cloud with a few outliers (scikit-learn\'s documentation).',
+  };
+  const ROLES = [
+    { key: 'y', label: 'Y, Columns', min: 2, numeric: true, types: ['continuous'], hint: 'required: two or more continuous',
+      help: 'Two or more continuous columns: each row becomes a point of the map, placed near the rows it is near in all of them. Rows with a missing value are left out, and so is a column with a single value in these rows.' },
+    { key: 'color', label: 'Color', max: 1, hint: 'optional: colours the points',
+      help: 'Optional: a column that colours the points, by its levels or, for a continuous one, from blue (low) to red (high); it takes no part in the map. Without it the points take the rows\' colours. Color By (red triangle) changes it.' },
+    { key: 'by', label: 'By', hint: 'optional', help: 'A separate map for each level of the By column (each combination of levels, with several). Rows with a missing By value are left out.' },
+  ];
+  const OPTIONS = [
+    { key: 'method', label: 'Method', type: 'select', value: 'tsne', choices: [['tsne', 't-SNE']], hint: 'UMAP needs numba, which the browser\'s Python does not have',
+      help: 't-SNE, scikit-learn\'s TSNE with the Barnes-Hut approximation: the only method here (UMAP, above, says why JMP\'s other one is not).' },
+    { key: 'dimension', label: 'Dimensions', type: 'select', value: '2', choices: [['2', '2'], ['3', '3']],
+      help: 'The axes of the map: 2 (the default) or 3. A three-dimensional map turns with the mouse where the browser has WebGL (else it is drawn as three pairs of axes), and takes about twice as long.' },
+    { key: 'perplexity', label: 'Perplexity', type: 'number', value: 30, help: HELP.perplexity },
+    { key: 'iterations', label: 'Iterations', type: 'number', value: 1000, help: HELP.iterations },
+    { key: 'learningRate', label: 'Learning Rate', type: 'text', value: 'auto', hint: 'a positive number, or auto: max(N / 48, 50)', help: HELP.learningRate },
+    { key: 'init', label: 'Initialization', type: 'select', value: 'pca', choices: [['pca', 'PCA'], ['random', 'Random']],
+      help: 'Where the points start: PCA (the default), the rows on their first principal components scaled small, the same start for every seed; or Random, drawn from the seed, so that another seed gives another map (structure that stays is real).' },
+    { key: 'standardize', label: 'Standardize Columns', type: 'check', value: true,
+      help: 'On (the default): each column to mean 0 and standard deviation 1 before the distances are taken, so that no column dominates by its units. Off: the columns as they are, for columns on one scale.' },
+    { key: 'seed', label: 'Random Seed', type: 'text', value: '', hint: 'empty: a seed drawn now and kept with the report',
+      help: 'The seed of the random start: kept with the report, so that Redo, a project and the Python code give the same map. The PCA start is not random: with it scikit-learn gives the same map for every seed. Empty: a seed drawn at the first run.' },
+  ];
+
+  /* ======================================================================
      TOPICS: the (i) panels
      ====================================================================== */
   const TOPICS = {
@@ -321,7 +352,8 @@
       lead: 'A map of the rows in two or three dimensions that keeps their neighbours: t-SNE (scikit-learn\'s TSNE) gives each row a Gaussian neighbourhood over all the columns, with a width set so that every row has the same perplexity (about how many neighbours it has), and places the rows so that Student t neighbourhoods in the map match them, by gradient descent on the Kullback-Leibler divergence.',
       sections: [
         { heading: 'Roles', choices: [['Y, Columns', 'Two or more continuous columns; rows with a missing value are left out, a column with one value too.'], ['Color', 'Optional: a column whose levels (or values, blue to red) colour the points. Without it the points take the rows\' colours.'], ['By', 'A separate map for each level.']] },
-        { heading: 'Options', choices: [['Perplexity', '30 (scikit-learn\'s default); lowered when it is not below the number of rows.'], ['Dimensions', '2 or 3.'], ['Iterations', '1000, the first 250 with early exaggeration 12.'], ['Learning Rate', 'auto: max(N / 12 / 4, 50).'], ['Initialization', 'PCA (the first components, scaled small) or random.'], ['Standardize Columns', 'On by default: each column to mean 0 and standard deviation 1, so that no column dominates by its units.'], ['Random Seed', 'The random start\'s: kept with the report, so that Redo, a project and the Python code give the same map. The PCA start is not random: with it scikit-learn gives the same map for every seed.']] },
+        // the launch's options (the red triangle changes them in the report)
+        { heading: 'Options', choices: OPTIONS.map((o) => [o.label, o.help]) },
         { heading: 'Reading the map', text: 'Rows close together are similar; clusters show groups. The distances between clusters, their sizes and densities are not to be read: t-SNE keeps neighbourhoods, not distances. Another seed or perplexity gives another map; structure that stays is real.' },
         { heading: 'UMAP', text: 'JMP also offers UMAP. It is not here: umap-learn needs numba, a compiler that Pyodide (the browser\'s Python) does not have.' },
         { heading: 'Time', text: 'Barnes-Hut t-SNE in the browser takes about 7 s for 1000 rows, 20 s for 2000 and 90 s for 5000 (10 columns, measured in Pyodide 314). Progress shows while it runs; above 3000 rows the report asks first, and more than 10 000 rows are refused.' },
@@ -329,9 +361,23 @@
       ],
       more: MORE,
     },
-    'emb:map': { kicker: 'Multivariate Embedding', title: 't-SNE map', lead: 'Each point is a row. Drag over points (or click one in 3-D) to select rows in the table and every other graph; rows selected elsewhere are highlighted here. Color By (red triangle) colours the points by a column; Save Embedding writes the coordinates as columns t-SNE 1, t-SNE 2 (and t-SNE 3).', more: MORE },
+    'emb:map': {
+      kicker: 'Multivariate Embedding', title: 't-SNE map',
+      lead: 'Each point is a row. Drag over points (or click one in 3-D) to select rows in the table and every other graph; rows selected elsewhere are highlighted here. Color By (red triangle) colours the points by a column; Save Embedding writes the coordinates as columns t-SNE 1, t-SNE 2 (and t-SNE 3).',
+      sections: [{ heading: 'The red triangle', choices: [
+        ['Color By', 'Row Colors (the rows\' own colours), or a column of the table: its levels in the palette\'s colours, or a continuous one from blue (low) to red (high).'],
+        ['3-D View', 'A three-dimensional map as a Turning Plot (drag to turn it; to zoom, pick Zoom in the toolbar above it and drag; it needs WebGL) or as Pairs of Axes, three linked two-dimensional plots.'],
+        ['Save Embedding', 'Adds the map\'s coordinates to the table as new columns.'],
+      ] }],
+      more: MORE,
+    },
     'emb:details': { kicker: 'Multivariate Embedding', title: 'Fit Details', lead: 'The final Kullback-Leibler divergence KL(P‖Q) of the map (scikit-learn\'s kl_divergence_), the iterations run, and the perplexity, learning rate and early exaggeration used. The perplexity is 2 to the entropy of each row\'s neighbourhood, about the number of its neighbours: small values show local structure, large ones more of the global.', more: MORE },
-    'emb:large': { kicker: 'Multivariate Embedding', title: 'Many rows', lead: 't-SNE\'s time grows faster than the number of rows: in the browser about 20 s for 2000 rows and 90 s for 5000. Above 3000 rows the report shows the estimate and runs when asked; the answer is kept with the report. More than 10 000 rows are refused: a Local Data Filter or a subset makes them fewer.', more: MORE },
+    'emb:large': {
+      kicker: 'Multivariate Embedding', title: 'Many rows',
+      lead: 't-SNE\'s time grows faster than the number of rows: in the browser about 20 s for 2000 rows and 90 s for 5000. Above 3000 rows the report shows the estimate and runs when asked; the answer is kept with the report. More than 10 000 rows are refused: a Local Data Filter or a subset makes them fewer.',
+      sections: [{ choices: [['Run t-SNE on … rows', 'Runs the map on all these rows now, with its progress shown here; the page stays usable meanwhile. The answer is kept with the report, so Redo and a project run it again without asking.']] }],
+      more: MORE,
+    },
   };
 
   /* ======================================================================
@@ -343,21 +389,8 @@
     uses: ['sklearn.manifold.TSNE (Barnes-Hut)'],
     launch: {
       lead: 'Choose two or more continuous columns. Each row becomes a point of a map in which near rows are near; a Color column colours the points.',
-      roles: [
-        { key: 'y', label: 'Y, Columns', min: 2, numeric: true, types: ['continuous'], hint: 'required: two or more continuous' },
-        { key: 'color', label: 'Color', max: 1, hint: 'optional: colours the points' },
-        { key: 'by', label: 'By', hint: 'optional' },
-      ],
-      options: [
-        { key: 'method', label: 'Method', type: 'select', value: 'tsne', choices: [['tsne', 't-SNE']], hint: 'UMAP needs numba, which the browser\'s Python does not have' },
-        { key: 'dimension', label: 'Dimensions', type: 'select', value: '2', choices: [['2', '2'], ['3', '3']] },
-        { key: 'perplexity', label: 'Perplexity', type: 'number', value: 30 },
-        { key: 'iterations', label: 'Iterations', type: 'number', value: 1000 },
-        { key: 'learningRate', label: 'Learning Rate', type: 'text', value: 'auto', hint: 'a positive number, or auto: max(N / 48, 50)' },
-        { key: 'init', label: 'Initialization', type: 'select', value: 'pca', choices: [['pca', 'PCA'], ['random', 'Random']] },
-        { key: 'standardize', label: 'Standardize Columns', type: 'check', value: true },
-        { key: 'seed', label: 'Random Seed', type: 'text', value: '', hint: 'empty: a seed drawn now and kept with the report' },
-      ],
+      roles: ROLES,
+      options: OPTIONS,
       validate: (spec) => {
         const o = spec.options || {};
         if (o.perplexity != null && !(o.perplexity > 0)) return 'Perplexity: a positive number';

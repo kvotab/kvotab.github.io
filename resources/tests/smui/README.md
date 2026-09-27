@@ -23,14 +23,14 @@ statsmodels 0.14 (Pyodide 314.0.7 has statsmodels 0.14.6), and scikit-learn
 | `test_distribution.py` | 158 | scipy/statsmodels directly, JMP's quantile definition, Garwood and DescTools rate intervals; the one-sample effect size and Bayes factor, the binomial Bayes factor |
 | `test_models.py` | 36 | NIST Longley, anova_lm type III, JMP's ANCOVA design built by hand |
 | `test_io.py` | 9 | a Stata file written by pandas, statsmodels.datasets |
-| `test_fit_y_by_x.py` | 560 | NIST NoInt1/2, Wampler1/2, Koenker's Engel, China smoking CMH, R lawstat and exactci, JMP's Car Poll example, DescTools, Conover; effect sizes against noncentrality searches and Bonett's published examples, JZS Bayes factors against BayesFactor's published value and Ly et al.'s closed forms, Games–Howell, pingouin |
+| `test_fit_y_by_x.py` | 563 | NIST NoInt1/2, Wampler1/2, Koenker's Engel, China smoking CMH, R lawstat and exactci, JMP's Car Poll example, DescTools, Conover; effect sizes against noncentrality searches and Bonett's published examples, JZS Bayes factors against BayesFactor's published value and Ly et al.'s closed forms, Games–Howell, pingouin |
 | `test_fit_model.py` | 1030 | NIST Longley, Wampler; Greene's Spector logit; random-effects formulas; statsmodels' GEE epil example, R gee, Stata robust/cluster/HAC, R lmtest; Stata ivreg2/ivendog (Griliches), Stata qreg (Engel), R strucchange; Generalized Regression against scikit-learn's lasso_path, ElasticNet, LogisticRegression, PoissonRegressor and LassoCV folds; repeated measures against statsmodels AnovaRM and MANOVA, Hotelling's T², JMP's documented Dogs sphericity test and pingouin; partial η² and ω² |
 | `test_multivariate.py` | 306 | statsmodels/scipy, brute force, SAS's iris CCC, the bivariate-normal distance correlation; intraclass correlations against Shrout and Fleiss's published coefficients, McGraw–Wong and pingouin; Kendall's W against scipy's Friedman |
 | `test_timeseries.py` | 376 | MacKinnon critical values, Hyndman et al. variances, sunspots AR fits, Durbin–Koopman Nile, KFAS, Hamilton 1989, Stata mswitch, Zivot–Andrews 1992, PSS 2001, statsmodels' ARDL example |
 | `test_survival.py` | 145 | Kaplan-Meier and Greenwood by hand, survdiff, PHReg, scipy CensoredData |
 | `test_nonlinear.py` | 242 | NIST Misra1a, Thurber, MGH09, DanWood, Rat42, Eckerle4, MGH17 |
-| `test_quality.py` | 153 | Montgomery's control-chart constants, formulas |
-| `test_doe.py` | 159 | design properties, statsmodels power, textbook values |
+| `test_quality.py` | 161 | Montgomery's control-chart constants, the published median-range divisors d4 and a simulation, formulas |
+| `test_doe.py` | 160 | design properties, statsmodels power, textbook values |
 | `test_graph.py` | 266 | statsmodels/scipy smoothers, fits, densities, interpolation; statsmodels' banddepth, fboxplot, hdrboxplot, rainbowplot, beanplot |
 | `test_tables.py` | 129 | pandas group-by, merge, melt/pivot, JMP quantiles |
 | `test_multits.py` | 167 | statsmodels' documented VAR example, MHM 1999 and MacKinnon 2010 critical values |
@@ -227,6 +227,26 @@ it builds outlines into the report:
   of Save Report as HTML. Graphs are drawn no wider than the room there is
   (their parent's content box) and follow the window as it narrows; `fit: false` keeps a graph's width
   (it then scrolls inside the report).
+- Help for every input: a launch role or option may carry `help` (a sentence
+  or two: what it does, when to change it, what the default means); a
+  platform's `extra` part may return `help: [[field label, text], ...]` (or a
+  function giving that, for fields that come and go); an `SM.ui.form` field
+  may carry `help` (or `hint`, which is also shown under the field). The
+  dialog's (i) then shows the platform's topic followed by Roles, Options
+  and the extra part's fields, or a form's Fields. Controls inside a report
+  (a Model Launch panel, Graph Builder's properties) are explained in their
+  outline's (i) topic, with a `choices` section; a topic may be a function
+  (`SM.info.get(key)` gives a registered topic). Text may use `code` and
+  **bold**, nothing else.
+- Documents: Save Report as HTML, Save Report as Word and Print… take the
+  report's open outlines. Buttons, inputs, selects, (i) slots and anything
+  marked `data-noexport` (a Model Launch panel, Graph Builder's zones) are
+  left out; a graph becomes an image drawn in the light theme; an inline
+  SVG diagram gets its computed paint written in (`SM.report.paintedSvg`,
+  the dark theme's colours mapped to the light ones), without elements of
+  `role="button"`. The browser's own Print prints the report in view: the
+  page's print rules hide the frame, and before printing whatever is wider
+  than the paper (a graph, a table, a profiler grid) is scaled to fit it.
 - Everything is built with `SM.util.el()` (text nodes only). Never put
   table-derived text into `innerHTML`: a table from a file is untrusted.
 
@@ -311,4 +331,13 @@ dialog, the Distribution report against numbers computed in the page,
 linking both ways, exclusion and Redo, By and combined By tables, saved
 columns, grid editing and Undo, the Local Data Filter and Rows > Data
 Filter, a Stata file and a statsmodels dataset read by the engine, the
-Python script, the dark theme and phone width.
+Python script; dialogs moved by their title bar and kept within reach, a
+disabled item's submenu shut (the mouse moved by the browser), the tab strip
+without a scroll bar; a launch dialog's (i) with its Roles and Options and
+a form's with its Fields; Print from a hidden frame (the print dialog stood
+in for through the frame's `contentWindow`), Save Report as Word read back
+with JSZip (its parts, headings, tables, PNG pictures, the code only when
+shown), the page's own print (emulated print media: the site, menus and
+buttons left out, a graph wider than the paper scaled to fit); documents in
+the light theme from the dark one, an SVG diagram with its paint; the dark
+theme and phone width.

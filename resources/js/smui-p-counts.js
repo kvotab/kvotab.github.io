@@ -468,6 +468,20 @@
     const inputs = () => boxes.map((b) => b.querySelector('input'));
     return {
       el: rootEl,
+      help: [
+        ['Models', 'The models fitted and compared, at least one: Poisson, NB2, ZI Poisson and ZI Negative Binomial at first. Fit Model, in the report\'s red triangle, adds or removes them later.'],
+        [PICK.poisson, 'The variance equals the mean. The reference: its overdispersion and excess-zero tests say whether the others are needed.'],
+        [PICK.nb2, 'Var = μ + αμ²: more variation than a Poisson, growing with the mean (a gamma mixture of Poissons). The usual first alternative; α is JMP\'s dispersion.'],
+        [PICK.nb1, 'Var = μ(1 + α): more variation than a Poisson, by a constant factor.'],
+        [PICK.gp, 'Var = μ(1 + α)²: more variation (α above 0) or less (α below 0) than a Poisson; the negative binomials allow only more.'],
+        [PICK.zip, 'A structural zero with probability π (a logit model on the zero effects), otherwise a Poisson count: for more zeros than the Poisson predicts.'],
+        [PICK.zinb, 'The same with NB2 counts: excess zeros and overdispersion together.'],
+        [PICK.zigp, 'The same with generalized Poisson counts.'],
+        [PICK.hp, 'Two parts: whether the count is above zero (the hurdle, complementary log-log on the zero effects), then the positive counts from a Poisson truncated at zero. Every zero comes from the hurdle.'],
+        [PICK.hnb, 'The hurdle with NB2 counts above it.'],
+        ['X, Model Effects', 'How the X, Model Effects enter the count part (and a zero part that takes them): Main effects (the default); Full factorial to degree 2, the main effects and every two-way crossing; Full factorial, every crossing.'],
+        ['Zero part when no Zero-Inflation Effects are cast', 'Same as the model effects (the default): the zero part takes the count part\'s effects. Intercept only: one zero probability for every row, as JMP Pro\'s Generalized Regression has it.'],
+      ],
       read() { return { options: { models: inputs().filter((i) => i.checked).map((i) => i.value), degree: Number(degree.value), zeroSame: zero.value === 'same' } }; },
       recall(saved) {
         const o = (saved && saved.options) || {};
@@ -587,19 +601,25 @@
       kicker: 'Count Regression', title: 'Rootograms',
       lead: 'The observed frequency of each count against the frequency each model expects (the sum of the predicted probabilities over the rows), on a square-root scale (Kleiber and Zeileis 2016).',
       sections: [{ choices: [['Hanging', 'bars of √observed hang from the curve of √expected: a bar ending above the zero line is a count the model expects too often, below too rarely'], ['Standing', 'bars from zero, the curve over them'], ['Suspended', 'bars of √expected − √observed from zero'], ['Overlay Models', 'one graph, standing bars, a curve for each model']] },
-      { heading: 'Linking', text: 'Click a bar, or a line of the Count Distribution table, to select the rows with that count.' }],
+      { heading: 'In the report', choices: [['A bar of a rootogram', 'click it to select the rows with that count (the last bar, ≥K, the rows at or above it); rows selected elsewhere are marked in the bars'],
+        ['A line of Count Distribution', 'click it to select the rows with that count; shift adds them to the selection']] }],
       more: MORE,
     },
     'p:counts:residuals': {
       kicker: 'Count Regression', title: 'Zero probabilities and residuals',
       lead: 'Zero Probability shows each row\'s predicted P(Y = 0) by its predicted mean, the observed share of zeros in ten groups of rows, and the zeros a Poisson would have. Residual Plots show Pearson residuals by the prediction and a normal quantile plot of randomized quantile residuals.',
-      sections: [{ heading: 'Randomized quantile residuals', text: 'Dunn and Smyth (1996): for a count y, a uniform u between F(y − 1) and F(y) of the fitted distribution, and Φ⁻¹(u). If the model is right they are standard normal whatever the counts; the random part is seeded (the top red triangle\'s Quantile Residual Seed), so they can be saved and reproduced.' }],
+      sections: [{ heading: 'Randomized quantile residuals', text: 'Dunn and Smyth (1996): for a count y, a uniform u between F(y − 1) and F(y) of the fitted distribution, and Φ⁻¹(u). If the model is right they are standard normal whatever the counts; the random part is seeded (the top red triangle\'s Quantile Residual Seed), so they can be saved and reproduced.' },
+        { heading: 'In the report', choices: [['A point', 'a row: click or drag over points to select their rows, in any of these plots'], ['A square of Zero Probability', 'one of up to ten groups of rows by predicted mean: click it to select the group']] }],
       more: MORE,
     },
     'p:counts:profiler': {
       kicker: 'Count Regression', title: 'Prediction Profiler and marginal effects',
       lead: 'The profiler shows the expected count and the probability of a zero as each factor moves, the others at their current values; the exposure is a factor too. Drag the red dashed lines, click in a plot, or type a value.',
-      sections: [{ heading: 'Marginal Effects', text: 'statsmodels\' get_margeff, for the Poisson, the negative binomials and the generalized Poisson: the change of the mean count with each design column, averaged over the rows or at the means. statsmodels has none for zero-inflated and hurdle models; use the profiler for them.' }],
+      sections: [{ heading: 'Marginal Effects', text: 'statsmodels\' get_margeff, for the Poisson, the negative binomials and the generalized Poisson: the change of the mean count with each design column, averaged over the rows or at the means. statsmodels has none for zero-inflated and hurdle models; use the profiler for them.' },
+        { heading: 'In the profiler', choices: [['The value box under a plot', 'the factor\'s current value: type one (Enter), or pick a level for a categorical factor; every plot is drawn again at the new setting'],
+          ['The slider', 'moves a continuous factor over the range of its data; the plots follow when you let go'], ['The red dashed line', 'drag it along the plot, or click in the plot, to move that factor there'],
+          ['A desirability plot', 'with Desirability Functions on (the profiler\'s red triangle), the small plot at the right of a response: click it to set that response\'s goal and desirability'],
+          ['Remembered Settings', 'a table of the settings Remember Settings kept; click a line to go back to it']] }],
       more: MORE,
     },
   };
@@ -614,13 +634,20 @@
     launch: {
       lead: 'Choose the count, the effects of the count part and, if they differ, of the zero part, and the models to fit. An exposure (the time or size at risk) is logged into an offset.',
       roles: [
-        { key: 'y', label: 'Y, Count', min: 1, numeric: true, hint: 'required: whole numbers ≥ 0' },
-        { key: 'x', label: 'X, Model Effects', hint: 'optional: main effects' },
-        { key: 'zx', label: 'Zero-Inflation Effects', hint: 'optional: the zero part' },
-        { key: 'exposure', label: 'Exposure', max: 1, numeric: true, types: ['continuous'], hint: 'optional: logged' },
-        { key: 'offset', label: 'Offset', max: 1, numeric: true, types: ['continuous'], hint: 'optional' },
-        { key: 'freq', label: 'Freq', max: 1, numeric: true, types: ['continuous'], hint: 'optional: whole numbers' },
-        { key: 'by', label: 'By', hint: 'optional' },
+        { key: 'y', label: 'Y, Count', min: 1, numeric: true, hint: 'required: whole numbers ≥ 0',
+          help: 'The counts to model, whole numbers of zero or more; each Y gets its own models and outlines. Rows with a missing value in any role are left out.' },
+        { key: 'x', label: 'X, Model Effects', hint: 'optional: main effects',
+          help: 'The regressors of the count part, the log of the mean count: a continuous column as it is, a nominal one effect coded. X, Model Effects under the roles makes them main effects or crosses them. Empty: the intercept only.' },
+        { key: 'zx', label: 'Zero-Inflation Effects', hint: 'optional: the zero part',
+          help: 'The regressors of the zero part of the zero-inflated models (the logit of a structural zero) and the hurdle models (the probability of a count above zero), as main effects. Empty: as Zero part, under the roles, says. The Poisson, negative binomial and generalized Poisson models have no zero part.' },
+        { key: 'exposure', label: 'Exposure', max: 1, numeric: true, types: ['continuous'], hint: 'optional: logged',
+          help: 'The time or size at risk of each row (years followed, area, population), above zero: its log is an offset, so the mean is per unit of exposure and the rate ratios compare rates. Not together with an Offset.' },
+        { key: 'offset', label: 'Offset', max: 1, numeric: true, types: ['continuous'], hint: 'optional',
+          help: 'A known part of the linear predictor (the log scale), added with a coefficient of 1: a log exposure already taken, say. Not together with an Exposure.' },
+        { key: 'freq', label: 'Freq', max: 1, numeric: true, types: ['continuous'], hint: 'optional: whole numbers',
+          help: 'A whole number per row: the row counts that many times, in the fits and in the count distribution.' },
+        { key: 'by', label: 'By', hint: 'optional',
+          help: 'A separate report of the rows of each level (each combination of levels, with several By columns). Rows with a missing By value are left out.' },
       ],
       extra: launchExtra,
       validate,
@@ -661,7 +688,8 @@
           label: saves.length > 1 ? `${y.name}: ${LABEL[k]}` : LABEL[k], disabled: !!fits[k].error, submenu: () => saveItems(ctx, y, k, fits[k]),
         }))) },
         { label: 'Quantile Residual Seed…', action: async () => {
-          const v = await SM.ui.form({ title: 'Quantile Residual Seed', lead: 'The seed of numpy\'s random generator for the randomized quantile residuals: the same seed gives the same residuals.', fields: [{ key: 's', label: 'Seed (a whole number)', type: 'number', value: Number(ctx.opt('seed', 1)) || 1 }] });
+          const v = await SM.ui.form({ title: 'Quantile Residual Seed', lead: 'The seed of numpy\'s random generator for the randomized quantile residuals: the same seed gives the same residuals.', fields: [{ key: 's', label: 'Seed (a whole number)', type: 'number', value: Number(ctx.opt('seed', 1)) || 1, helpLabel: 'Seed',
+            help: 'A whole number from 0 (1 at first). A randomized quantile residual draws a uniform value between F(y − 1) and F(y) for each count; the seed fixes those draws, so the residual plots, Save Columns and the Python shown agree. Another seed shows how much the plots move by chance; the fits do not change.' }] });
           if (v && Number.isFinite(v.s)) ctx.set('seed', Math.max(0, Math.round(v.s)));
         } },
         { label: 'Model Dialog', action: () => ctx.report.relaunch() },

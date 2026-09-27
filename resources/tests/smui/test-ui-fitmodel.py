@@ -692,6 +692,19 @@ async def main():
     await genreg(page)
     # ==== MANOVA's Repeated Measures; the Effect Tests' effect sizes ====
     await repeated(page)
+    # ==== help for every input: the launch dialog, the red-triangle forms, the controls in the reports ====
+    await help_inputs(page)
+    # a random effect in a personality that fits fixed effects only is refused,
+    # not left out without a word
+    r = await page.ev('''(() => {
+      const t = SM.app.current; const v = SM.platforms.get('fitmodel').launch.validate;
+      const y = t.columns.find(c => !c.isCategorical), x = t.columns.find(c => c.isCategorical);
+      const spec = (personality, extra) => ({ roles: { y: [y.id] }, options: { personality, dist: 'normal', ...extra }, effects: [{ cols: [x.id], random: true }] });
+      return ['glm', 'standard', 'mixed'].map(p => v(spec(p), t)).concat([v({ roles: { y: [x.id] }, options: { personality: 'nominal' }, effects: [{ cols: [y.id], random: true }] }, t)]);
+    })()''')
+    check('GLM refuses a random effect', (r[0] or '').startswith('Generalized Linear Model takes fixed effects only'), True)
+    check('Standard Least Squares and Mixed Model take it', (r[1], r[2]), (None, None))
+    check('Nominal Logistic refuses it', (r[3] or '').startswith('Nominal Logistic takes fixed effects only'), True)
 
     check('no script errors', page.errors, [])
     await page.close()
@@ -1378,6 +1391,195 @@ async def repeated(page):
     check.near('... sample 1 is fitmodel.ls on its rows', r['b1'], r['own'], 1e-12)
     audit = json.loads(await page.ev('JSON.stringify(KvotInfo.audit())'))
     check('every (i) of the repeated-measures and effect-test reports has a topic', audit.get('noTopic'), [])
+
+
+# Read the (i) panels: the open panel's title and sections, each with its
+# heading, its choices [name, text] and its paragraphs.
+HELP_JS = r"""
+window.__help = {
+  sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+  panel() {
+    const p = document.querySelector('.info-panel');
+    if (!p) return null;
+    const out = { title: p.querySelector('.info-panel-title').textContent, sections: [] };
+    let cur = { heading: '', choices: [], text: [] };
+    out.sections.push(cur);
+    for (const n of p.querySelector('.info-panel-body').children) {
+      if (n.tagName === 'H3') { cur = { heading: n.textContent, choices: [], text: [] }; out.sections.push(cur); }
+      else if (n.tagName === 'DL' && n.classList.contains('info-choices')) for (const dt of n.querySelectorAll('dt')) cur.choices.push([dt.textContent, dt.nextElementSibling ? dt.nextElementSibling.textContent : '']);
+      else cur.text.push(n.textContent);
+    }
+    return out;
+  },
+  async read(btn) { if (!btn) return null; btn.click(); await this.sleep(150); const r = this.panel(); KvotInfo.close(); await this.sleep(40); return r; },
+  names(p, heading) { const s = p && p.sections.find((x) => x.heading === heading); return s ? s.choices.map((c) => c[0]) : null; },
+  // the shortest text of a section's choices, without what a role takes '(required, ...)'
+  shortest(p, heading) { const s = p && p.sections.find((x) => x.heading === heading); return s && s.choices.length ? Math.min(...s.choices.map((c) => c[1].replace(/\s*\([^()]*\)$/, '').length)) : 0; },
+  dialog() { return [...document.querySelectorAll('.sm-dialog')].pop(); },
+  // the launch dialog's (i), with the audit while it is open
+  async launch(id, setup) {
+    SM.app.launch(id); await this.sleep(350);
+    const d = [...document.querySelectorAll('.sm-launch-dialog')].pop();
+    if (setup) await setup(d);
+    await this.sleep(100);
+    const audit = KvotInfo.audit();
+    const p = await this.read(d.querySelector('.sm-dialog-head .info-btn'));
+    return { d, p, noTopic: audit.noTopic, slots: audit.slots };
+  },
+  // an outline's red triangle down a path of labels (the last one is clicked)
+  async menu(title, path, rep) {
+    rep = rep || SM.app.reports[SM.app.reports.length - 1];
+    const h = [...rep.body.querySelectorAll('.sm-ob-head')].find((x) => x.querySelector('h2, h3, h4').textContent === title);
+    if (!h) throw new Error('no outline ' + title);
+    h.querySelector('.sm-ob-menu').click();
+    for (const label of path) {
+      await this.sleep(60);
+      const m = [...document.querySelectorAll('.sm-menu')].pop();
+      const b = m && [...m.querySelectorAll('button')].find((x) => x.querySelector('.sm-label') && x.querySelector('.sm-label').textContent === label);
+      if (!b) { SM.ui.closeMenus(0); throw new Error('no menu item ' + label); }
+      b.click();
+    }
+  },
+  // the form a menu item opened: its field labels, its (i) and the audit while it is open; then Cancel
+  async form() {
+    let d = null;
+    for (let i = 0; i < 60 && !(d && d.querySelector('.sm-form')); i++) { await this.sleep(50); d = this.dialog(); }
+    if (!d) throw new Error('no form');
+    const labels = [...d.querySelectorAll('.sm-form label')].map((l) => l.textContent);
+    const audit = KvotInfo.audit();
+    const p = await this.read(d.querySelector('.sm-dialog-head .info-btn'));
+    [...d.querySelectorAll('.sm-dialog-foot .sm-btn')].find((b) => b.textContent === 'Cancel').click();
+    await this.sleep(60);
+    return { labels, p, fields: this.names(p, 'Fields'), shortest: this.shortest(p, 'Fields'), noTopic: audit.noTopic };
+  },
+  // an outline's (i) in the last report
+  async outline(title, rep) {
+    rep = rep || SM.app.reports[SM.app.reports.length - 1];
+    const h = [...rep.body.querySelectorAll('.sm-ob-head')].find((x) => x.querySelector('h2, h3, h4').textContent === title);
+    return h ? this.read(h.querySelector('.kvot-info-slot .info-btn')) : null;
+  },
+};
+"""
+
+
+async def help_inputs(page):
+    """What every input is for, in the (i) panels: the launch dialog's roles
+    and its Construct Model Effects part (as the personality shows its
+    fields), the red-triangle forms' fields, and the controls inside the
+    reports (Effect Summary, Stepwise, Regression Diagnostics, Recursive and
+    Rolling Regression, the profilers, MANOVA, Generalized Regression and
+    Quantile Regression's Model Launch)."""
+    await page.call('Emulation.setDeviceMetricsOverride', {'width': 1500, 'height': 950, 'deviceScaleFactor': 1, 'mobile': False}, session=page.sid)
+    await page.ev("KVOT.setTheme ? KVOT.setTheme('light') : document.documentElement.setAttribute('data-theme', 'light')")
+    await page.ev("SM.app.openExample('students')")
+    await page.ev(HELPERS)
+    await page.ev(HELP_JS)
+    # the roles the dialog shows: a personality shows its own (GEE's Subject, Time, Subgroup)
+    roles = ['Y', 'Weight', 'Freq', 'Validation', 'By']
+    effects = ['Model effects', 'Add', 'Cross', 'Nest', 'Macros', 'Degree', 'Attributes', 'Remove', 'No Intercept']
+    r = await page.ev('''(async () => {
+      const heading = 'Personality and model effects';
+      const pers = (d, v) => { const ps = d.querySelector('select[aria-label="Personality"]'); ps.value = v; ps.dispatchEvent(new Event('change')); };
+      const a = await __help.launch('fitmodel', async (d) => { __fm.pick('height (cm)'); __fm.role('Y'); });
+      const out = { roles: __help.names(a.p, 'Roles'), rolesShort: __help.shortest(a.p, 'Roles'), sls: __help.names(a.p, heading), short: __help.shortest(a.p, heading), noTopic: a.noTopic, slots: a.slots };
+      pers(a.d, 'gee'); await __help.sleep(50);
+      const gp = await __help.read(a.d.querySelector('.sm-dialog-head .info-btn'));
+      out.gee = __help.names(gp, heading);
+      out.geeRoles = __help.names(gp, 'Roles');
+      const dist = a.d.querySelector('select[aria-label="Distribution"]'); dist.value = 'tweedie'; dist.dispatchEvent(new Event('change')); await __help.sleep(50);
+      out.tweedie = __help.names(await __help.read(a.d.querySelector('.sm-dialog-head .info-btn')), heading);
+      pers(a.d, 'quantreg'); await __help.sleep(50);
+      out.qr = __help.names(await __help.read(a.d.querySelector('.sm-dialog-head .info-btn')), heading);
+      pers(a.d, 'ordinal'); await __help.sleep(50);
+      out.ordinal = __help.names(await __help.read(a.d.querySelector('.sm-dialog-head .info-btn')), heading);
+      out.noTopic2 = KvotInfo.audit().noTopic;
+      __fm.btn('Cancel', a.d);
+      return out; })()''')
+    if isinstance(r, str):
+        print(r)
+    check('the launch dialog\'s (i) lists every role it shows', r['roles'], roles)
+    check('... and GEE\'s roles once GEE is the personality', [x for x in r['geeRoles'] if x in ('Subject', 'Time', 'Subgroup', 'Endogenous')], ['Subject', 'Time', 'Subgroup'])
+    check('... each with what it is for, beyond what it takes', r['rolesShort'] > 60, True)
+    check('... and the personality and model-effects fields of Standard Least Squares', r['sls'], ['Personality', 'Emphasis'] + effects)
+    check('... each explained', r['short'] > 30, True)
+    check('GEE: its fields as they show', r['gee'], ['Personality', 'Distribution', 'Link Function', 'Working Correlation', 'Covariance', 'Scale'] + effects)
+    check('GEE with the Tweedie: its power', r['tweedie'][:3], ['Personality', 'Distribution', 'Power'])
+    check('Quantile Regression: the quantile', r['qr'], ['Personality', 'Quantile τ'] + effects)
+    check('Ordinal Logistic: the link', r['ordinal'], ['Personality', 'Link'] + effects)
+    check('every (i) of the open launch dialog has a topic (three of its own)', (r['noTopic'], r['noTopic2'], r['slots'] >= 3), ([], [], True))
+
+    # ---- red-triangle forms: Newey–West HAC, Cluster, LSMeans Contrast; the Effect Summary's controls
+    r = await page.ev(open_js('weight (kg)', E(['height (cm)'], ['sex'])))
+    check('a least squares report to work on', r['errors'] if isinstance(r, dict) else r, [])
+    r = await page.ev('''(async () => {
+      const top = __fm.rep().body.querySelector('.sm-ob.level-0 > .sm-ob-head h2, .sm-ob.level-0 > .sm-ob-head h3').textContent;
+      const out = {};
+      await __help.menu(top, ['Robust Standard Errors', 'Newey–West HAC…']); out.hac = await __help.form();
+      await __help.menu(top, ['Robust Standard Errors', 'Cluster…']); out.cluster = await __help.form();
+      await __help.menu('sex', ['LSMeans Contrast…']); out.contrast = await __help.form();
+      out.summary = __help.names(await __help.outline('Effect Summary'), 'Editing the model');
+      return out; })()''')
+    if isinstance(r, str):
+        print(r)
+    check('Newey–West HAC\'s (i): the robust topic, then its field', (r['hac']['p']['title'], r['hac']['fields'], r['hac']['shortest'] > 60), ('Robust Standard Errors', ['Maximum lag'], True))
+    check('Cluster\'s (i): its field', (r['cluster']['fields'], r['cluster']['shortest'] > 60), (['Cluster by'], True))
+    check('LSMeans Contrast: one entry for the weights of the levels', (r['contrast']['labels'], r['contrast']['fields']), (['F', 'M'], ['The weight of each level']))
+    check('every (i) of the open forms has a topic', [x['noTopic'] for x in (r['hac'], r['cluster'], r['contrast'])], [[], [], []])
+    check('the Effect Summary\'s (i) explains its controls', r['summary'], ['An effect\'s line', 'Remove', 'Edit', 'Undo', 'FDR'])
+
+    # ---- Regression Diagnostics' settings, Recursive and Rolling Regression's, the profilers'
+    r = await page.ev('''(async () => {
+      const rep = __fm.rep();
+      const top = rep.body.querySelector('.sm-ob.level-0 > .sm-ob-head h2, .sm-ob.level-0 > .sm-ob-head h3').textContent;
+      let d = __fm.done(rep); await __help.menu(top, ['Regression Diagnostics', 'Goldfeld–Quandt Test']); await d;
+      d = __fm.done(rep); await __help.menu(top, ['Recursive and Rolling Regression', 'Recursive Estimates']); await d;
+      d = __fm.done(rep); await __help.menu(top, ['Factor Profiling', 'Profiler']); await d;
+      const rd = await __help.outline('Regression Diagnostics'), rr = await __help.outline('Recursive and Rolling Regression'), pr = await __help.outline('Prediction Profiler');
+      const out = { rd: __help.names(rd, 'The settings above a test'), rr: __help.names(rr, 'The settings above the plots'), prof: __help.names(pr, 'Prediction Profiler'),
+        shared: pr ? pr.sections.map((s) => s.heading) : null, contour: __help.names(pr, 'Contour Profiler'), maximize: (__help.names(pr, 'Its red triangle') || []).includes('Maximize Desirability') };
+      await __help.menu('Recursive and Rolling Regression', ['Order Rows By…']); out.order = await __help.form();
+      await __help.menu('Recursive and Rolling Regression', ['Rolling Window…']); out.window = await __help.form();
+      out.noTopic = KvotInfo.audit().noTopic;
+      return out; })()''')
+    if isinstance(r, str):
+        print(r)
+    check('Regression Diagnostics\' (i): the settings above the tests', r['rd'], ['Sort by (Goldfeld–Quandt)', 'Leave out the middle', 'Alternative', 'Powers of the predicted (RESET)', 'Order (Harvey–Collier)', 'Central rows by (Rainbow)', 'Central fraction', 'Lags (Breusch–Godfrey)'])
+    check('Recursive and Rolling Regression\'s (i): its settings', r['rr'], ['Order by', 'Significance', 'Window'])
+    check('... and its forms\' fields', (r['order']['fields'], r['window']['fields']), (['Order by'], ['Rows in a window']))
+    check('the Prediction Profiler\'s (i): its controls', r['prof'], ['The red dashed line', 'A click in a plot', 'The value box', 'The slider', 'The desirability plots'])
+    check('... then the shared profiler\'s red triangle, the Contour Profiler\'s controls', (r['maximize'], r['contour']), (True, ['Horizontal, Vertical', 'Response', 'The other factors']))
+    check('every (i) of these reports has a topic', r['noTopic'], [])
+
+    # ---- Stepwise's controls; MANOVA's Response Specification and the Repeated Measures form
+    r = await page.ev(open_js('weight (kg)', E(['height (cm)'], ['sex'], ['age']), {'personality': 'stepwise'}))
+    check('a stepwise report', r['errors'] if isinstance(r, dict) else r, [])
+    r = await page.ev('''(async () => {
+      const c = await __help.outline('Stepwise Regression Control'), e = await __help.outline('Current Estimates');
+      return { ctl: __help.names(c, 'Stepwise Regression Control'), cur: __help.names(e, 'Current Estimates') }; })()''')
+    check('Stepwise Regression Control\'s (i): every control', r['ctl'], ['Stopping Rule', 'Direction', 'Rules', 'Prob to Enter', 'Prob to Leave', 'Go', 'Step', 'Enter All', 'Remove All', 'Make Model', 'Run Model'])
+    check('Current Estimates has an (i) for its boxes', r['cur'], ['Lock', 'Entered', 'F Ratio, Prob>F'])
+    r = await page.ev(open_js(['height (cm)', 'weight (kg)'], E(['sex']), {'personality': 'manova'}))
+    r = await page.ev('''(async () => {
+      const spec = __help.names(await __help.outline('Response Specification'), 'Response Specification');
+      const s = __fm.outline('Response Specification').querySelector('select[aria-label="Choose Response"]');
+      s.value = 'repeated'; s.dispatchEvent(new Event('change'));
+      const f = await __help.form();
+      return { spec, form: f.fields, back: s.value }; })()''')
+    check('Response Specification\'s (i): its controls', r['spec'], ['Choose Response', 'Y Name', 'Univariate Tests Also'])
+    check('the Repeated Measures form lists its fields; Cancel keeps the response', (r['form'], r['back']), (['Y Name', 'Univariate Tests Also'], 'identity'))
+
+    # ---- Generalized Regression's and Quantile Regression's Model Launch
+    r = await page.ev(open_js('weight (kg)', E(['height (cm)'], ['sex'], ['age']), {'personality': 'genreg'}))
+    check('a Generalized Regression report', r['errors'] if isinstance(r, dict) else r, [])
+    r = await page.ev('''(async () => ({ launch: __help.names(await __help.outline('Model Launch'), 'Model Launch'), path: __help.names(await __help.outline('Solution Path'), 'Choosing a model') }))()''')
+    check('Generalized Regression\'s Model Launch (i): every control', r['launch'], ['Distribution', 'Estimation Method', 'Adaptive', 'Validation Method', 'Elastic Net Alpha', 'Number of Folds', 'Holdback Proportion', 'Random Seed'])
+    check('the Solution Path\'s (i): how to choose a model', r['path'], ['The red line', 'A point', 'The dotted line', 'Reset to the Best Model'])
+    r = await page.ev(open_js('weight (kg)', E(['height (cm)']), {'personality': 'quantreg', 'qrTau': 0.5}))
+    check('a Quantile Regression report', r['errors'] if isinstance(r, dict) else r, [])
+    r = await page.ev('''(async () => __help.names(await __help.outline('Model Launch'), 'Model Launch'))()''')
+    check('Quantile Regression\'s Model Launch (i): every control', r, ['Quantile τ', 'Standard Errors', 'Kernel', 'Bandwidth', 'Quantile Process'])
+    audit = json.loads(await page.ev('JSON.stringify(KvotInfo.audit())'))
+    check('every (i) has a topic', (audit.get('noTopic'), audit.get('brokenMore')), ([], []))
 
 
 asyncio.run(main())

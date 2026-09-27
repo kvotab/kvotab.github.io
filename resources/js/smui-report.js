@@ -32,7 +32,8 @@
   const SYMBOLS = ['circle', 'square', 'diamond', 'triangle-up', 'triangle-down', 'cross', 'x', 'star', 'hexagon', 'pentagon', 'circle-open', 'square-open'];
   // The points' colour. #2f6690 is 2.3:1 on the dark theme's panels, so the
   // dark theme takes the lighter blue Graph Builder uses there (5.2:1).
-  const baseColor = () => (document.documentElement.getAttribute('data-theme') === 'dark' ? '#6fa3d6' : '#2f6690');
+  const LIGHT_BASE = '#2f6690', DARK_BASE = '#6fa3d6';
+  const baseColor = () => (document.documentElement.getAttribute('data-theme') === 'dark' ? DARK_BASE : LIGHT_BASE);
   const BAR = '#8fa9c2';
   const SELECTED = '#d9822b';
 
@@ -840,7 +841,8 @@
         { label: 'Save Python Script (.py)', action: () => SM.util.download(`${slug(this.title)}.py`, this.pythonScript(), 'text/x-python') },
         { label: 'Copy Python Script', action: () => copyText(this.pythonScript()) },
         { label: 'Save Report as HTML', action: () => this.exportHtml() },
-        { label: 'Print…', action: () => window.print() },
+        { label: 'Save Report as Word', action: () => this.exportDocx(), disabled: !SM.docx },
+        { label: 'Print…', action: () => this.printReport() },
       ];
     }
 
@@ -893,8 +895,8 @@
       const v = await SM.ui.form({
         title: 'Column Switcher', info: 'report:switcher',
         fields: [
-          { key: 'which', label: 'Switch the column', type: 'select', value: cast[0][0], choices: cast },
-          { key: 'types', label: 'Offer columns of the same modeling type only', type: 'check', value: true },
+          { key: 'which', label: 'Switch the column', type: 'select', value: cast[0][0], choices: cast, help: 'The column of the analysis, with its role, that the switcher replaces. Each column in the switcher\'s list then takes its place in that role, with every other setting of the report kept.' },
+          { key: 'types', label: 'Offer columns of the same modeling type only', type: 'check', value: true, helpLabel: 'Same modeling type only', help: 'On: the list offers the columns of the same modeling type (any nominal or ordinal column for a categorical one), which the analysis can take. Off: every column of the table.' },
         ],
       });
       if (!v) return;
@@ -1043,24 +1045,85 @@
       return parts.join('\n');
     }
 
-    async exportHtml() {
+    /* A graph as an image for a document: drawn in the light theme (paper is
+       white), at its size on the page. */
+    async plotImage(p, format = 'svg', scale = 1) {
+      if (!p.drawn) { const closed = p.box.closest('.sm-ob.is-closed'); if (!closed) await p.draw(); }
+      if (!p.drawn) return null;
+      const gd = p.box;
+      let fig = gd;
+      if (SM.util.themeColors().dark) {
+        const layout = JSON.parse(JSON.stringify(gd.layout || {}));
+        layout.font = { ...(layout.font || {}), color: PAPER.text };
+        for (const k of Object.keys(layout)) if (/^[xy]axis\d*$/.test(k)) Object.assign(layout[k], { gridcolor: PAPER.grid, zerolinecolor: PAPER.grid, linecolor: PAPER.muted, tickcolor: PAPER.muted });
+        if (layout.legend) layout.legend = { ...layout.legend, font: { ...(layout.legend.font || {}), color: PAPER.text } };
+        // the points and lines drawn in the dark theme's blue take the light one's
+        const paper = (v) => {
+          if (typeof v === 'string') return v.toLowerCase() === DARK_BASE ? LIGHT_BASE : v;
+          if (Array.isArray(v)) return v.map(paper);
+          if (v && Object.getPrototypeOf(v) === Object.prototype) return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, paper(x)]));
+          return v;      // numbers, typed arrays
+        };
+        fig = { data: gd.data.map((t) => { const o = { ...t }; for (const k of ['marker', 'line', 'fillcolor']) if (t[k] != null) o[k] = paper(t[k]); return o; }), layout };
+      }
+      try {
+        const data = await Plotly.toImage(fig, { format, width: p.width, height: p.height, scale });
+        return { data, w: p.width, h: p.height, alt: p.opts.title || 'graph' };
+      } catch (e) { return null; }
+    }
+
+    /* The report as a document (Save Report as HTML, Print): the open parts,
+       the graphs as images, without the page's buttons and inputs. */
+    async documentHtml() {
       const clone = this.content.cloneNode(true);
+      // diagrams drawn as SVG (a tree, a network) with their paint written in:
+      // the document has none of the page's style sheets
+      const own = (root) => [...root.querySelectorAll('svg')].filter((s) => !s.closest('.sm-plot') && !s.ownerSVGElement);
+      const liveSvg = own(this.content), copySvg = own(clone);
+      liveSvg.forEach((s, i) => { if (copySvg[i]) copySvg[i].replaceWith(paintedSvg(s)); });
       const live = [...this.content.querySelectorAll('.sm-plot')];
       const copies = [...clone.querySelectorAll('.sm-plot')];
       for (let i = 0; i < live.length; i++) {
         const p = live[i]._plot;
-        let img = null;
-        if (p) {
-          if (!p.drawn) { const was = live[i].closest('.sm-ob.is-closed'); if (!was) await p.draw(); }
-          if (p.drawn) { try { img = await Plotly.toImage(live[i], { format: 'svg', width: p.width, height: p.height }); } catch (e) { img = null; } }
-        }
-        copies[i].replaceChildren(img ? el('img', { src: img, alt: p?.opts?.title || 'graph', width: p.width, height: p.height }) : el('em', { text: '(graph not drawn)' }));
+        const img = p ? await this.plotImage(p, 'svg') : null;
+        copies[i].replaceChildren(img ? el('img', { src: img.data, alt: img.alt, width: img.w, height: img.h }) : el('em', { text: '(graph not drawn)' }));
       }
       clone.querySelectorAll('button, .kvot-info-slot, [data-noexport], input, select, textarea').forEach((b) => b.remove());
+      // The Python goes along when the report shows it (the Python code button); a traceback always.
+      if (!this.spec.options.showCode) clone.querySelectorAll('details.sm-code').forEach((d) => { if (!d.closest('.sm-ob-error')) d.remove(); });
       clone.querySelectorAll('details').forEach((d) => d.setAttribute('open', ''));
-      const css = `body{font-family:verdana,sans-serif;font-size:12.5px;color:#352921;margin:20px}h2,h3,h4{font-size:13px;margin:10px 0 4px}.sm-ob-body{padding-left:18px}.sm-ob.is-closed>.sm-ob-body{display:none}table{border-collapse:collapse;margin:2px 0 8px}th,td{padding:2px 9px;border-bottom:1px solid #e0d7ce;text-align:right;white-space:nowrap}th{background:#f5eee7}.sm-l{text-align:left}.p-sig{color:#c8322b;font-weight:600}caption{text-align:left;font-weight:600;color:#6b5d50;padding-bottom:3px}.sm-ob-row{display:flex;flex-wrap:wrap;gap:16px 22px}pre{background:#f7f2ec;padding:8px;border:1px solid #e0d7ce;font-size:11.5px;overflow-x:auto}.sm-ob-note{color:#6b5d50;font-size:11.5px}.sm-ob-warn{border-left:3px solid #f3b87b;padding:4px 8px;background:#fdf4e9}.sm-ob-error{border-left:3px solid #c0392b;padding:4px 8px}`;
-      const html = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(this.title)}</title><style>${css}</style></head><body><h1 style="font-size:16px">${escapeHtml(this.title)}</h1><p style="color:#786b5d">${this.table ? `Table: ${escapeHtml(this.table.name)}. ` : ''} Made with the User Interface for statsmodels (kvotab.se/smui.html), statsmodels ${escapeHtml(SM.engine.versions ? SM.engine.versions.statsmodels : '')}, ${new Date().toISOString().slice(0, 10)}.</p>${clone.innerHTML}</body></html>`;
-      SM.util.download(`${slug(this.title)}.html`, html, 'text/html');
+      const css = `body{font-family:verdana,sans-serif;font-size:12.5px;color:#352921;background:#fff;margin:20px}h2,h3,h4{font-size:13px;margin:10px 0 4px}.sm-ob-body{padding-left:18px}.sm-ob.is-closed>.sm-ob-body{display:none}table{border-collapse:collapse;margin:2px 0 8px}th,td{padding:2px 9px;border-bottom:1px solid #e0d7ce;text-align:right;white-space:nowrap}th{background:#f5eee7}.sm-l{text-align:left}.p-sig{color:#c8322b;font-weight:600}caption{text-align:left;font-weight:600;color:#6b5d50;padding-bottom:3px}.sm-ob-row{display:flex;flex-wrap:wrap;gap:16px 22px}pre{background:#f7f2ec;padding:8px;border:1px solid #e0d7ce;font-size:11.5px;overflow-x:auto;white-space:pre-wrap}.sm-ob-note{color:#6b5d50;font-size:11.5px}.sm-ob-warn{border-left:3px solid #f3b87b;padding:4px 8px;background:#fdf4e9}.sm-ob-error{border-left:3px solid #c0392b;padding:4px 8px}img{max-width:100%;height:auto}`
+        + '@page{margin:15mm}@media print{body{margin:0}table,img,.sm-plot,caption{break-inside:avoid}h2,h3,h4{break-after:avoid}summary{list-style:none}}';
+      return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(this.title)}</title><style>${css}</style></head><body><h1 style="font-size:16px">${escapeHtml(this.title)}</h1><p style="color:#786b5d">${this.table ? `Table: ${escapeHtml(this.table.name)}. ` : ''} Made with the User Interface for statsmodels (kvotab.se/smui.html), statsmodels ${escapeHtml(SM.engine.versions ? SM.engine.versions.statsmodels : '')}, ${new Date().toISOString().slice(0, 10)}.</p>${clone.innerHTML}</body></html>`;
+    }
+
+    async exportHtml() {
+      SM.util.download(`${slug(this.title)}.html`, await this.documentHtml(), 'text/html');
+    }
+
+    /* Print: the document above in a hidden frame, printed from there, so the
+       paper has the report and not the page around it. */
+    async printReport() {
+      const html = await this.documentHtml();
+      const frame = el('iframe', { class: 'sm-print-frame', title: `Print ${this.title}`, 'aria-hidden': 'true', tabindex: '-1' });
+      document.body.append(frame);
+      await new Promise((res) => { frame.addEventListener('load', res, { once: true }); frame.srcdoc = html; });
+      const doc = frame.contentDocument;
+      await Promise.all([...doc.images].map((im) => (im.complete ? null : new Promise((r) => { im.onload = r; im.onerror = r; }))));
+      this._printFrame = frame;
+      const done = () => { frame.remove(); if (this._printFrame === frame) this._printFrame = null; };
+      frame.contentWindow.addEventListener('afterprint', () => setTimeout(done, 0), { once: true });
+      setTimeout(done, 10 * 60 * 1000);
+      frame.contentWindow.focus();
+      frame.contentWindow.print();
+      return frame;
+    }
+
+    /* Save Report as Word: smui-docx.js, with the graphs as PNG pictures. */
+    async exportDocx() {
+      const blob = await SM.docx.report(this, { plotImage: (p) => this.plotImage(p, 'png', 2) });
+      SM.util.download(`${slug(this.title)}.docx`, blob, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+      return blob;
     }
 
     retheme() { for (const p of this.plots) p.retheme(); }
@@ -1095,6 +1158,9 @@
       return { platform: this.platform.id, table: this.table ? this.table.id : null, idNames, spec: { ...this.spec, closed: Object.fromEntries(this.closed) } };
     }
   }
+
+  // A graph's colours on paper (and in a document) are the light theme's.
+  const PAPER = { text: '#352921', muted: '#786b5d', grid: '#e0d7ce' };
 
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -1251,7 +1317,7 @@
       return [
         ...items,
         items.length ? { separator: true } : null,
-        { label: 'Set α Level', submenu: () => [0.01, 0.05, 0.1].map((a) => ({ label: String(a), checked: this.alpha === a, action: () => this.set('alpha', a) })).concat([{ label: 'Other…', action: async () => { const v = await SM.ui.form({ title: 'Set α Level', fields: [{ key: 'a', label: 'α (between 0 and 1)', type: 'number', value: this.alpha }], validate: (x) => (x.a > 0 && x.a < 1 ? null : 'α must be between 0 and 1') }); if (v) this.set('alpha', v.a); } }]) },
+        { label: 'Set α Level', submenu: () => [0.01, 0.05, 0.1].map((a) => ({ label: String(a), checked: this.alpha === a, action: () => this.set('alpha', a) })).concat([{ label: 'Other…', action: async () => { const v = await SM.ui.form({ title: 'Set α Level', fields: [{ key: 'a', label: 'α (between 0 and 1)', type: 'number', value: this.alpha, help: 'The significance level of this report: its confidence intervals are 100(1 − α)% intervals and p-values below α are marked. The report is computed again with it.' }], validate: (x) => (x.a > 0 && x.a < 1 ? null : 'α must be between 0 and 1') }); if (v) this.set('alpha', v.a); } }]) },
         { label: 'Local Data Filter', checked: !!this.spec.filter, disabled: !this.table, action: () => this.report.toggleFilter() },
         { label: 'Column Switcher', checked: !!this.spec.switcher, disabled: !this.table, action: () => this.report.columnSwitcher() },
         { label: 'Redo', submenu: () => this.report.redoMenu() },
@@ -1259,6 +1325,56 @@
         { label: 'Show Python Code', checked: !!this.spec.options.showCode, action: () => this.report.toggleCode() },
       ];
     }
+  }
+
+  /* An inline SVG (a tree, a network, a word cloud) for a document: a copy
+     with the computed paint of each shape written in, so that it needs no
+     style sheet, and without its buttons. In the dark theme the theme's
+     colours become the light theme's, as paper is white. */
+  const PAINT = ['fill', 'stroke', 'stroke-width', 'stroke-dasharray', 'opacity', 'fill-opacity', 'stroke-opacity', 'font-size', 'font-family', 'font-weight', 'font-style', 'text-anchor', 'dominant-baseline', 'display', 'visibility'];
+  function paintedSvg(svg) {
+    const copy = svg.cloneNode(true);
+    const a = [svg, ...svg.querySelectorAll('*')], b = [copy, ...copy.querySelectorAll('*')];
+    const light = SM.util.themeColors().dark ? lightColors() : null;
+    for (let i = 0; i < a.length && i < b.length; i++) {
+      const cs = getComputedStyle(a[i]);
+      b[i].setAttribute('style', PAINT.map((p) => {
+        let v = cs.getPropertyValue(p);
+        if (light && (p === 'fill' || p === 'stroke') && light.has(v)) v = light.get(v);
+        return `${p}:${v}`;
+      }).join(';'));
+    }
+    copy.querySelectorAll('[role="button"]').forEach((e) => e.remove());     // a node's red triangle
+    const r = svg.getBoundingClientRect();
+    copy.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    if (r.width > 0 && r.height > 0) { copy.setAttribute('width', String(Math.round(r.width))); copy.setAttribute('height', String(Math.round(r.height))); }
+    return copy;
+  }
+
+  /* The dark theme's colours (as computed, rgb()) mapped to the light
+     theme's: the tokens of the style sheets' :root rules (the light ones;
+     the dark ones sit under [data-theme] and prefers-color-scheme). */
+  function lightColors() {
+    const lightVars = {};
+    for (const sheet of document.styleSheets) {
+      let rules;
+      try { rules = sheet.cssRules; } catch (e) { continue; }
+      for (const r of rules) {
+        if (r.selectorText !== ':root' || !r.style) continue;
+        for (let i = 0; i < r.style.length; i++) { const k = r.style[i]; if (k.startsWith('--')) lightVars[k] = r.style.getPropertyValue(k).trim(); }
+      }
+    }
+    const probe = document.createElement('span');
+    document.body.append(probe);
+    const rgb = (v) => { if (!v || /var\(/.test(v)) return null; probe.style.color = ''; probe.style.color = v; return probe.style.color ? getComputedStyle(probe).color : null; };
+    const root = getComputedStyle(document.documentElement);
+    const map = new Map();
+    for (const [k, lv] of Object.entries(lightVars)) {
+      const d = rgb(root.getPropertyValue(k).trim()), l = rgb(lv);
+      if (d && l && d !== l && !map.has(d)) map.set(d, l);
+    }
+    probe.remove();
+    return map;
   }
 
   /* FNV-1a over the row numbers: a short cache key for a long row list. */
@@ -1283,5 +1399,45 @@
       .observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'], attributeOldValue: true });
   }
 
-  SM.report = Object.freeze({ Report, Outline, Plot, Ctx, rt, combineRT, hasWebGL, plotlyText, kv, code, note, warn, error, cellText, rtText, tableFromRT, copyText, niceBins, kickPlots, filterRows, filterActive, renderFilter, SYMBOLS, SELECTED, get BASE() { return baseColor(); }, BAR, merge });
+  /* The browser's own Print prints the report in view (smui.css, @media
+     print). Graphs and tables have a size in pixels, so for the print what
+     is wider than the paper is scaled to fit it, and boxes that scroll show
+     all they hold; both only on paper (classes that the print rules use). */
+  const PRINT_WIDTH = 700;     // A4 or Letter within the page margins, in CSS pixels
+  let printFitted = [];
+  function unfitForPrint() {
+    for (const e of printFitted) { e.classList.remove('sm-print-flow', 'sm-print-zoom'); e.style.removeProperty('--sm-print-zoom'); }
+    printFitted = [];
+  }
+  function fitForPrint() {
+    unfitForPrint();
+    const body = document.querySelector('.sm-views > .sm-view:not([hidden]) .sm-reportbody');
+    if (!body) return;
+    const all = [...body.querySelectorAll('div, table, pre, section, aside')].filter((e) => !e.closest('.js-plotly-plot') || e.classList.contains('js-plotly-plot'));
+    for (const e of all) {
+      const cs = getComputedStyle(e);
+      if (/auto|scroll/.test(cs.overflowX + cs.overflowY)) { e.classList.add('sm-print-flow'); printFitted.push(e); }
+    }
+    const left0 = body.getBoundingClientRect().left + parseFloat(getComputedStyle(body).paddingLeft || 0);
+    const zoomed = [];
+    for (const e of body.querySelectorAll('.sm-plot, table.sm-rt, table.sm-kv, .sm-prof, svg, canvas')) {
+      if (zoomed.some((z) => z.contains(e)) || (e.tagName.toLowerCase() !== 'div' && e.closest('.sm-plot, .js-plotly-plot')) || (e.ownerSVGElement)) continue;
+      const w = Math.max(e.scrollWidth || 0, e.getBoundingClientRect().width);
+      // the outline's indent: where the element starts once its row wraps
+      const ob = e.closest('.sm-ob-body');
+      const indent = ob ? Math.max(0, ob.getBoundingClientRect().left + parseFloat(getComputedStyle(ob).paddingLeft || 0) - left0) : 0;
+      if (w > 0 && indent + w > PRINT_WIDTH) {
+        e.style.setProperty('--sm-print-zoom', String(Math.max(0.25, (PRINT_WIDTH - indent) / w)));
+        e.classList.add('sm-print-zoom');
+        zoomed.push(e);
+        if (!printFitted.includes(e)) printFitted.push(e);
+      }
+    }
+  }
+  if (typeof window !== 'undefined' && window.addEventListener) {
+    window.addEventListener('beforeprint', fitForPrint);
+    window.addEventListener('afterprint', unfitForPrint);
+  }
+
+  SM.report = Object.freeze({ Report, Outline, Plot, Ctx, rt, combineRT, hasWebGL, plotlyText, paintedSvg, kv, code, note, warn, error, cellText, rtText, tableFromRT, copyText, niceBins, kickPlots, filterRows, filterActive, renderFilter, SYMBOLS, SELECTED, get BASE() { return baseColor(); }, BAR, merge });
 }(typeof self !== 'undefined' ? self : this));

@@ -39,9 +39,11 @@
   const commands = [];
   let topicsReady = false;
   const pendingTopics = {};
+  const allTopics = {};      // every topic added here, for the dialogs that build on one
 
   function addTopics(t) {
     if (!t || typeof KvotInfo === 'undefined') return;
+    Object.assign(allTopics, t);
     if (topicsReady) KvotInfo.add(t); else Object.assign(pendingTopics, t);
   }
 
@@ -64,7 +66,14 @@
     all: () => commands.slice(),
   });
 
-  SM.info = Object.freeze({ add: addTopics });
+  // get() gives a topic as shown: a topic may be a function of the state.
+  SM.info = Object.freeze({
+    add: addTopics,
+    get(key) {
+      const t = allTopics[key];
+      try { return typeof t === 'function' ? t() : (t || null); } catch (e) { return null; }
+    },
+  });
 
   // Where submenus go among the items of their menu.
   const SUBMENU_ORDER = {
@@ -680,8 +689,8 @@
     tableMenu() {
       const t = this.current;
       return [
-        { label: 'Rename Table…', disabled: !t, action: async () => { const v = await SM.ui.form({ title: 'Rename Table', fields: [{ key: 'name', label: 'Name', value: t.name }] }); if (v && v.name.trim()) this.renameTable(t, v.name.trim()); } },
-        { label: 'Table Notes…', disabled: !t, action: async () => { const v = await SM.ui.form({ title: 'Table Notes', fields: [{ key: 'notes', label: 'Notes', type: 'textarea', value: t.notes }, { key: 'source', label: 'Source', value: t.source, full: true }] }); if (v) { t.notes = v.notes; t.source = v.source; this.panels.renderTable(); } } },
+        { label: 'Rename Table…', disabled: !t, action: async () => { const v = await SM.ui.form({ title: 'Rename Table', fields: [{ key: 'name', label: 'Name', value: t.name, help: 'The name on the table\'s tab, in the Table panel and in the titles of its reports, which are renamed with it. Saved files are named after it.' }] }); if (v && v.name.trim()) this.renameTable(t, v.name.trim()); } },
+        { label: 'Table Notes…', disabled: !t, action: async () => { const v = await SM.ui.form({ title: 'Table Notes', fields: [{ key: 'notes', label: 'Notes', type: 'textarea', value: t.notes, help: 'Free text kept with the table, such as what the rows are and what the columns mean. The Table panel shows its beginning; Save Table and Save Project keep it.' }, { key: 'source', label: 'Source', value: t.source, full: true, help: 'Where the table came from: the file it was read from, or a dataset\'s origin and copyright note. Shown in the Table panel and kept with the table.' }] }); if (v) { t.notes = v.notes; t.source = v.source; this.panels.renderTable(); } } },
         { separator: true },
         { label: 'Save Table (.json)', disabled: !t, action: () => this.exportTable('json') },
         { label: 'Export CSV', disabled: !t, action: () => this.exportTable('csv') },
@@ -698,12 +707,12 @@
       const v = await SM.ui.form({
         title: 'New Column', info: 'cols:new',
         fields: [
-          { key: 'name', label: 'Column name', value: t.uniqueName('Column') },
-          { key: 'dataType', label: 'Data type', type: 'select', value: 'numeric', choices: [['numeric', 'Numeric'], ['character', 'Character']] },
-          { key: 'modelingType', label: 'Modeling type', type: 'select', value: 'continuous', choices: [['continuous', 'Continuous'], ['ordinal', 'Ordinal'], ['nominal', 'Nominal']] },
-          { key: 'init', label: 'Initial values', type: 'select', value: 'missing', choices: [['missing', 'Missing'], ['constant', 'Constant'], ['sequence', 'Sequence 1, 2, 3…'], ['random', 'Random normal (0, 1)'], ['uniform', 'Random uniform (0, 1)']] },
-          { key: 'constant', label: 'Constant', value: '' },
-          SM.formula ? { key: 'formula', label: 'Formula', value: '', placeholder: 'e.g. log(:height) or :weight / (:height/100)^2', full: true, hint: 'Optional. A formula column recalculates when the columns it uses change.' } : null,
+          { key: 'name', label: 'Column name', value: t.uniqueName('Column'), help: 'The heading of the column and its name in launch dialogs and formulas. A name the table already has gets a number added.' },
+          { key: 'dataType', label: 'Data type', type: 'select', value: 'numeric', choices: [['numeric', 'Numeric'], ['character', 'Character']], help: 'What the cells hold: Numeric for numbers (and dates, which are numbers underneath), Character for text. A character column is ordinal or nominal.' },
+          { key: 'modelingType', label: 'Modeling type', type: 'select', value: 'continuous', choices: [['continuous', 'Continuous'], ['ordinal', 'Ordinal'], ['nominal', 'Nominal']], help: 'How analyses treat the values: Continuous as numbers on a scale, Ordinal as ordered categories, Nominal as unordered categories. Click the icon in the Columns panel to change it later.' },
+          { key: 'init', label: 'Initial values', type: 'select', value: 'missing', choices: [['missing', 'Missing'], ['constant', 'Constant'], ['sequence', 'Sequence 1, 2, 3…'], ['random', 'Random normal (0, 1)'], ['uniform', 'Random uniform (0, 1)']], help: 'What the rows start with: missing values, the same value in every row (the Constant below), the row numbers, or random draws, normal with mean 0 and standard deviation 1, or uniform between 0 and 1 (a new draw each time).' },
+          { key: 'constant', label: 'Constant', value: '', help: 'The value of every row when Initial values is Constant: a number for a numeric column, any text for a character one. Not used otherwise.' },
+          SM.formula ? { key: 'formula', label: 'Formula', value: '', placeholder: 'e.g. log(:height) or :weight / (:height/100)^2', full: true, hint: 'Optional. A formula column recalculates when the columns it uses change.', help: 'Optional. A formula computes the column from other columns, row by row, in place of the initial values, and computes it again when they change. Columns are written `:name`; Cols > Formula edits it later, with the list of functions.' } : null,
         ].filter(Boolean),
         validate: (x) => (x.dataType === 'character' && x.modelingType === 'continuous' ? 'A character column is nominal or ordinal.' : null),
       });
@@ -816,10 +825,10 @@
       const v = await SM.ui.form({
         title: 'Select Where', info: 'rows:selectwhere',
         fields: [
-          { key: 'col', label: 'Column', type: 'select', value: pre ? pre.id : t.columns[0]?.id, choices: t.columns.map((c) => [c.id, c.name]) },
-          { key: 'op', label: 'Condition', type: 'select', value: 'eq', choices: ops },
-          { key: 'value', label: 'Value', value: '' },
-          { key: 'mode', label: 'Current selection', type: 'select', value: 'replace', choices: [['replace', 'Clear it'], ['add', 'Extend it'], ['restrict', 'Restrict it']] },
+          { key: 'col', label: 'Column', type: 'select', value: pre ? pre.id : t.columns[0]?.id, choices: t.columns.map((c) => [c.id, c.name]), help: 'The column whose values are tested; it starts at the selected column.' },
+          { key: 'op', label: 'Condition', type: 'select', value: 'eq', choices: ops, help: 'How each value is compared with Value. On a numeric column, equals and the greater and less conditions compare numbers (a date column reads Value as a date); on a character column they compare the text, numbers within it in natural order. contains, does not contain and starts with look at the text as the grid shows it, ignoring case. is missing and is not missing need no Value.' },
+          { key: 'value', label: 'Value', value: '', help: 'What the values are compared with: a number or a date (yyyy-mm-dd) for a numeric column, text for a character one. A missing value matches no condition but is missing.' },
+          { key: 'mode', label: 'Current selection', type: 'select', value: 'replace', choices: [['replace', 'Clear it'], ['add', 'Extend it'], ['restrict', 'Restrict it']], help: 'Clear it: only the matching rows are selected. Extend it: the matching rows are added to the selection. Restrict it: of the rows selected now, only those that match stay selected.' },
         ],
       });
       if (!v) return;
@@ -856,7 +865,7 @@
     async selectRandomly() {
       const t = this.requireTable();
       if (!t) return;
-      const v = await SM.ui.form({ title: 'Select Randomly', fields: [{ key: 'n', label: 'Sampling rate (below 1) or number of rows', type: 'number', value: 0.1 }, { key: 'seed', label: 'Seed (empty: a new draw)', value: '' }] });
+      const v = await SM.ui.form({ title: 'Select Randomly', lead: 'Select rows at random, without replacement, in place of the current selection.', fields: [{ key: 'n', label: 'Sampling rate (below 1) or number of rows', type: 'number', value: 0.1, helpLabel: 'Sampling rate or number of rows', help: 'Below 1: that share of the table\'s rows, rounded to whole rows (0.1 selects a tenth). 1 or more: that many rows, at most all of them. Excluded and hidden rows can be drawn too.' }, { key: 'seed', label: 'Seed (empty: a new draw)', value: '', helpLabel: 'Seed', help: 'Any text or number. The same seed with the same number of rows selects the same rows again, so a sample can be repeated; empty draws new rows each time.' }] });
       if (!v || !(v.n > 0)) return;
       const k = v.n < 1 ? Math.round(v.n * t.nrows) : Math.min(t.nrows, Math.round(v.n));
       const r = SM.util.rng(v.seed || String(Date.now()));
@@ -870,8 +879,8 @@
       const t = this.requireTable();
       if (!t) return;
       const v = await SM.ui.form({ title: 'Name Selection in Column', fields: [
-        { key: 'name', label: 'Column name', value: t.uniqueName('Selected') },
-        { key: 'yes', label: 'Selected', value: '1' }, { key: 'no', label: 'Unselected', value: '0' },
+        { key: 'name', label: 'Column name', value: t.uniqueName('Selected'), help: 'The new column, nominal, that records which rows are selected now. It does not follow later changes of the selection.' },
+        { key: 'yes', label: 'Selected', value: '1', help: 'The value in the rows selected now.' }, { key: 'no', label: 'Unselected', value: '0', help: 'The value in the other rows. When both values are numbers the column is numeric, otherwise character.' },
       ] });
       if (!v) return;
       const numeric = [v.yes, v.no].every((x) => Number.isFinite(SM.table.toNumber(x)));
@@ -883,7 +892,7 @@
     async goToRow() {
       const t = this.requireTable();
       if (!t) return;
-      const v = await SM.ui.form({ title: 'Go to Row', fields: [{ key: 'row', label: 'Row number', type: 'number', value: 1 }] });
+      const v = await SM.ui.form({ title: 'Go to Row', fields: [{ key: 'row', label: 'Row number', type: 'number', value: 1, help: 'The row to show: the grid scrolls to it, puts the cursor on it and selects it. A number past the end goes to the last row.' }] });
       if (!v || !(v.row >= 1)) return;
       const r = Math.min(t.nrows, Math.round(v.row)) - 1;
       this.showTab(this.tabOf(t));
@@ -897,7 +906,7 @@
     async addRowsDialog() {
       const t = this.requireTable();
       if (!t) return;
-      const v = await SM.ui.form({ title: 'Add Rows', fields: [{ key: 'n', label: 'How many rows', type: 'number', value: 1 }, { key: 'where', label: 'Where', type: 'select', value: 'end', choices: [['end', 'At the end'], ['start', 'At the start'], ['after', 'After the first selected row']] }] });
+      const v = await SM.ui.form({ title: 'Add Rows', fields: [{ key: 'n', label: 'How many rows', type: 'number', value: 1, help: 'How many empty rows to insert, at most 100,000 at a time. Their cells are missing until values are typed or pasted in; formula columns fill theirs.' }, { key: 'where', label: 'Where', type: 'select', value: 'end', choices: [['end', 'At the end'], ['start', 'At the start'], ['after', 'After the first selected row']], help: 'At the end of the table, before the first row, or after the first selected row (at the end when no row is selected).' }] });
       if (!v || !(v.n >= 1)) return;
       const sel = t.selectedRows();
       const at = v.where === 'start' ? 0 : v.where === 'after' && sel.length ? sel[0] + 1 : t.nrows;
@@ -919,9 +928,9 @@
       const v = await SM.ui.form({
         title: 'Color or Mark by Column', info: 'rows:colorby',
         fields: [
-          { key: 'col', label: 'Column', type: 'select', value: pre ? pre.id : t.columns[0]?.id, choices: t.columns.map((c) => [c.id, `${c.name} (${TYPE_LABEL[c.modelingType].toLowerCase()})`]) },
-          { key: 'color', label: 'Set colours', type: 'check', value: true },
-          { key: 'marker', label: 'Set markers', type: 'check', value: false },
+          { key: 'col', label: 'Column', type: 'select', value: pre ? pre.id : t.columns[0]?.id, choices: t.columns.map((c) => [c.id, `${c.name} (${TYPE_LABEL[c.modelingType].toLowerCase()})`]), help: 'A nominal or ordinal column gives each level a colour and a marker of its own, in value order. A continuous column gives a colour ramp from its smallest value (blue) to its largest (red), and five markers from low to high. Rows with a missing value lose their colour or marker.' },
+          { key: 'color', label: 'Set colours', type: 'check', value: true, help: 'Colour every row by the column. The colours show in every graph of the table, and as a dot by the row number in the grid.' },
+          { key: 'marker', label: 'Set markers', type: 'check', value: false, help: 'Give every row a marker (the shape of its points in graphs) by the column.' },
         ],
       });
       if (!v) return;
@@ -1046,6 +1055,9 @@
     start({ version = '', topics = {} } = {}) {
       this._makeHelp();
       if (typeof KvotInfo !== 'undefined') {
+        // the frame's topics (smui-help.js) are there for SM.info.get too; a
+        // platform's own topic of the same name wins, as in the panel
+        for (const [k, v] of Object.entries({ ...(SM.help ? SM.help.topics : {}), ...topics })) if (!(k in allTopics)) allTopics[k] = v;
         KvotInfo.setup({ topics: { ...(SM.help ? SM.help.topics : {}), ...topics, ...pendingTopics }, morePrefix: 'Read more in Help: ', onMore: (more) => this.showHelp(more && more.id ? more.id.replace(/^help-/, '') : null) });
         topicsReady = true;
       }

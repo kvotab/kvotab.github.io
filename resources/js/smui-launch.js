@@ -10,11 +10,16 @@
        lead: 'one line on what the platform does',
        roles: [{ key: 'y', label: 'Y, Columns', min: 1, max: Infinity,
                  types: ['continuous', 'ordinal', 'nominal'], numeric: false,
-                 hint: 'required', info: 'topic key' }, ...],
+                 hint: 'required', help: 'what the role is for', info: 'topic key' }, ...],
        options: [{ key, label, type: 'check'|'number'|'select'|'text',
-                   value, choices: [[value, label], ...], hint }],
+                   value, choices: [[value, label], ...], hint, help }],
        extra(api, spec) -> { el, read() -> { roles?, options?, ... }, recall(saved),
-                             position: 'top' | undefined }   (optional)
+                             position: 'top' | undefined,
+                             help: [[field label, what it is for], ...] or () => that }   (optional)
+
+   The dialog's (i) shows the platform's topic and, after it, what every
+   role, option and field of the platform's own part is for: each one's
+   help (or its hint), with what a role takes.
        validate(spec, table) -> an error message or null
      }
 
@@ -35,6 +40,50 @@
       return `${role.label} takes ${role.types.map((t) => TYPE_LABEL[t].toLowerCase()).join(' or ')} columns; ${c.name} is ${TYPE_LABEL[c.modelingType].toLowerCase()} (right click it to change)`;
     }
     return null;
+  }
+
+  /* What a role takes, in words: 'required: one column, continuous'. */
+  function takes(r) {
+    const need = r.min ? (r.min > 1 ? `required: ${r.min} or more columns` : 'required') : 'optional';
+    const count = r.max === 1 ? 'one column' : (r.min > 1 ? '' : 'one or more columns');
+    const kinds = r.types ? r.types.map((k) => TYPE_LABEL[k].toLowerCase()).join(' or ') : '';
+    return [need, count, kinds, r.numeric ? 'numeric' : ''].filter(Boolean).join(', ');
+  }
+
+  /* The launch dialog's (i) topic: the platform's own, and the roles, options
+     and fields of the dialog, each with what it is for. shown(role): whether
+     the dialog shows the role now (a layout can hide some). */
+  function dialogTopic(platform, L, roles, extra, shown = () => true) {
+    if (typeof KvotInfo === 'undefined') return platform.info || null;
+    // A field's help, or its hint when the hint says more than what the role
+    // takes ('required: continuous', 'one or more', 'optional numeric' do not).
+    const say = (f) => {
+      if (f.help) return f.help;
+      const h = (f.hint || '').trim();
+      const rest = h.replace(/\b(required|optional|numeric|continuous|nominal|ordinal|character|categorical|one|two|or|and|more|columns?|a|an|any)\b|[:;,.()]/gi, '').trim();
+      return rest ? h.replace(/^(required|optional):\s*/i, '') : '';
+    };
+    // Built when the (i) is clicked, so fields the extra part shows only in
+    // some states are explained as they are.
+    const topic = () => {
+      const base = (platform.info && SM.info && SM.info.get(platform.info)) || null;
+      // A Roles or Options section of the platform's topic gives way to the
+      // generated one, its words kept for a field that has no help.
+      const own = (heading) => { const s = ((base && base.sections) || []).find((x) => x.heading === heading && x.choices); return new Map(s ? s.choices : []); };
+      const ownRoles = own('Roles'), ownOpts = own('Options');
+      const sections = ((base && base.sections) || []).filter((s) => !(s.choices && (s.heading === 'Roles' || s.heading === 'Options')));
+      const now = roles.filter((r) => shown(r));
+      if (now.length) sections.push({ heading: 'Roles', choices: now.map((r) => [r.label, [say(r) || ownRoles.get(r.label), `(${takes(r)})`].filter(Boolean).join(' ')]) });
+      const opts = (L.options || []).map((o) => [o.label, say(o) || ownOpts.get(o.label) || (o.type === 'check' ? 'on or off' : '')]);
+      if (opts.length) sections.push({ heading: 'Options', choices: opts });
+      let xh = null;
+      try { xh = extra && (typeof extra.help === 'function' ? extra.help() : extra.help); } catch (e) { xh = null; }
+      if (xh && xh.length) sections.push({ heading: extra.helpHeading || 'Settings', choices: xh });
+      return { kicker: (base && base.kicker) || 'Launch', title: (base && base.title) || platform.label, lead: (base && base.lead) || L.lead || platform.about || '', sections, more: base ? base.more : undefined };
+    };
+    const key = `launch:${platform.id}`;
+    (SM.info ? SM.info.add : KvotInfo.add)({ [key]: topic });
+    return key;
   }
 
   function open({ platform, table, spec = null, onOK }) {
@@ -305,7 +354,8 @@
         actions),
       (L.options || []).length ? opts : null, msg);
 
-    const dlg = SM.ui.dialog({ title: platform.label, body, info: platform.info || null, className: 'sm-launch-dialog' });
+    const topicKey = dialogTopic(platform, L, roles, extra, (r) => !(roleEls[r.key] && roleEls[r.key].row.hidden));
+    const dlg = SM.ui.dialog({ title: platform.label, body, info: topicKey, className: 'sm-launch-dialog' });
 
     const validate = (s) => {
       for (const r of roles) {
@@ -354,7 +404,8 @@
       fillFrom(s, true);
     });
     help.addEventListener('click', () => {
-      if (platform.info && typeof KvotInfo !== 'undefined') KvotInfo.open(platform.info);
+      // the same as the (i): the platform, and what each role, option and field is for
+      if ((topicKey || platform.info) && typeof KvotInfo !== 'undefined') KvotInfo.open(topicKey || platform.info);
       else if (SM.app) { dlg.close(null); SM.app.showHelp(platform.helpId || `p-${platform.id}`); }
     });
     dlg.el.addEventListener('keydown', (ev) => {
